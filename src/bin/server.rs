@@ -9,11 +9,13 @@ async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::from_filename(".env.local");
     let _ = dotenvy::dotenv();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
-        .init();
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "warn".into())
+        .add_directive("sqlx::query=error".parse().unwrap())
+        .add_directive("hyper_util::client=error".parse().unwrap())
+        .add_directive("rchat=warn".parse().unwrap());
+
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::mirror_request())
@@ -48,9 +50,12 @@ async fn main() -> anyhow::Result<()> {
     info!("Listening on http://{}", addr);
 
     // Graceful shutdown handler
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     info!("Server shutdown complete");
 

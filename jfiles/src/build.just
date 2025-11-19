@@ -40,7 +40,7 @@ fmt:
   cd {{ROOT}} && cargo clippy --all-targets --all-features --fix --allow-dirty -- -D warnings
   cd {{ROOT}} && cargo fmt --all
   cd {{ROOT}} && taplo fmt
-  cd {{ROOT}} && bun run lint --fix
+  cd {{ROOT}} && bunx eslint . --fix
   cd {{ROOT}} && bunx prettier --write "**/*.{ts,tsx,js,jsx,json,md}"
 
 # Check formatting and linting without making changes

@@ -9,7 +9,7 @@
 /coverage
 
 # next.js
-/.next/
+**.next**
 /out/
 
 # production
@@ -49,16 +49,11 @@ release/
 *.rs.bk
 *.rlib
 *.prof*
-Cargo.lock
 **/*.rs.bk
 .idea/
 *.iml
 
 # Project specific
-autowaka_data.json
-autowaka_data.json.tmp
-autowaka_data.json.backup
-autowaka_data.*.json
 
 # Playwright
 /frontend/tests/test-results/
@@ -67,3 +62,14 @@ autowaka_data.*.json
 
 # Project specific
 i.txt
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Uploaded files
+uploads/
+files/
