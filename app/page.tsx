@@ -1,59 +1,88 @@
 'use client'
 
-import { useState } from 'react'
-import { hello, HelloResponse } from './lib/api'
+import { useState, useEffect } from 'react'
+import { Container, Box, Paper, Tabs, Tab, Button } from '@mui/material'
+import RegisterForm from './components/auth/RegisterForm'
+import LoginForm from './components/auth/LoginForm'
+import Dashboard from './components/dashboard/Dashboard'
+import { authApi } from './lib/api'
 
 export default function Home() {
-  const [response, setResponse] = useState<HelloResponse | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [tab, setTab] = useState(0)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isGuestMode, setIsGuestMode] = useState(false)
+  const [mounted, setMounted] = useState(false)
 
-  const handleClick = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const result = await hello()
-      setResponse(result)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
-    } finally {
-      setLoading(false)
+  useEffect(() => {
+    setMounted(true)
+    setIsAuthenticated(authApi.isAuthenticated())
+    const guestMode = localStorage.getItem('rchat_guest_mode') === 'true'
+    if (guestMode && !authApi.isAuthenticated()) {
+      setIsGuestMode(true)
     }
+  }, [])
+
+  const handleAuthSuccess = () => {
+    setIsAuthenticated(true)
+    setIsGuestMode(false)
+  }
+
+  const handleLogout = async () => {
+    try {
+      await authApi.logout()
+    } catch (err) {
+      console.error('Logout error:', err)
+    }
+    setIsAuthenticated(false)
+    setIsGuestMode(false)
+  }
+
+  const handleGuestMode = () => {
+    localStorage.setItem('rchat_guest_mode', 'true')
+    setIsGuestMode(true)
+  }
+
+  const handleExitGuestMode = () => {
+    localStorage.removeItem('rchat_guest_mode')
+    setIsGuestMode(false)
+  }
+
+  if (!mounted) {
+    return null
+  }
+
+  if (isAuthenticated) {
+    return <Dashboard isGuest={false} onLogout={handleLogout} />
+  }
+
+  if (isGuestMode) {
+    return <Dashboard isGuest={true} onCreateAccount={handleExitGuestMode} />
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
-      <div className="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
-        <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">
-          Rust + Next.js Template
-        </h1>
+    <Container maxWidth="sm">
+      <Box sx={{ py: 4 }}>
+        <Paper sx={{ p: 3 }}>
+          <h1 style={{ textAlign: 'center' }}>RChat</h1>
 
-        <p className="text-gray-600 mb-8 text-center">
-          A full-stack template with Rust backend and Next.js frontend
-        </p>
+          <Tabs value={tab} onChange={(_, newValue) => setTab(newValue)} sx={{ mb: 2 }}>
+            <Tab label="Register" />
+            <Tab label="Login" />
+          </Tabs>
 
-        <button
-          onClick={handleClick}
-          disabled={loading}
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-        >
-          {loading ? 'Loading...' : 'Call Rust API'}
-        </button>
+          {tab === 0 ? (
+            <RegisterForm onSuccess={handleAuthSuccess} onSwitchToLogin={() => setTab(1)} />
+          ) : (
+            <LoginForm onSuccess={handleAuthSuccess} onSwitchToRegister={() => setTab(0)} />
+          )}
 
-        {response && (
-          <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-            <p className="text-green-800 font-medium">Response from Rust:</p>
-            <p className="text-green-700 mt-2">{response.message}</p>
-          </div>
-        )}
-
-        {error && (
-          <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-red-800 font-medium">Error:</p>
-            <p className="text-red-700 mt-2">{error}</p>
-          </div>
-        )}
-      </div>
-    </div>
+          <Box sx={{ mt: 2, textAlign: 'center' }}>
+            <Button variant="text" onClick={handleGuestMode} fullWidth>
+              Skip to RChat (Guest Mode)
+            </Button>
+          </Box>
+        </Paper>
+      </Box>
+    </Container>
   )
 }

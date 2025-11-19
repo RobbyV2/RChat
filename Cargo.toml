@@ -33,6 +33,14 @@ dotenvy = "0.15"
 itertools = "0.13"
 jsonwebtoken = "9"
 base64 = "0.22"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite"] }
+sha2 = "0.10"
+pulldown-cmark = "0.12"
+regex = "1"
+multer = "3"
+mime = "0.3"
+once_cell = "1"
+rustrict = "0.7"
 
 [dev-dependencies]
 
