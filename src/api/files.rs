@@ -14,6 +14,7 @@ use crate::api::AppState;
 use crate::services::file_storage::{delete_file, get_file_path, list_user_files, save_file};
 use crate::utils::error::{AppError, AppResult};
 use crate::utils::helpers::{json_list, json_response, system_username};
+use crate::websocket::events::ServerMessage;
 
 #[derive(Deserialize)]
 struct UploadRequest {
@@ -55,6 +56,13 @@ async fn download(
         .map_err(|e| AppError::Internal(format!("Failed to read file: {}", e)))?;
 
     let content_disposition = format!("inline; filename=\"{}\"", file.original_name);
+
+    let new_download_count = file.download_count + 1;
+    let ws_event = ServerMessage::FileDownloaded {
+        file_id: file_id.clone(),
+        download_count: new_download_count,
+    };
+    state.ws_manager.broadcast(ws_event).await;
 
     Ok((
         StatusCode::OK,

@@ -218,7 +218,7 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
         </Box>
       )}
 
-      <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 1 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <input
           ref={fileInputRef}
           type="file"
@@ -231,7 +231,6 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
           color="primary"
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading || disabled || !!attachedFile}
-          sx={{ mb: 1 }} // Aligned with bottom of text field
         >
           <AttachFileIcon />
         </IconButton>
@@ -260,7 +259,6 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
           color="primary"
           onClick={handleSend}
           disabled={(!content.trim() && !attachedFile) || disabled || sending}
-          sx={{ mb: 1 }}
         >
           {sending ? <CircularProgress size={24} /> : <SendIcon />}
         </IconButton>

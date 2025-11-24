@@ -244,16 +244,21 @@ export default function MessageList({
                                 }
                               />
 
-                              {/* Download link below image for clarity */}
-
-                              <Link
-                                href={`/api/downloads/${attachment.file_id}`}
-                                download={attachment.original_name}
-                                variant="caption"
-                                sx={{ display: 'block', mt: 0.5, textDecoration: 'none' }}
-                              >
-                                {attachment.original_name}
-                              </Link>
+                              {/* Download link below image with download count */}
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                                <Link
+                                  href={`/api/downloads/${attachment.file_id}`}
+                                  download={attachment.original_name}
+                                  variant="caption"
+                                  sx={{ textDecoration: 'none' }}
+                                >
+                                  {attachment.original_name}
+                                </Link>
+                                <Typography variant="caption" color="text.secondary">
+                                  {attachment.download_count}{' '}
+                                  {attachment.download_count === 1 ? 'download' : 'downloads'}
+                                </Typography>
+                              </Box>
                             </Box>
                           )
                         }
@@ -302,27 +307,27 @@ export default function MessageList({
                                 color="textPrimary"
                                 sx={{
                                   fontWeight: 500,
-
                                   display: 'block',
-
                                   textDecoration: 'none',
-
                                   '&:hover': { textDecoration: 'underline' },
-
                                   whiteSpace: 'nowrap',
-
                                   overflow: 'hidden',
-
                                   textOverflow: 'ellipsis',
-
                                   maxWidth: '200px',
                                 }}
                               >
                                 {attachment.original_name}
                               </Link>
-
                               <Typography variant="caption" color="text.secondary">
                                 {(attachment.size / 1024 / 1024).toFixed(2)} MB
+                              </Typography>
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                sx={{ display: 'block' }}
+                              >
+                                {attachment.download_count}{' '}
+                                {attachment.download_count === 1 ? 'download' : 'downloads'}
                               </Typography>
                             </Box>
 
@@ -385,15 +390,6 @@ export default function MessageList({
             </MenuItem>
           )}
 
-        {isSiteAdmin &&
-          selectedMessage &&
-          currentUser &&
-          selectedMessage.sender_username.toLowerCase() !== currentUser.username.toLowerCase() && (
-            <MenuItem onClick={handleSiteBan} sx={{ color: 'error.dark', fontWeight: 'bold' }}>
-              Site Ban
-            </MenuItem>
-          )}
-
         {onDeleteMessage &&
           selectedMessage &&
           currentUser?.username &&
@@ -403,6 +399,15 @@ export default function MessageList({
               currentUser.username.toLowerCase()) && (
             <MenuItem onClick={handleDeleteMessage} sx={{ color: 'error.main' }}>
               Delete Message
+            </MenuItem>
+          )}
+
+        {isSiteAdmin &&
+          selectedMessage &&
+          currentUser &&
+          selectedMessage.sender_username.toLowerCase() !== currentUser.username.toLowerCase() && (
+            <MenuItem onClick={handleSiteBan} sx={{ color: 'error.dark', fontWeight: 'bold' }}>
+              Site Ban
             </MenuItem>
           )}
       </Menu>

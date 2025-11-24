@@ -24,9 +24,9 @@ import LocalTime from '../ui/LocalTime'
 import ConnectionStatus from '../ui/ConnectionStatus'
 import AdminPanel from '../admin/AdminPanel'
 import { authApi, serverApi, channelApi, messagesApi, dmApi, publicApi } from '@/app/lib/api'
-import type { Server, Channel, Message, DirectMessage } from '@/app/lib/api'
+import type { Server, Channel, Message, DirectMessage, ServerMember } from '@/app/lib/api'
 import { useWebSocket } from '@/app/lib/websocket'
-import { useNotifications } from '@/app/lib/notifications'
+import { useNotifications, queueNotification } from '@/app/lib/notifications'
 
 interface DashboardProps {
   isGuest?: boolean
@@ -65,7 +65,7 @@ export default function Dashboard({
   const [loading, setLoading] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
   const [wsUrl, setWsUrl] = useState<string>('')
-  const [memberRefreshTrigger, setMemberRefreshTrigger] = useState(0)
+  const [members, setMembers] = useState<ServerMember[]>([])
   const [showAdminPanel, setShowAdminPanel] = useState(false)
   const [isGuestState, setIsGuestState] = useState(isGuest)
   const { showError, showSuccess } = useNotifications()
@@ -115,8 +115,11 @@ export default function Dashboard({
         localStorage.removeItem('auth_token')
         localStorage.removeItem('user')
         localStorage.removeItem('rchat_guest_mode')
-        if (onLogout) onLogout()
-        else window.location.href = '/'
+        queueNotification({
+          message: 'Your session has expired. Please log in again.',
+          type: 'error',
+        })
+        window.location.href = '/login'
       }
 
       window.addEventListener('auth:unauthorized', handleUnauthorized)
@@ -332,6 +335,26 @@ export default function Dashboard({
     }
   }
 
+  const loadMembers = async (serverName: string) => {
+    const effectiveGuest =
+      isGuest ||
+      (typeof window !== 'undefined' && localStorage.getItem('rchat_guest_mode') === 'true')
+
+    try {
+      let memberList: ServerMember[]
+      if (effectiveGuest) {
+        const response = await fetch(`/api/public/servers/${serverName}/members`)
+        memberList = response.ok ? await response.json() : []
+      } else {
+        memberList = await serverApi.listMembers(serverName)
+      }
+      setMembers(memberList)
+    } catch (err) {
+      console.error('Failed to load members:', err)
+      setMembers([])
+    }
+  }
+
   const loadDms = async () => {
     const effectiveGuest =
       isGuest ||
@@ -384,19 +407,15 @@ export default function Dashboard({
 
     const loadData = async () => {
       await loadChannels(selectedServerName)
+      await loadMembers(selectedServerName)
 
       if (!isGuestState && user) {
         if (user.is_admin) {
           setIsAdmin(true)
         } else {
-          try {
-            const members = await serverApi.listMembers(selectedServerName)
-            const currentMember = members.find(m => m.username === user.username)
-            setIsAdmin(currentMember?.role === 'admin')
-          } catch (err) {
-            console.error('Failed to check admin status:', err)
-            setIsAdmin(false)
-          }
+          const memberList = await serverApi.listMembers(selectedServerName)
+          const currentMember = memberList.find(m => m.username === user.username)
+          setIsAdmin(currentMember?.role === 'admin')
         }
       }
     }
@@ -460,27 +479,48 @@ export default function Dashboard({
 
       case 'user_online_status_changed':
         if (msg.server_name === selectedServerName) {
-          setMemberRefreshTrigger(prev => prev + 1)
+          setMembers(prev =>
+            prev.map(m =>
+              m.username === msg.username ? { ...m, is_online: msg.is_online ? 1 : 0 } : m
+            )
+          )
         }
         break
 
       case 'user_banned':
-        // Remove messages from the banned user immediately
         setMessages(prev => prev.filter(m => m.sender_username !== msg.username))
+        setMembers(prev => prev.filter(m => m.username !== msg.username))
 
         if (user && msg.username === user.username) {
-          showError('You have been banned.')
-          if (onLogout) onLogout()
-        } else {
-          setMemberRefreshTrigger(prev => prev + 1)
+          localStorage.removeItem('auth_token')
+          localStorage.removeItem('user')
+          localStorage.removeItem('rchat_guest_mode')
+          queueNotification({ message: 'You have been banned.', type: 'error' })
+          window.location.href = '/login'
         }
         break
 
       case 'server_created':
+        loadServers()
+        break
+
       case 'server_member_joined':
         loadServers()
-        if (lastMessage.type === 'server_member_joined' && msg.server_name === selectedServerName) {
-          setMemberRefreshTrigger(prev => prev + 1)
+        if (msg.server_name === selectedServerName) {
+          setMembers(prev => {
+            if (prev.some(m => m.username === msg.username)) return prev
+            return [
+              ...prev,
+              {
+                server_name: msg.server_name,
+                username: msg.username,
+                role: 'member',
+                joined_at: new Date().toISOString(),
+                is_online: 1,
+                last_seen: new Date().toISOString(),
+              } as ServerMember,
+            ]
+          })
         }
         break
 
@@ -491,13 +531,15 @@ export default function Dashboard({
             setSelectedServerName('RChat')
             showError('You have been removed from the server.')
           }
-          setMemberRefreshTrigger(prev => prev + 1)
+          setMembers(prev => prev.filter(m => m.username !== msg.username))
         }
         break
 
       case 'server_member_role_updated':
         if (msg.server_name === selectedServerName) {
-          setMemberRefreshTrigger(prev => prev + 1)
+          setMembers(prev =>
+            prev.map(m => (m.username === msg.username ? { ...m, role: msg.new_role } : m))
+          )
           if (user && msg.username === user.username) {
             showSuccess(`Your role has been updated to ${msg.new_role}`)
             // Trigger a reload of channels/permissions if needed
@@ -578,6 +620,23 @@ export default function Dashboard({
               ? { ...server, member_count: msg.member_count, channel_count: msg.channel_count }
               : server
           )
+        )
+        break
+
+      case 'file_downloaded':
+        setMessages(prev =>
+          prev.map(message => {
+            if (!message.attachments) return message
+            const updatedAttachments = message.attachments.map(att =>
+              att.file_id === msg.file_id ? { ...att, download_count: msg.download_count } : att
+            )
+            const hasChange = message.attachments.some(
+              (att, i) =>
+                att.file_id === msg.file_id &&
+                att.download_count !== updatedAttachments[i].download_count
+            )
+            return hasChange ? { ...message, attachments: updatedAttachments } : message
+          })
         )
         break
     }
@@ -890,7 +949,7 @@ export default function Dashboard({
                   user?.username ===
                   servers.find(s => s.name === selectedServerName)?.creator_username
                 }
-                refreshTrigger={memberRefreshTrigger}
+                members={members}
                 isGuest={isGuestState}
                 onStartDm={
                   isGuestState

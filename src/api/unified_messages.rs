@@ -35,9 +35,9 @@ async fn send_message_handler(
 
     use sqlx::Row;
     let attachments = sqlx::query(
-        "SELECT f.id as file_id, f.original_name, f.content_type, f.size 
-         FROM file_attachments fa 
-         JOIN files f ON fa.file_id = f.id 
+        "SELECT f.id as file_id, f.original_name, f.content_type, f.size, f.download_count
+         FROM file_attachments fa
+         JOIN files f ON fa.file_id = f.id
          WHERE fa.message_id = ? AND f.is_deleted = 0",
     )
     .bind(&message.id)
@@ -52,6 +52,7 @@ async fn send_message_handler(
                 "original_name": row.get::<String, _>("original_name"),
                 "content_type": row.get::<String, _>("content_type"),
                 "size": row.get::<i64, _>("size"),
+                "download_count": row.get::<i64, _>("download_count"),
             })
         })
         .collect();

@@ -6,6 +6,7 @@ import RegisterForm from './auth/RegisterForm'
 import LoginForm from './auth/LoginForm'
 import Dashboard from './dashboard/Dashboard'
 import { authApi } from '../lib/api'
+import { useNotifications } from '../lib/notifications'
 
 interface HomeClientProps {
   initialTab?: number
@@ -16,6 +17,7 @@ export default function HomeClient({ initialTab = 1 }: HomeClientProps) {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isGuestMode, setIsGuestMode] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const { showSuccess } = useNotifications()
 
   useEffect(() => {
     setMounted(true)
@@ -56,7 +58,8 @@ export default function HomeClient({ initialTab = 1 }: HomeClientProps) {
     }
     setIsAuthenticated(false)
     setIsGuestMode(false)
-    setTab(1) // Default back to login
+    setTab(1)
+    showSuccess('Logged out')
     window.history.replaceState(null, '', '/login')
   }
 

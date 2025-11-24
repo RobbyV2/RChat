@@ -25,7 +25,6 @@ interface MemberListProps {
   isAdmin?: boolean
   isSiteAdmin?: boolean
   isCreator?: boolean
-  refreshTrigger?: number
   members?: ServerMember[]
   isGuest?: boolean
   onStartDm?: (username: string) => void
@@ -37,7 +36,6 @@ export default function MemberList({
   isAdmin = false,
   isSiteAdmin = false,
   isCreator = false,
-  refreshTrigger,
   members: externalMembers,
   isGuest = false,
   onStartDm,
@@ -45,7 +43,7 @@ export default function MemberList({
   const [internalMembers, setInternalMembers] = useState<ServerMember[]>([])
   const [menuAnchor, setMenuAnchor] = useState<{ mouseX: number; mouseY: number } | null>(null)
   const [selectedMember, setSelectedMember] = useState<ServerMember | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(!externalMembers)
   const { showSuccess, showError } = useNotifications()
 
   const members = externalMembers || internalMembers
@@ -78,7 +76,7 @@ export default function MemberList({
     } else {
       setLoading(false)
     }
-  }, [serverName, refreshTrigger, externalMembers, isGuest, loadMembers])
+  }, [serverName, externalMembers, isGuest, loadMembers])
 
   const handleContextMenu = (event: React.MouseEvent, member: ServerMember) => {
     event.preventDefault()

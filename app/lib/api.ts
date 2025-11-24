@@ -27,10 +27,6 @@ async function handleResponse<T>(response: Response): Promise<T> {
         localStorage.removeItem('auth_token')
         localStorage.removeItem('user')
         localStorage.removeItem('rchat_guest_mode')
-
-        if (!window.location.pathname.includes('/login')) {
-          window.location.href = '/login'
-        }
         window.dispatchEvent(new Event('auth:unauthorized'))
       }
     }
@@ -146,6 +142,7 @@ export interface FileAttachment {
   original_name: string
   content_type: string
   size: number
+  download_count: number
 }
 
 export interface Message {

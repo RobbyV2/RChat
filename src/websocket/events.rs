@@ -111,6 +111,10 @@ pub enum ServerMessage {
         member_count: i64,
         channel_count: i64,
     },
+    FileDownloaded {
+        file_id: String,
+        download_count: i64,
+    },
     Error {
         message: String,
     },
