@@ -32,14 +32,14 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { showError } = useNotifications()
 
-  const maxSizeBytes = 10 * 1024 * 1024
+  const maxSizeBytes = 25 * 1024 * 1024
 
   const validateFile = (file: File): string | null => {
     if (file.size === 0) {
       return 'File is empty'
     }
     if (file.size > maxSizeBytes) {
-      return 'File too large. Maximum size is 10MB'
+      return 'File too large. Maximum size is 25MB'
     }
     return null
   }
