@@ -10,10 +10,9 @@ async fn main() -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
 
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "warn".into())
-        .add_directive("sqlx::query=error".parse().unwrap())
-        .add_directive("hyper_util::client=error".parse().unwrap())
-        .add_directive("rchat=warn".parse().unwrap());
+        .unwrap_or_else(|_| "info".into())
+        .add_directive("sqlx::query=warn".parse().unwrap())
+        .add_directive("hyper_util::client=warn".parse().unwrap());
 
     tracing_subscriber::fmt().with_env_filter(filter).init();
 

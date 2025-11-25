@@ -1,0 +1,30 @@
+services:
+  rchat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rchat
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - SERVER_PORT=3000
+      - SERVER_HOST=0.0.0.0
+      - SECRET_KEY=${SECRET_KEY:-change-this-secret-key-in-production}
+      - RUST_LOG=${RUST_LOG:-info}
+      - DATABASE_URL=sqlite:///app/data/rchat.db?mode=rwc
+    volumes:
+      - rchat-data:/app/data
+      - rchat-uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/auth/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  rchat-data:
+    driver: local
+  rchat-uploads:
+    driver: local

@@ -189,6 +189,39 @@ Runs optimized build:
 - Rust serves static files from `.next/standalone`
 - No Next.js dev server
 
+### Docker
+
+The easiest way to deploy RChat:
+
+```bash
+# Build and run with docker-compose
+docker-compose up -d
+
+# Or build manually
+docker build -t rchat .
+docker run -d \
+  -p 3000:3000 \
+  -e SECRET_KEY=your-secret-key \
+  -v rchat-data:/app/data \
+  -v rchat-uploads:/app/uploads \
+  rchat
+```
+
+Access at http://localhost:3000
+
+**Environment variables for Docker:**
+
+| Variable      | Default    | Description        |
+| ------------- | ---------- | ------------------ |
+| `SECRET_KEY`  | (required) | JWT signing secret |
+| `SERVER_PORT` | `3000`     | Port to expose     |
+| `RUST_LOG`    | `info`     | Log level          |
+
+**Volumes:**
+
+- `/app/data` - SQLite database
+- `/app/uploads` - Uploaded files (auto-deleted after 24h)
+
 ## Project Structure
 
 ```

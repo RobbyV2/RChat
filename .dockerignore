@@ -1,0 +1,63 @@
+# Dependencies
+node_modules/
+target/
+
+# Build outputs
+.next/
+out/
+
+# Database files (will be created in container)
+*.db
+*.db-shm
+*.db-wal
+
+# Uploaded files
+uploads/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Environment files (secrets should be passed via env vars)
+.env
+.env.*
+!.env.example
+
+# Documentation and misc
+*.md
+!README.md
+LICENSE
+
+# Test files
+*.test.*
+*.spec.*
+__tests__/
+
+# Development tools
+jfiles/
+justfile
+.prettierrc*
+.eslintrc*
+eslint.config.*
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker files (don't need to copy themselves)
+Dockerfile*
+docker-compose*
+.dockerignore
