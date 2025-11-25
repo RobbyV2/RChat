@@ -67,10 +67,11 @@ FROM oven/bun:1-slim AS runtime
 
 WORKDIR /app
 
-# Install runtime dependencies (curl for healthcheck)
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
+    libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Rust binary
@@ -86,32 +87,13 @@ COPY migrations/ /app/migrations/
 RUN mkdir -p /app/uploads /app/data
 
 # Create startup script
-RUN echo '#!/bin/bash\n\
-set -e\n\
-\n\
-# Start Next.js standalone server in background (using bun)\n\
+RUN printf '#!/bin/bash\n\
 cd /app/frontend\n\
 PORT=3001 HOSTNAME=0.0.0.0 bun run server.js &\n\
-NEXT_PID=$!\n\
-\n\
-# Wait for Next.js to start\n\
 sleep 2\n\
-\n\
-# Start Rust server (main entry point)\n\
 cd /app\n\
-SERVER_PROXY_URL=http://127.0.0.1:3001 \\\n\
-SERVER_HOST=0.0.0.0 \\\n\
-SERVER_PORT=${SERVER_PORT:-3000} \\\n\
-DATABASE_URL=${DATABASE_URL:-sqlite:///app/data/rchat.db?mode=rwc} \\\n\
-./server &\n\
-RUST_PID=$!\n\
-\n\
-# Handle shutdown\n\
-trap "kill $NEXT_PID $RUST_PID 2>/dev/null; exit 0" SIGTERM SIGINT\n\
-\n\
-# Wait for either process to exit\n\
-wait -n\n\
-exit $?\n\
+export SERVER_PROXY_URL=http://127.0.0.1:3001\n\
+exec ./server\n\
 ' > /app/start.sh && chmod +x /app/start.sh
 
 # Environment variables with defaults

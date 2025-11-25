@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: rchat
     restart: unless-stopped
+    init: true
     ports:
       - "3000:3000"
     environment:
