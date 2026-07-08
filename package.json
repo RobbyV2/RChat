@@ -1,0 +1,33 @@
+{
+  "name": "rust-next",
+  "description": "Rust + Next.js full-stack template with WASM support",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "dotenvx run --convention=nextjs --quiet -- bash -c 'HOSTNAME=${HOST:-localhost} exec next dev'",
+    "build": "dotenvx run --convention=nextjs --quiet -- next build",
+    "start": "dotenvx run --convention=nextjs --quiet -- bash -c 'HOSTNAME=${HOST:-0.0.0.0} exec bun .next/standalone/server.js'",
+    "lint": "eslint .",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,mjs}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,mjs}\""
+  },
+  "dependencies": {
+    "next": "^16.2.6",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@dotenvx/dotenvx": "^1.66.0",
+    "@eslint/js": "^10.0.1",
+    "@tailwindcss/postcss": "^4.3.0",
+    "@types/node": "^22.19.19",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^10.3.0",
+    "prettier": "^3.8.3",
+    "tailwindcss": "^4.3.0",
+    "typescript-eslint": "^8.59.3"
+  }
+}
