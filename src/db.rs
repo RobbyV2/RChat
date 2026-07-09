@@ -68,6 +68,48 @@ CREATE INDEX IF NOT EXISTS idx_messages_thread_root ON messages(thread_root_id, 
 CREATE INDEX IF NOT EXISTS idx_media_uploaded_at ON media(uploaded_at);
 ";
 
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("servers", "password_hash TEXT"),
+    ("members", "perms {INT} NOT NULL DEFAULT 0"),
+    (
+        "channels",
+        "kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice'))",
+    ),
+    ("channels", "slowmode_seconds {INT} NOT NULL DEFAULT 0"),
+    ("messages", "media_spoiler {INT} NOT NULL DEFAULT 0"),
+    (
+        "messages",
+        "media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p'))",
+    ),
+    ("messages", "media_hoster TEXT"),
+    ("messages", "media_expires_at {INT}"),
+    ("messages", "media_size {INT}"),
+    ("messages", "media_mime TEXT"),
+];
+
+async fn reconcile_columns(pool: &Db, is_sqlite: bool) -> anyhow::Result<()> {
+    let int = match is_sqlite {
+        true => "INTEGER",
+        false => "BIGINT",
+    };
+    for (table, col) in MIGRATIONS {
+        let coldef = col.replace("{INT}", int);
+        let sql = format!("ALTER TABLE {table} ADD COLUMN {coldef}");
+        match sqlx::query(&sql).execute(pool).await {
+            Ok(_) => {
+                let name = coldef.split_whitespace().next().unwrap_or(&coldef);
+                tracing::info!("added missing column {table}.{name}");
+            }
+            Err(e)
+                if matches!(&e, sqlx::Error::Database(d)
+                    if d.message().contains("duplicate column")
+                        || d.message().contains("already exists")) => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AvatarKind {
@@ -391,6 +433,7 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
     for stmt in schema.split(';').map(str::trim).filter(|s| !s.is_empty()) {
         sqlx::query(stmt).execute(&pool).await?;
     }
+    reconcile_columns(&pool, is_sqlite).await?;
     let t = now();
     sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
         .bind(t)
