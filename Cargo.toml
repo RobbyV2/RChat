@@ -26,7 +26,12 @@ dotenvy = "0.15"
 config = "0.15"
 clap = { version = "4", features = ["derive"] }
 tower_governor = "0.8"
-sqlx = { version = "0.8", features = ["any", "sqlite", "postgres", "runtime-tokio"] }
+sqlx = { version = "0.8", features = [
+  "any",
+  "sqlite",
+  "postgres",
+  "runtime-tokio",
+] }
 rustrict = "0.7.38"
 sha2 = "0.11.0"
 hex = "0.4.3"
@@ -36,10 +41,15 @@ memorable-wordlist = "0.1.7"
 argon2 = { version = "0.5", features = ["std"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls",
+] }
 tl = "0.7.8"
 url = "2.5.8"
-rust-s3 = { version = "0.37.2", default-features = false, features = ["tokio-rustls-tls", "fail-on-err"] }
+rust-s3 = { version = "0.37.2", default-features = false, features = [
+  "tokio-rustls-tls",
+  "fail-on-err",
+] }
 
 [profile.release]
 opt-level = "z"

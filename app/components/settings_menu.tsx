@@ -5,10 +5,10 @@ import { X } from 'lucide-react'
 import { useStore } from '../lib/store'
 import type { AvatarKind } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
-import { SettingSwitch, SiteSwitches } from './admin_panel'
+import { SettingSwitch } from './admin_panel'
 import { filledBtn, sectionCls } from './server_settings'
 
-type Section = 'account' | 'appearance' | 'streamer' | 'site'
+type Section = 'account' | 'appearance' | 'streamer'
 
 export default function SettingsMenu() {
   const open = useStore(s => s.activeDialog?.kind === 'settings')
@@ -65,7 +65,6 @@ function Menu() {
     ...(me ? ([['account', 'Account']] as [Section, string][]) : []),
     ['appearance', 'Appearance'],
     ['streamer', 'Streamer mode'],
-    ...(me?.is_site_admin ? ([['site', 'Site']] as [Section, string][]) : []),
   ]
 
   return (
@@ -115,12 +114,6 @@ function Menu() {
               <p className="mt-2 px-2 text-xs text-on-surface-variant">
                 Blurs server names, usernames, and DM names until hovered.
               </p>
-            </>
-          )}
-          {section === 'site' && me?.is_site_admin && (
-            <>
-              <p className={sectionCls}>Site settings</p>
-              <SiteSwitches />
             </>
           )}
         </div>

@@ -334,7 +334,6 @@ function EmbedCard({
   message: Message
   canDelete: boolean
 }) {
-  const previews = useStore(s => s.settings.asset_previews)
   const deleteEmbed = useStore(s => s.deleteEmbed)
   const openContextMenu = useStore(s => s.openContextMenu)
   const { ord, url, site_name, title, description, image_url, banner_removed } = embed
@@ -379,7 +378,7 @@ function EmbedCard({
           {description}
         </p>
       )}
-      {previews && image_url !== null && !banner_removed && (
+      {image_url !== null && !banner_removed && (
         <img src={image_url} alt={title ?? url} className="mt-2 max-h-60 max-w-full rounded-md" />
       )}
       {canDelete && (
@@ -403,6 +402,7 @@ export function MarkdownMessage({
   canDelete?: boolean
 }) {
   const deleteMedia = useStore(s => s.deleteMedia)
+  const previews = useStore(s => s.settings.asset_previews)
   const { content, media, embeds } = message
   return (
     <div className="min-w-0 text-sm leading-relaxed break-words">
@@ -429,9 +429,10 @@ export function MarkdownMessage({
           )}
         </div>
       )}
-      {embeds.map(e => (
-        <EmbedCard key={e.ord} embed={e} message={message} canDelete={canDelete} />
-      ))}
+      {previews &&
+        embeds.map(e => (
+          <EmbedCard key={e.ord} embed={e} message={message} canDelete={canDelete} />
+        ))}
     </div>
   )
 }

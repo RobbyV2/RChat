@@ -185,6 +185,22 @@ const OPT_BASE = 1e15
 let optSeq = 0
 const draining = new Set<string>()
 
+const pendingEmbeds = new Map<number, Embed[]>()
+const PENDING_EMBEDS_MAX = 256
+const rememberEmbeds = (id: number, embeds: Embed[]) => {
+  pendingEmbeds.delete(id)
+  pendingEmbeds.set(id, embeds)
+  if (pendingEmbeds.size > PENDING_EMBEDS_MAX)
+    pendingEmbeds.delete(pendingEmbeds.keys().next().value as number)
+}
+const applyEmbeds = (list: Message[]) =>
+  pendingEmbeds.size === 0
+    ? list
+    : list.map(m => {
+        const e = pendingEmbeds.get(m.id)
+        return e ? { ...m, embeds: e } : m
+      })
+
 interface RChatState {
   token: string | null
   me: Me | null
@@ -417,7 +433,9 @@ export const useStore = create<RChatState>()((set, get) => {
         view.kind === 'channel'
           ? await api.channelMessages(view.channelId)
           : await api.dmMessages(view.dmId)
-      set(s => ({ messages: { ...s.messages, [viewKey(view)]: [...msgs].sort(byId) } }))
+      set(s => ({
+        messages: { ...s.messages, [viewKey(view)]: applyEmbeds([...msgs].sort(byId)) },
+      }))
       askP2p(msgs)
       if (view.kind === 'channel') {
         const detail = await api.getServer(view.server)
@@ -807,7 +825,7 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         set(s => ({
           outbox: dropOutgoing(s.outbox, key, head.tempId),
-          messages: { ...s.messages, [key]: merge(s.messages[key] ?? [], [real]) },
+          messages: { ...s.messages, [key]: applyEmbeds(merge(s.messages[key] ?? [], [real])) },
         }))
         if (key[0] !== 't') get().markRead(key, real.id)
       }
@@ -1019,7 +1037,9 @@ export const useStore = create<RChatState>()((set, get) => {
         const kind = get().servers[server]?.channels.find(c => c.id === channelId)?.kind
         if (kind === 'voice') return
         const msgs = await api.channelMessages(channelId)
-        set(s => ({ messages: { ...s.messages, [`c${channelId}`]: [...msgs].sort(byId) } }))
+        set(s => ({
+          messages: { ...s.messages, [`c${channelId}`]: applyEmbeds([...msgs].sort(byId)) },
+        }))
         askP2p(msgs)
       }),
 
@@ -1034,7 +1054,7 @@ export const useStore = create<RChatState>()((set, get) => {
         syncUrl(view, nav)
         get().setViewing(null)
         const msgs = await api.dmMessages(dmId)
-        set(s => ({ messages: { ...s.messages, [`d${dmId}`]: [...msgs].sort(byId) } }))
+        set(s => ({ messages: { ...s.messages, [`d${dmId}`]: applyEmbeds([...msgs].sort(byId)) } }))
         askP2p(msgs)
       }),
 
@@ -1151,7 +1171,9 @@ export const useStore = create<RChatState>()((set, get) => {
       act(async () => {
         set({ panel: { kind: 'thread', root }, threadPending: null })
         const msgs = await api.threadMessages(root.id)
-        set(s => ({ messages: { ...s.messages, [`t${root.id}`]: [...msgs].sort(byId) } }))
+        set(s => ({
+          messages: { ...s.messages, [`t${root.id}`]: applyEmbeds([...msgs].sort(byId)) },
+        }))
         askP2p(msgs)
       }),
 
@@ -1535,7 +1557,7 @@ export const useStore = create<RChatState>()((set, get) => {
             set(s => {
               const messages = { ...s.messages }
               const tkey = `t${rootId}`
-              if (messages[tkey]) messages[tkey] = merge(messages[tkey], [m])
+              if (messages[tkey]) messages[tkey] = applyEmbeds(merge(messages[tkey], [m]))
               const ckey = m.channel_id !== null ? `c${m.channel_id}` : null
               if (ckey && messages[ckey]) {
                 messages[ckey] = messages[ckey].map(r =>
@@ -1558,7 +1580,7 @@ export const useStore = create<RChatState>()((set, get) => {
             if (key) {
               set(s =>
                 s.messages[key]
-                  ? { messages: { ...s.messages, [key]: merge(s.messages[key], [m]) } }
+                  ? { messages: { ...s.messages, [key]: applyEmbeds(merge(s.messages[key], [m])) } }
                   : {}
               )
             }
@@ -1652,10 +1674,13 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'embeds_resolved': {
+          rememberEmbeds(ev.message_id, ev.embeds)
           patchMessage(ev.message_id, m => ({ ...m, embeds: ev.embeds }))
           return
         }
         case 'embeds_removed': {
+          const cur = pendingEmbeds.get(ev.message_id)
+          if (cur) rememberEmbeds(ev.message_id, withoutEmbed(cur, ev.ord, ev.banner))
           patchMessage(ev.message_id, m => ({
             ...m,
             embeds: withoutEmbed(m.embeds, ev.ord, ev.banner),

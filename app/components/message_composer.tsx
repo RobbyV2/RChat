@@ -29,6 +29,10 @@ const UNITS = [
   { label: 'days', mult: 86400 },
 ]
 
+const IMG_EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/svg+xml': 'svg' }
+const namePasted = (f: File) =>
+  new File([f], `pasted.${IMG_EXT[f.type] ?? f.type.split('/')[1] ?? 'png'}`, { type: f.type })
+
 function ExpiryDialog({
   onPick,
   onClose,
@@ -223,6 +227,16 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
               send()
+            }
+          }}
+          onPaste={e => {
+            if (!assetUploads) return
+            const file = Array.from(e.clipboardData.items)
+              .find(i => i.kind === 'file' && i.type.startsWith('image/'))
+              ?.getAsFile()
+            if (file) {
+              e.preventDefault()
+              uploadFile(namePasted(file), thread)
             }
           }}
           placeholder={`Message ${target}`}
