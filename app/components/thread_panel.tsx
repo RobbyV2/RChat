@@ -7,7 +7,7 @@ import { Perm, hasPerm, type Message } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
-import { fmtTime } from './message_pane'
+import { fmtTime, OutboxRows } from './message_pane'
 
 const EMPTY: Message[] = []
 
@@ -29,6 +29,9 @@ export default function ThreadPanel() {
   const memberList = useStore(s =>
     s.view?.kind === 'channel' ? s.members[s.view.server]?.list : undefined
   )
+  const outCount = useStore(s =>
+    s.panel?.kind === 'thread' ? (s.outbox[`t${s.panel.root.id}`]?.length ?? 0) : 0
+  )
   const closePanel = useStore(s => s.closePanel)
   const loadOlderThread = useStore(s => s.loadOlderThread)
   const deleteMessage = useStore(s => s.deleteMessage)
@@ -44,7 +47,7 @@ export default function ThreadPanel() {
   useEffect(() => {
     const el = listRef.current
     if (el && stickBottom.current) el.scrollTop = el.scrollHeight
-  }, [replies])
+  }, [replies, outCount])
 
   if (!root) return null
 
@@ -123,6 +126,7 @@ export default function ThreadPanel() {
           <span className="h-px flex-1 bg-outline-variant" />
         </div>
         {replies.map(row)}
+        <OutboxRows msgKey={`t${root.id}`} size={30} />
       </div>
       <MessageComposer thread />
     </div>

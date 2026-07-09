@@ -51,6 +51,7 @@ function Tile({
   stream,
   hasVideo,
   muted,
+  speaking = false,
   mirror = false,
   muteAudio = false,
   pending = false,
@@ -59,12 +60,17 @@ function Tile({
   stream: MediaStream | null
   hasVideo: boolean
   muted: boolean
+  speaking?: boolean
   mirror?: boolean
   muteAudio?: boolean
   pending?: boolean
 }) {
   return (
-    <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-2xl bg-surface-container">
+    <div
+      className={`relative flex aspect-video items-center justify-center overflow-hidden rounded-2xl bg-surface-container transition-shadow ${
+        speaking ? 'ring-2 ring-green-500' : ''
+      }`}
+    >
       {stream && (
         <VideoView stream={stream} hidden={!hasVideo} mirror={mirror} muteAudio={muteAudio} />
       )}
@@ -211,6 +217,7 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
                 stream={p2pKind ? p2p.local : rtc.local}
                 hasVideo={p2pKind ? p2p.camOn || p2p.shareOn : rtc.videoTrack !== null}
                 muted={p2pKind ? p2p.muted : rtc.muted}
+                speaking={p2pKind ? p2p.localSpeaking : rtc.isSpeaking(u)}
                 mirror={
                   p2pKind ? p2p.camOn && !p2p.shareOn : rtc.videoTrack !== null && !rtc.sharing
                 }
@@ -225,6 +232,7 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
                 stream={joined ? p2p.remote : null}
                 hasVideo={joined && p2p.remoteCamOn}
                 muted={false}
+                speaking={joined && p2p.remoteSpeaking}
               />
             )
           const peer = joined ? rtc.peer(u) : undefined
@@ -235,6 +243,7 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
               stream={peer?.stream ?? null}
               hasVideo={peer?.camOn ?? false}
               muted={peer?.muted ?? false}
+              speaking={joined && rtc.isSpeaking(u)}
             />
           )
         })}

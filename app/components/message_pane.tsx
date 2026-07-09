@@ -20,6 +20,7 @@ import {
   useStore,
   viewKey,
   type ContextMenuItem,
+  type Outgoing,
 } from '../lib/store'
 import { Perm, hasPerm, type Message } from '../lib/types'
 import { UserAvatar } from './user_avatar'
@@ -37,6 +38,60 @@ export const fmtTime = (ts: number) => {
   return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString()} ${time}`
 }
 
+const EMPTY_OUT: Outgoing[] = []
+
+export function OutboxRows({ msgKey, size = 36 }: { msgKey: string; size?: number }) {
+  const me = useStore(s => s.me)
+  const outgoing = useStore(s => s.outbox[msgKey]) ?? EMPTY_OUT
+  const retryOutgoing = useStore(s => s.retryOutgoing)
+  const cancelOutgoing = useStore(s => s.cancelOutgoing)
+  if (!me || !outgoing.length) return null
+  return (
+    <>
+      {outgoing.map(o => {
+        const failed = o.status === 'failed'
+        return (
+          <div
+            key={o.tempId}
+            className={`relative flex gap-3 px-4 py-1.5 ${failed ? '' : 'opacity-50'}`}
+          >
+            <div className="shrink-0 pt-0.5">
+              <UserAvatar
+                username={me.username}
+                avatarKind={me.avatar_kind}
+                avatarColor={me.avatar_color}
+                size={size}
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline gap-2">
+                <span className="streamer text-sm font-medium">{me.display_name}</span>
+                <span className={`text-xs ${failed ? 'text-error' : 'text-on-surface-variant'}`}>
+                  {failed ? 'Failed to send' : o.status === 'sending' ? 'Sending' : 'Queued'}
+                </span>
+              </div>
+              <MarkdownMessage message={o.msg} canDelete={false} />
+              {o.pending && (
+                <span className="text-xs text-on-surface-variant">{o.pending.file.name}</span>
+              )}
+              {failed && (
+                <div className="mt-1 flex items-center gap-3 text-xs font-medium">
+                  <button onClick={() => retryOutgoing(msgKey, o.tempId)} className="text-primary">
+                    Retry
+                  </button>
+                  <button onClick={() => cancelOutgoing(msgKey, o.tempId)} className="text-error">
+                    Delete
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
 export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembers: () => void }) {
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)
@@ -44,6 +99,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
   const messages = useStore(s => (s.view ? s.messages[viewKey(s.view)] : undefined)) ?? EMPTY
+  const outCount = useStore(s => (s.view ? (s.outbox[viewKey(s.view)]?.length ?? 0) : 0))
   const memberList = useStore(s =>
     s.view?.kind === 'channel' ? s.members[s.view.server]?.list : undefined
   )
@@ -76,7 +132,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   useEffect(() => {
     const el = listRef.current
     if (el && stickBottom.current) el.scrollTop = el.scrollHeight
-  }, [messages])
+  }, [messages, outCount])
 
   const detail = view?.kind === 'channel' ? servers[view.server] : undefined
   const channel =
@@ -366,6 +422,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                 </div>
               )
             })}
+            {view && <OutboxRows msgKey={viewKey(view)} />}
           </div>
           <MessageComposer />
         </>

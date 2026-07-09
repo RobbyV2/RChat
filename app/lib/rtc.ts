@@ -1,4 +1,5 @@
 import { wsClient } from './ws'
+import { SpeakingDetector } from './vad'
 import type { RtcPayload } from './types'
 
 export type RtcTarget =
@@ -13,6 +14,7 @@ interface Peer {
   videoSender: RTCRtpSender | null
   muted: boolean
   camOn: boolean
+  speaking: boolean
 }
 
 class RtcManager {
@@ -23,10 +25,27 @@ class RtcManager {
   videoTrack: MediaStreamTrack | null = null
   sharing = false
   muted = false
+  localSpeaking = false
+  private detector = new SpeakingDetector()
   onChange: () => void = () => {}
+
+  constructor() {
+    this.detector.onSpeak = (id, speaking) => {
+      if (id === this.me) this.localSpeaking = speaking
+      else {
+        const peer = this.peers.get(id)
+        if (peer) peer.speaking = speaking
+      }
+      this.onChange()
+    }
+  }
 
   active(): boolean {
     return this.target !== null
+  }
+
+  isSpeaking(user: string): boolean {
+    return user === this.me ? this.localSpeaking : (this.peers.get(user)?.speaking ?? false)
   }
 
   async join(me: string, target: RtcTarget) {
@@ -35,10 +54,12 @@ class RtcManager {
     this.me = me
     this.target = target
     this.local = local
+    this.detector.watch(me, local)
     this.onChange()
   }
 
   leave() {
+    this.detector.clear()
     for (const { pc } of this.peers.values()) pc.close()
     this.peers.clear()
     for (const track of this.local?.getTracks() ?? []) track.stop()
@@ -48,6 +69,7 @@ class RtcManager {
     this.target = null
     this.muted = false
     this.sharing = false
+    this.localSpeaking = false
     this.onChange()
   }
 
@@ -56,6 +78,7 @@ class RtcManager {
     const wanted = new Set(users.filter(u => u !== this.me))
     for (const [user, peer] of this.peers) {
       if (!wanted.has(user)) {
+        this.detector.unwatch(user)
         peer.pc.close()
         this.peers.delete(user)
       }
@@ -136,6 +159,7 @@ class RtcManager {
       videoSender: null,
       muted: false,
       camOn: false,
+      speaking: false,
     }
     const local = this.local
     if (local) {
@@ -162,6 +186,7 @@ class RtcManager {
     }
     pc.ontrack = e => {
       peer.stream = e.streams[0] ?? new MediaStream([e.track])
+      if (e.track.kind === 'audio') this.detector.watch(user, new MediaStream([e.track]))
       this.onChange()
     }
     this.peers.set(user, peer)

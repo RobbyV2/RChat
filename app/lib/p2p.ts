@@ -1,5 +1,6 @@
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs'
 import { wsClient } from './ws'
+import { SpeakingDetector } from './vad'
 
 export interface StoredFile {
   name: string
@@ -56,8 +57,19 @@ class P2pManager {
   camOn = false
   shareOn = false
   remoteCamOn = false
+  localSpeaking = false
+  remoteSpeaking = false
+  private detector = new SpeakingDetector()
   onChange: () => void = () => {}
   onError: (message: string) => void = () => {}
+
+  constructor() {
+    this.detector.onSpeak = (id, speaking) => {
+      if (id === 'local') this.localSpeaking = speaking
+      else this.remoteSpeaking = speaking
+      this.onChange()
+    }
+  }
 
   peerId(): string {
     const stored = localStorage.getItem(LS_ID)
@@ -224,6 +236,7 @@ class P2pManager {
     this.local = new MediaStream(
       placeholder ? [...mic.getAudioTracks(), placeholder] : mic.getAudioTracks()
     )
+    this.detector.watch('local', this.local)
     this.ensurePeer()
     this.onChange()
   }
@@ -336,10 +349,12 @@ class P2pManager {
     this.media = call
     call.on('stream', stream => {
       this.remote = stream
+      this.detector.watch('remote', stream)
       this.onChange()
     })
     call.on('close', () => {
       if (this.media === call) {
+        this.detector.unwatch('remote')
         this.remote = null
         this.onChange()
       }
@@ -355,11 +370,14 @@ class P2pManager {
   }
 
   endMedia() {
+    this.detector.clear()
     this.media?.close()
     this.media = null
     this.control?.close()
     this.control = null
     this.remoteCamOn = false
+    this.localSpeaking = false
+    this.remoteSpeaking = false
     for (const track of this.local?.getTracks() ?? []) track.stop()
     this.placeholder?.stop()
     this.placeholder = null

@@ -84,6 +84,18 @@ export interface PendingUpload {
   mode: UploadMode
 }
 
+export type OutgoingStatus = 'queued' | 'sending' | 'failed'
+
+export interface Outgoing {
+  tempId: number
+  key: string
+  status: OutgoingStatus
+  msg: Message
+  pending: PendingUpload | null
+  p2pExpiresIn: number | null
+  send: (opts: api.SendOpts) => Promise<Message>
+}
+
 export interface Notice {
   id: number
   title: string
@@ -169,6 +181,10 @@ const merge = (list: Message[], incoming: Message[]) => {
   return [...map.values()].sort(byId)
 }
 
+const OPT_BASE = 1e15
+let optSeq = 0
+const draining = new Set<string>()
+
 interface RChatState {
   token: string | null
   me: Me | null
@@ -188,6 +204,7 @@ interface RChatState {
   rtcTick: number
   view: View | null
   messages: Record<string, Message[]>
+  outbox: Record<string, Outgoing[]>
   wsStatus: WsStatus
   theme: Theme
   streamer: boolean
@@ -216,7 +233,9 @@ interface RChatState {
   openChannel: (server: string, channelId: number, nav?: Nav) => Promise<void>
   openDm: (dmId: number, nav?: Nav) => Promise<void>
   startDm: (username: string) => Promise<void>
-  sendMessage: (content: string, p2pExpiresIn?: number | null) => Promise<void>
+  sendMessage: (content: string, p2pExpiresIn?: number | null) => void
+  retryOutgoing: (key: string, tempId: number) => void
+  cancelOutgoing: (key: string, tempId: number) => void
   loadOlder: () => Promise<void>
   uploadFile: (file: File | null, thread?: boolean) => void
   toggleSpoiler: (thread?: boolean) => void
@@ -225,7 +244,7 @@ interface RChatState {
   openSearch: () => void
   closePanel: () => void
   loadOlderThread: () => Promise<void>
-  sendThreadMessage: (content: string, p2pExpiresIn?: number | null) => Promise<void>
+  sendThreadMessage: (content: string, p2pExpiresIn?: number | null) => void
   searchRun: (args: SearchArgs, reset: boolean) => Promise<void>
   dismissNotice: (id: number) => void
   deleteMessage: (id: number) => Promise<void>
@@ -703,6 +722,63 @@ export const useStore = create<RChatState>()((set, get) => {
     return { opts: { media_id: uploaded.id, media_spoiler: spoiler }, p2pId: null }
   }
 
+  const patchOutgoing = (key: string, tempId: number, status: OutgoingStatus) =>
+    set(s => {
+      const list = s.outbox[key]
+      if (!list) return {}
+      return {
+        outbox: {
+          ...s.outbox,
+          [key]: list.map(o => (o.tempId === tempId ? { ...o, status } : o)),
+        },
+      }
+    })
+
+  const dropOutgoing = (map: Record<string, Outgoing[]>, key: string, tempId: number) => {
+    const next = (map[key] ?? []).filter(o => o.tempId !== tempId)
+    const outbox = { ...map }
+    if (next.length) outbox[key] = next
+    else delete outbox[key]
+    return outbox
+  }
+
+  const drain = async (key: string) => {
+    if (draining.has(key)) return
+    draining.add(key)
+    try {
+      for (;;) {
+        const head = (get().outbox[key] ?? [])[0]
+        if (!head || head.status === 'failed') break
+        patchOutgoing(key, head.tempId, 'sending')
+        let real: Message
+        try {
+          const { opts, p2pId } = await buildSendOpts(head.pending, head.p2pExpiresIn)
+          try {
+            real = await head.send(opts)
+          } catch (e) {
+            if (p2pId !== null) p2p.removeFile(p2pId)
+            throw e
+          }
+        } catch (e) {
+          patchOutgoing(key, head.tempId, 'failed')
+          fail(e)
+          break
+        }
+        set(s => ({
+          outbox: dropOutgoing(s.outbox, key, head.tempId),
+          messages: { ...s.messages, [key]: merge(s.messages[key] ?? [], [real]) },
+        }))
+      }
+    } finally {
+      draining.delete(key)
+    }
+  }
+
+  const enqueue = (o: Outgoing) => {
+    set(s => ({ outbox: { ...s.outbox, [o.key]: [...(s.outbox[o.key] ?? []), o] } }))
+    void drain(o.key)
+  }
+
   return {
     token: null,
     me: null,
@@ -722,6 +798,7 @@ export const useStore = create<RChatState>()((set, get) => {
     rtcTick: 0,
     view: null,
     messages: {},
+    outbox: {},
     wsStatus: 'red',
     theme: 'dark',
     streamer: false,
@@ -834,6 +911,7 @@ export const useStore = create<RChatState>()((set, get) => {
         dms: [],
         view: null,
         messages: {},
+        outbox: {},
         p2pAvailability: {},
         wsStatus: 'red',
         contextMenu: null,
@@ -910,30 +988,47 @@ export const useStore = create<RChatState>()((set, get) => {
         await get().openDm(dm.id)
       }),
 
-    sendMessage: (content, p2pExpiresIn) =>
-      act(async () => {
-        const { view, pending } = get()
-        if (!view) return
-        if (!content.trim() && !pending) return
-        const { opts, p2pId } = await buildSendOpts(pending, p2pExpiresIn)
-        let msg: Message
-        try {
-          msg =
-            view.kind === 'channel'
-              ? await api.sendChannelMessage(view.channelId, content, opts)
-              : await api.sendDmMessage(view.dmId, content, opts)
-        } catch (e) {
-          if (p2pId !== null) p2p.removeFile(p2pId)
-          throw e
-        }
-        set(s => ({
-          pending: null,
-          messages: {
-            ...s.messages,
-            [viewKey(view)]: merge(s.messages[viewKey(view)] ?? [], [msg]),
-          },
-        }))
-      }),
+    sendMessage: (content, p2pExpiresIn) => {
+      const { view, pending, me } = get()
+      if (!view || !me) return
+      if (!content.trim() && !pending) return
+      const key = viewKey(view)
+      const tempId = OPT_BASE + ++optSeq
+      set({ pending: null })
+      enqueue({
+        tempId,
+        key,
+        status: 'queued',
+        pending,
+        p2pExpiresIn: p2pExpiresIn ?? null,
+        msg: {
+          id: tempId,
+          channel_id: view.kind === 'channel' ? view.channelId : null,
+          dm_id: view.kind === 'dm' ? view.dmId : null,
+          thread_root_id: null,
+          author: me,
+          content,
+          created_at: Math.floor(Date.now() / 1000),
+          reply_count: 0,
+          media: null,
+          embeds: [],
+        },
+        send: opts =>
+          view.kind === 'channel'
+            ? api.sendChannelMessage(view.channelId, content, opts)
+            : api.sendDmMessage(view.dmId, content, opts),
+      })
+    },
+
+    retryOutgoing: (key, tempId) => {
+      patchOutgoing(key, tempId, 'queued')
+      void drain(key)
+    },
+
+    cancelOutgoing: (key, tempId) => {
+      set(s => ({ outbox: dropOutgoing(s.outbox, key, tempId) }))
+      void drain(key)
+    },
 
     loadOlder: () =>
       act(async () => {
@@ -997,25 +1092,35 @@ export const useStore = create<RChatState>()((set, get) => {
         askP2p(older)
       }),
 
-    sendThreadMessage: (content, p2pExpiresIn) =>
-      act(async () => {
-        const { panel, threadPending } = get()
-        if (panel?.kind !== 'thread') return
-        if (!content.trim() && !threadPending) return
-        const { opts, p2pId } = await buildSendOpts(threadPending, p2pExpiresIn)
-        let msg: Message
-        try {
-          msg = await api.sendThreadMessage(panel.root.id, content, opts)
-        } catch (e) {
-          if (p2pId !== null) p2p.removeFile(p2pId)
-          throw e
-        }
-        const key = `t${panel.root.id}`
-        set(s => ({
-          threadPending: null,
-          messages: { ...s.messages, [key]: merge(s.messages[key] ?? [], [msg]) },
-        }))
-      }),
+    sendThreadMessage: (content, p2pExpiresIn) => {
+      const { panel, threadPending, me } = get()
+      if (panel?.kind !== 'thread' || !me) return
+      if (!content.trim() && !threadPending) return
+      const rootId = panel.root.id
+      const key = `t${rootId}`
+      const tempId = OPT_BASE + ++optSeq
+      set({ threadPending: null })
+      enqueue({
+        tempId,
+        key,
+        status: 'queued',
+        pending: threadPending,
+        p2pExpiresIn: p2pExpiresIn ?? null,
+        msg: {
+          id: tempId,
+          channel_id: null,
+          dm_id: null,
+          thread_root_id: rootId,
+          author: me,
+          content,
+          created_at: Math.floor(Date.now() / 1000),
+          reply_count: 0,
+          media: null,
+          embeds: [],
+        },
+        send: opts => api.sendThreadMessage(rootId, content, opts),
+      })
+    },
 
     searchRun: (args, reset) =>
       act(async () => {

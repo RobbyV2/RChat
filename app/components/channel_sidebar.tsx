@@ -3,6 +3,7 @@
 import { useState, type MouseEvent } from 'react'
 import { Hash, Plus, Settings, Volume2 } from 'lucide-react'
 import { myPerms, serverAdminPerms, userRefFor, useStore } from '../lib/store'
+import { rtc } from '../lib/rtc'
 import { Perm, hasPerm, type Channel, type ChannelKind } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { VoiceDock } from './voice_grid'
@@ -27,6 +28,8 @@ export function ChannelSidebar() {
   const deleteChannel = useStore(s => s.deleteChannel)
   const joinVoice = useStore(s => s.joinVoice)
   const voiceUsers = useStore(s => s.voiceUsers)
+  const voice = useStore(s => s.voice)
+  useStore(s => s.rtcTick)
   useStore(s => s.members)
   useStore(s => s.me)
   const [editing, setEditing] = useState<Editing | null>(null)
@@ -239,17 +242,24 @@ export function ChannelSidebar() {
               </button>
               {(voiceUsers[c.id] ?? []).map(u => {
                 const user = userRefFor(useStore.getState(), u)
+                const speaking = voice?.channelId === c.id && rtc.isSpeaking(u)
                 return (
                   <div
                     key={u}
                     className="ml-9 flex items-center gap-1.5 px-2 py-0.5 text-sm text-on-surface-variant"
                   >
-                    <UserAvatar
-                      username={user.username}
-                      avatarKind={user.avatar_kind}
-                      avatarColor={user.avatar_color}
-                      size={18}
-                    />
+                    <span
+                      className={`flex shrink-0 rounded-full ${
+                        speaking ? 'ring-2 ring-green-500' : ''
+                      }`}
+                    >
+                      <UserAvatar
+                        username={user.username}
+                        avatarKind={user.avatar_kind}
+                        avatarColor={user.avatar_color}
+                        size={18}
+                      />
+                    </span>
                     <span className="streamer truncate">{user.display_name}</span>
                   </div>
                 )
