@@ -2,12 +2,13 @@
 
 import { useEffect, useRef } from 'react'
 import { MessageSquareText, Trash2, X } from 'lucide-react'
-import { myPerms, roleColor, useStore } from '../lib/store'
+import { myPerms, roleColor, useStore, type ContextMenuItem } from '../lib/store'
 import { Perm, hasPerm, type Message } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
 import { fmtTime, OutboxRows } from './message_pane'
+import { longPress } from './context_menu'
 
 const EMPTY: Message[] = []
 
@@ -35,6 +36,7 @@ export default function ThreadPanel() {
   const closePanel = useStore(s => s.closePanel)
   const loadOlderThread = useStore(s => s.loadOlderThread)
   const deleteMessage = useStore(s => s.deleteMessage)
+  const openContextMenu = useStore(s => s.openContextMenu)
   const listRef = useRef<HTMLDivElement>(null)
   const stickBottom = useRef(true)
   const loadingOlder = useRef(false)
@@ -66,44 +68,67 @@ export default function ThreadPanel() {
     }
   }
 
-  const row = (m: Message) => (
-    <div key={m.id} className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container">
-      <div className="shrink-0 pt-0.5">
-        <UserAvatar
-          username={m.author.username}
-          avatarKind={m.author.avatar_kind}
-          avatarColor={m.author.avatar_color}
-          size={30}
-        />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2">
-          <span
-            style={{
-              color: roleColor(
-                roles,
-                memberList?.find(x => x.username === m.author.username)?.role_ids ?? []
-              ),
-            }}
-            className="streamer text-sm font-medium"
-          >
-            {m.author.display_name}
-          </span>
-          <span className="text-xs text-on-surface-variant">{fmtTime(m.created_at)}</span>
+  const rowMenu = (m: Message) => (x: number, y: number) => {
+    const items: ContextMenuItem[] = []
+    if (m.id !== root.id && canDelete(m))
+      items.push({
+        label: 'Delete Message',
+        danger: true,
+        action: () => void deleteMessage(m.id),
+      })
+    items.push(
+      { label: 'Copy Message ID', action: () => void navigator.clipboard.writeText(String(m.id)) },
+      {
+        label: 'Copy User ID',
+        action: () => void navigator.clipboard.writeText(m.author.username),
+      }
+    )
+    openContextMenu(x, y, items)
+  }
+
+  const row = (m: Message) => {
+    const lp = longPress(rowMenu(m))
+    return (
+      <div key={m.id} className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container">
+        <div className="shrink-0 pt-0.5" {...lp}>
+          <UserAvatar
+            username={m.author.username}
+            avatarKind={m.author.avatar_kind}
+            avatarColor={m.author.avatar_color}
+            size={30}
+          />
         </div>
-        <MarkdownMessage message={m} canDelete={canDelete(m)} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <span
+              {...lp}
+              style={{
+                ...lp.style,
+                color: roleColor(
+                  roles,
+                  memberList?.find(x => x.username === m.author.username)?.role_ids ?? []
+                ),
+              }}
+              className="streamer cursor-default text-sm font-medium"
+            >
+              {m.author.display_name}
+            </span>
+            <span className="text-xs text-on-surface-variant">{fmtTime(m.created_at)}</span>
+          </div>
+          <MarkdownMessage message={m} canDelete={canDelete(m)} />
+        </div>
+        {m.id !== root.id && canDelete(m) && (
+          <button
+            title="Delete reply"
+            onClick={() => void deleteMessage(m.id)}
+            className="invisible absolute top-1 right-3 rounded-full bg-surface-container-high p-1.5 text-on-surface-variant group-hover:visible hover:text-error"
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
       </div>
-      {m.id !== root.id && canDelete(m) && (
-        <button
-          title="Delete reply"
-          onClick={() => void deleteMessage(m.id)}
-          className="invisible absolute top-1 right-3 rounded-full bg-surface-container-high p-1.5 text-on-surface-variant group-hover:visible hover:text-error"
-        >
-          <Trash2 size={14} />
-        </button>
-      )}
-    </div>
-  )
+    )
+  }
 
   return (
     <div className="flex h-full w-full flex-col bg-surface-container-low">

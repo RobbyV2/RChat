@@ -322,6 +322,12 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         action: () => openDialog({ kind: 'ban_confirm', username: author.username }),
       })
     }
+    if (canDelete(msg))
+      items.push({
+        label: 'Delete Message',
+        danger: true,
+        action: () => void deleteMessage(msg.id),
+      })
     items.push(
       {
         label: 'Copy Message ID',
