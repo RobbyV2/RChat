@@ -2,13 +2,16 @@ use std::sync::Arc;
 
 use axum::{
     Router,
+    body::Body,
     extract::Request,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use hyper::upgrade::OnUpgrade;
-use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::{TokioExecutor, TokioIo};
+
+type ProxyClient = Client<HttpConnector, Body>;
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 
 use crate::config::AppConfig;
@@ -29,16 +32,18 @@ pub fn register_routes(proxy_url: Option<&str>, config: &AppConfig, state: AppSt
     match proxy_url {
         Some(url) => {
             let url: Arc<str> = Arc::from(url);
+            let client: ProxyClient = Client::builder(TokioExecutor::new()).build_http();
             router.fallback(move |req| {
                 let url = Arc::clone(&url);
-                async move { proxy_to_frontend(url, req).await }
+                let client = client.clone();
+                async move { proxy_to_frontend(url, client, req).await }
             })
         }
         None => router,
     }
 }
 
-async fn proxy_to_frontend(proxy_url: Arc<str>, mut req: Request) -> Response {
+async fn proxy_to_frontend(proxy_url: Arc<str>, client: ProxyClient, mut req: Request) -> Response {
     let path_query = req
         .uri()
         .path_and_query()
@@ -67,7 +72,6 @@ async fn proxy_to_frontend(proxy_url: Arc<str>, mut req: Request) -> Response {
     }
 
     let client_upgrade = req.extensions_mut().remove::<OnUpgrade>();
-    let client = Client::builder(TokioExecutor::new()).build_http();
 
     match client.request(req).await {
         Ok(mut response) => {

@@ -43,6 +43,8 @@ export const msg = (id: number, over: Partial<Message> = {}): Message => ({
   reply_count: 0,
   media: null,
   embeds: [],
+  kind: 'user',
+  call: null,
   ...over,
 })
 

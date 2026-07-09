@@ -106,6 +106,17 @@ export interface Embed {
   banner_removed: boolean
 }
 
+export type MessageKind = 'user' | 'call'
+
+export type CallOutcome = 'missed' | 'declined' | 'completed'
+
+export interface CallLog {
+  from: string
+  answered_at: number | null
+  ended_at: number | null
+  outcome: CallOutcome | null
+}
+
 export interface Message {
   id: number
   channel_id: number | null
@@ -117,6 +128,8 @@ export interface Message {
   reply_count: number
   media: MessageMedia | null
   embeds: Embed[]
+  kind: MessageKind
+  call: CallLog | null
 }
 
 export interface SearchResult {
@@ -201,6 +214,7 @@ export type VoiceMsg =
 
 export type WsEvent =
   | ({ type: 'message'; message: Message } & Scoped)
+  | { type: 'message_updated'; message: Message }
   | ({ type: 'message_deleted'; id: number; thread_root_id: number | null } & Scoped)
   | ({
       type: 'media_removed'

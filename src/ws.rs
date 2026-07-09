@@ -42,6 +42,11 @@ pub enum WsEvent {
         dm_users: Option<Vec<String>>,
         message: Box<Message>,
     },
+    MessageUpdated {
+        message: Box<Message>,
+        #[serde(skip)]
+        dm_users: Vec<String>,
+    },
     MessageDeleted {
         server: Option<String>,
         channel_id: Option<i64>,
@@ -257,7 +262,24 @@ struct Call {
     occupants: Vec<(String, u64)>,
     active: bool,
     kind: CallKind,
+    log_id: i64,
     lone_since: i64,
+}
+
+pub struct CallEnd {
+    log_id: i64,
+    answered: bool,
+    dm_users: Vec<String>,
+}
+
+impl CallEnd {
+    fn of(call: &Call) -> CallEnd {
+        CallEnd {
+            log_id: call.log_id,
+            answered: call.active,
+            dm_users: call.dm_users.clone(),
+        }
+    }
 }
 
 struct P2pHost {
@@ -310,18 +332,21 @@ impl VoiceMap {
         self.rooms.retain(|_, r| !r.users.is_empty());
     }
 
-    fn end_calls<F: Fn(&Call) -> bool>(&mut self, pred: F, evs: &mut Vec<WsEvent>) {
+    fn end_calls<F: Fn(&Call) -> bool>(&mut self, pred: F, evs: &mut Vec<WsEvent>) -> Vec<CallEnd> {
         let ids: Vec<i64> = self
             .calls
             .iter()
             .filter(|(_, c)| pred(c))
             .map(|(id, _)| *id)
             .collect();
+        let mut ends = Vec::new();
         for id in ids {
             if let Some(call) = self.calls.remove(&id) {
                 evs.push(call_state(id, &call, CallPhase::Ended));
+                ends.push(CallEnd::of(&call));
             }
         }
+        ends
     }
 
     fn in_call(&self, user: &str) -> bool {
@@ -429,18 +454,19 @@ impl Hub {
         }
     }
 
-    pub fn voice_join(&self, user: &str, conn: u64, server: &str, channel_id: i64) {
+    pub fn voice_join(&self, user: &str, conn: u64, server: &str, channel_id: i64) -> Vec<CallEnd> {
         let mut evs = Vec::new();
+        let ends;
         {
             let mut v = self.voice.lock().unwrap();
             if let Some(room) = v.rooms.get_mut(&channel_id)
                 && let Some(slot) = room.users.iter_mut().find(|(u, _)| u == user)
             {
                 slot.1 = conn;
-                return;
+                return Vec::new();
             }
             v.leave_rooms(|_, u, _| u == user, &mut evs);
-            v.end_calls(|c| c.dm_users.iter().any(|u| u == user), &mut evs);
+            ends = v.end_calls(|c| c.dm_users.iter().any(|u| u == user), &mut evs);
             let room = v.rooms.entry(channel_id).or_insert_with(|| Room {
                 server: server.to_string(),
                 users: Vec::new(),
@@ -451,6 +477,7 @@ impl Hub {
             evs.push(room_state(channel_id, room));
         }
         self.voice_events(evs);
+        ends
     }
 
     pub fn voice_leave(&self, user: &str) {
@@ -469,6 +496,7 @@ impl Hub {
         dm_id: i64,
         dm_users: Vec<String>,
         kind: CallKind,
+        log_id: i64,
     ) -> Result<(), String> {
         let mut evs = Vec::new();
         {
@@ -491,6 +519,7 @@ impl Hub {
                 occupants: vec![(user.to_string(), conn)],
                 active: false,
                 kind,
+                log_id,
                 lone_since: now(),
             };
             evs.push(call_state(dm_id, &call, CallPhase::Ringing));
@@ -500,8 +529,14 @@ impl Hub {
         Ok(())
     }
 
-    pub fn call_accept(&self, user: &str, conn: u64, dm_id: i64) -> Result<(), String> {
+    pub fn call_accept(
+        &self,
+        user: &str,
+        conn: u64,
+        dm_id: i64,
+    ) -> Result<(i64, Vec<String>), String> {
         let mut evs = Vec::new();
+        let out;
         {
             let mut v = self.voice.lock().unwrap();
             let valid = v.calls.get(&dm_id).is_some_and(|c| {
@@ -511,18 +546,22 @@ impl Hub {
                 return Err("No incoming call".to_string());
             }
             v.leave_rooms(|_, u, _| u == user, &mut evs);
-            if let Some(call) = v.calls.get_mut(&dm_id) {
-                call.active = true;
-                call.occupants.push((user.to_string(), conn));
-                evs.push(call_state(dm_id, call, CallPhase::Active));
-            }
+            let call = v
+                .calls
+                .get_mut(&dm_id)
+                .ok_or_else(|| "No incoming call".to_string())?;
+            call.active = true;
+            call.occupants.push((user.to_string(), conn));
+            evs.push(call_state(dm_id, call, CallPhase::Active));
+            out = (call.log_id, call.dm_users.clone());
         }
         self.voice_events(evs);
-        Ok(())
+        Ok(out)
     }
 
-    pub fn call_end(&self, user: &str, dm_id: i64) -> Result<(), String> {
+    pub fn call_end(&self, user: &str, dm_id: i64) -> Result<CallEnd, String> {
         let mut evs = Vec::new();
+        let end;
         {
             let mut v = self.voice.lock().unwrap();
             let involved = v
@@ -532,12 +571,15 @@ impl Hub {
             if !involved {
                 return Err("No such call".to_string());
             }
-            if let Some(call) = v.calls.remove(&dm_id) {
-                evs.push(call_state(dm_id, &call, CallPhase::Ended));
-            }
+            let call = v
+                .calls
+                .remove(&dm_id)
+                .ok_or_else(|| "No such call".to_string())?;
+            evs.push(call_state(dm_id, &call, CallPhase::Ended));
+            end = CallEnd::of(&call);
         }
         self.voice_events(evs);
-        Ok(())
+        Ok(end)
     }
 
     pub fn rtc_shared(
@@ -561,21 +603,24 @@ impl Hub {
         }
     }
 
-    pub fn drop_conn(&self, user: &str, conn: u64) {
+    pub fn drop_conn(&self, user: &str, conn: u64) -> Vec<CallEnd> {
         let mut evs = Vec::new();
+        let ends;
         {
             let mut v = self.voice.lock().unwrap();
             v.leave_rooms(|_, u, c| u == user && c == conn, &mut evs);
-            v.end_calls(
+            ends = v.end_calls(
                 |c| c.occupants.iter().any(|(u, cn)| u == user && *cn == conn),
                 &mut evs,
             );
         }
         self.voice_events(evs);
+        ends
     }
 
-    pub fn sweep_voice(&self, idle: i64) {
+    pub fn sweep_voice(&self, idle: i64) -> Vec<CallEnd> {
         let mut evs = Vec::new();
+        let mut ends = Vec::new();
         {
             let mut v = self.voice.lock().unwrap();
             let t = now();
@@ -610,6 +655,7 @@ impl Hub {
                 .collect();
             for id in ids {
                 if let Some(call) = v.calls.remove(&id) {
+                    ends.push(CallEnd::of(&call));
                     evs.push(call_state(id, &call, CallPhase::Ended));
                     evs.push(WsEvent::VoiceEnded {
                         server: None,
@@ -622,6 +668,7 @@ impl Hub {
             }
         }
         self.voice_events(evs);
+        ends
     }
 
     pub fn set_p2p(&self, user: &str, conn: u64, peer_id: String, ids: Vec<String>) {
@@ -802,6 +849,82 @@ pub(crate) async fn evict_unviewable(state: &AppState, server: &str, channel_id:
     }
 }
 
+async fn insert_call_log(state: &AppState, dm_id: i64, caller: &str) -> Result<i64, sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO messages(dm_id, author, content, kind, created_at) VALUES($1, $2, '', 'call', $3) RETURNING id",
+    )
+    .bind(dm_id)
+    .bind(caller)
+    .bind(now())
+    .fetch_one(&state.db)
+    .await?
+    .try_get(0)
+}
+
+async fn broadcast_call_log(state: &AppState, dm_id: i64, dm_users: Vec<String>, log_id: i64) {
+    if let Ok(Some(message)) = crate::api::messages::load_message(&state.db, log_id).await {
+        state.hub.broadcast(WsEvent::Message {
+            server: None,
+            channel_id: None,
+            dm_id: Some(dm_id),
+            dm_users: Some(dm_users),
+            message: Box::new(message),
+        });
+    }
+}
+
+async fn broadcast_call_update(state: &AppState, dm_users: Vec<String>, log_id: i64) {
+    if let Ok(Some(message)) = crate::api::messages::load_message(&state.db, log_id).await {
+        state.hub.broadcast(WsEvent::MessageUpdated {
+            message: Box::new(message),
+            dm_users,
+        });
+    }
+}
+
+async fn answer_call_log(state: &AppState, dm_users: Vec<String>, log_id: i64) {
+    let res = sqlx::query(
+        "UPDATE messages SET call_answered_at = $1 WHERE id = $2 AND call_answered_at IS NULL",
+    )
+    .bind(now())
+    .bind(log_id)
+    .execute(&state.db)
+    .await;
+    if matches!(res, Ok(r) if r.rows_affected() > 0) {
+        broadcast_call_update(state, dm_users, log_id).await;
+    }
+}
+
+async fn finalize_call_log(state: &AppState, end: CallEnd, declined: bool) {
+    let CallEnd {
+        log_id,
+        answered,
+        dm_users,
+    } = end;
+    let outcome = match (answered, declined) {
+        (true, _) => "completed",
+        (false, true) => "declined",
+        (false, false) => "missed",
+    };
+    let res = sqlx::query(
+        "UPDATE messages SET call_ended_at = $1, call_outcome = $2 WHERE id = $3 AND call_ended_at IS NULL",
+    )
+    .bind(now())
+    .bind(outcome)
+    .bind(log_id)
+    .execute(&state.db)
+    .await;
+    if matches!(res, Ok(r) if r.rows_affected() > 0) {
+        broadcast_call_update(state, dm_users, log_id).await;
+    }
+}
+
+pub async fn sweep_and_log(state: &AppState, idle: i64) {
+    for end in state.hub.sweep_voice(idle) {
+        finalize_call_log(state, end, false).await;
+    }
+}
+
 #[utoipa::path(get, path = "/api/ws", responses((status = 101, description = "WebSocket upgrade")))]
 pub async fn handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
     ws.on_upgrade(move |socket| run(state, socket))
@@ -828,7 +951,9 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             if !channel_viewable(&state.db, &server, channel_id, Some(user)).await {
                 return Err("Not allowed".to_string());
             }
-            state.hub.voice_join(user, conn, &server, channel_id);
+            for end in state.hub.voice_join(user, conn, &server, channel_id) {
+                finalize_call_log(state, end, false).await;
+            }
             touch_interaction(&state.db, &server, user)
                 .await
                 .map_err(db_err)
@@ -858,11 +983,39 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
                 true => CallKind::P2p,
                 false => CallKind::Rtc,
             };
-            state.hub.call_start(user, conn, dm_id, vec![a, b], kind)
+            let dm_users = vec![a, b];
+            let log_id = insert_call_log(state, dm_id, user).await.map_err(db_err)?;
+            match state
+                .hub
+                .call_start(user, conn, dm_id, dm_users.clone(), kind, log_id)
+            {
+                Ok(()) => {
+                    broadcast_call_log(state, dm_id, dm_users, log_id).await;
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = sqlx::query("DELETE FROM messages WHERE id = $1")
+                        .bind(log_id)
+                        .execute(&state.db)
+                        .await;
+                    Err(e)
+                }
+            }
         }
-        ClientMsg::CallAccept { dm_id } => state.hub.call_accept(user, conn, dm_id),
-        ClientMsg::CallDecline { dm_id } | ClientMsg::CallLeave { dm_id } => {
-            state.hub.call_end(user, dm_id)
+        ClientMsg::CallAccept { dm_id } => {
+            let (log_id, dm_users) = state.hub.call_accept(user, conn, dm_id)?;
+            answer_call_log(state, dm_users, log_id).await;
+            Ok(())
+        }
+        ClientMsg::CallDecline { dm_id } => {
+            let end = state.hub.call_end(user, dm_id)?;
+            finalize_call_log(state, end, true).await;
+            Ok(())
+        }
+        ClientMsg::CallLeave { dm_id } => {
+            let end = state.hub.call_end(user, dm_id)?;
+            finalize_call_log(state, end, false).await;
+            Ok(())
         }
         ClientMsg::RtcSignal {
             to,
@@ -1239,7 +1392,9 @@ async fn run(state: AppState, mut socket: WebSocket) {
         }
     }
     if let Some(user) = &username {
-        state.hub.drop_conn(user, conn);
+        for end in state.hub.drop_conn(user, conn) {
+            finalize_call_log(&state, end, false).await;
+        }
         if state.hub.clear_p2p(user, conn) {
             let (scope_servers, scope_users) = p2p_scope(&state.db, user).await;
             state
@@ -1414,6 +1569,10 @@ fn wants(
             dm_users,
             message: _,
         } => scoped(server, dm_users),
+        WsEvent::MessageUpdated {
+            message: _,
+            dm_users,
+        } => me.is_some_and(|user| dm_users.iter().any(|u| u == user)),
         WsEvent::MessageDeleted {
             server,
             channel_id: _,

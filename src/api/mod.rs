@@ -189,6 +189,14 @@ pub struct Embed {
 }
 
 #[derive(Clone, Serialize, ToSchema)]
+pub struct CallLog {
+    pub from: String,
+    pub answered_at: Option<i64>,
+    pub ended_at: Option<i64>,
+    pub outcome: Option<String>,
+}
+
+#[derive(Clone, Serialize, ToSchema)]
 pub struct Message {
     pub id: i64,
     pub channel_id: Option<i64>,
@@ -200,6 +208,8 @@ pub struct Message {
     pub reply_count: i64,
     pub media: Option<MediaRef>,
     pub embeds: Vec<Embed>,
+    pub kind: String,
+    pub call: Option<CallLog>,
 }
 
 #[derive(Clone, Copy, Serialize, ToSchema)]

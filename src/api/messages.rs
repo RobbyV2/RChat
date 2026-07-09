@@ -9,8 +9,8 @@ use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::{
-    ApiError, Authed, Embed, MaybeAuthed, MediaRef, Message, UserRef, check_profanity, embeds,
-    header_grants, require_guest_ok, require_server_view, user_ref,
+    ApiError, Authed, CallLog, Embed, MaybeAuthed, MediaRef, Message, UserRef, check_profanity,
+    embeds, header_grants, require_guest_ok, require_server_view, user_ref,
 };
 use crate::db::{
     ChannelAccess, ChannelKind, Db, MediaKind, Perm, User, channel_access, effective_perms,
@@ -19,7 +19,7 @@ use crate::db::{
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
-const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime";
+const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome";
 
 #[derive(Deserialize, IntoParams)]
 pub struct PageQuery {
@@ -114,6 +114,16 @@ async fn row_message(db: &Db, r: &AnyRow) -> Result<Message, ApiError> {
         }
         None => None,
     };
+    let kind: String = r.try_get(17)?;
+    let call = match kind.as_str() {
+        "call" => Some(CallLog {
+            from: r.try_get(4)?,
+            answered_at: r.try_get(18)?,
+            ended_at: r.try_get(19)?,
+            outcome: r.try_get(20)?,
+        }),
+        _ => None,
+    };
     Ok(Message {
         id: r.try_get(0)?,
         channel_id: r.try_get(1)?,
@@ -125,7 +135,17 @@ async fn row_message(db: &Db, r: &AnyRow) -> Result<Message, ApiError> {
         reply_count: r.try_get(11)?,
         media,
         embeds: Vec::new(),
+        kind,
+        call,
     })
+}
+
+pub(crate) async fn load_message(db: &Db, id: i64) -> Result<Option<Message>, ApiError> {
+    let sql = format!("SELECT {COLS} FROM messages m WHERE m.id = $1");
+    match sqlx::query(&sql).bind(id).fetch_optional(db).await? {
+        Some(r) => Ok(Some(row_message(db, &r).await?)),
+        None => Ok(None),
+    }
 }
 
 async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), ApiError> {
@@ -299,6 +319,8 @@ async fn insert_message(
         reply_count: 0,
         media,
         embeds: Vec::new(),
+        kind: "user".to_string(),
+        call: None,
     })
 }
 
@@ -848,7 +870,7 @@ pub(crate) async fn search(
     let mut ctx: Vec<(String, String)> = Vec::with_capacity(rows.len());
     for r in &rows {
         msgs.push(row_message(&state.db, r).await?);
-        ctx.push((r.try_get(17)?, r.try_get(18)?));
+        ctx.push((r.try_get(21)?, r.try_get(22)?));
     }
     attach_embeds(&state.db, &mut msgs).await?;
     let out = msgs

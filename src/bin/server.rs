@@ -46,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
         loop {
             interval.tick().await;
-            voice.hub.sweep_voice(idle);
+            rust_next::ws::sweep_and_log(&voice, idle).await;
         }
     });
 

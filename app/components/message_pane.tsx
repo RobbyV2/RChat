@@ -1,12 +1,14 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Hash,
   Menu,
   MessageSquareText,
   MessagesSquare,
   Phone,
+  PhoneMissed,
+  PhoneOff,
   Search,
   Trash2,
   Users,
@@ -36,6 +38,85 @@ export const fmtTime = (ts: number) => {
   const d = new Date(ts * 1000)
   const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
   return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString()} ${time}`
+}
+
+const fmtDuration = (s: number) => {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`
+}
+
+function CallDuration({ from }: { from: number }) {
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
+  useEffect(() => {
+    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000)
+    return () => clearInterval(id)
+  }, [])
+  return <>{fmtDuration(Math.max(0, now - from))}</>
+}
+
+function CallLogRow({ message }: { message: Message }) {
+  const me = useStore(s => s.me)
+  const acceptCall = useStore(s => s.acceptCall)
+  const declineCall = useStore(s => s.declineCall)
+  const openDm = useStore(s => s.openDm)
+  const call = message.call
+  if (!call) return null
+  const ringing = call.answered_at === null && call.ended_at === null
+  const active = call.answered_at !== null && call.ended_at === null
+  const incoming = me !== null && me.username !== call.from
+  let icon = <Phone size={14} className="shrink-0" />
+  let label: ReactNode = 'Call'
+  if (ringing) label = incoming ? 'Incoming call' : 'Calling…'
+  else if (active && call.answered_at !== null)
+    label = (
+      <>
+        Call · <CallDuration from={call.answered_at} />
+      </>
+    )
+  else if (call.ended_at !== null) {
+    if (call.outcome === 'completed' && call.answered_at !== null)
+      label = `Call · ${fmtDuration(Math.max(0, call.ended_at - call.answered_at))}`
+    else if (call.outcome === 'declined') {
+      icon = <PhoneOff size={14} className="shrink-0" />
+      label = 'Call declined'
+    } else {
+      icon = <PhoneMissed size={14} className="shrink-0" />
+      label = 'Missed call'
+    }
+  }
+  return (
+    <div className="flex justify-center px-4 py-1.5">
+      <div className="flex items-center gap-2 rounded-full bg-surface-container px-3 py-1 text-xs text-on-surface-variant">
+        {icon}
+        <span>{label}</span>
+        <span className="opacity-60">{fmtTime(message.created_at)}</span>
+        {ringing && incoming && (
+          <span className="ml-1 flex items-center gap-1">
+            <button
+              title="Accept"
+              onClick={() => {
+                if (message.dm_id !== null) void openDm(message.dm_id)
+                void acceptCall()
+              }}
+              className="rounded-full bg-primary p-1 text-on-primary hover:opacity-90"
+            >
+              <Phone size={12} />
+            </button>
+            <button
+              title="Decline"
+              onClick={declineCall}
+              className="rounded-full bg-error p-1 text-on-error hover:opacity-90"
+            >
+              <PhoneOff size={12} />
+            </button>
+          </span>
+        )}
+      </div>
+    </div>
+  )
 }
 
 const EMPTY_OUT: Outgoing[] = []
@@ -403,14 +484,22 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
               </div>
             )}
             {messages.map((m, i) => {
+              const divider = i === dividerIndex && (
+                <div ref={dividerRef} className="px-4 py-1" aria-hidden>
+                  <div className="h-0.5 rounded-full bg-error" />
+                </div>
+              )
+              if (m.kind === 'call')
+                return (
+                  <div key={m.id}>
+                    {divider}
+                    <CallLogRow message={m} />
+                  </div>
+                )
               const lp = longPress(authorMenu(m))
               return (
                 <div key={m.id}>
-                  {i === dividerIndex && (
-                    <div ref={dividerRef} className="px-4 py-1" aria-hidden>
-                      <div className="h-0.5 rounded-full bg-error" />
-                    </div>
-                  )}
+                  {divider}
                   <div className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container-low">
                     <div className="shrink-0 pt-0.5" {...lp}>
                       <UserAvatar

@@ -1070,6 +1070,8 @@ export const useStore = create<RChatState>()((set, get) => {
           reply_count: 0,
           media: null,
           embeds: [],
+          kind: 'user',
+          call: null,
         },
         send: opts =>
           view.kind === 'channel'
@@ -1194,6 +1196,8 @@ export const useStore = create<RChatState>()((set, get) => {
           reply_count: 0,
           media: null,
           embeds: [],
+          kind: 'user',
+          call: null,
         },
         send: opts => api.sendThreadMessage(rootId, content, opts),
       })
@@ -1560,6 +1564,7 @@ export const useStore = create<RChatState>()((set, get) => {
             }
           }
           askP2p([m])
+          if (m.kind === 'call') return
           if (rootId === null) {
             const scope = messageKey(m.channel_id, m.dm_id)
             if (scope) {
@@ -1598,6 +1603,10 @@ export const useStore = create<RChatState>()((set, get) => {
               void get().openServer(server, channel_id)
             })
           }
+          return
+        }
+        case 'message_updated': {
+          patchMessage(ev.message.id, () => ev.message)
           return
         }
         case 'message_deleted': {
