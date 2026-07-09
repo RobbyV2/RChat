@@ -106,6 +106,21 @@ describe('media / embeds patching via patchMessage', () => {
     expect(st().messages.c1[0].embeds.map(e => e.ord)).toEqual([0])
   })
 
+  test('embeds_resolved before the message is inserted still lands on the later insert', () => {
+    useStore.setState({ messages: { c1: [msg(10)] } })
+    dispatch({ type: 'embeds_resolved', ...scoped, message_id: 80, embeds: [embed(0)] })
+    dispatch({ type: 'message', ...scoped, message: msg(80, { channel_id: 1 }) })
+    const stored = st().messages.c1.find(m => m.id === 80)
+    expect(stored?.embeds.map(e => e.ord)).toEqual([0])
+  })
+
+  test('a later duplicate message echo does not clobber resolved embeds', () => {
+    useStore.setState({ messages: { c1: [msg(80, { channel_id: 1 })] } })
+    dispatch({ type: 'embeds_resolved', ...scoped, message_id: 80, embeds: [embed(0)] })
+    dispatch({ type: 'message', ...scoped, message: msg(80, { channel_id: 1, embeds: [] }) })
+    expect(st().messages.c1[0].embeds.map(e => e.ord)).toEqual([0])
+  })
+
   test('embeds_removed banner marks banner_removed; full removes the embed', () => {
     useStore.setState({ messages: { c1: [msg(90, { embeds: [embed(0), embed(1)] })] } })
     dispatch({ type: 'embeds_removed', ...scoped, message_id: 90, ord: 0, banner: true })
