@@ -91,6 +91,7 @@ function ExpiryDialog({
 
 export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const guest = useStore(s => s.guest)
+  const logout = useStore(s => s.logout)
   const view = useStore(s => s.view)
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
@@ -111,7 +112,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     return (
       <div className="m-3 rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant">
         Viewing as a guest.{' '}
-        <Link href="/login" className="text-primary underline">
+        <Link href="/login" onClick={() => logout()} className="text-primary underline">
           Create an account
         </Link>{' '}
         to send messages.
