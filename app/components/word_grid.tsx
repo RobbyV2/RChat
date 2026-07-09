@@ -23,7 +23,7 @@ export function WordGrid({ words, selected, onChange }: Props) {
               key={word}
               type="button"
               onClick={() => toggle(word)}
-              className={`relative rounded-xl px-2 py-2 text-sm transition-colors ${
+              className={`relative min-w-0 break-words rounded-xl px-2 py-2 text-center text-sm leading-tight transition-colors ${
                 idx >= 0
                   ? 'bg-primary-container text-on-primary-container'
                   : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest'
