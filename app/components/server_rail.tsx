@@ -1,9 +1,8 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { LogOut, Plus, Settings, Shield } from 'lucide-react'
-import { useStore } from '../lib/store'
-import { UserAvatar } from './user_avatar'
+import { LogOut, MessageCircle, Plus, Settings, Shield } from 'lucide-react'
+import { dmsUnread, serverUnread, useStore } from '../lib/store'
 import { InstallButton } from './pwa_register'
 import { ThemeToggle } from './status_clock'
 
@@ -22,6 +21,14 @@ export function ServerRail() {
   const openContextMenu = useStore(s => s.openContextMenu)
   const leaveServer = useStore(s => s.leaveServer)
   const logout = useStore(s => s.logout)
+  useStore(s => s.reads)
+  const dot = (
+    <span
+      title="Unread messages"
+      aria-hidden
+      className="absolute -top-1 -right-1 h-3 w-3 rounded-full border-2 border-surface-container-lowest bg-error"
+    />
+  )
 
   const serverList = me
     ? me.servers.map(({ name, display_name, creator }) => ({ name, display_name, creator }))
@@ -31,35 +38,25 @@ export function ServerRail() {
         creator: servers[name]?.creator ?? null,
       }))
 
-  const sortedDms = [...dms].sort((a, b) => Number(b.is_self) - Number(a.is_self))
-
   return (
     <nav className="flex h-full w-18 shrink-0 flex-col items-center gap-2 overflow-y-auto bg-surface-container-lowest py-3">
-      {me &&
-        sortedDms.map(dm => {
-          const { id, other, is_self } = dm
-          const active = view?.kind === 'dm' && view.dmId === id
-          return (
-            <button
-              key={id}
-              title={is_self ? `${other.display_name} (yourself)` : other.display_name}
-              onClick={() => void openDm(id)}
-              className={`relative shrink-0 rounded-full ${active ? 'ring-2 ring-primary ring-offset-2 ring-offset-surface-container-lowest' : ''}`}
-            >
-              <UserAvatar
-                username={other.username}
-                avatarKind={other.avatar_kind}
-                avatarColor={other.avatar_color}
-                size={44}
-              />
-              {is_self && (
-                <span className="absolute -right-1 -bottom-0.5 rounded-full bg-primary px-1.5 text-[9px] leading-4 font-bold text-on-primary">
-                  you
-                </span>
-              )}
-            </button>
-          )
-        })}
+      {me && (
+        <button
+          title="Direct messages"
+          onClick={() => {
+            const target = dms.find(d => d.is_self) ?? dms[0]
+            if (target) void openDm(target.id)
+          }}
+          className={`${tile} relative ${
+            view?.kind === 'dm'
+              ? 'bg-primary text-on-primary'
+              : 'bg-surface-container-high text-on-surface hover:bg-primary-container hover:text-on-primary-container'
+          }`}
+        >
+          <MessageCircle size={22} />
+          {dmsUnread(useStore.getState()) && dot}
+        </button>
+      )}
       {me && <div className="my-1 h-px w-8 shrink-0 bg-outline-variant" />}
       {serverList.map(({ name, display_name, creator }) => {
         const active = view?.kind === 'channel' && view.server === name
@@ -71,9 +68,20 @@ export function ServerRail() {
             onClick={() => void openServer(name)}
             onContextMenu={e => {
               e.preventDefault()
-              if (name === 'rchat') return
               openContextMenu(e.clientX, e.clientY, [
-                { label: 'Leave Server', danger: true, action: () => void leaveServer(name) },
+                {
+                  label: 'Copy Server ID',
+                  action: () => void navigator.clipboard.writeText(name),
+                },
+                ...(name === 'rchat'
+                  ? []
+                  : [
+                      {
+                        label: 'Leave Server',
+                        danger: true,
+                        action: () => void leaveServer(name),
+                      },
+                    ]),
               ])
             }}
             className={`${tile} relative text-lg font-semibold ${
@@ -95,6 +103,7 @@ export function ServerRail() {
                 C
               </span>
             )}
+            {serverUnread(useStore.getState(), name) && dot}
           </button>
         )
       })}

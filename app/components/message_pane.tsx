@@ -100,6 +100,9 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const dms = useStore(s => s.dms)
   const messages = useStore(s => (s.view ? s.messages[viewKey(s.view)] : undefined)) ?? EMPTY
   const outCount = useStore(s => (s.view ? (s.outbox[viewKey(s.view)]?.length ?? 0) : 0))
+  const anchor = useStore(s => (s.view ? s.unreadAnchor[viewKey(s.view)] : undefined))
+  const markRead = useStore(s => s.markRead)
+  const setAtBottom = useStore(s => s.setAtBottom)
   const memberList = useStore(s =>
     s.view?.kind === 'channel' ? s.members[s.view.server]?.list : undefined
   )
@@ -122,17 +125,42 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
   const listRef = useRef<HTMLDivElement>(null)
-  const stickBottom = useRef(true)
+  const dividerRef = useRef<HTMLDivElement>(null)
+  const autoScroll = useRef(true)
+  const lastScrollTop = useRef(0)
   const loadingOlder = useRef(false)
+  const initialScrolled = useRef(false)
+  const atBottomRef = useRef(true)
+
+  const scope = view ? viewKey(view) : null
+  const dividerIndex = anchor === undefined ? -1 : messages.findIndex(m => m.id > anchor)
 
   useEffect(() => {
-    stickBottom.current = true
+    autoScroll.current = true
+    initialScrolled.current = false
+    atBottomRef.current = true
+    lastScrollTop.current = 0
   }, [view])
 
   useEffect(() => {
     const el = listRef.current
-    if (el && stickBottom.current) el.scrollTop = el.scrollHeight
-  }, [messages, outCount])
+    if (!el) return
+    if (!initialScrolled.current && messages.length) {
+      initialScrolled.current = true
+      const divider = dividerRef.current
+      el.scrollTop = divider ? Math.max(0, divider.offsetTop - 48) : el.scrollHeight
+      lastScrollTop.current = el.scrollTop
+      const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+      atBottomRef.current = bottom
+      setAtBottom(bottom)
+      if (bottom && scope) {
+        const last = messages[messages.length - 1]
+        if (last) markRead(scope, last.id)
+      }
+      return
+    }
+    if (autoScroll.current && atBottomRef.current) el.scrollTop = el.scrollHeight
+  }, [messages, outCount, setAtBottom, scope, markRead])
 
   const detail = view?.kind === 'channel' ? servers[view.server] : undefined
   const channel =
@@ -146,8 +174,19 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const onScroll = () => {
     const el = listRef.current
     if (!el) return
-    stickBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
-    if (el.scrollTop === 0 && messages.length && !loadingOlder.current) {
+    const st = el.scrollTop
+    const bottom = el.scrollHeight - st - el.clientHeight < 60
+    if (st < lastScrollTop.current - 2 && !bottom) autoScroll.current = false
+    lastScrollTop.current = st
+    if (bottom !== atBottomRef.current) {
+      atBottomRef.current = bottom
+      setAtBottom(bottom)
+    }
+    if (bottom && scope) {
+      const last = messages[messages.length - 1]
+      if (last) markRead(scope, last.id)
+    }
+    if (st === 0 && messages.length && !loadingOlder.current) {
       loadingOlder.current = true
       void loadOlder().finally(() => {
         loadingOlder.current = false
@@ -202,6 +241,16 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         action: () => openDialog({ kind: 'ban_confirm', username: author.username }),
       })
     }
+    items.push(
+      {
+        label: 'Copy Message ID',
+        action: () => void navigator.clipboard.writeText(String(msg.id)),
+      },
+      {
+        label: 'Copy User ID',
+        action: () => void navigator.clipboard.writeText(msg.author.username),
+      }
+    )
     openContextMenu(x, y, items)
   }
 
@@ -353,71 +402,76 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                 <span className="text-sm">Be the first to say something.</span>
               </div>
             )}
-            {messages.map(m => {
+            {messages.map((m, i) => {
               const lp = longPress(authorMenu(m))
               return (
-                <div
-                  key={m.id}
-                  className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container-low"
-                >
-                  <div className="shrink-0 pt-0.5" {...lp}>
-                    <UserAvatar
-                      username={m.author.username}
-                      avatarKind={m.author.avatar_kind}
-                      avatarColor={m.author.avatar_color}
-                      size={36}
-                    />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <span
-                        {...lp}
-                        style={{
-                          ...lp.style,
-                          color: roleColor(
-                            detail?.roles,
-                            memberList?.find(x => x.username === m.author.username)?.role_ids ?? []
-                          ),
-                        }}
-                        className="streamer cursor-default text-sm font-medium"
-                      >
-                        {m.author.display_name}
-                      </span>
-                      <span className="text-xs text-on-surface-variant">
-                        {fmtTime(m.created_at)}
-                      </span>
+                <div key={m.id}>
+                  {i === dividerIndex && (
+                    <div ref={dividerRef} className="px-4 py-1" aria-hidden>
+                      <div className="h-0.5 rounded-full bg-error" />
                     </div>
-                    <MarkdownMessage message={m} canDelete={canDelete(m)} />
-                    {view?.kind === 'channel' && m.reply_count > 0 && (
-                      <button
-                        title="Open thread"
-                        onClick={() => void openThread(m)}
-                        className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
-                      >
-                        <MessageSquareText size={12} />
-                        {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
-                      </button>
-                    )}
-                  </div>
-                  <div className="invisible absolute top-1 right-3 flex gap-1 group-hover:visible">
-                    {view?.kind === 'channel' && (
-                      <button
-                        title="Reply in thread"
-                        onClick={() => void openThread(m)}
-                        className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-primary"
-                      >
-                        <MessageSquareText size={14} />
-                      </button>
-                    )}
-                    {canDelete(m) && (
-                      <button
-                        title="Delete message"
-                        onClick={() => void deleteMessage(m.id)}
-                        className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-error"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
+                  )}
+                  <div className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container-low">
+                    <div className="shrink-0 pt-0.5" {...lp}>
+                      <UserAvatar
+                        username={m.author.username}
+                        avatarKind={m.author.avatar_kind}
+                        avatarColor={m.author.avatar_color}
+                        size={36}
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline gap-2">
+                        <span
+                          {...lp}
+                          style={{
+                            ...lp.style,
+                            color: roleColor(
+                              detail?.roles,
+                              memberList?.find(x => x.username === m.author.username)?.role_ids ??
+                                []
+                            ),
+                          }}
+                          className="streamer cursor-default text-sm font-medium"
+                        >
+                          {m.author.display_name}
+                        </span>
+                        <span className="text-xs text-on-surface-variant">
+                          {fmtTime(m.created_at)}
+                        </span>
+                      </div>
+                      <MarkdownMessage message={m} canDelete={canDelete(m)} />
+                      {view?.kind === 'channel' && m.reply_count > 0 && (
+                        <button
+                          title="Open thread"
+                          onClick={() => void openThread(m)}
+                          className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
+                        >
+                          <MessageSquareText size={12} />
+                          {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
+                        </button>
+                      )}
+                    </div>
+                    <div className="invisible absolute top-1 right-3 flex gap-1 group-hover:visible">
+                      {view?.kind === 'channel' && (
+                        <button
+                          title="Reply in thread"
+                          onClick={() => void openThread(m)}
+                          className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-primary"
+                        >
+                          <MessageSquareText size={14} />
+                        </button>
+                      )}
+                      {canDelete(m) && (
+                        <button
+                          title="Delete message"
+                          onClick={() => void deleteMessage(m.id)}
+                          className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-error"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               )

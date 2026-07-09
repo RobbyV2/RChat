@@ -64,6 +64,37 @@ pub struct SearchResult {
     pub channel_name: String,
 }
 
+#[derive(Serialize, ToSchema)]
+pub struct Unread {
+    pub scope: String,
+    pub last_read: i64,
+    pub latest: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct Unreads {
+    pub items: Vec<Unread>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct ReadReq {
+    scope: String,
+    last_read: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ReadState {
+    pub scope: String,
+    pub last_read: i64,
+}
+
+fn valid_scope(scope: &str) -> bool {
+    let bytes = scope.as_bytes();
+    bytes.len() >= 2
+        && matches!(bytes[0], b'c' | b'd')
+        && bytes[1..].iter().all(|b| b.is_ascii_digit())
+}
+
 async fn row_message(db: &Db, r: &AnyRow) -> Result<Message, ApiError> {
     let media = match r.try_get::<Option<String>, _>(6)? {
         Some(id) => {
@@ -830,6 +861,67 @@ pub(crate) async fn search(
         })
         .collect();
     Ok(Json(out))
+}
+
+#[utoipa::path(get, path = "/api/unreads", responses((status = 200, body = Unreads)), security(("bearer" = [])))]
+pub(crate) async fn unreads(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+) -> Result<Json<Unreads>, ApiError> {
+    let mut items = Vec::new();
+    let channel_rows = sqlx::query(
+        "SELECT 'c' || m.channel_id AS scope, MAX(m.id) AS latest, COALESCE(MAX(rs.last_read), 0) AS last_read FROM messages m JOIN channels c ON c.id = m.channel_id JOIN members mem ON mem.server = c.server AND mem.username = $1 LEFT JOIN read_state rs ON rs.username = $1 AND rs.scope = 'c' || m.channel_id WHERE c.kind = 'text' AND m.thread_root_id IS NULL GROUP BY m.channel_id",
+    )
+    .bind(&user.username)
+    .fetch_all(&state.db)
+    .await?;
+    let dm_rows = sqlx::query(
+        "SELECT 'd' || m.dm_id AS scope, MAX(m.id) AS latest, COALESCE(MAX(rs.last_read), 0) AS last_read FROM messages m JOIN dms d ON d.id = m.dm_id LEFT JOIN read_state rs ON rs.username = $1 AND rs.scope = 'd' || m.dm_id WHERE d.user_a = $1 OR d.user_b = $1 GROUP BY m.dm_id",
+    )
+    .bind(&user.username)
+    .fetch_all(&state.db)
+    .await?;
+    for r in channel_rows.iter().chain(dm_rows.iter()) {
+        items.push(Unread {
+            scope: r.try_get(0)?,
+            latest: r.try_get(1)?,
+            last_read: r.try_get(2)?,
+        });
+    }
+    Ok(Json(Unreads { items }))
+}
+
+#[utoipa::path(post, path = "/api/read", request_body = ReadReq, responses((status = 200, body = ReadState)), security(("bearer" = [])))]
+pub(crate) async fn mark_read(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Json(req): Json<ReadReq>,
+) -> Result<Json<ReadState>, ApiError> {
+    let ReadReq { scope, last_read } = req;
+    if !valid_scope(&scope) {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Invalid scope".to_string(),
+        ));
+    }
+    let stored: i64 = sqlx::query(
+        "INSERT INTO read_state(username, scope, last_read) VALUES($1, $2, $3) ON CONFLICT(username, scope) DO UPDATE SET last_read = CASE WHEN excluded.last_read > read_state.last_read THEN excluded.last_read ELSE read_state.last_read END RETURNING last_read",
+    )
+    .bind(&user.username)
+    .bind(&scope)
+    .bind(last_read)
+    .fetch_one(&state.db)
+    .await?
+    .try_get(0)?;
+    state.hub.broadcast(WsEvent::ReadUpdated {
+        username: user.username,
+        scope: scope.clone(),
+        last_read: stored,
+    });
+    Ok(Json(ReadState {
+        scope,
+        last_read: stored,
+    }))
 }
 
 #[cfg(test)]

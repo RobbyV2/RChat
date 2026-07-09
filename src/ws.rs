@@ -134,6 +134,11 @@ pub enum WsEvent {
         username: String,
         online: bool,
     },
+    ReadUpdated {
+        username: String,
+        scope: String,
+        last_read: i64,
+    },
     VoiceState {
         server: String,
         channel_id: i64,
@@ -1472,6 +1477,11 @@ fn wants(
             username: _,
             online: _,
         } => in_server(server),
+        WsEvent::ReadUpdated {
+            username,
+            scope: _,
+            last_read: _,
+        } => Some(username.as_str()) == me,
         WsEvent::ServerCreated { server } => is_site_admin || server.creator.as_deref() == me,
         WsEvent::ServerRenamed {
             old_name,

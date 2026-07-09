@@ -51,6 +51,14 @@ export default function AppShell() {
     router.replace('/login')
   }, [guestBlocked, router])
 
+  const authExpired = useStore(s => s.authExpired)
+  useEffect(() => {
+    if (!authExpired) return
+    useStore.setState({ authExpired: false })
+    useStore.getState().setError('Your session has ended. Please sign in again.')
+    router.replace('/login')
+  }, [authExpired, router])
+
   useEffect(() => {
     const onPop = () => void useStore.getState().syncFromUrl('none')
     window.addEventListener('popstate', onPop)

@@ -188,10 +188,10 @@ function P2pFile({ media }: { media: MessageMedia }) {
   }
 
   const meta = (
-    <span className="flex items-center gap-1.5 text-xs text-on-surface-variant">
+    <span className="flex items-center gap-2 text-xs text-on-surface-variant">
       <span
         title="Hosted peer-to-peer from the sender's browser"
-        className="flex items-center gap-0.5 rounded bg-tertiary-container px-1 py-0.5 font-medium text-on-tertiary-container"
+        className="flex items-center gap-1 rounded bg-tertiary-container px-1.5 py-0.5 font-medium text-on-tertiary-container"
       >
         <Share2 size={10} />
         P2P

@@ -100,6 +100,10 @@ export default function MemberSidebar() {
         danger: true,
         action: () => openDialog({ kind: 'ban_confirm', username: m.username }),
       })
+    items.push({
+      label: 'Copy User ID',
+      action: () => void navigator.clipboard.writeText(m.username),
+    })
     return items
   }
 
@@ -167,6 +171,10 @@ export default function MemberSidebar() {
                       {
                         label: u.username === me.username ? 'Message Yourself' : 'Direct Message',
                         action: () => void startDm(u.username),
+                      },
+                      {
+                        label: 'Copy User ID',
+                        action: () => void navigator.clipboard.writeText(u.username),
                       },
                     ])
                   )

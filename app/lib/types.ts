@@ -154,6 +154,12 @@ export interface AdminOverview {
   user_count: number
 }
 
+export interface Unread {
+  scope: string
+  last_read: number
+  latest: number
+}
+
 interface Scoped {
   server: string | null
   channel_id: number | null
@@ -219,6 +225,7 @@ export type WsEvent =
   | { type: 'user_updated'; user: UserRef }
   | { type: 'user_registered'; user: UserRef }
   | { type: 'presence_changed'; server: string; username: string; online: boolean }
+  | { type: 'read_updated'; username: string; scope: string; last_read: number }
   | { type: 'voice_state'; server: string; channel_id: number; users: string[] }
   | {
       type: 'call_state'

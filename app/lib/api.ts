@@ -15,6 +15,7 @@ import type {
   ServerMatch,
   ServerSummaryLite,
   SiteSettings,
+  Unread,
   UserRef,
 } from './types'
 
@@ -212,6 +213,10 @@ export const search = (params: SearchParams) => {
   }
   return req<SearchResult[]>('GET', `/search?${qs.toString()}`)
 }
+
+export const getUnreads = () => req<{ items: Unread[] }>('GET', '/unreads')
+export const postRead = (scope: string, last_read: number) =>
+  req<void>('POST', '/read', { scope, last_read })
 
 export const uploadMedia = (file: File) => {
   const form = new FormData()

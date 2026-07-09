@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Mic,
   MicOff,
@@ -11,6 +11,7 @@ import {
   Video,
   VideoOff,
   Volume2,
+  X,
 } from 'lucide-react'
 import { rtc } from '../lib/rtc'
 import { p2p } from '../lib/p2p'
@@ -55,6 +56,7 @@ function Tile({
   mirror = false,
   muteAudio = false,
   pending = false,
+  onExpand,
 }: {
   user: UserRef
   stream: MediaStream | null
@@ -64,12 +66,15 @@ function Tile({
   mirror?: boolean
   muteAudio?: boolean
   pending?: boolean
+  onExpand?: (stream: MediaStream, mirror: boolean) => void
 }) {
+  const expandable = hasVideo && !!stream && !!onExpand
   return (
     <div
+      onClick={hasVideo && stream && onExpand ? () => onExpand(stream, mirror) : undefined}
       className={`relative flex aspect-video items-center justify-center overflow-hidden rounded-2xl bg-surface-container transition-shadow ${
         speaking ? 'ring-2 ring-green-500' : ''
-      }`}
+      } ${expandable ? 'cursor-pointer hover:ring-2 hover:ring-primary hover:brightness-110' : ''}`}
     >
       {stream && (
         <VideoView stream={stream} hidden={!hasVideo} mirror={mirror} muteAudio={muteAudio} />
@@ -157,6 +162,8 @@ export function VoiceDock() {
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
   const me = useStore(s => s.me)
+  const openChannel = useStore(s => s.openChannel)
+  const openDm = useStore(s => s.openDm)
   const p2pCall = !voice && call?.kind === 'p2p'
   if ((p2pCall ? !p2p.mediaActive() : !rtc.active()) || (!voice && !call)) return null
   const label = voice
@@ -166,10 +173,17 @@ export function VoiceDock() {
       'call')
   return (
     <div className="shrink-0 border-t border-outline-variant bg-surface-container">
-      <p className="flex items-center gap-1 truncate px-3 pt-2 text-xs font-medium text-primary">
+      <button
+        title={`Go to ${label}`}
+        onClick={() => {
+          if (voice) openChannel(voice.server, voice.channelId)
+          else if (call) openDm(call.dmId)
+        }}
+        className="flex w-full items-center gap-1 px-3 py-2 text-left text-xs font-medium text-primary hover:underline"
+      >
         <Volume2 size={12} className="shrink-0" />
-        <span className="streamer truncate">{label}</span>
-      </p>
+        <span className="streamer truncate leading-none">{label}</span>
+      </button>
       <VoiceControls />
     </div>
   )
@@ -204,82 +218,118 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
     forDm?.state === 'ringing' ? forDm.dmUsers.find(u => u !== me?.username) : undefined
   const state = useStore.getState()
 
+  const [expanded, setExpanded] = useState<{ stream: MediaStream; mirror: boolean } | null>(null)
+  const onExpand = (stream: MediaStream, mirror: boolean) => setExpanded({ stream, mirror })
+  useEffect(() => {
+    if (!expanded) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpanded(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [expanded])
+
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col">
-      <div className="grid flex-1 auto-rows-min content-center gap-3 overflow-y-auto p-4 sm:grid-cols-2">
-        {users.map(u => {
-          const user = userRefFor(state, u)
-          if (joined && u === me?.username)
+    <>
+      <div className="flex min-h-0 w-full flex-1 flex-col">
+        <div className="grid flex-1 auto-rows-min content-center gap-3 overflow-y-auto p-4 sm:grid-cols-2">
+          {users.map(u => {
+            const user = userRefFor(state, u)
+            if (joined && u === me?.username)
+              return (
+                <Tile
+                  key={u}
+                  user={user}
+                  stream={p2pKind ? p2p.local : rtc.local}
+                  hasVideo={p2pKind ? p2p.camOn || p2p.shareOn : rtc.videoTrack !== null}
+                  muted={p2pKind ? p2p.muted : rtc.muted}
+                  speaking={p2pKind ? p2p.localSpeaking : rtc.isSpeaking(u)}
+                  mirror={
+                    p2pKind ? p2p.camOn && !p2p.shareOn : rtc.videoTrack !== null && !rtc.sharing
+                  }
+                  muteAudio
+                  onExpand={onExpand}
+                />
+              )
+            if (p2pKind)
+              return (
+                <Tile
+                  key={u}
+                  user={user}
+                  stream={joined ? p2p.remote : null}
+                  hasVideo={joined && p2p.remoteCamOn}
+                  muted={false}
+                  speaking={joined && p2p.remoteSpeaking}
+                  onExpand={onExpand}
+                />
+              )
+            const peer = joined ? rtc.peer(u) : undefined
             return (
               <Tile
                 key={u}
                 user={user}
-                stream={p2pKind ? p2p.local : rtc.local}
-                hasVideo={p2pKind ? p2p.camOn || p2p.shareOn : rtc.videoTrack !== null}
-                muted={p2pKind ? p2p.muted : rtc.muted}
-                speaking={p2pKind ? p2p.localSpeaking : rtc.isSpeaking(u)}
-                mirror={
-                  p2pKind ? p2p.camOn && !p2p.shareOn : rtc.videoTrack !== null && !rtc.sharing
-                }
-                muteAudio
+                stream={peer?.stream ?? null}
+                hasVideo={peer?.camOn ?? false}
+                muted={peer?.muted ?? false}
+                speaking={joined && rtc.isSpeaking(u)}
+                onExpand={onExpand}
               />
             )
-          if (p2pKind)
-            return (
-              <Tile
-                key={u}
-                user={user}
-                stream={joined ? p2p.remote : null}
-                hasVideo={joined && p2p.remoteCamOn}
-                muted={false}
-                speaking={joined && p2p.remoteSpeaking}
-              />
-            )
-          const peer = joined ? rtc.peer(u) : undefined
-          return (
+          })}
+          {pendingOther && (
             <Tile
-              key={u}
-              user={user}
-              stream={peer?.stream ?? null}
-              hasVideo={peer?.camOn ?? false}
-              muted={peer?.muted ?? false}
-              speaking={joined && rtc.isSpeaking(u)}
+              key={pendingOther}
+              user={userRefFor(state, pendingOther)}
+              stream={null}
+              hasVideo={false}
+              muted={false}
+              pending
             />
+          )}
+          {users.length === 0 && !pendingOther && (
+            <p className="col-span-full text-center text-sm text-on-surface-variant">
+              No one is in voice yet
+            </p>
+          )}
+        </div>
+        {joined ? (
+          <VoiceControls />
+        ) : (
+          channelId !== undefined && (
+            <div className="flex shrink-0 justify-center border-t border-outline-variant p-3">
+              <button
+                onClick={() => {
+                  if (view?.kind === 'channel') void joinVoice(view.server, channelId)
+                }}
+                className="rounded-full bg-primary px-5 py-2 text-sm font-medium text-on-primary hover:opacity-90"
+              >
+                Join voice
+              </button>
+            </div>
           )
-        })}
-        {pendingOther && (
-          <Tile
-            key={pendingOther}
-            user={userRefFor(state, pendingOther)}
-            stream={null}
-            hasVideo={false}
-            muted={false}
-            pending
-          />
-        )}
-        {users.length === 0 && !pendingOther && (
-          <p className="col-span-full text-center text-sm text-on-surface-variant">
-            No one is in voice yet
-          </p>
         )}
       </div>
-      {joined ? (
-        <VoiceControls />
-      ) : (
-        channelId !== undefined && (
-          <div className="flex shrink-0 justify-center border-t border-outline-variant p-3">
-            <button
-              onClick={() => {
-                if (view?.kind === 'channel') void joinVoice(view.server, channelId)
-              }}
-              className="rounded-full bg-primary px-5 py-2 text-sm font-medium text-on-primary hover:opacity-90"
-            >
-              Join voice
-            </button>
+      {expanded && (
+        <div
+          onClick={() => setExpanded(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/80 p-4"
+        >
+          <button
+            title="Close"
+            onClick={() => setExpanded(null)}
+            className="absolute top-4 right-4 rounded-full bg-surface-container-high p-2 text-on-surface hover:bg-surface-container-highest"
+          >
+            <X size={20} />
+          </button>
+          <div
+            onClick={e => e.stopPropagation()}
+            className="relative aspect-video max-h-full w-full max-w-5xl overflow-hidden rounded-2xl bg-surface-container"
+          >
+            <VideoView stream={expanded.stream} hidden={false} mirror={expanded.mirror} muteAudio />
           </div>
-        )
+        </div>
       )}
-    </div>
+    </>
   )
 }
 

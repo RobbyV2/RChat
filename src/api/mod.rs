@@ -488,6 +488,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
             get(messages::thread_messages).post(messages::send_thread_message),
         )
         .route("/search", get(messages::search))
+        .route("/unreads", get(messages::unreads))
+        .route("/read", post(messages::mark_read))
         .route("/media/{id}", get(media::download_media))
         .route("/settings", get(admin::get_settings))
         .route("/admin/settings", patch(admin::patch_settings))

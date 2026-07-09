@@ -29,6 +29,7 @@ class WsClient {
   private stopped = true
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private degradedTimer: ReturnType<typeof setInterval> | null = null
+  private connectTimer: ReturnType<typeof setTimeout> | null = null
 
   onEvent: (ev: WsEvent) => void = () => {}
   onStatus: (status: WsStatus) => void = () => {}
@@ -45,13 +46,26 @@ class WsClient {
     this.stopped = true
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     if (this.degradedTimer) clearInterval(this.degradedTimer)
+    if (this.connectTimer) clearTimeout(this.connectTimer)
     this.reconnectTimer = null
     this.degradedTimer = null
+    this.connectTimer = null
     const ws = this.ws
     this.ws = null
     ws?.close()
     this.subs.clear()
     this.viewing = null
+  }
+
+  ensureConnected() {
+    if (this.stopped) return
+    const rs = this.ws?.readyState
+    if (rs === WebSocket.OPEN || rs === WebSocket.CONNECTING) return
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+    this.connect()
   }
 
   setViewing(server: string | null) {
@@ -90,7 +104,12 @@ class WsClient {
     if (this.stopped) return
     const ws = new WebSocket(wsUrl())
     this.ws = ws
+    this.connectTimer = setTimeout(() => {
+      if (this.ws === ws && ws.readyState !== WebSocket.OPEN) ws.close()
+    }, 5_000)
     ws.onopen = () => {
+      if (this.connectTimer) clearTimeout(this.connectTimer)
+      this.connectTimer = null
       if (this.degradedTimer) clearInterval(this.degradedTimer)
       this.degradedTimer = null
       this.send({ type: 'auth', token: this.token })
@@ -106,6 +125,8 @@ class WsClient {
       }
     }
     ws.onclose = () => {
+      if (this.connectTimer) clearTimeout(this.connectTimer)
+      this.connectTimer = null
       if (this.ws !== ws || this.stopped) return
       this.dropped()
     }

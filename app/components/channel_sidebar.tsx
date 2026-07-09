@@ -6,6 +6,7 @@ import { myPerms, serverAdminPerms, userRefFor, useStore } from '../lib/store'
 import { rtc } from '../lib/rtc'
 import { Perm, hasPerm, type Channel, type ChannelKind } from '../lib/types'
 import { UserAvatar } from './user_avatar'
+import { longPress } from './context_menu'
 import { VoiceDock } from './voice_grid'
 
 type Editing = { mode: 'create'; kind: ChannelKind } | { mode: 'rename'; id: number }
@@ -20,6 +21,8 @@ export function ChannelSidebar() {
   )
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
+  const openDm = useStore(s => s.openDm)
+  const startDm = useStore(s => s.startDm)
   const openChannel = useStore(s => s.openChannel)
   const openDialog = useStore(s => s.openDialog)
   const openContextMenu = useStore(s => s.openContextMenu)
@@ -29,40 +32,103 @@ export function ChannelSidebar() {
   const joinVoice = useStore(s => s.joinVoice)
   const voiceUsers = useStore(s => s.voiceUsers)
   const voice = useStore(s => s.voice)
+  const reads = useStore(s => s.reads)
+  const unread = (scope: string) => {
+    const r = reads[scope]
+    return !!r && r.latest > r.lastRead
+  }
   useStore(s => s.rtcTick)
   useStore(s => s.members)
   useStore(s => s.me)
   const [editing, setEditing] = useState<Editing | null>(null)
   const [name, setName] = useState('')
+  const [dmInput, setDmInput] = useState<string | null>(null)
 
   if (view?.kind === 'dm') {
-    const dm = dms.find(d => d.id === view.dmId)
+    const sortedDms = [...dms].sort((a, b) => Number(b.is_self) - Number(a.is_self))
+    const submitDm = () => {
+      const target = (dmInput ?? '').trim().toLowerCase()
+      setDmInput(null)
+      if (target) void startDm(target)
+    }
     return (
       <aside className={base}>
-        <header className="flex h-14 items-center gap-2 border-b border-outline-variant px-4">
-          {dm && (
-            <>
-              <UserAvatar
-                username={dm.other.username}
-                avatarKind={dm.other.avatar_kind}
-                avatarColor={dm.other.avatar_color}
-                size={28}
-              />
-              <span className="streamer truncate font-medium">{dm.other.display_name}</span>
-              {dm.is_self && (
-                <span className="shrink-0 rounded-full bg-secondary-container px-2 py-0.5 text-xs text-on-secondary-container">
-                  yourself
-                </span>
-              )}
-            </>
-          )}
-        </header>
-        <p className="px-4 py-3 text-xs text-on-surface-variant">
-          {dm?.is_self ? 'Your personal space. Only you can see these messages.' : 'Direct message'}
-        </p>
-        <div className="mt-auto">
-          <VoiceDock />
+        <div className="flex items-center justify-between px-4 pt-3 pb-1">
+          <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+            Direct Messages
+          </span>
+          <button
+            title="New direct message"
+            onClick={() => setDmInput('')}
+            className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+          >
+            <Plus size={16} />
+          </button>
         </div>
+        {dmInput !== null && (
+          <input
+            autoFocus
+            value={dmInput}
+            onChange={e => setDmInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') submitDm()
+              if (e.key === 'Escape') setDmInput(null)
+            }}
+            onBlur={submitDm}
+            placeholder="username"
+            className="mx-2 my-0.5 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-sm outline-none"
+          />
+        )}
+        <div className="flex flex-1 flex-col overflow-y-auto pb-3">
+          {sortedDms.map(dm => {
+            const { id, other, is_self } = dm
+            const active = view.dmId === id
+            return (
+              <button
+                key={id}
+                onClick={() => void openDm(id)}
+                {...longPress((x, y) =>
+                  openContextMenu(x, y, [
+                    {
+                      label: 'Copy DM ID',
+                      action: () => void navigator.clipboard.writeText(String(id)),
+                    },
+                    {
+                      label: 'Copy User ID',
+                      action: () => void navigator.clipboard.writeText(other.username),
+                    },
+                  ])
+                )}
+                className={`mx-2 flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
+                  active
+                    ? 'bg-secondary-container text-on-secondary-container'
+                    : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
+                }`}
+              >
+                <UserAvatar
+                  username={other.username}
+                  avatarKind={other.avatar_kind}
+                  avatarColor={other.avatar_color}
+                  size={28}
+                />
+                <span className="streamer truncate">{other.display_name}</span>
+                {unread(`d${id}`) && (
+                  <span
+                    title="Unread"
+                    aria-hidden
+                    className="h-2 w-2 shrink-0 rounded-full bg-error"
+                  />
+                )}
+                {is_self && (
+                  <span className="ml-auto shrink-0 rounded-full bg-secondary-container px-2 py-0.5 text-xs text-on-secondary-container">
+                    you
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+        <VoiceDock />
       </aside>
     )
   }
@@ -96,20 +162,27 @@ export function ChannelSidebar() {
   const voiceChannels = detail.channels.filter(c => c.kind === 'voice')
 
   const channelMenu = (c: Channel) => (e: MouseEvent<HTMLButtonElement>) => {
-    if (!canManage) return
     e.preventDefault()
     openContextMenu(e.clientX, e.clientY, [
       {
-        label: 'Rename Channel',
-        action: () => startEdit({ mode: 'rename', id: c.id }, c.name),
+        label: 'Copy Channel ID',
+        action: () => void navigator.clipboard.writeText(String(c.id)),
       },
-      ...(detail.channels.length > 1
+      ...(canManage
         ? [
             {
-              label: 'Delete Channel',
-              danger: true,
-              action: () => void deleteChannel(c.id),
+              label: 'Rename Channel',
+              action: () => startEdit({ mode: 'rename', id: c.id }, c.name),
             },
+            ...(detail.channels.length > 1
+              ? [
+                  {
+                    label: 'Delete Channel',
+                    danger: true,
+                    action: () => void deleteChannel(c.id),
+                  },
+                ]
+              : []),
           ]
         : []),
     ])
@@ -181,6 +254,13 @@ export function ChannelSidebar() {
             >
               <Hash size={16} className="shrink-0" />
               <span className="truncate">{c.name}</span>
+              {unread(`c${c.id}`) && (
+                <span
+                  title="Unread"
+                  aria-hidden
+                  className="ml-auto h-2 w-2 shrink-0 rounded-full bg-error"
+                />
+              )}
             </button>
           )
         )}

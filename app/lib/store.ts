@@ -205,6 +205,10 @@ interface RChatState {
   view: View | null
   messages: Record<string, Message[]>
   outbox: Record<string, Outgoing[]>
+  reads: Record<string, { lastRead: number; latest: number }>
+  unreadAnchor: Record<string, number>
+  atBottom: boolean
+  authExpired: boolean
   wsStatus: WsStatus
   theme: Theme
   streamer: boolean
@@ -234,6 +238,8 @@ interface RChatState {
   openDm: (dmId: number, nav?: Nav) => Promise<void>
   startDm: (username: string) => Promise<void>
   sendMessage: (content: string, p2pExpiresIn?: number | null) => void
+  markRead: (scope: string, messageId: number) => void
+  setAtBottom: (v: boolean) => void
   retryOutgoing: (key: string, tempId: number) => void
   cancelOutgoing: (key: string, tempId: number) => void
   loadOlder: () => Promise<void>
@@ -329,6 +335,16 @@ export const myPerms = (s: RChatState, server: string): number =>
 export const roleColor = (roles: Role[] | undefined, roleIds: number[]): string | undefined =>
   roles?.find(r => roleIds.includes(r.id))?.color
 
+export const isUnread = (s: RChatState, scope: string): boolean => {
+  const r = s.reads[scope]
+  return !!r && r.latest > r.lastRead
+}
+
+export const serverUnread = (s: RChatState, name: string): boolean =>
+  (s.servers[name]?.channels ?? []).some(c => c.kind === 'text' && isUnread(s, `c${c.id}`))
+
+export const dmsUnread = (s: RChatState): boolean => s.dms.some(d => isUnread(s, `d${d.id}`))
+
 export const userRefFor = (s: RChatState, username: string): UserRef => {
   if (s.me?.username === username) return s.me
   const dm = s.dms.find(d => d.other.username === username)
@@ -378,11 +394,20 @@ export const useStore = create<RChatState>()((set, get) => {
     }
   }
 
+  const expireSession = () => {
+    if (get().authExpired) return
+    get().logout()
+    set({ authExpired: true })
+  }
+
   const refetchMe = () =>
     api
       .me()
       .then(me => set({ me, dms: me.dms }))
-      .catch(fail)
+      .catch(e => {
+        if (e instanceof api.ApiError && e.status === 401) expireSession()
+        else fail(e)
+      })
 
   const refreshView = async () => {
     const { view } = get()
@@ -457,6 +482,18 @@ export const useStore = create<RChatState>()((set, get) => {
     else rtc.leave()
   }
 
+  const loadUnreads = () =>
+    api
+      .getUnreads()
+      .then(({ items }) =>
+        set({
+          reads: Object.fromEntries(
+            items.map(i => [i.scope, { lastRead: i.last_read, latest: i.latest }])
+          ),
+        })
+      )
+      .catch(() => {})
+
   const startWs = () => {
     wsClient.onEvent = ev => get().applyWsEvent(ev)
     wsClient.onStatus = wsStatus => {
@@ -464,7 +501,10 @@ export const useStore = create<RChatState>()((set, get) => {
       if (wsStatus !== 'green' && (get().voice || get().call)) endRtc()
       if (wsStatus === 'green') {
         set({ p2pAvailability: {}, voiceUsers: {} })
-        if (get().me) p2p.announce()
+        if (get().me) {
+          p2p.announce()
+          void refetchMe()
+        }
         const { view } = get()
         if (view) askP2p(get().messages[viewKey(view)] ?? [])
       }
@@ -476,6 +516,7 @@ export const useStore = create<RChatState>()((set, get) => {
     }
     wsClient.start(get().token)
     p2p.ensurePurge()
+    if (get().me) void loadUnreads()
     if (get().guest) wsClient.subscribe(get().guestServers)
   }
 
@@ -558,7 +599,7 @@ export const useStore = create<RChatState>()((set, get) => {
     setTokenCookie(res.token)
     localStorage.removeItem(LS.guest)
     api.setToken(res.token)
-    set({ token: res.token, me: res.user, dms: res.user.dms, guest: false })
+    set({ token: res.token, me: res.user, dms: res.user.dms, guest: false, authExpired: false })
     startWs()
   }
 
@@ -768,6 +809,7 @@ export const useStore = create<RChatState>()((set, get) => {
           outbox: dropOutgoing(s.outbox, key, head.tempId),
           messages: { ...s.messages, [key]: merge(s.messages[key] ?? [], [real]) },
         }))
+        if (key[0] !== 't') get().markRead(key, real.id)
       }
     } finally {
       draining.delete(key)
@@ -799,6 +841,10 @@ export const useStore = create<RChatState>()((set, get) => {
     view: null,
     messages: {},
     outbox: {},
+    reads: {},
+    unreadAnchor: {},
+    atBottom: true,
+    authExpired: false,
     wsStatus: 'red',
     theme: 'dark',
     streamer: false,
@@ -864,11 +910,8 @@ export const useStore = create<RChatState>()((set, get) => {
           startWs()
           await resolveUrl('replace')
         } catch (e) {
-          localStorage.removeItem(LS.token)
-          setTokenCookie(null)
-          api.setToken(null)
-          set({ token: null })
           fail(e)
+          expireSession()
         }
       } else if (guest) {
         const storedGrants = localStorage.getItem(LS.guestGrants)
@@ -912,6 +955,9 @@ export const useStore = create<RChatState>()((set, get) => {
         view: null,
         messages: {},
         outbox: {},
+        reads: {},
+        unreadAnchor: {},
+        atBottom: true,
         p2pAvailability: {},
         wsStatus: 'red',
         contextMenu: null,
@@ -960,7 +1006,14 @@ export const useStore = create<RChatState>()((set, get) => {
     openChannel: (server, channelId, nav = 'push') =>
       act(async () => {
         const view: View = { kind: 'channel', server, channelId }
-        set({ view })
+        set(s => ({
+          view,
+          atBottom: true,
+          unreadAnchor: {
+            ...s.unreadAnchor,
+            [`c${channelId}`]: s.reads[`c${channelId}`]?.lastRead ?? 0,
+          },
+        }))
         syncUrl(view, nav)
         get().setViewing(server)
         const kind = get().servers[server]?.channels.find(c => c.id === channelId)?.kind
@@ -973,7 +1026,11 @@ export const useStore = create<RChatState>()((set, get) => {
     openDm: (dmId, nav = 'push') =>
       act(async () => {
         const view: View = { kind: 'dm', dmId }
-        set({ view })
+        set(s => ({
+          view,
+          atBottom: true,
+          unreadAnchor: { ...s.unreadAnchor, [`d${dmId}`]: s.reads[`d${dmId}`]?.lastRead ?? 0 },
+        }))
         syncUrl(view, nav)
         get().setViewing(null)
         const msgs = await api.dmMessages(dmId)
@@ -992,6 +1049,7 @@ export const useStore = create<RChatState>()((set, get) => {
       const { view, pending, me } = get()
       if (!view || !me) return
       if (!content.trim() && !pending) return
+      wsClient.ensureConnected()
       const key = viewKey(view)
       const tempId = OPT_BASE + ++optSeq
       set({ pending: null })
@@ -1019,6 +1077,25 @@ export const useStore = create<RChatState>()((set, get) => {
             : api.sendDmMessage(view.dmId, content, opts),
       })
     },
+
+    markRead: (scope, messageId) => {
+      const cur = get().reads[scope]
+      if (cur && messageId <= cur.lastRead) return
+      set(s => {
+        const prev = s.reads[scope] ?? { lastRead: 0, latest: messageId }
+        const lastRead = Math.max(prev.lastRead, messageId)
+        return {
+          reads: {
+            ...s.reads,
+            [scope]: { lastRead, latest: Math.max(prev.latest, messageId) },
+          },
+          unreadAnchor: { ...s.unreadAnchor, [scope]: lastRead },
+        }
+      })
+      void api.postRead(scope, messageId).catch(() => {})
+    },
+
+    setAtBottom: v => set({ atBottom: v }),
 
     retryOutgoing: (key, tempId) => {
       patchOutgoing(key, tempId, 'queued')
@@ -1296,6 +1373,7 @@ export const useStore = create<RChatState>()((set, get) => {
       act(async () => {
         const { me, guest, voice } = get()
         if (guest || !me) throw new Error('Create an account to join voice')
+        wsClient.ensureConnected()
         await get().openChannel(server, channelId)
         if (voice?.channelId === channelId) return
         p2p.endMedia()
@@ -1482,6 +1560,25 @@ export const useStore = create<RChatState>()((set, get) => {
             }
           }
           askP2p([m])
+          if (rootId === null) {
+            const scope = messageKey(m.channel_id, m.dm_id)
+            if (scope) {
+              const meNow = get().me
+              const mine = meNow?.username === m.author.username
+              const viewNow = get().view
+              const viewingScope = viewNow ? viewKey(viewNow) : null
+              set(s => {
+                const prev = s.reads[scope] ?? { lastRead: 0, latest: 0 }
+                return {
+                  reads: {
+                    ...s.reads,
+                    [scope]: { lastRead: prev.lastRead, latest: Math.max(prev.latest, m.id) },
+                  },
+                }
+              })
+              if (mine || (scope === viewingScope && get().atBottom)) get().markRead(scope, m.id)
+            }
+          }
           const { me, view, panel } = get()
           if (!me || m.author.username === me.username) return
           const { server, channel_id, dm_id } = ev
@@ -1802,6 +1899,24 @@ export const useStore = create<RChatState>()((set, get) => {
           )
           return
         }
+        case 'read_updated': {
+          if (get().me?.username !== ev.username) return
+          set(s => {
+            const prev = s.reads[ev.scope] ?? { lastRead: 0, latest: ev.last_read }
+            const lastRead = Math.max(prev.lastRead, ev.last_read)
+            return {
+              reads: {
+                ...s.reads,
+                [ev.scope]: { lastRead, latest: Math.max(prev.latest, ev.last_read) },
+              },
+              unreadAnchor: {
+                ...s.unreadAnchor,
+                [ev.scope]: Math.max(s.unreadAnchor[ev.scope] ?? 0, lastRead),
+              },
+            }
+          })
+          return
+        }
         case 'voice_state': {
           set(s => {
             const voiceUsers = { ...s.voiceUsers }
@@ -1911,7 +2026,7 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         case 'banned': {
           if (get().me?.username === ev.username) {
-            get().logout()
+            expireSession()
             return
           }
           set(s => ({

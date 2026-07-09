@@ -24,6 +24,20 @@ const isStandalone = () =>
   window.matchMedia('(display-mode: standalone)').matches ||
   (navigator as { standalone?: boolean }).standalone === true
 
+let reloading = false
+const trackUpdate = (reg: ServiceWorkerRegistration) => {
+  reg.addEventListener('updatefound', () => {
+    const next = reg.installing
+    if (!next) return
+    next.addEventListener('statechange', () => {
+      if (next.state === 'activated' && navigator.serviceWorker.controller && !reloading) {
+        reloading = true
+        window.location.reload()
+      }
+    })
+  })
+}
+
 export function InstallButton({ compact = false }: { compact?: boolean }) {
   const prompt = useSyncExternalStore(
     subscribe,
@@ -72,7 +86,13 @@ export default function PwaRegister() {
     }
     window.addEventListener('beforeinstallprompt', onPrompt)
     if (process.env.NODE_ENV === 'production' && 'serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => undefined)
+      navigator.serviceWorker
+        .register('/sw.js')
+        .then(reg => {
+          trackUpdate(reg)
+          void reg.update()
+        })
+        .catch(() => undefined)
     }
     return () => window.removeEventListener('beforeinstallprompt', onPrompt)
   }, [])

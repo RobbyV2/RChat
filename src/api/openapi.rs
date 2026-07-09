@@ -63,6 +63,8 @@ impl Modify for Bearer {
         super::messages::send_dm_message,
         super::messages::delete_message,
         super::messages::search,
+        super::messages::unreads,
+        super::messages::mark_read,
         super::embeds::delete_embed,
         super::dms::list_dms,
         super::dms::open_dm,
