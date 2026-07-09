@@ -63,7 +63,7 @@ export default function MemberSidebar() {
     const self = m.username === me.username
     const items: ContextMenuItem[] = [
       {
-        label: self ? 'Message Yourself' : 'Direct Message',
+        label: 'Direct Message',
         action: () => void startDm(m.username),
       },
     ]
@@ -169,7 +169,7 @@ export default function MemberSidebar() {
                 ? longPress((x, y) =>
                     openContextMenu(x, y, [
                       {
-                        label: u.username === me.username ? 'Message Yourself' : 'Direct Message',
+                        label: 'Direct Message',
                         action: () => void startDm(u.username),
                       },
                       {
