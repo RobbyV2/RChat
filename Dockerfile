@@ -59,7 +59,7 @@ COPY --from=rust-builder /app/target/release/server /app/server
 
 EXPOSE 3000 9001
 
-RUN printf '#!/bin/sh\nset -e\n\nexport HOSTNAME="${HOST:-0.0.0.0}"\n\n(cd /app/peer && exec bunx peer --port "${PEERJS_PORT:-9001}" --path /peerjs) &\nPEER_PID=$!\n\nif [ "$APP_MODE" = "api-only" ]; then\n    trap "kill $PEER_PID 2>/dev/null; exit" TERM INT\n    ./server\n    kill $PEER_PID 2>/dev/null\n    exit\nfi\n\nbun server.js &\nNEXT_PID=$!\ntrap "kill $NEXT_PID $PEER_PID 2>/dev/null; exit" TERM INT\nsleep 1\n./server\nkill $NEXT_PID $PEER_PID 2>/dev/null\n' > /app/start.sh && chmod +x /app/start.sh
+RUN printf '#!/bin/sh\nset -e\n\nexport HOSTNAME="${HOST:-0.0.0.0}"\n\n(cd /app/peer && bunx peer --port "${PEERJS_PORT:-9001}" --path /peerjs 2>&1 | { case "${RUST_LOG:-info}" in *debug*|*trace*) cat ;; *) grep --line-buffered -vE "Client (dis)?connected:" ;; esac; }) &\nPEER_PID=$!\n\nif [ "$APP_MODE" = "api-only" ]; then\n    trap "kill $PEER_PID 2>/dev/null; exit" TERM INT\n    ./server\n    kill $PEER_PID 2>/dev/null\n    exit\nfi\n\nbun server.js &\nNEXT_PID=$!\ntrap "kill $NEXT_PID $PEER_PID 2>/dev/null; exit" TERM INT\nsleep 1\n./server\nkill $NEXT_PID $PEER_PID 2>/dev/null\n' > /app/start.sh && chmod +x /app/start.sh
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:3000/api/settings || exit 1
