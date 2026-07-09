@@ -23,3 +23,7 @@ yarn.lock
 next-env.d.ts
 *.tsbuildinfo
 
+# Local scratch
+.remember
+temp
+

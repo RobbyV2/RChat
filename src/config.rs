@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use s3::creds::Credentials;
+use s3::{Bucket, Region};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -19,6 +21,11 @@ pub struct AppConfig {
     pub database_url: Option<String>,
     pub rate_limit_per_second: u64,
     pub rate_limit_burst: u32,
+    pub s3_endpoint: Option<String>,
+    pub s3_bucket: Option<String>,
+    pub s3_access_key: Option<String>,
+    pub s3_secret_key: Option<String>,
+    pub s3_region: Option<String>,
 }
 
 impl AppConfig {
@@ -28,8 +35,8 @@ impl AppConfig {
             .set_default("host", "127.0.0.1")?
             .set_default("server_port", 3000_i64)?
             .set_default("port", 3001_i64)?
-            .set_default("rate_limit_per_second", 2_i64)?
-            .set_default("rate_limit_burst", 10_i64)?
+            .set_default("rate_limit_per_second", 10_i64)?
+            .set_default("rate_limit_burst", 60_i64)?
             .add_source(config::Environment::default());
 
         if let Some(ref host) = cli.host {
@@ -43,6 +50,30 @@ impl AppConfig {
         }
 
         Ok(builder.build()?.try_deserialize()?)
+    }
+
+    pub fn s3(&self) -> anyhow::Result<Option<Arc<Bucket>>> {
+        match (
+            &self.s3_endpoint,
+            &self.s3_bucket,
+            &self.s3_access_key,
+            &self.s3_secret_key,
+        ) {
+            (Some(endpoint), Some(bucket), Some(access), Some(secret)) => {
+                let region = Region::Custom {
+                    region: self.s3_region.clone().unwrap_or_else(|| "us-east-1".into()),
+                    endpoint: endpoint.clone(),
+                };
+                let creds = Credentials::new(Some(access), Some(secret), None, None, None)?;
+                Ok(Some(Arc::from(
+                    Bucket::new(bucket, region, creds)?.with_path_style(),
+                )))
+            }
+            (None, None, None, None) => Ok(None),
+            _ => anyhow::bail!(
+                "S3 requires all of S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY"
+            ),
+        }
     }
 
     pub fn addr(&self) -> String {

@@ -7,3 +7,7 @@ test:
 # Run WASM tests
 test-wasm:
   cd {{ROOT}} && wasm-pack test --headless --chrome wasm
+
+# Run frontend unit tests
+test-ui:
+  cd {{ROOT}} && bun test app

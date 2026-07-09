@@ -1,293 +1,83 @@
-# rust-next
+<p align="center">
+  <img src="assets/rchat_logo.png" alt="RChat" width="440">
+</p>
 
-Full-stack template: Rust backend (Axum) + Next.js frontend + Rust WASM.
+<p align="center">
+  <a href="https://github.com/RobbyV2/RChat/actions/workflows/ci.yml"><img src="https://github.com/RobbyV2/RChat/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/RobbyV2/RChat/pkgs/container/rchat"><img src="https://img.shields.io/badge/ghcr-nightly-4f46e5" alt="Nightly image"></a>
+  <img src="https://img.shields.io/badge/Rust-axum-b7410e" alt="Rust">
+  <img src="https://img.shields.io/badge/Next.js-16-black" alt="Next.js">
+  <img src="https://img.shields.io/badge/storage-sqlite%20%7C%20postgres-336791" alt="Storage">
+</p>
 
-Supports multiple deployment modes via a single codebase. Includes OpenAPI/Swagger UI, per-IP rate limiting, and Docker support out of the box.
+# RChat
 
-## Modes
+Anonymous chat with a Discord-style layout and Google Material 3 dark theme. Servers, channels, and direct messages update live over a WebSocket. Everything runs locally; no external APIs, no telemetry, no email.
 
-| Mode               | Description                                                      | Use Case                        |
-| ------------------ | ---------------------------------------------------------------- | ------------------------------- |
-| **full** (default) | Rust server proxies to Next.js. Single entry point on port 3000. | Production apps                 |
-| **api-only**       | Rust API standalone. Next.js runs separately with rewrites.      | Microservices, separate deploys |
-| **static**         | No Rust server. WASM + Next.js only.                             | GitHub Pages, static hosting    |
+## Setup
 
-Set via `APP_MODE` environment variable.
-
-## Quick Start
-
-### Prerequisites
-
-- [Rust](https://rustup.rs/) (latest stable)
-- [Bun](https://bun.sh/) (v1.0+)
-- [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/)
-- [just](https://github.com/casey/just) command runner
-
-### Development
+Prerequisites: Rust (stable), Bun, wasm-pack, and the just command runner.
 
 ```bash
-just src install     # Install all dependencies
-just src dev         # Full-stack dev (Rust + Next.js + WASM)
+cp .env.local.example .env.local
+just src install
+just src dev
 ```
 
-Visit `http://localhost:3000`
+Fill out `.env.local` after renaming; the defaults work as-is for local development. Open http://localhost:3000. The first account registered becomes the hidden site admin.
 
-### Production
+Production: `just src prod`. API-only backend: `just src api`.
+
+## Deployment modes
+
+- Full (default): one Rust server on port 3000 serves `/api` and proxies everything else to the Next.js server. `just src prod`.
+- Split: run the Rust API headless anywhere with `APP_MODE=api-only`, and deploy the frontend as a static site baked with that API's URL. The static bundle talks to the API over CORS and connects its WebSocket to the same host, so the two halves can live on different origins.
 
 ```bash
-just src build-all   # Build everything
-just src prod        # Run production servers
+# on the API host (no UI, serves only /api)
+APP_MODE=api-only just src api
+
+# build the static frontend against that API (outputs to out/)
+just src build-static https://api.your-host.com
+# or preview it locally: just src static https://api.your-host.com
 ```
 
-### Docker
+The static build inlines `NEXT_PUBLIC_API_URL`; every request and the WebSocket target it directly. `out/` is plain files for any static host (an `index.html` copy is written to `404.html` so deep links like `/s/rchat/1/` boot the app). Guest and public-server browsing work cross-origin; authenticated media loaded via `<img>` needs the API on the same site or a public server, since image tags cannot send the bearer token.
+
+Docker (nightly image, published by CI and matching the `nightly` git tag):
 
 ```bash
-just src docker      # Build Docker image
-just src docker-run  # Run with docker compose
+docker run -p 3000:3000 -v rchat-data:/data ghcr.io/robbyv2/rchat:nightly
 ```
 
-Or directly:
-
-```bash
-docker build -t rust-next .
-docker run -p 3000:3000 rust-next
-```
-
-The Docker image uses a multi-stage build with [cargo-chef](https://github.com/LukeMathWalker/cargo-chef) for dependency caching. The runtime image is ~380MB based on `debian:bookworm-slim`. Set `APP_MODE=api-only` to run only the Rust server (no Next.js).
-
-## Project Structure
-
-```
-.
-├── src/
-│   ├── api/              # API route handlers (hello, greet, search, create, env)
-│   │   └── openapi.rs    # OpenAPI spec + Swagger UI
-│   ├── server/           # Routing, rate limiting, and frontend proxy
-│   ├── config.rs         # Hierarchical config (defaults → env → CLI)
-│   └── bin/server.rs     # Main entry point
-├── wasm/
-│   └── src/lib.rs        # Rust WASM exports (greet, add)
-├── app/
-│   ├── lib/
-│   │   ├── api.ts        # Typed API client
-│   │   └── basePath.ts   # Runtime base path detection (GitHub Pages)
-│   ├── wasm/page.tsx     # WASM demo page
-│   ├── page.tsx          # Home page
-│   ├── layout.tsx        # Root layout
-│   └── globals.css       # Tailwind v4 entry
-├── jfiles/               # Justfile modules (build, run, test)
-├── Cargo.toml            # Rust workspace
-├── package.json          # Frontend dependencies
-├── next.config.js        # Next.js config (mode-aware)
-├── Dockerfile            # Multi-stage production build
-├── docker-compose.yml    # Container orchestration
-└── .github/workflows/    # GitHub Pages deployment
-```
+Or `docker compose up` to build locally.
 
 ## Architecture
 
-### Full Mode (default)
+- `src/` is a Rust axum server on port 3000. It serves everything under `/api` and proxies all other paths to the Next.js dev or standalone server on port 3001.
+- `app/` is a Next.js 16 app router frontend with Tailwind 4, zustand for state, react-markdown for message rendering, and lucide-react icons. Material 3 color tokens live as CSS variables in `app/globals.css`.
+- Storage is sqlx over sqlite or postgres, selected by `DATABASE_URL`: a `postgres://` URL uses postgres, anything else is treated as a sqlite file path (WAL mode), default `rchat.db`. Users, tokens, servers, channels, members, messages, and media blobs all live in the database. MongoDB is not supported (no single Rust library covers it alongside SQL backends).
+- `/api/ws` is a broadcast hub. Handlers write to the database, then broadcast typed events (messages, channel and server changes, membership, presence, bans, media removal). Each connection filters events to its member servers, guest subscriptions, and DMs.
+- Presence is per server: a user is online only in the single server they are currently viewing.
+- Rate limiting is per IP via tower_governor across `/api`, with a stricter layer on auth and media routes. A 60 second background task sweeps expired media.
+- Profanity filtering (rustrict) runs server-side on usernames, server display names, channel names, and channel messages. DMs and passwords are exempt.
+- The `wasm/` crate and `jfiles/` recipes are retained template infrastructure.
 
-```
-Browser → Rust (port 3000) → /api/* handled by Axum (rate limited)
-                            → /api/swagger-ui/ → Swagger UI
-                            → /api/openapi.json → OpenAPI spec
-                            → /* proxied to Next.js (port 3001)
-```
+## Deliberate non-industry choices
 
-### API-Only Mode
+These are intentional per the project spec. Site-level protections exist (per-IP rate limits, server-side validation); user-level protections are deliberately loose.
 
-```
-Browser → Next.js (port 3000) → /api/* rewritten to Rust (port 3001)
-```
+- No password rules. Any non-empty password is accepted, including a single character. There is no strength meter and no minimum length.
+- Deterministic word passwords. As an alternative to text passwords, each username maps to a fixed set of 20 words: sha256 of the lowercase username seeds a ChaCha8 RNG that samples the `memorable-wordlist` crate. The user picks 7 of those 20 in order. Anyone can request any username's word set at `GET /api/auth/words/{username}`; the secret is the ordered selection, not the set.
+- Unlimited but throttled logins. There is no attempt cap and no lockout on failures. Per username: attempts must be 3 seconds apart, and more than 1000 attempts in one day lock the account until the next day.
+- Anonymous accounts. No email, no phone, no recovery flow. Usernames accept any characters. A lost password means a lost account.
+- Unencrypted single sqlite file by default. All data, including uploaded file blobs, lives in one unencrypted `.db` file (or a postgres database via `DATABASE_URL`). Anyone with the file has everything.
+- Public identifiers. Lowercased usernames are user IDs. Lowercased server names are server IDs and also the invite codes; knowing a server's name is sufficient to join or view it.
+- Hidden site admins. The first registered account is the site admin. No badge or indicator reveals this anywhere; admin-only routes return 404 rather than 403 to non-admins so the panel's existence stays hidden.
+- One-day media retention. Uploads are capped at 25MB and deleted exactly one day after posting. The message remains and renders a notice that the file was removed.
+- Guest read-only access. A "Skip to RChat" button on the login page enters a guest mode with no account. Guests can view any server by name (their server list is kept in localStorage), receive live updates, and cannot send messages or appear in presence.
+- Non-expiring tokens. Login tokens are random 32-byte values that never expire.
 
-### Static Mode
+## Configuration
 
-```
-Browser → Next.js / Static Export (WASM loaded from /public/wasm/)
-```
-
-## API Documentation
-
-Swagger UI is available at `/api/swagger-ui/` when the server is running. The OpenAPI spec is served at `/api/openapi.json`.
-
-Swagger UI is enabled by default. Disable with:
-
-```env
-SWAGGER_UI=false
-```
-
-All API handlers are annotated with [utoipa](https://github.com/juhaku/utoipa) macros, so the spec stays in sync with the code automatically.
-
-## Rate Limiting
-
-API routes are rate limited per IP using [tower-governor](https://github.com/benwis/tower-governor). Defaults: 10-request burst, replenishing at 2 requests/second.
-
-Configure via environment variables:
-
-```env
-RATE_LIMIT_PER_SECOND=2    # Token replenish rate
-RATE_LIMIT_BURST=10         # Max burst before 429 Too Many Requests
-```
-
-Rate limiting applies only to `/api/*` routes, not the frontend proxy.
-
-## Environment Variables
-
-Copy `.env.example` to `.env.local`:
-
-```env
-APP_MODE=full              # full | api-only
-HOST=127.0.0.1             # Bind address for both servers (0.0.0.0 for remote)
-SERVER_PORT=3000           # Rust server port
-PORT=3001                  # Next.js server port
-RATE_LIMIT_PER_SECOND=2    # Rate limit replenish rate
-RATE_LIMIT_BURST=10        # Rate limit burst size
-SWAGGER_UI=false           # Disable Swagger UI (enabled by default)
-RUST_LOG=info              # Logging level
-```
-
-### CLI Overrides
-
-```bash
-./target/release/server --port 8080 --host 0.0.0.0 --mode api-only
-```
-
-### GitHub Pages
-
-```env
-GITHUB_PAGES=true
-NEXT_PUBLIC_BASE_PATH=/your-repo-name
-```
-
-## Adding API Routes
-
-1. Create `src/api/my_route.rs`:
-
-```rust
-use axum::response::Json;
-use super::ApiResponse;
-
-#[utoipa::path(get, path = "/api/my-route", responses((status = 200, body = ApiResponse)))]
-pub(crate) async fn handler() -> Json<ApiResponse> {
-    Json(ApiResponse { message: "Hello!".into(), data: None })
-}
-```
-
-2. Register in `src/api/mod.rs`:
-
-```rust
-pub(crate) mod my_route;
-
-pub fn routes() -> Router {
-    Router::new()
-        .route("/hello", get(hello::handler))
-        .route("/my-route", get(my_route::handler))  // add here
-        // ...
-}
-```
-
-3. Add to OpenAPI spec in `src/api/openapi.rs`:
-
-```rust
-#[openapi(
-    paths(
-        super::hello::handler,
-        super::my_route::handler,  // add here
-        // ...
-    ),
-    // ...
-)]
-```
-
-4. Call from frontend via `app/lib/api.ts`:
-
-```typescript
-export async function myRoute(): Promise<ApiResponse> {
-  const response = await fetch('/api/my-route')
-  return handleResponse<ApiResponse>(response)
-}
-```
-
-## WASM
-
-Code lives in `wasm/src/lib.rs`. Functions are exported with `#[wasm_bindgen]`.
-
-```bash
-just src build-wasm       # Production build
-just src build-wasm-dev   # Dev build (faster)
-```
-
-The WASM demo page is at `/wasm/`. It uses `basePath` detection for correct asset loading on GitHub Pages.
-
-## Commands
-
-```bash
-# Development
-just src dev              # Full-stack dev (Rust proxy + Next.js + WASM)
-just src dev-static       # Static mode (WASM + Next.js, no Rust server)
-just src api              # Rust API server only
-just src frontend         # Next.js dev server only
-
-# Production
-just src prod             # Build and run full-stack production
-just src build-all        # Build everything
-just src start-prod       # Run production (pre-built)
-
-# Build
-just src build            # Build Rust (release)
-just src build-api        # Build API server binary
-just src build-frontend   # Build Next.js standalone
-just src build-wasm       # Build WASM (release)
-just src build-pages      # Build for GitHub Pages (static export)
-just src check            # Check Rust without building
-
-# Format & Lint
-just src fmt              # Format everything (Rust + TypeScript)
-just src fmt-check        # Check formatting
-just src fmt-rust         # Rust only
-just src fmt-ts           # TypeScript only
-
-# Test
-just src test             # Run Rust tests
-just src test-wasm        # Run WASM tests
-
-# Docker
-just src docker           # Build Docker image
-just src docker-run       # Run with docker compose
-just src docker-up        # Run detached
-just src docker-down      # Stop container
-
-# Maintenance
-just src install          # Install all dependencies
-just src clean            # Clean build artifacts
-```
-
-## Tech Stack
-
-### Backend
-
-- **Axum 0.8** - Web framework with WebSocket support
-- **Tokio** - Async runtime
-- **Tower-HTTP** - CORS, tracing, static file serving
-- **Hyper** - HTTP client for frontend proxying
-- **utoipa 5** - OpenAPI spec generation + Swagger UI
-- **tower-governor** - Per-IP rate limiting (governor-based)
-- **config + clap** - Hierarchical configuration (env → CLI overrides)
-
-### WASM
-
-- **wasm-bindgen** - Rust/JS interoperability
-- **wasm-pack** - Build tooling
-
-### Frontend
-
-- **Next.js 16** - React framework (App Router)
-- **React 19** - UI framework
-- **Tailwind CSS v4** - Utility-first CSS
-- **TypeScript** - Type safety
-
-### Infrastructure
-
-- **Docker** - Multi-stage build with cargo-chef dependency caching
-- **GitHub Actions** - GitHub Pages deployment workflow
+Environment variables, loaded from `.env.local` and `.env` (see `.env.local.example`): `APP_MODE` (full or api-only), `HOST`, `SERVER_PORT`, `PORT`, `DATABASE_URL`, `RATE_LIMIT_PER_SECOND`, `RATE_LIMIT_BURST`, `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION` (optional, default us-east-1; setting the other four S3 vars stores media blobs in the S3-compatible bucket at `media/{id}` instead of the database, path-style so minio works).

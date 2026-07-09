@@ -12,6 +12,7 @@
 
 # production
 /build
+**__pycache__/
 
 # misc
 .DS_Store
@@ -51,6 +52,10 @@ release/
 
 # project specific
 i.txt
+temp/
 
 # WASM build output
 /public/wasm/
+
+# database
+rchat.db*

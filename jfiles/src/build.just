@@ -23,9 +23,12 @@ build-frontend:
   cd {{ROOT}} && cp -r .next/static .next/standalone/.next/static
   cd {{ROOT}} && cp -r public .next/standalone/public
 
-# Build Next.js for GitHub Pages (static export)
-build-pages:
-  cd {{ROOT}} && GITHUB_PAGES=true bun run build
+# Build static frontend baked with a remote API URL (connects to an api-only server)
+# Usage: just src build-static https://api.example.com
+build-static api_url:
+  cd {{ROOT}} && STATIC_EXPORT=true NEXT_PUBLIC_API_URL={{api_url}} bun run build
+  cd {{ROOT}} && cp out/index.html out/404.html
+  @echo "Static site in {{ROOT}}/out (API: {{api_url}}); serve it on any static host."
 
 # Build everything for production (full mode)
 build-all: build-wasm build-api build-frontend

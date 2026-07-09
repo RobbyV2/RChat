@@ -4,6 +4,8 @@ use axum::http::{HeaderName, Method, header};
 use clap::Parser;
 use rust_next::config::{AppConfig, AppMode, CliOverrides};
 use rust_next::server::build_router;
+use rust_next::state::AppState;
+use rust_next::ws::Hub;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::info;
 
@@ -21,9 +23,32 @@ async fn main() -> anyhow::Result<()> {
     let cli = CliOverrides::parse();
     let config = AppConfig::load(&cli)?;
 
-    // DB integration point: initialize your database pool here
-    // e.g. let pool = sqlx::PgPool::connect(config.database_url.as_deref().unwrap_or("...")).await?;
-    // Then pass it as shared state: build_router(proxy_url.as_deref()).with_state(pool)
+    let db = rust_next::db::open(config.database_url.as_deref()).await?;
+    let state = AppState {
+        db,
+        hub: Hub::new(),
+        s3: config.s3()?,
+    };
+    let sweeper = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            rust_next::api::media::sweep_expired(&sweeper).await;
+        }
+    });
+    let voice = state.clone();
+    let idle: i64 = std::env::var("VOICE_IDLE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            voice.hub.sweep_voice(idle);
+        }
+    });
 
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::mirror_request())
@@ -48,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
         .allow_credentials(true);
 
     let proxy_url = config.proxy_url();
-    let app = build_router(proxy_url.as_deref(), &config).layer(cors);
+    let app = build_router(proxy_url.as_deref(), &config, state).layer(cors);
 
     let addr = config.addr();
     let listener = tokio::net::TcpListener::bind(&addr).await?;

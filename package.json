@@ -1,6 +1,6 @@
 {
-  "name": "rust-next",
-  "description": "Rust + Next.js full-stack template with WASM support",
+  "name": "rchat",
+  "description": "Anonymous Material chat",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,15 +8,22 @@
     "dev": "dotenvx run --convention=nextjs --quiet -- bash -c 'HOSTNAME=${HOST:-localhost} exec next dev'",
     "build": "dotenvx run --convention=nextjs --quiet -- next build",
     "start": "dotenvx run --convention=nextjs --quiet -- bash -c 'HOSTNAME=${HOST:-0.0.0.0} exec bun .next/standalone/server.js'",
+    "test:ui": "bun test app",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,mjs}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,mjs}\""
   },
   "dependencies": {
+    "lucide-react": "^1.23.0",
+    "minidenticons": "^4.2.1",
     "next": "^16.2.10",
+    "peerjs": "^1.5.5",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "typescript": "^5.9.3"
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "typescript": "^5.9.3",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@dotenvx/dotenvx": "^1.75.1",
@@ -26,6 +33,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "eslint": "^10.6.0",
+    "peer": "^1.0.2",
     "prettier": "^3.9.4",
     "tailwindcss": "^4.3.2",
     "typescript-eslint": "^8.63.0"

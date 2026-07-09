@@ -11,6 +11,7 @@ dev:
   wasm-pack build wasm --target web --out-dir ../public/wasm --dev
   trap 'kill 0' SIGINT
   {{DOTENVX}} bun run dev 2>&1 | sed 's/^/[WEB] /' &
+  {{DOTENVX}} bash -c 'exec bunx peer --port "${PEERJS_PORT:-9001}" --path /peerjs' 2>&1 | sed 's/^/[PEER] /' &
   sleep 2
   {{DOTENVX}} cargo run --bin server 2>&1 | sed 's/^/[RUST] /' &
   wait
@@ -31,6 +32,7 @@ prod:
   echo "Starting servers..."
   trap 'kill 0' SIGINT
   {{DOTENVX}} bash -c 'HOSTNAME=${HOST:-0.0.0.0} exec bun ./.next/standalone/server.js' 2>&1 | sed 's/^/[WEB] /' &
+  {{DOTENVX}} bash -c 'exec bunx peer --port "${PEERJS_PORT:-9001}" --path /peerjs' 2>&1 | sed 's/^/[PEER] /' &
   sleep 2
   {{DOTENVX}} ./target/release/server 2>&1 | sed 's/^/[RUST] /' &
   wait
@@ -55,17 +57,18 @@ frontend:
 frontend-prod:
   cd {{ROOT}} && {{DOTENVX}} bun run start
 
-# === STATIC MODE (WASM + Next.js, no Rust server) ===
+# === STATIC MODE (frontend only, connects to a remote api-only server) ===
 
-# Run static mode development (WASM + Next.js)
-dev-static:
+# Preview the static build locally against a remote API.
+# Usage: just src static https://api.example.com
+static api_url:
   #!/usr/bin/env bash
   set -euo pipefail
   cd "{{ROOT}}"
-  echo "Building WASM (dev)..."
-  wasm-pack build wasm --target web --out-dir ../public/wasm --dev
-  echo "Starting Next.js dev server..."
-  {{DOTENVX}} bun run dev
+  STATIC_EXPORT=true NEXT_PUBLIC_API_URL={{api_url}} bun run build
+  cp out/index.html out/404.html
+  echo "Serving out/ at http://localhost:{{env_var_or_default('PORT', '3001')}} (API: {{api_url}})"
+  bunx serve out -l {{env_var_or_default('PORT', '3001')}} -s
 
 # Run production (assumes already built)
 start-prod:

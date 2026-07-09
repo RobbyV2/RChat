@@ -1,20 +1,17 @@
-const isGitHubPages = process.env.GITHUB_PAGES === 'true'
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ''
+const staticExport = process.env.STATIC_EXPORT === 'true'
 const appMode = process.env.APP_MODE || 'full'
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: isGitHubPages ? 'export' : 'standalone',
-  basePath: basePath || undefined,
-  assetPrefix: basePath || undefined,
+  output: staticExport ? 'export' : 'standalone',
   trailingSlash: true,
   allowedDevOrigins: ['127.0.0.1', 'localhost'],
   images: {
-    unoptimized: isGitHubPages,
+    unoptimized: staticExport,
   },
 }
 
-if (appMode === 'api-only') {
+if (!staticExport && appMode === 'api-only') {
   const serverPort = process.env.SERVER_PORT || '3000'
   const serverHost = process.env.HOST || 'localhost'
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || `http://${serverHost}:${serverPort}`
