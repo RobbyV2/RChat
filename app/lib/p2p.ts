@@ -170,6 +170,9 @@ class P2pManager {
       conn.label === 'call' ? this.attachControl(conn) : this.serve(conn)
     )
     peer.on('call', call => this.answer(call))
+    peer.on('disconnected', () => {
+      if (!peer.destroyed) peer.reconnect()
+    })
     peer.on('error', err => {
       if (err.type === 'unavailable-id') {
         localStorage.setItem(LS_ID, randomHex(16))

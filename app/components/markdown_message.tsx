@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Download, EllipsisVertical, EyeOff, FileText, Share2, X } from 'lucide-react'
+import { Clock, Download, EllipsisVertical, EyeOff, FileText, Share2, X } from 'lucide-react'
 import { mediaUrl } from '../lib/api'
 import { base64ToBlob, p2p } from '../lib/p2p'
 import { userRefFor, useStore, type ContextMenuItem } from '../lib/store'
@@ -174,6 +174,10 @@ function P2pFile({ media }: { media: MessageMedia }) {
       .finally(() => setBusy(false))
   }, [isImage, previews, url, online, busy, failed, hidden])
 
+  useEffect(() => {
+    setFailed(false)
+  }, [avail])
+
   const save = () => {
     setBusy(true)
     getUrl()
@@ -188,7 +192,7 @@ function P2pFile({ media }: { media: MessageMedia }) {
   }
 
   const meta = (
-    <span className="flex items-center gap-2 text-xs text-on-surface-variant">
+    <span className="mt-1.5 flex items-center gap-2 text-xs text-on-surface-variant">
       <span
         title="Hosted peer-to-peer from the sender's browser"
         className="flex items-center gap-1 rounded bg-tertiary-container px-1.5 py-0.5 font-medium text-on-tertiary-container"
@@ -266,7 +270,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
   const previews = useStore(s => s.settings.asset_previews)
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
   const [revealed, setRevealed] = useState(false)
-  const { id, filename, removed, removed_by_author, spoiler } = media
+  const { id, filename, removed, removed_by_author, spoiler, expires_at } = media
   if (removed) {
     return (
       <p className="mt-1 text-xs text-on-surface-variant italic">
@@ -278,6 +282,13 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
   }
   const url = mediaUrl(id, server)
   const hidden = spoiler && !revealed
+  const expiry =
+    expires_at !== null ? (
+      <span className="mt-1.5 flex items-center gap-1 text-xs text-on-surface-variant">
+        <Clock size={10} />
+        {fmtExpiry(expires_at)}
+      </span>
+    ) : null
   if (previews && IMAGE_EXT.test(filename)) {
     if (hidden) {
       return (
@@ -296,9 +307,12 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
       )
     }
     return (
-      <a href={url} target="_blank" rel="noreferrer" className="mt-1 block w-fit">
-        <img src={url} alt={filename} className="max-h-80 max-w-full rounded-xl" />
-      </a>
+      <div className="mt-1 w-fit">
+        <a href={url} target="_blank" rel="noreferrer" className="block w-fit">
+          <img src={url} alt={filename} className="max-h-80 max-w-full rounded-xl" />
+        </a>
+        {expiry}
+      </div>
     )
   }
   if (hidden) {
@@ -316,11 +330,14 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
     <a
       href={url}
       download={filename}
-      className="mt-1 flex w-fit items-center gap-2 rounded-xl border border-outline-variant bg-surface-container px-3 py-2 hover:bg-surface-container-high"
+      className="mt-1 block w-fit rounded-xl border border-outline-variant bg-surface-container px-3 py-2 hover:bg-surface-container-high"
     >
-      <FileText size={18} className="shrink-0 text-primary" />
-      <span className="max-w-60 truncate text-sm">{filename}</span>
-      <Download size={14} className="shrink-0 text-on-surface-variant" />
+      <span className="flex items-center gap-2">
+        <FileText size={18} className="shrink-0 text-primary" />
+        <span className="max-w-60 truncate text-sm">{filename}</span>
+        <Download size={14} className="shrink-0 text-on-surface-variant" />
+      </span>
+      {expiry}
     </a>
   )
 }

@@ -17,6 +17,7 @@ use crate::state::AppState;
 use crate::ws::WsEvent;
 
 const MAX_SIZE: usize = 25 * 1024 * 1024;
+pub(crate) const MEDIA_TTL_SECS: i64 = 86400;
 
 type SweptMessage = (i64, Option<i64>, Option<i64>, Option<String>);
 
@@ -81,6 +82,7 @@ pub(crate) async fn upload_media(
         ));
     }
     let id = fresh_id(&state.db).await?;
+    let uploaded_at = now();
     let blob: Option<Vec<u8>> = match &state.s3 {
         Some(bucket) => {
             bucket
@@ -99,10 +101,15 @@ pub(crate) async fn upload_media(
     .bind(&mime)
     .bind(data.len() as i64)
     .bind(blob)
-    .bind(now())
+    .bind(uploaded_at)
     .execute(&state.db)
     .await?;
-    Ok(Json(MediaRef::server(id, filename, false)))
+    Ok(Json(MediaRef::server(
+        id,
+        filename,
+        false,
+        uploaded_at + MEDIA_TTL_SECS,
+    )))
 }
 
 #[utoipa::path(delete, path = "/api/messages/{id}/media", params(("id" = i64, Path)), responses((status = 200, description = "Removed")), security(("bearer" = [])))]
@@ -304,7 +311,7 @@ pub(crate) async fn download_media(
 }
 
 async fn sweep(db: &Db, s3: Option<&Bucket>) -> sqlx::Result<Vec<WsEvent>> {
-    let cutoff = now() - 86400;
+    let cutoff = now() - MEDIA_TTL_SECS;
     let mut tx = db.begin().await?;
     let rows = sqlx::query("SELECT id FROM media WHERE uploaded_at <= $1")
         .bind(cutoff)

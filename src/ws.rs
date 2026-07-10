@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -285,7 +285,12 @@ impl CallEnd {
 struct P2pHost {
     peer_id: String,
     ids: Vec<String>,
-    conn: u64,
+}
+
+pub enum P2pDrop {
+    Kept,
+    Offline,
+    Remaining(String, Vec<String>),
 }
 
 #[derive(Default)]
@@ -361,7 +366,7 @@ pub struct Hub {
     tx: broadcast::Sender<WsEvent>,
     presence: Arc<Mutex<HashMap<String, HashMap<String, usize>>>>,
     voice: Arc<Mutex<VoiceMap>>,
-    p2p: Arc<Mutex<HashMap<String, P2pHost>>>,
+    p2p: Arc<Mutex<HashMap<String, BTreeMap<u64, P2pHost>>>>,
 }
 
 impl Default for Hub {
@@ -675,7 +680,9 @@ impl Hub {
         self.p2p
             .lock()
             .unwrap()
-            .insert(user.to_string(), P2pHost { peer_id, ids, conn });
+            .entry(user.to_string())
+            .or_default()
+            .insert(conn, P2pHost { peer_id, ids });
     }
 
     pub fn p2p_of(&self, user: &str) -> Option<(String, Vec<String>)> {
@@ -683,17 +690,25 @@ impl Hub {
             .lock()
             .unwrap()
             .get(user)
-            .map(|h| (h.peer_id.clone(), h.ids.clone()))
+            .and_then(|hosts| hosts.last_key_value())
+            .map(|(_, h)| (h.peer_id.clone(), h.ids.clone()))
     }
 
-    pub fn clear_p2p(&self, user: &str, conn: u64) -> bool {
+    pub fn clear_p2p(&self, user: &str, conn: u64) -> P2pDrop {
         let mut p = self.p2p.lock().unwrap();
-        match p.get(user) {
-            Some(host) if host.conn == conn => {
+        let hosts = match p.get_mut(user) {
+            Some(hosts) => hosts,
+            None => return P2pDrop::Kept,
+        };
+        if hosts.remove(&conn).is_none() {
+            return P2pDrop::Kept;
+        }
+        match hosts.last_key_value() {
+            Some((_, h)) => P2pDrop::Remaining(h.peer_id.clone(), h.ids.clone()),
+            None => {
                 p.remove(user);
-                true
+                P2pDrop::Offline
             }
-            _ => false,
         }
     }
 
@@ -1395,11 +1410,25 @@ async fn run(state: AppState, mut socket: WebSocket) {
         for end in state.hub.drop_conn(user, conn) {
             finalize_call_log(&state, end, false).await;
         }
-        if state.hub.clear_p2p(user, conn) {
-            let (scope_servers, scope_users) = p2p_scope(&state.db, user).await;
-            state
-                .hub
-                .broadcast(p2p_offline(user.clone(), scope_servers, scope_users));
+        match state.hub.clear_p2p(user, conn) {
+            P2pDrop::Kept => {}
+            P2pDrop::Offline => {
+                let (scope_servers, scope_users) = p2p_scope(&state.db, user).await;
+                state
+                    .hub
+                    .broadcast(p2p_offline(user.clone(), scope_servers, scope_users));
+            }
+            P2pDrop::Remaining(peer_id, ids) => {
+                let (scope_servers, scope_users) = p2p_scope(&state.db, user).await;
+                state.hub.broadcast(WsEvent::P2pAvailability {
+                    hoster: user.clone(),
+                    peer_id: Some(peer_id),
+                    ids,
+                    online: true,
+                    scope_servers,
+                    scope_users,
+                });
+            }
         }
         if let Some(server) = &viewing {
             state.hub.set_viewing(user, Some(server), None)

@@ -161,13 +161,13 @@ pub struct MediaRef {
 }
 
 impl MediaRef {
-    pub fn server(id: String, filename: String, spoiler: bool) -> MediaRef {
+    pub fn server(id: String, filename: String, spoiler: bool, expires_at: i64) -> MediaRef {
         MediaRef {
             id,
             filename,
             kind: MediaKind::Server,
             hoster: None,
-            expires_at: None,
+            expires_at: Some(expires_at),
             size: None,
             mime: None,
             removed: false,

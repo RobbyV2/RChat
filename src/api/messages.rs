@@ -10,7 +10,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::api::{
     ApiError, Authed, CallLog, Embed, MaybeAuthed, MediaRef, Message, UserRef, check_profanity,
-    embeds, header_grants, require_guest_ok, require_server_view, user_ref,
+    embeds, header_grants, media::MEDIA_TTL_SECS, require_guest_ok, require_server_view, user_ref,
 };
 use crate::db::{
     ChannelAccess, ChannelKind, Db, MediaKind, Perm, User, channel_access, effective_perms,
@@ -231,12 +231,17 @@ async fn insert_message(
             ));
         }
         (Some(id), None) => {
-            let row = sqlx::query("SELECT filename FROM media WHERE id = $1")
+            let row = sqlx::query("SELECT filename, uploaded_at FROM media WHERE id = $1")
                 .bind(id)
                 .fetch_optional(db)
                 .await?;
             match row {
-                Some(r) => Some(MediaRef::server(id.clone(), r.try_get(0)?, spoiler)),
+                Some(r) => Some(MediaRef::server(
+                    id.clone(),
+                    r.try_get(0)?,
+                    spoiler,
+                    r.try_get::<i64, _>(1)? + MEDIA_TTL_SECS,
+                )),
                 None => {
                     return Err(ApiError(
                         StatusCode::BAD_REQUEST,
