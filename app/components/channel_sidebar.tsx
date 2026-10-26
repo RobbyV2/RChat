@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type MouseEvent } from 'react'
+import { useState } from 'react'
 import { Hash, Plus, Settings, Volume2 } from 'lucide-react'
 import { myPerms, serverAdminPerms, userRefFor, useStore } from '../lib/store'
 import { rtc } from '../lib/rtc'
@@ -161,9 +161,8 @@ export function ChannelSidebar() {
   const textChannels = detail.channels.filter(c => c.kind === 'text')
   const voiceChannels = detail.channels.filter(c => c.kind === 'voice')
 
-  const channelMenu = (c: Channel) => (e: MouseEvent<HTMLButtonElement>) => {
-    e.preventDefault()
-    openContextMenu(e.clientX, e.clientY, [
+  const channelMenu = (c: Channel) => (x: number, y: number) => {
+    openContextMenu(x, y, [
       {
         label: 'Copy Channel ID',
         action: () => void navigator.clipboard.writeText(String(c.id)),
@@ -245,7 +244,7 @@ export function ChannelSidebar() {
             <button
               key={c.id}
               onClick={() => void openChannel(detail.name, c.id)}
-              onContextMenu={channelMenu(c)}
+              {...longPress(channelMenu(c))}
               className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
                 view?.kind === 'channel' && view.channelId === c.id
                   ? 'bg-secondary-container text-on-secondary-container'
@@ -310,7 +309,7 @@ export function ChannelSidebar() {
               <button
                 title="Join voice channel"
                 onClick={() => void joinVoice(detail.name, c.id)}
-                onContextMenu={channelMenu(c)}
+                {...longPress(channelMenu(c))}
                 className={`mx-2 flex w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
                   view?.kind === 'channel' && view.channelId === c.id
                     ? 'bg-secondary-container text-on-secondary-container'

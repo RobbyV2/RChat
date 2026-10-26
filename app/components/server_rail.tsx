@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { LogOut, MessageCircle, Plus, Settings, Shield } from 'lucide-react'
 import { dmsUnread, serverUnread, useStore } from '../lib/store'
+import { longPress } from './context_menu'
 import { InstallButton } from './pwa_register'
 import { ThemeToggle } from './status_clock'
 
@@ -66,9 +67,8 @@ export function ServerRail() {
             key={name}
             title={mine ? `${display_name} (Creator)` : display_name}
             onClick={() => void openServer(name)}
-            onContextMenu={e => {
-              e.preventDefault()
-              openContextMenu(e.clientX, e.clientY, [
+            {...longPress((x, y) =>
+              openContextMenu(x, y, [
                 {
                   label: 'Copy Server ID',
                   action: () => void navigator.clipboard.writeText(name),
@@ -83,7 +83,7 @@ export function ServerRail() {
                       },
                     ]),
               ])
-            }}
+            )}
             className={`${tile} relative text-lg font-semibold ${
               active
                 ? 'bg-primary text-on-primary'

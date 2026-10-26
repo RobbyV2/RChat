@@ -121,6 +121,14 @@ function CallLogRow({ message }: { message: Message }) {
 
 const EMPTY_OUT: Outgoing[] = []
 
+const copy = (text: string) => void navigator.clipboard.writeText(text)
+
+export const messageCopyItems = (m: Message): ContextMenuItem[] => [
+  ...(m.content.trim() ? [{ label: 'Copy Text', action: () => copy(m.content) }] : []),
+  { label: 'Copy Message ID', action: () => copy(String(m.id)) },
+  { label: 'Copy User ID', action: () => copy(m.author.username) },
+]
+
 export function OutboxRows({ msgKey, size = 36 }: { msgKey: string; size?: number }) {
   const me = useStore(s => s.me)
   const outgoing = useStore(s => s.outbox[msgKey]) ?? EMPTY_OUT
@@ -275,8 +283,11 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     }
   }
 
-  const authorMenu = (msg: Message) => (x: number, y: number) => {
-    if (!me) return
+  const messageMenu = (msg: Message) => (x: number, y: number) => {
+    if (!me) {
+      openContextMenu(x, y, messageCopyItems(msg))
+      return
+    }
     const { author } = msg
     const self = author.username === me.username
     const items: ContextMenuItem[] = [
@@ -328,16 +339,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         danger: true,
         action: () => void deleteMessage(msg.id),
       })
-    items.push(
-      {
-        label: 'Copy Message ID',
-        action: () => void navigator.clipboard.writeText(String(msg.id)),
-      },
-      {
-        label: 'Copy User ID',
-        action: () => void navigator.clipboard.writeText(msg.author.username),
-      }
-    )
+    items.push(...messageCopyItems(msg))
     openContextMenu(x, y, items)
   }
 
@@ -502,12 +504,14 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     <CallLogRow message={m} />
                   </div>
                 )
-              const lp = longPress(authorMenu(m))
               return (
                 <div key={m.id}>
                   {divider}
-                  <div className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container-low">
-                    <div className="shrink-0 pt-0.5" {...lp}>
+                  <div
+                    {...longPress(messageMenu(m))}
+                    className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container-low"
+                  >
+                    <div className="shrink-0 pt-0.5">
                       <UserAvatar
                         username={m.author.username}
                         avatarKind={m.author.avatar_kind}
@@ -518,9 +522,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline gap-2">
                         <span
-                          {...lp}
                           style={{
-                            ...lp.style,
                             color: roleColor(
                               detail?.roles,
                               memberList?.find(x => x.username === m.author.username)?.role_ids ??

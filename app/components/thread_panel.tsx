@@ -7,7 +7,7 @@ import { Perm, hasPerm, type Message } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
-import { fmtTime, OutboxRows } from './message_pane'
+import { fmtTime, messageCopyItems, OutboxRows } from './message_pane'
 import { longPress } from './context_menu'
 
 const EMPTY: Message[] = []
@@ -76,21 +76,18 @@ export default function ThreadPanel() {
         danger: true,
         action: () => void deleteMessage(m.id),
       })
-    items.push(
-      { label: 'Copy Message ID', action: () => void navigator.clipboard.writeText(String(m.id)) },
-      {
-        label: 'Copy User ID',
-        action: () => void navigator.clipboard.writeText(m.author.username),
-      }
-    )
+    items.push(...messageCopyItems(m))
     openContextMenu(x, y, items)
   }
 
   const row = (m: Message) => {
-    const lp = longPress(rowMenu(m))
     return (
-      <div key={m.id} className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container">
-        <div className="shrink-0 pt-0.5" {...lp}>
+      <div
+        key={m.id}
+        {...longPress(rowMenu(m))}
+        className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container"
+      >
+        <div className="shrink-0 pt-0.5">
           <UserAvatar
             username={m.author.username}
             avatarKind={m.author.avatar_kind}
@@ -101,9 +98,7 @@ export default function ThreadPanel() {
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
             <span
-              {...lp}
               style={{
-                ...lp.style,
                 color: roleColor(
                   roles,
                   memberList?.find(x => x.username === m.author.username)?.role_ids ?? []
