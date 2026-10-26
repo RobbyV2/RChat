@@ -15,7 +15,9 @@ import {
   Video,
   Volume2,
 } from 'lucide-react'
+import { canModerate, memberPerms } from '../lib/rules'
 import {
+  banMenuItem,
   myPerms,
   roleColor,
   roleMenuItems,
@@ -303,12 +305,18 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     }
     if (view?.kind === 'channel' && !self) {
       const target = memberList?.find(m => m.username === author.username)
-      if (hasPerm(perms, Perm.Kick))
-        items.push({
-          label: 'Kick',
-          danger: true,
-          action: () => void kickMember(view.server, author.username),
-        })
+      if (
+        hasPerm(perms, Perm.Kick) &&
+        canModerate(perms, me.is_site_admin, memberPerms(target, detail?.roles ?? []))
+      )
+        items.push(
+          {
+            label: 'Kick',
+            danger: true,
+            action: () => void kickMember(view.server, author.username),
+          },
+          banMenuItem(view.server, author.username)
+        )
       if (hasPerm(perms, Perm.ManageAdmins))
         items.push(
           target?.is_admin

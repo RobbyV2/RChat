@@ -11,6 +11,7 @@ import type {
   Message,
   Role,
   SearchResult,
+  ServerBan,
   ServerDetail,
   ServerMatch,
   ServerSummary,
@@ -149,6 +150,12 @@ export const updateChannel = (id: number, patch: { name?: string; slowmode_secon
 export const deleteChannel = (id: number) => req<unknown>('DELETE', `/channels/${id}`)
 export const kickMember = (server: string, username: string) =>
   req<unknown>('POST', `/servers/${seg(server)}/kick`, { username })
+export const banMember = (server: string, username: string) =>
+  req<unknown>('POST', `/servers/${seg(server)}/bans`, { username })
+export const unbanMember = (server: string, username: string) =>
+  req<unknown>('DELETE', `/servers/${seg(server)}/bans/${seg(username)}`)
+export const listBans = (server: string, offset: number) =>
+  req<ServerBan[]>('GET', `/servers/${seg(server)}/bans?offset=${offset}&limit=50`)
 export const grantAdmin = (server: string, username: string) =>
   req<unknown>('POST', `/servers/${seg(server)}/admins`, { username })
 export const revokeAdmin = (server: string, username: string) =>

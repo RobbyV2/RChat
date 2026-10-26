@@ -300,6 +300,10 @@ pub(crate) async fn ban_user(
         .bind(&key)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("DELETE FROM server_bans WHERE username = $1")
+        .bind(&key)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM tokens WHERE username = $1")
         .bind(&key)
         .execute(&mut *tx)
@@ -392,6 +396,10 @@ pub(crate) async fn delete_user(
         .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM interactions WHERE username = $1")
+        .bind(&key)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM server_bans WHERE username = $1")
         .bind(&key)
         .execute(&mut *tx)
         .await?;

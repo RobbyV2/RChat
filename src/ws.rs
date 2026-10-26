@@ -12,7 +12,7 @@ use tokio::sync::broadcast;
 use crate::api::{
     Channel, Embed, Member, Message, ServerSummaryLite, Settings, UserRef, grant_matches,
 };
-use crate::db::{ChannelKind, Db, channel_viewable, now, setting_on, touch_interaction};
+use crate::db::{ChannelKind, Db, channel_viewable, is_banned, now, setting_on, touch_interaction};
 use crate::state::AppState;
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
@@ -114,6 +114,7 @@ pub enum WsEvent {
     MemberKicked {
         server: String,
         username: String,
+        banned: bool,
     },
     AdminChanged {
         server: String,
@@ -469,7 +470,11 @@ impl Hub {
                     v.rooms.remove(channel_id);
                 }
                 WsEvent::MemberLeft { server, username }
-                | WsEvent::MemberKicked { server, username } => {
+                | WsEvent::MemberKicked {
+                    server,
+                    username,
+                    banned: _,
+                } => {
                     v.leave_rooms(|s, u, _| s == server && u == username, &mut extra);
                 }
                 WsEvent::Banned { username } => {
@@ -1009,6 +1014,9 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             if kind != ChannelKind::Voice {
                 return Err("Not a voice channel".to_string());
             }
+            if is_banned(&state.db, &server, user).await.map_err(db_err)? {
+                return Err("You are banned from this server".to_string());
+            }
             if !channel_viewable(&state.db, &server, channel_id, Some(user)).await {
                 return Err("Not allowed".to_string());
             }
@@ -1540,7 +1548,12 @@ fn track(
                 viewable.clear();
             }
         }
-        WsEvent::MemberLeft { server, username } | WsEvent::MemberKicked { server, username } => {
+        WsEvent::MemberLeft { server, username }
+        | WsEvent::MemberKicked {
+            server,
+            username,
+            banned: _,
+        } => {
             if Some(username.as_str()) == me {
                 member_servers.remove(server);
                 viewable.clear();
@@ -1734,9 +1747,12 @@ fn wants(
         WsEvent::MemberJoined { server, member } => {
             in_server(server) || Some(member.user.username.as_str()) == me
         }
-        WsEvent::MemberLeft { server, username } | WsEvent::MemberKicked { server, username } => {
-            in_server(server) || Some(username.as_str()) == me
-        }
+        WsEvent::MemberLeft { server, username }
+        | WsEvent::MemberKicked {
+            server,
+            username,
+            banned: _,
+        } => in_server(server) || Some(username.as_str()) == me,
         WsEvent::AdminChanged {
             server,
             username: _,
@@ -1832,6 +1848,32 @@ mod tests {
             }
         }
         out
+    }
+
+    #[tokio::test]
+    async fn banned_user_cannot_join_voice() {
+        let (state, path) = crate::api::test_util::temp_state("ban_voice").await;
+        let cid: i64 = sqlx::query("INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id")
+            .fetch_one(&state.db)
+            .await
+            .expect("voice channel")
+            .try_get(0)
+            .expect("channel id");
+        sqlx::query("INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('rchat', 'bob', 'alice', 0)")
+            .execute(&state.db)
+            .await
+            .expect("ban");
+        let join = |user| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id: cid });
+        assert_eq!(
+            join("bob").await,
+            Err("You are banned from this server".to_string())
+        );
+        join("carol").await.expect("carol joins");
+        assert_eq!(
+            state.hub.rooms_in("rchat", None),
+            vec![(cid, vec!["carol".to_string()])]
+        );
+        crate::api::test_util::done(state, path).await;
     }
 
     #[test]

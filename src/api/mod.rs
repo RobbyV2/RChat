@@ -550,6 +550,14 @@ pub fn routes(state: AppState) -> Router<AppState> {
             patch(servers::update_channel).delete(servers::delete_channel),
         )
         .route("/servers/{name}/kick", post(servers::kick_member))
+        .route(
+            "/servers/{name}/bans",
+            get(servers::list_bans).post(servers::ban_member),
+        )
+        .route(
+            "/servers/{name}/bans/{username}",
+            delete(servers::unban_member),
+        )
         .route("/servers/{name}/admins", post(servers::grant_admin))
         .route(
             "/servers/{name}/admins/{username}",

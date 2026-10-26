@@ -15,7 +15,10 @@ use crate::api::{
     page_bounds, placeholders, require_guest_ok, require_server_view, unique_capped, user_from,
     user_ref, user_refs, valid_color,
 };
-use crate::db::{ALL_PERMS, ChannelKind, Db, Perm, User, channel_access, get_user, has_perm, now};
+use crate::db::{
+    ALL_PERMS, ChannelKind, Db, Perm, User, can_moderate, channel_access, effective_perms,
+    get_user, has_perm, is_banned, member_perms, now,
+};
 use crate::state::AppState;
 use crate::ws::{Hub, WsEvent, evict_unviewable};
 
@@ -102,6 +105,13 @@ pub struct ServerMatch {
 #[derive(Serialize, ToSchema)]
 pub struct OkResp {
     ok: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ServerBan {
+    #[serde(flatten)]
+    pub user: UserRef,
+    pub banned_at: i64,
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -211,6 +221,20 @@ async fn require_perm(db: &Db, server: &str, user: &User, perm: Perm) -> Result<
     match has_perm(db, server, user, perm).await {
         true => Ok(()),
         false => Err(forbidden("Missing permission")),
+    }
+}
+
+async fn require_moderate(
+    db: &Db,
+    server: &str,
+    actor: &User,
+    target: &str,
+) -> Result<(), ApiError> {
+    let mine = effective_perms(db, server, actor).await?;
+    let theirs = member_perms(db, server, target).await?;
+    match can_moderate(mine, actor.is_site_admin, theirs) {
+        true => Ok(()),
+        false => Err(forbidden("You can't moderate this member")),
     }
 }
 
@@ -691,7 +715,32 @@ pub(crate) async fn guest_access(
     Ok(Json(GuestGrant { grant }))
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/join", params(("name" = String, Path)), request_body = JoinReq, responses((status = 200, description = "Joined, or already a member; returns the server details", body = ServerDetail)), security(("bearer" = [])))]
+async fn insert_member(db: &Db, server: &str, username: &str) -> Result<bool, ApiError> {
+    let inserted = sqlx::query(
+        "INSERT INTO members(server, username, is_admin, joined_at) SELECT $1, $2, 0, $3 WHERE NOT EXISTS(SELECT 1 FROM server_bans WHERE server = $1 AND username = $2) ON CONFLICT(server, username) DO NOTHING",
+    )
+    .bind(server)
+    .bind(username)
+    .bind(now())
+    .execute(db)
+    .await?
+    .rows_affected();
+    if inserted > 0 {
+        return Ok(true);
+    }
+    let member = sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
+        .bind(server)
+        .bind(username)
+        .fetch_optional(db)
+        .await?
+        .is_some();
+    match !member && is_banned(db, server, username).await? {
+        true => Err(forbidden("You are banned from this server")),
+        false => Ok(false),
+    }
+}
+
+#[utoipa::path(post, path = "/api/servers/{name}/join", params(("name" = String, Path)), request_body = JoinReq, responses((status = 200, description = "Joined, or already a member; returns the server details", body = ServerDetail), (status = 401, description = "Wrong password"), (status = 403, description = "You are banned from this server")), security(("bearer" = [])))]
 pub(crate) async fn join_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -700,6 +749,9 @@ pub(crate) async fn join_server(
 ) -> Result<Json<ServerDetail>, ApiError> {
     let key = name.to_lowercase();
     let lite = require_server(&state.db, &key).await?;
+    if is_banned(&state.db, &key, &user.username).await? {
+        return Err(forbidden("You are banned from this server"));
+    }
     if lite.has_password {
         let already = sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
             .bind(&key)
@@ -727,15 +779,7 @@ pub(crate) async fn join_server(
             }
         }
     }
-    let inserted = sqlx::query(
-        "INSERT INTO members(server, username, is_admin, joined_at) VALUES($1, $2, 0, $3) ON CONFLICT(server, username) DO NOTHING",
-    )
-    .bind(&key)
-    .bind(&user.username)
-    .bind(now())
-    .execute(&state.db)
-    .await?
-    .rows_affected();
+    let inserted = insert_member(&state.db, &key, &user.username).await?;
     let detail = server_detail(&state.db, &state.hub, &key, Some(&user)).await?;
     let member = build_member(
         &state.db,
@@ -747,7 +791,7 @@ pub(crate) async fn join_server(
         0,
     )
     .await?;
-    if inserted > 0 {
+    if inserted {
         state.hub.broadcast(WsEvent::MemberJoined {
             server: key,
             member,
@@ -1046,7 +1090,7 @@ pub(crate) async fn delete_channel(
     Ok(ok())
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/kick", params(("name" = String, Path)), request_body = UsernameReq, responses((status = 200, description = "Member removed from the server and their roles dropped", body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/servers/{name}/kick", params(("name" = String, Path)), request_body = UsernameReq, responses((status = 200, description = "Member removed from the server and their roles dropped", body = OkResp), (status = 403, description = "Missing permission, or the member's server permissions are not a strict subset of yours")), security(("bearer" = [])))]
 pub(crate) async fn kick_member(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1057,6 +1101,7 @@ pub(crate) async fn kick_member(
     let target = req.username.to_lowercase();
     require_server(&state.db, &key).await?;
     require_perm(&state.db, &key, &user, Perm::Kick).await?;
+    require_moderate(&state.db, &key, &user, &target).await?;
     let removed = sqlx::query("DELETE FROM members WHERE server = $1 AND username = $2")
         .bind(&key)
         .bind(&target)
@@ -1074,11 +1119,124 @@ pub(crate) async fn kick_member(
             state.hub.broadcast(WsEvent::MemberKicked {
                 server: key.clone(),
                 username: target.clone(),
+                banned: false,
             });
             state.hub.force_offline(&key, &target);
             Ok(ok())
         }
     }
+}
+
+#[utoipa::path(post, path = "/api/servers/{name}/bans", params(("name" = String, Path)), request_body = UsernameReq, responses((status = 200, description = "User banned: removed from the server with their roles dropped and voice ended, and blocked from rejoining until unbanned. Works on non-members too. Requires the Kick permission", body = OkResp), (status = 400, description = "You can't ban yourself"), (status = 403, description = "Missing permission, or the user's server permissions are not a strict subset of yours")), security(("bearer" = [])))]
+pub(crate) async fn ban_member(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+    Json(req): Json<UsernameReq>,
+) -> Result<Json<OkResp>, ApiError> {
+    let key = name.to_lowercase();
+    let target = req.username.to_lowercase();
+    require_server(&state.db, &key).await?;
+    require_perm(&state.db, &key, &user, Perm::Kick).await?;
+    if target == user.username {
+        return Err(bad("You can't ban yourself"));
+    }
+    if get_user(&state.db, &target).await?.is_none() {
+        return Err(not_found("User not found"));
+    }
+    require_moderate(&state.db, &key, &user, &target).await?;
+    let mut tx = state.db.begin().await?;
+    sqlx::query(
+        "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES($1, $2, $3, $4) ON CONFLICT(server, username) DO NOTHING",
+    )
+    .bind(&key)
+    .bind(&target)
+    .bind(&user.username)
+    .bind(now())
+    .execute(&mut *tx)
+    .await?;
+    let removed = sqlx::query("DELETE FROM members WHERE server = $1 AND username = $2")
+        .bind(&key)
+        .bind(&target)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    sqlx::query("DELETE FROM user_roles WHERE server = $1 AND username = $2")
+        .bind(&key)
+        .bind(&target)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    if removed > 0 {
+        state.hub.broadcast(WsEvent::MemberKicked {
+            server: key.clone(),
+            username: target.clone(),
+            banned: true,
+        });
+        state.hub.force_offline(&key, &target);
+    }
+    for (cid, users) in state.hub.rooms_in(&key, None) {
+        if users.contains(&target) {
+            state.hub.evict_voice(&target, cid);
+        }
+    }
+    Ok(ok())
+}
+
+#[utoipa::path(delete, path = "/api/servers/{name}/bans/{username}", params(("name" = String, Path), ("username" = String, Path)), responses((status = 200, description = "Ban lifted; the user may join again. Requires the Kick permission", body = OkResp)), security(("bearer" = [])))]
+pub(crate) async fn unban_member(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path((name, target)): Path<(String, String)>,
+) -> Result<Json<OkResp>, ApiError> {
+    let key = name.to_lowercase();
+    require_server(&state.db, &key).await?;
+    require_perm(&state.db, &key, &user, Perm::Kick).await?;
+    let removed = sqlx::query("DELETE FROM server_bans WHERE server = $1 AND username = $2")
+        .bind(&key)
+        .bind(target.to_lowercase())
+        .execute(&state.db)
+        .await?
+        .rows_affected();
+    match removed {
+        0 => Err(not_found("Not banned")),
+        _ => Ok(ok()),
+    }
+}
+
+#[utoipa::path(get, path = "/api/servers/{name}/bans", params(("name" = String, Path), MembersQuery), responses((status = 200, description = "Up to 50 banned users, most recently banned first. Requires the Kick permission", body = Vec<ServerBan>)), security(("bearer" = [])))]
+pub(crate) async fn list_bans(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+    Query(q): Query<MembersQuery>,
+) -> Result<Json<Vec<ServerBan>>, ApiError> {
+    let key = name.to_lowercase();
+    require_server(&state.db, &key).await?;
+    require_perm(&state.db, &key, &user, Perm::Kick).await?;
+    let MembersQuery { offset, limit } = q;
+    let rows = sqlx::query(
+        "SELECT username, created_at FROM server_bans WHERE server = $1 ORDER BY created_at DESC, username LIMIT $2 OFFSET $3",
+    )
+    .bind(&key)
+    .bind(limit.unwrap_or(50).clamp(1, 50))
+    .bind(offset.unwrap_or(0).max(0))
+    .fetch_all(&state.db)
+    .await?;
+    let mut bans = Vec::with_capacity(rows.len());
+    for r in &rows {
+        bans.push((r.try_get::<String, _>(0)?, r.try_get::<i64, _>(1)?));
+    }
+    let names: Vec<String> = bans.iter().map(|(name, _)| name.clone()).collect();
+    let refs = user_refs(&state.db, &names).await;
+    Ok(Json(
+        bans.into_iter()
+            .map(|(username, banned_at)| ServerBan {
+                user: user_from(&refs, &username),
+                banned_at,
+            })
+            .collect(),
+    ))
 }
 
 async fn set_admin(
@@ -1806,6 +1964,480 @@ mod tests {
         assert!(first[1].is_admin && !first[0].is_admin);
         let (_, more) = my_servers_page(db, "alice", 0, 7).await.expect("page");
         assert!(!more);
+        done(state, path).await;
+    }
+
+    async fn add_user(db: &Db, username: &str, display_name: &str) {
+        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $2, '', 'text', 'identicon', 0)")
+            .bind(username)
+            .bind(display_name)
+            .execute(db)
+            .await
+            .expect("insert user");
+    }
+
+    async fn count(db: &Db, sql: &str) -> i64 {
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_one(db)
+            .await
+            .expect("count query")
+            .try_get(0)
+            .expect("count value")
+    }
+
+    async fn join(state: &AppState, who: &str, server: &str) -> Result<(), ApiError> {
+        join_server(
+            State(state.clone()),
+            Authed(mem_user(who, false)),
+            Path(server.to_string()),
+            None,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    async fn ban(
+        state: &AppState,
+        actor: User,
+        server: &str,
+        target: &str,
+    ) -> Result<(), ApiError> {
+        ban_member(
+            State(state.clone()),
+            Authed(actor),
+            Path(server.to_string()),
+            Json(UsernameReq {
+                username: target.to_string(),
+            }),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    async fn unban(
+        state: &AppState,
+        actor: User,
+        server: &str,
+        target: &str,
+    ) -> Result<(), ApiError> {
+        unban_member(
+            State(state.clone()),
+            Authed(actor),
+            Path((server.to_string(), target.to_string())),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    async fn bans(
+        state: &AppState,
+        actor: User,
+        server: &str,
+        offset: Option<i64>,
+    ) -> Result<Vec<(String, String, i64)>, ApiError> {
+        list_bans(
+            State(state.clone()),
+            Authed(actor),
+            Path(server.to_string()),
+            Query(MembersQuery {
+                offset,
+                limit: None,
+            }),
+        )
+        .await
+        .map(|Json(list)| {
+            list.into_iter()
+                .map(|b| (b.user.username, b.user.display_name, b.banned_at))
+                .collect()
+        })
+    }
+
+    fn status<T>(res: Result<T, ApiError>) -> Option<StatusCode> {
+        res.err().map(|ApiError(code, _)| code)
+    }
+
+    fn kicks(rx: &mut tokio::sync::broadcast::Receiver<WsEvent>) -> Vec<(String, String, bool)> {
+        let mut out = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let WsEvent::MemberKicked {
+                server,
+                username,
+                banned,
+            } = ev
+            {
+                out.push((server, username, banned));
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn ban_removes_membership_and_blocks_rejoin() {
+        let (state, path) = temp_state("ban_rejoin").await;
+        let db = &state.db;
+        let cid = make_server(&state, "club").await.expect("club").0.channels[0].id;
+        add_user(db, "bob", "Bob").await;
+        join(&state, "bob", "club").await.expect("bob joins");
+        let role: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES('club', 'r', '#ffffff', 0) RETURNING id")
+            .fetch_one(db)
+            .await
+            .expect("role")
+            .try_get(0)
+            .expect("role id");
+        sqlx::query("INSERT INTO user_roles(server, username, role_id) VALUES('club', 'bob', $1)")
+            .bind(role)
+            .execute(db)
+            .await
+            .expect("assign");
+        let _ = state.hub.voice_join("bob", 7, "club", cid);
+        let mut rx = state.hub.subscribe();
+        ban(&state, mem_user("alice", false), "Club", "Bob")
+            .await
+            .expect("ban bob");
+        let bob_rows = |table: &str| {
+            format!("SELECT COUNT(*) FROM {table} WHERE server = 'club' AND username = 'bob'")
+        };
+        assert_eq!(count(db, &bob_rows("members")).await, 0);
+        assert_eq!(count(db, &bob_rows("user_roles")).await, 0);
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM server_bans WHERE server = 'club' AND username = 'bob' AND banned_by = 'alice'").await,
+            1
+        );
+        assert_eq!(
+            kicks(&mut rx),
+            vec![("club".to_string(), "bob".to_string(), true)]
+        );
+        assert!(state.hub.rooms_in("club", None).is_empty());
+        match join(&state, "bob", "club").await {
+            Err(ApiError(StatusCode::FORBIDDEN, msg)) => {
+                assert_eq!(msg, "You are banned from this server")
+            }
+            _ => panic!("expected banned join rejection"),
+        }
+        assert_eq!(count(db, &bob_rows("members")).await, 0);
+        ban(&state, mem_user("alice", false), "club", "bob")
+            .await
+            .expect("re-ban is a no-op");
+        assert_eq!(count(db, &bob_rows("server_bans")).await, 1);
+        assert!(kicks(&mut rx).is_empty());
+        unban(&state, mem_user("alice", false), "club", "BOB")
+            .await
+            .expect("unban");
+        assert_eq!(
+            status(unban(&state, mem_user("alice", false), "club", "bob").await),
+            Some(StatusCode::NOT_FOUND)
+        );
+        join(&state, "bob", "club").await.expect("bob rejoins");
+        assert_eq!(count(db, &bob_rows("members")).await, 1);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn ban_permissions_and_targets() {
+        let (state, path) = temp_state("ban_perms").await;
+        let db = &state.db;
+        let cid = make_server(&state, "club").await.expect("club").0.channels[0].id;
+        for name in ["bob", "carol", "dave", "erin"] {
+            add_user(db, name, name).await;
+        }
+        for name in ["bob", "carol", "dave"] {
+            join(&state, name, "club").await.expect("join");
+        }
+        let plain = || mem_user("carol", false);
+        assert_eq!(
+            status(ban(&state, plain(), "club", "bob").await),
+            Some(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            status(bans(&state, plain(), "club", None).await),
+            Some(StatusCode::FORBIDDEN)
+        );
+        let role: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES('club', 'mod', '#ffffff', $1) RETURNING id")
+            .bind(Perm::Kick as i64)
+            .fetch_one(db)
+            .await
+            .expect("role")
+            .try_get(0)
+            .expect("role id");
+        sqlx::query("INSERT INTO user_roles(server, username, role_id) VALUES('club', 'dave', $1)")
+            .bind(role)
+            .execute(db)
+            .await
+            .expect("assign");
+        let moderator = || mem_user("dave", false);
+        ban(&state, moderator(), "club", "bob")
+            .await
+            .expect("kick-perm role can ban");
+        assert_eq!(
+            status(unban(&state, plain(), "club", "bob").await),
+            Some(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            status(ban(&state, moderator(), "club", "ghost").await),
+            Some(StatusCode::NOT_FOUND)
+        );
+        assert_eq!(
+            status(ban(&state, moderator(), "nowhere", "bob").await),
+            Some(StatusCode::NOT_FOUND)
+        );
+        let _ = state.hub.voice_join("erin", 9, "club", cid);
+        let mut rx = state.hub.subscribe();
+        ban(&state, moderator(), "club", "erin")
+            .await
+            .expect("non-member ban");
+        assert!(kicks(&mut rx).is_empty());
+        assert!(state.hub.rooms_in("club", None).is_empty());
+        assert_eq!(
+            status(join(&state, "erin", "club").await),
+            Some(StatusCode::FORBIDDEN)
+        );
+        let _ = kick_member(
+            State(state.clone()),
+            Authed(moderator()),
+            Path("club".to_string()),
+            Json(UsernameReq {
+                username: "carol".to_string(),
+            }),
+        )
+        .await
+        .expect("kick");
+        assert_eq!(
+            kicks(&mut rx),
+            vec![("club".to_string(), "carol".to_string(), false)]
+        );
+        join(&state, "carol", "club")
+            .await
+            .expect("kicked may rejoin");
+        let root = || mem_user("root", true);
+        let listed: Vec<String> = bans(&state, root(), "club", None)
+            .await
+            .expect("site admin lists")
+            .into_iter()
+            .map(|(name, _, _)| name)
+            .collect();
+        assert_eq!(listed.len(), 2);
+        assert!(listed.contains(&"bob".to_string()) && listed.contains(&"erin".to_string()));
+        unban(&state, root(), "club", "erin")
+            .await
+            .expect("site admin unbans");
+        join(&state, "erin", "club").await.expect("erin joins");
+        done(state, path).await;
+    }
+
+    async fn moderate(
+        state: &AppState,
+        actor: User,
+        target: &str,
+        banning: bool,
+    ) -> Result<String, (StatusCode, String)> {
+        let path = Path("club".to_string());
+        let body = Json(UsernameReq {
+            username: target.to_string(),
+        });
+        let res = match banning {
+            true => ban_member(State(state.clone()), Authed(actor), path, body).await,
+            false => kick_member(State(state.clone()), Authed(actor), path, body).await,
+        };
+        res.map(|Json(ok)| serde_json::to_string(&ok).expect("json"))
+            .map_err(|ApiError(code, msg)| (code, msg))
+    }
+
+    async fn set_admin_row(db: &Db, username: &str, perms: i64) {
+        sqlx::query(
+            "UPDATE members SET is_admin = 1, perms = $1 WHERE server = 'club' AND username = $2",
+        )
+        .bind(perms)
+        .bind(username)
+        .execute(db)
+        .await
+        .expect("make admin");
+    }
+
+    #[tokio::test]
+    async fn moderation_needs_strictly_more_perms() {
+        let (state, path) = temp_state("mod_rule").await;
+        let db = &state.db;
+        let _ = make_server(&state, "club").await.expect("club");
+        let names = [
+            "alice", "bob", "carol", "dave", "erin", "frank", "gina", "root", "su",
+        ];
+        for name in names {
+            add_user(db, name, name).await;
+        }
+        for name in &names[1..8] {
+            join(&state, name, "club").await.expect("join");
+        }
+        sqlx::query("UPDATE users SET is_site_admin = 1 WHERE username IN ('root', 'su')")
+            .execute(db)
+            .await
+            .expect("site admins");
+        let role: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES('club', 'mod', '#ffffff', $1) RETURNING id")
+            .bind(Perm::Kick as i64)
+            .fetch_one(db)
+            .await
+            .expect("role")
+            .try_get(0)
+            .expect("role id");
+        for name in ["carol", "dave", "root"] {
+            sqlx::query("INSERT INTO user_roles(server, username, role_id) VALUES('club', $1, $2)")
+                .bind(name)
+                .bind(role)
+                .execute(db)
+                .await
+                .expect("assign");
+        }
+        let narrow = Perm::Kick as i64 | Perm::DeleteMessages as i64;
+        set_admin_row(db, "erin", narrow).await;
+        set_admin_row(db, "gina", Perm::DeleteMessages as i64).await;
+        set_admin_row(db, "frank", 0).await;
+        let carol = || mem_user("carol", false);
+        let alice = || mem_user("alice", false);
+        let denied = Err((
+            StatusCode::FORBIDDEN,
+            "You can't moderate this member".to_string(),
+        ));
+        for banning in [false, true] {
+            for target in ["alice", "frank", "erin", "dave", "root"] {
+                assert_eq!(
+                    moderate(&state, carol(), target, banning).await,
+                    denied,
+                    "carol vs {target} banning {banning}"
+                );
+            }
+        }
+        sqlx::query("DELETE FROM user_roles WHERE server = 'club' AND username = 'root'")
+            .execute(db)
+            .await
+            .expect("drop root role");
+        let plain = moderate(&state, carol(), "bob", false)
+            .await
+            .expect("kick plain");
+        assert_eq!(
+            moderate(&state, carol(), "root", false).await,
+            Ok(plain.clone())
+        );
+        join(&state, "bob", "club").await.expect("bob rejoins");
+        join(&state, "root", "club").await.expect("root rejoins");
+        let banned = moderate(&state, carol(), "bob", true)
+            .await
+            .expect("ban plain");
+        assert_eq!(moderate(&state, carol(), "root", true).await, Ok(banned));
+        assert_eq!(
+            status(join(&state, "root", "club").await),
+            Some(StatusCode::FORBIDDEN)
+        );
+        moderate(&state, alice(), "erin", false)
+            .await
+            .expect("full admin kicks narrower admin");
+        moderate(&state, alice(), "gina", true)
+            .await
+            .expect("full admin bans narrower admin");
+        assert_eq!(moderate(&state, alice(), "frank", false).await, denied);
+        set_admin_row(db, "alice", Perm::Kick as i64).await;
+        moderate(&state, mem_user("frank", false), "alice", false)
+            .await
+            .expect("creator has no protection");
+        let su = || mem_user("su", true);
+        moderate(&state, su(), "frank", false)
+            .await
+            .expect("site admin kicks full admin");
+        moderate(&state, su(), "dave", true)
+            .await
+            .expect("site admin bans peer");
+        let own = Err((
+            StatusCode::BAD_REQUEST,
+            "You can't ban yourself".to_string(),
+        ));
+        assert_eq!(moderate(&state, carol(), "Carol", true).await, own);
+        assert_eq!(moderate(&state, su(), "su", true).await, own);
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM server_bans WHERE username IN ('carol', 'su')"
+            )
+            .await,
+            0
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn join_rejects_a_ban_that_lands_before_insert() {
+        let (state, path) = temp_state("join_race").await;
+        let db = &state.db;
+        let _ = make_server(&state, "club").await.expect("club");
+        sqlx::query("INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('club', 'bob', 'alice', 0)")
+            .execute(db)
+            .await
+            .expect("ban after check");
+        match insert_member(db, "club", "bob").await {
+            Err(ApiError(StatusCode::FORBIDDEN, msg)) => {
+                assert_eq!(msg, "You are banned from this server")
+            }
+            _ => panic!("expected banned insert rejection"),
+        }
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM members WHERE server = 'club' AND username = 'bob'"
+            )
+            .await,
+            0
+        );
+        assert!(
+            !insert_member(db, "club", "alice")
+                .await
+                .expect("already a member")
+        );
+        assert!(
+            insert_member(db, "club", "carol")
+                .await
+                .expect("new member")
+        );
+        assert!(
+            !insert_member(db, "club", "carol")
+                .await
+                .expect("repeat join")
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn ban_list_pages_newest_first() {
+        let (state, path) = temp_state("ban_pages").await;
+        let db = &state.db;
+        let _ = make_server(&state, "club").await.expect("club");
+        add_user(db, "u54", "Fifty Four").await;
+        for i in 0..55 {
+            sqlx::query("INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('club', $1, 'alice', $2)")
+                .bind(format!("u{i:02}"))
+                .bind(1000 + i)
+                .execute(db)
+                .await
+                .expect("insert ban");
+        }
+        let alice = || mem_user("alice", false);
+        let first = bans(&state, alice(), "club", None).await.expect("page 1");
+        assert_eq!(first.len(), 50);
+        assert_eq!(
+            first[0],
+            ("u54".to_string(), "Fifty Four".to_string(), 1054)
+        );
+        assert_eq!(first[1], ("u53".to_string(), "u53".to_string(), 1053));
+        assert_eq!(first[49].0, "u05");
+        let rest: Vec<String> = bans(&state, alice(), "club", Some(50))
+            .await
+            .expect("page 2")
+            .into_iter()
+            .map(|(name, _, _)| name)
+            .collect();
+        assert_eq!(rest, vec!["u04", "u03", "u02", "u01", "u00"]);
+        assert!(
+            bans(&state, alice(), "club", Some(55))
+                .await
+                .expect("past end")
+                .is_empty()
+        );
         done(state, path).await;
     }
 

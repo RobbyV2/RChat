@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS message_embeds(message_id INTEGER NOT NULL REFERENCES
 CREATE TABLE IF NOT EXISTS interactions(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, last_at INTEGER NOT NULL, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS guest_grants(\"grant\" TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS read_state(username TEXT NOT NULL, scope TEXT NOT NULL, last_read INTEGER NOT NULL, PRIMARY KEY(username, scope));
+CREATE TABLE IF NOT EXISTS server_bans(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, banned_by TEXT, created_at INTEGER NOT NULL, PRIMARY KEY(server, username));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -64,6 +65,7 @@ CREATE TABLE IF NOT EXISTS message_embeds(message_id BIGINT NOT NULL REFERENCES 
 CREATE TABLE IF NOT EXISTS interactions(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, last_at BIGINT NOT NULL, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS guest_grants(\"grant\" TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS read_state(username TEXT NOT NULL, scope TEXT NOT NULL, last_read BIGINT NOT NULL, PRIMARY KEY(username, scope));
+CREATE TABLE IF NOT EXISTS server_bans(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, banned_by TEXT, created_at BIGINT NOT NULL, PRIMARY KEY(server, username));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -312,27 +314,32 @@ pub enum Perm {
 pub const ALL_PERMS: i64 = 31;
 
 pub async fn effective_perms(db: &Db, server: &str, user: &User) -> sqlx::Result<i64> {
-    if user.is_site_admin {
-        return Ok(ALL_PERMS);
+    match user.is_site_admin {
+        true => Ok(ALL_PERMS),
+        false => member_perms(db, server, &user.username).await,
     }
+}
+
+pub async fn member_perms(db: &Db, server: &str, username: &str) -> sqlx::Result<i64> {
     let row =
         sqlx::query("SELECT is_admin, perms FROM members WHERE server = $1 AND username = $2")
             .bind(server)
-            .bind(&user.username)
+            .bind(username)
             .fetch_optional(db)
             .await?;
-    if let Some(r) = &row {
-        let (is_admin, perms): (i64, i64) = (r.try_get(0)?, r.try_get(1)?);
-        if is_admin != 0 {
-            return Ok(match perms {
-                0 => ALL_PERMS,
-                p => p & ALL_PERMS,
-            });
-        }
+    let Some(r) = row else {
+        return Ok(0);
+    };
+    let (is_admin, perms): (i64, i64) = (r.try_get(0)?, r.try_get(1)?);
+    if is_admin != 0 {
+        return Ok(match perms {
+            0 => ALL_PERMS,
+            p => p & ALL_PERMS,
+        });
     }
     let rows = sqlx::query("SELECT r.perms FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2")
         .bind(server)
-        .bind(&user.username)
+        .bind(username)
         .fetch_all(db)
         .await?;
     let mut acc = 0i64;
@@ -340,6 +347,10 @@ pub async fn effective_perms(db: &Db, server: &str, user: &User) -> sqlx::Result
         acc |= r.try_get::<i64, _>(0)?;
     }
     Ok(acc & ALL_PERMS)
+}
+
+pub fn can_moderate(actor: i64, actor_site_admin: bool, target: i64) -> bool {
+    actor_site_admin || ((target & !actor) == 0 && target != actor)
 }
 
 pub async fn has_perm(db: &Db, server: &str, user: &User, perm: Perm) -> bool {
@@ -456,6 +467,17 @@ pub async fn touch_interaction(db: &Db, server: &str, username: &str) -> sqlx::R
     .execute(db)
     .await
     .map(|_| ())
+}
+
+pub async fn is_banned(db: &Db, server: &str, username: &str) -> sqlx::Result<bool> {
+    Ok(
+        sqlx::query("SELECT 1 FROM server_bans WHERE server = $1 AND username = $2")
+            .bind(server)
+            .bind(username)
+            .fetch_optional(db)
+            .await?
+            .is_some(),
+    )
 }
 
 pub fn now() -> i64 {
@@ -596,6 +618,51 @@ mod tests {
                 .expect("effective_perms");
             assert_eq!(got, expected, "user {name}");
         }
+        done(state, path).await;
+    }
+
+    #[test]
+    fn moderation_needs_a_strict_superset() {
+        let kick = Perm::Kick as i64;
+        let channels = Perm::ManageChannels as i64;
+        let cases: [(i64, bool, i64, bool); 9] = [
+            (kick, false, 0, true),
+            (kick, false, kick, false),
+            (kick, false, ALL_PERMS, false),
+            (kick, false, channels, false),
+            (kick | channels, false, channels, true),
+            (kick | channels, false, kick, true),
+            (ALL_PERMS, false, ALL_PERMS, false),
+            (ALL_PERMS, false, ALL_PERMS & !channels, true),
+            (ALL_PERMS, true, ALL_PERMS, true),
+        ];
+        for (actor, site_admin, target, expected) in cases {
+            assert_eq!(
+                can_moderate(actor, site_admin, target),
+                expected,
+                "actor {actor} site admin {site_admin} target {target}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn member_perms_ignore_site_admin_and_non_members() {
+        let (state, path) = temp_state("member_perms").await;
+        let db = &state.db;
+        add_member(db, "rchat", "root", 0, 0, now()).await;
+        add_member(db, "rchat", "narrow", 1, Perm::Kick as i64, now()).await;
+        assert_eq!(member_perms(db, "rchat", "root").await.expect("root"), 0);
+        assert_eq!(
+            effective_perms(db, "rchat", &mem_user("root", true))
+                .await
+                .expect("root effective"),
+            ALL_PERMS
+        );
+        assert_eq!(
+            member_perms(db, "rchat", "narrow").await.expect("narrow"),
+            Perm::Kick as i64
+        );
+        assert_eq!(member_perms(db, "rchat", "ghost").await.expect("ghost"), 0);
         done(state, path).await;
     }
 

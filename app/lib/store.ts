@@ -16,6 +16,7 @@ import {
   type ReadMark,
 } from './lists'
 import { addSearchPage, searchCursor, searchParams, type SearchArgs } from './search'
+import { memberPerms } from './rules'
 import { ALL_PERMS } from './types'
 import type {
   AdminOverview,
@@ -32,6 +33,7 @@ import type {
   P2pAvailability,
   Role,
   SearchResult,
+  ServerBan,
   ServerDetail,
   ServerSummary,
   ServerSummaryLite,
@@ -120,6 +122,7 @@ export interface Outgoing {
 
 export interface Notice {
   id: number
+  lead?: string
   name: string
   title: string
   body: string
@@ -217,6 +220,7 @@ interface RChatState {
   servers: Record<string, ServerDetail>
   members: Record<string, Paged<Member>>
   interacted: Record<string, Paged<UserRef>>
+  bans: Record<string, Paged<ServerBan>>
   adminUsers: Paged<UserRef>
   adminServers: Paged<ServerSummaryLite>
   dms: DmSummary[]
@@ -302,6 +306,9 @@ interface RChatState {
   setSlowmode: (id: number, seconds: number) => Promise<void>
   deleteChannel: (id: number) => Promise<void>
   kickMember: (server: string, username: string) => Promise<void>
+  banMember: (server: string, username: string) => Promise<void>
+  unbanMember: (server: string, username: string) => Promise<void>
+  loadBans: (server: string, reset?: boolean) => Promise<void>
   grantAdmin: (server: string, username: string) => Promise<void>
   revokeAdmin: (server: string, username: string) => Promise<void>
   transferAdmin: (server: string, username: string) => Promise<void>
@@ -354,14 +361,7 @@ export const serverAdminPerms = (s: RChatState, server: string): number => {
   const { me } = s
   if (!me) return 0
   const row = s.members[server]?.list.find(m => m.username === me.username)
-  if (row) {
-    if (row.is_admin) return row.perms === 0 ? ALL_PERMS : row.perms & ALL_PERMS
-    const roles = s.servers[server]?.roles ?? []
-    return (
-      roles.filter(r => row.role_ids.includes(r.id)).reduce((acc, r) => acc | r.perms, 0) &
-      ALL_PERMS
-    )
-  }
+  if (row) return memberPerms(row, s.servers[server]?.roles ?? [])
   return (me.servers.find(x => x.name === server)?.is_admin ?? false) ? ALL_PERMS : 0
 }
 
@@ -419,6 +419,20 @@ export const roleMenuItems = (server: string, username: string): ContextMenuItem
     }
   })
 }
+
+export const banMenuItem = (server: string, username: string): ContextMenuItem => ({
+  label: 'Ban from server',
+  danger: true,
+  action: () => {
+    const s = useStore.getState()
+    s.askConfirm({
+      title: 'Ban from Server',
+      body: "Ban this user? They are removed from the server and can't join again until unbanned.",
+      confirm: 'Ban',
+      action: () => void s.banMember(server, username),
+    })
+  },
+})
 
 export const useStore = create<RChatState>()((set, get) => {
   const epochs: Record<string, number> = {}
@@ -961,10 +975,10 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   let noticeId = 0
-  const notify = (name: string, title: string, body: string, go: () => void) => {
+  const notify = (name: string, title: string, body: string, go: () => void, lead?: string) => {
     noticeId += 1
     const id = noticeId
-    set(s => ({ notices: [...s.notices, { id, name, title, body, go }].slice(-3) }))
+    set(s => ({ notices: [...s.notices, { id, lead, name, title, body, go }].slice(-3) }))
     setTimeout(() => set(s => ({ notices: s.notices.filter(n => n.id !== id) })), 5000)
   }
 
@@ -1080,6 +1094,7 @@ export const useStore = create<RChatState>()((set, get) => {
     servers: {},
     members: {},
     interacted: {},
+    bans: {},
     adminUsers: emptyPage<UserRef>(),
     adminServers: emptyPage<ServerSummaryLite>(),
     dms: [],
@@ -1228,6 +1243,7 @@ export const useStore = create<RChatState>()((set, get) => {
         servers: {},
         members: {},
         interacted: {},
+        bans: {},
         adminUsers: emptyPage<UserRef>(),
         adminServers: emptyPage<ServerSummaryLite>(),
         dms: [],
@@ -1650,6 +1666,35 @@ export const useStore = create<RChatState>()((set, get) => {
     deleteChannel: id => act(async () => void (await api.deleteChannel(id))),
     kickMember: (server, username) =>
       act(async () => void (await api.kickMember(server, username))),
+    banMember: (server, username) =>
+      act(async () => {
+        await api.banMember(server, username)
+        if (get().bans[server]) await get().loadBans(server, true)
+      }),
+    unbanMember: (server, username) =>
+      act(async () => {
+        await api.unbanMember(server, username)
+        const id = `b:${server}`
+        epochs[id] = (epochs[id] ?? 0) + 1
+        set(s => {
+          const cache = s.bans[server]
+          if (!cache) return {}
+          const list = cache.list.filter(b => b.username !== username)
+          return { bans: { ...s.bans, [server]: { ...cache, list, loading: false } } }
+        })
+      }),
+    loadBans: (server, reset = false) =>
+      act(() =>
+        loadPage(
+          `b:${server}`,
+          () => get().bans[server] ?? emptyPage<ServerBan>(),
+          page => set(s => ({ bans: { ...s.bans, [server]: page } })),
+          offset => api.listBans(server, offset),
+          b => b.username,
+          '',
+          reset
+        )
+      ),
     grantAdmin: (server, username) =>
       act(async () => void (await api.grantAdmin(server, username))),
     revokeAdmin: (server, username) =>
@@ -2159,10 +2204,20 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         case 'member_left':
         case 'member_kicked': {
+          const banned = ev.type === 'member_kicked' && ev.banned
           if (get().me?.username === ev.username) {
+            if (banned) {
+              const { servers, me } = get()
+              const name =
+                servers[ev.server]?.display_name ??
+                me?.servers.find(x => x.name === ev.server)?.display_name ??
+                ev.server
+              notify(name, '', '', () => {}, 'You were banned from')
+            }
             dropServer(ev.server)
             return
           }
+          if (banned && get().bans[ev.server]) void get().loadBans(ev.server, true)
           patchServer(ev.server, d => ({
             ...d,
             member_count: Math.max(0, d.member_count - 1),

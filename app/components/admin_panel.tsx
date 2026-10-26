@@ -9,6 +9,7 @@ import { canDeleteChannel } from '../lib/rules'
 import { UserAvatar } from './user_avatar'
 import {
   AdminPermsEditor,
+  BanList,
   ChannelControls,
   Dialog,
   RolesEditor,
@@ -335,12 +336,15 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
   const renameChannel = useStore(s => s.renameChannel)
   const deleteChannel = useStore(s => s.deleteChannel)
   const kickMember = useStore(s => s.kickMember)
+  const banMember = useStore(s => s.banMember)
   const grantAdmin = useStore(s => s.grantAdmin)
   const revokeAdmin = useStore(s => s.revokeAdmin)
   const cache = useStore(s => s.members[name])
   const loadMembers = useStore(s => s.loadMembers)
+  const me = useStore(s => s.me)
   const [detail, setDetail] = useState<ServerDetail | null>(null)
   const [editingAdmin, setEditingAdmin] = useState<string | null>(null)
+  const [banning, setBanning] = useState<string | null>(null)
 
   const refresh = useCallback(
     () =>
@@ -420,17 +424,19 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
         submitLabel="Add"
         onSubmit={v => run(() => createChannel(name, v))}
       />
+      <p className={sectionCls}>Bans</p>
+      <BanList server={name} />
       <p className={sectionCls}>Members ({detail.member_count})</p>
       {(cache?.list ?? []).map(m => (
         <div key={m.username} className="rounded-xl px-1 py-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <UserAvatar
               username={m.username}
               avatarKind={m.avatar_kind}
               avatarColor={m.avatar_color}
               size={24}
             />
-            <span className="min-w-0 flex-1 truncate text-sm">{m.display_name}</span>
+            <span className="streamer min-w-24 flex-1 truncate text-sm">{m.display_name}</span>
             {m.is_admin && (
               <button
                 onClick={() => setEditingAdmin(editingAdmin === m.username ? null : m.username)}
@@ -449,12 +455,36 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
             >
               {m.is_admin ? 'Revoke Admin' : 'Grant Admin'}
             </button>
-            <button
-              onClick={() => void kickMember(name, m.username).then(reloadMembers)}
-              className={dangerBtn}
-            >
-              Kick
-            </button>
+            {banning === m.username ? (
+              <>
+                <button onClick={() => setBanning(null)} className={textBtn}>
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setBanning(null)
+                    run(() => banMember(name, m.username).then(reloadMembers))
+                  }}
+                  className={dangerBtn}
+                >
+                  Confirm ban
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => void kickMember(name, m.username).then(reloadMembers)}
+                  className={dangerBtn}
+                >
+                  Kick
+                </button>
+                {m.username !== me?.username && (
+                  <button onClick={() => setBanning(m.username)} className={dangerBtn}>
+                    Ban from server
+                  </button>
+                )}
+              </>
+            )}
           </div>
           {m.is_admin && editingAdmin === m.username && (
             <div className="mt-1.5 pl-8">

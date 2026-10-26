@@ -269,6 +269,61 @@ describe('removed or renamed list items stay gone', () => {
   })
 })
 
+describe('server bans list', () => {
+  const ban = (i: number) => ({ ...user(`b${i}`), banned_at: 100 - i })
+  const names = () => st().bans.club.list.map(b => b.username)
+
+  test('an unban while a page is in flight does not bring the ban back', async () => {
+    useStore.setState({
+      bans: {
+        club: {
+          list: Array.from({ length: 50 }, (_, i) => ban(i)),
+          hasMore: true,
+          loading: false,
+          q: '',
+        },
+      },
+    })
+    hold()
+    const load = st().loadBans('club')
+    await tick()
+    const unban = st().unbanMember('club', 'b10')
+    await tick()
+    expect(requests).toHaveLength(2)
+    expect(offsetOf(requests[0])).toBe(50)
+    expect(requests[1]).toEndWith('/servers/club/bans/b10')
+    held[1]({ ok: true })
+    await unban
+    held[0]([ban(50)])
+    await load
+    expect(names()).toHaveLength(49)
+    expect(names().includes('b10')).toBe(false)
+    expect(st().bans.club.loading).toBe(false)
+    const next = st().loadBans('club')
+    await tick()
+    expect(offsetOf(requests[2])).toBe(49)
+    held[2]([ban(50)])
+    await next
+    expect(names()).toHaveLength(50)
+    expect(names().includes('b10')).toBe(false)
+    expect(names()[49]).toBe('b50')
+  })
+
+  test('a ban seen over the socket refreshes a loaded list', async () => {
+    useStore.setState({
+      bans: { club: { list: [ban(1)], hasMore: false, loading: false, q: '' } },
+    })
+    serve([ban(0), ban(1)])
+    dispatch({ type: 'member_kicked', server: 'club', username: 'b0', banned: true })
+    await tick()
+    expect(offsetOf(requests[0])).toBe(0)
+    expect(names()).toEqual(['b0', 'b1'])
+    dispatch({ type: 'member_kicked', server: 'club', username: 'b2', banned: false })
+    await tick()
+    expect(requests).toHaveLength(1)
+  })
+})
+
 describe('older history', () => {
   beforeEach(() => {
     useStore.setState({

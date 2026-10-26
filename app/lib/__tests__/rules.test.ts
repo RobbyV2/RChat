@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test'
-import { canDeleteChannel, charCount, sameOriginImage, serverInitial } from '../rules'
-import type { Channel } from '../types'
+import {
+  canDeleteChannel,
+  canModerate,
+  charCount,
+  memberPerms,
+  sameOriginImage,
+  serverInitial,
+} from '../rules'
+import { ALL_PERMS, Perm, type Channel } from '../types'
 
 const ch = (id: number, kind: Channel['kind']): Channel => ({
   id,
@@ -18,6 +25,46 @@ describe('canDeleteChannel', () => {
     expect(canDeleteChannel([text, voice], voice)).toBe(true)
     expect(canDeleteChannel([voice], voice)).toBe(false)
     expect(canDeleteChannel([text, ch(3, 'text')], text)).toBe(true)
+  })
+})
+
+describe('memberPerms', () => {
+  const roles = [
+    { id: 1, perms: Perm.Kick },
+    { id: 2, perms: Perm.ManageChannels },
+  ]
+  const row = (is_admin: boolean, perms: number, role_ids: number[] = []) => ({
+    is_admin,
+    perms,
+    role_ids,
+  })
+
+  test('mirrors the server: admin perms 0 means all, roles only for non-admins', () => {
+    expect(memberPerms(null, roles)).toBe(0)
+    expect(memberPerms(undefined, roles)).toBe(0)
+    expect(memberPerms(row(true, 0, [2]), roles)).toBe(ALL_PERMS)
+    expect(memberPerms(row(true, Perm.Kick, [2]), roles)).toBe(Perm.Kick)
+    expect(memberPerms(row(false, 0, [1, 2]), roles)).toBe(Perm.Kick | Perm.ManageChannels)
+    expect(memberPerms(row(false, ALL_PERMS, [3]), roles)).toBe(0)
+  })
+})
+
+describe('canModerate', () => {
+  test('needs a strict superset of the target perms', () => {
+    const kick = Perm.Kick
+    const channels = Perm.ManageChannels
+    expect(canModerate(kick, false, 0)).toBe(true)
+    expect(canModerate(kick, false, kick)).toBe(false)
+    expect(canModerate(kick, false, ALL_PERMS)).toBe(false)
+    expect(canModerate(kick, false, channels)).toBe(false)
+    expect(canModerate(kick | channels, false, channels)).toBe(true)
+    expect(canModerate(kick | channels, false, kick)).toBe(true)
+    expect(canModerate(ALL_PERMS, false, ALL_PERMS)).toBe(false)
+    expect(canModerate(ALL_PERMS, false, ALL_PERMS & ~channels)).toBe(true)
+  })
+
+  test('site admins bypass the rule', () => {
+    expect(canModerate(ALL_PERMS, true, ALL_PERMS)).toBe(true)
   })
 })
 

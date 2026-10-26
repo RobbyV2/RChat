@@ -152,10 +152,11 @@ export default function AppShell() {
               className="rounded-xl bg-surface-container-high p-3 text-left shadow-elevation-2 hover:bg-surface-container-highest"
             >
               <p className="truncate text-sm font-medium">
+                {n.lead && `${n.lead} `}
                 <span className="streamer">{n.name}</span>
                 {n.title && ` ${n.title}`}
               </p>
-              <p className="truncate text-xs text-on-surface-variant">{n.body}</p>
+              {n.body && <p className="truncate text-xs text-on-surface-variant">{n.body}</p>}
             </button>
           ))}
         </div>

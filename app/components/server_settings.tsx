@@ -526,6 +526,45 @@ export function AdminPermsEditor({
   )
 }
 
+export function BanList({ server }: { server: string }) {
+  const cache = useStore(s => s.bans[server])
+  const loadBans = useStore(s => s.loadBans)
+  const unbanMember = useStore(s => s.unbanMember)
+  useEffect(() => {
+    void loadBans(server, true)
+  }, [server, loadBans])
+  const more = useCallback(() => void loadBans(server), [server, loadBans])
+  const list = cache?.list ?? []
+  return (
+    <div className="space-y-1">
+      {list.map(b => (
+        <div key={b.username} className="flex items-center gap-2 rounded-xl px-2 py-1.5">
+          <UserAvatar
+            username={b.username}
+            avatarKind={b.avatar_kind}
+            avatarColor={b.avatar_color}
+            size={28}
+          />
+          <span className="min-w-0 flex-1 truncate text-sm">
+            <span className="streamer">{b.display_name}</span>
+            <span className="text-xs text-on-surface-variant">
+              {' '}
+              · banned {new Date(b.banned_at * 1000).toLocaleDateString()}
+            </span>
+          </span>
+          <button onClick={() => void unbanMember(server, b.username)} className={textBtn}>
+            Unban
+          </button>
+        </div>
+      ))}
+      {cache && !cache.loading && list.length === 0 && (
+        <p className="px-2 text-sm text-on-surface-variant">No one is banned.</p>
+      )}
+      {(cache?.hasMore ?? false) && <Sentinel key={list.length} onVisible={more} />}
+    </div>
+  )
+}
+
 export function ConfirmDialog() {
   const dialog = useStore(s => s.activeDialog)
   const closeDialog = useStore(s => s.closeDialog)
@@ -649,6 +688,12 @@ function Settings({ server }: { server: string }) {
           {detail.channels.map(c => (
             <ChannelControls key={c.id} server={server} channel={c} roles={detail.roles} />
           ))}
+        </>
+      )}
+      {hasPerm(perms, Perm.Kick) && (
+        <>
+          <p className={sectionCls}>Bans</p>
+          <BanList server={server} />
         </>
       )}
       {hasPerm(perms, Perm.ManageAdmins) && (

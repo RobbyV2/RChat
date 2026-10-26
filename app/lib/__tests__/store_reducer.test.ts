@@ -189,9 +189,41 @@ describe('membership count math', () => {
       servers: { s: serverDetail('s', { member_count: 2 }) },
       members: { s: paged([member('alice'), member('bob')]) },
     })
-    dispatch({ type: 'member_kicked', server: 's', username: 'bob' })
+    dispatch({ type: 'member_kicked', server: 's', username: 'bob', banned: false })
     expect(st().servers.s.member_count).toBe(1)
     expect(st().members.s.list.map(m => m.username)).toEqual(['alice'])
+  })
+
+  test('a ban of someone else mirrors a kick', () => {
+    useStore.setState({
+      me: me('alice'),
+      servers: { s: serverDetail('s', { member_count: 2 }) },
+      members: { s: paged([member('alice'), member('bob')]) },
+      notices: [],
+    })
+    dispatch({ type: 'member_kicked', server: 's', username: 'bob', banned: true })
+    expect(st().servers.s.member_count).toBe(1)
+    expect(st().members.s.list.map(m => m.username)).toEqual(['alice'])
+    expect(st().notices).toEqual([])
+  })
+
+  test('being banned drops the server and says so; being kicked stays quiet', () => {
+    const club = { name: 's', display_name: 'Club', creator: null, is_admin: false }
+    const other = { name: 't', display_name: 'Other', creator: null, is_admin: false }
+    useStore.setState({
+      me: me('alice', { servers: [club, other] }),
+      servers: { s: serverDetail('s', { display_name: 'Club' }), t: serverDetail('t') },
+      members: { s: paged([member('alice')]) },
+      notices: [],
+    })
+    dispatch({ type: 'member_kicked', server: 't', username: 'alice', banned: false })
+    expect(st().notices).toEqual([])
+    dispatch({ type: 'member_kicked', server: 's', username: 'alice', banned: true })
+    const s = st()
+    expect(s.servers.s).toBeUndefined()
+    expect(s.members.s).toBeUndefined()
+    expect(s.me?.servers).toEqual([])
+    expect(s.notices.map(n => `${n.lead} ${n.name}`)).toEqual(['You were banned from Club'])
   })
 
   test('banned purges the user everywhere but leaves member_count to member events', () => {

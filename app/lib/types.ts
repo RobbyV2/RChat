@@ -64,6 +64,10 @@ export interface Member extends UserRef {
   role_ids: number[]
 }
 
+export interface ServerBan extends UserRef {
+  banned_at: number
+}
+
 export interface ServerDetail {
   name: string
   display_name: string
@@ -236,7 +240,7 @@ export type WsEvent =
   | { type: 'server_deleted'; name: string }
   | { type: 'member_joined'; server: string; member: Member }
   | { type: 'member_left'; server: string; username: string }
-  | { type: 'member_kicked'; server: string; username: string }
+  | { type: 'member_kicked'; server: string; username: string; banned: boolean }
   | { type: 'admin_changed'; server: string; username: string; is_admin: boolean; perms: number }
   | { type: 'roles_changed'; server: string }
   | { type: 'channel_perms_changed'; server: string; channel_id: number }

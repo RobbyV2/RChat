@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect } from 'react'
 import { Perm, hasPerm, type Member } from '../lib/types'
-import { myPerms, roleColor, roleMenuItems, useStore, type ContextMenuItem } from '../lib/store'
+import { canModerate, memberPerms } from '../lib/rules'
+import {
+  banMenuItem,
+  myPerms,
+  roleColor,
+  roleMenuItems,
+  useStore,
+  type ContextMenuItem,
+} from '../lib/store'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
 import { Sentinel } from './server_settings'
@@ -67,12 +75,19 @@ export default function MemberSidebar() {
         action: () => void startDm(m.username),
       },
     ]
-    if (hasPerm(perms, Perm.Kick) && !self)
-      items.push({
-        label: 'Kick',
-        danger: true,
-        action: () => void kickMember(detail.name, m.username),
-      })
+    if (
+      hasPerm(perms, Perm.Kick) &&
+      !self &&
+      canModerate(perms, me.is_site_admin, memberPerms(m, detail.roles))
+    )
+      items.push(
+        {
+          label: 'Kick',
+          danger: true,
+          action: () => void kickMember(detail.name, m.username),
+        },
+        banMenuItem(detail.name, m.username)
+      )
     if (hasPerm(perms, Perm.ManageAdmins)) {
       items.push(
         m.is_admin
