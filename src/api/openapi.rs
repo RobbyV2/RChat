@@ -79,6 +79,8 @@ impl Modify for Bearer {
         super::media::download_media,
         super::media::delete_media,
         super::admin::get_settings,
+        super::health::health,
+        super::health::ready,
         crate::ws::handler,
     ),
     modifiers(&Bearer),

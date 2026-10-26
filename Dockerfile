@@ -29,6 +29,10 @@ RUN bun install --frozen-lockfile
 COPY . ./
 COPY --from=rust-builder /app/public/wasm ./public/wasm
 
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_WS_URL
+ARG NEXT_PUBLIC_PEERJS_HOST
+ARG NEXT_PUBLIC_PEERJS_PORT
 RUN bun run build
 RUN mkdir -p /peer && cd /peer && echo '{"name":"peer-runtime","dependencies":{"peer":"^1.0.2"}}' > package.json && bun install
 
@@ -39,6 +43,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
 COPY --from=oven/bun:latest /usr/local/bin/bun /usr/local/bin/bun
+RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -56,12 +61,11 @@ COPY --from=js-builder /app/.next/static ./.next/static
 COPY --from=js-builder /app/public ./public
 COPY --from=js-builder /peer /app/peer
 COPY --from=rust-builder /app/target/release/server /app/server
+COPY --chmod=755 deploy/start.sh /app/start.sh
 
 EXPOSE 3000 9001
 
-RUN printf '#!/bin/sh\nset -e\n\nexport HOSTNAME="${HOST:-0.0.0.0}"\n\n(cd /app/peer && bunx peer --port "${PEERJS_PORT:-9001}" --path /peerjs 2>&1 | { case "${RUST_LOG:-info}" in *debug*|*trace*) cat ;; *) grep --line-buffered -vE "Client (dis)?connected:" ;; esac; }) &\nPEER_PID=$!\n\nif [ "$APP_MODE" = "api-only" ]; then\n    trap "kill $PEER_PID 2>/dev/null; exit" TERM INT\n    ./server\n    kill $PEER_PID 2>/dev/null\n    exit\nfi\n\nbun server.js &\nNEXT_PID=$!\ntrap "kill $NEXT_PID $PEER_PID 2>/dev/null; exit" TERM INT\nsleep 1\n./server\nkill $NEXT_PID $PEER_PID 2>/dev/null\n' > /app/start.sh && chmod +x /app/start.sh
-
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:3000/api/settings || exit 1
+    CMD curl -fs "http://localhost:${SERVER_PORT:-3000}/api/health" > /dev/null || exit 1
 
 CMD ["/app/start.sh"]

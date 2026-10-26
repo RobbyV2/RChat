@@ -53,6 +53,7 @@ release/
 # project specific
 i.txt
 temp/
+deploy/k8s/secrets.env
 
 # WASM build output
 /public/wasm/

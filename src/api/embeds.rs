@@ -5,7 +5,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use reqwest::redirect::Policy;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use url::{Host, Url};
 use utoipa::IntoParams;
@@ -298,6 +298,16 @@ async fn resolve(db: &Db, url: &str) -> anyhow::Result<Option<Embed>> {
     Ok(Some(embed(site_name, title, description, image)))
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct UnfurlJob {
+    server: Option<String>,
+    channel_id: Option<i64>,
+    dm_id: Option<i64>,
+    dm_users: Option<Vec<String>>,
+    message_id: i64,
+    urls: Vec<String>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_unfurl(
     state: &AppState,
@@ -312,47 +322,77 @@ pub(crate) fn spawn_unfurl(
     if urls.is_empty() {
         return;
     }
+    let job = UnfurlJob {
+        server,
+        channel_id,
+        dm_id,
+        dm_users,
+        message_id,
+        urls,
+    };
     let state = state.clone();
     tokio::spawn(async move {
-        let mut embeds: Vec<Embed> = Vec::new();
-        for url in urls {
-            match resolve(&state.db, &url).await {
-                Ok(Some(mut embed)) => {
-                    embed.ord = embeds.len() as i64;
-                    embeds.push(embed);
-                }
-                Ok(None) => {}
-                Err(e) => tracing::debug!("unfurl {url} skipped: {e}"),
-            }
-        }
-        if embeds.is_empty() {
-            return;
-        }
-        for embed in &embeds {
-            let inserted = sqlx::query(
-                "INSERT INTO message_embeds(message_id, ord, url, banner_removed, removed) VALUES($1, $2, $3, 0, 0) ON CONFLICT(message_id, ord) DO NOTHING",
-            )
-            .bind(message_id)
-            .bind(embed.ord)
-            .bind(&embed.url)
-            .execute(&state.db)
-            .await;
-            match inserted {
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::debug!("embed insert for message {message_id} skipped: {e}");
-                    return;
+        match &state.bus {
+            Some(bus) if !bus.unfurls_locally() => {
+                if let Err(e) = bus.enqueue_unfurl(&job).await {
+                    tracing::warn!(
+                        "embed job for message {message_id} not queued, unfurling here: {e}"
+                    );
+                    unfurl(&state, job).await;
                 }
             }
+            Some(_) | None => unfurl(&state, job).await,
         }
-        state.hub.broadcast(WsEvent::EmbedsResolved {
-            server,
-            channel_id,
-            dm_id,
-            dm_users,
-            message_id,
-            embeds,
-        });
+    });
+}
+
+pub async fn unfurl(state: &AppState, job: UnfurlJob) {
+    let UnfurlJob {
+        server,
+        channel_id,
+        dm_id,
+        dm_users,
+        message_id,
+        urls,
+    } = job;
+    let mut embeds: Vec<Embed> = Vec::new();
+    for url in urls {
+        match resolve(&state.db, &url).await {
+            Ok(Some(mut embed)) => {
+                embed.ord = embeds.len() as i64;
+                embeds.push(embed);
+            }
+            Ok(None) => {}
+            Err(e) => tracing::debug!("unfurl {url} skipped: {e}"),
+        }
+    }
+    if embeds.is_empty() {
+        return;
+    }
+    for embed in &embeds {
+        let inserted = sqlx::query(
+            "INSERT INTO message_embeds(message_id, ord, url, banner_removed, removed) VALUES($1, $2, $3, 0, 0) ON CONFLICT(message_id, ord) DO NOTHING",
+        )
+        .bind(message_id)
+        .bind(embed.ord)
+        .bind(&embed.url)
+        .execute(&state.db)
+        .await;
+        match inserted {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::debug!("embed insert for message {message_id} skipped: {e}");
+                return;
+            }
+        }
+    }
+    state.hub.broadcast(WsEvent::EmbedsResolved {
+        server,
+        channel_id,
+        dm_id,
+        dm_users,
+        message_id,
+        embeds,
     });
 }
 

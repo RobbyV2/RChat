@@ -1,0 +1,23 @@
+# TRUSTED_PROXIES: the backends honour X-Forwarded-For only from these peers and key their
+# rate limits on the right-most hop that is not one of them. REPLACE the placeholder with
+# the address range your ingress controller's pods use: usually the cluster pod CIDR
+# (for example 10.244.0.0/16 with kubeadm and flannel, 10.42.0.0/16 with k3s; see
+# kubectl get nodes -o jsonpath='{.items[*].spec.podCIDR}'), or the node range if the
+# controller runs with hostNetwork. The role pods refuse to start until it is a valid
+# list. Trusting the whole pod range is safe because networkpolicy.yaml only lets the
+# controller reach them (with a CNI that enforces NetworkPolicy); a narrower range is
+# better if your controller pods have one. See the client address notes in ingress.yaml.
+# ingress-nginx sets X-Forwarded-For itself; any other proxy you list must set or
+# overwrite it too, because it is read before X-Real-IP (a proxy that only sets
+# X-Real-IP and passes the client's X-Forwarded-For through lets clients pick their key).
+# The secrets (DATABASE_URL, VALKEY_PASSWORD, REDIS_URL) come from secrets.env through
+# the secretGenerator in kustomization.yaml; see secrets.env.example.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rchat-config
+data:
+  HOST: "0.0.0.0"
+  TRUSTED_PROXIES: "REPLACE-with-the-ingress-controller-pod-CIDR"
+  RUST_LOG: info
+  DATABASE_MAX_CONNECTIONS: "8"

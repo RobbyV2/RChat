@@ -15,19 +15,30 @@ type ProxyClient = Client<HttpConnector, Body>;
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 
 use crate::config::AppConfig;
+use crate::server::client_ip::ClientIp;
 use crate::state::AppState;
 
-pub fn register_routes(proxy_url: Option<&str>, config: &AppConfig, state: AppState) -> Router {
+fn limited(router: Router, key: ClientIp, config: &AppConfig) -> Router {
     let governor_conf = GovernorConfigBuilder::default()
         .per_millisecond((1000 / config.rate_limit_per_second.max(1)).max(1))
         .burst_size(config.rate_limit_burst)
+        .key_extractor(key)
         .finish()
         .expect("invalid rate limit config");
+    router.layer(GovernorLayer::new(governor_conf))
+}
 
-    let api_routes = crate::api::routes(state.clone())
-        .with_state(state)
-        .layer(GovernorLayer::new(governor_conf));
-    let router = Router::new().nest("/api", api_routes);
+pub fn register_routes(proxy_url: Option<&str>, config: &AppConfig, state: AppState) -> Router {
+    let key = ClientIp(config.proxy_trust.clone());
+    let api_routes =
+        crate::api::routes(state.clone(), &config.roles, key.clone()).with_state(state.clone());
+    let api_routes = limited(api_routes, key, config);
+    let router = Router::new().nest(
+        "/api",
+        crate::api::health::routes()
+            .with_state(state)
+            .merge(api_routes),
+    );
 
     match proxy_url {
         Some(url) => {

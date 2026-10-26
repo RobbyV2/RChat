@@ -1,12 +1,14 @@
 use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use sqlx::any::{AnyPoolOptions, AnyRow, install_default_drivers};
-use sqlx::{AnyPool, Row};
+use sqlx::{AnyConnection, AnyPool, Row};
 
 pub type Db = AnyPool;
+
+const SCHEMA_LOCK: i64 = 0x7263_6861_7400;
 
 const SQLITE_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users(
@@ -147,16 +149,19 @@ async fn sqlite_search_index(pool: &Db) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn postgres_search_index(pool: &Db) {
-    if let Err(e) = sqlx::query("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-        .execute(pool)
-        .await
-    {
+async fn guarded(conn: &mut AnyConnection, stmt: &'static str) -> Result<(), sqlx::Error> {
+    let mut savepoint = sqlx::Connection::begin(&mut *conn).await?;
+    sqlx::query(stmt).execute(&mut *savepoint).await?;
+    savepoint.commit().await
+}
+
+async fn postgres_search_index(conn: &mut AnyConnection) {
+    if let Err(e) = guarded(conn, "CREATE EXTENSION IF NOT EXISTS pg_trgm").await {
         tracing::warn!("pg_trgm unavailable, search falls back to unindexed LIKE: {e}");
         return;
     }
     for stmt in POSTGRES_SEARCH {
-        if let Err(e) = sqlx::query(*stmt).execute(pool).await {
+        if let Err(e) = guarded(conn, stmt).await {
             tracing::warn!("search index not created: {e}");
         }
     }
@@ -188,17 +193,33 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("media", "uploader TEXT"),
 ];
 
-async fn reconcile_columns(pool: &Db, is_sqlite: bool) -> anyhow::Result<()> {
+async fn reconcile_columns(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Result<()> {
     let int = match is_sqlite {
         true => "INTEGER",
         false => "BIGINT",
     };
     for (table, col) in MIGRATIONS {
         let coldef = col.replace("{INT}", int);
+        let name = coldef.split_whitespace().next().unwrap_or(&coldef);
+        if !is_sqlite {
+            let present = sqlx::query(
+                "SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2",
+            )
+            .bind(*table)
+            .bind(name)
+            .fetch_optional(&mut *conn)
+            .await?
+            .is_some();
+            if present {
+                continue;
+            }
+        }
         let sql = format!("ALTER TABLE {table} ADD COLUMN {coldef}");
-        match sqlx::query(sqlx::AssertSqlSafe(sql)).execute(pool).await {
+        match sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *conn)
+            .await
+        {
             Ok(_) => {
-                let name = coldef.split_whitespace().next().unwrap_or(&coldef);
                 tracing::info!("added missing column {table}.{name}");
             }
             Err(e)
@@ -523,6 +544,41 @@ pub fn now() -> i64 {
         .unwrap_or(0)
 }
 
+fn env_num<T: std::str::FromStr>(key: &str) -> Option<T> {
+    std::env::var(key).ok().and_then(|v| v.trim().parse().ok())
+}
+
+async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Result<()> {
+    let schema = match is_sqlite {
+        true => SQLITE_SCHEMA,
+        false => POSTGRES_SCHEMA,
+    };
+    for stmt in schema.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        sqlx::query(stmt).execute(&mut *conn).await?;
+    }
+    reconcile_columns(conn, is_sqlite).await?;
+    let t = now();
+    sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
+        .bind(t)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("INSERT INTO channels(server, name, created_at) SELECT 'rchat', 'general', $1 WHERE NOT EXISTS(SELECT 1 FROM channels WHERE server = 'rchat')")
+        .bind(t)
+        .execute(&mut *conn)
+        .await?;
+    let guests = match std::env::var("GUESTS_ENABLED") {
+        Ok(v) if matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "off") => "0",
+        _ => "1",
+    };
+    sqlx::query(
+        "INSERT INTO settings(key, value) VALUES('guests_enabled', $1) ON CONFLICT(key) DO NOTHING",
+    )
+    .bind(guests)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
     install_default_drivers();
     let url = match database_url {
@@ -537,11 +593,19 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
         None => "sqlite://rchat.db?mode=rwc".to_string(),
     };
     let is_sqlite = url.starts_with("sqlite:");
-    let pool = AnyPoolOptions::new()
-        .max_connections(match is_sqlite {
+    let mut options = AnyPoolOptions::new().max_connections(
+        env_num("DATABASE_MAX_CONNECTIONS").unwrap_or(match is_sqlite {
             true => 1,
             false => 8,
-        })
+        }),
+    );
+    if let Some(min) = env_num("DATABASE_MIN_CONNECTIONS") {
+        options = options.min_connections(min);
+    }
+    if let Some(secs) = env_num("DATABASE_ACQUIRE_TIMEOUT_SECS") {
+        options = options.acquire_timeout(Duration::from_secs(secs));
+    }
+    let pool = options
         .after_connect(move |conn, _| {
             Box::pin(async move {
                 if is_sqlite {
@@ -557,14 +621,19 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
         })
         .connect(&url)
         .await?;
-    let schema = match is_sqlite {
-        true => SQLITE_SCHEMA,
-        false => POSTGRES_SCHEMA,
-    };
-    for stmt in schema.split(';').map(str::trim).filter(|s| !s.is_empty()) {
-        sqlx::query(stmt).execute(&pool).await?;
+    match is_sqlite {
+        true => init_schema(&mut *pool.acquire().await?, true).await?,
+        false => {
+            let mut tx = pool.begin().await?;
+            sqlx::query("SELECT COUNT(*) FROM pg_advisory_xact_lock($1)")
+                .bind(SCHEMA_LOCK)
+                .execute(&mut *tx)
+                .await?;
+            init_schema(&mut tx, false).await?;
+            postgres_search_index(&mut tx).await;
+            tx.commit().await?;
+        }
     }
-    reconcile_columns(&pool, is_sqlite).await?;
     match is_sqlite {
         true => {
             if let Err(e) = sqlite_search_index(&pool).await {
@@ -572,30 +641,8 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
             }
             set_fts(&pool, probe_fts(&pool).await);
         }
-        false => {
-            postgres_search_index(&pool).await;
-            set_fts(&pool, false);
-        }
+        false => set_fts(&pool, false),
     }
-    let t = now();
-    sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
-        .bind(t)
-        .execute(&pool)
-        .await?;
-    sqlx::query("INSERT INTO channels(server, name, created_at) SELECT 'rchat', 'general', $1 WHERE NOT EXISTS(SELECT 1 FROM channels WHERE server = 'rchat')")
-        .bind(t)
-        .execute(&pool)
-        .await?;
-    let guests = match std::env::var("GUESTS_ENABLED") {
-        Ok(v) if matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "off") => "0",
-        _ => "1",
-    };
-    sqlx::query(
-        "INSERT INTO settings(key, value) VALUES('guests_enabled', $1) ON CONFLICT(key) DO NOTHING",
-    )
-    .bind(guests)
-    .execute(&pool)
-    .await?;
     Ok(pool)
 }
 

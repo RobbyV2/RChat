@@ -1,0 +1,161 @@
+# Path routing identical to deploy/nginx.conf. The browser dials PeerJS on
+# NEXT_PUBLIC_PEERJS_PORT (9001 in the published image); to route /peerjs through this
+# Ingress on 443, build the image with --build-arg NEXT_PUBLIC_PEERJS_PORT=443, or expose
+# rchat-peerjs on 9001 with a LoadBalancer Service instead.
+#
+# rchat-strict (below) adds the cluster-wide rate limit for auth, password changes,
+# guest_access and media uploads, and rchat-invites the same limit in a bucket of its own for invite lookups.
+# rchat-strict's regex paths make ingress-nginx treat every path of this host as a
+# case-insensitive regex prefix (use-regex is host-wide); the paths here stay correct.
+#
+# Client address: the backends honour X-Forwarded-For only from TRUSTED_PROXIES (the
+# controller's pod range, config.yaml) and key their rate limits on the right-most hop
+# that is not a trusted proxy, and rchat-strict keys on the address the controller
+# resolves. Both are only as good as the controller's view of the client, which is set
+# in the controller ConfigMap (see ingress-nginx.example.yaml), not here:
+# - Clients connect directly, or through an L4 balancer that keeps the source address
+#   (externalTrafficPolicy: Local) or sends the PROXY protocol (use-proxy-protocol: "true"):
+#   keep use-forwarded-headers "false" (the default). The controller then ignores client
+#   X-Forwarded-* headers and replaces X-Forwarded-For with the peer address.
+# - Behind an L7 balancer that appends to X-Forwarded-For: set use-forwarded-headers
+#   "true" and proxy-real-ip-cidr to the balancer's address range. The default
+#   proxy-real-ip-cidr 0.0.0.0/0 trusts every hop, so the left-most, client-written entry
+#   would become the address the controller limits and forwards.
+# networkpolicy.yaml makes the controller the only peer that can reach the role pods, so
+# no other pod can present forged headers from inside the trusted range.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rchat
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: 26m
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: chat.example.com
+      http:
+        paths:
+          - path: /api/ws
+            pathType: Exact
+            backend:
+              service:
+                name: rchat-gateway
+                port:
+                  name: http
+          - path: /api/media
+            pathType: Prefix
+            backend:
+              service:
+                name: rchat-media
+                port:
+                  name: http
+          - path: /api/search
+            pathType: Exact
+            backend:
+              service:
+                name: rchat-search
+                port:
+                  name: http
+          - path: /api/server_search
+            pathType: Exact
+            backend:
+              service:
+                name: rchat-search
+                port:
+                  name: http
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
+          - path: /peerjs
+            pathType: Prefix
+            backend:
+              service:
+                name: rchat-peerjs
+                port:
+                  name: peer
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rchat-web
+                port:
+                  name: http
+---
+# The backends rate limit these routes per instance (2 requests/s, burst 30 per client
+# address); N replicas alone would allow N times as much, so the edge enforces the same
+# limit. ingress-nginx keeps the counters per controller pod (divide by the controller
+# replica count) and answers 503 unless the controller ConfigMap sets
+# limit-req-status-code: "429". The limit keys on the client address described at the
+# top of this file.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rchat-strict
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/limit-rps: "2"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "15"
+    nginx.ingress.kubernetes.io/proxy-body-size: 26m
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: chat.example.com
+      http:
+        paths:
+          - path: /api/auth/
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
+          - path: /api/me/password$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
+          - path: /api/servers/.+/guest_access$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
+          - path: /api/media$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-media
+                port:
+                  name: http
+---
+# Invite lookups get the same limit as rchat-strict, counted separately (the backends
+# keep a separate bucket for them too), so invite cards cannot starve logins or uploads.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rchat-invites
+  annotations:
+    nginx.ingress.kubernetes.io/limit-rps: "2"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "15"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: chat.example.com
+      http:
+        paths:
+          - path: /api/invites/
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http

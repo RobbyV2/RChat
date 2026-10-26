@@ -2413,7 +2413,7 @@ mod tests {
             .execute(db)
             .await
             .expect("assign");
-        let _ = state.hub.voice_join("bob", 7, "club", cid);
+        let _ = state.hub.voice_join("bob", 7, "club", cid).await;
         let mut rx = state.hub.subscribe();
         ban(&state, mem_user("alice", false), "Club", "Bob")
             .await
@@ -2504,7 +2504,7 @@ mod tests {
             status(ban(&state, moderator(), "nowhere", "bob").await),
             Some(StatusCode::NOT_FOUND)
         );
-        let _ = state.hub.voice_join("erin", 9, "club", cid);
+        let _ = state.hub.voice_join("erin", 9, "club", cid).await;
         let mut rx = state.hub.subscribe();
         ban(&state, moderator(), "club", "erin")
             .await
@@ -3275,8 +3275,8 @@ mod tests {
         );
         assert!(grant_valid(&state, "club", &grant).await);
         assert!(kicks(&mut rx).is_empty());
-        let _ = state.hub.voice_join("bob", 7, "club", cid);
-        state.hub.set_viewing(8, "carol", Some("club"));
+        let _ = state.hub.voice_join("bob", 7, "club", cid).await;
+        state.hub.set_viewing("carol", 8, None, Some("club"));
         assert!(state.hub.is_online("club", "carol"));
         let removed = change_password(
             &state,

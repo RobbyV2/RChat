@@ -2,6 +2,7 @@ pub mod admin;
 pub mod auth;
 pub mod dms;
 pub mod embeds;
+pub mod health;
 pub mod media;
 pub mod messages;
 pub mod openapi;
@@ -23,7 +24,9 @@ use sqlx::Row;
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use utoipa::ToSchema;
 
+use crate::config::Roles;
 use crate::db::{AvatarKind, ChannelKind, Db, MediaKind, User, get_user, setting_on};
+use crate::server::client_ip::ClientIp;
 use crate::state::AppState;
 
 #[derive(Debug)]
@@ -48,7 +51,7 @@ impl From<sqlx::Error> for ApiError {
     }
 }
 
-#[derive(Clone, Serialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct UserRef {
     pub username: String,
     pub display_name: String,
@@ -173,7 +176,7 @@ pub struct ServerSummary {
     pub is_admin: bool,
 }
 
-#[derive(Clone, Serialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct ServerSummaryLite {
     pub name: String,
     pub display_name: String,
@@ -181,7 +184,7 @@ pub struct ServerSummaryLite {
     pub has_password: bool,
 }
 
-#[derive(Clone, Serialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct Channel {
     pub id: i64,
     pub name: String,
@@ -205,7 +208,7 @@ pub struct ChannelPerm {
     pub can_read_history: bool,
 }
 
-#[derive(Clone, Serialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct Member {
     #[serde(flatten)]
     pub user: UserRef,
@@ -235,7 +238,7 @@ pub struct DmSummary {
     pub is_self: bool,
 }
 
-#[derive(Clone, Serialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct MediaRef {
     pub id: String,
     pub filename: String,
@@ -266,7 +269,7 @@ impl MediaRef {
     }
 }
 
-#[derive(Clone, Serialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct Embed {
     pub ord: i64,
     pub url: String,
@@ -277,7 +280,7 @@ pub struct Embed {
     pub banner_removed: bool,
 }
 
-#[derive(Clone, Serialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct CallLog {
     pub from: String,
     pub answered_at: Option<i64>,
@@ -285,7 +288,7 @@ pub struct CallLog {
     pub outcome: Option<String>,
 }
 
-#[derive(Clone, Serialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct Message {
     pub id: i64,
     pub channel_id: Option<i64>,
@@ -301,7 +304,7 @@ pub struct Message {
     pub call: Option<CallLog>,
 }
 
-#[derive(Clone, Copy, Serialize, ToSchema)]
+#[derive(Clone, Copy, Serialize, Deserialize, ToSchema)]
 pub struct Settings {
     pub profanity_filter: bool,
     pub asset_previews: bool,
@@ -579,28 +582,59 @@ impl FromRequestParts<AppState> for MaybeAuthed {
     }
 }
 
-pub fn routes(state: AppState) -> Router<AppState> {
-    let strict = || {
-        GovernorConfigBuilder::default()
-            .per_millisecond(500)
-            .burst_size(30)
-            .finish()
-            .expect("invalid strict rate limit config")
-    };
-    let invite_routes = Router::new()
-        .route("/invites/{name}", get(servers::get_invite))
-        .route_layer(GovernorLayer::new(strict()));
-    let strict_routes = Router::new()
-        .route("/auth/register", post(auth::register))
-        .route("/auth/login", post(auth::login))
-        .route("/auth/words/{username}", get(auth::words))
-        .route("/me/password", post(auth::change_password))
-        .route(
-            "/media",
-            post(media::upload_media).layer(DefaultBodyLimit::max(26 * 1024 * 1024)),
+pub fn routes(state: AppState, roles: &Roles, key: ClientIp) -> Router<AppState> {
+    let limiter = || {
+        GovernorLayer::new(
+            GovernorConfigBuilder::default()
+                .per_millisecond(500)
+                .burst_size(30)
+                .key_extractor(key.clone())
+                .finish()
+                .expect("invalid strict rate limit config"),
         )
-        .route("/servers/{name}/guest_access", post(servers::guest_access))
-        .route_layer(GovernorLayer::new(strict()));
+    };
+    let strict = limiter();
+    let mut router = Router::new();
+    if roles.api {
+        let invite_routes = Router::new()
+            .route("/invites/{name}", get(servers::get_invite))
+            .route_layer(limiter());
+        let strict_routes = Router::new()
+            .route("/auth/register", post(auth::register))
+            .route("/auth/login", post(auth::login))
+            .route("/auth/words/{username}", get(auth::words))
+            .route("/me/password", post(auth::change_password))
+            .route("/servers/{name}/guest_access", post(servers::guest_access))
+            .route_layer(strict.clone());
+        router = router.merge(api_routes(state, strict_routes, invite_routes));
+    }
+    if roles.gateway {
+        router = router.route("/ws", get(crate::ws::handler));
+    }
+    if roles.media {
+        let upload = Router::new()
+            .route(
+                "/media",
+                post(media::upload_media).layer(DefaultBodyLimit::max(26 * 1024 * 1024)),
+            )
+            .route_layer(strict);
+        router = router
+            .merge(upload)
+            .route("/media/{id}", get(media::download_media));
+    }
+    if roles.search {
+        router = router
+            .route("/search", get(messages::search))
+            .route("/server_search", get(servers::search_servers));
+    }
+    router
+}
+
+fn api_routes(
+    state: AppState,
+    strict_routes: Router<AppState>,
+    invite_routes: Router<AppState>,
+) -> Router<AppState> {
     Router::new()
         .route("/me", get(auth::me).patch(auth::patch_me))
         .route("/me/servers", get(servers::list_my_servers))
@@ -613,7 +647,6 @@ pub fn routes(state: AppState) -> Router<AppState> {
                 .delete(servers::delete_server),
         )
         .route("/servers/{name}/exists", get(servers::server_exists))
-        .route("/server_search", get(servers::search_servers))
         .route("/servers/{name}/members", get(servers::list_members))
         .route("/servers/{name}/interacted", get(servers::list_interacted))
         .route("/servers/{name}/join", post(servers::join_server))
@@ -682,10 +715,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
             "/messages/{id}/thread",
             get(messages::thread_messages).post(messages::send_thread_message),
         )
-        .route("/search", get(messages::search))
         .route("/unreads", get(messages::unreads))
         .route("/read", post(messages::mark_read))
-        .route("/media/{id}", get(media::download_media))
         .route("/settings", get(admin::get_settings))
         .route("/admin/settings", patch(admin::patch_settings))
         .route("/admin/overview", get(admin::overview))
@@ -696,7 +727,6 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/admin/users/{username}/servers", get(admin::user_servers))
         .route("/admin/messages/{id}", delete(admin::delete_message))
         .route("/admin/ban", post(admin::ban_user))
-        .route("/ws", get(crate::ws::handler))
         .merge(strict_routes)
         .merge(invite_routes)
         .merge(openapi::routes().route_layer(from_fn_with_state(state, require_token)))
@@ -719,6 +749,7 @@ pub(crate) mod test_util {
                 db,
                 hub: Hub::new(),
                 s3: None,
+                bus: None,
             },
             path,
         )
@@ -772,6 +803,7 @@ mod tests {
 
     use super::*;
     use crate::api::test_util::{done, temp_state};
+    use crate::server::client_ip::ProxyTrust;
 
     #[test]
     fn profanity_ignores_url_punctuation() {
@@ -827,7 +859,8 @@ mod tests {
     #[tokio::test]
     async fn invites_have_their_own_strict_limiter() {
         let (state, path) = temp_state("strict_invites").await;
-        let app = routes(state.clone()).with_state(state.clone());
+        let trusted = ProxyTrust::from_config(false, Some("127.0.0.1")).expect("trust");
+        let app = routes(state.clone(), &Roles::ALL, ClientIp(trusted)).with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
@@ -850,6 +883,7 @@ mod tests {
             for _ in 0..tries {
                 let res = client
                     .get(format!("http://{addr}{path}"))
+                    .header("X-Forwarded-For", "203.0.113.7")
                     .send()
                     .await
                     .expect("request");
@@ -859,7 +893,14 @@ mod tests {
             }
             limited.insert(path, count);
         }
+        let other = client
+            .get(format!("http://{addr}/invites/rchat"))
+            .header("X-Forwarded-For", "198.51.100.9")
+            .send()
+            .await
+            .expect("request");
         server.abort();
+        assert_eq!(other.status(), StatusCode::OK);
         assert!(limited["/invites/rchat"] >= 5, "{limited:?}");
         assert_eq!(limited["/auth/words/nobody"], 0, "{limited:?}");
         assert_eq!(limited["/settings"], 0, "{limited:?}");

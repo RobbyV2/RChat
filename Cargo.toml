@@ -49,6 +49,11 @@ rust-s3 = { version = "0.38.0", default-features = false, features = [
   "tokio-rustls-tls",
   "fail-on-err",
 ] }
+redis = { version = "1.8", default-features = false, features = [
+  "tokio-comp",
+  "streams",
+  "connection-manager",
+] }
 
 [profile.release]
 opt-level = "z"

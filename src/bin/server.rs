@@ -2,8 +2,9 @@ use std::net::SocketAddr;
 
 use axum::http::{HeaderName, Method, header};
 use clap::Parser;
-use rust_next::config::{AppConfig, AppMode, CliOverrides};
+use rust_next::config::{AppConfig, CliOverrides, Roles};
 use rust_next::server::build_router;
+use rust_next::server::client_ip::ProxyTrust;
 use rust_next::state::AppState;
 use rust_next::ws::Hub;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -23,32 +24,64 @@ async fn main() -> anyhow::Result<()> {
     let cli = CliOverrides::parse();
     let config = AppConfig::load(&cli)?;
 
+    let roles = config.roles;
     let db = rust_next::db::open(config.database_url.as_deref()).await?;
+    let web_only = roles
+        == Roles {
+            web: true,
+            ..Roles::NONE
+        };
+    let (hub, bus) = match config.redis_url.as_deref().map(str::trim) {
+        Some(url) if !web_only => {
+            let (hub, bus) =
+                rust_next::bus::connect(url, &config.redis_prefix, config.redis_hub_maxlen, roles)
+                    .await?;
+            info!("Realtime bus: redis (prefix {})", config.redis_prefix);
+            (hub, Some(bus))
+        }
+        Some(_) | None => (Hub::new(), None),
+    };
     let state = AppState {
         db,
-        hub: Hub::new(),
+        hub,
         s3: config.s3()?,
+        bus,
     };
-    let sweeper = state.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-            rust_next::api::media::sweep_expired(&sweeper).await;
-        }
-    });
-    let voice = state.clone();
-    let idle: i64 = std::env::var("VOICE_IDLE_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(60);
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-        loop {
-            interval.tick().await;
-            rust_next::ws::sweep_and_log(&voice, idle).await;
-        }
-    });
+    rust_next::ws::spawn_aftermath(&state);
+    if let Some(bus) = &state.bus {
+        bus.spawn_workers(&state);
+    }
+    if roles.jobs {
+        let sweeper = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let mine = match &sweeper.bus {
+                    Some(bus) => {
+                        bus.try_lock("media-sweep", std::time::Duration::from_secs(55))
+                            .await
+                    }
+                    None => true,
+                };
+                if mine {
+                    rust_next::api::media::sweep_expired(&sweeper).await;
+                }
+            }
+        });
+        let voice = state.clone();
+        let idle: i64 = std::env::var("VOICE_IDLE_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                interval.tick().await;
+                rust_next::ws::sweep_and_log(&voice, idle).await;
+            }
+        });
+    }
 
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::mirror_request())
@@ -75,17 +108,17 @@ async fn main() -> anyhow::Result<()> {
         .allow_credentials(true);
 
     let proxy_url = config.proxy_url();
-    let app = build_router(proxy_url.as_deref(), &config, state).layer(cors);
+    let app = build_router(proxy_url.as_deref(), &config, state.clone()).layer(cors);
 
     let addr = config.addr();
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
-    let mode_label = match config.app_mode {
-        AppMode::Full => "full (proxy to frontend)",
-        AppMode::ApiOnly => "api-only",
+    let mode_label = match roles == Roles::ALL {
+        true => "all (proxy to frontend)".to_string(),
+        false => roles.names().join(","),
     };
 
-    info!("Starting rust-next server [mode: {mode_label}]");
+    info!("Starting rust-next server [roles: {mode_label}]");
     info!("Listening on http://{addr}");
 
     if let Some(ref url) = proxy_url {
@@ -96,6 +129,16 @@ async fn main() -> anyhow::Result<()> {
         "Rate limiting: {} req/s, burst {}",
         config.rate_limit_per_second, config.rate_limit_burst
     );
+    match &config.proxy_trust {
+        ProxyTrust::Peer => {}
+        ProxyTrust::Any => info!(
+            "TRUST_PROXY: rate limits key on X-Forwarded-For / X-Real-IP / Forwarded from any peer"
+        ),
+        ProxyTrust::Listed(ranges) => info!(
+            "TRUSTED_PROXIES: rate limits key on X-Forwarded-For / X-Real-IP / Forwarded from {} trusted range(s)",
+            ranges.len()
+        ),
+    }
 
     axum::serve(
         listener,
@@ -104,6 +147,7 @@ async fn main() -> anyhow::Result<()> {
     .with_graceful_shutdown(shutdown_signal())
     .await?;
 
+    rust_next::ws::depart(&state).await;
     info!("Server shutdown complete");
     Ok(())
 }

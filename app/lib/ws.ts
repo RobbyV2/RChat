@@ -2,21 +2,26 @@ import { getBasePath } from './basePath'
 import type { VoiceMsg, WsEvent, WsStatus } from './types'
 
 const apiBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, '')
+const wsBase = process.env.NEXT_PUBLIC_WS_URL?.replace(/\/+$/, '')
+
+const secure = (protocol: string) => protocol === 'https:' || protocol === 'wss:'
 
 export function wsUrlFrom(
   base: string | undefined,
   loc?: { protocol: string; host: string },
-  basePath = ''
+  basePath = '',
+  gateway?: string
 ): string {
-  if (base) {
-    const u = new URL(base)
-    return `${u.protocol === 'https:' ? 'wss' : 'ws'}://${u.host}/api/ws`
+  const target = gateway || base
+  if (target) {
+    const u = new URL(target)
+    return `${secure(u.protocol) ? 'wss' : 'ws'}://${u.host}/api/ws`
   }
   const l = loc as { protocol: string; host: string }
   return `${l.protocol === 'https:' ? 'wss' : 'ws'}://${l.host}${basePath}/api/ws`
 }
 
-const wsUrl = () => wsUrlFrom(apiBase, window.location, getBasePath())
+const wsUrl = () => wsUrlFrom(apiBase, window.location, getBasePath(), wsBase)
 
 const probeUrl = apiBase ? `${apiBase}/api/servers/rchat` : `${getBasePath()}/api/servers/rchat`
 

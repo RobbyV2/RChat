@@ -1,0 +1,42 @@
+# The PeerServer keeps its peer registry in memory: run exactly one replica so every
+# browser signals through the same process.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rchat-peerjs
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rchat-peerjs
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rchat-peerjs
+    spec:
+      containers:
+        - name: peerjs
+          image: ghcr.io/robbyv2/rchat:nightly
+          args: ["/app/start.sh", "peer"]
+          ports:
+            - name: peer
+              containerPort: 9001
+          readinessProbe:
+            httpGet:
+              path: /peerjs
+              port: peer
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rchat-peerjs
+spec:
+  selector:
+    app.kubernetes.io/name: rchat-peerjs
+  ports:
+    - name: peer
+      port: 9001
+      targetPort: peer

@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rchat
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: rchat
+
+resources:
+  - namespace.yaml
+  - config.yaml
+  - valkey.yaml
+  - roles.yaml
+  - peerjs.yaml
+  - networkpolicy.yaml
+  - ingress.yaml
+  - hpa.yaml
+
+images:
+  - name: ghcr.io/robbyv2/rchat
+    newTag: nightly
+
+# rchat-secrets is generated from secrets.env, which you create from secrets.env.example
+# and never commit (it is gitignored). The name gets a content hash, so changing a
+# secret rolls the pods that use it.
+secretGenerator:
+  - name: rchat-secrets
+    envs:
+      - secrets.env

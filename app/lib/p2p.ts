@@ -162,8 +162,8 @@ class P2pManager {
       return cur
     }
     const peer = new Peer(this.peerId(), {
-      host: window.location.hostname,
-      port: Number(process.env.NEXT_PUBLIC_PEERJS_PORT ?? '9001'),
+      host: process.env.NEXT_PUBLIC_PEERJS_HOST || window.location.hostname,
+      port: Number(process.env.NEXT_PUBLIC_PEERJS_PORT || '9001'),
       path: '/peerjs',
       secure: window.location.protocol === 'https:',
     })

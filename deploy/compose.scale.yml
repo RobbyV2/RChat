@@ -1,0 +1,173 @@
+# Horizontally scaled RChat: every service role runs as its own container behind nginx,
+# sharing one Postgres and one Valkey (any Redis-protocol server works).
+#
+#   VALKEY_PASSWORD=$(openssl rand -hex 24) docker compose -f deploy/compose.scale.yml up -d
+#
+# (or put VALKEY_PASSWORD in deploy/.env). Valkey is the trusted realtime bus: it requires
+# that password, is never published on the host, and must stay on a private network
+# (rediss:// TLS is not supported yet). Use a URL-safe password (hex), it is embedded in
+# REDIS_URL.
+#
+# nginx is the only proxy: it shares the edge network (fixed subnet RCHAT_EDGE_SUBNET,
+# default 10.240.80.0/24; pick another if it overlaps a local network) with the services
+# it routes to, and those trust X-Forwarded-For only from that subnet (TRUSTED_PROXIES).
+# Postgres, Valkey, embeds and jobs are only on the backend network.
+#
+# Open http://localhost:8080 (RCHAT_HTTP_PORT). PeerJS is published on 9001
+# (RCHAT_PEERJS_PORT), the port the prebuilt frontend dials; change it only together
+# with an image built with --build-arg NEXT_PUBLIC_PEERJS_PORT=<port>.
+# Scale a role with: docker compose -f deploy/compose.scale.yml up -d --scale gateway=4
+
+x-rchat: &rchat
+  image: ${RCHAT_IMAGE:-ghcr.io/robbyv2/rchat:nightly}
+  restart: unless-stopped
+  networks: [edge, backend]
+  depends_on:
+    postgres:
+      condition: service_healthy
+    valkey:
+      condition: service_healthy
+
+x-env: &env
+  HOST: 0.0.0.0
+  DATABASE_URL: postgres://rchat:${POSTGRES_PASSWORD:-rchat}@postgres:5432/rchat
+  REDIS_URL: redis://:${VALKEY_PASSWORD:?set VALKEY_PASSWORD}@valkey:6379
+  TRUSTED_PROXIES: ${RCHAT_EDGE_SUBNET:-10.240.80.0/24}
+  RUST_LOG: ${RUST_LOG:-info}
+  # Store media blobs in S3/minio instead of Postgres:
+  # S3_ENDPOINT: http://minio:9000
+  # S3_BUCKET: rchat
+  # S3_ACCESS_KEY: ...
+  # S3_SECRET_KEY: ...
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rchat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rchat}
+      POSTGRES_DB: rchat
+    networks: [backend]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rchat -d rchat -h 127.0.0.1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${VALKEY_PASSWORD:?set VALKEY_PASSWORD}
+    environment:
+      REDISCLI_AUTH: ${VALKEY_PASSWORD:?set VALKEY_PASSWORD}
+    networks: [backend]
+    volumes:
+      - valkeydata:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  api:
+    <<: *rchat
+    environment:
+      <<: *env
+      RCHAT_ROLES: api
+    deploy:
+      replicas: 2
+
+  gateway:
+    <<: *rchat
+    environment:
+      <<: *env
+      RCHAT_ROLES: gateway
+    deploy:
+      replicas: 2
+
+  media:
+    <<: *rchat
+    environment:
+      <<: *env
+      RCHAT_ROLES: media
+
+  search:
+    <<: *rchat
+    environment:
+      <<: *env
+      RCHAT_ROLES: search
+
+  embeds:
+    <<: *rchat
+    networks: [backend]
+    environment:
+      <<: *env
+      RCHAT_ROLES: embeds
+
+  jobs:
+    <<: *rchat
+    networks: [backend]
+    environment:
+      <<: *env
+      RCHAT_ROLES: jobs
+
+  web:
+    <<: *rchat
+    environment:
+      <<: *env
+      RCHAT_ROLES: web
+    deploy:
+      replicas: 2
+
+  peerjs:
+    image: ${RCHAT_IMAGE:-ghcr.io/robbyv2/rchat:nightly}
+    restart: unless-stopped
+    command: ["/app/start.sh", "peer"]
+    networks: [edge]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9001/peerjs > /dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  nginx:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    networks: [edge]
+    ports:
+      - "${RCHAT_HTTP_PORT:-8080}:80"
+      - "${RCHAT_PEERJS_PORT:-9001}:9001"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+      media:
+        condition: service_healthy
+      search:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+      peerjs:
+        condition: service_healthy
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: ${RCHAT_EDGE_SUBNET:-10.240.80.0/24}
+  backend: {}
+
+volumes:
+  pgdata:
+  valkeydata:

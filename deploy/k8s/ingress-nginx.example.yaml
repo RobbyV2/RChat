@@ -1,0 +1,33 @@
+# Example ingress-nginx controller settings for RChat behind an L7 cloud load balancer
+# that appends the client address to X-Forwarded-For. Not part of the kustomize base: the
+# controller lives in its own namespace and owns this ConfigMap. Merge the keys into your
+# controller's ConfigMap, or with the Helm chart:
+#
+#   helm upgrade ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx --reuse-values \
+#     --set-string controller.config.use-forwarded-headers=true \
+#     --set-string controller.config.proxy-real-ip-cidr=<balancer CIDR> \
+#     --set-string controller.config.compute-full-forwarded-for=false \
+#     --set-string controller.config.limit-req-status-code=429
+#
+# When clients reach the controller directly, or through an L4 balancer that keeps the
+# source address (externalTrafficPolicy: Local) or speaks the PROXY protocol
+# (use-proxy-protocol: "true"), leave use-forwarded-headers at its default "false"
+# instead and only set limit-req-status-code.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingress-nginx-controller
+  namespace: ingress-nginx
+data:
+  use-forwarded-headers: "true"
+  # REPLACE with the address range(s) your load balancer connects from, comma separated.
+  # 192.0.2.0/24 is a documentation range that matches no balancer, so until it is
+  # replaced every client shares the balancer's address (one rate limit bucket, but not
+  # spoofable). Never use the default 0.0.0.0/0: it trusts every hop, so the left-most,
+  # client-written X-Forwarded-For entry becomes the client address.
+  proxy-real-ip-cidr: "192.0.2.0/24"
+  # Send the backends only the resolved client address. "true" would append it after the
+  # client-written entries; the backends (TRUSTED_PROXIES) take the right-most untrusted
+  # hop and would still find it, but backends left on TRUST_PROXY=true would not.
+  compute-full-forwarded-for: "false"
+  limit-req-status-code: "429"

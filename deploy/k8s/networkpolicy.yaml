@@ -1,0 +1,44 @@
+# Only the ingress controller may open connections to the RChat pods. The roles never
+# call each other (they share state through Postgres and rchat-valkey, which has its own
+# policy in valkey.yaml), so no pod-to-pod traffic is admitted; rchat-embeds and
+# rchat-jobs have no Ingress route and serve only their probes. Kubelet probes come from
+# the node, which common enforcing CNIs (Calico, Cilium) allow regardless. Takes effect
+# only with a CNI that implements NetworkPolicy.
+#
+# REPLACE the two selectors below if your controller is not a standard ingress-nginx
+# install (namespace ingress-nginx, controller pods labelled
+# app.kubernetes.io/name: ingress-nginx and app.kubernetes.io/component: controller).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rchat-from-ingress
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - rchat-api
+          - rchat-gateway
+          - rchat-media
+          - rchat-search
+          - rchat-embeds
+          - rchat-jobs
+          - rchat-web
+          - rchat-peerjs
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+              app.kubernetes.io/component: controller
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 9001

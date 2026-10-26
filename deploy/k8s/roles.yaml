@@ -1,0 +1,549 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rchat-api
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rchat-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rchat-api
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: rchat
+          image: ghcr.io/robbyv2/rchat:nightly
+          command:
+            - sh
+            - -c
+            - >-
+              test -n "$DATABASE_URL" && test -n "$REDIS_URL" ||
+              { echo "DATABASE_URL and REDIS_URL in rchat-secrets must not be empty" >&2; exit 1; };
+              exec /app/start.sh
+          env:
+            - name: RCHAT_ROLES
+              value: api
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: REDIS_URL
+          envFrom:
+            - configMapRef:
+                name: rchat-config
+            - secretRef:
+                name: rchat-secrets
+          ports:
+            - name: http
+              containerPort: 3000
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rchat-api
+spec:
+  selector:
+    app.kubernetes.io/name: rchat-api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rchat-gateway
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rchat-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rchat-gateway
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: rchat
+          image: ghcr.io/robbyv2/rchat:nightly
+          command:
+            - sh
+            - -c
+            - >-
+              test -n "$DATABASE_URL" && test -n "$REDIS_URL" ||
+              { echo "DATABASE_URL and REDIS_URL in rchat-secrets must not be empty" >&2; exit 1; };
+              exec /app/start.sh
+          env:
+            - name: RCHAT_ROLES
+              value: gateway
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: REDIS_URL
+          envFrom:
+            - configMapRef:
+                name: rchat-config
+            - secretRef:
+                name: rchat-secrets
+          ports:
+            - name: http
+              containerPort: 3000
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rchat-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: rchat-gateway
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rchat-media
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rchat-media
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rchat-media
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: rchat
+          image: ghcr.io/robbyv2/rchat:nightly
+          command:
+            - sh
+            - -c
+            - >-
+              test -n "$DATABASE_URL" && test -n "$REDIS_URL" ||
+              { echo "DATABASE_URL and REDIS_URL in rchat-secrets must not be empty" >&2; exit 1; };
+              exec /app/start.sh
+          env:
+            - name: RCHAT_ROLES
+              value: media
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: REDIS_URL
+          envFrom:
+            - configMapRef:
+                name: rchat-config
+            - secretRef:
+                name: rchat-secrets
+          ports:
+            - name: http
+              containerPort: 3000
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rchat-media
+spec:
+  selector:
+    app.kubernetes.io/name: rchat-media
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rchat-search
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rchat-search
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rchat-search
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: rchat
+          image: ghcr.io/robbyv2/rchat:nightly
+          command:
+            - sh
+            - -c
+            - >-
+              test -n "$DATABASE_URL" && test -n "$REDIS_URL" ||
+              { echo "DATABASE_URL and REDIS_URL in rchat-secrets must not be empty" >&2; exit 1; };
+              exec /app/start.sh
+          env:
+            - name: RCHAT_ROLES
+              value: search
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: REDIS_URL
+          envFrom:
+            - configMapRef:
+                name: rchat-config
+            - secretRef:
+                name: rchat-secrets
+          ports:
+            - name: http
+              containerPort: 3000
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rchat-search
+spec:
+  selector:
+    app.kubernetes.io/name: rchat-search
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rchat-embeds
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rchat-embeds
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rchat-embeds
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: rchat
+          image: ghcr.io/robbyv2/rchat:nightly
+          command:
+            - sh
+            - -c
+            - >-
+              test -n "$DATABASE_URL" && test -n "$REDIS_URL" ||
+              { echo "DATABASE_URL and REDIS_URL in rchat-secrets must not be empty" >&2; exit 1; };
+              exec /app/start.sh
+          env:
+            - name: RCHAT_ROLES
+              value: embeds
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: REDIS_URL
+          envFrom:
+            - configMapRef:
+                name: rchat-config
+            - secretRef:
+                name: rchat-secrets
+          ports:
+            - name: http
+              containerPort: 3000
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rchat-embeds
+spec:
+  selector:
+    app.kubernetes.io/name: rchat-embeds
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rchat-jobs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rchat-jobs
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rchat-jobs
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: rchat
+          image: ghcr.io/robbyv2/rchat:nightly
+          command:
+            - sh
+            - -c
+            - >-
+              test -n "$DATABASE_URL" && test -n "$REDIS_URL" ||
+              { echo "DATABASE_URL and REDIS_URL in rchat-secrets must not be empty" >&2; exit 1; };
+              exec /app/start.sh
+          env:
+            - name: RCHAT_ROLES
+              value: jobs
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: REDIS_URL
+          envFrom:
+            - configMapRef:
+                name: rchat-config
+            - secretRef:
+                name: rchat-secrets
+          ports:
+            - name: http
+              containerPort: 3000
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rchat-jobs
+spec:
+  selector:
+    app.kubernetes.io/name: rchat-jobs
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rchat-web
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rchat-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rchat-web
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: rchat
+          image: ghcr.io/robbyv2/rchat:nightly
+          command:
+            - sh
+            - -c
+            - >-
+              test -n "$DATABASE_URL" && test -n "$REDIS_URL" ||
+              { echo "DATABASE_URL and REDIS_URL in rchat-secrets must not be empty" >&2; exit 1; };
+              exec /app/start.sh
+          env:
+            - name: RCHAT_ROLES
+              value: web
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: REDIS_URL
+          envFrom:
+            - configMapRef:
+                name: rchat-config
+            - secretRef:
+                name: rchat-secrets
+          ports:
+            - name: http
+              containerPort: 3000
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rchat-web
+spec:
+  selector:
+    app.kubernetes.io/name: rchat-web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

@@ -34,6 +34,20 @@ describe('wsUrlFrom', () => {
     expect(wsUrlFrom('http://x.com:3000')).toBe('ws://x.com:3000/api/ws')
   })
 
+  test('gateway url wins over api base', () => {
+    expect(wsUrlFrom('https://api.x.com', undefined, '', 'https://gw.x.com')).toBe(
+      'wss://gw.x.com/api/ws'
+    )
+    expect(wsUrlFrom(undefined, { protocol: 'https:', host: 'h' }, '', 'ws://gw:4000')).toBe(
+      'ws://gw:4000/api/ws'
+    )
+    expect(wsUrlFrom(undefined, undefined, '', 'wss://gw.x.com')).toBe('wss://gw.x.com/api/ws')
+  })
+
+  test('empty gateway url falls back', () => {
+    expect(wsUrlFrom('http://x.com:3000', undefined, '', '')).toBe('ws://x.com:3000/api/ws')
+  })
+
   test('no api base derives from location + basePath', () => {
     expect(wsUrlFrom(undefined, { protocol: 'https:', host: 'h:1' }, '/base')).toBe(
       'wss://h:1/base/api/ws'

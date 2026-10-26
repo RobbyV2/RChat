@@ -203,6 +203,19 @@ pub(crate) async fn load_message(db: &Db, id: i64) -> Result<Option<Message>, Ap
     Ok(rows_messages(db, &rows).await?.pop())
 }
 
+pub(crate) async fn load_message_with_embeds(
+    db: &Db,
+    id: i64,
+) -> Result<Option<Message>, ApiError> {
+    let Some(message) = load_message(db, id).await? else {
+        return Ok(None);
+    };
+    let mut msgs = [message];
+    attach_embeds(db, &mut msgs).await?;
+    let [message] = msgs;
+    Ok(Some(message))
+}
+
 async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), ApiError> {
     if msgs.is_empty() {
         return Ok(());
@@ -2273,6 +2286,7 @@ mod tests {
             db,
             hub: crate::ws::Hub::new(),
             s3: None,
+            bus: None,
         }
     }
 

@@ -1,0 +1,91 @@
+# Single-node Valkey for the realtime bus and job queue. For production prefer a managed
+# Redis/Valkey with failover and point REDIS_URL at it instead. The bus is trusted (any
+# client can inject realtime events), so it requires VALKEY_PASSWORD and the
+# NetworkPolicy below only lets the RChat role pods reach it (enforced only by a CNI that
+# implements NetworkPolicy, e.g. Calico or Cilium).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rchat-valkey
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rchat-valkey
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rchat-valkey
+    spec:
+      containers:
+        - name: valkey
+          image: valkey/valkey:8-alpine
+          args:
+            - sh
+            - -c
+            - >-
+              test -n "$VALKEY_PASSWORD" || { echo "VALKEY_PASSWORD is empty" >&2; exit 1; };
+              exec docker-entrypoint.sh valkey-server --appendonly yes --requirepass "$VALKEY_PASSWORD"
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: VALKEY_PASSWORD
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: VALKEY_PASSWORD
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rchat-valkey
+spec:
+  selector:
+    app.kubernetes.io/name: rchat-valkey
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rchat-valkey
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: rchat-valkey
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - rchat-api
+                  - rchat-gateway
+                  - rchat-media
+                  - rchat-search
+                  - rchat-embeds
+                  - rchat-jobs
+      ports:
+        - protocol: TCP
+          port: 6379
