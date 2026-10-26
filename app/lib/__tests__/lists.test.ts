@@ -120,13 +120,16 @@ describe('unread helpers', () => {
 
 const fakeServer = (total: number) => {
   const all = Array.from({ length: total }, (_, i) => i + 1)
-  const calls: [number, number][] = []
+  const calls: [string | null, number][] = []
   return {
     all,
     calls,
-    fetchPage: async (offset: number, limit: number) => {
-      calls.push([offset, limit])
-      return all.slice(offset, offset + Math.min(limit, 100))
+    fetchPage: async (cursor: string | null, limit: number) => {
+      calls.push([cursor, limit])
+      const after = cursor === null ? 0 : Number(cursor)
+      const items = all.filter(n => n > after).slice(0, limit)
+      const more = all.some(n => n > (items.at(-1) ?? Infinity))
+      return { items, next: more ? String(items.at(-1)) : null }
     },
   }
 }
@@ -142,14 +145,13 @@ const pagerOver = (server: ReturnType<typeof fakeServer>, initial: number[]) => 
     fetchPage: server.fetchPage,
     keyOf: id,
     page: 50,
-    max: 100,
   })
-  pager.reset(initial.length)
+  pager.reset(initial.length ? String(initial.at(-1)) : null)
   return { state, pager }
 }
 
 describe('createPager', () => {
-  test('loads page by page and stops on a short page', async () => {
+  test('follows the next cursor and stops when there is none', async () => {
     const server = fakeServer(120)
     const { state, pager } = pagerOver(server, server.all.slice(0, 50))
     await pager.load()
@@ -159,8 +161,8 @@ describe('createPager', () => {
     expect(state.list).toEqual(server.all)
     expect(state.more).toBe(false)
     expect(server.calls).toEqual([
-      [50, 50],
-      [100, 50],
+      ['50', 50],
+      ['100', 50],
     ])
   })
 
@@ -174,63 +176,85 @@ describe('createPager', () => {
   test('catches up past already-loaded items without stopping on a duplicate page', async () => {
     const server = fakeServer(260)
     const { state, pager } = pagerOver(server, server.all.slice(0, 200))
-    pager.reset(50)
+    pager.reset('50')
     await pager.load()
-    expect(server.calls).toEqual([
-      [50, 100],
-      [150, 100],
-    ])
+    expect(server.calls.map(([c]) => c)).toEqual(['50', '100', '150', '200'])
     expect(state.list).toEqual(server.all.slice(0, 250))
     expect(state.more).toBe(true)
+  })
+
+  test('a kept reset resumes from its own cursor', async () => {
+    const server = fakeServer(260)
+    const { state, pager } = pagerOver(server, server.all.slice(0, 50))
+    await pager.load()
+    pager.reset('50', true)
+    await pager.load()
+    expect(server.calls.map(([c]) => c)).toEqual(['50', '100'])
+    expect(state.list).toEqual(server.all.slice(0, 150))
+  })
+
+  test('an exhausted list re-checks its last page so items added at the end show up', async () => {
+    const server = fakeServer(70)
+    const { state, pager } = pagerOver(server, server.all.slice(0, 50))
+    await pager.load()
+    expect(state.more).toBe(false)
+    server.all.push(71)
+    pager.reset('50', true)
+    await pager.load()
+    expect(server.calls.map(([c]) => c)).toEqual(['50', '50'])
+    expect(state.list).toEqual(server.all)
+  })
+
+  test('a pager that was never reset starts from the first page', async () => {
+    const server = fakeServer(30)
+    const state = { list: [1, 2], more: true }
+    const pager = createPager({
+      read: () => state.list,
+      write: (list, more) => Object.assign(state, { list, more }),
+      fetchPage: server.fetchPage,
+      keyOf: id,
+      page: 50,
+    })
+    await pager.load()
+    expect(server.calls).toEqual([[null, 50]])
+    expect(state.list).toEqual(server.all)
   })
 
   test('reset during a load discards the stale page', async () => {
     const server = fakeServer(120)
     const { state, pager } = pagerOver(server, server.all.slice(0, 50))
     const pending = pager.load()
-    expect(pager.reset(50)).toBe(true)
+    expect(pager.reset('50')).toBe(true)
     state.list = [7]
     await pending
     expect(state.list).toEqual([7])
-    expect(pager.reset(1)).toBe(false)
+    expect(pager.reset('1')).toBe(false)
   })
 
-  test('removals step the cursor back so nothing is skipped', async () => {
+  test('removals do not move a keyset cursor', async () => {
     const server = fakeServer(120)
     const { state, pager } = pagerOver(server, server.all.slice(0, 50))
     server.all.splice(9, 1)
     state.list = state.list.filter(n => n !== 10)
-    expect(pager.removed(1)).toBe(false)
+    expect(pager.removed()).toBe(false)
     await pager.load()
-    expect(server.calls[0]).toEqual([49, 50])
-    expect(state.list).toContain(51)
+    expect(server.calls[0]).toEqual(['50', 50])
+    expect(state.list).toEqual(server.all.slice(0, 99))
   })
 
   test('a removal during a load drops the in-flight page and asks for a reload', async () => {
     const server = fakeServer(120)
     const { state, pager } = pagerOver(server, server.all.slice(0, 50))
     const pending = pager.load()
-    server.all.splice(9, 1)
-    state.list = state.list.filter(n => n !== 10)
-    expect(pager.removed(1)).toBe(true)
+    server.all.splice(59, 1)
+    expect(pager.removed()).toBe(true)
     await pending
-    expect(state.list).toHaveLength(49)
+    expect(state.list).toHaveLength(50)
     await pager.load()
     expect(server.calls).toEqual([
-      [50, 50],
-      [49, 50],
+      ['50', 50],
+      ['50', 50],
     ])
-    expect(state.list).toEqual(server.all.slice(0, 99))
-  })
-
-  test('an item removed from the in-flight page is not brought back', async () => {
-    const server = fakeServer(120)
-    const { state, pager } = pagerOver(server, server.all.slice(0, 50))
-    const pending = pager.load()
-    server.all.splice(59, 1)
-    expect(pager.removed(0)).toBe(true)
-    await pending
-    await pager.load()
     expect(state.list.includes(60)).toBe(false)
     expect(state.list).toEqual(server.all.slice(0, 100))
   })

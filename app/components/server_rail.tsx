@@ -12,6 +12,7 @@ import {
 } from '../lib/store'
 import { folderKey, railItems, serverKey, type Folder } from '../lib/nav_layout'
 import type { DropTarget } from '../lib/drag'
+import type { ServerDetail } from '../lib/types'
 import { serverInitial } from '../lib/rules'
 import { inviteUrl } from '../lib/invite'
 import { longPress } from './context_menu'
@@ -24,6 +25,7 @@ const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl tr
 const idle =
   'bg-surface-container-high text-on-surface hover:bg-primary-container hover:text-on-primary-container'
 
+const NO_DETAILS: Record<string, ServerDetail> = {}
 const SERVER = serverKey('')
 const FOLDER = folderKey('')
 
@@ -75,6 +77,7 @@ function ServerTile({
 }) {
   const me = useStore(s => s.me)
   const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name)
+  const unread = useStore(s => serverUnread(s, name))
   const openServer = useStore(s => s.openServer)
   const openContextMenu = useStore(s => s.openContextMenu)
   const leaveServer = useStore(s => s.leaveServer)
@@ -135,7 +138,7 @@ function ServerTile({
           C
         </span>
       )}
-      {serverUnread(useStore.getState(), name) && <UnreadDot />}
+      {unread && <UnreadDot />}
     </button>
   )
 }
@@ -171,6 +174,7 @@ function FolderEntry({
   const ungroupFolder = useStore(s => s.ungroupFolder)
   const openDialog = useStore(s => s.openDialog)
   const openContextMenu = useStore(s => s.openContextMenu)
+  const unread = useStore(s => !folder.open && servers.some(x => serverUnread(s, x.name)))
   const key = folderKey(folder.id)
   const header = {
     title: folderLabel(useStore.getState(), folder),
@@ -195,7 +199,6 @@ function FolderEntry({
     ),
   }
   if (!folder.open) {
-    const unread = servers.some(s => serverUnread(useStore.getState(), s.name))
     return (
       <button {...header} className={`${tile} folder-tile relative p-1.5`}>
         <span className="grid size-9 grid-cols-2 grid-rows-2 gap-1">
@@ -236,15 +239,15 @@ export function ServerRail() {
   const me = useStore(s => s.me)
   const guestServers = useStore(s => s.guestServers)
   const guestNames = useStore(s => s.guestNames)
-  const servers = useStore(s => s.servers)
+  const servers = useStore(s => (s.me ? NO_DETAILS : s.servers))
   const view = useStore(s => s.view)
+  const dmUnread = useStore(dmsUnread)
   const openLastDm = useStore(s => s.openLastDm)
   const serversMore = useStore(s => s.serversMore)
   const loadMoreServers = useStore(s => s.loadMoreServers)
   const openDialog = useStore(s => s.openDialog)
   const logout = useStore(s => s.logout)
   const saved = useStore(s => s.layout.servers)
-  useStore(s => s.reads)
 
   const items = railItems(
     railServers({ me, guestServers, guestNames, servers }),
@@ -265,7 +268,7 @@ export function ServerRail() {
             className={`${tile} relative ${view?.kind === 'dm' ? 'bg-primary text-on-primary' : idle}`}
           >
             <MessageCircle size={22} />
-            {dmsUnread(useStore.getState()) && <UnreadDot />}
+            {dmUnread && <UnreadDot />}
           </button>
         )}
         {me && <div className="my-1 h-px w-8 shrink-0 bg-outline-variant" />}

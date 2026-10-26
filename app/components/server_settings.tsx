@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Hash, Trash2, X } from 'lucide-react'
+import type { Page } from '../lib/lists'
 import * as api from '../lib/api'
 import {
   errorText,
@@ -93,6 +94,161 @@ export function Sentinel({ onVisible }: { onVisible: () => void }) {
     return () => observer.disconnect()
   }, [onVisible])
   return <div ref={ref} className="h-px" />
+}
+
+const SEARCH_DEBOUNCE = 250
+const PICKER_HITS = 8
+const PICKER_PAGES = 4
+
+interface MemberSearch {
+  list: Member[]
+  next: string | null
+  loading: boolean
+}
+
+export function useMemberSearch(server: string, q: string, admins = false, enabled = true) {
+  const needle = q.trim()
+  const active = enabled && (needle !== '' || admins)
+  const [state, setState] = useState<MemberSearch>({ list: [], next: null, loading: false })
+  const [tick, setTick] = useState(0)
+  const epoch = useRef(0)
+  const setError = useStore(s => s.setError)
+
+  const fetchFrom = useCallback(
+    async (cursor: string | null, mine: number) => {
+      setState(s => ({ ...s, loading: true }))
+      try {
+        const page = await api.listMembers(server, cursor, {
+          q: needle || undefined,
+          admins,
+        })
+        if (epoch.current !== mine) return
+        setState(s => {
+          const base = cursor === null ? [] : s.list
+          const seen = new Set(base.map(m => m.username))
+          return {
+            list: [...base, ...page.items.filter(m => !seen.has(m.username))],
+            next: page.next,
+            loading: false,
+          }
+        })
+      } catch (e) {
+        if (epoch.current !== mine) return
+        setState(s => ({ ...s, loading: false }))
+        setError(errorText(e))
+      }
+    },
+    [server, needle, admins, setError]
+  )
+
+  useEffect(() => {
+    const mine = ++epoch.current
+    if (!active) {
+      setState({ list: [], next: null, loading: false })
+      return
+    }
+    const t = setTimeout(() => void fetchFrom(null, mine), needle ? SEARCH_DEBOUNCE : 0)
+    return () => clearTimeout(t)
+  }, [active, needle, fetchFrom, tick])
+
+  const more = useCallback(() => {
+    if (state.loading || state.next === null) return
+    void fetchFrom(state.next, epoch.current)
+  }, [state, fetchFrom])
+  const reload = useCallback(() => setTick(t => t + 1), [])
+  return {
+    active,
+    list: state.list,
+    loading: state.loading,
+    more,
+    hasMore: state.next !== null,
+    reload,
+  }
+}
+
+export function MemberSearchField({
+  value,
+  onChange,
+  placeholder = 'Search members',
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+}) {
+  return (
+    <div className="mb-2 flex">
+      <input
+        type="search"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={fieldCls}
+      />
+    </div>
+  )
+}
+
+export function MemberPicker({
+  server,
+  onPick,
+  exclude,
+}: {
+  server: string
+  onPick: (m: Member) => void
+  exclude?: (m: Member) => boolean
+}) {
+  const [q, setQ] = useState('')
+  const found = useMemberSearch(server, q)
+  const matching = found.list.filter(m => !exclude?.(m))
+  const hits = matching.slice(0, PICKER_HITS)
+  const pages = useRef({ q: '', count: 0 })
+  const { active, loading, hasMore, more } = found
+  useEffect(() => {
+    if (pages.current.q !== q) pages.current = { q, count: 0 }
+    if (!active || loading || !hasMore || matching.length >= PICKER_HITS) return
+    if (pages.current.count >= PICKER_PAGES) return
+    pages.current.count += 1
+    more()
+  }, [q, active, loading, hasMore, more, matching.length])
+  return (
+    <div className="min-w-0 flex-1">
+      <input
+        type="search"
+        value={q}
+        onChange={e => setQ(e.target.value)}
+        placeholder="Add member…"
+        title="Search members to add"
+        className={`${fieldCls} w-full`}
+      />
+      {found.active && (
+        <div className="mt-1 space-y-0.5">
+          {hits.map(m => (
+            <button
+              key={m.username}
+              onClick={() => {
+                onPick(m)
+                setQ('')
+              }}
+              className="flex w-full items-center gap-2 rounded-xl px-2 py-1 text-left hover:bg-surface-container-highest"
+            >
+              <UserAvatar
+                username={m.username}
+                avatarKind={m.avatar_kind}
+                avatarColor={m.avatar_color}
+                size={20}
+              />
+              <span className="streamer min-w-0 flex-1 truncate text-sm">{m.display_name}</span>
+            </button>
+          ))}
+          {!found.loading && hits.length === 0 && (
+            <p className="px-2 py-1 text-xs text-on-surface-variant">
+              {found.hasMore ? 'Keep typing to narrow the search.' : 'No matching members.'}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function Dialog({
@@ -310,21 +466,26 @@ export function ChannelPermsEditor({
   server: string
   roles: Role[]
 }) {
-  const members = useStore(s => s.members[server]?.list)
   const setChannelPerm = useStore(s => s.setChannelPerm)
   const clearChannelPerm = useStore(s => s.clearChannelPerm)
   const setError = useStore(s => s.setError)
   const [rows, setRows] = useState<ChannelPerm[]>([])
   const [subject, setSubject] = useState('')
 
-  const reload = useCallback(
-    () =>
-      api
-        .channelPerms(channelId)
-        .then(setRows)
-        .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))),
-    [channelId, setError]
-  )
+  const reload = useCallback(async () => {
+    try {
+      const all: ChannelPerm[] = []
+      let cursor: string | null = null
+      do {
+        const page: Page<ChannelPerm> = await api.channelPerms(channelId, cursor)
+        all.push(...page.items)
+        cursor = page.next
+      } while (cursor !== null)
+      setRows(all)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [channelId, setError])
   useEffect(() => {
     void reload()
   }, [reload])
@@ -371,42 +532,45 @@ export function ChannelPermsEditor({
           </button>
         </div>
       ))}
-      <div className="flex gap-2">
-        <select
-          value={subject}
-          onChange={e => setSubject(e.target.value)}
-          title="Add user or role"
-          className={fieldCls}
-        >
-          <option value="">Add user or role…</option>
-          {roles.length > 0 && (
-            <optgroup label="Roles">
-              {roles.map(r => (
-                <option key={r.id} value={`r:${r.id}`}>
-                  {r.name}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          <optgroup label="Members">
-            {(members ?? []).map(m => (
-              <option key={m.username} value={`u:${m.username}`}>
-                {m.display_name}
+      {roles.length > 0 && (
+        <div className="flex gap-2">
+          <select
+            value={subject}
+            onChange={e => setSubject(e.target.value)}
+            title="Add role"
+            className={fieldCls}
+          >
+            <option value="">Add role…</option>
+            {roles.map(r => (
+              <option key={r.id} value={`r:${r.id}`}>
+                {r.name}
               </option>
             ))}
-          </optgroup>
-        </select>
-        <button
-          onClick={() => {
-            if (!subject || rows.some(r => r.subject === subject)) return
-            save({ subject, can_view: true, can_send: true, can_read_history: true })
-            setSubject('')
-          }}
-          className={textBtn}
-        >
-          Add
-        </button>
-      </div>
+          </select>
+          <button
+            onClick={() => {
+              if (!subject || rows.some(r => r.subject === subject)) return
+              save({ subject, can_view: true, can_send: true, can_read_history: true })
+              setSubject('')
+            }}
+            className={textBtn}
+          >
+            Add
+          </button>
+        </div>
+      )}
+      <MemberPicker
+        server={server}
+        exclude={m => rows.some(r => r.subject === `u:${m.username}`)}
+        onPick={m =>
+          save({
+            subject: `u:${m.username}`,
+            can_view: true,
+            can_send: true,
+            can_read_history: true,
+          })
+        }
+      />
     </div>
   )
 }
@@ -755,14 +919,33 @@ function Settings({ server }: { server: string }) {
   const [name, setName] = useState(detail?.display_name ?? '')
   const [renameError, setRenameError] = useState<string | null>(null)
   const [editingAdmin, setEditingAdmin] = useState<string | null>(null)
+  const [q, setQ] = useState('')
+  const canAdmin = hasPerm(perms, Perm.ManageAdmins)
+  const found = useMemberSearch(server, q)
+  const adminList = useMemberSearch(server, q, true, canAdmin)
+  const reloadFound = found.reload
+  const reloadAdmins = adminList.reload
+  const reloadBoth = useCallback(() => {
+    reloadFound()
+    reloadAdmins()
+    void loadMembers(server, true)
+  }, [reloadFound, reloadAdmins, loadMembers, server])
+  const adminTick = useStore(s => s.adminChanges[server] ?? 0)
+  const seenTick = useRef(adminTick)
+  useEffect(() => {
+    if (adminTick === seenTick.current) return
+    seenTick.current = adminTick
+    reloadFound()
+    reloadAdmins()
+  }, [adminTick, reloadFound, reloadAdmins])
   useEffect(() => {
     void loadMembers(server)
   }, [server, loadMembers])
   const more = useCallback(() => void loadMembers(server), [server, loadMembers])
   if (!detail || !me || perms === 0) return null
   const loaded = cache?.list ?? []
-  const admins = loaded.filter(m => m.is_admin)
-  const others = loaded.filter(m => !m.is_admin)
+  const admins = adminList.list
+  const others = (found.active ? found.list : loaded).filter(m => !m.is_admin)
 
   const rolesButton = (m: Member) =>
     detail.roles.length > 0 && hasPerm(perms, Perm.ManageAdmins) ? (
@@ -871,6 +1054,7 @@ function Settings({ server }: { server: string }) {
       {hasPerm(perms, Perm.ManageAdmins) && (
         <>
           <p className={sectionCls}>Admins</p>
+          <MemberSearchField value={q} onChange={setQ} />
           {admins.map(m =>
             memberRow(
               m,
@@ -881,7 +1065,10 @@ function Settings({ server }: { server: string }) {
                 >
                   Perms
                 </button>
-                <button onClick={() => revokeAdminFor(server, m.username)} className={dangerBtn}>
+                <button
+                  onClick={() => revokeAdminFor(server, m.username, reloadBoth)}
+                  className={dangerBtn}
+                >
                   Remove
                 </button>
               </>,
@@ -892,22 +1079,34 @@ function Settings({ server }: { server: string }) {
               )
             )
           )}
+          {adminList.hasMore && <Sentinel key={`a${admins.length}`} onVisible={adminList.more} />}
           <p className={sectionCls}>Members</p>
           {others.length ? (
             others.map(m =>
               memberRow(
                 m,
-                <button onClick={() => void grantAdmin(server, m.username)} className={textBtn}>
+                <button
+                  onClick={() => void grantAdmin(server, m.username).then(reloadBoth)}
+                  className={textBtn}
+                >
                   Make Admin
                 </button>
               )
             )
           ) : (
-            <p className="px-2 text-sm text-on-surface-variant">Everyone here is an admin.</p>
+            <p className="px-2 text-sm text-on-surface-variant">
+              {found.active
+                ? found.loading
+                  ? 'Searching…'
+                  : 'No matching members.'
+                : 'Everyone here is an admin.'}
+            </p>
           )}
         </>
       )}
-      {(cache?.hasMore ?? false) && <Sentinel key={loaded.length} onVisible={more} />}
+      {found.active
+        ? found.hasMore && <Sentinel key={`q${found.list.length}`} onVisible={found.more} />
+        : (cache?.hasMore ?? false) && <Sentinel key={loaded.length} onVisible={more} />}
     </Dialog>
   )
 }

@@ -11,12 +11,13 @@ use utoipa::{IntoParams, ToSchema};
 use crate::api::admin::like_pattern;
 use crate::api::{
     ApiError, Authed, CallLog, Embed, LIST_MAX, LIST_PAGE, MESSAGE_MAX, MaybeAuthed, MediaRef,
-    Message, UserRef, check_len, check_profanity, embeds, header_grants, media::MEDIA_TTL_SECS,
-    require_guest_ok, require_server_view, unique_capped, user_from, user_refs,
+    Message, Paged, UserRef, check_len, check_profanity, cursor_int, decode_cursor, embeds,
+    encode_cursor, header_grants, media::MEDIA_TTL_SECS, require_guest_ok, require_server_view,
+    unique_capped, user_from, user_refs,
 };
 use crate::db::{
-    ChannelAccess, ChannelKind, Db, MediaKind, Perm, User, channel_access, effective_perms,
-    has_fts, has_perm, now, touch_interaction,
+    ChannelAccess, ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, Perm, User, channel_access,
+    effective_perms, has_fts, has_perm, is_sqlite, now, touch_interaction,
 };
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -55,7 +56,7 @@ pub struct P2pAttachment {
     expires_in_seconds: Option<i64>,
 }
 
-#[derive(Default, IntoParams)]
+#[derive(Clone, Default, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct SearchQuery {
     q: Option<String>,
@@ -68,6 +69,7 @@ pub struct SearchQuery {
     before_ts: Option<i64>,
     after_ts: Option<i64>,
     offset: Option<i64>,
+    cursor: Option<String>,
     servers: Option<Vec<String>>,
 }
 
@@ -90,6 +92,7 @@ impl SearchQuery {
                 "before_ts" => sq.before_ts = Some(int(&value)?),
                 "after_ts" => sq.after_ts = Some(int(&value)?),
                 "offset" => sq.offset = Some(int(&value)?),
+                "cursor" if !value.trim().is_empty() => sq.cursor = Some(value.into_owned()),
                 "servers" => sq
                     .servers
                     .get_or_insert_with(Vec::new)
@@ -119,6 +122,7 @@ pub struct Unread {
 #[derive(Serialize, ToSchema)]
 pub struct Unreads {
     pub items: Vec<Unread>,
+    pub more: bool,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -265,7 +269,7 @@ async fn slice(
         Span::After => ("m.id > $2", "ASC"),
     };
     let sql = format!(
-        "SELECT {COLS} FROM messages m WHERE {cond} AND {bound} AND m.created_at >= $3 ORDER BY m.id {order} LIMIT $4"
+        "SELECT {COLS} FROM messages m WHERE {cond} AND {bound} AND m.created_at >= $3 AND {LIVE_AUTHOR} ORDER BY m.id {order} LIMIT $4"
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(key)
@@ -508,25 +512,22 @@ async fn channel_server(db: &Db, id: i64) -> Result<String, ApiError> {
 }
 
 async fn dm_users(db: &Db, id: i64) -> Result<Vec<String>, ApiError> {
-    let row = sqlx::query("SELECT user_a, user_b FROM dms WHERE id = $1")
+    dm_pair(db, id, "SELECT user_a, user_b FROM dms WHERE id = $1").await
+}
+
+async fn live_dm_users(db: &Db, id: i64) -> Result<Vec<String>, ApiError> {
+    let sql = format!("SELECT user_a, user_b FROM dms WHERE id = $1 AND {LIVE_DM}");
+    dm_pair(db, id, &sql).await
+}
+
+async fn dm_pair(db: &Db, id: i64, sql: &str) -> Result<Vec<String>, ApiError> {
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .fetch_optional(db)
         .await?;
     match row {
         Some(r) => Ok(vec![r.try_get(0)?, r.try_get(1)?]),
         None => Err(ApiError(StatusCode::NOT_FOUND, "DM not found".to_string())),
-    }
-}
-
-async fn require_member(db: &Db, server: &str, username: &str) -> Result<(), ApiError> {
-    let member = sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
-        .bind(server)
-        .bind(username)
-        .fetch_optional(db)
-        .await?;
-    match member {
-        Some(_) => Ok(()),
-        None => Err(ApiError(StatusCode::FORBIDDEN, "Not a member".to_string())),
     }
 }
 
@@ -591,12 +592,21 @@ async fn read_gate(
     }
 }
 
-async fn send_gate(db: &Db, server: &str, channel_id: i64, user: &User) -> Result<(), ApiError> {
-    let row = sqlx::query("SELECT kind, slowmode_seconds FROM channels WHERE id = $1")
-        .bind(channel_id)
-        .fetch_one(db)
-        .await?;
-    if ChannelKind::parse(&row.try_get::<String, _>(0)?)? == ChannelKind::Voice {
+async fn send_gate(db: &Db, channel_id: i64, user: &User) -> Result<String, ApiError> {
+    let row = sqlx::query(
+        "SELECT c.server, c.kind, c.slowmode_seconds, (SELECT COUNT(*) FROM members m WHERE m.server = c.server AND m.username = $2) FROM channels c WHERE c.id = $1",
+    )
+    .bind(channel_id)
+    .bind(&user.username)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Channel not found".to_string()))?;
+    let server: String = row.try_get(0)?;
+    if row.try_get::<i64, _>(3)? == 0 {
+        return Err(ApiError(StatusCode::FORBIDDEN, "Not a member".to_string()));
+    }
+    let server = server.as_str();
+    if ChannelKind::parse(&row.try_get::<String, _>(1)?)? == ChannelKind::Voice {
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
             "Voice channels cannot receive messages".to_string(),
@@ -613,29 +623,31 @@ async fn send_gate(db: &Db, server: &str, channel_id: i64, user: &User) -> Resul
             "No permission to send in this channel".to_string(),
         ));
     }
-    let slow: i64 = row.try_get(1)?;
+    let slow: i64 = row.try_get(2)?;
     if slow <= 0 {
-        return Ok(());
+        return Ok(server.to_string());
     }
     let exempt = effective_perms(db, server, user).await?
         & (Perm::ManageChannels as i64 | Perm::DeleteMessages as i64)
         != 0;
     if exempt {
-        return Ok(());
+        return Ok(server.to_string());
     }
-    let last: Option<i64> =
-        sqlx::query("SELECT MAX(created_at) FROM messages WHERE channel_id = $1 AND author = $2")
-            .bind(channel_id)
-            .bind(&user.username)
-            .fetch_one(db)
-            .await?
-            .try_get(0)?;
+    let last: Option<i64> = sqlx::query(
+        "SELECT created_at FROM messages WHERE channel_id = $1 AND author = $2 ORDER BY id DESC LIMIT 1",
+    )
+    .bind(channel_id)
+    .bind(&user.username)
+    .fetch_optional(db)
+    .await?
+    .map(|r| r.try_get(0))
+    .transpose()?;
     match last {
         Some(t) if now() - t < slow => Err(ApiError(
             StatusCode::TOO_MANY_REQUESTS,
             format!("Slow mode: wait {}s", slow - (now() - t)),
         )),
-        _ => Ok(()),
+        _ => Ok(server.to_string()),
     }
 }
 
@@ -647,11 +659,12 @@ pub(crate) async fn channel_messages(
     Path(id): Path<i64>,
     Query(q): Query<PageQuery>,
 ) -> Result<Json<Vec<Message>>, ApiError> {
-    require_guest_ok(&state.db, user.as_ref()).await?;
-    let min_ts = read_gate(&state.db, &headers, id, user.as_ref()).await?;
+    let db = &state.read();
+    require_guest_ok(db, user.as_ref()).await?;
+    let min_ts = read_gate(db, &headers, id, user.as_ref()).await?;
     Ok(Json(
         page(
-            &state.db,
+            db,
             "m.channel_id = $1 AND m.thread_root_id IS NULL",
             id,
             &q,
@@ -669,9 +682,7 @@ pub(crate) async fn send_channel_message(
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
     check_profanity(&state.db, &req.content).await?;
-    let server = channel_server(&state.db, id).await?;
-    require_member(&state.db, &server, &user.username).await?;
-    send_gate(&state.db, &server, id, &user).await?;
+    let server = send_gate(&state.db, id, &user).await?;
     let message = insert_message(&state.db, Some(id), None, None, &user, req).await?;
     touch_interaction(&state.db, &server, &user.username).await?;
     embeds::spawn_unfurl(
@@ -701,11 +712,12 @@ pub(crate) async fn thread_messages(
     Path(id): Path<i64>,
     Query(q): Query<PageQuery>,
 ) -> Result<Json<Vec<Message>>, ApiError> {
-    require_guest_ok(&state.db, user.as_ref()).await?;
-    let channel_id = thread_root_channel(&state.db, id).await?;
-    let min_ts = read_gate(&state.db, &headers, channel_id, user.as_ref()).await?;
+    let db = &state.read();
+    require_guest_ok(db, user.as_ref()).await?;
+    let channel_id = thread_root_channel(db, id).await?;
+    let min_ts = read_gate(db, &headers, channel_id, user.as_ref()).await?;
     Ok(Json(
-        page(&state.db, "m.thread_root_id = $1", id, &q, min_ts).await?,
+        page(db, "m.thread_root_id = $1", id, &q, min_ts).await?,
     ))
 }
 
@@ -718,9 +730,7 @@ pub(crate) async fn send_thread_message(
 ) -> Result<Json<Message>, ApiError> {
     let channel_id = thread_root_channel(&state.db, id).await?;
     check_profanity(&state.db, &req.content).await?;
-    let server = channel_server(&state.db, channel_id).await?;
-    require_member(&state.db, &server, &user.username).await?;
-    send_gate(&state.db, &server, channel_id, &user).await?;
+    let server = send_gate(&state.db, channel_id, &user).await?;
     let message = insert_message(&state.db, Some(channel_id), None, Some(id), &user, req).await?;
     touch_interaction(&state.db, &server, &user.username).await?;
     embeds::spawn_unfurl(
@@ -749,14 +759,15 @@ pub(crate) async fn dm_messages(
     Authed(user): Authed,
     Query(q): Query<PageQuery>,
 ) -> Result<Json<Vec<Message>>, ApiError> {
-    let users = dm_users(&state.db, id).await?;
+    let db = &state.read();
+    let users = live_dm_users(db, id).await?;
     if !users.contains(&user.username) {
         return Err(ApiError(
             StatusCode::FORBIDDEN,
             "Not a participant".to_string(),
         ));
     }
-    Ok(Json(page(&state.db, "m.dm_id = $1", id, &q, None).await?))
+    Ok(Json(page(db, "m.dm_id = $1", id, &q, None).await?))
 }
 
 #[utoipa::path(post, path = "/api/dms/{id}/messages", params(("id" = i64, Path)), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `EmbedsResolved` WebSocket event", body = Message)), security(("bearer" = [])))]
@@ -766,7 +777,7 @@ pub(crate) async fn send_dm_message(
     Authed(user): Authed,
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
-    let users = dm_users(&state.db, id).await?;
+    let users = live_dm_users(&state.db, id).await?;
     if !users.contains(&user.username) {
         return Err(ApiError(
             StatusCode::FORBIDDEN,
@@ -908,39 +919,121 @@ fn fts_phrase(text: &str) -> String {
     format!("\"{}\"", text.replace('"', "\"\""))
 }
 
-#[utoipa::path(get, path = "/api/search", params(SearchQuery), responses((status = 200, description = "Up to 25 messages from channels the caller can view whose content contains `q` (case-insensitive), newest first; `before`/`after` bound the message id (pass the oldest returned id as `before` for the next page) and `before_ts`/`after_ts` bound `created_at` (exclusive, unix seconds). Guests pass the servers to search as repeated `servers` params (`servers=a&servers=b`, max 100)", body = Vec<SearchResult>), (status = 400, description = "Invalid number, or text containing a NUL character")), security((), ("bearer" = [])))]
+const SEARCH_OFFSET_MAX: i64 = 500;
+const SEARCH_WINDOW: i64 = 4096;
+const LIKE_BUDGET: i64 = 250_000;
+
+#[utoipa::path(get, path = "/api/search", params(SearchQuery), responses((status = 200, description = "Up to 25 messages from channels the caller can view whose content contains `q` (case-insensitive), newest first; `before`/`after` bound the message id and `before_ts`/`after_ts` bound `created_at` (exclusive, unix seconds). When more results may follow, the `X-Next-Cursor` response header holds a `cursor` for the next page (it is absent once the search reached the oldest message); a page can hold fewer than 25 results and still have a next cursor. Passing the oldest returned id as `before` also works when the page is full. The legacy `offset` is capped at 500. Guests pass the servers to search as repeated `servers` params (`servers=a&servers=b`, max 100)", body = Vec<SearchResult>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid number or cursor, or text containing a NUL character")), security((), ("bearer" = [])))]
 pub(crate) async fn search(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
     headers: HeaderMap,
     RawQuery(raw): RawQuery,
-) -> Result<Json<Vec<SearchResult>>, ApiError> {
+) -> Result<Paged<SearchResult>, ApiError> {
     let sq = SearchQuery::parse(raw.as_deref().unwrap_or(""))?;
-    Ok(Json(
-        search_with(&state, user.as_ref(), &headers, sq).await?,
+    let (results, next) = search_paged(&state, user.as_ref(), &headers, sq).await?;
+    Ok(Paged(
+        results,
+        next.map(|id| encode_cursor(&[&id.to_string()])),
     ))
 }
 
+#[cfg(test)]
 async fn search_with(
     state: &AppState,
     user: Option<&User>,
     headers: &HeaderMap,
     sq: SearchQuery,
 ) -> Result<Vec<SearchResult>, ApiError> {
-    require_guest_ok(&state.db, user).await?;
-    let (sql, binds) = match search_sql(&state.db, user, headers, sq).await? {
+    Ok(search_paged(state, user, headers, sq).await?.0)
+}
+
+async fn search_paged(
+    state: &AppState,
+    user: Option<&User>,
+    headers: &HeaderMap,
+    mut sq: SearchQuery,
+) -> Result<(Vec<SearchResult>, Option<i64>), ApiError> {
+    let db = &state.read();
+    require_guest_ok(db, user).await?;
+    check_nul([&sq.q, &sq.server, &sq.from, &sq.has], &sq.servers)?;
+    if let Some(raw) = sq.cursor.take() {
+        sq.before = Some(cursor_int(&decode_cursor(&raw, 1)?[0])?);
+        sq.offset = None;
+    }
+    sq.offset = sq.offset.map(|n| n.min(SEARCH_OFFSET_MAX));
+    let text = sq.q.as_deref().map(str::trim).unwrap_or("");
+    let short = text.chars().count() < FTS_MIN_CHARS || !has_fts(db);
+    let unscoped = sq.server.is_none() && sq.channel_id.is_none();
+    let windowed = !text.is_empty()
+        && (short || unscoped)
+        && is_sqlite(db)
+        && sq.offset.is_none_or(|n| n <= 0);
+    let budget = match short {
+        true => LIKE_BUDGET,
+        false => i64::MAX,
+    };
+    if !windowed {
+        let results = search_once(db, user, headers, sq, None, SEARCH_PAGE).await?;
+        let next = match results.len() as i64 == SEARCH_PAGE {
+            true => results.last().map(|r| r.message.id),
+            false => None,
+        };
+        return Ok((results, next));
+    }
+    let floor = sq.after.unwrap_or(0).max(0);
+    let mut hi = match sq.before {
+        Some(b) => b,
+        None => {
+            sqlx::query("SELECT MAX(id) FROM messages")
+                .fetch_one(db)
+                .await?
+                .try_get::<Option<i64>, _>(0)?
+                .unwrap_or(0)
+                + 1
+        }
+    };
+    let mut size = SEARCH_WINDOW;
+    let mut scanned = 0i64;
+    let mut results: Vec<SearchResult> = Vec::new();
+    while (results.len() as i64) < SEARCH_PAGE && hi > floor + 1 && scanned < budget {
+        let lo = hi.saturating_sub(size).max(floor + 1);
+        let want = SEARCH_PAGE - results.len() as i64;
+        let page = search_once(db, user, headers, sq.clone(), Some((lo, hi)), want).await?;
+        results.extend(page);
+        scanned = scanned.saturating_add(hi - lo);
+        hi = lo;
+        size = size.saturating_mul(8);
+    }
+    let next = match (results.len() as i64 == SEARCH_PAGE, hi > floor + 1) {
+        (true, _) => results.last().map(|r| r.message.id),
+        (false, true) => Some(hi),
+        (false, false) => None,
+    };
+    Ok((results, next))
+}
+
+async fn search_once(
+    db: &Db,
+    user: Option<&User>,
+    headers: &HeaderMap,
+    sq: SearchQuery,
+    window: Option<(i64, i64)>,
+    limit: i64,
+) -> Result<Vec<SearchResult>, ApiError> {
+    let (sql, binds) = match search_sql(db, user, headers, sq, window, limit).await? {
         Some(built) => built,
         None => return Ok(Vec::new()),
     };
     let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), &binds)
-        .fetch_all(&state.db)
+        .fetch_all(db)
         .await?;
-    let mut msgs = rows_messages(&state.db, &rows).await?;
+    let mut msgs = rows_messages(db, &rows).await?;
     let mut ctx: Vec<(String, String)> = Vec::with_capacity(rows.len());
     for r in &rows {
         ctx.push((r.try_get(21)?, r.try_get(22)?));
     }
-    attach_embeds(&state.db, &mut msgs).await?;
+    attach_embeds(db, &mut msgs).await?;
     Ok(msgs
         .into_iter()
         .zip(ctx)
@@ -965,11 +1058,27 @@ fn bind_all<'q>(
     query
 }
 
+fn check_nul(texts: [&Option<String>; 4], servers: &Option<Vec<String>>) -> Result<(), ApiError> {
+    let nul = texts
+        .iter()
+        .any(|t| t.as_deref().is_some_and(|v| v.contains('\0')))
+        || servers.iter().flatten().any(|v| v.contains('\0'));
+    match nul {
+        true => Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Search text cannot contain NUL characters".to_string(),
+        )),
+        false => Ok(()),
+    }
+}
+
 async fn search_sql(
     db: &Db,
     user: Option<&User>,
     headers: &HeaderMap,
     sq: SearchQuery,
+    window: Option<(i64, i64)>,
+    limit: i64,
 ) -> Result<Option<(String, Vec<Bind>)>, ApiError> {
     let SearchQuery {
         q,
@@ -982,20 +1091,15 @@ async fn search_sql(
         before_ts,
         after_ts,
         offset,
+        cursor: _,
         servers,
     } = sq;
-    let texts = [&q, &server, &from, &has];
-    let nul = texts
-        .iter()
-        .any(|t| t.as_deref().is_some_and(|v| v.contains('\0')))
-        || servers.iter().flatten().any(|v| v.contains('\0'));
-    if nul {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Search text cannot contain NUL characters".to_string(),
-        ));
-    }
-    let mut conds: Vec<String> = Vec::new();
+    let (lo, hi) = match window {
+        Some((lo, hi)) => (lo, hi),
+        None => (i64::MIN, before.unwrap_or(i64::MAX)),
+    };
+    check_nul([&q, &server, &from, &has], &servers)?;
+    let mut conds: Vec<String> = vec![LIVE_AUTHOR.to_string()];
     let mut binds: Vec<Bind> = Vec::new();
     match user {
         Some(u) => {
@@ -1033,21 +1137,21 @@ async fn search_sql(
                 "NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id)"
                     .to_string(),
             );
-            let grants = header_grants(headers);
-            match grants.is_empty() {
+            let granted = crate::db::live_grant_servers(db, &header_grants(headers)).await?;
+            match granted.is_empty() {
                 true => conds.push(
                     "c.server IN (SELECT name FROM servers WHERE password_hash IS NULL)"
                         .to_string(),
                 ),
                 false => {
-                    let mut ph = Vec::with_capacity(grants.len());
-                    for grant in grants {
-                        binds.push(Bind::S(grant));
+                    let mut ph = Vec::with_capacity(granted.len());
+                    for server in granted {
+                        binds.push(Bind::S(server));
                         ph.push(format!("${}", binds.len()));
                     }
                     conds.push(format!(
-                        "(c.server IN (SELECT name FROM servers WHERE password_hash IS NULL) OR c.server IN (SELECT server FROM guest_grants WHERE \"grant\" IN ({})))",
-                        ph.join(", ")
+                        "(c.server IN (SELECT name FROM servers WHERE password_hash IS NULL) OR c.server IN ({}))",
+                        ph.join(", "),
                     ));
                 }
             }
@@ -1072,9 +1176,11 @@ async fn search_sql(
         match text.chars().count() >= FTS_MIN_CHARS && has_fts(db) {
             true => {
                 binds.push(Bind::S(fts_phrase(text)));
-                binds.push(Bind::I(before.unwrap_or(i64::MAX)));
+                binds.push(Bind::I(lo));
+                binds.push(Bind::I(hi));
                 conds.push(format!(
-                    "m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${} AND rowid < ${})",
+                    "m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${} AND rowid >= ${} AND rowid < ${})",
+                    binds.len() - 2,
                     binds.len() - 1,
                     binds.len()
                 ));
@@ -1107,6 +1213,12 @@ async fn search_sql(
         binds.push(Bind::I(b));
         conds.push(format!("m.id < ${}", binds.len()));
     }
+    if window.is_some() {
+        binds.push(Bind::I(lo));
+        conds.push(format!("m.id >= ${}", binds.len()));
+        binds.push(Bind::I(hi));
+        conds.push(format!("m.id < ${}", binds.len()));
+    }
     if let Some(a) = after {
         binds.push(Bind::I(a));
         conds.push(format!("m.id > ${}", binds.len()));
@@ -1127,7 +1239,7 @@ async fn search_sql(
         _ => String::new(),
     };
     let sql = format!(
-        "SELECT {COLS}, c.server, c.name FROM messages m CROSS JOIN channels c WHERE c.id = m.channel_id AND {} ORDER BY m.id DESC LIMIT {SEARCH_PAGE}{skip}",
+        "SELECT {COLS}, c.server, c.name FROM messages m CROSS JOIN channels c WHERE c.id = m.channel_id AND {} ORDER BY m.id DESC LIMIT {limit}{skip}",
         conds.join(" AND ")
     );
     Ok(Some((sql, binds)))
@@ -1192,12 +1304,21 @@ async fn restricted_access(db: &Db, user: &User) -> Result<HashMap<i64, ChannelA
     Ok(out)
 }
 
-#[utoipa::path(get, path = "/api/unreads", responses((status = 200, description = "Latest top-level message id from someone else and the last-read id for each text channel the caller can view (with its server) and each DM, skipping ones with no messages from others", body = Unreads)), security(("bearer" = [])))]
+const UNREADS_MAX: usize = 500;
+
+#[derive(Deserialize, IntoParams)]
+pub struct UnreadsQuery {
+    all: Option<bool>,
+}
+
+#[utoipa::path(get, path = "/api/unreads", params(UnreadsQuery), responses((status = 200, description = "Unread scopes: the latest top-level message id from someone else and the last-read id for each text channel the caller can view (with its server) and each DM whose latest message is newer than its read position, newest first and capped at 500 (`more` is true when the cap cut the list). Scopes that are not listed are read. With `all=true` every viewable channel and DM with messages from others is listed, read or not (no cap)", body = Unreads)), security(("bearer" = [])))]
 pub(crate) async fn unreads(
     State(state): State<AppState>,
     Authed(user): Authed,
+    Query(q): Query<UnreadsQuery>,
 ) -> Result<Json<Unreads>, ApiError> {
-    let db = &state.db;
+    let all = q.all.unwrap_or(false);
+    let db = &state.read();
     let restricted = restricted_access(db, &user).await?;
     let channel_rows = sqlx::query(
         "SELECT x.id, x.server, x.latest, (SELECT lm.created_at FROM messages lm WHERE lm.id = x.latest), x.last_read, x.joined_at FROM (SELECT c.id, c.server, (SELECT MAX(m.id) FROM messages m WHERE m.channel_id = c.id AND m.thread_root_id IS NULL AND m.author <> $1) AS latest, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'c' || c.id), 0) AS last_read, mem.joined_at FROM channels c JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text') x",
@@ -1205,12 +1326,18 @@ pub(crate) async fn unreads(
     .bind(&user.username)
     .fetch_all(db)
     .await?;
-    let dm_rows = sqlx::query(
-        "SELECT d.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = d.id AND m.author <> $1), COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) FROM dms d WHERE d.user_a = $1 OR d.user_b = $1",
-    )
-    .bind(&user.username)
-    .fetch_all(db)
-    .await?;
+    let dm_sql = match all {
+        true => {
+            "SELECT d.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = d.id AND m.author <> $1), COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) FROM dms d WHERE (d.user_a = $1 OR d.user_b = $1) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')"
+        }
+        false => {
+            "SELECT x.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = x.id AND m.author <> $1), x.last_read FROM (SELECT d.id, d.last_message_id, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) AS last_read FROM dms d WHERE (d.user_a = $1 OR d.user_b = $1) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')) x WHERE x.last_message_id > x.last_read"
+        }
+    };
+    let dm_rows = sqlx::query(dm_sql)
+        .bind(&user.username)
+        .fetch_all(db)
+        .await?;
     let mut items = Vec::with_capacity(channel_rows.len() + dm_rows.len());
     for r in &channel_rows {
         let id: i64 = r.try_get(0)?;
@@ -1224,27 +1351,38 @@ pub(crate) async fn unreads(
                 history,
             }) => *view && (*history || latest_at.is_some_and(|t| t >= joined_at)),
         };
-        if let (Some(latest), true) = (latest, readable) {
+        let last_read: i64 = r.try_get(4)?;
+        if let (Some(latest), true) = (latest, readable)
+            && (all || latest > last_read)
+        {
             items.push(Unread {
                 scope: format!("c{id}"),
                 server: Some(r.try_get(1)?),
-                last_read: r.try_get(4)?,
+                last_read,
                 latest,
             });
         }
     }
     for r in &dm_rows {
         let id: i64 = r.try_get(0)?;
-        if let Some(latest) = r.try_get::<Option<i64>, _>(1)? {
+        let last_read: i64 = r.try_get(2)?;
+        if let Some(latest) = r.try_get::<Option<i64>, _>(1)?
+            && (all || latest > last_read)
+        {
             items.push(Unread {
                 scope: format!("d{id}"),
                 server: None,
-                last_read: r.try_get(2)?,
+                last_read,
                 latest,
             });
         }
     }
-    Ok(Json(Unreads { items }))
+    let more = !all && items.len() > UNREADS_MAX;
+    if !all {
+        items.sort_by_key(|u| std::cmp::Reverse(u.latest));
+        items.truncate(UNREADS_MAX);
+    }
+    Ok(Json(Unreads { items, more }))
 }
 
 #[utoipa::path(post, path = "/api/read", request_body = ReadReq, responses((status = 200, description = "The stored read position, which never moves backwards", body = ReadState)), security(("bearer" = [])))]
@@ -1269,11 +1407,13 @@ pub(crate) async fn mark_read(
     .fetch_one(&state.db)
     .await?
     .try_get(0)?;
-    state.hub.broadcast(WsEvent::ReadUpdated {
-        username: user.username,
-        scope: scope.clone(),
-        last_read: stored,
-    });
+    if stored == last_read {
+        state.hub.broadcast(WsEvent::ReadUpdated {
+            username: user.username,
+            scope: scope.clone(),
+            last_read: stored,
+        });
+    }
     Ok(Json(ReadState {
         scope,
         last_read: stored,
@@ -1515,6 +1655,7 @@ mod tests {
             before_ts: None,
             after_ts: None,
             offset: None,
+            cursor: None,
             servers: None,
         }
     }
@@ -1656,14 +1797,18 @@ mod tests {
         state: &AppState,
         name: &str,
     ) -> HashMap<String, (Option<String>, i64, i64)> {
-        unreads(State(state.clone()), Authed(mem_user(name, false)))
-            .await
-            .expect("unreads")
-            .0
-            .items
-            .into_iter()
-            .map(|u| (u.scope, (u.server, u.latest, u.last_read)))
-            .collect()
+        unreads(
+            State(state.clone()),
+            Authed(mem_user(name, false)),
+            Query(UnreadsQuery { all: Some(true) }),
+        )
+        .await
+        .expect("unreads")
+        .0
+        .items
+        .into_iter()
+        .map(|u| (u.scope, (u.server, u.latest, u.last_read)))
+        .collect()
     }
 
     #[tokio::test]
@@ -1984,7 +2129,7 @@ mod tests {
             .await
             .expect("history perm");
         sqlx::query(
-            "INSERT INTO guest_grants(\"grant\", server, created_at) VALUES('g1', 'locked', 0)",
+            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('g1', 'locked', 0, 4000000000)",
         )
         .execute(db)
         .await
@@ -2160,7 +2305,7 @@ mod tests {
     }
 
     async fn plan(db: &Db, user: &User, sq: SearchQuery) -> String {
-        let (sql, binds) = search_sql(db, Some(user), &HeaderMap::new(), sq)
+        let (sql, binds) = search_sql(db, Some(user), &HeaderMap::new(), sq, None, SEARCH_PAGE)
             .await
             .expect("search sql")
             .expect("built");
@@ -2282,12 +2427,7 @@ mod tests {
     }
 
     fn reopened(db: Db) -> AppState {
-        AppState {
-            db,
-            hub: crate::ws::Hub::new(),
-            s3: None,
-            bus: None,
-        }
+        AppState::new(db, crate::ws::Hub::new(), None, None)
     }
 
     #[tokio::test]
@@ -2526,6 +2666,166 @@ mod tests {
         )
         .await;
         assert!(ok.is_ok());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn unreads_default_lists_only_unread_scopes() {
+        let (state, path) = temp_state("unreads_only").await;
+        let db = &state.db;
+        let general = general_id(db).await;
+        let quiet = add_channel(db, "quiet", "text").await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        add_member(db, "rchat", "bob", 0, 0, 0).await;
+        let loud = insert(db, Some(general), None, None, "bob").await;
+        let old = insert(db, Some(quiet), None, None, "bob").await;
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        let read_dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'carol') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        let dm_msg = insert(db, None, Some(dm), None, "bob").await;
+        let carol = insert(db, None, Some(read_dm), None, "carol").await;
+        insert(db, None, Some(read_dm), None, "alice").await;
+        for (scope, last) in [(format!("c{quiet}"), old), (format!("d{read_dm}"), carol)] {
+            sqlx::query(
+                "INSERT INTO read_state(username, scope, last_read) VALUES('alice', $1, $2)",
+            )
+            .bind(scope)
+            .bind(last)
+            .execute(db)
+            .await
+            .expect("read");
+        }
+        let got = unreads(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Query(UnreadsQuery { all: None }),
+        )
+        .await
+        .expect("unreads")
+        .0;
+        assert!(!got.more);
+        let scopes: Vec<(String, i64)> =
+            got.items.into_iter().map(|u| (u.scope, u.latest)).collect();
+        assert_eq!(
+            scopes,
+            vec![(format!("d{dm}"), dm_msg), (format!("c{general}"), loud)]
+        );
+        let all = unread_map(&state, "alice").await;
+        assert_eq!(all.len(), 4);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn search_cursor_header_walks_windows() {
+        let (state, path) = temp_state("search_windows").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        seed(db, cid, 20000).await;
+        let alice = Some(mem_user("alice", false));
+        for q in ["needle", "ne"] {
+            let expected: Vec<i64> = sqlx::query(
+                "SELECT id FROM messages WHERE lower(content) LIKE $1 ORDER BY id DESC",
+            )
+            .bind(format!("%{q}%"))
+            .fetch_all(db)
+            .await
+            .expect("expected")
+            .iter()
+            .map(|r| r.try_get(0).expect("id"))
+            .collect();
+            let mut seen = Vec::new();
+            let mut cursor: Option<String> = None;
+            let mut pages = 0;
+            loop {
+                let mut sq = query(Some(q));
+                sq.cursor = cursor.clone();
+                let (page, next) = search_paged(&state, alice.as_ref(), &HeaderMap::new(), sq)
+                    .await
+                    .expect("search");
+                assert!(page.len() as i64 <= SEARCH_PAGE);
+                seen.extend(page.iter().map(|r| r.message.id));
+                pages += 1;
+                match next {
+                    Some(id) => cursor = Some(encode_cursor(&[&id.to_string()])),
+                    None => break,
+                }
+            }
+            assert_eq!(seen, expected, "q={q}");
+            assert!(pages >= expected.len() / SEARCH_PAGE as usize, "q={q}");
+        }
+        let mut deep = query(Some("needle"));
+        deep.offset = Some(10_000);
+        let capped = found(&state, alice.clone(), HeaderMap::new(), deep).await;
+        assert!(capped.is_empty());
+        let mut bad = query(Some("needle"));
+        bad.cursor = Some("nothex".to_string());
+        assert!(matches!(
+            search_paged(&state, alice.as_ref(), &HeaderMap::new(), bad).await,
+            Err(ApiError(StatusCode::BAD_REQUEST, _))
+        ));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn send_path_checks_membership_and_slowmode() {
+        let (state, path) = temp_state("send_gate").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        let send = |who: &str, cid: i64| {
+            let state = state.clone();
+            let who = who.to_string();
+            async move {
+                send_channel_message(
+                    State(state),
+                    Path(cid),
+                    Authed(mem_user(&who, false)),
+                    Json(SendReq {
+                        content: "hello".to_string(),
+                        media_id: None,
+                        media_spoiler: None,
+                        p2p: None,
+                    }),
+                )
+                .await
+                .map(|_| ())
+            }
+        };
+        assert!(send("alice", cid).await.is_ok());
+        assert!(matches!(
+            send("mallory", cid).await,
+            Err(ApiError(StatusCode::FORBIDDEN, _))
+        ));
+        assert!(matches!(
+            send("alice", 9999).await,
+            Err(ApiError(StatusCode::NOT_FOUND, _))
+        ));
+        sqlx::query("UPDATE channels SET slowmode_seconds = 60 WHERE id = $1")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("slowmode");
+        assert!(matches!(
+            send("alice", cid).await,
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+        ));
+        let voice = add_channel(db, "talk", "voice").await;
+        assert!(matches!(
+            send("alice", voice).await,
+            Err(ApiError(StatusCode::BAD_REQUEST, _))
+        ));
         done(state, path).await;
     }
 }

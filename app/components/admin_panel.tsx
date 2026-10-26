@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import * as api from '../lib/api'
 import type { ServerDetail, ServerSummaryLite } from '../lib/types'
@@ -12,10 +12,12 @@ import {
   BanList,
   ChannelControls,
   Dialog,
+  MemberSearchField,
   RolesEditor,
   Sentinel,
   ServerPasswordField,
   dangerBtn,
+  useMemberSearch,
   fieldCls,
   sectionCls,
   textBtn,
@@ -163,13 +165,36 @@ function UserServers({ username }: { username: string }) {
   const openServer = useStore(s => s.openServer)
   const closeDialog = useStore(s => s.closeDialog)
   const [list, setList] = useState<ServerSummaryLite[] | null>(null)
+  const [next, setNext] = useState<string | null>(null)
   const [managing, setManaging] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const busy = useRef(false)
+  const fetchFrom = useCallback(
+    (cursor: string | null) => {
+      if (busy.current && cursor !== null) return Promise.resolve()
+      busy.current = true
+      setLoading(true)
+      return api
+        .adminUserServers(username, cursor)
+        .then(page => {
+          setList(cur => {
+            const base = cursor === null ? [] : (cur ?? [])
+            const seen = new Set(base.map(sv => sv.name))
+            return [...base, ...page.items.filter(sv => !seen.has(sv.name))]
+          })
+          setNext(page.next)
+        })
+        .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+        .finally(() => {
+          busy.current = false
+          setLoading(false)
+        })
+    },
+    [username, setError]
+  )
   useEffect(() => {
-    api
-      .adminUserServers(username)
-      .then(setList)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }, [username, setError])
+    void fetchFrom(null)
+  }, [fetchFrom])
   if (!list) return null
   return (
     <div className="space-y-1 border-t border-outline-variant px-3 py-2">
@@ -201,6 +226,11 @@ function UserServers({ username }: { username: string }) {
           )}
         </div>
       ))}
+      {next !== null && (
+        <button onClick={() => void fetchFrom(next)} disabled={loading} className={textBtn}>
+          {loading ? 'Loading…' : 'Show more'}
+        </button>
+      )}
     </div>
   )
 }
@@ -358,6 +388,8 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
   const [detail, setDetail] = useState<ServerDetail | null>(null)
   const [editingAdmin, setEditingAdmin] = useState<string | null>(null)
   const [banning, setBanning] = useState<string | null>(null)
+  const [q, setQ] = useState('')
+  const found = useMemberSearch(name, q)
 
   const refresh = useCallback(
     () =>
@@ -372,7 +404,11 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
     void loadMembers(name)
   }, [refresh, name, loadMembers])
   const moreMembers = useCallback(() => void loadMembers(name), [name, loadMembers])
-  const reloadMembers = useCallback(() => void loadMembers(name, true), [name, loadMembers])
+  const reloadSearch = found.reload
+  const reloadMembers = useCallback(() => {
+    void loadMembers(name, true)
+    reloadSearch()
+  }, [name, loadMembers, reloadSearch])
 
   if (!detail) return null
   const run = (fn: () => Promise<void>) => void fn().then(refresh)
@@ -459,7 +495,11 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
       <p className={sectionCls}>Bans</p>
       <BanList server={name} />
       <p className={sectionCls}>Members ({detail.member_count})</p>
-      {(cache?.list ?? []).map(m => (
+      <MemberSearchField value={q} onChange={setQ} />
+      {found.active && !found.loading && found.list.length === 0 && (
+        <p className="px-2 text-sm text-on-surface-variant">No matching members.</p>
+      )}
+      {(found.active ? found.list : (cache?.list ?? [])).map(m => (
         <div key={m.username} className="rounded-xl px-1 py-1">
           <div className="flex flex-wrap items-center justify-end gap-2">
             <UserAvatar
@@ -530,9 +570,11 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
           )}
         </div>
       ))}
-      {(cache?.hasMore ?? false) && (
-        <Sentinel key={cache?.list.length ?? 0} onVisible={moreMembers} />
-      )}
+      {found.active
+        ? found.hasMore && <Sentinel key={`q${found.list.length}`} onVisible={found.more} />
+        : (cache?.hasMore ?? false) && (
+            <Sentinel key={cache?.list.length ?? 0} onVisible={moreMembers} />
+          )}
     </div>
   )
 }

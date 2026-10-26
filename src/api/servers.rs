@@ -8,17 +8,18 @@ use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::admin::{fuzzy_match, is_fuzzy, like_pattern};
-use crate::api::auth::{hash_password, new_token, verify_password};
+use crate::api::auth::{hash_password, new_token, verify_password, verify_password_cached};
 use crate::api::messages::recent_channel_messages;
 use crate::api::{
-    ApiError, Authed, Channel, ChannelPerm, MaybeAuthed, Member, Message, NAME_MAX, Role,
-    SLOWMODE_MAX, ServerDetail, ServerSummary, ServerSummaryLite, UserRef, check_len,
-    check_profanity, grant_matches, header_grants, page_bounds, placeholders, require_guest_ok,
-    require_server_view, unique_capped, user_from, user_ref, user_refs, valid_color,
+    ApiError, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message, NAME_MAX,
+    OFFSET_MAX, Paged, Role, SLOWMODE_MAX, ServerDetail, ServerSummary, ServerSummaryLite, UserRef,
+    check_len, check_profanity, cursor_int, decode_cursor, encode_cursor, grant_matches,
+    header_grants, page_bounds, placeholders, require_guest_ok, require_server_view, unique_capped,
+    user_from, user_ref, user_refs, valid_color,
 };
 use crate::db::{
-    ALL_PERMS, ChannelKind, Db, Perm, User, can_moderate, channel_access, effective_perms,
-    get_user, has_perm, is_banned, member_perms, now, perm_bits,
+    ALL_PERMS, ChannelKind, Db, Perm, User, can_moderate, effective_perms, get_user, has_perm,
+    is_banned, member_perms, now, perm_bits,
 };
 use crate::state::AppState;
 use crate::ws::{Hub, WsEvent, evict_unviewable};
@@ -156,6 +157,7 @@ pub struct Invite {
 pub struct MembersQuery {
     offset: Option<i64>,
     limit: Option<i64>,
+    cursor: Option<String>,
 }
 
 #[derive(IntoParams)]
@@ -163,34 +165,53 @@ pub struct MembersQuery {
 pub struct MyServersQuery {
     offset: Option<i64>,
     limit: Option<i64>,
+    cursor: Option<String>,
     names: Option<Vec<String>>,
 }
 
-type PagedList = (Option<i64>, Option<i64>, Option<Vec<String>>);
+struct PagedList {
+    offset: Option<i64>,
+    limit: Option<i64>,
+    cursor: Option<String>,
+    list: Option<Vec<String>>,
+}
 
 fn paged_list(raw: &str, list_key: &str) -> Result<PagedList, ApiError> {
     let int = |v: &str| v.parse::<i64>().map_err(|_| bad("Invalid number"));
-    let mut offset = None;
-    let mut limit = None;
-    let mut list: Option<Vec<String>> = None;
+    let mut out = PagedList {
+        offset: None,
+        limit: None,
+        cursor: None,
+        list: None,
+    };
     for (key, value) in url::form_urlencoded::parse(raw.as_bytes()) {
         match key.as_ref() {
-            "offset" => offset = Some(int(&value)?),
-            "limit" => limit = Some(int(&value)?),
-            k if k == list_key => list.get_or_insert_with(Vec::new).push(value.into_owned()),
+            "offset" => out.offset = Some(int(&value)?),
+            "limit" => out.limit = Some(int(&value)?),
+            "cursor" if !value.trim().is_empty() => out.cursor = Some(value.into_owned()),
+            k if k == list_key => out
+                .list
+                .get_or_insert_with(Vec::new)
+                .push(value.into_owned()),
             _ => {}
         }
     }
-    Ok((offset, limit, list))
+    Ok(out)
 }
 
 impl MyServersQuery {
     fn parse(raw: &str) -> Result<MyServersQuery, ApiError> {
-        let (offset, limit, names) = paged_list(raw, "names")?;
+        let PagedList {
+            offset,
+            limit,
+            cursor,
+            list,
+        } = paged_list(raw, "names")?;
         Ok(MyServersQuery {
             offset,
             limit,
-            names,
+            cursor,
+            names: list,
         })
     }
 }
@@ -200,18 +221,118 @@ impl MyServersQuery {
 pub struct MemberListQuery {
     offset: Option<i64>,
     limit: Option<i64>,
+    cursor: Option<String>,
     usernames: Option<Vec<String>>,
+    q: Option<String>,
+    admins: Option<bool>,
 }
 
 impl MemberListQuery {
     fn parse(raw: &str) -> Result<MemberListQuery, ApiError> {
-        let (offset, limit, usernames) = paged_list(raw, "usernames")?;
+        let PagedList {
+            offset,
+            limit,
+            cursor,
+            list,
+        } = paged_list(raw, "usernames")?;
+        let mut q = None;
+        let mut admins = None;
+        for (key, value) in url::form_urlencoded::parse(raw.as_bytes()) {
+            match key.as_ref() {
+                "q" if !value.trim().is_empty() => q = Some(value.trim().to_lowercase()),
+                "admins" => admins = Some(matches!(value.as_ref(), "1" | "true")),
+                _ => {}
+            }
+        }
         Ok(MemberListQuery {
             offset,
             limit,
-            usernames,
+            cursor,
+            usernames: list,
+            q,
+            admins,
         })
     }
+}
+
+fn prefix_end(prefix: &str) -> Option<String> {
+    let mut chars: Vec<char> = prefix.chars().collect();
+    while let Some(last) = chars.pop() {
+        let next = (u32::from(last) + 1..=u32::from(char::MAX)).find_map(char::from_u32);
+        if let Some(c) = next {
+            chars.push(c);
+            return Some(chars.into_iter().collect());
+        }
+    }
+    None
+}
+
+async fn filtered_members(
+    db: &Db,
+    server: &str,
+    q: Option<&str>,
+    admins: bool,
+    limit: Option<i64>,
+    cursor: Option<&str>,
+) -> Result<(Vec<MemberRow>, Option<String>), ApiError> {
+    let limit = limit.unwrap_or(50).clamp(1, 50);
+    let after = match cursor {
+        Some(raw) => {
+            let parts = decode_cursor(raw, 2)?;
+            match parts[0].as_str() {
+                "s" => Some(parts[1].clone()),
+                _ => return Err(bad("Invalid cursor")),
+            }
+        }
+        None => None,
+    };
+    let q = q.filter(|q| !q.is_empty());
+    let col = match crate::db::is_sqlite(db) {
+        true => "username",
+        false => "(username COLLATE \"C\")",
+    };
+    let mut sql = String::from("SELECT username, is_admin, perms FROM members WHERE server = $1");
+    let mut binds: Vec<String> = Vec::new();
+    if admins {
+        sql.push_str(" AND is_admin <> 0");
+    }
+    match (&after, q) {
+        (Some(a), _) => {
+            binds.push(a.clone());
+            sql.push_str(&format!(" AND {col} > ${}", binds.len() + 1));
+        }
+        (None, Some(q)) => {
+            binds.push(q.to_string());
+            sql.push_str(&format!(" AND {col} >= ${}", binds.len() + 1));
+        }
+        (None, None) => {}
+    }
+    if let Some(end) = q.and_then(prefix_end) {
+        binds.push(end);
+        sql.push_str(&format!(" AND {col} < ${}", binds.len() + 1));
+    }
+    sql.push_str(&format!(" ORDER BY {col} LIMIT ${}", binds.len() + 2));
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(server);
+    for b in &binds {
+        query = query.bind(b);
+    }
+    let mut rows = member_rows(&query.bind(limit + 1).fetch_all(db).await?)?;
+    rows.retain(|(name, _, _)| q.is_none_or(|q| name.starts_with(q)));
+    let more = rows.len() as i64 > limit;
+    rows.truncate(limit as usize);
+    let next = match (more, rows.last()) {
+        (true, Some((name, _, _))) => Some(encode_cursor(&["s", name])),
+        _ => None,
+    };
+    Ok((rows, next))
+}
+
+pub const CHANNEL_MAX: i64 = 500;
+pub const ROLE_MAX: i64 = 250;
+pub const CHANNEL_PERM_MAX: i64 = 500;
+
+async fn count_rows(db: &Db, sql: &'static str, key: &str) -> Result<i64, ApiError> {
+    Ok(sqlx::query(sql).bind(key).fetch_one(db).await?.try_get(0)?)
 }
 
 pub(crate) fn ok() -> Json<OkResp> {
@@ -258,7 +379,7 @@ pub(crate) async fn server_lite(
     name: &str,
 ) -> Result<Option<ServerSummaryLite>, ApiError> {
     let row = sqlx::query(
-        "SELECT name, display_name, creator, password_hash FROM servers WHERE name = $1",
+        "SELECT name, display_name, creator, password_hash FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
     )
     .bind(name)
     .fetch_optional(db)
@@ -348,7 +469,7 @@ async fn role_ids_of(
     Ok(map)
 }
 
-const MY_SERVERS: &str = "SELECT s.name, s.display_name, s.creator, m.is_admin FROM members m JOIN servers s ON s.name = m.server WHERE m.username = $1";
+const MY_SERVERS: &str = "SELECT s.name, s.display_name, s.creator, m.is_admin, m.joined_at FROM members m JOIN servers s ON s.name = m.server WHERE m.username = $1";
 
 fn summary_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<ServerSummary>, ApiError> {
     let mut servers = Vec::with_capacity(rows.len());
@@ -363,22 +484,57 @@ fn summary_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<ServerSummary>, ApiErr
     Ok(servers)
 }
 
+pub(crate) struct Page<T> {
+    pub items: Vec<T>,
+    pub more: bool,
+    pub next: Option<String>,
+}
+
 pub(crate) async fn my_servers_page(
     db: &Db,
     username: &str,
     offset: i64,
+    cursor: Option<&str>,
     limit: i64,
-) -> Result<(Vec<ServerSummary>, bool), ApiError> {
-    let sql = format!("{MY_SERVERS} ORDER BY m.joined_at, s.name LIMIT $2 OFFSET $3");
-    let mut rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(username)
-        .bind(limit + 1)
-        .bind(offset)
-        .fetch_all(db)
-        .await?;
+) -> Result<Page<ServerSummary>, ApiError> {
+    let mut rows = match cursor {
+        Some(raw) => {
+            let parts = decode_cursor(raw, 2)?;
+            let sql = format!(
+                "{MY_SERVERS} AND (m.joined_at, m.server) > ($2, $3) ORDER BY m.joined_at, m.server LIMIT $4"
+            );
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .bind(username)
+                .bind(cursor_int(&parts[0])?)
+                .bind(parts[1].clone())
+                .bind(limit + 1)
+                .fetch_all(db)
+                .await?
+        }
+        None => {
+            let sql = format!("{MY_SERVERS} ORDER BY m.joined_at, m.server LIMIT $2 OFFSET $3");
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .bind(username)
+                .bind(limit + 1)
+                .bind(offset)
+                .fetch_all(db)
+                .await?
+        }
+    };
     let more = rows.len() as i64 > limit;
     rows.truncate(limit as usize);
-    Ok((summary_rows(&rows)?, more))
+    let next = match (more, rows.last()) {
+        (true, Some(r)) => Some(encode_cursor(&[
+            &r.try_get::<i64, _>(4)?.to_string(),
+            &r.try_get::<String, _>(0)?,
+        ])),
+        _ => None,
+    };
+    Ok(Page {
+        items: summary_rows(&rows)?,
+        more,
+        next,
+    })
 }
 
 pub(crate) async fn my_servers_by_names(
@@ -390,7 +546,7 @@ pub(crate) async fn my_servers_by_names(
         return Ok(Vec::new());
     }
     let sql = format!(
-        "{MY_SERVERS} AND m.server IN ({}) ORDER BY m.joined_at, s.name",
+        "{MY_SERVERS} AND m.server IN ({}) ORDER BY m.joined_at, m.server",
         placeholders(2, names.len())
     );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(username);
@@ -400,33 +556,37 @@ pub(crate) async fn my_servers_by_names(
     summary_rows(&query.fetch_all(db).await?)
 }
 
-#[utoipa::path(get, path = "/api/me/servers", params(MyServersQuery), responses((status = 200, description = "A page (`offset`, `limit` default 50, max 100) of the servers the signed-in user joined, oldest membership first. With `names` (repeated once per server, e.g. `names=a&names=b`, max 100) returns just those servers, skipping ones the user is not a member of", body = Vec<ServerSummary>)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/me/servers", params(MyServersQuery), responses((status = 200, description = "A page (`cursor` or legacy `offset`, `limit` default 50, max 100) of the servers the signed-in user joined, oldest membership first. When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page. With `names` (repeated once per server, e.g. `names=a&names=b`, max 100) returns just those servers, skipping ones the user is not a member of", body = Vec<ServerSummary>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page")))), security(("bearer" = [])))]
 pub(crate) async fn list_my_servers(
     State(state): State<AppState>,
     Authed(user): Authed,
     RawQuery(raw): RawQuery,
-) -> Result<Json<Vec<ServerSummary>>, ApiError> {
+) -> Result<Paged<ServerSummary>, ApiError> {
     let MyServersQuery {
         offset,
         limit,
+        cursor,
         names,
     } = MyServersQuery::parse(raw.as_deref().unwrap_or(""))?;
+    let db = &state.read();
     match names {
-        Some(names) => Ok(Json(
+        Some(names) => Ok(Paged(
             my_servers_by_names(
-                &state.db,
+                db,
                 &user.username,
                 &unique_capped(names.iter().map(|n| n.to_lowercase())),
             )
             .await?,
+            None,
         )),
         None => {
             let (offset, limit) = page_bounds(offset, limit);
-            Ok(Json(
-                my_servers_page(&state.db, &user.username, offset, limit)
-                    .await?
-                    .0,
-            ))
+            let Page {
+                items,
+                more: _,
+                next,
+            } = my_servers_page(db, &user.username, offset, cursor.as_deref(), limit).await?;
+            Ok(Paged(items, next))
         }
     }
 }
@@ -479,6 +639,57 @@ pub(crate) async fn server_roles(db: &Db, server: &str) -> Result<Vec<Role>, Api
     Ok(roles)
 }
 
+async fn visible_restricted(
+    db: &Db,
+    server: &str,
+    viewer: Option<&User>,
+    restricted: &[i64],
+) -> Result<HashSet<i64>, ApiError> {
+    let Some(user) = viewer else {
+        return Ok(HashSet::new());
+    };
+    if restricted.is_empty() {
+        return Ok(HashSet::new());
+    }
+    if effective_perms(db, server, user).await? & Perm::ManageChannels as i64 != 0 {
+        return Ok(restricted.iter().copied().collect());
+    }
+    let mut subjects = vec![format!("u:{}", user.username)];
+    for r in &sqlx::query("SELECT role_id FROM user_roles WHERE server = $1 AND username = $2")
+        .bind(server)
+        .bind(&user.username)
+        .fetch_all(db)
+        .await?
+    {
+        subjects.push(format!("r:{}", r.try_get::<i64, _>(0)?));
+    }
+    let sql = format!(
+        "SELECT DISTINCT cp.channel_id FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1 AND cp.can_view != 0 AND cp.subject IN ({})",
+        placeholders(2, subjects.len())
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(server);
+    for subject in &subjects {
+        query = query.bind(subject);
+    }
+    let mut visible = HashSet::new();
+    for r in &query.fetch_all(db).await? {
+        visible.insert(r.try_get::<i64, _>(0)?);
+    }
+    Ok(visible)
+}
+
+pub(crate) async fn member_count(db: &Db, server: &str) -> Result<i64, ApiError> {
+    Ok(
+        sqlx::query("SELECT member_count FROM servers WHERE name = $1")
+            .bind(server)
+            .fetch_optional(db)
+            .await?
+            .map(|r| r.try_get::<i64, _>(0))
+            .transpose()?
+            .unwrap_or(0),
+    )
+}
+
 async fn server_detail(
     db: &Db,
     hub: &Hub,
@@ -507,17 +718,12 @@ async fn server_detail(
     for r in &restricted_rows {
         restricted.push(r.try_get::<i64, _>(0)?);
     }
+    let visible = visible_restricted(db, &name, viewer, &restricted).await?;
     let mut channels = Vec::new();
     for r in &rows {
         let id: i64 = r.try_get(0)?;
-        if restricted.contains(&id) {
-            let visible = match viewer {
-                Some(user) => channel_access(db, &name, id, Some(user)).await?.view,
-                None => false,
-            };
-            if !visible {
-                continue;
-            }
+        if restricted.contains(&id) && !visible.contains(&id) {
+            continue;
         }
         channels.push(Channel {
             id,
@@ -526,11 +732,7 @@ async fn server_detail(
             slowmode_seconds: r.try_get(3)?,
         });
     }
-    let member_count: i64 = sqlx::query("SELECT COUNT(*) FROM members WHERE server = $1")
-        .bind(&name)
-        .fetch_one(db)
-        .await?
-        .try_get(0)?;
+    let member_count = member_count(db, &name).await?;
     let online_count = hub.online_count(&name);
     Ok(ServerDetail {
         name: name.clone(),
@@ -573,65 +775,202 @@ async fn members_by_names(
     member_rows(&query.fetch_all(db).await?)
 }
 
+async fn online_members(
+    db: &Db,
+    server: &str,
+    hub: &Hub,
+    after: Option<&str>,
+    mut skip: usize,
+    want: usize,
+) -> Result<(Vec<MemberRow>, usize), ApiError> {
+    let mut out = Vec::new();
+    let mut skipped = 0;
+    let mut from = after.map(str::to_string);
+    loop {
+        let chunk = hub.online_after(server, from.as_deref(), LIST_MAX as usize);
+        let Some(last) = chunk.last() else {
+            return Ok((out, skipped));
+        };
+        from = Some(last.clone());
+        for row in members_by_names(db, server, &chunk).await? {
+            if skip > 0 {
+                skip -= 1;
+                skipped += 1;
+                continue;
+            }
+            out.push(row);
+            if out.len() == want {
+                return Ok((out, skipped));
+            }
+        }
+    }
+}
+
+const OFFLINE_CHUNK_MAX: usize = 5000;
+
+async fn offline_members(
+    db: &Db,
+    server: &str,
+    hub: &Hub,
+    mut after: Option<String>,
+    mut skip: usize,
+    want: usize,
+) -> Result<Vec<MemberRow>, ApiError> {
+    let mut out = Vec::new();
+    let mut chunk = (want + skip).clamp(64, OFFLINE_CHUNK_MAX) as i64;
+    loop {
+        let rows = match &after {
+            Some(a) => sqlx::query(
+                "SELECT username, is_admin, perms FROM members WHERE server = $1 AND username > $2 ORDER BY username LIMIT $3",
+            )
+            .bind(server)
+            .bind(a)
+            .bind(chunk),
+            None => sqlx::query(
+                "SELECT username, is_admin, perms FROM members WHERE server = $1 ORDER BY username LIMIT $2",
+            )
+            .bind(server)
+            .bind(chunk),
+        }
+        .fetch_all(db)
+        .await?;
+        let rows = member_rows(&rows)?;
+        let exhausted = (rows.len() as i64) < chunk;
+        chunk = (chunk * 2).min(OFFLINE_CHUNK_MAX as i64);
+        if let Some((last, _, _)) = rows.last() {
+            after = Some(last.clone());
+        }
+        let names: Vec<String> = rows.iter().map(|(name, _, _)| name.clone()).collect();
+        let online: HashSet<String> = hub
+            .online_among(server, &names)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        for row in rows {
+            if online.contains(&row.0) {
+                continue;
+            }
+            if skip > 0 {
+                skip -= 1;
+                continue;
+            }
+            out.push(row);
+            if out.len() == want {
+                return Ok(out);
+            }
+        }
+        if exhausted {
+            return Ok(out);
+        }
+    }
+}
+
 async fn members_page(
     db: &Db,
     server: &str,
-    online: &HashSet<String>,
+    hub: &Hub,
     offset: Option<i64>,
     limit: Option<i64>,
-) -> Result<Vec<MemberRow>, ApiError> {
-    let offset = offset.unwrap_or(0).max(0) as usize;
+    cursor: Option<&str>,
+) -> Result<(Vec<MemberRow>, Option<String>), ApiError> {
     let limit = limit.unwrap_or(50).clamp(1, 50) as usize;
-    let rows = sqlx::query(
-        "SELECT username, is_admin, perms FROM members WHERE server = $1 ORDER BY username",
-    )
-    .bind(server)
-    .fetch_all(db)
-    .await?;
-    let (mut on, mut off): (Vec<MemberRow>, Vec<MemberRow>) = member_rows(&rows)?
-        .into_iter()
-        .partition(|(username, _, _)| online.contains(username));
-    on.append(&mut off);
-    Ok(on.into_iter().skip(offset).take(limit).collect())
+    let want = limit + 1;
+    let (from_online, after, skip) = match cursor {
+        Some(raw) => {
+            let parts = decode_cursor(raw, 2)?;
+            match parts[0].as_str() {
+                "o" => (true, Some(parts[1].clone()), 0),
+                "f" => (false, Some(parts[1].clone()), 0),
+                _ => return Err(bad("Invalid cursor")),
+            }
+        }
+        None => (
+            true,
+            None,
+            offset.unwrap_or(0).clamp(0, OFFSET_MAX) as usize,
+        ),
+    };
+    let mut rows: Vec<(bool, MemberRow)> = Vec::with_capacity(want);
+    let mut skip = skip;
+    let mut offline_after = after.clone();
+    if from_online {
+        let (got, skipped) = online_members(db, server, hub, after.as_deref(), skip, want).await?;
+        skip -= skipped.min(skip);
+        rows.extend(got.into_iter().map(|r| (true, r)));
+        offline_after = None;
+    }
+    if rows.len() < want {
+        let got = offline_members(db, server, hub, offline_after, skip, want - rows.len()).await?;
+        rows.extend(got.into_iter().map(|r| (false, r)));
+    }
+    let more = rows.len() > limit;
+    rows.truncate(limit);
+    let next = match (more, rows.last()) {
+        (true, Some((phase, (username, _, _)))) => Some(encode_cursor(&[
+            match phase {
+                true => "o",
+                false => "f",
+            },
+            username,
+        ])),
+        _ => None,
+    };
+    Ok((rows.into_iter().map(|(_, r)| r).collect(), next))
 }
 
-#[utoipa::path(get, path = "/api/servers/{name}/members", params(("name" = String, Path), MemberListQuery), responses((status = 200, description = "A page (`offset`, `limit` default and max 50) of members, online first and then alphabetical. With `usernames` (repeated once per user, e.g. `usernames=a&usernames=b`, max 100) returns just those users that are members, alphabetical, skipping the rest", body = Vec<Member>)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/servers/{name}/members", params(("name" = String, Path), MemberListQuery), responses((status = 200, description = "A page (`cursor` or legacy `offset`, `limit` default and max 50) of members, online first and then alphabetical. When more members follow, the `X-Next-Cursor` response header holds the cursor for the next page (absent on the last page). With `usernames` (repeated once per user, e.g. `usernames=a&usernames=b`, max 100) returns just those users that are members, alphabetical, skipping the rest. With `q` (case-insensitive username prefix) and/or `admins=1` (admins only) returns matching members alphabetically, paged by the same cursor header (`offset` is ignored)", body = Vec<Member>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page")))), security((), ("bearer" = [])))]
 pub(crate) async fn list_members(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
     headers: HeaderMap,
     Path(name): Path<String>,
     RawQuery(raw): RawQuery,
-) -> Result<Json<Vec<Member>>, ApiError> {
+) -> Result<Paged<Member>, ApiError> {
     let MemberListQuery {
         offset,
         limit,
+        cursor,
         usernames,
+        q,
+        admins,
     } = MemberListQuery::parse(raw.as_deref().unwrap_or(""))?;
-    require_guest_ok(&state.db, viewer.as_ref()).await?;
+    let db = &state.read();
+    require_guest_ok(db, viewer.as_ref()).await?;
     let key = name.to_lowercase();
-    let lite = require_server(&state.db, &key).await?;
-    require_server_view(&state.db, &headers, &lite, viewer.as_ref()).await?;
+    let lite = require_server(db, &key).await?;
+    require_server_view(db, &headers, &lite, viewer.as_ref()).await?;
     let creator = lite.creator;
-    let online = state.hub.online_set(&key);
-    let rows = match usernames {
-        Some(names) => {
+    let (rows, next) = match usernames {
+        Some(names) => (
             members_by_names(
-                &state.db,
+                db,
                 &key,
                 &unique_capped(names.iter().map(|n| n.to_lowercase())),
             )
+            .await?,
+            None,
+        ),
+        None if q.is_some() || admins == Some(true) => {
+            filtered_members(
+                db,
+                &key,
+                q.as_deref(),
+                admins == Some(true),
+                limit,
+                cursor.as_deref(),
+            )
             .await?
         }
-        None => members_page(&state.db, &key, &online, offset, limit).await?,
+        None => members_page(db, &key, &state.hub, offset, limit, cursor.as_deref()).await?,
     };
     let names: Vec<String> = rows.iter().map(|(name, _, _)| name.clone()).collect();
-    let refs = user_refs(&state.db, &names).await;
-    let mut roles = role_ids_of(&state.db, &key, &names).await?;
+    let online = state.hub.online_among(&key, &names);
+    let refs = user_refs(db, &names).await;
+    let mut roles = role_ids_of(db, &key, &names).await?;
     let members = rows
         .into_iter()
         .map(|(username, is_admin, perms)| Member {
-            online: online.contains(&username),
+            online: online.contains(username.as_str()),
             is_admin: is_admin != 0,
             is_creator: creator.as_deref() == Some(username.as_str()),
             perms,
@@ -639,38 +978,98 @@ pub(crate) async fn list_members(
             user: user_from(&refs, &username),
         })
         .collect();
-    Ok(Json(members))
+    Ok(Paged(members, next))
 }
 
-#[utoipa::path(get, path = "/api/servers/{name}/interacted", params(("name" = String, Path), MembersQuery), responses((status = 200, description = "Up to 50 non-members who interacted with the server, most recent first", body = Vec<UserRef>)), security((), ("bearer" = [])))]
+fn pair_cursor(raw: Option<&str>) -> Result<Option<(i64, String)>, ApiError> {
+    match raw.filter(|c| !c.trim().is_empty()) {
+        Some(raw) => {
+            let parts = decode_cursor(raw, 2)?;
+            Ok(Some((cursor_int(&parts[0])?, parts[1].clone())))
+        }
+        None => Ok(None),
+    }
+}
+
+fn pair_next(more: bool, last: Option<&(String, i64)>) -> Option<String> {
+    match (more, last) {
+        (true, Some((name, at))) => Some(encode_cursor(&[&at.to_string(), name])),
+        _ => None,
+    }
+}
+
+async fn recent_pairs(
+    db: &Db,
+    sql_first: &str,
+    sql_after: &str,
+    server: &str,
+    after: Option<(i64, String)>,
+    offset: i64,
+    limit: i64,
+) -> Result<(Vec<(String, i64)>, Option<String>), ApiError> {
+    let rows = match after {
+        Some((at, name)) => {
+            sqlx::query(sqlx::AssertSqlSafe(sql_after.to_string()))
+                .bind(server)
+                .bind(at)
+                .bind(name)
+                .bind(limit + 1)
+                .fetch_all(db)
+                .await?
+        }
+        None => {
+            sqlx::query(sqlx::AssertSqlSafe(sql_first.to_string()))
+                .bind(server)
+                .bind(limit + 1)
+                .bind(offset)
+                .fetch_all(db)
+                .await?
+        }
+    };
+    let mut pairs = Vec::with_capacity(rows.len());
+    for r in &rows {
+        pairs.push((r.try_get::<String, _>(0)?, r.try_get::<i64, _>(1)?));
+    }
+    let more = pairs.len() as i64 > limit;
+    pairs.truncate(limit as usize);
+    let next = pair_next(more, pairs.last());
+    Ok((pairs, next))
+}
+
+#[utoipa::path(get, path = "/api/servers/{name}/interacted", params(("name" = String, Path), MembersQuery), responses((status = 200, description = "Up to 50 non-members who interacted with the server, most recent first (`cursor` or legacy `offset`). When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page", body = Vec<UserRef>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page")))), security((), ("bearer" = [])))]
 pub(crate) async fn list_interacted(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
     headers: HeaderMap,
     Path(name): Path<String>,
     Query(q): Query<MembersQuery>,
-) -> Result<Json<Vec<UserRef>>, ApiError> {
-    require_guest_ok(&state.db, viewer.as_ref()).await?;
+) -> Result<Paged<UserRef>, ApiError> {
+    let db = &state.read();
+    require_guest_ok(db, viewer.as_ref()).await?;
     let key = name.to_lowercase();
-    let lite = require_server(&state.db, &key).await?;
-    require_server_view(&state.db, &headers, &lite, viewer.as_ref()).await?;
-    let offset = q.offset.unwrap_or(0).max(0);
-    let limit = q.limit.unwrap_or(50).clamp(1, 50);
-    let rows = sqlx::query(
-        "SELECT username FROM interactions WHERE server = $1 AND username NOT IN (SELECT username FROM members WHERE server = $2) ORDER BY last_at DESC LIMIT $3 OFFSET $4",
+    let lite = require_server(db, &key).await?;
+    require_server_view(db, &headers, &lite, viewer.as_ref()).await?;
+    let MembersQuery {
+        offset,
+        limit,
+        cursor,
+    } = q;
+    let (pairs, next) = recent_pairs(
+        db,
+        "SELECT i.username, i.last_at FROM interactions i WHERE i.server = $1 AND NOT EXISTS(SELECT 1 FROM members m WHERE m.server = i.server AND m.username = i.username) ORDER BY i.last_at DESC, i.username DESC LIMIT $2 OFFSET $3",
+        "SELECT i.username, i.last_at FROM interactions i WHERE i.server = $1 AND (i.last_at, i.username) < ($2, $3) AND NOT EXISTS(SELECT 1 FROM members m WHERE m.server = i.server AND m.username = i.username) ORDER BY i.last_at DESC, i.username DESC LIMIT $4",
+        &key,
+        pair_cursor(cursor.as_deref())?,
+        offset.unwrap_or(0).max(0),
+        limit.unwrap_or(50).clamp(1, 50),
     )
-    .bind(&key)
-    .bind(&key)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&state.db)
     .await?;
-    let mut names = Vec::with_capacity(rows.len());
-    for r in &rows {
-        names.push(r.try_get::<String, _>(0)?);
-    }
-    let refs = user_refs(&state.db, &names).await;
-    Ok(Json(names.iter().map(|n| user_from(&refs, n)).collect()))
+    let names: Vec<String> = pairs.into_iter().map(|(name, _)| name).collect();
+    let refs = user_refs(db, &names).await;
+    Ok(Paged(
+        names.iter().map(|n| user_from(&refs, n)).collect(),
+        next,
+    ))
 }
 
 #[utoipa::path(post, path = "/api/servers", request_body = CreateServerReq, responses((status = 200, description = "The created server, with the caller as admin and a default general channel", body = ServerDetail)), security(("bearer" = [])))]
@@ -682,16 +1081,14 @@ pub(crate) async fn create_server(
     let display = req.name.trim().to_string();
     let key = display.to_lowercase();
     check_server_name(&state.db, &display).await?;
-    if server_lite(&state.db, &key).await?.is_some() {
-        return Err(bad("Server name is taken"));
-    }
+    name_free(&state.db, &key).await?;
     let password_hash = match req
         .password
         .as_deref()
         .map(str::trim)
         .filter(|p| !p.is_empty())
     {
-        Some(password) => Some(hash_password(password)?),
+        Some(password) => Some(hash_password(password).await?),
         None => None,
     };
     let t = now();
@@ -737,12 +1134,13 @@ pub(crate) async fn get_server(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<ServerDetail>, ApiError> {
-    require_guest_ok(&state.db, viewer.as_ref()).await?;
+    let db = &state.read();
+    require_guest_ok(db, viewer.as_ref()).await?;
     let key = name.to_lowercase();
-    let lite = require_server(&state.db, &key).await?;
-    require_server_view(&state.db, &headers, &lite, viewer.as_ref()).await?;
+    let lite = require_server(db, &key).await?;
+    require_server_view(db, &headers, &lite, viewer.as_ref()).await?;
     Ok(Json(
-        server_detail(&state.db, &state.hub, &key, viewer.as_ref()).await?,
+        server_detail(db, &state.hub, &key, viewer.as_ref()).await?,
     ))
 }
 
@@ -752,13 +1150,14 @@ pub(crate) async fn server_exists(
     MaybeAuthed(viewer): MaybeAuthed,
     Path(name): Path<String>,
 ) -> Result<Json<ServerExists>, ApiError> {
-    require_guest_ok(&state.db, viewer.as_ref()).await?;
+    let db = &state.read();
+    require_guest_ok(db, viewer.as_ref()).await?;
     let ServerSummaryLite {
         name: _,
         display_name: _,
         creator: _,
         has_password,
-    } = require_server(&state.db, &name.to_lowercase()).await?;
+    } = require_server(db, &name.to_lowercase()).await?;
     Ok(Json(ServerExists { has_password }))
 }
 
@@ -768,17 +1167,18 @@ pub(crate) async fn search_servers(
     MaybeAuthed(viewer): MaybeAuthed,
     Query(sq): Query<ServerSearchQuery>,
 ) -> Result<Json<Vec<ServerMatch>>, ApiError> {
-    require_guest_ok(&state.db, viewer.as_ref()).await?;
+    let db = &state.read();
+    require_guest_ok(db, viewer.as_ref()).await?;
     let q = sq.q.as_deref().unwrap_or("").trim().to_lowercase();
     if q.is_empty() {
         return Ok(Json(Vec::new()));
     }
     let fuzzy = is_fuzzy(&q);
     let rows = sqlx::query(
-        "SELECT name, display_name, password_hash FROM servers WHERE lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\' ORDER BY name LIMIT 50",
+        "SELECT name, display_name, password_hash FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging' ORDER BY name LIMIT 50",
     )
     .bind(like_pattern(&q, fuzzy))
-    .fetch_all(&state.db)
+    .fetch_all(db)
     .await?;
     let mut out = Vec::new();
     for r in &rows {
@@ -818,14 +1218,14 @@ pub(crate) async fn guest_access(
         Some(hash) => hash,
         None => return Err(bad("Server has no password")),
     };
-    if !verify_password(&req.password, &hash) {
+    if !verify_password(&req.password, &hash).await {
         return Err(ApiError(
             StatusCode::UNAUTHORIZED,
             "Wrong password".to_string(),
         ));
     }
     let grant = new_token();
-    sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at) VALUES($1, $2, $3)")
+    sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, $2, $3, $3)")
         .bind(&grant)
         .bind(&key)
         .bind(now())
@@ -881,7 +1281,7 @@ async fn invite_unlocked(
         .await?
         .try_get(0)?;
     Ok(match hash {
-        Some(hash) => verify_password(&given, &hash),
+        Some(hash) => verify_password_cached(&given, &hash).await,
         None => false,
     })
 }
@@ -909,20 +1309,21 @@ pub(crate) async fn get_invite(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Invite>, ApiError> {
-    require_guest_ok(&state.db, viewer.as_ref()).await?;
+    let db = &state.read();
+    require_guest_ok(db, viewer.as_ref()).await?;
     let key = name.to_lowercase();
-    let server = require_server(&state.db, &key).await?;
+    let server = require_server(db, &key).await?;
     let member = match &viewer {
-        Some(user) => is_member(&state.db, &key, &user.username).await?,
+        Some(user) => is_member(db, &key, &user.username).await?,
         None => false,
     };
     let banned = match &viewer {
-        Some(user) if !member => is_banned(&state.db, &key, &user.username).await?,
+        Some(user) if !member => is_banned(db, &key, &user.username).await?,
         _ => false,
     };
     let open = !server.has_password
         || member
-        || invite_unlocked(&state.db, &headers, &key, viewer.as_ref()).await?;
+        || invite_unlocked(db, &headers, &key, viewer.as_ref()).await?;
     let unlocked = !banned && open;
     let status = match (member, banned, unlocked) {
         (true, _, _) => InviteStatus::Member,
@@ -931,16 +1332,12 @@ pub(crate) async fn get_invite(
         (false, false, false) => InviteStatus::PasswordRequired,
     };
     let (preview_channel, preview) = match unlocked {
-        true => invite_preview(&state.db, &key).await?,
+        true => invite_preview(db, &key).await?,
         false => (None, Vec::new()),
     };
     let (member_count, online_count) = match open {
         true => {
-            let members: i64 = sqlx::query("SELECT COUNT(*) FROM members WHERE server = $1")
-                .bind(&key)
-                .fetch_one(&state.db)
-                .await?
-                .try_get(0)?;
+            let members = member_count(db, &key).await?;
             (Some(members), Some(state.hub.online_count(&key)))
         }
         false => (None, None),
@@ -1008,7 +1405,7 @@ pub(crate) async fn join_server(
                     .try_get(0)?;
             let given = body.as_ref().and_then(|Json(j)| j.password.as_deref());
             let ok = match (&hash, given) {
-                (Some(hash), Some(password)) => verify_password(password, hash),
+                (Some(hash), Some(password)) => verify_password(password, hash).await,
                 (_, _) => false,
             };
             if !ok {
@@ -1098,8 +1495,8 @@ pub(crate) async fn update_server(
             let display = n.trim().to_string();
             let new_key = display.to_lowercase();
             check_server_name(&state.db, &display).await?;
-            if new_key != key && server_lite(&state.db, &new_key).await?.is_some() {
-                return Err(bad("Server name is taken"));
+            if new_key != key {
+                name_free(&state.db, &new_key).await?;
             }
             (new_key, display)
         }
@@ -1107,23 +1504,11 @@ pub(crate) async fn update_server(
     };
     let password_hash = match password.as_deref().map(str::trim) {
         Some("") => Some(None),
-        Some(p) => Some(Some(hash_password(p)?)),
+        Some(p) => Some(Some(hash_password(p).await?)),
         None => None,
     };
     let mut tx = state.db.begin().await?;
-    sqlx::query("UPDATE servers SET name = $1, display_name = $2 WHERE name = $3")
-        .bind(&new_key)
-        .bind(&display)
-        .bind(&key)
-        .execute(&mut *tx)
-        .await?;
-    if let Some(hash) = &password_hash {
-        sqlx::query("UPDATE servers SET password_hash = $1 WHERE name = $2")
-            .bind(hash)
-            .bind(&new_key)
-            .execute(&mut *tx)
-            .await?;
-    }
+    rename_live(&mut tx, &key, &new_key, &display, password_hash.as_ref()).await?;
     let (removed, kept) = match purge {
         true => purge_members(&mut tx, &new_key, &user, mine).await?,
         false => (
@@ -1151,14 +1536,63 @@ pub(crate) async fn update_server(
         old_name: key,
         server: server.clone(),
     });
-    for username in &removed {
-        announce_kick(&state.hub, &server.name, username, false);
-    }
+    crate::ws::announce_purge(&state.hub, &server.name, &removed);
     Ok(Json(ServerUpdated {
         server,
         removed: removed.len() as i64,
         kept,
     }))
+}
+
+async fn rename_live(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    key: &str,
+    new_key: &str,
+    display: &str,
+    password_hash: Option<&Option<String>>,
+) -> Result<(), ApiError> {
+    let renamed = sqlx::query(
+        "UPDATE servers SET name = $1, display_name = $2 WHERE name = $3 AND COALESCE(password_hash, '') <> '!purging'",
+    )
+    .bind(new_key)
+    .bind(display)
+    .bind(key)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    if renamed == 0 {
+        return Err(ApiError(
+            StatusCode::NOT_FOUND,
+            "Server not found".to_string(),
+        ));
+    }
+    if let Some(hash) = password_hash {
+        sqlx::query(
+            "UPDATE servers SET password_hash = $1 WHERE name = $2 AND COALESCE(password_hash, '') <> '!purging'",
+        )
+        .bind(hash)
+        .bind(new_key)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn name_free(db: &Db, key: &str) -> Result<(), ApiError> {
+    let row = sqlx::query("SELECT password_hash FROM servers WHERE name = $1")
+        .bind(key)
+        .fetch_optional(db)
+        .await?;
+    match row {
+        None => Ok(()),
+        Some(r) => match r.try_get::<Option<String>, _>(0)?.as_deref() {
+            Some(crate::db::PURGING_HASH) => Err(ApiError(
+                StatusCode::CONFLICT,
+                "That name is not available yet".to_string(),
+            )),
+            _ => Err(bad("Server name is taken")),
+        },
+    }
 }
 
 async fn other_members(
@@ -1239,12 +1673,10 @@ pub(crate) async fn delete_server(
     guard_rchat(&key)?;
     require_server(&state.db, &key).await?;
     require_perm(&state.db, &key, &user, Perm::DeleteServer).await?;
-    sqlx::query("DELETE FROM servers WHERE name = $1")
-        .bind(&key)
-        .execute(&state.db)
-        .await?;
-    state.hub.broadcast(WsEvent::ServerDeleted { name: key });
-    Ok(ok())
+    match crate::api::admin::remove_server(&state, &key).await? {
+        true => Ok(ok()),
+        false => Err(not_found("Server not found")),
+    }
 }
 
 #[utoipa::path(post, path = "/api/servers/{name}/channels", params(("name" = String, Path)), request_body = CreateChannelReq, responses((status = 200, description = "The created channel", body = Channel)), security(("bearer" = [])))]
@@ -1268,6 +1700,18 @@ pub(crate) async fn create_channel(
         .is_some();
     if taken {
         return Err(bad("Channel name is taken"));
+    }
+    if count_rows(
+        &state.db,
+        "SELECT COUNT(*) FROM channels WHERE server = $1",
+        &key,
+    )
+    .await?
+        >= CHANNEL_MAX
+    {
+        return Err(bad(&format!(
+            "A server can have at most {CHANNEL_MAX} channels"
+        )));
     }
     let id: i64 = sqlx::query(
         "INSERT INTO channels(server, name, kind, created_at) VALUES($1, $2, $3, $4) RETURNING id",
@@ -1527,38 +1971,42 @@ pub(crate) async fn unban_member(
     }
 }
 
-#[utoipa::path(get, path = "/api/servers/{name}/bans", params(("name" = String, Path), MembersQuery), responses((status = 200, description = "Up to 50 banned users, most recently banned first. Requires the Kick permission", body = Vec<ServerBan>)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/servers/{name}/bans", params(("name" = String, Path), MembersQuery), responses((status = 200, description = "Up to 50 banned users, most recently banned first (`cursor` or legacy `offset`). When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page. Requires the Kick permission", body = Vec<ServerBan>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page")))), security(("bearer" = [])))]
 pub(crate) async fn list_bans(
     State(state): State<AppState>,
     Authed(user): Authed,
     Path(name): Path<String>,
     Query(q): Query<MembersQuery>,
-) -> Result<Json<Vec<ServerBan>>, ApiError> {
+) -> Result<Paged<ServerBan>, ApiError> {
     let key = name.to_lowercase();
-    require_server(&state.db, &key).await?;
-    require_perm(&state.db, &key, &user, Perm::Kick).await?;
-    let MembersQuery { offset, limit } = q;
-    let rows = sqlx::query(
-        "SELECT username, created_at FROM server_bans WHERE server = $1 ORDER BY created_at DESC, username LIMIT $2 OFFSET $3",
+    let db = &state.read();
+    require_server(db, &key).await?;
+    require_perm(db, &key, &user, Perm::Kick).await?;
+    let MembersQuery {
+        offset,
+        limit,
+        cursor,
+    } = q;
+    let (bans, next) = recent_pairs(
+        db,
+        "SELECT username, created_at FROM server_bans WHERE server = $1 ORDER BY created_at DESC, username DESC LIMIT $2 OFFSET $3",
+        "SELECT username, created_at FROM server_bans WHERE server = $1 AND (created_at, username) < ($2, $3) ORDER BY created_at DESC, username DESC LIMIT $4",
+        &key,
+        pair_cursor(cursor.as_deref())?,
+        offset.unwrap_or(0).max(0),
+        limit.unwrap_or(50).clamp(1, 50),
     )
-    .bind(&key)
-    .bind(limit.unwrap_or(50).clamp(1, 50))
-    .bind(offset.unwrap_or(0).max(0))
-    .fetch_all(&state.db)
     .await?;
-    let mut bans = Vec::with_capacity(rows.len());
-    for r in &rows {
-        bans.push((r.try_get::<String, _>(0)?, r.try_get::<i64, _>(1)?));
-    }
     let names: Vec<String> = bans.iter().map(|(name, _)| name.clone()).collect();
-    let refs = user_refs(&state.db, &names).await;
-    Ok(Json(
+    let refs = user_refs(db, &names).await;
+    Ok(Paged(
         bans.into_iter()
             .map(|(username, banned_at)| ServerBan {
                 user: user_from(&refs, &username),
                 banned_at,
             })
             .collect(),
+        next,
     ))
 }
 
@@ -1750,6 +2198,16 @@ pub(crate) async fn create_role(
     check_name(&state.db, "Role name", &role_name).await?;
     check_color(&req.color)?;
     let perms = req.perms & ALL_PERMS;
+    if count_rows(
+        &state.db,
+        "SELECT COUNT(*) FROM roles WHERE server = $1",
+        &key,
+    )
+    .await?
+        >= ROLE_MAX
+    {
+        return Err(bad(&format!("A server can have at most {ROLE_MAX} roles")));
+    }
     let id: i64 = sqlx::query(
         "INSERT INTO roles(server, name, color, perms) VALUES($1, $2, $3, $4) RETURNING id",
     )
@@ -1922,18 +2380,33 @@ async fn check_subject(db: &Db, server: &str, subject: &str) -> Result<(), ApiEr
     }
 }
 
-#[utoipa::path(get, path = "/api/channels/{id}/perms", params(("id" = i64, Path)), responses((status = 200, description = "Permission rules on the channel, ordered by subject", body = Vec<ChannelPerm>)), security(("bearer" = [])))]
+#[derive(Deserialize, IntoParams)]
+pub struct ChannelPermsQuery {
+    limit: Option<i64>,
+    cursor: Option<String>,
+}
+
+#[utoipa::path(get, path = "/api/channels/{id}/perms", params(("id" = i64, Path), ChannelPermsQuery), responses((status = 200, description = "Permission rules on the channel, ordered by subject, up to `limit` (default and max 100) per page. When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page", body = Vec<ChannelPerm>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page")))), security(("bearer" = [])))]
 pub(crate) async fn list_channel_perms(
     State(state): State<AppState>,
     Authed(user): Authed,
     Path(id): Path<i64>,
-) -> Result<Json<Vec<ChannelPerm>>, ApiError> {
+    Query(q): Query<ChannelPermsQuery>,
+) -> Result<Paged<ChannelPerm>, ApiError> {
     channel_perm_guard(&state, id, &user).await?;
+    let ChannelPermsQuery { limit, cursor } = q;
+    let limit = limit.unwrap_or(LIST_MAX).clamp(1, LIST_MAX);
+    let after = match cursor.as_deref().filter(|c| !c.trim().is_empty()) {
+        Some(raw) => decode_cursor(raw, 1)?.remove(0),
+        None => String::new(),
+    };
     let rows = sqlx::query(
-        "SELECT subject, can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1 ORDER BY subject",
+        "SELECT subject, can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1 AND subject > $2 ORDER BY subject LIMIT $3",
     )
     .bind(id)
-    .fetch_all(&state.db)
+    .bind(&after)
+    .bind(limit + 1)
+    .fetch_all(&state.read())
     .await?;
     let mut perms = Vec::with_capacity(rows.len());
     for r in &rows {
@@ -1944,7 +2417,13 @@ pub(crate) async fn list_channel_perms(
             can_read_history: r.try_get::<i64, _>(3)? != 0,
         });
     }
-    Ok(Json(perms))
+    let more = perms.len() as i64 > limit;
+    perms.truncate(limit as usize);
+    let next = match (more, perms.last()) {
+        (true, Some(p)) => Some(encode_cursor(&[&p.subject])),
+        _ => None,
+    };
+    Ok(Paged(perms, next))
 }
 
 #[utoipa::path(put, path = "/api/channels/{id}/perms", params(("id" = i64, Path)), request_body = ChannelPerm, responses((status = 200, description = "Permission rule created or replaced for the subject", body = OkResp)), security(("bearer" = [])))]
@@ -1963,6 +2442,22 @@ pub(crate) async fn set_channel_perm(
     } = req;
     let subject = subject.to_lowercase();
     check_subject(&state.db, &server, &subject).await?;
+    let exists = sqlx::query("SELECT 1 FROM channel_perms WHERE channel_id = $1 AND subject = $2")
+        .bind(id)
+        .bind(&subject)
+        .fetch_optional(&state.db)
+        .await?
+        .is_some();
+    let rules: i64 = sqlx::query("SELECT COUNT(*) FROM channel_perms WHERE channel_id = $1")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await?
+        .try_get(0)?;
+    if !exists && rules >= CHANNEL_PERM_MAX {
+        return Err(bad(&format!(
+            "A channel can have at most {CHANNEL_PERM_MAX} permission rules"
+        )));
+    }
     sqlx::query(
         "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, $3, $4, $5) ON CONFLICT(channel_id, subject) DO UPDATE SET can_view = excluded.can_view, can_send = excluded.can_send, can_read_history = excluded.can_read_history",
     )
@@ -2117,6 +2612,69 @@ mod tests {
         assert!(rejected(rename(&state, "dots...", "..").await));
         assert!(rejected(rename(&state, "dots...", &"x".repeat(101)).await));
         rename(&state, "dots...", "a.b").await.expect("rename ok");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn purging_names_are_not_available_yet() {
+        let (state, path) = temp_state("purging_names").await;
+        let _ = make_server(&state, "gone").await.expect("gone");
+        let _ = make_server(&state, "live").await.expect("live");
+        sqlx::query("UPDATE servers SET password_hash = '!purging' WHERE name = 'gone'")
+            .execute(&state.db)
+            .await
+            .expect("hide");
+        let conflict = |res: Result<(), ApiError>| match res {
+            Err(ApiError(StatusCode::CONFLICT, msg)) => msg == "That name is not available yet",
+            _ => false,
+        };
+        assert!(conflict(make_server(&state, "Gone").await.map(|_| ())));
+        assert!(conflict(rename(&state, "live", "GONE").await));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_rename_racing_a_delete_leaves_the_hidden_server_alone() {
+        let (state, path) = temp_state("rename_race").await;
+        let _ = make_server(&state, "gone").await.expect("gone");
+        let _ = make_server(&state, "live").await.expect("live");
+        sqlx::query("UPDATE servers SET password_hash = '!purging' WHERE name = 'gone'")
+            .execute(&state.db)
+            .await
+            .expect("hide");
+        assert!(matches!(
+            rename(&state, "gone", "fresh").await,
+            Err(ApiError(StatusCode::NOT_FOUND, _))
+        ));
+        let mut tx = state.db.begin().await.expect("tx");
+        let raced = rename_live(&mut tx, "gone", "fresh", "Fresh", Some(&None)).await;
+        assert!(matches!(raced, Err(ApiError(StatusCode::NOT_FOUND, _))));
+        drop(tx);
+        let row =
+            sqlx::query("SELECT name, password_hash FROM servers WHERE name IN ('gone', 'fresh')")
+                .fetch_all(&state.db)
+                .await
+                .expect("rows");
+        assert_eq!(row.len(), 1);
+        assert_eq!(row[0].try_get::<String, _>(0).expect("name"), "gone");
+        assert_eq!(
+            row[0]
+                .try_get::<Option<String>, _>(1)
+                .expect("hash")
+                .as_deref(),
+            Some("!purging")
+        );
+        let mut tx = state.db.begin().await.expect("tx");
+        rename_live(&mut tx, "live", "lively", "Lively", None)
+            .await
+            .expect("live rename");
+        tx.commit().await.expect("commit");
+        assert!(
+            server_lite(&state.db, "lively")
+                .await
+                .expect("lite")
+                .is_some()
+        );
         done(state, path).await;
     }
 
@@ -2282,12 +2840,25 @@ mod tests {
             .await
             .is_err()
         );
-        let (first, more) = my_servers_page(db, "alice", 0, 4).await.expect("page");
-        assert_eq!(first.len(), 4);
-        assert!(more);
-        assert!(first[1].is_admin && !first[0].is_admin);
-        let (_, more) = my_servers_page(db, "alice", 0, 7).await.expect("page");
-        assert!(!more);
+        let first = my_servers_page(db, "alice", 0, None, 4)
+            .await
+            .expect("page");
+        assert_eq!(first.items.len(), 4);
+        assert!(first.more);
+        assert!(first.items[1].is_admin && !first.items[0].is_admin);
+        let rest = my_servers_page(db, "alice", 0, first.next.as_deref(), 4)
+            .await
+            .expect("page");
+        let all = my_servers_page(db, "alice", 0, None, 7)
+            .await
+            .expect("page");
+        assert!(!all.more && all.next.is_none());
+        let names = |p: &[ServerSummary]| p.iter().map(|s| s.name.clone()).collect::<Vec<_>>();
+        assert_eq!(
+            [names(&first.items), names(&rest.items)].concat(),
+            names(&all.items)
+        );
+        assert!(!rest.more);
         done(state, path).await;
     }
 
@@ -2366,10 +2937,11 @@ mod tests {
             Query(MembersQuery {
                 offset,
                 limit: None,
+                cursor: None,
             }),
         )
         .await
-        .map(|Json(list)| {
+        .map(|Paged(list, _)| {
             list.into_iter()
                 .map(|b| (b.user.username, b.user.display_name, b.banned_at))
                 .collect()
@@ -2383,13 +2955,16 @@ mod tests {
     fn kicks(rx: &mut tokio::sync::broadcast::Receiver<WsEvent>) -> Vec<(String, String, bool)> {
         let mut out = Vec::new();
         while let Ok(ev) = rx.try_recv() {
-            if let WsEvent::MemberKicked {
-                server,
-                username,
-                banned,
-            } = ev
-            {
-                out.push((server, username, banned));
+            match ev {
+                WsEvent::MemberKicked {
+                    server,
+                    username,
+                    banned,
+                } => out.push((server, username, banned)),
+                WsEvent::MembersPurged { server, usernames } => {
+                    out.extend(usernames.into_iter().map(|u| (server.clone(), u, false)))
+                }
+                _ => {}
             }
         }
         out
@@ -2909,7 +3484,7 @@ mod tests {
 
     async fn insert_grant(db: &Db, server: &str) -> String {
         let grant = new_token();
-        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at) VALUES($1, $2, 0)")
+        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, $2, 0, 4000000000)")
             .bind(&grant)
             .bind(server)
             .execute(db)
@@ -3517,6 +4092,345 @@ mod tests {
             ),
             Some(StatusCode::FORBIDDEN)
         );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn member_cursor_walk_matches_offsets() {
+        let (state, path) = temp_state("member_cursor").await;
+        let db = &state.db;
+        let mut names: Vec<String> = (0..130).map(|n| format!("m{n:03}")).collect();
+        for name in &names {
+            add_member(db, "rchat", name, 0, 0, 0).await;
+        }
+        let online: Vec<String> = names.iter().step_by(7).cloned().collect();
+        for (conn, name) in online.iter().enumerate() {
+            state
+                .hub
+                .set_viewing(name, conn as u64 + 1, None, Some("rchat"));
+        }
+        state.hub.set_viewing("stranger", 999, None, Some("rchat"));
+        names.retain(|n| !online.contains(n));
+        let expected: Vec<String> = [online.clone(), names].concat();
+        let mut walked = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut pages = 0;
+        loop {
+            let (rows, next) =
+                members_page(db, "rchat", &state.hub, None, Some(50), cursor.as_deref())
+                    .await
+                    .expect("page");
+            let offset_rows = members_page(
+                db,
+                "rchat",
+                &state.hub,
+                Some(walked.len() as i64),
+                Some(50),
+                None,
+            )
+            .await
+            .expect("offset page")
+            .0;
+            assert_eq!(rows, offset_rows, "page {pages}");
+            walked.extend(rows.into_iter().map(|(name, _, _)| name));
+            pages += 1;
+            match next {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        assert_eq!(pages, 3);
+        assert_eq!(walked, expected);
+        let (small, next) = members_page(db, "rchat", &state.hub, None, Some(19), None)
+            .await
+            .expect("online only page");
+        assert_eq!(small.len(), 19);
+        let (rest, _) = members_page(db, "rchat", &state.hub, None, Some(5), next.as_deref())
+            .await
+            .expect("across phases");
+        let rest: Vec<String> = rest.into_iter().map(|(n, _, _)| n).collect();
+        assert_eq!(rest, expected[19..24]);
+        assert!(rejected(
+            members_page(db, "rchat", &state.hub, None, None, Some("zz"))
+                .await
+                .map(|_| ())
+        ));
+        let res = list_members(
+            State(state.clone()),
+            MaybeAuthed(None),
+            HeaderMap::new(),
+            Path("rchat".to_string()),
+            RawQuery(Some("limit=50".to_string())),
+        )
+        .await
+        .expect("handler");
+        let res = axum::response::IntoResponse::into_response(res);
+        assert!(res.headers().contains_key(crate::api::NEXT_CURSOR));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn member_search_pages_by_prefix_and_admins() {
+        let (state, path) = temp_state("member_search").await;
+        let db = &state.db;
+        for n in 0..70 {
+            add_member(
+                db,
+                "rchat",
+                &format!("al{n:02}"),
+                i64::from(n % 10 == 0),
+                0,
+                0,
+            )
+            .await;
+        }
+        for name in ["alpha", "bob", "alz", "am", "a\u{10ffff}x"] {
+            add_member(db, "rchat", name, 0, 0, 0).await;
+        }
+        let fetch = |raw: String| {
+            let state = state.clone();
+            async move {
+                let res = list_members(
+                    State(state),
+                    MaybeAuthed(None),
+                    HeaderMap::new(),
+                    Path("rchat".to_string()),
+                    RawQuery(Some(raw)),
+                )
+                .await
+                .expect("handler");
+                let res = axum::response::IntoResponse::into_response(res);
+                let next = res
+                    .headers()
+                    .get(crate::api::NEXT_CURSOR)
+                    .map(|v| v.to_str().expect("ascii").to_string());
+                let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                    .await
+                    .expect("body");
+                let members: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("json");
+                let names: Vec<String> = members
+                    .iter()
+                    .map(|m| m["username"].as_str().expect("name").to_string())
+                    .collect();
+                (names, next)
+            }
+        };
+        let mut walked = Vec::new();
+        let mut cursor = String::new();
+        loop {
+            let (names, next) = fetch(format!("q=AL&cursor={cursor}")).await;
+            walked.extend(names);
+            match next {
+                Some(next) => cursor = next,
+                None => break,
+            }
+        }
+        let mut expected: Vec<String> = (0..70).map(|n| format!("al{n:02}")).collect();
+        expected.extend(["alpha".to_string(), "alz".to_string()]);
+        assert_eq!(walked, expected);
+        assert_eq!(
+            fetch("q=b".to_string()).await,
+            (vec!["bob".to_string()], None)
+        );
+        assert_eq!(fetch("q=zzz".to_string()).await, (Vec::new(), None));
+        let (admins, next) = fetch("admins=1".to_string()).await;
+        assert_eq!(
+            admins,
+            (0..7).map(|n| format!("al{}0", n)).collect::<Vec<_>>()
+        );
+        assert!(next.is_none());
+        let (some, next) = fetch("admins=1&q=al3&limit=1".to_string()).await;
+        assert_eq!(some, vec!["al30".to_string()]);
+        assert!(next.is_none());
+        assert_eq!(prefix_end("ab"), Some("ac".to_string()));
+        assert_eq!(prefix_end("a\u{10ffff}"), Some("b".to_string()));
+        assert_eq!(prefix_end("\u{10ffff}"), None);
+        assert_eq!(prefix_end("\u{d7ff}"), Some("\u{e000}".to_string()));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn ban_and_interacted_cursors_walk_everything() {
+        let (state, path) = temp_state("pair_cursor").await;
+        let db = &state.db;
+        let _ = make_server(&state, "club").await.expect("club");
+        for i in 0..23 {
+            sqlx::query("INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('club', $1, 'alice', $2)")
+                .bind(format!("b{i:02}"))
+                .bind(1000 + i / 3)
+                .execute(db)
+                .await
+                .expect("ban");
+            sqlx::query(
+                "INSERT INTO interactions(server, username, last_at) VALUES('club', $1, $2)",
+            )
+            .bind(format!("i{i:02}"))
+            .bind(500 + i / 4)
+            .execute(db)
+            .await
+            .expect("interaction");
+        }
+        add_member(db, "club", "i05", 0, 0, 0).await;
+        let walk = |interacted: bool| {
+            let state = state.clone();
+            async move {
+                let mut seen = Vec::new();
+                let mut cursor: Option<String> = None;
+                loop {
+                    let q = MembersQuery {
+                        offset: None,
+                        limit: Some(5),
+                        cursor: cursor.clone(),
+                    };
+                    let Paged(names, next) = match interacted {
+                        true => {
+                            let Paged(list, next) = list_interacted(
+                                State(state.clone()),
+                                MaybeAuthed(None),
+                                HeaderMap::new(),
+                                Path("club".to_string()),
+                                Query(q),
+                            )
+                            .await
+                            .expect("interacted");
+                            Paged(list.into_iter().map(|u| u.username).collect(), next)
+                        }
+                        false => {
+                            let Paged(list, next) = list_bans(
+                                State(state.clone()),
+                                Authed(mem_user("alice", false)),
+                                Path("club".to_string()),
+                                Query(q),
+                            )
+                            .await
+                            .expect("bans");
+                            Paged(
+                                list.into_iter()
+                                    .map(|b| b.user.username)
+                                    .collect::<Vec<_>>(),
+                                next,
+                            )
+                        }
+                    };
+                    seen.extend(names);
+                    match next {
+                        Some(next) => cursor = Some(next),
+                        None => return seen,
+                    }
+                }
+            }
+        };
+        let bans_seen = walk(false).await;
+        let mut want: Vec<String> = (0..23).map(|i| format!("b{i:02}")).collect();
+        want.sort_by(|a, b| b.cmp(a));
+        assert_eq!(bans_seen, want);
+        let seen = walk(true).await;
+        let mut want: Vec<String> = (0..23)
+            .filter(|i| *i != 5)
+            .map(|i| format!("i{i:02}"))
+            .collect();
+        want.sort_by(|a, b| b.cmp(a));
+        assert_eq!(seen, want);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn server_caps_and_counts() {
+        let (state, path) = temp_state("server_caps").await;
+        let db = &state.db;
+        let _ = make_server(&state, "cap").await.expect("server");
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < $1) INSERT INTO channels(server, name, created_at) SELECT 'cap', 'c' || i, 0 FROM n")
+            .bind(CHANNEL_MAX - 1)
+            .execute(db)
+            .await
+            .expect("fill channels");
+        let made = create_channel(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path("cap".to_string()),
+            Json(CreateChannelReq {
+                name: "extra".to_string(),
+                kind: None,
+            }),
+        )
+        .await;
+        assert!(rejected(made));
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < $1) INSERT INTO roles(server, name, color, perms) SELECT 'cap', 'r' || i, '#ffffff', 0 FROM n")
+            .bind(ROLE_MAX)
+            .execute(db)
+            .await
+            .expect("fill roles");
+        let role = create_role(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path("cap".to_string()),
+            Json(RoleReq {
+                name: "extra".to_string(),
+                color: "#ffffff".to_string(),
+                perms: 0,
+            }),
+        )
+        .await;
+        assert!(rejected(role));
+        let detail = |state: AppState| async move {
+            get_server(
+                State(state),
+                MaybeAuthed(None),
+                HeaderMap::new(),
+                Path("cap".to_string()),
+            )
+            .await
+            .expect("detail")
+            .0
+            .member_count
+        };
+        assert_eq!(detail(state.clone()).await, 1);
+        add_user(db, "bob", "Bob").await;
+        join(&state, "bob", "cap").await.expect("join");
+        assert_eq!(detail(state.clone()).await, 2);
+        let _ = leave_server(
+            State(state.clone()),
+            Authed(mem_user("bob", false)),
+            Path("cap".to_string()),
+        )
+        .await
+        .expect("leave");
+        assert_eq!(detail(state.clone()).await, 1);
+        let cid: i64 =
+            sqlx::query("SELECT id FROM channels WHERE server = 'cap' AND name = 'general'")
+                .fetch_one(db)
+                .await
+                .expect("general")
+                .try_get(0)
+                .expect("id");
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 230) INSERT INTO channel_perms(channel_id, subject) SELECT $1, 'u:p' || substr('000' || i, -3, 3) FROM n")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("fill perms");
+        let mut seen = Vec::new();
+        let mut cursor = None;
+        loop {
+            let Paged(perms, next) = list_channel_perms(
+                State(state.clone()),
+                Authed(mem_user("alice", false)),
+                Path(cid),
+                Query(ChannelPermsQuery {
+                    limit: None,
+                    cursor,
+                }),
+            )
+            .await
+            .expect("perms");
+            assert!(perms.len() <= LIST_MAX as usize);
+            seen.extend(perms.into_iter().map(|p| p.subject));
+            match next {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        let want: Vec<String> = (1..=230).map(|i| format!("u:p{i:03}")).collect();
+        assert_eq!(seen, want);
         done(state, path).await;
     }
 }

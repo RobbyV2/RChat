@@ -24,6 +24,7 @@ import type {
   Unread,
   UserRef,
 } from './types'
+import type { Page } from './lists'
 import type { Secret } from './password'
 
 export function resolveApiBase(
@@ -66,20 +67,23 @@ export class ApiError extends Error {
   }
 }
 
+async function failed(response: Response): Promise<never> {
+  const error = await response.json().catch(() => ({ error: response.statusText }))
+  throw new ApiError(error.error || response.statusText, response.status, error)
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: response.statusText }))
-    throw new ApiError(error.error || response.statusText, response.status, error)
-  }
+  if (!response.ok) return failed(response)
   return response.json()
 }
 
-async function req<T>(
+async function send(
   method: string,
   path: string,
   body?: unknown,
-  extra: Record<string, string> = {}
-): Promise<T> {
+  extra: Record<string, string> = {},
+  keepalive = false
+): Promise<Response> {
   const headers: Record<string, string> = { ...extra }
   if (authToken) {
     headers.Authorization = `Bearer ${authToken}`
@@ -87,21 +91,41 @@ async function req<T>(
     const grants = Object.values(guestGrants)
     if (grants.length) headers['X-Guest-Grant'] = grants.join(',')
   }
-  const init: RequestInit = { method, headers }
+  const init: RequestInit = keepalive ? { method, headers, keepalive } : { method, headers }
   if (body instanceof FormData) {
     init.body = body
   } else if (body !== undefined) {
     headers['Content-Type'] = 'application/json'
     init.body = JSON.stringify(body)
   }
-  let response: Response
   try {
-    response = await fetch(`${API}${path}`, init)
+    return await fetch(`${API}${path}`, init)
   } catch {
     throw new ApiError("Can't reach the server", 0)
   }
-  return handleResponse<T>(response)
 }
+
+async function req<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  extra: Record<string, string> = {},
+  keepalive = false
+): Promise<T> {
+  return handleResponse<T>(await send(method, path, body, extra, keepalive))
+}
+
+export const NEXT_CURSOR = 'X-Next-Cursor'
+
+async function page<T>(path: string): Promise<Page<T>> {
+  const response = await send('GET', path)
+  if (!response.ok) return failed(response)
+  const items = (await response.json()) as T[]
+  return { items, next: response.headers.get(NEXT_CURSOR) || null }
+}
+
+export const withCursor = (path: string, cursor: string | null) =>
+  cursor ? `${path}${path.includes('?') ? '&' : '?'}cursor=${seg(cursor)}` : path
 
 export const apiOrigin = () => new URL(API, window.location.href).origin
 
@@ -126,8 +150,8 @@ export const login = (body: LoginRequest) => req<AuthResponse>('POST', '/auth/lo
 export const words = (username: string) =>
   req<{ words: string[] }>('GET', `/auth/words/${seg(username)}`)
 export const me = () => req<Me>('GET', '/me')
-export const myServers = (offset: number, limit: number) =>
-  req<ServerSummary[]>('GET', `/me/servers?offset=${offset}&limit=${limit}`)
+export const myServers = (cursor: string | null, limit: number) =>
+  page<ServerSummary>(withCursor(`/me/servers?limit=${limit}`, cursor))
 export const myServersByName = (names: string[]) =>
   req<ServerSummary[]>('GET', `/me/servers?${names.map(n => `names=${seg(n)}`).join('&')}`)
 export interface MeUpdated extends UserRef {
@@ -162,15 +186,25 @@ export const getInvite = (name: string, password?: string | null) =>
 export const searchServers = (q: string) => req<ServerMatch[]>('GET', `/server_search?q=${seg(q)}`)
 export const guestAccess = (name: string, password: string) =>
   req<{ grant: string }>('POST', `/servers/${seg(name)}/guest_access`, { password })
-export const listMembers = (name: string, offset: number) =>
-  req<Member[]>('GET', `/servers/${seg(name)}/members?offset=${offset}&limit=50`)
+export interface MemberFilter {
+  q?: string
+  admins?: boolean
+}
+
+export const listMembers = (name: string, cursor: string | null, filter: MemberFilter = {}) =>
+  page<Member>(
+    withCursor(
+      `/servers/${seg(name)}/members?limit=50${filter.q ? `&q=${seg(filter.q)}` : ''}${filter.admins ? '&admins=1' : ''}`,
+      cursor
+    )
+  )
 export const membersByName = (name: string, usernames: string[]) =>
   req<Member[]>(
     'GET',
     `/servers/${seg(name)}/members?${usernames.map(u => `usernames=${seg(u)}`).join('&')}`
   )
-export const listInteracted = (name: string, offset: number) =>
-  req<UserRef[]>('GET', `/servers/${seg(name)}/interacted?offset=${offset}&limit=50`)
+export const listInteracted = (name: string, cursor: string | null) =>
+  page<UserRef>(withCursor(`/servers/${seg(name)}/interacted?limit=50`, cursor))
 export const joinServer = (name: string, password?: string) =>
   req<ServerDetail>('POST', `/servers/${seg(name)}/join`, { password })
 export const leaveServer = (name: string) => req<unknown>('POST', `/servers/${seg(name)}/leave`)
@@ -190,8 +224,8 @@ export const banMember = (server: string, username: string) =>
   req<unknown>('POST', `/servers/${seg(server)}/bans`, { username })
 export const unbanMember = (server: string, username: string) =>
   req<unknown>('DELETE', `/servers/${seg(server)}/bans/${seg(username)}`)
-export const listBans = (server: string, offset: number) =>
-  req<ServerBan[]>('GET', `/servers/${seg(server)}/bans?offset=${offset}&limit=50`)
+export const listBans = (server: string, cursor: string | null) =>
+  page<ServerBan>(withCursor(`/servers/${seg(server)}/bans?limit=50`, cursor))
 export const grantAdmin = (server: string, username: string) =>
   req<unknown>('POST', `/servers/${seg(server)}/admins`, { username })
 export const revokeAdmin = (server: string, username: string) =>
@@ -213,7 +247,8 @@ export const assignRole = (server: string, id: number, username: string) =>
   req<unknown>('POST', `/servers/${seg(server)}/roles/${id}/assign`, { username })
 export const unassignRole = (server: string, id: number, username: string) =>
   req<unknown>('DELETE', `/servers/${seg(server)}/roles/${id}/assign/${seg(username)}`)
-export const channelPerms = (id: number) => req<ChannelPerm[]>('GET', `/channels/${id}/perms`)
+export const channelPerms = (id: number, cursor: string | null = null) =>
+  page<ChannelPerm>(withCursor(`/channels/${id}/perms`, cursor))
 export const setChannelPerm = (id: number, perm: ChannelPerm) =>
   req<unknown>('PUT', `/channels/${id}/perms`, perm)
 export const clearChannelPerm = (id: number, subject: string) =>
@@ -244,8 +279,8 @@ export const channelMessages = (id: number, page: PageOpts = {}) =>
   req<Message[]>('GET', `/channels/${id}/messages${pageQuery(page)}`)
 export const sendChannelMessage = (id: number, content: string, opts: SendOpts = {}) =>
   req<Message>('POST', `/channels/${id}/messages`, { content, ...opts })
-export const listDms = (offset: number, limit: number) =>
-  req<DmSummary[]>('GET', `/dms?offset=${offset}&limit=${limit}`)
+export const listDms = (cursor: string | null, limit: number) =>
+  page<DmSummary>(withCursor(`/dms?limit=${limit}`, cursor))
 export const dmsById = (ids: number[]) => req<DmSummary[]>('GET', `/dms?ids=${ids.join(',')}`)
 export const openDm = (username: string) => req<DmSummary>('POST', '/dms', { username })
 export const dmMessages = (id: number, page: PageOpts = {}) =>
@@ -271,7 +306,7 @@ export interface SearchParams {
   after?: number
   before_ts?: number
   after_ts?: number
-  offset?: number
+  cursor?: string
   servers?: string[]
 }
 
@@ -281,12 +316,12 @@ export const search = (params: SearchParams) => {
     if (Array.isArray(v)) for (const item of v) qs.append(k, String(item))
     else if (v !== undefined) qs.set(k, String(v))
   }
-  return req<SearchResult[]>('GET', `/search?${qs.toString()}`)
+  return page<SearchResult>(`/search?${qs.toString()}`)
 }
 
-export const getUnreads = () => req<{ items: Unread[] }>('GET', '/unreads')
-export const postRead = (scope: string, last_read: number) =>
-  req<void>('POST', '/read', { scope, last_read })
+export const getUnreads = () => req<{ items: Unread[]; more: boolean }>('GET', '/unreads')
+export const postRead = (scope: string, last_read: number, keepalive = false) =>
+  req<void>('POST', '/read', { scope, last_read }, {}, keepalive)
 
 export const uploadMedia = (file: File) => {
   const form = new FormData()
@@ -304,16 +339,16 @@ export const patchSettings = (body: Partial<SiteSettings>) =>
   req<SiteSettings>('PATCH', '/admin/settings', body)
 
 export const adminOverview = () => req<AdminOverview>('GET', '/admin/overview')
-export const adminUsers = (offset: number, q: string) =>
-  req<UserRef[]>('GET', `/admin/users?offset=${offset}&limit=50&q=${seg(q)}`)
-export const adminServers = (offset: number, q: string) =>
-  req<ServerSummaryLite[]>('GET', `/admin/servers?offset=${offset}&limit=50&q=${seg(q)}`)
+export const adminUsers = (cursor: string | null, q: string) =>
+  page<UserRef>(withCursor(`/admin/users?limit=50&q=${seg(q)}`, cursor))
+export const adminServers = (cursor: string | null, q: string) =>
+  page<ServerSummaryLite>(withCursor(`/admin/servers?limit=50&q=${seg(q)}`, cursor))
 export const adminDeleteServer = (name: string) =>
   req<unknown>('DELETE', `/admin/servers/${seg(name)}`)
 export const adminDeleteUser = (username: string) =>
   req<unknown>('DELETE', `/admin/users/${seg(username)}`)
-export const adminUserServers = (username: string) =>
-  req<ServerSummaryLite[]>('GET', `/admin/users/${seg(username)}/servers`)
+export const adminUserServers = (username: string, cursor: string | null = null) =>
+  page<ServerSummaryLite>(withCursor(`/admin/users/${seg(username)}/servers`, cursor))
 export const adminDeleteMessage = (id: number) => req<unknown>('DELETE', `/admin/messages/${id}`)
 export const banUser = (username: string) => req<unknown>('POST', '/admin/ban', { username })
 

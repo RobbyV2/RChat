@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Hash,
   Menu,
@@ -19,6 +19,7 @@ import { canModerate, memberPerms } from '../lib/rules'
 import { unreadMark } from '../lib/lists'
 import {
   banMenuItem,
+  byUsername,
   confirmDeleteMessage,
   confirmKick,
   confirmTransfer,
@@ -47,7 +48,7 @@ import {
   UnreadBar,
   useFocusMessage,
   usePinnedBottom,
-  usePrependAnchor,
+  useScrollAnchor,
 } from './viewport_height'
 
 const EMPTY: Message[] = []
@@ -152,18 +153,128 @@ export const authorKey = (messages: Message[], extra: string[] = []) =>
 export function useAuthorMembers(server: string | null, key: string) {
   const ensureMembers = useStore(s => s.ensureMembers)
   const cached = useStore(s => (server ? s.memberInfo[server] !== undefined : false))
+  const trim = useStore(s => (server ? (s.memberInfoTrim[server] ?? 0) : 0))
   useEffect(() => {
     if (server && key) void ensureMembers(server, key.split('\n'))
-  }, [server, key, cached, ensureMembers])
+  }, [server, key, cached, trim, ensureMembers])
 }
 
 export function useMemberLookup(server: string | null) {
   const list = useStore(s => (server ? s.members[server]?.list : undefined))
   const known = useStore(s => (server ? s.memberInfo[server] : undefined))
-  return (username: string): Member | undefined =>
-    list?.find(m => m.username === username) ??
-    (known && Object.hasOwn(known, username) ? (known[username] ?? undefined) : undefined)
+  return useCallback(
+    (username: string): Member | undefined =>
+      (list ? byUsername(list).get(username) : undefined) ??
+      (known && Object.hasOwn(known, username) ? (known[username] ?? undefined) : undefined),
+    [list, known]
+  )
 }
+
+interface RowProps {
+  m: Message
+  divider: boolean
+  flash: boolean
+  canDelete: boolean
+  channel: boolean
+  server: string | null
+  color: string | undefined
+  onMenu: (m: Message, x: number, y: number) => void
+}
+
+const MessageRow = memo(function MessageRow({
+  m,
+  divider,
+  flash,
+  canDelete,
+  channel,
+  server,
+  color,
+  onMenu,
+}: RowProps) {
+  const openThread = useStore(s => s.openThread)
+  const mark = divider && (
+    <div data-divider className="px-4 py-1" aria-hidden>
+      <div className="h-0.5 rounded-full bg-error" />
+    </div>
+  )
+  if (m.kind === 'call')
+    return (
+      <div data-mid={m.id}>
+        {mark}
+        <CallLogRow message={m} />
+      </div>
+    )
+  return (
+    <div data-mid={m.id}>
+      {mark}
+      <div
+        {...longPress((x, y) => onMenu(m, x, y))}
+        data-flash={flash ? '' : undefined}
+        className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container-low"
+      >
+        <div className="shrink-0 pt-0.5">
+          <span
+            {...profileTrigger(m.author, server, false)}
+            title="View profile"
+            className={avatarTriggerCls}
+          >
+            <UserAvatar
+              username={m.author.username}
+              avatarKind={m.author.avatar_kind}
+              avatarColor={m.author.avatar_color}
+              size={36}
+            />
+          </span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span
+              {...profileTrigger(m.author, server)}
+              style={{ color }}
+              className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
+            >
+              {m.author.display_name}
+            </span>
+            <span className="shrink-0 text-xs text-on-surface-variant">
+              {fmtTime(m.created_at)}
+            </span>
+          </div>
+          <MarkdownMessage message={m} canDelete={canDelete} />
+          {channel && m.reply_count > 0 && (
+            <button
+              title="Open thread"
+              onClick={() => void openThread(m)}
+              className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
+            >
+              <MessageSquareText size={12} />
+              {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
+            </button>
+          )}
+        </div>
+        <div className="pointer-events-none absolute top-1 right-3 flex gap-1 opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+          {channel && (
+            <button
+              title="Reply in thread"
+              onClick={() => void openThread(m)}
+              className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-primary"
+            >
+              <MessageSquareText size={14} />
+            </button>
+          )}
+          {canDelete && (
+            <button
+              title="Delete message (hold Shift to skip confirmation)"
+              onClick={e => confirmDeleteMessage(m.id, e.shiftKey)}
+              className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-error"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+})
 
 export const messageCopyItems = (m: Message): ContextMenuItem[] => [
   ...(m.content.trim() ? [{ label: 'Copy Text', action: () => copy(m.content) }] : []),
@@ -241,13 +352,17 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)
   const view = useStore(s => s.view)
-  const servers = useStore(s => s.servers)
-  const dms = useStore(s => s.dms)
+  const detail = useStore(s => (s.view?.kind === 'channel' ? s.servers[s.view.server] : undefined))
+  const dm = useStore(s => {
+    const v = s.view
+    return v?.kind === 'dm' ? s.dms.find(d => d.id === v.dmId) : undefined
+  })
   const messages = useStore(s => (s.view ? s.messages[viewKey(s.view)] : undefined)) ?? EMPTY
   const outCount = useStore(s => (s.view ? (s.outbox[viewKey(s.view)]?.length ?? 0) : 0))
   const anchor = useStore(s => (s.view ? s.unreadAnchor[viewKey(s.view)] : undefined))
   const older = useStore(s => (s.view ? s.older[viewKey(s.view)] : undefined))
   const newer = useStore(s => (s.view ? s.newer[viewKey(s.view)] : undefined))
+  const stale = useStore(s => (s.view ? s.stale[viewKey(s.view)] === true : false))
   const focus = useStore(s => (s.view ? s.focus[viewKey(s.view)] : undefined))
   const markRead = useStore(s => s.markRead)
   const setAtBottom = useStore(s => s.setAtBottom)
@@ -274,7 +389,6 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const [ready, setReady] = useState<string | null>(null)
   const dragDepth = useRef(0)
   const listRef = useRef<HTMLDivElement>(null)
-  const dividerRef = useRef<HTMLDivElement>(null)
   const autoScroll = useRef(true)
   const lastScrollTop = useRef(0)
   const initialScrolled = useRef(false)
@@ -283,7 +397,11 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const scope = view ? viewKey(view) : null
   const detached = newer?.more === true
   const positioned = scope !== null && ready === scope
-  const snapOlder = usePrependAnchor(listRef, messages[0]?.id)
+  const snapEdge = useScrollAnchor(
+    listRef,
+    messages[0]?.id,
+    older?.loading === true || newer?.loading === true
+  )
   const ids = useMemo(() => messages.map(m => m.id), [messages])
   const mark = unreadMark(ids, anchor, older?.more !== false)
   const dividerIndex = mark.divider
@@ -314,10 +432,10 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     const el = listRef.current
     if (!el || !scope) return
     if (!initialScrolled.current) {
-      if (!messages.length) return
+      if (!messages.length || stale) return
       initialScrolled.current = true
       if (!focus) {
-        const divider = dividerRef.current
+        const divider = el.querySelector<HTMLElement>('[data-divider]')
         el.scrollTop = divider ? Math.max(0, divider.offsetTop - 48) : el.scrollHeight
         settle()
       }
@@ -325,23 +443,21 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       return
     }
     if (autoScroll.current && atBottomRef.current && !detached) el.scrollTop = el.scrollHeight
-  }, [messages, outCount, scope, focus, detached])
+  }, [messages, outCount, scope, focus, detached, stale])
 
   const flash = useFocusMessage(listRef, scope, focus, messages, settle)
 
-  const detail = view?.kind === 'channel' ? servers[view.server] : undefined
   const channel =
     view?.kind === 'channel' ? detail?.channels.find(c => c.id === view.channelId) : undefined
   const channelName = channel?.name
   const isVoice = channel?.kind === 'voice'
   usePinnedBottom(listRef, atBottomRef, isVoice)
-  const dm = view?.kind === 'dm' ? dms.find(d => d.id === view.dmId) : undefined
   const dmCall =
     dm && call?.dmId === dm.id && (call.state === 'active' || call.from === me?.username)
 
   const onScroll = () => {
     const el = listRef.current
-    if (!el) return
+    if (!el || (stale && !positioned)) return
     const st = el.scrollTop
     const bottom = el.scrollHeight - st - el.clientHeight < 60
     const live = bottom && !detached
@@ -356,16 +472,22 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       const last = messages[messages.length - 1]
       if (last) markRead(scope, last.id)
     }
-    if (older?.loading) snapOlder()
+    if (older?.loading || newer?.loading) snapEdge()
   }
 
   const onTop = () => {
     if (older?.loading || older?.more === false || !messages.length) return
-    snapOlder()
+    snapEdge()
     void loadOlder()
   }
 
-  const messageMenu = (msg: Message) => (x: number, y: number) => {
+  const onBottom = () => {
+    if (newer?.loading) return
+    snapEdge()
+    void loadNewer()
+  }
+
+  const messageMenu = (msg: Message, x: number, y: number) => {
     if (!me) {
       openContextMenu(x, y, messageCopyItems(msg))
       return
@@ -435,6 +557,15 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     me !== null &&
     (m.author.username === me.username ||
       (view?.kind === 'channel' && hasPerm(perms, Perm.DeleteMessages)))
+
+  const menuRef = useRef(messageMenu)
+  useEffect(() => {
+    menuRef.current = messageMenu
+  })
+  const rowMenu = useCallback(
+    (msg: Message, x: number, y: number) => menuRef.current(msg, x, y),
+    []
+  )
 
   return (
     <main
@@ -587,7 +718,11 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
             {detached && !newer?.loading && scope && (
               <PresentBar onJump={() => void jumpToPresent(scope)} />
             )}
-            <div ref={listRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-3">
+            <div
+              ref={listRef}
+              onScroll={onScroll}
+              className={`flex-1 overflow-y-auto py-3 ${stale && !positioned ? 'invisible' : ''}`}
+            >
               {positioned && messages.length > 0 && older?.more !== false && (
                 <EdgeSentinel key={messages[0].id} root={listRef} edge="top" onVisible={onTop} />
               )}
@@ -603,101 +738,25 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                   <span className="text-sm">Be the first to say something.</span>
                 </div>
               )}
-              {messages.map((m, i) => {
-                const divider = i === dividerIndex && (
-                  <div ref={dividerRef} className="px-4 py-1" aria-hidden>
-                    <div className="h-0.5 rounded-full bg-error" />
-                  </div>
-                )
-                if (m.kind === 'call')
-                  return (
-                    <div key={m.id} data-mid={m.id}>
-                      {divider}
-                      <CallLogRow message={m} />
-                    </div>
-                  )
-                return (
-                  <div key={m.id} data-mid={m.id}>
-                    {divider}
-                    <div
-                      {...longPress(messageMenu(m))}
-                      data-flash={flash === m.id ? '' : undefined}
-                      className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container-low"
-                    >
-                      <div className="shrink-0 pt-0.5">
-                        <span
-                          {...profileTrigger(m.author, memberServer, false)}
-                          title="View profile"
-                          className={avatarTriggerCls}
-                        >
-                          <UserAvatar
-                            username={m.author.username}
-                            avatarKind={m.author.avatar_kind}
-                            avatarColor={m.author.avatar_color}
-                            size={36}
-                          />
-                        </span>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex min-w-0 items-baseline gap-2">
-                          <span
-                            {...profileTrigger(m.author, memberServer)}
-                            style={{
-                              color: roleColor(
-                                detail?.roles,
-                                memberFor(m.author.username)?.role_ids ?? []
-                              ),
-                            }}
-                            className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
-                          >
-                            {m.author.display_name}
-                          </span>
-                          <span className="shrink-0 text-xs text-on-surface-variant">
-                            {fmtTime(m.created_at)}
-                          </span>
-                        </div>
-                        <MarkdownMessage message={m} canDelete={canDelete(m)} />
-                        {view?.kind === 'channel' && m.reply_count > 0 && (
-                          <button
-                            title="Open thread"
-                            onClick={() => void openThread(m)}
-                            className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
-                          >
-                            <MessageSquareText size={12} />
-                            {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
-                          </button>
-                        )}
-                      </div>
-                      <div className="pointer-events-none absolute top-1 right-3 flex gap-1 opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
-                        {view?.kind === 'channel' && (
-                          <button
-                            title="Reply in thread"
-                            onClick={() => void openThread(m)}
-                            className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-primary"
-                          >
-                            <MessageSquareText size={14} />
-                          </button>
-                        )}
-                        {canDelete(m) && (
-                          <button
-                            title="Delete message (hold Shift to skip confirmation)"
-                            onClick={e => confirmDeleteMessage(m.id, e.shiftKey)}
-                            className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-error"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
+              {messages.map((m, i) => (
+                <MessageRow
+                  key={m.id}
+                  m={m}
+                  divider={i === dividerIndex}
+                  flash={flash === m.id}
+                  canDelete={canDelete(m)}
+                  channel={view?.kind === 'channel'}
+                  server={memberServer}
+                  color={roleColor(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])}
+                  onMenu={rowMenu}
+                />
+              ))}
               {positioned && detached && messages.length > 0 && (
                 <EdgeSentinel
                   key={`n${messages[messages.length - 1].id}`}
                   root={listRef}
                   edge="bottom"
-                  onVisible={() => void loadNewer()}
+                  onVisible={onBottom}
                 />
               )}
               {view && <OutboxRows msgKey={viewKey(view)} />}

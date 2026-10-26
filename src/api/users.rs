@@ -207,7 +207,7 @@ mod tests {
             .await
             .expect("assign");
         sqlx::query(
-            "INSERT INTO guest_grants(\"grant\", server, created_at) VALUES('g1', 'vault', 0)",
+            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('g1', 'vault', 0, 4000000000)",
         )
         .execute(db)
         .await
@@ -289,6 +289,7 @@ mod tests {
             .execute(db)
             .await
             .expect("disable guests");
+        crate::api::Settings::forget(db);
         assert!(matches!(
             view(&state, None, None, "bob", None).await,
             Err(ApiError(StatusCode::UNAUTHORIZED, _))

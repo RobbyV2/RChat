@@ -30,6 +30,29 @@ export const mergeHead = <T>(list: T[], head: T[], more: boolean, keyOf: (item: 
   return [...head, ...list.filter(item => !seen.has(keyOf(item)))]
 }
 
+export const samePrefix = <T>(list: T[], head: T[], keyOf: (item: T) => Key): boolean =>
+  head.length <= list.length && head.every((item, i) => keyOf(item) === keyOf(list[i]))
+
+export const insertSorted = <T>(
+  list: T[],
+  item: T,
+  cmp: (a: T, b: T) => number,
+  keyOf: (item: T) => Key,
+  more: boolean
+): T[] => {
+  const key = keyOf(item)
+  const rest = list.some(x => keyOf(x) === key) ? list.filter(x => keyOf(x) !== key) : list
+  let lo = 0
+  let hi = rest.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (cmp(rest[mid], item) < 0) lo = mid + 1
+    else hi = mid
+  }
+  if (more && lo === rest.length) return rest
+  return [...rest.slice(0, lo), item, ...rest.slice(lo)]
+}
+
 export const lostServers = (
   known: string[],
   joined: ReadonlySet<string>,
@@ -113,21 +136,26 @@ export const unreadServers = (reads: Record<string, ReadMark>): Set<string> => {
 export const anyDmUnread = (reads: Record<string, ReadMark>): boolean =>
   Object.entries(reads).some(([scope, r]) => scope[0] === 'd' && r.latest > r.lastRead)
 
+export interface Page<T> {
+  items: T[]
+  next: string | null
+}
+
 export interface Pager {
   load: () => Promise<void>
-  reset: (cursor: number) => boolean
-  removed: (count: number) => boolean
+  reset: (cursor: string | null, keep?: boolean) => boolean
+  removed: () => boolean
 }
 
 export const createPager = <T>(opts: {
   read: () => T[]
   write: (list: T[], more: boolean) => void
-  fetchPage: (offset: number, limit: number) => Promise<T[]>
+  fetchPage: (cursor: string | null, limit: number) => Promise<Page<T>>
   keyOf: (item: T) => Key
   page: number
-  max: number
 }): Pager => {
-  let cursor = 0
+  let cursor: string | null = null
+  let last: string | null = null
   let epoch = 0
   let loading = false
   return {
@@ -138,28 +166,30 @@ export const createPager = <T>(opts: {
       try {
         for (;;) {
           const had = opts.read().length
-          const limit = cursor < had ? opts.max : opts.page
-          const page = await opts.fetchPage(cursor, limit)
+          const from = cursor ?? last
+          const page = await opts.fetchPage(from, opts.page)
           if (epoch !== mine) return
-          cursor += page.length
-          const more = page.length === limit
-          const list = appendUnique(opts.read(), page, opts.keyOf)
-          opts.write(list, more)
-          if (!more || list.length > had) return
+          last = from
+          cursor = page.next
+          const list = appendUnique(opts.read(), page.items, opts.keyOf)
+          opts.write(list, page.next !== null)
+          if (page.next === null || list.length > had) return
         }
       } finally {
         if (epoch === mine) loading = false
       }
     },
-    reset: next => {
+    reset: (next, keep = false) => {
       const wasLoading = loading
       epoch += 1
       loading = false
-      cursor = next
+      if (!keep || (cursor === null && last === null)) {
+        cursor = next
+        last = null
+      }
       return wasLoading
     },
-    removed: count => {
-      cursor = Math.max(0, cursor - count)
+    removed: () => {
       if (!loading) return false
       epoch += 1
       loading = false

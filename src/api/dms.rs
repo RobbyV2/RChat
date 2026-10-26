@@ -6,11 +6,12 @@ use sqlx::Row;
 use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::servers::Page;
 use crate::api::{
-    ApiError, Authed, DmSummary, page_bounds, placeholders, split_list, user_from, user_ref,
-    user_refs,
+    ApiError, Authed, DmSummary, Paged, cursor_int, decode_cursor, encode_cursor, page_bounds,
+    placeholders, split_list, user_from, user_ref, user_refs,
 };
-use crate::db::{Db, get_user};
+use crate::db::{Db, LIVE_DM, get_user};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -23,12 +24,33 @@ pub struct OpenDmReq {
 pub struct DmListQuery {
     offset: Option<i64>,
     limit: Option<i64>,
+    cursor: Option<String>,
     ids: Option<String>,
 }
 
-fn dm_select(cond: &str) -> String {
+fn dm_half(col: &str, keyset: bool, limit: usize) -> String {
+    let bound = match keyset {
+        true => " AND (last_message_id, id) < ($2, $3)",
+        false => "",
+    };
+    let partner = match col {
+        "user_a" => "user_b",
+        _ => "user_a",
+    };
     format!(
-        "SELECT id, user_a, user_b FROM (SELECT d.id, d.user_a, d.user_b, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = d.id) AS latest FROM dms d WHERE (d.user_a = $1 OR d.user_b = $1){cond}) x ORDER BY CASE WHEN user_a = user_b THEN 0 ELSE 1 END, COALESCE(latest, 0) DESC, id DESC"
+        "SELECT id, user_a, user_b, last_message_id FROM (SELECT id, user_a, user_b, last_message_id FROM dms WHERE {col} = $1 AND user_a <> user_b{bound} AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username = dms.{partner} AND pu.password_hash = '!purging') ORDER BY last_message_id DESC, id DESC LIMIT ${limit}) h_{col}"
+    )
+}
+
+fn dm_union(keyset: bool) -> String {
+    let (limit, offset) = match keyset {
+        true => (4, 5),
+        false => (2, 3),
+    };
+    format!(
+        "SELECT id, user_a, user_b, last_message_id FROM ({} UNION ALL {}) x ORDER BY last_message_id DESC, id DESC LIMIT ${limit} OFFSET ${offset}",
+        dm_half("user_a", keyset, limit),
+        dm_half("user_b", keyset, limit),
     )
 }
 
@@ -59,18 +81,67 @@ pub(crate) async fn dm_page(
     db: &Db,
     viewer: &str,
     offset: i64,
+    cursor: Option<&str>,
     limit: i64,
-) -> Result<(Vec<DmSummary>, bool), ApiError> {
-    let sql = format!("{} LIMIT $2 OFFSET $3", dm_select(""));
-    let mut rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(viewer)
-        .bind(limit + 1)
-        .bind(offset)
-        .fetch_all(db)
-        .await?;
+) -> Result<Page<DmSummary>, ApiError> {
+    let mut rows: Vec<AnyRow> = Vec::with_capacity(limit as usize + 1);
+    match cursor {
+        Some(raw) => {
+            let parts = decode_cursor(raw, 2)?;
+            let sql = dm_union(true);
+            rows.extend(
+                sqlx::query(sqlx::AssertSqlSafe(sql))
+                    .bind(viewer)
+                    .bind(cursor_int(&parts[0])?)
+                    .bind(cursor_int(&parts[1])?)
+                    .bind(limit + 1)
+                    .bind(0i64)
+                    .fetch_all(db)
+                    .await?,
+            );
+        }
+        None => {
+            if offset == 0 {
+                rows.extend(
+                    sqlx::query("SELECT id, user_a, user_b, last_message_id FROM dms WHERE user_a = $1 AND user_b = $1")
+                        .bind(viewer)
+                        .fetch_all(db)
+                        .await?,
+                );
+            }
+            let skip = (offset - 1).max(0);
+            let want = limit + 1 - rows.len() as i64;
+            let sql = dm_union(false);
+            rows.extend(
+                sqlx::query(sqlx::AssertSqlSafe(sql))
+                    .bind(viewer)
+                    .bind(want + skip)
+                    .bind(skip)
+                    .fetch_all(db)
+                    .await?
+                    .into_iter()
+                    .take(want as usize),
+            );
+        }
+    }
     let more = rows.len() as i64 > limit;
     rows.truncate(limit as usize);
-    Ok((summaries(db, viewer, &rows).await?, more))
+    let next = match (more, rows.last()) {
+        (true, Some(r)) => {
+            let (id, a, b, latest): (i64, String, String, i64) =
+                (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?, r.try_get(3)?);
+            Some(match a == b {
+                true => encode_cursor(&[&i64::MAX.to_string(), &i64::MAX.to_string()]),
+                false => encode_cursor(&[&latest.to_string(), &id.to_string()]),
+            })
+        }
+        _ => None,
+    };
+    Ok(Page {
+        items: summaries(db, viewer, &rows).await?,
+        more,
+        next,
+    })
 }
 
 pub(crate) async fn dms_by_ids(
@@ -81,7 +152,10 @@ pub(crate) async fn dms_by_ids(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let sql = dm_select(&format!(" AND d.id IN ({})", placeholders(2, ids.len())));
+    let sql = format!(
+        "SELECT id, user_a, user_b FROM dms WHERE (user_a = $1 OR user_b = $1) AND id IN ({}) AND {LIVE_DM} ORDER BY CASE WHEN user_a = user_b THEN 0 ELSE 1 END, last_message_id DESC, id DESC",
+        placeholders(2, ids.len())
+    );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(viewer);
     for id in ids {
         query = query.bind(*id);
@@ -90,26 +164,36 @@ pub(crate) async fn dms_by_ids(
     summaries(db, viewer, &rows).await
 }
 
-#[utoipa::path(get, path = "/api/dms", params(DmListQuery), responses((status = 200, description = "A page (`offset`, `limit` default 50, max 100) of the signed-in user's DM conversations: the self DM first, then by latest message (call logs included) newest first, DMs without messages last by id newest first. With `ids` (comma-separated, max 100) returns just those DMs, skipping ones the user is not part of", body = Vec<DmSummary>)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/dms", params(DmListQuery), responses((status = 200, description = "A page (`cursor` or legacy `offset`, `limit` default 50, max 100) of the signed-in user's DM conversations: the self DM first, then by latest message (call logs included) newest first, DMs without messages last by id newest first. When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page (`dms_cursor` in `/api/me` for the page after the first). With `ids` (comma-separated, max 100) returns just those DMs, skipping ones the user is not part of", body = Vec<DmSummary>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page")))), security(("bearer" = [])))]
 pub(crate) async fn list_dms(
     State(state): State<AppState>,
     Authed(user): Authed,
     Query(q): Query<DmListQuery>,
-) -> Result<Json<Vec<DmSummary>>, ApiError> {
-    let DmListQuery { offset, limit, ids } = q;
+) -> Result<Paged<DmSummary>, ApiError> {
+    let DmListQuery {
+        offset,
+        limit,
+        cursor,
+        ids,
+    } = q;
+    let db = &state.read();
     match ids {
         Some(raw) => {
             let ids: Vec<i64> = split_list(&raw)
                 .iter()
                 .filter_map(|s| s.parse().ok())
                 .collect();
-            Ok(Json(dms_by_ids(&state.db, &user.username, &ids).await?))
+            Ok(Paged(dms_by_ids(db, &user.username, &ids).await?, None))
         }
         None => {
             let (offset, limit) = page_bounds(offset, limit);
-            Ok(Json(
-                dm_page(&state.db, &user.username, offset, limit).await?.0,
-            ))
+            let cursor = cursor.as_deref().filter(|c| !c.trim().is_empty());
+            let Page {
+                items,
+                more: _,
+                next,
+            } = dm_page(db, &user.username, offset, cursor, limit).await?;
+            Ok(Paged(items, next))
         }
     }
 }
@@ -222,6 +306,7 @@ mod tests {
             Query(DmListQuery {
                 offset,
                 limit,
+                cursor: None,
                 ids: ids.map(str::to_string),
             }),
         )
@@ -256,12 +341,25 @@ mod tests {
         assert_eq!(list(&state, Some(2), Some(2), None).await, order[2..4]);
         assert_eq!(list(&state, Some(4), Some(2), None).await, order[4..]);
         assert_eq!(list(&state, Some(-5), Some(0), None).await, order[..1]);
-        let (first, more) = dm_page(db, "alice", 0, 5).await.expect("page");
-        assert_eq!(first.len(), 5);
-        assert!(more);
-        let (rest, more) = dm_page(db, "alice", 5, 5).await.expect("page");
-        assert_eq!(rest.len(), 1);
-        assert!(!more);
+        let first = dm_page(db, "alice", 0, None, 5).await.expect("page");
+        assert_eq!(first.items.len(), 5);
+        assert!(first.more);
+        let rest = dm_page(db, "alice", 5, None, 5).await.expect("page");
+        assert_eq!(rest.items.len(), 1);
+        assert!(!rest.more);
+        let mut walked = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = dm_page(db, "alice", 0, cursor.as_deref(), 2)
+                .await
+                .expect("cursor page");
+            walked.extend(page.items.iter().map(|d| d.id));
+            match page.next {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        assert_eq!(walked, order);
         let picked = format!("{dave},{other},abc,{carol},{dave}");
         assert_eq!(
             list(&state, None, None, Some(&picked)).await,
@@ -309,10 +407,16 @@ mod tests {
         assert!(me.servers.is_empty());
         assert!(!me.servers_more);
         let ids: Vec<i64> = me.dms.iter().map(|d| d.id).collect();
-        let (next, more) = dm_page(db, "alice", 50, 50).await.expect("next");
-        assert_eq!(next.len(), 6);
-        assert!(!more);
-        assert!(next.iter().all(|d| !ids.contains(&d.id)));
+        let next = dm_page(db, "alice", 50, None, 50).await.expect("next");
+        assert_eq!(next.items.len(), 6);
+        assert!(!next.more);
+        assert!(next.items.iter().all(|d| !ids.contains(&d.id)));
+        let after = dm_page(db, "alice", 0, me.dms_cursor.as_deref(), 50)
+            .await
+            .expect("cursor");
+        let a: Vec<i64> = after.items.iter().map(|d| d.id).collect();
+        let b: Vec<i64> = next.items.iter().map(|d| d.id).collect();
+        assert_eq!(a, b);
         done(state, path).await;
     }
 

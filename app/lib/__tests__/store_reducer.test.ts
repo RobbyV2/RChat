@@ -6,10 +6,13 @@ import { embed, me, media, member, msg, paged, serverDetail, user } from './fixt
 const dispatch = (ev: WsEvent) => useStore.getState().applyWsEvent(ev)
 const st = () => useStore.getState()
 const scoped = { server: 's', channel_id: 1, dm_id: null, dm_users: null }
+const viewing = { kind: 'channel' as const, server: 's', channelId: 1 }
+const frame = () => new Promise(r => setTimeout(r, 20))
 
 beforeEach(() => {
   useStore.setState({
     me: null,
+    view: null,
     messages: {},
     servers: {},
     members: {},
@@ -23,9 +26,16 @@ beforeEach(() => {
 
 describe('message', () => {
   test('channel message appends to the channel cache', () => {
-    useStore.setState({ messages: { c1: [msg(10)] } })
+    useStore.setState({ messages: { c1: [msg(10)] }, view: viewing })
     dispatch({ type: 'message', ...scoped, message: msg(11, { channel_id: 1 }) })
     expect(st().messages.c1.map(m => m.id)).toEqual([10, 11])
+  })
+
+  test('a channel that is not on screen keeps its cached list untouched', () => {
+    const cached = [msg(10)]
+    useStore.setState({ messages: { c1: cached }, view: { ...viewing, channelId: 2 } })
+    dispatch({ type: 'message', ...scoped, message: msg(11, { channel_id: 1 }) })
+    expect(st().messages.c1).toBe(cached)
   })
 
   test('thread reply bumps root reply_count and stays out of the channel list', () => {
@@ -107,7 +117,7 @@ describe('media / embeds patching via patchMessage', () => {
   })
 
   test('embeds_resolved before the message is inserted still lands on the later insert', () => {
-    useStore.setState({ messages: { c1: [msg(10)] } })
+    useStore.setState({ messages: { c1: [msg(10)] }, view: viewing })
     dispatch({ type: 'embeds_resolved', ...scoped, message_id: 80, embeds: [embed(0)] })
     dispatch({ type: 'message', ...scoped, message: msg(80, { channel_id: 1 }) })
     const stored = st().messages.c1.find(m => m.id === 80)
@@ -134,15 +144,17 @@ describe('media / embeds patching via patchMessage', () => {
 })
 
 describe('presence_changed', () => {
-  test('patches loaded rows and adjusts online_count', () => {
+  test('patches loaded rows and adjusts online_count', async () => {
     useStore.setState({
       servers: { s: serverDetail('s', { online_count: 0 }) },
       members: { s: paged([member('bob', { online: false })]) },
     })
     dispatch({ type: 'presence_changed', server: 's', username: 'bob', online: true })
+    await frame()
     expect(st().servers.s.online_count).toBe(1)
     expect(st().members.s.list[0].online).toBe(true)
     dispatch({ type: 'presence_changed', server: 's', username: 'bob', online: false })
+    await frame()
     expect(st().servers.s.online_count).toBe(0)
     expect(st().members.s.list[0].online).toBe(false)
   })

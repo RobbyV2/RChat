@@ -11,6 +11,7 @@ import {
   type ContextMenuItem,
 } from '../lib/store'
 import { Perm, hasPerm, type Message } from '../lib/types'
+import { findById } from '../lib/window'
 import { UserAvatar } from './user_avatar'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
@@ -32,7 +33,7 @@ import {
   PresentBar,
   useFocusMessage,
   usePinnedBottom,
-  usePrependAnchor,
+  useScrollAnchor,
 } from './viewport_height'
 import { useEscape } from './server_settings'
 
@@ -43,7 +44,7 @@ export default function ThreadPanel() {
     if (s.panel?.kind !== 'thread') return null
     const r = s.panel.root
     const list = r.channel_id !== null ? s.messages[`c${r.channel_id}`] : undefined
-    return list?.find(m => m.id === r.id) ?? r
+    return findById(list, r.id) ?? r
   })
   const replies =
     useStore(s => (s.panel?.kind === 'thread' ? s.messages[`t${s.panel.root.id}`] : undefined)) ??
@@ -59,6 +60,7 @@ export default function ThreadPanel() {
   const key = useStore(s => (s.panel?.kind === 'thread' ? threadKey(s.panel.root.id) : null))
   const older = useStore(s => (key ? s.older[key] : undefined))
   const newer = useStore(s => (key ? s.newer[key] : undefined))
+  const stale = useStore(s => (key ? s.stale[key] === true : false))
   const focus = useStore(s => (key ? s.focus[key] : undefined))
   const outCount = useStore(s => (key ? (s.outbox[key]?.length ?? 0) : 0))
   const closePanel = useStore(s => s.closePanel)
@@ -71,7 +73,11 @@ export default function ThreadPanel() {
   const [ready, setReady] = useState<string | null>(null)
   const rootId = root?.id
   const detached = newer?.more === true
-  const snapOlder = usePrependAnchor(listRef, replies[0]?.id)
+  const snapEdge = useScrollAnchor(
+    listRef,
+    replies[0]?.id,
+    older?.loading === true || newer?.loading === true
+  )
   useEscape(closePanel, 'panel')
 
   useEffect(() => {
@@ -82,8 +88,8 @@ export default function ThreadPanel() {
     const el = listRef.current
     if (!el || !key) return
     if (stickBottom.current && !focus && !detached) el.scrollTop = el.scrollHeight
-    if (ready !== key && replies.length) setReady(key)
-  }, [replies, outCount, focus, detached, key, ready])
+    if (ready !== key && replies.length && !stale) setReady(key)
+  }, [replies, outCount, focus, detached, key, ready, stale])
 
   const flash = useFocusMessage(listRef, key, focus, replies, () => {
     const el = listRef.current
@@ -103,12 +109,12 @@ export default function ThreadPanel() {
     const el = listRef.current
     if (!el) return
     stickBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60 && !detached
-    if (older?.loading) snapOlder()
+    if (older?.loading || newer?.loading) snapEdge()
   }
 
   const onTop = () => {
     if (older?.loading || older?.more === false || !replies.length) return
-    snapOlder()
+    snapEdge()
     void loadOlderThread()
   }
 
@@ -210,7 +216,11 @@ export default function ThreadPanel() {
               key={`n${replies[replies.length - 1].id}`}
               root={listRef}
               edge="bottom"
-              onVisible={() => void loadNewerThread()}
+              onVisible={() => {
+                if (newer?.loading) return
+                snapEdge()
+                void loadNewerThread()
+              }}
             />
           )}
           <OutboxRows msgKey={key} size={30} />

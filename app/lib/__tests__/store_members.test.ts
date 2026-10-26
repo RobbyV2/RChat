@@ -75,6 +75,7 @@ describe('member lookups for authors', () => {
     await st().ensureMembers('s', ['bob', 'carol', 'zed'])
     dispatch({ type: 'admin_changed', server: 's', username: 'bob', is_admin: true, perms: 4 })
     dispatch({ type: 'presence_changed', server: 's', username: 'bob', online: true })
+    await new Promise(r => setTimeout(r, 20))
     expect(memberOf(st(), 's', 'bob')).toEqual({
       ...member('bob', { role_ids: [1] }),
       is_admin: true,

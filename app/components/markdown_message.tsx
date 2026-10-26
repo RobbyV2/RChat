@@ -1,6 +1,14 @@
 'use client'
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Clock, Download, EllipsisVertical, EyeOff, FileText, Share2, X } from 'lucide-react'
@@ -205,6 +213,25 @@ const components: Components = {
 }
 
 const objectUrls = new Map<string, string>()
+const OBJECT_URLS_MAX = 32
+
+const cachedUrl = (id: string) => {
+  const u = objectUrls.get(id)
+  if (u === undefined) return null
+  objectUrls.delete(id)
+  objectUrls.set(id, u)
+  return u
+}
+
+const keepUrl = (id: string, u: string) => {
+  objectUrls.delete(id)
+  objectUrls.set(id, u)
+  for (const [old, stale] of objectUrls) {
+    if (objectUrls.size <= OBJECT_URLS_MAX) break
+    objectUrls.delete(old)
+    URL.revokeObjectURL(stale)
+  }
+}
 
 const fmtExpiry = (ts: number | null) =>
   ts === null ? 'Indefinite' : expiryText(ts - Math.floor(Date.now() / 1000))
@@ -214,7 +241,7 @@ function P2pFile({ media }: { media: MessageMedia }) {
   const previews = useStore(s => s.settings.asset_previews)
   const avail = useStore(s => (media.hoster !== null ? s.p2pAvailability[media.hoster] : undefined))
   const { id, filename, hoster, expires_at, spoiler } = media
-  const [url, setUrl] = useState(objectUrls.get(id) ?? null)
+  const [url, setUrl] = useState(() => cachedUrl(id))
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
   const [revealed, setRevealed] = useState(false)
@@ -228,7 +255,7 @@ function P2pFile({ media }: { media: MessageMedia }) {
   const hidden = spoiler && !revealed
 
   const getUrl = async () => {
-    const cached = objectUrls.get(id)
+    const cached = cachedUrl(id)
     if (cached) return cached
     const blob = localFile
       ? base64ToBlob(localFile.data, localFile.mime)
@@ -237,7 +264,7 @@ function P2pFile({ media }: { media: MessageMedia }) {
           return p2p.download(peerId, id)
         })()
     const u = URL.createObjectURL(blob)
-    objectUrls.set(id, u)
+    keepUrl(id, u)
     return u
   }
 
@@ -490,7 +517,7 @@ function EmbedCard({
   )
 }
 
-export function MarkdownMessage({
+export const MarkdownMessage = memo(function MarkdownMessage({
   message,
   canDelete = false,
 }: {
@@ -542,4 +569,4 @@ export function MarkdownMessage({
         links.map(e => <EmbedCard key={e.ord} embed={e} message={message} canDelete={canDelete} />)}
     </div>
   )
-}
+})

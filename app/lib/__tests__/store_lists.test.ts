@@ -22,16 +22,23 @@ const serve = (body: unknown) => {
   }) as typeof fetch
 }
 
-let held: ((body: unknown) => void)[] = []
+let held: ((body: unknown, next?: string) => void)[] = []
 const hold = () => {
   globalThis.fetch = ((input: string | URL | Request) =>
     new Promise<Response>(resolve => {
       requests.push(String(input))
-      held.push(body => resolve(new Response(JSON.stringify(body), { status: 200 })))
+      held.push((body, next) =>
+        resolve(
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: next ? { 'X-Next-Cursor': next } : {},
+          })
+        )
+      )
     })) as typeof fetch
 }
 const tick = () => new Promise(r => setTimeout(r, 0))
-const offsetOf = (url: string) => Number(new URL(url).searchParams.get('offset'))
+const cursorOf = (url: string) => new URL(url, 'http://localhost').searchParams.get('cursor')
 const srv = (name: string): ServerSummary => ({
   name,
   display_name: name,
@@ -127,7 +134,7 @@ describe('unread dots for lists that are not loaded', () => {
       dm_users: null,
       message: msg(60, { channel_id: 40, author: user('bob') }),
     })
-    expect(st().reads.c40).toEqual({ lastRead: 0, latest: 60, server: 'far' })
+    expect(st().reads.c40).toEqual({ lastRead: 59, latest: 60, server: 'far' })
     expect(serverUnread(st(), 'far')).toBe(true)
     expect(serverUnread(st(), 'near')).toBe(false)
     dispatch({ type: 'read_updated', username: 'alice', scope: 'c40', last_read: 60 })
@@ -177,7 +184,7 @@ describe('removed or renamed list items stay gone', () => {
     dispatch({ type: 'server_deleted', name: 's50' })
     await tick()
     expect(requests).toHaveLength(2)
-    expect(offsetOf(requests[1])).toBe(offsetOf(requests[0]))
+    expect(cursorOf(requests[1])).toBe(cursorOf(requests[0]))
     held[0]([srv('s50'), srv('s51')])
     await load
     held[1]([srv('s51')])
@@ -188,7 +195,7 @@ describe('removed or renamed list items stay gone', () => {
     expect(st().serversMore).toBe(false)
   })
 
-  test('leaving a loaded server mid-page refetches one step back so nothing is skipped', async () => {
+  test('leaving a loaded server mid-page asks again from the same cursor', async () => {
     useStore.setState({ me: me('alice', { servers: firstFifty() }), serversMore: true })
     hold()
     const load = st().loadMoreServers()
@@ -196,7 +203,7 @@ describe('removed or renamed list items stay gone', () => {
     dispatch({ type: 'member_left', server: 's10', username: 'alice' })
     await tick()
     expect(requests).toHaveLength(2)
-    expect(offsetOf(requests[1])).toBe(offsetOf(requests[0]) - 1)
+    expect(cursorOf(requests[1])).toBe(cursorOf(requests[0]))
     held[0]([srv('s51')])
     await load
     expect(serverNames()).toHaveLength(49)
@@ -282,6 +289,7 @@ describe('server bans list', () => {
           hasMore: true,
           loading: false,
           q: '',
+          cursor: 'k49',
         },
       },
     })
@@ -291,7 +299,7 @@ describe('server bans list', () => {
     const unban = st().unbanMember('club', 'b10')
     await tick()
     expect(requests).toHaveLength(2)
-    expect(offsetOf(requests[0])).toBe(50)
+    expect(cursorOf(requests[0])).toBe('k49')
     expect(requests[1]).toEndWith('/servers/club/bans/b10')
     held[1]({ ok: true })
     await unban
@@ -302,7 +310,7 @@ describe('server bans list', () => {
     expect(st().bans.club.loading).toBe(false)
     const next = st().loadBans('club')
     await tick()
-    expect(offsetOf(requests[2])).toBe(49)
+    expect(cursorOf(requests[2])).toBe('k49')
     held[2]([ban(50)])
     await next
     expect(names()).toHaveLength(50)
@@ -317,7 +325,7 @@ describe('server bans list', () => {
     serve([ban(0), ban(1)])
     dispatch({ type: 'member_kicked', server: 'club', username: 'b0', banned: true })
     await tick()
-    expect(offsetOf(requests[0])).toBe(0)
+    expect(cursorOf(requests[0])).toBeNull()
     expect(names()).toEqual(['b0', 'b1'])
     dispatch({ type: 'member_kicked', server: 'club', username: 'b2', banned: false })
     await tick()
@@ -396,13 +404,13 @@ describe('resync after the socket lagged', () => {
     Math.random = realRandom
   })
 
-  test('waits a random jitter of up to three seconds before catching up', async () => {
-    Math.random = () => 0.5
+  test('waits a random jitter of up to ten seconds before catching up', async () => {
+    Math.random = () => 0.15
     serve({ items: [] })
     dispatch({ type: 'resync' })
-    await new Promise(r => setTimeout(r, 300))
+    await new Promise(r => setTimeout(r, 1500))
     expect(requests).toHaveLength(0)
-    await new Promise(r => setTimeout(r, 1550))
+    await new Promise(r => setTimeout(r, 300))
     expect(requests.length > 0).toBe(true)
   })
 

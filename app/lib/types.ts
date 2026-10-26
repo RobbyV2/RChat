@@ -197,8 +197,10 @@ export interface Me extends UserRef {
   password_kind: 'text' | 'words'
   servers: ServerSummary[]
   servers_more: boolean
+  servers_cursor: string | null
   dms: DmSummary[]
   dms_more: boolean
+  dms_cursor: string | null
 }
 
 export interface AuthResponse {

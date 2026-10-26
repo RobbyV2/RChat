@@ -2,6 +2,7 @@ pub mod api;
 pub mod bus;
 pub mod config;
 pub mod db;
+pub mod fanout;
 pub mod hub;
 pub mod server;
 pub mod state;

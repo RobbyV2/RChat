@@ -9,7 +9,9 @@ pub mod openapi;
 pub mod servers;
 pub mod users;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Request, State};
@@ -25,7 +27,7 @@ use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use utoipa::ToSchema;
 
 use crate::config::Roles;
-use crate::db::{AvatarKind, ChannelKind, Db, MediaKind, User, get_user, setting_on};
+use crate::db::{AvatarKind, ChannelKind, Db, MediaKind, User, get_user, pool_key};
 use crate::server::client_ip::ClientIp;
 use crate::state::AppState;
 
@@ -161,9 +163,48 @@ pub(crate) fn split_list(raw: &str) -> Vec<String> {
     unique_capped(raw.split(',').map(|s| s.trim().to_string()))
 }
 
+pub const NEXT_CURSOR: &str = "x-next-cursor";
+
+pub(crate) fn encode_cursor(parts: &[&str]) -> String {
+    hex::encode(parts.join("\u{1f}"))
+}
+
+pub(crate) fn decode_cursor(raw: &str, count: usize) -> Result<Vec<String>, ApiError> {
+    let invalid = || ApiError(StatusCode::BAD_REQUEST, "Invalid cursor".to_string());
+    let bytes = hex::decode(raw.trim()).map_err(|_| invalid())?;
+    let text = String::from_utf8(bytes).map_err(|_| invalid())?;
+    let parts: Vec<String> = text.split('\u{1f}').map(str::to_string).collect();
+    match parts.len() == count {
+        true => Ok(parts),
+        false => Err(invalid()),
+    }
+}
+
+pub(crate) fn cursor_int(part: &str) -> Result<i64, ApiError> {
+    part.parse()
+        .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Invalid cursor".to_string()))
+}
+
+pub struct Paged<T>(pub Vec<T>, pub Option<String>);
+
+impl<T: Serialize> IntoResponse for Paged<T> {
+    fn into_response(self) -> Response {
+        let Paged(items, next) = self;
+        let mut res = axum::Json(items).into_response();
+        if let Some(cursor) = next
+            && let Ok(value) = header::HeaderValue::from_str(&cursor)
+        {
+            res.headers_mut().insert(NEXT_CURSOR, value);
+        }
+        res
+    }
+}
+
+pub(crate) const OFFSET_MAX: i64 = 1_000_000;
+
 pub(crate) fn page_bounds(offset: Option<i64>, limit: Option<i64>) -> (i64, i64) {
     (
-        offset.unwrap_or(0).max(0),
+        offset.unwrap_or(0).clamp(0, OFFSET_MAX),
         limit.unwrap_or(LIST_PAGE).clamp(1, LIST_MAX),
     )
 }
@@ -312,13 +353,68 @@ pub struct Settings {
     pub guests_enabled: bool,
 }
 
+const SETTINGS_TTL: Duration = Duration::from_secs(5);
+
+static SETTINGS_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Settings)>>> =
+    LazyLock::new(Default::default);
+
 impl Settings {
+    pub const DENY: Settings = Settings {
+        profanity_filter: true,
+        asset_previews: false,
+        asset_uploads: false,
+        guests_enabled: false,
+    };
+
     pub async fn load(db: &Db) -> Settings {
-        Settings {
-            profanity_filter: setting_on(db, "profanity_filter").await,
-            asset_previews: setting_on(db, "asset_previews").await,
-            asset_uploads: setting_on(db, "asset_uploads").await,
-            guests_enabled: setting_on(db, "guests_enabled").await,
+        let rows = match sqlx::query("SELECT key, value FROM settings")
+            .fetch_all(db)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::warn!("settings could not be read, using the last known values: {e}");
+                return SETTINGS_CACHE
+                    .lock()
+                    .ok()
+                    .and_then(|cache| cache.get(&pool_key(db)).map(|(_, settings)| *settings))
+                    .unwrap_or(Settings::DENY);
+            }
+        };
+        let on = |key: &str| {
+            rows.iter()
+                .find(|r| r.try_get::<String, _>(0).is_ok_and(|k| k == key))
+                .and_then(|r| r.try_get::<String, _>(1).ok())
+                .is_none_or(|v| v == "1")
+        };
+        let settings = Settings {
+            profanity_filter: on("profanity_filter"),
+            asset_previews: on("asset_previews"),
+            asset_uploads: on("asset_uploads"),
+            guests_enabled: on("guests_enabled"),
+        };
+        if let Ok(mut cache) = SETTINGS_CACHE.lock() {
+            cache.insert(pool_key(db), (Instant::now(), settings));
+        }
+        settings
+    }
+
+    pub async fn cached(db: &Db) -> Settings {
+        let hit = SETTINGS_CACHE.lock().ok().and_then(|cache| {
+            cache
+                .get(&pool_key(db))
+                .filter(|(at, _)| at.elapsed() < SETTINGS_TTL)
+                .map(|(_, settings)| *settings)
+        });
+        match hit {
+            Some(settings) => settings,
+            None => Settings::load(db).await,
+        }
+    }
+
+    pub fn forget(db: &Db) {
+        if let Ok(mut cache) = SETTINGS_CACHE.lock() {
+            cache.remove(&pool_key(db));
         }
     }
 }
@@ -326,7 +422,7 @@ impl Settings {
 pub async fn require_guest_ok(db: &Db, user: Option<&User>) -> Result<(), ApiError> {
     match user {
         Some(_) => Ok(()),
-        None => match setting_on(db, "guests_enabled").await {
+        None => match Settings::cached(db).await.guests_enabled {
             true => Ok(()),
             false => Err(ApiError(
                 StatusCode::UNAUTHORIZED,
@@ -336,12 +432,16 @@ pub async fn require_guest_ok(db: &Db, user: Option<&User>) -> Result<(), ApiErr
     }
 }
 
+pub(crate) const GRANTS_MAX: usize = 100;
+
 pub(crate) fn header_grants(headers: &HeaderMap) -> Vec<String> {
+    let mut seen = HashSet::new();
     match headers.get("x-guest-grant").and_then(|v| v.to_str().ok()) {
         Some(v) => v
             .split(',')
             .map(str::trim)
-            .filter(|s| !s.is_empty())
+            .filter(|s| !s.is_empty() && seen.insert(*s))
+            .take(GRANTS_MAX)
             .map(str::to_string)
             .collect(),
         None => Vec::new(),
@@ -349,14 +449,7 @@ pub(crate) fn header_grants(headers: &HeaderMap) -> Vec<String> {
 }
 
 pub(crate) async fn grant_matches(db: &Db, grant: &str, server: &str) -> sqlx::Result<bool> {
-    Ok(
-        sqlx::query("SELECT 1 FROM guest_grants WHERE \"grant\" = $1 AND server = $2")
-            .bind(grant)
-            .bind(server)
-            .fetch_optional(db)
-            .await?
-            .is_some(),
-    )
+    crate::db::grant_live(db, grant, server).await
 }
 
 pub(crate) async fn require_guest_view(
@@ -498,11 +591,8 @@ pub(crate) fn is_profane(text: &str) -> bool {
     phrases.iter().any(|p| p.is_inappropriate())
 }
 
-pub async fn check_profanity<'e, E>(ex: E, text: &str) -> Result<(), ApiError>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Any>,
-{
-    match setting_on(ex, "profanity_filter").await && is_profane(text) {
+pub async fn check_profanity(db: &Db, text: &str) -> Result<(), ApiError> {
+    match Settings::cached(db).await.profanity_filter && is_profane(text) {
         true => Err(ApiError(
             StatusCode::BAD_REQUEST,
             "Content blocked by profanity filter".to_string(),
@@ -515,13 +605,14 @@ pub struct Authed(pub User);
 pub struct MaybeAuthed(pub Option<User>);
 
 pub(crate) async fn user_for_token(state: &AppState, token: &str) -> Option<User> {
-    let row = sqlx::query("SELECT username FROM tokens WHERE token = $1")
-        .bind(token)
-        .fetch_optional(&state.db)
-        .await
-        .ok()??;
-    let username: String = row.try_get(0).ok()?;
-    get_user(&state.db, &username).await.ok()?
+    let row = sqlx::query(
+        "SELECT u.* FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
+    )
+    .bind(token)
+    .fetch_optional(&state.read())
+    .await
+    .ok()??;
+    User::from_row(&row).ok()
 }
 
 async fn bearer_user(parts: &Parts, state: &AppState) -> Option<User> {
@@ -744,19 +835,11 @@ pub(crate) mod test_util {
         let path = std::env::temp_dir().join(format!("rchat_{tag}_{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let db = open(path.to_str()).await.expect("open db");
-        (
-            AppState {
-                db,
-                hub: Hub::new(),
-                s3: None,
-                bus: None,
-            },
-            path,
-        )
+        (AppState::new(db, Hub::new(), None, None), path)
     }
 
     pub(crate) async fn done(state: AppState, path: PathBuf) {
-        state.db.close().await;
+        crate::db::close(&state.db).await;
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
@@ -804,6 +887,30 @@ mod tests {
     use super::*;
     use crate::api::test_util::{done, temp_state};
     use crate::server::client_ip::ProxyTrust;
+
+    #[tokio::test]
+    async fn settings_fail_closed_and_never_cache_errors() {
+        let (state, path) = temp_state("settings_errors").await;
+        let db = state.db.clone();
+        sqlx::query("UPDATE settings SET value = '1' WHERE key = 'guests_enabled'")
+            .execute(&db)
+            .await
+            .expect("guests on");
+        let good = Settings::load(&db).await;
+        assert!(good.guests_enabled && good.asset_uploads);
+        crate::db::close(&db).await;
+        let stale = Settings::load(&db).await;
+        assert!(stale.guests_enabled && stale.asset_uploads);
+        Settings::forget(&db);
+        let denied = Settings::load(&db).await;
+        assert!(!denied.guests_enabled && !denied.asset_uploads && !denied.asset_previews);
+        assert!(denied.profanity_filter);
+        let still = Settings::cached(&db).await;
+        assert!(!still.guests_enabled);
+        assert!(SETTINGS_CACHE.lock().unwrap().get(&pool_key(&db)).is_none());
+        assert!(crate::db::setting_on(&db, "guests_enabled").await.is_err());
+        done(state, path).await;
+    }
 
     #[test]
     fn profanity_ignores_url_punctuation() {

@@ -1,16 +1,27 @@
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tracing::warn;
 
+use crate::fanout::{Channels, Inbox, Router, Topic};
 use crate::ws::{CallKind, CallPhase, WsEvent};
 
 pub const DEAD_AFTER_MS: i64 = 30_000;
 const GAPS_KEPT: usize = 32;
+const OUT_CAP: usize = 10_000;
+const PENDING_CAP: usize = 50_000;
+pub const CALL_TIMEOUT: Duration = match cfg!(test) {
+    true => Duration::from_secs(2),
+    false => Duration::from_secs(10),
+};
+pub const READ_FLUSH: Duration = Duration::from_millis(500);
+
+static DROPPED: AtomicU64 = AtomicU64::new(0);
 
 pub fn owner(conn: u64) -> u32 {
     (conn >> 32) as u32
@@ -26,6 +37,25 @@ fn now_ms() -> i64 {
 pub fn stream_pos(id: &str) -> (u64, u64) {
     let (ms, seq) = id.split_once('-').unwrap_or((id, "0"));
     (ms.parse().unwrap_or(0), seq.parse().unwrap_or(0))
+}
+
+fn link<K: Ord, V: Ord>(map: &mut BTreeMap<K, BTreeSet<V>>, key: K, val: V) {
+    map.entry(key).or_default().insert(val);
+}
+
+fn unlink<K, V, Q, R>(map: &mut BTreeMap<K, BTreeSet<V>>, key: &Q, val: &R)
+where
+    K: Ord + Borrow<Q>,
+    V: Ord + Borrow<R>,
+    Q: Ord + ?Sized,
+    R: Ord + ?Sized,
+{
+    if let Some(set) = map.get_mut(key) {
+        set.remove(val);
+        if set.is_empty() {
+            map.remove(key);
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -52,6 +82,16 @@ struct Call {
     kind: CallKind,
     log_id: i64,
     lone_since: i64,
+}
+
+impl Call {
+    fn people(&self) -> BTreeSet<String> {
+        self.dm_users
+            .iter()
+            .chain(self.occupants.iter().map(|(u, _)| u))
+            .cloned()
+            .collect()
+    }
 }
 
 pub struct CallEnd {
@@ -90,14 +130,68 @@ struct Peer {
     gaps: Vec<(u64, u64)>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq)]
+struct Index {
+    views: BTreeMap<u64, BTreeSet<String>>,
+    user_rooms: BTreeMap<String, BTreeSet<i64>>,
+    server_rooms: BTreeMap<String, BTreeSet<i64>>,
+    user_calls: BTreeMap<String, BTreeSet<i64>>,
+}
+
+#[derive(Default, Deserialize)]
 #[serde(default)]
+struct Wire {
+    presence: BTreeMap<String, BTreeMap<String, BTreeSet<u64>>>,
+    rooms: BTreeMap<i64, Room>,
+    calls: BTreeMap<i64, Call>,
+    p2p: BTreeMap<String, BTreeMap<u64, P2pHost>>,
+    peers: BTreeMap<u32, Peer>,
+    clock: i64,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(from = "Wire")]
 pub struct Replica {
     presence: BTreeMap<String, BTreeMap<String, BTreeSet<u64>>>,
     rooms: BTreeMap<i64, Room>,
     calls: BTreeMap<i64, Call>,
     p2p: BTreeMap<String, BTreeMap<u64, P2pHost>>,
     peers: BTreeMap<u32, Peer>,
+    clock: i64,
+    #[serde(skip)]
+    index: Index,
+}
+
+impl From<Wire> for Replica {
+    fn from(wire: Wire) -> Replica {
+        let Wire {
+            presence,
+            rooms,
+            calls,
+            p2p,
+            peers,
+            clock,
+        } = wire;
+        let mut replica = Replica {
+            presence,
+            rooms,
+            calls,
+            p2p,
+            peers,
+            clock,
+            index: Index::default(),
+        };
+        replica.reindex();
+        replica
+    }
+}
+
+impl Clone for Replica {
+    fn clone(&self) -> Replica {
+        let mut copy = self.detached();
+        copy.index = self.index.clone();
+        copy
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -126,6 +220,8 @@ pub enum Op {
         conn: u64,
         server: String,
         channel_id: i64,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        cap: usize,
     },
     VoiceLeave {
         user: String,
@@ -168,6 +264,10 @@ pub enum Op {
     Depart,
 }
 
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
 impl Op {
     fn repostable(&self) -> bool {
         match self {
@@ -200,6 +300,7 @@ impl Op {
                 conn: _,
                 server: _,
                 channel_id: _,
+                cap: _,
             }
             | Op::VoiceLeave { user: _ }
             | Op::CallStart {
@@ -220,6 +321,13 @@ impl Op {
             | Op::SweepVoice { idle: _ }
             | Op::Depart => false,
         }
+    }
+
+    fn must_apply(&self) -> bool {
+        matches!(
+            self,
+            Op::DropConn { user: _, conn: _ } | Op::VoiceLeave { user: _ } | Op::Depart
+        )
     }
 
     fn hoster(&self) -> Option<&str> {
@@ -267,6 +375,7 @@ pub enum Aftermath {
 pub enum Outcome {
     Done,
     Lost,
+    Full,
     Ends(Vec<CallEnd>),
     Started(Result<(), String>),
     Accepted(Result<(i64, Vec<String>), String>),
@@ -300,6 +409,13 @@ fn call_state(dm_id: i64, call: &Call, state: CallPhase) -> WsEvent {
     }
 }
 
+fn call_phase(call: &Call) -> CallPhase {
+    match call.active {
+        true => CallPhase::Active,
+        false => CallPhase::Ringing,
+    }
+}
+
 fn presence_ev(server: &str, username: &str, online: bool) -> WsEvent {
     WsEvent::PresenceChanged {
         server: server.to_string(),
@@ -309,40 +425,135 @@ fn presence_ev(server: &str, username: &str, online: bool) -> WsEvent {
 }
 
 impl Replica {
+    fn detached(&self) -> Replica {
+        Replica {
+            presence: self.presence.clone(),
+            rooms: self.rooms.clone(),
+            calls: self.calls.clone(),
+            p2p: self.p2p.clone(),
+            peers: self.peers.clone(),
+            clock: self.clock,
+            index: Index::default(),
+        }
+    }
+
+    fn reindex(&mut self) {
+        let mut index = Index::default();
+        for (server, users) in &self.presence {
+            for conns in users.values() {
+                for conn in conns {
+                    link(&mut index.views, *conn, server.clone());
+                }
+            }
+        }
+        for (cid, room) in &self.rooms {
+            link(&mut index.server_rooms, room.server.clone(), *cid);
+            for (user, _) in &room.users {
+                link(&mut index.user_rooms, user.clone(), *cid);
+            }
+        }
+        for (id, call) in &self.calls {
+            for user in call.people() {
+                link(&mut index.user_calls, user, *id);
+            }
+        }
+        self.index = index;
+    }
+
+    fn rooms_of(&self, user: &str) -> Vec<i64> {
+        self.index
+            .user_rooms
+            .get(user)
+            .map(|set| set.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    fn calls_of(&self, user: &str) -> Vec<i64> {
+        self.index
+            .user_calls
+            .get(user)
+            .map(|set| set.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    fn take_room(&mut self, cid: i64) -> Option<Room> {
+        let room = self.rooms.remove(&cid)?;
+        unlink(&mut self.index.server_rooms, room.server.as_str(), &cid);
+        for (user, _) in &room.users {
+            unlink(&mut self.index.user_rooms, user.as_str(), &cid);
+        }
+        Some(room)
+    }
+
+    fn add_call(&mut self, id: i64, call: Call) {
+        self.take_call(id);
+        for user in call.people() {
+            link(&mut self.index.user_calls, user, id);
+        }
+        self.calls.insert(id, call);
+    }
+
+    fn take_call(&mut self, id: i64) -> Option<Call> {
+        let call = self.calls.remove(&id)?;
+        for user in call.people() {
+            unlink(&mut self.index.user_calls, user.as_str(), &id);
+        }
+        Some(call)
+    }
+
     fn leave_rooms<F: Fn(&str, &str, u64) -> bool>(
         &mut self,
+        cids: Vec<i64>,
         gone: F,
         t: i64,
         evs: &mut Vec<WsEvent>,
     ) {
-        for (cid, room) in self.rooms.iter_mut() {
+        for cid in cids {
+            let Some(room) = self.rooms.get_mut(&cid) else {
+                continue;
+            };
             let Room {
                 server,
                 users,
                 lone_since,
             } = room;
-            let before = users.len();
-            users.retain(|(u, c)| !gone(server, u, *c));
-            if users.len() != before {
-                if users.len() == 1 {
-                    *lone_since = t;
+            let mut left = Vec::new();
+            users.retain(|(u, c)| match gone(server, u, *c) {
+                true => {
+                    left.push(u.clone());
+                    false
                 }
-                evs.push(room_state(*cid, room));
+                false => true,
+            });
+            if left.is_empty() {
+                continue;
+            }
+            for user in &left {
+                unlink(&mut self.index.user_rooms, user.as_str(), &cid);
+            }
+            if users.len() == 1 {
+                *lone_since = t;
+            }
+            evs.push(room_state(cid, room));
+            if room.users.is_empty() {
+                self.take_room(cid);
             }
         }
-        self.rooms.retain(|_, r| !r.users.is_empty());
     }
 
-    fn end_calls<F: Fn(&Call) -> bool>(&mut self, pred: F, evs: &mut Vec<WsEvent>) -> Vec<CallEnd> {
-        let ids: Vec<i64> = self
-            .calls
-            .iter()
-            .filter(|(_, c)| pred(c))
-            .map(|(id, _)| *id)
+    fn end_calls<F: Fn(&Call) -> bool>(
+        &mut self,
+        ids: Vec<i64>,
+        pred: F,
+        evs: &mut Vec<WsEvent>,
+    ) -> Vec<CallEnd> {
+        let ids: Vec<i64> = ids
+            .into_iter()
+            .filter(|id| self.calls.get(id).is_some_and(&pred))
             .collect();
         let mut ends = Vec::new();
         for id in ids {
-            if let Some(call) = self.calls.remove(&id) {
+            if let Some(call) = self.take_call(id) {
                 evs.push(call_state(id, &call, CallPhase::Ended));
                 ends.push(CallEnd::of(&call));
             }
@@ -351,16 +562,22 @@ impl Replica {
     }
 
     fn in_call(&self, user: &str) -> bool {
-        self.calls
-            .values()
-            .any(|c| c.dm_users.iter().any(|u| u == user))
+        self.calls_of(user).iter().any(|id| {
+            self.calls
+                .get(id)
+                .is_some_and(|c| c.dm_users.iter().any(|u| u == user))
+        })
     }
 
     fn unview(&mut self, server: &str, user: &str, conn: u64, evs: &mut Vec<WsEvent>) {
         if let Some(users) = self.presence.get_mut(server) {
-            let emptied = users
-                .get_mut(user)
-                .is_some_and(|conns| conns.remove(&conn) && conns.is_empty());
+            let mut emptied = false;
+            if let Some(conns) = users.get_mut(user)
+                && conns.remove(&conn)
+            {
+                unlink(&mut self.index.views, &conn, server);
+                emptied = conns.is_empty();
+            }
             if emptied {
                 users.remove(user);
                 evs.push(presence_ev(server, user, false));
@@ -379,21 +596,50 @@ impl Replica {
             .entry(user.to_string())
             .or_default();
         let fresh = conns.is_empty();
-        conns.insert(conn);
+        if conns.insert(conn) {
+            link(&mut self.index.views, conn, server.to_string());
+        }
         if fresh {
             evs.push(presence_ev(server, user, true));
         }
     }
 
+    fn drop_presence(&mut self, server: &str, user: &str, evs: &mut Vec<WsEvent>) {
+        let Some(users) = self.presence.get_mut(server) else {
+            return;
+        };
+        let Some(conns) = users.remove(user) else {
+            return;
+        };
+        if users.is_empty() {
+            self.presence.remove(server);
+        }
+        for conn in &conns {
+            unlink(&mut self.index.views, conn, server);
+        }
+        evs.push(presence_ev(server, user, false));
+    }
+
     fn present(&mut self, user: &str, conn: u64, server: Option<&str>, evs: &mut Vec<WsEvent>) {
         let stale: Vec<String> = self
-            .presence
-            .iter()
-            .filter(|(s, users)| {
-                Some(s.as_str()) != server && users.get(user).is_some_and(|c| c.contains(&conn))
+            .index
+            .views
+            .get(&conn)
+            .map(|servers| {
+                servers
+                    .iter()
+                    .filter(|s| {
+                        Some(s.as_str()) != server
+                            && self
+                                .presence
+                                .get(*s)
+                                .and_then(|users| users.get(user))
+                                .is_some_and(|c| c.contains(&conn))
+                    })
+                    .cloned()
+                    .collect()
             })
-            .map(|(s, _)| s.clone())
-            .collect();
+            .unwrap_or_default();
         for s in stale {
             self.unview(&s, user, conn, evs);
         }
@@ -418,46 +664,96 @@ impl Replica {
         }
     }
 
+    fn kick(&mut self, server: &str, username: &str, t: i64, extra: &mut Vec<WsEvent>) {
+        let rooms = self.rooms_of(username);
+        self.leave_rooms(rooms, |s, u, _| s == server && u == username, t, extra);
+    }
+
+    fn rename_server(&mut self, old_name: &str, new_name: &str) {
+        if let Some(moved) = self.presence.remove(old_name) {
+            if let Some(replaced) = self.presence.insert(new_name.to_string(), moved) {
+                for conn in replaced.values().flatten() {
+                    unlink(&mut self.index.views, conn, new_name);
+                }
+            }
+            let conns: Vec<u64> = self.presence[new_name]
+                .values()
+                .flatten()
+                .copied()
+                .collect();
+            for conn in conns {
+                unlink(&mut self.index.views, &conn, old_name);
+                link(&mut self.index.views, conn, new_name.to_string());
+            }
+        }
+        if let Some(cids) = self.index.server_rooms.remove(old_name) {
+            for cid in &cids {
+                if let Some(room) = self.rooms.get_mut(cid) {
+                    room.server = new_name.to_string();
+                }
+            }
+            self.index
+                .server_rooms
+                .entry(new_name.to_string())
+                .or_default()
+                .extend(cids);
+        }
+    }
+
     fn side_effects(&mut self, ev: &WsEvent, t: i64, extra: &mut Vec<WsEvent>) {
         match ev {
             WsEvent::ServerRenamed { old_name, server } => {
-                if let Some(v) = self.presence.remove(old_name) {
-                    self.presence.insert(server.name.clone(), v);
-                }
-                for room in self.rooms.values_mut() {
-                    if room.server == *old_name {
-                        room.server = server.name.clone();
-                    }
-                }
+                self.rename_server(old_name, &server.name);
             }
             WsEvent::ServerDeleted { name } => {
-                self.presence.remove(name);
-                self.rooms.retain(|_, r| r.server != *name);
+                if let Some(users) = self.presence.remove(name) {
+                    for conn in users.values().flatten() {
+                        unlink(&mut self.index.views, conn, name.as_str());
+                    }
+                }
+                let cids: Vec<i64> = self
+                    .index
+                    .server_rooms
+                    .get(name)
+                    .map(|set| set.iter().copied().collect())
+                    .unwrap_or_default();
+                for cid in cids {
+                    self.take_room(cid);
+                }
             }
             WsEvent::ChannelDeleted {
                 server: _,
                 channel_id,
             } => {
-                self.rooms.remove(channel_id);
+                self.take_room(*channel_id);
             }
             WsEvent::MemberLeft { server, username }
             | WsEvent::MemberKicked {
                 server,
                 username,
                 banned: _,
-            } => {
-                self.leave_rooms(|s, u, _| s == server && u == username, t, extra);
+            } => self.kick(server, username, t, extra),
+            WsEvent::MembersPurged { server, usernames } => {
+                for username in usernames {
+                    self.kick(server, username, t, extra);
+                    self.drop_presence(server, username, extra);
+                }
             }
             WsEvent::Banned { username } => {
-                for (server, users) in self.presence.iter_mut() {
-                    if users.remove(username).is_some() {
-                        extra.push(presence_ev(server, username, false));
-                    }
+                let servers: Vec<String> = self
+                    .presence
+                    .iter()
+                    .filter(|(_, users)| users.contains_key(username))
+                    .map(|(s, _)| s.clone())
+                    .collect();
+                for server in servers {
+                    self.drop_presence(&server, username, extra);
                 }
-                self.presence.retain(|_, users| !users.is_empty());
                 self.p2p.remove(username);
-                self.leave_rooms(|_, u, _| u == username, t, extra);
-                self.end_calls(|c| c.dm_users.iter().any(|u| u == username), extra);
+                let rooms = self.rooms_of(username);
+                self.leave_rooms(rooms, |_, u, _| u == username, t, extra);
+                let calls = self.calls_of(username);
+                self.end_calls(calls, |c| c.dm_users.iter().any(|u| u == username), extra);
             }
             _ => {}
         }
@@ -480,8 +776,15 @@ impl Replica {
             }
         }
         self.presence.retain(|_, users| !users.is_empty());
-        self.leave_rooms(|_, _, c| owner(c) == id, t, evs);
-        let ends = self.end_calls(|c| c.occupants.iter().any(|(_, cn)| owner(*cn) == id), evs);
+        self.index.views.retain(|c, _| owner(*c) != id);
+        let rooms: Vec<i64> = self.rooms.keys().copied().collect();
+        self.leave_rooms(rooms, |_, _, c| owner(c) == id, t, evs);
+        let calls: Vec<i64> = self.calls.keys().copied().collect();
+        let ends = self.end_calls(
+            calls,
+            |c| c.occupants.iter().any(|(_, cn)| owner(*cn) == id),
+            evs,
+        );
         purge.ends.extend(ends);
         for (user, hosts) in self.p2p.iter_mut() {
             let before = hosts.len();
@@ -585,17 +888,31 @@ impl Replica {
         }
     }
 
+    fn sweep_dead(&mut self, origin: u32, t_ms: i64) -> Vec<u32> {
+        let last = self.clock;
+        self.clock = last.max(t_ms);
+        self.peers.entry(origin).or_default().seen = t_ms;
+        if last != 0 && t_ms - last > DEAD_AFTER_MS {
+            for peer in self.peers.values_mut() {
+                peer.seen = peer.seen.max(t_ms);
+            }
+            return Vec::new();
+        }
+        if last != 0 && t_ms.div_euclid(1000) == last.div_euclid(1000) {
+            return Vec::new();
+        }
+        self.peers
+            .iter()
+            .filter(|(_, p)| t_ms - p.seen > DEAD_AFTER_MS)
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
     pub fn apply(&mut self, origin: u32, op: Op, t_ms: i64) -> Applied {
         let t = t_ms.div_euclid(1000);
         let mut evs = Vec::new();
         let mut purge = Purge::default();
-        self.peers.entry(origin).or_default().seen = t_ms;
-        let purged: Vec<u32> = self
-            .peers
-            .iter()
-            .filter(|(_, p)| t_ms - p.seen > DEAD_AFTER_MS)
-            .map(|(id, _)| *id)
-            .collect();
+        let purged = self.sweep_dead(origin, t_ms);
         for id in &purged {
             self.purge(*id, t, &mut evs, &mut purge);
         }
@@ -628,14 +945,7 @@ impl Replica {
                 Outcome::Done
             }
             Op::ForceOffline { server, user } => {
-                let removed = self
-                    .presence
-                    .get_mut(&server)
-                    .is_some_and(|users| users.remove(&user).is_some());
-                if removed {
-                    evs.push(presence_ev(&server, &user, false));
-                }
-                self.presence.retain(|_, users| !users.is_empty());
+                self.drop_presence(&server, &user, &mut evs);
                 Outcome::Done
             }
             Op::VoiceJoin {
@@ -643,19 +953,31 @@ impl Replica {
                 conn,
                 server,
                 channel_id,
+                cap,
             } => {
+                let full = self
+                    .rooms
+                    .get(&channel_id)
+                    .is_some_and(|room| cap > 0 && room.users.len() >= cap);
                 let slot = self
                     .rooms
                     .get_mut(&channel_id)
                     .and_then(|room| room.users.iter_mut().find(|(u, _)| *u == user));
-                match slot {
-                    Some(slot) => {
+                match (slot, full) {
+                    (Some(slot), _) => {
                         slot.1 = conn;
                         Outcome::Ends(Vec::new())
                     }
-                    None => {
-                        self.leave_rooms(|_, u, _| u == user, t, &mut evs);
-                        let ends = self.end_calls(|c| c.dm_users.contains(&user), &mut evs);
+                    (None, true) => Outcome::Full,
+                    (None, false) => {
+                        let rooms = self.rooms_of(&user);
+                        self.leave_rooms(rooms, |_, u, _| u == user, t, &mut evs);
+                        let calls = self.calls_of(&user);
+                        let ends = self.end_calls(calls, |c| c.dm_users.contains(&user), &mut evs);
+                        if !self.rooms.contains_key(&channel_id) {
+                            link(&mut self.index.server_rooms, server.clone(), channel_id);
+                        }
+                        link(&mut self.index.user_rooms, user.clone(), channel_id);
                         let room = self.rooms.entry(channel_id).or_insert_with(|| Room {
                             server,
                             users: Vec::new(),
@@ -669,7 +991,8 @@ impl Replica {
                 }
             }
             Op::VoiceLeave { user } => {
-                self.leave_rooms(|_, u, _| u == user, t, &mut evs);
+                let rooms = self.rooms_of(&user);
+                self.leave_rooms(rooms, |_, u, _| u == user, t, &mut evs);
                 Outcome::Done
             }
             Op::CallStart {
@@ -691,7 +1014,8 @@ impl Replica {
                     Some(_) => {}
                     None => break 'start Err("Cannot call yourself".to_string()),
                 }
-                self.leave_rooms(|_, u, _| u == user, t, &mut evs);
+                let rooms = self.rooms_of(&user);
+                self.leave_rooms(rooms, |_, u, _| u == user, t, &mut evs);
                 let call = Call {
                     dm_users,
                     from: user.clone(),
@@ -702,7 +1026,7 @@ impl Replica {
                     lone_since: t,
                 };
                 evs.push(call_state(dm_id, &call, CallPhase::Ringing));
-                self.calls.insert(dm_id, call);
+                self.add_call(dm_id, call);
                 Ok(())
             }),
             Op::CallAccept { user, conn, dm_id } => Outcome::Accepted('accept: {
@@ -713,14 +1037,17 @@ impl Replica {
                 if !valid {
                     break 'accept Err("No incoming call".to_string());
                 }
-                self.leave_rooms(|_, u, _| u == user, t, &mut evs);
+                let rooms = self.rooms_of(&user);
+                self.leave_rooms(rooms, |_, u, _| u == user, t, &mut evs);
                 let Some(call) = self.calls.get_mut(&dm_id) else {
                     break 'accept Err("No incoming call".to_string());
                 };
                 call.active = true;
-                call.occupants.push((user, conn));
+                call.occupants.push((user.clone(), conn));
                 evs.push(call_state(dm_id, call, CallPhase::Active));
-                Ok((call.log_id, call.dm_users.clone()))
+                let res = Ok((call.log_id, call.dm_users.clone()));
+                link(&mut self.index.user_calls, user, dm_id);
+                res
             }),
             Op::CallEnd { user, dm_id } => {
                 let involved = self
@@ -728,7 +1055,7 @@ impl Replica {
                     .get(&dm_id)
                     .is_some_and(|c| c.dm_users.contains(&user));
                 let call = match involved {
-                    true => self.calls.remove(&dm_id),
+                    true => self.take_call(dm_id),
                     false => None,
                 };
                 Outcome::Ended(match call {
@@ -740,8 +1067,11 @@ impl Replica {
                 })
             }
             Op::DropConn { user, conn } => {
-                self.leave_rooms(|_, u, c| u == user && c == conn, t, &mut evs);
+                let rooms = self.rooms_of(&user);
+                self.leave_rooms(rooms, |_, u, c| u == user && c == conn, t, &mut evs);
+                let calls = self.calls_of(&user);
                 let ends = self.end_calls(
+                    calls,
                     |c| c.occupants.iter().any(|(u, cn)| *u == user && *cn == conn),
                     &mut evs,
                 );
@@ -758,7 +1088,7 @@ impl Replica {
                     .map(|(id, _)| *id)
                     .collect();
                 for cid in cids {
-                    if let Some(room) = self.rooms.remove(&cid) {
+                    if let Some(room) = self.take_room(cid) {
                         evs.push(WsEvent::VoiceState {
                             server: room.server.clone(),
                             channel_id: cid,
@@ -780,7 +1110,7 @@ impl Replica {
                     .map(|(id, _)| *id)
                     .collect();
                 for id in ids {
-                    if let Some(call) = self.calls.remove(&id) {
+                    if let Some(call) = self.take_call(id) {
                         ends.push(CallEnd::of(&call));
                         evs.push(call_state(id, &call, CallPhase::Ended));
                         evs.push(WsEvent::VoiceEnded {
@@ -823,7 +1153,14 @@ impl Replica {
                     None => false,
                 };
                 if hit {
-                    self.rooms.retain(|_, r| !r.users.is_empty());
+                    unlink(&mut self.index.user_rooms, user.as_str(), &channel_id);
+                    if self
+                        .rooms
+                        .get(&channel_id)
+                        .is_some_and(|r| r.users.is_empty())
+                    {
+                        self.take_room(channel_id);
+                    }
                     evs.push(WsEvent::VoiceEnded {
                         server: None,
                         channel_id: Some(channel_id),
@@ -869,11 +1206,32 @@ impl Replica {
             .map(|(cid, room)| room_state(*cid, room))
             .collect();
         for (id, call) in self.calls.iter() {
-            let phase = match call.active {
-                true => CallPhase::Active,
-                false => CallPhase::Ringing,
-            };
-            evs.push(call_state(*id, call, phase));
+            evs.push(call_state(*id, call, call_phase(call)));
+        }
+        evs
+    }
+
+    fn voice_snapshot_for<'a, I: IntoIterator<Item = &'a String>>(
+        &self,
+        servers: I,
+        user: Option<&str>,
+    ) -> Vec<WsEvent> {
+        let cids: BTreeSet<i64> = servers
+            .into_iter()
+            .filter_map(|s| self.index.server_rooms.get(s))
+            .flatten()
+            .copied()
+            .collect();
+        let mut evs: Vec<WsEvent> = cids
+            .iter()
+            .filter_map(|cid| self.rooms.get(cid).map(|room| room_state(*cid, room)))
+            .collect();
+        if let Some(user) = user {
+            for id in self.calls_of(user) {
+                if let Some(call) = self.calls.get(&id) {
+                    evs.push(call_state(id, call, call_phase(call)));
+                }
+            }
         }
         evs
     }
@@ -883,21 +1241,38 @@ struct Store {
     replica: Replica,
     last_id: String,
     own: u64,
+    dirty: bool,
+}
+
+enum Reply {
+    Forget,
+    Waiter(oneshot::Sender<Outcome>),
 }
 
 struct Posted {
     op: Op,
-    waiter: Option<oneshot::Sender<Outcome>>,
+    reply: Reply,
 }
 
+type Reads = BTreeMap<(String, String), i64>;
+
 struct Link {
-    out: mpsc::UnboundedSender<Envelope>,
+    out: mpsc::Sender<Envelope>,
     seq: Mutex<u64>,
     pending: Mutex<BTreeMap<u64, Posted>>,
     publishing: AtomicBool,
     following: AtomicBool,
     caught_up: AtomicBool,
     diverged: AtomicBool,
+    overflow: AtomicBool,
+    reads: Mutex<Option<Reads>>,
+}
+
+#[derive(Default)]
+struct Resolved {
+    reposts: Vec<Op>,
+    retry: Vec<Op>,
+    late: Vec<(Op, Outcome)>,
 }
 
 impl Link {
@@ -911,7 +1286,7 @@ impl Link {
         &self,
         taken: BTreeMap<u64, Posted>,
         mut applied: F,
-    ) -> Vec<Op> {
+    ) -> Resolved {
         let settled: Vec<(Posted, Option<Outcome>)> = taken
             .into_iter()
             .map(|(seq, posted)| {
@@ -929,30 +1304,54 @@ impl Link {
                 .collect(),
             false => HashSet::new(),
         };
-        let mut reposts = Vec::new();
-        for (Posted { op, waiter }, outcome) in settled.into_iter().rev() {
+        let mut done = Resolved::default();
+        for (Posted { op, reply }, outcome) in settled.into_iter().rev() {
             let hoster = op.hoster().map(str::to_string);
-            match (outcome, waiter) {
-                (Some(outcome), waiter) => {
+            match (outcome, reply) {
+                (Some(_), Reply::Forget) => later.extend(hoster),
+                (Some(outcome), Reply::Waiter(waiter)) => {
                     later.extend(hoster);
-                    if let Some(waiter) = waiter {
-                        let _ = waiter.send(outcome);
+                    if let Err(outcome) = waiter.send(outcome) {
+                        done.late.push((op, outcome));
                     }
                 }
-                (None, Some(waiter)) => {
-                    let _ = waiter.send(Outcome::Lost);
+                (None, Reply::Waiter(waiter)) => {
+                    if waiter.send(Outcome::Lost).is_err() && op.must_apply() {
+                        done.retry.push(op);
+                    }
                 }
-                (None, None) => match hoster {
+                (None, Reply::Forget) => match hoster {
                     Some(h) if later.contains(&h) => {}
                     hoster => {
                         later.extend(hoster);
-                        reposts.push(op);
+                        done.reposts.push(op);
                     }
                 },
             }
         }
-        reposts.reverse();
-        reposts
+        done.reposts.reverse();
+        done.retry.reverse();
+        done.late.reverse();
+        done
+    }
+}
+
+fn late_purge(op: Op, outcome: Outcome) -> Purge {
+    match (op, outcome) {
+        (Op::DropConn { user, conn: _ }, Outcome::Dropped(ends, drop)) => Purge {
+            ends,
+            p2p: vec![(user, drop)],
+        },
+        (_, Outcome::Departed(purge)) => purge,
+        (_, Outcome::Ends(ends)) => Purge {
+            ends,
+            p2p: Vec::new(),
+        },
+        (_, Outcome::Ended(Ok(end))) => Purge {
+            ends: vec![end],
+            p2p: Vec::new(),
+        },
+        (_, _) => Purge::default(),
     }
 }
 
@@ -966,11 +1365,19 @@ struct Inner {
     instance: u32,
     tx: broadcast::Sender<WsEvent>,
     store: Mutex<Store>,
+    order: Mutex<()>,
+    router: Router,
+    channels: Channels,
     conns: AtomicU64,
     link: Option<Link>,
     epoch: watch::Sender<Epoch>,
     aftermath: mpsc::UnboundedSender<Aftermath>,
     aftermath_rx: Mutex<Option<mpsc::UnboundedReceiver<Aftermath>>>,
+}
+
+enum Waited {
+    Got(Outcome),
+    TimedOut,
 }
 
 #[derive(Clone)]
@@ -985,17 +1392,21 @@ impl Default for Hub {
 }
 
 impl Hub {
-    fn build(link: Option<Link>, capacity: usize) -> Hub {
+    fn build(link: Option<Link>) -> Hub {
         let (aftermath, aftermath_rx) = mpsc::unbounded_channel();
         Hub {
             inner: Arc::new(Inner {
                 instance: rand::random(),
-                tx: broadcast::channel(capacity).0,
+                tx: broadcast::channel(1024).0,
                 store: Mutex::new(Store {
                     replica: Replica::default(),
                     last_id: String::new(),
                     own: 0,
+                    dirty: true,
                 }),
+                order: Mutex::new(()),
+                router: Router::default(),
+                channels: Channels::default(),
                 conns: AtomicU64::new(0),
                 link,
                 epoch: watch::channel(Epoch::default()).0,
@@ -1006,11 +1417,11 @@ impl Hub {
     }
 
     pub fn new() -> Hub {
-        Self::build(None, 256)
+        Self::build(None)
     }
 
-    pub fn replicated() -> (Hub, mpsc::UnboundedReceiver<Envelope>) {
-        let (out, rx) = mpsc::unbounded_channel();
+    pub fn replicated() -> (Hub, mpsc::Receiver<Envelope>) {
+        let (out, rx) = mpsc::channel(OUT_CAP);
         let link = Link {
             out,
             seq: Mutex::new(0),
@@ -1019,8 +1430,10 @@ impl Hub {
             following: AtomicBool::new(false),
             caught_up: AtomicBool::new(false),
             diverged: AtomicBool::new(false),
+            overflow: AtomicBool::new(false),
+            reads: Mutex::new(None),
         };
-        (Self::build(Some(link), 1024), rx)
+        (Self::build(Some(link)), rx)
     }
 
     pub fn instance(&self) -> u32 {
@@ -1034,6 +1447,34 @@ impl Hub {
 
     pub fn subscribe(&self) -> broadcast::Receiver<WsEvent> {
         self.inner.tx.subscribe()
+    }
+
+    pub fn open(&self, conn: u64, topics: &HashSet<Topic>) -> Inbox {
+        self.inner.router.open(conn, topics)
+    }
+
+    pub fn close(&self, conn: u64) {
+        self.inner.router.close(conn);
+    }
+
+    pub fn listen(&self, conn: u64, topics: &[Topic]) {
+        self.inner.router.add(conn, topics);
+    }
+
+    pub fn reconcile(&self, conn: u64, want: &HashSet<Topic>, through: u64) {
+        self.inner.router.reconcile(conn, want, through);
+    }
+
+    pub fn topics(&self, conn: u64) -> HashSet<Topic> {
+        self.inner.router.topics(conn)
+    }
+
+    pub fn connections(&self) -> usize {
+        self.inner.router.connections()
+    }
+
+    pub fn channels(&self) -> &Channels {
+        &self.inner.channels
     }
 
     pub fn epoch(&self) -> watch::Receiver<Epoch> {
@@ -1076,6 +1517,7 @@ impl Hub {
     }
 
     pub fn resync(&self, lossy: bool) {
+        self.inner.channels.clear();
         self.inner.epoch.send_modify(|e| {
             e.count += 1;
             e.lossy += lossy as u64;
@@ -1086,20 +1528,31 @@ impl Hub {
         self.inner.aftermath_rx.lock().unwrap().take()
     }
 
-    fn local(&self, op: Op) -> Outcome {
-        let (outcome, purge) = {
-            let mut store = self.inner.store.lock().unwrap();
-            let Applied {
-                events,
-                outcome,
-                purge,
-                purged: _,
-            } = store.replica.apply(self.inner.instance, op, now_ms());
-            for ev in events {
-                let _ = self.inner.tx.send(ev);
+    fn dispatch(&self, events: Vec<WsEvent>, live: bool) {
+        for ev in events {
+            self.inner.channels.observe(&ev);
+            if !live {
+                continue;
             }
-            (outcome, purge)
-        };
+            if self.inner.tx.receiver_count() > 0 {
+                let _ = self.inner.tx.send(ev.clone());
+            }
+            self.inner.router.deliver(ev);
+        }
+    }
+
+    fn local(&self, op: Op) -> Outcome {
+        let mut store = self.inner.store.lock().unwrap();
+        let Applied {
+            events,
+            outcome,
+            purge,
+            purged: _,
+        } = store.replica.apply(self.inner.instance, op, now_ms());
+        let order = self.inner.order.lock().unwrap();
+        drop(store);
+        self.dispatch(events, true);
+        drop(order);
         if !purge.is_empty() {
             let _ = self.inner.aftermath.send(Aftermath::Settle(purge));
         }
@@ -1113,25 +1566,50 @@ impl Hub {
             }
             Some(link) => {
                 let mut seq = link.seq.lock().unwrap();
-                self.send(link, &mut seq, op);
+                self.send(link, &mut seq, op, Reply::Forget);
             }
         }
     }
 
-    fn send(&self, link: &Link, seq: &mut u64, op: Op) {
+    fn send(&self, link: &Link, seq: &mut u64, op: Op, reply: Reply) {
         *seq += 1;
-        if op.repostable() {
-            let posted = Posted {
-                op: op.clone(),
-                waiter: None,
-            };
-            link.pending.lock().unwrap().insert(*seq, posted);
+        let keep = match reply {
+            Reply::Forget => op.repostable(),
+            Reply::Waiter(_) => true,
+        };
+        if keep {
+            let mut pending = link.pending.lock().unwrap();
+            while pending.len() >= PENDING_CAP {
+                let Some((_, evicted)) = pending.pop_first() else {
+                    break;
+                };
+                if let Reply::Waiter(waiter) = evicted.reply {
+                    let _ = waiter.send(Outcome::Lost);
+                }
+                link.overflow.store(true, Ordering::Relaxed);
+            }
+            pending.insert(
+                *seq,
+                Posted {
+                    op: op.clone(),
+                    reply,
+                },
+            );
         }
-        let _ = link.out.send(Envelope {
+        let env = Envelope {
             origin: self.inner.instance,
             seq: *seq,
             op,
-        });
+        };
+        if let Err(mpsc::error::TrySendError::Full(_)) = link.out.try_send(env) {
+            let n = DROPPED.fetch_add(1, Ordering::Relaxed);
+            if n.is_multiple_of(1000) {
+                warn!(
+                    "realtime publish queue is full ({OUT_CAP} ops); dropped {} op(s) so far, they are reposted or re-announced once the bus recovers",
+                    n + 1
+                );
+            }
+        }
     }
 
     fn settle_own<F: FnMut(u64, &Op) -> Option<Outcome>>(
@@ -1141,54 +1619,80 @@ impl Hub {
         applied: F,
     ) {
         let mut seq = link.seq.lock().unwrap();
-        let lost = link.resolve(link.take_through(through), applied);
-        if lost.is_empty() {
-            return;
+        let Resolved {
+            reposts,
+            retry,
+            late,
+        } = link.resolve(link.take_through(through), applied);
+        for op in retry {
+            warn!("a realtime cleanup op was lost on the bus; posting it again");
+            let (waiter, _) = oneshot::channel();
+            self.send(link, &mut seq, op, Reply::Waiter(waiter));
         }
-        let (now, checked): (Vec<Op>, Vec<Op>) =
-            lost.into_iter().partition(|op| op.hoster().is_some());
-        warn!(
-            "{} realtime ops were lost on the bus; posting them again ({} after a database check)",
-            now.len() + checked.len(),
-            checked.len()
-        );
-        for op in now {
-            self.send(link, &mut seq, op);
+        if !reposts.is_empty() {
+            let (now, checked): (Vec<Op>, Vec<Op>) =
+                reposts.into_iter().partition(|op| op.hoster().is_some());
+            warn!(
+                "{} realtime ops were lost on the bus; posting them again ({} after a database check)",
+                now.len() + checked.len(),
+                checked.len()
+            );
+            for op in now {
+                self.send(link, &mut seq, op, Reply::Forget);
+            }
+            if !checked.is_empty() {
+                let _ = self.inner.aftermath.send(Aftermath::Repost(checked));
+            }
         }
         drop(seq);
-        if !checked.is_empty() {
-            let _ = self.inner.aftermath.send(Aftermath::Repost(checked));
+        for (op, outcome) in late {
+            let purge = late_purge(op, outcome);
+            if !purge.is_empty() {
+                let _ = self.inner.aftermath.send(Aftermath::Settle(purge));
+            }
         }
     }
 
-    async fn call(&self, op: Op) -> Outcome {
+    async fn call(&self, op: Op) -> Waited {
         let link = match &self.inner.link {
-            None => return self.local(op),
+            None => return Waited::Got(self.local(op)),
             Some(link) => link,
         };
         let (tx, rx) = oneshot::channel();
         {
             let mut seq = link.seq.lock().unwrap();
-            *seq += 1;
-            let posted = Posted {
-                op: op.clone(),
-                waiter: Some(tx),
-            };
-            link.pending.lock().unwrap().insert(*seq, posted);
-            let _ = link.out.send(Envelope {
-                origin: self.inner.instance,
-                seq: *seq,
-                op,
-            });
+            self.send(link, &mut seq, op, Reply::Waiter(tx));
         }
-        rx.await.unwrap_or(Outcome::Done)
+        match tokio::time::timeout(CALL_TIMEOUT, rx).await {
+            Ok(Ok(outcome)) => Waited::Got(outcome),
+            Ok(Err(_)) => Waited::Got(Outcome::Done),
+            Err(_) => Waited::TimedOut,
+        }
+    }
+
+    async fn ask(&self, op: Op) -> Outcome {
+        match self.call(op).await {
+            Waited::Got(outcome) => outcome,
+            Waited::TimedOut => {
+                warn!("realtime bus did not confirm an op in time");
+                Outcome::Lost
+            }
+        }
     }
 
     async fn call_applied(&self, op: Op) -> Outcome {
         loop {
             match self.call(op.clone()).await {
-                Outcome::Lost => warn!("realtime op was lost on the bus, posting it again"),
-                outcome => return outcome,
+                Waited::Got(Outcome::Lost) => {
+                    warn!("realtime op was lost on the bus, posting it again")
+                }
+                Waited::Got(outcome) => return outcome,
+                Waited::TimedOut => {
+                    warn!(
+                        "realtime bus did not confirm a cleanup op in time; it finishes once the bus recovers"
+                    );
+                    return Outcome::Done;
+                }
             }
         }
     }
@@ -1201,29 +1705,27 @@ impl Hub {
         let Envelope { origin, seq, op } = env;
         let mine = origin == self.inner.instance;
         let (t_ms, _) = stream_pos(id);
-        let (outcome, purge, purged, skipped) = {
-            let mut store = self.inner.store.lock().unwrap();
-            store.last_id = id.to_string();
-            if !store.replica.admit(origin, seq) {
-                return;
-            }
-            let skipped = mine && seq > store.own + 1;
-            if mine {
-                store.own = store.own.max(seq);
-            }
-            let Applied {
-                events,
-                outcome,
-                purge,
-                purged,
-            } = store.replica.apply(origin, op, t_ms as i64);
-            if live {
-                for ev in events {
-                    let _ = self.inner.tx.send(ev);
-                }
-            }
-            (outcome, purge, purged, skipped)
-        };
+        let mut store = self.inner.store.lock().unwrap();
+        store.last_id = id.to_string();
+        if !store.replica.admit(origin, seq) {
+            return;
+        }
+        let skipped = mine && seq > store.own + 1;
+        if mine {
+            store.own = store.own.max(seq);
+        }
+        let beat = matches!(op, Op::Heartbeat);
+        let Applied {
+            events,
+            outcome,
+            purge,
+            purged,
+        } = store.replica.apply(origin, op, t_ms as i64);
+        store.dirty |= !beat || !events.is_empty() || !purged.is_empty();
+        let order = self.inner.order.lock().unwrap();
+        drop(store);
+        self.dispatch(events, live);
+        drop(order);
         if mine {
             let mut outcome = Some(outcome);
             self.settle_own(link, seq, |s, _| match s == seq {
@@ -1232,6 +1734,10 @@ impl Hub {
             });
             if !purge.is_empty() {
                 let _ = self.inner.aftermath.send(Aftermath::Settle(purge));
+            }
+            if link.overflow.swap(false, Ordering::Relaxed) {
+                warn!("realtime ops were dropped while the bus was unreachable; resyncing clients");
+                self.resync(true);
             }
         }
         if skipped {
@@ -1243,19 +1749,27 @@ impl Hub {
         }
     }
 
-    pub fn snapshot(&self) -> Option<(String, String)> {
-        let store = self.inner.store.lock().unwrap();
+    pub fn snapshot_state(&self, force: bool) -> Option<(String, Replica)> {
+        let mut store = self.inner.store.lock().unwrap();
         let gap = self
             .inner
             .link
             .as_ref()
             .is_some_and(|l| l.diverged.load(Ordering::Relaxed));
-        if store.last_id.is_empty() || gap {
+        if store.last_id.is_empty() || gap || !(force || store.dirty) {
             return None;
         }
-        serde_json::to_string(&store.replica)
-            .ok()
-            .map(|json| (store.last_id.clone(), json))
+        store.dirty = false;
+        Some((store.last_id.clone(), store.replica.detached()))
+    }
+
+    pub fn mark_dirty(&self) {
+        self.inner.store.lock().unwrap().dirty = true;
+    }
+
+    pub fn snapshot(&self) -> Option<(String, String)> {
+        let (id, replica) = self.snapshot_state(true)?;
+        serde_json::to_string(&replica).ok().map(|json| (id, json))
     }
 
     pub fn restore(&self, last_id: &str, json: &str) -> serde_json::Result<()> {
@@ -1266,6 +1780,8 @@ impl Hub {
         let before = std::mem::replace(&mut store.replica, replica);
         store.last_id = last_id.to_string();
         store.own = store.own.max(applied);
+        store.dirty = true;
+        self.inner.channels.clear();
         let after = &store.replica;
         if let Some(link) = &self.inner.link {
             self.settle_own(link, applied, |seq, op| match after.kept(me, seq) {
@@ -1298,12 +1814,53 @@ impl Hub {
         }
     }
 
+    pub fn coalesce_reads(&self) {
+        if let Some(link) = &self.inner.link {
+            link.reads.lock().unwrap().get_or_insert_default();
+        }
+    }
+
+    pub fn flush_reads(&self) {
+        let Some(link) = &self.inner.link else {
+            return;
+        };
+        let batch = match link.reads.lock().unwrap().as_mut() {
+            Some(reads) => std::mem::take(reads),
+            None => return,
+        };
+        for ((username, scope), last_read) in batch {
+            self.post(Op::Broadcast {
+                event: WsEvent::ReadUpdated {
+                    username,
+                    scope,
+                    last_read,
+                },
+            });
+        }
+    }
+
     pub fn broadcast(&self, ev: WsEvent) {
+        if let (
+            WsEvent::ReadUpdated {
+                username,
+                scope,
+                last_read,
+            },
+            Some(link),
+        ) = (&ev, &self.inner.link)
+            && let Some(reads) = link.reads.lock().unwrap().as_mut()
+        {
+            let at = reads
+                .entry((username.clone(), scope.clone()))
+                .or_insert(*last_read);
+            *at = (*at).max(*last_read);
+            return;
+        }
         self.post(Op::Broadcast { event: ev });
     }
 
     pub async fn broadcast_confirmed(&self, ev: WsEvent) -> bool {
-        !matches!(self.call(Op::Broadcast { event: ev }).await, Outcome::Lost)
+        !matches!(self.ask(Op::Broadcast { event: ev }).await, Outcome::Lost)
     }
 
     pub async fn voice_join(
@@ -1313,15 +1870,31 @@ impl Hub {
         server: &str,
         channel_id: i64,
     ) -> Vec<CallEnd> {
+        self.voice_join_capped(user, conn, server, channel_id, 0)
+            .await
+            .unwrap_or_default()
+    }
+
+    pub async fn voice_join_capped(
+        &self,
+        user: &str,
+        conn: u64,
+        server: &str,
+        channel_id: i64,
+        cap: usize,
+    ) -> Result<Vec<CallEnd>, String> {
         let op = Op::VoiceJoin {
             user: user.to_string(),
             conn,
             server: server.to_string(),
             channel_id,
+            cap,
         };
-        match self.call(op).await {
-            Outcome::Ends(ends) => ends,
-            _ => Vec::new(),
+        match self.ask(op).await {
+            Outcome::Ends(ends) => Ok(ends),
+            Outcome::Full => Err(format!("This voice channel is full ({cap} people)")),
+            Outcome::Lost => Err("Realtime service unavailable".to_string()),
+            _ => Ok(Vec::new()),
         }
     }
 
@@ -1349,7 +1922,7 @@ impl Hub {
             kind,
             log_id,
         };
-        match self.call(op).await {
+        match self.ask(op).await {
             Outcome::Started(res) => res,
             _ => Err("Realtime service unavailable".to_string()),
         }
@@ -1366,7 +1939,7 @@ impl Hub {
             conn,
             dm_id,
         };
-        match self.call(op).await {
+        match self.ask(op).await {
             Outcome::Accepted(res) => res,
             _ => Err("Realtime service unavailable".to_string()),
         }
@@ -1377,7 +1950,7 @@ impl Hub {
             user: user.to_string(),
             dm_id,
         };
-        match self.call(op).await {
+        match self.ask(op).await {
             Outcome::Ended(res) => res,
             _ => Err("Realtime service unavailable".to_string()),
         }
@@ -1410,7 +1983,7 @@ impl Hub {
     }
 
     pub async fn sweep_voice(&self, idle: i64) -> Vec<CallEnd> {
-        match self.call(Op::SweepVoice { idle }).await {
+        match self.ask(Op::SweepVoice { idle }).await {
             Outcome::Ends(ends) => ends,
             _ => Vec::new(),
         }
@@ -1448,6 +2021,32 @@ impl Hub {
             .get(server)
         {
             Some(users) => users.keys().cloned().collect(),
+            None => HashSet::new(),
+        }
+    }
+
+    pub fn online_after(&self, server: &str, after: Option<&str>, n: usize) -> Vec<String> {
+        let store = self.inner.store.lock().unwrap();
+        let Some(users) = store.replica.presence.get(server) else {
+            return Vec::new();
+        };
+        let range = match after {
+            Some(a) => {
+                users.range::<str, _>((std::ops::Bound::Excluded(a), std::ops::Bound::Unbounded))
+            }
+            None => users.range::<str, _>(..),
+        };
+        range.take(n).map(|(name, _)| name.clone()).collect()
+    }
+
+    pub fn online_among<'a>(&self, server: &str, names: &'a [String]) -> HashSet<&'a str> {
+        let store = self.inner.store.lock().unwrap();
+        match store.replica.presence.get(server) {
+            Some(users) => names
+                .iter()
+                .filter(|n| users.contains_key(n.as_str()))
+                .map(String::as_str)
+                .collect(),
             None => HashSet::new(),
         }
     }
@@ -1502,15 +2101,21 @@ impl Hub {
     }
 
     pub fn rooms_in(&self, server: &str, channel_id: Option<i64>) -> Vec<(i64, Vec<String>)> {
-        self.inner
-            .store
-            .lock()
-            .unwrap()
-            .replica
-            .rooms
-            .iter()
-            .filter(|(cid, room)| room.server == server && channel_id.is_none_or(|c| c == **cid))
-            .map(|(cid, room)| (*cid, room.users.iter().map(|(u, _)| u.clone()).collect()))
+        let store = self.inner.store.lock().unwrap();
+        let replica = &store.replica;
+        replica
+            .index
+            .server_rooms
+            .get(server)
+            .into_iter()
+            .flatten()
+            .filter(|cid| channel_id.is_none_or(|c| c == **cid))
+            .filter_map(|cid| {
+                replica
+                    .rooms
+                    .get(cid)
+                    .map(|room| (*cid, room.users.iter().map(|(u, _)| u.clone()).collect()))
+            })
             .collect()
     }
 
@@ -1523,6 +2128,19 @@ impl Hub {
 
     pub fn voice_snapshot(&self) -> Vec<WsEvent> {
         self.inner.store.lock().unwrap().replica.voice_snapshot()
+    }
+
+    pub fn voice_snapshot_for<'a, I: IntoIterator<Item = &'a String>>(
+        &self,
+        servers: I,
+        user: Option<&str>,
+    ) -> Vec<WsEvent> {
+        self.inner
+            .store
+            .lock()
+            .unwrap()
+            .replica
+            .voice_snapshot_for(servers, user)
     }
 }
 
@@ -1561,12 +2179,7 @@ pub(crate) mod tests {
             hub
         }
 
-        fn attach(
-            &self,
-            hub: Hub,
-            mut out: mpsc::UnboundedReceiver<Envelope>,
-            after: Option<&str>,
-        ) {
+        fn attach(&self, hub: Hub, mut out: mpsc::Receiver<Envelope>, after: Option<&str>) {
             {
                 let log = self.log.lock().unwrap();
                 for (id, json) in log.iter() {
@@ -1646,6 +2259,15 @@ pub(crate) mod tests {
             .collect()
     }
 
+    async fn outlive(bus: &MemBus, alive: &Hub) {
+        for _ in 0..3 {
+            bus.advance(DEAD_AFTER_MS / 3);
+            alive.flush().await;
+        }
+        bus.advance(1_000);
+        alive.flush().await;
+    }
+
     fn dm_users() -> Vec<String> {
         vec!["alice".to_string(), "bob".to_string()]
     }
@@ -1690,6 +2312,7 @@ pub(crate) mod tests {
                     conn: 1 << 32,
                     server: s("rchat"),
                     channel_id: 5,
+                    cap: 0,
                 },
                 T0 + 20,
             ),
@@ -1700,6 +2323,7 @@ pub(crate) mod tests {
                     conn: (2 << 32) | 1,
                     server: s("other"),
                     channel_id: 6,
+                    cap: 0,
                 },
                 T0 + 25,
             ),
@@ -1732,6 +2356,8 @@ pub(crate) mod tests {
                 },
                 T0 + 50,
             ),
+            (1, Op::Heartbeat, T0 + 20_000),
+            (1, Op::Heartbeat, T0 + 40_000),
             (1, Op::SweepVoice { idle: 60 }, T0 + 59_000),
             (1, Op::SweepVoice { idle: 60 }, T0 + 80_100),
         ]
@@ -1779,6 +2405,7 @@ pub(crate) mod tests {
             conn: 1 << 32,
             server: "rchat".to_string(),
             channel_id: 5,
+            cap: 0,
         };
         replica.apply(1, join, T0);
         let early = replica.apply(1, Op::SweepVoice { idle: 60 }, T0 + 59_999);
@@ -1966,8 +2593,7 @@ pub(crate) mod tests {
                 .is_empty()
         );
         drain(&mut rx_b);
-        bus.advance(DEAD_AFTER_MS + 1);
-        b.flush().await;
+        outlive(&bus, &b).await;
         let evs = drain(&mut rx_b);
         assert_eq!(
             presence_of(&evs),
@@ -1997,8 +2623,7 @@ pub(crate) mod tests {
         let alice = a.next_conn();
         a.set_viewing("alice", alice, None, Some("rchat"));
         a.flush().await;
-        bus.advance(DEAD_AFTER_MS + 1);
-        b.flush().await;
+        outlive(&bus, &b).await;
         assert!(epoch.has_changed().unwrap());
         assert_eq!(epoch.borrow_and_update().lossy, 0);
         a.resync(true);
@@ -2089,5 +2714,319 @@ pub(crate) mod tests {
         c.flush().await;
         assert!(a.is_online("rchat", "carol"));
         assert_eq!(a.snapshot().unwrap().1, c.snapshot().unwrap().1);
+    }
+
+    #[tokio::test]
+    async fn bus_outage_does_not_purge_live_instances() {
+        let bus = MemBus::new();
+        let hubs: Vec<Hub> = (0..3).map(|_| bus.join()).collect();
+        let mut epochs: Vec<_> = hubs.iter().map(|h| h.epoch()).collect();
+        let mut rx = hubs[0].subscribe();
+        for (i, h) in hubs.iter().enumerate() {
+            for u in 0..100 {
+                h.set_viewing(&format!("u{i}_{u}"), h.next_conn(), None, Some("big"));
+            }
+            h.flush().await;
+        }
+        drain(&mut rx);
+        bus.advance(DEAD_AFTER_MS + 1_000);
+        for h in &hubs {
+            h.flush().await;
+        }
+        let offline = presence_of(&drain(&mut rx))
+            .iter()
+            .filter(|(_, _, on)| !on)
+            .count();
+        let resynced = epochs
+            .iter_mut()
+            .filter(|e| e.has_changed().unwrap())
+            .count();
+        assert_eq!((offline, resynced), (0, 0));
+        assert!(hubs.iter().all(|h| h.online_count("big") == 300));
+        for _ in 0..3 {
+            bus.advance(DEAD_AFTER_MS / 3);
+            hubs[0].flush().await;
+            hubs[1].flush().await;
+        }
+        bus.advance(1_000);
+        hubs[0].flush().await;
+        let offline = presence_of(&drain(&mut rx))
+            .iter()
+            .filter(|(s, u, on)| s == "big" && u.starts_with("u2_") && !on)
+            .count();
+        assert_eq!(offline, 100);
+        assert!(hubs.iter().all(|h| h.online_count("big") == 200));
+        assert!(epochs[2].has_changed().unwrap());
+    }
+
+    fn reindexed(replica: &Replica) -> Index {
+        let mut copy = replica.detached();
+        copy.reindex();
+        copy.index
+    }
+
+    #[test]
+    fn indexes_follow_every_op() {
+        let s = |v: &str| v.to_string();
+        let mut replica = Replica::default();
+        let mut ops = script();
+        let t = T0 + 100_000;
+        let more = vec![
+            Op::Viewing {
+                user: s("dave"),
+                conn: 3 << 32,
+                old: None,
+                new: Some(s("one")),
+            },
+            Op::Present {
+                user: s("dave"),
+                conn: 3 << 32,
+                server: Some(s("two")),
+            },
+            Op::VoiceJoin {
+                user: s("dave"),
+                conn: 3 << 32,
+                server: s("two"),
+                channel_id: 11,
+                cap: 0,
+            },
+            Op::VoiceJoin {
+                user: s("erin"),
+                conn: (3 << 32) | 1,
+                server: s("two"),
+                channel_id: 11,
+                cap: 0,
+            },
+            Op::Broadcast {
+                event: WsEvent::ServerRenamed {
+                    old_name: s("two"),
+                    server: crate::api::ServerSummaryLite {
+                        name: s("deux"),
+                        display_name: s("deux"),
+                        creator: None,
+                        has_password: false,
+                    },
+                },
+            },
+            Op::CallStart {
+                user: s("frank"),
+                conn: (3 << 32) | 2,
+                dm_id: 4,
+                dm_users: vec![s("frank"), s("gina")],
+                kind: CallKind::Rtc,
+                log_id: 9,
+            },
+            Op::CallAccept {
+                user: s("gina"),
+                conn: (3 << 32) | 3,
+                dm_id: 4,
+            },
+            Op::VoiceJoin {
+                user: s("gina"),
+                conn: (3 << 32) | 3,
+                server: s("deux"),
+                channel_id: 11,
+                cap: 0,
+            },
+            Op::Broadcast {
+                event: WsEvent::MembersPurged {
+                    server: s("deux"),
+                    usernames: vec![s("dave")],
+                },
+            },
+            Op::EvictVoice {
+                user: s("erin"),
+                channel_id: 11,
+            },
+            Op::DropConn {
+                user: s("gina"),
+                conn: (3 << 32) | 3,
+            },
+            Op::Broadcast {
+                event: WsEvent::ServerDeleted { name: s("deux") },
+            },
+            Op::Depart,
+        ];
+        ops.extend(
+            more.into_iter()
+                .enumerate()
+                .map(|(i, op)| (3, op, t + i as i64 * 10)),
+        );
+        for (origin, op, at) in ops {
+            replica.apply(origin, op, at);
+            assert_eq!(replica.index, reindexed(&replica));
+        }
+        assert!(replica.index.views.is_empty() || !replica.presence.is_empty());
+    }
+
+    #[test]
+    fn full_voice_rooms_turn_joins_away() {
+        let mut replica = Replica::default();
+        let join = |user: &str, conn: u64, channel_id: i64| Op::VoiceJoin {
+            user: user.to_string(),
+            conn,
+            server: "rchat".to_string(),
+            channel_id,
+            cap: 2,
+        };
+        for (user, conn) in [("a", 1), ("b", 2)] {
+            let applied = replica.apply(1, join(user, conn, 5), T0);
+            assert!(matches!(applied.outcome, Outcome::Ends(_)));
+        }
+        replica.apply(1, join("c", 3, 6), T0);
+        let refused = replica.apply(1, join("c", 3, 5), T0);
+        assert!(matches!(refused.outcome, Outcome::Full) && refused.events.is_empty());
+        assert!(matches!(
+            replica.apply(1, join("a", 9, 5), T0).outcome,
+            Outcome::Ends(_)
+        ));
+        assert_eq!(replica.rooms[&6].users, vec![("c".to_string(), 3)]);
+        assert_eq!(replica.rooms[&5].users.len(), 2);
+    }
+
+    #[test]
+    fn purge_event_removes_members_in_one_op() {
+        let mut replica = Replica::default();
+        let s = |v: &str| v.to_string();
+        for (i, user) in ["bob", "carol", "dave"].iter().enumerate() {
+            let conn = (1 << 32) | i as u64;
+            replica.apply(
+                1,
+                Op::Viewing {
+                    user: s(user),
+                    conn,
+                    old: None,
+                    new: Some(s("club")),
+                },
+                T0,
+            );
+            replica.apply(
+                1,
+                Op::VoiceJoin {
+                    user: s(user),
+                    conn,
+                    server: s("club"),
+                    channel_id: 3,
+                    cap: 0,
+                },
+                T0,
+            );
+        }
+        let applied = replica.apply(
+            1,
+            Op::Broadcast {
+                event: WsEvent::MembersPurged {
+                    server: s("club"),
+                    usernames: vec![s("bob"), s("carol")],
+                },
+            },
+            T0 + 1,
+        );
+        assert_eq!(
+            presence_of(&applied.events),
+            vec![(s("club"), s("bob"), false), (s("club"), s("carol"), false)]
+        );
+        assert_eq!(
+            voice_of(&applied.events).last(),
+            Some(&(3, vec![s("dave")]))
+        );
+        assert_eq!(
+            replica.presence["club"].keys().collect::<Vec<_>>(),
+            ["dave"]
+        );
+    }
+
+    #[tokio::test]
+    async fn voice_snapshot_covers_only_held_servers() {
+        let hub = Hub::new();
+        let s = |v: &str| v.to_string();
+        hub.voice_join("alice", 1, "one", 5).await;
+        hub.voice_join("bob", 2, "two", 6).await;
+        hub.call_start("carol", 3, 9, vec![s("carol"), s("dave")], CallKind::Rtc, 1)
+            .await
+            .unwrap();
+        let held = [s("one")];
+        assert_eq!(
+            voice_of(&hub.voice_snapshot_for(held.iter(), Some("dave"))),
+            vec![(5, vec![s("alice")])]
+        );
+        assert_eq!(
+            calls_of(&hub.voice_snapshot_for(held.iter(), Some("dave"))),
+            vec![(9, CallPhase::Ringing)]
+        );
+        assert!(calls_of(&hub.voice_snapshot_for(held.iter(), Some("erin"))).is_empty());
+        assert_eq!(hub.voice_snapshot().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn reads_are_coalesced_per_scope() {
+        let (hub, mut out) = Hub::replicated();
+        hub.coalesce_reads();
+        let read = |scope: &str, last_read| WsEvent::ReadUpdated {
+            username: "alice".to_string(),
+            scope: scope.to_string(),
+            last_read,
+        };
+        hub.broadcast(read("c1", 5));
+        hub.broadcast(read("c1", 9));
+        hub.broadcast(read("c1", 7));
+        hub.broadcast(read("c2", 1));
+        assert!(out.try_recv().is_err());
+        hub.flush_reads();
+        let posted: Vec<(String, i64)> = std::iter::from_fn(|| out.try_recv().ok())
+            .map(|env| match env.op {
+                Op::Broadcast {
+                    event:
+                        WsEvent::ReadUpdated {
+                            scope, last_read, ..
+                        },
+                } => (scope, last_read),
+                _ => panic!("expected reads"),
+            })
+            .collect();
+        assert_eq!(posted, vec![("c1".to_string(), 9), ("c2".to_string(), 1)]);
+    }
+
+    #[tokio::test]
+    async fn full_publish_queue_is_recovered_by_a_resync() {
+        let (hub, mut out) = Hub::replicated();
+        let mut epoch = hub.epoch();
+        let conn = hub.next_conn();
+        for i in 0..=OUT_CAP {
+            hub.set_viewing("alice", conn, None, Some(&format!("s{}", i % 2)));
+        }
+        let queued: Vec<Envelope> = std::iter::from_fn(|| out.try_recv().ok()).collect();
+        assert_eq!(queued.len(), OUT_CAP);
+        for (i, env) in queued.into_iter().enumerate() {
+            hub.ingest(&format!("{}-{i}", T0), env, true);
+        }
+        assert!(!epoch.has_changed().unwrap());
+        hub.heartbeat();
+        hub.ingest(&format!("{}-0", T0 + 1), out.try_recv().unwrap(), true);
+        assert!(epoch.has_changed().unwrap());
+        assert_eq!(epoch.borrow_and_update().lossy, 0);
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_cleanup_finishes_in_the_background() {
+        let (hub, mut out) = Hub::replicated();
+        let mut aftermath = hub.take_aftermath().unwrap();
+        let conn = hub.next_conn();
+        hub.set_viewing("alice", conn, None, Some("rchat"));
+        hub.set_p2p("alice", conn, "peer".to_string(), vec!["f".to_string()]);
+        let started = std::time::Instant::now();
+        let (ends, drop) = hub.drop_conn("alice", conn).await;
+        assert!(started.elapsed() >= CALL_TIMEOUT);
+        assert!(ends.is_empty() && matches!(drop, P2pDrop::Kept));
+        let posted: Vec<Envelope> = std::iter::from_fn(|| out.try_recv().ok()).collect();
+        assert_eq!(posted.len(), 3);
+        for (i, env) in posted.into_iter().enumerate() {
+            hub.ingest(&format!("{T0}-{i}"), env, true);
+        }
+        assert!(!hub.is_online("rchat", "alice"));
+        let Ok(Aftermath::Settle(purge)) = aftermath.try_recv() else {
+            panic!("the late drop should be settled");
+        };
+        assert!(matches!(purge.p2p.as_slice(), [(user, P2pDrop::Offline)] if user == "alice"));
     }
 }

@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
+
 use argon2::Argon2;
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
@@ -9,11 +13,12 @@ use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
+use tokio::sync::Semaphore;
 use utoipa::ToSchema;
 
 use crate::api::dms::dm_page;
-use crate::api::servers::my_servers_page;
 use crate::api::servers::{OkResp, ok};
+use crate::api::servers::{Page, my_servers_page};
 use crate::api::{
     ApiError, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, ServerSummary, UserRef, check_len,
     check_profanity, request_token, valid_color,
@@ -35,8 +40,10 @@ pub struct Me {
     pub password_kind: String,
     pub servers: Vec<ServerSummary>,
     pub servers_more: bool,
+    pub servers_cursor: Option<String>,
     pub dms: Vec<DmSummary>,
     pub dms_more: bool,
+    pub dms_cursor: Option<String>,
 }
 
 fn password_kind_schema() -> utoipa::openapi::Object {
@@ -95,20 +102,86 @@ fn word_set(username: &str) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn hash_password(secret: &str) -> Result<String, ApiError> {
+static HASHING: LazyLock<Semaphore> = LazyLock::new(|| {
+    Semaphore::new(
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4),
+    )
+});
+
+const VERIFIED_TTL: Duration = Duration::from_secs(60);
+const VERIFIED_MAX: usize = 4096;
+
+type Verified = HashMap<[u8; 32], (Instant, bool)>;
+
+static VERIFIED: LazyLock<Mutex<Verified>> = LazyLock::new(Default::default);
+
+async fn off_runtime<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, ApiError> {
+    let _permit = HASHING
+        .acquire()
+        .await
+        .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|e| ApiError::from(anyhow::anyhow!(e)))
+}
+
+fn hash_now(secret: &str) -> Result<String, ApiError> {
     match Argon2::default().hash_password(secret.as_bytes()) {
         Ok(hash) => Ok(hash.to_string()),
         Err(e) => Err(anyhow::anyhow!(e).into()),
     }
 }
 
-pub(crate) fn verify_password(secret: &str, hash: &str) -> bool {
+fn verify_now(secret: &str, hash: &str) -> bool {
     match PasswordHash::new(hash) {
         Ok(parsed) => Argon2::default()
             .verify_password(secret.as_bytes(), &parsed)
             .is_ok(),
         Err(_) => false,
     }
+}
+
+pub(crate) async fn hash_password(secret: &str) -> Result<String, ApiError> {
+    let secret = secret.to_string();
+    off_runtime(move || hash_now(&secret)).await?
+}
+
+pub(crate) async fn verify_password(secret: &str, hash: &str) -> bool {
+    let (secret, hash) = (secret.to_string(), hash.to_string());
+    off_runtime(move || verify_now(&secret, &hash))
+        .await
+        .unwrap_or(false)
+}
+
+pub(crate) async fn verify_password_cached(secret: &str, hash: &str) -> bool {
+    let mut digest = Sha256::new();
+    digest.update(hash.as_bytes());
+    digest.update([0u8]);
+    digest.update(secret.as_bytes());
+    let key: [u8; 32] = digest.finalize().into();
+    let hit = VERIFIED.lock().ok().and_then(|cache| {
+        cache
+            .get(&key)
+            .filter(|(at, _)| at.elapsed() < VERIFIED_TTL)
+            .map(|(_, ok)| *ok)
+    });
+    if let Some(ok) = hit {
+        return ok;
+    }
+    let ok = verify_password(secret, hash).await;
+    if let Ok(mut cache) = VERIFIED.lock() {
+        if cache.len() >= VERIFIED_MAX {
+            cache.retain(|_, (at, _)| at.elapsed() < VERIFIED_TTL);
+        }
+        if cache.len() < VERIFIED_MAX {
+            cache.insert(key, (Instant::now(), ok));
+        }
+    }
+    ok
 }
 
 pub(crate) fn new_token() -> String {
@@ -155,8 +228,16 @@ fn secret_from(
 }
 
 pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
-    let (servers, servers_more) = my_servers_page(db, &user.username, 0, LIST_PAGE).await?;
-    let (dms, dms_more) = dm_page(db, &user.username, 0, LIST_PAGE).await?;
+    let Page {
+        items: servers,
+        more: servers_more,
+        next: servers_cursor,
+    } = my_servers_page(db, &user.username, 0, None, LIST_PAGE).await?;
+    let Page {
+        items: dms,
+        more: dms_more,
+        next: dms_cursor,
+    } = dm_page(db, &user.username, 0, None, LIST_PAGE).await?;
     Ok(Me {
         username: user.username.clone(),
         display_name: user.display_name.clone(),
@@ -168,8 +249,10 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
         password_kind: user.password_kind.clone(),
         servers,
         servers_more,
+        servers_cursor,
         dms,
         dms_more,
+        dms_cursor,
     })
 }
 
@@ -202,8 +285,9 @@ pub(crate) async fn register(
     let key = username.to_lowercase();
     let (secret, password_kind) = secret_from(&username, password, words, true)?;
     let avatar_color = check_avatar(avatar_kind, avatar_color)?;
+    check_profanity(&state.db, &username).await?;
+    let password_hash = hash_password(&secret).await?;
     let mut tx = state.db.begin().await?;
-    check_profanity(&mut *tx, &username).await?;
     let banned = sqlx::query("SELECT 1 FROM banned_usernames WHERE username = $1")
         .bind(&key)
         .fetch_optional(&mut *tx)
@@ -212,10 +296,10 @@ pub(crate) async fn register(
     if banned {
         return Err(bad("Username is banned"));
     }
-    if get_user(&mut *tx, &key).await?.is_some() {
+    if crate::db::user_row(&mut *tx, &key).await?.is_some() {
         return Err(bad("Username is taken"));
     }
-    let user_count: i64 = sqlx::query("SELECT COUNT(*) FROM users")
+    let user_count: i64 = sqlx::query("SELECT COUNT(*) FROM (SELECT 1 FROM users LIMIT 1) t")
         .fetch_one(&mut *tx)
         .await?
         .try_get(0)?;
@@ -225,7 +309,7 @@ pub(crate) async fn register(
     )
     .bind(&key)
     .bind(&username)
-    .bind(hash_password(&secret)?)
+    .bind(&password_hash)
     .bind(password_kind)
     .bind(avatar_kind.as_str())
     .bind(&avatar_color)
@@ -353,7 +437,7 @@ pub(crate) async fn login(
     throttle_attempt(db, &key, t).await?;
     let (secret, _) = secret_from(&username, password, words, false)?;
     let user = match get_user(db, &key).await? {
-        Some(user) if verify_password(&secret, &user.password_hash) => user,
+        Some(user) if verify_password(&secret, &user.password_hash).await => user,
         _ => {
             return Err(ApiError(
                 StatusCode::UNAUTHORIZED,
@@ -366,12 +450,12 @@ pub(crate) async fn login(
     Ok(Json(AuthResp { token, user: me }))
 }
 
-#[utoipa::path(get, path = "/api/me", responses((status = 200, description = "The signed-in user's profile with the first page (50) of joined servers and of DMs; `servers_more`/`dms_more` say whether `/api/me/servers` and `/api/dms` have more", body = Me)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/me", responses((status = 200, description = "The signed-in user's profile with the first page (50) of joined servers and of DMs; `servers_more`/`dms_more` say whether `/api/me/servers` and `/api/dms` have more, and `servers_cursor`/`dms_cursor` are the `cursor` values for their next pages (null when there are no more)", body = Me)), security(("bearer" = [])))]
 pub(crate) async fn me(
     State(state): State<AppState>,
     Authed(user): Authed,
 ) -> Result<Json<Me>, ApiError> {
-    Ok(Json(me_payload(&state.db, &user).await?))
+    Ok(Json(me_payload(&state.read(), &user).await?))
 }
 
 #[utoipa::path(post, path = "/api/me/password", request_body(content = PasswordChange, description = "`current` and `new` each take exactly one of `password` (any non-empty text) or `words` (7 words, in order, from the account's word set). Switching between text and words is allowed"), responses((status = 200, description = "Password changed. Every other login token of the account is revoked and their live connections close; the token used for this request stays valid", body = OkResp), (status = 400, description = "Missing or invalid new password"), (status = 401, description = "Wrong current password"), (status = 423, description = "Account locked for the day after too many attempts"), (status = 429, description = "Attempts share the login throttle: one every 3 seconds per account")), security(("bearer" = [])))]
@@ -394,11 +478,11 @@ pub(crate) async fn change_password(
     let (secret, _) = secret_from(&user.username, password, words, false)?;
     let t = now();
     throttle_attempt(&state.db, &user.username, t).await?;
-    if !verify_password(&secret, &user.password_hash) {
+    if !verify_password(&secret, &user.password_hash).await {
         return Err(wrong_password());
     }
     let token = request_token(&headers).unwrap_or_default();
-    let hash = hash_password(&new_secret)?;
+    let hash = hash_password(&new_secret).await?;
     let mut tx = state.db.begin().await?;
     let changed = sqlx::query(
         "UPDATE users SET password_hash = $1, password_kind = $2 WHERE username = $3 AND password_hash = $4",
@@ -510,6 +594,7 @@ pub(crate) async fn patch_me(
     if avatar.is_some() {
         state.hub.broadcast(WsEvent::UserUpdated {
             user: user_ref.clone(),
+            scope: crate::ws::user_scope(&state.read(), &stored.username).await,
         });
     }
     if appear_offline.is_some() {
@@ -792,8 +877,8 @@ mod tests {
             .expect("load")
             .expect("tina");
         assert_eq!(user.password_kind, "words");
-        assert!(verify_password(&seven.join(" "), &user.password_hash));
-        assert!(!verify_password("a", &user.password_hash));
+        assert!(verify_password(&seven.join(" "), &user.password_hash).await);
+        assert!(!verify_password("a", &user.password_hash).await);
         assert_eq!(tokens_of(&state, "tina").await, vec![mine.clone()]);
         assert_eq!(tokens_of(&state, "bob").await, vec![other]);
         assert!(matches!(
@@ -825,7 +910,7 @@ mod tests {
             .expect("load")
             .expect("tina");
         assert_eq!(user.password_kind, "text");
-        assert!(verify_password("new pass", &user.password_hash));
+        assert!(verify_password("new pass", &user.password_hash).await);
         assert_eq!(tokens_of(&state, "tina").await, vec![second]);
         rewind(&state).await;
         let ok = login(
@@ -960,7 +1045,7 @@ mod tests {
             false => ("thief".to_string(), "p2"),
         };
         assert_eq!(left, vec![winner.0]);
-        assert!(verify_password(winner.1, &user.password_hash));
+        assert!(verify_password(winner.1, &user.password_hash).await);
         sqlx::query("DELETE FROM tokens WHERE username = 'vic'")
             .execute(&state.db)
             .await
@@ -982,7 +1067,7 @@ mod tests {
             .await
             .expect("load")
             .expect("vic");
-        assert!(verify_password("p3", &user.password_hash));
+        assert!(verify_password("p3", &user.password_hash).await);
         done(state, path).await;
     }
 
@@ -1094,7 +1179,7 @@ mod tests {
         assert!(stored(state.clone()).await);
         assert!(matches!(
             rx.try_recv(),
-            Ok(WsEvent::UserUpdated { user: _ })
+            Ok(WsEvent::UserUpdated { user: _, scope: _ })
         ));
         let _ = patch(None, None, Some(false)).await;
         assert!(!stored(state.clone()).await);
@@ -1112,7 +1197,7 @@ mod tests {
         assert!(stored(state.clone()).await);
         assert!(matches!(
             rx.try_recv(),
-            Ok(WsEvent::UserUpdated { user }) if user.avatar_color.as_deref() == Some("#abcdef")
+            Ok(WsEvent::UserUpdated { user, scope: _ }) if user.avatar_color.as_deref() == Some("#abcdef")
         ));
         assert!(matches!(
             rx.try_recv(),
@@ -1122,5 +1207,16 @@ mod tests {
             })
         ));
         done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn cached_verification_tracks_the_hash() {
+        let hash = hash_password("pw").await.expect("hash");
+        assert!(verify_password_cached("pw", &hash).await);
+        assert!(!verify_password_cached("nope", &hash).await);
+        assert!(verify_password_cached("pw", &hash).await);
+        let other = hash_password("pw2").await.expect("hash");
+        assert!(!verify_password_cached("pw", &other).await);
+        assert!(verify_password_cached("pw2", &other).await);
     }
 }

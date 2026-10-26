@@ -14,7 +14,7 @@ use tracing::{error, info, warn};
 
 use crate::api::embeds::{UnfurlJob, unfurl};
 use crate::config::Roles;
-use crate::hub::{Envelope, Hub, stream_pos};
+use crate::hub::{Envelope, Hub, READ_FLUSH, stream_pos};
 use crate::state::AppState;
 use crate::ws::to_bus_json;
 
@@ -24,6 +24,11 @@ const BLOCK_MS: u64 = 5_000;
 const TICK: Duration = Duration::from_secs(5);
 const START: &str = "0-0";
 const SNAPSHOT_WAITS: u32 = 6;
+const SNAPSHOT_FORCE: Duration = Duration::from_secs(60);
+const SNAPSHOT_LARGE: usize = 1 << 20;
+const SNAPSHOT_SLOW: Duration = Duration::from_secs(30);
+const SNAPSHOT_ATTEMPTS: u32 = 2;
+const SNAPSHOT_BACKOFF_CAP: Duration = Duration::from_secs(120);
 const EMBEDS_GROUP: &str = "embeds";
 const CLAIM_IDLE_MS: u64 = 60_000;
 const CLAIM_EVERY: Duration = Duration::from_secs(30);
@@ -186,9 +191,11 @@ pub async fn connect(
         maxlen: hub_maxlen,
     };
     let (hub, out) = Hub::replicated();
+    hub.coalesce_reads();
     tokio::spawn(publish(out, conn.clone(), log.clone(), hub.clone()));
     tokio::spawn(follow(tail, log.clone(), hub.clone()));
     tokio::spawn(heartbeats(hub.clone()));
+    tokio::spawn(reads(hub.clone()));
     let bus = Bus {
         conn,
         client,
@@ -201,7 +208,7 @@ pub async fn connect(
 }
 
 async fn publish(
-    mut rx: mpsc::UnboundedReceiver<Envelope>,
+    mut rx: mpsc::Receiver<Envelope>,
     mut conn: ConnectionManager,
     log: Log,
     hub: Hub,
@@ -410,31 +417,115 @@ async fn heartbeats(hub: Hub) {
     }
 }
 
-async fn snapshots(bus: Bus, key: String, hub: Hub) {
-    let mut every = tokio::time::interval(TICK);
+async fn reads(hub: Hub) {
+    let mut every = tokio::time::interval(READ_FLUSH);
     loop {
         every.tick().await;
-        if !hub.ready()
-            || !bus
-                .try_lock("hub-snapshot", TICK - Duration::from_millis(500))
-                .await
+        hub.flush_reads();
+    }
+}
+
+fn snapshot_wait(size: usize) -> Duration {
+    match size >= SNAPSHOT_LARGE {
+        true => SNAPSHOT_SLOW,
+        false => TICK,
+    }
+}
+
+async fn save_snapshot(
+    conn: &mut ConnectionManager,
+    sha: &mut Option<String>,
+    key: &str,
+    id: &str,
+    json: &str,
+) -> RedisResult<i64> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let hash = match sha {
+            Some(hash) => hash.clone(),
+            None => {
+                let loaded: String = redis::cmd("SCRIPT")
+                    .arg("LOAD")
+                    .arg(SAVE_SNAPSHOT)
+                    .query_async(conn)
+                    .await?;
+                sha.insert(loaded).clone()
+            }
+        };
+        let saved: RedisResult<i64> = redis::cmd("EVALSHA")
+            .arg(&hash)
+            .arg(1)
+            .arg(key)
+            .arg(id)
+            .arg(json)
+            .query_async(conn)
+            .await;
+        match saved {
+            Err(e) if e.code() == Some("NOSCRIPT") => {
+                *sha = None;
+                if attempt >= SNAPSHOT_ATTEMPTS {
+                    return Err(e);
+                }
+            }
+            other => return other,
+        }
+    }
+}
+
+fn snapshot_backoff(failures: u32) -> Duration {
+    TICK.saturating_mul(1 << failures.min(8))
+        .min(SNAPSHOT_BACKOFF_CAP)
+}
+
+async fn snapshots(bus: Bus, key: String, hub: Hub) {
+    let mut every = tokio::time::interval(TICK);
+    let mut sha: Option<String> = None;
+    let mut saved_at: Option<Instant> = None;
+    let mut size = 0;
+    let mut failures = 0;
+    let mut held_until: Option<Instant> = None;
+    loop {
+        every.tick().await;
+        if held_until.is_some_and(|t| Instant::now() < t) {
+            continue;
+        }
+        let since = saved_at.map(|t| t.elapsed());
+        if since.is_some_and(|s| s < snapshot_wait(size)) || !hub.ready() {
+            continue;
+        }
+        let force = since.is_none_or(|s| s >= SNAPSHOT_FORCE);
+        if !bus
+            .try_lock("hub-snapshot", TICK - Duration::from_millis(500))
+            .await
         {
             continue;
         }
-        let Some((id, json)) = hub.snapshot() else {
+        let Some((id, replica)) = hub.snapshot_state(force) else {
             continue;
         };
+        let json = match serde_json::to_string(&replica) {
+            Ok(json) => json,
+            Err(e) => {
+                warn!("realtime snapshot not serialized: {e}");
+                continue;
+            }
+        };
+        drop(replica);
+        size = json.len();
         let mut conn = bus.conn.clone();
-        let saved: RedisResult<i64> = redis::cmd("EVAL")
-            .arg(SAVE_SNAPSHOT)
-            .arg(1)
-            .arg(&key)
-            .arg(&id)
-            .arg(json)
-            .query_async(&mut conn)
-            .await;
-        if let Err(e) = saved {
-            warn!("realtime snapshot not saved: {e}");
+        match save_snapshot(&mut conn, &mut sha, &key, &id, &json).await {
+            Ok(_) => {
+                saved_at = Some(Instant::now());
+                failures = 0;
+                held_until = None;
+            }
+            Err(e) => {
+                hub.mark_dirty();
+                held_until = Some(Instant::now() + snapshot_backoff(failures));
+                failures += 1;
+                warn!("realtime snapshot not saved, retrying later: {e}");
+            }
         }
     }
 }
@@ -694,6 +785,14 @@ mod tests {
         for _ in 0..8 {
             tokio::task::yield_now().await;
         }
+    }
+
+    #[test]
+    fn snapshot_retries_back_off_to_a_cap() {
+        assert_eq!(snapshot_backoff(0), TICK);
+        assert_eq!(snapshot_backoff(1), TICK * 2);
+        assert_eq!(snapshot_backoff(3), TICK * 8);
+        assert_eq!(snapshot_backoff(30), SNAPSHOT_BACKOFF_CAP);
     }
 
     #[test]

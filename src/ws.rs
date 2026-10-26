@@ -1,15 +1,17 @@
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::extract::State;
-use axum::extract::ws::{Message as Frame, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{Message as Frame, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use futures_util::stream::SplitSink;
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tracing::{debug, warn};
 
@@ -22,6 +24,7 @@ use crate::db::{
     ChannelKind, Db, channel_access, channel_viewable, get_user, is_banned, now, setting_on,
     touch_interaction,
 };
+use crate::fanout::Topic;
 pub use crate::hub::Hub;
 use crate::hub::{Aftermath, CallEnd, Epoch, Op, P2pDrop, Purge};
 use crate::state::AppState;
@@ -42,11 +45,24 @@ pub enum CallKind {
 }
 
 const P2P_IDS_CAP: usize = 256;
+const P2P_ID_MAX: usize = 128;
+const SUBSCRIBE_CAP: usize = 100;
+const FRAME_MAX: usize = 64 * 1024;
+const SIGNAL_MAX: usize = 32 * 1024;
+const OUT_FRAMES: usize = 256;
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
+const MSG_RATE: f64 = 50.0;
+const MSG_BURST: f64 = 200.0;
+const VOICE_ROOM_MAX: usize = 25;
+pub const PURGE_CHUNK: usize = 500;
 const PING_EVERY: Duration = Duration::from_secs(30);
 const SILENT_LIMIT: Duration = Duration::from_secs(90);
 const REAUTH_RETRY: Duration = Duration::from_secs(2);
 const REAUTH_GIVE_UP: Duration = Duration::from_secs(30);
 const LOG_EVERY: Duration = Duration::from_secs(10);
+const LAG_REAUTH_EVERY: Duration = Duration::from_secs(2);
+const P2P_ANNOUNCE_EVERY: Duration = Duration::from_secs(1);
+const P2P_SCOPE_TTL: Duration = Duration::from_secs(60);
 
 struct Gate {
     last: Option<Instant>,
@@ -140,6 +156,71 @@ static AUTH_FAILED: LogGate = LogGate::new(LOG_EVERY, |n| {
 
 thread_local! {
     static BUS_WIRE: Cell<bool> = const { Cell::new(false) };
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserScope {
+    pub servers: Vec<String>,
+    pub views: Vec<String>,
+    pub users: Vec<String>,
+}
+
+impl UserScope {
+    pub fn is_empty(&self) -> bool {
+        let UserScope {
+            servers,
+            views,
+            users,
+        } = self;
+        servers.is_empty() && views.is_empty() && users.is_empty()
+    }
+}
+
+pub const USER_SCOPE_SERVERS: i64 = 500;
+pub const USER_SCOPE_DMS: i64 = 250;
+pub const USER_SCOPE_SMALL: i64 = 1000;
+
+pub async fn user_scope(db: &Db, user: &str) -> UserScope {
+    let mut scope = UserScope::default();
+    if let Ok(rows) = sqlx::query(
+        "SELECT m.server, s.member_count FROM members m JOIN servers s ON s.name = m.server WHERE m.username = $1 ORDER BY m.joined_at DESC LIMIT $2",
+    )
+    .bind(user)
+    .bind(USER_SCOPE_SERVERS)
+    .fetch_all(db)
+    .await
+    {
+        for r in &rows {
+            let (Ok(server), Ok(count)) = (r.try_get::<String, _>(0), r.try_get::<i64, _>(1)) else {
+                continue;
+            };
+            match count <= USER_SCOPE_SMALL {
+                true => scope.servers.push(server),
+                false => scope.views.push(server),
+            }
+        }
+    }
+    for sql in [
+        "SELECT user_b FROM dms WHERE user_a = $1 ORDER BY last_message_id DESC LIMIT $2",
+        "SELECT user_a FROM dms WHERE user_b = $1 ORDER BY last_message_id DESC LIMIT $2",
+    ] {
+        if let Ok(rows) = sqlx::query(sql)
+            .bind(user)
+            .bind(USER_SCOPE_DMS)
+            .fetch_all(db)
+            .await
+        {
+            scope.users.extend(
+                rows.iter()
+                    .filter_map(|r| r.try_get::<String, _>(0).ok())
+                    .filter(|u| u != user),
+            );
+        }
+    }
+    scope.users.push(user.to_string());
+    scope.users.sort();
+    scope.users.dedup();
+    scope
 }
 
 fn routing_only<T>(_: &T) -> bool {
@@ -241,6 +322,11 @@ pub enum WsEvent {
         username: String,
         banned: bool,
     },
+    MembersPurged {
+        server: String,
+        #[serde(default, skip_serializing_if = "routing_only")]
+        usernames: Vec<String>,
+    },
     AdminChanged {
         server: String,
         username: String,
@@ -256,6 +342,8 @@ pub enum WsEvent {
     },
     UserUpdated {
         user: UserRef,
+        #[serde(default, skip_serializing_if = "routing_only")]
+        scope: UserScope,
     },
     UserRegistered {
         user: UserRef,
@@ -379,13 +467,13 @@ enum ClientMsg {
 
 pub(crate) async fn evict_unviewable(state: &AppState, server: &str, channel_id: Option<i64>) {
     for (cid, users) in state.hub.rooms_in(server, channel_id) {
-        if let Ok(Some((owner, _))) = channel_now(&state.db, cid).await
+        if let Ok(Some((owner, _))) = channel_now(&state.read(), cid).await
             && owner != server
         {
             continue;
         }
         for user in users {
-            if !channel_viewable(&state.db, server, cid, Some(&user)).await {
+            if !channel_viewable(&state.read(), server, cid, Some(&user)).await {
                 state.hub.evict_voice(&user, cid);
             }
         }
@@ -405,7 +493,7 @@ async fn insert_call_log(state: &AppState, dm_id: i64, caller: &str) -> Result<i
 }
 
 async fn broadcast_call_log(state: &AppState, dm_id: i64, dm_users: Vec<String>, log_id: i64) {
-    if let Ok(Some(message)) = crate::api::messages::load_message(&state.db, log_id).await {
+    if let Ok(Some(message)) = crate::api::messages::load_message(&state.read(), log_id).await {
         state.hub.broadcast(WsEvent::Message {
             server: None,
             channel_id: None,
@@ -417,7 +505,7 @@ async fn broadcast_call_log(state: &AppState, dm_id: i64, dm_users: Vec<String>,
 }
 
 async fn broadcast_call_update(state: &AppState, dm_users: Vec<String>, log_id: i64) {
-    if let Ok(Some(message)) = crate::api::messages::load_message(&state.db, log_id).await {
+    if let Ok(Some(message)) = crate::api::messages::load_message(&state.read(), log_id).await {
         state.hub.broadcast(WsEvent::MessageUpdated {
             message: Box::new(message),
             dm_users,
@@ -472,11 +560,10 @@ async fn announce_hosting(
     state: &AppState,
     user: &str,
     conn: u64,
-    peer_id: String,
-    ids: Vec<String>,
+    (peer_id, ids): (String, Vec<String>),
+    (scope_servers, scope_users): P2pScope,
 ) {
     state.hub.set_p2p(user, conn, peer_id.clone(), ids.clone());
-    let (scope_servers, scope_users) = p2p_scope(&state.db, user).await;
     state.hub.broadcast(WsEvent::P2pAvailability {
         hoster: user.to_string(),
         peer_id: Some(peer_id),
@@ -487,17 +574,21 @@ async fn announce_hosting(
     });
 }
 
-async fn announce_drop(state: &AppState, user: &str, drop: P2pDrop) {
+async fn announce_drop(state: &AppState, user: &str, drop: P2pDrop, cached: Option<P2pScope>) {
+    let scope = async || match cached {
+        Some(scope) => scope,
+        None => p2p_scope(&state.read(), user).await,
+    };
     match drop {
         P2pDrop::Kept => {}
         P2pDrop::Offline => {
-            let (scope_servers, scope_users) = p2p_scope(&state.db, user).await;
+            let (scope_servers, scope_users) = scope().await;
             state
                 .hub
                 .broadcast(p2p_offline(user.to_string(), scope_servers, scope_users));
         }
         P2pDrop::Remaining(peer_id, ids) => {
-            let (scope_servers, scope_users) = p2p_scope(&state.db, user).await;
+            let (scope_servers, scope_users) = scope().await;
             state.hub.broadcast(WsEvent::P2pAvailability {
                 hoster: user.to_string(),
                 peer_id: Some(peer_id),
@@ -516,7 +607,7 @@ pub async fn settle(state: &AppState, purge: Purge) {
         finalize_call_log(state, end, false).await;
     }
     for (user, drop) in p2p {
-        announce_drop(state, &user, drop).await;
+        announce_drop(state, &user, drop, None).await;
     }
 }
 
@@ -571,8 +662,8 @@ async fn admin_state(db: &Db, server: &str, user: &str) -> sqlx::Result<Option<(
     }
 }
 
-async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
-    let db = &state.db;
+pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
+    let db = &state.read();
     match ev {
         WsEvent::Message {
             server,
@@ -674,6 +765,23 @@ async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 banned,
             }),
         },
+        WsEvent::MembersPurged { server, usernames } => {
+            let mut gone = Vec::new();
+            let mut stayed = false;
+            for username in usernames {
+                match is_member(db, &server, &username).await {
+                    Ok(true) => stayed = true,
+                    Ok(false) | Err(_) => gone.push(username),
+                }
+            }
+            if stayed {
+                evict_unviewable(state, &server, None).await;
+            }
+            (!gone.is_empty()).then_some(WsEvent::MembersPurged {
+                server,
+                usernames: gone,
+            })
+        }
         WsEvent::PresenceMode {
             username,
             appear_offline: _,
@@ -698,10 +806,11 @@ async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 perms,
             })
         }
-        WsEvent::UserUpdated { user } => {
+        WsEvent::UserUpdated { user, scope } => {
             let user = get_user(db, &user.username).await.ok().flatten()?;
             Some(WsEvent::UserUpdated {
                 user: UserRef::from_user(&user),
+                scope,
             })
         }
         WsEvent::UserRegistered { user } => {
@@ -763,7 +872,7 @@ async fn repost_event(state: &AppState, event: WsEvent) {
             thread_root_id: message.thread_root_id,
         };
         if state.hub.broadcast_confirmed(ev).await {
-            if matches!(load_message(&state.db, id).await, Ok(None)) {
+            if matches!(load_message(&state.read(), id).await, Ok(None)) {
                 state.hub.broadcast(deleted);
             }
             return;
@@ -775,14 +884,17 @@ pub(crate) async fn repost(state: &AppState, op: Op) {
     match op {
         Op::Broadcast { event } => repost_event(state, event).await,
         Op::ForceOffline { server, user } => {
-            if !is_member(&state.db, &server, &user).await.unwrap_or(false) {
+            if !is_member(&state.read(), &server, &user)
+                .await
+                .unwrap_or(false)
+            {
                 state.hub.force_offline(&server, &user);
             }
         }
         Op::EvictVoice { user, channel_id } => {
-            let allowed = match channel_now(&state.db, channel_id).await {
+            let allowed = match channel_now(&state.read(), channel_id).await {
                 Ok(Some((server, _))) => {
-                    channel_viewable(&state.db, &server, channel_id, Some(&user)).await
+                    channel_viewable(&state.read(), &server, channel_id, Some(&user)).await
                 }
                 Ok(None) | Err(_) => false,
             };
@@ -792,6 +904,25 @@ pub(crate) async fn repost(state: &AppState, op: Op) {
         }
         _ => {}
     }
+}
+
+pub fn announce_purge(hub: &Hub, server: &str, usernames: &[String]) {
+    for chunk in usernames.chunks(PURGE_CHUNK) {
+        hub.broadcast(WsEvent::MembersPurged {
+            server: server.to_string(),
+            usernames: chunk.to_vec(),
+        });
+    }
+}
+
+fn voice_room_max() -> usize {
+    static MAX: OnceLock<usize> = OnceLock::new();
+    *MAX.get_or_init(|| {
+        std::env::var("VOICE_ROOM_MAX")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(VOICE_ROOM_MAX)
+    })
 }
 
 pub async fn depart(state: &AppState) {
@@ -807,7 +938,9 @@ pub async fn handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Res
     if !state.hub.ready() {
         return (StatusCode::SERVICE_UNAVAILABLE, "Realtime bus not ready").into_response();
     }
-    ws.on_upgrade(move |socket| run(state, socket))
+    ws.max_message_size(FRAME_MAX)
+        .max_frame_size(FRAME_MAX)
+        .on_upgrade(move |socket| run(state, socket))
 }
 
 async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> Result<(), String> {
@@ -816,7 +949,7 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
         ClientMsg::VoiceJoin { channel_id } => {
             let row = sqlx::query("SELECT server, kind FROM channels WHERE id = $1")
                 .bind(channel_id)
-                .fetch_optional(&state.db)
+                .fetch_optional(&state.read())
                 .await
                 .map_err(db_err)?
                 .ok_or_else(|| "Channel not found".to_string())?;
@@ -826,13 +959,20 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             if kind != ChannelKind::Voice {
                 return Err("Not a voice channel".to_string());
             }
-            if is_banned(&state.db, &server, user).await.map_err(db_err)? {
+            if is_banned(&state.read(), &server, user)
+                .await
+                .map_err(db_err)?
+            {
                 return Err("You are banned from this server".to_string());
             }
-            if !channel_viewable(&state.db, &server, channel_id, Some(user)).await {
+            if !channel_viewable(&state.read(), &server, channel_id, Some(user)).await {
                 return Err("Not allowed".to_string());
             }
-            for end in state.hub.voice_join(user, conn, &server, channel_id).await {
+            let ends = state
+                .hub
+                .voice_join_capped(user, conn, &server, channel_id, voice_room_max())
+                .await?;
+            for end in ends {
                 finalize_call_log(state, end, false).await;
             }
             touch_interaction(&state.db, &server, user)
@@ -846,7 +986,7 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
         ClientMsg::CallStart { dm_id, p2p } => {
             let row = sqlx::query("SELECT user_a, user_b FROM dms WHERE id = $1")
                 .bind(dm_id)
-                .fetch_optional(&state.db)
+                .fetch_optional(&state.read())
                 .await
                 .map_err(db_err)?
                 .ok_or_else(|| "DM not found".to_string())?;
@@ -906,6 +1046,9 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             payload,
         } => {
             let to = to.to_lowercase();
+            if serde_json::to_string(&payload).map_or(true, |p| p.len() > SIGNAL_MAX) {
+                return Err("Signal too large".to_string());
+            }
             match state.hub.rtc_shared(user, &to, channel_id, dm_id) {
                 true => {
                     state.hub.broadcast(WsEvent::RtcSignal {
@@ -931,24 +1074,15 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
     }
 }
 
-async fn p2p_scope(db: &Db, user: &str) -> (Vec<String>, Vec<String>) {
-    let servers = sqlx::query("SELECT server FROM members WHERE username = $1")
-        .bind(user)
-        .fetch_all(db)
-        .await
-        .map(|rows| rows.iter().filter_map(|r| r.try_get(0).ok()).collect())
-        .unwrap_or_default();
-    let users = sqlx::query("SELECT user_a, user_b FROM dms WHERE user_a = $1 OR user_b = $1")
-        .bind(user)
-        .fetch_all(db)
-        .await
-        .map(|rows| {
-            rows.iter()
-                .flat_map(|r| [r.try_get(0).ok(), r.try_get(1).ok()])
-                .flatten()
-                .collect()
-        })
-        .unwrap_or_default();
+type P2pScope = (Vec<String>, Vec<String>);
+
+async fn p2p_scope(db: &Db, user: &str) -> P2pScope {
+    let UserScope {
+        mut servers,
+        views,
+        users,
+    } = user_scope(db, user).await;
+    servers.extend(views);
     (servers, users)
 }
 
@@ -1026,7 +1160,7 @@ async fn token_live(db: &Db, token: Option<&str>) -> sqlx::Result<bool> {
 
 async fn session_of(db: &Db, token: &str) -> sqlx::Result<Option<bool>> {
     match sqlx::query(
-        "SELECT u.appear_offline FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1",
+        "SELECT u.appear_offline FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
     )
     .bind(token)
     .fetch_optional(db)
@@ -1101,6 +1235,56 @@ impl Retry {
     }
 }
 
+struct Pace {
+    every: Duration,
+    last: Option<Instant>,
+    due: Option<Instant>,
+}
+
+impl Pace {
+    fn new(every: Duration) -> Pace {
+        Pace {
+            every,
+            last: None,
+            due: None,
+        }
+    }
+
+    fn hit(&mut self, now: Instant) -> bool {
+        match self.last {
+            Some(last) if now < last + self.every => {
+                self.due = Some(last + self.every);
+                false
+            }
+            Some(_) | None => {
+                self.fire(now);
+                true
+            }
+        }
+    }
+
+    fn fire(&mut self, now: Instant) {
+        self.last = Some(now);
+        self.due = None;
+    }
+}
+
+async fn catch_up(
+    state: &AppState,
+    conn: u64,
+    access: &mut Access,
+    inbox: &mut crate::fanout::Inbox,
+    lag: &mut Pace,
+    seq: u64,
+) -> (u64, bool) {
+    let through = inbox.drain().unwrap_or(seq).max(seq);
+    if !lag.hit(Instant::now()) {
+        return (through, true);
+    }
+    access.missed = true;
+    (through, access.refresh(state, conn).await)
+}
+
 struct Access {
     user: Option<String>,
     token: Option<String>,
@@ -1114,8 +1298,11 @@ struct Access {
     dark: bool,
     missed: bool,
     hosting: Option<(String, Vec<String>)>,
+    hosted_scope: Option<(Instant, P2pScope)>,
+    hosting_pace: Pace,
     viewable: Viewable,
     retry: Retry,
+    topics_dirty: bool,
 }
 
 impl Access {
@@ -1133,9 +1320,29 @@ impl Access {
             dark: false,
             missed: false,
             hosting: None,
+            hosted_scope: None,
+            hosting_pace: Pace::new(P2P_ANNOUNCE_EVERY),
             viewable: HashMap::new(),
             retry: Retry::new(),
+            topics_dirty: false,
         }
+    }
+
+    fn topics(&self) -> HashSet<Topic> {
+        let mut topics = HashSet::new();
+        if self.site_admin {
+            topics.insert(Topic::Admin);
+        }
+        if let Some(user) = &self.user {
+            topics.insert(Topic::User(user.clone()));
+        }
+        for server in self.member_servers.iter().chain(self.subs.iter()) {
+            topics.insert(Topic::Server(server.clone()));
+        }
+        for server in self.subs.iter().chain(self.viewing.iter()) {
+            topics.insert(Topic::View(server.clone()));
+        }
+        topics
     }
 
     fn target(&self) -> Option<String> {
@@ -1157,6 +1364,7 @@ impl Access {
     }
 
     fn view(&mut self, hub: &Hub, conn: u64, target: Option<String>) {
+        self.topics_dirty |= self.viewing != target;
         self.viewing = target;
         self.sync(hub, conn);
     }
@@ -1180,8 +1388,40 @@ impl Access {
 
     async fn announce(&mut self, state: &AppState, conn: u64) {
         self.reshow(&state.hub, conn);
-        if let (Some(user), Some((peer_id, ids)), false) = (&self.user, &self.hosting, self.dark) {
-            announce_hosting(state, user, conn, peer_id.clone(), ids.clone()).await;
+        self.announce_hosting(state, conn).await;
+    }
+
+    async fn scope_of_hosting(&mut self, state: &AppState) -> Option<P2pScope> {
+        let user = self.user.as_deref()?;
+        if let Some((at, scope)) = &self.hosted_scope
+            && at.elapsed() < P2P_SCOPE_TTL
+        {
+            return Some(scope.clone());
+        }
+        let scope = p2p_scope(&state.read(), user).await;
+        self.hosted_scope = Some((Instant::now(), scope.clone()));
+        Some(scope)
+    }
+
+    async fn announce_hosting(&mut self, state: &AppState, conn: u64) {
+        if self.dark || self.hosting.is_none() {
+            return;
+        }
+        let Some(scope) = self.scope_of_hosting(state).await else {
+            return;
+        };
+        if let (Some(user), Some(hosting)) = (&self.user, &self.hosting) {
+            announce_hosting(state, user, conn, hosting.clone(), scope).await;
+        }
+    }
+
+    async fn host(&mut self, state: &AppState, conn: u64, hosting: (String, Vec<String>)) {
+        if self.hosting.as_ref() == Some(&hosting) {
+            return;
+        }
+        self.hosting = Some(hosting);
+        if self.hosting_pace.hit(Instant::now()) {
+            self.announce_hosting(state, conn).await;
         }
     }
 
@@ -1244,7 +1484,7 @@ impl Access {
             return true;
         }
         let started = Instant::now();
-        match still_held(&state.db, self, name).await {
+        match still_held(&state.read(), self, name).await {
             Ok(true) => true,
             Ok(false) => self.refresh(state, conn).await,
             Err(e) => self.hold(e, started),
@@ -1253,7 +1493,7 @@ impl Access {
 }
 
 async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::Result<bool> {
-    let db = &state.db;
+    let db = &state.read();
     let (servers, hidden) = match &access.user {
         Some(user) => {
             let session = match &access.token {
@@ -1266,7 +1506,7 @@ async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::Result<bool
             (member_servers_of(db, user).await?, hidden)
         }
         None => {
-            if !setting_on(db, "guests_enabled").await {
+            if !setting_on(db, "guests_enabled").await? {
                 return Ok(false);
             }
             (HashSet::new(), false)
@@ -1286,6 +1526,9 @@ async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::Result<bool
         }
     }
     access.viewable.clear();
+    if access.member_servers != servers {
+        access.hosted_scope = None;
+    }
     access.member_servers = servers;
     access.hidden = hidden;
     access.grants.retain(|server, _| kept.contains(server));
@@ -1297,6 +1540,7 @@ async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::Result<bool
     {
         access.viewing = None;
     }
+    access.topics_dirty = true;
     Ok(true)
 }
 
@@ -1330,6 +1574,18 @@ fn self_grant<'a>(ev: &'a WsEvent, me: Option<&str>) -> Option<&'a str> {
     }
 }
 
+async fn channel_public(db: &Db, cid: i64) -> sqlx::Result<Option<(String, bool)>> {
+    let Some((owner, _)) = channel_now(db, cid).await? else {
+        return Ok(None);
+    };
+    let restricted = sqlx::query("SELECT 1 FROM channel_perms WHERE channel_id = $1 LIMIT 1")
+        .bind(cid)
+        .fetch_optional(db)
+        .await?
+        .is_some();
+    Ok(Some((owner, !restricted)))
+}
+
 async fn channel_view(
     db: &Db,
     username: Option<&str>,
@@ -1356,7 +1612,19 @@ async fn channel_gate(
         return Some(*view && owner == server);
     }
     let started = Instant::now();
-    match channel_view(&state.db, access.user.as_deref(), cid).await {
+    let slot = state.hub.channels().slot(cid);
+    let read = state.read();
+    let shared = slot
+        .get_or_try_init(|| channel_public(&read, cid))
+        .await
+        .cloned();
+    let looked = match shared {
+        Ok(Some((owner, true))) => Ok(Some((owner, true))),
+        Ok(Some((_, false))) => channel_view(&state.read(), access.user.as_deref(), cid).await,
+        Ok(None) => Ok(None),
+        Err(e) => Err(e),
+    };
+    match looked {
         Ok(Some((owner, view))) => {
             let open = view && owner == server;
             access.viewable.insert(cid, (owner, view));
@@ -1370,7 +1638,7 @@ async fn channel_gate(
 async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent) -> Option<bool> {
     if let (Some(server), Some(user)) = (self_grant(ev, access.user.as_deref()), &access.user) {
         let started = Instant::now();
-        match is_member(&state.db, server, user).await {
+        match is_member(&state.read(), server, user).await {
             Ok(true) => {}
             Ok(false) => return Some(false),
             Err(e) => return access.hold(e, started).then_some(false),
@@ -1403,12 +1671,110 @@ async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent
     Some(deliver)
 }
 
-async fn send_voice_snapshot(
-    state: &AppState,
-    socket: &mut WebSocket,
-    access: &mut Access,
-) -> bool {
-    for ev in state.hub.voice_snapshot() {
+enum Sent {
+    Queued,
+    Full,
+    Closed,
+}
+
+struct Out {
+    tx: mpsc::Sender<Frame>,
+}
+
+impl Out {
+    fn spawn(mut sink: SplitSink<WebSocket, Frame>) -> Out {
+        let (tx, mut rx) = mpsc::channel::<Frame>(OUT_FRAMES);
+        tokio::spawn(async move {
+            while let Some(frame) = rx.recv().await {
+                match tokio::time::timeout(SEND_TIMEOUT, sink.send(frame)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) | Err(_) => break,
+                }
+            }
+            let _ = tokio::time::timeout(SEND_TIMEOUT, sink.close()).await;
+        });
+        Out { tx }
+    }
+
+    fn push(&self, frame: Frame) -> Sent {
+        match self.tx.try_send(frame) {
+            Ok(()) => Sent::Queued,
+            Err(mpsc::error::TrySendError::Full(_)) => Sent::Full,
+            Err(mpsc::error::TrySendError::Closed(_)) => Sent::Closed,
+        }
+    }
+
+    fn text(&self, text: Utf8Bytes) -> Sent {
+        self.push(Frame::Text(text))
+    }
+
+    fn event(&self, ev: &WsEvent) -> Sent {
+        match serde_json::to_string(ev) {
+            Ok(json) => self.text(json.into()),
+            Err(_) => Sent::Queued,
+        }
+    }
+}
+
+fn sent(access: &mut Access, res: Sent) -> bool {
+    match res {
+        Sent::Queued => true,
+        Sent::Full => {
+            access.missed = true;
+            true
+        }
+        Sent::Closed => false,
+    }
+}
+
+struct Bucket {
+    tokens: f64,
+    at: Instant,
+}
+
+impl Bucket {
+    fn new() -> Bucket {
+        Bucket {
+            tokens: MSG_BURST,
+            at: Instant::now(),
+        }
+    }
+
+    fn take(&mut self, now: Instant) -> Option<bool> {
+        let refill = now.duration_since(self.at).as_secs_f64() * MSG_RATE;
+        self.tokens = (self.tokens + refill).min(MSG_BURST) - 1.0;
+        self.at = now;
+        match self.tokens {
+            t if t >= 0.0 => Some(true),
+            t if t < -MSG_BURST => None,
+            _ => Some(false),
+        }
+    }
+}
+
+fn client_frame(fanned: &crate::fanout::Fanned, me: Option<&str>) -> Option<Utf8Bytes> {
+    match (&fanned.ev, me) {
+        (WsEvent::MembersPurged { server, usernames }, Some(me))
+            if usernames.iter().any(|u| u == me) =>
+        {
+            serde_json::to_string(&WsEvent::MemberKicked {
+                server: server.clone(),
+                username: me.to_string(),
+                banned: false,
+            })
+            .ok()
+            .map(Utf8Bytes::from)
+        }
+        (_, _) => fanned.frame(),
+    }
+}
+
+async fn send_voice_snapshot(state: &AppState, out: &Out, access: &mut Access) -> bool {
+    let snapshot = state.hub.voice_snapshot_for(
+        access.member_servers.iter().chain(access.subs.iter()),
+        access.user.as_deref(),
+    );
+    for ev in snapshot {
         if !access.wants(&ev) {
             continue;
         }
@@ -1419,9 +1785,7 @@ async fn send_voice_snapshot(
                 None => return false,
             }
         }
-        if let Ok(json) = serde_json::to_string(&ev)
-            && socket.send(Frame::Text(json.into())).await.is_err()
-        {
+        if !sent(access, out.event(&ev)) {
             return false;
         }
     }
@@ -1437,6 +1801,24 @@ fn refuse(e: sqlx::Error) {
     }
 }
 
+struct Listening {
+    hub: Hub,
+    conn: u64,
+}
+
+impl Drop for Listening {
+    fn drop(&mut self) {
+        self.hub.close(self.conn);
+    }
+}
+
+fn hosting_ids(ids: Vec<String>) -> Vec<String> {
+    ids.into_iter()
+        .filter(|id| id.len() <= P2P_ID_MAX)
+        .take(P2P_IDS_CAP)
+        .collect()
+}
+
 async fn run(state: AppState, mut socket: WebSocket) {
     let conn = state.hub.next_conn();
     let token = loop {
@@ -1449,16 +1831,20 @@ async fn run(state: AppState, mut socket: WebSocket) {
             Some(Ok(_)) => {}
         }
     };
-    let mut rx = state.hub.subscribe();
+    let mut inbox = state.hub.open(conn, &HashSet::from([Topic::All]));
+    let _listening = Listening {
+        hub: state.hub.clone(),
+        conn,
+    };
     let mut epoch = state.hub.epoch();
     let mut lossy = epoch.borrow_and_update().lossy;
     let (username, is_site_admin, hidden): (Option<String>, bool, bool) = match &token {
         Some(token) => {
             let row = sqlx::query(
-                "SELECT u.username, u.is_site_admin, u.appear_offline FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1",
+                "SELECT u.username, u.is_site_admin, u.appear_offline FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
             )
             .bind(token)
-            .fetch_optional(&state.db)
+            .fetch_optional(&state.read())
             .await;
             match row {
                 Ok(Some(r)) => (
@@ -1472,50 +1858,66 @@ async fn run(state: AppState, mut socket: WebSocket) {
         }
         None => (None, false, false),
     };
+    if let Some(user) = &username {
+        state.hub.listen(conn, &[Topic::User(user.clone())]);
+    }
     let member_servers: HashSet<String> = match &username {
-        Some(user) => match member_servers_of(&state.db, user).await {
+        Some(user) => match member_servers_of(&state.read(), user).await {
             Ok(servers) => servers,
             Err(e) => return refuse(e),
         },
         None => HashSet::new(),
     };
-    if username.is_none() && !setting_on(&state.db, "guests_enabled").await {
-        return;
+    if username.is_none() {
+        match setting_on(&state.read(), "guests_enabled").await {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(e) => return refuse(e),
+        }
     }
     let mut access = Access::new(username, is_site_admin, member_servers);
     access.hidden = hidden;
     access.token = token.filter(|_| access.user.is_some());
+    state.hub.reconcile(conn, &access.topics(), 0);
+    let (sink, mut stream) = socket.split();
+    let out = Out::spawn(sink);
+    let mut through = 0;
+    let mut bucket = Bucket::new();
     let mut ping = tokio::time::interval_at(Instant::now() + PING_EVERY, PING_EVERY);
     let mut heard = Instant::now();
-    if !send_voice_snapshot(&state, &mut socket, &mut access).await {
+    let mut lag = Pace::new(LAG_REAUTH_EVERY);
+    if !send_voice_snapshot(&state, &out, &mut access).await {
         return;
     }
     loop {
         tokio::select! {
-            ev = rx.recv() => {
-                let ev = match ev {
-                    Ok(ev) => Some(ev),
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        access.missed = true;
-                        if !access.refresh(&state, conn).await {
-                            break;
-                        }
-                        None
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
+            got = inbox.rx.recv() => {
+                let Some(fanned) = got else {
+                    break;
                 };
-                if let Some(ev) = ev {
-                    let Some(deliver) = on_event(&state, conn, &mut access, &ev).await else {
+                if lag.due.is_some() {
+                    through = inbox.drain().unwrap_or(fanned.seq).max(fanned.seq);
+                } else if inbox.lagged() {
+                    let (seen, open) = catch_up(&state, conn, &mut access, &mut inbox, &mut lag, fanned.seq).await;
+                    through = seen;
+                    if !open {
+                        break;
+                    }
+                } else {
+                    through = fanned.seq;
+                    let ev = &fanned.ev;
+                    let Some(deliver) = on_event(&state, conn, &mut access, ev).await else {
                         break;
                     };
                     if deliver
-                        && let Ok(json) = serde_json::to_string(&ev)
-                            && socket.send(Frame::Text(json.into())).await.is_err() {
-                                break;
-                            }
-                    match &ev {
+                        && let Some(frame) = client_frame(&fanned, access.user.as_deref())
+                        && !sent(&mut access, out.text(frame))
+                    {
+                        break;
+                    }
+                    match ev {
                         WsEvent::Banned { username: banned } if Some(banned.as_str()) == access.user.as_deref() => break,
-                        WsEvent::TokensRevoked { username: user } if Some(user.as_str()) == access.user.as_deref() && !access.check_token(&state.db).await => break,
+                        WsEvent::TokensRevoked { username: user } if Some(user.as_str()) == access.user.as_deref() && !access.check_token(&state.read()).await => break,
                         WsEvent::SettingsChanged { settings } if access.user.is_none() && !settings.guests_enabled => break,
                         WsEvent::PresenceMode { username: user, appear_offline } if Some(user.as_str()) == access.user.as_deref() => {
                             access.set_hidden(&state.hub, conn, *appear_offline);
@@ -1524,29 +1926,45 @@ async fn run(state: AppState, mut socket: WebSocket) {
                     }
                 }
             }
-            msg = socket.recv() => {
+            msg = stream.next() => {
                 heard = Instant::now();
+                if matches!(msg, Some(Ok(Frame::Text(_)))) {
+                    match bucket.take(heard) {
+                        Some(true) => {}
+                        Some(false) => continue,
+                        None => {
+                            debug!("closed a realtime connection that kept flooding messages");
+                            break;
+                        }
+                    }
+                }
                 match msg {
                     Some(Ok(Frame::Text(text))) => match serde_json::from_str::<ClientMsg>(&text) {
                         Ok(ClientMsg::Viewing { server }) => {
                             let target = match (&access.user, server) {
                                 (Some(user), Some(s)) => {
                                     let s = s.to_lowercase();
-                                    is_member(&state.db, &s, user).await.unwrap_or(false).then_some(s)
+                                    state.hub.listen(conn, &[Topic::View(s.clone())]);
+                                    let member = is_member(&state.read(), &s, user).await.unwrap_or(false);
+                                    access.topics_dirty |= !member && !access.subs.contains(&s);
+                                    member.then_some(s)
                                 }
                                 (_, _) => None,
                             };
                             access.view(&state.hub, conn, target);
                         }
                         Ok(ClientMsg::Subscribe { servers, grants }) => {
+                            let servers: Vec<String> = servers.into_iter().take(SUBSCRIBE_CAP).map(|s| s.to_lowercase()).collect();
+                            let early: Vec<Topic> = servers.iter().flat_map(|s| [Topic::Server(s.clone()), Topic::View(s.clone())]).collect();
+                            state.hub.listen(conn, &early);
                             access.subs.clear();
                             access.grants.clear();
+                            access.topics_dirty = true;
                             for s in servers {
-                                let s = s.to_lowercase();
                                 let grant = grants.get(&s).cloned();
                                 let allowed = match &access.user {
-                                    Some(user) => authed_sub_ok(&state.db, &s, user, access.site_admin).await.unwrap_or(false),
-                                    None => guest_sub_ok(&state.db, &s, grant.as_deref()).await.unwrap_or(false),
+                                    Some(user) => authed_sub_ok(&state.read(), &s, user, access.site_admin).await.unwrap_or(false),
+                                    None => guest_sub_ok(&state.read(), &s, grant.as_deref()).await.unwrap_or(false),
                                 };
                                 if allowed {
                                     if let Some(g) = grant {
@@ -1555,17 +1973,13 @@ async fn run(state: AppState, mut socket: WebSocket) {
                                     access.subs.insert(s);
                                 }
                             }
-                            if !send_voice_snapshot(&state, &mut socket, &mut access).await {
+                            if !send_voice_snapshot(&state, &out, &mut access).await {
                                 break;
                             }
                         }
                         Ok(ClientMsg::P2pHosting { peer_id, ids }) => {
-                            if let Some(user) = &access.user {
-                                let ids: Vec<String> = ids.into_iter().take(P2P_IDS_CAP).collect();
-                                access.hosting = Some((peer_id.clone(), ids.clone()));
-                                if !access.dark {
-                                    announce_hosting(&state, user, conn, peer_id, ids).await;
-                                }
+                            if access.user.is_some() && peer_id.len() <= P2P_ID_MAX {
+                                access.host(&state, conn, (peer_id, hosting_ids(ids))).await;
                             }
                         }
                         Ok(ClientMsg::P2pWho { hosters: _ }) if access.retry.pending() => {}
@@ -1584,11 +1998,10 @@ async fn run(state: AppState, mut socket: WebSocket) {
                                     },
                                     None => p2p_offline(hoster, Vec::new(), Vec::new()),
                                 };
-                                if let Ok(json) = serde_json::to_string(&ev)
-                                    && socket.send(Frame::Text(json.into())).await.is_err() {
-                                        closed = true;
-                                        break;
-                                    }
+                                if !sent(&mut access, out.event(&ev)) {
+                                    closed = true;
+                                    break;
+                                }
                             }
                             if closed {
                                 break;
@@ -1603,10 +2016,10 @@ async fn run(state: AppState, mut socket: WebSocket) {
                                 (None, _) => Err("Create an account to join voice".to_string()),
                             };
                             if let Err(message) = res
-                                && let Ok(json) = serde_json::to_string(&WsEvent::Error { message })
-                                    && socket.send(Frame::Text(json.into())).await.is_err() {
-                                        break;
-                                    }
+                                && !sent(&mut access, out.event(&WsEvent::Error { message }))
+                            {
+                                break;
+                            }
                         }
                     },
                     Some(Ok(Frame::Close(_))) | None => break,
@@ -1615,11 +2028,22 @@ async fn run(state: AppState, mut socket: WebSocket) {
                 }
             }
             _ = ping.tick() => {
-                if heard.elapsed() > SILENT_LIMIT || socket.send(Frame::Ping(Default::default())).await.is_err() {
+                if heard.elapsed() > SILENT_LIMIT || matches!(out.push(Frame::Ping(Default::default())), Sent::Closed) {
                     break;
                 }
             }
             _ = tokio::time::sleep_until(access.retry.at.unwrap_or_else(Instant::now)), if access.retry.pending() => {
+                if !access.refresh(&state, conn).await {
+                    break;
+                }
+            }
+            _ = tokio::time::sleep_until(access.hosting_pace.due.unwrap_or_else(Instant::now)), if access.hosting_pace.due.is_some() => {
+                access.hosting_pace.fire(Instant::now());
+                access.announce_hosting(&state, conn).await;
+            }
+            _ = tokio::time::sleep_until(lag.due.unwrap_or_else(Instant::now)), if lag.due.is_some() => {
+                lag.fire(Instant::now());
+                access.missed = true;
                 if !access.refresh(&state, conn).await {
                     break;
                 }
@@ -1633,6 +2057,10 @@ async fn run(state: AppState, mut socket: WebSocket) {
                 }
                 access.announce(&state, conn).await;
             }
+            _ = out.tx.closed() => break,
+        }
+        if std::mem::take(&mut access.topics_dirty) {
+            state.hub.reconcile(conn, &access.topics(), through);
         }
         if access.retry.pending() {
             continue;
@@ -1640,19 +2068,33 @@ async fn run(state: AppState, mut socket: WebSocket) {
         if access.dark {
             access.announce(&state, conn).await;
         }
-        if std::mem::take(&mut access.missed)
-            && let Ok(json) = serde_json::to_string(&WsEvent::Resync)
-            && socket.send(Frame::Text(json.into())).await.is_err()
-        {
-            break;
+        if std::mem::take(&mut access.missed) {
+            match out.event(&WsEvent::Resync) {
+                Sent::Queued => {}
+                Sent::Full => access.missed = true,
+                Sent::Closed => break,
+            }
         }
     }
+    drop(inbox);
+    state.hub.close(conn);
     if let Some(user) = &access.user {
         let (ends, drop) = state.hub.drop_conn(user, conn).await;
         for end in ends {
             finalize_call_log(&state, end, false).await;
         }
-        announce_drop(&state, user, drop).await;
+        let cached = access.hosted_scope.take().map(|(_, scope)| scope);
+        announce_drop(&state, user, drop, cached).await;
+    }
+}
+
+fn leave(access: &mut Access, server: &str) {
+    access.member_servers.remove(server);
+    access.hosted_scope = None;
+    access.viewable.clear();
+    access.topics_dirty = true;
+    if access.viewing.as_deref() == Some(server) {
+        access.viewing = None;
     }
 }
 
@@ -1662,7 +2104,9 @@ fn track(ev: &WsEvent, access: &mut Access) {
         WsEvent::MemberJoined { server, member } => {
             if Some(member.user.username.as_str()) == me {
                 access.member_servers.insert(server.clone());
+                access.hosted_scope = None;
                 access.viewable.clear();
+                access.topics_dirty = true;
             }
         }
         WsEvent::MemberLeft { server, username }
@@ -1672,30 +2116,35 @@ fn track(ev: &WsEvent, access: &mut Access) {
             banned: _,
         } => {
             if Some(username.as_str()) == me {
-                access.member_servers.remove(server);
-                access.viewable.clear();
-                if access.viewing.as_deref() == Some(server.as_str()) {
-                    access.viewing = None;
-                }
+                leave(access, server);
+            }
+        }
+        WsEvent::MembersPurged { server, usernames } => {
+            if me.is_some_and(|me| usernames.iter().any(|u| u == me)) {
+                leave(access, server);
             }
         }
         WsEvent::ServerCreated { server } => {
             if server.creator.as_deref() == me {
                 access.member_servers.insert(server.name.clone());
+                access.hosted_scope = None;
                 access.viewable.clear();
+                access.topics_dirty = true;
             }
         }
         WsEvent::AdminChanged {
-            server: _,
+            server,
             username,
             is_admin: _,
             perms: _,
         } => {
             if Some(username.as_str()) == me {
-                access.viewable.clear();
+                access.viewable.retain(|_, (owner, _)| owner != server);
             }
         }
-        WsEvent::RolesChanged { server: _ } => access.viewable.clear(),
+        WsEvent::RolesChanged { server } => {
+            access.viewable.retain(|_, (owner, _)| owner != server);
+        }
         WsEvent::ChannelPermsChanged {
             server: _,
             channel_id,
@@ -1707,8 +2156,10 @@ fn track(ev: &WsEvent, access: &mut Access) {
             access.viewable.remove(channel_id);
         }
         WsEvent::ServerRenamed { old_name, server } => {
+            access.topics_dirty |= access.held(old_name);
             if access.member_servers.remove(old_name) {
                 access.member_servers.insert(server.name.clone());
+                access.hosted_scope = None;
             }
             if access.subs.remove(old_name) {
                 access.subs.insert(server.name.clone());
@@ -1722,7 +2173,10 @@ fn track(ev: &WsEvent, access: &mut Access) {
             access.viewable.retain(|_, (owner, _)| owner != old_name);
         }
         WsEvent::ServerDeleted { name } => {
-            access.member_servers.remove(name);
+            access.topics_dirty |= access.held(name);
+            if access.member_servers.remove(name) {
+                access.hosted_scope = None;
+            }
             access.subs.remove(name);
             if access.viewing.as_deref() == Some(name.as_str()) {
                 access.viewing = None;
@@ -1875,6 +2329,9 @@ fn wants(
             username,
             banned: _,
         } => in_server(server) || Some(username.as_str()) == me,
+        WsEvent::MembersPurged { server, usernames } => {
+            in_server(server) || me.is_some_and(|user| usernames.iter().any(|u| u == user))
+        }
         WsEvent::AdminChanged {
             server,
             username: _,
@@ -1886,7 +2343,17 @@ fn wants(
             server,
             channel_id: _,
         } => in_server(server),
-        WsEvent::UserUpdated { user: _ } | WsEvent::UserRegistered { user: _ } => true,
+        WsEvent::UserUpdated { user, scope } => {
+            scope.is_empty()
+                || Some(user.username.as_str()) == me
+                || scope
+                    .servers
+                    .iter()
+                    .chain(scope.views.iter())
+                    .any(in_server)
+                || me.is_some_and(|me| scope.users.iter().any(|u| u == me))
+        }
+        WsEvent::UserRegistered { user: _ } => is_site_admin,
         WsEvent::PresenceChanged {
             server,
             username: _,
@@ -1963,6 +2430,7 @@ mod tests {
 
     use super::*;
     use crate::db::AvatarKind;
+    use tokio::sync::broadcast;
 
     fn message() -> Message {
         Message {
@@ -2247,6 +2715,7 @@ mod tests {
                         display_name: s("Alice Then"),
                         ..kept.author.clone()
                     },
+                    scope: UserScope::default(),
                 },
             },
         ];
@@ -2270,7 +2739,7 @@ mod tests {
                     channel_id, users, ..
                 } => format!("voice {channel_id} {users:?}"),
                 WsEvent::VoiceEnded { dm_users, .. } => format!("voice ended {dm_users:?}"),
-                WsEvent::UserUpdated { user } => format!("user {}", user.display_name),
+                WsEvent::UserUpdated { user, scope: _ } => format!("user {}", user.display_name),
                 WsEvent::Banned { username } => format!("banned {username}"),
                 WsEvent::PresenceChanged {
                     username, online, ..
@@ -2302,12 +2771,7 @@ mod tests {
         add_user(&local.db, "alice").await;
         let text = general(&local.db).await;
         let (hub, mut out) = Hub::replicated();
-        let state = AppState {
-            db: local.db.clone(),
-            hub: hub.clone(),
-            s3: None,
-            bus: None,
-        };
+        let state = AppState::new(local.db.clone(), hub.clone(), None, None);
         let mut n = 0;
         for delete in [true, false] {
             let message = post_message(&state.db, text, "secret").await;
@@ -2420,7 +2884,7 @@ mod tests {
             banned: true,
         };
         assert!(alice.wants(&presence) && alice.wants(&created));
-        state.db.close().await;
+        crate::db::close(&state.db).await;
         let started = Instant::now();
         let res = reauthorize(&state, &mut alice).await;
         assert!(res.is_err());
@@ -2595,7 +3059,7 @@ mod tests {
             Some(false)
         );
         assert_eq!(carol.viewable.len(), 1);
-        state.db.close().await;
+        crate::db::close(&state.db).await;
         assert_eq!(
             on_event(&state, conn, &mut carol, &renamed("d", "e")).await,
             Some(false)
@@ -2812,7 +3276,7 @@ mod tests {
         }
         exec(
             db,
-            "INSERT INTO guest_grants(\"grant\", server, created_at) VALUES('g2', 'kept', 0)",
+            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('g2', 'kept', 0, 4000000000)",
         )
         .await;
         let mut guest = Access::new(None, false, HashSet::new());
@@ -3116,7 +3580,7 @@ mod tests {
     async fn channel_gate_holds_on_database_errors() {
         let (state, path) = crate::api::test_util::temp_state("ws_gate_error").await;
         let mut bob = Access::new(Some(s("bob")), false, set(&["rchat"]));
-        state.db.close().await;
+        crate::db::close(&state.db).await;
         assert_eq!(
             channel_gate(&state, &mut bob, "rchat", 1).await,
             Some(false)
@@ -3163,7 +3627,7 @@ mod tests {
         assert!(!token_live(db, None).await.unwrap());
         exec(db, "DELETE FROM tokens WHERE token = 't1'").await;
         assert!(!token_live(db, Some("t1")).await.unwrap());
-        state.db.close().await;
+        crate::db::close(&state.db).await;
         assert!(token_live(db, Some("t1")).await.is_err());
         crate::api::test_util::done(state, path).await;
     }
@@ -3223,7 +3687,7 @@ mod tests {
             },
         ];
         assert!(scoped.iter().take(4).all(|ev| tia.wants(ev)));
-        state.db.close().await;
+        crate::db::close(&state.db).await;
         let started = Instant::now();
         assert!(tia.check_token(db).await);
         assert!(tia.retry.pending() && tia.missed && tia.retry.since >= Some(started));
@@ -3235,6 +3699,141 @@ mod tests {
         tia.retry.since = Instant::now().checked_sub(REAUTH_GIVE_UP);
         assert!(!tia.refresh(&state, conn).await);
         crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn an_overflowed_inbox_drops_stale_events_and_resyncs() {
+        let (state, path) = crate::api::test_util::temp_state("ws_overflow").await;
+        add_user(&state.db, "alice").await;
+        exec(
+            &state.db,
+            "INSERT INTO servers(name, display_name, created_at) VALUES('club', 'club', 1)",
+        )
+        .await;
+        exec(
+            &state.db,
+            "INSERT INTO members(server, username, joined_at) VALUES('club', 'alice', 2)",
+        )
+        .await;
+        let router = crate::fanout::Router::default();
+        let conn = 1;
+        let topics = HashSet::from([Topic::User(s("alice")), Topic::Server(s("club"))]);
+        let mut inbox = router.open(conn, &topics);
+        router.deliver(WsEvent::MemberLeft {
+            server: s("club"),
+            username: s("alice"),
+        });
+        let filler = |id| WsEvent::MessageDeleted {
+            server: Some(s("club")),
+            channel_id: Some(1),
+            dm_id: None,
+            dm_users: None,
+            id,
+            thread_root_id: None,
+        };
+        for id in 0..600 {
+            router.deliver(filler(id));
+        }
+        router.deliver(WsEvent::MemberJoined {
+            server: s("club"),
+            member: Member {
+                user: message().author,
+                is_admin: false,
+                is_creator: false,
+                online: false,
+                perms: 0,
+                role_ids: Vec::new(),
+            },
+        });
+        let first = inbox.rx.recv().await.unwrap();
+        assert!(matches!(first.ev, WsEvent::MemberLeft { .. }));
+        assert!(inbox.lagged());
+        let mut alice = Access::new(Some(s("alice")), false, HashSet::new());
+        let mut lag = Pace::new(LAG_REAUTH_EVERY);
+        let (through, open) =
+            catch_up(&state, conn, &mut alice, &mut inbox, &mut lag, first.seq).await;
+        assert!(open && alice.missed);
+        assert!(through > first.seq);
+        assert!(inbox.rx.try_recv().is_err());
+        assert_eq!(alice.member_servers, set(&["club"]));
+        router.deliver(filler(9000));
+        let fresh = inbox.rx.recv().await.unwrap();
+        assert!(fresh.seq > through && alice.wants(&fresh.ev));
+        alice.missed = false;
+        let (_, open) = catch_up(&state, conn, &mut alice, &mut inbox, &mut lag, fresh.seq).await;
+        assert!(open && !alice.missed && lag.due.is_some());
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn hosting_announces_are_deduped_paced_cached_and_bounded() {
+        let (state, path) = lagged_presence_state("ws_hosting_pace").await;
+        let hub = state.hub.clone();
+        let mut rx = hub.subscribe();
+        let scopes = |rx: &mut tokio::sync::broadcast::Receiver<WsEvent>| {
+            let mut out = Vec::new();
+            while let Ok(ev) = rx.try_recv() {
+                if let WsEvent::P2pAvailability {
+                    ids, scope_servers, ..
+                } = ev
+                {
+                    out.push((ids, scope_servers));
+                }
+            }
+            out
+        };
+        let mut a = Access::new(Some(s("alice")), false, set(&["chat"]));
+        a.host(&state, 1, (s("peer"), vec![s("f1")])).await;
+        assert_eq!(scopes(&mut rx), vec![(vec![s("f1")], vec![s("chat")])]);
+        a.host(&state, 1, (s("peer"), vec![s("f1")])).await;
+        assert!(scopes(&mut rx).is_empty());
+        a.host(&state, 1, (s("peer"), vec![s("f1"), s("f2")])).await;
+        a.host(&state, 1, (s("peer"), vec![s("f2")])).await;
+        assert!(scopes(&mut rx).is_empty());
+        assert!(a.hosting_pace.due.is_some());
+        exec(&state.db, "DELETE FROM members WHERE username = 'alice'").await;
+        a.hosting_pace.fire(Instant::now());
+        a.announce_hosting(&state, 1).await;
+        assert_eq!(scopes(&mut rx), vec![(vec![s("f2")], vec![s("chat")])]);
+        track(
+            &WsEvent::MemberLeft {
+                server: s("chat"),
+                username: s("alice"),
+            },
+            &mut a,
+        );
+        a.announce_hosting(&state, 1).await;
+        assert_eq!(scopes(&mut rx), vec![(vec![s("f2")], Vec::<String>::new())]);
+        for i in 0..(USER_SCOPE_SERVERS + 20) {
+            sqlx::query("INSERT INTO servers(name, display_name, created_at) VALUES($1, $1, 1)")
+                .bind(format!("s{i}"))
+                .execute(&state.db)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO members(server, username, joined_at) VALUES($1, 'alice', $2)")
+                .bind(format!("s{i}"))
+                .bind(i)
+                .execute(&state.db)
+                .await
+                .unwrap();
+        }
+        let (servers, users) = p2p_scope(&state.read(), "alice").await;
+        assert_eq!(servers.len() as i64, USER_SCOPE_SERVERS);
+        assert_eq!(users, vec![s("alice")]);
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[test]
+    fn lag_reauthorizes_at_most_every_interval() {
+        let mut lag = Pace::new(LAG_REAUTH_EVERY);
+        let start = Instant::now();
+        assert!(lag.hit(start));
+        assert!(!lag.hit(start + Duration::from_millis(100)));
+        assert_eq!(lag.due, Some(start + LAG_REAUTH_EVERY));
+        assert!(!lag.hit(start + Duration::from_millis(500)));
+        lag.fire(start + LAG_REAUTH_EVERY);
+        assert!(lag.due.is_none());
+        assert!(lag.hit(start + LAG_REAUTH_EVERY * 2));
     }
 
     #[test]
@@ -3276,6 +3875,485 @@ mod tests {
             &HashSet::new(),
             &HashSet::new()
         ));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    fn every_event() -> Vec<WsEvent> {
+        let dm = || Some(vec![s("alice"), s("bob")]);
+        let chan = Channel {
+            id: 1,
+            name: s("c"),
+            kind: ChannelKind::Text,
+            slowmode_seconds: 0,
+        };
+        let mut evs = Vec::new();
+        for server in [Some(s("a")), Some(s("b")), None] {
+            let dm_users = match server {
+                Some(_) => None,
+                None => dm(),
+            };
+            evs.push(WsEvent::Message {
+                server: server.clone(),
+                channel_id: Some(1),
+                dm_id: None,
+                dm_users: dm_users.clone(),
+                message: Box::new(message()),
+            });
+            evs.push(WsEvent::MessageDeleted {
+                server: server.clone(),
+                channel_id: Some(1),
+                dm_id: None,
+                dm_users: dm_users.clone(),
+                id: 1,
+                thread_root_id: None,
+            });
+            evs.push(WsEvent::MediaRemoved {
+                server: server.clone(),
+                channel_id: Some(1),
+                dm_id: None,
+                dm_users: dm_users.clone(),
+                message_id: 1,
+                filename: s("f"),
+                removed_by_author: false,
+            });
+            evs.push(WsEvent::EmbedsResolved {
+                server: server.clone(),
+                channel_id: Some(1),
+                dm_id: None,
+                dm_users: dm_users.clone(),
+                message_id: 1,
+                embeds: Vec::new(),
+            });
+            evs.push(WsEvent::EmbedsRemoved {
+                server: server.clone(),
+                channel_id: Some(1),
+                dm_id: None,
+                dm_users: dm_users.clone(),
+                message_id: 1,
+                ord: 0,
+                banner: false,
+            });
+            evs.push(WsEvent::VoiceEnded {
+                server,
+                channel_id: Some(1),
+                dm_id: None,
+                dm_users,
+                reason: s("r"),
+            });
+        }
+        for server in ["a", "b", "z"] {
+            for user in ["alice", "bob"] {
+                evs.extend([
+                    joined(server, user),
+                    WsEvent::MemberLeft {
+                        server: s(server),
+                        username: s(user),
+                    },
+                    WsEvent::MemberKicked {
+                        server: s(server),
+                        username: s(user),
+                        banned: true,
+                    },
+                    WsEvent::MembersPurged {
+                        server: s(server),
+                        usernames: vec![s(user)],
+                    },
+                    WsEvent::AdminChanged {
+                        server: s(server),
+                        username: s(user),
+                        is_admin: true,
+                        perms: 1,
+                    },
+                    WsEvent::ServerCreated {
+                        server: ServerSummaryLite {
+                            creator: Some(s(user)),
+                            ..lite(server)
+                        },
+                    },
+                    WsEvent::PresenceMode {
+                        username: s(user),
+                        appear_offline: true,
+                    },
+                    WsEvent::ReadUpdated {
+                        username: s(user),
+                        scope: s("c1"),
+                        last_read: 1,
+                    },
+                    WsEvent::TokensRevoked { username: s(user) },
+                    WsEvent::RtcSignal {
+                        to: s(user),
+                        from: s("x"),
+                        channel_id: None,
+                        dm_id: Some(1),
+                        payload: serde_json::Value::Null,
+                    },
+                    WsEvent::P2pAvailability {
+                        hoster: s(user),
+                        peer_id: None,
+                        ids: Vec::new(),
+                        online: false,
+                        scope_servers: vec![s(server)],
+                        scope_users: vec![s("carol")],
+                    },
+                    WsEvent::Banned { username: s(user) },
+                    WsEvent::UserUpdated {
+                        user: UserRef {
+                            username: s(user),
+                            ..message().author
+                        },
+                        scope: UserScope {
+                            servers: vec![s(server)],
+                            views: Vec::new(),
+                            users: vec![s("carol")],
+                        },
+                    },
+                    WsEvent::UserUpdated {
+                        user: UserRef {
+                            username: s(user),
+                            ..message().author
+                        },
+                        scope: UserScope {
+                            servers: Vec::new(),
+                            views: vec![s(server)],
+                            users: Vec::new(),
+                        },
+                    },
+                ]);
+            }
+            evs.extend([
+                WsEvent::ChannelCreated {
+                    server: s(server),
+                    channel: chan.clone(),
+                },
+                WsEvent::ChannelRenamed {
+                    server: s(server),
+                    channel: chan.clone(),
+                },
+                WsEvent::ChannelDeleted {
+                    server: s(server),
+                    channel_id: 1,
+                },
+                WsEvent::RolesChanged { server: s(server) },
+                WsEvent::ChannelPermsChanged {
+                    server: s(server),
+                    channel_id: 1,
+                },
+                WsEvent::VoiceState {
+                    server: s(server),
+                    channel_id: 1,
+                    users: Vec::new(),
+                },
+                WsEvent::ServerCreated {
+                    server: lite(server),
+                },
+                renamed(server, "q"),
+                renamed("q", server),
+                WsEvent::ServerDeleted { name: s(server) },
+            ]);
+        }
+        evs.extend([
+            WsEvent::MessageUpdated {
+                message: Box::new(message()),
+                dm_users: vec![s("alice"), s("bob")],
+            },
+            WsEvent::CallState {
+                dm_id: 1,
+                dm_users: vec![s("alice"), s("bob")],
+                state: CallPhase::Ringing,
+                from: s("alice"),
+                kind: CallKind::Rtc,
+            },
+            WsEvent::DmCreated {
+                dm_id: 1,
+                dm_users: vec![s("bob"), s("carol")],
+            },
+            WsEvent::UserUpdated {
+                user: message().author,
+                scope: UserScope::default(),
+            },
+            WsEvent::UserRegistered {
+                user: message().author,
+            },
+            WsEvent::SettingsChanged {
+                settings: Settings {
+                    profanity_filter: false,
+                    asset_previews: false,
+                    asset_uploads: false,
+                    guests_enabled: false,
+                },
+            },
+            WsEvent::Error { message: s("e") },
+            WsEvent::Resync,
+        ]);
+        evs
+    }
+
+    fn reaches(target: &crate::fanout::Target, topics: &HashSet<Topic>) -> bool {
+        use crate::fanout::Target;
+        match *target {
+            Target::Admins => topics.contains(&Topic::Admin),
+            Target::User(u) => topics.contains(&Topic::User(s(u))),
+            Target::Server(v) => topics.contains(&Topic::Server(s(v))),
+            Target::View(v) => topics.contains(&Topic::View(v.to_string())),
+        }
+    }
+
+    #[test]
+    fn routing_reaches_everyone_who_wants_an_event() {
+        let mut alice = Access::new(Some(s("alice")), false, set(&["a"]));
+        alice.subs = set(&["b"]);
+        alice.viewing = Some(s("a"));
+        let mut admin = Access::new(Some(s("bob")), true, set(&["b"]));
+        admin.viewing = Some(s("b"));
+        let mut guest = Access::new(None, false, HashSet::new());
+        guest.subs = set(&["a"]);
+        let mut held = Access::new(Some(s("carol")), false, set(&["a"]));
+        held.retry.at = Some(Instant::now());
+        let lurker = Access::new(Some(s("dave")), false, set(&["a", "b"]));
+        let mut checked = 0;
+        for access in [&alice, &admin, &guest, &held, &lurker] {
+            let topics = access.topics();
+            for ev in every_event() {
+                if !access.wants(&ev) {
+                    continue;
+                }
+                checked += 1;
+                let routed = match crate::fanout::route(&ev) {
+                    crate::fanout::Route::Everyone => true,
+                    crate::fanout::Route::To(targets) => {
+                        targets.iter().any(|t| reaches(t, &topics))
+                    }
+                };
+                let viewer_only = match &ev {
+                    WsEvent::PresenceChanged { .. } => true,
+                    WsEvent::UserUpdated { user, scope } => {
+                        !scope.views.is_empty() && access.user.as_ref() != Some(&user.username)
+                    }
+                    _ => false,
+                };
+                assert!(
+                    routed || viewer_only,
+                    "{:?} misses {}",
+                    access.user,
+                    to_bus_json(&ev).unwrap()
+                );
+            }
+        }
+        assert!(checked > 100);
+        let presence = |server: &str| WsEvent::PresenceChanged {
+            server: s(server),
+            username: s("x"),
+            online: true,
+        };
+        fn viewers(ev: &WsEvent) -> Vec<crate::fanout::Target<'_>> {
+            match crate::fanout::route(ev) {
+                crate::fanout::Route::To(targets) => targets,
+                crate::fanout::Route::Everyone => panic!("presence is never global"),
+            }
+        }
+        assert!(
+            viewers(&presence("a"))
+                .iter()
+                .any(|t| reaches(t, &alice.topics()))
+        );
+        assert!(
+            viewers(&presence("b"))
+                .iter()
+                .any(|t| reaches(t, &alice.topics()))
+        );
+        assert!(
+            viewers(&presence("a"))
+                .iter()
+                .any(|t| reaches(t, &guest.topics()))
+        );
+        assert!(
+            !viewers(&presence("a"))
+                .iter()
+                .any(|t| reaches(t, &lurker.topics()))
+        );
+        assert!(!lurker.wants(&WsEvent::UserRegistered {
+            user: message().author
+        }));
+    }
+
+    #[tokio::test]
+    async fn user_updates_reach_only_people_who_share_something() {
+        let (state, path) = crate::api::test_util::temp_state("ws_user_scope").await;
+        let db = &state.db;
+        for name in ["alice", "bob", "carol", "dave"] {
+            add_user(db, name).await;
+        }
+        exec(
+            db,
+            "INSERT INTO servers(name, display_name, created_at) VALUES('club', 'club', 1)",
+        )
+        .await;
+        exec(db, "INSERT INTO members(server, username, joined_at) VALUES('rchat', 'alice', 1), ('rchat', 'bob', 1), ('rchat', 'carol', 1), ('rchat', 'dave', 1), ('club', 'alice', 2), ('club', 'bob', 2)").await;
+        exec(
+            db,
+            "UPDATE servers SET member_count = 5000 WHERE name = 'rchat'",
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'alice'), ('carol', 'alice')",
+        )
+        .await;
+        let scope = user_scope(db, "alice").await;
+        assert_eq!(
+            scope,
+            UserScope {
+                servers: vec![s("club")],
+                views: vec![s("rchat")],
+                users: vec![s("alice"), s("carol")],
+            }
+        );
+        let loner = user_scope(db, "dave").await;
+        exec(db, "DELETE FROM members WHERE username = 'dave'").await;
+        let alone = user_scope(db, "dave").await;
+        assert!(!loner.is_empty() && !alone.is_empty());
+        assert_eq!(alone.users, vec![s("dave")]);
+        assert!(matches!(
+            crate::fanout::route(&WsEvent::UserUpdated {
+                user: UserRef {
+                    username: s("dave"),
+                    ..message().author
+                },
+                scope: alone,
+            }),
+            crate::fanout::Route::To(_)
+        ));
+        let ev = WsEvent::UserUpdated {
+            user: UserRef {
+                username: s("alice"),
+                ..message().author
+            },
+            scope,
+        };
+        let frame = crate::fanout::Fanned::new(ev.clone(), 1).frame().unwrap();
+        assert!(!frame.as_str().contains("scope"), "{}", frame.as_str());
+        assert!(to_bus_json(&ev).unwrap().contains(r#""views":["rchat"]"#));
+        let reached = |access: &Access| match crate::fanout::route(&ev) {
+            crate::fanout::Route::To(targets) => {
+                let topics = access.topics();
+                targets.iter().any(|t| reaches(t, &topics))
+            }
+            crate::fanout::Route::Everyone => panic!("user updates are scoped"),
+        };
+        let me = Access::new(Some(s("alice")), false, set(&["rchat", "club"]));
+        let bob = Access::new(Some(s("bob")), false, set(&["rchat", "club"]));
+        let carol = Access::new(Some(s("carol")), false, set(&["rchat"]));
+        let dave = Access::new(Some(s("dave")), false, set(&["rchat"]));
+        let mut viewer = Access::new(Some(s("dave")), false, set(&["rchat"]));
+        viewer.viewing = Some(s("rchat"));
+        assert!(reached(&me) && reached(&bob) && reached(&carol) && reached(&viewer));
+        assert!(!reached(&dave));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[test]
+    fn purged_members_get_their_own_kick() {
+        let fanned = crate::fanout::Fanned::new(
+            WsEvent::MembersPurged {
+                server: s("club"),
+                usernames: vec![s("bob"), s("carol")],
+            },
+            1,
+        );
+        assert_eq!(
+            client_frame(&fanned, Some("carol")).unwrap().as_str(),
+            r#"{"type":"member_kicked","server":"club","username":"carol","banned":false}"#
+        );
+        assert_eq!(
+            client_frame(&fanned, Some("alice")).unwrap().as_str(),
+            r#"{"type":"roles_changed","server":"club"}"#
+        );
+        let mut carol = Access::new(Some(s("carol")), false, set(&["club", "rchat"]));
+        carol.viewing = Some(s("club"));
+        track(&fanned.ev, &mut carol);
+        assert_eq!(carol.member_servers, set(&["rchat"]));
+        assert!(carol.viewing.is_none() && carol.topics_dirty);
+        let mut alice = Access::new(Some(s("alice")), false, set(&["club"]));
+        track(&fanned.ev, &mut alice);
+        assert_eq!(alice.member_servers, set(&["club"]));
+    }
+
+    #[test]
+    fn flooding_clients_are_throttled_then_closed() {
+        let mut bucket = Bucket::new();
+        let now = bucket.at;
+        let mut allowed = 0;
+        let mut dropped = 0;
+        loop {
+            match bucket.take(now) {
+                Some(true) => allowed += 1,
+                Some(false) => dropped += 1,
+                None => break,
+            }
+        }
+        assert_eq!((allowed, dropped), (MSG_BURST as usize, MSG_BURST as usize));
+        let mut bucket = Bucket::new();
+        for i in 0..1_000 {
+            let at = bucket.at + Duration::from_millis(25);
+            assert_eq!(bucket.take(at), Some(true), "message {i}");
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_channel_cache_follows_permission_events() {
+        let (state, path) = crate::api::test_util::temp_state("ws_channel_cache").await;
+        let db = &state.db;
+        add_user(db, "bob").await;
+        exec(
+            db,
+            "INSERT INTO members(server, username, joined_at) VALUES('rchat', 'bob', 1)",
+        )
+        .await;
+        let text = general(db).await;
+        let mut bob = Access::new(Some(s("bob")), false, set(&["rchat"]));
+        let mut guest = Access::new(None, false, set(&[]));
+        assert_eq!(
+            channel_gate(&state, &mut bob, "rchat", text).await,
+            Some(true)
+        );
+        assert_eq!(
+            channel_gate(&state, &mut guest, "rchat", text).await,
+            Some(true)
+        );
+        assert_eq!(state.hub.channels().len(), 1);
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'r:999', 1, 1, 1)")
+            .bind(text)
+            .execute(db)
+            .await
+            .unwrap();
+        let mut late = Access::new(Some(s("bob")), false, set(&["rchat"]));
+        assert_eq!(
+            channel_gate(&state, &mut late, "rchat", text).await,
+            Some(true)
+        );
+        state.hub.broadcast(WsEvent::ChannelPermsChanged {
+            server: s("rchat"),
+            channel_id: text,
+        });
+        let changed = WsEvent::ChannelPermsChanged {
+            server: s("rchat"),
+            channel_id: text,
+        };
+        track(&changed, &mut bob);
+        track(&changed, &mut guest);
+        assert_eq!(
+            channel_gate(&state, &mut bob, "rchat", text).await,
+            Some(false)
+        );
+        assert_eq!(
+            channel_gate(&state, &mut guest, "rchat", text).await,
+            Some(false)
+        );
+        let roles = WsEvent::RolesChanged { server: s("other") };
+        track(&roles, &mut bob);
+        assert_eq!(bob.viewable.len(), 1);
+        track(&WsEvent::RolesChanged { server: s("rchat") }, &mut bob);
+        assert!(bob.viewable.is_empty());
         crate::api::test_util::done(state, path).await;
     }
 }

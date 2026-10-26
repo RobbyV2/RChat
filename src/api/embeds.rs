@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::time::Duration;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -7,6 +9,7 @@ use axum::http::StatusCode;
 use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use tokio::sync::Semaphore;
 use url::{Host, Url};
 use utoipa::IntoParams;
 
@@ -246,7 +249,65 @@ fn extract_urls(content: &str) -> Vec<String> {
     out
 }
 
+const FETCH_CONCURRENCY: usize = 16;
+
+static FETCHING: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(FETCH_CONCURRENCY));
+static IN_FLIGHT: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(Default::default);
+
+const FAILED_FOR: Duration = Duration::from_secs(60);
+const FAILED_MAX: usize = 10_000;
+
+static FAILED: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(Default::default);
+
+fn failed_lately(url: &str, now: Instant) -> bool {
+    FAILED
+        .lock()
+        .ok()
+        .and_then(|map| map.get(url).copied())
+        .is_some_and(|at| now.duration_since(at) < FAILED_FOR)
+}
+
+fn note_failure(url: &str, now: Instant) {
+    if let Ok(mut map) = FAILED.lock() {
+        if map.len() >= FAILED_MAX {
+            map.retain(|_, at| now.duration_since(*at) < FAILED_FOR);
+            if map.len() >= FAILED_MAX {
+                map.clear();
+            }
+        }
+        map.insert(url.to_string(), now);
+    }
+}
+
 async fn resolve(db: &Db, url: &str) -> anyhow::Result<Option<Embed>> {
+    let lock = match IN_FLIGHT.lock() {
+        Ok(mut map) => map.entry(url.to_string()).or_default().clone(),
+        Err(_) => Arc::default(),
+    };
+    let held = lock.lock().await;
+    let out = match failed_lately(url, Instant::now()) {
+        true => Ok(None),
+        false => {
+            let out = resolve_once(db, url).await;
+            if !matches!(out, Ok(Some(_))) {
+                note_failure(url, Instant::now());
+            }
+            out
+        }
+    };
+    drop(held);
+    if let Ok(mut map) = IN_FLIGHT.lock()
+        && map
+            .get(url)
+            .is_some_and(|l| Arc::ptr_eq(l, &lock) && Arc::strong_count(l) <= 2)
+    {
+        map.remove(url);
+    }
+    out
+}
+
+async fn resolve_once(db: &Db, url: &str) -> anyhow::Result<Option<Embed>> {
     let embed = |site_name, title, description, image_url| Embed {
         ord: 0,
         url: url.to_string(),
@@ -272,6 +333,7 @@ async fn resolve(db: &Db, url: &str) -> anyhow::Result<Option<Embed>> {
         )));
     }
     let parsed = Url::parse(url)?;
+    let _permit = FETCHING.acquire().await?;
     let (final_url, html) =
         tokio::time::timeout(Duration::from_secs(5), fetch_html(&parsed)).await??;
     let meta = parse_meta(&html, &final_url);
@@ -437,4 +499,19 @@ pub(crate) async fn delete_embed(
         banner,
     });
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_urls_are_skipped_for_a_while() {
+        let url = "https://dead.example/failed-skip";
+        let start = Instant::now();
+        assert!(!failed_lately(url, start));
+        note_failure(url, start);
+        assert!(failed_lately(url, start + Duration::from_secs(5)));
+        assert!(!failed_lately(url, start + FAILED_FOR));
+    }
 }

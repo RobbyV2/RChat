@@ -4,6 +4,19 @@ import { wsClient } from './ws'
 import { rtc } from './rtc'
 import { newP2pId, p2p } from './p2p'
 import { mentionsUser } from './mentions'
+import { catchUpDelay, due } from './backoff'
+import { createReadQueue, mergeReads } from './reads'
+import {
+  WINDOW_MAX,
+  createLru,
+  dropWhere,
+  findById,
+  indexOfId,
+  mapWhere,
+  mergeSorted,
+  patchById,
+  trimWindow,
+} from './window'
 import {
   anyDmUnread,
   appendUnique,
@@ -12,13 +25,17 @@ import {
   keyed,
   lostServers,
   mergeHead,
+  insertSorted,
   refreshTail,
+  samePrefix,
   unreadServers,
   windowEdges,
+  type Key,
   type OlderState,
+  type Page,
   type ReadMark,
 } from './lists'
-import { addSearchPage, searchCursor, searchParams, type SearchArgs } from './search'
+import { SEARCH_PAGE, SEARCH_TRIES, addSearchPage, searchParams, type SearchArgs } from './search'
 import {
   addToFolder as addIn,
   dmSections,
@@ -198,6 +215,7 @@ export interface SearchState {
   results: SearchResult[]
   hasMore: boolean
   loading: boolean
+  cursor?: string | null
 }
 
 export interface VoiceSession {
@@ -224,6 +242,7 @@ export interface Paged<T> {
   hasMore: boolean
   loading: boolean
   q: string
+  cursor?: string | null
 }
 
 const emptyPage = <T>(): Paged<T> => ({ list: [], hasMore: true, loading: false, q: '' })
@@ -271,11 +290,7 @@ const dmKey = (d: DmSummary) => d.id
 const isSelfDm = (d: DmSummary) => d.is_self
 const serverKey = (x: ServerSummary) => x.name
 
-const merge = (list: Message[], incoming: Message[]) => {
-  const map = new Map(list.map(m => [m.id, m]))
-  for (const m of incoming) map.set(m.id, m)
-  return [...map.values()].sort(byId)
-}
+const merge = mergeSorted<Message>
 
 const OPT_BASE = 1e15
 let optSeq = 0
@@ -283,7 +298,11 @@ const draining = new Set<string>()
 
 const pendingEmbeds = new Map<number, Embed[]>()
 const PENDING_EMBEDS_MAX = 256
-const RESYNC_JITTER = 3000
+const RESYNC_JITTER = 10_000
+const CATCH_UP_VIEW_MAX = 5_000
+const POLL_EVERY = 60_000
+const VIEW_CACHE = 8
+const DETACH_AT = WINDOW_MAX * 2
 const rememberEmbeds = (id: number, embeds: Embed[]) => {
   pendingEmbeds.delete(id)
   pendingEmbeds.set(id, embeds)
@@ -295,8 +314,10 @@ const applyEmbeds = (list: Message[]) =>
     ? list
     : list.map(m => {
         const e = pendingEmbeds.get(m.id)
-        return e ? { ...m, embeds: e } : m
+        return e && e !== m.embeds ? { ...m, embeds: e } : m
       })
+
+const pageVisible = () => typeof document === 'undefined' || document.visibilityState === 'visible'
 
 interface RChatState {
   token: string | null
@@ -308,6 +329,8 @@ interface RChatState {
   servers: Record<string, ServerDetail>
   members: Record<string, Paged<Member>>
   memberInfo: Record<string, Record<string, Member | null>>
+  memberInfoTrim: Record<string, number>
+  adminChanges: Record<string, number>
   interacted: Record<string, Paged<UserRef>>
   bans: Record<string, Paged<ServerBan>>
   adminUsers: Paged<UserRef>
@@ -326,6 +349,7 @@ interface RChatState {
   messages: Record<string, Message[]>
   older: Record<string, OlderState>
   newer: Record<string, OlderState>
+  stale: Record<string, boolean>
   focus: Record<string, Focus>
   outbox: Record<string, Outgoing[]>
   reads: Record<string, ReadMark>
@@ -462,6 +486,7 @@ interface RChatState {
   loadInteracted: (server: string, reset?: boolean) => Promise<void>
   ensureMembers: (server: string, usernames: string[]) => Promise<void>
   rememberMember: (server: string, username: string, member: Member | null) => void
+  notePresence: (server: string, username: string, online: boolean) => void
   refreshMember: (server: string, username: string) => Promise<void>
   joinVoice: (server: string, channelId: number) => Promise<void>
   leaveVoice: () => void
@@ -492,12 +517,24 @@ interface RChatState {
   setError: (message: string | null) => void
 }
 
+const nameIndex = new WeakMap<readonly UserRef[], Map<string, UserRef>>()
+
+export const byUsername = <T extends UserRef>(list: readonly T[]): Map<string, T> => {
+  let index = nameIndex.get(list)
+  if (!index) {
+    index = new Map(list.map(m => [m.username, m]))
+    nameIndex.set(list, index)
+  }
+  return index as Map<string, T>
+}
+
 export const memberState = (
   s: Pick<RChatState, 'members' | 'memberInfo'>,
   server: string,
   username: string
 ): Member | null | undefined => {
-  const listed = s.members[server]?.list.find(m => m.username === username)
+  const list = s.members[server]?.list
+  const listed = list ? byUsername(list).get(username) : undefined
   if (listed) return listed
   const known = s.memberInfo[server]
   return known && Object.hasOwn(known, username) ? known[username] : undefined
@@ -565,14 +602,20 @@ export const serverUnread = (s: RChatState, name: string): boolean => {
   return unreadMemo.servers.has(name)
 }
 
-export const dmsUnread = (s: RChatState): boolean => anyDmUnread(s.reads)
+let dmUnreadMemo: { reads: RChatState['reads']; unread: boolean } | null = null
+
+export const dmsUnread = (s: RChatState): boolean => {
+  if (dmUnreadMemo?.reads !== s.reads)
+    dmUnreadMemo = { reads: s.reads, unread: anyDmUnread(s.reads) }
+  return dmUnreadMemo.unread
+}
 
 export const userRefFor = (s: RChatState, username: string): UserRef => {
   if (s.me?.username === username) return s.me
   const dm = s.dms.find(d => d.other.username === username)
   if (dm) return dm.other
   for (const cache of Object.values(s.members)) {
-    const m = cache.list.find(x => x.username === username)
+    const m = byUsername(cache.list).get(username)
     if (m) return m
   }
   for (const known of Object.values(s.memberInfo)) {
@@ -580,7 +623,7 @@ export const userRefFor = (s: RChatState, username: string): UserRef => {
     if (m) return m
   }
   for (const cache of Object.values(s.interacted)) {
-    const u = cache.list.find(x => x.username === username)
+    const u = byUsername(cache.list).get(username)
     if (u) return u
   }
   return { username, display_name: username, avatar_kind: 'identicon', avatar_color: null }
@@ -693,7 +736,6 @@ export const useStore = create<RChatState>()((set, get) => {
     fetchPage: api.listDms,
     keyOf: dmKey,
     page: PAGE,
-    max: LIST_MAX,
   })
 
   const serverPager = createPager<ServerSummary>({
@@ -703,7 +745,6 @@ export const useStore = create<RChatState>()((set, get) => {
     fetchPage: api.myServers,
     keyOf: serverKey,
     page: PAGE,
-    max: LIST_MAX,
   })
 
   let dmGen = 0
@@ -759,9 +800,13 @@ export const useStore = create<RChatState>()((set, get) => {
   const applyMe = (fresh: Me, keep: boolean) => {
     const cur = get()
     const same = keep && cur.me?.username === fresh.username
+    const steady = {
+      servers: same && !!cur.me && samePrefix(cur.me.servers, fresh.servers, serverKey),
+      dms: same && samePrefix(cur.dms, fresh.dms, dmKey),
+    }
     const resume = {
-      servers: serverPager.reset(fresh.servers.length) && same,
-      dms: dmPager.reset(fresh.dms.length) && same,
+      servers: serverPager.reset(fresh.servers_cursor, steady.servers) && same,
+      dms: dmPager.reset(fresh.dms_cursor, steady.dms) && same,
     }
     set({
       me: {
@@ -830,16 +875,30 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         return
       }
+      if (loadingHead(key)) return
+      const gen = historyGen.get(key)
       const msgs = await fetchPage(key, {})
+      if (historyGen.get(key) !== gen || loadingHead(key)) return
+      const { view: now } = get()
+      if (!now || viewKey(now) !== key) return
+      if (!views.has(key)) {
+        firstPage(key, msgs)
+        askP2p(msgs)
+        return
+      }
       const prev = get().messages[key] ?? []
       const next = refreshTail(prev, msgs, PAGE, get().older[key]?.more ?? true)
-      const replaced = next.list[0]?.id !== prev[0]?.id
+      const bounded = trimWindow(next.list, 'newest')
+      const replaced = bounded.list[0]?.id !== prev[0]?.id
       if (replaced) newHistory(key)
       set(s => ({
-        messages: { ...s.messages, [key]: applyEmbeds(next.list) },
+        messages: { ...s.messages, [key]: applyEmbeds(bounded.list) },
         older: {
           ...s.older,
-          [key]: { more: next.more, loading: !replaced && (s.older[key]?.loading ?? false) },
+          [key]: {
+            more: next.more || bounded.trimmed,
+            loading: !replaced && (s.older[key]?.loading ?? false),
+          },
         },
       }))
       askP2p(msgs)
@@ -925,19 +984,16 @@ export const useStore = create<RChatState>()((set, get) => {
 
   let unreadsReady: Promise<void> = Promise.resolve()
 
+  let unreadsMore = false
+
   const loadUnreads = () => {
+    const before = get().reads
     unreadsReady = api
       .getUnreads()
-      .then(({ items }) =>
-        set({
-          reads: Object.fromEntries(
-            items.map(i => [
-              i.scope,
-              { lastRead: i.last_read, latest: i.latest, server: i.server ?? undefined },
-            ])
-          ),
-        })
-      )
+      .then(({ items, more }) => {
+        unreadsMore = more
+        set(s => ({ reads: mergeReads(before, s.reads, items, readQueue.pending) }))
+      })
       .catch(() => {})
     return unreadsReady
   }
@@ -1006,29 +1062,96 @@ export const useStore = create<RChatState>()((set, get) => {
     )
   }
 
+  let downSince: number | null = null
+  let viewTimer: ReturnType<typeof setTimeout> | null = null
+  let catchUpTimer: ReturnType<typeof setTimeout> | null = null
+  let polledMe: number | null = null
+  let polledSettings: number | null = null
+
+  const stopCatchUp = () => {
+    if (viewTimer) clearTimeout(viewTimer)
+    if (catchUpTimer) clearTimeout(catchUpTimer)
+    viewTimer = null
+    catchUpTimer = null
+  }
+
+  const scheduleCatchUp = (outage: number) => {
+    stopCatchUp()
+    viewTimer = setTimeout(
+      () => {
+        viewTimer = null
+        void refreshView()
+      },
+      catchUpDelay(outage, Math.random, CATCH_UP_VIEW_MAX)
+    )
+    catchUpTimer = setTimeout(() => {
+      catchUpTimer = null
+      if (get().me) void refetchMe()
+      else if (get().token) void recoverMe()
+      if (get().me) void loadUnreads()
+      void pruneServers()
+        .catch(() => {})
+        .then(() => {
+          const { view, members } = get()
+          if (view?.kind === 'channel' && members[view.server])
+            void get().loadMembers(view.server, true)
+        })
+    }, catchUpDelay(outage))
+  }
+
+  let listening = false
+  const listenPage = () => {
+    if (listening || typeof document === 'undefined' || typeof window === 'undefined') return
+    listening = true
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') {
+        readQueue.flush()
+        return
+      }
+      const { view, atBottom, messages } = get()
+      if (!view || !atBottom || detached(viewKey(view))) return
+      const list = messages[viewKey(view)] ?? []
+      const last = list[list.length - 1]
+      if (last) get().markRead(viewKey(view), last.id)
+    })
+    window.addEventListener('pagehide', () => readQueue.flush())
+  }
+
   const startWs = () => {
     let connected = false
+    downSince = null
+    stopCatchUp()
+    listenPage()
     wsClient.onEvent = ev => get().applyWsEvent(ev)
     wsClient.onStatus = wsStatus => {
       set({ wsStatus })
-      if (wsStatus !== 'green' && (get().voice || get().call)) endRtc()
-      if (wsStatus === 'green') {
-        set({ p2pAvailability: {}, voiceUsers: {} })
-        if (get().me) {
-          p2p.announce()
-          void refetchMe()
-        } else if (get().token) void recoverMe()
-        const { view } = get()
-        if (view) askP2p(get().messages[viewKey(view)] ?? [])
-        if (connected) catchUp()
-        connected = true
+      if (wsStatus !== 'green') {
+        if (downSince === null) downSince = Date.now()
+        if (get().voice || get().call) endRtc()
+        return
       }
+      const outage = downSince === null ? 0 : Date.now() - downSince
+      downSince = null
+      set({ p2pAvailability: {}, voiceUsers: {} })
+      if (get().me) p2p.announce()
+      else if (get().token) void recoverMe()
+      const { view } = get()
+      if (view) askP2p(get().messages[viewKey(view)] ?? [])
+      if (connected) scheduleCatchUp(outage)
+      connected = true
     }
     wsClient.onPoll = () => {
       void refreshView()
-      if (get().me) void refetchMe()
-      else if (get().token) void recoverMe()
-      void get().loadSettings()
+      const now = Date.now()
+      if (due(polledMe, now, POLL_EVERY)) {
+        polledMe = now
+        if (get().me) void refetchMe()
+        else if (get().token) void recoverMe()
+      }
+      if (due(polledSettings, now, POLL_EVERY)) {
+        polledSettings = now
+        void get().loadSettings()
+      }
     }
     wsClient.start(get().token)
     p2p.ensurePurge()
@@ -1216,8 +1339,9 @@ export const useStore = create<RChatState>()((set, get) => {
     if (get().voice?.server === name) get().leaveVoice()
     serverGen += 1
     droppedAt.set(name, serverGen)
-    const reload = serverPager.removed(get().me?.servers.some(x => x.name === name) ? 1 : 0)
+    const reload = serverPager.removed()
     const scopes = new Set((get().servers[name]?.channels ?? []).map(c => `c${c.id}`))
+    forgetViews(views.keys().filter(k => scopes.has(k) && !liveKey(k)))
     forgetPending((_, upload) => !scopes.has(upload.scope))
     forgetReads((_, mark) => mark.server !== name)
     forgetMemberInfo(name)
@@ -1278,16 +1402,126 @@ export const useStore = create<RChatState>()((set, get) => {
     tails.delete(key)
     return held.filter(m => m.id > after)
   }
+  const heads = new Map<string, number>()
+  const loadingHead = (key: string) => (heads.get(key) ?? 0) > 0
+  const holding = (key: string) => detached(key) || loadingHead(key)
+  const headLoad = async <T>(key: string, run: () => Promise<T>): Promise<T> => {
+    heads.set(key, (heads.get(key) ?? 0) + 1)
+    if (get().messages[key]?.length) set(s => ({ stale: { ...s.stale, [key]: true } }))
+    try {
+      return await run()
+    } catch (e) {
+      if (heads.get(key) === 1) {
+        const caught = takeTail(key, 0)
+        set(s => ({
+          messages:
+            caught.length && s.messages[key]
+              ? { ...s.messages, [key]: applyEmbeds(merge(s.messages[key], caught)) }
+              : s.messages,
+          stale: keyed(s.stale, key, null),
+        }))
+      }
+      throw e
+    } finally {
+      const left = (heads.get(key) ?? 1) - 1
+      if (left > 0) heads.set(key, left)
+      else heads.delete(key)
+    }
+  }
   const mapTails = (fn: (list: Message[]) => Message[]) => {
-    for (const [key, list] of tails) tails.set(key, fn(list))
+    for (const [key, list] of tails) {
+      const next = fn(list)
+      if (next !== list) tails.set(key, next)
+    }
+  }
+
+  const mapLists = (
+    messages: Record<string, Message[]>,
+    fn: (list: Message[], key: string) => Message[]
+  ) => {
+    let out: Record<string, Message[]> | null = null
+    for (const [key, list] of Object.entries(messages)) {
+      const next = fn(list, key)
+      if (next === list) continue
+      out ??= { ...messages }
+      out[key] = next
+    }
+    return out ?? messages
   }
 
   const patchMessage = (id: number, fn: (m: Message) => Message) => {
-    const patch = (list: Message[]) => list.map(m => (m.id === id ? fn(m) : m))
+    const patch = (list: Message[]) => patchById(list, id, fn)
     mapTails(patch)
+    set(s => {
+      const messages = mapLists(s.messages, patch)
+      return messages === s.messages ? {} : { messages }
+    })
+  }
+
+  const liveKey = (key: string) => {
+    const { view, panel } = get()
+    return (
+      (view !== null && viewKey(view) === key) ||
+      (panel?.kind === 'thread' && threadKey(panel.root.id) === key)
+    )
+  }
+
+  const views = createLru<string>(VIEW_CACHE, liveKey)
+
+  const forgetViews = (keys: string[]) => {
+    if (!keys.length) return
+    for (const key of keys) {
+      tails.delete(key)
+      heads.delete(key)
+      historyGen.delete(key)
+      sticky.delete(key)
+      views.delete(key)
+    }
+    const without = <T>(map: Record<string, T>) => {
+      if (!keys.some(k => k in map)) return map
+      const next = { ...map }
+      for (const k of keys) delete next[k]
+      return next
+    }
     set(s => ({
-      messages: Object.fromEntries(Object.entries(s.messages).map(([k, list]) => [k, patch(list)])),
+      messages: without(s.messages),
+      older: without(s.older),
+      newer: without(s.newer),
+      stale: without(s.stale),
+      focus: without(s.focus),
+      unreadAnchor: without(s.unreadAnchor),
     }))
+  }
+
+  const touchView = (key: string) => forgetViews(views.touch(key))
+
+  const appendLive = (key: string, msgs: Message[], create = false): Partial<RChatState> | null => {
+    const s = get()
+    const cur = s.messages[key]
+    if (!cur && !(create && liveKey(key))) return {}
+    const merged = merge(cur ?? [], applyEmbeds(msgs))
+    const bottom = s.view !== null && viewKey(s.view) === key && s.atBottom
+    if (!bottom && merged.length > DETACH_AT) return null
+    const bounded =
+      bottom && !s.older[key]?.loading
+        ? trimWindow(merged, 'newest')
+        : { list: merged, trimmed: false }
+    if (bounded.trimmed) newHistory(key)
+    const anchor = s.unreadAnchor[key]
+    const cut = bounded.trimmed && anchor !== undefined && anchor < (bounded.list[0]?.id ?? 0)
+    if (cut) sticky.delete(key)
+    return {
+      messages: { ...s.messages, [key]: bounded.list },
+      ...(bounded.trimmed ? { older: { ...s.older, [key]: { more: true, loading: false } } } : {}),
+      ...(cut
+        ? { unreadAnchor: { ...s.unreadAnchor, [key]: bounded.list[bounded.list.length - 1].id } }
+        : {}),
+    }
+  }
+
+  const holdLive = (key: string, msgs: Message[]): Partial<RChatState> => {
+    for (const m of msgs) holdTail(key, m)
+    return { newer: { ...get().newer, [key]: { more: true, loading: false } } }
   }
 
   const withoutEmbed = (embeds: Embed[], ord: number, banner: boolean) =>
@@ -1305,9 +1539,96 @@ export const useStore = create<RChatState>()((set, get) => {
   const patchMembers = (server: string, fn: (list: Member[]) => Member[]) => {
     set(s => {
       const cache = s.members[server]
-      return cache
-        ? { members: { ...s.members, [server]: { ...cache, list: fn(cache.list) } } }
-        : {}
+      if (!cache) return {}
+      const list = fn(cache.list)
+      return list === cache.list ? {} : { members: { ...s.members, [server]: { ...cache, list } } }
+    })
+  }
+
+  const mapPages = <T>(pages: Record<string, Paged<T>>, fn: (list: T[]) => T[]) => {
+    let out: Record<string, Paged<T>> | null = null
+    for (const [key, cache] of Object.entries(pages)) {
+      const list = fn(cache.list)
+      if (list === cache.list) continue
+      out ??= { ...pages }
+      out[key] = { ...cache, list }
+    }
+    return out ?? pages
+  }
+
+  const presence: Extract<WsEvent, { type: 'presence_changed' }>[] = []
+  let presenceFrame = false
+
+  const flushPresence = () => {
+    presenceFrame = false
+    const batch = presence.splice(0)
+    if (!batch.length) return
+    const byServer = new Map<string, Map<string, boolean>>()
+    const delta = new Map<string, number>()
+    for (const ev of batch) {
+      const users = byServer.get(ev.server) ?? new Map<string, boolean>()
+      users.set(ev.username, ev.online)
+      byServer.set(ev.server, users)
+      delta.set(ev.server, (delta.get(ev.server) ?? 0) + (ev.online ? 1 : -1))
+    }
+    set(s => {
+      let servers = s.servers
+      let members = s.members
+      let memberInfo = s.memberInfo
+      for (const [server, users] of byServer) {
+        const detail = servers[server]
+        if (detail) {
+          const online_count = Math.max(0, detail.online_count + (delta.get(server) ?? 0))
+          servers = { ...servers, [server]: { ...detail, online_count } }
+        }
+        const cache = members[server]
+        if (cache) {
+          const hit = (m: Member) => users.has(m.username) && users.get(m.username) !== m.online
+          const list = mapWhere(cache.list, hit, m => ({
+            ...m,
+            online: users.get(m.username) ?? m.online,
+          }))
+          if (list !== cache.list) members = { ...members, [server]: { ...cache, list } }
+        }
+        const known = memberInfo[server]
+        if (known) {
+          let next: Record<string, Member | null> | null = null
+          for (const [username, online] of users) {
+            const cur = known[username]
+            if (!cur || cur.online === online) continue
+            next ??= { ...known }
+            next[username] = { ...cur, online }
+          }
+          if (next) memberInfo = { ...memberInfo, [server]: next }
+        }
+      }
+      return { servers, members, memberInfo }
+    })
+  }
+
+  const queuePresence = (ev: Extract<WsEvent, { type: 'presence_changed' }>) => {
+    presence.push(ev)
+    if (presenceFrame) return
+    presenceFrame = true
+    if (typeof requestAnimationFrame === 'function' && pageVisible())
+      requestAnimationFrame(flushPresence)
+    else setTimeout(flushPresence, 16)
+  }
+
+  const leaveServerView = (next: string | null) => {
+    const cur = get().view
+    const prev = cur?.kind === 'channel' ? cur.server : null
+    if (prev === null || prev === next) return
+    const { activeDialog } = get()
+    if (activeDialog?.kind === 'server_settings' && activeDialog.server === prev) return
+    for (const id of [`m:${prev}`, `i:${prev}`]) epochs[id] = (epochs[id] ?? 0) + 1
+    set(s => {
+      if (!s.members[prev] && !s.interacted[prev]) return {}
+      const members = { ...s.members }
+      delete members[prev]
+      const interacted = { ...s.interacted }
+      delete interacted[prev]
+      return { members, interacted }
     })
   }
 
@@ -1316,11 +1637,13 @@ export const useStore = create<RChatState>()((set, get) => {
     return !needle || names.some(n => n.toLowerCase().includes(needle))
   }
 
+  const pageKeys = new WeakMap<unknown[], Set<Key>>()
+
   const loadPage = async <T>(
     id: string,
     read: () => Paged<T>,
     write: (page: Paged<T>) => void,
-    fetchPage: (offset: number) => Promise<T[]>,
+    fetchPage: (cursor: string | null) => Promise<Page<T>>,
     keyOf: (item: T) => string,
     q: string,
     reset: boolean
@@ -1331,24 +1654,27 @@ export const useStore = create<RChatState>()((set, get) => {
     if (fresh) epochs[id] = (epochs[id] ?? 0) + 1
     const epoch = epochs[id] ?? 0
     const base: Paged<T> = fresh
-      ? { list: [], hasMore: true, loading: true, q }
+      ? { list: [], hasMore: true, loading: true, q, cursor: null }
       : { ...cur, loading: true }
     write(base)
-    let page: T[]
+    let page: Page<T>
     try {
-      page = await fetchPage(base.list.length)
+      page = await fetchPage(base.cursor ?? null)
     } catch (e) {
       if ((epochs[id] ?? 0) === epoch) write({ ...base, loading: false })
       throw e
     }
     if ((epochs[id] ?? 0) !== epoch) return
-    const seen = new Set(base.list.map(keyOf))
-    write({
-      ...base,
-      list: [...base.list, ...page.filter(item => !seen.has(keyOf(item)))],
-      hasMore: page.length === PAGE,
-      loading: false,
+    const seen = pageKeys.get(base.list) ?? new Set<Key>(base.list.map(keyOf))
+    const added = page.items.filter(item => {
+      const key = keyOf(item)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
     })
+    const list = added.length ? [...base.list, ...added] : base.list
+    pageKeys.set(list, seen)
+    write({ ...base, list, hasMore: page.next !== null, cursor: page.next, loading: false })
   }
 
   const writeMembers = (server: string) => (page: Paged<Member>) =>
@@ -1420,7 +1746,10 @@ export const useStore = create<RChatState>()((set, get) => {
     const kept = Object.entries(known)
       .filter(([, m]) => m !== null)
       .slice(-MEMBER_INFO_REFRESH)
-    set(s => ({ memberInfo: { ...s.memberInfo, [server]: Object.fromEntries(kept) } }))
+    set(s => ({
+      memberInfo: { ...s.memberInfo, [server]: Object.fromEntries(kept) },
+      memberInfoTrim: { ...s.memberInfoTrim, [server]: (s.memberInfoTrim[server] ?? 0) + 1 },
+    }))
     if (kept.length)
       void fetchMemberInfo(
         server,
@@ -1476,6 +1805,10 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const sameUser = (username: string) => get().me?.username === username
 
+  const readQueue = createReadQueue({
+    send: (scope, id) => (get().token ? api.postRead(scope, id, true) : Promise.resolve()),
+  })
+
   const moveDmUp = (id: number) =>
     set(s => {
       const dm = s.dms.find(d => d.id === id)
@@ -1526,9 +1859,15 @@ export const useStore = create<RChatState>()((set, get) => {
       throw e
     }
     if (!current()) return
+    const bounded = trimWindow(merge(get().messages[key] ?? [], applyEmbeds(older)), 'oldest')
+    if (bounded.trimmed) {
+      newHistory(key)
+      tails.delete(key)
+    }
     set(s => ({
-      messages: { ...s.messages, [key]: merge(s.messages[key] ?? [], older) },
+      messages: { ...s.messages, [key]: bounded.list },
       older: { ...s.older, [key]: { more: older.length === PAGE, loading: false } },
+      ...(bounded.trimmed ? { newer: { ...s.newer, [key]: { more: true, loading: false } } } : {}),
     }))
     askP2p(older)
   }
@@ -1554,24 +1893,29 @@ export const useStore = create<RChatState>()((set, get) => {
     if (!current()) return
     const more = newer.length === PAGE
     const caught = more ? [] : takeTail(key, Math.max(last.id, ...newer.map(m => m.id)))
+    const bounded = trimWindow(
+      merge(get().messages[key] ?? [], applyEmbeds([...newer, ...caught])),
+      'newest'
+    )
+    if (bounded.trimmed) newHistory(key)
     set(s => ({
-      messages: {
-        ...s.messages,
-        [key]: applyEmbeds(merge(s.messages[key] ?? [], [...newer, ...caught])),
-      },
+      messages: { ...s.messages, [key]: bounded.list },
       newer: keyed(s.newer, key, more ? { more: true, loading: false } : null),
+      ...(bounded.trimmed ? { older: { ...s.older, [key]: { more: true, loading: false } } } : {}),
     }))
     askP2p(newer)
   }
 
   const firstPage = (key: string, msgs: Message[], focus?: Focus) => {
     newHistory(key)
+    touchView(key)
     const sorted = [...msgs].sort(byId)
-    const caught = takeTail(key, sorted[sorted.length - 1]?.id ?? 0)
+    const caught = takeTail(key, (sorted[0]?.id ?? 1) - 1)
     set(s => ({
-      messages: { ...s.messages, [key]: applyEmbeds(merge(sorted, caught)) },
+      messages: { ...s.messages, [key]: applyEmbeds(merge(caught, sorted)) },
       older: { ...s.older, [key]: { more: msgs.length === PAGE, loading: false } },
       newer: keyed(s.newer, key, null),
+      stale: keyed(s.stale, key, null),
       ...(focus ? { focus: { ...s.focus, [key]: focus } } : {}),
     }))
   }
@@ -1583,17 +1927,20 @@ export const useStore = create<RChatState>()((set, get) => {
     focus: (sorted: Message[]) => Focus | null
   ) => {
     newHistory(key)
-    tails.delete(key)
+    touchView(key)
     const sorted = [...msgs].sort(byId)
     const edges = windowEdges(
       sorted.map(m => m.id),
       at,
       PAGE
     )
+    const caught = edges.newer ? [] : takeTail(key, (sorted[0]?.id ?? 1) - 1)
+    tails.delete(key)
     set(s => ({
-      messages: { ...s.messages, [key]: applyEmbeds(sorted) },
+      messages: { ...s.messages, [key]: applyEmbeds(merge(caught, sorted)) },
       older: { ...s.older, [key]: { more: edges.older, loading: false } },
       newer: keyed(s.newer, key, edges.newer ? { more: true, loading: false } : null),
+      stale: keyed(s.stale, key, null),
       focus: keyed(s.focus, key, focus(sorted)),
     }))
   }
@@ -1603,7 +1950,7 @@ export const useStore = create<RChatState>()((set, get) => {
     at: number,
     focus: (sorted: Message[]) => Focus | null = () => ({ id: at, flash: true })
   ) => {
-    const msgs = await fetchPage(key, { around: at, limit: PAGE })
+    const msgs = await headLoad(key, () => fetchPage(key, { around: at, limit: PAGE }))
     windowPage(key, msgs, at, focus)
     askP2p(msgs)
   }
@@ -1713,13 +2060,9 @@ export const useStore = create<RChatState>()((set, get) => {
           fail(e)
           break
         }
-        if (detached(key)) holdTail(key, real)
-        set(s => ({
-          outbox: dropOutgoing(s.outbox, key, head.tempId),
-          messages: detached(key)
-            ? s.messages
-            : { ...s.messages, [key]: applyEmbeds(merge(s.messages[key] ?? [], [real])) },
-        }))
+        if (holding(key)) holdTail(key, real)
+        const next = holding(key) ? {} : (appendLive(key, [real], true) ?? holdLive(key, [real]))
+        set(s => ({ outbox: dropOutgoing(s.outbox, key, head.tempId), ...next }))
         if (key[0] !== 't') get().markRead(key, real.id)
       }
     } finally {
@@ -1742,6 +2085,8 @@ export const useStore = create<RChatState>()((set, get) => {
     servers: {},
     members: {},
     memberInfo: {},
+    memberInfoTrim: {},
+    adminChanges: {},
     interacted: {},
     bans: {},
     adminUsers: emptyPage<UserRef>(),
@@ -1760,6 +2105,7 @@ export const useStore = create<RChatState>()((set, get) => {
     messages: {},
     older: {},
     newer: {},
+    stale: {},
     focus: {},
     outbox: {},
     reads: {},
@@ -1892,6 +2238,10 @@ export const useStore = create<RChatState>()((set, get) => {
     logout: () => {
       if (meRetry) clearTimeout(meRetry)
       meRetry = null
+      readQueue.flush()
+      readQueue.clear()
+      unreadsMore = false
+      stopCatchUp()
       wsClient.stop()
       rtc.leave()
       p2p.endMedia()
@@ -1902,11 +2252,13 @@ export const useStore = create<RChatState>()((set, get) => {
       api.setToken(null)
       api.setGrants({})
       wsClient.setGrants({})
-      dmPager.reset(0)
-      serverPager.reset(0)
+      dmPager.reset(null)
+      serverPager.reset(null)
       historyGen.clear()
       tails.clear()
       sticky.clear()
+      views.clear()
+      presence.length = 0
       clearProfiles()
       dropStashedInvite()
       set({
@@ -1921,6 +2273,8 @@ export const useStore = create<RChatState>()((set, get) => {
         servers: {},
         members: {},
         memberInfo: {},
+        memberInfoTrim: {},
+        adminChanges: {},
         interacted: {},
         bans: {},
         adminUsers: emptyPage<UserRef>(),
@@ -1934,6 +2288,7 @@ export const useStore = create<RChatState>()((set, get) => {
         messages: {},
         older: {},
         newer: {},
+        stale: {},
         focus: {},
         outbox: {},
         reads: {},
@@ -1992,6 +2347,11 @@ export const useStore = create<RChatState>()((set, get) => {
       act(async () => {
         const view: View = { kind: 'channel', server, channelId }
         const key = viewKey(view)
+        const before = get().view
+        const entering = before?.kind !== 'channel' || before.server !== server
+        readQueue.flush()
+        leaveServerView(server)
+        if (entering) refreshMemberInfo(server)
         set(s => ({ view, atBottom: true, focus: keyed(s.focus, key, null) }))
         placeAnchor(key)
         syncUrl(view, nav)
@@ -2002,7 +2362,7 @@ export const useStore = create<RChatState>()((set, get) => {
           await loadAround(key, at)
           return
         }
-        const msgs = await fetchPage(key, {})
+        const msgs = await headLoad(key, () => fetchPage(key, {}))
         firstPage(key, msgs)
         askP2p(msgs)
       }),
@@ -2011,6 +2371,8 @@ export const useStore = create<RChatState>()((set, get) => {
       act(async () => {
         const view: View = { kind: 'dm', dmId }
         const key = viewKey(view)
+        readQueue.flush()
+        leaveServerView(null)
         set(s => ({ view, atBottom: true, focus: keyed(s.focus, key, null) }))
         placeAnchor(key)
         syncUrl(view, nav)
@@ -2025,7 +2387,7 @@ export const useStore = create<RChatState>()((set, get) => {
           await loadAround(key, at)
           return
         }
-        const msgs = await fetchPage(key, {})
+        const msgs = await headLoad(key, () => fetchPage(key, {}))
         firstPage(key, msgs)
         askP2p(msgs)
       }),
@@ -2209,7 +2571,7 @@ export const useStore = create<RChatState>()((set, get) => {
             : { ...s.unreadAnchor, [scope]: lastRead },
         }
       })
-      if (get().token) void api.postRead(scope, messageId).catch(() => {})
+      if (get().token) readQueue.mark(scope, messageId)
     },
 
     setAtBottom: v => set({ atBottom: v }),
@@ -2260,7 +2622,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
     jumpToPresent: key =>
       act(async () => {
-        const msgs = await fetchPage(key, {})
+        const msgs = await headLoad(key, () => fetchPage(key, {}))
         firstPage(key, msgs, { id: null, flash: false })
         askP2p(msgs)
       }),
@@ -2330,7 +2692,7 @@ export const useStore = create<RChatState>()((set, get) => {
           await loadAround(key, at)
           return
         }
-        const msgs = await fetchPage(key, {})
+        const msgs = await headLoad(key, () => fetchPage(key, {}))
         firstPage(key, msgs)
         askP2p(msgs)
       }),
@@ -2391,21 +2753,29 @@ export const useStore = create<RChatState>()((set, get) => {
         if (!reset && (cur.loading || !cur.hasMore)) return
         if (reset) epochs.search = (epochs.search ?? 0) + 1
         const epoch = epochs.search ?? 0
-        const results = reset ? [] : cur.results
-        set({ search: { results, hasMore: true, loading: true } })
+        let results = reset ? [] : cur.results
+        let cursor = reset ? null : (cur.cursor ?? null)
+        set({ search: { results, hasMore: true, loading: true, cursor } })
         const { guest, guestServers } = get()
-        let page: SearchResult[]
-        try {
-          page = await api.search(
-            searchParams(args, searchCursor(results), guest ? guestServers : null)
-          )
-        } catch (e) {
-          if ((epochs.search ?? 0) === epoch)
-            set({ search: { results, hasMore: true, loading: false } })
-          throw e
+        const start = results.length
+        for (let tries = 0; ; tries += 1) {
+          let page: Page<SearchResult>
+          try {
+            page = await api.search(searchParams(args, cursor, guest ? guestServers : null))
+          } catch (e) {
+            if ((epochs.search ?? 0) === epoch)
+              set({ search: { results, hasMore: true, loading: false, cursor } })
+            throw e
+          }
+          if ((epochs.search ?? 0) !== epoch) return
+          const next = addSearchPage(results, page.items, page.next)
+          results = next.results
+          cursor = page.next
+          const done =
+            !next.hasMore || results.length - start >= SEARCH_PAGE || tries + 1 >= SEARCH_TRIES
+          set({ search: { ...next, loading: !done, cursor } })
+          if (done) return
         }
-        if ((epochs.search ?? 0) !== epoch) return
-        set({ search: { ...addSearchPage(results, page), loading: false } })
       }),
 
     dismissNotice: id => set(s => ({ notices: s.notices.filter(n => n.id !== id) })),
@@ -2413,12 +2783,12 @@ export const useStore = create<RChatState>()((set, get) => {
     deleteMessage: id =>
       act(async () => {
         await api.deleteMessage(id)
-        mapTails(list => list.filter(m => m.id !== id))
-        set(s => ({
-          messages: Object.fromEntries(
-            Object.entries(s.messages).map(([k, list]) => [k, list.filter(m => m.id !== id)])
-          ),
-        }))
+        const drop = (list: Message[]) => {
+          const i = indexOfId(list, id)
+          return i === -1 ? list : [...list.slice(0, i), ...list.slice(i + 1)]
+        }
+        mapTails(drop)
+        set(s => ({ messages: mapLists(s.messages, drop) }))
       }),
 
     deleteMedia: messageId =>
@@ -2426,7 +2796,7 @@ export const useStore = create<RChatState>()((set, get) => {
         await api.deleteMedia(messageId)
         const { me, messages } = get()
         for (const list of Object.values(messages)) {
-          const m = list.find(x => x.id === messageId)
+          const m = findById(list, messageId)
           if (
             m?.media?.kind === 'p2p' &&
             m.media.hoster !== null &&
@@ -2505,7 +2875,7 @@ export const useStore = create<RChatState>()((set, get) => {
           `b:${server}`,
           () => get().bans[server] ?? emptyPage<ServerBan>(),
           page => set(s => ({ bans: { ...s.bans, [server]: page } })),
-          offset => api.listBans(server, offset),
+          cursor => api.listBans(server, cursor),
           b => b.username,
           '',
           reset
@@ -2539,7 +2909,7 @@ export const useStore = create<RChatState>()((set, get) => {
           `m:${server}`,
           () => get().members[server] ?? emptyPage<Member>(),
           writeMembers(server),
-          offset => api.listMembers(server, offset),
+          cursor => api.listMembers(server, cursor),
           m => m.username,
           '',
           reset
@@ -2552,7 +2922,7 @@ export const useStore = create<RChatState>()((set, get) => {
           `i:${server}`,
           () => get().interacted[server] ?? emptyPage<UserRef>(),
           page => set(s => ({ interacted: { ...s.interacted, [server]: page } })),
-          offset => api.listInteracted(server, offset),
+          cursor => api.listInteracted(server, cursor),
           u => u.username,
           '',
           reset
@@ -2574,6 +2944,27 @@ export const useStore = create<RChatState>()((set, get) => {
     },
 
     rememberMember: (server, username, member) => writeMemberInfo(server, [[username, member]]),
+
+    notePresence: (server, username, online) =>
+      set(s => {
+        const out: Partial<RChatState> = {}
+        const cache = s.members[server]
+        if (cache) {
+          const list = mapWhere(
+            cache.list,
+            m => m.username === username && m.online !== online,
+            m => ({ ...m, online })
+          )
+          if (list !== cache.list) out.members = { ...s.members, [server]: { ...cache, list } }
+        }
+        const cur = s.memberInfo[server]?.[username]
+        if (cur && cur.online !== online)
+          out.memberInfo = {
+            ...s.memberInfo,
+            [server]: { ...s.memberInfo[server], [username]: { ...cur, online } },
+          }
+        return out
+      }),
 
     refreshMember: async (server, username) => {
       let found: Member | undefined
@@ -2709,7 +3100,7 @@ export const useStore = create<RChatState>()((set, get) => {
           'admin_users',
           () => get().adminUsers,
           adminUsers => set({ adminUsers }),
-          offset => api.adminUsers(offset, q),
+          cursor => api.adminUsers(cursor, q),
           u => u.username,
           q,
           reset
@@ -2722,7 +3113,7 @@ export const useStore = create<RChatState>()((set, get) => {
           'admin_servers',
           () => get().adminServers,
           adminServers => set({ adminServers }),
-          offset => api.adminServers(offset, q),
+          cursor => api.adminServers(cursor, q),
           sv => sv.name,
           q,
           reset
@@ -2749,18 +3140,20 @@ export const useStore = create<RChatState>()((set, get) => {
           const rootId = m.thread_root_id
           if (rootId !== null) {
             const tkey = threadKey(rootId)
-            if (detached(tkey)) holdTail(tkey, m)
             const ckey = m.channel_id !== null ? `c${m.channel_id}` : null
             const bump = (list: Message[]) =>
-              list.map(r => (r.id === rootId ? { ...r, reply_count: r.reply_count + 1 } : r))
+              patchById(list, rootId, r => ({ ...r, reply_count: r.reply_count + 1 }))
             const held = ckey ? tails.get(ckey) : undefined
             if (ckey && held) tails.set(ckey, bump(held))
+            const live = liveKey(tkey)
+            if (live && holding(tkey)) holdTail(tkey, m)
+            const thread =
+              live && !holding(tkey) ? (appendLive(tkey, [m]) ?? holdLive(tkey, [m])) : {}
             set(s => {
-              const messages = { ...s.messages }
-              if (messages[tkey] && !s.newer[tkey]?.more)
-                messages[tkey] = applyEmbeds(merge(messages[tkey], [m]))
+              const messages = { ...s.messages, ...thread.messages }
               if (ckey && messages[ckey]) messages[ckey] = bump(messages[ckey])
               return {
+                ...thread,
                 messages,
                 panel:
                   s.panel?.kind === 'thread' && s.panel.root.id === rootId
@@ -2773,13 +3166,9 @@ export const useStore = create<RChatState>()((set, get) => {
             })
           } else {
             const key = messageKey(ev.channel_id, ev.dm_id)
-            if (key && detached(key)) holdTail(key, m)
-            else if (key) {
-              set(s =>
-                s.messages[key]
-                  ? { messages: { ...s.messages, [key]: applyEmbeds(merge(s.messages[key], [m])) } }
-                  : {}
-              )
+            if (key && liveKey(key)) {
+              if (holding(key)) holdTail(key, m)
+              else set(appendLive(key, [m]) ?? holdLive(key, [m]))
             }
           }
           askP2p([m])
@@ -2793,7 +3182,7 @@ export const useStore = create<RChatState>()((set, get) => {
               const viewNow = get().view
               const viewingScope = viewNow ? viewKey(viewNow) : null
               set(s => {
-                const prev = s.reads[scope] ?? { lastRead: 0, latest: 0 }
+                const prev = s.reads[scope] ?? { lastRead: unreadsMore ? 0 : m.id - 1, latest: 0 }
                 return {
                   reads: {
                     ...s.reads,
@@ -2805,7 +3194,8 @@ export const useStore = create<RChatState>()((set, get) => {
                   },
                 }
               })
-              if (mine || (scope === viewingScope && get().atBottom)) get().markRead(scope, m.id)
+              if (mine || (scope === viewingScope && get().atBottom && pageVisible()))
+                get().markRead(scope, m.id)
             }
           }
           const { me, view, panel } = get()
@@ -2840,21 +3230,24 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         case 'message_deleted': {
           const rootOf = ev.thread_root_id
-          const drop = (list: Message[]) =>
-            list
-              .filter(m => m.id !== ev.id)
-              .map(m =>
-                m.id === rootOf ? { ...m, reply_count: Math.max(0, m.reply_count - 1) } : m
-              )
+          const drop = (list: Message[]) => {
+            const i = indexOfId(list, ev.id)
+            const cut = i === -1 ? list : [...list.slice(0, i), ...list.slice(i + 1)]
+            return rootOf === null
+              ? cut
+              : patchById(cut, rootOf, m => ({
+                  ...m,
+                  reply_count: Math.max(0, m.reply_count - 1),
+                }))
+          }
           tails.delete(threadKey(ev.id))
+          views.delete(threadKey(ev.id))
           mapTails(drop)
           forgetPending(key => key !== threadKey(ev.id))
           set(s => {
-            const messages = Object.fromEntries(
-              Object.entries(s.messages)
-                .filter(([k]) => k !== threadKey(ev.id))
-                .map(([k, list]) => [k, drop(list)])
-            )
+            const kept = { ...s.messages }
+            delete kept[threadKey(ev.id)]
+            const messages = mapLists(kept, drop)
             const panel =
               s.panel?.kind === 'thread' && s.panel.root.id === ev.id
                 ? null
@@ -2927,6 +3320,7 @@ export const useStore = create<RChatState>()((set, get) => {
           })
           forgetReads(scope => scope !== `c${ev.channel_id}`)
           forgetPending((_, upload) => upload.scope !== `c${ev.channel_id}`)
+          if (!liveKey(`c${ev.channel_id}`)) forgetViews([`c${ev.channel_id}`])
           const { view, servers } = get()
           if (view?.kind === 'channel' && view.channelId === ev.channel_id) {
             const next = servers[ev.server]?.channels[0]
@@ -2943,15 +3337,20 @@ export const useStore = create<RChatState>()((set, get) => {
             adminOverview: s.adminOverview
               ? { ...s.adminOverview, server_count: s.adminOverview.server_count + 1 }
               : s.adminOverview,
-            adminServers: matches(s.adminServers.q, ev.server.name, ev.server.display_name)
-              ? {
-                  ...s.adminServers,
-                  list: [
-                    ...s.adminServers.list.filter(x => x.name !== ev.server.name),
-                    ev.server,
-                  ].sort((a, b) => a.name.localeCompare(b.name)),
-                }
-              : s.adminServers,
+            adminServers:
+              (s.adminServers.list.length > 0 || !s.adminServers.hasMore) &&
+              matches(s.adminServers.q, ev.server.name, ev.server.display_name)
+                ? {
+                    ...s.adminServers,
+                    list: insertSorted(
+                      s.adminServers.list,
+                      ev.server,
+                      (a, b) => a.name.localeCompare(b.name),
+                      x => x.name,
+                      s.adminServers.hasMore
+                    ),
+                  }
+                : s.adminServers,
           }))
           return
         }
@@ -3025,7 +3424,7 @@ export const useStore = create<RChatState>()((set, get) => {
           if (old_name !== server.name) droppedAt.set(old_name, serverGen)
           memberGen[old_name] = (memberGen[old_name] ?? 0) + 1
           memberGen[server.name] = (memberGen[server.name] ?? 0) + 1
-          if (serverPager.removed(0)) void get().loadMoreServers()
+          if (serverPager.removed()) void get().loadMoreServers()
           if (get().guest && get().guestServers.includes(old_name)) {
             persistGuestServers(get().guestServers.map(n => (n === old_name ? server.name : n)))
             const names = { ...get().guestNames, [server.name]: server.display_name }
@@ -3093,6 +3492,9 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'admin_changed': {
+          set(s => ({
+            adminChanges: { ...s.adminChanges, [ev.server]: (s.adminChanges[ev.server] ?? 0) + 1 },
+          }))
           patchMembers(ev.server, list =>
             list.map(m =>
               m.username === ev.username ? { ...m, is_admin: ev.is_admin, perms: ev.perms } : m
@@ -3131,36 +3533,30 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         case 'user_updated': {
           const u = ev.user
-          mapTails(list =>
-            list.map(m => (m.author.username === u.username ? { ...m, author: u } : m))
-          )
+          const byAuthor = (m: Message) => m.author.username === u.username
+          const reauthor = (list: Message[]) => mapWhere(list, byAuthor, m => ({ ...m, author: u }))
+          mapTails(reauthor)
           set(s => ({
             me: s.me && s.me.username === u.username ? { ...s.me, ...u } : s.me,
             dms: s.dms.map(d => (d.other.username === u.username ? { ...d, other: u } : d)),
-            members: Object.fromEntries(
-              Object.entries(s.members).map(([k, cache]) => [
-                k,
-                {
-                  ...cache,
-                  list: cache.list.map(m => (m.username === u.username ? { ...m, ...u } : m)),
-                },
-              ])
+            members: mapPages(s.members, list =>
+              mapWhere(
+                list,
+                m => m.username === u.username,
+                m => ({ ...m, ...u })
+              )
             ),
-            messages: Object.fromEntries(
-              Object.entries(s.messages).map(([k, list]) => [
-                k,
-                list.map(m => (m.author.username === u.username ? { ...m, author: u } : m)),
-              ])
-            ),
+            messages: mapLists(s.messages, reauthor),
             adminUsers: {
               ...s.adminUsers,
               list: s.adminUsers.list.map(x => (x.username === u.username ? u : x)),
             },
-            interacted: Object.fromEntries(
-              Object.entries(s.interacted).map(([k, cache]) => [
-                k,
-                { ...cache, list: cache.list.map(x => (x.username === u.username ? u : x)) },
-              ])
+            interacted: mapPages(s.interacted, list =>
+              mapWhere(
+                list,
+                x => x.username === u.username,
+                () => u
+              )
             ),
             search: {
               ...s.search,
@@ -3181,14 +3577,7 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'presence_changed': {
-          patchServer(ev.server, d => ({
-            ...d,
-            online_count: Math.max(0, d.online_count + (ev.online ? 1 : -1)),
-          }))
-          patchMembers(ev.server, list =>
-            list.map(m => (m.username === ev.username ? { ...m, online: ev.online } : m))
-          )
-          patchMemberInfo(ev.server, ev.username, m => ({ ...m, online: ev.online }))
+          queuePresence(ev)
           return
         }
         case 'presence_mode': {
@@ -3201,6 +3590,7 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         case 'read_updated': {
           if (get().me?.username !== ev.username) return
+          readQueue.seen(ev.scope, ev.last_read)
           set(s => {
             const prev = s.reads[ev.scope] ?? { lastRead: 0, latest: ev.last_read }
             const lastRead = Math.max(prev.lastRead, ev.last_read)
@@ -3334,35 +3724,23 @@ export const useStore = create<RChatState>()((set, get) => {
             .dms.filter(d => d.other.username === ev.username)
             .map(d => `d${d.id}`)
           dmGen += 1
-          const reload = dmPager.removed(gone.length)
+          const reload = dmPager.removed()
           forgetReads(scope => !gone.includes(scope))
+          const byBanned = (m: Message) => m.author.username === ev.username
           const roots = new Set(
             Object.values(get().messages)
-              .flat()
-              .filter(m => m.author.username === ev.username)
+              .flatMap(list => list.filter(byBanned))
               .map(m => threadKey(m.id))
           )
           forgetPending((key, upload) => !gone.includes(upload.scope) && !roots.has(key))
-          mapTails(list => list.filter(m => m.author.username !== ev.username))
+          const unban = (list: Message[]) => dropWhere(list, byBanned)
+          mapTails(unban)
           if (get().me) void loadUnreads()
           set(s => ({
-            messages: Object.fromEntries(
-              Object.entries(s.messages).map(([k, list]) => [
-                k,
-                list.filter(m => m.author.username !== ev.username),
-              ])
-            ),
-            members: Object.fromEntries(
-              Object.entries(s.members).map(([k, cache]) => [
-                k,
-                { ...cache, list: cache.list.filter(m => m.username !== ev.username) },
-              ])
-            ),
-            interacted: Object.fromEntries(
-              Object.entries(s.interacted).map(([k, cache]) => [
-                k,
-                { ...cache, list: cache.list.filter(u => u.username !== ev.username) },
-              ])
+            messages: mapLists(s.messages, unban),
+            members: mapPages(s.members, list => dropWhere(list, m => m.username === ev.username)),
+            interacted: mapPages(s.interacted, list =>
+              dropWhere(list, u => u.username === ev.username)
             ),
             dms: s.dms.filter(d => d.other.username !== ev.username),
             adminOverview: s.adminOverview
@@ -3392,15 +3770,20 @@ export const useStore = create<RChatState>()((set, get) => {
             adminOverview: s.adminOverview
               ? { ...s.adminOverview, user_count: s.adminOverview.user_count + 1 }
               : s.adminOverview,
-            adminUsers: matches(s.adminUsers.q, ev.user.username, ev.user.display_name)
-              ? {
-                  ...s.adminUsers,
-                  list: [
-                    ...s.adminUsers.list.filter(u => u.username !== ev.user.username),
-                    ev.user,
-                  ].sort((a, b) => a.username.localeCompare(b.username)),
-                }
-              : s.adminUsers,
+            adminUsers:
+              (s.adminUsers.list.length > 0 || !s.adminUsers.hasMore) &&
+              matches(s.adminUsers.q, ev.user.username, ev.user.display_name)
+                ? {
+                    ...s.adminUsers,
+                    list: insertSorted(
+                      s.adminUsers.list,
+                      ev.user,
+                      (a, b) => a.username.localeCompare(b.username),
+                      u => u.username,
+                      s.adminUsers.hasMore
+                    ),
+                  }
+                : s.adminUsers,
           }))
           return
         }

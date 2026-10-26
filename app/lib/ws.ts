@@ -1,4 +1,5 @@
 import { getBasePath } from './basePath'
+import { backoffDelay, nextAttempt } from './backoff'
 import type { VoiceMsg, WsEvent, WsStatus } from './types'
 
 const apiBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, '')
@@ -23,7 +24,7 @@ export function wsUrlFrom(
 
 const wsUrl = () => wsUrlFrom(apiBase, window.location, getBasePath(), wsBase)
 
-const probeUrl = apiBase ? `${apiBase}/api/servers/rchat` : `${getBasePath()}/api/servers/rchat`
+const probeUrl = apiBase ? `${apiBase}/api/health` : `${getBasePath()}/api/health`
 
 class WsClient {
   private ws: WebSocket | null = null
@@ -33,8 +34,9 @@ class WsClient {
   private grants: Record<string, string> = {}
   private stopped = true
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  private degradedTimer: ReturnType<typeof setInterval> | null = null
   private connectTimer: ReturnType<typeof setTimeout> | null = null
+  private attempt = 0
+  private openedAt: number | null = null
 
   onEvent: (ev: WsEvent) => void = () => {}
   onStatus: (status: WsStatus) => void = () => {}
@@ -50,11 +52,11 @@ class WsClient {
   stop() {
     this.stopped = true
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
-    if (this.degradedTimer) clearInterval(this.degradedTimer)
     if (this.connectTimer) clearTimeout(this.connectTimer)
     this.reconnectTimer = null
-    this.degradedTimer = null
     this.connectTimer = null
+    this.attempt = 0
+    this.openedAt = null
     const ws = this.ws
     this.ws = null
     ws?.close()
@@ -119,8 +121,7 @@ class WsClient {
     ws.onopen = () => {
       if (this.connectTimer) clearTimeout(this.connectTimer)
       this.connectTimer = null
-      if (this.degradedTimer) clearInterval(this.degradedTimer)
-      this.degradedTimer = null
+      this.openedAt = Date.now()
       this.send({ type: 'auth', token: this.token })
       if (this.token) this.send({ type: 'viewing', server: this.viewing })
       if (this.subs.size) this.sendSubscribe()
@@ -143,16 +144,25 @@ class WsClient {
   }
 
   private dropped() {
+    const openFor = this.openedAt === null ? null : Date.now() - this.openedAt
+    this.openedAt = null
+    this.attempt = nextAttempt(this.attempt, openFor)
     void this.probe()
-    if (!this.degradedTimer) {
-      this.degradedTimer = setInterval(() => void this.probe(), 10_000)
-    }
-    this.reconnectTimer = setTimeout(() => this.connect(), 2_000)
+    this.reconnectTimer = setTimeout(
+      () => {
+        this.reconnectTimer = null
+        this.connect()
+      },
+      backoffDelay(this.attempt - 1)
+    )
   }
 
   private async probe() {
+    const ws = this.ws
+    const stale = () => this.stopped || this.ws !== ws || ws?.readyState === WebSocket.OPEN
     try {
       const res = await fetch(probeUrl)
+      if (stale()) return
       if (res.ok) {
         this.onStatus('yellow')
         this.onPoll()
@@ -160,7 +170,7 @@ class WsClient {
         this.onStatus('red')
       }
     } catch {
-      this.onStatus('red')
+      if (!stale()) this.onStatus('red')
     }
   }
 }

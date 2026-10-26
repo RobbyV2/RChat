@@ -41,16 +41,21 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(_) | None => (Hub::new(), None),
     };
-    let state = AppState {
-        db,
-        hub,
-        s3: config.s3()?,
-        bus,
-    };
+    let state = AppState::new(db, hub, config.s3()?, bus);
     rust_next::ws::spawn_aftermath(&state);
     if let Some(bus) = &state.bus {
         bus.spawn_workers(&state);
     }
+    let touches = state.db.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            if let Err(e) = rust_next::db::flush_grant_touches(&touches).await {
+                tracing::warn!("guest grant refresh failed: {e}");
+            }
+        }
+    });
     if roles.jobs {
         let sweeper = state.clone();
         tokio::spawn(async move {
@@ -69,6 +74,34 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         });
+        let stale = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop {
+                interval.tick().await;
+                let mine = match &stale.bus {
+                    Some(bus) => {
+                        bus.try_lock("db-sweep", std::time::Duration::from_secs(590))
+                            .await
+                    }
+                    None => true,
+                };
+                if mine {
+                    match rust_next::api::admin::resume_purges(&stale).await {
+                        Ok(0) => {}
+                        Ok(n) => info!("resumed {n} interrupted deletions"),
+                        Err(e) => tracing::warn!("resuming interrupted deletions failed: {e}"),
+                    }
+                    match rust_next::db::sweep_stale(&stale.db).await {
+                        Ok(swept) if swept != rust_next::db::Swept::default() => {
+                            info!("swept stale rows: {swept:?}")
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("stale row sweep failed: {e}"),
+                    }
+                }
+            }
+        });
         let voice = state.clone();
         let idle: i64 = std::env::var("VOICE_IDLE_SECS")
             .ok()
@@ -78,7 +111,16 @@ async fn main() -> anyhow::Result<()> {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
             loop {
                 interval.tick().await;
-                rust_next::ws::sweep_and_log(&voice, idle).await;
+                let mine = match &voice.bus {
+                    Some(bus) => {
+                        bus.try_lock("voice-sweep", std::time::Duration::from_millis(4_500))
+                            .await
+                    }
+                    None => true,
+                };
+                if mine {
+                    rust_next::ws::sweep_and_log(&voice, idle).await;
+                }
             }
         });
     }
@@ -105,6 +147,7 @@ async fn main() -> anyhow::Result<()> {
             HeaderName::from_static("x-guest-grant"),
             HeaderName::from_static("x-invite-password"),
         ])
+        .expose_headers([HeaderName::from_static(rust_next::api::NEXT_CURSOR)])
         .allow_credentials(true);
 
     let proxy_url = config.proxy_url();

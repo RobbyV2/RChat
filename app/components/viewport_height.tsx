@@ -57,22 +57,37 @@ const offsetIn = (el: HTMLElement, id: number) => {
   return node ? node.getBoundingClientRect().top - el.getBoundingClientRect().top : null
 }
 
-export function usePrependAnchor(ref: RefObject<HTMLElement | null>, firstId: number | undefined) {
+const firstVisible = (el: HTMLElement) => {
+  const box = el.getBoundingClientRect()
+  for (const node of el.querySelectorAll<HTMLElement>('[data-mid]')) {
+    const r = node.getBoundingClientRect()
+    if (r.bottom > box.top) return { id: Number(node.dataset.mid), top: r.top - box.top }
+  }
+  return null
+}
+
+export function useScrollAnchor(
+  ref: RefObject<HTMLElement | null>,
+  firstId: number | undefined,
+  busy = false
+) {
   const anchor = useRef<{ id: number; top: number } | null>(null)
   useLayoutEffect(() => {
     const el = ref.current
     const a = anchor.current
-    if (!el || !a || a.id === firstId) return
-    anchor.current = null
+    if (!el || !a) return
     const top = offsetIn(el, a.id)
-    if (top !== null) el.scrollTop += top - a.top
+    if (top === null) return
+    anchor.current = null
+    el.scrollTop += top - a.top
   }, [ref, firstId])
+  useLayoutEffect(() => {
+    if (!busy) anchor.current = null
+  }, [busy])
   return useCallback(() => {
     const el = ref.current
-    if (!el || firstId === undefined) return
-    const top = offsetIn(el, firstId)
-    anchor.current = top === null ? null : { id: firstId, top }
-  }, [ref, firstId])
+    if (el) anchor.current = firstVisible(el)
+  }, [ref])
 }
 
 export function OlderLoading({ newer = false }: { newer?: boolean }) {

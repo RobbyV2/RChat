@@ -89,8 +89,10 @@ export const me = (username: string, over: Partial<Me> = {}): Me => ({
   password_kind: 'text',
   servers: [],
   servers_more: false,
+  servers_cursor: null,
   dms: [],
   dms_more: false,
+  dms_cursor: null,
   ...over,
 })
 

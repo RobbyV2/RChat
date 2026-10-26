@@ -197,6 +197,7 @@ function Card({ target }: { target: ProfileTarget }) {
         setProfile(p)
         const s = useStore.getState()
         if (server && s.servers[server]) s.rememberMember(server, username, asMember(p))
+        if (server && p.member) s.notePresence(server, username, p.member.online)
         useStore.setState(st =>
           st.profile?.user.username === username ? { profile: { ...st.profile, user: p.user } } : {}
         )

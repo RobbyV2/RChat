@@ -184,7 +184,9 @@ export default function SearchPanel() {
             )}
           </button>
         ))}
-        {active && search.hasMore && <Sentinel key={search.results.length} onVisible={more} />}
+        {active && search.hasMore && (
+          <Sentinel key={`${search.results.length}:${search.cursor ?? ''}`} onVisible={more} />
+        )}
         {search.loading && (
           <p className="px-3 py-2 text-center text-xs text-on-surface-variant">Searching</p>
         )}

@@ -28,26 +28,29 @@ export const dayEndTs = (date: string): number | null => {
 
 export const searchParams = (
   args: SearchArgs,
-  before: number | null,
+  cursor: string | null,
   servers: string[] | null
 ): SearchParams => ({
   q: args.q || undefined,
   from: args.from || undefined,
   channel_id: args.channelId ?? undefined,
   has: args.hasFile ? 'file' : undefined,
-  before: before ?? undefined,
+  cursor: cursor ?? undefined,
   before_ts: args.beforeTs ?? undefined,
   after_ts: args.afterTs ?? undefined,
   servers: servers ?? undefined,
 })
 
-export const searchCursor = (results: SearchResult[]): number | null =>
-  results.length ? results[results.length - 1].message.id : null
+export const SEARCH_MAX = 500
+export const SEARCH_TRIES = 4
 
 export const addSearchPage = (
   results: SearchResult[],
-  page: SearchResult[]
-): { results: SearchResult[]; hasMore: boolean } => ({
-  results: appendUnique(results, page, r => r.message.id),
-  hasMore: page.length === SEARCH_PAGE,
-})
+  page: SearchResult[],
+  next: string | null,
+  max = SEARCH_MAX
+): { results: SearchResult[]; hasMore: boolean } => {
+  const all = appendUnique(results, page, r => r.message.id)
+  const capped = all.length > max ? all.slice(0, max) : all
+  return { results: capped, hasMore: next !== null && capped.length < max }
+}
