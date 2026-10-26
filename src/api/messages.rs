@@ -9,9 +9,9 @@ use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::{
-    ApiError, Authed, CallLog, Embed, MESSAGE_MAX, MaybeAuthed, MediaRef, Message, UserRef,
-    check_len, check_profanity, embeds, header_grants, media::MEDIA_TTL_SECS, require_guest_ok,
-    require_server_view, user_ref,
+    ApiError, Authed, CallLog, Embed, LIST_MAX, LIST_PAGE, MESSAGE_MAX, MaybeAuthed, MediaRef,
+    Message, UserRef, check_len, check_profanity, embeds, header_grants, media::MEDIA_TTL_SECS,
+    require_guest_ok, require_server_view, user_from, user_refs,
 };
 use crate::db::{
     ChannelAccess, ChannelKind, Db, MediaKind, Perm, User, channel_access, effective_perms,
@@ -68,6 +68,7 @@ pub struct SearchResult {
 #[derive(Serialize, ToSchema)]
 pub struct Unread {
     pub scope: String,
+    pub server: Option<String>,
     pub last_read: i64,
     pub latest: i64,
 }
@@ -96,7 +97,7 @@ fn valid_scope(scope: &str) -> bool {
         && bytes[1..].iter().all(|b| b.is_ascii_digit())
 }
 
-async fn row_message(db: &Db, r: &AnyRow) -> Result<Message, ApiError> {
+fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, ApiError> {
     let media = match r.try_get::<Option<String>, _>(6)? {
         Some(id) => {
             let removed = r.try_get::<i64, _>(8)?;
@@ -130,7 +131,7 @@ async fn row_message(db: &Db, r: &AnyRow) -> Result<Message, ApiError> {
         channel_id: r.try_get(1)?,
         dm_id: r.try_get(2)?,
         thread_root_id: r.try_get(3)?,
-        author: user_ref(db, &r.try_get::<String, _>(4)?).await,
+        author: user_from(refs, &r.try_get::<String, _>(4)?),
         content: r.try_get(5)?,
         created_at: r.try_get(10)?,
         reply_count: r.try_get(11)?,
@@ -141,16 +142,22 @@ async fn row_message(db: &Db, r: &AnyRow) -> Result<Message, ApiError> {
     })
 }
 
+async fn rows_messages(db: &Db, rows: &[AnyRow]) -> Result<Vec<Message>, ApiError> {
+    let mut authors = Vec::with_capacity(rows.len());
+    for r in rows {
+        authors.push(r.try_get::<String, _>(4)?);
+    }
+    let refs = user_refs(db, &authors).await;
+    rows.iter().map(|r| row_message(r, &refs)).collect()
+}
+
 pub(crate) async fn load_message(db: &Db, id: i64) -> Result<Option<Message>, ApiError> {
     let sql = format!("SELECT {COLS} FROM messages m WHERE m.id = $1");
-    match sqlx::query(sqlx::AssertSqlSafe(sql))
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(id)
-        .fetch_optional(db)
-        .await?
-    {
-        Some(r) => Ok(Some(row_message(db, &r).await?)),
-        None => Ok(None),
-    }
+        .fetch_all(db)
+        .await?;
+    Ok(rows_messages(db, &rows).await?.pop())
 }
 
 async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), ApiError> {
@@ -201,13 +208,10 @@ async fn page(
         .bind(key)
         .bind(q.before.unwrap_or(i64::MAX))
         .bind(min_ts.unwrap_or(i64::MIN))
-        .bind(q.limit.unwrap_or(50))
+        .bind(q.limit.unwrap_or(LIST_PAGE).clamp(1, LIST_MAX))
         .fetch_all(db)
         .await?;
-    let mut msgs = Vec::with_capacity(rows.len());
-    for r in &rows {
-        msgs.push(row_message(db, r).await?);
-    }
+    let mut msgs = rows_messages(db, &rows).await?;
     msgs.reverse();
     attach_embeds(db, &mut msgs).await?;
     Ok(msgs)
@@ -913,10 +917,9 @@ pub(crate) async fn search(
         };
     }
     let rows = query.fetch_all(&state.db).await?;
-    let mut msgs = Vec::with_capacity(rows.len());
+    let mut msgs = rows_messages(&state.db, &rows).await?;
     let mut ctx: Vec<(String, String)> = Vec::with_capacity(rows.len());
     for r in &rows {
-        msgs.push(row_message(&state.db, r).await?);
         ctx.push((r.try_get(21)?, r.try_get(22)?));
     }
     attach_embeds(&state.db, &mut msgs).await?;
@@ -932,30 +935,116 @@ pub(crate) async fn search(
     Ok(Json(out))
 }
 
-#[utoipa::path(get, path = "/api/unreads", responses((status = 200, description = "Latest and last-read message ids for each text channel and DM that has messages", body = Unreads)), security(("bearer" = [])))]
+async fn restricted_access(db: &Db, user: &User) -> Result<HashMap<i64, ChannelAccess>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT cp.channel_id, c.server, cp.subject, cp.can_view, cp.can_send, cp.can_read_history FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text'",
+    )
+    .bind(&user.username)
+    .fetch_all(db)
+    .await?;
+    if rows.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut subjects = vec![format!("u:{}", user.username)];
+    let role_rows = sqlx::query("SELECT role_id FROM user_roles WHERE username = $1")
+        .bind(&user.username)
+        .fetch_all(db)
+        .await?;
+    for r in &role_rows {
+        subjects.push(format!("r:{}", r.try_get::<i64, _>(0)?));
+    }
+    let mut restricted: HashMap<i64, (String, ChannelAccess)> = HashMap::new();
+    for r in &rows {
+        let (id, server, subject): (i64, String, String) =
+            (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
+        let entry = restricted
+            .entry(id)
+            .or_insert_with(|| (server, ChannelAccess::all(false)));
+        if subjects.contains(&subject) {
+            entry.1.view |= r.try_get::<i64, _>(3)? != 0;
+            entry.1.send |= r.try_get::<i64, _>(4)? != 0;
+            entry.1.history |= r.try_get::<i64, _>(5)? != 0;
+        }
+    }
+    let mut manages: HashMap<String, bool> = HashMap::new();
+    let mut out = HashMap::with_capacity(restricted.len());
+    for (id, (server, acc)) in restricted {
+        let ChannelAccess {
+            view,
+            send,
+            history,
+        } = acc;
+        let can_manage = match (view && send && history, manages.get(&server)) {
+            (true, _) => false,
+            (false, Some(m)) => *m,
+            (false, None) => {
+                let m =
+                    effective_perms(db, &server, user).await? & Perm::ManageChannels as i64 != 0;
+                manages.insert(server, m);
+                m
+            }
+        };
+        let access = match (can_manage, view) {
+            (true, _) => ChannelAccess::all(true),
+            (false, true) => acc,
+            (false, false) => ChannelAccess::all(false),
+        };
+        out.insert(id, access);
+    }
+    Ok(out)
+}
+
+#[utoipa::path(get, path = "/api/unreads", responses((status = 200, description = "Latest top-level and last-read message ids for each text channel the caller can view (with its server) and each DM, skipping ones without messages", body = Unreads)), security(("bearer" = [])))]
 pub(crate) async fn unreads(
     State(state): State<AppState>,
     Authed(user): Authed,
 ) -> Result<Json<Unreads>, ApiError> {
-    let mut items = Vec::new();
+    let db = &state.db;
+    let restricted = restricted_access(db, &user).await?;
     let channel_rows = sqlx::query(
-        "SELECT 'c' || m.channel_id AS scope, MAX(m.id) AS latest, COALESCE(MAX(rs.last_read), 0) AS last_read FROM messages m JOIN channels c ON c.id = m.channel_id JOIN members mem ON mem.server = c.server AND mem.username = $1 LEFT JOIN read_state rs ON rs.username = $1 AND rs.scope = 'c' || m.channel_id WHERE c.kind = 'text' AND m.thread_root_id IS NULL GROUP BY m.channel_id",
+        "SELECT x.id, x.server, x.latest, (SELECT lm.created_at FROM messages lm WHERE lm.id = x.latest), x.last_read, x.joined_at FROM (SELECT c.id, c.server, (SELECT MAX(m.id) FROM messages m WHERE m.channel_id = c.id AND m.thread_root_id IS NULL) AS latest, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'c' || c.id), 0) AS last_read, mem.joined_at FROM channels c JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text') x",
     )
     .bind(&user.username)
-    .fetch_all(&state.db)
+    .fetch_all(db)
     .await?;
     let dm_rows = sqlx::query(
-        "SELECT 'd' || m.dm_id AS scope, MAX(m.id) AS latest, COALESCE(MAX(rs.last_read), 0) AS last_read FROM messages m JOIN dms d ON d.id = m.dm_id LEFT JOIN read_state rs ON rs.username = $1 AND rs.scope = 'd' || m.dm_id WHERE d.user_a = $1 OR d.user_b = $1 GROUP BY m.dm_id",
+        "SELECT d.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = d.id), COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) FROM dms d WHERE d.user_a = $1 OR d.user_b = $1",
     )
     .bind(&user.username)
-    .fetch_all(&state.db)
+    .fetch_all(db)
     .await?;
-    for r in channel_rows.iter().chain(dm_rows.iter()) {
-        items.push(Unread {
-            scope: r.try_get(0)?,
-            latest: r.try_get(1)?,
-            last_read: r.try_get(2)?,
-        });
+    let mut items = Vec::with_capacity(channel_rows.len() + dm_rows.len());
+    for r in &channel_rows {
+        let id: i64 = r.try_get(0)?;
+        let (latest, latest_at): (Option<i64>, Option<i64>) = (r.try_get(2)?, r.try_get(3)?);
+        let joined_at: i64 = r.try_get(5)?;
+        let readable = match restricted.get(&id) {
+            None => true,
+            Some(ChannelAccess {
+                view,
+                send: _,
+                history,
+            }) => *view && (*history || latest_at.is_some_and(|t| t >= joined_at)),
+        };
+        if let (Some(latest), true) = (latest, readable) {
+            items.push(Unread {
+                scope: format!("c{id}"),
+                server: Some(r.try_get(1)?),
+                last_read: r.try_get(4)?,
+                latest,
+            });
+        }
+    }
+    for r in &dm_rows {
+        let id: i64 = r.try_get(0)?;
+        if let Some(latest) = r.try_get::<Option<i64>, _>(1)? {
+            items.push(Unread {
+                scope: format!("d{id}"),
+                server: None,
+                last_read: r.try_get(2)?,
+                latest,
+            });
+        }
     }
     Ok(Json(Unreads { items }))
 }
@@ -1222,6 +1311,275 @@ mod tests {
         .0;
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].message.content, "after");
+        done(state, path).await;
+    }
+
+    async fn add_user(db: &Db, name: &str, display: &str) {
+        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, avatar_color, created_at) VALUES($1, $2, '', 'text', 'identicon', NULL, $3)")
+            .bind(name)
+            .bind(display)
+            .bind(now())
+            .execute(db)
+            .await
+            .expect("insert user");
+    }
+
+    async fn insert(
+        db: &Db,
+        cid: Option<i64>,
+        dm: Option<i64>,
+        root: Option<i64>,
+        author: &str,
+    ) -> i64 {
+        sqlx::query("INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, created_at) VALUES($1, $2, $3, $4, 'x', $5) RETURNING id")
+            .bind(cid)
+            .bind(dm)
+            .bind(root)
+            .bind(author)
+            .bind(now())
+            .fetch_one(db)
+            .await
+            .expect("insert message")
+            .try_get(0)
+            .expect("message id")
+    }
+
+    async fn add_channel(db: &Db, name: &str, kind: &str) -> i64 {
+        sqlx::query("INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', $1, $2, 0) RETURNING id")
+            .bind(name)
+            .bind(kind)
+            .fetch_one(db)
+            .await
+            .expect("insert channel")
+            .try_get(0)
+            .expect("channel id")
+    }
+
+    async fn perm(db: &Db, cid: i64, subject: &str, view: i64) {
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, $3, 1, 1)")
+            .bind(cid)
+            .bind(subject)
+            .bind(view)
+            .execute(db)
+            .await
+            .expect("insert perm");
+    }
+
+    #[tokio::test]
+    async fn pages_batch_authors_and_clamp() {
+        let (state, path) = temp_state("page_batch").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "Alice A").await;
+        add_user(db, "bob", "Bob B").await;
+        let mut ids = Vec::new();
+        for n in 0..150 {
+            let author = ["alice", "bob", "ghost"][n % 3];
+            ids.push(insert(db, Some(cid), None, None, author).await);
+        }
+        let root = ids[0];
+        for author in ["bob", "ghost"] {
+            insert(db, Some(cid), None, Some(root), author).await;
+        }
+        let get = |before: Option<i64>, limit: Option<i64>| {
+            let state = state.clone();
+            async move {
+                channel_messages(
+                    State(state),
+                    MaybeAuthed(None),
+                    HeaderMap::new(),
+                    Path(cid),
+                    Query(PageQuery { before, limit }),
+                )
+                .await
+                .expect("page")
+                .0
+            }
+        };
+        let latest = get(None, None).await;
+        assert_eq!(latest.len(), 50);
+        assert_eq!(latest.last().map(|m| m.id), ids.last().copied());
+        assert!(latest.windows(2).all(|w| w[0].id < w[1].id));
+        assert_eq!(get(None, Some(500)).await.len(), 100);
+        assert_eq!(get(None, Some(0)).await.len(), 1);
+        let tail = get(Some(ids[40]), None).await;
+        assert_eq!(tail.len(), 40);
+        assert_eq!(tail[0].id, root);
+        assert_eq!(tail[0].reply_count, 2);
+        let names: HashMap<String, String> = latest
+            .iter()
+            .map(|m| (m.author.username.clone(), m.author.display_name.clone()))
+            .collect();
+        assert_eq!(names["alice"], "Alice A");
+        assert_eq!(names["bob"], "Bob B");
+        assert_eq!(names["ghost"], "ghost");
+        let thread = thread_messages(
+            State(state.clone()),
+            MaybeAuthed(None),
+            HeaderMap::new(),
+            Path(root),
+            Query(PageQuery {
+                before: None,
+                limit: None,
+            }),
+        )
+        .await
+        .expect("thread")
+        .0;
+        let authors: Vec<&str> = thread
+            .iter()
+            .map(|m| m.author.display_name.as_str())
+            .collect();
+        assert_eq!(authors, ["Bob B", "ghost"]);
+        let loaded = load_message(db, ids[1])
+            .await
+            .expect("load")
+            .expect("exists");
+        assert_eq!(loaded.author.display_name, "Bob B");
+        assert!(load_message(db, i64::MAX).await.expect("load").is_none());
+        done(state, path).await;
+    }
+
+    async fn unread_map(
+        state: &AppState,
+        name: &str,
+    ) -> HashMap<String, (Option<String>, i64, i64)> {
+        unreads(State(state.clone()), Authed(mem_user(name, false)))
+            .await
+            .expect("unreads")
+            .0
+            .items
+            .into_iter()
+            .map(|u| (u.scope, (u.server, u.latest, u.last_read)))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn unreads_respect_visibility() {
+        let (state, path) = temp_state("unread_vis").await;
+        let db = &state.db;
+        let general = general_id(db).await;
+        let private = add_channel(db, "private", "text").await;
+        let roled = add_channel(db, "roled", "text").await;
+        let empty = add_channel(db, "empty", "text").await;
+        let voice = add_channel(db, "voice", "voice").await;
+        let t = now();
+        for (name, admin, perms) in [
+            ("alice", 0, 0),
+            ("bob", 0, 0),
+            ("mod", 1, Perm::ManageChannels as i64),
+            ("kicker", 1, Perm::Kick as i64),
+        ] {
+            add_member(db, "rchat", name, admin, perms, t).await;
+        }
+        let role: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'r', '#ffffff', 0) RETURNING id")
+            .fetch_one(db)
+            .await
+            .expect("role")
+            .try_get(0)
+            .expect("role id");
+        sqlx::query("INSERT INTO user_roles(server, username, role_id) VALUES('rchat', 'bob', $1)")
+            .bind(role)
+            .execute(db)
+            .await
+            .expect("assign role");
+        perm(db, private, "u:alice", 0).await;
+        perm(db, private, "u:bob", 1).await;
+        perm(db, roled, &format!("r:{role}"), 1).await;
+        perm(db, empty, "u:alice", 0).await;
+        let nohist = add_channel(db, "nohist", "text").await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:alice', 1, 1, 0)")
+            .bind(nohist)
+            .execute(db)
+            .await
+            .expect("no history perm");
+        let at = |when: i64| {
+            sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'bob', 'x', $2) RETURNING id")
+                .bind(nohist)
+                .bind(when)
+        };
+        let before_join: i64 = at(t - 10)
+            .fetch_one(db)
+            .await
+            .expect("old message")
+            .try_get(0)
+            .expect("old id");
+        let g = insert(db, Some(general), None, None, "bob").await;
+        let reply = insert(db, Some(general), None, Some(g), "bob").await;
+        let p = insert(db, Some(private), None, None, "bob").await;
+        let r = insert(db, Some(roled), None, None, "bob").await;
+        insert(db, Some(voice), None, None, "bob").await;
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("dm id");
+        let call: i64 = sqlx::query("INSERT INTO messages(dm_id, author, content, kind, created_at) VALUES($1, 'bob', '', 'call', $2) RETURNING id")
+            .bind(dm)
+            .bind(t)
+            .fetch_one(db)
+            .await
+            .expect("call log")
+            .try_get(0)
+            .expect("call id");
+        sqlx::query("INSERT INTO read_state(username, scope, last_read) VALUES('alice', $1, $2)")
+            .bind(format!("c{general}"))
+            .bind(g)
+            .execute(db)
+            .await
+            .expect("read state");
+        assert!(reply > g);
+        let alice = unread_map(&state, "alice").await;
+        let rchat = Some("rchat".to_string());
+        assert_eq!(alice.len(), 2);
+        assert_eq!(alice[&format!("c{general}")], (rchat.clone(), g, g));
+        assert_eq!(alice[&format!("d{dm}")], (None, call, 0));
+        let bob = unread_map(&state, "bob").await;
+        assert_eq!(bob[&format!("c{private}")], (rchat.clone(), p, 0));
+        assert_eq!(bob[&format!("c{roled}")], (rchat.clone(), r, 0));
+        assert_eq!(bob.len(), 4);
+        let moderator = unread_map(&state, "mod").await;
+        assert!(moderator.contains_key(&format!("c{private}")));
+        assert!(moderator.contains_key(&format!("c{roled}")));
+        assert!(!moderator.contains_key(&format!("c{empty}")));
+        assert!(!moderator.contains_key(&format!("c{voice}")));
+        assert_eq!(
+            moderator[&format!("c{nohist}")],
+            (rchat.clone(), before_join, 0)
+        );
+        let outsider = unread_map(&state, "zed").await;
+        assert!(outsider.is_empty());
+        let after_join: i64 = at(t + 10)
+            .fetch_one(db)
+            .await
+            .expect("new message")
+            .try_get(0)
+            .expect("new id");
+        let alice = unread_map(&state, "alice").await;
+        assert_eq!(alice[&format!("c{nohist}")], (rchat.clone(), after_join, 0));
+        assert!(
+            !unread_map(&state, "bob")
+                .await
+                .contains_key(&format!("c{nohist}"))
+        );
+        for name in ["alice", "bob", "mod", "kicker"] {
+            let user = mem_user(name, false);
+            let restricted = restricted_access(db, &user).await.expect("restricted");
+            let open = ChannelAccess::all(true);
+            for cid in [general, private, roled, empty, nohist] {
+                let want = channel_access(db, "rchat", cid, Some(&user))
+                    .await
+                    .expect("access");
+                let got = restricted.get(&cid).unwrap_or(&open);
+                assert_eq!(
+                    (got.view, got.send, got.history),
+                    (want.view, want.send, want.history),
+                    "{name} channel {cid}"
+                );
+            }
+        }
         done(state, path).await;
     }
 }

@@ -188,6 +188,7 @@ pub enum WsEvent {
         message: String,
     },
     DmCreated {
+        dm_id: i64,
         dm_users: Vec<String>,
     },
     Banned {
@@ -1769,7 +1770,7 @@ fn wants(
         } => is_site_admin || in_server(old_name),
         WsEvent::ServerDeleted { name } => is_site_admin || in_server(name),
         WsEvent::Banned { username: _ } | WsEvent::SettingsChanged { settings: _ } => true,
-        WsEvent::DmCreated { dm_users } => {
+        WsEvent::DmCreated { dm_id: _, dm_users } => {
             me.is_some_and(|user| dm_users.iter().any(|u| u == user))
         }
         WsEvent::VoiceState {

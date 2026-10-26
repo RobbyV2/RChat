@@ -6,6 +6,7 @@ import { dmsUnread, serverUnread, useStore } from '../lib/store'
 import { serverInitial } from '../lib/rules'
 import { longPress } from './context_menu'
 import { InstallButton } from './pwa_register'
+import { Sentinel } from './server_settings'
 import { ThemeToggle } from './status_clock'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
@@ -18,6 +19,8 @@ export function ServerRail() {
   const view = useStore(s => s.view)
   const openLastDm = useStore(s => s.openLastDm)
   const openServer = useStore(s => s.openServer)
+  const serversMore = useStore(s => s.serversMore)
+  const loadMoreServers = useStore(s => s.loadMoreServers)
   const openDialog = useStore(s => s.openDialog)
   const openContextMenu = useStore(s => s.openContextMenu)
   const leaveServer = useStore(s => s.leaveServer)
@@ -111,6 +114,7 @@ export function ServerRail() {
           </button>
         )
       })}
+      {me && serversMore && <Sentinel key={me.servers.length} onVisible={loadMoreServers} />}
       <button
         title="Add a server"
         onClick={() => openDialog({ kind: 'add_server' })}

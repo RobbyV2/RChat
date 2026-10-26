@@ -11,8 +11,10 @@ use sha2::{Digest, Sha256};
 use sqlx::Row;
 use utoipa::ToSchema;
 
+use crate::api::dms::dm_page;
+use crate::api::servers::my_servers_page;
 use crate::api::{
-    ApiError, Authed, DmSummary, Member, ServerSummary, UserRef, check_profanity, user_ref,
+    ApiError, Authed, DmSummary, LIST_PAGE, Member, ServerSummary, UserRef, check_profanity,
     valid_color,
 };
 use crate::db::{AvatarKind, Db, User, get_user, now};
@@ -28,7 +30,9 @@ pub struct Me {
     pub is_site_admin: bool,
     pub appear_offline: bool,
     pub servers: Vec<ServerSummary>,
+    pub servers_more: bool,
     pub dms: Vec<DmSummary>,
+    pub dms_more: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -127,42 +131,8 @@ fn secret_from(
 }
 
 pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
-    let rows = sqlx::query(
-        "SELECT s.name, s.display_name, s.creator, m.is_admin FROM members m JOIN servers s ON s.name = m.server WHERE m.username = $1 ORDER BY m.joined_at",
-    )
-    .bind(&user.username)
-    .fetch_all(db)
-    .await?;
-    let mut servers = Vec::with_capacity(rows.len());
-    for r in &rows {
-        servers.push(ServerSummary {
-            name: r.try_get(0)?,
-            display_name: r.try_get(1)?,
-            creator: r.try_get(2)?,
-            is_admin: r.try_get::<i64, _>(3)? != 0,
-        });
-    }
-    let rows = sqlx::query(
-        "SELECT id, user_a, user_b FROM dms WHERE user_a = $1 OR user_b = $2 ORDER BY id",
-    )
-    .bind(&user.username)
-    .bind(&user.username)
-    .fetch_all(db)
-    .await?;
-    let mut dms = Vec::with_capacity(rows.len());
-    for r in &rows {
-        let (id, a, b): (i64, String, String) = (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
-        let is_self = a == b;
-        let other = match a == user.username {
-            true => b,
-            false => a,
-        };
-        dms.push(DmSummary {
-            id,
-            other: user_ref(db, &other).await,
-            is_self,
-        });
-    }
+    let (servers, servers_more) = my_servers_page(db, &user.username, 0, LIST_PAGE).await?;
+    let (dms, dms_more) = dm_page(db, &user.username, 0, LIST_PAGE).await?;
     Ok(Me {
         username: user.username.clone(),
         display_name: user.display_name.clone(),
@@ -171,7 +141,9 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
         is_site_admin: user.is_site_admin,
         appear_offline: user.appear_offline,
         servers,
+        servers_more,
         dms,
+        dms_more,
     })
 }
 
@@ -347,7 +319,7 @@ pub(crate) async fn login(
     Ok(Json(AuthResp { token, user: me }))
 }
 
-#[utoipa::path(get, path = "/api/me", responses((status = 200, description = "The signed-in user's profile with joined servers and DMs", body = Me)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/me", responses((status = 200, description = "The signed-in user's profile with the first page (50) of joined servers and of DMs; `servers_more`/`dms_more` say whether `/api/me/servers` and `/api/dms` have more", body = Me)), security(("bearer" = [])))]
 pub(crate) async fn me(
     State(state): State<AppState>,
     Authed(user): Authed,

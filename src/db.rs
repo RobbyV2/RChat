@@ -35,6 +35,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_author ON messages(author);
 CREATE INDEX IF NOT EXISTS idx_messages_thread_root ON messages(thread_root_id, id);
+CREATE INDEX IF NOT EXISTS idx_messages_channel_top ON messages(channel_id, id) WHERE thread_root_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_dms_user_b ON dms(user_b);
 CREATE INDEX IF NOT EXISTS idx_media_uploaded_at ON media(uploaded_at);
 ";
 
@@ -67,6 +69,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_author ON messages(author);
 CREATE INDEX IF NOT EXISTS idx_messages_thread_root ON messages(thread_root_id, id);
+CREATE INDEX IF NOT EXISTS idx_messages_channel_top ON messages(channel_id, id) WHERE thread_root_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_dms_user_b ON dms(user_b);
 CREATE INDEX IF NOT EXISTS idx_media_uploaded_at ON media(uploaded_at);
 ";
 
@@ -292,7 +296,7 @@ pub struct ChannelAccess {
 }
 
 impl ChannelAccess {
-    fn all(v: bool) -> ChannelAccess {
+    pub fn all(v: bool) -> ChannelAccess {
         ChannelAccess {
             view: v,
             send: v,

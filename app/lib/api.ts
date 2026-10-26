@@ -13,6 +13,7 @@ import type {
   SearchResult,
   ServerDetail,
   ServerMatch,
+  ServerSummary,
   ServerSummaryLite,
   SiteSettings,
   Unread,
@@ -114,13 +115,17 @@ export const login = (body: LoginRequest) => req<AuthResponse>('POST', '/auth/lo
 export const words = (username: string) =>
   req<{ words: string[] }>('GET', `/auth/words/${seg(username)}`)
 export const me = () => req<Me>('GET', '/me')
+export const myServers = (offset: number, limit: number) =>
+  req<ServerSummary[]>('GET', `/me/servers?offset=${offset}&limit=${limit}`)
+export const myServersByName = (names: string[]) =>
+  req<ServerSummary[]>('GET', `/me/servers?${names.map(n => `names=${seg(n)}`).join('&')}`)
 export const patchMe = (avatar_kind: AvatarKind, avatar_color?: string) =>
   req<UserRef>('PATCH', '/me', { avatar_kind, avatar_color })
 export const setAppearOffline = (appear_offline: boolean) =>
   req<UserRef>('PATCH', '/me', { appear_offline })
 
 export const createServer = (name: string, password?: string) =>
-  req<unknown>('POST', '/servers', { name, password })
+  req<ServerDetail>('POST', '/servers', { name, password })
 export const getServer = (name: string) => req<ServerDetail>('GET', `/servers/${seg(name)}`)
 export const serverExists = (name: string) =>
   req<{ has_password: boolean }>('GET', `/servers/${seg(name)}/exists`)
@@ -132,7 +137,7 @@ export const listMembers = (name: string, offset: number) =>
 export const listInteracted = (name: string, offset: number) =>
   req<UserRef[]>('GET', `/servers/${seg(name)}/interacted?offset=${offset}&limit=50`)
 export const joinServer = (name: string, password?: string) =>
-  req<unknown>('POST', `/servers/${seg(name)}/join`, { password })
+  req<ServerDetail>('POST', `/servers/${seg(name)}/join`, { password })
 export const leaveServer = (name: string) => req<unknown>('POST', `/servers/${seg(name)}/leave`)
 export const updateServer = (name: string, patch: { name?: string; password?: string }) =>
   req<ServerSummaryLite>('PATCH', `/servers/${seg(name)}`, patch)
@@ -189,7 +194,9 @@ export const channelMessages = (id: number, before?: number, limit?: number) =>
   req<Message[]>('GET', `/channels/${id}/messages${query(before, limit)}`)
 export const sendChannelMessage = (id: number, content: string, opts: SendOpts = {}) =>
   req<Message>('POST', `/channels/${id}/messages`, { content, ...opts })
-export const listDms = () => req<DmSummary[]>('GET', '/dms')
+export const listDms = (offset: number, limit: number) =>
+  req<DmSummary[]>('GET', `/dms?offset=${offset}&limit=${limit}`)
+export const dmsById = (ids: number[]) => req<DmSummary[]>('GET', `/dms?ids=${ids.join(',')}`)
 export const openDm = (username: string) => req<DmSummary>('POST', '/dms', { username })
 export const dmMessages = (id: number, before?: number, limit?: number) =>
   req<Message[]>('GET', `/dms/${id}/messages${query(before, limit)}`)

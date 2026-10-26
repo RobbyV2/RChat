@@ -31,9 +31,11 @@ import { MessageComposer } from './message_composer'
 import StatusClock from './status_clock'
 import { longPress } from './context_menu'
 import { VoiceGrid } from './voice_grid'
-import { usePinnedBottom } from './viewport_height'
+import { OlderLoading, usePinnedBottom, usePrependAnchor } from './viewport_height'
 
 const EMPTY: Message[] = []
+
+export const OLDER_THRESHOLD = 200
 
 export const fmtTime = (ts: number) => {
   const d = new Date(ts * 1000)
@@ -191,6 +193,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const messages = useStore(s => (s.view ? s.messages[viewKey(s.view)] : undefined)) ?? EMPTY
   const outCount = useStore(s => (s.view ? (s.outbox[viewKey(s.view)]?.length ?? 0) : 0))
   const anchor = useStore(s => (s.view ? s.unreadAnchor[viewKey(s.view)] : undefined))
+  const older = useStore(s => (s.view ? s.older[viewKey(s.view)] : undefined))
   const markRead = useStore(s => s.markRead)
   const setAtBottom = useStore(s => s.setAtBottom)
   const memberList = useStore(s =>
@@ -218,11 +221,11 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const dividerRef = useRef<HTMLDivElement>(null)
   const autoScroll = useRef(true)
   const lastScrollTop = useRef(0)
-  const loadingOlder = useRef(false)
   const initialScrolled = useRef(false)
   const atBottomRef = useRef(true)
 
   const scope = view ? viewKey(view) : null
+  const snapOlder = usePrependAnchor(listRef, messages[0]?.id)
   const dividerIndex = anchor === undefined ? -1 : messages.findIndex(m => m.id > anchor)
 
   useEffect(() => {
@@ -278,11 +281,10 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       const last = messages[messages.length - 1]
       if (last) markRead(scope, last.id)
     }
-    if (st === 0 && messages.length && !loadingOlder.current) {
-      loadingOlder.current = true
-      void loadOlder().finally(() => {
-        loadingOlder.current = false
-      })
+    if (older?.loading) snapOlder()
+    else if (st < OLDER_THRESHOLD && messages.length && older?.more !== false) {
+      snapOlder()
+      void loadOlder()
     }
   }
 
@@ -481,102 +483,105 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
               <VoiceGrid dmId={dm.id} />
             </div>
           )}
-          <div ref={listRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-3">
-            {!view && (
-              <div className="flex h-full flex-col items-center justify-center gap-3 text-on-surface-variant">
-                <MessagesSquare size={40} />
-                <span>Select a conversation</span>
-              </div>
-            )}
-            {view && messages.length === 0 && (
-              <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-on-surface-variant opacity-70">
-                <span className="text-2xl font-semibold">No messages here yet</span>
-                <span className="text-sm">Be the first to say something.</span>
-              </div>
-            )}
-            {messages.map((m, i) => {
-              const divider = i === dividerIndex && (
-                <div ref={dividerRef} className="px-4 py-1" aria-hidden>
-                  <div className="h-0.5 rounded-full bg-error" />
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            {older?.loading && <OlderLoading />}
+            <div ref={listRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-3">
+              {!view && (
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-on-surface-variant">
+                  <MessagesSquare size={40} />
+                  <span>Select a conversation</span>
                 </div>
-              )
-              if (m.kind === 'call')
-                return (
-                  <div key={m.id}>
-                    {divider}
-                    <CallLogRow message={m} />
+              )}
+              {view && messages.length === 0 && (
+                <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center text-on-surface-variant opacity-70">
+                  <span className="text-2xl font-semibold">No messages here yet</span>
+                  <span className="text-sm">Be the first to say something.</span>
+                </div>
+              )}
+              {messages.map((m, i) => {
+                const divider = i === dividerIndex && (
+                  <div ref={dividerRef} className="px-4 py-1" aria-hidden>
+                    <div className="h-0.5 rounded-full bg-error" />
                   </div>
                 )
-              return (
-                <div key={m.id}>
-                  {divider}
-                  <div
-                    {...longPress(messageMenu(m))}
-                    className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container-low"
-                  >
-                    <div className="shrink-0 pt-0.5">
-                      <UserAvatar
-                        username={m.author.username}
-                        avatarKind={m.author.avatar_kind}
-                        avatarColor={m.author.avatar_color}
-                        size={36}
-                      />
+                if (m.kind === 'call')
+                  return (
+                    <div key={m.id} data-mid={m.id}>
+                      {divider}
+                      <CallLogRow message={m} />
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline gap-2">
-                        <span
-                          style={{
-                            color: roleColor(
-                              detail?.roles,
-                              memberList?.find(x => x.username === m.author.username)?.role_ids ??
-                                []
-                            ),
-                          }}
-                          className="streamer cursor-default text-sm font-medium"
-                        >
-                          {m.author.display_name}
-                        </span>
-                        <span className="text-xs text-on-surface-variant">
-                          {fmtTime(m.created_at)}
-                        </span>
+                  )
+                return (
+                  <div key={m.id} data-mid={m.id}>
+                    {divider}
+                    <div
+                      {...longPress(messageMenu(m))}
+                      className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container-low"
+                    >
+                      <div className="shrink-0 pt-0.5">
+                        <UserAvatar
+                          username={m.author.username}
+                          avatarKind={m.author.avatar_kind}
+                          avatarColor={m.author.avatar_color}
+                          size={36}
+                        />
                       </div>
-                      <MarkdownMessage message={m} canDelete={canDelete(m)} />
-                      {view?.kind === 'channel' && m.reply_count > 0 && (
-                        <button
-                          title="Open thread"
-                          onClick={() => void openThread(m)}
-                          className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
-                        >
-                          <MessageSquareText size={12} />
-                          {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
-                        </button>
-                      )}
-                    </div>
-                    <div className="pointer-events-none absolute top-1 right-3 flex gap-1 opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
-                      {view?.kind === 'channel' && (
-                        <button
-                          title="Reply in thread"
-                          onClick={() => void openThread(m)}
-                          className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-primary"
-                        >
-                          <MessageSquareText size={14} />
-                        </button>
-                      )}
-                      {canDelete(m) && (
-                        <button
-                          title="Delete message"
-                          onClick={() => void deleteMessage(m.id)}
-                          className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-error"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline gap-2">
+                          <span
+                            style={{
+                              color: roleColor(
+                                detail?.roles,
+                                memberList?.find(x => x.username === m.author.username)?.role_ids ??
+                                  []
+                              ),
+                            }}
+                            className="streamer cursor-default text-sm font-medium"
+                          >
+                            {m.author.display_name}
+                          </span>
+                          <span className="text-xs text-on-surface-variant">
+                            {fmtTime(m.created_at)}
+                          </span>
+                        </div>
+                        <MarkdownMessage message={m} canDelete={canDelete(m)} />
+                        {view?.kind === 'channel' && m.reply_count > 0 && (
+                          <button
+                            title="Open thread"
+                            onClick={() => void openThread(m)}
+                            className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
+                          >
+                            <MessageSquareText size={12} />
+                            {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
+                          </button>
+                        )}
+                      </div>
+                      <div className="pointer-events-none absolute top-1 right-3 flex gap-1 opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+                        {view?.kind === 'channel' && (
+                          <button
+                            title="Reply in thread"
+                            onClick={() => void openThread(m)}
+                            className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-primary"
+                          >
+                            <MessageSquareText size={14} />
+                          </button>
+                        )}
+                        {canDelete(m) && (
+                          <button
+                            title="Delete message"
+                            onClick={() => void deleteMessage(m.id)}
+                            className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-error"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              )
-            })}
-            {view && <OutboxRows msgKey={viewKey(view)} />}
+                )
+              })}
+              {view && <OutboxRows msgKey={viewKey(view)} />}
+            </div>
           </div>
           <MessageComposer />
         </>

@@ -5,9 +5,12 @@ declare module 'bun:test' {
     toBeNull(): void
     toBeUndefined(): void
     toHaveLength(length: number): void
+    toContain(item: unknown): void
+    toEndWith(suffix: string): void
   }
   export function expect<T>(actual: T): Matchers<T>
   export function test(name: string, fn: () => void | Promise<void>): void
   export function describe(name: string, fn: () => void): void
   export function beforeEach(fn: () => void | Promise<void>): void
+  export function afterEach(fn: () => void | Promise<void>): void
 }

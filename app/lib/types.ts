@@ -148,7 +148,9 @@ export interface Me extends UserRef {
   is_site_admin: boolean
   appear_offline: boolean
   servers: ServerSummary[]
+  servers_more: boolean
   dms: DmSummary[]
+  dms_more: boolean
 }
 
 export interface AuthResponse {
@@ -170,6 +172,7 @@ export interface AdminOverview {
 
 export interface Unread {
   scope: string
+  server: string | null
   last_read: number
   latest: number
 }
@@ -262,7 +265,7 @@ export type WsEvent =
     }
   | ({ type: 'voice_ended'; reason: string } & Scoped)
   | { type: 'error'; message: string }
-  | { type: 'dm_created'; dm_users: string[] }
+  | { type: 'dm_created'; dm_id: number; dm_users: string[] }
   | { type: 'banned'; username: string }
   | { type: 'settings_changed'; settings: SiteSettings }
 

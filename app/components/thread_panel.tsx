@@ -7,9 +7,9 @@ import { Perm, hasPerm, type Message } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
-import { fmtTime, messageCopyItems, OutboxRows } from './message_pane'
+import { fmtTime, messageCopyItems, OLDER_THRESHOLD, OutboxRows } from './message_pane'
 import { longPress } from './context_menu'
-import { usePinnedBottom } from './viewport_height'
+import { OlderLoading, usePinnedBottom, usePrependAnchor } from './viewport_height'
 
 const EMPTY: Message[] = []
 
@@ -31,6 +31,9 @@ export default function ThreadPanel() {
   const memberList = useStore(s =>
     s.view?.kind === 'channel' ? s.members[s.view.server]?.list : undefined
   )
+  const older = useStore(s =>
+    s.panel?.kind === 'thread' ? s.older[`t${s.panel.root.id}`] : undefined
+  )
   const outCount = useStore(s =>
     s.panel?.kind === 'thread' ? (s.outbox[`t${s.panel.root.id}`]?.length ?? 0) : 0
   )
@@ -40,8 +43,8 @@ export default function ThreadPanel() {
   const openContextMenu = useStore(s => s.openContextMenu)
   const listRef = useRef<HTMLDivElement>(null)
   const stickBottom = useRef(true)
-  const loadingOlder = useRef(false)
   const rootId = root?.id
+  const snapOlder = usePrependAnchor(listRef, replies[0]?.id)
 
   useEffect(() => {
     stickBottom.current = true
@@ -63,11 +66,10 @@ export default function ThreadPanel() {
     const el = listRef.current
     if (!el) return
     stickBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
-    if (el.scrollTop === 0 && replies.length && !loadingOlder.current) {
-      loadingOlder.current = true
-      void loadOlderThread().finally(() => {
-        loadingOlder.current = false
-      })
+    if (older?.loading) snapOlder()
+    else if (el.scrollTop < OLDER_THRESHOLD && replies.length && older?.more !== false) {
+      snapOlder()
+      void loadOlderThread()
     }
   }
 
@@ -87,6 +89,7 @@ export default function ThreadPanel() {
     return (
       <div
         key={m.id}
+        data-mid={m.id}
         {...longPress(rowMenu(m))}
         className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container"
       >
@@ -141,15 +144,18 @@ export default function ThreadPanel() {
           <X size={18} />
         </button>
       </header>
-      <div ref={listRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-3">
-        {row(root)}
-        <div className="my-2 flex items-center gap-2 px-4 text-xs text-on-surface-variant">
-          <span className="h-px flex-1 bg-outline-variant" />
-          {root.reply_count} {root.reply_count === 1 ? 'reply' : 'replies'}
-          <span className="h-px flex-1 bg-outline-variant" />
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {older?.loading && <OlderLoading />}
+        <div ref={listRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-3">
+          {row(root)}
+          <div className="my-2 flex items-center gap-2 px-4 text-xs text-on-surface-variant">
+            <span className="h-px flex-1 bg-outline-variant" />
+            {root.reply_count} {root.reply_count === 1 ? 'reply' : 'replies'}
+            <span className="h-px flex-1 bg-outline-variant" />
+          </div>
+          {replies.map(row)}
+          <OutboxRows msgKey={`t${root.id}`} size={30} />
         </div>
-        {replies.map(row)}
-        <OutboxRows msgKey={`t${root.id}`} size={30} />
       </div>
       <MessageComposer thread />
     </div>

@@ -28,6 +28,7 @@ impl Modify for Bearer {
         super::auth::words,
         super::auth::me,
         super::auth::patch_me,
+        super::servers::list_my_servers,
         super::servers::create_server,
         super::servers::get_server,
         super::servers::server_exists,

@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react'
+import { LoaderCircle } from 'lucide-react'
 
 const editable = 'input, textarea, select, [contenteditable]'
 const KEYBOARD_MIN = 120
@@ -48,4 +49,41 @@ export function usePinnedBottom(
     ro.observe(el)
     return () => ro.disconnect()
   }, [ref, pinned, key])
+}
+
+const offsetIn = (el: HTMLElement, id: number) => {
+  const node = el.querySelector(`[data-mid="${id}"]`)
+  return node ? node.getBoundingClientRect().top - el.getBoundingClientRect().top : null
+}
+
+export function usePrependAnchor(ref: RefObject<HTMLElement | null>, firstId: number | undefined) {
+  const anchor = useRef<{ id: number; top: number } | null>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    const a = anchor.current
+    if (!el || !a || a.id === firstId) return
+    anchor.current = null
+    const top = offsetIn(el, a.id)
+    if (top !== null) el.scrollTop += top - a.top
+  }, [ref, firstId])
+  return useCallback(() => {
+    const el = ref.current
+    if (!el || firstId === undefined) return
+    const top = offsetIn(el, firstId)
+    anchor.current = top === null ? null : { id: firstId, top }
+  }, [ref, firstId])
+}
+
+export function OlderLoading() {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
+      <span
+        role="status"
+        className="flex items-center gap-1.5 rounded-full bg-surface-container-high px-3 py-1 text-xs text-on-surface-variant shadow-elevation-1"
+      >
+        <LoaderCircle size={14} className="animate-spin" />
+        Loading older messages
+      </span>
+    </div>
+  )
 }

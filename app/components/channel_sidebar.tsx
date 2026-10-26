@@ -9,6 +9,7 @@ import { Perm, hasPerm, type Channel, type ChannelKind } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
 import { VoiceDock } from './voice_grid'
+import { Sentinel } from './server_settings'
 
 type Editing = { mode: 'create'; kind: ChannelKind } | { mode: 'rename'; id: number }
 
@@ -22,6 +23,8 @@ export function ChannelSidebar() {
   )
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
+  const dmsMore = useStore(s => s.dmsMore)
+  const loadMoreDms = useStore(s => s.loadMoreDms)
   const openDm = useStore(s => s.openDm)
   const startDm = useStore(s => s.startDm)
   const openChannel = useStore(s => s.openChannel)
@@ -138,6 +141,7 @@ export function ChannelSidebar() {
               </button>
             )
           })}
+          {dmsMore && <Sentinel key={dms.length} onVisible={loadMoreDms} />}
         </div>
         <VoiceDock />
       </aside>

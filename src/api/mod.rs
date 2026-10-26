@@ -7,6 +7,8 @@ pub mod messages;
 pub mod openapi;
 pub mod servers;
 
+use std::collections::HashMap;
+
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Request, State};
 use axum::http::request::Parts;
@@ -64,16 +66,102 @@ impl UserRef {
     }
 }
 
+pub fn missing_user(username: &str) -> UserRef {
+    UserRef {
+        username: username.to_string(),
+        display_name: username.to_string(),
+        avatar_kind: AvatarKind::Color,
+        avatar_color: Some("#9e9e9e".to_string()),
+    }
+}
+
 pub async fn user_ref(db: &Db, username: &str) -> UserRef {
     match get_user(db, username).await {
         Ok(Some(user)) => UserRef::from_user(&user),
-        _ => UserRef {
-            username: username.to_string(),
-            display_name: username.to_string(),
-            avatar_kind: AvatarKind::Color,
-            avatar_color: Some("#9e9e9e".to_string()),
-        },
+        _ => missing_user(username),
     }
+}
+
+pub(crate) fn placeholders(first: usize, count: usize) -> String {
+    (first..first + count)
+        .map(|n| format!("${n}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn row_user_ref(r: &sqlx::any::AnyRow) -> sqlx::Result<UserRef> {
+    Ok(UserRef {
+        username: r.try_get(0)?,
+        display_name: r.try_get(1)?,
+        avatar_kind: AvatarKind::parse(&r.try_get::<String, _>(2)?)?,
+        avatar_color: r.try_get(3)?,
+    })
+}
+
+pub async fn user_refs(db: &Db, names: &[String]) -> HashMap<String, UserRef> {
+    let mut keys: Vec<String> = names.iter().map(|n| n.to_lowercase()).collect();
+    keys.sort();
+    keys.dedup();
+    let mut found: HashMap<String, UserRef> = HashMap::with_capacity(keys.len());
+    for chunk in keys.chunks(500) {
+        let sql = format!(
+            "SELECT username, display_name, avatar_kind, avatar_color FROM users WHERE username IN ({})",
+            placeholders(1, chunk.len())
+        );
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for key in chunk {
+            query = query.bind(key);
+        }
+        if let Ok(rows) = query.fetch_all(db).await {
+            for user in rows.iter().filter_map(|r| row_user_ref(r).ok()) {
+                found.insert(user.username.clone(), user);
+            }
+        }
+    }
+    names
+        .iter()
+        .map(|name| {
+            let user = match found.get(&name.to_lowercase()) {
+                Some(user) => user.clone(),
+                None => missing_user(name),
+            };
+            (name.clone(), user)
+        })
+        .collect()
+}
+
+pub(crate) fn user_from(refs: &HashMap<String, UserRef>, username: &str) -> UserRef {
+    match refs.get(username) {
+        Some(user) => user.clone(),
+        None => missing_user(username),
+    }
+}
+
+pub const LIST_PAGE: i64 = 50;
+pub const LIST_MAX: i64 = 100;
+
+pub(crate) fn unique_capped<I: IntoIterator<Item = String>>(items: I) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for item in items.into_iter().filter(|s| !s.is_empty()) {
+        if out.len() == LIST_MAX as usize {
+            break;
+        }
+        if !out.contains(&item) {
+            out.push(item);
+        }
+    }
+    out
+}
+
+pub(crate) fn split_list(raw: &str) -> Vec<String> {
+    unique_capped(raw.split(',').map(|s| s.trim().to_string()))
+}
+
+pub(crate) fn page_bounds(offset: Option<i64>, limit: Option<i64>) -> (i64, i64) {
+    (
+        offset.unwrap_or(0).max(0),
+        limit.unwrap_or(LIST_PAGE).clamp(1, LIST_MAX),
+    )
 }
 
 #[derive(Clone, Serialize, ToSchema)]
@@ -442,6 +530,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route_layer(GovernorLayer::new(strict));
     Router::new()
         .route("/me", get(auth::me).patch(auth::patch_me))
+        .route("/me/servers", get(servers::list_my_servers))
         .route("/servers", post(servers::create_server))
         .route(
             "/servers/{name}",

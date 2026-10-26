@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -9,8 +11,9 @@ use crate::api::admin::{fuzzy_match, is_fuzzy, like_pattern};
 use crate::api::auth::{hash_password, new_token, verify_password};
 use crate::api::{
     ApiError, Authed, Channel, ChannelPerm, MaybeAuthed, Member, NAME_MAX, Role, SLOWMODE_MAX,
-    ServerDetail, ServerSummaryLite, UserRef, check_len, check_profanity, require_guest_ok,
-    require_server_view, user_ref, valid_color,
+    ServerDetail, ServerSummary, ServerSummaryLite, UserRef, check_len, check_profanity,
+    page_bounds, placeholders, require_guest_ok, require_server_view, unique_capped, user_from,
+    user_ref, user_refs, valid_color,
 };
 use crate::db::{ALL_PERMS, ChannelKind, Db, Perm, User, channel_access, get_user, has_perm, now};
 use crate::state::AppState;
@@ -107,6 +110,37 @@ pub struct MembersQuery {
     limit: Option<i64>,
 }
 
+#[derive(IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct MyServersQuery {
+    offset: Option<i64>,
+    limit: Option<i64>,
+    names: Option<Vec<String>>,
+}
+
+impl MyServersQuery {
+    fn parse(raw: &str) -> Result<MyServersQuery, ApiError> {
+        let int = |v: &str| v.parse::<i64>().map_err(|_| bad("Invalid number"));
+        let mut q = MyServersQuery {
+            offset: None,
+            limit: None,
+            names: None,
+        };
+        for (key, value) in url::form_urlencoded::parse(raw.as_bytes()) {
+            match key.as_ref() {
+                "offset" => q.offset = Some(int(&value)?),
+                "limit" => q.limit = Some(int(&value)?),
+                "names" => q
+                    .names
+                    .get_or_insert_with(Vec::new)
+                    .push(value.into_owned()),
+                _ => {}
+            }
+        }
+        Ok(q)
+    }
+}
+
 fn ok() -> Json<OkResp> {
     Json(OkResp { ok: true })
 }
@@ -193,6 +227,112 @@ async fn role_ids(db: &Db, server: &str, username: &str) -> Result<Vec<i64>, Api
         ids.push(r.try_get(0)?);
     }
     Ok(ids)
+}
+
+async fn role_ids_of(
+    db: &Db,
+    server: &str,
+    names: &[String],
+) -> Result<HashMap<String, Vec<i64>>, ApiError> {
+    let mut map: HashMap<String, Vec<i64>> = HashMap::new();
+    if names.is_empty() {
+        return Ok(map);
+    }
+    let sql = format!(
+        "SELECT username, role_id FROM user_roles WHERE server = $1 AND username IN ({}) ORDER BY role_id",
+        placeholders(2, names.len())
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(server);
+    for name in names {
+        query = query.bind(name);
+    }
+    for r in &query.fetch_all(db).await? {
+        map.entry(r.try_get(0)?).or_default().push(r.try_get(1)?);
+    }
+    Ok(map)
+}
+
+const MY_SERVERS: &str = "SELECT s.name, s.display_name, s.creator, m.is_admin FROM members m JOIN servers s ON s.name = m.server WHERE m.username = $1";
+
+fn summary_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<ServerSummary>, ApiError> {
+    let mut servers = Vec::with_capacity(rows.len());
+    for r in rows {
+        servers.push(ServerSummary {
+            name: r.try_get(0)?,
+            display_name: r.try_get(1)?,
+            creator: r.try_get(2)?,
+            is_admin: r.try_get::<i64, _>(3)? != 0,
+        });
+    }
+    Ok(servers)
+}
+
+pub(crate) async fn my_servers_page(
+    db: &Db,
+    username: &str,
+    offset: i64,
+    limit: i64,
+) -> Result<(Vec<ServerSummary>, bool), ApiError> {
+    let sql = format!("{MY_SERVERS} ORDER BY m.joined_at, s.name LIMIT $2 OFFSET $3");
+    let mut rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(username)
+        .bind(limit + 1)
+        .bind(offset)
+        .fetch_all(db)
+        .await?;
+    let more = rows.len() as i64 > limit;
+    rows.truncate(limit as usize);
+    Ok((summary_rows(&rows)?, more))
+}
+
+pub(crate) async fn my_servers_by_names(
+    db: &Db,
+    username: &str,
+    names: &[String],
+) -> Result<Vec<ServerSummary>, ApiError> {
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
+        "{MY_SERVERS} AND m.server IN ({}) ORDER BY m.joined_at, s.name",
+        placeholders(2, names.len())
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(username);
+    for name in names {
+        query = query.bind(name);
+    }
+    summary_rows(&query.fetch_all(db).await?)
+}
+
+#[utoipa::path(get, path = "/api/me/servers", params(MyServersQuery), responses((status = 200, description = "A page (`offset`, `limit` default 50, max 100) of the servers the signed-in user joined, oldest membership first. With `names` (repeated once per server, e.g. `names=a&names=b`, max 100) returns just those servers, skipping ones the user is not a member of", body = Vec<ServerSummary>)), security(("bearer" = [])))]
+pub(crate) async fn list_my_servers(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    RawQuery(raw): RawQuery,
+) -> Result<Json<Vec<ServerSummary>>, ApiError> {
+    let MyServersQuery {
+        offset,
+        limit,
+        names,
+    } = MyServersQuery::parse(raw.as_deref().unwrap_or(""))?;
+    match names {
+        Some(names) => Ok(Json(
+            my_servers_by_names(
+                &state.db,
+                &user.username,
+                &unique_capped(names.iter().map(|n| n.to_lowercase())),
+            )
+            .await?,
+        )),
+        None => {
+            let (offset, limit) = page_bounds(offset, limit);
+            Ok(Json(
+                my_servers_page(&state.db, &user.username, offset, limit)
+                    .await?
+                    .0,
+            ))
+        }
+    }
 }
 
 async fn channel_server(db: &Db, id: i64) -> Result<String, ApiError> {
@@ -341,17 +481,21 @@ pub(crate) async fn list_members(
         }
     }
     on.append(&mut off);
-    let mut members = Vec::new();
-    for (username, is_admin, perms) in on.into_iter().skip(offset).take(limit) {
-        members.push(Member {
+    let rows: Vec<(String, i64, i64)> = on.into_iter().skip(offset).take(limit).collect();
+    let names: Vec<String> = rows.iter().map(|(name, _, _)| name.clone()).collect();
+    let refs = user_refs(&state.db, &names).await;
+    let mut roles = role_ids_of(&state.db, &key, &names).await?;
+    let members = rows
+        .into_iter()
+        .map(|(username, is_admin, perms)| Member {
             online: online.contains(&username),
             is_admin: is_admin != 0,
             is_creator: creator.as_deref() == Some(username.as_str()),
             perms,
-            role_ids: role_ids(&state.db, &key, &username).await?,
-            user: user_ref(&state.db, &username).await,
-        });
-    }
+            role_ids: roles.remove(&username).unwrap_or_default(),
+            user: user_from(&refs, &username),
+        })
+        .collect();
     Ok(Json(members))
 }
 
@@ -378,11 +522,12 @@ pub(crate) async fn list_interacted(
     .bind(offset)
     .fetch_all(&state.db)
     .await?;
-    let mut users = Vec::with_capacity(rows.len());
+    let mut names = Vec::with_capacity(rows.len());
     for r in &rows {
-        users.push(user_ref(&state.db, &r.try_get::<String, _>(0)?).await);
+        names.push(r.try_get::<String, _>(0)?);
     }
-    Ok(Json(users))
+    let refs = user_refs(&state.db, &names).await;
+    Ok(Json(names.iter().map(|n| user_from(&refs, n)).collect()))
 }
 
 #[utoipa::path(post, path = "/api/servers", request_body = CreateServerReq, responses((status = 200, description = "The created server, with the caller as admin and a default general channel", body = ServerDetail)), security(("bearer" = [])))]
@@ -1384,7 +1529,7 @@ pub(crate) async fn clear_channel_perm(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::test_util::{done, mem_user, temp_state};
+    use crate::api::test_util::{add_member, done, mem_user, temp_state};
 
     #[tokio::test]
     async fn sole_channel_guard() {
@@ -1590,6 +1735,137 @@ mod tests {
         )
         .await;
         assert!(rejected(patched));
+        done(state, path).await;
+    }
+
+    async fn my_servers(state: &AppState, raw: &str) -> Vec<String> {
+        list_my_servers(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            RawQuery(Some(raw.to_string()).filter(|r| !r.is_empty())),
+        )
+        .await
+        .expect("my servers")
+        .0
+        .into_iter()
+        .map(|s| s.name)
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn my_servers_order_paging_and_batch() {
+        let (state, path) = temp_state("my_servers").await;
+        let db = &state.db;
+        for (name, joined) in [
+            ("s1", 3),
+            ("s2", 1),
+            ("s4", 2),
+            ("s3", 2),
+            ("s5", 5),
+            ("foo, bar", 6),
+            ("a&b=c+d", 7),
+        ] {
+            sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES($1, $1, NULL, 0)")
+                .bind(name)
+                .execute(db)
+                .await
+                .expect("insert server");
+            add_member(db, name, "alice", i64::from(name == "s3"), 0, joined).await;
+        }
+        add_member(db, "rchat", "bob", 0, 0, 0).await;
+        let all = vec!["s2", "s3", "s4", "s1", "s5", "foo, bar", "a&b=c+d"];
+        assert_eq!(my_servers(&state, "").await, all);
+        assert_eq!(my_servers(&state, "offset=1&limit=2").await, all[1..3]);
+        assert_eq!(my_servers(&state, "offset=6&limit=2").await, all[6..]);
+        assert!(my_servers(&state, "offset=7").await.is_empty());
+        let named = my_servers(
+            &state,
+            "names=S5&names=s1&names=rchat&names=nope&names=s1&names=&names=%20s2",
+        )
+        .await;
+        assert_eq!(named, vec!["s1", "s5"]);
+        let named = my_servers(&state, "names=Foo%2C%20Bar&names=a%26b%3Dc%2Bd&names=foo").await;
+        assert_eq!(named, vec!["foo, bar", "a&b=c+d"]);
+        let many: Vec<String> = (0..150).map(|n| format!("names=x{n}")).collect();
+        let capped = format!("{}&names=s1", many[..99].join("&"));
+        assert_eq!(my_servers(&state, &capped).await, vec!["s1"]);
+        let capped = format!("{}&names=s1", many.join("&"));
+        assert!(my_servers(&state, &capped).await.is_empty());
+        assert!(
+            list_my_servers(
+                State(state.clone()),
+                Authed(mem_user("alice", false)),
+                RawQuery(Some("offset=x".to_string())),
+            )
+            .await
+            .is_err()
+        );
+        let (first, more) = my_servers_page(db, "alice", 0, 4).await.expect("page");
+        assert_eq!(first.len(), 4);
+        assert!(more);
+        assert!(first[1].is_admin && !first[0].is_admin);
+        let (_, more) = my_servers_page(db, "alice", 0, 7).await.expect("page");
+        assert!(!more);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn members_batch_refs_and_roles() {
+        let (state, path) = temp_state("members_batch").await;
+        let db = &state.db;
+        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, avatar_color, created_at) VALUES('alice', 'Alice A', '', 'text', 'color', '#abcdef', 0)")
+            .execute(db)
+            .await
+            .expect("insert user");
+        for name in ["alice", "bob", "carol"] {
+            add_member(db, "rchat", name, 0, 0, 0).await;
+        }
+        let mut roles = Vec::new();
+        for name in ["r1", "r2"] {
+            let id: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES('rchat', $1, '#ffffff', 0) RETURNING id")
+                .bind(name)
+                .fetch_one(db)
+                .await
+                .expect("role")
+                .try_get(0)
+                .expect("role id");
+            roles.push(id);
+        }
+        for (user, role) in [("bob", roles[1]), ("bob", roles[0]), ("carol", roles[1])] {
+            sqlx::query(
+                "INSERT INTO user_roles(server, username, role_id) VALUES('rchat', $1, $2)",
+            )
+            .bind(user)
+            .bind(role)
+            .execute(db)
+            .await
+            .expect("assign");
+        }
+        let members = list_members(
+            State(state.clone()),
+            MaybeAuthed(None),
+            HeaderMap::new(),
+            Path("rchat".to_string()),
+            Query(MembersQuery {
+                offset: None,
+                limit: None,
+            }),
+        )
+        .await
+        .expect("members")
+        .0;
+        let rows: Vec<(String, String, Vec<i64>)> = members
+            .into_iter()
+            .map(|m| (m.user.username, m.user.display_name, m.role_ids))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("alice".to_string(), "Alice A".to_string(), vec![]),
+                ("bob".to_string(), "bob".to_string(), roles.clone()),
+                ("carol".to_string(), "carol".to_string(), vec![roles[1]]),
+            ]
+        );
         done(state, path).await;
     }
 }
