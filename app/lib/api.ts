@@ -6,6 +6,7 @@ import type {
   ChannelKind,
   ChannelPerm,
   DmSummary,
+  Invite,
   Me,
   Member,
   Message,
@@ -70,8 +71,13 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json()
 }
 
-async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = {}
+async function req<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  extra: Record<string, string> = {}
+): Promise<T> {
+  const headers: Record<string, string> = { ...extra }
   if (authToken) {
     headers.Authorization = `Bearer ${authToken}`
   } else {
@@ -141,6 +147,13 @@ export const createServer = (name: string, password?: string) =>
 export const getServer = (name: string) => req<ServerDetail>('GET', `/servers/${seg(name)}`)
 export const serverExists = (name: string) =>
   req<{ has_password: boolean }>('GET', `/servers/${seg(name)}/exists`)
+export const getInvite = (name: string, password?: string | null) =>
+  req<Invite>(
+    'GET',
+    `/invites/${seg(name)}`,
+    undefined,
+    password ? { 'X-Invite-Password': seg(password) } : {}
+  )
 export const searchServers = (q: string) => req<ServerMatch[]>('GET', `/server_search?q=${seg(q)}`)
 export const guestAccess = (name: string, password: string) =>
   req<{ grant: string }>('POST', `/servers/${seg(name)}/guest_access`, { password })

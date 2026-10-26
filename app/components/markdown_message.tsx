@@ -7,10 +7,12 @@ import { Clock, Download, EllipsisVertical, EyeOff, FileText, Share2, X } from '
 import { apiOrigin, mediaUrl } from '../lib/api'
 import { splitMentions } from '../lib/mentions'
 import { base64ToBlob, p2p } from '../lib/p2p'
+import { findInvites, parseInvite } from '../lib/invite'
 import { sameOriginImage } from '../lib/rules'
 import { userRefFor, useStore, type ContextMenuItem } from '../lib/store'
 import type { Embed, Message, MessageMedia } from '../lib/types'
 import { longPress } from './context_menu'
+import { InviteCard } from './invite_card'
 import { profileTrigger } from './profile_card'
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
@@ -127,6 +129,30 @@ function Mention({ children }: { children?: ReactNode }) {
   )
 }
 
+function MessageLink({ href, children, ...props }: React.ComponentProps<'a'>) {
+  const invite = href ? parseInvite(href, window.location.origin) : null
+  if (!invite)
+    return (
+      <a {...props} href={href} target="_blank" rel="noreferrer" className="text-primary underline">
+        {children}
+      </a>
+    )
+  return (
+    <a
+      {...props}
+      href={href}
+      onClick={e => {
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+        e.preventDefault()
+        useStore.getState().openInvite(invite.server, invite.password)
+      }}
+      className="text-primary underline"
+    >
+      {children}
+    </a>
+  )
+}
+
 const components: Components = {
   span: ({ node, ...props }) =>
     'data-spoiler' in props ? (
@@ -139,9 +165,7 @@ const components: Components = {
   img: ({ src, alt }) => (
     <MarkdownImage src={typeof src === 'string' ? src : undefined} alt={alt} />
   ),
-  a: ({ node, ...props }) => (
-    <a {...props} target="_blank" rel="noreferrer" className="text-primary underline" />
-  ),
+  a: ({ node, ...props }) => <MessageLink {...props} />,
   p: ({ node, ...props }) => <p {...props} className="my-0.5" />,
   ul: ({ node, ...props }) => <ul {...props} className="my-1 list-disc pl-5" />,
   ol: ({ node, ...props }) => <ol {...props} className="my-1 list-decimal pl-5" />,
@@ -491,6 +515,11 @@ export function MarkdownMessage({
     [username]
   )
   const { content, media, embeds } = message
+  const invites = useMemo(() => findInvites(content, window.location.origin), [content])
+  const links = useMemo(
+    () => embeds.filter(e => parseInvite(e.url, window.location.origin) === null),
+    [embeds]
+  )
   return (
     <div className="min-w-0 text-sm leading-relaxed break-words">
       {content.trim() !== '' && (
@@ -516,10 +545,11 @@ export function MarkdownMessage({
           )}
         </div>
       )}
+      {invites.map(i => (
+        <InviteCard key={i.server} variant="embed" server={i.server} password={i.password} />
+      ))}
       {previews &&
-        embeds.map(e => (
-          <EmbedCard key={e.ord} embed={e} message={message} canDelete={canDelete} />
-        ))}
+        links.map(e => <EmbedCard key={e.ord} embed={e} message={message} canDelete={canDelete} />)}
     </div>
   )
 }

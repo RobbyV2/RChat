@@ -69,6 +69,8 @@ async fn main() -> anyhow::Result<()> {
             HeaderName::from_static("sec-websocket-key"),
             HeaderName::from_static("sec-websocket-version"),
             HeaderName::from_static("sec-websocket-protocol"),
+            HeaderName::from_static("x-guest-grant"),
+            HeaderName::from_static("x-invite-password"),
         ])
         .allow_credentials(true);
 

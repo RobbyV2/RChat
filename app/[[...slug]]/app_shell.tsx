@@ -17,12 +17,14 @@ import SettingsMenu from '../components/settings_menu'
 import ThreadPanel from '../components/thread_panel'
 import SearchPanel from '../components/search_panel'
 import { CallBanner } from '../components/voice_grid'
+import { InvitePage } from '../components/invite_card'
 
 export default function AppShell() {
   const router = useRouter()
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)
   const view = useStore(s => s.view)
+  const invite = useStore(s => s.invite)
   const dialog = useStore(s => s.activeDialog)
   const panel = useStore(s => s.panel)
   const notices = useStore(s => s.notices)
@@ -40,7 +42,8 @@ export default function AppShell() {
     useStore.getState().setStreamer(localStorage.getItem('rchat_streamer') === '1')
     const authed = localStorage.getItem('rchat_token') || localStorage.getItem('rchat_guest')
     if (!authed) {
-      router.replace('/login')
+      if (useStore.getState().syncInvite()) void useStore.getState().loadSettings()
+      else router.replace('/login')
       return
     }
     void bootstrap()
@@ -90,93 +93,101 @@ export default function AppShell() {
 
   if (!me && !guest) {
     return (
-      <div className="flex h-app flex-col items-center justify-center gap-1 px-6 text-center text-on-surface-variant">
-        <span>Loading RChat</span>
-        {bootError && <span className="text-sm">{bootError}. Retrying…</span>}
-      </div>
+      <>
+        {!invite && (
+          <div className="flex h-app flex-col items-center justify-center gap-1 px-6 text-center text-on-surface-variant">
+            <span>Loading RChat</span>
+            {bootError && <span className="text-sm">{bootError}. Retrying…</span>}
+          </div>
+        )}
+        <InvitePage />
+      </>
     )
   }
 
   const isChannel = view?.kind === 'channel'
 
   return (
-    <div className="flex h-app overflow-hidden px-safe">
-      <div className="hidden h-full md:flex">
-        <ServerRail />
-        <ChannelSidebar />
-      </div>
-      <MessagePane
-        onMenu={() => {
-          setRightOpen(false)
-          setLeftOpen(true)
-        }}
-        onMembers={() => {
-          setLeftOpen(false)
-          setRightOpen(o => !o)
-        }}
-      />
-      {isChannel && !panel && (
-        <div className="hidden h-full lg:block">
-          <MemberSidebar />
+    <>
+      <div className="flex h-app overflow-hidden px-safe">
+        <div className="hidden h-full md:flex">
+          <ServerRail />
+          <ChannelSidebar />
         </div>
-      )}
-      {panel && (
-        <div className="fixed inset-x-0 top-0 z-40 h-app bg-surface max-md:px-safe md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
-          {panel.kind === 'thread' ? <ThreadPanel /> : <SearchPanel />}
-        </div>
-      )}
-      {leftOpen && (
-        <div className="fixed inset-x-0 top-0 z-40 flex h-app md:hidden">
-          <div className="flex h-full bg-surface-container-lowest pl-[env(safe-area-inset-left)] shadow-elevation-3">
-            <ServerRail />
-            <ChannelSidebar />
-          </div>
-          <div className="flex-1 bg-scrim/50" onClick={() => setLeftOpen(false)} />
-        </div>
-      )}
-      {rightOpen && isChannel && (
-        <div className="fixed inset-x-0 top-0 z-40 flex h-app justify-end lg:hidden">
-          <div className="flex-1 bg-scrim/50" onClick={() => setRightOpen(false)} />
-          <div className="h-full bg-surface-container-low pr-[env(safe-area-inset-right)] shadow-elevation-3">
+        <MessagePane
+          onMenu={() => {
+            setRightOpen(false)
+            setLeftOpen(true)
+          }}
+          onMembers={() => {
+            setLeftOpen(false)
+            setRightOpen(o => !o)
+          }}
+        />
+        {isChannel && !panel && (
+          <div className="hidden h-full lg:block">
             <MemberSidebar />
           </div>
-        </div>
-      )}
-      <ServerDialogs />
-      <FolderDialog />
-      <ServerSettings />
-      <SettingsMenu />
-      <AdminPanel />
-      <ConfirmDialog />
-      <ProfileCard />
-      <ContextMenu />
-      <CallBanner />
-      {notices.length > 0 && (
-        <div className="fixed top-16 right-[max(1rem,env(safe-area-inset-right))] z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
-          {notices.map(n => (
-            <button
-              key={n.id}
-              onClick={() => {
-                dismissNotice(n.id)
-                n.go()
-              }}
-              className="rounded-xl bg-surface-container-high p-3 text-left shadow-elevation-2 hover:bg-surface-container-highest"
-            >
-              <p className="truncate text-sm font-medium">
-                {n.lead && `${n.lead} `}
-                <span className="streamer">{n.name}</span>
-                {n.title && ` ${n.title}`}
-              </p>
-              {n.body && <p className="truncate text-xs text-on-surface-variant">{n.body}</p>}
-            </button>
-          ))}
-        </div>
-      )}
-      {error && (
-        <div className="fixed bottom-4 left-1/2 z-60 -translate-x-1/2 rounded-xl bg-error-container px-4 py-2 text-sm text-on-error-container shadow-elevation-2">
-          {error}
-        </div>
-      )}
-    </div>
+        )}
+        {panel && (
+          <div className="fixed inset-x-0 top-0 z-40 h-app bg-surface max-md:px-safe md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
+            {panel.kind === 'thread' ? <ThreadPanel /> : <SearchPanel />}
+          </div>
+        )}
+        {leftOpen && (
+          <div className="fixed inset-x-0 top-0 z-40 flex h-app md:hidden">
+            <div className="flex h-full bg-surface-container-lowest pl-[env(safe-area-inset-left)] shadow-elevation-3">
+              <ServerRail />
+              <ChannelSidebar />
+            </div>
+            <div className="flex-1 bg-scrim/50" onClick={() => setLeftOpen(false)} />
+          </div>
+        )}
+        {rightOpen && isChannel && (
+          <div className="fixed inset-x-0 top-0 z-40 flex h-app justify-end lg:hidden">
+            <div className="flex-1 bg-scrim/50" onClick={() => setRightOpen(false)} />
+            <div className="h-full bg-surface-container-low pr-[env(safe-area-inset-right)] shadow-elevation-3">
+              <MemberSidebar />
+            </div>
+          </div>
+        )}
+        <ServerDialogs />
+        <FolderDialog />
+        <ServerSettings />
+        <SettingsMenu />
+        <AdminPanel />
+        <ConfirmDialog />
+        <ProfileCard />
+        <ContextMenu />
+        <CallBanner />
+        {notices.length > 0 && (
+          <div className="fixed top-16 right-[max(1rem,env(safe-area-inset-right))] z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
+            {notices.map(n => (
+              <button
+                key={n.id}
+                onClick={() => {
+                  dismissNotice(n.id)
+                  n.go()
+                }}
+                className="rounded-xl bg-surface-container-high p-3 text-left shadow-elevation-2 hover:bg-surface-container-highest"
+              >
+                <p className="truncate text-sm font-medium">
+                  {n.lead && `${n.lead} `}
+                  <span className="streamer">{n.name}</span>
+                  {n.title && ` ${n.title}`}
+                </p>
+                {n.body && <p className="truncate text-xs text-on-surface-variant">{n.body}</p>}
+              </button>
+            ))}
+          </div>
+        )}
+        {error && (
+          <div className="fixed bottom-4 left-1/2 z-60 -translate-x-1/2 rounded-xl bg-error-container px-4 py-2 text-sm text-on-error-container shadow-elevation-2">
+            {error}
+          </div>
+        )}
+      </div>
+      <InvitePage />
+    </>
   )
 }

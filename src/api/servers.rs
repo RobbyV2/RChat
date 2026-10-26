@@ -9,11 +9,12 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::api::admin::{fuzzy_match, is_fuzzy, like_pattern};
 use crate::api::auth::{hash_password, new_token, verify_password};
+use crate::api::messages::recent_channel_messages;
 use crate::api::{
-    ApiError, Authed, Channel, ChannelPerm, MaybeAuthed, Member, NAME_MAX, Role, SLOWMODE_MAX,
-    ServerDetail, ServerSummary, ServerSummaryLite, UserRef, check_len, check_profanity,
-    page_bounds, placeholders, require_guest_ok, require_server_view, unique_capped, user_from,
-    user_ref, user_refs, valid_color,
+    ApiError, Authed, Channel, ChannelPerm, MaybeAuthed, Member, Message, NAME_MAX, Role,
+    SLOWMODE_MAX, ServerDetail, ServerSummary, ServerSummaryLite, UserRef, check_len,
+    check_profanity, grant_matches, header_grants, page_bounds, placeholders, require_guest_ok,
+    require_server_view, unique_capped, user_from, user_ref, user_refs, valid_color,
 };
 use crate::db::{
     ALL_PERMS, ChannelKind, Db, Perm, User, can_moderate, channel_access, effective_perms,
@@ -112,6 +113,25 @@ pub struct ServerBan {
     #[serde(flatten)]
     pub user: UserRef,
     pub banned_at: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InviteStatus {
+    Member,
+    Banned,
+    Joinable,
+    PasswordRequired,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct Invite {
+    pub server: ServerSummaryLite,
+    pub member_count: i64,
+    pub online_count: i64,
+    pub status: InviteStatus,
+    pub preview_channel: Option<String>,
+    pub preview: Vec<Message>,
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -785,6 +805,121 @@ pub(crate) async fn guest_access(
         .execute(&state.db)
         .await?;
     Ok(Json(GuestGrant { grant }))
+}
+
+const INVITE_PREVIEW: i64 = 3;
+
+async fn is_member(db: &Db, server: &str, username: &str) -> Result<bool, ApiError> {
+    Ok(
+        sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
+            .bind(server)
+            .bind(username)
+            .fetch_optional(db)
+            .await?
+            .is_some(),
+    )
+}
+
+fn invite_password(headers: &HeaderMap) -> Option<String> {
+    let raw = headers.get("x-invite-password")?.to_str().ok()?;
+    let decoded = percent_encoding::percent_decode_str(raw)
+        .decode_utf8()
+        .ok()?;
+    match decoded.trim() {
+        "" => None,
+        password => Some(password.to_string()),
+    }
+}
+
+async fn invite_unlocked(
+    db: &Db,
+    headers: &HeaderMap,
+    server: &str,
+    viewer: Option<&User>,
+) -> Result<bool, ApiError> {
+    if viewer.is_none() {
+        for grant in header_grants(headers) {
+            if grant_matches(db, &grant, server).await? {
+                return Ok(true);
+            }
+        }
+    }
+    let given = match invite_password(headers) {
+        Some(password) => password,
+        None => return Ok(false),
+    };
+    let hash: Option<String> = sqlx::query("SELECT password_hash FROM servers WHERE name = $1")
+        .bind(server)
+        .fetch_one(db)
+        .await?
+        .try_get(0)?;
+    Ok(match hash {
+        Some(hash) => verify_password(&given, &hash),
+        None => false,
+    })
+}
+
+async fn invite_preview(db: &Db, server: &str) -> Result<(Option<String>, Vec<Message>), ApiError> {
+    let row = sqlx::query(
+        "SELECT c.id, c.name FROM channels c WHERE c.server = $1 AND c.kind = 'text' AND NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id) ORDER BY c.id LIMIT 1",
+    )
+    .bind(server)
+    .fetch_optional(db)
+    .await?;
+    match row {
+        Some(r) => Ok((
+            Some(r.try_get(1)?),
+            recent_channel_messages(db, r.try_get(0)?, INVITE_PREVIEW).await?,
+        )),
+        None => Ok((None, Vec::new())),
+    }
+}
+
+#[utoipa::path(get, path = "/api/invites/{name}", params(("name" = String, Path), ("X-Invite-Password" = Option<String>, Header, description = "Percent-encoded server password from the invite link")), responses((status = 200, description = "Invite card for the server: counts, the viewer's status (`member`, `banned`, `joinable` or `password_required`; guests never get `member` or `banned`) and the last few top-level messages of the first text channel anyone may view. The preview is empty for banned viewers, and otherwise unless the server has no password, the viewer is a member, or the password header (or a guest grant) is valid", body = Invite), (status = 404, description = "Invalid invite: the server does not exist")), security((), ("bearer" = [])))]
+pub(crate) async fn get_invite(
+    State(state): State<AppState>,
+    MaybeAuthed(viewer): MaybeAuthed,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+) -> Result<Json<Invite>, ApiError> {
+    require_guest_ok(&state.db, viewer.as_ref()).await?;
+    let key = name.to_lowercase();
+    let server = require_server(&state.db, &key).await?;
+    let member = match &viewer {
+        Some(user) => is_member(&state.db, &key, &user.username).await?,
+        None => false,
+    };
+    let banned = match &viewer {
+        Some(user) if !member => is_banned(&state.db, &key, &user.username).await?,
+        _ => false,
+    };
+    let unlocked = !banned
+        && (!server.has_password
+            || member
+            || invite_unlocked(&state.db, &headers, &key, viewer.as_ref()).await?);
+    let status = match (member, banned, unlocked) {
+        (true, _, _) => InviteStatus::Member,
+        (false, true, _) => InviteStatus::Banned,
+        (false, false, true) => InviteStatus::Joinable,
+        (false, false, false) => InviteStatus::PasswordRequired,
+    };
+    let (preview_channel, preview) = match unlocked {
+        true => invite_preview(&state.db, &key).await?,
+        false => (None, Vec::new()),
+    };
+    let member_count: i64 = sqlx::query("SELECT COUNT(*) FROM members WHERE server = $1")
+        .bind(&key)
+        .fetch_one(&state.db)
+        .await?
+        .try_get(0)?;
+    Ok(Json(Invite {
+        online_count: state.hub.online_count(&key),
+        server,
+        member_count,
+        status,
+        preview_channel,
+        preview,
+    }))
 }
 
 async fn insert_member(db: &Db, server: &str, username: &str) -> Result<bool, ApiError> {
@@ -2596,6 +2731,281 @@ mod tests {
             fetch("usernames=bob").await,
             Err(ApiError(StatusCode::FORBIDDEN, _))
         ));
+        done(state, path).await;
+    }
+
+    async fn invite_as(
+        state: &AppState,
+        viewer: Option<User>,
+        server: &str,
+        password: Option<&str>,
+        grant: Option<&str>,
+    ) -> Result<Invite, ApiError> {
+        let mut headers = HeaderMap::new();
+        if let Some(password) = password {
+            let encoded =
+                percent_encoding::utf8_percent_encode(password, percent_encoding::NON_ALPHANUMERIC)
+                    .to_string();
+            headers.insert(
+                "x-invite-password",
+                encoded.parse().expect("password header"),
+            );
+        }
+        if let Some(grant) = grant {
+            headers.insert("x-guest-grant", grant.parse().expect("grant header"));
+        }
+        get_invite(
+            State(state.clone()),
+            MaybeAuthed(viewer),
+            headers,
+            Path(server.to_string()),
+        )
+        .await
+        .map(|Json(invite)| invite)
+    }
+
+    async fn status_of(
+        state: &AppState,
+        viewer: Option<User>,
+        password: Option<&str>,
+    ) -> InviteStatus {
+        invite_as(state, viewer, "club", password, None)
+            .await
+            .expect("invite")
+            .status
+    }
+
+    async fn set_password(state: &AppState, password: &str) {
+        let _ = update_server(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path("club".to_string()),
+            Json(ServerPatch {
+                name: None,
+                password: Some(password.to_string()),
+            }),
+        )
+        .await
+        .expect("set password");
+    }
+
+    async fn insert_grant(db: &Db, server: &str) -> String {
+        let grant = new_token();
+        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at) VALUES($1, $2, 0)")
+            .bind(&grant)
+            .bind(server)
+            .execute(db)
+            .await
+            .expect("insert grant");
+        grant
+    }
+
+    #[tokio::test]
+    async fn invite_statuses() {
+        let (state, path) = temp_state("invite_status").await;
+        let db = &state.db;
+        let _ = make_server(&state, "Club").await.expect("club");
+        add_user(db, "bob", "Bob").await;
+        add_user(db, "carol", "Carol").await;
+        join(&state, "bob", "club").await.expect("bob joins");
+        ban(&state, mem_user("alice", false), "club", "carol")
+            .await
+            .expect("ban carol");
+        let user = |name: &str| Some(mem_user(name, false));
+        let open = invite_as(&state, user("dave"), "CLUB", None, None)
+            .await
+            .expect("open invite");
+        assert_eq!(open.server.display_name, "Club");
+        assert_eq!(open.server.name, "club");
+        assert!(!open.server.has_password);
+        assert_eq!(open.member_count, 2);
+        assert_eq!(open.status, InviteStatus::Joinable);
+        assert_eq!(open.preview_channel.as_deref(), Some("general"));
+        assert_eq!(
+            status_of(&state, user("alice"), None).await,
+            InviteStatus::Member
+        );
+        assert_eq!(
+            status_of(&state, user("bob"), None).await,
+            InviteStatus::Member
+        );
+        assert_eq!(
+            status_of(&state, user("carol"), None).await,
+            InviteStatus::Banned
+        );
+        assert_eq!(status_of(&state, None, None).await, InviteStatus::Joinable);
+        assert_eq!(
+            status_of(&state, Some(mem_user("root", true)), None).await,
+            InviteStatus::Joinable
+        );
+        set_password(&state, "pässwörd #1").await;
+        assert_eq!(
+            status_of(&state, user("dave"), None).await,
+            InviteStatus::PasswordRequired
+        );
+        assert_eq!(
+            status_of(&state, user("dave"), Some("wrong")).await,
+            InviteStatus::PasswordRequired
+        );
+        assert_eq!(
+            status_of(&state, user("dave"), Some("pässwörd #1")).await,
+            InviteStatus::Joinable
+        );
+        assert_eq!(
+            status_of(&state, Some(mem_user("root", true)), None).await,
+            InviteStatus::PasswordRequired
+        );
+        assert_eq!(
+            status_of(&state, user("bob"), None).await,
+            InviteStatus::Member
+        );
+        assert_eq!(
+            status_of(&state, user("carol"), Some("pässwörd #1")).await,
+            InviteStatus::Banned
+        );
+        assert_eq!(
+            status_of(&state, None, None).await,
+            InviteStatus::PasswordRequired
+        );
+        assert_eq!(
+            status_of(&state, None, Some("pässwörd #1")).await,
+            InviteStatus::Joinable
+        );
+        let grant = insert_grant(db, "club").await;
+        let guest = invite_as(&state, None, "club", None, Some(&format!("bogus, {grant}")))
+            .await
+            .expect("guest invite");
+        assert_eq!(guest.status, InviteStatus::Joinable);
+        let ignored = invite_as(&state, user("dave"), "club", None, Some(&grant))
+            .await
+            .expect("grants are for guests");
+        assert_eq!(ignored.status, InviteStatus::PasswordRequired);
+        assert_eq!(
+            status(invite_as(&state, user("dave"), "nowhere", None, None).await),
+            Some(StatusCode::NOT_FOUND)
+        );
+        done(state, path).await;
+    }
+
+    async fn post(db: &Db, channel: i64, content: &str, root: Option<i64>) -> i64 {
+        sqlx::query("INSERT INTO messages(channel_id, thread_root_id, author, content, created_at) VALUES($1, $2, 'alice', $3, 0) RETURNING id")
+            .bind(channel)
+            .bind(root)
+            .bind(content)
+            .fetch_one(db)
+            .await
+            .expect("insert message")
+            .try_get(0)
+            .expect("message id")
+    }
+
+    fn contents(invite: &Invite) -> Vec<&str> {
+        invite.preview.iter().map(|m| m.content.as_str()).collect()
+    }
+
+    #[tokio::test]
+    async fn invite_preview_gating() {
+        let (state, path) = temp_state("invite_preview").await;
+        let db = &state.db;
+        let general = make_server(&state, "club").await.expect("club").0.channels[0].id;
+        set_password(&state, "secret").await;
+        for n in 1..=5 {
+            post(db, general, &format!("m{n}"), None).await;
+        }
+        let last = post(db, general, "m6", None).await;
+        post(db, general, "reply", Some(last)).await;
+        let dave = || Some(mem_user("dave", false));
+        let locked = invite_as(&state, dave(), "club", None, None)
+            .await
+            .expect("locked");
+        assert!(locked.preview.is_empty());
+        assert_eq!(locked.preview_channel, None);
+        let wrong = invite_as(&state, dave(), "club", Some("nope"), None)
+            .await
+            .expect("wrong password");
+        assert!(wrong.preview.is_empty());
+        let unlocked = invite_as(&state, dave(), "club", Some("secret"), None)
+            .await
+            .expect("unlocked");
+        assert_eq!(unlocked.preview_channel.as_deref(), Some("general"));
+        assert_eq!(contents(&unlocked), vec!["m4", "m5", "m6"]);
+        assert_eq!(unlocked.preview[2].author.username, "alice");
+        let grant = insert_grant(db, "club").await;
+        let guest = invite_as(&state, None, "club", None, Some(&grant))
+            .await
+            .expect("guest");
+        assert_eq!(contents(&guest), vec!["m4", "m5", "m6"]);
+        let member = invite_as(&state, Some(mem_user("alice", false)), "club", None, None)
+            .await
+            .expect("member");
+        assert_eq!(contents(&member), vec!["m4", "m5", "m6"]);
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:alice', 1, 1, 1)")
+            .bind(general)
+            .execute(db)
+            .await
+            .expect("make general private");
+        sqlx::query("INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'lounge', 'voice', 0)")
+            .execute(db)
+            .await
+            .expect("voice channel");
+        let lobby: i64 = sqlx::query(
+            "INSERT INTO channels(server, name, created_at) VALUES('club', 'lobby', 0) RETURNING id",
+        )
+        .fetch_one(db)
+        .await
+        .expect("lobby")
+        .try_get(0)
+        .expect("lobby id");
+        post(db, lobby, "hello lobby", None).await;
+        let public = invite_as(&state, dave(), "club", Some("secret"), None)
+            .await
+            .expect("public channel");
+        assert_eq!(public.preview_channel.as_deref(), Some("lobby"));
+        assert_eq!(contents(&public), vec!["hello lobby"]);
+        let alice_view = invite_as(&state, Some(mem_user("alice", false)), "club", None, None)
+            .await
+            .expect("alice sees the outsider preview");
+        assert_eq!(alice_view.preview_channel.as_deref(), Some("lobby"));
+        add_user(db, "carol", "Carol").await;
+        ban(&state, mem_user("alice", false), "club", "carol")
+            .await
+            .expect("ban carol");
+        for password in [Some("secret"), None] {
+            let banned = invite_as(
+                &state,
+                Some(mem_user("carol", false)),
+                "club",
+                password,
+                None,
+            )
+            .await
+            .expect("banned");
+            assert_eq!(banned.status, InviteStatus::Banned);
+            assert_eq!(banned.preview_channel, None);
+            assert!(banned.preview.is_empty());
+        }
+        set_password(&state, "").await;
+        let banned = invite_as(&state, Some(mem_user("carol", false)), "club", None, None)
+            .await
+            .expect("banned from an open server");
+        assert_eq!(banned.status, InviteStatus::Banned);
+        assert!(banned.preview.is_empty());
+        let open = invite_as(&state, dave(), "club", None, None)
+            .await
+            .expect("open server");
+        assert_eq!(contents(&open), vec!["hello lobby"]);
+        set_password(&state, "secret").await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:alice', 1, 1, 1)")
+            .bind(lobby)
+            .execute(db)
+            .await
+            .expect("make lobby private");
+        let hidden = invite_as(&state, dave(), "club", Some("secret"), None)
+            .await
+            .expect("no public channel");
+        assert_eq!(hidden.status, InviteStatus::Joinable);
+        assert_eq!(hidden.preview_channel, None);
+        assert!(hidden.preview.is_empty());
         done(state, path).await;
     }
 }

@@ -5,6 +5,7 @@ import { Hash, Trash2, X } from 'lucide-react'
 import * as api from '../lib/api'
 import { errorText, roleMenuItems, serverAdminPerms, useStore } from '../lib/store'
 import { SLOWMODE_MAX } from '../lib/rules'
+import { inviteUrl } from '../lib/invite'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
 import type { Channel, ChannelPerm, Member, Role } from '../lib/types'
 import { UserAvatar } from './user_avatar'
@@ -493,6 +494,59 @@ export function ServerPasswordField({
   )
 }
 
+export function InviteLinkField({ server, hasPassword }: { server: string; hasPassword: boolean }) {
+  const [password, setPassword] = useState('')
+  const [copied, setCopied] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const link = inviteUrl(server, hasPassword ? password : null)
+  const withPassword = hasPassword && password.trim() !== ''
+  return (
+    <>
+      <p className={sectionCls}>Invite</p>
+      <div className="flex gap-2">
+        <input
+          readOnly
+          value={link}
+          aria-label="Invite link"
+          onFocus={e => e.currentTarget.select()}
+          className={`${fieldCls} streamer text-on-surface-variant`}
+        />
+        <button
+          onClick={() => {
+            setError(null)
+            navigator.clipboard.writeText(link).then(
+              () => setCopied(link),
+              (err: unknown) => setError(errorText(err))
+            )
+          }}
+          className={filledBtn}
+        >
+          {copied === link ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <FieldError message={error} />
+      {hasPassword && (
+        <input
+          type="password"
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          placeholder="Server password (optional)"
+          autoComplete="off"
+          aria-label="Include the server password in the link"
+          className={`${fieldCls} mt-2 w-full`}
+        />
+      )}
+      <p className="pt-1.5 text-xs text-on-surface-variant">
+        {withPassword
+          ? 'Anyone with this link joins without typing the password.'
+          : hasPassword
+            ? 'People with this link are asked for the password. Type it above to include it in the link.'
+            : 'Paste this link in a chat to show an invite card.'}
+      </p>
+    </>
+  )
+}
+
 export function AdminPermsEditor({
   server,
   username,
@@ -649,6 +703,7 @@ function Settings({ server }: { server: string }) {
 
   return (
     <Dialog full title="Server Settings" onClose={closeDialog}>
+      <InviteLinkField server={server} hasPassword={detail.has_password} />
       {server !== 'rchat' && hasPerm(perms, Perm.DeleteServer) && (
         <>
           <p className={sectionCls}>Rename Server</p>

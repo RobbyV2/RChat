@@ -541,6 +541,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
                 .delete(servers::delete_server),
         )
         .route("/servers/{name}/exists", get(servers::server_exists))
+        .route("/invites/{name}", get(servers::get_invite))
         .route("/server_search", get(servers::search_servers))
         .route("/servers/{name}/members", get(servers::list_members))
         .route("/servers/{name}/interacted", get(servers::list_interacted))

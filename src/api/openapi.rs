@@ -33,6 +33,7 @@ impl Modify for Bearer {
         super::servers::create_server,
         super::servers::get_server,
         super::servers::server_exists,
+        super::servers::get_invite,
         super::servers::search_servers,
         super::servers::guest_access,
         super::servers::list_members,

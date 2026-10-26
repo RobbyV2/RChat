@@ -298,3 +298,18 @@ body {
   border-radius: 9999px;
   background: var(--color-surface-container-low);
 }
+
+.invite-backdrop {
+  background:
+    radial-gradient(
+      ellipse 70% 55% at 12% 8%,
+      color-mix(in srgb, var(--color-primary) 22%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 60% 50% at 92% 96%,
+      color-mix(in srgb, var(--color-tertiary) 18%, transparent),
+      transparent 70%
+    ),
+    var(--color-surface);
+}

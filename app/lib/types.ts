@@ -79,6 +79,17 @@ export interface ServerDetail {
   online_count: number
 }
 
+export type InviteStatus = 'member' | 'banned' | 'joinable' | 'password_required'
+
+export interface Invite {
+  server: ServerSummaryLite
+  member_count: number
+  online_count: number
+  status: InviteStatus
+  preview_channel: string | null
+  preview: Message[]
+}
+
 export interface DmSummary {
   id: number
   other: UserRef

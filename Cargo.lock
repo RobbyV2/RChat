@@ -2260,6 +2260,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "memorable-wordlist",
+ "percent-encoding",
  "rand 0.10.3",
  "rand_chacha 0.10.0",
  "reqwest 0.13.5",

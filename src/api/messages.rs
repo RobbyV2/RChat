@@ -220,6 +220,24 @@ async fn page(
     Ok(msgs)
 }
 
+pub(crate) async fn recent_channel_messages(
+    db: &Db,
+    channel_id: i64,
+    limit: i64,
+) -> Result<Vec<Message>, ApiError> {
+    page(
+        db,
+        "m.channel_id = $1 AND m.thread_root_id IS NULL",
+        channel_id,
+        &PageQuery {
+            before: None,
+            limit: Some(limit),
+        },
+        None,
+    )
+    .await
+}
+
 async fn claim_media(
     tx: &mut sqlx::Transaction<'_, sqlx::Any>,
     id: &str,

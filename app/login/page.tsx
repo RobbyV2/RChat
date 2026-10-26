@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { ArrowRight, KeyRound, LayoutGrid } from 'lucide-react'
 import * as api from '../lib/api'
 import { useStore } from '../lib/store'
+import { safeNext } from '../lib/invite'
 import type { AvatarKind } from '../lib/types'
 import { AvatarPicker } from '../components/avatar_picker'
 import { WordGrid } from '../components/word_grid'
@@ -40,7 +41,8 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    if (authed) router.replace('/')
+    if (!authed) return
+    router.replace(safeNext(new URLSearchParams(window.location.search).get('next')) ?? '/')
   }, [authed, router])
 
   useEffect(() => {

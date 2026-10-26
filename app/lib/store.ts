@@ -45,6 +45,16 @@ import {
   type Layout,
 } from './nav_layout'
 import { memberPerms } from './rules'
+import {
+  dropStashedInvite,
+  entryState,
+  inviteEntry,
+  invitePath,
+  parseInvite,
+  takeStashedInvite,
+  type InviteEntry,
+  type OpenInvite,
+} from './invite'
 import { ALL_PERMS } from './types'
 import type {
   AdminOverview,
@@ -270,6 +280,7 @@ interface RChatState {
   p2pAvailability: Record<string, P2pAvailability>
   rtcTick: number
   view: View | null
+  invite: OpenInvite | null
   messages: Record<string, Message[]>
   older: Record<string, OlderState>
   outbox: Record<string, Outgoing[]>
@@ -308,11 +319,15 @@ interface RChatState {
   login: (body: api.LoginRequest) => Promise<void>
   logout: () => void
   enterGuest: () => Promise<void>
-  guestJoinServer: (name: string, password?: string) => Promise<void>
+  guestJoinServer: (name: string, password?: string, nav?: Nav) => Promise<void>
   openServer: (name: string, channelId?: number, nav?: Nav) => Promise<void>
   openChannel: (server: string, channelId: number, nav?: Nav) => Promise<void>
   openDm: (dmId: number, nav?: Nav) => Promise<void>
   openLastDm: () => void
+  openInvite: (server: string, password?: string | null) => void
+  closeInvite: () => void
+  syncInvite: () => boolean
+  consumeInviteJoin: () => void
   startDm: (username: string) => Promise<void>
   messageUser: (username: string, content: string) => Promise<void>
   loadMoreDms: () => Promise<void>
@@ -352,7 +367,7 @@ interface RChatState {
   deleteMedia: (messageId: number) => Promise<void>
   deleteEmbed: (messageId: number, ord: number, banner: boolean) => Promise<void>
   createServer: (name: string, password?: string) => Promise<void>
-  joinServer: (name: string, password?: string) => Promise<void>
+  joinServer: (name: string, password?: string, nav?: Nav) => Promise<void>
   leaveServer: (name: string) => Promise<void>
   renameServer: (name: string, newName: string) => Promise<void>
   setServerPassword: (name: string, password: string) => Promise<void>
@@ -877,7 +892,35 @@ export const useStore = create<RChatState>()((set, get) => {
       : `rchat_token=; ${attrs}; max-age=0`
   }
 
+  const leaveInvite = () => {
+    if (get().invite) set({ invite: null })
+  }
+
+  const rememberInvite = (entry: InviteEntry) =>
+    queueMicrotask(() => {
+      if (parseInvite(window.location.href, window.location.origin)?.server !== entry.server) return
+      window.history.replaceState(entryState(entry), '', invitePath(entry.server))
+    })
+
+  const readInvite = () => {
+    const target = parseInvite(window.location.href, window.location.origin)
+    const handoff = takeStashedInvite(target?.server ?? null)
+    if (!target) {
+      leaveInvite()
+      return false
+    }
+    const { server } = target
+    const entry = inviteEntry(window.history.state, server)
+    const password = target.password ?? entry?.password ?? handoff?.password ?? null
+    if (target.password !== null || password !== (entry?.password ?? null))
+      rememberInvite({ server, password, pushed: entry?.pushed ?? false })
+    const { me, guest } = get()
+    set({ invite: { server, password, join: handoff !== null && (me !== null || guest) } })
+    return true
+  }
+
   const syncUrl = (view: View | null, nav: Nav) => {
+    leaveInvite()
     if (nav === 'none') return
     const path = viewPath(view)
     if (window.location.pathname === path) return
@@ -886,6 +929,7 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   const resolveUrl = async (nav: 'replace' | 'none') => {
+    if (readInvite() || (!get().me && !get().guest)) return
     const target = parsePath(window.location.pathname)
     const fallback = () => get().openServer('rchat', undefined, 'replace')
     const cur = get().view
@@ -1363,6 +1407,7 @@ export const useStore = create<RChatState>()((set, get) => {
     p2pAvailability: {},
     rtcTick: 0,
     view: null,
+    invite: null,
     messages: {},
     older: {},
     outbox: {},
@@ -1491,6 +1536,7 @@ export const useStore = create<RChatState>()((set, get) => {
       dmPager.reset(0)
       serverPager.reset(0)
       historyGen.clear()
+      dropStashedInvite()
       set({
         token: null,
         me: null,
@@ -1511,6 +1557,7 @@ export const useStore = create<RChatState>()((set, get) => {
         serversMore: false,
         layout: emptyLayout,
         view: null,
+        invite: null,
         messages: {},
         older: {},
         outbox: {},
@@ -1543,7 +1590,7 @@ export const useStore = create<RChatState>()((set, get) => {
         startWs()
       }),
 
-    guestJoinServer: async (name, password) => {
+    guestJoinServer: async (name, password, nav) => {
       const id = name.trim().toLowerCase()
       if (password) {
         const { grant } = await api.guestAccess(id, password)
@@ -1553,7 +1600,7 @@ export const useStore = create<RChatState>()((set, get) => {
       const list = get().guestServers
       persistGuestServers(list.includes(id) ? list : [...list, id])
       wsClient.subscribe([id])
-      await get().openServer(id)
+      await get().openServer(id, undefined, nav)
     },
 
     openServer: (name, channelId, nav = 'push') =>
@@ -1605,6 +1652,28 @@ export const useStore = create<RChatState>()((set, get) => {
         firstPage(`d${dmId}`, msgs)
         askP2p(msgs)
       }),
+
+    openInvite: (server, password = null) => {
+      const invite: OpenInvite = { server, password, join: false }
+      set({ invite, contextMenu: null, profile: null, activeDialog: null })
+      const path = invitePath(server)
+      if (window.location.pathname !== path)
+        window.history.pushState(entryState({ server, password, pushed: true }), '', path)
+    },
+
+    closeInvite: () => {
+      const { view, invite } = get()
+      const pushed = invite !== null && inviteEntry(window.history.state, invite.server)?.pushed
+      leaveInvite()
+      if (pushed) window.history.back()
+      else if (view) syncUrl(view, 'push')
+      else void get().openServer('rchat', undefined, 'push')
+    },
+
+    syncInvite: readInvite,
+
+    consumeInviteJoin: () =>
+      set(s => (s.invite?.join ? { invite: { ...s.invite, join: false } } : {})),
 
     openLastDm: () => {
       const { me } = get()
@@ -1932,12 +2001,12 @@ export const useStore = create<RChatState>()((set, get) => {
       await get().openServer(id)
     },
 
-    joinServer: async (name, password) => {
+    joinServer: async (name, password, nav = 'push') => {
       const { name: id } = await api.joinServer(name.trim().toLowerCase(), password)
       await addServer(id).catch(fail)
       const { view } = get()
       const here = view?.kind === 'channel' && view.server === id ? view.channelId : undefined
-      await get().openServer(id, here, here === undefined ? 'push' : 'replace')
+      await get().openServer(id, here, here === undefined ? nav : 'replace')
     },
 
     leaveServer: name =>

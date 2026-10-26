@@ -1,4 +1,4 @@
-const CACHE = 'rchat-v2'
+const CACHE = 'rchat-v3'
 
 const asset = url => url.pathname.startsWith('/_next/static') || url.pathname.startsWith('/icons')
 const html = res => (res.headers.get('content-type') || '').includes('text/html')
@@ -33,14 +33,15 @@ self.addEventListener('fetch', event => {
   }
 
   if (request.mode === 'navigate') {
+    const page = `${url.origin}${url.pathname}`
     event.respondWith(
       caches.open(CACHE).then(cache =>
         fetch(request)
           .then(res => {
-            if (res.ok && html(res)) cache.put(request, res.clone())
+            if (res.ok && html(res)) cache.put(page, res.clone())
             return res
           })
-          .catch(() => cache.match(request).then(hit => hit ?? Response.error()))
+          .catch(() => cache.match(page).then(hit => hit ?? Response.error()))
       )
     )
   }

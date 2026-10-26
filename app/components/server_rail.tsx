@@ -13,6 +13,7 @@ import {
 import { folderKey, railItems, serverKey, type Folder } from '../lib/nav_layout'
 import type { DropTarget } from '../lib/drag'
 import { serverInitial } from '../lib/rules'
+import { inviteUrl } from '../lib/invite'
 import { longPress } from './context_menu'
 import { dragScope } from './drag'
 import { InstallButton } from './pwa_register'
@@ -38,6 +39,19 @@ const dropServer = (name: string, { zone, index, onto }: DropTarget) => {
   else if (target !== null) s.mergeServers(name, target)
   else if (into !== null) s.moveIntoFolder(name, into, index)
   else s.moveServer(name, index)
+}
+
+export function ServerGlyph({ name, displayName }: { name: string; displayName: string }) {
+  return name === 'rchat' ? (
+    <img
+      src="/rchat_r.png"
+      alt="RChat"
+      draggable={false}
+      className="h-full w-full object-contain p-1"
+    />
+  ) : (
+    <span className="streamer">{serverInitial(displayName)}</span>
+  )
 }
 
 function UnreadDot() {
@@ -76,6 +90,10 @@ function ServerTile({
         (x, y) =>
           openContextMenu(x, y, [
             {
+              label: 'Copy invite link',
+              action: () => void navigator.clipboard.writeText(inviteUrl(name)),
+            },
+            {
               label: 'Copy Server ID',
               action: () => void navigator.clipboard.writeText(name),
             },
@@ -108,16 +126,7 @@ function ServerTile({
       data-drop-onto={folder === null ? 'Create folder' : undefined}
       className={`${tile} relative text-lg font-semibold ${active ? 'bg-primary text-on-primary' : idle}`}
     >
-      {name === 'rchat' ? (
-        <img
-          src="/rchat_r.png"
-          alt="RChat"
-          draggable={false}
-          className="h-full w-full object-contain p-1"
-        />
-      ) : (
-        <span className="streamer">{serverInitial(display_name)}</span>
-      )}
+      <ServerGlyph name={name} displayName={display_name} />
       {mine && (
         <span
           title="Creator"
