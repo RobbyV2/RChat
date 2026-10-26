@@ -15,7 +15,7 @@ export function WordGrid({ words, selected, onChange }: Props) {
   }
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-4 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
         {words.map(word => {
           const idx = selected.indexOf(word)
           return (
@@ -23,7 +23,7 @@ export function WordGrid({ words, selected, onChange }: Props) {
               key={word}
               type="button"
               onClick={() => toggle(word)}
-              className={`relative min-w-0 break-words rounded-xl px-2 py-2 text-center text-sm leading-tight transition-colors ${
+              className={`relative min-w-0 break-words rounded-xl px-1 py-2 text-center text-xs leading-tight min-[360px]:text-sm transition-colors ${
                 idx >= 0
                   ? 'bg-primary-container text-on-primary-container'
                   : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest'

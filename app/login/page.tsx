@@ -119,14 +119,12 @@ export default function LoginPage() {
   )
 
   return (
-    <div className="flex min-h-dvh items-center justify-center p-4">
-      <div className="fixed right-4 top-4">
-        <StatusClock />
-      </div>
-      <div className="fixed bottom-4 left-4">
+    <div className="flex min-h-dvh flex-col items-center px-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-4">
+      <header className="flex w-full shrink-0 items-center justify-between pt-[max(0.5rem,env(safe-area-inset-top))] pb-2">
         <ThemeToggle />
-      </div>
-      <div className="flex w-full max-w-md flex-col gap-5 rounded-2xl bg-surface-container-low p-6 shadow-elevation-2">
+        <StatusClock />
+      </header>
+      <div className="my-auto flex w-full max-w-md flex-col gap-5 rounded-2xl bg-surface-container-low p-4 shadow-elevation-2 sm:p-6">
         <h1 className="flex justify-center">
           <img src="/rchat_logo.png" alt="RChat" className="h-16 w-auto" />
         </h1>
@@ -193,7 +191,7 @@ export default function LoginPage() {
           <button
             type="button"
             onClick={() => void enterGuest()}
-            className="flex items-center justify-center gap-1 rounded-full py-2 text-sm text-primary hover:bg-surface-container-high"
+            className="flex flex-wrap items-center justify-center gap-x-1 rounded-full px-3 py-2 text-sm text-primary hover:bg-surface-container-high"
           >
             Skip to RChat <ArrowRight size={16} /> (cannot send messages)
           </button>
