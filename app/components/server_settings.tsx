@@ -9,7 +9,7 @@ import type { Channel, ChannelPerm, Member, Role } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 
 export const fieldCls =
-  'min-w-0 flex-1 rounded-xl border border-outline bg-transparent px-3 py-2 text-sm outline-none placeholder:text-on-surface-variant focus:border-primary'
+  'min-w-0 flex-1 rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm'
 export const filledBtn =
   'rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary hover:opacity-90 disabled:opacity-40'
 export const textBtn =
@@ -46,14 +46,14 @@ export function Dialog({
 }) {
   return (
     <div
-      className={`fixed inset-0 z-40 flex items-center justify-center bg-scrim/60 ${full ? 'p-0 sm:p-4' : 'p-4'}`}
+      className={`fixed inset-x-0 top-0 z-40 flex h-app items-center justify-center bg-scrim/60 ${full ? 'px-safe sm:px-safe-4 sm:py-4' : 'px-safe-4 py-4'}`}
       onMouseDown={onClose}
     >
       <div
         className={`w-full overflow-y-auto bg-surface-container-high p-6 shadow-elevation-3 ${
           full
-            ? 'h-full max-h-none sm:h-auto sm:max-h-[85vh] sm:max-w-lg sm:rounded-2xl'
-            : 'max-h-[85vh] max-w-lg rounded-2xl'
+            ? 'h-full max-h-none sm:h-auto sm:max-h-[min(85vh,100%)] sm:max-w-lg sm:rounded-2xl'
+            : 'max-h-[min(85vh,100%)] max-w-lg rounded-2xl'
         }`}
         onMouseDown={e => e.stopPropagation()}
       >
@@ -379,7 +379,7 @@ export function ChannelControls({
               value={slow}
               onChange={e => setSlow(e.target.value)}
               inputMode="numeric"
-              className="w-16 rounded-lg border border-outline bg-transparent px-2 py-1 text-sm text-on-surface outline-none focus:border-primary"
+              className="w-16 rounded-lg border border-outline bg-transparent px-2 py-1 text-base text-on-surface outline-none focus:border-primary md:text-sm"
             />
           </label>
           <button className={textBtn}>Set</button>

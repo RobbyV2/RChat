@@ -40,7 +40,7 @@ export function ServerRail() {
       }))
 
   return (
-    <nav className="flex h-full w-18 shrink-0 flex-col items-center gap-2 overflow-y-auto bg-surface-container-lowest py-3">
+    <nav className="flex h-full w-18 shrink-0 flex-col items-center gap-2 overflow-y-auto bg-surface-container-lowest pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {me && (
         <button
           title="Direct messages"

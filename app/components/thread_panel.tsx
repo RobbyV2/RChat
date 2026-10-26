@@ -9,6 +9,7 @@ import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
 import { fmtTime, messageCopyItems, OutboxRows } from './message_pane'
 import { longPress } from './context_menu'
+import { usePinnedBottom } from './viewport_height'
 
 const EMPTY: Message[] = []
 
@@ -50,6 +51,8 @@ export default function ThreadPanel() {
     const el = listRef.current
     if (el && stickBottom.current) el.scrollTop = el.scrollHeight
   }, [replies, outCount])
+
+  usePinnedBottom(listRef, stickBottom, rootId)
 
   if (!root) return null
 

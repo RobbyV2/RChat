@@ -76,7 +76,7 @@ export function ChannelSidebar() {
             }}
             onBlur={submitDm}
             placeholder="username"
-            className="mx-2 my-0.5 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-sm outline-none"
+            className="mx-2 my-0.5 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
           />
         )}
         <div className="flex flex-1 flex-col overflow-y-auto pb-3">
@@ -198,7 +198,7 @@ export function ChannelSidebar() {
       }}
       onBlur={submit}
       placeholder="channel name"
-      className="mx-2 my-0.5 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-sm outline-none"
+      className="mx-2 my-0.5 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
     />
   )
 

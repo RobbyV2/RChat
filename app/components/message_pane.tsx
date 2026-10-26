@@ -31,6 +31,7 @@ import { MessageComposer } from './message_composer'
 import StatusClock from './status_clock'
 import { longPress } from './context_menu'
 import { VoiceGrid } from './voice_grid'
+import { usePinnedBottom } from './viewport_height'
 
 const EMPTY: Message[] = []
 
@@ -256,6 +257,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     view?.kind === 'channel' ? detail?.channels.find(c => c.id === view.channelId) : undefined
   const channelName = channel?.name
   const isVoice = channel?.kind === 'voice'
+  usePinnedBottom(listRef, atBottomRef, isVoice)
   const dm = view?.kind === 'dm' ? dms.find(d => d.id === view.dmId) : undefined
   const dmCall =
     dm && call?.dmId === dm.id && (call.state === 'active' || call.from === me?.username)

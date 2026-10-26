@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import PwaRegister from './components/pwa_register'
+import ViewportHeight from './components/viewport_height'
 
 export const metadata: Metadata = {
   title: 'RChat',
@@ -17,6 +18,10 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: '#141218',
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  interactiveWidget: 'resizes-content',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -30,6 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
         <PwaRegister />
+        <ViewportHeight />
         {children}
       </body>
     </html>

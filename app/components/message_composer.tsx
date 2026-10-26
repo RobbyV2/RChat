@@ -138,7 +138,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   }
 
   return (
-    <div className="shrink-0 px-3 pb-3">
+    <div className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3">
       {expiryOpen && (
         <ExpiryDialog
           onPick={seconds => {
@@ -241,7 +241,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             }
           }}
           placeholder={`Message ${target}`}
-          className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none placeholder:text-on-surface-variant"
+          className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:text-on-surface-variant md:text-sm"
         />
         <button
           title="Send"

@@ -195,7 +195,7 @@ export function ContextMenu() {
   if (coarse) {
     return (
       <div
-        className="fixed inset-0 z-50 flex flex-col justify-end bg-scrim/40"
+        className="fixed inset-x-0 top-0 z-50 flex h-app flex-col justify-end bg-scrim/40"
         onClick={close}
         onContextMenu={e => {
           e.preventDefault()
@@ -209,7 +209,7 @@ export function ContextMenu() {
             e.preventDefault()
             e.stopPropagation()
           }}
-          className="animate-sheet-up max-h-[70dvh] overflow-y-auto overscroll-contain rounded-t-3xl bg-surface-container-high pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-elevation-3 select-none"
+          className="animate-sheet-up max-h-[70dvh] overflow-y-auto overscroll-contain rounded-t-3xl bg-surface-container-high px-safe pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-elevation-3 select-none"
         >
           <div aria-hidden className="mx-auto mb-2 h-1 w-8 rounded-full bg-outline-variant" />
           {menu.items.map((it, i) =>

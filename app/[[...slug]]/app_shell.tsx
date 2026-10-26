@@ -80,7 +80,7 @@ export default function AppShell() {
 
   if (!me && !guest) {
     return (
-      <div className="flex h-dvh items-center justify-center text-on-surface-variant">
+      <div className="flex h-app items-center justify-center text-on-surface-variant">
         Loading RChat
       </div>
     )
@@ -89,7 +89,7 @@ export default function AppShell() {
   const isChannel = view?.kind === 'channel'
 
   return (
-    <div className="flex h-dvh overflow-hidden">
+    <div className="flex h-app overflow-hidden px-safe">
       <div className="hidden h-full md:flex">
         <ServerRail />
         <ChannelSidebar />
@@ -110,13 +110,13 @@ export default function AppShell() {
         </div>
       )}
       {panel && (
-        <div className="fixed inset-0 z-40 bg-surface md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
+        <div className="fixed inset-x-0 top-0 z-40 h-app bg-surface max-md:px-safe md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
           {panel.kind === 'thread' ? <ThreadPanel /> : <SearchPanel />}
         </div>
       )}
       {leftOpen && (
-        <div className="fixed inset-0 z-40 flex md:hidden">
-          <div className="flex h-full shadow-elevation-3">
+        <div className="fixed inset-x-0 top-0 z-40 flex h-app md:hidden">
+          <div className="flex h-full bg-surface-container-lowest pl-[env(safe-area-inset-left)] shadow-elevation-3">
             <ServerRail />
             <ChannelSidebar />
           </div>
@@ -124,9 +124,9 @@ export default function AppShell() {
         </div>
       )}
       {rightOpen && isChannel && (
-        <div className="fixed inset-0 z-40 flex justify-end lg:hidden">
+        <div className="fixed inset-x-0 top-0 z-40 flex h-app justify-end lg:hidden">
           <div className="flex-1 bg-scrim/50" onClick={() => setRightOpen(false)} />
-          <div className="h-full shadow-elevation-3">
+          <div className="h-full bg-surface-container-low pr-[env(safe-area-inset-right)] shadow-elevation-3">
             <MemberSidebar />
           </div>
         </div>
@@ -138,7 +138,7 @@ export default function AppShell() {
       <ContextMenu />
       <CallBanner />
       {notices.length > 0 && (
-        <div className="fixed top-16 right-4 z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
+        <div className="fixed top-16 right-[max(1rem,env(safe-area-inset-right))] z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
           {notices.map(n => (
             <button
               key={n.id}

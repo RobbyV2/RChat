@@ -17,11 +17,11 @@ function Dialog({ title, children }: { title: string; children: React.ReactNode 
   }, [closeDialog])
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60 p-4"
+      className="fixed inset-x-0 top-0 z-50 flex h-app items-center justify-center bg-scrim/60 px-safe-4 py-4"
       onMouseDown={closeDialog}
     >
       <div
-        className="w-full max-w-sm rounded-3xl bg-surface-container-high p-6 shadow-elevation-3"
+        className="max-h-full w-full max-w-sm overflow-y-auto rounded-3xl bg-surface-container-high p-6 shadow-elevation-3"
         onMouseDown={e => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
@@ -127,7 +127,7 @@ function AddServerDialog() {
           if (e.key === 'Enter') submit()
         }}
         placeholder="server name"
-        className="w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-sm outline-none focus:border-primary"
+        className="w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
       />
       {joining && suggestions.some(s => s.name !== id) && (
         <div className="mt-2 flex flex-col gap-1">
@@ -158,7 +158,7 @@ function AddServerDialog() {
             if (e.key === 'Enter') submit()
           }}
           placeholder={creating ? 'password (optional)' : 'password'}
-          className="mt-3 w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-sm outline-none focus:border-primary"
+          className="mt-3 w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
         />
       )}
       <div className="mt-5 flex justify-end gap-2">

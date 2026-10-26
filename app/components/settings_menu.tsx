@@ -182,7 +182,7 @@ function Menu() {
   ]
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-surface md:flex-row">
+    <div className="fixed inset-x-0 top-0 z-50 flex h-app flex-col bg-surface px-safe md:flex-row">
       <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-outline-variant bg-surface-container-low p-3 md:w-56 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r md:p-4">
         <p className="hidden px-3 pb-2 text-xs font-medium tracking-wide text-on-surface-variant uppercase md:block">
           Settings

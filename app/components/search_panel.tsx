@@ -68,7 +68,7 @@ export default function SearchPanel() {
         value={value}
         max={max}
         onChange={e => onChange(e.target.value)}
-        className="rounded-lg border border-outline bg-transparent px-2 py-1 text-xs outline-none focus:border-primary"
+        className="rounded-lg border border-outline bg-transparent px-2 py-1 text-base outline-none focus:border-primary md:text-xs"
       />
     </label>
   )
@@ -99,13 +99,13 @@ export default function SearchPanel() {
             value={from}
             onChange={e => setFrom(e.target.value)}
             placeholder="from: user"
-            className="w-28 rounded-full border border-outline bg-transparent px-3 py-1 text-xs outline-none placeholder:text-on-surface-variant focus:border-primary"
+            className="w-28 rounded-full border border-outline bg-transparent px-3 py-1 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-xs"
           />
           {channels && (
             <select
               value={channelId}
               onChange={e => setChannelId(e.target.value)}
-              className="rounded-full border border-outline bg-transparent px-2 py-1 text-xs text-on-surface-variant outline-none focus:border-primary"
+              className="rounded-full border border-outline bg-transparent px-2 py-1 text-base text-on-surface-variant outline-none focus:border-primary md:text-xs"
             >
               <option value="">in: any channel</option>
               {channels.map(c => (

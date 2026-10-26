@@ -172,7 +172,7 @@ export function VoiceDock() {
       call?.dmUsers.find(u => u !== me?.username) ??
       'call')
   return (
-    <div className="shrink-0 border-t border-outline-variant bg-surface-container">
+    <div className="shrink-0 border-t border-outline-variant bg-surface-container pb-[env(safe-area-inset-bottom)]">
       <button
         title={`Go to ${label}`}
         onClick={() => {
@@ -312,12 +312,12 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
       {expanded && (
         <div
           onClick={() => setExpanded(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/80 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/80 px-safe-4 py-4"
         >
           <button
             title="Close"
             onClick={() => setExpanded(null)}
-            className="absolute top-4 right-4 rounded-full bg-surface-container-high p-2 text-on-surface hover:bg-surface-container-highest"
+            className="absolute top-4 right-[max(1rem,env(safe-area-inset-right))] rounded-full bg-surface-container-high p-2 text-on-surface hover:bg-surface-container-highest"
           >
             <X size={20} />
           </button>
