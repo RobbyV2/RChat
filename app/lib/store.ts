@@ -15,6 +15,7 @@ import {
   type OlderState,
   type ReadMark,
 } from './lists'
+import { addSearchPage, searchCursor, searchParams, type SearchArgs } from './search'
 import { ALL_PERMS } from './types'
 import type {
   AdminOverview,
@@ -125,15 +126,6 @@ export interface Notice {
   go: () => void
 }
 
-export interface SearchArgs {
-  q: string
-  from: string
-  channelId: number | null
-  hasFile: boolean
-  beforeTs: number | null
-  afterTs: number | null
-}
-
 export interface SearchState {
   results: SearchResult[]
   hasMore: boolean
@@ -154,22 +146,6 @@ export interface CallSession {
 }
 
 const emptySearch = (): SearchState => ({ results: [], hasMore: false, loading: false })
-
-export const filterSearchPage = (
-  raw: SearchResult[],
-  seenIds: Set<number>,
-  beforeTs: number | null,
-  afterTs: number | null
-): { filtered: SearchResult[]; hasMore: boolean } => {
-  const filtered = raw.filter(
-    r =>
-      !seenIds.has(r.message.id) &&
-      (beforeTs === null || r.message.created_at < beforeTs) &&
-      (afterTs === null || r.message.created_at > afterTs)
-  )
-  const past = afterTs !== null && raw.some(r => r.message.created_at <= afterTs)
-  return { filtered, hasMore: raw.length === 25 && !past }
-}
 
 export const MAX_UPLOAD = 25 * 1024 * 1024
 export const PAGE = 50
@@ -992,7 +968,6 @@ export const useStore = create<RChatState>()((set, get) => {
     setTimeout(() => set(s => ({ notices: s.notices.filter(n => n.id !== id) })), 5000)
   }
 
-  let searchOffset = 0
   let endedVoice: number | null = null
   rtc.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
   p2p.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
@@ -1581,48 +1556,25 @@ export const useStore = create<RChatState>()((set, get) => {
 
     searchRun: (args, reset) =>
       act(async () => {
-        const { q, from, channelId, hasFile, beforeTs, afterTs } = args
         const cur = get().search
         if (!reset && (cur.loading || !cur.hasMore)) return
-        if (reset) {
-          epochs.search = (epochs.search ?? 0) + 1
-          searchOffset = 0
-        }
+        if (reset) epochs.search = (epochs.search ?? 0) + 1
         const epoch = epochs.search ?? 0
-        const base: SearchState = {
-          results: reset ? [] : cur.results,
-          hasMore: true,
-          loading: true,
-        }
-        set({ search: base })
+        const results = reset ? [] : cur.results
+        set({ search: { results, hasMore: true, loading: true } })
         const { guest, guestServers } = get()
-        let results = base.results
-        let hasMore = true
-        for (;;) {
-          let raw: SearchResult[]
-          try {
-            raw = await api.search({
-              q: q || undefined,
-              from: from || undefined,
-              channel_id: channelId ?? undefined,
-              has: hasFile ? 'file' : undefined,
-              offset: searchOffset,
-              servers: guest ? guestServers.join(',') : undefined,
-            })
-          } catch (e) {
-            if ((epochs.search ?? 0) === epoch)
-              set({ search: { results, hasMore, loading: false } })
-            throw e
-          }
-          if ((epochs.search ?? 0) !== epoch) return
-          searchOffset += raw.length
-          const seen = new Set(results.map(r => r.message.id))
-          const page = filterSearchPage(raw, seen, beforeTs, afterTs)
-          results = [...results, ...page.filtered]
-          hasMore = page.hasMore
-          if (page.filtered.length > 0 || !hasMore) break
+        let page: SearchResult[]
+        try {
+          page = await api.search(
+            searchParams(args, searchCursor(results), guest ? guestServers : null)
+          )
+        } catch (e) {
+          if ((epochs.search ?? 0) === epoch)
+            set({ search: { results, hasMore: true, loading: false } })
+          throw e
         }
-        set({ search: { results, hasMore, loading: false } })
+        if ((epochs.search ?? 0) !== epoch) return
+        set({ search: { ...addSearchPage(results, page), loading: false } })
       }),
 
     dismissNotice: id => set(s => ({ notices: s.notices.filter(n => n.id !== id) })),

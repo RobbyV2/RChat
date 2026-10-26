@@ -8,6 +8,7 @@ use sqlx::Row;
 use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::admin::like_pattern;
 use crate::api::{
     ApiError, Authed, CallLog, Embed, LIST_MAX, LIST_PAGE, MESSAGE_MAX, MaybeAuthed, MediaRef,
     Message, UserRef, check_len, check_profanity, embeds, header_grants, media::MEDIA_TTL_SECS,
@@ -15,7 +16,7 @@ use crate::api::{
 };
 use crate::db::{
     ChannelAccess, ChannelKind, Db, MediaKind, Perm, User, channel_access, effective_perms,
-    has_perm, now, touch_interaction,
+    has_fts, has_perm, now, touch_interaction,
 };
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -54,6 +55,8 @@ pub struct SearchQuery {
     has: Option<String>,
     before: Option<i64>,
     after: Option<i64>,
+    before_ts: Option<i64>,
+    after_ts: Option<i64>,
     offset: Option<i64>,
     servers: Option<String>,
 }
@@ -783,7 +786,14 @@ enum Bind {
     I(i64),
 }
 
-#[utoipa::path(get, path = "/api/search", params(SearchQuery), responses((status = 200, description = "Up to 25 matching messages from channels the caller can view, newest first", body = Vec<SearchResult>)), security((), ("bearer" = [])))]
+const SEARCH_PAGE: i64 = 25;
+const FTS_MIN_CHARS: usize = 3;
+
+fn fts_phrase(text: &str) -> String {
+    format!("\"{}\"", text.replace('"', "\"\""))
+}
+
+#[utoipa::path(get, path = "/api/search", params(SearchQuery), responses((status = 200, description = "Up to 25 messages from channels the caller can view whose content contains `q` (case-insensitive), newest first; `before`/`after` bound the message id (pass the oldest returned id as `before` for the next page) and `before_ts`/`after_ts` bound `created_at` (exclusive, unix seconds)", body = Vec<SearchResult>)), security((), ("bearer" = [])))]
 pub(crate) async fn search(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -791,6 +801,50 @@ pub(crate) async fn search(
     Query(sq): Query<SearchQuery>,
 ) -> Result<Json<Vec<SearchResult>>, ApiError> {
     require_guest_ok(&state.db, user.as_ref()).await?;
+    let (sql, binds) = match search_sql(&state.db, user.as_ref(), &headers, sq).await? {
+        Some(built) => built,
+        None => return Ok(Json(Vec::new())),
+    };
+    let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), &binds)
+        .fetch_all(&state.db)
+        .await?;
+    let mut msgs = rows_messages(&state.db, &rows).await?;
+    let mut ctx: Vec<(String, String)> = Vec::with_capacity(rows.len());
+    for r in &rows {
+        ctx.push((r.try_get(21)?, r.try_get(22)?));
+    }
+    attach_embeds(&state.db, &mut msgs).await?;
+    let out = msgs
+        .into_iter()
+        .zip(ctx)
+        .map(|(message, (server, channel_name))| SearchResult {
+            message,
+            server,
+            channel_name,
+        })
+        .collect();
+    Ok(Json(out))
+}
+
+fn bind_all<'q>(
+    mut query: sqlx::query::Query<'q, sqlx::Any, sqlx::any::AnyArguments>,
+    binds: &'q [Bind],
+) -> sqlx::query::Query<'q, sqlx::Any, sqlx::any::AnyArguments> {
+    for b in binds {
+        query = match b {
+            Bind::S(s) => query.bind(s),
+            Bind::I(i) => query.bind(*i),
+        };
+    }
+    query
+}
+
+async fn search_sql(
+    db: &Db,
+    user: Option<&User>,
+    headers: &HeaderMap,
+    sq: SearchQuery,
+) -> Result<Option<(String, Vec<Bind>)>, ApiError> {
     let SearchQuery {
         q,
         server,
@@ -799,12 +853,14 @@ pub(crate) async fn search(
         has,
         before,
         after,
+        before_ts,
+        after_ts,
         offset,
         servers,
     } = sq;
     let mut conds: Vec<String> = Vec::new();
     let mut binds: Vec<Bind> = Vec::new();
-    match &user {
+    match user {
         Some(u) => {
             binds.push(Bind::S(u.username.clone()));
             conds.push(format!(
@@ -815,7 +871,7 @@ pub(crate) async fn search(
                 let mut subjects = vec![format!("u:{}", u.username)];
                 let role_rows = sqlx::query("SELECT role_id FROM user_roles WHERE username = $1")
                     .bind(&u.username)
-                    .fetch_all(&state.db)
+                    .fetch_all(db)
                     .await?;
                 for r in &role_rows {
                     subjects.push(format!("r:{}", r.try_get::<i64, _>(0)?));
@@ -840,7 +896,7 @@ pub(crate) async fn search(
                 "NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id)"
                     .to_string(),
             );
-            let grants = header_grants(&headers);
+            let grants = header_grants(headers);
             match grants.is_empty() {
                 true => conds.push(
                     "c.server IN (SELECT name FROM servers WHERE password_hash IS NULL)"
@@ -866,7 +922,7 @@ pub(crate) async fn search(
                 .filter(|s| !s.is_empty())
                 .collect();
             if names.is_empty() {
-                return Ok(Json(Vec::new()));
+                return Ok(None);
             }
             let mut ph = Vec::with_capacity(names.len());
             for name in names {
@@ -877,8 +933,24 @@ pub(crate) async fn search(
         }
     }
     if let Some(text) = q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        binds.push(Bind::S(format!("%{}%", text.to_lowercase())));
-        conds.push(format!("lower(m.content) LIKE ${}", binds.len()));
+        match text.chars().count() >= FTS_MIN_CHARS && !text.contains('\0') && has_fts(db).await {
+            true => {
+                binds.push(Bind::S(fts_phrase(text)));
+                binds.push(Bind::I(before.unwrap_or(i64::MAX)));
+                conds.push(format!(
+                    "m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${} AND rowid < ${})",
+                    binds.len() - 1,
+                    binds.len()
+                ));
+            }
+            false => {
+                binds.push(Bind::S(like_pattern(text, false)));
+                conds.push(format!(
+                    "lower(m.content) LIKE lower(${}) ESCAPE '\\'",
+                    binds.len()
+                ));
+            }
+        }
     }
     if let Some(s) = server {
         binds.push(Bind::S(s.to_lowercase()));
@@ -903,36 +975,26 @@ pub(crate) async fn search(
         binds.push(Bind::I(a));
         conds.push(format!("m.id > ${}", binds.len()));
     }
-    binds.push(Bind::I(offset.unwrap_or(0).max(0)));
+    if let Some(t) = before_ts {
+        binds.push(Bind::I(t));
+        conds.push(format!("m.created_at < ${}", binds.len()));
+    }
+    if let Some(t) = after_ts {
+        binds.push(Bind::I(t));
+        conds.push(format!("m.created_at > ${}", binds.len()));
+    }
+    let skip = match offset {
+        Some(n) if n > 0 => {
+            binds.push(Bind::I(n));
+            format!(" OFFSET ${}", binds.len())
+        }
+        _ => String::new(),
+    };
     let sql = format!(
-        "SELECT {COLS}, c.server, c.name FROM messages m JOIN channels c ON c.id = m.channel_id WHERE {} ORDER BY m.id DESC LIMIT 25 OFFSET ${}",
-        conds.join(" AND "),
-        binds.len()
+        "SELECT {COLS}, c.server, c.name FROM messages m CROSS JOIN channels c WHERE c.id = m.channel_id AND {} ORDER BY m.id DESC LIMIT {SEARCH_PAGE}{skip}",
+        conds.join(" AND ")
     );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-    for b in &binds {
-        query = match b {
-            Bind::S(s) => query.bind(s),
-            Bind::I(i) => query.bind(*i),
-        };
-    }
-    let rows = query.fetch_all(&state.db).await?;
-    let mut msgs = rows_messages(&state.db, &rows).await?;
-    let mut ctx: Vec<(String, String)> = Vec::with_capacity(rows.len());
-    for r in &rows {
-        ctx.push((r.try_get(21)?, r.try_get(22)?));
-    }
-    attach_embeds(&state.db, &mut msgs).await?;
-    let out = msgs
-        .into_iter()
-        .zip(ctx)
-        .map(|(message, (server, channel_name))| SearchResult {
-            message,
-            server,
-            channel_name,
-        })
-        .collect();
-    Ok(Json(out))
+    Ok(Some((sql, binds)))
 }
 
 async fn restricted_access(db: &Db, user: &User) -> Result<HashMap<i64, ChannelAccess>, ApiError> {
@@ -1294,17 +1356,7 @@ mod tests {
             State(state.clone()),
             MaybeAuthed(Some(mem_user("alice", false))),
             HeaderMap::new(),
-            Query(SearchQuery {
-                q: None,
-                server: None,
-                channel_id: None,
-                from: None,
-                has: None,
-                before: None,
-                after: None,
-                offset: None,
-                servers: None,
-            }),
+            Query(query(None)),
         )
         .await
         .expect("search")
@@ -1312,6 +1364,22 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].message.content, "after");
         done(state, path).await;
+    }
+
+    fn query(q: Option<&str>) -> SearchQuery {
+        SearchQuery {
+            q: q.map(str::to_string),
+            server: None,
+            channel_id: None,
+            from: None,
+            has: None,
+            before: None,
+            after: None,
+            before_ts: None,
+            after_ts: None,
+            offset: None,
+            servers: None,
+        }
     }
 
     async fn add_user(db: &Db, name: &str, display: &str) {
@@ -1580,6 +1648,506 @@ mod tests {
                 );
             }
         }
+        done(state, path).await;
+    }
+
+    async fn post(db: &Db, cid: i64, author: &str, content: &str, at: i64) -> i64 {
+        sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, $2, $3, $4) RETURNING id")
+            .bind(cid)
+            .bind(author)
+            .bind(content)
+            .bind(at)
+            .fetch_one(db)
+            .await
+            .expect("insert message")
+            .try_get(0)
+            .expect("message id")
+    }
+
+    async fn found(
+        state: &AppState,
+        user: Option<User>,
+        headers: HeaderMap,
+        sq: SearchQuery,
+    ) -> Vec<i64> {
+        search(State(state.clone()), MaybeAuthed(user), headers, Query(sq))
+            .await
+            .expect("search")
+            .0
+            .iter()
+            .map(|r| r.message.id)
+            .collect()
+    }
+
+    async fn drop_fts(db: &Db) {
+        for stmt in [
+            "DROP TRIGGER messages_fts_insert",
+            "DROP TRIGGER messages_fts_delete",
+            "DROP TRIGGER messages_fts_update",
+            "DROP TABLE messages_fts",
+        ] {
+            sqlx::query(stmt).execute(db).await.expect("drop fts");
+        }
+    }
+
+    async fn fts_ok(db: &Db) {
+        sqlx::query("INSERT INTO messages_fts(messages_fts, rank) VALUES('integrity-check', 1)")
+            .execute(db)
+            .await
+            .expect("fts index matches messages");
+    }
+
+    async fn fts_hits(db: &Db, phrase: &str) -> i64 {
+        sqlx::query("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH $1")
+            .bind(fts_phrase(phrase))
+            .fetch_one(db)
+            .await
+            .expect("fts count")
+            .try_get(0)
+            .expect("count value")
+    }
+
+    async fn seed(db: &Db, cid: i64, count: i64) {
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < $2) INSERT INTO messages(channel_id, author, content, created_at) SELECT $1, 'alice', CASE WHEN i % 50 = 0 THEN 'find the needle ' || i ELSE 'plain hay ' || i END, i FROM n")
+            .bind(cid)
+            .bind(count)
+            .execute(db)
+            .await
+            .expect("seed messages");
+    }
+
+    #[tokio::test]
+    async fn search_substring_and_wildcards() {
+        let (state, path) = temp_state("search_substr").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        let t = now();
+        let hello = post(db, cid, "alice", "Hello World", t).await;
+        let shout = post(db, cid, "alice", "say HELLO again", t).await;
+        let pct = post(db, cid, "alice", "100% sure", t).await;
+        let snake = post(db, cid, "alice", "snake_case name", t).await;
+        let slash = post(db, cid, "alice", r"back\slash", t).await;
+        let quoted = post(db, cid, "alice", r#"she said "hi there" twice"#, t).await;
+        post(db, cid, "alice", "unrelated", t).await;
+        let cases: Vec<(&str, Vec<i64>)> = vec![
+            ("hello", vec![shout, hello]),
+            ("HeLLo", vec![shout, hello]),
+            ("  lo wo ", vec![hello]),
+            ("lo", vec![shout, hello]),
+            ("O", vec![shout, hello]),
+            ("%", vec![pct]),
+            ("_", vec![snake]),
+            ("0%", vec![pct]),
+            ("e_c", vec![snake]),
+            ("%%%", vec![]),
+            (r"\", vec![slash]),
+            (r"k\s", vec![slash]),
+            (r#""hi"#, vec![quoted]),
+            (r#""hi there""#, vec![quoted]),
+            ("hi there", vec![quoted]),
+            ("zzz", vec![]),
+        ];
+        for fts in [true, false] {
+            assert_eq!(has_fts(db).await, fts);
+            for (q, want) in &cases {
+                let got = found(
+                    &state,
+                    Some(mem_user("alice", false)),
+                    HeaderMap::new(),
+                    query(Some(q)),
+                )
+                .await;
+                assert_eq!(&got, want, "q={q:?} fts={fts}");
+            }
+            found(
+                &state,
+                Some(mem_user("alice", false)),
+                HeaderMap::new(),
+                query(Some("hel\0lo")),
+            )
+            .await;
+            if fts {
+                drop_fts(db).await;
+            }
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn search_respects_visibility() {
+        let (state, path) = temp_state("search_vis").await;
+        let db = &state.db;
+        let t = now();
+        for (name, password) in [("locked", Some("x")), ("other", None)] {
+            sqlx::query("INSERT INTO servers(name, display_name, password_hash, created_at) VALUES($1, $1, $2, 0)")
+                .bind(name)
+                .bind(password)
+                .execute(db)
+                .await
+                .expect("insert server");
+        }
+        let general = general_id(db).await;
+        let private = add_channel(db, "private", "text").await;
+        let roled = add_channel(db, "roled", "text").await;
+        let history = add_channel(db, "history", "text").await;
+        let mut ids = HashMap::new();
+        for (server, name) in [("locked", "vault"), ("other", "lobby")] {
+            let cid: i64 = sqlx::query(
+                "INSERT INTO channels(server, name, created_at) VALUES($1, $2, 0) RETURNING id",
+            )
+            .bind(server)
+            .bind(name)
+            .fetch_one(db)
+            .await
+            .expect("insert channel")
+            .try_get(0)
+            .expect("channel id");
+            ids.insert(name, post(db, cid, "bob", "a needle here", t).await);
+        }
+        for (server, name) in [
+            ("rchat", "alice"),
+            ("rchat", "bob"),
+            ("rchat", "root"),
+            ("locked", "alice"),
+        ] {
+            add_member(db, server, name, 0, 0, t).await;
+        }
+        let role: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'r', '#ffffff', 0) RETURNING id")
+            .fetch_one(db)
+            .await
+            .expect("role")
+            .try_get(0)
+            .expect("role id");
+        sqlx::query(
+            "INSERT INTO user_roles(server, username, role_id) VALUES('rchat', 'alice', $1)",
+        )
+        .bind(role)
+        .execute(db)
+        .await
+        .expect("assign role");
+        perm(db, private, "u:bob", 1).await;
+        perm(db, roled, &format!("r:{role}"), 1).await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:alice', 1, 1, 0)")
+            .bind(history)
+            .execute(db)
+            .await
+            .expect("history perm");
+        sqlx::query(
+            "INSERT INTO guest_grants(\"grant\", server, created_at) VALUES('g1', 'locked', 0)",
+        )
+        .execute(db)
+        .await
+        .expect("grant");
+        ids.insert("general", post(db, general, "bob", "the needle", t).await);
+        ids.insert("private", post(db, private, "bob", "needle!", t).await);
+        ids.insert("roled", post(db, roled, "bob", "NEEDLE", t).await);
+        ids.insert("old", post(db, history, "bob", "old needle", t - 100).await);
+        ids.insert("new", post(db, history, "bob", "new needle", t + 100).await);
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("dm id");
+        sqlx::query("INSERT INTO messages(dm_id, author, content, created_at) VALUES($1, 'bob', 'dm needle', $2)")
+            .bind(dm)
+            .bind(t)
+            .execute(db)
+            .await
+            .expect("dm message");
+        let grant = |value: &str| {
+            let mut h = HeaderMap::new();
+            h.insert("x-guest-grant", value.parse().expect("header"));
+            h
+        };
+        let expect = |names: &[&str]| {
+            let mut want: Vec<i64> = names.iter().map(|n| ids[n]).collect();
+            want.sort_by(|a, b| b.cmp(a));
+            want
+        };
+        for q in [Some("needle"), Some("ee"), None] {
+            let guest = |servers: Option<&str>| {
+                let mut sq = query(q);
+                sq.servers = servers.map(str::to_string);
+                sq
+            };
+            let cases: Vec<(Option<User>, HeaderMap, SearchQuery, Vec<i64>)> = vec![
+                (
+                    Some(mem_user("alice", false)),
+                    HeaderMap::new(),
+                    query(q),
+                    expect(&["general", "roled", "new", "vault"]),
+                ),
+                (
+                    Some(mem_user("bob", false)),
+                    HeaderMap::new(),
+                    query(q),
+                    expect(&["general", "private"]),
+                ),
+                (
+                    Some(mem_user("root", true)),
+                    HeaderMap::new(),
+                    query(q),
+                    expect(&["general", "private", "roled", "old", "new"]),
+                ),
+                (
+                    Some(mem_user("zed", false)),
+                    HeaderMap::new(),
+                    query(q),
+                    Vec::new(),
+                ),
+                (
+                    None,
+                    HeaderMap::new(),
+                    guest(Some("rchat,locked,other")),
+                    expect(&["general", "lobby"]),
+                ),
+                (
+                    None,
+                    grant("g1"),
+                    guest(Some("rchat, LOCKED")),
+                    expect(&["general", "vault"]),
+                ),
+                (None, grant("nope"), guest(Some("locked")), Vec::new()),
+                (None, grant("g1"), guest(None), Vec::new()),
+            ];
+            for (n, (user, headers, sq, want)) in cases.into_iter().enumerate() {
+                let got = found(&state, user, headers, sq).await;
+                assert_eq!(got, want, "case {n} q={q:?}");
+            }
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn search_keyset_pages_and_dates() {
+        let (state, path) = temp_state("search_pages").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        seed(db, cid, 6000).await;
+        let alice = || Some(mem_user("alice", false));
+        for q in ["needle", "ne", "NeEdLe"] {
+            let all: Vec<i64> = sqlx::query(
+                "SELECT id FROM messages WHERE lower(content) LIKE $1 ORDER BY id DESC",
+            )
+            .bind(format!("%{}%", q.to_lowercase()))
+            .fetch_all(db)
+            .await
+            .expect("expected ids")
+            .iter()
+            .map(|r| r.try_get(0).expect("id"))
+            .collect();
+            assert!(all.len() > 50, "q={q}");
+            let mut seen: Vec<i64> = Vec::new();
+            let mut before = None;
+            loop {
+                let mut sq = query(Some(q));
+                sq.before = before;
+                let page = found(&state, alice(), HeaderMap::new(), sq).await;
+                assert!(page.len() <= 25);
+                assert!(page.windows(2).all(|w| w[0] > w[1]), "q={q}");
+                if let (Some(last), Some(first)) = (seen.last(), page.first()) {
+                    assert!(last > first, "pages overlap for q={q}");
+                }
+                seen.extend(&page);
+                match page.len() {
+                    25 => before = page.last().copied(),
+                    _ => break,
+                }
+            }
+            assert_eq!(seen, all, "q={q}");
+            let mut legacy = query(Some(q));
+            legacy.offset = Some(25);
+            assert_eq!(
+                found(&state, alice(), HeaderMap::new(), legacy).await,
+                all[25..50]
+            );
+        }
+        let window = |before_ts: Option<i64>, after_ts: Option<i64>, q: Option<&str>| {
+            let mut sq = query(q);
+            sq.before_ts = before_ts;
+            sq.after_ts = after_ts;
+            sq
+        };
+        let cases: Vec<(SearchQuery, Vec<i64>)> = vec![
+            (window(Some(150), Some(50), Some("needle")), vec![100]),
+            (window(Some(150), Some(100), Some("needle")), vec![]),
+            (window(Some(100), Some(0), Some("needle")), vec![50]),
+            (window(Some(51), None, Some("ne")), vec![50]),
+            (window(None, Some(5949), Some("needle")), vec![6000, 5950]),
+            (window(Some(4), None, None), vec![3, 2, 1]),
+            (window(Some(3), Some(1), None), vec![2]),
+        ];
+        for (n, (sq, want)) in cases.into_iter().enumerate() {
+            assert_eq!(
+                found(&state, alice(), HeaderMap::new(), sq).await,
+                want,
+                "case {n}"
+            );
+        }
+        let mut sq = window(Some(5000), Some(1000), Some("needle"));
+        sq.before = Some(2001);
+        let page = found(&state, alice(), HeaderMap::new(), sq).await;
+        assert_eq!(page.len(), 20);
+        assert_eq!(page.first(), Some(&2000));
+        assert_eq!(page.last(), Some(&1050));
+        done(state, path).await;
+    }
+
+    async fn plan(db: &Db, user: &User, sq: SearchQuery) -> String {
+        let (sql, binds) = search_sql(db, Some(user), &HeaderMap::new(), sq)
+            .await
+            .expect("search sql")
+            .expect("built");
+        let explain = format!("EXPLAIN QUERY PLAN {sql}");
+        bind_all(sqlx::query(sqlx::AssertSqlSafe(explain)), &binds)
+            .fetch_all(db)
+            .await
+            .expect("explain")
+            .iter()
+            .map(|r| r.try_get::<String, _>(3).expect("detail"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[tokio::test]
+    async fn search_plans_use_indexes() {
+        let (state, path) = temp_state("search_plan").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        seed(db, cid, 5000).await;
+        let alice = mem_user("alice", false);
+        let fts = plan(db, &alice, query(Some("needle"))).await;
+        assert!(fts.contains("SCAN messages_fts VIRTUAL TABLE"), "{fts}");
+        assert!(
+            fts.contains("SEARCH m USING INTEGER PRIMARY KEY (rowid=?)"),
+            "{fts}"
+        );
+        let mut paged = query(Some("needle"));
+        paged.before = Some(3000);
+        paged.from = Some("alice".to_string());
+        paged.channel_id = Some(cid);
+        paged.before_ts = Some(4000);
+        let filtered = plan(db, &alice, paged).await;
+        assert!(
+            filtered.contains("SCAN messages_fts VIRTUAL TABLE"),
+            "{filtered}"
+        );
+        let mut short = query(Some("ne"));
+        short.before = Some(3000);
+        let like = plan(db, &alice, short).await;
+        assert!(
+            like.contains("SEARCH m USING INTEGER PRIMARY KEY (rowid<?)"),
+            "{like}"
+        );
+        let mut dated = query(None);
+        dated.after_ts = Some(10);
+        let browse = plan(db, &alice, dated).await;
+        assert!(browse.contains("SCAN m"), "{browse}");
+        for detail in [fts, filtered, like, browse] {
+            assert!(!detail.contains("TEMP B-TREE"), "{detail}");
+            assert!(!detail.contains("SCAN c"), "{detail}");
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn search_index_tracks_edits_and_deletes() {
+        let (state, path) = temp_state("search_sync").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        let sent = send_with(&state, cid, "alice", "alpha beta".to_string(), None)
+            .await
+            .expect("send")
+            .0
+            .id;
+        let alice = || Some(mem_user("alice", false));
+        let hits = |q: &str| found(&state, alice(), HeaderMap::new(), query(Some(q)));
+        assert_eq!(hits("beta").await, vec![sent]);
+        sqlx::query("UPDATE messages SET content = 'gamma delta' WHERE id = $1")
+            .bind(sent)
+            .execute(db)
+            .await
+            .expect("edit");
+        assert_eq!(hits("beta").await, Vec::<i64>::new());
+        assert_eq!(hits("delta").await, vec![sent]);
+        assert_eq!(fts_hits(db, "beta").await, 0);
+        sqlx::query("UPDATE messages SET media_removed = 1 WHERE id = $1")
+            .bind(sent)
+            .execute(db)
+            .await
+            .expect("unrelated update");
+        assert_eq!(hits("delta").await, vec![sent]);
+        fts_ok(db).await;
+        let root = post(db, cid, "alice", "root delta", 1).await;
+        sqlx::query("INSERT INTO messages(channel_id, thread_root_id, author, content, created_at) VALUES($1, $2, 'alice', 'reply delta', 2)")
+            .bind(cid)
+            .bind(root)
+            .execute(db)
+            .await
+            .expect("reply");
+        assert_eq!(fts_hits(db, "delta").await, 3);
+        let _ = delete_message(
+            State(state.clone()),
+            Path(sent),
+            Authed(mem_user("alice", false)),
+        )
+        .await
+        .expect("delete");
+        sqlx::query("DELETE FROM messages WHERE id = $1")
+            .bind(root)
+            .execute(db)
+            .await
+            .expect("delete root");
+        assert_eq!(fts_hits(db, "delta").await, 0);
+        assert_eq!(hits("delta").await, Vec::<i64>::new());
+        let doomed = add_channel(db, "doomed", "text").await;
+        post(db, doomed, "alice", "epsilon", 3).await;
+        assert_eq!(fts_hits(db, "epsilon").await, 1);
+        sqlx::query("DELETE FROM channels WHERE id = $1")
+            .bind(doomed)
+            .execute(db)
+            .await
+            .expect("delete channel");
+        assert_eq!(fts_hits(db, "epsilon").await, 0);
+        fts_ok(db).await;
+        done(state, path).await;
+    }
+
+    fn reopened(db: Db) -> AppState {
+        AppState {
+            db,
+            hub: crate::ws::Hub::new(),
+            s3: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn search_index_backfills_existing_db() {
+        let (state, path) = temp_state("search_backfill").await;
+        let cid = general_id(&state.db).await;
+        add_member(&state.db, "rchat", "alice", 0, 0, 0).await;
+        drop_fts(&state.db).await;
+        seed(&state.db, cid, 500).await;
+        let alice = || Some(mem_user("alice", false));
+        let like = found(&state, alice(), HeaderMap::new(), query(Some("needle"))).await;
+        assert_eq!(like.len(), 10);
+        state.db.close().await;
+        for _ in 0..2 {
+            let state = reopened(crate::db::open(path.to_str()).await.expect("reopen"));
+            assert!(has_fts(&state.db).await);
+            assert_eq!(fts_hits(&state.db, "needle").await, 10);
+            fts_ok(&state.db).await;
+            let got = found(&state, alice(), HeaderMap::new(), query(Some("needle"))).await;
+            assert_eq!(got, like);
+            state.db.close().await;
+        }
+        let state = reopened(crate::db::open(path.to_str()).await.expect("reopen"));
         done(state, path).await;
     }
 }

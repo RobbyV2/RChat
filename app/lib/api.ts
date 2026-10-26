@@ -219,6 +219,8 @@ export interface SearchParams {
   has?: 'file'
   before?: number
   after?: number
+  before_ts?: number
+  after_ts?: number
   offset?: number
   servers?: string
 }

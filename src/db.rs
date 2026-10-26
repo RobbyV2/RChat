@@ -74,6 +74,65 @@ CREATE INDEX IF NOT EXISTS idx_dms_user_b ON dms(user_b);
 CREATE INDEX IF NOT EXISTS idx_media_uploaded_at ON media(uploaded_at);
 ";
 
+const SQLITE_SEARCH: &[&str] = &[
+    "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(content, content='messages', content_rowid='id', tokenize='trigram')",
+    "CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN INSERT INTO messages_fts(rowid, content) VALUES(new.id, new.content); END",
+    "CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.id, old.content); END",
+    "CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF content ON messages BEGIN INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.id, old.content); INSERT INTO messages_fts(rowid, content) VALUES(new.id, new.content); END",
+];
+
+const POSTGRES_SEARCH: &[&str] = &[
+    "CREATE INDEX IF NOT EXISTS idx_messages_content_trgm ON messages USING gin (lower(content) gin_trgm_ops)",
+    "CREATE INDEX IF NOT EXISTS idx_users_username_trgm ON users USING gin (lower(username) gin_trgm_ops)",
+    "CREATE INDEX IF NOT EXISTS idx_users_display_name_trgm ON users USING gin (lower(display_name) gin_trgm_ops)",
+    "CREATE INDEX IF NOT EXISTS idx_servers_name_trgm ON servers USING gin (lower(name) gin_trgm_ops)",
+    "CREATE INDEX IF NOT EXISTS idx_servers_display_name_trgm ON servers USING gin (lower(display_name) gin_trgm_ops)",
+];
+
+pub async fn has_fts(db: &Db) -> bool {
+    db.connect_options()
+        .database_url
+        .scheme()
+        .starts_with("sqlite")
+        && sqlx::query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages_fts'")
+            .fetch_optional(db)
+            .await
+            .is_ok_and(|r| r.is_some())
+}
+
+async fn sqlite_search_index(pool: &Db) -> anyhow::Result<()> {
+    let existed = has_fts(pool).await;
+    let mut tx = pool.begin().await?;
+    for stmt in SQLITE_SEARCH {
+        sqlx::query(*stmt).execute(&mut *tx).await?;
+    }
+    if !existed {
+        sqlx::query("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    if !existed {
+        tracing::info!("built message search index");
+    }
+    Ok(())
+}
+
+async fn postgres_search_index(pool: &Db) {
+    if let Err(e) = sqlx::query("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        .execute(pool)
+        .await
+    {
+        tracing::warn!("pg_trgm unavailable, search falls back to unindexed LIKE: {e}");
+        return;
+    }
+    for stmt in POSTGRES_SEARCH {
+        if let Err(e) = sqlx::query(*stmt).execute(pool).await {
+            tracing::warn!("search index not created: {e}");
+        }
+    }
+}
+
 const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "password_hash TEXT"),
     ("members", "perms {INT} NOT NULL DEFAULT 0"),
@@ -448,6 +507,14 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
         sqlx::query(stmt).execute(&pool).await?;
     }
     reconcile_columns(&pool, is_sqlite).await?;
+    match is_sqlite {
+        true => {
+            if let Err(e) = sqlite_search_index(&pool).await {
+                tracing::warn!("FTS5 trigram unavailable, search falls back to LIKE: {e}");
+            }
+        }
+        false => postgres_search_index(&pool).await,
+    }
     let t = now();
     sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
         .bind(t)

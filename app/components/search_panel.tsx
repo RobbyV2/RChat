@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FileText, Hash, Search, X } from 'lucide-react'
-import { useStore, type SearchArgs } from '../lib/store'
+import { useStore } from '../lib/store'
+import { dayEndTs, dayStartTs, type SearchArgs } from '../lib/search'
 import { UserAvatar } from './user_avatar'
 import { Sentinel, fieldCls } from './server_settings'
 import { fmtTime } from './message_pane'
@@ -34,8 +35,8 @@ export default function SearchPanel() {
     from: from.trim().toLowerCase(),
     channelId: channelId ? Number(channelId) : null,
     hasFile,
-    beforeTs: before ? Date.parse(before) / 1000 : null,
-    afterTs: after ? Date.parse(after) / 1000 + 86400 : null,
+    beforeTs: dayStartTs(before),
+    afterTs: dayEndTs(after),
   }
   const active =
     args.q !== '' ||
