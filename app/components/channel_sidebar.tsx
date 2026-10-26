@@ -1,13 +1,15 @@
 'use client'
 
-import { useRef, useState } from 'react'
-import { Hash, Plus, Settings, Volume2 } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { Hash, Pin, Plus, Settings, Volume2 } from 'lucide-react'
 import { myPerms, serverAdminPerms, userRefFor, useStore } from '../lib/store'
+import { dmSections } from '../lib/nav_layout'
 import { canDeleteChannel } from '../lib/rules'
 import { rtc } from '../lib/rtc'
-import { Perm, hasPerm, type Channel, type ChannelKind } from '../lib/types'
+import { Perm, hasPerm, type Channel, type ChannelKind, type DmSummary } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
+import { dragScope, useDrag } from './drag'
 import { profileTrigger } from './profile_card'
 import { VoiceDock } from './voice_grid'
 import { Sentinel } from './server_settings'
@@ -17,6 +19,72 @@ type Editing = { mode: 'create'; kind: ChannelKind } | { mode: 'rename'; id: num
 
 const base = 'flex h-full w-60 shrink-0 flex-col bg-surface-container-low'
 
+function DmRow({
+  dm,
+  pinned,
+  active,
+  unread,
+}: {
+  dm: DmSummary
+  pinned: boolean
+  active: boolean
+  unread: boolean
+}) {
+  const openDm = useStore(s => s.openDm)
+  const openContextMenu = useStore(s => s.openContextMenu)
+  const pinDm = useStore(s => s.pinDm)
+  const unpinDm = useStore(s => s.unpinDm)
+  const placeDm = useStore(s => s.placeDm)
+  const { id, other, is_self } = dm
+  return (
+    <button
+      onClick={() => void openDm(id)}
+      {...longPress(
+        (x, y) =>
+          openContextMenu(x, y, [
+            pinned
+              ? { label: 'Unpin DM', action: () => unpinDm(id) }
+              : { label: 'Pin DM', action: () => pinDm(id) },
+            {
+              label: 'Copy DM ID',
+              action: () => void navigator.clipboard.writeText(String(id)),
+            },
+            {
+              label: 'Copy User ID',
+              action: () => void navigator.clipboard.writeText(other.username),
+            },
+          ]),
+        {
+          group: 'dm',
+          key: String(id),
+          onDrop: ({ zone, index }) => placeDm(id, zone === 'pinned' ? 'pinned' : 'recent', index),
+        }
+      )}
+      className={`mx-2 flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
+        active
+          ? 'bg-secondary-container text-on-secondary-container'
+          : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
+      }`}
+    >
+      <UserAvatar
+        username={other.username}
+        avatarKind={other.avatar_kind}
+        avatarColor={other.avatar_color}
+        size={28}
+      />
+      <span className="streamer truncate">{other.display_name}</span>
+      {unread && (
+        <span title="Unread" aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-error" />
+      )}
+      {is_self && (
+        <span className="ml-auto shrink-0 rounded-full bg-secondary-container px-2 py-0.5 text-xs text-on-secondary-container">
+          you
+        </span>
+      )}
+    </button>
+  )
+}
+
 export function ChannelSidebar() {
   const view = useStore(s => s.view)
   const perms = useStore(s => (s.view?.kind === 'channel' ? myPerms(s, s.view.server) : 0))
@@ -25,10 +93,14 @@ export function ChannelSidebar() {
   )
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
+  const layout = useStore(s => s.layout)
   const dmsMore = useStore(s => s.dmsMore)
   const loadMoreDms = useStore(s => s.loadMoreDms)
-  const openDm = useStore(s => s.openDm)
   const startDm = useStore(s => s.startDm)
+  const dmDrag = useDrag(s => s.group === 'dm')
+  const dragKey = useDrag(s => s.key)
+  const dropZone = useDrag(s => s.zone)
+  const { pinned, recent } = useMemo(() => dmSections(dms, layout), [dms, layout])
   const openChannel = useStore(s => s.openChannel)
   const openDialog = useStore(s => s.openDialog)
   const openContextMenu = useStore(s => s.openContextMenu)
@@ -62,7 +134,6 @@ export function ChannelSidebar() {
   useAuthorMembers(voiceServer, voiceKey)
 
   if (view?.kind === 'dm') {
-    const sortedDms = [...dms].sort((a, b) => Number(b.is_self) - Number(a.is_self))
     const submitDm = () => {
       const target = (dmInput ?? '').trim().toLowerCase()
       setDmInput(null)
@@ -70,89 +141,90 @@ export function ChannelSidebar() {
       settled.current = true
       if (target) void startDm(target)
     }
+    const pinZone = dmDrag && pinned.length === 0
+    const pinning = dropZone === 'pinned' && !pinned.some(d => String(d.id) === dragKey)
+    const row = (dm: DmSummary, isPinned: boolean) => (
+      <DmRow
+        key={dm.id}
+        dm={dm}
+        pinned={isPinned}
+        active={view.dmId === dm.id}
+        unread={unread(`d${dm.id}`)}
+      />
+    )
     return (
       <aside className={base}>
-        <div className="flex items-center justify-between px-4 pt-3 pb-1">
-          <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-            Direct Messages
-          </span>
-          <button
-            title="New direct message"
-            onClick={() => {
-              settled.current = false
-              setDmInput('')
-            }}
-            className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+        <div ref={dragScope} className="flex flex-1 flex-col overflow-y-auto pb-3">
+          {pinned.length > 0 && (
+            <div
+              data-drop-zone="pinned"
+              data-drop-label="Pin"
+              className={`flex shrink-0 flex-col pb-1 transition-colors ${
+                pinning ? 'bg-primary-container/40' : ''
+              }`}
+            >
+              <div className="sticky top-0 z-10 flex items-center gap-1.5 bg-surface-container-low px-4 pt-3 pb-1 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+                <Pin size={12} className="shrink-0" />
+                Pinned
+              </div>
+              {pinned.map(dm => row(dm, true))}
+            </div>
+          )}
+          <div
+            data-drop-zone={pinZone ? 'pinned' : undefined}
+            data-drop-label={pinZone ? 'Pin' : undefined}
+            className="sticky top-0 z-10 shrink-0 bg-surface-container-low"
           >
-            <Plus size={16} />
-          </button>
-        </div>
-        {dmInput !== null && (
-          <input
-            autoFocus
-            value={dmInput}
-            onChange={e => setDmInput(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') submitDm()
-              if (e.key === 'Escape') {
-                settled.current = true
-                setDmInput(null)
-              }
-            }}
-            onBlur={submitDm}
-            placeholder="username"
-            className="mx-2 my-0.5 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
-          />
-        )}
-        <div className="flex flex-1 flex-col overflow-y-auto pb-3">
-          {sortedDms.map(dm => {
-            const { id, other, is_self } = dm
-            const active = view.dmId === id
-            return (
-              <button
-                key={id}
-                onClick={() => void openDm(id)}
-                {...longPress((x, y) =>
-                  openContextMenu(x, y, [
-                    {
-                      label: 'Copy DM ID',
-                      action: () => void navigator.clipboard.writeText(String(id)),
-                    },
-                    {
-                      label: 'Copy User ID',
-                      action: () => void navigator.clipboard.writeText(other.username),
-                    },
-                  ])
-                )}
-                className={`mx-2 flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
-                  active
-                    ? 'bg-secondary-container text-on-secondary-container'
-                    : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
+            {pinZone ? (
+              <div
+                className={`mx-2 my-1 flex h-8 items-center justify-center gap-1.5 rounded-lg border-2 border-dashed text-xs font-medium transition-colors ${
+                  dropZone === 'pinned'
+                    ? 'border-primary bg-primary-container text-on-primary-container'
+                    : 'border-outline text-on-surface-variant'
                 }`}
               >
-                <UserAvatar
-                  username={other.username}
-                  avatarKind={other.avatar_kind}
-                  avatarColor={other.avatar_color}
-                  size={28}
-                />
-                <span className="streamer truncate">{other.display_name}</span>
-                {unread(`d${id}`) && (
-                  <span
-                    title="Unread"
-                    aria-hidden
-                    className="h-2 w-2 shrink-0 rounded-full bg-error"
-                  />
-                )}
-                {is_self && (
-                  <span className="ml-auto shrink-0 rounded-full bg-secondary-container px-2 py-0.5 text-xs text-on-secondary-container">
-                    you
-                  </span>
-                )}
-              </button>
-            )
-          })}
-          {dmsMore && <Sentinel key={dms.length} onVisible={loadMoreDms} />}
+                <Pin size={14} className="shrink-0" />
+                Drop here to pin
+              </div>
+            ) : (
+              <div className="flex items-center justify-between px-4 pt-3 pb-1">
+                <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+                  Direct Messages
+                </span>
+                <button
+                  title="New direct message"
+                  onClick={() => {
+                    settled.current = false
+                    setDmInput('')
+                  }}
+                  className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+            )}
+          </div>
+          {dmInput !== null && (
+            <input
+              autoFocus
+              value={dmInput}
+              onChange={e => setDmInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') submitDm()
+                if (e.key === 'Escape') {
+                  settled.current = true
+                  setDmInput(null)
+                }
+              }}
+              onBlur={submitDm}
+              placeholder="username"
+              className="mx-2 my-0.5 shrink-0 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
+            />
+          )}
+          <div data-drop-zone="recent" data-drop-label="Unpin" className="flex shrink-0 flex-col">
+            {recent.map(dm => row(dm, false))}
+            {dmsMore && <Sentinel key={dms.length} onVisible={loadMoreDms} />}
+          </div>
         </div>
         <VoiceDock />
       </aside>

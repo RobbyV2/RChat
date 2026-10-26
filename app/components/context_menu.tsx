@@ -8,7 +8,12 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import type { MouseEvent as ReactMouseEvent, TouchEvent as ReactTouchEvent } from 'react'
+import type {
+  DragEvent as ReactDragEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  TouchEvent as ReactTouchEvent,
+} from 'react'
 import { useStore } from '../lib/store'
 import {
   HOLD_MS,
@@ -18,10 +23,14 @@ import {
   swallowsClick,
   type PressInput,
 } from '../lib/long_press'
+import { dnd, type DragSpec } from './drag'
 
 let press = idlePress
 let owner: HTMLElement | null = null
 let opener: ((x: number, y: number) => void) | null = null
+let dragSpec: DragSpec | null = null
+let pointerId: number | null = null
+let touchId: number | null = null
 let claimed: Event | null = null
 let holdTimer: number | null = null
 let pressedTimer: number | null = null
@@ -50,16 +59,55 @@ const armPress = () => {
   document.addEventListener('scroll', onScroll, { capture: true, passive: true })
 }
 
+const abortDrag = () => void drive({ kind: 'escape' })
+
 const drive = (input: PressInput, open = opener) => {
+  const prev = press
   const [next, out] = pressStep(press, input)
   press = next
   if (out.clear) clearPress()
   if (out.arm) armPress()
+  if (prev.phase === 'lifted' && next.phase !== 'lifted') dnd.unlift()
+  if (out.lift && owner) {
+    navigator.vibrate?.(10)
+    dnd.lift(owner)
+  }
+  if (out.drag === 'start' && input.kind === 'move' && owner && dragSpec) {
+    if (next.mouse && pointerId !== null) owner.setPointerCapture?.(pointerId)
+    dnd.start(dragSpec, owner, prev.x, prev.y, abortDrag)
+    dnd.move(input.x, input.y)
+  }
+  if (out.drag === 'drop' || out.drag === 'cancel') dnd.finish(out.drag === 'drop')
   if (out.open && open) {
     if (press.phase === 'held') navigator.vibrate?.(10)
     open(out.open.x, out.open.y)
   }
   return out
+}
+
+const onMouseMove = (e: PointerEvent) => {
+  if (e.pointerId !== pointerId) return
+  if (press.phase === 'dragging') dnd.move(e.clientX, e.clientY)
+  else drive({ kind: 'move', x: e.clientX, y: e.clientY })
+}
+
+const onMouseUp = (e: PointerEvent) => {
+  if (e.pointerId !== pointerId) return
+  unwatchMouse()
+  drive({ kind: e.type === 'pointerup' ? 'end' : 'cancel', now: Date.now() })
+}
+
+const watchMouse = () => {
+  window.addEventListener('pointermove', onMouseMove)
+  window.addEventListener('pointerup', onMouseUp)
+  window.addEventListener('pointercancel', onMouseUp)
+}
+
+const unwatchMouse = () => {
+  window.removeEventListener('pointermove', onMouseMove)
+  window.removeEventListener('pointerup', onMouseUp)
+  window.removeEventListener('pointercancel', onMouseUp)
+  pointerId = null
 }
 
 const guardClicks = () => {
@@ -79,7 +127,19 @@ const guardClicks = () => {
     e => void drive({ kind: 'touch', touches: e.touches.length }),
     { capture: true, passive: true }
   )
+  window.addEventListener(
+    'pointerdown',
+    e => {
+      if (e.pointerType === 'touch') return
+      unwatchMouse()
+      drive({ kind: 'touch', touches: 1 })
+    },
+    { capture: true, passive: true }
+  )
 }
+
+const primary = (list: ReactTouchEvent['touches']) =>
+  Array.from(list).find(t => touchId === null || t.identifier === touchId)
 
 const claim = (e: { nativeEvent: Event }) => {
   if (claimed === e.nativeEvent) return false
@@ -89,15 +149,18 @@ const claim = (e: { nativeEvent: Event }) => {
 
 export interface LongPressProps {
   'data-long-press': ''
+  'data-drag-key'?: string
   onTouchStart: (e: ReactTouchEvent<HTMLElement>) => void
   onTouchMove: (e: ReactTouchEvent<HTMLElement>) => void
   onTouchEnd: (e: ReactTouchEvent<HTMLElement>) => void
   onTouchCancel: (e: ReactTouchEvent<HTMLElement>) => void
   onContextMenu: (e: ReactMouseEvent<HTMLElement>) => void
+  onPointerDown?: (e: ReactPointerEvent<HTMLElement>) => void
+  onDragStart?: (e: ReactDragEvent<HTMLElement>) => void
 }
 
-export function longPress(open: (x: number, y: number) => void): LongPressProps {
-  return {
+export function longPress(open: (x: number, y: number) => void, drag?: DragSpec): LongPressProps {
+  const props: LongPressProps = {
     'data-long-press': '',
     onTouchStart: e => {
       if (!claim(e)) return
@@ -107,20 +170,30 @@ export function longPress(open: (x: number, y: number) => void): LongPressProps 
         clearPress()
         owner = e.currentTarget
         opener = open
+        dragSpec = drag ?? null
+        touchId = t.identifier
       }
-      drive({ kind: 'start', x: t.clientX, y: t.clientY, touches: e.touches.length })
+      drive({
+        kind: 'start',
+        x: t.clientX,
+        y: t.clientY,
+        touches: e.touches.length,
+        drag: drag !== undefined,
+      })
     },
     onTouchMove: e => {
       if (!claim(e)) return
-      const t = e.touches[0]
-      if (t) drive({ kind: 'move', x: t.clientX, y: t.clientY })
+      const t = primary(e.touches)
+      if (!t) return
+      if (press.phase === 'dragging') dnd.move(t.clientX, t.clientY)
+      else drive({ kind: 'move', x: t.clientX, y: t.clientY })
     },
     onTouchEnd: e => {
-      if (!claim(e)) return
+      if (!claim(e) || !primary(e.changedTouches)) return
       if (drive({ kind: 'end', now: Date.now() }).swallow && e.cancelable) e.preventDefault()
     },
     onTouchCancel: e => {
-      if (!claim(e)) return
+      if (!claim(e) || !primary(e.changedTouches)) return
       drive({ kind: 'cancel', now: Date.now() })
     },
     onContextMenu: e => {
@@ -128,6 +201,23 @@ export function longPress(open: (x: number, y: number) => void): LongPressProps 
       e.preventDefault()
       drive({ kind: 'native', x: e.clientX, y: e.clientY, now: Date.now() }, open)
     },
+  }
+  if (!drag) return props
+  return {
+    ...props,
+    'data-drag-key': drag.key,
+    onPointerDown: e => {
+      if (e.pointerType === 'touch' || e.button !== 0 || !claim(e)) return
+      guardClicks()
+      clearPress()
+      owner = e.currentTarget
+      opener = open
+      dragSpec = drag
+      pointerId = e.pointerId
+      drive({ kind: 'mouse', x: e.clientX, y: e.clientY })
+      watchMouse()
+    },
+    onDragStart: e => e.preventDefault(),
   }
 }
 

@@ -3,8 +3,10 @@
 import { useRouter } from 'next/navigation'
 import { LogOut, MessageCircle, Plus, Settings, Shield } from 'lucide-react'
 import { dmsUnread, serverUnread, useStore } from '../lib/store'
+import { orderServers } from '../lib/nav_layout'
 import { serverInitial } from '../lib/rules'
 import { longPress } from './context_menu'
+import { dragScope } from './drag'
 import { InstallButton } from './pwa_register'
 import { Sentinel } from './server_settings'
 import { ThemeToggle } from './status_clock'
@@ -26,6 +28,8 @@ export function ServerRail() {
   const leaveServer = useStore(s => s.leaveServer)
   const askConfirm = useStore(s => s.askConfirm)
   const logout = useStore(s => s.logout)
+  const moveServer = useStore(s => s.moveServer)
+  const saved = useStore(s => s.layout.servers)
   useStore(s => s.reads)
   const dot = (
     <span
@@ -35,16 +39,23 @@ export function ServerRail() {
     />
   )
 
-  const serverList = me
-    ? me.servers.map(({ name, display_name, creator }) => ({ name, display_name, creator }))
-    : guestServers.map(name => ({
-        name,
-        display_name: servers[name]?.display_name ?? name,
-        creator: servers[name]?.creator ?? null,
-      }))
+  const serverList = orderServers(
+    me
+      ? me.servers.map(({ name, display_name, creator }) => ({ name, display_name, creator }))
+      : guestServers.map(name => ({
+          name,
+          display_name: servers[name]?.display_name ?? name,
+          creator: servers[name]?.creator ?? null,
+        })),
+    x => x.name,
+    saved
+  )
 
   return (
-    <nav className="flex h-full w-18 shrink-0 flex-col items-center gap-2 overflow-y-auto bg-surface-container-lowest pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <nav
+      ref={dragScope}
+      className="flex h-full w-18 shrink-0 flex-col items-center gap-2 overflow-y-auto bg-surface-container-lowest pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+    >
       {me && (
         <button
           title="Direct messages"
@@ -60,60 +71,69 @@ export function ServerRail() {
         </button>
       )}
       {me && <div className="my-1 h-px w-8 shrink-0 bg-outline-variant" />}
-      {serverList.map(({ name, display_name, creator }) => {
-        const active = view?.kind === 'channel' && view.server === name
-        const mine = me !== null && creator === me.username
-        return (
-          <button
-            key={name}
-            title={mine ? `${display_name} (Creator)` : display_name}
-            onClick={() => void openServer(name)}
-            {...longPress((x, y) =>
-              openContextMenu(x, y, [
-                {
-                  label: 'Copy Server ID',
-                  action: () => void navigator.clipboard.writeText(name),
-                },
-                ...(name === 'rchat'
-                  ? []
-                  : [
-                      {
-                        label: 'Leave Server',
-                        danger: true,
-                        action: () =>
-                          askConfirm({
-                            title: 'Leave Server',
-                            body: 'Leave this server? You can join it again later.',
-                            confirm: 'Leave',
-                            action: () => void leaveServer(name),
-                          }),
-                      },
-                    ]),
-              ])
-            )}
-            className={`${tile} relative text-lg font-semibold ${
-              active
-                ? 'bg-primary text-on-primary'
-                : 'bg-surface-container-high text-on-surface hover:bg-primary-container hover:text-on-primary-container'
-            }`}
-          >
-            {name === 'rchat' ? (
-              <img src="/rchat_r.png" alt="RChat" className="h-full w-full object-contain p-1" />
-            ) : (
-              <span className="streamer">{serverInitial(display_name)}</span>
-            )}
-            {mine && (
-              <span
-                title="Creator"
-                className="absolute -right-1 -bottom-0.5 rounded-full bg-tertiary-container px-1.5 text-[9px] leading-4 font-bold text-on-tertiary-container"
-              >
-                C
-              </span>
-            )}
-            {serverUnread(useStore.getState(), name) && dot}
-          </button>
-        )
-      })}
+      <div data-drop-zone="servers" className="flex shrink-0 flex-col items-center gap-2">
+        {serverList.map(({ name, display_name, creator }) => {
+          const active = view?.kind === 'channel' && view.server === name
+          const mine = me !== null && creator === me.username
+          return (
+            <button
+              key={name}
+              title={mine ? `${display_name} (Creator)` : display_name}
+              onClick={() => void openServer(name)}
+              {...longPress(
+                (x, y) =>
+                  openContextMenu(x, y, [
+                    {
+                      label: 'Copy Server ID',
+                      action: () => void navigator.clipboard.writeText(name),
+                    },
+                    ...(name === 'rchat'
+                      ? []
+                      : [
+                          {
+                            label: 'Leave Server',
+                            danger: true,
+                            action: () =>
+                              askConfirm({
+                                title: 'Leave Server',
+                                body: 'Leave this server? You can join it again later.',
+                                confirm: 'Leave',
+                                action: () => void leaveServer(name),
+                              }),
+                          },
+                        ]),
+                  ]),
+                { group: 'rail', key: name, onDrop: ({ index }) => moveServer(name, index) }
+              )}
+              className={`${tile} relative text-lg font-semibold ${
+                active
+                  ? 'bg-primary text-on-primary'
+                  : 'bg-surface-container-high text-on-surface hover:bg-primary-container hover:text-on-primary-container'
+              }`}
+            >
+              {name === 'rchat' ? (
+                <img
+                  src="/rchat_r.png"
+                  alt="RChat"
+                  draggable={false}
+                  className="h-full w-full object-contain p-1"
+                />
+              ) : (
+                <span className="streamer">{serverInitial(display_name)}</span>
+              )}
+              {mine && (
+                <span
+                  title="Creator"
+                  className="absolute -right-1 -bottom-0.5 rounded-full bg-tertiary-container px-1.5 text-[9px] leading-4 font-bold text-on-tertiary-container"
+                >
+                  C
+                </span>
+              )}
+              {serverUnread(useStore.getState(), name) && dot}
+            </button>
+          )
+        })}
+      </div>
       {me && serversMore && <Sentinel key={me.servers.length} onVisible={loadMoreServers} />}
       <button
         title="Add a server"

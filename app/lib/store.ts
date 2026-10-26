@@ -16,6 +16,22 @@ import {
   type ReadMark,
 } from './lists'
 import { addSearchPage, searchCursor, searchParams, type SearchArgs } from './search'
+import {
+  dmSections,
+  emptyLayout,
+  forgetServer,
+  layoutKey,
+  orderServers,
+  parseLayout,
+  pinDm as pinIn,
+  placeDm as placeIn,
+  pruneLayout,
+  renameServer,
+  reorderServers,
+  unpinDm as unpinIn,
+  type DmZone,
+  type Layout,
+} from './nav_layout'
 import { memberPerms } from './rules'
 import { ALL_PERMS } from './types'
 import type {
@@ -234,6 +250,7 @@ interface RChatState {
   dms: DmSummary[]
   dmsMore: boolean
   serversMore: boolean
+  layout: Layout
   voice: VoiceSession | null
   call: CallSession | null
   voiceUsers: Record<number, string[]>
@@ -289,6 +306,11 @@ interface RChatState {
   loadMoreServers: () => Promise<void>
   ensureDms: (ids: number[]) => Promise<void>
   ensureServers: (names: string[]) => Promise<void>
+  moveServer: (name: string, index: number) => void
+  placeDm: (id: number, zone: DmZone, index: number) => void
+  pinDm: (id: number) => void
+  unpinDm: (id: number) => void
+  reloadLayout: () => void
   setDraft: (key: string, text: string) => void
   sendMessage: (content: string, p2pExpiresIn?: number | null) => void
   markRead: (scope: string, messageId: number) => void
@@ -401,6 +423,13 @@ export const isUnread = (s: RChatState, scope: string): boolean => {
   const r = s.reads[scope]
   return !!r && r.latest > r.lastRead
 }
+
+export const serverNames = (s: RChatState) =>
+  s.me ? s.me.servers.map(x => x.name) : s.guestServers
+
+export const railOrder = (s: RChatState) => orderServers(serverNames(s), n => n, s.layout.servers)
+
+export const dmView = (s: RChatState) => dmSections(s.dms, s.layout)
 
 let unreadMemo: { reads: RChatState['reads']; servers: Set<string> } | null = null
 
@@ -523,6 +552,35 @@ export const useStore = create<RChatState>()((set, get) => {
   let historySeq = 0
   const newHistory = (key: string) => historyGen.set(key, ++historySeq)
 
+  const readLayout = (username: string | null) =>
+    parseLayout(localStorage.getItem(layoutKey(username)))
+
+  const saveLayout = (next: Layout) => {
+    if (next === get().layout) return
+    set({ layout: next })
+    const { me, guest } = get()
+    if (me || guest) localStorage.setItem(layoutKey(me?.username ?? null), JSON.stringify(next))
+  }
+
+  const syncLayout = async (username: string) => {
+    const { servers, dmPinned, dmOrder } = get().layout
+    try {
+      await get().ensureServers(servers)
+      await get().ensureDms([...dmPinned, ...dmOrder])
+    } catch {
+      return
+    }
+    if (!sameUser(username)) return
+    const s = get()
+    const dmIds = s.dms.map(d => d.id)
+    saveLayout(pruneLayout(s.layout, serverNames(s), dmIds))
+  }
+
+  const loadGuestLayout = () => {
+    set({ layout: readLayout(null) })
+    saveLayout(pruneLayout(get().layout, get().guestServers, null))
+  }
+
   const applyMe = (fresh: Me, keep: boolean) => {
     const cur = get()
     const same = keep && cur.me?.username === fresh.username
@@ -541,9 +599,11 @@ export const useStore = create<RChatState>()((set, get) => {
       dms: same ? mergeHead(cur.dms, fresh.dms, fresh.dms_more, dmKey) : fresh.dms,
       serversMore: fresh.servers_more,
       dmsMore: fresh.dms_more,
+      ...(same ? {} : { layout: readLayout(fresh.username) }),
     })
     if (resume.servers) void get().loadMoreServers()
     if (resume.dms) void get().loadMoreDms()
+    if (!same) void syncLayout(fresh.username)
   }
 
   const refetchMe = () =>
@@ -849,6 +909,7 @@ export const useStore = create<RChatState>()((set, get) => {
     const reload = serverPager.removed(get().me?.servers.some(x => x.name === name) ? 1 : 0)
     forgetReads((_, mark) => mark.server !== name)
     forgetMemberInfo(name)
+    saveLayout(forgetServer(get().layout, name))
     set(s => {
       const servers = { ...s.servers }
       delete servers[name]
@@ -1252,6 +1313,7 @@ export const useStore = create<RChatState>()((set, get) => {
     dms: [],
     dmsMore: false,
     serversMore: false,
+    layout: emptyLayout,
     voice: null,
     call: null,
     voiceUsers: {},
@@ -1359,6 +1421,7 @@ export const useStore = create<RChatState>()((set, get) => {
         const storedGrants = localStorage.getItem(LS.guestGrants)
         persistGrants(storedGrants ? (JSON.parse(storedGrants) as Record<string, string>) : {})
         set({ guest: true, guestServers })
+        loadGuestLayout()
         startWs()
         await resolveUrl('replace')
       }
@@ -1403,6 +1466,7 @@ export const useStore = create<RChatState>()((set, get) => {
         dms: [],
         dmsMore: false,
         serversMore: false,
+        layout: emptyLayout,
         view: null,
         messages: {},
         older: {},
@@ -1432,6 +1496,7 @@ export const useStore = create<RChatState>()((set, get) => {
         localStorage.setItem(LS.guestServers, JSON.stringify(['rchat']))
         persistGrants({})
         set({ guest: true, guestServers: ['rchat'] })
+        loadGuestLayout()
         startWs()
       }),
 
@@ -1586,6 +1651,27 @@ export const useStore = create<RChatState>()((set, get) => {
           s.me ? { me: { ...s.me, servers: appendUnique(s.me.servers, found, serverKey) } } : {}
         )
       }
+    },
+
+    moveServer: (name, index) => {
+      const s = get()
+      saveLayout(reorderServers(s.layout, railOrder(s), name, index))
+    },
+
+    placeDm: (id, zone, index) => {
+      const s = get()
+      const { pinned, recent } = dmView(s)
+      const shown = { pinned: pinned.map(d => d.id), recent: recent.map(d => d.id) }
+      const maxId = s.dms.reduce((m, d) => Math.max(m, d.id), 0)
+      saveLayout(placeIn(s.layout, shown, id, zone, index, maxId))
+    },
+
+    pinDm: id => saveLayout(pinIn(get().layout, id)),
+    unpinDm: id => saveLayout(unpinIn(get().layout, id)),
+
+    reloadLayout: () => {
+      const { me, guest } = get()
+      if (me || guest) set({ layout: readLayout(me?.username ?? null) })
     },
 
     sendMessage: (content, p2pExpiresIn) => {
@@ -2339,6 +2425,7 @@ export const useStore = create<RChatState>()((set, get) => {
               },
             }
           })
+          saveLayout(renameServer(get().layout, old_name, server.name))
           serverGen += 1
           memberGen[old_name] = (memberGen[old_name] ?? 0) + 1
           memberGen[server.name] = (memberGen[server.name] ?? 0) + 1

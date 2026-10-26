@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   CLICK_GUARD_MS,
+  DRAG_SLOP,
   MOVE_SLOP,
   idlePress,
   pressStep,
@@ -22,6 +23,10 @@ const run = (inputs: PressInput[], from: Press = idlePress) => {
 }
 
 const start = (x = 100, y = 200): PressInput => ({ kind: 'start', x, y, touches: 1 })
+const grab = (x = 100, y = 200): PressInput => ({ kind: 'start', x, y, touches: 1, drag: true })
+const mouse = (x = 100, y = 200): PressInput => ({ kind: 'mouse', x, y })
+const move = (x: number, y: number): PressInput => ({ kind: 'move', x, y })
+const drags = (outs: PressOutput[]) => outs.map(o => o.drag).filter(d => d !== null)
 
 describe('long press gesture', () => {
   test('a quick tap never opens and lets the click through', () => {
@@ -156,5 +161,173 @@ describe('long press gesture', () => {
       { x: 100, y: 200 },
       { x: 10, y: 10 },
     ])
+  })
+})
+
+describe('drag gesture on touch', () => {
+  test('a hold on a draggable item lifts it instead of opening the menu', () => {
+    const { press, outs, opens } = run([grab(), { kind: 'timer' }])
+    expect(opens).toEqual([])
+    expect(outs[1].lift).toBe(true)
+    expect(outs[1].clear).toBe(true)
+    expect(press.phase).toBe('lifted')
+    expect(swallowsClick(press, 0)).toBe(true)
+  })
+
+  test('releasing a lifted item without moving opens the menu and swallows the click', () => {
+    const { press, outs, opens } = run([
+      grab(40, 60),
+      { kind: 'timer' },
+      move(42, 61),
+      { kind: 'end', now: 1000 },
+    ])
+    expect(opens).toEqual([{ x: 40, y: 60 }])
+    expect(outs[3].swallow).toBe(true)
+    expect(drags(outs)).toEqual([])
+    expect(swallowsClick(press, 1000 + CLICK_GUARD_MS - 1)).toBe(true)
+  })
+
+  test('moving a lifted item starts a drag, releasing drops it', () => {
+    const { press, outs, opens } = run([
+      grab(),
+      { kind: 'timer' },
+      move(100, 200 + MOVE_SLOP + 1),
+      move(100, 300),
+      { kind: 'end', now: 1000 },
+    ])
+    expect(opens).toEqual([])
+    expect(outs[2].drag).toBe('start')
+    expect(outs[3].drag).toBe(null)
+    expect(outs[4]).toEqual({
+      arm: false,
+      clear: false,
+      open: null,
+      swallow: true,
+      lift: false,
+      drag: 'drop',
+    })
+    expect(press.phase).toBe('idle')
+    expect(swallowsClick(press, 1001)).toBe(true)
+  })
+
+  test('a plain swipe before the hold scrolls and never lifts or drags', () => {
+    const { press, outs } = run([grab(), move(100, 260), { kind: 'timer' }, move(100, 400)])
+    expect(outs.some(o => o.lift)).toBe(false)
+    expect(drags(outs)).toEqual([])
+    expect(press.phase).toBe('idle')
+  })
+
+  test('scrolling before the hold cancels it', () => {
+    const { outs, press } = run([grab(), { kind: 'cancel', now: 10 }, { kind: 'timer' }])
+    expect(outs.some(o => o.lift)).toBe(false)
+    expect(press.phase).toBe('idle')
+  })
+
+  test('a quick tap on a draggable item is still a click', () => {
+    const { press, outs } = run([grab(), { kind: 'end', now: 1000 }])
+    expect(outs[1].swallow).toBe(false)
+    expect(swallowsClick(press, 1001)).toBe(false)
+  })
+
+  test('the native contextmenu lifts a draggable item once', () => {
+    const { outs, opens, press } = run([
+      grab(),
+      { kind: 'native', x: 1, y: 1, now: 500 },
+      { kind: 'timer' },
+      { kind: 'native', x: 1, y: 1, now: 600 },
+    ])
+    expect(outs.filter(o => o.lift)).toHaveLength(1)
+    expect(opens).toEqual([])
+    expect(press.phase).toBe('lifted')
+  })
+
+  test('a touch cancel while dragging cancels the drop', () => {
+    const { outs } = run([grab(), { kind: 'timer' }, move(100, 300), { kind: 'cancel', now: 9 }])
+    expect(drags(outs)).toEqual(['start', 'cancel'])
+    expect(outs[3].swallow).toBe(false)
+  })
+
+  test('a lost release is recovered by the next touch, cancelling the drag', () => {
+    const { outs, press } = run([
+      grab(),
+      { kind: 'timer' },
+      move(100, 300),
+      { kind: 'touch', touches: 1 },
+    ])
+    expect(drags(outs)).toEqual(['start', 'cancel'])
+    expect(press.phase).toBe('idle')
+    expect(swallowsClick(press, 0)).toBe(false)
+  })
+
+  test('a second finger does not interrupt a drag', () => {
+    const { press, outs } = run([
+      grab(),
+      { kind: 'timer' },
+      move(100, 300),
+      { kind: 'touch', touches: 2 },
+      { kind: 'start', x: 0, y: 0, touches: 2 },
+    ])
+    expect(press.phase).toBe('dragging')
+    expect(drags(outs)).toEqual(['start'])
+  })
+})
+
+describe('drag gesture with a mouse', () => {
+  test('a click without movement is a normal click', () => {
+    const { press, outs } = run([mouse(), move(102, 201), { kind: 'end', now: 1000 }])
+    expect(drags(outs)).toEqual([])
+    expect(outs[2].swallow).toBe(false)
+    expect(swallowsClick(press, 1001)).toBe(false)
+  })
+
+  test('moving past the drag slop starts a drag right away, no hold needed', () => {
+    const { outs } = run([mouse(), move(100 + DRAG_SLOP, 200), move(100 + DRAG_SLOP + 1, 200)])
+    expect(drags(outs)).toEqual(['start'])
+    expect(outs[1].drag).toBe(null)
+  })
+
+  test('the hold timer never applies to the mouse', () => {
+    const { press, outs } = run([mouse(), { kind: 'timer' }])
+    expect(press.phase).toBe('pending')
+    expect(outs[0].arm).toBe(false)
+    expect(outs[1].lift).toBe(false)
+  })
+
+  test('releasing after a drag drops and swallows the click on the source', () => {
+    const { press, outs } = run([mouse(), move(100, 260), { kind: 'end', now: 1000 }])
+    expect(drags(outs)).toEqual(['start', 'drop'])
+    expect(swallowsClick(press, 1000)).toBe(true)
+  })
+
+  test('escape cancels the drag and keeps swallowing until the button is released', () => {
+    const { press, outs } = run([mouse(), move(100, 260), { kind: 'escape' }])
+    expect(drags(outs)).toEqual(['start', 'cancel'])
+    expect(press.phase).toBe('held')
+    expect(swallowsClick(press, 0)).toBe(true)
+    const after = run([{ kind: 'end', now: 2000 }], press)
+    expect(drags(after.outs)).toEqual([])
+    expect(after.outs[0].swallow).toBe(true)
+    expect(after.press.phase).toBe('idle')
+  })
+
+  test('escape does nothing when nothing is being dragged', () => {
+    const { press, outs } = run([mouse(), { kind: 'escape' }])
+    expect(press.phase).toBe('pending')
+    expect(drags(outs)).toEqual([])
+  })
+
+  test('the next press anywhere ends the click guard after a drop', () => {
+    const { press } = run([
+      mouse(),
+      move(100, 260),
+      { kind: 'end', now: 1000 },
+      { kind: 'touch', touches: 1 },
+    ])
+    expect(swallowsClick(press, 1001)).toBe(false)
+  })
+
+  test('a right click still opens the menu at the cursor', () => {
+    const { opens } = run([{ kind: 'native', x: 7, y: 9, now: 5000 }])
+    expect(opens).toEqual([{ x: 7, y: 9 }])
   })
 })

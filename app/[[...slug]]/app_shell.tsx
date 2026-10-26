@@ -63,8 +63,15 @@ export default function AppShell() {
 
   useEffect(() => {
     const onPop = () => void useStore.getState().syncFromUrl('none')
+    const onStorage = (e: StorageEvent) => {
+      if (e.key?.startsWith('rchat_layout:')) useStore.getState().reloadLayout()
+    }
     window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
+    window.addEventListener('storage', onStorage)
+    return () => {
+      window.removeEventListener('popstate', onPop)
+      window.removeEventListener('storage', onStorage)
+    }
   }, [])
 
   useEffect(() => {
