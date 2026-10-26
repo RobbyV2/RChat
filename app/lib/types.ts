@@ -83,8 +83,8 @@ export type InviteStatus = 'member' | 'banned' | 'joinable' | 'password_required
 
 export interface Invite {
   server: ServerSummaryLite
-  member_count: number
-  online_count: number
+  member_count: number | null
+  online_count: number | null
   status: InviteStatus
   preview_channel: string | null
   preview: Message[]

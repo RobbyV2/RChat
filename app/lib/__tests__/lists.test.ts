@@ -3,6 +3,9 @@ import {
   anyDmUnread,
   appendUnique,
   bumpFront,
+  keyed,
+  unreadMark,
+  windowEdges,
   createPager,
   mergeHead,
   refreshTail,
@@ -219,5 +222,46 @@ describe('createPager', () => {
     await pager.load()
     expect(state.list.includes(60)).toBe(false)
     expect(state.list).toEqual(server.all.slice(0, 100))
+  })
+})
+
+describe('keyed', () => {
+  test('sets and deletes a key without touching the others', () => {
+    const map = { a: 1, b: 2 }
+    expect(keyed(map, 'c', 3)).toEqual({ a: 1, b: 2, c: 3 })
+    expect(keyed(map, 'a', null)).toEqual({ b: 2 })
+    expect(keyed(map, 'z', undefined)).toBe(map)
+    expect(keyed(map, 'a', 1)).toBe(map)
+    expect(map).toEqual({ a: 1, b: 2 })
+  })
+})
+
+describe('windowEdges', () => {
+  const ids = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) => from + i)
+  test('a full window has more on both sides', () => {
+    expect(windowEdges(ids(75, 124), 100, 50)).toEqual({ older: true, newer: true })
+  })
+  test('short sides mean the start or the present was reached', () => {
+    expect(windowEdges(ids(1, 30), 5, 50)).toEqual({ older: false, newer: true })
+    expect(windowEdges(ids(75, 110), 100, 50)).toEqual({ older: true, newer: false })
+    expect(windowEdges([], 100, 50)).toEqual({ older: false, newer: false })
+  })
+})
+
+describe('unreadMark', () => {
+  const ids = [10, 11, 12, 13]
+  test('never read or nothing unread shows no divider', () => {
+    expect(unreadMark(ids, 0, true)).toEqual({ divider: -1, above: false })
+    expect(unreadMark(ids, undefined, true)).toEqual({ divider: -1, above: false })
+    expect(unreadMark(ids, 13, true)).toEqual({ divider: -1, above: false })
+  })
+  test('the divider sits before the first unread loaded message', () => {
+    expect(unreadMark(ids, 11, true)).toEqual({ divider: 2, above: false })
+  })
+  test('unread starting above the loaded page asks to jump instead of a divider', () => {
+    expect(unreadMark(ids, 5, true)).toEqual({ divider: -1, above: true })
+    expect(unreadMark(ids, 5, false)).toEqual({ divider: 0, above: false })
+    expect(unreadMark(ids, 9, true)).toEqual({ divider: 0, above: false })
   })
 })

@@ -30,12 +30,18 @@ describe('viewPath / parsePath round-trips', () => {
     expect(parsePath('/dm/8')).toEqual({ kind: 'dm', dmId: 8 })
   })
 
+  test('a server path without a channel targets the server', () => {
+    expect(parsePath('/s/beta/')).toEqual({ kind: 'server', server: 'beta' })
+    expect(parsePath('/s/beta')).toEqual({ kind: 'server', server: 'beta' })
+    expect(parsePath('/s/caf%C3%A9%20%26%20co/')).toEqual({ kind: 'server', server: 'café & co' })
+  })
+
   test('bad input returns null', () => {
     for (const bad of [
       '',
       '/login',
-      '/s/rchat',
       '/s/rchat/abc',
+      '/s/rchat/1/x',
       '/dm/',
       '/dm/x',
       '/s//1/',

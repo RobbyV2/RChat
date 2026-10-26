@@ -71,7 +71,7 @@ describe('search params', () => {
       before: 42,
       before_ts: 200,
       after_ts: 100,
-      servers: 'a,b',
+      servers: ['a', 'b'],
     })
   })
 })
@@ -143,9 +143,9 @@ describe('searchRun', () => {
     expect(ids()).toEqual([50])
   })
 
-  test('guests send their server list', async () => {
-    useStore.setState({ guest: true, guestServers: ['rchat', 'other'] })
+  test('guests send their server list as repeated params', async () => {
+    useStore.setState({ guest: true, guestServers: ['rchat', 'other', 'a, b'] })
     await run(args({ q: 'x' }), true)
-    expect(requests[0].searchParams.get('servers')).toBe('rchat,other')
+    expect(requests[0].searchParams.getAll('servers')).toEqual(['rchat', 'other', 'a, b'])
   })
 })

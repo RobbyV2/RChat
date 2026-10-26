@@ -429,11 +429,77 @@ pub fn valid_color(color: &str) -> bool {
     color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
+const URL_PUNCT: &str = "-._~:/?#[]@!$&'()*+,;=%";
+const URL_DELIMS: [char; 7] = ['/', '?', '#', '&', '=', ':', '@'];
+
+fn url_len(text: &str, at: usize) -> Option<usize> {
+    let rest = &text[at..];
+    let scheme = ["http://", "https://"].iter().any(|s| {
+        rest.get(..s.len())
+            .is_some_and(|p| p.eq_ignore_ascii_case(s))
+    });
+    let bounded = !text[..at]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_alphanumeric() || c == '_');
+    match scheme && bounded {
+        true => Some(
+            rest.find(|c: char| !c.is_ascii_alphanumeric() && !URL_PUNCT.contains(c))
+                .unwrap_or(rest.len()),
+        ),
+        false => None,
+    }
+}
+
+fn words(text: &str) -> impl DoubleEndedIterator<Item = &str> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+}
+
+fn push_words(phrases: &mut Vec<String>, phrase: &mut String, text: &str, gap: &str) {
+    let short = |w: &str| w.chars().count() <= 2;
+    let before = words(phrase).next_back().map(short);
+    let after = words(text).next().map(short);
+    match (before, after) {
+        (Some(a), Some(b)) if a != b => phrases.push(std::mem::take(phrase)),
+        _ => phrase.push_str(gap),
+    }
+    phrase.push_str(text);
+}
+
+pub(crate) fn is_profane(text: &str) -> bool {
+    let mut phrases = Vec::new();
+    let mut phrase = String::with_capacity(text.len());
+    let mut at = 0;
+    for (i, _) in text.char_indices() {
+        if i < at {
+            continue;
+        }
+        let Some(len) = url_len(text, i) else {
+            continue;
+        };
+        push_words(&mut phrases, &mut phrase, &text[at..i], "");
+        let url = percent_encoding::percent_decode_str(&text[i..i + len]).decode_utf8_lossy();
+        for (n, part) in url.split(URL_DELIMS).filter(|p| !p.is_empty()).enumerate() {
+            push_words(
+                &mut phrases,
+                &mut phrase,
+                part,
+                if n == 0 { "" } else { " " },
+            );
+        }
+        at = i + len;
+    }
+    push_words(&mut phrases, &mut phrase, &text[at..], "");
+    phrases.push(phrase);
+    phrases.iter().any(|p| p.is_inappropriate())
+}
+
 pub async fn check_profanity<'e, E>(ex: E, text: &str) -> Result<(), ApiError>
 where
     E: sqlx::Executor<'e, Database = sqlx::Any>,
 {
-    match setting_on(ex, "profanity_filter").await && text.is_inappropriate() {
+    match setting_on(ex, "profanity_filter").await && is_profane(text) {
         true => Err(ApiError(
             StatusCode::BAD_REQUEST,
             "Content blocked by profanity filter".to_string(),
@@ -514,11 +580,16 @@ impl FromRequestParts<AppState> for MaybeAuthed {
 }
 
 pub fn routes(state: AppState) -> Router<AppState> {
-    let strict = GovernorConfigBuilder::default()
-        .per_millisecond(500)
-        .burst_size(30)
-        .finish()
-        .expect("invalid strict rate limit config");
+    let strict = || {
+        GovernorConfigBuilder::default()
+            .per_millisecond(500)
+            .burst_size(30)
+            .finish()
+            .expect("invalid strict rate limit config")
+    };
+    let invite_routes = Router::new()
+        .route("/invites/{name}", get(servers::get_invite))
+        .route_layer(GovernorLayer::new(strict()));
     let strict_routes = Router::new()
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
@@ -528,7 +599,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
             post(media::upload_media).layer(DefaultBodyLimit::max(26 * 1024 * 1024)),
         )
         .route("/servers/{name}/guest_access", post(servers::guest_access))
-        .route_layer(GovernorLayer::new(strict));
+        .route_layer(GovernorLayer::new(strict()));
     Router::new()
         .route("/me", get(auth::me).patch(auth::patch_me))
         .route("/me/servers", get(servers::list_my_servers))
@@ -541,7 +612,6 @@ pub fn routes(state: AppState) -> Router<AppState> {
                 .delete(servers::delete_server),
         )
         .route("/servers/{name}/exists", get(servers::server_exists))
-        .route("/invites/{name}", get(servers::get_invite))
         .route("/server_search", get(servers::search_servers))
         .route("/servers/{name}/members", get(servers::list_members))
         .route("/servers/{name}/interacted", get(servers::list_interacted))
@@ -627,6 +697,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/admin/ban", post(admin::ban_user))
         .route("/ws", get(crate::ws::handler))
         .merge(strict_routes)
+        .merge(invite_routes)
         .merge(openapi::routes().route_layer(from_fn_with_state(state, require_token)))
 }
 
@@ -691,5 +762,106 @@ pub(crate) mod test_util {
             .execute(db)
             .await
             .expect("insert member");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+
+    use super::*;
+    use crate::api::test_util::{done, temp_state};
+
+    #[test]
+    fn profanity_ignores_url_punctuation() {
+        let clean = [
+            "http://localhost:3000/invite/p0/?password=secret",
+            "join http://localhost:3000/invite/p0/?password=hunter2 now",
+            "HTTPS://Example.com/invite/p0/?password=x and https://example.com/docs/",
+            "https://example.com/invite/gamma%20secret/?password=secret",
+            "[invite](https://example.com/invite/p0/?password=secret)",
+            "https://example.com/invite/p0/?password=p0",
+            "https://example.com/invite/p0/ please join",
+            "come to https://example.com/invite/p0/?password=secret please",
+            "https://example.com/v1/photos/p0/pizza",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://github.com/RobbyV2/RChat/pull/12#issuecomment-123",
+            "plain words",
+        ];
+        for text in clean {
+            assert!(!is_profane(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn profanity_reads_phrases_in_urls() {
+        let dirty = [
+            "you are a fucking idiot",
+            "https://example.com/fuck",
+            "https://example.com/?q=shit",
+            "nice https://example.com/ but fuck this",
+            "p0/?password",
+            "f u c k",
+            "https://x.co/f.u.c.k",
+            "https://x.co/sh.it",
+            "https://x.co/f_ck",
+            "https://x.co/kill-yourself",
+            "xhttp://a\u{2800}f\u{2800}u\u{2800}c\u{2800}k",
+            "https://x.co/kill\u{2800}yourself",
+            "https://x.co/a\u{2800}f\u{2800}u\u{2800}c\u{2800}k",
+            "x https://a\u{2800}f\u{2800}u\u{2800}c\u{2800}k",
+            "https://x.co/f%75ck",
+            "https://x.co/f/u/c/k",
+            "https://x.co/a/s/s",
+            "https://x.co/kill/yourself",
+            "https://x.co/?q=kill+yourself",
+            "https://x.co/kill%20yourself",
+            "https://x.co/sh!t",
+        ];
+        for text in dirty {
+            assert!(is_profane(text), "{text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn invites_have_their_own_strict_limiter() {
+        let (state, path) = temp_state("strict_invites").await;
+        let app = routes(state.clone()).with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+        });
+        let client = reqwest::Client::new();
+        let mut limited = HashMap::new();
+        for (path, tries) in [
+            ("/invites/rchat", 40),
+            ("/auth/words/nobody", 20),
+            ("/settings", 40),
+        ] {
+            let mut count = 0;
+            for _ in 0..tries {
+                let res = client
+                    .get(format!("http://{addr}{path}"))
+                    .send()
+                    .await
+                    .expect("request");
+                if res.status() == StatusCode::TOO_MANY_REQUESTS {
+                    count += 1;
+                }
+            }
+            limited.insert(path, count);
+        }
+        server.abort();
+        assert!(limited["/invites/rchat"] >= 5, "{limited:?}");
+        assert_eq!(limited["/auth/words/nobody"], 0, "{limited:?}");
+        assert_eq!(limited["/settings"], 0, "{limited:?}");
+        done(state, path).await;
     }
 }

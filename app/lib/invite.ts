@@ -22,7 +22,7 @@ const URL_RE = /https?:\/\/[^\s<>"'`]+/gi
 const TRAIL = /[)\]}>.,;:!?*_~|'"]+$/
 const FENCE = /^(?: {0,3}>)* {0,3}(`{3,}|~{3,})(.*)$/
 const LIST_ITEM = /^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:\s|$)/
-const CODE_SPAN = /(?<!`)(`+)(?!`)(?:(?!\n[ \t]*\n)[\s\S])*?[^`]\1(?!`)/g
+const CODE_SPAN = /(^|[^`])(`+)(?!`)(?:(?!\n[ \t]*\n)[\s\S])*?[^`]\2(?!`)/g
 const SPOILER = /\|\|(?:(?!\|\||\n[ \t]*\n)[\s\S])+\|\|/g
 
 const hex = (c: string) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
@@ -98,7 +98,9 @@ const withoutCodeBlocks = (text: string) => {
 }
 
 const visibleText = (text: string) =>
-  withoutCodeBlocks(text).replace(CODE_SPAN, ' ').replace(SPOILER, ' ')
+  withoutCodeBlocks(text)
+    .replace(CODE_SPAN, (_, lead: string) => `${lead} `)
+    .replace(SPOILER, ' ')
 
 export const findInvites = (text: string, origin: string, max = 3): InviteLink[] => {
   const out: InviteLink[] = []

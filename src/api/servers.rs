@@ -127,8 +127,8 @@ pub enum InviteStatus {
 #[derive(Serialize, ToSchema)]
 pub struct Invite {
     pub server: ServerSummaryLite,
-    pub member_count: i64,
-    pub online_count: i64,
+    pub member_count: Option<i64>,
+    pub online_count: Option<i64>,
     pub status: InviteStatus,
     pub preview_channel: Option<String>,
     pub preview: Vec<Message>,
@@ -875,7 +875,7 @@ async fn invite_preview(db: &Db, server: &str) -> Result<(Option<String>, Vec<Me
     }
 }
 
-#[utoipa::path(get, path = "/api/invites/{name}", params(("name" = String, Path), ("X-Invite-Password" = Option<String>, Header, description = "Percent-encoded server password from the invite link")), responses((status = 200, description = "Invite card for the server: counts, the viewer's status (`member`, `banned`, `joinable` or `password_required`; guests never get `member` or `banned`) and the last few top-level messages of the first text channel anyone may view. The preview is empty for banned viewers, and otherwise unless the server has no password, the viewer is a member, or the password header (or a guest grant) is valid", body = Invite), (status = 404, description = "Invalid invite: the server does not exist")), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/invites/{name}", params(("name" = String, Path), ("X-Invite-Password" = Option<String>, Header, description = "Percent-encoded server password from the invite link")), responses((status = 200, description = "Invite card for the server: member and online counts (null unless the server has no password, the viewer is a member, or the password header or a guest grant is valid), the viewer's status (`member`, `banned`, `joinable` or `password_required`; guests never get `member` or `banned`) and the last few top-level messages of the first text channel anyone may view. The preview is empty for banned viewers, and otherwise unless the server has no password, the viewer is a member, or the password header (or a guest grant) is valid", body = Invite), (status = 404, description = "Invalid invite: the server does not exist")), security((), ("bearer" = [])))]
 pub(crate) async fn get_invite(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -893,10 +893,10 @@ pub(crate) async fn get_invite(
         Some(user) if !member => is_banned(&state.db, &key, &user.username).await?,
         _ => false,
     };
-    let unlocked = !banned
-        && (!server.has_password
-            || member
-            || invite_unlocked(&state.db, &headers, &key, viewer.as_ref()).await?);
+    let open = !server.has_password
+        || member
+        || invite_unlocked(&state.db, &headers, &key, viewer.as_ref()).await?;
+    let unlocked = !banned && open;
     let status = match (member, banned, unlocked) {
         (true, _, _) => InviteStatus::Member,
         (false, true, _) => InviteStatus::Banned,
@@ -907,13 +907,19 @@ pub(crate) async fn get_invite(
         true => invite_preview(&state.db, &key).await?,
         false => (None, Vec::new()),
     };
-    let member_count: i64 = sqlx::query("SELECT COUNT(*) FROM members WHERE server = $1")
-        .bind(&key)
-        .fetch_one(&state.db)
-        .await?
-        .try_get(0)?;
+    let (member_count, online_count) = match open {
+        true => {
+            let members: i64 = sqlx::query("SELECT COUNT(*) FROM members WHERE server = $1")
+                .bind(&key)
+                .fetch_one(&state.db)
+                .await?
+                .try_get(0)?;
+            (Some(members), Some(state.hub.online_count(&key)))
+        }
+        false => (None, None),
+    };
     Ok(Json(Invite {
-        online_count: state.hub.online_count(&key),
+        online_count,
         server,
         member_count,
         status,
@@ -2818,7 +2824,7 @@ mod tests {
         assert_eq!(open.server.display_name, "Club");
         assert_eq!(open.server.name, "club");
         assert!(!open.server.has_password);
-        assert_eq!(open.member_count, 2);
+        assert_eq!(open.member_count, Some(2));
         assert_eq!(open.status, InviteStatus::Joinable);
         assert_eq!(open.preview_channel.as_deref(), Some("general"));
         assert_eq!(
@@ -2884,6 +2890,47 @@ mod tests {
             status(invite_as(&state, user("dave"), "nowhere", None, None).await),
             Some(StatusCode::NOT_FOUND)
         );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn invite_counts_hidden_when_locked() {
+        let (state, path) = temp_state("invite_counts").await;
+        let db = &state.db;
+        let _ = make_server(&state, "Club").await.expect("club");
+        add_user(db, "bob", "Bob").await;
+        join(&state, "bob", "club").await.expect("bob joins");
+        let user = |name: &str| Some(mem_user(name, false));
+        let counts = |invite: &Invite| (invite.member_count, invite.online_count);
+        let open = invite_as(&state, user("dave"), "club", None, None)
+            .await
+            .expect("open");
+        assert_eq!(counts(&open), (Some(2), Some(0)));
+        set_password(&state, "secret").await;
+        let grant = insert_grant(db, "club").await;
+        type Case<'a> = (Option<User>, Option<&'a str>, Option<&'a str>, bool);
+        let cases: Vec<Case> = vec![
+            (user("dave"), None, None, false),
+            (user("dave"), Some("nope"), None, false),
+            (user("dave"), Some("secret"), None, true),
+            (user("bob"), None, None, true),
+            (Some(mem_user("root", true)), None, None, false),
+            (None, None, None, false),
+            (None, None, Some("bogus"), false),
+            (None, None, Some(&grant), true),
+            (None, Some("secret"), None, true),
+        ];
+        for (n, (viewer, password, grant, shown)) in cases.into_iter().enumerate() {
+            let invite = invite_as(&state, viewer, "club", password, grant)
+                .await
+                .expect("invite");
+            assert_eq!(invite.server.display_name, "Club", "case {n}");
+            let want = match shown {
+                true => (Some(2), Some(0)),
+                false => (None, None),
+            };
+            assert_eq!(counts(&invite), want, "case {n}");
+        }
         done(state, path).await;
     }
 

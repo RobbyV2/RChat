@@ -222,6 +222,10 @@ function ServerTile({
 
 function Counts({ invite, center }: { invite: Invite; center: boolean }) {
   const { online_count, member_count } = invite
+  if (online_count === null || member_count === null)
+    return invite.status === 'password_required' ? (
+      <p className="text-xs text-on-surface-variant">Enter the password to see who&apos;s here.</p>
+    ) : null
   return (
     <div
       className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-on-surface-variant ${
@@ -320,7 +324,7 @@ function Frame({
       className={
         big
           ? 'w-full max-w-md rounded-[28px] bg-surface-container-low p-6 text-center shadow-elevation-3 sm:p-8'
-          : 'mt-1.5 w-full max-w-md rounded-2xl border border-outline-variant bg-surface-container p-3 sm:p-4'
+          : '@container mt-1.5 w-full max-w-md rounded-2xl border border-outline-variant bg-surface-container p-3 sm:p-4'
       }
     >
       {!big && (
@@ -361,13 +365,17 @@ function Layout({
     )
   return (
     <>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         {icon}
         <div className="min-w-0 flex-1">
           <p className="flex min-w-0 items-center gap-1.5 font-semibold">{title}</p>
           <div className="mt-0.5">{sub}</div>
         </div>
-        {actions && <div className="flex shrink-0 flex-col items-end gap-1.5">{actions}</div>}
+        {actions && (
+          <div className="flex w-full flex-wrap gap-1.5 @sm:w-auto @sm:shrink-0 @sm:flex-col @sm:items-end">
+            {actions}
+          </div>
+        )}
       </div>
       {extra}
     </>

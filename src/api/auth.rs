@@ -14,8 +14,8 @@ use utoipa::ToSchema;
 use crate::api::dms::dm_page;
 use crate::api::servers::my_servers_page;
 use crate::api::{
-    ApiError, Authed, DmSummary, LIST_PAGE, Member, ServerSummary, UserRef, check_profanity,
-    valid_color,
+    ApiError, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, ServerSummary, UserRef, check_len,
+    check_profanity, valid_color,
 };
 use crate::db::{AvatarKind, Db, User, get_user, now};
 use crate::state::AppState;
@@ -171,6 +171,7 @@ pub(crate) async fn register(
     if username.trim().is_empty() {
         return Err(bad("Username required"));
     }
+    check_len(&username, NAME_MAX, "Username")?;
     if password.as_deref() == Some("") {
         return Err(bad("Password required"));
     }
@@ -527,6 +528,31 @@ mod tests {
         assert!(matches!(empty, Err(ApiError(StatusCode::BAD_REQUEST, _))));
         assert!(get_user(&state.db, "erin").await.expect("lookup").is_none());
         let _ = register_text(&state, "erin").await.expect("non-empty ok");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn username_length_limit() {
+        let (state, path) = temp_state("username_len").await;
+        let max = "é".repeat(NAME_MAX);
+        let ok = register_text(&state, &max)
+            .await
+            .expect("100 code points ok");
+        assert_eq!(ok.0.user.username.chars().count(), NAME_MAX);
+        for len in [NAME_MAX + 1, 1001, 5001] {
+            let long = register_text(&state, &"a".repeat(len)).await;
+            assert!(
+                matches!(long, Err(ApiError(StatusCode::BAD_REQUEST, _))),
+                "{len}"
+            );
+        }
+        let count: i64 = sqlx::query("SELECT COUNT(*) FROM users")
+            .fetch_one(&state.db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("count value");
+        assert_eq!(count, 1);
         done(state, path).await;
     }
 

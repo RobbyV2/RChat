@@ -1,14 +1,20 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MessageSquareText, Trash2, X } from 'lucide-react'
-import { myPerms, roleColor, useStore, type ContextMenuItem } from '../lib/store'
+import {
+  confirmDeleteMessage,
+  myPerms,
+  roleColor,
+  threadKey,
+  useStore,
+  type ContextMenuItem,
+} from '../lib/store'
 import { Perm, hasPerm, type Message } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
 import {
-  OLDER_THRESHOLD,
   OutboxRows,
   authorKey,
   avatarTriggerCls,
@@ -20,7 +26,15 @@ import {
 } from './message_pane'
 import { longPress } from './context_menu'
 import { profileTrigger } from './profile_card'
-import { OlderLoading, usePinnedBottom, usePrependAnchor } from './viewport_height'
+import {
+  EdgeSentinel,
+  OlderLoading,
+  PresentBar,
+  useFocusMessage,
+  usePinnedBottom,
+  usePrependAnchor,
+} from './viewport_height'
+import { useEscape } from './server_settings'
 
 const EMPTY: Message[] = []
 
@@ -42,20 +56,23 @@ export default function ThreadPanel() {
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const memberFor = useMemberLookup(server)
   useAuthorMembers(server, authorKey(root ? [root, ...replies] : replies))
-  const older = useStore(s =>
-    s.panel?.kind === 'thread' ? s.older[`t${s.panel.root.id}`] : undefined
-  )
-  const outCount = useStore(s =>
-    s.panel?.kind === 'thread' ? (s.outbox[`t${s.panel.root.id}`]?.length ?? 0) : 0
-  )
+  const key = useStore(s => (s.panel?.kind === 'thread' ? threadKey(s.panel.root.id) : null))
+  const older = useStore(s => (key ? s.older[key] : undefined))
+  const newer = useStore(s => (key ? s.newer[key] : undefined))
+  const focus = useStore(s => (key ? s.focus[key] : undefined))
+  const outCount = useStore(s => (key ? (s.outbox[key]?.length ?? 0) : 0))
   const closePanel = useStore(s => s.closePanel)
   const loadOlderThread = useStore(s => s.loadOlderThread)
-  const deleteMessage = useStore(s => s.deleteMessage)
+  const loadNewerThread = useStore(s => s.loadNewerThread)
+  const jumpToPresent = useStore(s => s.jumpToPresent)
   const openContextMenu = useStore(s => s.openContextMenu)
   const listRef = useRef<HTMLDivElement>(null)
   const stickBottom = useRef(true)
+  const [ready, setReady] = useState<string | null>(null)
   const rootId = root?.id
+  const detached = newer?.more === true
   const snapOlder = usePrependAnchor(listRef, replies[0]?.id)
+  useEscape(closePanel, 'panel')
 
   useEffect(() => {
     stickBottom.current = true
@@ -63,12 +80,21 @@ export default function ThreadPanel() {
 
   useEffect(() => {
     const el = listRef.current
-    if (el && stickBottom.current) el.scrollTop = el.scrollHeight
-  }, [replies, outCount])
+    if (!el || !key) return
+    if (stickBottom.current && !focus && !detached) el.scrollTop = el.scrollHeight
+    if (ready !== key && replies.length) setReady(key)
+  }, [replies, outCount, focus, detached, key, ready])
+
+  const flash = useFocusMessage(listRef, key, focus, replies, () => {
+    const el = listRef.current
+    if (el) stickBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60 && !detached
+  })
 
   usePinnedBottom(listRef, stickBottom, rootId)
 
-  if (!root) return null
+  if (!root || !key) return null
+
+  const positioned = ready === key
 
   const canDelete = (m: Message) =>
     me !== null && (m.author.username === me.username || hasPerm(perms, Perm.DeleteMessages))
@@ -76,12 +102,14 @@ export default function ThreadPanel() {
   const onScroll = () => {
     const el = listRef.current
     if (!el) return
-    stickBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+    stickBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60 && !detached
     if (older?.loading) snapOlder()
-    else if (el.scrollTop < OLDER_THRESHOLD && replies.length && older?.more !== false) {
-      snapOlder()
-      void loadOlderThread()
-    }
+  }
+
+  const onTop = () => {
+    if (older?.loading || older?.more === false || !replies.length) return
+    snapOlder()
+    void loadOlderThread()
   }
 
   const rowMenu = (m: Message) => (x: number, y: number) => {
@@ -90,7 +118,7 @@ export default function ThreadPanel() {
       items.push({
         label: 'Delete Message',
         danger: true,
-        action: () => void deleteMessage(m.id),
+        action: () => confirmDeleteMessage(m.id),
       })
     items.push(...messageCopyItems(m))
     openContextMenu(x, y, items)
@@ -101,6 +129,7 @@ export default function ThreadPanel() {
       <div
         key={m.id}
         data-mid={m.id}
+        data-flash={flash === m.id ? '' : undefined}
         {...longPress(rowMenu(m))}
         className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container"
       >
@@ -119,24 +148,26 @@ export default function ThreadPanel() {
           </span>
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2">
+          <div className="flex min-w-0 items-baseline gap-2">
             <span
               {...profileTrigger(m.author, server)}
               style={{
                 color: roleColor(roles, memberFor(m.author.username)?.role_ids ?? []),
               }}
-              className={`streamer text-sm font-medium ${nameTriggerCls}`}
+              className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
             >
               {m.author.display_name}
             </span>
-            <span className="text-xs text-on-surface-variant">{fmtTime(m.created_at)}</span>
+            <span className="shrink-0 text-xs text-on-surface-variant">
+              {fmtTime(m.created_at)}
+            </span>
           </div>
           <MarkdownMessage message={m} canDelete={canDelete(m)} />
         </div>
         {m.id !== root.id && canDelete(m) && (
           <button
-            title="Delete reply"
-            onClick={() => void deleteMessage(m.id)}
+            title="Delete reply (hold Shift to skip confirmation)"
+            onClick={e => confirmDeleteMessage(m.id, e.shiftKey)}
             className="pointer-events-none absolute top-1 right-3 rounded-full bg-surface-container-high p-1.5 text-on-surface-variant opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 hover:text-error"
           >
             <Trash2 size={14} />
@@ -161,7 +192,12 @@ export default function ThreadPanel() {
       </header>
       <div className="relative flex min-h-0 flex-1 flex-col">
         {older?.loading && <OlderLoading />}
+        {newer?.loading && <OlderLoading newer />}
+        {detached && !newer?.loading && <PresentBar onJump={() => void jumpToPresent(key)} />}
         <div ref={listRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-3">
+          {positioned && replies.length > 0 && older?.more !== false && (
+            <EdgeSentinel key={replies[0].id} root={listRef} edge="top" onVisible={onTop} />
+          )}
           {row(root)}
           <div className="my-2 flex items-center gap-2 px-4 text-xs text-on-surface-variant">
             <span className="h-px flex-1 bg-outline-variant" />
@@ -169,7 +205,15 @@ export default function ThreadPanel() {
             <span className="h-px flex-1 bg-outline-variant" />
           </div>
           {replies.map(row)}
-          <OutboxRows msgKey={`t${root.id}`} size={30} />
+          {positioned && detached && replies.length > 0 && (
+            <EdgeSentinel
+              key={`n${replies[replies.length - 1].id}`}
+              root={listRef}
+              edge="bottom"
+              onVisible={() => void loadNewerThread()}
+            />
+          )}
+          <OutboxRows msgKey={key} size={30} />
         </div>
       </div>
       <MessageComposer thread />

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import * as api from '../lib/api'
 import type { ServerDetail, ServerSummaryLite } from '../lib/types'
-import { errorText, useStore } from '../lib/store'
+import { confirmKick, errorText, revokeAdminFor, useStore } from '../lib/store'
 import { canDeleteChannel } from '../lib/rules'
 import { UserAvatar } from './user_avatar'
 import {
@@ -42,11 +42,13 @@ function NameForm({
   placeholder,
   submitLabel,
   onSubmit,
+  streamer = false,
 }: {
   initial?: string
   placeholder: string
   submitLabel: string
   onSubmit: (value: string) => void
+  streamer?: boolean
 }) {
   const [value, setValue] = useState(initial ?? '')
   return (
@@ -64,9 +66,10 @@ function NameForm({
         value={value}
         onChange={e => setValue(e.target.value)}
         placeholder={placeholder}
-        className={fieldCls}
+        aria-label={placeholder}
+        className={`${fieldCls} min-w-24 ${streamer ? 'streamer' : ''}`}
       />
-      <button className={textBtn}>{submitLabel}</button>
+      <button className={`${textBtn} shrink-0`}>{submitLabel}</button>
     </form>
   )
 }
@@ -210,6 +213,7 @@ function Panel() {
   const loadAdminUsers = useStore(s => s.loadAdminUsers)
   const loadAdminServers = useStore(s => s.loadAdminServers)
   const adminDeleteServer = useStore(s => s.adminDeleteServer)
+  const askConfirm = useStore(s => s.askConfirm)
   const closeDialog = useStore(s => s.closeDialog)
   const openDialog = useStore(s => s.openDialog)
   const me = useStore(s => s.me)
@@ -257,7 +261,17 @@ function Panel() {
                 {selected === sv.name ? 'Close' : 'Manage'}
               </button>
               {sv.name !== 'rchat' && (
-                <button onClick={() => void adminDeleteServer(sv.name)} className={dangerBtn}>
+                <button
+                  onClick={() =>
+                    askConfirm({
+                      title: 'Delete Server',
+                      body: 'Delete this server for everyone? All of its channels and messages are deleted. This cannot be undone.',
+                      confirm: 'Delete',
+                      action: () => void adminDeleteServer(sv.name),
+                    })
+                  }
+                  className={dangerBtn}
+                >
                   Delete
                 </button>
               )}
@@ -313,7 +327,7 @@ function Panel() {
                     onClick={() => openDialog({ kind: 'ban_confirm', username: u.username })}
                     className={dangerBtn}
                   >
-                    Ban
+                    Ban site-wide
                   </button>
                 </>
               )}
@@ -335,10 +349,9 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
   const createChannel = useStore(s => s.createChannel)
   const renameChannel = useStore(s => s.renameChannel)
   const deleteChannel = useStore(s => s.deleteChannel)
-  const kickMember = useStore(s => s.kickMember)
+  const askConfirm = useStore(s => s.askConfirm)
   const banMember = useStore(s => s.banMember)
   const grantAdmin = useStore(s => s.grantAdmin)
-  const revokeAdmin = useStore(s => s.revokeAdmin)
   const cache = useStore(s => s.members[name])
   const loadMembers = useStore(s => s.loadMembers)
   const me = useStore(s => s.me)
@@ -372,6 +385,7 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
             initial={detail.display_name}
             placeholder="Server name"
             submitLabel="Rename"
+            streamer
             onSubmit={v =>
               renameServer(name, v).then(onCollapse, (e: unknown) => setError(errorText(e)))
             }
@@ -392,7 +406,7 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
             roles={detail.roles}
             refresh={refresh}
             lead={
-              <>
+              <div className="flex w-full min-w-0 items-center gap-2">
                 <NameForm
                   initial={c.name}
                   placeholder="Channel name"
@@ -401,7 +415,17 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
                 />
                 <button
                   disabled={!deletable}
-                  onClick={() => run(() => deleteChannel(c.id))}
+                  onClick={() =>
+                    askConfirm({
+                      title: 'Delete Channel',
+                      body:
+                        c.kind === 'text'
+                          ? `Delete #${c.name}? Its messages are deleted for everyone.`
+                          : `Delete the voice channel ${c.name}?`,
+                      confirm: 'Delete',
+                      action: () => run(() => deleteChannel(c.id)),
+                    })
+                  }
                   aria-label={`Delete ${c.name}`}
                   title={
                     deletable
@@ -410,11 +434,11 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
                         ? 'Cannot delete the only text channel'
                         : 'Cannot delete the only channel'
                   }
-                  className={dangerBtn}
+                  className={`${dangerBtn} shrink-0`}
                 >
                   <Trash2 size={16} />
                 </button>
-              </>
+              </div>
             }
           />
         )
@@ -447,9 +471,9 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
             )}
             <button
               onClick={() =>
-                void (
-                  m.is_admin ? revokeAdmin(name, m.username) : grantAdmin(name, m.username)
-                ).then(reloadMembers)
+                m.is_admin
+                  ? revokeAdminFor(name, m.username, reloadMembers)
+                  : void grantAdmin(name, m.username).then(reloadMembers)
               }
               className={textBtn}
             >
@@ -473,7 +497,7 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
             ) : (
               <>
                 <button
-                  onClick={() => void kickMember(name, m.username).then(reloadMembers)}
+                  onClick={() => confirmKick(name, m.username, reloadMembers)}
                   className={dangerBtn}
                 >
                   Kick
@@ -511,8 +535,9 @@ function DeleteUserConfirm({ username }: { username: string }) {
   return (
     <Dialog title="Delete User" onClose={closeDialog}>
       <p className="text-sm text-on-surface-variant">
-        Delete the account of {username}? Their messages and created servers are kept, and the
-        username stays available. Use Ban to also erase messages and blacklist the name.
+        Delete the account of <span className="streamer">{username}</span>? Every message they sent
+        and their DMs are deleted. Servers they created are kept. The username becomes free to
+        register again; use Ban site-wide to also block the name.
       </p>
       <div className="mt-6 flex justify-end gap-2">
         <button onClick={closeDialog} className={textBtn}>
@@ -533,10 +558,10 @@ function BanConfirm({ username }: { username: string }) {
   const banUser = useStore(s => s.banUser)
   const closeDialog = useStore(s => s.closeDialog)
   return (
-    <Dialog title="Ban User" onClose={closeDialog}>
+    <Dialog title="Ban Site-wide" onClose={closeDialog}>
       <p className="text-sm text-on-surface-variant">
-        Ban {username} site-wide? This deletes their account and every message they have sent, and
-        permanently blocks the username.
+        Ban <span className="streamer">{username}</span> site-wide? This deletes their account and
+        every message they have sent, and permanently blocks the username.
       </p>
       <div className="mt-6 flex justify-end gap-2">
         <button onClick={closeDialog} className={textBtn}>

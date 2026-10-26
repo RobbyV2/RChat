@@ -1,6 +1,7 @@
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs'
 import { wsClient } from './ws'
 import { SpeakingDetector } from './vad'
+import { mediaError } from './rules'
 
 export interface StoredFile {
   name: string
@@ -228,7 +229,9 @@ class P2pManager {
 
   async startMedia() {
     this.endMedia()
-    const mic = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const mic = await navigator.mediaDevices.getUserMedia({ audio: true }).catch((e: unknown) => {
+      throw mediaError(e, 'microphone', 'call')
+    })
     const canvas = document.createElement('canvas')
     canvas.width = 2
     canvas.height = 2
@@ -264,7 +267,11 @@ class P2pManager {
       if (!this.shareOn) this.swapVideo(this.placeholder)
     } else {
       const cam = (
-        await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+        await navigator.mediaDevices
+          .getUserMedia({ video: { facingMode: 'user' } })
+          .catch((e: unknown) => {
+            throw mediaError(e, 'camera', 'turn on video')
+          })
       ).getVideoTracks()[0]
       if (!cam) throw new Error('No camera available')
       cam.onended = () => {

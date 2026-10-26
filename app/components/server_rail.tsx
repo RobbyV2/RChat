@@ -235,6 +235,7 @@ export function ServerRail() {
   const router = useRouter()
   const me = useStore(s => s.me)
   const guestServers = useStore(s => s.guestServers)
+  const guestNames = useStore(s => s.guestNames)
   const servers = useStore(s => s.servers)
   const view = useStore(s => s.view)
   const openLastDm = useStore(s => s.openLastDm)
@@ -245,46 +246,52 @@ export function ServerRail() {
   const saved = useStore(s => s.layout.servers)
   useStore(s => s.reads)
 
-  const items = railItems(railServers({ me, guestServers, servers }), x => x.name, saved)
+  const items = railItems(
+    railServers({ me, guestServers, guestNames, servers }),
+    x => x.name,
+    saved
+  )
 
   return (
-    <nav
-      ref={dragScope}
-      className="flex h-full w-18 shrink-0 flex-col items-center gap-2 overflow-y-auto bg-surface-container-lowest pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
-    >
-      {me && (
-        <button
-          title="Direct messages"
-          onClick={openLastDm}
-          className={`${tile} relative ${view?.kind === 'dm' ? 'bg-primary text-on-primary' : idle}`}
-        >
-          <MessageCircle size={22} />
-          {dmsUnread(useStore.getState()) && <UnreadDot />}
-        </button>
-      )}
-      {me && <div className="my-1 h-px w-8 shrink-0 bg-outline-variant" />}
+    <nav className="flex h-full w-18 shrink-0 flex-col bg-surface-container-lowest">
       <div
-        data-drop-zone="servers"
-        data-drop-label="Remove from folder"
-        className="flex shrink-0 flex-col items-center gap-2"
+        ref={dragScope}
+        className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto pt-3 pb-2"
       >
-        {items.map((item, at) =>
-          item.kind === 'server' ? (
-            <ServerTile key={item.key} server={item.server} folder={null} at={at} />
-          ) : (
-            <FolderEntry key={item.key} folder={item.folder} servers={item.servers} at={at} />
-          )
+        {me && (
+          <button
+            title="Direct messages"
+            onClick={openLastDm}
+            className={`${tile} relative ${view?.kind === 'dm' ? 'bg-primary text-on-primary' : idle}`}
+          >
+            <MessageCircle size={22} />
+            {dmsUnread(useStore.getState()) && <UnreadDot />}
+          </button>
         )}
+        {me && <div className="my-1 h-px w-8 shrink-0 bg-outline-variant" />}
+        <div
+          data-drop-zone="servers"
+          data-drop-label="Remove from folder"
+          className="flex shrink-0 flex-col items-center gap-2"
+        >
+          {items.map((item, at) =>
+            item.kind === 'server' ? (
+              <ServerTile key={item.key} server={item.server} folder={null} at={at} />
+            ) : (
+              <FolderEntry key={item.key} folder={item.folder} servers={item.servers} at={at} />
+            )
+          )}
+        </div>
+        {me && serversMore && <Sentinel key={me.servers.length} onVisible={loadMoreServers} />}
+        <button
+          title="Add a server"
+          onClick={() => openDialog({ kind: 'add_server' })}
+          className={`${tile} bg-primary-container text-on-primary-container shadow-elevation-1 hover:bg-primary hover:text-on-primary`}
+        >
+          <Plus size={22} />
+        </button>
       </div>
-      {me && serversMore && <Sentinel key={me.servers.length} onVisible={loadMoreServers} />}
-      <button
-        title="Add a server"
-        onClick={() => openDialog({ kind: 'add_server' })}
-        className={`${tile} bg-primary-container text-on-primary-container shadow-elevation-1 hover:bg-primary hover:text-on-primary`}
-      >
-        <Plus size={22} />
-      </button>
-      <div className="mt-auto flex shrink-0 flex-col items-center gap-2 pt-2">
+      <div className="flex shrink-0 flex-col items-center gap-2 border-t border-outline-variant pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <ThemeToggle />
         <InstallButton compact />
         <button

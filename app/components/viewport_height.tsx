@@ -1,7 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react'
-import { LoaderCircle } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { ArrowDown, LoaderCircle, X } from 'lucide-react'
+import { useStore, type Focus } from '../lib/store'
 
 const editable = 'input, textarea, select, [contenteditable]'
 const KEYBOARD_MIN = 120
@@ -74,16 +75,125 @@ export function usePrependAnchor(ref: RefObject<HTMLElement | null>, firstId: nu
   }, [ref, firstId])
 }
 
-export function OlderLoading() {
+export function OlderLoading({ newer = false }: { newer?: boolean }) {
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
+    <div
+      className={`pointer-events-none absolute inset-x-0 z-10 flex justify-center ${newer ? 'bottom-2' : 'top-2'}`}
+    >
       <span
         role="status"
         className="flex items-center gap-1.5 rounded-full bg-surface-container-high px-3 py-1 text-xs text-on-surface-variant shadow-elevation-1"
       >
         <LoaderCircle size={14} className="animate-spin" />
-        Loading older messages
+        {newer ? 'Loading newer messages' : 'Loading older messages'}
       </span>
+    </div>
+  )
+}
+
+export const EDGE_MARGIN = 200
+
+export function EdgeSentinel({
+  root,
+  edge,
+  onVisible,
+}: {
+  root: RefObject<HTMLElement | null>
+  edge: 'top' | 'bottom'
+  onVisible: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const latest = useRef(onVisible)
+  useEffect(() => {
+    latest.current = onVisible
+  })
+  useEffect(() => {
+    const el = ref.current
+    const scroller = root.current
+    if (!el || !scroller) return
+    const margin = edge === 'top' ? `${EDGE_MARGIN}px 0px 0px 0px` : `0px 0px ${EDGE_MARGIN}px 0px`
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries.some(e => e.isIntersecting)) latest.current()
+      },
+      { root: scroller, rootMargin: margin }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [root, edge])
+  return <div ref={ref} aria-hidden className="h-px" />
+}
+
+export const scrollToMessage = (list: HTMLElement, id: number | null) => {
+  if (id === null) {
+    list.scrollTop = list.scrollHeight
+    return true
+  }
+  const rows = [...list.querySelectorAll<HTMLElement>('[data-mid]')]
+  const node = rows.find(r => Number(r.dataset.mid) >= id) ?? rows[rows.length - 1]
+  if (!node) return false
+  const box = list.getBoundingClientRect()
+  const at = node.getBoundingClientRect()
+  list.scrollTop += at.top - box.top - Math.max(0, (list.clientHeight - at.height) / 2)
+  return true
+}
+
+export function useFocusMessage(
+  list: RefObject<HTMLElement | null>,
+  key: string | null,
+  focus: Focus | undefined,
+  deps: unknown,
+  settle: () => void
+) {
+  const clearFocus = useStore(s => s.clearFocus)
+  const [flash, setFlash] = useState<number | null>(null)
+  const after = useRef(settle)
+  useEffect(() => {
+    after.current = settle
+  })
+  useLayoutEffect(() => {
+    const el = list.current
+    if (!el || !key || !focus) return
+    if (!scrollToMessage(el, focus.id)) return
+    clearFocus(key)
+    after.current()
+    if (focus.flash && focus.id !== null) setFlash(focus.id)
+  }, [list, key, focus, deps, clearFocus])
+  useEffect(() => {
+    if (flash === null) return
+    const t = setTimeout(() => setFlash(null), 2200)
+    return () => clearTimeout(t)
+  }, [flash])
+  return flash
+}
+
+export function UnreadBar({ onJump, onDismiss }: { onJump: () => void; onDismiss: () => void }) {
+  return (
+    <div className="absolute inset-x-0 top-0 z-10 flex items-center gap-2 bg-primary-container px-4 py-1.5 text-xs text-on-primary-container shadow-elevation-1">
+      <button onClick={onJump} className="min-w-0 flex-1 truncate text-left font-medium">
+        New messages above · Jump to first unread
+      </button>
+      <button
+        title="Mark as read"
+        onClick={onDismiss}
+        className="shrink-0 rounded-full p-1 hover:bg-on-primary-container/10"
+      >
+        <X size={14} />
+      </button>
+    </div>
+  )
+}
+
+export function PresentBar({ onJump }: { onJump: () => void }) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+      <button
+        onClick={onJump}
+        className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-on-primary shadow-elevation-2 hover:opacity-90"
+      >
+        <ArrowDown size={14} />
+        Jump to present
+      </button>
     </div>
   )
 }

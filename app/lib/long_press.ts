@@ -33,6 +33,7 @@ export type PressInput =
   | { kind: 'end'; now: number }
   | { kind: 'cancel'; now: number }
   | { kind: 'escape' }
+  | { kind: 'key' }
   | { kind: 'touch'; touches: number }
 
 export type DragSignal = 'start' | 'drop' | 'cancel' | null
@@ -126,6 +127,9 @@ export const pressStep = (press: Press, input: PressInput): [Press, PressOutput]
     case 'escape':
       if (phase !== 'lifted' && phase !== 'dragging') return [press, out()]
       return [{ ...press, phase: 'held' }, out({ drag: dropped(phase) })]
+    case 'key':
+      if (phase === 'held') return [{ ...press, phase: 'idle', guardUntil: 0 }, out()]
+      return phase === 'idle' ? [{ ...press, guardUntil: 0 }, out()] : [press, out()]
     case 'touch':
       if (input.touches === 1)
         return [

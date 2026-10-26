@@ -45,6 +45,42 @@ export const bumpFront = <T>(
   return [...rest.slice(0, at), item, ...rest.slice(at)]
 }
 
+export const keyed = <T>(
+  map: Record<string, T>,
+  key: string,
+  value: T | null | undefined
+): Record<string, T> => {
+  if (value === null || value === undefined) {
+    if (!(key in map)) return map
+    const next = { ...map }
+    delete next[key]
+    return next
+  }
+  return map[key] === value ? map : { ...map, [key]: value }
+}
+
+export const windowEdges = (
+  ids: number[],
+  at: number,
+  page: number
+): { older: boolean; newer: boolean } => {
+  const below = ids.filter(id => id < at).length
+  const half = Math.floor(page / 2)
+  return { older: below >= half, newer: ids.length - below >= page - half }
+}
+
+export const unreadMark = (
+  ids: number[],
+  anchor: number | undefined,
+  olderMore: boolean
+): { divider: number; above: boolean } => {
+  if (anchor === undefined || anchor <= 0) return { divider: -1, above: false }
+  const first = ids.findIndex(id => id > anchor)
+  if (first === -1) return { divider: -1, above: false }
+  if (first === 0 && olderMore && ids[0] !== anchor + 1) return { divider: -1, above: true }
+  return { divider: first, above: false }
+}
+
 const byId = (a: Message, b: Message) => a.id - b.id
 
 export const refreshTail = (

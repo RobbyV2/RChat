@@ -136,6 +136,17 @@ const guardClicks = () => {
     },
     { capture: true, passive: true }
   )
+  window.addEventListener(
+    'keydown',
+    () => {
+      if (pointerId === null) drive({ kind: 'key' })
+    },
+    { capture: true, passive: true }
+  )
+  window.addEventListener('blur', () => {
+    unwatchMouse()
+    drive({ kind: 'cancel', now: Date.now() })
+  })
 }
 
 const primary = (list: ReactTouchEvent['touches']) =>

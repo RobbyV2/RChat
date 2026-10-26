@@ -5,7 +5,7 @@ import { FileText, Hash, Search, X } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { dayEndTs, dayStartTs, type SearchArgs } from '../lib/search'
 import { UserAvatar } from './user_avatar'
-import { Sentinel, fieldCls } from './server_settings'
+import { Sentinel, fieldCls, useEscape } from './server_settings'
 import { avatarTriggerCls, fmtTime, nameTriggerCls } from './message_pane'
 import { profileTrigger } from './profile_card'
 
@@ -23,7 +23,7 @@ export default function SearchPanel() {
   const search = useStore(s => s.search)
   const searchRun = useStore(s => s.searchRun)
   const closePanel = useStore(s => s.closePanel)
-  const openServer = useStore(s => s.openServer)
+  const openResult = useStore(s => s.openResult)
   const [q, setQ] = useState('')
   const [from, setFrom] = useState('')
   const [channelId, setChannelId] = useState('')
@@ -48,6 +48,7 @@ export default function SearchPanel() {
     args.afterTs !== null
   const argsRef = useRef(args)
   argsRef.current = args
+  useEscape(closePanel, 'panel')
 
   useEffect(() => {
     if (!active) return
@@ -140,11 +141,7 @@ export default function SearchPanel() {
         {search.results.map(r => (
           <button
             key={r.message.id}
-            onClick={() => {
-              const { channel_id } = r.message
-              if (channel_id !== null) void openServer(r.server, channel_id)
-              closePanel()
-            }}
+            onClick={() => void openResult(r)}
             className="block w-full rounded-xl px-3 py-2 text-left hover:bg-surface-container-high"
           >
             <p className="flex min-w-0 items-center gap-1 text-xs text-on-surface-variant">

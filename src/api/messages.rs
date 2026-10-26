@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -12,7 +12,7 @@ use crate::api::admin::like_pattern;
 use crate::api::{
     ApiError, Authed, CallLog, Embed, LIST_MAX, LIST_PAGE, MESSAGE_MAX, MaybeAuthed, MediaRef,
     Message, UserRef, check_len, check_profanity, embeds, header_grants, media::MEDIA_TTL_SECS,
-    require_guest_ok, require_server_view, user_from, user_refs,
+    require_guest_ok, require_server_view, unique_capped, user_from, user_refs,
 };
 use crate::db::{
     ChannelAccess, ChannelKind, Db, MediaKind, Perm, User, channel_access, effective_perms,
@@ -23,10 +23,19 @@ use crate::ws::WsEvent;
 
 const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome";
 
-#[derive(Deserialize, IntoParams)]
+#[derive(Clone, Copy, Deserialize, IntoParams)]
 pub struct PageQuery {
     before: Option<i64>,
+    after: Option<i64>,
+    around: Option<i64>,
     limit: Option<i64>,
+}
+
+#[derive(Clone, Copy)]
+enum Span {
+    Before,
+    From,
+    After,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -46,7 +55,8 @@ pub struct P2pAttachment {
     expires_in_seconds: Option<i64>,
 }
 
-#[derive(Deserialize, IntoParams)]
+#[derive(Default, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct SearchQuery {
     q: Option<String>,
     server: Option<String>,
@@ -58,7 +68,37 @@ pub struct SearchQuery {
     before_ts: Option<i64>,
     after_ts: Option<i64>,
     offset: Option<i64>,
-    servers: Option<String>,
+    servers: Option<Vec<String>>,
+}
+
+impl SearchQuery {
+    fn parse(raw: &str) -> Result<SearchQuery, ApiError> {
+        let int = |v: &str| {
+            v.parse::<i64>()
+                .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Invalid number".to_string()))
+        };
+        let mut sq = SearchQuery::default();
+        for (key, value) in url::form_urlencoded::parse(raw.as_bytes()) {
+            match key.as_ref() {
+                "q" => sq.q = Some(value.into_owned()),
+                "server" => sq.server = Some(value.into_owned()),
+                "channel_id" => sq.channel_id = Some(int(&value)?),
+                "from" => sq.from = Some(value.into_owned()),
+                "has" => sq.has = Some(value.into_owned()),
+                "before" => sq.before = Some(int(&value)?),
+                "after" => sq.after = Some(int(&value)?),
+                "before_ts" => sq.before_ts = Some(int(&value)?),
+                "after_ts" => sq.after_ts = Some(int(&value)?),
+                "offset" => sq.offset = Some(int(&value)?),
+                "servers" => sq
+                    .servers
+                    .get_or_insert_with(Vec::new)
+                    .push(value.into_owned()),
+                _ => {}
+            }
+        }
+        Ok(sq)
+    }
 }
 
 #[derive(Serialize, ToSchema)]
@@ -197,6 +237,37 @@ async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), ApiError> {
     Ok(())
 }
 
+async fn slice(
+    db: &Db,
+    cond: &str,
+    key: i64,
+    span: Span,
+    edge: i64,
+    min_ts: Option<i64>,
+    limit: i64,
+) -> Result<Vec<Message>, ApiError> {
+    let (bound, order) = match span {
+        Span::Before => ("m.id < $2", "DESC"),
+        Span::From => ("m.id >= $2", "ASC"),
+        Span::After => ("m.id > $2", "ASC"),
+    };
+    let sql = format!(
+        "SELECT {COLS} FROM messages m WHERE {cond} AND {bound} AND m.created_at >= $3 ORDER BY m.id {order} LIMIT $4"
+    );
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(key)
+        .bind(edge)
+        .bind(min_ts.unwrap_or(i64::MIN))
+        .bind(limit)
+        .fetch_all(db)
+        .await?;
+    let mut msgs = rows_messages(db, &rows).await?;
+    if let Span::Before = span {
+        msgs.reverse();
+    }
+    Ok(msgs)
+}
+
 async fn page(
     db: &Db,
     cond: &str,
@@ -204,18 +275,29 @@ async fn page(
     q: &PageQuery,
     min_ts: Option<i64>,
 ) -> Result<Vec<Message>, ApiError> {
-    let sql = format!(
-        "SELECT {COLS} FROM messages m WHERE {cond} AND m.id < $2 AND m.created_at >= $3 ORDER BY m.id DESC LIMIT $4"
-    );
-    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(key)
-        .bind(q.before.unwrap_or(i64::MAX))
-        .bind(min_ts.unwrap_or(i64::MIN))
-        .bind(q.limit.unwrap_or(LIST_PAGE).clamp(1, LIST_MAX))
-        .fetch_all(db)
-        .await?;
-    let mut msgs = rows_messages(db, &rows).await?;
-    msgs.reverse();
+    let PageQuery {
+        before,
+        after,
+        around,
+        limit,
+    } = *q;
+    let limit = limit.unwrap_or(LIST_PAGE).clamp(1, LIST_MAX);
+    let mut msgs = match (around, after) {
+        (Some(id), _) => {
+            let older = limit / 2;
+            let mut out = match older {
+                0 => Vec::new(),
+                n => slice(db, cond, key, Span::Before, id, min_ts, n).await?,
+            };
+            out.extend(slice(db, cond, key, Span::From, id, min_ts, limit - older).await?);
+            out
+        }
+        (None, Some(id)) => slice(db, cond, key, Span::After, id, min_ts, limit).await?,
+        (None, None) => {
+            let edge = before.unwrap_or(i64::MAX);
+            slice(db, cond, key, Span::Before, edge, min_ts, limit).await?
+        }
+    };
     attach_embeds(db, &mut msgs).await?;
     Ok(msgs)
 }
@@ -231,6 +313,8 @@ pub(crate) async fn recent_channel_messages(
         channel_id,
         &PageQuery {
             before: None,
+            after: None,
+            around: None,
             limit: Some(limit),
         },
         None,
@@ -542,7 +626,7 @@ async fn send_gate(db: &Db, server: &str, channel_id: i64, user: &User) -> Resul
     }
 }
 
-#[utoipa::path(get, path = "/api/channels/{id}/messages", params(("id" = i64, Path), PageQuery), responses((status = 200, description = "Up to `limit` (default 50) top-level messages before `before`, oldest first; without read-history access only messages since joining are returned", body = Vec<Message>)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/channels/{id}/messages", params(("id" = i64, Path), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) top-level messages, oldest first: the newest ones before `before` (or the latest), or with `after` the oldest ones after that id, or with `around` a window of `limit / 2` messages before that id followed by the message itself and newer ones (`around` wins over `after`, which wins over `before`); without read-history access only messages since joining are returned", body = Vec<Message>)), security((), ("bearer" = [])))]
 pub(crate) async fn channel_messages(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -596,7 +680,7 @@ pub(crate) async fn send_channel_message(
     Ok(Json(message))
 }
 
-#[utoipa::path(get, path = "/api/messages/{id}/thread", params(("id" = i64, Path), PageQuery), responses((status = 200, description = "Up to `limit` (default 50) thread replies before `before`, oldest first", body = Vec<Message>)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/messages/{id}/thread", params(("id" = i64, Path), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) thread replies, oldest first, paged with `before`, `after` or `around` like channel messages", body = Vec<Message>)), security((), ("bearer" = [])))]
 pub(crate) async fn thread_messages(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -645,7 +729,7 @@ pub(crate) async fn send_thread_message(
     Ok(Json(message))
 }
 
-#[utoipa::path(get, path = "/api/dms/{id}/messages", params(("id" = i64, Path), PageQuery), responses((status = 200, description = "Up to `limit` (default 50) DM messages before `before`, oldest first", body = Vec<Message>)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/dms/{id}/messages", params(("id" = i64, Path), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) DM messages, oldest first, paged with `before`, `after` or `around` like channel messages", body = Vec<Message>)), security(("bearer" = [])))]
 pub(crate) async fn dm_messages(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -811,17 +895,29 @@ fn fts_phrase(text: &str) -> String {
     format!("\"{}\"", text.replace('"', "\"\""))
 }
 
-#[utoipa::path(get, path = "/api/search", params(SearchQuery), responses((status = 200, description = "Up to 25 messages from channels the caller can view whose content contains `q` (case-insensitive), newest first; `before`/`after` bound the message id (pass the oldest returned id as `before` for the next page) and `before_ts`/`after_ts` bound `created_at` (exclusive, unix seconds)", body = Vec<SearchResult>)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/search", params(SearchQuery), responses((status = 200, description = "Up to 25 messages from channels the caller can view whose content contains `q` (case-insensitive), newest first; `before`/`after` bound the message id (pass the oldest returned id as `before` for the next page) and `before_ts`/`after_ts` bound `created_at` (exclusive, unix seconds). Guests pass the servers to search as repeated `servers` params (`servers=a&servers=b`, max 100)", body = Vec<SearchResult>), (status = 400, description = "Invalid number, or text containing a NUL character")), security((), ("bearer" = [])))]
 pub(crate) async fn search(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
     headers: HeaderMap,
-    Query(sq): Query<SearchQuery>,
+    RawQuery(raw): RawQuery,
 ) -> Result<Json<Vec<SearchResult>>, ApiError> {
-    require_guest_ok(&state.db, user.as_ref()).await?;
-    let (sql, binds) = match search_sql(&state.db, user.as_ref(), &headers, sq).await? {
+    let sq = SearchQuery::parse(raw.as_deref().unwrap_or(""))?;
+    Ok(Json(
+        search_with(&state, user.as_ref(), &headers, sq).await?,
+    ))
+}
+
+async fn search_with(
+    state: &AppState,
+    user: Option<&User>,
+    headers: &HeaderMap,
+    sq: SearchQuery,
+) -> Result<Vec<SearchResult>, ApiError> {
+    require_guest_ok(&state.db, user).await?;
+    let (sql, binds) = match search_sql(&state.db, user, headers, sq).await? {
         Some(built) => built,
-        None => return Ok(Json(Vec::new())),
+        None => return Ok(Vec::new()),
     };
     let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), &binds)
         .fetch_all(&state.db)
@@ -832,7 +928,7 @@ pub(crate) async fn search(
         ctx.push((r.try_get(21)?, r.try_get(22)?));
     }
     attach_embeds(&state.db, &mut msgs).await?;
-    let out = msgs
+    Ok(msgs
         .into_iter()
         .zip(ctx)
         .map(|(message, (server, channel_name))| SearchResult {
@@ -840,8 +936,7 @@ pub(crate) async fn search(
             server,
             channel_name,
         })
-        .collect();
-    Ok(Json(out))
+        .collect())
 }
 
 fn bind_all<'q>(
@@ -876,6 +971,17 @@ async fn search_sql(
         offset,
         servers,
     } = sq;
+    let texts = [&q, &server, &from, &has];
+    let nul = texts
+        .iter()
+        .any(|t| t.as_deref().is_some_and(|v| v.contains('\0')))
+        || servers.iter().flatten().any(|v| v.contains('\0'));
+    if nul {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Search text cannot contain NUL characters".to_string(),
+        ));
+    }
     let mut conds: Vec<String> = Vec::new();
     let mut binds: Vec<Bind> = Vec::new();
     match user {
@@ -932,13 +1038,12 @@ async fn search_sql(
                     ));
                 }
             }
-            let names: Vec<String> = servers
-                .as_deref()
-                .unwrap_or("")
-                .split(',')
-                .map(|s| s.trim().to_lowercase())
-                .filter(|s| !s.is_empty())
-                .collect();
+            let names = unique_capped(
+                servers
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|s| s.trim().to_lowercase()),
+            );
             if names.is_empty() {
                 return Ok(None);
             }
@@ -951,7 +1056,7 @@ async fn search_sql(
         }
     }
     if let Some(text) = q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        match text.chars().count() >= FTS_MIN_CHARS && !text.contains('\0') && has_fts(db).await {
+        match text.chars().count() >= FTS_MIN_CHARS && has_fts(db) {
             true => {
                 binds.push(Bind::S(fts_phrase(text)));
                 binds.push(Bind::I(before.unwrap_or(i64::MAX)));
@@ -1074,7 +1179,7 @@ async fn restricted_access(db: &Db, user: &User) -> Result<HashMap<i64, ChannelA
     Ok(out)
 }
 
-#[utoipa::path(get, path = "/api/unreads", responses((status = 200, description = "Latest top-level and last-read message ids for each text channel the caller can view (with its server) and each DM, skipping ones without messages", body = Unreads)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/unreads", responses((status = 200, description = "Latest top-level message id from someone else and the last-read id for each text channel the caller can view (with its server) and each DM, skipping ones with no messages from others", body = Unreads)), security(("bearer" = [])))]
 pub(crate) async fn unreads(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1082,13 +1187,13 @@ pub(crate) async fn unreads(
     let db = &state.db;
     let restricted = restricted_access(db, &user).await?;
     let channel_rows = sqlx::query(
-        "SELECT x.id, x.server, x.latest, (SELECT lm.created_at FROM messages lm WHERE lm.id = x.latest), x.last_read, x.joined_at FROM (SELECT c.id, c.server, (SELECT MAX(m.id) FROM messages m WHERE m.channel_id = c.id AND m.thread_root_id IS NULL) AS latest, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'c' || c.id), 0) AS last_read, mem.joined_at FROM channels c JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text') x",
+        "SELECT x.id, x.server, x.latest, (SELECT lm.created_at FROM messages lm WHERE lm.id = x.latest), x.last_read, x.joined_at FROM (SELECT c.id, c.server, (SELECT MAX(m.id) FROM messages m WHERE m.channel_id = c.id AND m.thread_root_id IS NULL AND m.author <> $1) AS latest, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'c' || c.id), 0) AS last_read, mem.joined_at FROM channels c JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text') x",
     )
     .bind(&user.username)
     .fetch_all(db)
     .await?;
     let dm_rows = sqlx::query(
-        "SELECT d.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = d.id), COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) FROM dms d WHERE d.user_a = $1 OR d.user_b = $1",
+        "SELECT d.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = d.id AND m.author <> $1), COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) FROM dms d WHERE d.user_a = $1 OR d.user_b = $1",
     )
     .bind(&user.username)
     .fetch_all(db)
@@ -1203,6 +1308,8 @@ mod tests {
             Path(cid),
             Query(PageQuery {
                 before: None,
+                after: None,
+                around: None,
                 limit: None,
             }),
         )
@@ -1370,15 +1477,14 @@ mod tests {
         assert!(matches!(bob, Err(ApiError(StatusCode::FORBIDDEN, _))));
         let guest = list(&state, cid, None).await;
         assert!(matches!(guest, Err(ApiError(StatusCode::FORBIDDEN, _))));
-        let found = search(
-            State(state.clone()),
-            MaybeAuthed(Some(mem_user("alice", false))),
-            HeaderMap::new(),
-            Query(query(None)),
+        let found = search_with(
+            &state,
+            Some(&mem_user("alice", false)),
+            &HeaderMap::new(),
+            query(None),
         )
         .await
-        .expect("search")
-        .0;
+        .expect("search");
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].message.content, "after");
         done(state, path).await;
@@ -1475,7 +1581,12 @@ mod tests {
                     MaybeAuthed(None),
                     HeaderMap::new(),
                     Path(cid),
-                    Query(PageQuery { before, limit }),
+                    Query(PageQuery {
+                        before,
+                        after: None,
+                        around: None,
+                        limit,
+                    }),
                 )
                 .await
                 .expect("page")
@@ -1506,6 +1617,8 @@ mod tests {
             Path(root),
             Query(PageQuery {
                 before: None,
+                after: None,
+                around: None,
                 limit: None,
             }),
         )
@@ -1580,7 +1693,7 @@ mod tests {
             .await
             .expect("no history perm");
         let at = |when: i64| {
-            sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'bob', 'x', $2) RETURNING id")
+            sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'eve', 'x', $2) RETURNING id")
                 .bind(nohist)
                 .bind(when)
         };
@@ -1590,11 +1703,11 @@ mod tests {
             .expect("old message")
             .try_get(0)
             .expect("old id");
-        let g = insert(db, Some(general), None, None, "bob").await;
-        let reply = insert(db, Some(general), None, Some(g), "bob").await;
-        let p = insert(db, Some(private), None, None, "bob").await;
-        let r = insert(db, Some(roled), None, None, "bob").await;
-        insert(db, Some(voice), None, None, "bob").await;
+        let g = insert(db, Some(general), None, None, "eve").await;
+        let reply = insert(db, Some(general), None, Some(g), "eve").await;
+        let p = insert(db, Some(private), None, None, "eve").await;
+        let r = insert(db, Some(roled), None, None, "eve").await;
+        insert(db, Some(voice), None, None, "eve").await;
         let dm: i64 =
             sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
                 .fetch_one(db)
@@ -1625,7 +1738,8 @@ mod tests {
         let bob = unread_map(&state, "bob").await;
         assert_eq!(bob[&format!("c{private}")], (rchat.clone(), p, 0));
         assert_eq!(bob[&format!("c{roled}")], (rchat.clone(), r, 0));
-        assert_eq!(bob.len(), 4);
+        assert!(!bob.contains_key(&format!("d{dm}")));
+        assert_eq!(bob.len(), 3);
         let moderator = unread_map(&state, "mod").await;
         assert!(moderator.contains_key(&format!("c{private}")));
         assert!(moderator.contains_key(&format!("c{roled}")));
@@ -1688,10 +1802,9 @@ mod tests {
         headers: HeaderMap,
         sq: SearchQuery,
     ) -> Vec<i64> {
-        search(State(state.clone()), MaybeAuthed(user), headers, Query(sq))
+        search_with(state, user.as_ref(), &headers, sq)
             .await
             .expect("search")
-            .0
             .iter()
             .map(|r| r.message.id)
             .collect()
@@ -1706,6 +1819,7 @@ mod tests {
         ] {
             sqlx::query(stmt).execute(db).await.expect("drop fts");
         }
+        crate::db::set_fts(db, false);
     }
 
     async fn fts_ok(db: &Db) {
@@ -1767,7 +1881,7 @@ mod tests {
             ("zzz", vec![]),
         ];
         for fts in [true, false] {
-            assert_eq!(has_fts(db).await, fts);
+            assert_eq!(has_fts(db), fts);
             for (q, want) in &cases {
                 let got = found(
                     &state,
@@ -1778,13 +1892,14 @@ mod tests {
                 .await;
                 assert_eq!(&got, want, "q={q:?} fts={fts}");
             }
-            found(
+            let nul = search_with(
                 &state,
-                Some(mem_user("alice", false)),
-                HeaderMap::new(),
+                Some(&mem_user("alice", false)),
+                &HeaderMap::new(),
                 query(Some("hel\0lo")),
             )
             .await;
+            assert!(matches!(nul, Err(ApiError(StatusCode::BAD_REQUEST, _))));
             if fts {
                 drop_fts(db).await;
             }
@@ -1797,7 +1912,7 @@ mod tests {
         let (state, path) = temp_state("search_vis").await;
         let db = &state.db;
         let t = now();
-        for (name, password) in [("locked", Some("x")), ("other", None)] {
+        for (name, password) in [("locked", Some("x")), ("other", None), ("comma, inc", None)] {
             sqlx::query("INSERT INTO servers(name, display_name, password_hash, created_at) VALUES($1, $1, $2, 0)")
                 .bind(name)
                 .bind(password)
@@ -1810,7 +1925,11 @@ mod tests {
         let roled = add_channel(db, "roled", "text").await;
         let history = add_channel(db, "history", "text").await;
         let mut ids = HashMap::new();
-        for (server, name) in [("locked", "vault"), ("other", "lobby")] {
+        for (server, name) in [
+            ("locked", "vault"),
+            ("other", "lobby"),
+            ("comma, inc", "hall"),
+        ] {
             let cid: i64 = sqlx::query(
                 "INSERT INTO channels(server, name, created_at) VALUES($1, $2, 0) RETURNING id",
             )
@@ -1886,9 +2005,9 @@ mod tests {
             want
         };
         for q in [Some("needle"), Some("ee"), None] {
-            let guest = |servers: Option<&str>| {
+            let guest = |servers: Option<&[&str]>| {
                 let mut sq = query(q);
-                sq.servers = servers.map(str::to_string);
+                sq.servers = servers.map(|list| list.iter().map(|n| n.to_string()).collect());
                 sq
             };
             let cases: Vec<(Option<User>, HeaderMap, SearchQuery, Vec<i64>)> = vec![
@@ -1919,17 +2038,29 @@ mod tests {
                 (
                     None,
                     HeaderMap::new(),
-                    guest(Some("rchat,locked,other")),
+                    guest(Some(&["rchat", "locked", "other"])),
                     expect(&["general", "lobby"]),
                 ),
                 (
                     None,
                     grant("g1"),
-                    guest(Some("rchat, LOCKED")),
+                    guest(Some(&["rchat", " LOCKED"])),
                     expect(&["general", "vault"]),
                 ),
-                (None, grant("nope"), guest(Some("locked")), Vec::new()),
+                (None, grant("nope"), guest(Some(&["locked"])), Vec::new()),
                 (None, grant("g1"), guest(None), Vec::new()),
+                (
+                    None,
+                    HeaderMap::new(),
+                    guest(Some(&["comma, inc"])),
+                    expect(&["hall"]),
+                ),
+                (
+                    None,
+                    HeaderMap::new(),
+                    guest(Some(&["comma", " inc"])),
+                    Vec::new(),
+                ),
             ];
             for (n, (user, headers, sq, want)) in cases.into_iter().enumerate() {
                 let got = found(&state, user, headers, sq).await;
@@ -2158,7 +2289,7 @@ mod tests {
         state.db.close().await;
         for _ in 0..2 {
             let state = reopened(crate::db::open(path.to_str()).await.expect("reopen"));
-            assert!(has_fts(&state.db).await);
+            assert!(has_fts(&state.db));
             assert_eq!(fts_hits(&state.db, "needle").await, 10);
             fts_ok(&state.db).await;
             let got = found(&state, alice(), HeaderMap::new(), query(Some("needle"))).await;
@@ -2166,6 +2297,221 @@ mod tests {
             state.db.close().await;
         }
         let state = reopened(crate::db::open(path.to_str()).await.expect("reopen"));
+        done(state, path).await;
+    }
+
+    fn around(before: Option<i64>, after: Option<i64>, at: Option<i64>, limit: i64) -> PageQuery {
+        PageQuery {
+            before,
+            after,
+            around: at,
+            limit: Some(limit),
+        }
+    }
+
+    #[tokio::test]
+    async fn pages_around_and_after() {
+        let (state, path) = temp_state("page_around").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        let mut ids = Vec::new();
+        for _ in 0..120 {
+            ids.push(insert(db, Some(cid), None, None, "alice").await);
+        }
+        let root = ids[10];
+        let mut replies = Vec::new();
+        for _ in 0..30 {
+            replies.push(insert(db, Some(cid), None, Some(root), "bob").await);
+        }
+        let channel = |q: PageQuery| {
+            let state = state.clone();
+            async move {
+                channel_messages(
+                    State(state),
+                    MaybeAuthed(None),
+                    HeaderMap::new(),
+                    Path(cid),
+                    Query(q),
+                )
+                .await
+                .expect("page")
+                .0
+                .iter()
+                .map(|m| m.id)
+                .collect::<Vec<i64>>()
+            }
+        };
+        assert_eq!(
+            channel(around(None, None, Some(ids[60]), 50)).await,
+            ids[35..85]
+        );
+        assert_eq!(
+            channel(around(None, None, Some(ids[3]), 50)).await,
+            ids[0..28]
+        );
+        assert_eq!(
+            channel(around(None, None, Some(ids[110]), 50)).await,
+            ids[85..120]
+        );
+        assert_eq!(
+            channel(around(None, None, Some(ids[60]), 1)).await,
+            ids[60..61]
+        );
+        assert_eq!(
+            channel(around(None, Some(ids[20]), None, 10)).await,
+            ids[21..31]
+        );
+        assert_eq!(
+            channel(around(None, Some(ids[115]), None, 50)).await,
+            ids[116..120]
+        );
+        assert_eq!(
+            channel(around(Some(ids[5]), Some(ids[20]), Some(ids[60]), 4)).await,
+            ids[58..62]
+        );
+        assert_eq!(
+            channel(around(Some(ids[50]), Some(ids[20]), None, 5)).await,
+            ids[21..26]
+        );
+        let thread = thread_messages(
+            State(state.clone()),
+            MaybeAuthed(None),
+            HeaderMap::new(),
+            Path(root),
+            Query(around(None, None, Some(replies[15]), 10)),
+        )
+        .await
+        .expect("thread")
+        .0
+        .iter()
+        .map(|m| m.id)
+        .collect::<Vec<i64>>();
+        assert_eq!(thread, replies[10..20]);
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("dm id");
+        let mut dm_ids = Vec::new();
+        for _ in 0..20 {
+            dm_ids.push(insert(db, None, Some(dm), None, "bob").await);
+        }
+        let dm_page = dm_messages(
+            State(state.clone()),
+            Path(dm),
+            Authed(mem_user("alice", false)),
+            Query(around(None, None, Some(dm_ids[2]), 10)),
+        )
+        .await
+        .expect("dm page")
+        .0
+        .iter()
+        .map(|m| m.id)
+        .collect::<Vec<i64>>();
+        assert_eq!(dm_page, dm_ids[0..7]);
+        let joined = now() - 100;
+        add_member(db, "rchat", "late", 0, 0, joined).await;
+        sqlx::query("UPDATE messages SET created_at = $1 WHERE channel_id = $2 AND id < $3")
+            .bind(joined - 10)
+            .bind(cid)
+            .bind(ids[60])
+            .execute(db)
+            .await
+            .expect("age messages");
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:late', 1, 1, 0)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("no history perm");
+        let gated = channel_messages(
+            State(state.clone()),
+            MaybeAuthed(Some(mem_user("late", false))),
+            HeaderMap::new(),
+            Path(cid),
+            Query(around(None, None, Some(ids[62]), 50)),
+        )
+        .await
+        .expect("gated page")
+        .0
+        .iter()
+        .map(|m| m.id)
+        .collect::<Vec<i64>>();
+        assert_eq!(gated, ids[60..87]);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn unreads_skip_own_messages() {
+        let (state, path) = temp_state("unread_own").await;
+        let db = &state.db;
+        let general = general_id(db).await;
+        let t = now();
+        add_member(db, "rchat", "alice", 0, 0, t).await;
+        add_member(db, "rchat", "bob", 0, 0, t).await;
+        let theirs = insert(db, Some(general), None, None, "bob").await;
+        let mine = insert(db, Some(general), None, None, "alice").await;
+        assert!(mine > theirs);
+        let only_mine = add_channel(db, "mine", "text").await;
+        insert(db, Some(only_mine), None, None, "alice").await;
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("dm id");
+        let sent = insert(db, None, Some(dm), None, "alice").await;
+        let rchat = Some("rchat".to_string());
+        let alice = unread_map(&state, "alice").await;
+        assert_eq!(alice[&format!("c{general}")], (rchat.clone(), theirs, 0));
+        assert!(!alice.contains_key(&format!("c{only_mine}")));
+        assert!(!alice.contains_key(&format!("d{dm}")));
+        let bob = unread_map(&state, "bob").await;
+        assert_eq!(bob[&format!("c{general}")], (rchat.clone(), mine, 0));
+        assert_eq!(bob[&format!("d{dm}")], (None, sent, 0));
+        let reply = insert(db, None, Some(dm), None, "bob").await;
+        let alice = unread_map(&state, "alice").await;
+        assert_eq!(alice[&format!("d{dm}")], (None, reply, 0));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn search_query_parsing() {
+        let sq = SearchQuery::parse("q=hi&servers=a%2Cb&servers=c&channel_id=4&unknown=1")
+            .expect("parse");
+        assert_eq!(sq.q.as_deref(), Some("hi"));
+        assert_eq!(sq.channel_id, Some(4));
+        assert_eq!(sq.servers, Some(vec!["a,b".to_string(), "c".to_string()]));
+        assert!(SearchQuery::parse("").expect("empty").servers.is_none());
+        assert!(matches!(
+            SearchQuery::parse("before=x"),
+            Err(ApiError(StatusCode::BAD_REQUEST, _))
+        ));
+        let (state, path) = temp_state("search_parse").await;
+        add_member(&state.db, "rchat", "alice", 0, 0, 0).await;
+        for raw in ["q=a%00b", "from=a%00", "servers=rch%00at", "server=x%00"] {
+            let got = search(
+                State(state.clone()),
+                MaybeAuthed(Some(mem_user("alice", false))),
+                HeaderMap::new(),
+                RawQuery(Some(raw.to_string())),
+            )
+            .await;
+            assert!(
+                matches!(got, Err(ApiError(StatusCode::BAD_REQUEST, _))),
+                "{raw}"
+            );
+        }
+        let ok = search(
+            State(state.clone()),
+            MaybeAuthed(Some(mem_user("alice", false))),
+            HeaderMap::new(),
+            RawQuery(Some("q=hello".to_string())),
+        )
+        .await;
+        assert!(ok.is_ok());
         done(state, path).await;
     }
 }

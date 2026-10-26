@@ -9,9 +9,11 @@ import {
   appendUnique,
   bumpFront,
   createPager,
+  keyed,
   mergeHead,
   refreshTail,
   unreadServers,
+  windowEdges,
   type OlderState,
   type ReadMark,
 } from './lists'
@@ -55,6 +57,7 @@ import {
   type InviteEntry,
   type OpenInvite,
 } from './invite'
+import { clearProfiles } from './profile'
 import { ALL_PERMS } from './types'
 import type {
   AdminOverview,
@@ -87,6 +90,8 @@ export type View =
 
 export type Nav = 'push' | 'replace' | 'none'
 
+export type PathTarget = View | { kind: 'server'; server: string }
+
 export const viewPath = (view: View | null) => {
   if (view === null) return '/'
   return view.kind === 'channel'
@@ -94,12 +99,15 @@ export const viewPath = (view: View | null) => {
     : `/dm/${view.dmId}/`
 }
 
-export const parsePath = (pathname: string): View | null => {
-  const channel = pathname.match(/^\/s\/([^/]+)\/(\d+)\/?$/)
+export const parsePath = (pathname: string): PathTarget | null => {
+  const channel = pathname.match(/^\/s\/([^/]+)(?:\/(\d+))?\/?$/)
   if (channel) {
     const [, raw, id] = channel
     try {
-      return { kind: 'channel', server: decodeURIComponent(raw), channelId: Number(id) }
+      const server = decodeURIComponent(raw)
+      return id === undefined
+        ? { kind: 'server', server }
+        : { kind: 'channel', server, channelId: Number(id) }
     } catch {
       return null
     }
@@ -130,7 +138,6 @@ export interface ConfirmRequest {
 export type ActiveDialog =
   | { kind: 'add_server'; join?: string }
   | { kind: 'server_settings'; server: string }
-  | ({ kind: 'confirm' } & ConfirmRequest)
   | { kind: 'admin_panel' }
   | { kind: 'ban_confirm'; username: string }
   | { kind: 'delete_user_confirm'; username: string }
@@ -138,6 +145,11 @@ export type ActiveDialog =
   | { kind: 'rename_folder'; id: string }
 
 export type Panel = { kind: 'thread'; root: Message } | { kind: 'search' }
+
+export interface Focus {
+  id: number | null
+  flash: boolean
+}
 
 export interface ProfileTarget {
   user: UserRef
@@ -152,6 +164,7 @@ export interface PendingUpload {
   file: File
   spoiler: boolean
   mode: UploadMode
+  scope: string
 }
 
 export type OutgoingStatus = 'queued' | 'sending' | 'failed'
@@ -214,6 +227,7 @@ const LS = {
   guest: 'rchat_guest',
   guestServers: 'rchat_guest_servers',
   guestGrants: 'rchat_guest_grants',
+  guestNames: 'rchat_guest_names',
   theme: 'rchat_theme',
   streamer: 'rchat_streamer',
   lastDm: 'rchat_last_dm',
@@ -225,6 +239,26 @@ export const errorText = (e: unknown) => (e instanceof Error ? e.message : Strin
 
 export const viewKey = (view: View) =>
   view.kind === 'channel' ? `c${view.channelId}` : `d${view.dmId}`
+
+export const threadKey = (rootId: number) => `t${rootId}`
+
+const writeLocal = (key: string, value: string | null) => {
+  try {
+    if (value === null) localStorage.removeItem(key)
+    else localStorage.setItem(key, value)
+  } catch (e) {
+    console.warn('localStorage write failed', key, e)
+  }
+}
+
+const readJson = <T>(key: string, fallback: T): T => {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? (JSON.parse(raw) as T) : fallback
+  } catch {
+    return fallback
+  }
+}
 
 const byId = (a: Message, b: Message) => a.id - b.id
 const dmKey = (d: DmSummary) => d.id
@@ -263,6 +297,7 @@ interface RChatState {
   guest: boolean
   guestServers: string[]
   guestGrants: Record<string, string>
+  guestNames: Record<string, string>
   servers: Record<string, ServerDetail>
   members: Record<string, Paged<Member>>
   memberInfo: Record<string, Record<string, Member | null>>
@@ -283,6 +318,8 @@ interface RChatState {
   invite: OpenInvite | null
   messages: Record<string, Message[]>
   older: Record<string, OlderState>
+  newer: Record<string, OlderState>
+  focus: Record<string, Focus>
   outbox: Record<string, Outgoing[]>
   reads: Record<string, ReadMark>
   unreadAnchor: Record<string, number>
@@ -295,9 +332,9 @@ interface RChatState {
   contextMenu: ContextMenuState | null
   profile: ProfileTarget | null
   activeDialog: ActiveDialog | null
+  confirm: ConfirmRequest | null
   panel: Panel | null
-  pending: PendingUpload | null
-  threadPending: PendingUpload | null
+  pending: Record<string, PendingUpload>
   notices: Notice[]
   drafts: Record<string, string>
   search: SearchState
@@ -320,9 +357,9 @@ interface RChatState {
   logout: () => void
   enterGuest: () => Promise<void>
   guestJoinServer: (name: string, password?: string, nav?: Nav) => Promise<void>
-  openServer: (name: string, channelId?: number, nav?: Nav) => Promise<void>
-  openChannel: (server: string, channelId: number, nav?: Nav) => Promise<void>
-  openDm: (dmId: number, nav?: Nav) => Promise<void>
+  openServer: (name: string, channelId?: number, nav?: Nav, at?: number) => Promise<void>
+  openChannel: (server: string, channelId: number, nav?: Nav, at?: number) => Promise<void>
+  openDm: (dmId: number, nav?: Nav, at?: number) => Promise<void>
   openLastDm: () => void
   openInvite: (server: string, password?: string | null) => void
   closeInvite: () => void
@@ -353,13 +390,21 @@ interface RChatState {
   retryOutgoing: (key: string, tempId: number) => void
   cancelOutgoing: (key: string, tempId: number) => void
   loadOlder: () => Promise<void>
-  uploadFile: (file: File | null, thread?: boolean) => void
-  toggleSpoiler: (thread?: boolean) => void
-  toggleUploadMode: (thread?: boolean) => void
-  openThread: (root: Message) => Promise<void>
+  loadNewer: () => Promise<void>
+  jumpTo: (key: string, id: number, flash?: boolean) => Promise<void>
+  jumpToUnread: () => Promise<void>
+  jumpToPresent: (key: string) => Promise<void>
+  dismissUnread: (key: string) => void
+  clearFocus: (key: string) => void
+  openResult: (result: SearchResult) => Promise<void>
+  uploadFile: (key: string, file: File | null) => void
+  toggleSpoiler: (key: string) => void
+  toggleUploadMode: (key: string) => void
+  openThread: (root: Message, at?: number) => Promise<void>
   openSearch: () => void
   closePanel: () => void
   loadOlderThread: () => Promise<void>
+  loadNewerThread: () => Promise<void>
   sendThreadMessage: (content: string, p2pExpiresIn?: number | null) => void
   searchRun: (args: SearchArgs, reset: boolean) => Promise<void>
   dismissNotice: (id: number) => void
@@ -430,15 +475,23 @@ interface RChatState {
   openDialog: (dialog: ActiveDialog) => void
   closeDialog: () => void
   askConfirm: (req: ConfirmRequest) => void
+  closeConfirm: () => void
   setError: (message: string | null) => void
 }
 
-export const memberOf = (s: RChatState, server: string, username: string): Member | undefined => {
+export const memberState = (
+  s: Pick<RChatState, 'members' | 'memberInfo'>,
+  server: string,
+  username: string
+): Member | null | undefined => {
   const listed = s.members[server]?.list.find(m => m.username === username)
   if (listed) return listed
   const known = s.memberInfo[server]
-  return known && Object.hasOwn(known, username) ? (known[username] ?? undefined) : undefined
+  return known && Object.hasOwn(known, username) ? known[username] : undefined
 }
+
+export const memberOf = (s: RChatState, server: string, username: string): Member | undefined =>
+  memberState(s, server, username) ?? undefined
 
 export const serverAdminPerms = (s: RChatState, server: string): number => {
   const { me } = s
@@ -470,14 +523,14 @@ export interface RailServer {
   creator: string | null
 }
 
-type RailSource = Pick<RChatState, 'me' | 'guestServers' | 'servers'>
+type RailSource = Pick<RChatState, 'me' | 'guestServers' | 'guestNames' | 'servers'>
 
 export const railServers = (s: RailSource): RailServer[] =>
   s.me
     ? s.me.servers.map(({ name, display_name, creator }) => ({ name, display_name, creator }))
     : s.guestServers.map(name => ({
         name,
-        display_name: s.servers[name]?.display_name ?? name,
+        display_name: s.servers[name]?.display_name ?? s.guestNames[name] ?? name,
         creator: s.servers[name]?.creator ?? null,
       }))
 
@@ -551,6 +604,51 @@ export const banMenuItem = (server: string, username: string): ContextMenuItem =
   },
 })
 
+export const confirmKick = (server: string, username: string, after?: () => void) =>
+  useStore.getState().askConfirm({
+    title: 'Kick Member',
+    body: 'Kick this member? They are removed from the server but can join again.',
+    confirm: 'Kick',
+    action: () => void useStore.getState().kickMember(server, username).then(after),
+  })
+
+export const confirmTransfer = (server: string, username: string) =>
+  useStore.getState().askConfirm({
+    title: 'Transfer Admin',
+    body: 'Make this member the server admin? You lose your own admin rights and cannot take them back yourself.',
+    confirm: 'Transfer',
+    action: () => void useStore.getState().transferAdmin(server, username),
+  })
+
+export const revokeAdminFor = (server: string, username: string, after?: () => void) => {
+  const s = useStore.getState()
+  const revoke = () => void useStore.getState().revokeAdmin(server, username).then(after)
+  if (s.me?.username !== username) {
+    revoke()
+    return
+  }
+  s.askConfirm({
+    title: 'Revoke Admin',
+    body: 'Remove your own admin rights? Another admin has to give them back.',
+    confirm: 'Revoke',
+    action: revoke,
+  })
+}
+
+export const confirmDeleteMessage = (id: number, now = false) => {
+  const s = useStore.getState()
+  if (now) {
+    void s.deleteMessage(id)
+    return
+  }
+  s.askConfirm({
+    title: 'Delete Message',
+    body: 'Delete this message for everyone? Hold Shift while clicking the trash icon to skip this.',
+    confirm: 'Delete',
+    action: () => void useStore.getState().deleteMessage(id),
+  })
+}
+
 export const useStore = create<RChatState>()((set, get) => {
   const epochs: Record<string, number> = {}
 
@@ -610,14 +708,19 @@ export const useStore = create<RChatState>()((set, get) => {
   let historySeq = 0
   const newHistory = (key: string) => historyGen.set(key, ++historySeq)
 
-  const readLayout = (username: string | null) =>
-    parseLayout(localStorage.getItem(layoutKey(username)))
+  const readLayout = (username: string | null) => {
+    try {
+      return parseLayout(localStorage.getItem(layoutKey(username)))
+    } catch {
+      return emptyLayout
+    }
+  }
 
   const saveLayout = (next: Layout) => {
     if (next === get().layout) return
     set({ layout: next })
     const { me, guest } = get()
-    if (me || guest) localStorage.setItem(layoutKey(me?.username ?? null), JSON.stringify(next))
+    if (me || guest) writeLocal(layoutKey(me?.username ?? null), JSON.stringify(next))
   }
 
   const syncLayout = async (username: string) => {
@@ -705,11 +808,15 @@ export const useStore = create<RChatState>()((set, get) => {
     const { view } = get()
     if (!view) return
     try {
-      const msgs =
-        view.kind === 'channel'
-          ? await api.channelMessages(view.channelId)
-          : await api.dmMessages(view.dmId)
       const key = viewKey(view)
+      if (detached(key)) {
+        if (view.kind === 'channel') {
+          const detail = await api.getServer(view.server)
+          set(s => ({ servers: { ...s.servers, [view.server]: detail } }))
+        }
+        return
+      }
+      const msgs = await fetchPage(key, {})
       const prev = get().messages[key] ?? []
       const next = refreshTail(prev, msgs, PAGE, get().older[key]?.more ?? true)
       const replaced = next.list[0]?.id !== prev[0]?.id
@@ -785,8 +892,10 @@ export const useStore = create<RChatState>()((set, get) => {
     else rtc.leave()
   }
 
-  const loadUnreads = () =>
-    api
+  let unreadsReady: Promise<void> = Promise.resolve()
+
+  const loadUnreads = () => {
+    unreadsReady = api
       .getUnreads()
       .then(({ items }) =>
         set({
@@ -799,6 +908,8 @@ export const useStore = create<RChatState>()((set, get) => {
         })
       )
       .catch(() => {})
+    return unreadsReady
+  }
 
   const catchUp = () => {
     void refreshView()
@@ -838,12 +949,22 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   const persistGuestServers = (list: string[]) => {
-    localStorage.setItem(LS.guestServers, JSON.stringify(list))
+    writeLocal(LS.guestServers, JSON.stringify(list))
     set({ guestServers: list })
   }
 
+  const persistGuestNames = (names: Record<string, string>) => {
+    writeLocal(LS.guestNames, JSON.stringify(names))
+    set({ guestNames: names })
+  }
+
+  const rememberGuestName = (name: string, display: string) => {
+    if (get().guestNames[name] !== display)
+      persistGuestNames({ ...get().guestNames, [name]: display })
+  }
+
   const persistGrants = (grants: Record<string, string>) => {
-    localStorage.setItem(LS.guestGrants, JSON.stringify(grants))
+    writeLocal(LS.guestGrants, JSON.stringify(grants))
     api.setGrants(grants)
     wsClient.setGrants(grants)
     set({ guestGrants: grants })
@@ -858,7 +979,9 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const fetchServer = async (name: string) => {
     try {
-      return await api.getServer(name)
+      const detail = await api.getServer(name)
+      if (get().guest) rememberGuestName(detail.name, detail.display_name)
+      return detail
     } catch (e) {
       if (get().guest && e instanceof api.ApiError && e.status === 401) dropGrant(name)
       throw e
@@ -883,6 +1006,13 @@ export const useStore = create<RChatState>()((set, get) => {
       const entries = Object.entries(s.reads)
       const kept = entries.filter(([scope, mark]) => keep(scope, mark))
       return kept.length === entries.length ? {} : { reads: Object.fromEntries(kept) }
+    })
+
+  const forgetPending = (keep: (key: string, upload: PendingUpload) => boolean) =>
+    set(s => {
+      const entries = Object.entries(s.pending)
+      const kept = entries.filter(([key, upload]) => keep(key, upload))
+      return kept.length === entries.length ? {} : { pending: Object.fromEntries(kept) }
     })
 
   const setTokenCookie = (token: string | null) => {
@@ -931,9 +1061,12 @@ export const useStore = create<RChatState>()((set, get) => {
   const resolveUrl = async (nav: 'replace' | 'none') => {
     if (readInvite() || (!get().me && !get().guest)) return
     const target = parsePath(window.location.pathname)
-    const fallback = () => get().openServer('rchat', undefined, 'replace')
+    const fallback = async () => {
+      await unreadsReady
+      return get().openServer('rchat', undefined, 'replace')
+    }
     const cur = get().view
-    if (target && cur && viewPath(target) === viewPath(cur)) return
+    if (target && target.kind !== 'server' && cur && viewPath(target) === viewPath(cur)) return
     if (!target) return fallback()
     if (target.kind === 'dm') {
       if (get().guest) return fallback()
@@ -943,6 +1076,7 @@ export const useStore = create<RChatState>()((set, get) => {
           .ensureDms([target.dmId])
           .catch(() => {})
       if (!known()) return fallback()
+      await unreadsReady
       return get().openDm(target.dmId, nav)
     }
     let detail: ServerDetail
@@ -966,19 +1100,19 @@ export const useStore = create<RChatState>()((set, get) => {
       wsClient.subscribe([target.server])
     }
     set(s => ({ servers: { ...s.servers, [target.server]: detail } }))
-    const channel = detail.channels.find(c => c.id === target.channelId) ?? detail.channels[0]
+    const wanted = target.kind === 'channel' ? target.channelId : null
+    const channel = detail.channels.find(c => c.id === wanted) ?? detail.channels[0]
     if (!channel) return fallback()
-    return get().openChannel(
-      target.server,
-      channel.id,
-      channel.id === target.channelId ? nav : 'replace'
-    )
+    if (cur?.kind === 'channel' && cur.server === target.server && cur.channelId === channel.id)
+      return syncUrl(cur, 'replace')
+    await unreadsReady
+    return get().openChannel(target.server, channel.id, channel.id === wanted ? nav : 'replace')
   }
 
   const enter = (res: AuthResponse) => {
-    localStorage.setItem(LS.token, res.token)
+    writeLocal(LS.token, res.token)
     setTokenCookie(res.token)
-    localStorage.removeItem(LS.guest)
+    writeLocal(LS.guest, null)
     api.setToken(res.token)
     applyMe(res.user, false)
     set({
@@ -994,6 +1128,8 @@ export const useStore = create<RChatState>()((set, get) => {
     if (get().voice?.server === name) get().leaveVoice()
     serverGen += 1
     const reload = serverPager.removed(get().me?.servers.some(x => x.name === name) ? 1 : 0)
+    const scopes = new Set((get().servers[name]?.channels ?? []).map(c => `c${c.id}`))
+    forgetPending((_, upload) => !scopes.has(upload.scope))
     forgetReads((_, mark) => mark.server !== name)
     forgetMemberInfo(name)
     saveLayout(forgetServer(get().layout, name))
@@ -1016,6 +1152,11 @@ export const useStore = create<RChatState>()((set, get) => {
       persistGuestServers(get().guestServers.filter(n => n !== name))
       dropGrant(name)
       wsClient.unsubscribe(name)
+      if (name in get().guestNames) {
+        const names = { ...get().guestNames }
+        delete names[name]
+        persistGuestNames(names)
+      }
     }
     const { view } = get()
     if (view?.kind === 'channel' && view.server === name)
@@ -1028,11 +1169,24 @@ export const useStore = create<RChatState>()((set, get) => {
     return null
   }
 
+  const TAIL_MAX = 200
+  const tails = new Map<string, Message[]>()
+  const holdTail = (key: string, m: Message) =>
+    tails.set(key, merge(tails.get(key) ?? [], [m]).slice(-TAIL_MAX))
+  const takeTail = (key: string, after: number) => {
+    const held = tails.get(key) ?? []
+    tails.delete(key)
+    return held.filter(m => m.id > after)
+  }
+  const mapTails = (fn: (list: Message[]) => Message[]) => {
+    for (const [key, list] of tails) tails.set(key, fn(list))
+  }
+
   const patchMessage = (id: number, fn: (m: Message) => Message) => {
+    const patch = (list: Message[]) => list.map(m => (m.id === id ? fn(m) : m))
+    mapTails(patch)
     set(s => ({
-      messages: Object.fromEntries(
-        Object.entries(s.messages).map(([k, list]) => [k, list.map(m => (m.id === id ? fn(m) : m))])
-      ),
+      messages: Object.fromEntries(Object.entries(s.messages).map(([k, list]) => [k, patch(list)])),
     }))
   }
 
@@ -1240,7 +1394,21 @@ export const useStore = create<RChatState>()((set, get) => {
   const setOlder = (key: string, state: OlderState) =>
     set(s => ({ older: { ...s.older, [key]: state } }))
 
-  const loadOlderFor = async (key: string, fetchBefore: (id: number) => Promise<Message[]>) => {
+  const fetchPage = (key: string, page: api.PageOpts): Promise<Message[]> => {
+    const id = Number(key.slice(1))
+    switch (key[0]) {
+      case 'c':
+        return api.channelMessages(id, page)
+      case 'd':
+        return api.dmMessages(id, page)
+      default:
+        return api.threadMessages(id, page)
+    }
+  }
+
+  const detached = (key: string) => get().newer[key]?.more === true
+
+  const loadOlderFor = async (key: string) => {
     const cur = get().older[key]
     if (cur?.loading || cur?.more === false) return
     const first = (get().messages[key] ?? [])[0]
@@ -1251,7 +1419,7 @@ export const useStore = create<RChatState>()((set, get) => {
     setOlder(key, { more: true, loading: true })
     let older: Message[]
     try {
-      older = await fetchBefore(first.id)
+      older = await fetchPage(key, { before: first.id })
     } catch (e) {
       if (!current()) return
       setOlder(key, { more: true, loading: false })
@@ -1265,13 +1433,90 @@ export const useStore = create<RChatState>()((set, get) => {
     askP2p(older)
   }
 
-  const firstPage = (key: string, msgs: Message[]) => {
-    newHistory(key)
+  const loadNewerFor = async (key: string) => {
+    const cur = get().newer[key]
+    if (!cur?.more || cur.loading) return
+    const list = get().messages[key] ?? []
+    const last = list[list.length - 1]
+    if (!last) return
+    if (!historyGen.has(key)) newHistory(key)
+    const gen = historyGen.get(key)
+    const current = () => historyGen.get(key) === gen
+    set(s => ({ newer: { ...s.newer, [key]: { more: true, loading: true } } }))
+    let newer: Message[]
+    try {
+      newer = await fetchPage(key, { after: last.id })
+    } catch (e) {
+      if (!current()) return
+      set(s => ({ newer: { ...s.newer, [key]: { more: true, loading: false } } }))
+      throw e
+    }
+    if (!current()) return
+    const more = newer.length === PAGE
+    const caught = more ? [] : takeTail(key, Math.max(last.id, ...newer.map(m => m.id)))
     set(s => ({
-      messages: { ...s.messages, [key]: applyEmbeds([...msgs].sort(byId)) },
+      messages: {
+        ...s.messages,
+        [key]: applyEmbeds(merge(s.messages[key] ?? [], [...newer, ...caught])),
+      },
+      newer: keyed(s.newer, key, more ? { more: true, loading: false } : null),
+    }))
+    askP2p(newer)
+  }
+
+  const firstPage = (key: string, msgs: Message[], focus?: Focus) => {
+    newHistory(key)
+    const sorted = [...msgs].sort(byId)
+    const caught = takeTail(key, sorted[sorted.length - 1]?.id ?? 0)
+    set(s => ({
+      messages: { ...s.messages, [key]: applyEmbeds(merge(sorted, caught)) },
       older: { ...s.older, [key]: { more: msgs.length === PAGE, loading: false } },
+      newer: keyed(s.newer, key, null),
+      ...(focus ? { focus: { ...s.focus, [key]: focus } } : {}),
     }))
   }
+
+  const windowPage = (
+    key: string,
+    msgs: Message[],
+    at: number,
+    focus: (sorted: Message[]) => Focus | null
+  ) => {
+    newHistory(key)
+    tails.delete(key)
+    const sorted = [...msgs].sort(byId)
+    const edges = windowEdges(
+      sorted.map(m => m.id),
+      at,
+      PAGE
+    )
+    set(s => ({
+      messages: { ...s.messages, [key]: applyEmbeds(sorted) },
+      older: { ...s.older, [key]: { more: edges.older, loading: false } },
+      newer: keyed(s.newer, key, edges.newer ? { more: true, loading: false } : null),
+      focus: keyed(s.focus, key, focus(sorted)),
+    }))
+  }
+
+  const loadAround = async (
+    key: string,
+    at: number,
+    focus: (sorted: Message[]) => Focus | null = () => ({ id: at, flash: true })
+  ) => {
+    const msgs = await fetchPage(key, { around: at, limit: PAGE })
+    windowPage(key, msgs, at, focus)
+    askP2p(msgs)
+  }
+
+  const sticky = new Set<string>()
+  const placeAnchor = (key: string) =>
+    set(s => {
+      const mark = s.reads[key]
+      const anchor = mark?.lastRead ?? 0
+      if (mark && anchor > 0 && mark.latest > anchor) sticky.add(key)
+      else sticky.delete(key)
+      return { unreadAnchor: { ...s.unreadAnchor, [key]: anchor } }
+    })
 
   let noticeId = 0
   const notify = (name: string, title: string, body: string, go: () => void, lead?: string) => {
@@ -1368,9 +1613,12 @@ export const useStore = create<RChatState>()((set, get) => {
           fail(e)
           break
         }
+        if (detached(key)) holdTail(key, real)
         set(s => ({
           outbox: dropOutgoing(s.outbox, key, head.tempId),
-          messages: { ...s.messages, [key]: applyEmbeds(merge(s.messages[key] ?? [], [real])) },
+          messages: detached(key)
+            ? s.messages
+            : { ...s.messages, [key]: applyEmbeds(merge(s.messages[key] ?? [], [real])) },
         }))
         if (key[0] !== 't') get().markRead(key, real.id)
       }
@@ -1390,6 +1638,7 @@ export const useStore = create<RChatState>()((set, get) => {
     guest: false,
     guestServers: ['rchat'],
     guestGrants: {},
+    guestNames: {},
     servers: {},
     members: {},
     memberInfo: {},
@@ -1410,6 +1659,8 @@ export const useStore = create<RChatState>()((set, get) => {
     invite: null,
     messages: {},
     older: {},
+    newer: {},
+    focus: {},
     outbox: {},
     reads: {},
     unreadAnchor: {},
@@ -1422,9 +1673,9 @@ export const useStore = create<RChatState>()((set, get) => {
     contextMenu: null,
     profile: null,
     activeDialog: null,
+    confirm: null,
     panel: null,
-    pending: null,
-    threadPending: null,
+    pending: {},
     notices: [],
     drafts: {},
     search: emptySearch(),
@@ -1446,7 +1697,7 @@ export const useStore = create<RChatState>()((set, get) => {
     },
 
     setTheme: theme => {
-      localStorage.setItem(LS.theme, theme)
+      writeLocal(LS.theme, theme)
       document.documentElement.dataset.theme = theme
       document
         .querySelector('meta[name="theme-color"]')
@@ -1455,7 +1706,7 @@ export const useStore = create<RChatState>()((set, get) => {
     },
 
     setStreamer: streamer => {
-      localStorage.setItem(LS.streamer, streamer ? '1' : '0')
+      writeLocal(LS.streamer, streamer ? '1' : '0')
       document.body.classList.toggle('streamer-mode', streamer)
       set({ streamer })
     },
@@ -1480,8 +1731,10 @@ export const useStore = create<RChatState>()((set, get) => {
       void get().loadSettings()
       const token = localStorage.getItem(LS.token)
       const guest = localStorage.getItem(LS.guest) === '1'
-      const stored = localStorage.getItem(LS.guestServers)
-      const guestServers: string[] = stored ? JSON.parse(stored) : ['rchat']
+      const stored = readJson<unknown>(LS.guestServers, null)
+      const guestServers = Array.isArray(stored)
+        ? stored.filter((n): n is string => typeof n === 'string')
+        : ['rchat']
       if (!guestServers.includes('rchat')) guestServers.unshift('rchat')
       if (token) {
         api.setToken(token)
@@ -1506,9 +1759,12 @@ export const useStore = create<RChatState>()((set, get) => {
         startWs()
         await resolveUrl('replace')
       } else if (guest) {
-        const storedGrants = localStorage.getItem(LS.guestGrants)
-        persistGrants(storedGrants ? (JSON.parse(storedGrants) as Record<string, string>) : {})
-        set({ guest: true, guestServers })
+        persistGrants(readJson<Record<string, string>>(LS.guestGrants, {}))
+        set({
+          guest: true,
+          guestServers,
+          guestNames: readJson<Record<string, string>>(LS.guestNames, {}),
+        })
         loadGuestLayout()
         startWs()
         await resolveUrl('replace')
@@ -1527,21 +1783,25 @@ export const useStore = create<RChatState>()((set, get) => {
       rtc.leave()
       p2p.endMedia()
       pendingDial = null
-      localStorage.removeItem(LS.token)
+      writeLocal(LS.token, null)
       setTokenCookie(null)
-      localStorage.removeItem(LS.guest)
+      writeLocal(LS.guest, null)
       api.setToken(null)
       api.setGrants({})
       wsClient.setGrants({})
       dmPager.reset(0)
       serverPager.reset(0)
       historyGen.clear()
+      tails.clear()
+      sticky.clear()
+      clearProfiles()
       dropStashedInvite()
       set({
         token: null,
         me: null,
         guest: false,
         guestGrants: {},
+        guestNames: {},
         voice: null,
         call: null,
         voiceUsers: {},
@@ -1560,6 +1820,8 @@ export const useStore = create<RChatState>()((set, get) => {
         invite: null,
         messages: {},
         older: {},
+        newer: {},
+        focus: {},
         outbox: {},
         reads: {},
         unreadAnchor: {},
@@ -1569,9 +1831,9 @@ export const useStore = create<RChatState>()((set, get) => {
         contextMenu: null,
         profile: null,
         activeDialog: null,
+        confirm: null,
         panel: null,
-        pending: null,
-        threadPending: null,
+        pending: {},
         notices: [],
         drafts: {},
         bootError: null,
@@ -1582,9 +1844,10 @@ export const useStore = create<RChatState>()((set, get) => {
 
     enterGuest: () =>
       act(async () => {
-        localStorage.setItem(LS.guest, '1')
-        localStorage.setItem(LS.guestServers, JSON.stringify(['rchat']))
+        writeLocal(LS.guest, '1')
+        writeLocal(LS.guestServers, JSON.stringify(['rchat']))
         persistGrants({})
+        persistGuestNames({})
         set({ guest: true, guestServers: ['rchat'] })
         loadGuestLayout()
         startWs()
@@ -1603,53 +1866,54 @@ export const useStore = create<RChatState>()((set, get) => {
       await get().openServer(id, undefined, nav)
     },
 
-    openServer: (name, channelId, nav = 'push') =>
+    openServer: (name, channelId, nav = 'push', at) =>
       act(async () => {
         const [detail] = await Promise.all([fetchServer(name), ensureMembership(name)])
         set(s => ({ servers: { ...s.servers, [name]: detail } }))
         const target = detail.channels.find(c => c.id === channelId) ?? detail.channels[0]
         if (!target) throw new Error(`No channels you can view in ${detail.display_name}`)
-        await get().openChannel(name, target.id, nav)
+        await get().openChannel(name, target.id, nav, target.id === channelId ? at : undefined)
       }),
 
-    openChannel: (server, channelId, nav = 'push') =>
+    openChannel: (server, channelId, nav = 'push', at) =>
       act(async () => {
         const view: View = { kind: 'channel', server, channelId }
-        set(s => ({
-          view,
-          atBottom: true,
-          unreadAnchor: {
-            ...s.unreadAnchor,
-            [`c${channelId}`]: s.reads[`c${channelId}`]?.lastRead ?? 0,
-          },
-        }))
+        const key = viewKey(view)
+        set(s => ({ view, atBottom: true, focus: keyed(s.focus, key, null) }))
+        placeAnchor(key)
         syncUrl(view, nav)
         get().setViewing(server)
         const kind = get().servers[server]?.channels.find(c => c.id === channelId)?.kind
         if (kind === 'voice') return
-        const msgs = await api.channelMessages(channelId)
-        firstPage(`c${channelId}`, msgs)
+        if (at !== undefined) {
+          await loadAround(key, at)
+          return
+        }
+        const msgs = await fetchPage(key, {})
+        firstPage(key, msgs)
         askP2p(msgs)
       }),
 
-    openDm: (dmId, nav = 'push') =>
+    openDm: (dmId, nav = 'push', at) =>
       act(async () => {
         const view: View = { kind: 'dm', dmId }
-        set(s => ({
-          view,
-          atBottom: true,
-          unreadAnchor: { ...s.unreadAnchor, [`d${dmId}`]: s.reads[`d${dmId}`]?.lastRead ?? 0 },
-        }))
+        const key = viewKey(view)
+        set(s => ({ view, atBottom: true, focus: keyed(s.focus, key, null) }))
+        placeAnchor(key)
         syncUrl(view, nav)
         get().setViewing(null)
         const username = get().me?.username
-        if (username) localStorage.setItem(`${LS.lastDm}:${username}`, String(dmId))
+        if (username) writeLocal(`${LS.lastDm}:${username}`, String(dmId))
         if (username && !get().dms.some(d => d.id === dmId))
           void get()
             .ensureDms([dmId])
             .catch(() => {})
-        const msgs = await api.dmMessages(dmId)
-        firstPage(`d${dmId}`, msgs)
+        if (at !== undefined) {
+          await loadAround(key, at)
+          return
+        }
+        const msgs = await fetchPage(key, {})
+        firstPage(key, msgs)
         askP2p(msgs)
       }),
 
@@ -1693,13 +1957,7 @@ export const useStore = create<RChatState>()((set, get) => {
           .then(go)
     },
 
-    setDraft: (key, text) =>
-      set(s => {
-        const drafts = { ...s.drafts }
-        if (text) drafts[key] = text
-        else delete drafts[key]
-        return { drafts }
-      }),
+    setDraft: (key, text) => set(s => ({ drafts: keyed(s.drafts, key, text || null) })),
 
     startDm: username =>
       act(async () => {
@@ -1812,10 +2070,13 @@ export const useStore = create<RChatState>()((set, get) => {
     },
 
     sendMessage: (content, p2pExpiresIn) => {
-      const { view, pending, me } = get()
+      const { view, me } = get()
       if (!view || !me) return
+      const key = viewKey(view)
+      const pending = get().pending[key] ?? null
       if (!content.trim() && !pending) return
-      set({ pending: null })
+      set(s => ({ pending: keyed(s.pending, key, null) }))
+      if (detached(key)) void get().jumpToPresent(key)
       queueMessage(view, me, content, pending, p2pExpiresIn ?? null)
     },
 
@@ -1830,7 +2091,9 @@ export const useStore = create<RChatState>()((set, get) => {
             ...s.reads,
             [scope]: { ...prev, lastRead, latest: Math.max(prev.latest, messageId) },
           },
-          unreadAnchor: { ...s.unreadAnchor, [scope]: lastRead },
+          unreadAnchor: sticky.has(scope)
+            ? s.unreadAnchor
+            : { ...s.unreadAnchor, [scope]: lastRead },
         }
       })
       if (get().token) void api.postRead(scope, messageId).catch(() => {})
@@ -1851,70 +2114,145 @@ export const useStore = create<RChatState>()((set, get) => {
     loadOlder: () =>
       act(async () => {
         const { view } = get()
-        if (!view) return
-        await loadOlderFor(viewKey(view), before =>
-          view.kind === 'channel'
-            ? api.channelMessages(view.channelId, before)
-            : api.dmMessages(view.dmId, before)
-        )
+        if (view) await loadOlderFor(viewKey(view))
       }),
 
-    uploadFile: (file, thread = false) => {
-      if (file && !uploadOk(file)) return
-      const pending: PendingUpload | null = file ? { file, spoiler: false, mode: 'server' } : null
-      set(thread ? { threadPending: pending } : { pending })
-    },
-
-    toggleSpoiler: (thread = false) =>
-      set(s =>
-        thread
-          ? {
-              threadPending: s.threadPending
-                ? { ...s.threadPending, spoiler: !s.threadPending.spoiler }
-                : null,
-            }
-          : { pending: s.pending ? { ...s.pending, spoiler: !s.pending.spoiler } : null }
-      ),
-
-    toggleUploadMode: (thread = false) => {
-      const flip = (p: PendingUpload | null): PendingUpload | null =>
-        p ? { ...p, mode: p.mode === 'server' ? 'p2p' : 'server' } : null
-      set(s => (thread ? { threadPending: flip(s.threadPending) } : { pending: flip(s.pending) }))
-    },
-
-    openThread: root =>
+    loadNewer: () =>
       act(async () => {
-        set({ panel: { kind: 'thread', root }, threadPending: null })
-        const msgs = await api.threadMessages(root.id)
-        firstPage(`t${root.id}`, msgs)
+        const { view } = get()
+        if (view) await loadNewerFor(viewKey(view))
+      }),
+
+    jumpTo: (key, id, flash = true) =>
+      act(async () => {
+        if ((get().messages[key] ?? []).some(m => m.id === id)) {
+          set(s => ({ focus: { ...s.focus, [key]: { id, flash } } }))
+          return
+        }
+        await loadAround(key, id, () => ({ id, flash }))
+      }),
+
+    jumpToUnread: () =>
+      act(async () => {
+        const { view } = get()
+        if (!view) return
+        const key = viewKey(view)
+        const anchor = get().unreadAnchor[key] ?? 0
+        if (anchor <= 0) return
+        await loadAround(key, anchor, sorted => ({
+          id: sorted.find(m => m.id > anchor)?.id ?? anchor,
+          flash: false,
+        }))
+      }),
+
+    jumpToPresent: key =>
+      act(async () => {
+        const msgs = await fetchPage(key, {})
+        firstPage(key, msgs, { id: null, flash: false })
+        askP2p(msgs)
+      }),
+
+    dismissUnread: key => {
+      sticky.delete(key)
+      set(s => ({
+        unreadAnchor: {
+          ...s.unreadAnchor,
+          [key]: Math.max(s.reads[key]?.latest ?? 0, s.unreadAnchor[key] ?? 0),
+        },
+      }))
+    },
+
+    clearFocus: key => set(s => (s.focus[key] ? { focus: keyed(s.focus, key, null) } : {})),
+
+    openResult: result =>
+      act(async () => {
+        const { message, server } = result
+        const { channel_id, thread_root_id, id } = message
+        if (channel_id === null) return
+        const s = get()
+        const here = s.view?.kind === 'channel' && s.view.channelId === channel_id
+        const at = thread_root_id ?? id
+        if (here) {
+          set({ panel: null })
+          await get().jumpTo(viewKey({ kind: 'channel', server, channelId: channel_id }), at)
+        } else {
+          set({ panel: null })
+          await get().openServer(server, channel_id, 'push', at)
+        }
+        if (thread_root_id === null) return
+        const root = (get().messages[`c${channel_id}`] ?? []).find(m => m.id === thread_root_id)
+        if (root) await get().openThread(root, id)
+      }),
+
+    uploadFile: (key, file) => {
+      if (file && !uploadOk(file)) return
+      const { panel } = get()
+      const root = panel?.kind === 'thread' && threadKey(panel.root.id) === key ? panel.root : null
+      const scope = root && root.channel_id !== null ? `c${root.channel_id}` : key
+      const pending: PendingUpload | null = file
+        ? { file, spoiler: false, mode: 'server', scope }
+        : null
+      set(s => ({ pending: keyed(s.pending, key, pending) }))
+    },
+
+    toggleSpoiler: key =>
+      set(s => {
+        const cur = s.pending[key]
+        return cur ? { pending: { ...s.pending, [key]: { ...cur, spoiler: !cur.spoiler } } } : {}
+      }),
+
+    toggleUploadMode: key =>
+      set(s => {
+        const cur = s.pending[key]
+        if (!cur) return {}
+        const mode: UploadMode = cur.mode === 'server' ? 'p2p' : 'server'
+        return { pending: { ...s.pending, [key]: { ...cur, mode } } }
+      }),
+
+    openThread: (root, at) =>
+      act(async () => {
+        const key = threadKey(root.id)
+        set(s => ({ panel: { kind: 'thread', root }, focus: keyed(s.focus, key, null) }))
+        if (at !== undefined) {
+          await loadAround(key, at)
+          return
+        }
+        const msgs = await fetchPage(key, {})
+        firstPage(key, msgs)
         askP2p(msgs)
       }),
 
     openSearch: () => set({ panel: { kind: 'search' }, search: emptySearch() }),
 
-    closePanel: () => set({ panel: null, threadPending: null }),
+    closePanel: () => set({ panel: null }),
 
     loadOlderThread: () =>
       act(async () => {
         const { panel } = get()
-        if (panel?.kind !== 'thread') return
-        const rootId = panel.root.id
-        await loadOlderFor(`t${rootId}`, before => api.threadMessages(rootId, before))
+        if (panel?.kind === 'thread') await loadOlderFor(threadKey(panel.root.id))
+      }),
+
+    loadNewerThread: () =>
+      act(async () => {
+        const { panel } = get()
+        if (panel?.kind === 'thread') await loadNewerFor(threadKey(panel.root.id))
       }),
 
     sendThreadMessage: (content, p2pExpiresIn) => {
-      const { panel, threadPending, me } = get()
+      const { panel, me } = get()
       if (panel?.kind !== 'thread' || !me) return
-      if (!content.trim() && !threadPending) return
       const rootId = panel.root.id
-      const key = `t${rootId}`
+      const key = threadKey(rootId)
+      const pending = get().pending[key] ?? null
+      if (!content.trim() && !pending) return
       const tempId = OPT_BASE + ++optSeq
-      set({ threadPending: null })
+      set(s => ({ pending: keyed(s.pending, key, null) }))
+      if (detached(key)) void get().jumpToPresent(key)
       enqueue({
         tempId,
         key,
         status: 'queued',
-        pending: threadPending,
+        pending,
         p2pExpiresIn: p2pExpiresIn ?? null,
         msg: {
           id: tempId,
@@ -1962,6 +2300,7 @@ export const useStore = create<RChatState>()((set, get) => {
     deleteMessage: id =>
       act(async () => {
         await api.deleteMessage(id)
+        mapTails(list => list.filter(m => m.id !== id))
         set(s => ({
           messages: Object.fromEntries(
             Object.entries(s.messages).map(([k, list]) => [k, list.filter(m => m.id !== id)])
@@ -2296,16 +2635,18 @@ export const useStore = create<RChatState>()((set, get) => {
           const m = ev.message
           const rootId = m.thread_root_id
           if (rootId !== null) {
+            const tkey = threadKey(rootId)
+            if (detached(tkey)) holdTail(tkey, m)
+            const ckey = m.channel_id !== null ? `c${m.channel_id}` : null
+            const bump = (list: Message[]) =>
+              list.map(r => (r.id === rootId ? { ...r, reply_count: r.reply_count + 1 } : r))
+            const held = ckey ? tails.get(ckey) : undefined
+            if (ckey && held) tails.set(ckey, bump(held))
             set(s => {
               const messages = { ...s.messages }
-              const tkey = `t${rootId}`
-              if (messages[tkey]) messages[tkey] = applyEmbeds(merge(messages[tkey], [m]))
-              const ckey = m.channel_id !== null ? `c${m.channel_id}` : null
-              if (ckey && messages[ckey]) {
-                messages[ckey] = messages[ckey].map(r =>
-                  r.id === rootId ? { ...r, reply_count: r.reply_count + 1 } : r
-                )
-              }
+              if (messages[tkey] && !s.newer[tkey]?.more)
+                messages[tkey] = applyEmbeds(merge(messages[tkey], [m]))
+              if (ckey && messages[ckey]) messages[ckey] = bump(messages[ckey])
               return {
                 messages,
                 panel:
@@ -2319,7 +2660,8 @@ export const useStore = create<RChatState>()((set, get) => {
             })
           } else {
             const key = messageKey(ev.channel_id, ev.dm_id)
-            if (key) {
+            if (key && detached(key)) holdTail(key, m)
+            else if (key) {
               set(s =>
                 s.messages[key]
                   ? { messages: { ...s.messages, [key]: applyEmbeds(merge(s.messages[key], [m])) } }
@@ -2384,19 +2726,21 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'message_deleted': {
+          const rootOf = ev.thread_root_id
+          const drop = (list: Message[]) =>
+            list
+              .filter(m => m.id !== ev.id)
+              .map(m =>
+                m.id === rootOf ? { ...m, reply_count: Math.max(0, m.reply_count - 1) } : m
+              )
+          tails.delete(threadKey(ev.id))
+          mapTails(drop)
+          forgetPending(key => key !== threadKey(ev.id))
           set(s => {
-            const rootOf = ev.thread_root_id
             const messages = Object.fromEntries(
               Object.entries(s.messages)
-                .filter(([k]) => k !== `t${ev.id}`)
-                .map(([k, list]) => [
-                  k,
-                  list
-                    .filter(m => m.id !== ev.id)
-                    .map(m =>
-                      m.id === rootOf ? { ...m, reply_count: Math.max(0, m.reply_count - 1) } : m
-                    ),
-                ])
+                .filter(([k]) => k !== threadKey(ev.id))
+                .map(([k, list]) => [k, drop(list)])
             )
             const panel =
               s.panel?.kind === 'thread' && s.panel.root.id === ev.id
@@ -2469,6 +2813,7 @@ export const useStore = create<RChatState>()((set, get) => {
             return { voiceUsers }
           })
           forgetReads(scope => scope !== `c${ev.channel_id}`)
+          forgetPending((_, upload) => upload.scope !== `c${ev.channel_id}`)
           const { view, servers } = get()
           if (view?.kind === 'channel' && view.channelId === ev.channel_id) {
             const next = servers[ev.server]?.channels[0]
@@ -2569,6 +2914,9 @@ export const useStore = create<RChatState>()((set, get) => {
           if (serverPager.removed(0)) void get().loadMoreServers()
           if (get().guest && get().guestServers.includes(old_name)) {
             persistGuestServers(get().guestServers.map(n => (n === old_name ? server.name : n)))
+            const names = { ...get().guestNames, [server.name]: server.display_name }
+            if (old_name !== server.name) delete names[old_name]
+            persistGuestNames(names)
             const grants = get().guestGrants
             if (grants[old_name]) {
               const next = { ...grants, [server.name]: grants[old_name] }
@@ -2612,13 +2960,19 @@ export const useStore = create<RChatState>()((set, get) => {
         case 'member_kicked': {
           const banned = ev.type === 'member_kicked' && ev.banned
           if (get().me?.username === ev.username) {
-            if (banned) {
+            if (ev.type === 'member_kicked') {
               const { servers, me } = get()
               const name =
                 servers[ev.server]?.display_name ??
                 me?.servers.find(x => x.name === ev.server)?.display_name ??
                 ev.server
-              notify(name, '', '', () => {}, 'You were banned from')
+              notify(
+                name,
+                '',
+                '',
+                () => {},
+                banned ? 'You were banned from' : 'You were removed from'
+              )
             }
             dropServer(ev.server)
             return
@@ -2672,6 +3026,9 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         case 'user_updated': {
           const u = ev.user
+          mapTails(list =>
+            list.map(m => (m.author.username === u.username ? { ...m, author: u } : m))
+          )
           set(s => ({
             me: s.me && s.me.username === u.username ? { ...s.me, ...u } : s.me,
             dms: s.dms.map(d => (d.other.username === u.username ? { ...d, other: u } : d)),
@@ -2747,10 +3104,12 @@ export const useStore = create<RChatState>()((set, get) => {
                 ...s.reads,
                 [ev.scope]: { ...prev, lastRead, latest: Math.max(prev.latest, ev.last_read) },
               },
-              unreadAnchor: {
-                ...s.unreadAnchor,
-                [ev.scope]: Math.max(s.unreadAnchor[ev.scope] ?? 0, lastRead),
-              },
+              unreadAnchor: sticky.has(ev.scope)
+                ? s.unreadAnchor
+                : {
+                    ...s.unreadAnchor,
+                    [ev.scope]: Math.max(s.unreadAnchor[ev.scope] ?? 0, lastRead),
+                  },
             }
           })
           return
@@ -2872,6 +3231,14 @@ export const useStore = create<RChatState>()((set, get) => {
           dmGen += 1
           const reload = dmPager.removed(gone.length)
           forgetReads(scope => !gone.includes(scope))
+          const roots = new Set(
+            Object.values(get().messages)
+              .flat()
+              .filter(m => m.author.username === ev.username)
+              .map(m => threadKey(m.id))
+          )
+          forgetPending((key, upload) => !gone.includes(upload.scope) && !roots.has(key))
+          mapTails(list => list.filter(m => m.author.username !== ev.username))
           if (get().me) void loadUnreads()
           set(s => ({
             messages: Object.fromEntries(
@@ -2945,7 +3312,8 @@ export const useStore = create<RChatState>()((set, get) => {
     closeProfile: () => set(s => (s.profile ? { profile: null } : {})),
     openDialog: dialog => set({ activeDialog: dialog }),
     closeDialog: () => set({ activeDialog: null }),
-    askConfirm: req => set({ activeDialog: { kind: 'confirm', ...req } }),
+    askConfirm: req => set({ confirm: req, contextMenu: null }),
+    closeConfirm: () => set(s => (s.confirm ? { confirm: null } : {})),
     setError: message => set({ error: message }),
   }
 })

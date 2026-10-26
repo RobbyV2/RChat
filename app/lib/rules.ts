@@ -43,3 +43,39 @@ export const sameOriginImage = (src: string | undefined, base: string, origins: 
     return false
   }
 }
+
+const UNITS: [number, string][] = [
+  [1, 'second'],
+  [60, 'minute'],
+  [3600, 'hour'],
+  [86400, 'day'],
+]
+
+export const expiryText = (seconds: number) => {
+  if (seconds <= 0) return 'Expired'
+  let unit = 0
+  while (
+    unit < UNITS.length - 1 &&
+    Math.round(seconds / UNITS[unit][0]) >= UNITS[unit + 1][0] / UNITS[unit][0]
+  )
+    unit += 1
+  const [mult, label] = UNITS[unit]
+  const n = Math.max(1, Math.round(seconds / mult))
+  return `Expires in ${n} ${label}${n === 1 ? '' : 's'}`
+}
+
+export const mediaError = (e: unknown, device: 'microphone' | 'camera', purpose: string) => {
+  const name = typeof e === 'object' && e !== null && 'name' in e ? String(e.name) : ''
+  switch (name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return new Error(`Allow ${device} access to ${purpose}`)
+    case 'NotFoundError':
+    case 'OverconstrainedError':
+      return new Error(`No ${device} found`)
+    case 'NotReadableError':
+      return new Error(`Your ${device} is busy in another app`)
+    default:
+      return e instanceof Error ? e : new Error(String(e))
+  }
+}

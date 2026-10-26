@@ -1,5 +1,21 @@
 import { canModerate } from './rules'
-import { Perm, hasPerm, type Role, type UserRef } from './types'
+import { Perm, hasPerm, type Profile, type Role, type UserRef } from './types'
+
+const PROFILE_CACHE = 100
+const profiles = new Map<string, Profile>()
+
+export const profileKey = (username: string, server: string | null) =>
+  `${username}\n${server ?? ''}`
+
+export const cachedProfile = (key: string) => profiles.get(key) ?? null
+
+export const rememberProfile = (key: string, profile: Profile) => {
+  profiles.delete(key)
+  profiles.set(key, profile)
+  if (profiles.size > PROFILE_CACHE) profiles.delete(profiles.keys().next().value as string)
+}
+
+export const clearProfiles = () => profiles.clear()
 
 export interface Point {
   x: number

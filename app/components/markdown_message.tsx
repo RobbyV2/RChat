@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Clock, Download, EllipsisVertical, EyeOff, FileText, Share2, X } from 'lucide-react'
@@ -8,7 +8,7 @@ import { apiOrigin, mediaUrl } from '../lib/api'
 import { splitMentions } from '../lib/mentions'
 import { base64ToBlob, p2p } from '../lib/p2p'
 import { findInvites, parseInvite } from '../lib/invite'
-import { sameOriginImage } from '../lib/rules'
+import { expiryText, sameOriginImage } from '../lib/rules'
 import { userRefFor, useStore, type ContextMenuItem } from '../lib/store'
 import type { Embed, Message, MessageMedia } from '../lib/types'
 import { longPress } from './context_menu'
@@ -87,12 +87,16 @@ const markMentions = (node: MdNode, username: string) => {
 const remarkMention = (username: string) => () => (tree: unknown) =>
   markMentions(tree as MdNode, username)
 
+const InLink = createContext(false)
+
 function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const previews = useStore(s => s.settings.asset_previews)
+  const inLink = useContext(InLink)
   const local = sameOriginImage(src, window.location.href, [window.location.origin, apiOrigin()])
   if (previews && local)
     return <img src={src} alt={alt ?? ''} className="my-1 max-h-80 max-w-full rounded-xl" />
   if (!src) return <>{alt}</>
+  if (inLink) return <>{alt || src}</>
   return (
     <a href={src} target="_blank" rel="noreferrer" className="text-primary underline">
       {alt || src}
@@ -104,6 +108,7 @@ function SpoilerText({ children }: { children?: ReactNode }) {
   const [revealed, setRevealed] = useState(false)
   return (
     <span
+      data-spoiler={revealed ? 'shown' : 'hidden'}
       onClick={() => setRevealed(true)}
       className={`rounded px-1 ${
         revealed
@@ -131,10 +136,11 @@ function Mention({ children }: { children?: ReactNode }) {
 
 function MessageLink({ href, children, ...props }: React.ComponentProps<'a'>) {
   const invite = href ? parseInvite(href, window.location.origin) : null
+  const body = <InLink.Provider value>{children}</InLink.Provider>
   if (!invite)
     return (
       <a {...props} href={href} target="_blank" rel="noreferrer" className="text-primary underline">
-        {children}
+        {body}
       </a>
     )
   return (
@@ -148,7 +154,7 @@ function MessageLink({ href, children, ...props }: React.ComponentProps<'a'>) {
       }}
       className="text-primary underline"
     >
-      {children}
+      {body}
     </a>
   )
 }
@@ -200,24 +206,8 @@ const components: Components = {
 
 const objectUrls = new Map<string, string>()
 
-const fmtExpiry = (ts: number | null) => {
-  if (ts === null) return 'Indefinite'
-  const diff = ts - Math.floor(Date.now() / 1000)
-  if (diff <= 0) return 'Expired'
-  const units: [number, string][] = [
-    [86400, 'day'],
-    [3600, 'hour'],
-    [60, 'minute'],
-    [1, 'second'],
-  ]
-  for (const [mult, label] of units) {
-    if (diff >= mult) {
-      const n = Math.round(diff / mult)
-      return `Expires in ${n} ${label}${n === 1 ? '' : 's'}`
-    }
-  }
-  return 'Expires soon'
-}
+const fmtExpiry = (ts: number | null) =>
+  ts === null ? 'Indefinite' : expiryText(ts - Math.floor(Date.now() / 1000))
 
 function P2pFile({ media }: { media: MessageMedia }) {
   const me = useStore(s => s.me)

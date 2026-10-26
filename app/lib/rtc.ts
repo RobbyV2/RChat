@@ -1,5 +1,6 @@
 import { wsClient } from './ws'
 import { SpeakingDetector } from './vad'
+import { mediaError } from './rules'
 import type { RtcPayload } from './types'
 
 export type RtcTarget =
@@ -50,7 +51,9 @@ class RtcManager {
 
   async join(me: string, target: RtcTarget) {
     this.leave()
-    const local = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const local = await navigator.mediaDevices.getUserMedia({ audio: true }).catch((e: unknown) => {
+      throw mediaError(e, 'microphone', target.channelId !== undefined ? 'join voice' : 'call')
+    })
     this.me = me
     this.target = target
     this.local = local
@@ -104,7 +107,9 @@ class RtcManager {
 
   async camera(on: boolean) {
     if (!on) return this.setVideo(null, false)
-    const media = await navigator.mediaDevices.getUserMedia({ video: true })
+    const media = await navigator.mediaDevices.getUserMedia({ video: true }).catch((e: unknown) => {
+      throw mediaError(e, 'camera', 'turn on video')
+    })
     await this.setVideo(media.getVideoTracks()[0] ?? null, false)
   }
 

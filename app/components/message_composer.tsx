@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { errorText, useStore, viewKey } from '../lib/store'
 import { MESSAGE_MAX, charCount } from '../lib/rules'
+import { sendKey } from '../lib/keys'
 import { Dialog, FieldError, fieldCls, filledBtn } from './server_settings'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
@@ -157,7 +158,8 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     const v = s.view
     return !s.me || v?.kind !== 'channel' || s.me.servers.some(x => x.name === v.server)
   })
-  const pending = useStore(s => (thread ? s.threadPending : s.pending))
+  const draftKey = thread ? (rootId !== null ? `t${rootId}` : null) : view ? viewKey(view) : null
+  const pending = useStore(s => (draftKey ? s.pending[draftKey] : undefined)) ?? null
   const assetUploads = useStore(s => s.settings.asset_uploads)
   const uploadFile = useStore(s => s.uploadFile)
   const toggleSpoiler = useStore(s => s.toggleSpoiler)
@@ -165,7 +167,6 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const sendMessage = useStore(s => s.sendMessage)
   const sendThreadMessage = useStore(s => s.sendThreadMessage)
   const setDraft = useStore(s => s.setDraft)
-  const draftKey = thread ? (rootId !== null ? `t${rootId}` : null) : view ? viewKey(view) : null
   const text = useStore(s => (draftKey ? (s.drafts[draftKey] ?? '') : ''))
   const [expiryOpen, setExpiryOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -206,6 +207,10 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     if (draftKey) setDraft(draftKey, value)
   }
 
+  const attach = (file: File | null) => {
+    if (draftKey) uploadFile(draftKey, file)
+  }
+
   const count = charCount(text)
   const tooLong = count > MESSAGE_MAX
 
@@ -235,7 +240,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         <div className="relative mb-2 flex h-24 w-48 flex-col justify-between rounded-xl border border-outline-variant bg-surface-container p-3">
           <button
             title="Remove file"
-            onClick={() => uploadFile(null, thread)}
+            onClick={() => attach(null)}
             className="absolute -top-2 -right-2 rounded-full bg-error-container p-1 text-on-error-container shadow-elevation-1"
           >
             <X size={12} />
@@ -249,7 +254,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
                     ? 'P2P: hosted from your browser while you are online. Click for server upload'
                     : 'Server: uploaded to the server, removed after 1 day. Click for P2P'
                 }
-                onClick={() => toggleUploadMode(thread)}
+                onClick={() => draftKey && toggleUploadMode(draftKey)}
                 className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
                   pending.mode === 'p2p'
                     ? 'bg-tertiary-container text-on-tertiary-container'
@@ -261,7 +266,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
               </button>
               <button
                 title={pending.spoiler ? 'Unmark spoiler' : 'Mark as spoiler'}
-                onClick={() => toggleSpoiler(thread)}
+                onClick={() => draftKey && toggleSpoiler(draftKey)}
                 className={`rounded-full p-1 ${
                   pending.spoiler
                     ? 'bg-primary-container text-on-primary-container'
@@ -293,7 +298,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
               type="file"
               className="hidden"
               onChange={e => {
-                uploadFile(e.target.files?.item(0) ?? null, thread)
+                attach(e.target.files?.item(0) ?? null)
                 e.target.value = ''
               }}
             />
@@ -305,7 +310,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (sendKey(e)) {
               e.preventDefault()
               send()
             }
@@ -317,7 +322,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
               ?.getAsFile()
             if (file) {
               e.preventDefault()
-              uploadFile(namePasted(file), thread)
+              attach(namePasted(file))
             }
           }}
           placeholder={placeholder}

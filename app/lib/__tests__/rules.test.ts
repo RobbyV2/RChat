@@ -3,6 +3,8 @@ import {
   canDeleteChannel,
   canModerate,
   charCount,
+  expiryText,
+  mediaError,
   memberPerms,
   sameOriginImage,
   serverInitial,
@@ -96,5 +98,45 @@ describe('sameOriginImage', () => {
     expect(sameOriginImage('data:image/png;base64,AAAA', base, origins)).toBe(false)
     expect(sameOriginImage(undefined, base, origins)).toBe(false)
     expect(sameOriginImage('http://[bad', base, origins)).toBe(false)
+  })
+})
+
+describe('expiryText', () => {
+  test('a freshly posted one-day file reads 1 day, not 24 hours', () => {
+    expect(expiryText(86400)).toBe('Expires in 1 day')
+    expect(expiryText(86390)).toBe('Expires in 1 day')
+    expect(expiryText(84600)).toBe('Expires in 1 day')
+    expect(expiryText(84500)).toBe('Expires in 23 hours')
+  })
+
+  test('picks the largest unit that rounds to at least one', () => {
+    expect(expiryText(7 * 86400)).toBe('Expires in 7 days')
+    expect(expiryText(3600)).toBe('Expires in 1 hour')
+    expect(expiryText(3599)).toBe('Expires in 1 hour')
+    expect(expiryText(90)).toBe('Expires in 2 minutes')
+    expect(expiryText(59.6)).toBe('Expires in 1 minute')
+    expect(expiryText(12)).toBe('Expires in 12 seconds')
+    expect(expiryText(0)).toBe('Expired')
+  })
+})
+
+describe('mediaError', () => {
+  const named = (name: string) => Object.assign(new Error('Permission denied'), { name })
+  test('maps permission and device errors to friendly text', () => {
+    expect(mediaError(named('NotAllowedError'), 'microphone', 'join voice').message).toBe(
+      'Allow microphone access to join voice'
+    )
+    expect(mediaError(named('NotFoundError'), 'camera', 'turn on video').message).toBe(
+      'No camera found'
+    )
+    expect(mediaError(named('NotReadableError'), 'microphone', 'call').message).toBe(
+      'Your microphone is busy in another app'
+    )
+  })
+
+  test('keeps other errors as they are', () => {
+    const other = named('AbortError')
+    expect(mediaError(other, 'microphone', 'call')).toBe(other)
+    expect(mediaError('boom', 'microphone', 'call').message).toBe('boom')
   })
 })

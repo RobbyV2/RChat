@@ -5,7 +5,10 @@ import { Perm, hasPerm, type Member } from '../lib/types'
 import { canModerate, memberPerms } from '../lib/rules'
 import {
   banMenuItem,
+  confirmKick,
+  confirmTransfer,
   myPerms,
+  revokeAdminFor,
   roleColor,
   roleMenuItems,
   useStore,
@@ -33,10 +36,7 @@ export default function MemberSidebar() {
   const openContextMenu = useStore(s => s.openContextMenu)
   const openDialog = useStore(s => s.openDialog)
   const startDm = useStore(s => s.startDm)
-  const kickMember = useStore(s => s.kickMember)
   const grantAdmin = useStore(s => s.grantAdmin)
-  const revokeAdmin = useStore(s => s.revokeAdmin)
-  const transferAdmin = useStore(s => s.transferAdmin)
   const server = detail?.name
   useEffect(() => {
     if (server) {
@@ -75,7 +75,7 @@ export default function MemberSidebar() {
         {
           label: 'Kick',
           danger: true,
-          action: () => void kickMember(detail.name, m.username),
+          action: () => confirmKick(detail.name, m.username),
         },
         banMenuItem(detail.name, m.username)
       )
@@ -85,14 +85,14 @@ export default function MemberSidebar() {
           ? {
               label: 'Revoke Admin',
               danger: true,
-              action: () => void revokeAdmin(detail.name, m.username),
+              action: () => revokeAdminFor(detail.name, m.username),
             }
           : { label: 'Promote to Admin', action: () => void grantAdmin(detail.name, m.username) }
       )
       if (!self)
         items.push({
           label: 'Transfer Admin',
-          action: () => void transferAdmin(detail.name, m.username),
+          action: () => confirmTransfer(detail.name, m.username),
         })
       if (detail.roles.length)
         items.push({
@@ -102,7 +102,7 @@ export default function MemberSidebar() {
     }
     if (me.is_site_admin && !self)
       items.push({
-        label: 'Ban',
+        label: 'Ban site-wide',
         danger: true,
         action: () => openDialog({ kind: 'ban_confirm', username: m.username }),
       })

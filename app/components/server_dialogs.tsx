@@ -5,6 +5,7 @@ import { Lock, X } from 'lucide-react'
 import * as api from '../lib/api'
 import { errorText, useStore } from '../lib/store'
 import type { ServerMatch } from '../lib/types'
+import { enterKey } from '../lib/keys'
 import { FieldError, useBackdrop, useEscape } from './server_settings'
 
 function Dialog({ title, children }: { title: string; children: React.ReactNode }) {
@@ -128,7 +129,7 @@ function AddServerDialog({ join }: { join?: string }) {
         value={name}
         onChange={e => setName(e.target.value)}
         onKeyDown={e => {
-          if (e.key === 'Enter') void submit()
+          if (enterKey(e)) void submit()
         }}
         placeholder="server name"
         className="w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
@@ -159,7 +160,7 @@ function AddServerDialog({ join }: { join?: string }) {
           value={password}
           onChange={e => setPassword(e.target.value)}
           onKeyDown={e => {
-            if (e.key === 'Enter') void submit()
+            if (enterKey(e)) void submit()
           }}
           placeholder={creating ? 'password (optional)' : 'password'}
           className="mt-3 w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"

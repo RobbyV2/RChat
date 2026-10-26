@@ -5,8 +5,10 @@ export interface MentionPart {
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+const WORD = '[\\p{L}\\p{N}\\p{M}_]'
+
 const mentionRe = (username: string) =>
-  new RegExp(`(?<![\\p{L}\\p{N}\\p{M}_])@${escapeRe(username)}(?![\\p{L}\\p{N}\\p{M}_])`, 'giu')
+  new RegExp(`(^|(?!${WORD})[\\s\\S])(@${escapeRe(username)})(?!${WORD})`, 'giu')
 
 export const mentionsUser = (content: string, username: string): boolean =>
   username !== '' && mentionRe(username).test(content)
@@ -16,10 +18,10 @@ export const splitMentions = (text: string, username: string): MentionPart[] => 
   const parts: MentionPart[] = []
   let last = 0
   for (const m of text.matchAll(mentionRe(username))) {
-    const at = m.index ?? 0
+    const at = (m.index ?? 0) + m[1].length
     if (at > last) parts.push({ text: text.slice(last, at), mention: false })
-    parts.push({ text: m[0], mention: true })
-    last = at + m[0].length
+    parts.push({ text: m[2], mention: true })
+    last = at + m[2].length
   }
   if (last < text.length || parts.length === 0)
     parts.push({ text: text.slice(last), mention: false })

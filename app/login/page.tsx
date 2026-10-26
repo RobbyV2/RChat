@@ -6,6 +6,7 @@ import { ArrowRight, KeyRound, LayoutGrid } from 'lucide-react'
 import * as api from '../lib/api'
 import { useStore } from '../lib/store'
 import { safeNext } from '../lib/invite'
+import { NAME_MAX, charCount } from '../lib/rules'
 import type { AvatarKind } from '../lib/types'
 import { AvatarPicker } from '../components/avatar_picker'
 import { WordGrid } from '../components/word_grid'
@@ -70,6 +71,10 @@ export default function LoginPage() {
     const name = username.trim()
     if (!name) {
       setError('Enter a username')
+      return
+    }
+    if (mode === 'register' && charCount(name) > NAME_MAX) {
+      setError(`Usernames can be at most ${NAME_MAX} characters`)
       return
     }
     if (passKind === 'words' && selected.length !== 7) {

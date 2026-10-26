@@ -38,7 +38,7 @@ export const searchParams = (
   before: before ?? undefined,
   before_ts: args.beforeTs ?? undefined,
   after_ts: args.afterTs ?? undefined,
-  servers: servers ? servers.join(',') : undefined,
+  servers: servers ?? undefined,
 })
 
 export const searchCursor = (results: SearchResult[]): number | null =>

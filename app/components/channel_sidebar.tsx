@@ -5,6 +5,7 @@ import { Hash, Pin, Plus, Settings, Volume2 } from 'lucide-react'
 import { myPerms, serverAdminPerms, userRefFor, useStore } from '../lib/store'
 import { dmSections } from '../lib/nav_layout'
 import { canDeleteChannel } from '../lib/rules'
+import { enterKey } from '../lib/keys'
 import { rtc } from '../lib/rtc'
 import { Perm, hasPerm, type Channel, type ChannelKind, type DmSummary } from '../lib/types'
 import { UserAvatar } from './user_avatar'
@@ -210,7 +211,7 @@ export function ChannelSidebar() {
               value={dmInput}
               onChange={e => setDmInput(e.target.value)}
               onKeyDown={e => {
-                if (e.key === 'Enter') submitDm()
+                if (enterKey(e)) submitDm()
                 if (e.key === 'Escape') {
                   settled.current = true
                   setDmInput(null)
@@ -303,7 +304,7 @@ export function ChannelSidebar() {
       value={name}
       onChange={e => setName(e.target.value)}
       onKeyDown={e => {
-        if (e.key === 'Enter') submit()
+        if (enterKey(e)) submit()
         if (e.key === 'Escape') {
           settled.current = true
           setEditing(null)

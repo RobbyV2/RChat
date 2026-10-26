@@ -119,6 +119,28 @@ body {
   color: var(--color-on-primary-container);
 }
 
+[data-spoiler='hidden'] * {
+  color: transparent !important;
+  background: transparent !important;
+  text-decoration-color: transparent !important;
+  pointer-events: none;
+}
+
+[data-spoiler='hidden'] img {
+  visibility: hidden;
+}
+
+[data-flash] {
+  animation: message-flash 2.2s ease-out;
+}
+
+@keyframes message-flash {
+  0%,
+  40% {
+    background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  }
+}
+
 @media (pointer: coarse) {
   [data-long-press] {
     -webkit-touch-callout: none;

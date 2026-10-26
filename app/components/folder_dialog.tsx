@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { folderLabel, useStore } from '../lib/store'
 import { FOLDER_NAME_MAX, type Folder } from '../lib/nav_layout'
+import { enterKey } from '../lib/keys'
 import { Dialog, fieldCls, filledBtn, textBtn } from './server_settings'
 
 function RenameFolder({ folder }: { folder: Folder }) {
@@ -22,7 +23,7 @@ function RenameFolder({ folder }: { folder: Folder }) {
         maxLength={FOLDER_NAME_MAX}
         onChange={e => setName(e.target.value)}
         onKeyDown={e => {
-          if (e.key === 'Enter') save()
+          if (enterKey(e)) save()
         }}
         placeholder={fallback}
         aria-label="Folder name"

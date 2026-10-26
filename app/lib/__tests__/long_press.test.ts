@@ -326,6 +326,25 @@ describe('drag gesture with a mouse', () => {
     expect(swallowsClick(press, 1001)).toBe(false)
   })
 
+  test('a key press ends a hold whose release was lost, so keyboard clicks go through', () => {
+    const aborted = run([mouse(), move(100, 260), { kind: 'escape' }])
+    expect(swallowsClick(aborted.press, 0)).toBe(true)
+    const keyed = run([{ kind: 'key' }], aborted.press)
+    expect(keyed.press.phase).toBe('idle')
+    expect(drags(keyed.outs)).toEqual([])
+    expect(swallowsClick(keyed.press, 0)).toBe(false)
+    const dropped = run([mouse(), move(100, 260), { kind: 'end', now: 1000 }, { kind: 'key' }])
+    expect(swallowsClick(dropped.press, 1001)).toBe(false)
+  })
+
+  test('a key press leaves a press that is still down alone', () => {
+    const pending = run([start(), { kind: 'key' }])
+    expect(pending.press.phase).toBe('pending')
+    const dragging = run([mouse(), move(100, 260), { kind: 'key' }])
+    expect(dragging.press.phase).toBe('dragging')
+    expect(drags(dragging.outs)).toEqual(['start'])
+  })
+
   test('a right click still opens the menu at the cursor', () => {
     const { opens } = run([{ kind: 'native', x: 7, y: 9, now: 5000 }])
     expect(opens).toEqual([{ x: 7, y: 9 }])

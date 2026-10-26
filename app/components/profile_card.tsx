@@ -20,20 +20,33 @@ import {
   X,
 } from 'lucide-react'
 import * as api from '../lib/api'
-import { banMenuItem, memberOf, myPerms, useStore, type ProfileTarget } from '../lib/store'
+import {
+  banMenuItem,
+  confirmKick,
+  confirmTransfer,
+  memberState,
+  myPerms,
+  revokeAdminFor,
+  useStore,
+  type ProfileTarget,
+} from '../lib/store'
 import {
   SHEET_QUERY,
   bannerColor,
+  cachedProfile,
   canEditRoles,
   freeRoles,
   heldRoles,
   placeCard,
   profileActions,
+  profileKey,
+  rememberProfile,
   type ActionInput,
   type Point,
   type ProfileAction,
 } from '../lib/profile'
 import { MESSAGE_MAX, memberPerms } from '../lib/rules'
+import { sendKey } from '../lib/keys'
 import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { COARSE_QUERY, useMedia } from './context_menu'
@@ -99,15 +112,6 @@ export function profileTrigger(
   }
 }
 
-const PROFILE_CACHE = 100
-const profiles = new Map<string, Profile>()
-const cacheKey = (username: string, server: string | null) => `${username}\n${server ?? ''}`
-const rememberProfile = (key: string, profile: Profile) => {
-  profiles.delete(key)
-  profiles.set(key, profile)
-  if (profiles.size > PROFILE_CACHE) profiles.delete(profiles.keys().next().value as string)
-}
-
 const asMember = (p: Profile): Member | null =>
   p.member && {
     ...p.user,
@@ -156,7 +160,7 @@ function Card({ target }: { target: ProfileTarget }) {
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)
   const streamer = useStore(s => s.streamer)
-  const live = useStore(s => (server ? memberOf(s, server, username) : undefined))
+  const live = useStore(s => (server ? memberState(s, server, username) : undefined))
   const serverRoles = useStore(s => (server ? s.servers[server]?.roles : undefined))
   const serverName = useStore(s =>
     server
@@ -172,18 +176,19 @@ function Card({ target }: { target: ProfileTarget }) {
   const titleId = useId()
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<Point | null>(null)
-  const [profile, setProfile] = useState<Profile | null>(
-    () => profiles.get(cacheKey(username, server)) ?? null
+  const [profile, setProfile] = useState<Profile | null>(() =>
+    cachedProfile(profileKey(username, server))
   )
   const [missing, setMissing] = useState(false)
   const [text, setText] = useState('')
   const [adding, setAdding] = useState(false)
   const [copied, setCopied] = useState(false)
   const opened = useRef({ view, dialog })
+  const inside = useRef(false)
 
   useEffect(() => {
     let current = true
-    const key = cacheKey(username, server)
+    const key = profileKey(username, server)
     api
       .userProfile(username, server)
       .then(p => {
@@ -192,6 +197,9 @@ function Card({ target }: { target: ProfileTarget }) {
         setProfile(p)
         const s = useStore.getState()
         if (server && s.servers[server]) s.rememberMember(server, username, asMember(p))
+        useStore.setState(st =>
+          st.profile?.user.username === username ? { profile: { ...st.profile, user: p.user } } : {}
+        )
       })
       .catch((e: unknown) => {
         if (current && e instanceof api.ApiError && e.status === 404) setMissing(true)
@@ -234,6 +242,33 @@ function Card({ target }: { target: ProfileTarget }) {
     if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) active.blur()
   }, [sheet])
 
+  const shown = sheet || pos !== null
+  const focused = useRef(false)
+  useEffect(() => {
+    if (!shown || focused.current) return
+    focused.current = true
+    ref.current?.focus({ preventScroll: true })
+  }, [shown])
+
+  useEffect(() => {
+    const from = anchor
+    return () => {
+      const lost = document.activeElement === null || document.activeElement === document.body
+      if (inside.current && lost && from instanceof HTMLElement && from.isConnected)
+        from.focus({ preventScroll: true })
+    }
+  }, [])
+
+  const focusProps = {
+    tabIndex: -1,
+    onFocus: () => {
+      inside.current = true
+    },
+    onBlur: (e: React.FocusEvent<HTMLDivElement>) => {
+      if (!e.currentTarget.contains(e.relatedTarget)) inside.current = false
+    },
+  }
+
   useLayoutEffect(() => {
     if (sheet) return
     const el = ref.current
@@ -253,11 +288,11 @@ function Card({ target }: { target: ProfileTarget }) {
   }, [sheet, x, y])
 
   const self = me?.username === username
-  const user: UserRef = self && me ? me : (live ?? profile?.user ?? target.user)
+  const user: UserRef = self && me ? me : (live ?? target.user)
   const banner = bannerColor(user, self ? me?.banner_color : profile?.banner_color)
   const fetched = profile?.member ?? null
   const known = server === null || live !== undefined || profile !== null || missing
-  const member = server === null ? null : (live ?? fetched)
+  const member = server === null ? null : live !== undefined ? live : fetched
   const roles: Role[] = member
     ? serverRoles
       ? heldRoles(serverRoles, member.role_ids)
@@ -288,7 +323,7 @@ function Card({ target }: { target: ProfileTarget }) {
     switch (action) {
       case 'kick':
         close()
-        void s.kickMember(server, username)
+        confirmKick(server, username)
         return
       case 'server_ban':
         close()
@@ -298,10 +333,12 @@ function Card({ target }: { target: ProfileTarget }) {
         void s.grantAdmin(server, username)
         return
       case 'revoke':
-        void s.revokeAdmin(server, username)
+        if (self) close()
+        revokeAdminFor(server, username)
         return
       case 'transfer':
-        void s.transferAdmin(server, username)
+        close()
+        confirmTransfer(server, username)
         return
     }
   }
@@ -388,7 +425,7 @@ function Card({ target }: { target: ProfileTarget }) {
                     {profile ? fmtDate(profile.created_at) : '…'}
                   </dd>
                 </div>
-                {fetched && serverName && server !== 'rchat' && (
+                {member && fetched && serverName && server !== 'rchat' && (
                   <div className="flex items-baseline justify-between gap-3">
                     <dt className="streamer min-w-0 truncate text-on-surface-variant">
                       {serverName}
@@ -497,7 +534,7 @@ function Card({ target }: { target: ProfileTarget }) {
                 maxLength={MESSAGE_MAX}
                 onChange={e => setText(e.target.value)}
                 onKeyDown={e => {
-                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  if (sendKey(e)) {
                     e.preventDefault()
                     send()
                   }
@@ -525,8 +562,9 @@ function Card({ target }: { target: ProfileTarget }) {
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
+          {...focusProps}
           onClick={e => e.stopPropagation()}
-          className="animate-sheet-up flex max-h-[90%] flex-col overflow-y-auto overscroll-contain rounded-t-3xl bg-surface-container-high px-safe pb-[max(1rem,env(safe-area-inset-bottom))] shadow-elevation-3"
+          className="animate-sheet-up flex max-h-[90%] flex-col overflow-y-auto overscroll-contain rounded-t-3xl bg-surface-container-high px-safe pb-[max(1rem,env(safe-area-inset-bottom))] shadow-elevation-3 outline-none"
         >
           {body}
         </div>
@@ -539,12 +577,13 @@ function Card({ target }: { target: ProfileTarget }) {
       ref={ref}
       role="dialog"
       aria-labelledby={titleId}
+      {...focusProps}
       style={{
         left: pos?.x ?? x,
         top: pos?.y ?? y,
         visibility: pos ? 'visible' : 'hidden',
       }}
-      className="fixed z-50 flex max-h-[calc(100dvh-1rem)] w-75 flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl bg-surface-container-high pb-4 shadow-elevation-3"
+      className="fixed z-50 flex max-h-[calc(100dvh-1rem)] w-75 flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl bg-surface-container-high pb-4 shadow-elevation-3 outline-none"
     >
       {body}
     </div>

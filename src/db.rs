@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::sync::{LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -91,7 +93,32 @@ const POSTGRES_SEARCH: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_servers_display_name_trgm ON servers USING gin (lower(display_name) gin_trgm_ops)",
 ];
 
-pub async fn has_fts(db: &Db) -> bool {
+static FTS_READY: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
+
+fn pool_key(db: &Db) -> String {
+    db.connect_options().database_url.to_string()
+}
+
+pub fn has_fts(db: &Db) -> bool {
+    FTS_READY
+        .lock()
+        .is_ok_and(|ready| ready.contains(&pool_key(db)))
+}
+
+pub(crate) fn set_fts(db: &Db, ready: bool) {
+    if let Ok(mut set) = FTS_READY.lock() {
+        match ready {
+            true => {
+                set.insert(pool_key(db));
+            }
+            false => {
+                set.remove(&pool_key(db));
+            }
+        }
+    }
+}
+
+async fn probe_fts(db: &Db) -> bool {
     db.connect_options()
         .database_url
         .scheme()
@@ -103,7 +130,7 @@ pub async fn has_fts(db: &Db) -> bool {
 }
 
 async fn sqlite_search_index(pool: &Db) -> anyhow::Result<()> {
-    let existed = has_fts(pool).await;
+    let existed = probe_fts(pool).await;
     let mut tx = pool.begin().await?;
     for stmt in SQLITE_SEARCH {
         sqlx::query(*stmt).execute(&mut *tx).await?;
@@ -537,8 +564,12 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
             if let Err(e) = sqlite_search_index(&pool).await {
                 tracing::warn!("FTS5 trigram unavailable, search falls back to LIKE: {e}");
             }
+            set_fts(&pool, probe_fts(&pool).await);
         }
-        false => postgres_search_index(&pool).await,
+        false => {
+            postgres_search_index(&pool).await;
+            set_fts(&pool, false);
+        }
     }
     let t = now();
     sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")

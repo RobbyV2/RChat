@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Hash, Trash2, X } from 'lucide-react'
 import * as api from '../lib/api'
-import { errorText, roleMenuItems, serverAdminPerms, useStore } from '../lib/store'
+import { errorText, revokeAdminFor, roleMenuItems, serverAdminPerms, useStore } from '../lib/store'
 import { SLOWMODE_MAX } from '../lib/rules'
 import { inviteUrl } from '../lib/invite'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
@@ -30,18 +30,34 @@ export function FieldError({ message }: { message: string | null }) {
   )
 }
 
-export function useEscape(onEscape: () => void) {
+export type EscapeLayer = 'panel' | 'dialog' | 'confirm'
+
+const covered = (layer: EscapeLayer) => {
+  const s = useStore.getState()
+  if (s.contextMenu) return true
+  if (layer === 'confirm') return false
+  if (s.confirm) return true
+  if (layer === 'dialog') return false
+  return (
+    s.activeDialog !== null ||
+    s.profile !== null ||
+    s.invite !== null ||
+    document.querySelector('[aria-modal="true"]') !== null
+  )
+}
+
+export function useEscape(onEscape: () => void, layer: EscapeLayer = 'dialog') {
   const ref = useRef(onEscape)
   useEffect(() => {
     ref.current = onEscape
   })
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !useStore.getState().contextMenu) ref.current()
+      if (e.key === 'Escape' && !e.isComposing && !covered(layer)) ref.current()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [layer])
 }
 
 export function useBackdrop(onClose: () => void) {
@@ -77,18 +93,20 @@ export function Dialog({
   onClose,
   children,
   full = false,
+  layer = 'dialog',
 }: {
   title: string
   onClose: () => void
   children: ReactNode
   full?: boolean
+  layer?: EscapeLayer
 }) {
   const titleId = useId()
   const backdrop = useBackdrop(onClose)
-  useEscape(onClose)
+  useEscape(onClose, layer)
   return (
     <div
-      className={`fixed inset-x-0 top-0 z-40 flex h-app items-center justify-center bg-scrim/60 ${full ? 'px-safe sm:px-safe-4 sm:py-4' : 'px-safe-4 py-4'}`}
+      className={`fixed inset-x-0 top-0 ${layer === 'confirm' ? 'z-50' : 'z-40'} flex h-app items-center justify-center bg-scrim/60 ${full ? 'px-safe sm:px-safe-4 sm:py-4' : 'px-safe-4 py-4'}`}
       {...backdrop}
     >
       <div
@@ -103,7 +121,9 @@ export function Dialog({
       >
         <div
           className={`flex items-center justify-between ${
-            full ? 'sticky top-0 z-10 -mx-6 -mt-6 mb-4 bg-surface-container-high px-6 py-4' : 'mb-4'
+            full
+              ? 'sticky -top-6 z-10 -mx-6 -mt-6 mb-4 bg-surface-container-high px-6 py-4'
+              : 'mb-4'
           }`}
         >
           <h2 id={titleId} className="text-lg font-medium text-on-surface">
@@ -620,21 +640,20 @@ export function BanList({ server }: { server: string }) {
 }
 
 export function ConfirmDialog() {
-  const dialog = useStore(s => s.activeDialog)
-  const closeDialog = useStore(s => s.closeDialog)
-  if (dialog?.kind !== 'confirm') return null
-  const { title, body, confirm, action } = dialog
+  const request = useStore(s => s.confirm)
+  const closeConfirm = useStore(s => s.closeConfirm)
+  if (!request) return null
+  const { title, body, confirm, action } = request
   return (
-    <Dialog title={title} onClose={closeDialog}>
+    <Dialog title={title} onClose={closeConfirm} layer="confirm">
       <p className="text-sm text-on-surface-variant">{body}</p>
       <div className="mt-6 flex justify-end gap-2">
-        <button onClick={closeDialog} className={textBtn}>
+        <button autoFocus onClick={closeConfirm} className={textBtn}>
           Cancel
         </button>
         <button
-          autoFocus
           onClick={() => {
-            closeDialog()
+            closeConfirm()
             action()
           }}
           className="rounded-full bg-error px-4 py-2 text-sm font-medium text-on-error hover:opacity-90"
@@ -659,8 +678,9 @@ function Settings({ server }: { server: string }) {
   const loadMembers = useStore(s => s.loadMembers)
   const closeDialog = useStore(s => s.closeDialog)
   const renameServer = useStore(s => s.renameServer)
+  const deleteServer = useStore(s => s.deleteServer)
+  const askConfirm = useStore(s => s.askConfirm)
   const grantAdmin = useStore(s => s.grantAdmin)
-  const revokeAdmin = useStore(s => s.revokeAdmin)
   const openContextMenu = useStore(s => s.openContextMenu)
   const [name, setName] = useState(detail?.display_name ?? '')
   const [renameError, setRenameError] = useState<string | null>(null)
@@ -723,12 +743,35 @@ function Settings({ server }: { server: string }) {
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="Server name"
-              className={fieldCls}
+              className={`${fieldCls} streamer`}
             />
             <button className={filledBtn}>Rename</button>
           </form>
           <FieldError message={renameError} />
           <ServerPasswordField server={server} hasPassword={detail.has_password} />
+          <p className={sectionCls}>Delete Server</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <p className="min-w-48 flex-1 text-xs text-on-surface-variant">
+              Deletes the server with all of its channels and messages for everyone. This cannot be
+              undone.
+            </p>
+            <button
+              onClick={() =>
+                askConfirm({
+                  title: 'Delete Server',
+                  body: 'Delete this server for everyone? All of its channels and messages are deleted. This cannot be undone.',
+                  confirm: 'Delete',
+                  action: () => {
+                    closeDialog()
+                    void deleteServer(server)
+                  },
+                })
+              }
+              className="rounded-full border border-error px-4 py-2 text-sm font-medium text-error hover:bg-error-container hover:text-on-error-container"
+            >
+              Delete server
+            </button>
+          </div>
         </>
       )}
       {hasPerm(perms, Perm.ManageAdmins) && (
@@ -764,7 +807,7 @@ function Settings({ server }: { server: string }) {
                 >
                   Perms
                 </button>
-                <button onClick={() => void revokeAdmin(server, m.username)} className={dangerBtn}>
+                <button onClick={() => revokeAdminFor(server, m.username)} className={dangerBtn}>
                   Remove
                 </button>
               </>,

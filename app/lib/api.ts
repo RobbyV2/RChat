@@ -226,24 +226,31 @@ export interface SendOpts {
   p2p?: P2pAttachment
 }
 
-export const channelMessages = (id: number, before?: number, limit?: number) =>
-  req<Message[]>('GET', `/channels/${id}/messages${query(before, limit)}`)
+export interface PageOpts {
+  before?: number
+  after?: number
+  around?: number
+  limit?: number
+}
+
+export const channelMessages = (id: number, page: PageOpts = {}) =>
+  req<Message[]>('GET', `/channels/${id}/messages${pageQuery(page)}`)
 export const sendChannelMessage = (id: number, content: string, opts: SendOpts = {}) =>
   req<Message>('POST', `/channels/${id}/messages`, { content, ...opts })
 export const listDms = (offset: number, limit: number) =>
   req<DmSummary[]>('GET', `/dms?offset=${offset}&limit=${limit}`)
 export const dmsById = (ids: number[]) => req<DmSummary[]>('GET', `/dms?ids=${ids.join(',')}`)
 export const openDm = (username: string) => req<DmSummary>('POST', '/dms', { username })
-export const dmMessages = (id: number, before?: number, limit?: number) =>
-  req<Message[]>('GET', `/dms/${id}/messages${query(before, limit)}`)
+export const dmMessages = (id: number, page: PageOpts = {}) =>
+  req<Message[]>('GET', `/dms/${id}/messages${pageQuery(page)}`)
 export const sendDmMessage = (id: number, content: string, opts: SendOpts = {}) =>
   req<Message>('POST', `/dms/${id}/messages`, { content, ...opts })
 export const deleteMessage = (id: number) => req<unknown>('DELETE', `/messages/${id}`)
 export const deleteMedia = (id: number) => req<unknown>('DELETE', `/messages/${id}/media`)
 export const deleteEmbed = (id: number, ord: number, banner: boolean) =>
   req<unknown>('DELETE', `/messages/${id}/embeds/${ord}${banner ? '?banner=1' : ''}`)
-export const threadMessages = (id: number, before?: number, limit?: number) =>
-  req<Message[]>('GET', `/messages/${id}/thread${query(before, limit)}`)
+export const threadMessages = (id: number, page: PageOpts = {}) =>
+  req<Message[]>('GET', `/messages/${id}/thread${pageQuery(page)}`)
 export const sendThreadMessage = (id: number, content: string, opts: SendOpts = {}) =>
   req<Message>('POST', `/messages/${id}/thread`, { content, ...opts })
 
@@ -258,13 +265,14 @@ export interface SearchParams {
   before_ts?: number
   after_ts?: number
   offset?: number
-  servers?: string
+  servers?: string[]
 }
 
 export const search = (params: SearchParams) => {
   const qs = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined) qs.set(k, String(v))
+    if (Array.isArray(v)) for (const item of v) qs.append(k, String(item))
+    else if (v !== undefined) qs.set(k, String(v))
   }
   return req<SearchResult[]>('GET', `/search?${qs.toString()}`)
 }
@@ -302,9 +310,9 @@ export const adminUserServers = (username: string) =>
 export const adminDeleteMessage = (id: number) => req<unknown>('DELETE', `/admin/messages/${id}`)
 export const banUser = (username: string) => req<unknown>('POST', '/admin/ban', { username })
 
-function query(before?: number, limit?: number) {
-  const parts: string[] = []
-  if (before !== undefined) parts.push(`before=${before}`)
-  if (limit !== undefined) parts.push(`limit=${limit}`)
+export function pageQuery(page: PageOpts) {
+  const parts = Object.entries(page)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => `${k}=${v}`)
   return parts.length ? `?${parts.join('&')}` : ''
 }

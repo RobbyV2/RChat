@@ -26,6 +26,7 @@ export default function AppShell() {
   const view = useStore(s => s.view)
   const invite = useStore(s => s.invite)
   const dialog = useStore(s => s.activeDialog)
+  const confirming = useStore(s => s.confirm !== null)
   const panel = useStore(s => s.panel)
   const notices = useStore(s => s.notices)
   const dismissNotice = useStore(s => s.dismissNotice)
@@ -85,11 +86,11 @@ export default function AppShell() {
   }, [view])
 
   useEffect(() => {
-    if (dialog) {
+    if (dialog || confirming) {
       setLeftOpen(false)
       setRightOpen(false)
     }
-  }, [dialog])
+  }, [dialog, confirming])
 
   if (!me && !guest) {
     return (
