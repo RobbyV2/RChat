@@ -7,8 +7,19 @@ import { Perm, hasPerm, type Message } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
-import { fmtTime, messageCopyItems, OLDER_THRESHOLD, OutboxRows } from './message_pane'
+import {
+  OLDER_THRESHOLD,
+  OutboxRows,
+  authorKey,
+  avatarTriggerCls,
+  fmtTime,
+  messageCopyItems,
+  nameTriggerCls,
+  useAuthorMembers,
+  useMemberLookup,
+} from './message_pane'
 import { longPress } from './context_menu'
+import { profileTrigger } from './profile_card'
 import { OlderLoading, usePinnedBottom, usePrependAnchor } from './viewport_height'
 
 const EMPTY: Message[] = []
@@ -28,9 +39,9 @@ export default function ThreadPanel() {
   const roles = useStore(s =>
     s.view?.kind === 'channel' ? s.servers[s.view.server]?.roles : undefined
   )
-  const memberList = useStore(s =>
-    s.view?.kind === 'channel' ? s.members[s.view.server]?.list : undefined
-  )
+  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
+  const memberFor = useMemberLookup(server)
+  useAuthorMembers(server, authorKey(root ? [root, ...replies] : replies))
   const older = useStore(s =>
     s.panel?.kind === 'thread' ? s.older[`t${s.panel.root.id}`] : undefined
   )
@@ -94,23 +105,27 @@ export default function ThreadPanel() {
         className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container"
       >
         <div className="shrink-0 pt-0.5">
-          <UserAvatar
-            username={m.author.username}
-            avatarKind={m.author.avatar_kind}
-            avatarColor={m.author.avatar_color}
-            size={30}
-          />
+          <span
+            {...profileTrigger(m.author, server, false)}
+            title="View profile"
+            className={avatarTriggerCls}
+          >
+            <UserAvatar
+              username={m.author.username}
+              avatarKind={m.author.avatar_kind}
+              avatarColor={m.author.avatar_color}
+              size={30}
+            />
+          </span>
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
             <span
+              {...profileTrigger(m.author, server)}
               style={{
-                color: roleColor(
-                  roles,
-                  memberList?.find(x => x.username === m.author.username)?.role_ids ?? []
-                ),
+                color: roleColor(roles, memberFor(m.author.username)?.role_ids ?? []),
               }}
-              className="streamer cursor-default text-sm font-medium"
+              className={`streamer text-sm font-medium ${nameTriggerCls}`}
             >
               {m.author.display_name}
             </span>

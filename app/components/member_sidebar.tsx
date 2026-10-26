@@ -13,21 +13,12 @@ import {
 } from '../lib/store'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
+import { Badge, profileTrigger } from './profile_card'
 import { Sentinel } from './server_settings'
 
 const byName = (a: Member, b: Member) => a.display_name.localeCompare(b.display_name)
 
-function Badge({ tone, children }: { tone: 'primary' | 'tertiary'; children: string }) {
-  const cls =
-    tone === 'primary'
-      ? 'bg-primary-container text-on-primary-container'
-      : 'bg-tertiary-container text-on-tertiary-container'
-  return (
-    <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>
-      {children}
-    </span>
-  )
-}
+const rowFocus = 'outline-offset-[-2px] focus-visible:outline-2 focus-visible:outline-primary'
 
 export default function MemberSidebar() {
   const detail = useStore(s => (s.view?.kind === 'channel' ? s.servers[s.view.server] : null))
@@ -132,7 +123,8 @@ export default function MemberSidebar() {
               if (items.length) openContextMenu(x, y, items)
             })
           : {})}
-        className={`flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-surface-container-high ${
+        {...profileTrigger(m, detail.name)}
+        className={`flex cursor-pointer items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-surface-container-high ${rowFocus} ${
           m.online ? '' : 'opacity-50'
         }`}
       >
@@ -194,7 +186,8 @@ export default function MemberSidebar() {
                     ])
                   )
                 : {})}
-              className="flex items-center gap-2 rounded-xl px-2 py-1.5 opacity-70 hover:bg-surface-container-high"
+              {...profileTrigger(u, detail.name)}
+              className={`flex cursor-pointer items-center gap-2 rounded-xl px-2 py-1.5 opacity-70 hover:bg-surface-container-high ${rowFocus}`}
             >
               <UserAvatar
                 username={u.username}

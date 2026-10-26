@@ -3,10 +3,12 @@
 import { useId, useState } from 'react'
 import { X } from 'lucide-react'
 import { useStore } from '../lib/store'
+import { defaultBanner } from '../lib/profile'
 import type { AvatarKind } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
+import { UserAvatar } from './user_avatar'
 import { SettingSwitch } from './admin_panel'
-import { filledBtn, sectionCls, useEscape } from './server_settings'
+import { filledBtn, sectionCls, textBtn, useEscape } from './server_settings'
 
 type Section = 'settings' | 'information'
 
@@ -15,11 +17,62 @@ export default function SettingsMenu() {
   return open ? <Menu /> : null
 }
 
+function BannerPicker({
+  username,
+  displayName,
+  kind,
+  avatarColor,
+  banner,
+  onBanner,
+}: {
+  username: string
+  displayName: string
+  kind: AvatarKind
+  avatarColor: string
+  banner: string | null
+  onBanner: (color: string | null) => void
+}) {
+  const shown = banner ?? defaultBanner({ username, avatar_kind: kind, avatar_color: avatarColor })
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-sm text-on-surface-variant">Banner</span>
+      <div className="overflow-hidden rounded-2xl bg-surface-container-high" aria-hidden>
+        <div style={{ background: shown }} className="h-14" />
+        <div className="-mt-8 flex min-w-0 items-end gap-3 px-3 pb-3">
+          <span className="shrink-0 rounded-full bg-surface-container-high p-1">
+            <UserAvatar username={username} avatarKind={kind} avatarColor={avatarColor} size={56} />
+          </span>
+          <span className="streamer truncate pb-1 font-medium text-on-surface">{displayName}</span>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-on-surface-variant">
+        <label className="flex items-center gap-3">
+          Banner color
+          <input
+            type="color"
+            value={shown}
+            onChange={e => onBanner(e.target.value)}
+            className="h-8 w-12 cursor-pointer rounded bg-transparent"
+          />
+        </label>
+        {banner === null ? (
+          <span className="text-xs">Default, follows your avatar</span>
+        ) : (
+          <button type="button" onClick={() => onBanner(null)} className={textBtn}>
+            Use default
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function AccountSection() {
   const me = useStore(s => s.me)
   const patchMe = useStore(s => s.patchMe)
   const [kind, setKind] = useState<AvatarKind>(me?.avatar_kind ?? 'identicon')
   const [color, setColor] = useState(me?.avatar_color ?? '#6750a4')
+  const [banner, setBanner] = useState<string | null>(me?.banner_color ?? null)
   if (!me) return null
   return (
     <section>
@@ -27,18 +80,28 @@ function AccountSection() {
       <p className="mb-4 text-sm text-on-surface-variant">
         Signed in as <span className="streamer font-medium text-on-surface">{me.display_name}</span>
       </p>
-      <AvatarPicker
-        username={me.username}
-        kind={kind}
-        color={color}
-        onKind={setKind}
-        onColor={setColor}
-      />
+      <div className="flex flex-col gap-5">
+        <AvatarPicker
+          username={me.username}
+          kind={kind}
+          color={color}
+          onKind={setKind}
+          onColor={setColor}
+        />
+        <BannerPicker
+          username={me.username}
+          displayName={me.display_name}
+          kind={kind}
+          avatarColor={color}
+          banner={banner}
+          onBanner={setBanner}
+        />
+      </div>
       <button
-        onClick={() => void patchMe(kind, kind === 'color' ? color : undefined)}
+        onClick={() => void patchMe(kind, kind === 'color' ? color : undefined, banner)}
         className={`mt-4 ${filledBtn}`}
       >
-        Save avatar
+        Save profile
       </button>
     </section>
   )

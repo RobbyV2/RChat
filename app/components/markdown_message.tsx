@@ -11,6 +11,7 @@ import { sameOriginImage } from '../lib/rules'
 import { userRefFor, useStore, type ContextMenuItem } from '../lib/store'
 import type { Embed, Message, MessageMedia } from '../lib/types'
 import { longPress } from './context_menu'
+import { profileTrigger } from './profile_card'
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -113,14 +114,25 @@ function SpoilerText({ children }: { children?: ReactNode }) {
   )
 }
 
+function Mention({ children }: { children?: ReactNode }) {
+  const me = useStore(s => s.me)
+  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
+  return (
+    <span
+      {...(me ? profileTrigger(me, server) : {})}
+      className="streamer cursor-pointer rounded bg-primary-container px-0.5 font-medium text-on-primary-container hover:underline"
+    >
+      {children}
+    </span>
+  )
+}
+
 const components: Components = {
   span: ({ node, ...props }) =>
     'data-spoiler' in props ? (
       <SpoilerText>{props.children}</SpoilerText>
     ) : 'data-mention' in props ? (
-      <span className="streamer rounded bg-primary-container px-0.5 font-medium text-on-primary-container">
-        {props.children}
-      </span>
+      <Mention>{props.children}</Mention>
     ) : (
       <span {...props} />
     ),

@@ -10,7 +10,7 @@ const SQLITE_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users(
   username TEXT PRIMARY KEY, display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
   password_kind TEXT NOT NULL CHECK(password_kind IN ('text','words')),
-  avatar_kind TEXT NOT NULL CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT,
+  avatar_kind TEXT NOT NULL CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, banner_color TEXT,
   is_site_admin INTEGER NOT NULL DEFAULT 0, appear_offline INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NOT NULL, count INTEGER NOT NULL, last_at INTEGER NOT NULL);
@@ -45,7 +45,7 @@ const POSTGRES_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users(
   username TEXT PRIMARY KEY, display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
   password_kind TEXT NOT NULL CHECK(password_kind IN ('text','words')),
-  avatar_kind TEXT NOT NULL CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT,
+  avatar_kind TEXT NOT NULL CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, banner_color TEXT,
   is_site_admin BIGINT NOT NULL DEFAULT 0, appear_offline BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NOT NULL, count BIGINT NOT NULL, last_at BIGINT NOT NULL);
@@ -157,6 +157,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("messages", "call_ended_at {INT}"),
     ("messages", "call_outcome TEXT"),
     ("users", "appear_offline {INT} NOT NULL DEFAULT 0"),
+    ("users", "banner_color TEXT"),
     ("media", "uploader TEXT"),
 ];
 
@@ -268,6 +269,7 @@ pub struct User {
     pub password_kind: String,
     pub avatar_kind: AvatarKind,
     pub avatar_color: Option<String>,
+    pub banner_color: Option<String>,
     pub is_site_admin: bool,
     pub appear_offline: bool,
     pub created_at: i64,
@@ -282,6 +284,7 @@ impl User {
             password_kind: row.try_get("password_kind")?,
             avatar_kind: AvatarKind::parse(&row.try_get::<String, _>("avatar_kind")?)?,
             avatar_color: row.try_get("avatar_color")?,
+            banner_color: row.try_get("banner_color")?,
             is_site_admin: row.try_get::<i64, _>("is_site_admin")? != 0,
             appear_offline: row.try_get::<i64, _>("appear_offline")? != 0,
             created_at: row.try_get("created_at")?,

@@ -148,7 +148,25 @@ export interface ServerMatch {
   has_password: boolean
 }
 
+export interface ProfileMember {
+  is_admin: boolean
+  is_creator: boolean
+  perms: number
+  role_ids: number[]
+  roles: Role[]
+  joined_at: number
+  online: boolean
+}
+
+export interface Profile {
+  user: UserRef
+  banner_color: string | null
+  created_at: number
+  member: ProfileMember | null
+}
+
 export interface Me extends UserRef {
+  banner_color: string | null
   is_site_admin: boolean
   appear_offline: boolean
   servers: ServerSummary[]

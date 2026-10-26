@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '../lib/store'
 import { ContextMenu } from '../components/context_menu'
+import { ProfileCard } from '../components/profile_card'
 import { ServerRail } from '../components/server_rail'
 import { ChannelSidebar } from '../components/channel_sidebar'
 import { MessagePane } from '../components/message_pane'
@@ -138,6 +139,7 @@ export default function AppShell() {
       <SettingsMenu />
       <AdminPanel />
       <ConfirmDialog />
+      <ProfileCard />
       <ContextMenu />
       <CallBanner />
       {notices.length > 0 && (

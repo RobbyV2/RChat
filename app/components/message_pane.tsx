@@ -18,6 +18,7 @@ import {
 import { canModerate, memberPerms } from '../lib/rules'
 import {
   banMenuItem,
+  memberOf,
   myPerms,
   roleColor,
   roleMenuItems,
@@ -26,12 +27,13 @@ import {
   type ContextMenuItem,
   type Outgoing,
 } from '../lib/store'
-import { Perm, hasPerm, type Message } from '../lib/types'
+import { Perm, hasPerm, type Member, type Message } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
 import StatusClock from './status_clock'
 import { longPress } from './context_menu'
+import { profileTrigger } from './profile_card'
 import { VoiceGrid } from './voice_grid'
 import { OlderLoading, usePinnedBottom, usePrependAnchor } from './viewport_height'
 
@@ -128,6 +130,30 @@ const EMPTY_OUT: Outgoing[] = []
 
 const copy = (text: string) => void navigator.clipboard.writeText(text)
 
+export const avatarTriggerCls =
+  'block cursor-pointer rounded-full outline-offset-2 hover:opacity-85 focus-visible:outline-2 focus-visible:outline-primary'
+export const nameTriggerCls =
+  'cursor-pointer rounded-sm outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'
+
+export const authorKey = (messages: Message[], extra: string[] = []) =>
+  [...new Set([...messages.map(m => m.author.username), ...extra])].sort().join('\n')
+
+export function useAuthorMembers(server: string | null, key: string) {
+  const ensureMembers = useStore(s => s.ensureMembers)
+  const cached = useStore(s => (server ? s.memberInfo[server] !== undefined : false))
+  useEffect(() => {
+    if (server && key) void ensureMembers(server, key.split('\n'))
+  }, [server, key, cached, ensureMembers])
+}
+
+export function useMemberLookup(server: string | null) {
+  const list = useStore(s => (server ? s.members[server]?.list : undefined))
+  const known = useStore(s => (server ? s.memberInfo[server] : undefined))
+  return (username: string): Member | undefined =>
+    list?.find(m => m.username === username) ??
+    (known && Object.hasOwn(known, username) ? (known[username] ?? undefined) : undefined)
+}
+
 export const messageCopyItems = (m: Message): ContextMenuItem[] => [
   ...(m.content.trim() ? [{ label: 'Copy Text', action: () => copy(m.content) }] : []),
   { label: 'Copy Message ID', action: () => copy(String(m.id)) },
@@ -136,6 +162,7 @@ export const messageCopyItems = (m: Message): ContextMenuItem[] => [
 
 export function OutboxRows({ msgKey, size = 36 }: { msgKey: string; size?: number }) {
   const me = useStore(s => s.me)
+  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const outgoing = useStore(s => s.outbox[msgKey]) ?? EMPTY_OUT
   const retryOutgoing = useStore(s => s.retryOutgoing)
   const cancelOutgoing = useStore(s => s.cancelOutgoing)
@@ -150,16 +177,27 @@ export function OutboxRows({ msgKey, size = 36 }: { msgKey: string; size?: numbe
             className={`relative flex gap-3 px-4 py-1.5 ${failed ? '' : 'opacity-50'}`}
           >
             <div className="shrink-0 pt-0.5">
-              <UserAvatar
-                username={me.username}
-                avatarKind={me.avatar_kind}
-                avatarColor={me.avatar_color}
-                size={size}
-              />
+              <span
+                {...profileTrigger(me, server, false)}
+                title="View profile"
+                className={avatarTriggerCls}
+              >
+                <UserAvatar
+                  username={me.username}
+                  avatarKind={me.avatar_kind}
+                  avatarColor={me.avatar_color}
+                  size={size}
+                />
+              </span>
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2">
-                <span className="streamer text-sm font-medium">{me.display_name}</span>
+                <span
+                  {...profileTrigger(me, server)}
+                  className={`streamer text-sm font-medium ${nameTriggerCls}`}
+                >
+                  {me.display_name}
+                </span>
                 <span className={`text-xs ${failed ? 'text-error' : 'text-on-surface-variant'}`}>
                   {failed ? 'Failed to send' : o.status === 'sending' ? 'Sending' : 'Queued'}
                 </span>
@@ -198,9 +236,9 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const older = useStore(s => (s.view ? s.older[viewKey(s.view)] : undefined))
   const markRead = useStore(s => s.markRead)
   const setAtBottom = useStore(s => s.setAtBottom)
-  const memberList = useStore(s =>
-    s.view?.kind === 'channel' ? s.members[s.view.server]?.list : undefined
-  )
+  const memberServer = view?.kind === 'channel' ? view.server : null
+  const memberFor = useMemberLookup(memberServer)
+  useAuthorMembers(memberServer, authorKey(messages, me ? [me.username] : []))
   const perms = useStore(s => (s.view?.kind === 'channel' ? myPerms(s, s.view.server) : 0))
   const loadOlder = useStore(s => s.loadOlder)
   const deleteMessage = useStore(s => s.deleteMessage)
@@ -304,7 +342,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       items.unshift({ label: 'Reply in thread', action: () => void openThread(msg) })
     }
     if (view?.kind === 'channel' && !self) {
-      const target = memberList?.find(m => m.username === author.username)
+      const target = memberOf(useStore.getState(), view.server, author.username)
       if (
         hasPerm(perms, Perm.Kick) &&
         canModerate(perms, me.is_site_admin, memberPerms(target, detail?.roles ?? []))
@@ -404,13 +442,18 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         )}
         {dm && (
           <span className="flex min-w-0 items-center gap-2 font-medium">
-            <UserAvatar
-              username={dm.other.username}
-              avatarKind={dm.other.avatar_kind}
-              avatarColor={dm.other.avatar_color}
-              size={24}
-            />
-            <span className="streamer truncate">{dm.other.display_name}</span>
+            <span
+              {...profileTrigger(dm.other, null)}
+              className="-ml-1.5 flex min-w-0 cursor-pointer items-center gap-2 rounded-full py-1 pr-2.5 pl-1.5 outline-offset-2 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary"
+            >
+              <UserAvatar
+                username={dm.other.username}
+                avatarKind={dm.other.avatar_kind}
+                avatarColor={dm.other.avatar_color}
+                size={24}
+              />
+              <span className="streamer truncate">{dm.other.display_name}</span>
+            </span>
             {dm.is_self && (
               <span className="shrink-0 rounded-full bg-secondary-container px-2 py-0.5 text-xs text-on-secondary-container">
                 yourself
@@ -527,24 +570,30 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                       className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container-low"
                     >
                       <div className="shrink-0 pt-0.5">
-                        <UserAvatar
-                          username={m.author.username}
-                          avatarKind={m.author.avatar_kind}
-                          avatarColor={m.author.avatar_color}
-                          size={36}
-                        />
+                        <span
+                          {...profileTrigger(m.author, memberServer, false)}
+                          title="View profile"
+                          className={avatarTriggerCls}
+                        >
+                          <UserAvatar
+                            username={m.author.username}
+                            avatarKind={m.author.avatar_kind}
+                            avatarColor={m.author.avatar_color}
+                            size={36}
+                          />
+                        </span>
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-baseline gap-2">
                           <span
+                            {...profileTrigger(m.author, memberServer)}
                             style={{
                               color: roleColor(
                                 detail?.roles,
-                                memberList?.find(x => x.username === m.author.username)?.role_ids ??
-                                  []
+                                memberFor(m.author.username)?.role_ids ?? []
                               ),
                             }}
-                            className="streamer cursor-default text-sm font-medium"
+                            className={`streamer text-sm font-medium ${nameTriggerCls}`}
                           >
                             {m.author.display_name}
                           </span>

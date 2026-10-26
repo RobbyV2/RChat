@@ -6,6 +6,7 @@ pub mod media;
 pub mod messages;
 pub mod openapi;
 pub mod servers;
+pub mod users;
 
 use std::collections::HashMap;
 
@@ -531,6 +532,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/me", get(auth::me).patch(auth::patch_me))
         .route("/me/servers", get(servers::list_my_servers))
+        .route("/users/{username}/profile", get(users::profile))
         .route("/servers", post(servers::create_server))
         .route(
             "/servers/{name}",
@@ -664,6 +666,7 @@ pub(crate) mod test_util {
             password_kind: "text".to_string(),
             avatar_kind: AvatarKind::Identicon,
             avatar_color: None,
+            banner_color: None,
             is_site_admin: site_admin,
             appear_offline: false,
             created_at: now(),

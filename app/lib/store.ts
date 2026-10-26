@@ -100,6 +100,13 @@ export type ActiveDialog =
 
 export type Panel = { kind: 'thread'; root: Message } | { kind: 'search' }
 
+export interface ProfileTarget {
+  user: UserRef
+  server: string | null
+  x: number
+  y: number
+}
+
 export type UploadMode = 'server' | 'p2p'
 
 export interface PendingUpload {
@@ -219,6 +226,7 @@ interface RChatState {
   guestGrants: Record<string, string>
   servers: Record<string, ServerDetail>
   members: Record<string, Paged<Member>>
+  memberInfo: Record<string, Record<string, Member | null>>
   interacted: Record<string, Paged<UserRef>>
   bans: Record<string, Paged<ServerBan>>
   adminUsers: Paged<UserRef>
@@ -244,6 +252,7 @@ interface RChatState {
   theme: Theme
   streamer: boolean
   contextMenu: ContextMenuState | null
+  profile: ProfileTarget | null
   activeDialog: ActiveDialog | null
   panel: Panel | null
   pending: PendingUpload | null
@@ -258,7 +267,11 @@ interface RChatState {
   loadSettings: () => Promise<void>
   setTheme: (theme: Theme) => void
   setStreamer: (streamer: boolean) => void
-  patchMe: (avatar_kind: AvatarKind, avatar_color?: string) => Promise<void>
+  patchMe: (
+    avatar_kind: AvatarKind,
+    avatar_color?: string,
+    banner_color?: string | null
+  ) => Promise<void>
   setAppearOffline: (appearOffline: boolean) => Promise<void>
   syncFromUrl: (nav: 'replace' | 'none') => Promise<void>
   register: (body: api.RegisterRequest) => Promise<void>
@@ -271,6 +284,7 @@ interface RChatState {
   openDm: (dmId: number, nav?: Nav) => Promise<void>
   openLastDm: () => void
   startDm: (username: string) => Promise<void>
+  messageUser: (username: string, content: string) => Promise<void>
   loadMoreDms: () => Promise<void>
   loadMoreServers: () => Promise<void>
   ensureDms: (ids: number[]) => Promise<void>
@@ -331,6 +345,9 @@ interface RChatState {
   adminDeleteMessage: (id: number) => Promise<void>
   loadMembers: (server: string, reset?: boolean) => Promise<void>
   loadInteracted: (server: string, reset?: boolean) => Promise<void>
+  ensureMembers: (server: string, usernames: string[]) => Promise<void>
+  rememberMember: (server: string, username: string, member: Member | null) => void
+  refreshMember: (server: string, username: string) => Promise<void>
   joinVoice: (server: string, channelId: number) => Promise<void>
   leaveVoice: () => void
   toggleMute: () => void
@@ -351,16 +368,25 @@ interface RChatState {
   applyWsEvent: (ev: WsEvent) => void
   openContextMenu: (x: number, y: number, items: ContextMenuItem[]) => void
   closeContextMenu: () => void
+  openProfile: (user: UserRef, server: string | null, x: number, y: number) => void
+  closeProfile: () => void
   openDialog: (dialog: ActiveDialog) => void
   closeDialog: () => void
   askConfirm: (req: ConfirmRequest) => void
   setError: (message: string | null) => void
 }
 
+export const memberOf = (s: RChatState, server: string, username: string): Member | undefined => {
+  const listed = s.members[server]?.list.find(m => m.username === username)
+  if (listed) return listed
+  const known = s.memberInfo[server]
+  return known && Object.hasOwn(known, username) ? (known[username] ?? undefined) : undefined
+}
+
 export const serverAdminPerms = (s: RChatState, server: string): number => {
   const { me } = s
   if (!me) return 0
-  const row = s.members[server]?.list.find(m => m.username === me.username)
+  const row = memberOf(s, server, me.username)
   if (row) return memberPerms(row, s.servers[server]?.roles ?? [])
   return (me.servers.find(x => x.name === server)?.is_admin ?? false) ? ALL_PERMS : 0
 }
@@ -396,6 +422,10 @@ export const userRefFor = (s: RChatState, username: string): UserRef => {
     const m = cache.list.find(x => x.username === username)
     if (m) return m
   }
+  for (const known of Object.values(s.memberInfo)) {
+    const m = Object.hasOwn(known, username) ? known[username] : null
+    if (m) return m
+  }
   for (const cache of Object.values(s.interacted)) {
     const u = cache.list.find(x => x.username === username)
     if (u) return u
@@ -406,7 +436,7 @@ export const userRefFor = (s: RChatState, username: string): UserRef => {
 export const roleMenuItems = (server: string, username: string): ContextMenuItem[] => {
   const s = useStore.getState()
   const roles = s.servers[server]?.roles ?? []
-  const roleIds = s.members[server]?.list.find(m => m.username === username)?.role_ids ?? []
+  const roleIds = memberOf(s, server, username)?.role_ids ?? []
   return roles.map(r => {
     const assigned = roleIds.includes(r.id)
     return {
@@ -818,6 +848,7 @@ export const useStore = create<RChatState>()((set, get) => {
     serverGen += 1
     const reload = serverPager.removed(get().me?.servers.some(x => x.name === name) ? 1 : 0)
     forgetReads((_, mark) => mark.server !== name)
+    forgetMemberInfo(name)
     set(s => {
       const servers = { ...s.servers }
       delete servers[name]
@@ -920,6 +951,126 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const writeMembers = (server: string) => (page: Paged<Member>) =>
     set(s => ({ members: { ...s.members, [server]: page } }))
+
+  const memberGen: Record<string, number> = {}
+  const memberPending = new Set<string>()
+  const pendingKey = (server: string, username: string) => `${server}\n${username}`
+
+  const writeMemberInfo = (server: string, entries: [string, Member | null][]) =>
+    set(s => ({
+      memberInfo: {
+        ...s.memberInfo,
+        [server]: { ...(s.memberInfo[server] ?? {}), ...Object.fromEntries(entries) },
+      },
+    }))
+
+  const mapMemberInfo = (fn: (username: string, m: Member) => Member | null) =>
+    set(s => ({
+      memberInfo: Object.fromEntries(
+        Object.entries(s.memberInfo).map(([server, known]) => [
+          server,
+          Object.fromEntries(
+            Object.entries(known).map(([username, m]) => [username, m ? fn(username, m) : m])
+          ),
+        ])
+      ),
+    }))
+
+  const patchMemberInfo = (server: string, username: string, fn: (m: Member) => Member | null) =>
+    set(s => {
+      const known = s.memberInfo[server]
+      if (!known || !Object.hasOwn(known, username)) return {}
+      const cur = known[username]
+      return cur
+        ? { memberInfo: { ...s.memberInfo, [server]: { ...known, [username]: fn(cur) } } }
+        : {}
+    })
+
+  const fetchMemberInfo = async (server: string, names: string[]) => {
+    for (let i = 0; i < names.length; i += LIST_MAX) {
+      const batch = names.slice(i, i + LIST_MAX)
+      const gen = memberGen[server] ?? 0
+      for (const n of batch) memberPending.add(pendingKey(server, n))
+      let found: Member[]
+      try {
+        found = await api.membersByName(server, batch)
+      } finally {
+        for (const n of batch) memberPending.delete(pendingKey(server, n))
+      }
+      if ((memberGen[server] ?? 0) !== gen) {
+        if (get().servers[server]) void get().ensureMembers(server, batch)
+        continue
+      }
+      const byName = new Map(found.map(m => [m.username, m]))
+      writeMemberInfo(
+        server,
+        batch.map(n => [n, byName.get(n) ?? null])
+      )
+    }
+  }
+
+  const MEMBER_INFO_REFRESH = 300
+
+  const refreshMemberInfo = (server: string) => {
+    memberGen[server] = (memberGen[server] ?? 0) + 1
+    const known = get().memberInfo[server]
+    if (!known) return
+    const kept = Object.entries(known)
+      .filter(([, m]) => m !== null)
+      .slice(-MEMBER_INFO_REFRESH)
+    set(s => ({ memberInfo: { ...s.memberInfo, [server]: Object.fromEntries(kept) } }))
+    if (kept.length)
+      void fetchMemberInfo(
+        server,
+        kept.map(([n]) => n)
+      ).catch(() => {})
+  }
+
+  const forgetMemberInfo = (server: string) => {
+    memberGen[server] = (memberGen[server] ?? 0) + 1
+    set(s => {
+      if (!s.memberInfo[server]) return {}
+      const memberInfo = { ...s.memberInfo }
+      delete memberInfo[server]
+      return { memberInfo }
+    })
+  }
+
+  const queueMessage = (
+    view: View,
+    me: Me,
+    content: string,
+    pending: PendingUpload | null,
+    p2pExpiresIn: number | null
+  ) => {
+    wsClient.ensureConnected()
+    const tempId = OPT_BASE + ++optSeq
+    enqueue({
+      tempId,
+      key: viewKey(view),
+      status: 'queued',
+      pending,
+      p2pExpiresIn,
+      msg: {
+        id: tempId,
+        channel_id: view.kind === 'channel' ? view.channelId : null,
+        dm_id: view.kind === 'dm' ? view.dmId : null,
+        thread_root_id: null,
+        author: me,
+        content,
+        created_at: Math.floor(Date.now() / 1000),
+        reply_count: 0,
+        media: null,
+        embeds: [],
+        kind: 'user',
+        call: null,
+      },
+      send: opts =>
+        view.kind === 'channel'
+          ? api.sendChannelMessage(view.channelId, content, opts)
+          : api.sendDmMessage(view.dmId, content, opts),
+    })
+  }
 
   const sameUser = (username: string) => get().me?.username === username
 
@@ -1093,6 +1244,7 @@ export const useStore = create<RChatState>()((set, get) => {
     guestGrants: {},
     servers: {},
     members: {},
+    memberInfo: {},
     interacted: {},
     bans: {},
     adminUsers: emptyPage<UserRef>(),
@@ -1118,6 +1270,7 @@ export const useStore = create<RChatState>()((set, get) => {
     theme: 'dark',
     streamer: false,
     contextMenu: null,
+    profile: null,
     activeDialog: null,
     panel: null,
     pending: null,
@@ -1157,9 +1310,9 @@ export const useStore = create<RChatState>()((set, get) => {
       set({ streamer })
     },
 
-    patchMe: (avatar_kind, avatar_color) =>
+    patchMe: (avatar_kind, avatar_color, banner_color) =>
       act(async () => {
-        const user = await api.patchMe(avatar_kind, avatar_color)
+        const user = await api.patchMe(avatar_kind, avatar_color, banner_color)
         set(s => (s.me ? { me: { ...s.me, ...user } } : {}))
       }),
 
@@ -1242,6 +1395,7 @@ export const useStore = create<RChatState>()((set, get) => {
         voiceUsers: {},
         servers: {},
         members: {},
+        memberInfo: {},
         interacted: {},
         bans: {},
         adminUsers: emptyPage<UserRef>(),
@@ -1259,6 +1413,7 @@ export const useStore = create<RChatState>()((set, get) => {
         p2pAvailability: {},
         wsStatus: 'red',
         contextMenu: null,
+        profile: null,
         activeDialog: null,
         panel: null,
         pending: null,
@@ -1376,6 +1531,19 @@ export const useStore = create<RChatState>()((set, get) => {
         await get().openDm(dm.id)
       }),
 
+    messageUser: (username, content) =>
+      act(async () => {
+        const { me } = get()
+        if (!me) throw new Error('Create an account to send messages')
+        const dm = await api.openDm(username)
+        if (!sameUser(me.username)) return
+        set(s => ({ dms: bumpFront(s.dms, dm, dmKey, isSelfDm) }))
+        await get().openDm(dm.id)
+        const author = get().me
+        if (content.trim() && author?.username === me.username)
+          queueMessage({ kind: 'dm', dmId: dm.id }, author, content, null, null)
+      }),
+
     loadMoreDms: () =>
       act(async () => {
         if (get().me && get().dmsMore) await dmPager.load()
@@ -1424,35 +1592,8 @@ export const useStore = create<RChatState>()((set, get) => {
       const { view, pending, me } = get()
       if (!view || !me) return
       if (!content.trim() && !pending) return
-      wsClient.ensureConnected()
-      const key = viewKey(view)
-      const tempId = OPT_BASE + ++optSeq
       set({ pending: null })
-      enqueue({
-        tempId,
-        key,
-        status: 'queued',
-        pending,
-        p2pExpiresIn: p2pExpiresIn ?? null,
-        msg: {
-          id: tempId,
-          channel_id: view.kind === 'channel' ? view.channelId : null,
-          dm_id: view.kind === 'dm' ? view.dmId : null,
-          thread_root_id: null,
-          author: me,
-          content,
-          created_at: Math.floor(Date.now() / 1000),
-          reply_count: 0,
-          media: null,
-          embeds: [],
-          kind: 'user',
-          call: null,
-        },
-        send: opts =>
-          view.kind === 'channel'
-            ? api.sendChannelMessage(view.channelId, content, opts)
-            : api.sendDmMessage(view.dmId, content, opts),
-      })
+      queueMessage(view, me, content, pending, p2pExpiresIn ?? null)
     },
 
     markRead: (scope, messageId) => {
@@ -1469,7 +1610,7 @@ export const useStore = create<RChatState>()((set, get) => {
           unreadAnchor: { ...s.unreadAnchor, [scope]: lastRead },
         }
       })
-      void api.postRead(scope, messageId).catch(() => {})
+      if (get().token) void api.postRead(scope, messageId).catch(() => {})
     },
 
     setAtBottom: v => set({ atBottom: v }),
@@ -1742,6 +1883,36 @@ export const useStore = create<RChatState>()((set, get) => {
           reset
         )
       ),
+
+    ensureMembers: async (server, usernames) => {
+      const s = get()
+      const known = s.memberInfo[server] ?? {}
+      const listed = new Set((s.members[server]?.list ?? []).map(m => m.username))
+      const missing = [...new Set(usernames)].filter(
+        n =>
+          n !== '' &&
+          !Object.hasOwn(known, n) &&
+          !listed.has(n) &&
+          !memberPending.has(pendingKey(server, n))
+      )
+      if (missing.length) await fetchMemberInfo(server, missing).catch(() => {})
+    },
+
+    rememberMember: (server, username, member) => writeMemberInfo(server, [[username, member]]),
+
+    refreshMember: async (server, username) => {
+      let found: Member | undefined
+      try {
+        found = (await api.membersByName(server, [username]))[0]
+      } catch {
+        return
+      }
+      writeMemberInfo(server, [[username, found ?? null]])
+      if (found) {
+        const fresh = found
+        patchMembers(server, list => list.map(m => (m.username === username ? fresh : m)))
+      }
+    },
 
     joinVoice: (server, channelId) =>
       act(async () => {
@@ -2129,6 +2300,12 @@ export const useStore = create<RChatState>()((set, get) => {
               delete interacted[old_name]
               interacted[server.name] = icache
             }
+            const memberInfo = { ...s.memberInfo }
+            const known = memberInfo[old_name]
+            if (known) {
+              delete memberInfo[old_name]
+              memberInfo[server.name] = known
+            }
             const reads = Object.fromEntries(
               Object.entries(s.reads).map(([scope, mark]) => [
                 scope,
@@ -2138,6 +2315,7 @@ export const useStore = create<RChatState>()((set, get) => {
             return {
               servers,
               members,
+              memberInfo,
               interacted,
               reads,
               voice: s.voice?.server === old_name ? { ...s.voice, server: server.name } : s.voice,
@@ -2162,6 +2340,8 @@ export const useStore = create<RChatState>()((set, get) => {
             }
           })
           serverGen += 1
+          memberGen[old_name] = (memberGen[old_name] ?? 0) + 1
+          memberGen[server.name] = (memberGen[server.name] ?? 0) + 1
           if (serverPager.removed(0)) void get().loadMoreServers()
           if (get().guest && get().guestServers.includes(old_name)) {
             persistGuestServers(get().guestServers.map(n => (n === old_name ? server.name : n)))
@@ -2199,6 +2379,8 @@ export const useStore = create<RChatState>()((set, get) => {
             ...list.filter(m => m.username !== ev.member.username),
             ev.member,
           ])
+          if (get().memberInfo[ev.server])
+            writeMemberInfo(ev.server, [[ev.member.username, ev.member]])
           if (self) void addServer(ev.server).catch(() => {})
           return
         }
@@ -2223,6 +2405,8 @@ export const useStore = create<RChatState>()((set, get) => {
             member_count: Math.max(0, d.member_count - 1),
           }))
           patchMembers(ev.server, list => list.filter(m => m.username !== ev.username))
+          if (Object.hasOwn(get().memberInfo[ev.server] ?? {}, ev.username))
+            writeMemberInfo(ev.server, [[ev.username, null]])
           return
         }
         case 'admin_changed': {
@@ -2231,6 +2415,11 @@ export const useStore = create<RChatState>()((set, get) => {
               m.username === ev.username ? { ...m, is_admin: ev.is_admin, perms: ev.perms } : m
             )
           )
+          patchMemberInfo(ev.server, ev.username, m => ({
+            ...m,
+            is_admin: ev.is_admin,
+            perms: ev.perms,
+          }))
           set(s =>
             s.me?.username === ev.username
               ? {
@@ -2250,6 +2439,7 @@ export const useStore = create<RChatState>()((set, get) => {
           if (!get().servers[ev.server]) return
           refetchServer(ev.server)
           void get().loadMembers(ev.server, true)
+          refreshMemberInfo(ev.server)
           return
         }
         case 'channel_perms_changed': {
@@ -2298,7 +2488,10 @@ export const useStore = create<RChatState>()((set, get) => {
               s.panel?.kind === 'thread' && s.panel.root.author.username === u.username
                 ? { ...s.panel, root: { ...s.panel.root, author: u } }
                 : s.panel,
+            profile:
+              s.profile?.user.username === u.username ? { ...s.profile, user: u } : s.profile,
           }))
+          mapMemberInfo((username, m) => (username === u.username ? { ...m, ...u } : m))
           return
         }
         case 'presence_changed': {
@@ -2309,6 +2502,7 @@ export const useStore = create<RChatState>()((set, get) => {
           patchMembers(ev.server, list =>
             list.map(m => (m.username === ev.username ? { ...m, online: ev.online } : m))
           )
+          patchMemberInfo(ev.server, ev.username, m => ({ ...m, online: ev.online }))
           return
         }
         case 'presence_mode': {
@@ -2483,6 +2677,8 @@ export const useStore = create<RChatState>()((set, get) => {
               list: s.adminUsers.list.filter(u => u.username !== ev.username),
             },
           }))
+          mapMemberInfo((username, m) => (username === ev.username ? null : m))
+          set(s => (s.profile?.user.username === ev.username ? { profile: null } : {}))
           if (reload) void get().loadMoreDms()
           const { view, dms } = get()
           if (view?.kind === 'dm' && !dms.some(d => d.id === view.dmId)) {
@@ -2521,6 +2717,8 @@ export const useStore = create<RChatState>()((set, get) => {
 
     openContextMenu: (x, y, items) => set({ contextMenu: { x, y, items } }),
     closeContextMenu: () => set({ contextMenu: null }),
+    openProfile: (user, server, x, y) => set({ profile: { user, server, x, y } }),
+    closeProfile: () => set(s => (s.profile ? { profile: null } : {})),
     openDialog: dialog => set({ activeDialog: dialog }),
     closeDialog: () => set({ activeDialog: null }),
     askConfirm: req => set({ activeDialog: { kind: 'confirm', ...req } }),

@@ -9,6 +9,7 @@ import type {
   Me,
   Member,
   Message,
+  Profile,
   Role,
   SearchResult,
   ServerBan,
@@ -120,10 +121,20 @@ export const myServers = (offset: number, limit: number) =>
   req<ServerSummary[]>('GET', `/me/servers?offset=${offset}&limit=${limit}`)
 export const myServersByName = (names: string[]) =>
   req<ServerSummary[]>('GET', `/me/servers?${names.map(n => `names=${seg(n)}`).join('&')}`)
-export const patchMe = (avatar_kind: AvatarKind, avatar_color?: string) =>
-  req<UserRef>('PATCH', '/me', { avatar_kind, avatar_color })
+export interface MeUpdated extends UserRef {
+  banner_color: string | null
+  appear_offline: boolean
+}
+
+export const patchMe = (
+  avatar_kind: AvatarKind,
+  avatar_color?: string,
+  banner_color?: string | null
+) => req<MeUpdated>('PATCH', '/me', { avatar_kind, avatar_color, banner_color })
 export const setAppearOffline = (appear_offline: boolean) =>
-  req<UserRef>('PATCH', '/me', { appear_offline })
+  req<MeUpdated>('PATCH', '/me', { appear_offline })
+export const userProfile = (username: string, server?: string | null) =>
+  req<Profile>('GET', `/users/${seg(username)}/profile${server ? `?server=${seg(server)}` : ''}`)
 
 export const createServer = (name: string, password?: string) =>
   req<ServerDetail>('POST', '/servers', { name, password })
@@ -135,6 +146,11 @@ export const guestAccess = (name: string, password: string) =>
   req<{ grant: string }>('POST', `/servers/${seg(name)}/guest_access`, { password })
 export const listMembers = (name: string, offset: number) =>
   req<Member[]>('GET', `/servers/${seg(name)}/members?offset=${offset}&limit=50`)
+export const membersByName = (name: string, usernames: string[]) =>
+  req<Member[]>(
+    'GET',
+    `/servers/${seg(name)}/members?${usernames.map(u => `usernames=${seg(u)}`).join('&')}`
+  )
 export const listInteracted = (name: string, offset: number) =>
   req<UserRef[]>('GET', `/servers/${seg(name)}/interacted?offset=${offset}&limit=50`)
 export const joinServer = (name: string, password?: string) =>

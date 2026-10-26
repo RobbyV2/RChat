@@ -27,6 +27,7 @@ pub struct Me {
     pub display_name: String,
     pub avatar_kind: AvatarKind,
     pub avatar_color: Option<String>,
+    pub banner_color: Option<String>,
     pub is_site_admin: bool,
     pub appear_offline: bool,
     pub servers: Vec<ServerSummary>,
@@ -138,6 +139,7 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
         display_name: user.display_name.clone(),
         avatar_kind: user.avatar_kind,
         avatar_color: user.avatar_color.clone(),
+        banner_color: user.banner_color.clone(),
         is_site_admin: user.is_site_admin,
         appear_offline: user.appear_offline,
         servers,
@@ -327,32 +329,71 @@ pub(crate) async fn me(
     Ok(Json(me_payload(&state.db, &user).await?))
 }
 
+fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
 #[derive(Deserialize, ToSchema)]
 pub struct MePatch {
     avatar_kind: Option<AvatarKind>,
     avatar_color: Option<String>,
     appear_offline: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<String>)]
+    banner_color: Option<Option<String>>,
 }
 
-#[utoipa::path(patch, path = "/api/me", request_body = MePatch, responses((status = 200, description = "Avatar and/or appear-offline preference updated; returns the user's public profile", body = UserRef)), security(("bearer" = [])))]
+#[derive(Serialize, ToSchema)]
+pub struct MeUpdated {
+    #[serde(flatten)]
+    pub user: UserRef,
+    pub banner_color: Option<String>,
+    pub appear_offline: bool,
+}
+
+fn check_banner(color: Option<String>) -> Result<Option<String>, ApiError> {
+    match color {
+        None => Ok(None),
+        Some(color) if valid_color(&color) => Ok(Some(color.to_lowercase())),
+        Some(_) => Err(bad("Invalid banner color")),
+    }
+}
+
+#[utoipa::path(patch, path = "/api/me", request_body(content = MePatch, description = "Every field is optional and only the fields present change. `banner_color` is a `#rrggbb` color, or `null` to go back to the default derived from the avatar"), responses((status = 200, description = "Avatar, banner color and/or appear-offline preference updated; returns the user's public profile plus their banner color and appear-offline flag", body = MeUpdated)), security(("bearer" = [])))]
 pub(crate) async fn patch_me(
     State(state): State<AppState>,
     Authed(user): Authed,
     Json(req): Json<MePatch>,
-) -> Result<Json<UserRef>, ApiError> {
+) -> Result<Json<MeUpdated>, ApiError> {
     let MePatch {
         avatar_kind,
         avatar_color,
         appear_offline,
+        banner_color,
     } = req;
     let avatar = match avatar_kind {
         Some(kind) => Some((kind, check_avatar(kind, avatar_color)?)),
+        None => None,
+    };
+    let banner = match banner_color {
+        Some(color) => Some(check_banner(color)?),
         None => None,
     };
     let mut tx = state.db.begin().await?;
     if let Some((kind, color)) = &avatar {
         sqlx::query("UPDATE users SET avatar_kind = $1, avatar_color = $2 WHERE username = $3")
             .bind(kind.as_str())
+            .bind(color)
+            .bind(&user.username)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(color) = &banner {
+        sqlx::query("UPDATE users SET banner_color = $1 WHERE username = $2")
             .bind(color)
             .bind(&user.username)
             .execute(&mut *tx)
@@ -377,11 +418,15 @@ pub(crate) async fn patch_me(
     }
     if appear_offline.is_some() {
         state.hub.broadcast(WsEvent::PresenceMode {
-            username: stored.username,
+            username: stored.username.clone(),
             appear_offline: stored.appear_offline,
         });
     }
-    Ok(Json(user_ref))
+    Ok(Json(MeUpdated {
+        user: user_ref,
+        banner_color: stored.banner_color,
+        appear_offline: stored.appear_offline,
+    }))
 }
 
 #[cfg(test)]
@@ -542,6 +587,7 @@ mod tests {
                             avatar_kind,
                             avatar_color,
                             appear_offline,
+                            banner_color: None,
                         }),
                     )
                     .await
@@ -583,7 +629,7 @@ mod tests {
         let both = patch(Some(AvatarKind::Color), Some("#ABCDEF"), Some(true))
             .await
             .0;
-        assert_eq!(both.avatar_color.as_deref(), Some("#abcdef"));
+        assert_eq!(both.user.avatar_color.as_deref(), Some("#abcdef"));
         assert!(stored(state.clone()).await);
         assert!(matches!(
             rx.try_recv(),

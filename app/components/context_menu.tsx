@@ -1,6 +1,13 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { MouseEvent as ReactMouseEvent, TouchEvent as ReactTouchEvent } from 'react'
 import { useStore } from '../lib/store'
 import {
@@ -124,20 +131,25 @@ export function longPress(open: (x: number, y: number) => void): LongPressProps 
   }
 }
 
-const coarseQuery = '(pointer: coarse)'
+export const COARSE_QUERY = '(pointer: coarse)'
 
-const subscribeCoarse = (cb: () => void) => {
-  const mq = window.matchMedia(coarseQuery)
-  mq.addEventListener('change', cb)
-  return () => mq.removeEventListener('change', cb)
-}
-
-const useCoarse = () =>
-  useSyncExternalStore(
-    subscribeCoarse,
-    () => window.matchMedia(coarseQuery).matches,
+export function useMedia(query: string) {
+  const subscribe = useCallback(
+    (cb: () => void) => {
+      const mq = window.matchMedia(query)
+      mq.addEventListener('change', cb)
+      return () => mq.removeEventListener('change', cb)
+    },
+    [query]
+  )
+  return useSyncExternalStore(
+    subscribe,
+    () => window.matchMedia(query).matches,
     () => false
   )
+}
+
+const useCoarse = () => useMedia(COARSE_QUERY)
 
 export function ContextMenu() {
   const menu = useStore(s => s.contextMenu)

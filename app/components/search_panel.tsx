@@ -6,7 +6,8 @@ import { useStore } from '../lib/store'
 import { dayEndTs, dayStartTs, type SearchArgs } from '../lib/search'
 import { UserAvatar } from './user_avatar'
 import { Sentinel, fieldCls } from './server_settings'
-import { fmtTime } from './message_pane'
+import { avatarTriggerCls, fmtTime, nameTriggerCls } from './message_pane'
+import { profileTrigger } from './profile_card'
 
 const chipCls = (on: boolean) =>
   `rounded-full border px-3 py-1 text-xs font-medium ${
@@ -152,14 +153,23 @@ export default function SearchPanel() {
               <span className="shrink-0">·</span>
               <span className="streamer truncate">{r.server}</span>
             </p>
-            <div className="mt-1 flex items-center gap-2">
-              <UserAvatar
-                username={r.message.author.username}
-                avatarKind={r.message.author.avatar_kind}
-                avatarColor={r.message.author.avatar_color}
-                size={20}
-              />
-              <span className="streamer truncate text-sm font-medium">
+            <div className="mt-1 flex min-w-0 items-center gap-2">
+              <span
+                {...profileTrigger(r.message.author, r.server, false)}
+                title="View profile"
+                className={`shrink-0 ${avatarTriggerCls}`}
+              >
+                <UserAvatar
+                  username={r.message.author.username}
+                  avatarKind={r.message.author.avatar_kind}
+                  avatarColor={r.message.author.avatar_color}
+                  size={20}
+                />
+              </span>
+              <span
+                {...profileTrigger(r.message.author, r.server)}
+                className={`streamer truncate text-sm font-medium ${nameTriggerCls}`}
+              >
                 {r.message.author.display_name}
               </span>
               <span className="shrink-0 text-xs text-on-surface-variant">

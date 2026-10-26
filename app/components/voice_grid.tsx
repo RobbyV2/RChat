@@ -18,6 +18,7 @@ import { p2p } from '../lib/p2p'
 import { userRefFor, useStore } from '../lib/store'
 import type { UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
+import { profileTrigger } from './profile_card'
 
 function VideoView({
   stream,
@@ -49,6 +50,7 @@ function VideoView({
 
 function Tile({
   user,
+  server,
   stream,
   hasVideo,
   muted,
@@ -59,6 +61,7 @@ function Tile({
   onExpand,
 }: {
   user: UserRef
+  server: string | null
   stream: MediaStream | null
   hasVideo: boolean
   muted: boolean
@@ -80,14 +83,23 @@ function Tile({
         <VideoView stream={stream} hidden={!hasVideo} mirror={mirror} muteAudio={muteAudio} />
       )}
       {!hasVideo && (
-        <UserAvatar
-          username={user.username}
-          avatarKind={user.avatar_kind}
-          avatarColor={user.avatar_color}
-          size={56}
-        />
+        <span
+          {...profileTrigger(user, server, false)}
+          title="View profile"
+          className="block cursor-pointer rounded-full outline-offset-2 hover:opacity-85 focus-visible:outline-2 focus-visible:outline-primary"
+        >
+          <UserAvatar
+            username={user.username}
+            avatarKind={user.avatar_kind}
+            avatarColor={user.avatar_color}
+            size={56}
+          />
+        </span>
       )}
-      <span className="absolute bottom-2 left-2 flex max-w-[calc(100%-1rem)] items-center gap-1 rounded-full bg-scrim/60 px-2 py-0.5 text-xs text-white">
+      <span
+        {...profileTrigger(user, server)}
+        className="absolute bottom-2 left-2 flex max-w-[calc(100%-1rem)] cursor-pointer items-center gap-1 rounded-full bg-scrim/60 px-2 py-0.5 text-xs text-white outline-offset-2 hover:bg-scrim/80 focus-visible:outline-2 focus-visible:outline-primary"
+      >
         {muted && (
           <span title="Muted" className="flex shrink-0">
             <MicOff size={12} />
@@ -192,6 +204,7 @@ export function VoiceDock() {
 export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: number }) {
   useStore(s => s.rtcTick)
   useStore(s => s.members)
+  useStore(s => s.memberInfo)
   useStore(s => s.dms)
   const me = useStore(s => s.me)
   const voice = useStore(s => s.voice)
@@ -199,6 +212,7 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
   const roomUsers = useStore(s => (channelId !== undefined ? s.voiceUsers[channelId] : undefined))
   const view = useStore(s => s.view)
   const joinVoice = useStore(s => s.joinVoice)
+  const server = channelId !== undefined && view?.kind === 'channel' ? view.server : null
 
   const forDm = dmId !== undefined && call?.dmId === dmId ? call : null
   const p2pKind = forDm?.kind === 'p2p'
@@ -240,6 +254,7 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
                 <Tile
                   key={u}
                   user={user}
+                  server={server}
                   stream={p2pKind ? p2p.local : rtc.local}
                   hasVideo={p2pKind ? p2p.camOn || p2p.shareOn : rtc.videoTrack !== null}
                   muted={p2pKind ? p2p.muted : rtc.muted}
@@ -256,6 +271,7 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
                 <Tile
                   key={u}
                   user={user}
+                  server={server}
                   stream={joined ? p2p.remote : null}
                   hasVideo={joined && p2p.remoteCamOn}
                   muted={false}
@@ -268,6 +284,7 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
               <Tile
                 key={u}
                 user={user}
+                server={server}
                 stream={peer?.stream ?? null}
                 hasVideo={peer?.camOn ?? false}
                 muted={peer?.muted ?? false}
@@ -280,6 +297,7 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
             <Tile
               key={pendingOther}
               user={userRefFor(state, pendingOther)}
+              server={null}
               stream={null}
               hasVideo={false}
               muted={false}

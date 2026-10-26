@@ -8,8 +8,10 @@ import { rtc } from '../lib/rtc'
 import { Perm, hasPerm, type Channel, type ChannelKind } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
+import { profileTrigger } from './profile_card'
 import { VoiceDock } from './voice_grid'
 import { Sentinel } from './server_settings'
+import { useAuthorMembers } from './message_pane'
 
 type Editing = { mode: 'create'; kind: ChannelKind } | { mode: 'rename'; id: number }
 
@@ -44,11 +46,20 @@ export function ChannelSidebar() {
   }
   useStore(s => s.rtcTick)
   useStore(s => s.members)
+  useStore(s => s.memberInfo)
   useStore(s => s.me)
   const [editing, setEditing] = useState<Editing | null>(null)
   const [name, setName] = useState('')
   const [dmInput, setDmInput] = useState<string | null>(null)
   const settled = useRef(false)
+  const voiceServer = view?.kind === 'channel' ? view.server : null
+  const voiceKey = useStore(s => {
+    const channels = voiceServer ? s.servers[voiceServer]?.channels : undefined
+    if (!channels) return ''
+    const names = channels.flatMap(c => (c.kind === 'voice' ? (s.voiceUsers[c.id] ?? []) : []))
+    return [...new Set(names)].sort().join('\n')
+  })
+  useAuthorMembers(voiceServer, voiceKey)
 
   if (view?.kind === 'dm') {
     const sortedDms = [...dms].sort((a, b) => Number(b.is_self) - Number(a.is_self))
@@ -355,7 +366,8 @@ export function ChannelSidebar() {
                 return (
                   <div
                     key={u}
-                    className="ml-9 flex items-center gap-1.5 px-2 py-0.5 text-sm text-on-surface-variant"
+                    {...profileTrigger(user, detail.name)}
+                    className="mr-2 ml-9 flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-0.5 text-sm text-on-surface-variant outline-offset-[-2px] hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary"
                   >
                     <span
                       className={`flex shrink-0 rounded-full ${

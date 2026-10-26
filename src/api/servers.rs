@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use axum::Json;
 use axum::extract::{Path, Query, RawQuery, State};
@@ -128,26 +128,51 @@ pub struct MyServersQuery {
     names: Option<Vec<String>>,
 }
 
+type PagedList = (Option<i64>, Option<i64>, Option<Vec<String>>);
+
+fn paged_list(raw: &str, list_key: &str) -> Result<PagedList, ApiError> {
+    let int = |v: &str| v.parse::<i64>().map_err(|_| bad("Invalid number"));
+    let mut offset = None;
+    let mut limit = None;
+    let mut list: Option<Vec<String>> = None;
+    for (key, value) in url::form_urlencoded::parse(raw.as_bytes()) {
+        match key.as_ref() {
+            "offset" => offset = Some(int(&value)?),
+            "limit" => limit = Some(int(&value)?),
+            k if k == list_key => list.get_or_insert_with(Vec::new).push(value.into_owned()),
+            _ => {}
+        }
+    }
+    Ok((offset, limit, list))
+}
+
 impl MyServersQuery {
     fn parse(raw: &str) -> Result<MyServersQuery, ApiError> {
-        let int = |v: &str| v.parse::<i64>().map_err(|_| bad("Invalid number"));
-        let mut q = MyServersQuery {
-            offset: None,
-            limit: None,
-            names: None,
-        };
-        for (key, value) in url::form_urlencoded::parse(raw.as_bytes()) {
-            match key.as_ref() {
-                "offset" => q.offset = Some(int(&value)?),
-                "limit" => q.limit = Some(int(&value)?),
-                "names" => q
-                    .names
-                    .get_or_insert_with(Vec::new)
-                    .push(value.into_owned()),
-                _ => {}
-            }
-        }
-        Ok(q)
+        let (offset, limit, names) = paged_list(raw, "names")?;
+        Ok(MyServersQuery {
+            offset,
+            limit,
+            names,
+        })
+    }
+}
+
+#[derive(IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct MemberListQuery {
+    offset: Option<i64>,
+    limit: Option<i64>,
+    usernames: Option<Vec<String>>,
+}
+
+impl MemberListQuery {
+    fn parse(raw: &str) -> Result<MemberListQuery, ApiError> {
+        let (offset, limit, usernames) = paged_list(raw, "usernames")?;
+        Ok(MemberListQuery {
+            offset,
+            limit,
+            usernames,
+        })
     }
 }
 
@@ -472,40 +497,87 @@ async fn server_detail(
     })
 }
 
-#[utoipa::path(get, path = "/api/servers/{name}/members", params(("name" = String, Path), MembersQuery), responses((status = 200, description = "Up to 50 members, online first and then alphabetical", body = Vec<Member>)), security((), ("bearer" = [])))]
+type MemberRow = (String, i64, i64);
+
+fn member_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<MemberRow>, ApiError> {
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push((r.try_get(0)?, r.try_get(1)?, r.try_get(2)?));
+    }
+    Ok(out)
+}
+
+async fn members_by_names(
+    db: &Db,
+    server: &str,
+    names: &[String],
+) -> Result<Vec<MemberRow>, ApiError> {
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
+        "SELECT username, is_admin, perms FROM members WHERE server = $1 AND username IN ({}) ORDER BY username",
+        placeholders(2, names.len())
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(server);
+    for name in names {
+        query = query.bind(name);
+    }
+    member_rows(&query.fetch_all(db).await?)
+}
+
+async fn members_page(
+    db: &Db,
+    server: &str,
+    online: &HashSet<String>,
+    offset: Option<i64>,
+    limit: Option<i64>,
+) -> Result<Vec<MemberRow>, ApiError> {
+    let offset = offset.unwrap_or(0).max(0) as usize;
+    let limit = limit.unwrap_or(50).clamp(1, 50) as usize;
+    let rows = sqlx::query(
+        "SELECT username, is_admin, perms FROM members WHERE server = $1 ORDER BY username",
+    )
+    .bind(server)
+    .fetch_all(db)
+    .await?;
+    let (mut on, mut off): (Vec<MemberRow>, Vec<MemberRow>) = member_rows(&rows)?
+        .into_iter()
+        .partition(|(username, _, _)| online.contains(username));
+    on.append(&mut off);
+    Ok(on.into_iter().skip(offset).take(limit).collect())
+}
+
+#[utoipa::path(get, path = "/api/servers/{name}/members", params(("name" = String, Path), MemberListQuery), responses((status = 200, description = "A page (`offset`, `limit` default and max 50) of members, online first and then alphabetical. With `usernames` (repeated once per user, e.g. `usernames=a&usernames=b`, max 100) returns just those users that are members, alphabetical, skipping the rest", body = Vec<Member>)), security((), ("bearer" = [])))]
 pub(crate) async fn list_members(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
     headers: HeaderMap,
     Path(name): Path<String>,
-    Query(q): Query<MembersQuery>,
+    RawQuery(raw): RawQuery,
 ) -> Result<Json<Vec<Member>>, ApiError> {
+    let MemberListQuery {
+        offset,
+        limit,
+        usernames,
+    } = MemberListQuery::parse(raw.as_deref().unwrap_or(""))?;
     require_guest_ok(&state.db, viewer.as_ref()).await?;
     let key = name.to_lowercase();
     let lite = require_server(&state.db, &key).await?;
     require_server_view(&state.db, &headers, &lite, viewer.as_ref()).await?;
     let creator = lite.creator;
-    let offset = q.offset.unwrap_or(0).max(0) as usize;
-    let limit = q.limit.unwrap_or(50).clamp(1, 50) as usize;
     let online = state.hub.online_set(&key);
-    let rows = sqlx::query(
-        "SELECT username, is_admin, perms FROM members WHERE server = $1 ORDER BY username",
-    )
-    .bind(&key)
-    .fetch_all(&state.db)
-    .await?;
-    let mut on = Vec::new();
-    let mut off = Vec::new();
-    for r in &rows {
-        let (username, is_admin, perms): (String, i64, i64) =
-            (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
-        match online.contains(&username) {
-            true => on.push((username, is_admin, perms)),
-            false => off.push((username, is_admin, perms)),
+    let rows = match usernames {
+        Some(names) => {
+            members_by_names(
+                &state.db,
+                &key,
+                &unique_capped(names.iter().map(|n| n.to_lowercase())),
+            )
+            .await?
         }
-    }
-    on.append(&mut off);
-    let rows: Vec<(String, i64, i64)> = on.into_iter().skip(offset).take(limit).collect();
+        None => members_page(&state.db, &key, &online, offset, limit).await?,
+    };
     let names: Vec<String> = rows.iter().map(|(name, _, _)| name.clone()).collect();
     let refs = user_refs(&state.db, &names).await;
     let mut roles = role_ids_of(&state.db, &key, &names).await?;
@@ -2473,31 +2545,57 @@ mod tests {
             .await
             .expect("assign");
         }
-        let members = list_members(
-            State(state.clone()),
-            MaybeAuthed(None),
-            HeaderMap::new(),
-            Path("rchat".to_string()),
-            Query(MembersQuery {
-                offset: None,
-                limit: None,
-            }),
-        )
-        .await
-        .expect("members")
-        .0;
-        let rows: Vec<(String, String, Vec<i64>)> = members
-            .into_iter()
-            .map(|m| (m.user.username, m.user.display_name, m.role_ids))
-            .collect();
-        assert_eq!(
-            rows,
-            vec![
-                ("alice".to_string(), "Alice A".to_string(), vec![]),
-                ("bob".to_string(), "bob".to_string(), roles.clone()),
-                ("carol".to_string(), "carol".to_string(), vec![roles[1]]),
-            ]
-        );
+        let fetch = |raw: &str| {
+            let state = state.clone();
+            let raw = raw.to_string();
+            async move {
+                list_members(
+                    State(state),
+                    MaybeAuthed(None),
+                    HeaderMap::new(),
+                    Path("rchat".to_string()),
+                    RawQuery(Some(raw)),
+                )
+                .await
+                .map(|members| {
+                    members
+                        .0
+                        .into_iter()
+                        .map(|m| (m.user.username, m.user.display_name, m.role_ids))
+                        .collect::<Vec<(String, String, Vec<i64>)>>()
+                })
+            }
+        };
+        let all = vec![
+            ("alice".to_string(), "Alice A".to_string(), vec![]),
+            ("bob".to_string(), "bob".to_string(), roles.clone()),
+            ("carol".to_string(), "carol".to_string(), vec![roles[1]]),
+        ];
+        assert_eq!(fetch("").await.expect("members"), all);
+        assert_eq!(fetch("offset=1&limit=1").await.expect("page"), all[1..2]);
+        let picked = fetch("usernames=CAROL&usernames=nobody&usernames=alice&usernames=carol")
+            .await
+            .expect("by name");
+        assert_eq!(picked, vec![all[0].clone(), all[2].clone()]);
+        assert!(fetch("usernames=").await.expect("empty name").is_empty());
+        let many: Vec<String> = (0..150).map(|n| format!("usernames=x{n}")).collect();
+        let capped = fetch(&format!("{}&usernames=bob", many[..99].join("&")))
+            .await
+            .expect("under cap");
+        assert_eq!(capped, vec![all[1].clone()]);
+        let over = fetch(&format!("{}&usernames=bob", many.join("&")))
+            .await
+            .expect("over cap");
+        assert!(over.is_empty());
+        assert!(rejected(fetch("offset=x").await));
+        sqlx::query("UPDATE servers SET password_hash = 'x' WHERE name = 'rchat'")
+            .execute(db)
+            .await
+            .expect("lock server");
+        assert!(matches!(
+            fetch("usernames=bob").await,
+            Err(ApiError(StatusCode::FORBIDDEN, _))
+        ));
         done(state, path).await;
     }
 }
