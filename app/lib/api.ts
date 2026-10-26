@@ -10,6 +10,7 @@ import type {
   Me,
   Member,
   Message,
+  PasswordMembers,
   Profile,
   Role,
   SearchResult,
@@ -18,6 +19,7 @@ import type {
   ServerMatch,
   ServerSummary,
   ServerSummaryLite,
+  ServerUpdated,
   SiteSettings,
   Unread,
   UserRef,
@@ -169,8 +171,10 @@ export const listInteracted = (name: string, offset: number) =>
 export const joinServer = (name: string, password?: string) =>
   req<ServerDetail>('POST', `/servers/${seg(name)}/join`, { password })
 export const leaveServer = (name: string) => req<unknown>('POST', `/servers/${seg(name)}/leave`)
-export const updateServer = (name: string, patch: { name?: string; password?: string }) =>
-  req<ServerSummaryLite>('PATCH', `/servers/${seg(name)}`, patch)
+export const updateServer = (
+  name: string,
+  patch: { name?: string; password?: string; members?: PasswordMembers }
+) => req<ServerUpdated>('PATCH', `/servers/${seg(name)}`, patch)
 export const deleteServer = (name: string) => req<unknown>('DELETE', `/servers/${seg(name)}`)
 export const createChannel = (server: string, name: string, kind: ChannelKind = 'text') =>
   req<Channel>('POST', `/servers/${seg(server)}/channels`, { name, kind })

@@ -4,6 +4,7 @@ import {
   appendUnique,
   bumpFront,
   keyed,
+  lostServers,
   unreadMark,
   windowEdges,
   createPager,
@@ -34,6 +35,16 @@ describe('mergeHead', () => {
 
   test('a partial head keeps loaded items that are not in it', () => {
     expect(mergeHead([1, 2, 3, 4], [5, 1], true, id)).toEqual([5, 1, 2, 3, 4])
+  })
+})
+
+describe('lostServers', () => {
+  test('lists every known server the user is no longer in, once', () => {
+    expect(lostServers(['a', 'b', 'c', 'b'], new Set(['a']), () => false)).toEqual(['b', 'c'])
+  })
+
+  test('skips servers already dropped while the check ran', () => {
+    expect(lostServers(['a', 'b', 'c'], new Set(['a']), n => n === 'b')).toEqual(['c'])
   })
 })
 

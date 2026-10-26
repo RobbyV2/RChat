@@ -251,3 +251,13 @@ describe('membership count math', () => {
     expect(s.servers.s.member_count).toBe(3)
   })
 })
+
+describe('confirm dialog', () => {
+  test('every request gets a fresh sequence number, even with the same title', () => {
+    const req = { title: 'Change Password', body: '', confirm: 'Change', action: () => {} }
+    st().askConfirm(req)
+    const first = st().confirmSeq
+    st().askConfirm({ ...req })
+    expect(st().confirmSeq).toBe(first + 1)
+  })
+})

@@ -198,6 +198,7 @@ pub enum WsEvent {
     SettingsChanged {
         settings: Settings,
     },
+    Resync,
 }
 
 #[derive(Deserialize)]
@@ -1180,6 +1181,22 @@ async fn guest_sub_ok(db: &Db, server: &str, grant: Option<&str>) -> bool {
     }
 }
 
+async fn recheck_guest_subs(
+    db: &Db,
+    subs: &mut HashSet<String>,
+    grants: &mut HashMap<String, String>,
+) {
+    let mut kept = HashSet::new();
+    for server in subs.drain() {
+        if guest_sub_ok(db, &server, grants.get(&server).map(String::as_str)).await {
+            kept.insert(server);
+        } else {
+            grants.remove(&server);
+        }
+    }
+    *subs = kept;
+}
+
 async fn authed_sub_ok(db: &Db, server: &str, user: &str, site_admin: bool) -> bool {
     match server_password_hash(db, server).await {
         None => false,
@@ -1364,8 +1381,13 @@ async fn run(state: AppState, mut socket: WebSocket) {
                                 if !setting_on(&state.db, "guests_enabled").await {
                                     break;
                                 }
+                                recheck_guest_subs(&state.db, &mut subs, &mut guest_grants).await;
                             }
                         }
+                        if let Ok(json) = serde_json::to_string(&WsEvent::Resync)
+                            && socket.send(Frame::Text(json.into())).await.is_err() {
+                                break;
+                            }
                         continue;
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
@@ -1827,13 +1849,43 @@ fn wants(
             dm_users,
             reason: _,
         } => scoped(server, dm_users),
-        WsEvent::Error { message: _ } => false,
+        WsEvent::Error { message: _ } | WsEvent::Resync => false,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn lagged_guest_recheck_drops_revoked_subs() {
+        let (state, path) = crate::api::test_util::temp_state("guest_recheck").await;
+        let db = &state.db;
+        for (name, hash) in [("open", None), ("locked", Some("h")), ("kept", Some("h"))] {
+            sqlx::query("INSERT INTO servers(name, display_name, password_hash, created_at) VALUES($1, $1, $2, 0)")
+                .bind(name)
+                .bind(hash)
+                .execute(db)
+                .await
+                .expect("server");
+        }
+        sqlx::query(
+            "INSERT INTO guest_grants(\"grant\", server, created_at) VALUES('g2', 'kept', 0)",
+        )
+        .execute(db)
+        .await
+        .expect("grant");
+        let mut subs: HashSet<String> = ["open", "locked", "kept", "gone"].map(String::from).into();
+        let mut grants: HashMap<String, String> = [("locked", "g1"), ("kept", "g2")]
+            .map(|(s, g)| (s.to_string(), g.to_string()))
+            .into();
+        recheck_guest_subs(db, &mut subs, &mut grants).await;
+        let mut left: Vec<_> = subs.into_iter().collect();
+        left.sort();
+        assert_eq!(left, ["kept", "open"]);
+        assert_eq!(grants.keys().collect::<Vec<_>>(), ["kept"]);
+        crate::api::test_util::done(state, path).await;
+    }
 
     fn presence_events(rx: &mut broadcast::Receiver<WsEvent>) -> Vec<(String, bool)> {
         let mut out = Vec::new();

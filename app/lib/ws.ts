@@ -86,6 +86,10 @@ class WsClient {
     if (this.subs.delete(server)) this.sendSubscribe()
   }
 
+  resubscribe() {
+    this.sendSubscribe()
+  }
+
   private sendSubscribe() {
     this.send({ type: 'subscribe', servers: [...this.subs], grants: this.grants })
   }

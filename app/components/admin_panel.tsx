@@ -390,7 +390,15 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
               renameServer(name, v).then(onCollapse, (e: unknown) => setError(errorText(e)))
             }
           />
-          <ServerPasswordField server={name} hasPassword={detail.has_password} refresh={refresh} />
+          <ServerPasswordField
+            server={name}
+            hasPassword={detail.has_password}
+            canRemove
+            refresh={() => {
+              void refresh()
+              reloadMembers()
+            }}
+          />
         </>
       )}
       <p className={sectionCls}>Roles</p>

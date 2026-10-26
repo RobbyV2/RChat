@@ -30,6 +30,12 @@ export const mergeHead = <T>(list: T[], head: T[], more: boolean, keyOf: (item: 
   return [...head, ...list.filter(item => !seen.has(keyOf(item)))]
 }
 
+export const lostServers = (
+  known: string[],
+  joined: ReadonlySet<string>,
+  droppedSince: (name: string) => boolean
+): string[] => [...new Set(known)].filter(name => !joined.has(name) && !droppedSince(name))
+
 export const bumpFront = <T>(
   list: T[],
   item: T,

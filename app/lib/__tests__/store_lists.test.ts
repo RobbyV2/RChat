@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { dmsUnread, serverUnread, useStore } from '../store'
 import type { DmSummary, Message, ServerSummary, WsEvent } from '../types'
-import { me, msg, serverDetail, user } from './fixtures'
+import { me, member, msg, paged, serverDetail, user } from './fixtures'
+import { emptyLayout, layoutServers } from '../nav_layout'
 
 const dispatch = (ev: WsEvent) => useStore.getState().applyWsEvent(ev)
 const st = () => useStore.getState()
@@ -383,5 +384,170 @@ describe('older history', () => {
     held[2]([])
     await next
     expect(st().older.t500).toEqual({ more: false, loading: false })
+  })
+})
+
+describe('resync after the socket lagged', () => {
+  const realRandom = Math.random
+  beforeEach(() => {
+    Math.random = () => 0
+  })
+  afterEach(() => {
+    Math.random = realRandom
+  })
+
+  test('waits a random jitter of up to three seconds before catching up', async () => {
+    Math.random = () => 0.5
+    serve({ items: [] })
+    dispatch({ type: 'resync' })
+    await new Promise(r => setTimeout(r, 300))
+    expect(requests).toHaveLength(0)
+    await new Promise(r => setTimeout(r, 1550))
+    expect(requests.length > 0).toBe(true)
+  })
+
+  test('fully drops the open server even when the refetched me already lost it', async () => {
+    const channels = [{ id: 7, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }]
+    const rchat = serverDetail('rchat', {
+      channels: [{ id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 }],
+    })
+    useStore.setState({
+      me: me('alice', { servers: [srv('rchat'), { ...srv('club'), display_name: 'Club' }] }),
+      serversMore: false,
+      view: { kind: 'channel', server: 'club', channelId: 7 },
+      servers: { club: serverDetail('club', { display_name: 'Club', channels }) },
+      members: { club: paged([member('alice'), member('bob')]) },
+      layout: { ...emptyLayout, servers: ['club', 'rchat'] },
+      notices: [],
+      error: null,
+    })
+    let releaseNames: () => void = () => {}
+    const namesHeld = new Promise<void>(r => (releaseNames = r))
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = new URL(String(input))
+      requests.push(url.pathname + url.search)
+      const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
+      if (url.pathname.endsWith('/me/servers')) {
+        await namesHeld
+        return json(
+          url.searchParams
+            .getAll('names')
+            .filter(n => n !== 'club')
+            .map(srv)
+        )
+      }
+      if (url.pathname.endsWith('/me'))
+        return json(me('alice', { servers: [srv('rchat')], servers_more: false }))
+      if (url.pathname.includes('/servers/club')) return json({ error: 'Not a member' }, 403)
+      if (url.pathname.endsWith('/servers/rchat')) return json(rchat)
+      return json(url.pathname.includes('/messages') ? [] : { items: [] })
+    }) as typeof fetch
+    dispatch({ type: 'resync' })
+    await new Promise(r => setTimeout(r, 300))
+    await tick()
+    expect(serverNames()).toEqual(['rchat'])
+    releaseNames()
+    await new Promise(r => setTimeout(r, 20))
+    expect(st().view).toEqual({ kind: 'channel', server: 'rchat', channelId: 1 })
+    expect(st().servers.club).toBeUndefined()
+    expect(st().members.club).toBeUndefined()
+    expect(layoutServers(st().layout.servers)).toEqual(['rchat'])
+    expect(st().notices.map(n => `${n.lead} ${n.name}`)).toEqual(['You were removed from Club'])
+    expect(requests.some(r => r.includes('/servers/club/members'))).toBe(false)
+    expect(st().error === 'Not a member').toBe(false)
+  })
+
+  test('a server that no longer exists drops without a removal notice', async () => {
+    useStore.setState({
+      me: me('alice', { servers: [srv('rchat'), srv('gone')] }),
+      serversMore: false,
+      servers: { gone: serverDetail('gone') },
+      notices: [],
+    })
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = new URL(String(input))
+      requests.push(url.pathname + url.search)
+      if (url.pathname.endsWith('/servers/gone/exists'))
+        return new Response(JSON.stringify({ error: 'Server not found' }), { status: 404 })
+      const body = url.pathname.endsWith('/me/servers')
+        ? url.searchParams
+            .getAll('names')
+            .filter(n => n !== 'gone')
+            .map(srv)
+        : url.pathname.endsWith('/me')
+          ? me('alice', { servers: [srv('rchat')] })
+          : { items: [] }
+      return new Response(JSON.stringify(body), { status: 200 })
+    }) as typeof fetch
+    dispatch({ type: 'resync' })
+    await new Promise(r => setTimeout(r, 320))
+    expect(serverNames()).toEqual(['rchat'])
+    expect(st().servers.gone).toBeUndefined()
+    expect(st().notices).toHaveLength(0)
+  })
+
+  test('a kick that arrives during the check is not announced twice', async () => {
+    useStore.setState({
+      me: me('alice', { servers: [srv('rchat'), srv('club')] }),
+      serversMore: false,
+      servers: { club: serverDetail('club') },
+      notices: [],
+    })
+    let releaseNames: () => void = () => {}
+    const namesHeld = new Promise<void>(r => (releaseNames = r))
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = new URL(String(input))
+      requests.push(url.pathname + url.search)
+      if (url.pathname.endsWith('/me/servers')) await namesHeld
+      const body = url.pathname.endsWith('/me/servers')
+        ? url.searchParams
+            .getAll('names')
+            .filter(n => n !== 'club')
+            .map(srv)
+        : url.pathname.endsWith('/me')
+          ? me('alice', { servers: [srv('rchat'), srv('club')] })
+          : { items: [] }
+      return new Response(JSON.stringify(body), { status: 200 })
+    }) as typeof fetch
+    dispatch({ type: 'resync' })
+    await new Promise(r => setTimeout(r, 300))
+    dispatch({ type: 'member_kicked', server: 'club', username: 'alice', banned: false })
+    releaseNames()
+    await new Promise(r => setTimeout(r, 20))
+    expect(serverNames()).toEqual(['rchat'])
+    expect(st().notices).toHaveLength(1)
+  })
+
+  test('drops servers the user was removed from, past the first page too', async () => {
+    const all = Array.from({ length: 52 }, (_, i) => srv(`s${i}`))
+    const gone = new Set(['s1', 's51'])
+    useStore.setState({
+      me: me('alice', { servers: all, servers_more: true }),
+      serversMore: true,
+      servers: { s1: serverDetail('s1'), s2: serverDetail('s2'), s51: serverDetail('s51') },
+    })
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = new URL(String(input))
+      requests.push(url.pathname + url.search)
+      const names = url.searchParams.getAll('names')
+      const body = url.pathname.endsWith('/me/servers')
+        ? names.filter(n => !gone.has(n)).map(srv)
+        : url.pathname.endsWith('/me')
+          ? me('alice', {
+              servers: all.slice(0, 50).filter(x => !gone.has(x.name)),
+              servers_more: true,
+            })
+          : { items: [] }
+      return new Response(JSON.stringify(body), { status: 200 })
+    }) as typeof fetch
+    dispatch({ type: 'resync' })
+    dispatch({ type: 'resync' })
+    expect(requests).toHaveLength(0)
+    await new Promise(r => setTimeout(r, 300))
+    await tick()
+    expect(requests.filter(r => r.includes('names='))).toHaveLength(1)
+    expect(serverNames()).toHaveLength(50)
+    expect(serverNames().some(n => gone.has(n))).toBe(false)
+    expect(Object.keys(st().servers)).toEqual(['s2'])
   })
 })

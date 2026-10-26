@@ -1,4 +1,11 @@
-import { ALL_PERMS, type Channel, type Member, type Role } from './types'
+import {
+  ALL_PERMS,
+  type Channel,
+  type ConfirmChoice,
+  type Member,
+  type PasswordMembers,
+  type Role,
+} from './types'
 
 export const NAME_MAX = 100
 export const MESSAGE_MAX = 4000
@@ -24,6 +31,64 @@ export const memberPerms = (
 
 export const canModerate = (perms: number, siteAdmin: boolean, target: number) =>
   siteAdmin || ((target & ~perms) === 0 && target !== perms)
+
+export type PasswordVerb = 'Set' | 'Change' | 'Clear'
+
+export const passwordPrompt = (
+  had: boolean,
+  next: string,
+  canRemove: boolean,
+  siteAdmin: boolean
+) => {
+  const verb: PasswordVerb = next ? (had ? 'Change' : 'Set') : 'Clear'
+  const changed = had && next !== ''
+  const choices: ConfirmChoice[] = [
+    {
+      value: 'keep',
+      label: 'Keep everyone',
+      detail: changed
+        ? 'Current members stay, and guests who entered the old password keep access.'
+        : 'Current members stay.',
+      danger: false,
+    },
+  ]
+  if (canRemove)
+    choices.push({
+      value: 'remove',
+      label: 'Remove everyone except me',
+      detail: [
+        `Other members are removed, not banned, and can rejoin${next ? ' with the new password' : ''}.`,
+        changed ? 'Guests who entered the old password lose access.' : '',
+        siteAdmin ? '' : 'Members with equal or higher permissions stay.',
+      ]
+        .filter(Boolean)
+        .join(' '),
+      danger: true,
+    })
+  return {
+    title: `${verb} Password`,
+    body: next
+      ? 'Joining will require the new password.'
+      : 'Anyone will be able to join with the server name.',
+    confirm: verb,
+    choices,
+  }
+}
+
+const members = (n: number) => `${n} member${n === 1 ? '' : 's'}`
+
+export const passwordDone = (
+  verb: PasswordVerb,
+  choice: PasswordMembers,
+  removed: number,
+  kept: number
+) => {
+  const head = `Password ${verb === 'Change' ? 'changed' : verb === 'Set' ? 'set' : 'cleared'}.`
+  if (choice === 'keep') return `${head} Everyone stayed.`
+  const gone = removed ? `Removed ${members(removed)}.` : 'No one was removed.'
+  const stayed = kept ? ` ${members(kept)} with equal or higher permissions stayed.` : ''
+  return `${head} ${gone}${stayed}`
+}
 
 export const serverInitial = (name: string) => {
   const trimmed = name.trim()

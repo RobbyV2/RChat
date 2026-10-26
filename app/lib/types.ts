@@ -33,6 +33,20 @@ export interface ServerSummaryLite {
   has_password: boolean
 }
 
+export type PasswordMembers = 'keep' | 'remove'
+
+export interface ConfirmChoice {
+  value: string
+  label: string
+  detail: string
+  danger: boolean
+}
+
+export interface ServerUpdated extends ServerSummaryLite {
+  removed: number
+  kept: number
+}
+
 export type ChannelKind = 'text' | 'voice'
 
 export interface Channel {
@@ -301,6 +315,7 @@ export type WsEvent =
   | { type: 'dm_created'; dm_id: number; dm_users: string[] }
   | { type: 'banned'; username: string }
   | { type: 'settings_changed'; settings: SiteSettings }
+  | { type: 'resync' }
 
 export type WsStatus = 'green' | 'yellow' | 'red'
 

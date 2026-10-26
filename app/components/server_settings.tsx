@@ -3,8 +3,15 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Hash, Trash2, X } from 'lucide-react'
 import * as api from '../lib/api'
-import { errorText, revokeAdminFor, roleMenuItems, serverAdminPerms, useStore } from '../lib/store'
-import { SLOWMODE_MAX } from '../lib/rules'
+import {
+  errorText,
+  revokeAdminFor,
+  roleMenuItems,
+  serverAdminPerms,
+  useStore,
+  type ConfirmRequest,
+} from '../lib/store'
+import { SLOWMODE_MAX, passwordDone, passwordPrompt } from '../lib/rules'
 import { inviteUrl } from '../lib/invite'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
 import type { Channel, ChannelPerm, Member, Role } from '../lib/types'
@@ -467,36 +474,54 @@ export function ChannelControls({
 export function ServerPasswordField({
   server,
   hasPassword,
+  canRemove,
   refresh,
 }: {
   server: string
   hasPassword: boolean
+  canRemove: boolean
   refresh?: () => void
 }) {
   const setServerPassword = useStore(s => s.setServerPassword)
+  const askConfirm = useStore(s => s.askConfirm)
+  const siteAdmin = useStore(s => s.me?.is_site_admin ?? false)
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState<string | null>(null)
   return (
     <>
       <p className={sectionCls}>Password</p>
       <form
         onSubmit={e => {
           e.preventDefault()
+          const next = password.trim()
           setError(null)
-          setServerPassword(server, password.trim()).then(
-            () => {
-              setPassword('')
-              refresh?.()
+          setDone(null)
+          const prompt = passwordPrompt(hasPassword, next, canRemove, siteAdmin)
+          askConfirm({
+            ...prompt,
+            action: choice => {
+              const members = choice === 'remove' ? 'remove' : 'keep'
+              setServerPassword(server, next, members).then(
+                res => {
+                  setPassword('')
+                  setDone(passwordDone(prompt.confirm, members, res.removed, res.kept))
+                  refresh?.()
+                },
+                (err: unknown) => setError(errorText(err))
+              )
             },
-            (err: unknown) => setError(errorText(err))
-          )
+          })
         }}
         className="flex gap-2"
       >
         <input
           type="password"
           value={password}
-          onChange={e => setPassword(e.target.value)}
+          onChange={e => {
+            setPassword(e.target.value)
+            setDone(null)
+          }}
           placeholder={hasPassword ? 'New password (blank clears)' : 'Set a join password'}
           className={fieldCls}
         />
@@ -505,6 +530,11 @@ export function ServerPasswordField({
         </button>
       </form>
       <FieldError message={error} />
+      {done && (
+        <p role="status" className="pt-1.5 text-xs text-on-surface">
+          {done}
+        </p>
+      )}
       <p className="pt-1.5 text-xs text-on-surface-variant">
         {hasPassword
           ? 'Joining requires the password; guests cannot view this server.'
@@ -641,22 +671,62 @@ export function BanList({ server }: { server: string }) {
 
 export function ConfirmDialog() {
   const request = useStore(s => s.confirm)
+  const seq = useStore(s => s.confirmSeq)
   const closeConfirm = useStore(s => s.closeConfirm)
   if (!request) return null
-  const { title, body, confirm, action } = request
+  return <ConfirmBody key={seq} request={request} onClose={closeConfirm} />
+}
+
+function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: () => void }) {
+  const { title, body, confirm, action, choices } = request
+  const name = useId()
+  const [choice, setChoice] = useState(choices?.[0]?.value ?? '')
+  const danger = choices?.find(c => c.value === choice)?.danger ?? true
   return (
-    <Dialog title={title} onClose={closeConfirm} layer="confirm">
+    <Dialog title={title} onClose={onClose} layer="confirm">
       <p className="text-sm text-on-surface-variant">{body}</p>
+      {choices && (
+        <fieldset className="mt-4 space-y-2">
+          <legend className="sr-only">{title}</legend>
+          {choices.map(c => (
+            <label
+              key={c.value}
+              className={`flex cursor-pointer gap-3 rounded-xl border px-3 py-2.5 ${
+                c.value === choice
+                  ? 'border-primary bg-surface-container-highest'
+                  : 'border-outline-variant hover:bg-surface-container-highest'
+              }`}
+            >
+              <input
+                type="radio"
+                name={name}
+                value={c.value}
+                checked={c.value === choice}
+                onChange={() => setChoice(c.value)}
+                className="mt-0.5 shrink-0 accent-primary"
+              />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-on-surface">{c.label}</span>
+                <span className="block pt-0.5 text-xs text-on-surface-variant">{c.detail}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
       <div className="mt-6 flex justify-end gap-2">
-        <button autoFocus onClick={closeConfirm} className={textBtn}>
+        <button autoFocus onClick={onClose} className={textBtn}>
           Cancel
         </button>
         <button
           onClick={() => {
-            closeConfirm()
-            action()
+            onClose()
+            action(choice)
           }}
-          className="rounded-full bg-error px-4 py-2 text-sm font-medium text-on-error hover:opacity-90"
+          className={
+            danger
+              ? 'rounded-full bg-error px-4 py-2 text-sm font-medium text-on-error hover:opacity-90'
+              : filledBtn
+          }
         >
           {confirm}
         </button>
@@ -748,7 +818,11 @@ function Settings({ server }: { server: string }) {
             <button className={filledBtn}>Rename</button>
           </form>
           <FieldError message={renameError} />
-          <ServerPasswordField server={server} hasPassword={detail.has_password} />
+          <ServerPasswordField
+            server={server}
+            hasPassword={detail.has_password}
+            canRemove={hasPerm(perms, Perm.Kick)}
+          />
           <p className={sectionCls}>Delete Server</p>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <p className="min-w-48 flex-1 text-xs text-on-surface-variant">

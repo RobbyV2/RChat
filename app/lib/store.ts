@@ -10,6 +10,7 @@ import {
   bumpFront,
   createPager,
   keyed,
+  lostServers,
   mergeHead,
   refreshTail,
   unreadServers,
@@ -66,18 +67,21 @@ import type {
   CallKind,
   ChannelKind,
   ChannelPerm,
+  ConfirmChoice,
   DmSummary,
   Embed,
   Me,
   Member,
   Message,
   P2pAvailability,
+  PasswordMembers,
   Role,
   SearchResult,
   ServerBan,
   ServerDetail,
   ServerSummary,
   ServerSummaryLite,
+  ServerUpdated,
   SiteSettings,
   Theme,
   UserRef,
@@ -132,7 +136,8 @@ export interface ConfirmRequest {
   title: string
   body: string
   confirm: string
-  action: () => void
+  action: (choice: string) => void
+  choices?: ConfirmChoice[]
 }
 
 export type ActiveDialog =
@@ -277,6 +282,7 @@ const draining = new Set<string>()
 
 const pendingEmbeds = new Map<number, Embed[]>()
 const PENDING_EMBEDS_MAX = 256
+const RESYNC_JITTER = 3000
 const rememberEmbeds = (id: number, embeds: Embed[]) => {
   pendingEmbeds.delete(id)
   pendingEmbeds.set(id, embeds)
@@ -333,6 +339,7 @@ interface RChatState {
   profile: ProfileTarget | null
   activeDialog: ActiveDialog | null
   confirm: ConfirmRequest | null
+  confirmSeq: number
   panel: Panel | null
   pending: Record<string, PendingUpload>
   notices: Notice[]
@@ -415,7 +422,11 @@ interface RChatState {
   joinServer: (name: string, password?: string, nav?: Nav) => Promise<void>
   leaveServer: (name: string) => Promise<void>
   renameServer: (name: string, newName: string) => Promise<void>
-  setServerPassword: (name: string, password: string) => Promise<void>
+  setServerPassword: (
+    name: string,
+    password: string,
+    members: PasswordMembers
+  ) => Promise<ServerUpdated>
   deleteServer: (name: string) => Promise<void>
   createChannel: (server: string, name: string, kind?: ChannelKind) => Promise<void>
   renameChannel: (id: number, name: string) => Promise<void>
@@ -695,6 +706,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
   let dmGen = 0
   let serverGen = 0
+  const droppedAt = new Map<string, number>()
 
   const settled = async <T>(gen: () => number, fetch: () => Promise<T>): Promise<T> => {
     for (;;) {
@@ -834,8 +846,25 @@ export const useStore = create<RChatState>()((set, get) => {
         set(s => ({ servers: { ...s.servers, [view.server]: detail } }))
       }
     } catch (e) {
-      console.error('degraded poll', e)
+      if (view.kind === 'channel' && lockedOut(e)) guestLocked(view.server)
+      else console.error('degraded poll', e)
     }
+  }
+
+  const lockedOut = (e: unknown) =>
+    get().guest && get().settings.guests_enabled && e instanceof api.ApiError && e.status === 401
+
+  const guestLocked = (name: string) => {
+    if (!get().guestServers.includes(name)) return
+    const { servers, guestNames } = get()
+    notify(
+      servers[name]?.display_name ?? guestNames[name] ?? name,
+      '',
+      '',
+      () => {},
+      'You were removed from'
+    )
+    dropServer(name)
   }
 
   const refetchServer = (server: string) => {
@@ -911,11 +940,68 @@ export const useStore = create<RChatState>()((set, get) => {
     return unreadsReady
   }
 
+  const pruneServers = async () => {
+    const me = get().me
+    if (!me) return
+    const since = serverGen
+    const names = me.servers.map(x => x.name)
+    const titles = new Map(me.servers.map(x => [x.name, x.display_name]))
+    const joined = new Set<string>()
+    for (let i = 0; i < names.length; i += LIST_MAX) {
+      const batch = names.slice(i, i + LIST_MAX)
+      const found = await settled(
+        () => serverGen,
+        () => api.myServersByName(batch)
+      )
+      for (const x of found) joined.add(x.name)
+    }
+    const dropped = (name: string) => (droppedAt.get(name) ?? 0) > since
+    const lost = lostServers(names, joined, dropped)
+    const exists = await Promise.all(
+      lost.map(name =>
+        api.serverExists(name).then(
+          () => true,
+          (e: unknown) => !(e instanceof api.ApiError && e.status === 404)
+        )
+      )
+    )
+    if (!sameUser(me.username)) return
+    lost.forEach((name, i) => {
+      if (dropped(name)) return
+      if (exists[i]) removedFrom(name, false, titles.get(name))
+      else dropServer(name)
+    })
+  }
+
   const catchUp = () => {
     void refreshView()
     if (get().me) void loadUnreads()
-    const { view, members } = get()
-    if (view?.kind === 'channel' && members[view.server]) void get().loadMembers(view.server, true)
+    void pruneServers()
+      .catch(() => {})
+      .then(() => {
+        const { view, members } = get()
+        if (view?.kind === 'channel' && members[view.server])
+          void get().loadMembers(view.server, true)
+      })
+  }
+
+  let resyncTimer: ReturnType<typeof setTimeout> | null = null
+
+  const resync = () => {
+    if (resyncTimer) return
+    resyncTimer = setTimeout(
+      () => {
+        resyncTimer = null
+        set({ p2pAvailability: {}, voiceUsers: {} })
+        wsClient.resubscribe()
+        if (get().me) void refetchMe()
+        else if (get().token) void recoverMe()
+        const { view } = get()
+        if (view) askP2p(get().messages[viewKey(view)] ?? [])
+        catchUp()
+      },
+      250 + Math.random() * RESYNC_JITTER
+    )
   }
 
   const startWs = () => {
@@ -1127,6 +1213,7 @@ export const useStore = create<RChatState>()((set, get) => {
   const dropServer = (name: string) => {
     if (get().voice?.server === name) get().leaveVoice()
     serverGen += 1
+    droppedAt.set(name, serverGen)
     const reload = serverPager.removed(get().me?.servers.some(x => x.name === name) ? 1 : 0)
     const scopes = new Set((get().servers[name]?.channels ?? []).map(c => `c${c.id}`))
     forgetPending((_, upload) => !scopes.has(upload.scope))
@@ -1161,6 +1248,17 @@ export const useStore = create<RChatState>()((set, get) => {
     const { view } = get()
     if (view?.kind === 'channel' && view.server === name)
       void get().openServer('rchat', undefined, 'replace')
+  }
+
+  const removedFrom = (server: string, banned: boolean, title?: string) => {
+    const { servers, me } = get()
+    const name =
+      servers[server]?.display_name ??
+      me?.servers.find(x => x.name === server)?.display_name ??
+      title ??
+      server
+    notify(name, '', '', () => {}, banned ? 'You were banned from' : 'You were removed from')
+    dropServer(server)
   }
 
   const messageKey = (channel_id: number | null, dm_id: number | null) => {
@@ -1674,6 +1772,7 @@ export const useStore = create<RChatState>()((set, get) => {
     profile: null,
     activeDialog: null,
     confirm: null,
+    confirmSeq: 0,
     panel: null,
     pending: {},
     notices: [],
@@ -2359,7 +2458,7 @@ export const useStore = create<RChatState>()((set, get) => {
       }),
 
     renameServer: async (name, newName) => void (await api.updateServer(name, { name: newName })),
-    setServerPassword: async (name, password) => void (await api.updateServer(name, { password })),
+    setServerPassword: (name, password, members) => api.updateServer(name, { password, members }),
     deleteServer: name => act(async () => void (await api.deleteServer(name))),
     createChannel: (server, name, kind = 'text') =>
       act(async () => void (await api.createChannel(server, name, kind))),
@@ -2909,6 +3008,7 @@ export const useStore = create<RChatState>()((set, get) => {
           })
           saveLayout(renameServer(get().layout, old_name, server.name))
           serverGen += 1
+          if (old_name !== server.name) droppedAt.set(old_name, serverGen)
           memberGen[old_name] = (memberGen[old_name] ?? 0) + 1
           memberGen[server.name] = (memberGen[server.name] ?? 0) + 1
           if (serverPager.removed(0)) void get().loadMoreServers()
@@ -2918,13 +3018,17 @@ export const useStore = create<RChatState>()((set, get) => {
             if (old_name !== server.name) delete names[old_name]
             persistGuestNames(names)
             const grants = get().guestGrants
-            if (grants[old_name]) {
+            if (old_name !== server.name && grants[old_name]) {
               const next = { ...grants, [server.name]: grants[old_name] }
               delete next[old_name]
               persistGrants(next)
             }
             wsClient.unsubscribe(old_name)
             wsClient.subscribe([server.name])
+            if (server.has_password)
+              void api.getServer(server.name).catch((e: unknown) => {
+                if (lockedOut(e)) guestLocked(server.name)
+              })
           }
           const renamedView = get().view
           if (renamedView?.kind === 'channel' && renamedView.server === server.name)
@@ -2960,21 +3064,8 @@ export const useStore = create<RChatState>()((set, get) => {
         case 'member_kicked': {
           const banned = ev.type === 'member_kicked' && ev.banned
           if (get().me?.username === ev.username) {
-            if (ev.type === 'member_kicked') {
-              const { servers, me } = get()
-              const name =
-                servers[ev.server]?.display_name ??
-                me?.servers.find(x => x.name === ev.server)?.display_name ??
-                ev.server
-              notify(
-                name,
-                '',
-                '',
-                () => {},
-                banned ? 'You were banned from' : 'You were removed from'
-              )
-            }
-            dropServer(ev.server)
+            if (ev.type === 'member_kicked') removedFrom(ev.server, banned)
+            else dropServer(ev.server)
             return
           }
           if (banned && get().bans[ev.server]) void get().loadBans(ev.server, true)
@@ -3303,6 +3394,10 @@ export const useStore = create<RChatState>()((set, get) => {
           set({ settings: ev.settings })
           return
         }
+        case 'resync': {
+          resync()
+          return
+        }
       }
     },
 
@@ -3312,7 +3407,8 @@ export const useStore = create<RChatState>()((set, get) => {
     closeProfile: () => set(s => (s.profile ? { profile: null } : {})),
     openDialog: dialog => set({ activeDialog: dialog }),
     closeDialog: () => set({ activeDialog: null }),
-    askConfirm: req => set({ confirm: req, contextMenu: null }),
+    askConfirm: req =>
+      set(s => ({ confirm: req, confirmSeq: s.confirmSeq + 1, contextMenu: null })),
     closeConfirm: () => set(s => (s.confirm ? { confirm: null } : {})),
     setError: message => set({ error: message }),
   }

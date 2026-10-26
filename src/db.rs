@@ -362,10 +362,7 @@ pub async fn member_perms(db: &Db, server: &str, username: &str) -> sqlx::Result
     };
     let (is_admin, perms): (i64, i64) = (r.try_get(0)?, r.try_get(1)?);
     if is_admin != 0 {
-        return Ok(match perms {
-            0 => ALL_PERMS,
-            p => p & ALL_PERMS,
-        });
+        return Ok(perm_bits(true, perms, 0));
     }
     let rows = sqlx::query("SELECT r.perms FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2")
         .bind(server)
@@ -376,7 +373,15 @@ pub async fn member_perms(db: &Db, server: &str, username: &str) -> sqlx::Result
     for r in &rows {
         acc |= r.try_get::<i64, _>(0)?;
     }
-    Ok(acc & ALL_PERMS)
+    Ok(perm_bits(false, perms, acc))
+}
+
+pub fn perm_bits(is_admin: bool, perms: i64, roles: i64) -> i64 {
+    match (is_admin, perms) {
+        (true, 0) => ALL_PERMS,
+        (true, p) => p & ALL_PERMS,
+        (false, _) => roles & ALL_PERMS,
+    }
 }
 
 pub fn can_moderate(actor: i64, actor_site_admin: bool, target: i64) -> bool {

@@ -6,6 +6,8 @@ import {
   expiryText,
   mediaError,
   memberPerms,
+  passwordDone,
+  passwordPrompt,
   sameOriginImage,
   serverInitial,
 } from '../rules'
@@ -138,5 +140,50 @@ describe('mediaError', () => {
     const other = named('AbortError')
     expect(mediaError(other, 'microphone', 'call')).toBe(other)
     expect(mediaError('boom', 'microphone', 'call').message).toBe('boom')
+  })
+})
+
+describe('passwordPrompt', () => {
+  const values = (p: ReturnType<typeof passwordPrompt>) => p.choices.map(c => c.value)
+
+  test('names the change and defaults to keeping everyone', () => {
+    expect(passwordPrompt(false, 'pw', true, false).title).toBe('Set Password')
+    expect(passwordPrompt(true, 'pw', true, false).title).toBe('Change Password')
+    const clear = passwordPrompt(true, '', true, false)
+    expect([clear.title, clear.confirm]).toEqual(['Clear Password', 'Clear'])
+    expect(clear.body).toBe('Anyone will be able to join with the server name.')
+    expect(values(clear)).toEqual(['keep', 'remove'])
+    expect(clear.choices.map(c => c.danger)).toEqual([false, true])
+  })
+
+  test('hides removal without the kick permission', () => {
+    expect(values(passwordPrompt(true, 'pw', false, false))).toEqual(['keep'])
+  })
+
+  test('explains who stays', () => {
+    const change = passwordPrompt(true, 'pw', true, false)
+    expect(change.choices[0].detail).toBe(
+      'Current members stay, and guests who entered the old password keep access.'
+    )
+    expect(change.choices[1].detail).toBe(
+      'Other members are removed, not banned, and can rejoin with the new password. Guests who entered the old password lose access. Members with equal or higher permissions stay.'
+    )
+    expect(passwordPrompt(false, 'pw', true, false).choices[0].detail).toBe('Current members stay.')
+    expect(passwordPrompt(true, '', true, true).choices[1].detail).toBe(
+      'Other members are removed, not banned, and can rejoin.'
+    )
+  })
+})
+
+describe('passwordDone', () => {
+  test('summarizes the counts', () => {
+    expect(passwordDone('Change', 'keep', 0, 4)).toBe('Password changed. Everyone stayed.')
+    expect(passwordDone('Set', 'remove', 3, 1)).toBe(
+      'Password set. Removed 3 members. 1 member with equal or higher permissions stayed.'
+    )
+    expect(passwordDone('Clear', 'remove', 1, 0)).toBe('Password cleared. Removed 1 member.')
+    expect(passwordDone('Change', 'remove', 0, 2)).toBe(
+      'Password changed. No one was removed. 2 members with equal or higher permissions stayed.'
+    )
   })
 })

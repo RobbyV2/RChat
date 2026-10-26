@@ -18,7 +18,7 @@ use crate::api::{
 };
 use crate::db::{
     ALL_PERMS, ChannelKind, Db, Perm, User, can_moderate, channel_access, effective_perms,
-    get_user, has_perm, is_banned, member_perms, now,
+    get_user, has_perm, is_banned, member_perms, now, perm_bits,
 };
 use crate::state::AppState;
 use crate::ws::{Hub, WsEvent, evict_unviewable};
@@ -40,10 +40,28 @@ pub struct JoinReq {
     password: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PasswordMembers {
+    #[default]
+    Keep,
+    Remove,
+}
+
 #[derive(Deserialize, ToSchema)]
 pub struct ServerPatch {
     name: Option<String>,
     password: Option<String>,
+    #[serde(default)]
+    members: PasswordMembers,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ServerUpdated {
+    #[serde(flatten)]
+    pub server: ServerSummaryLite,
+    pub removed: i64,
+    pub kept: i64,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -281,6 +299,15 @@ async fn require_moderate(
         true => Ok(()),
         false => Err(forbidden("You can't moderate this member")),
     }
+}
+
+fn announce_kick(hub: &Hub, server: &str, username: &str, banned: bool) {
+    hub.broadcast(WsEvent::MemberKicked {
+        server: server.to_string(),
+        username: username.to_string(),
+        banned,
+    });
+    hub.force_offline(server, username);
 }
 
 async fn role_ids(db: &Db, server: &str, username: &str) -> Result<Vec<i64>, ApiError> {
@@ -1045,18 +1072,27 @@ pub(crate) async fn leave_server(
     }
 }
 
-#[utoipa::path(patch, path = "/api/servers/{name}", params(("name" = String, Path)), request_body = ServerPatch, responses((status = 200, description = "Server renamed or password changed; changing the password revokes existing guest grants", body = ServerSummaryLite)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/servers/{name}", params(("name" = String, Path)), request_body = ServerPatch, responses((status = 200, description = "Server renamed or password set, changed or cleared (an empty password clears it). `members` only applies when `password` is present: `keep` (default) keeps every member and, unless the password is cleared, existing guest grants; `remove` removes every other member whose server permissions are a strict subset of yours (site admins remove everyone else) as if kicked, and revokes all guest grants. Returns the server with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated), (status = 403, description = "Missing permission: changing the server needs Delete server, and `remove` also needs Kick; the rchat server is protected")), security(("bearer" = [])))]
 pub(crate) async fn update_server(
     State(state): State<AppState>,
     Authed(user): Authed,
     Path(name): Path<String>,
     Json(req): Json<ServerPatch>,
-) -> Result<Json<ServerSummaryLite>, ApiError> {
+) -> Result<Json<ServerUpdated>, ApiError> {
     let key = name.to_lowercase();
     guard_rchat(&key)?;
     let lite = require_server(&state.db, &key).await?;
     require_perm(&state.db, &key, &user, Perm::DeleteServer).await?;
-    let ServerPatch { name, password } = req;
+    let ServerPatch {
+        name,
+        password,
+        members,
+    } = req;
+    let purge = password.is_some() && members == PasswordMembers::Remove;
+    if purge {
+        require_perm(&state.db, &key, &user, Perm::Kick).await?;
+    }
+    let mine = effective_perms(&state.db, &key, &user).await?;
     let (new_key, display) = match &name {
         Some(n) => {
             let display = n.trim().to_string();
@@ -1087,6 +1123,15 @@ pub(crate) async fn update_server(
             .bind(&new_key)
             .execute(&mut *tx)
             .await?;
+    }
+    let (removed, kept) = match purge {
+        true => purge_members(&mut tx, &new_key, &user, mine).await?,
+        false => (
+            Vec::new(),
+            other_members(&mut tx, &new_key, &user.username).await?,
+        ),
+    };
+    if purge || matches!(password_hash, Some(None)) {
         sqlx::query("DELETE FROM guest_grants WHERE server = $1")
             .bind(&new_key)
             .execute(&mut *tx)
@@ -1106,7 +1151,82 @@ pub(crate) async fn update_server(
         old_name: key,
         server: server.clone(),
     });
-    Ok(Json(server))
+    for username in &removed {
+        announce_kick(&state.hub, &server.name, username, false);
+    }
+    Ok(Json(ServerUpdated {
+        server,
+        removed: removed.len() as i64,
+        kept,
+    }))
+}
+
+async fn other_members(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    server: &str,
+    username: &str,
+) -> Result<i64, ApiError> {
+    Ok(
+        sqlx::query("SELECT COUNT(*) FROM members WHERE server = $1 AND username <> $2")
+            .bind(server)
+            .bind(username)
+            .fetch_one(&mut **tx)
+            .await?
+            .try_get(0)?,
+    )
+}
+
+async fn purge_members(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    server: &str,
+    actor: &User,
+    mine: i64,
+) -> Result<(Vec<String>, i64), ApiError> {
+    let rows = sqlx::query(
+        "SELECT username, is_admin, perms FROM members WHERE server = $1 AND username <> $2",
+    )
+    .bind(server)
+    .bind(&actor.username)
+    .fetch_all(&mut **tx)
+    .await?;
+    let role_rows = sqlx::query(
+        "SELECT ur.username, r.perms FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1",
+    )
+    .bind(server)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut roles: HashMap<String, i64> = HashMap::new();
+    for r in &role_rows {
+        *roles.entry(r.try_get(0)?).or_default() |= r.try_get::<i64, _>(1)?;
+    }
+    let mut removed = Vec::new();
+    let mut kept = 0;
+    for r in &rows {
+        let username: String = r.try_get(0)?;
+        let theirs = perm_bits(
+            r.try_get::<i64, _>(1)? != 0,
+            r.try_get(2)?,
+            roles.get(&username).copied().unwrap_or(0),
+        );
+        match can_moderate(mine, actor.is_site_admin, theirs) {
+            true => removed.push(username),
+            false => kept += 1,
+        }
+    }
+    for chunk in removed.chunks(500) {
+        for table in ["members", "user_roles"] {
+            let sql = format!(
+                "DELETE FROM {table} WHERE server = $1 AND username IN ({})",
+                placeholders(2, chunk.len())
+            );
+            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(server);
+            for name in chunk {
+                query = query.bind(name);
+            }
+            query.execute(&mut **tx).await?;
+        }
+    }
+    Ok((removed, kept))
 }
 
 #[utoipa::path(delete, path = "/api/servers/{name}", params(("name" = String, Path)), responses((status = 200, description = "Server deleted along with its channels, members, and roles", body = OkResp)), security(("bearer" = [])))]
@@ -1329,12 +1449,7 @@ pub(crate) async fn kick_member(
                 .bind(&target)
                 .execute(&state.db)
                 .await?;
-            state.hub.broadcast(WsEvent::MemberKicked {
-                server: key.clone(),
-                username: target.clone(),
-                banned: false,
-            });
-            state.hub.force_offline(&key, &target);
+            announce_kick(&state.hub, &key, &target, false);
             Ok(ok())
         }
     }
@@ -1381,12 +1496,7 @@ pub(crate) async fn ban_member(
         .await?;
     tx.commit().await?;
     if removed > 0 {
-        state.hub.broadcast(WsEvent::MemberKicked {
-            server: key.clone(),
-            username: target.clone(),
-            banned: true,
-        });
-        state.hub.force_offline(&key, &target);
+        announce_kick(&state.hub, &key, &target, true);
     }
     for (cid, users) in state.hub.rooms_in(&key, None) {
         if users.contains(&target) {
@@ -1985,6 +2095,7 @@ mod tests {
             Json(ServerPatch {
                 name: Some(name.to_string()),
                 password: None,
+                members: PasswordMembers::Keep,
             }),
         )
         .await
@@ -2789,6 +2900,7 @@ mod tests {
             Json(ServerPatch {
                 name: None,
                 password: Some(password.to_string()),
+                members: PasswordMembers::Keep,
             }),
         )
         .await
@@ -3053,6 +3165,358 @@ mod tests {
         assert_eq!(hidden.status, InviteStatus::Joinable);
         assert_eq!(hidden.preview_channel, None);
         assert!(hidden.preview.is_empty());
+        done(state, path).await;
+    }
+
+    async fn change_password(
+        state: &AppState,
+        actor: User,
+        server: &str,
+        name: Option<&str>,
+        password: Option<&str>,
+        members: PasswordMembers,
+    ) -> Result<ServerUpdated, ApiError> {
+        update_server(
+            State(state.clone()),
+            Authed(actor),
+            Path(server.to_string()),
+            Json(ServerPatch {
+                name: name.map(str::to_string),
+                password: password.map(str::to_string),
+                members,
+            }),
+        )
+        .await
+        .map(|Json(updated)| updated)
+    }
+
+    async fn member_names(db: &Db, server: &str) -> Vec<String> {
+        let rows = sqlx::query("SELECT username FROM members WHERE server = $1 ORDER BY username")
+            .bind(server)
+            .fetch_all(db)
+            .await
+            .expect("members");
+        rows.iter()
+            .map(|r| r.try_get(0).expect("username"))
+            .collect()
+    }
+
+    async fn grant_valid(state: &AppState, server: &str, grant: &str) -> bool {
+        invite_as(state, None, server, None, Some(grant))
+            .await
+            .expect("guest invite")
+            .status
+            == InviteStatus::Joinable
+    }
+
+    async fn join_with(state: &AppState, who: &str, server: &str, password: &str) {
+        let _ = join_server(
+            State(state.clone()),
+            Authed(mem_user(who, false)),
+            Path(server.to_string()),
+            Some(Json(JoinReq {
+                password: Some(password.to_string()),
+            })),
+        )
+        .await
+        .expect("join with password");
+    }
+
+    async fn give_role(db: &Db, server: &str, username: &str, perms: i64) {
+        let role: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES($1, $2, '#ffffff', $3) RETURNING id")
+            .bind(server)
+            .bind(format!("r-{username}"))
+            .bind(perms)
+            .fetch_one(db)
+            .await
+            .expect("role")
+            .try_get(0)
+            .expect("role id");
+        sqlx::query("INSERT INTO user_roles(server, username, role_id) VALUES($1, $2, $3)")
+            .bind(server)
+            .bind(username)
+            .bind(role)
+            .execute(db)
+            .await
+            .expect("assign");
+    }
+
+    #[tokio::test]
+    async fn password_change_keeps_or_removes_members() {
+        let (state, path) = temp_state("pw_members").await;
+        let db = &state.db;
+        let cid = make_server(&state, "club").await.expect("club").0.channels[0].id;
+        for name in ["bob", "carol", "dave", "erin"] {
+            add_user(db, name, name).await;
+            join(&state, name, "club").await.expect("join");
+        }
+        give_role(db, "club", "carol", Perm::Kick as i64).await;
+        set_admin_row(db, "dave", 0).await;
+        set_admin_row(db, "erin", Perm::Kick as i64 | Perm::DeleteMessages as i64).await;
+        set_password(&state, "old").await;
+        let grant = insert_grant(db, "club").await;
+        let alice = || mem_user("alice", false);
+        let mut rx = state.hub.subscribe();
+        let kept = change_password(
+            &state,
+            alice(),
+            "club",
+            None,
+            Some("new"),
+            PasswordMembers::Keep,
+        )
+        .await
+        .expect("keep everyone");
+        assert!(kept.server.has_password);
+        assert_eq!((kept.removed, kept.kept), (0, 4));
+        assert_eq!(
+            member_names(db, "club").await,
+            ["alice", "bob", "carol", "dave", "erin"]
+        );
+        assert!(grant_valid(&state, "club", &grant).await);
+        assert!(kicks(&mut rx).is_empty());
+        let _ = state.hub.voice_join("bob", 7, "club", cid);
+        state.hub.set_viewing(8, "carol", Some("club"));
+        assert!(state.hub.is_online("club", "carol"));
+        let removed = change_password(
+            &state,
+            alice(),
+            "club",
+            None,
+            Some("newer"),
+            PasswordMembers::Remove,
+        )
+        .await
+        .expect("remove everyone");
+        assert_eq!((removed.removed, removed.kept), (3, 1));
+        assert_eq!(member_names(db, "club").await, ["alice", "dave"]);
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM user_roles WHERE server = 'club'").await,
+            0
+        );
+        assert!(!grant_valid(&state, "club", &grant).await);
+        let mut got = kicks(&mut rx);
+        got.sort();
+        assert_eq!(
+            got,
+            ["bob", "carol", "erin"].map(|u| ("club".to_string(), u.to_string(), false))
+        );
+        assert!(state.hub.rooms_in("club", None).is_empty());
+        assert!(!state.hub.is_online("club", "carol"));
+        assert_eq!(count(db, "SELECT COUNT(*) FROM server_bans").await, 0);
+        assert_eq!(
+            status(join(&state, "bob", "club").await),
+            Some(StatusCode::UNAUTHORIZED)
+        );
+        join_with(&state, "bob", "club", "newer").await;
+        let cleared = change_password(
+            &state,
+            alice(),
+            "club",
+            None,
+            Some(""),
+            PasswordMembers::Remove,
+        )
+        .await
+        .expect("clear and remove");
+        assert!(!cleared.server.has_password);
+        assert_eq!((cleared.removed, cleared.kept), (1, 1));
+        join(&state, "bob", "club").await.expect("open again");
+        let renamed = change_password(
+            &state,
+            alice(),
+            "club",
+            Some("Den"),
+            None,
+            PasswordMembers::Remove,
+        )
+        .await
+        .expect("rename ignores members");
+        assert_eq!((renamed.removed, renamed.kept), (0, 2));
+        assert_eq!(member_names(db, "den").await, ["alice", "bob", "dave"]);
+        let both = change_password(
+            &state,
+            alice(),
+            "den",
+            Some("Lair"),
+            Some("x"),
+            PasswordMembers::Remove,
+        )
+        .await
+        .expect("rename and remove");
+        assert_eq!(
+            (both.server.name.as_str(), both.removed, both.kept),
+            ("lair", 1, 1)
+        );
+        assert_eq!(member_names(db, "lair").await, ["alice", "dave"]);
+        assert_eq!(
+            kicks(&mut rx),
+            [
+                ("club".to_string(), "bob".to_string(), false),
+                ("lair".to_string(), "bob".to_string(), false)
+            ]
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn password_remove_needs_kick_and_follows_hierarchy() {
+        let (state, path) = temp_state("pw_rules").await;
+        let db = &state.db;
+        let _ = make_server(&state, "club").await.expect("club");
+        let names = ["bob", "carol", "dave", "erin", "frank", "su", "root"];
+        for name in names {
+            add_user(db, name, name).await;
+        }
+        for name in &names[..6] {
+            join(&state, name, "club").await.expect("join");
+        }
+        sqlx::query("UPDATE users SET is_site_admin = 1 WHERE username IN ('su', 'root')")
+            .execute(db)
+            .await
+            .expect("site admins");
+        let manage = Perm::DeleteServer as i64;
+        let manage_kick = manage | Perm::Kick as i64;
+        set_admin_row(db, "bob", manage).await;
+        set_admin_row(db, "carol", manage_kick).await;
+        set_admin_row(db, "dave", manage_kick).await;
+        give_role(db, "club", "erin", Perm::Kick as i64).await;
+        set_admin_row(db, "frank", manage_kick | Perm::ManageAdmins as i64).await;
+        let grant = insert_grant(db, "club").await;
+        let everyone = ["alice", "bob", "carol", "dave", "erin", "frank", "su"];
+        assert_eq!(
+            status(
+                change_password(
+                    &state,
+                    mem_user("bob", false),
+                    "club",
+                    None,
+                    Some("pw"),
+                    PasswordMembers::Remove
+                )
+                .await
+            ),
+            Some(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(member_names(db, "club").await, everyone);
+        assert!(!require_server(db, "club").await.expect("club").has_password);
+        assert_eq!(
+            status(
+                change_password(
+                    &state,
+                    mem_user("erin", false),
+                    "club",
+                    None,
+                    Some("pw"),
+                    PasswordMembers::Keep
+                )
+                .await
+            ),
+            Some(StatusCode::FORBIDDEN)
+        );
+        let kept = change_password(
+            &state,
+            mem_user("bob", false),
+            "club",
+            None,
+            Some("pw"),
+            PasswordMembers::Keep,
+        )
+        .await
+        .expect("delete-server admin keeps everyone");
+        assert_eq!((kept.removed, kept.kept), (0, 6));
+        assert!(grant_valid(&state, "club", &grant).await);
+        let narrow = change_password(
+            &state,
+            mem_user("carol", false),
+            "club",
+            None,
+            Some("pw2"),
+            PasswordMembers::Remove,
+        )
+        .await
+        .expect("narrow admin removes");
+        assert_eq!((narrow.removed, narrow.kept), (3, 3));
+        assert_eq!(
+            member_names(db, "club").await,
+            ["alice", "carol", "dave", "frank"]
+        );
+        assert!(!grant_valid(&state, "club", &grant).await);
+        let full = change_password(
+            &state,
+            mem_user("alice", false),
+            "club",
+            None,
+            Some("pw3"),
+            PasswordMembers::Remove,
+        )
+        .await
+        .expect("full admin removes");
+        assert_eq!((full.removed, full.kept), (3, 0));
+        assert_eq!(member_names(db, "club").await, ["alice"]);
+        join_with(&state, "frank", "club", "pw3").await;
+        set_admin_row(db, "frank", 0).await;
+        let site = change_password(
+            &state,
+            mem_user("root", true),
+            "club",
+            None,
+            Some("pw4"),
+            PasswordMembers::Remove,
+        )
+        .await
+        .expect("site admin removes everyone");
+        assert_eq!((site.removed, site.kept), (2, 0));
+        assert!(member_names(db, "club").await.is_empty());
+        let grant = insert_grant(db, "club").await;
+        assert!(grant_valid(&state, "club", &grant).await);
+        let open = change_password(
+            &state,
+            mem_user("root", true),
+            "club",
+            None,
+            Some(" "),
+            PasswordMembers::Keep,
+        )
+        .await
+        .expect("clear keeps members");
+        assert!(!open.server.has_password);
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM guest_grants WHERE server = 'club'"
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            status(
+                change_password(
+                    &state,
+                    mem_user("root", true),
+                    "rchat",
+                    None,
+                    Some("pw"),
+                    PasswordMembers::Remove
+                )
+                .await
+            ),
+            Some(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            status(
+                change_password(
+                    &state,
+                    mem_user("root", true),
+                    "rchat",
+                    None,
+                    Some("pw"),
+                    PasswordMembers::Keep
+                )
+                .await
+            ),
+            Some(StatusCode::FORBIDDEN)
+        );
         done(state, path).await;
     }
 }

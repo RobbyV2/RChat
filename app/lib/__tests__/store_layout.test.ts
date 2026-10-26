@@ -262,3 +262,52 @@ describe('dm order', () => {
     expect(recent()).toEqual([1, 2, 3])
   })
 })
+
+describe('guest grants', () => {
+  const renamed = (old_name: string, name: string): WsEvent => ({
+    type: 'server_renamed',
+    old_name,
+    server: { name, display_name: name, creator: null, has_password: true },
+  })
+
+  test('a password change keeps the grant and a rename moves it', () => {
+    serve(serverDetail('club'))
+    useStore.setState({ me: null, guest: true, guestServers: ['rchat', 'club'] })
+    useStore.setState({ guestGrants: { club: 'g1' } })
+    dispatch(renamed('club', 'club'))
+    expect(st().guestGrants).toEqual({ club: 'g1' })
+    expect(storage.get('rchat_guest_grants') ?? null).toBeNull()
+    dispatch(renamed('club', 'den'))
+    expect(st().guestGrants).toEqual({ den: 'g1' })
+    expect(JSON.parse(storage.get('rchat_guest_grants') ?? '{}')).toEqual({ den: 'g1' })
+    expect(st().guestServers).toEqual(['rchat', 'den'])
+  })
+})
+
+describe('guest access', () => {
+  test('a guest locked out by a password change drops the server with a notice', async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: 'Password required' }), {
+        status: 401,
+      })) as unknown as typeof fetch
+    useStore.setState({
+      me: null,
+      guest: true,
+      guestServers: ['rchat', 'club'],
+      guestGrants: { club: 'g1' },
+      servers: { club: serverDetail('club', { display_name: 'Club' }) },
+      notices: [],
+    })
+    dispatch({
+      type: 'server_renamed',
+      old_name: 'club',
+      server: { name: 'club', display_name: 'Club', creator: null, has_password: true },
+    })
+    await tick()
+    await tick()
+    expect(st().guestServers).toEqual(['rchat'])
+    expect(st().guestGrants).toEqual({})
+    expect(st().servers.club).toBeUndefined()
+    expect(st().notices.map(n => `${n.lead} ${n.name}`)).toEqual(['You were removed from Club'])
+  })
+})
