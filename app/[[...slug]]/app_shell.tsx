@@ -9,6 +9,7 @@ import { ServerRail } from '../components/server_rail'
 import { ChannelSidebar } from '../components/channel_sidebar'
 import { MessagePane } from '../components/message_pane'
 import { ServerDialogs } from '../components/server_dialogs'
+import { FolderDialog } from '../components/folder_dialog'
 import MemberSidebar from '../components/member_sidebar'
 import AdminPanel from '../components/admin_panel'
 import ServerSettings, { ConfirmDialog } from '../components/server_settings'
@@ -142,6 +143,7 @@ export default function AppShell() {
         </div>
       )}
       <ServerDialogs />
+      <FolderDialog />
       <ServerSettings />
       <SettingsMenu />
       <AdminPanel />

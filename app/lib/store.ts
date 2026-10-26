@@ -17,19 +17,31 @@ import {
 } from './lists'
 import { addSearchPage, searchCursor, searchParams, type SearchArgs } from './search'
 import {
+  addToFolder as addIn,
   dmSections,
   emptyLayout,
+  folderChildren,
+  folderTitle,
   forgetServer,
   layoutKey,
-  orderServers,
+  layoutServers,
+  mergeServers as mergeIn,
+  moveFolder as moveFolderIn,
+  moveIntoFolder as moveIntoIn,
+  moveServer as moveServerIn,
+  newFolderId,
   parseLayout,
   pinDm as pinIn,
   placeDm as placeIn,
   pruneLayout,
+  railNames,
+  renameFolder as renameFolderIn,
   renameServer,
-  reorderServers,
+  toggleFolder as toggleIn,
+  ungroupFolder as ungroupIn,
   unpinDm as unpinIn,
   type DmZone,
+  type Folder,
   type Layout,
 } from './nav_layout'
 import { memberPerms } from './rules'
@@ -113,6 +125,7 @@ export type ActiveDialog =
   | { kind: 'ban_confirm'; username: string }
   | { kind: 'delete_user_confirm'; username: string }
   | { kind: 'settings' }
+  | { kind: 'rename_folder'; id: string }
 
 export type Panel = { kind: 'thread'; root: Message } | { kind: 'search' }
 
@@ -307,6 +320,13 @@ interface RChatState {
   ensureDms: (ids: number[]) => Promise<void>
   ensureServers: (names: string[]) => Promise<void>
   moveServer: (name: string, index: number) => void
+  moveFolder: (id: string, index: number) => void
+  moveIntoFolder: (name: string, id: string, index: number) => void
+  addToFolder: (name: string, id: string) => void
+  mergeServers: (name: string, target: string) => void
+  toggleFolder: (id: string) => void
+  renameFolder: (id: string, name: string) => void
+  ungroupFolder: (id: string) => void
   placeDm: (id: number, zone: DmZone, index: number) => void
   pinDm: (id: number) => void
   unpinDm: (id: number) => void
@@ -427,7 +447,30 @@ export const isUnread = (s: RChatState, scope: string): boolean => {
 export const serverNames = (s: RChatState) =>
   s.me ? s.me.servers.map(x => x.name) : s.guestServers
 
-export const railOrder = (s: RChatState) => orderServers(serverNames(s), n => n, s.layout.servers)
+export const railOrder = (s: RChatState) => railNames(serverNames(s), s.layout.servers)
+
+export interface RailServer {
+  name: string
+  display_name: string
+  creator: string | null
+}
+
+type RailSource = Pick<RChatState, 'me' | 'guestServers' | 'servers'>
+
+export const railServers = (s: RailSource): RailServer[] =>
+  s.me
+    ? s.me.servers.map(({ name, display_name, creator }) => ({ name, display_name, creator }))
+    : s.guestServers.map(name => ({
+        name,
+        display_name: s.servers[name]?.display_name ?? name,
+        creator: s.servers[name]?.creator ?? null,
+      }))
+
+export const folderLabel = (s: RailSource, folder: Folder, name = folder.name) =>
+  folderTitle(
+    name,
+    folderChildren(folder, new Map(railServers(s).map(x => [x.name, x.display_name])))
+  )
 
 export const dmView = (s: RChatState) => dmSections(s.dms, s.layout)
 
@@ -565,7 +608,7 @@ export const useStore = create<RChatState>()((set, get) => {
   const syncLayout = async (username: string) => {
     const { servers, dmPinned, dmOrder } = get().layout
     try {
-      await get().ensureServers(servers)
+      await get().ensureServers(layoutServers(servers))
       await get().ensureDms([...dmPinned, ...dmOrder])
     } catch {
       return
@@ -1655,8 +1698,33 @@ export const useStore = create<RChatState>()((set, get) => {
 
     moveServer: (name, index) => {
       const s = get()
-      saveLayout(reorderServers(s.layout, railOrder(s), name, index))
+      saveLayout(moveServerIn(s.layout, serverNames(s), name, index))
     },
+
+    moveFolder: (id, index) => {
+      const s = get()
+      saveLayout(moveFolderIn(s.layout, serverNames(s), id, index))
+    },
+
+    moveIntoFolder: (name, id, index) => {
+      const s = get()
+      saveLayout(moveIntoIn(s.layout, serverNames(s), name, id, index))
+    },
+
+    addToFolder: (name, id) => {
+      const s = get()
+      saveLayout(addIn(s.layout, serverNames(s), name, id))
+    },
+
+    mergeServers: (name, target) => {
+      const s = get()
+      const id = newFolderId(s.layout.servers)
+      saveLayout(mergeIn(s.layout, serverNames(s), name, target, id))
+    },
+
+    toggleFolder: id => saveLayout(toggleIn(get().layout, id)),
+    renameFolder: (id, name) => saveLayout(renameFolderIn(get().layout, id, name)),
+    ungroupFolder: id => saveLayout(ungroupIn(get().layout, id)),
 
     placeDm: (id, zone, index) => {
       const s = get()

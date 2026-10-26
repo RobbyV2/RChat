@@ -3,17 +3,22 @@
 import { create } from 'zustand'
 import {
   autoScrollStep,
+  layoutSpan,
   nearestSpan,
   offSide,
+  ontoBand,
   slotAt,
   type Box,
   type DropTarget,
   type Slot,
+  type Span,
 } from '../lib/drag'
 
 export interface DragSpec {
   group: string
   key: string
+  zones?: (zone: string) => boolean
+  onto?: (key: string) => boolean
   onDrop: (target: DropTarget) => void
 }
 
@@ -28,6 +33,7 @@ export const useDrag = create<DragView>(() => ({ group: null, key: null, zone: n
 interface Active {
   spec: DragSpec
   el: HTMLElement
+  source: HTMLElement
   scope: HTMLElement
   ghost: HTMLElement
   chip: HTMLElement
@@ -38,6 +44,7 @@ interface Active {
   x: number
   y: number
   target: (DropTarget & Slot) | null
+  merge: HTMLElement | null
   frame: number
   abort: () => void
 }
@@ -45,7 +52,15 @@ interface Active {
 let active: Active | null = null
 let lifted: HTMLElement | null = null
 
-const STRIP = ['data-lifted', 'data-pressed', 'data-drag-source', 'data-drag-key', 'id', 'title']
+const STRIP = [
+  'data-lifted',
+  'data-pressed',
+  'data-drag-source',
+  'data-drag-key',
+  'data-drop-target',
+  'id',
+  'title',
+]
 
 const ghostOf = (el: HTMLElement, rect: DOMRect) => {
   const ghost = document.createElement('div')
@@ -69,41 +84,87 @@ const zoneOf = (el: Element | null) => el?.closest<HTMLElement>('[data-drop-zone
 const itemsIn = (zone: HTMLElement) =>
   [...zone.querySelectorAll<HTMLElement>('[data-drag-key]')].filter(el => zoneOf(el) === zone)
 
-const boxesIn = (zone: HTMLElement): Box[] =>
-  itemsIn(zone).map(el => {
-    const r = el.getBoundingClientRect()
-    return { key: el.dataset.dragKey ?? '', top: r.top, bottom: r.bottom }
+const boxOf = (el: HTMLElement) => {
+  const box = el.closest<HTMLElement>('[data-drag-box]')
+  return box && zoneOf(box) === zoneOf(el) ? box : el
+}
+
+const spanOf = (el: HTMLElement): Span => {
+  const { top, bottom } = el.getBoundingClientRect()
+  return layoutSpan({ top, bottom }, el.offsetHeight)
+}
+
+const boxesIn = (items: HTMLElement[], merges: boolean): Box[] =>
+  items.map(el => {
+    const box = boxOf(el)
+    const { top, bottom } = spanOf(box)
+    const own = spanOf(el)
+    const onto = merges && el.dataset.dropOnto ? ontoBand(own.top, own.bottom, box !== el) : null
+    return { key: el.dataset.dragKey ?? '', top, bottom, onto }
   })
 
-const resolve = (a: Active, rect: DOMRect): [(DropTarget & Slot) | null, HTMLElement | null] => {
-  if (offSide(a.x, rect.left, rect.right)) return [null, null]
-  const zones = [...a.scope.querySelectorAll<HTMLElement>('[data-drop-zone]')]
-  if (zones.length === 0) return [null, null]
-  const probe = zoneOf(document.elementFromPoint(rect.left + rect.width / 2, a.y))
+interface Resolved {
+  target: (DropTarget & Slot) | null
+  zone: HTMLElement | null
+  onto: HTMLElement | null
+}
+
+const none: Resolved = { target: null, zone: null, onto: null }
+
+const resolve = (a: Active, rect: DOMRect): Resolved => {
+  if (offSide(a.x, rect.left, rect.right)) return none
+  const zones = [...a.scope.querySelectorAll<HTMLElement>('[data-drop-zone]')].filter(
+    z => a.spec.zones?.(z.dataset.dropZone ?? '') ?? true
+  )
+  if (zones.length === 0) return none
+  let probe = zoneOf(document.elementFromPoint(rect.left + rect.width / 2, a.y))
+  while (probe && !zones.includes(probe)) probe = zoneOf(probe.parentElement)
   const zone =
-    probe && zones.includes(probe)
-      ? probe
-      : zones[
-          nearestSpan(
-            zones.map(z => z.getBoundingClientRect()),
-            a.y
-          )
-        ]
-  const slot = slotAt(boxesIn(zone), a.y, a.spec.key)
-  return [{ zone: zone.dataset.dropZone ?? '', ...slot }, zone]
+    probe ??
+    zones[
+      nearestSpan(
+        zones.map(z => z.getBoundingClientRect()),
+        a.y
+      )
+    ]
+  const items = itemsIn(zone)
+  const slot = slotAt(boxesIn(items, a.spec.onto !== undefined), a.y, a.spec.key)
+  const blocked = slot.onto !== null && !(a.spec.onto?.(slot.onto) ?? false)
+  const onto = blocked ? null : (items.find(el => el.dataset.dragKey === slot.onto) ?? null)
+  return {
+    target: {
+      ...slot,
+      zone: zone.dataset.dropZone ?? '',
+      noop: slot.noop || blocked,
+      onto: onto ? slot.onto : null,
+    },
+    zone,
+    onto,
+  }
+}
+
+const highlight = (a: Active, el: HTMLElement | null) => {
+  const next = el && boxOf(el)
+  if (next === a.merge) return
+  a.merge?.removeAttribute('data-drop-target')
+  next?.setAttribute('data-drop-target', '')
+  a.merge = next
+  a.ghost.toggleAttribute('data-merge', next !== null)
 }
 
 const placeLine = (a: Active, rect: DOMRect, zone: HTMLElement | null) => {
   const t = a.target
-  const box = zone && (itemsIn(zone)[0] ?? zone).getBoundingClientRect()
-  if (!t || t.noop || t.line === null || !box) {
+  const first = zone && (itemsIn(zone)[0] ?? zone)
+  if (!t || t.noop || t.line === null || !first) {
     a.line.hidden = true
     return
   }
+  const { left, width } = first.getBoundingClientRect()
+  const w = first.offsetWidth
   a.line.hidden = false
-  a.line.style.width = `${box.width}px`
+  a.line.style.width = `${w}px`
   const y = Math.min(rect.bottom - 2, Math.max(rect.top + 2, t.line))
-  a.line.style.transform = `translate(${box.left}px, ${y}px)`
+  a.line.style.transform = `translate(${left + (width - w) / 2}px, ${y}px)`
 }
 
 const tick = () => {
@@ -117,11 +178,16 @@ const tick = () => {
   const rect = a.scope.getBoundingClientRect()
   const step = autoScrollStep(a.y, rect.top, rect.bottom)
   if (step !== 0 && !offSide(a.x, rect.left, rect.right)) a.scope.scrollTop += step
-  const [next, zoneEl] = resolve(a, rect)
+  const { target: next, zone: zoneEl, onto } = resolve(a, rect)
   const was = a.target
   a.target = next
   a.ghost.toggleAttribute('data-off', next === null)
-  const label = next && !next.noop && next.zone !== a.from ? zoneEl?.dataset.dropLabel : undefined
+  highlight(a, onto)
+  const label = onto
+    ? onto.dataset.dropOnto
+    : next && !next.noop && next.zone !== a.from
+      ? zoneEl?.dataset.dropLabel
+      : undefined
   a.chip.textContent = label ?? ''
   a.chip.hidden = !label
   placeLine(a, rect, zoneEl)
@@ -155,6 +221,7 @@ export const dnd = {
     if (!scope) return
     const rect = el.getBoundingClientRect()
     const ghost = ghostOf(el, rect)
+    ghost.dataset.group = spec.group
     const chip = document.createElement('span')
     chip.className = 'drag-chip'
     chip.hidden = true
@@ -164,7 +231,8 @@ export const dnd = {
     line.dataset.group = spec.group
     line.hidden = true
     document.body.append(ghost, line)
-    el.setAttribute('data-drag-source', '')
+    const source = boxOf(el)
+    source.setAttribute('data-drag-source', '')
     document.documentElement.setAttribute('data-dragging', '')
     window.getSelection()?.removeAllRanges()
     window.addEventListener('keydown', onKey, true)
@@ -172,6 +240,7 @@ export const dnd = {
     active = {
       spec,
       el,
+      source,
       scope,
       ghost,
       chip,
@@ -182,6 +251,7 @@ export const dnd = {
       x: ox,
       y: oy,
       target: null,
+      merge: null,
       frame: 0,
       abort,
     }
@@ -202,11 +272,12 @@ export const dnd = {
     window.removeEventListener('blur', onBlur)
     a.ghost.remove()
     a.line.remove()
-    a.el.removeAttribute('data-drag-source')
+    a.source.removeAttribute('data-drag-source')
+    a.merge?.removeAttribute('data-drop-target')
     document.documentElement.removeAttribute('data-dragging')
     useDrag.setState({ group: null, key: null, zone: null })
     const t = a.target
-    if (commit && t && !t.noop) a.spec.onDrop({ zone: t.zone, index: t.index })
+    if (commit && t && !t.noop) a.spec.onDrop({ zone: t.zone, index: t.index, onto: t.onto })
   },
 }
 

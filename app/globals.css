@@ -201,6 +201,66 @@ body {
   opacity: 0.45;
 }
 
+.drag-ghost > :first-child {
+  transition:
+    scale 120ms ease-out,
+    translate 120ms ease-out;
+}
+
+.drag-ghost[data-merge] {
+  background: transparent;
+  box-shadow: none;
+}
+
+.drag-ghost[data-merge] > :first-child {
+  translate: 30% 30%;
+  scale: 0.55;
+  box-shadow: var(--shadow-elevation-2);
+}
+
+.drag-ghost[data-group='rail'] .drag-chip {
+  right: auto;
+  left: calc(100% + 10px);
+  white-space: nowrap;
+}
+
+[data-dragging] [data-drag-scope] :is([data-drop-onto], [data-drag-box]) {
+  transition-property: color, background-color, scale, box-shadow;
+  transition-duration: 120ms;
+  transition-timing-function: ease-out;
+}
+
+[data-drop-target] {
+  scale: 0.84;
+  box-shadow:
+    0 0 0 7px color-mix(in srgb, var(--color-primary) 30%, var(--color-surface-container-lowest)),
+    0 0 0 9px var(--color-primary);
+}
+
+[data-drop-target][data-drag-box] {
+  scale: none;
+  background: color-mix(in srgb, var(--color-primary) 34%, var(--color-surface-container-lowest));
+  box-shadow: inset 0 0 0 2px var(--color-primary);
+}
+
+.folder-tile {
+  background: color-mix(in srgb, var(--color-primary) 26%, var(--color-surface-container-lowest));
+}
+
+.folder-tile:hover {
+  background: color-mix(in srgb, var(--color-primary) 36%, var(--color-surface-container-lowest));
+}
+
+.folder-mini {
+  background: var(--color-surface-container-high);
+  color: var(--color-on-surface);
+}
+
+.folder-group {
+  --rail-cut: color-mix(in srgb, var(--color-primary) 22%, var(--color-surface-container-lowest));
+  background: var(--rail-cut);
+}
+
 .drag-chip {
   position: absolute;
   top: 50%;
