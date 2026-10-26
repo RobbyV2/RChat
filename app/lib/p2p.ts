@@ -1,5 +1,5 @@
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs'
-import { wsClient } from './ws'
+import { home } from './instances'
 import { SpeakingDetector } from './vad'
 import { mediaError } from './rules'
 
@@ -148,7 +148,7 @@ class P2pManager {
 
   announce() {
     this.ensurePeer()
-    wsClient.sendVoice({
+    home.ws.sendVoice({
       type: 'p2p_hosting',
       peer_id: this.peerId(),
       ids: Object.keys(this.files()),
@@ -161,12 +161,7 @@ class P2pManager {
       if (cur.disconnected) cur.reconnect()
       return cur
     }
-    const peer = new Peer(this.peerId(), {
-      host: process.env.NEXT_PUBLIC_PEERJS_HOST || window.location.hostname,
-      port: Number(process.env.NEXT_PUBLIC_PEERJS_PORT || '9001'),
-      path: '/peerjs',
-      secure: window.location.protocol === 'https:',
-    })
+    const peer = new Peer(this.peerId(), home.peer())
     peer.on('connection', conn =>
       conn.label === 'call' ? this.attachControl(conn) : this.serve(conn)
     )

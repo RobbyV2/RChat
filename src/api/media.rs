@@ -18,7 +18,7 @@ use crate::db::{Db, MediaKind, User, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
-const MAX_SIZE: usize = 25 * 1024 * 1024;
+pub(crate) const MAX_SIZE: usize = 25 * 1024 * 1024;
 pub(crate) const MEDIA_TTL_SECS: i64 = 86400;
 
 fn s3_key(id: &str) -> String {

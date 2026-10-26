@@ -2771,7 +2771,13 @@ mod tests {
         add_user(&local.db, "alice").await;
         let text = general(&local.db).await;
         let (hub, mut out) = Hub::replicated();
-        let state = AppState::new(local.db.clone(), hub.clone(), None, None);
+        let state = AppState::new(
+            local.db.clone(),
+            hub.clone(),
+            None,
+            None,
+            local.instance.clone(),
+        );
         let mut n = 0;
         for delete in [true, false] {
             let message = post_message(&state.db, text, "secret").await;

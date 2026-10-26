@@ -767,6 +767,16 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
     .bind(guests)
     .execute(&mut *conn)
     .await?;
+    for (key, value) in [
+        ("instance_id", crate::identity::random_id()),
+        ("instance_signing_key", crate::identity::new_seed()),
+    ] {
+        sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO NOTHING")
+            .bind(key)
+            .bind(value)
+            .execute(&mut *conn)
+            .await?;
+    }
     Ok(())
 }
 
@@ -1431,7 +1441,13 @@ mod tests {
             .execute(&db)
             .await
             .expect("write");
-        let state = crate::state::AppState::new(db.clone(), crate::ws::Hub::new(), None, None);
+        let state = crate::state::AppState::new(
+            db.clone(),
+            crate::ws::Hub::new(),
+            None,
+            None,
+            crate::instance::Instance::ephemeral(),
+        );
         assert_eq!(
             count(
                 &state.read(),

@@ -23,7 +23,7 @@ const MAX_BODY: usize = 1024 * 1024;
 const CACHE_TTL: i64 = 86400;
 const MAX_URLS: usize = 3;
 
-fn ip_ok(ip: IpAddr) -> bool {
+pub(crate) fn ip_ok(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             let [a, b, _, _] = v4.octets();

@@ -32,13 +32,23 @@ pub fn register_routes(proxy_url: Option<&str>, config: &AppConfig, state: AppSt
     let key = ClientIp(config.proxy_trust.clone());
     let api_routes =
         crate::api::routes(state.clone(), &config.roles, key.clone()).with_state(state.clone());
-    let api_routes = limited(api_routes, key, config);
-    let router = Router::new().nest(
-        "/api",
-        crate::api::health::routes()
-            .with_state(state)
-            .merge(api_routes),
-    );
+    let api_routes = limited(api_routes, key.clone(), config);
+    let well_known = match config.roles.api {
+        true => limited(
+            crate::api::instance::well_known_routes().with_state(state.clone()),
+            key,
+            config,
+        ),
+        false => Router::new(),
+    };
+    let router = Router::new()
+        .nest(
+            "/api",
+            crate::api::health::routes()
+                .with_state(state)
+                .merge(api_routes),
+        )
+        .merge(well_known);
 
     match proxy_url {
         Some(url) => {

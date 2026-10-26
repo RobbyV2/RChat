@@ -26,6 +26,8 @@ async fn main() -> anyhow::Result<()> {
 
     let roles = config.roles;
     let db = rust_next::db::open(config.database_url.as_deref()).await?;
+    let instance = rust_next::instance::Instance::load(&db, &config.instance()).await?;
+    info!("Instance: {} ({})", instance.name, instance.id);
     let web_only = roles
         == Roles {
             web: true,
@@ -41,7 +43,19 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(_) | None => (Hub::new(), None),
     };
-    let state = AppState::new(db, hub, config.s3()?, bus);
+    if !instance.pinned() {
+        if bus.is_some() {
+            tracing::warn!(
+                "PUBLIC_URL is unset while replicas share a bus: set PUBLIC_URL so every replica names the same issuer and discovery URLs"
+            );
+        }
+        if instance.allowed_hosts.is_empty() {
+            info!(
+                "PUBLIC_URL and ALLOWED_HOSTS are unset: /api/instance only names loopback hosts and reports localhost for any other Host"
+            );
+        }
+    }
+    let state = AppState::new(db, hub, config.s3()?, bus, instance);
     rust_next::ws::spawn_aftermath(&state);
     if let Some(bus) = &state.bus {
         bus.spawn_workers(&state);

@@ -5,13 +5,17 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   findInvites,
+  findRemoteInvites,
   entryState,
   handoffFor,
   inviteEntry,
   invitePath,
   inviteUrl,
   parseInvite,
+  parseInviteAt,
   previewText,
+  remoteInviteUrl,
+  remoteKey,
   safeNext,
 } from '../invite'
 
@@ -261,5 +265,46 @@ describe('inviteEntry', () => {
     expect(
       inviteEntry({ rchatInvite: { server: 'vault', password: 3, pushed: 'yes' } }, 'vault')
     ).toEqual({ server: 'vault', password: null, pushed: false })
+  })
+})
+
+describe('remote invites', () => {
+  const LOCAL = [ORIGIN, 'http://127.0.0.1:3821']
+
+  test('parseInviteAt keeps the origin of any http(s) invite link', () => {
+    expect(parseInviteAt('http://127.0.0.1:3831/invite/Club/?password=pw', ORIGIN)).toEqual({
+      origin: 'http://127.0.0.1:3831',
+      server: 'club',
+      password: 'pw',
+      url: 'http://127.0.0.1:3831/invite/Club/?password=pw',
+    })
+    expect(parseInviteAt('/invite/club/', ORIGIN)?.origin).toBe(ORIGIN)
+    expect(parseInviteAt('ftp://x.example/invite/club/', ORIGIN)).toBeNull()
+    expect(parseInviteAt('https://u:p@x.example/invite/club/', ORIGIN)).toBeNull()
+    expect(parseInviteAt('https://x.example/invite/club/more', ORIGIN)).toBeNull()
+  })
+
+  test('finds invite links to other origins, skipping local ones and duplicates', () => {
+    const text = [
+      'local https://chat.example.com/invite/a/',
+      'home http://127.0.0.1:3821/invite/b/',
+      'remote http://127.0.0.1:3831/invite/c/?password=x.',
+      'again http://127.0.0.1:3831/invite/C/',
+      'other https://b.example/invite/c/',
+      '`https://code.example/invite/z/`',
+    ].join('\n')
+    const any = () => true
+    const found = findRemoteInvites(text, LOCAL, any)
+    expect(found.map(remoteKey)).toEqual(['http://127.0.0.1:3831\nc', 'https://b.example\nc'])
+    expect(found[0].password).toBe('x')
+    expect(found[0].url).toBe('http://127.0.0.1:3831/invite/c/?password=x')
+    expect(remoteInviteUrl(found[0])).toBe('http://127.0.0.1:3831/invite/c/?password=x')
+    expect(findRemoteInvites('no links here', LOCAL, any)).toEqual([])
+    const many = Array.from({ length: 5 }, (_, i) => `https://h${i}.example/invite/s/`).join(' ')
+    expect(findRemoteInvites(many, LOCAL, any)).toHaveLength(3)
+    const httpsOnly = (o: string) => o.startsWith('https:')
+    expect(findRemoteInvites(text, LOCAL, httpsOnly).map(remoteKey)).toEqual([
+      'https://b.example\nc',
+    ])
   })
 })

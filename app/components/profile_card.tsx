@@ -19,7 +19,10 @@ import {
   UserMinus,
   X,
 } from 'lucide-react'
-import * as api from '../lib/api'
+import { ApiError } from '../lib/api'
+import { formatQualified, isHomeHost } from '../lib/qualified'
+import { InstanceChip } from './instance_badge'
+import { api } from '../lib/instances'
 import {
   banMenuItem,
   confirmKick,
@@ -160,6 +163,8 @@ function Card({ target }: { target: ProfileTarget }) {
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)
   const streamer = useStore(s => s.streamer)
+  const homeHost = useStore(s => s.instanceHost)
+  const remote = isHomeHost(target.instance, homeHost) ? null : (target.instance as string)
   const live = useStore(s => (server ? memberState(s, server, username) : undefined))
   const serverRoles = useStore(s => (server ? s.servers[server]?.roles : undefined))
   const serverName = useStore(s =>
@@ -203,7 +208,7 @@ function Card({ target }: { target: ProfileTarget }) {
         )
       })
       .catch((e: unknown) => {
-        if (current && e instanceof api.ApiError && e.status === 404) setMissing(true)
+        if (current && e instanceof ApiError && e.status === 404) setMissing(true)
       })
     return () => {
       current = false
@@ -409,7 +414,10 @@ function Card({ target }: { target: ProfileTarget }) {
           >
             {user.display_name}
           </p>
-          <p className="streamer truncate text-sm text-on-surface-variant">@{user.username}</p>
+          <p className="streamer truncate text-sm text-on-surface-variant">
+            @{remote ? formatQualified(user.username, remote) : user.username}
+          </p>
+          {remote && <InstanceChip host={remote} className="mt-1" />}
         </div>
         {missing ? (
           <p className="mt-3 rounded-xl bg-surface-container-low p-3 text-sm text-on-surface-variant">

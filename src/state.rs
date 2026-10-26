@@ -4,6 +4,7 @@ use s3::Bucket;
 
 use crate::bus::Bus;
 use crate::db::Db;
+use crate::instance::Instance;
 use crate::ws::Hub;
 
 #[derive(Clone)]
@@ -13,10 +14,17 @@ pub struct AppState {
     pub s3: Option<Arc<Bucket>>,
     pub bus: Option<Bus>,
     reader: Db,
+    pub instance: Arc<Instance>,
 }
 
 impl AppState {
-    pub fn new(db: Db, hub: Hub, s3: Option<Arc<Bucket>>, bus: Option<Bus>) -> AppState {
+    pub fn new(
+        db: Db,
+        hub: Hub,
+        s3: Option<Arc<Bucket>>,
+        bus: Option<Bus>,
+        instance: Arc<Instance>,
+    ) -> AppState {
         let reader = crate::db::reader(&db);
         AppState {
             db,
@@ -24,6 +32,7 @@ impl AppState {
             s3,
             bus,
             reader,
+            instance,
         }
     }
 

@@ -21,6 +21,10 @@
 #   "true" and proxy-real-ip-cidr to the balancer's address range. The default
 #   proxy-real-ip-cidr 0.0.0.0/0 trusts every hop, so the left-most, client-written entry
 #   would become the address the controller limits and forwards.
+# The controller also sets X-Forwarded-Host and X-Forwarded-Proto itself, which the
+# backends use for the issuer when PUBLIC_URL is unset (bounded by ALLOWED_HOSTS). With
+# use-forwarded-headers "true" it passes the balancer's values on, so the balancer must
+# overwrite them too.
 # networkpolicy.yaml makes the controller the only peer that can reach the role pods, so
 # no other pod can present forged headers from inside the trusted range.
 apiVersion: networking.k8s.io/v1
@@ -67,6 +71,20 @@ spec:
                   name: http
           - path: /api
             pathType: Prefix
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
+          - path: /.well-known/rchat
+            pathType: Exact
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
+          - path: /.well-known/jwks.json
+            pathType: Exact
             backend:
               service:
                 name: rchat-api

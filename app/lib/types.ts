@@ -323,3 +323,36 @@ export type WsEvent =
 export type WsStatus = 'green' | 'yellow' | 'red'
 
 export type Theme = 'dark' | 'light'
+
+export interface InstanceFeatures {
+  guests: boolean
+  uploads: boolean
+  previews: boolean
+  identity_assertions: boolean
+}
+
+export interface InstanceLimits {
+  message_chars: number
+  name_chars: number
+  upload_bytes: number
+  media_retention_secs: number
+  page_size: number
+  assertion_ttl_secs: number
+}
+
+export interface InstanceInfo {
+  software: 'rchat'
+  id: string
+  name: string
+  host: string
+  version: string
+  api_version: string
+  public_url: string
+  api_url: string
+  ws_url: string
+  peerjs_url: string
+  instance_url: string
+  jwks_uri: string
+  features: InstanceFeatures
+  limits: InstanceLimits
+}

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '../lib/store'
+import { home } from '../lib/instances'
 import { ContextMenu } from '../components/context_menu'
 import { ProfileCard } from '../components/profile_card'
 import { ServerRail } from '../components/server_rail'
@@ -41,7 +42,9 @@ export default function AppShell() {
     if (booted.current) return
     booted.current = true
     useStore.getState().setStreamer(localStorage.getItem('rchat_streamer') === '1')
-    const authed = localStorage.getItem('rchat_token') || localStorage.getItem('rchat_guest')
+    const authed =
+      localStorage.getItem(home.scoped('rchat_token')) ||
+      localStorage.getItem(home.scoped('rchat_guest'))
     if (!authed) {
       if (useStore.getState().syncInvite()) void useStore.getState().loadSettings()
       else router.replace('/login')

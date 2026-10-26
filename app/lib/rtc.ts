@@ -1,4 +1,4 @@
-import { wsClient } from './ws'
+import { home } from './instances'
 import { SpeakingDetector } from './vad'
 import { mediaError } from './rules'
 import type { RtcPayload } from './types'
@@ -144,7 +144,7 @@ class RtcManager {
   private signal(to: string, payload: RtcPayload) {
     const { target } = this
     if (!target) return
-    wsClient.sendVoice({
+    home.ws.sendVoice({
       type: 'rtc_signal',
       to,
       channel_id: target.channelId ?? null,

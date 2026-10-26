@@ -6,6 +6,7 @@ use s3::{Bucket, Region};
 use serde::Deserialize;
 
 use crate::bus::DEFAULT_HUB_MAXLEN;
+use crate::instance::InstanceConfig;
 use crate::server::client_ip::ProxyTrust;
 
 const MIN_HUB_MAXLEN: u64 = 1_000;
@@ -117,6 +118,16 @@ impl Roles {
     }
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(transparent)]
+pub struct Secret(pub String);
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Secret(..)")
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
     pub app_mode: AppMode,
@@ -138,6 +149,14 @@ pub struct AppConfig {
     pub redis_hub_maxlen: u64,
     pub trust_proxy: bool,
     pub trusted_proxies: Option<String>,
+    pub instance_name: Option<String>,
+    pub public_url: Option<String>,
+    pub public_api_url: Option<String>,
+    pub public_ws_url: Option<String>,
+    pub public_peerjs_url: Option<String>,
+    pub instance_signing_key: Option<Secret>,
+    pub allowed_hosts: Option<String>,
+    pub peerjs_port: Option<u16>,
     #[serde(skip)]
     pub roles: Roles,
     #[serde(skip)]
@@ -183,6 +202,13 @@ impl AppConfig {
         config.check_shared_state()?;
         config.proxy_trust =
             ProxyTrust::from_config(config.trust_proxy, config.trusted_proxies.as_deref())?;
+        if let Some(Secret(spec)) = &config.instance_signing_key
+            && !spec.trim().is_empty()
+        {
+            crate::identity::Keyring::parse(spec)
+                .map_err(|e| anyhow::anyhow!("INSTANCE_SIGNING_KEY: {e}"))?;
+        }
+        crate::instance::parse_allowed_hosts(config.allowed_hosts.as_deref().unwrap_or_default())?;
         Ok(config)
     }
 
@@ -224,6 +250,34 @@ impl AppConfig {
                 },
             }),
         }
+    }
+
+    pub fn instance(&self) -> InstanceConfig {
+        InstanceConfig {
+            name: self.instance_name.clone(),
+            public_url: self.public_url.clone(),
+            api_url: self.public_api_url.clone(),
+            ws_url: self.public_ws_url.clone(),
+            peerjs_url: self.public_peerjs_url.clone(),
+            signing_key: self
+                .instance_signing_key
+                .as_ref()
+                .map(|Secret(s)| s.clone()),
+            allowed_hosts: self.allowed_hosts.clone(),
+            peerjs_port: self.peerjs_port,
+            proxy_trust: self.proxy_trust.clone(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn defaults() -> AppConfig {
+        let cli = CliOverrides {
+            host: None,
+            port: None,
+            mode: None,
+            roles: None,
+        };
+        AppConfig::load_from(&cli, Some(HashMap::new())).expect("default config")
     }
 
     pub fn s3(&self) -> anyhow::Result<Option<Arc<Bucket>>> {

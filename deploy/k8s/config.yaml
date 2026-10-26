@@ -21,3 +21,8 @@ data:
   TRUSTED_PROXIES: "REPLACE-with-the-ingress-controller-pod-CIDR"
   RUST_LOG: info
   DATABASE_MAX_CONNECTIONS: "8"
+  # The name and public origin this instance announces at /api/instance and signs identity
+  # assertions with; every replica shares the id and signing key stored in Postgres.
+  INSTANCE_NAME: RChat
+  # PUBLIC_URL: "https://chat.example.com"
+  # ALLOWED_HOSTS: "chat.example.com"

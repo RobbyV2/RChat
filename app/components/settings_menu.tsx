@@ -2,12 +2,13 @@
 
 import { useEffect, useId, useState, type FormEvent } from 'react'
 import { X } from 'lucide-react'
-import * as api from '../lib/api'
+import { api } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import { defaultBanner } from '../lib/profile'
 import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
 import type { AvatarKind } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
+import { InstanceDetails } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { SettingSwitch } from './admin_panel'
 import { PassSwitch, WordGrid } from './word_grid'
@@ -339,6 +340,10 @@ function SettingsSection() {
   const setStreamer = useStore(s => s.setStreamer)
   return (
     <div className="flex flex-col gap-8">
+      <section>
+        <p className={sectionCls}>Instance</p>
+        <InstanceDetails />
+      </section>
       <AccountSection />
       <PasswordSection />
       <StatusSection />

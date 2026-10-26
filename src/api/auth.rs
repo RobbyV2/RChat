@@ -279,6 +279,9 @@ pub(crate) async fn register(
         return Err(bad("Username required"));
     }
     check_len(&username, NAME_MAX, "Username")?;
+    if username.contains('@') {
+        return Err(bad("Usernames can't contain @"));
+    }
     if password.as_deref() == Some("") {
         return Err(bad("Password required"));
     }
@@ -708,6 +711,30 @@ mod tests {
         assert!(matches!(empty, Err(ApiError(StatusCode::BAD_REQUEST, _))));
         assert!(get_user(&state.db, "erin").await.expect("lookup").is_none());
         let _ = register_text(&state, "erin").await.expect("non-empty ok");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn new_usernames_cannot_contain_at() {
+        let (state, path) = temp_state("username_at").await;
+        for name in ["admin@localhost", "bob@other.example", "@", "a@"] {
+            let res = register_text(&state, name).await;
+            assert!(
+                matches!(&res, Err(ApiError(StatusCode::BAD_REQUEST, m)) if m.contains('@')),
+                "{name}"
+            );
+        }
+        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('old@name', 'old@name', '', 'text', 'identicon', 0)")
+            .execute(&state.db)
+            .await
+            .expect("legacy user");
+        assert!(
+            get_user(&state.db, "old@name")
+                .await
+                .expect("lookup")
+                .is_some()
+        );
+        let _ = register_text(&state, "plain").await.expect("plain ok");
         done(state, path).await;
     }
 

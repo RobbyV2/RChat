@@ -1,9 +1,5 @@
-import { getBasePath } from './basePath'
 import { backoffDelay, nextAttempt } from './backoff'
 import type { VoiceMsg, WsEvent, WsStatus } from './types'
-
-const apiBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, '')
-const wsBase = process.env.NEXT_PUBLIC_WS_URL?.replace(/\/+$/, '')
 
 const secure = (protocol: string) => protocol === 'https:' || protocol === 'wss:'
 
@@ -22,11 +18,12 @@ export function wsUrlFrom(
   return `${l.protocol === 'https:' ? 'wss' : 'ws'}://${l.host}${basePath}/api/ws`
 }
 
-const wsUrl = () => wsUrlFrom(apiBase, window.location, getBasePath(), wsBase)
+export interface WsEndpoints {
+  url: () => string
+  probe: () => string
+}
 
-const probeUrl = apiBase ? `${apiBase}/api/health` : `${getBasePath()}/api/health`
-
-class WsClient {
+export class WsClient {
   private ws: WebSocket | null = null
   private token: string | null = null
   private viewing: string | null = null
@@ -41,6 +38,12 @@ class WsClient {
   onEvent: (ev: WsEvent) => void = () => {}
   onStatus: (status: WsStatus) => void = () => {}
   onPoll: () => void = () => {}
+
+  constructor(private endpoints: WsEndpoints) {}
+
+  retarget(endpoints: WsEndpoints) {
+    this.endpoints = endpoints
+  }
 
   start(token: string | null) {
     this.stop()
@@ -113,7 +116,7 @@ class WsClient {
 
   private connect() {
     if (this.stopped) return
-    const ws = new WebSocket(wsUrl())
+    const ws = new WebSocket(this.endpoints.url())
     this.ws = ws
     this.connectTimer = setTimeout(() => {
       if (this.ws === ws && ws.readyState !== WebSocket.OPEN) ws.close()
@@ -161,7 +164,7 @@ class WsClient {
     const ws = this.ws
     const stale = () => this.stopped || this.ws !== ws || ws?.readyState === WebSocket.OPEN
     try {
-      const res = await fetch(probeUrl)
+      const res = await fetch(this.endpoints.probe())
       if (stale()) return
       if (res.ok) {
         this.onStatus('yellow')
@@ -174,5 +177,3 @@ class WsClient {
     }
   }
 }
-
-export const wsClient = new WsClient()

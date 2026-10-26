@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowRight } from 'lucide-react'
-import * as api from '../lib/api'
+import { ArrowRight, Globe } from 'lucide-react'
+import { DEFAULT_INSTANCE_NAME, api, home, knownInstances, normalizeOrigin } from '../lib/instances'
+import { hostOf } from '../lib/qualified'
 import { useStore } from '../lib/store'
 import { safeNext } from '../lib/invite'
 import { NAME_MAX, charCount } from '../lib/rules'
@@ -16,6 +17,171 @@ import { InstallButton, IosInstallHint } from '../components/pwa_register'
 
 type Mode = 'login' | 'register'
 
+const inputCls =
+  'rounded-lg border border-outline bg-transparent px-3 py-2 outline-none focus:border-primary'
+
+const signedIn = () =>
+  localStorage.getItem(home.scoped('rchat_token')) !== null ||
+  localStorage.getItem(home.scoped('rchat_guest')) !== null
+
+function blurHosts(text: string, hosts: (string | null)[]): ReactNode {
+  const wanted = [...new Set(hosts.filter((h): h is string => !!h))].sort(
+    (a, b) => b.length - a.length
+  )
+  if (wanted.length === 0) return text
+  const escaped = wanted.map(h => h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  return text.split(new RegExp(`(${escaped.join('|')})`)).map((part, at) =>
+    at % 2 === 1 ? (
+      <span key={at} className="streamer">
+        {part}
+      </span>
+    ) : (
+      part
+    )
+  )
+}
+
+function InstancePicker({
+  onSwitched,
+  onMissing,
+}: {
+  onSwitched: () => void
+  onMissing: (missing: boolean) => void
+}) {
+  const info = useStore(s => s.instance)
+  const host = useStore(s => s.instanceHost)
+  const loadInstance = useStore(s => s.loadInstance)
+  const switchInstance = useStore(s => s.switchInstance)
+  const [open, setOpen] = useState(false)
+  const [address, setAddress] = useState('')
+  const [error, setError] = useState<ReactNode>(null)
+  const [busy, setBusy] = useState(false)
+  const [known, setKnown] = useState<{ origin: string; name: string }[]>([])
+  const listId = useId()
+
+  useEffect(() => {
+    let live = true
+    void loadInstance().then(found => {
+      if (!live) return
+      onMissing(!found)
+      if (found) {
+        void useStore.getState().loadSettings()
+        return
+      }
+      setOpen(true)
+      setError(
+        <>
+          No RChat instance answered at <span className="streamer">{home.host}</span>. Enter the
+          instance to use.
+        </>
+      )
+    })
+    setKnown(knownInstances().map(({ origin, info }) => ({ origin, name: info.name })))
+    return () => {
+      live = false
+    }
+  }, [loadInstance, onMissing])
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    const failed = await switchInstance(address || home.origin)
+    setBusy(false)
+    if (failed) {
+      const typed = normalizeOrigin(address)
+      setError(blurHosts(failed, [home.host, typed ? hostOf(typed) : null, address.trim()]))
+      return
+    }
+    setOpen(false)
+    setAddress('')
+    onMissing(false)
+    if (signedIn()) onSwitched()
+  }
+
+  const name = info?.name || DEFAULT_INSTANCE_NAME
+  if (!open)
+    return (
+      <div className="flex min-w-0 items-center gap-3 rounded-xl bg-surface-container px-3 py-2">
+        <Globe size={18} className="shrink-0 text-on-surface-variant" />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs text-on-surface-variant">Instance</p>
+          <p className="truncate text-sm" title={host ? `${name} (${host})` : name}>
+            <span className="streamer font-medium text-on-surface">{name}</span>
+            {host && <span className="streamer ml-1.5 text-on-surface-variant">{host}</span>}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(true)
+            setError(null)
+          }}
+          className="shrink-0 rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-high"
+        >
+          Change
+        </button>
+      </div>
+    )
+  return (
+    <form onSubmit={submit} className="flex flex-col gap-1 rounded-xl bg-surface-container p-3">
+      <label htmlFor={`${listId}-input`} className="text-sm text-on-surface-variant">
+        Instance
+      </label>
+      <div className="flex min-w-0 gap-2">
+        <input
+          id={`${listId}-input`}
+          value={address}
+          onChange={e => setAddress(e.target.value)}
+          list={listId}
+          placeholder={home.origin}
+          inputMode="url"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          aria-invalid={error !== null}
+          className={`${inputCls} min-w-0 flex-1`}
+        />
+        <button
+          disabled={busy}
+          className="shrink-0 rounded-full bg-secondary-container px-4 text-sm font-medium text-on-secondary-container hover:opacity-90 disabled:opacity-50"
+        >
+          {busy ? 'Checking…' : 'Connect'}
+        </button>
+      </div>
+      <datalist id={listId}>
+        {known.map(k => (
+          <option key={k.origin} value={k.origin}>
+            {k.name}
+          </option>
+        ))}
+      </datalist>
+      {error ? (
+        <p role="alert" className="text-xs text-error">
+          {error}
+        </p>
+      ) : (
+        <p className="text-xs text-on-surface-variant">
+          The RChat server your account lives on, for example chat.example.com.
+        </p>
+      )}
+      {info !== null && (
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(false)
+            setError(null)
+          }}
+          className="self-end rounded-full px-3 py-1 text-sm text-on-surface-variant hover:bg-surface-container-high"
+        >
+          Cancel
+        </button>
+      )}
+    </form>
+  )
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const authed = useStore(s => !!s.token || s.guest)
@@ -25,11 +191,7 @@ export default function LoginPage() {
   const register = useStore(s => s.register)
   const enterGuest = useStore(s => s.enterGuest)
   const guestsEnabled = useStore(s => s.settings.guests_enabled)
-  const loadSettings = useStore(s => s.loadSettings)
-
-  useEffect(() => {
-    void loadSettings()
-  }, [loadSettings])
+  const [missing, setMissing] = useState(false)
 
   const [mode, setMode] = useState<Mode>('login')
   const [username, setUsername] = useState('')
@@ -68,6 +230,10 @@ export default function LoginPage() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
+    if (missing) {
+      setError('Connect to an RChat instance first')
+      return
+    }
     const name = username.trim()
     if (!name) {
       setError('Enter a username')
@@ -75,6 +241,10 @@ export default function LoginPage() {
     }
     if (mode === 'register' && charCount(name) > NAME_MAX) {
       setError(`Usernames can be at most ${NAME_MAX} characters`)
+      return
+    }
+    if (mode === 'register' && name.includes('@')) {
+      setError("Usernames can't contain @")
       return
     }
     if (passKind === 'words' && selected.length !== 7) {
@@ -127,6 +297,12 @@ export default function LoginPage() {
         <h1 className="flex justify-center">
           <img src="/rchat_logo.png" alt="RChat" className="h-16 w-auto" />
         </h1>
+        <InstancePicker
+          onMissing={setMissing}
+          onSwitched={() =>
+            router.replace(safeNext(new URLSearchParams(window.location.search).get('next')) ?? '/')
+          }
+        />
         <div className="flex gap-1 rounded-full bg-surface-container p-1">
           {tab('login', 'Log in')}
           {tab('register', 'Create account')}
@@ -139,7 +315,7 @@ export default function LoginPage() {
               onChange={e => setUsername(e.target.value)}
               autoFocus
               autoComplete="username"
-              className="rounded-lg border border-outline bg-transparent px-3 py-2 outline-none focus:border-primary"
+              className={inputCls}
             />
           </label>
           <PassSwitch value={passKind} onChange={setPassKind} />
@@ -151,7 +327,7 @@ export default function LoginPage() {
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                className="rounded-lg border border-outline bg-transparent px-3 py-2 outline-none focus:border-primary"
+                className={inputCls}
               />
             </label>
           ) : words.length ? (
@@ -183,7 +359,7 @@ export default function LoginPage() {
             {mode === 'login' ? 'Log in' : 'Create account'}
           </button>
         </form>
-        {guestsEnabled && (
+        {guestsEnabled && !missing && (
           <button
             type="button"
             onClick={() => void enterGuest()}

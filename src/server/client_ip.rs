@@ -82,7 +82,7 @@ impl ProxyTrust {
         Ok(ProxyTrust::Listed(cidrs.into()))
     }
 
-    fn trusts(&self, ip: IpAddr) -> bool {
+    pub fn trusts(&self, ip: IpAddr) -> bool {
         match self {
             ProxyTrust::Peer => false,
             ProxyTrust::Any => true,

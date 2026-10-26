@@ -55,6 +55,8 @@ redis = { version = "1.8", default-features = false, features = [
   "streams",
   "connection-manager",
 ] }
+ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
+base64 = "0.22"
 
 [profile.release]
 opt-level = "z"

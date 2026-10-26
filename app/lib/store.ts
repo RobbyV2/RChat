@@ -1,6 +1,12 @@
 import { create } from 'zustand'
-import * as api from './api'
-import { wsClient } from './ws'
+import {
+  ApiError,
+  type LoginRequest,
+  type PageOpts,
+  type RegisterRequest,
+  type SendOpts,
+} from './api'
+import { api, fitsHome, home, noteHomeInfo, resolveInstance, selectHome } from './instances'
 import { rtc } from './rtc'
 import { newP2pId, p2p } from './p2p'
 import { mentionsUser } from './mentions'
@@ -101,6 +107,7 @@ import type {
   ServerSummaryLite,
   ServerUpdated,
   SiteSettings,
+  InstanceInfo,
   Theme,
   UserRef,
   WsEvent,
@@ -179,6 +186,7 @@ export interface ProfileTarget {
   server: string | null
   x: number
   y: number
+  instance?: string | null
 }
 
 export type UploadMode = 'server' | 'p2p'
@@ -199,7 +207,7 @@ export interface Outgoing {
   msg: Message
   pending: PendingUpload | null
   p2pExpiresIn: number | null
-  send: (opts: api.SendOpts) => Promise<Message>
+  send: (opts: SendOpts) => Promise<Message>
 }
 
 export interface Notice {
@@ -248,14 +256,26 @@ export interface Paged<T> {
 const emptyPage = <T>(): Paged<T> => ({ list: [], hasMore: true, loading: false, q: '' })
 
 const LS = {
-  token: 'rchat_token',
-  guest: 'rchat_guest',
-  guestServers: 'rchat_guest_servers',
-  guestGrants: 'rchat_guest_grants',
-  guestNames: 'rchat_guest_names',
+  get token() {
+    return home.scoped('rchat_token')
+  },
+  get guest() {
+    return home.scoped('rchat_guest')
+  },
+  get guestServers() {
+    return home.scoped('rchat_guest_servers')
+  },
+  get guestGrants() {
+    return home.scoped('rchat_guest_grants')
+  },
+  get guestNames() {
+    return home.scoped('rchat_guest_names')
+  },
   theme: 'rchat_theme',
   streamer: 'rchat_streamer',
-  lastDm: 'rchat_last_dm',
+  get lastDm() {
+    return home.scoped('rchat_last_dm')
+  },
 }
 
 export const THEME_COLORS: Record<Theme, string> = { dark: '#141218', light: '#fef7ff' }
@@ -373,6 +393,10 @@ interface RChatState {
   error: string | null
   adminOverview: AdminOverview | null
   settings: SiteSettings
+  instance: InstanceInfo | null
+  instanceHost: string
+  loadInstance: () => Promise<boolean>
+  switchInstance: (address: string) => Promise<string | null>
   bootstrap: () => Promise<void>
   loadSettings: () => Promise<void>
   setTheme: (theme: Theme) => void
@@ -385,8 +409,8 @@ interface RChatState {
   setAppearOffline: (appearOffline: boolean) => Promise<void>
   changePassword: (current: Secret, next: Secret, kind: PassKind) => Promise<string | null>
   syncFromUrl: (nav: 'replace' | 'none') => Promise<void>
-  register: (body: api.RegisterRequest) => Promise<void>
-  login: (body: api.LoginRequest) => Promise<void>
+  register: (body: RegisterRequest) => Promise<void>
+  login: (body: LoginRequest) => Promise<void>
   logout: () => void
   enterGuest: () => Promise<void>
   guestJoinServer: (name: string, password?: string, nav?: Nav) => Promise<void>
@@ -765,7 +789,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const readLayout = (username: string | null) => {
     try {
-      return parseLayout(localStorage.getItem(layoutKey(username)))
+      return parseLayout(localStorage.getItem(home.scoped(layoutKey(username))))
     } catch {
       return emptyLayout
     }
@@ -775,7 +799,7 @@ export const useStore = create<RChatState>()((set, get) => {
     if (next === get().layout) return
     set({ layout: next })
     const { me, guest } = get()
-    if (me || guest) writeLocal(layoutKey(me?.username ?? null), JSON.stringify(next))
+    if (me || guest) writeLocal(home.scoped(layoutKey(me?.username ?? null)), JSON.stringify(next))
   }
 
   const syncLayout = async (username: string) => {
@@ -831,7 +855,7 @@ export const useStore = create<RChatState>()((set, get) => {
       .me()
       .then(me => applyMe(me, true))
       .catch(e => {
-        if (e instanceof api.ApiError && e.status === 401) expireSession()
+        if (e instanceof ApiError && e.status === 401) expireSession()
         else fail(e)
       })
 
@@ -852,7 +876,7 @@ export const useStore = create<RChatState>()((set, get) => {
       void loadUnreads()
       await resolveUrl('replace')
     } catch (e) {
-      if (e instanceof api.ApiError && e.status === 401) {
+      if (e instanceof ApiError && e.status === 401) {
         expireSession()
         return
       }
@@ -913,7 +937,7 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   const lockedOut = (e: unknown) =>
-    get().guest && get().settings.guests_enabled && e instanceof api.ApiError && e.status === 401
+    get().guest && get().settings.guests_enabled && e instanceof ApiError && e.status === 401
 
   const guestLocked = (name: string) => {
     if (!get().guestServers.includes(name)) return
@@ -964,7 +988,7 @@ export const useStore = create<RChatState>()((set, get) => {
         )
       ),
     ]
-    if (hosters.length) wsClient.sendVoice({ type: 'p2p_who', hosters })
+    if (hosters.length) home.ws.sendVoice({ type: 'p2p_who', hosters })
   }
 
   let pendingDial: string | null = null
@@ -1019,7 +1043,7 @@ export const useStore = create<RChatState>()((set, get) => {
       lost.map(name =>
         api.serverExists(name).then(
           () => true,
-          (e: unknown) => !(e instanceof api.ApiError && e.status === 404)
+          (e: unknown) => !(e instanceof ApiError && e.status === 404)
         )
       )
     )
@@ -1051,7 +1075,7 @@ export const useStore = create<RChatState>()((set, get) => {
       () => {
         resyncTimer = null
         set({ p2pAvailability: {}, voiceUsers: {} })
-        wsClient.resubscribe()
+        home.ws.resubscribe()
         if (get().me) void refetchMe()
         else if (get().token) void recoverMe()
         const { view } = get()
@@ -1122,8 +1146,8 @@ export const useStore = create<RChatState>()((set, get) => {
     downSince = null
     stopCatchUp()
     listenPage()
-    wsClient.onEvent = ev => get().applyWsEvent(ev)
-    wsClient.onStatus = wsStatus => {
+    home.ws.onEvent = ev => get().applyWsEvent(ev)
+    home.ws.onStatus = wsStatus => {
       set({ wsStatus })
       if (wsStatus !== 'green') {
         if (downSince === null) downSince = Date.now()
@@ -1140,7 +1164,7 @@ export const useStore = create<RChatState>()((set, get) => {
       if (connected) scheduleCatchUp(outage)
       connected = true
     }
-    wsClient.onPoll = () => {
+    home.ws.onPoll = () => {
       void refreshView()
       const now = Date.now()
       if (due(polledMe, now, POLL_EVERY)) {
@@ -1153,10 +1177,10 @@ export const useStore = create<RChatState>()((set, get) => {
         void get().loadSettings()
       }
     }
-    wsClient.start(get().token)
+    home.ws.start(get().token)
     p2p.ensurePurge()
     if (get().me) void loadUnreads()
-    if (get().guest) wsClient.subscribe(get().guestServers)
+    if (get().guest) home.ws.subscribe(get().guestServers)
   }
 
   const persistGuestServers = (list: string[]) => {
@@ -1177,7 +1201,7 @@ export const useStore = create<RChatState>()((set, get) => {
   const persistGrants = (grants: Record<string, string>) => {
     writeLocal(LS.guestGrants, JSON.stringify(grants))
     api.setGrants(grants)
-    wsClient.setGrants(grants)
+    home.ws.setGrants(grants)
     set({ guestGrants: grants })
   }
 
@@ -1194,7 +1218,7 @@ export const useStore = create<RChatState>()((set, get) => {
       if (get().guest) rememberGuestName(detail.name, detail.display_name)
       return detail
     } catch (e) {
-      if (get().guest && e instanceof api.ApiError && e.status === 401) dropGrant(name)
+      if (get().guest && e instanceof ApiError && e.status === 401) dropGrant(name)
       throw e
     }
   }
@@ -1226,7 +1250,8 @@ export const useStore = create<RChatState>()((set, get) => {
       return kept.length === entries.length ? {} : { pending: Object.fromEntries(kept) }
     })
 
-  const setTokenCookie = (token: string | null) => {
+  const setTokenCookie = (value: string | null) => {
+    const token = home.isDefault ? value : null
     const attrs = `path=/; SameSite=Strict${window.location.protocol === 'https:' ? '; Secure' : ''}`
     document.cookie = token
       ? `rchat_token=${token}; ${attrs}; max-age=31536000`
@@ -1296,9 +1321,9 @@ export const useStore = create<RChatState>()((set, get) => {
     } catch (e) {
       await fallback()
       const locked =
-        e instanceof api.ApiError &&
+        e instanceof ApiError &&
         (e.status === 403 || (e.status === 401 && get().settings.guests_enabled))
-      const missing = e instanceof api.ApiError && e.status === 404
+      const missing = e instanceof ApiError && e.status === 404
       if (locked) {
         fail(new Error('That server is password protected. Enter its password to join.'))
         get().openDialog({ kind: 'add_server', join: target.server })
@@ -1308,7 +1333,7 @@ export const useStore = create<RChatState>()((set, get) => {
     const { guest, guestServers } = get()
     if (guest && !guestServers.includes(target.server)) {
       persistGuestServers([...guestServers, target.server])
-      wsClient.subscribe([target.server])
+      home.ws.subscribe([target.server])
     }
     set(s => ({ servers: { ...s.servers, [target.server]: detail } }))
     const wanted = target.kind === 'channel' ? target.channelId : null
@@ -1364,7 +1389,7 @@ export const useStore = create<RChatState>()((set, get) => {
     if (get().guest) {
       persistGuestServers(get().guestServers.filter(n => n !== name))
       dropGrant(name)
-      wsClient.unsubscribe(name)
+      home.ws.unsubscribe(name)
       if (name in get().guestNames) {
         const names = { ...get().guestNames }
         delete names[name]
@@ -1774,7 +1799,7 @@ export const useStore = create<RChatState>()((set, get) => {
     pending: PendingUpload | null,
     p2pExpiresIn: number | null
   ) => {
-    wsClient.ensureConnected()
+    home.ws.ensureConnected()
     const tempId = OPT_BASE + ++optSeq
     enqueue({
       tempId,
@@ -1827,7 +1852,7 @@ export const useStore = create<RChatState>()((set, get) => {
   const setOlder = (key: string, state: OlderState) =>
     set(s => ({ older: { ...s.older, [key]: state } }))
 
-  const fetchPage = (key: string, page: api.PageOpts): Promise<Message[]> => {
+  const fetchPage = (key: string, page: PageOpts): Promise<Message[]> => {
     const id = Number(key.slice(1))
     switch (key[0]) {
       case 'c':
@@ -1993,7 +2018,7 @@ export const useStore = create<RChatState>()((set, get) => {
   const buildSendOpts = async (
     pending: PendingUpload | null,
     p2pExpiresIn: number | null | undefined
-  ): Promise<{ opts: api.SendOpts; p2pId: string | null }> => {
+  ): Promise<{ opts: SendOpts; p2pId: string | null }> => {
     if (!pending) return { opts: {}, p2pId: null }
     const { file, spoiler, mode } = pending
     if (mode === 'p2p') {
@@ -2135,6 +2160,39 @@ export const useStore = create<RChatState>()((set, get) => {
       guests_enabled: true,
     },
 
+    instance: null,
+    instanceHost: '',
+
+    loadInstance: async () => {
+      set({ instance: home.info, instanceHost: home.host })
+      try {
+        const info = await api.instance()
+        if (!fitsHome(info)) throw new Error('instance endpoints moved to another site')
+        noteHomeInfo(info)
+        set({ instance: info, instanceHost: home.host })
+        return true
+      } catch {
+        set({ instanceHost: home.host })
+        return false
+      }
+    },
+
+    switchInstance: async address => {
+      if (get().token || get().guest) return 'Log out before switching instances'
+      try {
+        const { origin, info } = await resolveInstance(address)
+        if (origin !== home.origin || home.info?.id !== info.id) {
+          home.ws.stop()
+          selectHome(origin, info)
+        } else noteHomeInfo(info)
+        set({ instance: info, instanceHost: home.host, error: null })
+        await get().loadSettings()
+        return null
+      } catch (e) {
+        return errorText(e)
+      }
+    },
+
     loadSettings: async () => {
       try {
         set({ settings: await api.getSettings() })
@@ -2176,7 +2234,7 @@ export const useStore = create<RChatState>()((set, get) => {
         set(s => (s.me ? { me: { ...s.me, password_kind: kind } } : {}))
         return null
       } catch (e) {
-        if (e instanceof api.ApiError && e.status === 401 && e.message === 'Unauthorized')
+        if (e instanceof ApiError && e.status === 401 && e.message === 'Unauthorized')
           expireSession()
         return errorText(e)
       }
@@ -2188,6 +2246,7 @@ export const useStore = create<RChatState>()((set, get) => {
         return
       }
       void get().loadSettings()
+      void get().loadInstance()
       const token = localStorage.getItem(LS.token)
       const guest = localStorage.getItem(LS.guest) === '1'
       const stored = readJson<unknown>(LS.guestServers, null)
@@ -2201,7 +2260,7 @@ export const useStore = create<RChatState>()((set, get) => {
         try {
           me = await api.me()
         } catch (e) {
-          if (e instanceof api.ApiError && e.status === 401) {
+          if (e instanceof ApiError && e.status === 401) {
             fail(e)
             expireSession()
             return
@@ -2242,7 +2301,7 @@ export const useStore = create<RChatState>()((set, get) => {
       readQueue.clear()
       unreadsMore = false
       stopCatchUp()
-      wsClient.stop()
+      home.ws.stop()
       rtc.leave()
       p2p.endMedia()
       pendingDial = null
@@ -2251,7 +2310,7 @@ export const useStore = create<RChatState>()((set, get) => {
       writeLocal(LS.guest, null)
       api.setToken(null)
       api.setGrants({})
-      wsClient.setGrants({})
+      home.ws.setGrants({})
       dmPager.reset(null)
       serverPager.reset(null)
       historyGen.clear()
@@ -2330,7 +2389,7 @@ export const useStore = create<RChatState>()((set, get) => {
       await fetchServer(id)
       const list = get().guestServers
       persistGuestServers(list.includes(id) ? list : [...list, id])
-      wsClient.subscribe([id])
+      home.ws.subscribe([id])
       await get().openServer(id, undefined, nav)
     },
 
@@ -2984,12 +3043,12 @@ export const useStore = create<RChatState>()((set, get) => {
       act(async () => {
         const { me, guest, voice } = get()
         if (guest || !me) throw new Error('Create an account to join voice')
-        wsClient.ensureConnected()
+        home.ws.ensureConnected()
         await get().openChannel(server, channelId)
         if (voice?.channelId === channelId) return
         p2p.endMedia()
         await rtc.join(me.username, { channelId })
-        if (!wsClient.sendVoice({ type: 'voice_join', channel_id: channelId })) {
+        if (!home.ws.sendVoice({ type: 'voice_join', channel_id: channelId })) {
           rtc.leave()
           throw new Error('Not connected')
         }
@@ -2997,7 +3056,7 @@ export const useStore = create<RChatState>()((set, get) => {
       }),
 
     leaveVoice: () => {
-      wsClient.sendVoice({ type: 'voice_leave' })
+      home.ws.sendVoice({ type: 'voice_leave' })
       rtc.leave()
       set({ voice: null })
     },
@@ -3032,7 +3091,7 @@ export const useStore = create<RChatState>()((set, get) => {
           rtc.leave()
           throw e
         }
-        if (!wsClient.sendVoice({ type: 'call_start', dm_id: dmId })) {
+        if (!home.ws.sendVoice({ type: 'call_start', dm_id: dmId })) {
           rtc.leave()
           throw new Error('Not connected')
         }
@@ -3051,7 +3110,7 @@ export const useStore = create<RChatState>()((set, get) => {
           p2p.endMedia()
           throw e
         }
-        if (!wsClient.sendVoice({ type: 'call_start', dm_id: dmId, p2p: true })) {
+        if (!home.ws.sendVoice({ type: 'call_start', dm_id: dmId, p2p: true })) {
           p2p.endMedia()
           throw new Error('Not connected')
         }
@@ -3064,7 +3123,7 @@ export const useStore = create<RChatState>()((set, get) => {
         if (!me || !call || call.state !== 'ringing') return
         if (call.kind === 'p2p') await p2p.startMedia()
         else await rtc.join(me.username, { dmId: call.dmId })
-        if (!wsClient.sendVoice({ type: 'call_accept', dm_id: call.dmId })) {
+        if (!home.ws.sendVoice({ type: 'call_accept', dm_id: call.dmId })) {
           endCallMedia(call.kind)
           throw new Error('Not connected')
         }
@@ -3074,7 +3133,7 @@ export const useStore = create<RChatState>()((set, get) => {
     declineCall: () => {
       const { call } = get()
       if (call) {
-        wsClient.sendVoice({ type: 'call_decline', dm_id: call.dmId })
+        home.ws.sendVoice({ type: 'call_decline', dm_id: call.dmId })
         endCallMedia(call.kind)
       }
       set({ call: null })
@@ -3083,7 +3142,7 @@ export const useStore = create<RChatState>()((set, get) => {
     hangupCall: () => {
       const { call } = get()
       if (call) {
-        wsClient.sendVoice({ type: 'call_leave', dm_id: call.dmId })
+        home.ws.sendVoice({ type: 'call_leave', dm_id: call.dmId })
         endCallMedia(call.kind)
       }
       set({ call: null })
@@ -3130,7 +3189,7 @@ export const useStore = create<RChatState>()((set, get) => {
       }),
 
     setViewing: server => {
-      if (get().token) wsClient.setViewing(server)
+      if (get().token) home.ws.setViewing(server)
     },
 
     applyWsEvent: ev => {
@@ -3436,8 +3495,8 @@ export const useStore = create<RChatState>()((set, get) => {
               delete next[old_name]
               persistGrants(next)
             }
-            wsClient.unsubscribe(old_name)
-            wsClient.subscribe([server.name])
+            home.ws.unsubscribe(old_name)
+            home.ws.subscribe([server.name])
             if (server.has_password)
               void api.getServer(server.name).catch((e: unknown) => {
                 if (lockedOut(e)) guestLocked(server.name)
@@ -3662,7 +3721,7 @@ export const useStore = create<RChatState>()((set, get) => {
           if (avail?.online && avail.peer_id !== null) p2p.dial(avail.peer_id)
           else {
             pendingDial = other
-            wsClient.sendVoice({ type: 'p2p_who', hosters: [other] })
+            home.ws.sendVoice({ type: 'p2p_who', hosters: [other] })
           }
           return
         }

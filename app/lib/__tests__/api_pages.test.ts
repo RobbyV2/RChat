@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import * as api from '../api'
+import { api } from '../instances'
 import { useStore } from '../store'
 import { member, paged } from './fixtures'
 

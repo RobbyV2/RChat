@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState } from 'react'
 import { Lock, X } from 'lucide-react'
-import * as api from '../lib/api'
+import { api } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import type { ServerMatch } from '../lib/types'
 import { enterKey } from '../lib/keys'

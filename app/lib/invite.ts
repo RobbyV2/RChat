@@ -39,15 +39,20 @@ export const inviteUrl = (server: string, password?: string | null, origin?: str
   return `${base}${invitePath(server)}${pw ? `?password=${queryEncode(pw)}` : ''}`
 }
 
-export const parseInvite = (href: string, origin: string): InviteTarget | null => {
+export interface RemoteInvite extends InviteLink {
+  origin: string
+}
+
+export const parseInviteAt = (href: string, base: string): RemoteInvite | null => {
   if (!SCHEME.test(href) && !href.startsWith('/')) return null
   let url: URL
   try {
-    url = new URL(href, origin)
+    url = new URL(href, base)
   } catch {
     return null
   }
-  if (url.origin !== origin) return null
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  if (url.username || url.password) return null
   const match = url.pathname.match(/^\/invite\/([^/]+)\/?$/)
   if (!match) return null
   let server: string
@@ -58,7 +63,13 @@ export const parseInvite = (href: string, origin: string): InviteTarget | null =
   }
   if (!server) return null
   const password = url.searchParams.get('password')?.trim()
-  return { server, password: password || null }
+  return { origin: url.origin, server, password: password || null, url: url.href }
+}
+
+export const parseInvite = (href: string, origin: string): InviteTarget | null => {
+  const found = parseInviteAt(href, origin)
+  if (!found || found.origin !== origin) return null
+  return { server: found.server, password: found.password }
 }
 
 const withoutCodeBlocks = (text: string) => {
@@ -102,10 +113,12 @@ const visibleText = (text: string) =>
     .replace(CODE_SPAN, (_, lead: string) => `${lead} `)
     .replace(SPOILER, ' ')
 
+const inviteLinks = (text: string) =>
+  [...visibleText(text).matchAll(URL_RE)].map(match => match[0].replace(TRAIL, ''))
+
 export const findInvites = (text: string, origin: string, max = 3): InviteLink[] => {
   const out: InviteLink[] = []
-  for (const match of visibleText(text).matchAll(URL_RE)) {
-    const url = match[0].replace(TRAIL, '')
+  for (const url of inviteLinks(text)) {
     const target = parseInvite(url, origin)
     if (!target || out.some(o => o.server === target.server)) continue
     out.push({ ...target, url })
@@ -113,6 +126,29 @@ export const findInvites = (text: string, origin: string, max = 3): InviteLink[]
   }
   return out
 }
+
+export const findRemoteInvites = (
+  text: string,
+  local: string[],
+  allowed: (origin: string) => boolean,
+  max = 3
+): RemoteInvite[] => {
+  const out: RemoteInvite[] = []
+  for (const url of inviteLinks(text)) {
+    const found = parseInviteAt(url, 'http://invalid')
+    if (!found || local.includes(found.origin) || !allowed(found.origin)) continue
+    if (out.some(o => o.origin === found.origin && o.server === found.server)) continue
+    out.push({ ...found, url })
+    if (out.length === max) break
+  }
+  return out
+}
+
+export const remoteKey = ({ origin, server }: { origin: string; server: string }) =>
+  `${origin}\n${server}`
+
+export const remoteInviteUrl = ({ origin, server, password }: RemoteInvite) =>
+  inviteUrl(server, password, origin)
 
 export const safeNext = (raw: string | null | undefined) => {
   if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return null

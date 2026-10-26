@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Hash, Trash2, X } from 'lucide-react'
 import type { Page } from '../lib/lists'
-import * as api from '../lib/api'
+import { api } from '../lib/instances'
 import {
   errorText,
   revokeAdminFor,

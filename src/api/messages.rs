@@ -2427,7 +2427,13 @@ mod tests {
     }
 
     fn reopened(db: Db) -> AppState {
-        AppState::new(db, crate::ws::Hub::new(), None, None)
+        AppState::new(
+            db,
+            crate::ws::Hub::new(),
+            None,
+            None,
+            crate::instance::Instance::ephemeral(),
+        )
     }
 
     #[tokio::test]

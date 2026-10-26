@@ -12,15 +12,31 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { Hash, Link2Off, Lock, Paperclip, X } from 'lucide-react'
-import * as api from '../lib/api'
+import { ExternalLink, Globe, Hash, Link2Off, Lock, Paperclip, X } from 'lucide-react'
+import { ApiError } from '../lib/api'
+import { api } from '../lib/instances'
 import { errorText, useStore, type Nav } from '../lib/store'
-import { invitePath, previewText, stashInvite } from '../lib/invite'
+import {
+  invitePath,
+  previewText,
+  remoteInviteUrl,
+  remoteKey,
+  stashInvite,
+  type RemoteInvite,
+} from '../lib/invite'
+import { formatQualified, hostOf } from '../lib/qualified'
+import {
+  previewRequested,
+  remoteConnection,
+  remoteInvite,
+  requestPreview,
+} from '../lib/remote_invite'
 import { serverInitial } from '../lib/rules'
-import type { Invite, InviteStatus, Message } from '../lib/types'
+import type { InstanceInfo, Invite, InviteStatus, Message } from '../lib/types'
 import { ServerGlyph } from './server_rail'
 import { Dialog, FieldError, fieldCls, filledBtn, textBtn } from './server_settings'
 import { ThemeToggle } from './status_clock'
+import { InstanceChip } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 
 export type InviteVariant = 'embed' | 'page'
@@ -244,7 +260,7 @@ function Counts({ invite, center }: { invite: Invite; center: boolean }) {
   )
 }
 
-function PreviewLine({ message, big }: { message: Message; big: boolean }) {
+function PreviewLine({ message, big, host }: { message: Message; big: boolean; host?: string }) {
   const { author, content, media } = message
   const text = previewText(content)
   return (
@@ -260,7 +276,12 @@ function PreviewLine({ message, big }: { message: Message; big: boolean }) {
           big ? 'line-clamp-2 text-sm' : 'truncate text-xs leading-[18px]'
         }`}
       >
-        <span className="streamer font-medium text-on-surface">{author.display_name}</span>{' '}
+        <span
+          title={host ? formatQualified(author.username, host) : undefined}
+          className="streamer font-medium text-on-surface"
+        >
+          {author.display_name}
+        </span>{' '}
         <span className="text-on-surface-variant">
           {text}
           {media !== null && (
@@ -275,7 +296,7 @@ function PreviewLine({ message, big }: { message: Message; big: boolean }) {
   )
 }
 
-function Preview({ invite, big }: { invite: Invite; big: boolean }) {
+function Preview({ invite, big, host }: { invite: Invite; big: boolean; host?: string }) {
   const { preview_channel, preview } = invite
   if (preview_channel === null || (preview.length === 0 && !big)) return null
   return (
@@ -289,7 +310,7 @@ function Preview({ invite, big }: { invite: Invite; big: boolean }) {
       {preview.length ? (
         <div className={`flex flex-col ${big ? 'mt-2 gap-2' : 'mt-1.5 gap-1'}`}>
           {preview.map(m => (
-            <PreviewLine key={m.id} message={m} big={big} />
+            <PreviewLine key={m.id} message={m} big={big} host={host} />
           ))}
         </div>
       ) : (
@@ -312,11 +333,13 @@ function Frame({
   invalid,
   ref,
   children,
+  heading,
 }: {
   big: boolean
   invalid: boolean
   ref: Ref<HTMLDivElement>
   children: ReactNode
+  heading?: ReactNode
 }) {
   return (
     <div
@@ -329,7 +352,8 @@ function Frame({
     >
       {!big && (
         <p className="mb-2 text-[11px] font-semibold tracking-wide text-on-surface-variant uppercase">
-          {invalid ? "You've received an invite, but…" : "You've been invited to join a server"}
+          {heading ??
+            (invalid ? "You've received an invite, but…" : "You've been invited to join a server")}
         </p>
       )}
       {children}
@@ -455,7 +479,7 @@ export function InviteCard({
       else await s.joinServer(name, given, nav)
       return { ok: true }
     } catch (e) {
-      const code = e instanceof api.ApiError ? e.status : 0
+      const code = e instanceof ApiError ? e.status : 0
       const retry = code === 401 || (asGuest && code === 403)
       const banned = !asGuest && code === 403
       const message = retry && code === 403 ? 'Enter the server password' : errorText(e)
@@ -517,7 +541,7 @@ export function InviteCard({
 
   const btn = big ? 'w-full py-2.5' : 'shrink-0'
   const fit = big ? 'break-words' : 'truncate'
-  const errorCode = error instanceof api.ApiError ? error.status : null
+  const errorCode = error instanceof ApiError ? error.status : null
   const invalid = errorCode === 404
   const locked = !authed && errorCode === 401
 
@@ -659,6 +683,191 @@ export function InviteCard({
         />
       )}
     </>
+  )
+}
+
+function RemoteOrigin({ host, name }: { host: string; name?: string }) {
+  return (
+    <span className="flex max-w-full min-w-0 items-center gap-1.5">
+      <InstanceChip host={host} className="shrink-0" />
+      {name && name !== host && (
+        <span
+          title={`${host} calls itself ${name}`}
+          className="streamer min-w-0 shrink-[3] truncate text-[11px] text-on-surface-variant"
+        >
+          {name}
+        </span>
+      )}
+    </span>
+  )
+}
+
+function useRemoteInvite(invite: RemoteInvite, enabled: boolean) {
+  const { origin, server, password } = invite
+  const key = `${origin}\n${server}\n${password ?? ''}`
+  const [loaded, setLoaded] = useState<{
+    key: string
+    data: Invite | null
+    error: unknown
+    instance: InstanceInfo | null
+  } | null>(null)
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    if (!enabled) return
+    let live = true
+    remoteConnection(origin).then(
+      conn =>
+        remoteInvite(origin, server, password, tick > 0).then(
+          data => live && setLoaded({ key, data, error: null, instance: conn.info }),
+          (error: unknown) => live && setLoaded({ key, data: null, error, instance: conn.info })
+        ),
+      (error: unknown) => live && setLoaded({ key, data: null, error, instance: null })
+    )
+    return () => {
+      live = false
+    }
+  }, [enabled, key, origin, server, password, tick])
+  const current = enabled && loaded?.key === key ? loaded : null
+  return {
+    ready: current !== null,
+    instance: current?.instance ?? null,
+    data: current?.data ?? null,
+    error: current?.error ?? null,
+    reload: () => setTick(t => t + 1),
+  }
+}
+
+export function RemoteInviteCard({
+  invite,
+  onResolved,
+}: {
+  invite: RemoteInvite
+  onResolved?: (key: string, ok: boolean) => void
+}) {
+  const previews = useStore(s => s.settings.asset_previews)
+  const key = remoteKey(invite)
+  const [asked, setAsked] = useState(() => previewRequested(key))
+  const wanted = previews && (asked || previewRequested(key))
+  const { ready, instance, data, error, reload } = useRemoteInvite(invite, wanted)
+  const root = useRef<HTMLDivElement>(null)
+  const rchat = instance !== null
+  useKeepBottom(root, ready)
+  useEffect(() => {
+    if (ready) onResolved?.(key, rchat)
+  }, [ready, rchat, key, onResolved])
+  if (!previews) return null
+  const host = hostOf(invite.origin) ?? new URL(invite.origin).host
+  const where = <RemoteOrigin host={host} name={instance?.name} />
+  const load = () => {
+    requestPreview(key)
+    setAsked(true)
+  }
+  const open = () => window.open(remoteInviteUrl(invite), '_blank', 'noopener,noreferrer')
+  const openBtn = (
+    <button
+      onClick={open}
+      title={`Opens ${host} in a new tab`}
+      className={`${filledBtn} inline-flex shrink-0 items-center gap-1.5`}
+    >
+      <span className="max-w-40 truncate">
+        Open on <span className="streamer">{host}</span>
+      </span>
+      <ExternalLink size={14} className="shrink-0" />
+    </button>
+  )
+  const invalid = error instanceof ApiError && error.status === 404
+  const heading = (
+    <>
+      Invite on <span className="streamer normal-case">{host}</span>
+    </>
+  )
+  const body = (): Body | null => {
+    if (!wanted)
+      return {
+        icon: (
+          <Tile big={false} tone="bg-surface-container-highest text-on-surface-variant">
+            <Globe size={22} />
+          </Tile>
+        ),
+        title: <span className="min-w-0 truncate">Server invite</span>,
+        sub: (
+          <p className="text-xs text-on-surface-variant">
+            Loading the preview contacts <span className="streamer">{host}</span>.
+          </p>
+        ),
+        actions: (
+          <button
+            onClick={load}
+            title={`Fetch this invite from ${host}`}
+            className={`${filledBtn} shrink-0`}
+          >
+            Load preview
+          </button>
+        ),
+      }
+    if (!ready) return null
+    if (invalid || (error !== null && !data))
+      return {
+        icon: (
+          <Tile big={false} tone="bg-surface-container-highest text-on-surface-variant">
+            <Link2Off size={22} />
+          </Tile>
+        ),
+        title: invalid ? 'Invalid invite' : "Couldn't load this invite",
+        sub: (
+          <div className="flex flex-col items-start gap-1">
+            {where}
+            <p className="text-xs text-on-surface-variant">
+              {invalid
+                ? 'This invite may have expired, or the server no longer exists.'
+                : rchat
+                  ? errorText(error)
+                  : 'This link is not an RChat invite, or that site could not be reached.'}
+            </p>
+          </div>
+        ),
+        actions:
+          invalid || !rchat ? (
+            openBtn
+          ) : (
+            <button onClick={reload} className={`${textBtn} shrink-0`}>
+              Retry
+            </button>
+          ),
+      }
+    if (!data) return null
+    const { name, display_name, has_password } = data.server
+    return {
+      icon: (
+        <span title={`${display_name} on ${host}`}>
+          <ServerTile name={name} displayName={display_name} big={false} />
+        </span>
+      ),
+      title: (
+        <>
+          <span className="streamer min-w-0 truncate">{display_name}</span>
+          {has_password && (
+            <span title="Password protected" className="shrink-0 text-on-surface-variant">
+              <Lock size={13} />
+            </span>
+          )}
+        </>
+      ),
+      sub: (
+        <div className="flex flex-col items-start gap-1">
+          {where}
+          <Counts invite={data} center={false} />
+        </div>
+      ),
+      actions: openBtn,
+      extra: <Preview invite={data} big={false} host={host} />,
+    }
+  }
+  const view = body()
+  return (
+    <Frame ref={root} big={false} invalid={invalid} heading={heading}>
+      {view ? <Layout big={false} invalid={invalid} {...view} /> : <Skeleton big={false} />}
+    </Frame>
   )
 }
 

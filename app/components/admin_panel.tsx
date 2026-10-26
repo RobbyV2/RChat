@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Trash2 } from 'lucide-react'
-import * as api from '../lib/api'
+import { api } from '../lib/instances'
 import type { ServerDetail, ServerSummaryLite } from '../lib/types'
 import { confirmKick, errorText, revokeAdminFor, useStore } from '../lib/store'
 import { canDeleteChannel } from '../lib/rules'

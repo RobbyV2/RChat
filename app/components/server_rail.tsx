@@ -18,6 +18,7 @@ import { inviteUrl } from '../lib/invite'
 import { longPress } from './context_menu'
 import { dragScope } from './drag'
 import { InstallButton } from './pwa_register'
+import { RailInstance } from './instance_badge'
 import { Sentinel } from './server_settings'
 import { ThemeToggle } from './status_clock'
 
@@ -257,9 +258,13 @@ export function ServerRail() {
 
   return (
     <nav className="flex h-full w-18 shrink-0 flex-col bg-surface-container-lowest">
+      <div className="flex shrink-0 flex-col items-center gap-1.5 pt-2">
+        <RailInstance />
+        <div className="h-px w-8 bg-outline-variant" />
+      </div>
       <div
         ref={dragScope}
-        className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto pt-3 pb-2"
+        className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto pt-2 pb-2"
       >
         {me && (
           <button

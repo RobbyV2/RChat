@@ -3,6 +3,7 @@ pub mod auth;
 pub mod dms;
 pub mod embeds;
 pub mod health;
+pub mod instance;
 pub mod media;
 pub mod messages;
 pub mod openapi;
@@ -367,7 +368,9 @@ impl Settings {
     };
 
     pub async fn load(db: &Db) -> Settings {
-        let rows = match sqlx::query("SELECT key, value FROM settings")
+        let rows = match sqlx::query(
+            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'guests_enabled')",
+        )
             .fetch_all(db)
             .await
         {
@@ -809,6 +812,8 @@ fn api_routes(
         .route("/unreads", get(messages::unreads))
         .route("/read", post(messages::mark_read))
         .route("/settings", get(admin::get_settings))
+        .route("/instance", get(instance::instance))
+        .route("/identity/assertion", post(instance::assertion))
         .route("/admin/settings", patch(admin::patch_settings))
         .route("/admin/overview", get(admin::overview))
         .route("/admin/users", get(admin::list_users))
@@ -828,6 +833,7 @@ pub(crate) mod test_util {
     use std::path::PathBuf;
 
     use crate::db::{AvatarKind, Db, User, now, open};
+    use crate::instance::{Instance, InstanceConfig};
     use crate::state::AppState;
     use crate::ws::Hub;
 
@@ -835,7 +841,10 @@ pub(crate) mod test_util {
         let path = std::env::temp_dir().join(format!("rchat_{tag}_{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let db = open(path.to_str()).await.expect("open db");
-        (AppState::new(db, Hub::new(), None, None), path)
+        let instance = Instance::load(&db, &InstanceConfig::default())
+            .await
+            .expect("instance");
+        (AppState::new(db, Hub::new(), None, None, instance), path)
     }
 
     pub(crate) async fn done(state: AppState, path: PathBuf) {

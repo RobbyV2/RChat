@@ -3,6 +3,7 @@
 import {
   createContext,
   memo,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -12,15 +13,21 @@ import {
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Clock, Download, EllipsisVertical, EyeOff, FileText, Share2, X } from 'lucide-react'
-import { apiOrigin, mediaUrl } from '../lib/api'
+import { api, home, localOrigins, remoteAllowed } from '../lib/instances'
 import { splitMentions } from '../lib/mentions'
 import { base64ToBlob, p2p } from '../lib/p2p'
-import { findInvites, parseInvite } from '../lib/invite'
+import {
+  findInvites,
+  findRemoteInvites,
+  parseInvite,
+  parseInviteAt,
+  remoteKey,
+} from '../lib/invite'
 import { expiryText, sameOriginImage } from '../lib/rules'
 import { userRefFor, useStore, type ContextMenuItem } from '../lib/store'
 import type { Embed, Message, MessageMedia } from '../lib/types'
 import { longPress } from './context_menu'
-import { InviteCard } from './invite_card'
+import { InviteCard, RemoteInviteCard } from './invite_card'
 import { profileTrigger } from './profile_card'
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
@@ -100,7 +107,7 @@ const InLink = createContext(false)
 function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const previews = useStore(s => s.settings.asset_previews)
   const inLink = useContext(InLink)
-  const local = sameOriginImage(src, window.location.href, [window.location.origin, apiOrigin()])
+  const local = sameOriginImage(src, window.location.href, [window.location.origin, api.origin()])
   if (previews && local)
     return <img src={src} alt={alt ?? ''} className="my-1 max-h-80 max-w-full rounded-xl" />
   if (!src) return <>{alt}</>
@@ -386,7 +393,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
       </p>
     )
   }
-  const url = mediaUrl(id, server)
+  const url = api.mediaUrl(id, server)
   const hidden = spoiler && !revealed
   const expiry =
     expires_at !== null ? (
@@ -532,10 +539,29 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     [username]
   )
   const { content, media, embeds } = message
-  const invites = useMemo(() => findInvites(content, window.location.origin), [content])
+  const homePublic = useStore(s => s.instance?.public_url ?? null)
+  const local = useMemo(() => localOrigins(homePublic), [homePublic])
+  const invites = useMemo(() => {
+    const found = local.flatMap(origin => findInvites(content, origin))
+    return found.filter((i, at) => found.findIndex(o => o.server === i.server) === at).slice(0, 3)
+  }, [content, local])
+  const remotes = useMemo(
+    () => findRemoteInvites(content, local, origin => remoteAllowed(origin, home.origin)),
+    [content, local]
+  )
+  const [remoteOk, setRemoteOk] = useState<Record<string, boolean>>({})
+  const onResolved = useCallback(
+    (key: string, ok: boolean) => setRemoteOk(m => (m[key] === ok ? m : { ...m, [key]: ok })),
+    []
+  )
   const links = useMemo(
-    () => embeds.filter(e => parseInvite(e.url, window.location.origin) === null),
-    [embeds]
+    () =>
+      embeds.filter(e => {
+        if (local.some(origin => parseInvite(e.url, origin) !== null)) return false
+        const remote = parseInviteAt(e.url, 'http://invalid')
+        return !(remote && remoteOk[remoteKey(remote)])
+      }),
+    [embeds, local, remoteOk]
   )
   return (
     <div className="min-w-0 text-sm leading-relaxed break-words">
@@ -565,6 +591,10 @@ export const MarkdownMessage = memo(function MarkdownMessage({
       {invites.map(i => (
         <InviteCard key={i.server} variant="embed" server={i.server} password={i.password} />
       ))}
+      {previews &&
+        remotes.map(i => (
+          <RemoteInviteCard key={remoteKey(i)} invite={i} onResolved={onResolved} />
+        ))}
       {previews &&
         links.map(e => <EmbedCard key={e.ord} embed={e} message={message} canDelete={canDelete} />)}
     </div>

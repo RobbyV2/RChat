@@ -34,6 +34,14 @@ x-env: &env
   REDIS_URL: redis://:${VALKEY_PASSWORD:?set VALKEY_PASSWORD}@valkey:6379
   TRUSTED_PROXIES: ${RCHAT_EDGE_SUBNET:-10.240.80.0/24}
   RUST_LOG: ${RUST_LOG:-info}
+  # Instance identity: every replica shares the id and signing key stored in Postgres.
+  # PUBLIC_URL is the origin users open (it becomes the iss of identity assertions); set it.
+  # Unset, a request's Host (X-Forwarded-Host from nginx) is reported only if it is loopback
+  # or listed in ALLOWED_HOSTS (comma-separated host or host:port), otherwise the first
+  # ALLOWED_HOSTS entry, or localhost.
+  INSTANCE_NAME: ${RCHAT_INSTANCE_NAME:-RChat}
+  PUBLIC_URL: ${RCHAT_PUBLIC_URL:-}
+  ALLOWED_HOSTS: ${RCHAT_ALLOWED_HOSTS:-}
   # Store media blobs in S3/minio instead of Postgres:
   # S3_ENDPOINT: http://minio:9000
   # S3_BUCKET: rchat
