@@ -86,6 +86,7 @@ export const me = (username: string, over: Partial<Me> = {}): Me => ({
   banner_color: null,
   is_site_admin: false,
   appear_offline: false,
+  password_kind: 'text',
   servers: [],
   servers_more: false,
   dms: [],

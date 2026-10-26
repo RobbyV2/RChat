@@ -24,6 +24,7 @@ import type {
   Unread,
   UserRef,
 } from './types'
+import type { Secret } from './password'
 
 export function resolveApiBase(
   url: string | undefined,
@@ -141,6 +142,8 @@ export const patchMe = (
 ) => req<MeUpdated>('PATCH', '/me', { avatar_kind, avatar_color, banner_color })
 export const setAppearOffline = (appear_offline: boolean) =>
   req<MeUpdated>('PATCH', '/me', { appear_offline })
+export const changePassword = (current: Secret, next: Secret) =>
+  req<{ ok: boolean }>('POST', '/me/password', { current, new: next })
 export const userProfile = (username: string, server?: string | null) =>
   req<Profile>('GET', `/users/${seg(username)}/profile${server ? `?server=${seg(server)}` : ''}`)
 

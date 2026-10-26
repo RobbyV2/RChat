@@ -59,6 +59,7 @@ import {
   type OpenInvite,
 } from './invite'
 import { clearProfiles } from './profile'
+import type { PassKind, Secret } from './password'
 import { ALL_PERMS } from './types'
 import type {
   AdminOverview,
@@ -358,6 +359,7 @@ interface RChatState {
     banner_color?: string | null
   ) => Promise<void>
   setAppearOffline: (appearOffline: boolean) => Promise<void>
+  changePassword: (current: Secret, next: Secret, kind: PassKind) => Promise<string | null>
   syncFromUrl: (nav: 'replace' | 'none') => Promise<void>
   register: (body: api.RegisterRequest) => Promise<void>
   login: (body: api.LoginRequest) => Promise<void>
@@ -1821,6 +1823,18 @@ export const useStore = create<RChatState>()((set, get) => {
         await api.setAppearOffline(appearOffline)
         set(s => (s.me ? { me: { ...s.me, appear_offline: appearOffline } } : {}))
       }),
+
+    changePassword: async (current, next, kind) => {
+      try {
+        await api.changePassword(current, next)
+        set(s => (s.me ? { me: { ...s.me, password_kind: kind } } : {}))
+        return null
+      } catch (e) {
+        if (e instanceof api.ApiError && e.status === 401 && e.message === 'Unauthorized')
+          expireSession()
+        return errorText(e)
+      }
+    },
 
     bootstrap: async () => {
       if (get().me || get().guest) {

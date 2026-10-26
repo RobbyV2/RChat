@@ -3,7 +3,7 @@ use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
@@ -13,9 +13,10 @@ use utoipa::ToSchema;
 
 use crate::api::dms::dm_page;
 use crate::api::servers::my_servers_page;
+use crate::api::servers::{OkResp, ok};
 use crate::api::{
     ApiError, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, ServerSummary, UserRef, check_len,
-    check_profanity, valid_color,
+    check_profanity, request_token, valid_color,
 };
 use crate::db::{AvatarKind, Db, User, get_user, now};
 use crate::state::AppState;
@@ -30,10 +31,20 @@ pub struct Me {
     pub banner_color: Option<String>,
     pub is_site_admin: bool,
     pub appear_offline: bool,
+    #[schema(schema_with = password_kind_schema)]
+    pub password_kind: String,
     pub servers: Vec<ServerSummary>,
     pub servers_more: bool,
     pub dms: Vec<DmSummary>,
     pub dms_more: bool,
+}
+
+fn password_kind_schema() -> utoipa::openapi::Object {
+    utoipa::openapi::ObjectBuilder::new()
+        .schema_type(utoipa::openapi::Type::String)
+        .enum_values(Some(["text", "words"]))
+        .description(Some("How the account signs in: a text password or 7 words"))
+        .build()
 }
 
 #[derive(Serialize, ToSchema)]
@@ -61,6 +72,18 @@ pub struct LoginReq {
     username: String,
     password: Option<String>,
     words: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct Secret {
+    password: Option<String>,
+    words: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct PasswordChange {
+    current: Secret,
+    new: Secret,
 }
 
 fn word_set(username: &str) -> Vec<String> {
@@ -142,6 +165,7 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
         banner_color: user.banner_color.clone(),
         is_site_admin: user.is_site_admin,
         appear_offline: user.appear_offline,
+        password_kind: user.password_kind.clone(),
         servers,
         servers_more,
         dms,
@@ -251,6 +275,68 @@ pub(crate) async fn register(
     Ok(Json(AuthResp { token, user: me }))
 }
 
+async fn throttle_attempt(db: &Db, key: &str, t: i64) -> Result<(), ApiError> {
+    let day = (t / 86400).to_string();
+    let admitted = sqlx::query(
+        "INSERT INTO login_attempts(username, day, count, last_at) VALUES($1, $2, 1, $3) ON CONFLICT(username) DO UPDATE SET count = CASE WHEN login_attempts.day = excluded.day THEN login_attempts.count + 1 ELSE 1 END, day = excluded.day, last_at = excluded.last_at WHERE login_attempts.day <> excluded.day OR excluded.last_at - login_attempts.last_at >= 3 RETURNING count",
+    )
+    .bind(key)
+    .bind(&day)
+    .bind(t)
+    .fetch_optional(db)
+    .await?;
+    let count: i64 = match &admitted {
+        Some(row) => row.try_get(0)?,
+        None => sqlx::query(
+            "UPDATE login_attempts SET count = count + 1, last_at = $2 WHERE username = $1 RETURNING count",
+        )
+        .bind(key)
+        .bind(t)
+        .fetch_one(db)
+        .await?
+        .try_get(0)?,
+    };
+    match (count > 1000, admitted.is_some()) {
+        (true, _) => Err(ApiError(
+            StatusCode::LOCKED,
+            "Account locked for the day".to_string(),
+        )),
+        (false, true) => Ok(()),
+        (false, false) => Err(ApiError(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Wait 3 seconds between attempts".to_string(),
+        )),
+    }
+}
+
+async fn issue_token(db: &Db, user: &User, t: i64) -> Result<String, ApiError> {
+    let token = new_token();
+    let mut tx = db.begin().await?;
+    let held = sqlx::query(
+        "UPDATE users SET password_hash = password_hash WHERE username = $1 AND password_hash = $2",
+    )
+    .bind(&user.username)
+    .bind(&user.password_hash)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if held != 1 {
+        return Err(wrong_password());
+    }
+    sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, $3)")
+        .bind(&token)
+        .bind(&user.username)
+        .bind(t)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(token)
+}
+
+fn wrong_password() -> ApiError {
+    ApiError(StatusCode::UNAUTHORIZED, "Wrong password".to_string())
+}
+
 #[utoipa::path(post, path = "/api/auth/login", request_body = LoginReq, responses((status = 200, description = "Credentials accepted; returns a new session token and the user's profile", body = AuthResp)))]
 pub(crate) async fn login(
     State(state): State<AppState>,
@@ -264,43 +350,7 @@ pub(crate) async fn login(
     let key = username.to_lowercase();
     let db = &state.db;
     let t = now();
-    let day = (t / 86400).to_string();
-    let row = sqlx::query("SELECT day, count, last_at FROM login_attempts WHERE username = $1")
-        .bind(&key)
-        .fetch_optional(db)
-        .await?;
-    let prev: Option<(String, i64, i64)> = match &row {
-        Some(r) => Some((r.try_get(0)?, r.try_get(1)?, r.try_get(2)?)),
-        None => None,
-    };
-    let count = match &prev {
-        Some((d, c, _)) if *d == day => c + 1,
-        _ => 1,
-    };
-    sqlx::query(
-        "INSERT INTO login_attempts(username, day, count, last_at) VALUES($1, $2, $3, $4) ON CONFLICT(username) DO UPDATE SET day = excluded.day, count = excluded.count, last_at = excluded.last_at",
-    )
-    .bind(&key)
-    .bind(&day)
-    .bind(count)
-    .bind(t)
-    .execute(db)
-    .await?;
-    if count > 1000 {
-        return Err(ApiError(
-            StatusCode::LOCKED,
-            "Account locked for the day".to_string(),
-        ));
-    }
-    match &prev {
-        Some((d, _, last)) if *d == day && t - last < 3 => {
-            return Err(ApiError(
-                StatusCode::TOO_MANY_REQUESTS,
-                "Wait 3 seconds between attempts".to_string(),
-            ));
-        }
-        _ => {}
-    }
+    throttle_attempt(db, &key, t).await?;
     let (secret, _) = secret_from(&username, password, words, false)?;
     let user = match get_user(db, &key).await? {
         Some(user) if verify_password(&secret, &user.password_hash) => user,
@@ -311,13 +361,7 @@ pub(crate) async fn login(
             ));
         }
     };
-    let token = new_token();
-    sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, $3)")
-        .bind(&token)
-        .bind(&user.username)
-        .bind(t)
-        .execute(db)
-        .await?;
+    let token = issue_token(db, &user, t).await?;
     let me = me_payload(db, &user).await?;
     Ok(Json(AuthResp { token, user: me }))
 }
@@ -328,6 +372,57 @@ pub(crate) async fn me(
     Authed(user): Authed,
 ) -> Result<Json<Me>, ApiError> {
     Ok(Json(me_payload(&state.db, &user).await?))
+}
+
+#[utoipa::path(post, path = "/api/me/password", request_body(content = PasswordChange, description = "`current` and `new` each take exactly one of `password` (any non-empty text) or `words` (7 words, in order, from the account's word set). Switching between text and words is allowed"), responses((status = 200, description = "Password changed. Every other login token of the account is revoked and their live connections close; the token used for this request stays valid", body = OkResp), (status = 400, description = "Missing or invalid new password"), (status = 401, description = "Wrong current password"), (status = 423, description = "Account locked for the day after too many attempts"), (status = 429, description = "Attempts share the login throttle: one every 3 seconds per account")), security(("bearer" = [])))]
+pub(crate) async fn change_password(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    headers: HeaderMap,
+    Json(req): Json<PasswordChange>,
+) -> Result<Json<OkResp>, ApiError> {
+    let PasswordChange { current, new } = req;
+    let Secret {
+        password: new_password,
+        words: new_words,
+    } = new;
+    if new_password.as_deref() == Some("") {
+        return Err(bad("Password required"));
+    }
+    let (new_secret, new_kind) = secret_from(&user.username, new_password, new_words, true)?;
+    let Secret { password, words } = current;
+    let (secret, _) = secret_from(&user.username, password, words, false)?;
+    let t = now();
+    throttle_attempt(&state.db, &user.username, t).await?;
+    if !verify_password(&secret, &user.password_hash) {
+        return Err(wrong_password());
+    }
+    let token = request_token(&headers).unwrap_or_default();
+    let hash = hash_password(&new_secret)?;
+    let mut tx = state.db.begin().await?;
+    let changed = sqlx::query(
+        "UPDATE users SET password_hash = $1, password_kind = $2 WHERE username = $3 AND password_hash = $4",
+    )
+    .bind(&hash)
+    .bind(new_kind)
+    .bind(&user.username)
+    .bind(&user.password_hash)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if changed != 1 {
+        return Err(wrong_password());
+    }
+    sqlx::query("DELETE FROM tokens WHERE username = $1 AND token <> $2")
+        .bind(&user.username)
+        .bind(&token)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    state.hub.broadcast(WsEvent::TokensRevoked {
+        username: user.username.clone(),
+    });
+    Ok(ok())
 }
 
 fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
@@ -589,6 +684,364 @@ mod tests {
         .expect("prime attempts");
         let locked = attempt("a").await;
         assert!(matches!(locked, Err(ApiError(StatusCode::LOCKED, _))));
+        done(state, path).await;
+    }
+
+    fn text(password: &str) -> Secret {
+        Secret {
+            password: Some(password.to_string()),
+            words: None,
+        }
+    }
+
+    fn picked(words: &[String]) -> Secret {
+        Secret {
+            password: None,
+            words: Some(words.to_vec()),
+        }
+    }
+
+    async fn change(
+        state: &AppState,
+        name: &str,
+        token: &str,
+        current: Secret,
+        new: Secret,
+    ) -> Result<Json<OkResp>, ApiError> {
+        let user = get_user(&state.db, name)
+            .await
+            .expect("load user")
+            .expect("user exists");
+        change_as(state, user, token, current, new).await
+    }
+
+    async fn change_as(
+        state: &AppState,
+        user: User,
+        token: &str,
+        current: Secret,
+        new: Secret,
+    ) -> Result<Json<OkResp>, ApiError> {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {token}").parse().expect("header"),
+        );
+        change_password(
+            State(state.clone()),
+            Authed(user),
+            headers,
+            Json(PasswordChange { current, new }),
+        )
+        .await
+    }
+
+    async fn rewind(state: &AppState) {
+        sqlx::query("UPDATE login_attempts SET last_at = last_at - 10")
+            .execute(&state.db)
+            .await
+            .expect("rewind attempts");
+    }
+
+    async fn tokens_of(state: &AppState, name: &str) -> Vec<String> {
+        let rows = sqlx::query("SELECT token FROM tokens WHERE username = $1 ORDER BY token")
+            .bind(name)
+            .fetch_all(&state.db)
+            .await
+            .expect("tokens");
+        rows.iter().map(|r| r.try_get(0).expect("token")).collect()
+    }
+
+    async fn attempts(state: &AppState, name: &str) -> i64 {
+        sqlx::query("SELECT count FROM login_attempts WHERE username = $1")
+            .bind(name)
+            .fetch_optional(&state.db)
+            .await
+            .expect("attempts")
+            .map(|r| r.try_get(0).expect("count"))
+            .unwrap_or(0)
+    }
+
+    async fn add_token(state: &AppState, name: &str, token: &str) {
+        sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, 0)")
+            .bind(token)
+            .bind(name)
+            .execute(&state.db)
+            .await
+            .expect("insert token");
+    }
+
+    #[tokio::test]
+    async fn password_change_switches_kinds_and_revokes_other_tokens() {
+        let (state, path) = temp_state("password_change").await;
+        let other = register_text(&state, "bob").await.expect("bob").0.token;
+        let mine = register_text(&state, "Tina")
+            .await
+            .expect("register")
+            .0
+            .token;
+        add_token(&state, "tina", "stale").await;
+        let mut rx = state.hub.subscribe();
+        let words = word_set("tina");
+        let seven: Vec<String> = words[3..10].iter().rev().cloned().collect();
+        let _ = change(&state, "tina", &mine, text("a"), picked(&seven))
+            .await
+            .expect("text to words");
+        let user = get_user(&state.db, "tina")
+            .await
+            .expect("load")
+            .expect("tina");
+        assert_eq!(user.password_kind, "words");
+        assert!(verify_password(&seven.join(" "), &user.password_hash));
+        assert!(!verify_password("a", &user.password_hash));
+        assert_eq!(tokens_of(&state, "tina").await, vec![mine.clone()]);
+        assert_eq!(tokens_of(&state, "bob").await, vec![other]);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::TokensRevoked { username }) if username == "tina"
+        ));
+        let me = me_payload(&state.db, &user).await.expect("me");
+        assert_eq!(me.password_kind, "words");
+        rewind(&state).await;
+        let shouted: Vec<String> = seven.iter().map(|w| w.to_uppercase()).collect();
+        let second = login(
+            State(state.clone()),
+            Json(LoginReq {
+                username: "tina".to_string(),
+                password: None,
+                words: Some(shouted.clone()),
+            }),
+        )
+        .await
+        .expect("login with words")
+        .0
+        .token;
+        rewind(&state).await;
+        let _ = change(&state, "tina", &second, picked(&shouted), text("new pass"))
+            .await
+            .expect("words to text");
+        let user = get_user(&state.db, "tina")
+            .await
+            .expect("load")
+            .expect("tina");
+        assert_eq!(user.password_kind, "text");
+        assert!(verify_password("new pass", &user.password_hash));
+        assert_eq!(tokens_of(&state, "tina").await, vec![second]);
+        rewind(&state).await;
+        let ok = login(
+            State(state.clone()),
+            Json(LoginReq {
+                username: "tina".to_string(),
+                password: Some("new pass".to_string()),
+                words: None,
+            }),
+        )
+        .await;
+        assert!(ok.is_ok());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn password_change_rejects_wrong_current_and_bad_new() {
+        let (state, path) = temp_state("password_change_reject").await;
+        let mine = register_text(&state, "uma")
+            .await
+            .expect("register")
+            .0
+            .token;
+        add_token(&state, "uma", "other").await;
+        let before = tokens_of(&state, "uma").await;
+        let hash = get_user(&state.db, "uma")
+            .await
+            .expect("load")
+            .expect("uma")
+            .password_hash;
+        let words = word_set("uma");
+        let wrong = change(&state, "uma", &mine, text("nope"), text("b")).await;
+        assert!(
+            matches!(&wrong, Err(ApiError(StatusCode::UNAUTHORIZED, m)) if m == "Wrong password")
+        );
+        assert_eq!(attempts(&state, "uma").await, 1);
+        let fast = change(&state, "uma", &mine, text("a"), text("b")).await;
+        assert!(matches!(
+            fast,
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+        ));
+        assert_eq!(attempts(&state, "uma").await, 2);
+        rewind(&state).await;
+        let wrong_words = change(&state, "uma", &mine, picked(&words[..7]), text("b")).await;
+        assert!(matches!(
+            wrong_words,
+            Err(ApiError(StatusCode::UNAUTHORIZED, _))
+        ));
+        assert_eq!(attempts(&state, "uma").await, 3);
+        rewind(&state).await;
+        let invalid = [
+            text(""),
+            picked(&words[..6]),
+            picked(
+                &[
+                    vec!["definitelynotintheset".to_string()],
+                    words[..6].to_vec(),
+                ]
+                .concat(),
+            ),
+            Secret {
+                password: None,
+                words: None,
+            },
+            Secret {
+                password: Some("b".to_string()),
+                words: Some(words[..7].to_vec()),
+            },
+        ];
+        for new in invalid {
+            let res = change(&state, "uma", &mine, text("a"), new).await;
+            assert!(matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        }
+        let no_current = change(
+            &state,
+            "uma",
+            &mine,
+            Secret {
+                password: None,
+                words: None,
+            },
+            text("b"),
+        )
+        .await;
+        assert!(matches!(
+            no_current,
+            Err(ApiError(StatusCode::BAD_REQUEST, _))
+        ));
+        assert_eq!(attempts(&state, "uma").await, 3);
+        let user = get_user(&state.db, "uma")
+            .await
+            .expect("load")
+            .expect("uma");
+        assert_eq!(user.password_hash, hash);
+        assert_eq!(user.password_kind, "text");
+        assert_eq!(tokens_of(&state, "uma").await, before);
+        sqlx::query("UPDATE login_attempts SET count = 1000 WHERE username = 'uma'")
+            .execute(&state.db)
+            .await
+            .expect("prime attempts");
+        let locked = change(&state, "uma", &mine, text("a"), text("b")).await;
+        assert!(matches!(locked, Err(ApiError(StatusCode::LOCKED, _))));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn racing_password_changes_keep_one_winner_and_its_token() {
+        let (state, path) = temp_state("password_race").await;
+        let mine = register_text(&state, "vic")
+            .await
+            .expect("register")
+            .0
+            .token;
+        add_token(&state, "vic", "thief").await;
+        let stale = get_user(&state.db, "vic")
+            .await
+            .expect("load")
+            .expect("vic");
+        let (a, b) = tokio::join!(
+            change_as(&state, stale.clone(), &mine, text("a"), text("p1")),
+            change_as(&state, stale.clone(), "thief", text("a"), text("p2")),
+        );
+        assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
+        let left = tokens_of(&state, "vic").await;
+        assert_eq!(left.len(), 1);
+        let user = get_user(&state.db, "vic")
+            .await
+            .expect("load")
+            .expect("vic");
+        let winner = match a.is_ok() {
+            true => (mine.clone(), "p1"),
+            false => ("thief".to_string(), "p2"),
+        };
+        assert_eq!(left, vec![winner.0]);
+        assert!(verify_password(winner.1, &user.password_hash));
+        sqlx::query("DELETE FROM tokens WHERE username = 'vic'")
+            .execute(&state.db)
+            .await
+            .expect("reset tokens");
+        add_token(&state, "vic", "first").await;
+        add_token(&state, "vic", "second").await;
+        let stale = user;
+        rewind(&state).await;
+        let _ = change_as(&state, stale.clone(), "first", text(winner.1), text("p3"))
+            .await
+            .expect("first change");
+        rewind(&state).await;
+        let late = change_as(&state, stale, "second", text(winner.1), text("p4")).await;
+        assert!(
+            matches!(&late, Err(ApiError(StatusCode::UNAUTHORIZED, m)) if m == "Wrong password")
+        );
+        assert_eq!(tokens_of(&state, "vic").await, vec!["first".to_string()]);
+        let user = get_user(&state.db, "vic")
+            .await
+            .expect("load")
+            .expect("vic");
+        assert!(verify_password("p3", &user.password_hash));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn login_verified_against_old_hash_gets_no_token() {
+        let (state, path) = temp_state("login_stale").await;
+        let mine = register_text(&state, "lou")
+            .await
+            .expect("register")
+            .0
+            .token;
+        let stale = get_user(&state.db, "lou")
+            .await
+            .expect("load")
+            .expect("lou");
+        let _ = change(&state, "lou", &mine, text("a"), text("b"))
+            .await
+            .expect("change");
+        let late = issue_token(&state.db, &stale, now()).await;
+        assert!(
+            matches!(&late, Err(ApiError(StatusCode::UNAUTHORIZED, m)) if m == "Wrong password")
+        );
+        assert_eq!(tokens_of(&state, "lou").await, vec![mine]);
+        let fresh = get_user(&state.db, "lou")
+            .await
+            .expect("load")
+            .expect("lou");
+        let token = issue_token(&state.db, &fresh, now())
+            .await
+            .expect("fresh hash issues");
+        assert!(tokens_of(&state, "lou").await.contains(&token));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn throttle_admits_one_of_concurrent_attempts() {
+        let (state, path) = temp_state("throttle_race").await;
+        let t = now();
+        let tries: Vec<_> = (0..12)
+            .map(|_| {
+                let db = state.db.clone();
+                tokio::spawn(async move { throttle_attempt(&db, "zed", t).await })
+            })
+            .collect();
+        let mut admitted = 0;
+        for task in tries {
+            match task.await.expect("join") {
+                Ok(()) => admitted += 1,
+                Err(ApiError(status, _)) => assert_eq!(status, StatusCode::TOO_MANY_REQUESTS),
+            }
+        }
+        assert_eq!(admitted, 1);
+        assert_eq!(attempts(&state, "zed").await, 12);
+        assert!(throttle_attempt(&state.db, "zed", t + 3).await.is_ok());
+        assert!(matches!(
+            throttle_attempt(&state.db, "zed", t + 86400 * 2).await,
+            Ok(())
+        ));
+        assert_eq!(attempts(&state, "zed").await, 1);
         done(state, path).await;
     }
 

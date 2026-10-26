@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::extract::State;
 use axum::extract::ws::{Message as Frame, WebSocket, WebSocketUpgrade};
@@ -8,6 +9,7 @@ use axum::response::Response;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::sync::broadcast;
+use tokio::time::Instant;
 
 use crate::api::{
     Channel, Embed, Member, Message, ServerSummaryLite, Settings, UserRef, grant_matches,
@@ -31,6 +33,9 @@ pub enum CallKind {
 }
 
 const P2P_IDS_CAP: usize = 256;
+const RECHECK_RETRY: Duration = Duration::from_millis(250);
+const RECHECK_RETRY_MAX: Duration = Duration::from_secs(5);
+const RECHECK_GIVE_UP: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -197,6 +202,9 @@ pub enum WsEvent {
     },
     SettingsChanged {
         settings: Settings,
+    },
+    TokensRevoked {
+        username: String,
     },
     Resync,
 }
@@ -1205,6 +1213,46 @@ async fn authed_sub_ok(db: &Db, server: &str, user: &str, site_admin: bool) -> b
     }
 }
 
+async fn recheck<T, F, Fut>(give_up: Duration, mut query: F) -> Option<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = sqlx::Result<T>>,
+{
+    let deadline = Instant::now() + give_up;
+    let mut wait = RECHECK_RETRY;
+    loop {
+        match query().await {
+            Ok(v) => return Some(v),
+            Err(e) if Instant::now() + wait >= deadline => {
+                tracing::warn!(
+                    "closed a realtime connection whose token re-check kept failing: {e}"
+                );
+                return None;
+            }
+            Err(e) => {
+                tracing::debug!("token re-check failed, retrying: {e}");
+                tokio::time::sleep(wait).await;
+                wait = (wait * 2).min(RECHECK_RETRY_MAX);
+            }
+        }
+    }
+}
+
+async fn token_live(db: &Db, token: Option<&str>, give_up: Duration) -> bool {
+    match token {
+        Some(token) => matches!(
+            recheck(give_up, || sqlx::query(
+                "SELECT 1 FROM tokens WHERE token = $1"
+            )
+            .bind(token)
+            .fetch_optional(db))
+            .await,
+            Some(Some(_))
+        ),
+        None => false,
+    }
+}
+
 async fn member_servers_of(db: &Db, user: &str) -> HashSet<String> {
     sqlx::query("SELECT server FROM members WHERE username = $1")
         .bind(user)
@@ -1306,7 +1354,7 @@ async fn run(state: AppState, mut socket: WebSocket) {
         }
     };
     let mut rx = state.hub.subscribe();
-    let (username, is_site_admin, hidden): (Option<String>, bool, bool) = match token {
+    let (username, is_site_admin, hidden): (Option<String>, bool, bool) = match &token {
         Some(token) => {
             let row = sqlx::query(
                 "SELECT u.username, u.is_site_admin, u.appear_offline FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1",
@@ -1364,11 +1412,10 @@ async fn run(state: AppState, mut socket: WebSocket) {
                         viewable.clear();
                         match &username {
                             Some(user) => {
-                                let row = sqlx::query("SELECT appear_offline FROM users WHERE username = $1")
-                                    .bind(user)
-                                    .fetch_optional(&state.db)
+                                let row = recheck(RECHECK_GIVE_UP, || sqlx::query("SELECT u.appear_offline FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1")
+                                    .bind(&token)
+                                    .fetch_optional(&state.db))
                                     .await
-                                    .ok()
                                     .flatten();
                                 let hidden = match row {
                                     Some(r) => r.try_get::<i64, _>(0).map(|v| v != 0).unwrap_or(presence.hidden),
@@ -1424,6 +1471,7 @@ async fn run(state: AppState, mut socket: WebSocket) {
                         }
                 match &ev {
                     WsEvent::Banned { username: banned } if Some(banned.as_str()) == username.as_deref() => break,
+                    WsEvent::TokensRevoked { username: user } if Some(user.as_str()) == username.as_deref() && !token_live(&state.db, token.as_deref(), RECHECK_GIVE_UP).await => break,
                     WsEvent::SettingsChanged { settings } if username.is_none() && !settings.guests_enabled => break,
                     WsEvent::PresenceMode { username: user, appear_offline } if Some(user.as_str()) == username.as_deref() => {
                         presence.set_hidden(&state.hub, user, *appear_offline);
@@ -1849,13 +1897,74 @@ fn wants(
             dm_users,
             reason: _,
         } => scoped(server, dm_users),
-        WsEvent::Error { message: _ } | WsEvent::Resync => false,
+        WsEvent::Error { message: _ }
+        | WsEvent::TokensRevoked { username: _ }
+        | WsEvent::Resync => false,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn token_live_follows_the_tokens_table() {
+        let (state, path) = crate::api::test_util::temp_state("token_live").await;
+        let db = &state.db;
+        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('tia', 'tia', '', 'text', 'identicon', 0)")
+            .execute(db)
+            .await
+            .expect("user");
+        sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES('t1', 'tia', 0)")
+            .execute(db)
+            .await
+            .expect("token");
+        assert!(token_live(db, Some("t1"), RECHECK_GIVE_UP).await);
+        assert!(!token_live(db, Some("t2"), RECHECK_GIVE_UP).await);
+        assert!(!token_live(db, None, RECHECK_GIVE_UP).await);
+        sqlx::query("DELETE FROM tokens WHERE token = 't1'")
+            .execute(db)
+            .await
+            .expect("revoke");
+        assert!(!token_live(db, Some("t1"), RECHECK_GIVE_UP).await);
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn token_recheck_fails_closed() {
+        let (state, path) = crate::api::test_util::temp_state("token_recheck").await;
+        let db = &state.db;
+        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('tia', 'tia', '', 'text', 'identicon', 0)")
+            .execute(db)
+            .await
+            .expect("user");
+        sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES('t1', 'tia', 0)")
+            .execute(db)
+            .await
+            .expect("token");
+        let mut failures = 2;
+        let flaky = recheck(RECHECK_GIVE_UP, || {
+            let fail = failures > 0;
+            failures -= 1;
+            async move {
+                match fail {
+                    true => Err(sqlx::Error::PoolTimedOut),
+                    false => {
+                        sqlx::query("SELECT 1 FROM tokens WHERE token = 't1'")
+                            .fetch_optional(db)
+                            .await
+                    }
+                }
+            }
+        })
+        .await;
+        assert!(matches!(flaky, Some(Some(_))));
+        db.close().await;
+        let started = Instant::now();
+        assert!(!token_live(db, Some("t1"), Duration::from_secs(1)).await);
+        assert!(started.elapsed() >= Duration::from_millis(500));
+        crate::api::test_util::done(state, path).await;
+    }
 
     #[tokio::test]
     async fn lagged_guest_recheck_drops_revoked_subs() {

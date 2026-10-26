@@ -594,6 +594,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
         .route("/auth/words/{username}", get(auth::words))
+        .route("/me/password", post(auth::change_password))
         .route(
             "/media",
             post(media::upload_media).layer(DefaultBodyLimit::max(26 * 1024 * 1024)),

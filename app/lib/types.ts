@@ -194,6 +194,7 @@ export interface Me extends UserRef {
   banner_color: string | null
   is_site_admin: boolean
   appear_offline: boolean
+  password_kind: 'text' | 'words'
   servers: ServerSummary[]
   servers_more: boolean
   dms: DmSummary[]

@@ -1,14 +1,17 @@
 'use client'
 
-import { useId, useState } from 'react'
+import { useEffect, useId, useState, type FormEvent } from 'react'
 import { X } from 'lucide-react'
-import { useStore } from '../lib/store'
+import * as api from '../lib/api'
+import { errorText, useStore } from '../lib/store'
 import { defaultBanner } from '../lib/profile'
+import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
 import type { AvatarKind } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
 import { UserAvatar } from './user_avatar'
 import { SettingSwitch } from './admin_panel'
-import { filledBtn, sectionCls, textBtn, useEscape } from './server_settings'
+import { PassSwitch, WordGrid } from './word_grid'
+import { FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './server_settings'
 
 type Section = 'settings' | 'information'
 
@@ -107,6 +110,209 @@ function AccountSection() {
   )
 }
 
+function SecretField({
+  label,
+  kind,
+  onKind,
+  words,
+  selected,
+  onSelected,
+  wordsError,
+  onRetry,
+  children,
+}: {
+  label: string
+  kind: PassKind
+  onKind: (kind: PassKind) => void
+  words: string[]
+  selected: string[]
+  onSelected: (selected: string[]) => void
+  wordsError: string | null
+  onRetry: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-sm text-on-surface-variant">{label}</span>
+      <PassSwitch value={kind} onChange={onKind} label={`${label} type`} />
+      {kind === 'text' ? (
+        children
+      ) : words.length ? (
+        <WordGrid words={words} selected={selected} onChange={onSelected} />
+      ) : wordsError ? (
+        <div className="flex items-center gap-3 text-sm">
+          <span className="text-error">Couldn't load your words: {wordsError}</span>
+          <button type="button" onClick={onRetry} className="font-medium text-primary">
+            Retry
+          </button>
+        </div>
+      ) : (
+        <p className="text-sm text-on-surface-variant">Loading your 20 words…</p>
+      )}
+    </div>
+  )
+}
+
+function PasswordSection() {
+  const username = useStore(s => s.me?.username)
+  const savedKind = useStore(s => s.me?.password_kind ?? 'text')
+  const changePassword = useStore(s => s.changePassword)
+  const [currentKind, setCurrentKind] = useState<PassKind>(savedKind)
+  const [newKind, setNewKind] = useState<PassKind>(savedKind)
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [currentWords, setCurrentWords] = useState<string[]>([])
+  const [newWords, setNewWords] = useState<string[]>([])
+  const [words, setWords] = useState<string[]>([])
+  const [wordsError, setWordsError] = useState<string | null>(null)
+  const [wordsTry, setWordsTry] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const needWords = currentKind === 'words' || newKind === 'words'
+
+  useEffect(() => {
+    if (!needWords || words.length || !username) return
+    let live = true
+    api
+      .words(username)
+      .then(res => live && setWords(res.words))
+      .catch(e => live && setWordsError(errorText(e)))
+    return () => {
+      live = false
+    }
+  }, [needWords, words.length, username, wordsTry])
+
+  if (!username) return null
+
+  const retryWords = () => {
+    setWordsError(null)
+    setWordsTry(n => n + 1)
+  }
+
+  const edit =
+    <T,>(fn: (v: T) => void) =>
+    (v: T) => {
+      fn(v)
+      setError(null)
+      setDone(false)
+    }
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    const invalid = passwordChangeError({
+      currentKind,
+      current,
+      currentWords,
+      newKind,
+      next,
+      confirm,
+      newWords,
+    })
+    if (invalid) {
+      setError(invalid)
+      return
+    }
+    setBusy(true)
+    const err = await changePassword(
+      secretOf(currentKind, current, currentWords),
+      secretOf(newKind, next, newWords),
+      newKind
+    )
+    setBusy(false)
+    setError(err)
+    if (err) return
+    setDone(true)
+    setCurrentKind(newKind)
+    setCurrent('')
+    setNext('')
+    setConfirm('')
+    setCurrentWords([])
+    setNewWords([])
+  }
+
+  return (
+    <section>
+      <p className={sectionCls}>Change password</p>
+      <form onSubmit={submit} className="flex flex-col gap-5">
+        <input
+          type="text"
+          value={username}
+          readOnly
+          hidden
+          autoComplete="username"
+          aria-hidden
+          tabIndex={-1}
+        />
+        <SecretField
+          label="Current password"
+          kind={currentKind}
+          onKind={edit(setCurrentKind)}
+          words={words}
+          selected={currentWords}
+          onSelected={edit(setCurrentWords)}
+          wordsError={wordsError}
+          onRetry={retryWords}
+        >
+          <input
+            type="password"
+            value={current}
+            onChange={e => edit(setCurrent)(e.target.value)}
+            autoComplete="current-password"
+            placeholder="Current password"
+            aria-label="Current password"
+            className={fieldCls}
+          />
+        </SecretField>
+        <SecretField
+          label="New password"
+          kind={newKind}
+          onKind={edit(setNewKind)}
+          words={words}
+          selected={newWords}
+          onSelected={edit(setNewWords)}
+          wordsError={wordsError}
+          onRetry={retryWords}
+        >
+          <input
+            type="password"
+            value={next}
+            onChange={e => edit(setNext)(e.target.value)}
+            autoComplete="new-password"
+            placeholder="New password"
+            aria-label="New password"
+            className={fieldCls}
+          />
+          <input
+            type="password"
+            value={confirm}
+            onChange={e => edit(setConfirm)(e.target.value)}
+            autoComplete="new-password"
+            placeholder="Confirm new password"
+            aria-label="Confirm new password"
+            className={fieldCls}
+          />
+        </SecretField>
+        <div>
+          <p className="text-xs text-on-surface-variant">
+            Changing your password signs out every other device and tab.
+          </p>
+          <FieldError message={error} />
+          {done && (
+            <p role="status" className="pt-1.5 text-xs text-primary">
+              Password changed
+            </p>
+          )}
+          <button type="submit" disabled={busy} className={`mt-3 ${filledBtn}`}>
+            Change password
+          </button>
+        </div>
+      </form>
+    </section>
+  )
+}
+
 function StatusSection() {
   const appearOffline = useStore(s => s.me?.appear_offline)
   const setAppearOffline = useStore(s => s.setAppearOffline)
@@ -134,6 +340,7 @@ function SettingsSection() {
   return (
     <div className="flex flex-col gap-8">
       <AccountSection />
+      <PasswordSection />
       <StatusSection />
       <section>
         <p className={sectionCls}>Appearance</p>
@@ -185,7 +392,9 @@ function InformationSection() {
         </p>
         <p>
           Login attempts per username are throttled to one every 3 seconds, and over 1000 failures
-          in a day lock the account until the next day. Login tokens never expire.
+          in a day lock the account until the next day; changing your password in settings counts as
+          an attempt. Login tokens never expire, but changing your password signs out every other
+          session.
         </p>
       </Info>
       <Info title="Files and attachments">

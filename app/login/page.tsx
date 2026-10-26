@@ -2,19 +2,19 @@
 
 import { useEffect, useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowRight, KeyRound, LayoutGrid } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import * as api from '../lib/api'
 import { useStore } from '../lib/store'
 import { safeNext } from '../lib/invite'
 import { NAME_MAX, charCount } from '../lib/rules'
 import type { AvatarKind } from '../lib/types'
+import type { PassKind } from '../lib/password'
 import { AvatarPicker } from '../components/avatar_picker'
-import { WordGrid } from '../components/word_grid'
+import { PassSwitch, WordGrid } from '../components/word_grid'
 import StatusClock, { ThemeToggle } from '../components/status_clock'
 import { InstallButton, IosInstallHint } from '../components/pwa_register'
 
 type Mode = 'login' | 'register'
-type PassKind = 'text' | 'words'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -117,21 +117,6 @@ export default function LoginPage() {
     </button>
   )
 
-  const passTab = (value: PassKind, label: string, icon: React.ReactNode) => (
-    <button
-      type="button"
-      onClick={() => setPassKind(value)}
-      className={`flex flex-1 items-center justify-center gap-2 border border-outline py-2 text-sm transition-colors first:rounded-l-full last:rounded-r-full ${
-        passKind === value
-          ? 'bg-secondary-container text-on-secondary-container'
-          : 'text-on-surface-variant hover:bg-surface-container-high'
-      }`}
-    >
-      {icon}
-      {label}
-    </button>
-  )
-
   return (
     <div className="flex min-h-dvh flex-col items-center px-safe-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-safe-4">
       <header className="flex w-full shrink-0 items-center justify-between pt-[max(0.5rem,env(safe-area-inset-top))] pb-2">
@@ -157,10 +142,7 @@ export default function LoginPage() {
               className="rounded-lg border border-outline bg-transparent px-3 py-2 outline-none focus:border-primary"
             />
           </label>
-          <div className="flex">
-            {passTab('text', 'Password', <KeyRound size={16} />)}
-            {passTab('words', 'Word grid', <LayoutGrid size={16} />)}
-          </div>
+          <PassSwitch value={passKind} onChange={setPassKind} />
           {passKind === 'text' ? (
             <label className="flex flex-col gap-1">
               <span className="text-sm text-on-surface-variant">Password</span>

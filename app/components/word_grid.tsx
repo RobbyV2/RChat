@@ -1,6 +1,7 @@
 'use client'
 
-import { X } from 'lucide-react'
+import { KeyRound, LayoutGrid, X } from 'lucide-react'
+import type { PassKind } from '../lib/password'
 
 interface Props {
   words: string[]
@@ -55,6 +56,38 @@ export function WordGrid({ words, selected, onChange }: Props) {
         ))}
         <span className="text-xs text-on-surface-variant">{selected.length}/7 words in order</span>
       </div>
+    </div>
+  )
+}
+
+export function PassSwitch({
+  value,
+  onChange,
+  label,
+}: {
+  value: PassKind
+  onChange: (kind: PassKind) => void
+  label?: string
+}) {
+  const tab = (kind: PassKind, text: string, icon: React.ReactNode) => (
+    <button
+      type="button"
+      aria-pressed={value === kind}
+      onClick={() => onChange(kind)}
+      className={`flex flex-1 items-center justify-center gap-2 border border-outline py-2 text-sm transition-colors first:rounded-l-full last:rounded-r-full ${
+        value === kind
+          ? 'bg-secondary-container text-on-secondary-container'
+          : 'text-on-surface-variant hover:bg-surface-container-high'
+      }`}
+    >
+      {icon}
+      {text}
+    </button>
+  )
+  return (
+    <div role="group" aria-label={label} className="flex">
+      {tab('text', 'Password', <KeyRound size={16} />)}
+      {tab('words', 'Word grid', <LayoutGrid size={16} />)}
     </div>
   )
 }

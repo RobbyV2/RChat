@@ -289,6 +289,7 @@ impl MediaKind {
     }
 }
 
+#[derive(Clone)]
 pub struct User {
     pub username: String,
     pub display_name: String,

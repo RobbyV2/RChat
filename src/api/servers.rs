@@ -214,7 +214,7 @@ impl MemberListQuery {
     }
 }
 
-fn ok() -> Json<OkResp> {
+pub(crate) fn ok() -> Json<OkResp> {
     Json(OkResp { ok: true })
 }
 
