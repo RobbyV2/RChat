@@ -322,6 +322,20 @@ pub(crate) async fn require_server_view(
     }
 }
 
+pub const NAME_MAX: usize = 100;
+pub const MESSAGE_MAX: usize = 4000;
+pub const SLOWMODE_MAX: i64 = 21600;
+
+pub fn check_len(text: &str, max: usize, what: &str) -> Result<(), ApiError> {
+    match text.chars().count() > max {
+        true => Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            format!("{what} must be at most {max} characters"),
+        )),
+        false => Ok(()),
+    }
+}
+
 pub fn valid_color(color: &str) -> bool {
     color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit())
 }

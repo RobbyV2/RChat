@@ -74,6 +74,10 @@ export default function LoginPage() {
       setError('Pick 7 words in order')
       return
     }
+    if (mode === 'register' && passKind === 'text' && !password) {
+      setError('Enter a password')
+      return
+    }
     setBusy(true)
     const cred = passKind === 'text' ? { password } : { words: selected }
     if (mode === 'login') {
@@ -92,7 +96,10 @@ export default function LoginPage() {
   const tab = (value: Mode, label: string) => (
     <button
       type="button"
-      onClick={() => setMode(value)}
+      onClick={() => {
+        setMode(value)
+        setError(null)
+      }}
       className={`flex-1 rounded-full py-2 text-sm font-medium transition-colors ${
         mode === value
           ? 'bg-primary-container text-on-primary-container'

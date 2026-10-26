@@ -197,6 +197,9 @@ pub(crate) async fn register(
     if username.trim().is_empty() {
         return Err(bad("Username required"));
     }
+    if password.as_deref() == Some("") {
+        return Err(bad("Password required"));
+    }
     let key = username.to_lowercase();
     let (secret, password_kind) = secret_from(&username, password, words, true)?;
     let avatar_color = check_avatar(avatar_kind, avatar_color)?;
@@ -487,6 +490,26 @@ mod tests {
         .expect("login")
         .0;
         assert!(!ok.token.is_empty());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn empty_password_rejected() {
+        let (state, path) = temp_state("empty_password").await;
+        let empty = register(
+            State(state.clone()),
+            Json(RegisterReq {
+                username: "erin".to_string(),
+                password: Some(String::new()),
+                words: None,
+                avatar_kind: AvatarKind::Identicon,
+                avatar_color: None,
+            }),
+        )
+        .await;
+        assert!(matches!(empty, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        assert!(get_user(&state.db, "erin").await.expect("lookup").is_none());
+        let _ = register_text(&state, "erin").await.expect("non-empty ok");
         done(state, path).await;
     }
 

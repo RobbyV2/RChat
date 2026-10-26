@@ -267,7 +267,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     if (!el) return
     const st = el.scrollTop
     const bottom = el.scrollHeight - st - el.clientHeight < 60
-    if (st < lastScrollTop.current - 2 && !bottom) autoScroll.current = false
+    if (bottom) autoScroll.current = true
+    else if (st < lastScrollTop.current - 2) autoScroll.current = false
     lastScrollTop.current = st
     if (bottom !== atBottomRef.current) {
       atBottomRef.current = bottom
@@ -551,7 +552,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                         </button>
                       )}
                     </div>
-                    <div className="invisible absolute top-1 right-3 flex gap-1 group-hover:visible">
+                    <div className="pointer-events-none absolute top-1 right-3 flex gap-1 opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
                       {view?.kind === 'channel' && (
                         <button
                           title="Reply in thread"

@@ -1,9 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Hash, Trash2, X } from 'lucide-react'
 import * as api from '../lib/api'
-import { roleMenuItems, serverAdminPerms, useStore } from '../lib/store'
+import { errorText, roleMenuItems, serverAdminPerms, useStore } from '../lib/store'
+import { SLOWMODE_MAX } from '../lib/rules'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
 import type { Channel, ChannelPerm, Member, Role } from '../lib/types'
 import { UserAvatar } from './user_avatar'
@@ -18,6 +19,43 @@ export const dangerBtn =
   'rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest disabled:opacity-40'
 export const sectionCls =
   'pb-2 pt-5 text-xs font-medium uppercase tracking-wide text-on-surface-variant first:pt-0'
+
+export function FieldError({ message }: { message: string | null }) {
+  if (!message) return null
+  return (
+    <p role="alert" className="pt-1.5 text-xs text-error">
+      {message}
+    </p>
+  )
+}
+
+export function useEscape(onEscape: () => void) {
+  const ref = useRef(onEscape)
+  useEffect(() => {
+    ref.current = onEscape
+  })
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !useStore.getState().contextMenu) ref.current()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+}
+
+export function useBackdrop(onClose: () => void) {
+  const pressed = useRef(false)
+  return {
+    onMouseDown: (e: React.MouseEvent) => {
+      pressed.current = e.target === e.currentTarget
+    },
+    onClick: (e: React.MouseEvent) => {
+      const hit = pressed.current && e.target === e.currentTarget
+      pressed.current = false
+      if (hit) onClose()
+    },
+  }
+}
 
 export function Sentinel({ onVisible }: { onVisible: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -44,25 +82,32 @@ export function Dialog({
   children: ReactNode
   full?: boolean
 }) {
+  const titleId = useId()
+  const backdrop = useBackdrop(onClose)
+  useEscape(onClose)
   return (
     <div
       className={`fixed inset-x-0 top-0 z-40 flex h-app items-center justify-center bg-scrim/60 ${full ? 'px-safe sm:px-safe-4 sm:py-4' : 'px-safe-4 py-4'}`}
-      onMouseDown={onClose}
+      {...backdrop}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className={`w-full overflow-y-auto bg-surface-container-high p-6 shadow-elevation-3 ${
           full
             ? 'h-full max-h-none sm:h-auto sm:max-h-[min(85vh,100%)] sm:max-w-lg sm:rounded-2xl'
             : 'max-h-[min(85vh,100%)] max-w-lg rounded-2xl'
         }`}
-        onMouseDown={e => e.stopPropagation()}
       >
         <div
           className={`flex items-center justify-between ${
             full ? 'sticky top-0 z-10 -mx-6 -mt-6 mb-4 bg-surface-container-high px-6 py-4' : 'mb-4'
           }`}
         >
-          <h2 className="text-lg font-medium text-on-surface">{title}</h2>
+          <h2 id={titleId} className="text-lg font-medium text-on-surface">
+            {title}
+          </h2>
           <button
             onClick={onClose}
             aria-label="Close"
@@ -364,26 +409,31 @@ export function ChannelControls({
             <span className="truncate">{channel.name}</span>
           </span>
         )}
-        <form
-          onSubmit={e => {
-            e.preventDefault()
-            const n = Number(slow)
-            if (Number.isInteger(n) && n >= 0 && n !== channel.slowmode_seconds)
-              void setSlowmode(channel.id, n).then(() => refresh?.())
-          }}
-          className="flex items-center gap-1.5"
-        >
-          <label className="flex items-center gap-1.5 text-xs text-on-surface-variant">
-            Slow mode (s)
-            <input
-              value={slow}
-              onChange={e => setSlow(e.target.value)}
-              inputMode="numeric"
-              className="w-16 rounded-lg border border-outline bg-transparent px-2 py-1 text-base text-on-surface outline-none focus:border-primary md:text-sm"
-            />
-          </label>
-          <button className={textBtn}>Set</button>
-        </form>
+        {channel.kind === 'text' && (
+          <form
+            onSubmit={e => {
+              e.preventDefault()
+              const n = Number(slow)
+              if (Number.isInteger(n) && n !== channel.slowmode_seconds)
+                void setSlowmode(channel.id, n).then(() => refresh?.())
+            }}
+            className="flex items-center gap-1.5"
+          >
+            <label
+              title={`0 to ${SLOWMODE_MAX} seconds`}
+              className="flex items-center gap-1.5 text-xs text-on-surface-variant"
+            >
+              Slow mode (s)
+              <input
+                value={slow}
+                onChange={e => setSlow(e.target.value)}
+                inputMode="numeric"
+                className="w-16 rounded-lg border border-outline bg-transparent px-2 py-1 text-base text-on-surface outline-none focus:border-primary md:text-sm"
+              />
+            </label>
+            <button className={textBtn}>Set</button>
+          </form>
+        )}
         <button onClick={() => setOpen(!open)} className={textBtn}>
           {open ? 'Hide perms' : 'Perms'}
         </button>
@@ -404,16 +454,21 @@ export function ServerPasswordField({
 }) {
   const setServerPassword = useStore(s => s.setServerPassword)
   const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
   return (
     <>
       <p className={sectionCls}>Password</p>
       <form
         onSubmit={e => {
           e.preventDefault()
-          void setServerPassword(server, password.trim()).then(() => {
-            setPassword('')
-            refresh?.()
-          })
+          setError(null)
+          setServerPassword(server, password.trim()).then(
+            () => {
+              setPassword('')
+              refresh?.()
+            },
+            (err: unknown) => setError(errorText(err))
+          )
         }}
         className="flex gap-2"
       >
@@ -428,6 +483,7 @@ export function ServerPasswordField({
           {password.trim() ? 'Set' : hasPassword ? 'Clear' : 'Set'}
         </button>
       </form>
+      <FieldError message={error} />
       <p className="pt-1.5 text-xs text-on-surface-variant">
         {hasPassword
           ? 'Joining requires the password; guests cannot view this server.'
@@ -449,14 +505,51 @@ export function AdminPermsEditor({
   refresh?: () => void
 }) {
   const setAdminPerms = useStore(s => s.setAdminPerms)
+  const [lastBlocked, setLastBlocked] = useState(false)
   return (
-    <PermChecks
-      value={perms === 0 ? ALL_PERMS : perms}
-      onChange={v => {
-        if (v !== 0)
-          void setAdminPerms(server, username, v === ALL_PERMS ? 0 : v).then(() => refresh?.())
-      }}
-    />
+    <>
+      <PermChecks
+        value={perms === 0 ? ALL_PERMS : perms}
+        onChange={v => {
+          setLastBlocked(v === 0)
+          if (v !== 0)
+            void setAdminPerms(server, username, v === ALL_PERMS ? 0 : v).then(() => refresh?.())
+        }}
+      />
+      {lastBlocked && (
+        <p className="pt-1.5 text-xs text-on-surface-variant">
+          An admin keeps at least one permission. To take every permission away, remove them as
+          admin instead.
+        </p>
+      )}
+    </>
+  )
+}
+
+export function ConfirmDialog() {
+  const dialog = useStore(s => s.activeDialog)
+  const closeDialog = useStore(s => s.closeDialog)
+  if (dialog?.kind !== 'confirm') return null
+  const { title, body, confirm, action } = dialog
+  return (
+    <Dialog title={title} onClose={closeDialog}>
+      <p className="text-sm text-on-surface-variant">{body}</p>
+      <div className="mt-6 flex justify-end gap-2">
+        <button onClick={closeDialog} className={textBtn}>
+          Cancel
+        </button>
+        <button
+          autoFocus
+          onClick={() => {
+            closeDialog()
+            action()
+          }}
+          className="rounded-full bg-error px-4 py-2 text-sm font-medium text-on-error hover:opacity-90"
+        >
+          {confirm}
+        </button>
+      </div>
+    </Dialog>
   )
 }
 
@@ -477,6 +570,7 @@ function Settings({ server }: { server: string }) {
   const revokeAdmin = useStore(s => s.revokeAdmin)
   const openContextMenu = useStore(s => s.openContextMenu)
   const [name, setName] = useState(detail?.display_name ?? '')
+  const [renameError, setRenameError] = useState<string | null>(null)
   const [editingAdmin, setEditingAdmin] = useState<string | null>(null)
   useEffect(() => {
     void loadMembers(server)
@@ -523,7 +617,11 @@ function Settings({ server }: { server: string }) {
             onSubmit={e => {
               e.preventDefault()
               const trimmed = name.trim()
-              if (trimmed) void renameServer(server, trimmed).then(closeDialog)
+              if (!trimmed) return
+              setRenameError(null)
+              renameServer(server, trimmed).then(closeDialog, (err: unknown) =>
+                setRenameError(errorText(err))
+              )
             }}
             className="flex gap-2"
           >
@@ -535,6 +633,7 @@ function Settings({ server }: { server: string }) {
             />
             <button className={filledBtn}>Rename</button>
           </form>
+          <FieldError message={renameError} />
           <ServerPasswordField server={server} hasPassword={detail.has_password} />
         </>
       )}

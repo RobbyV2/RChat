@@ -21,7 +21,7 @@ export function ThemeToggle() {
   const theme = useStore(s => s.theme)
   const setTheme = useStore(s => s.setTheme)
   useEffect(() => {
-    if (localStorage.getItem('rchat_theme') === 'light') useStore.getState().setTheme('light')
+    useStore.getState().setTheme(localStorage.getItem('rchat_theme') === 'light' ? 'light' : 'dark')
   }, [])
   return (
     <button
@@ -36,6 +36,7 @@ export function ThemeToggle() {
 
 export default function StatusClock() {
   const wsStatus = useStore(s => s.wsStatus)
+  const live = useStore(s => s.token !== null || s.guest)
   const [time, setTime] = useState('')
   useEffect(() => {
     const tick = () => setTime(new Date().toTimeString().slice(0, 8))
@@ -48,10 +49,12 @@ export default function StatusClock() {
       <span title="Local time" className="min-w-16 text-right">
         {time}
       </span>
-      <span
-        title={dotTitle[wsStatus]}
-        className={`h-2.5 w-2.5 shrink-0 rounded-full ${dotClass[wsStatus]}`}
-      />
+      {live && (
+        <span
+          title={dotTitle[wsStatus]}
+          className={`h-2.5 w-2.5 shrink-0 rounded-full ${dotClass[wsStatus]}`}
+        />
+      )}
     </div>
   )
 }

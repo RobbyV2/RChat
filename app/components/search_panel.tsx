@@ -145,9 +145,11 @@ export default function SearchPanel() {
             }}
             className="block w-full rounded-xl px-3 py-2 text-left hover:bg-surface-container-high"
           >
-            <p className="flex items-center gap-1 text-xs text-on-surface-variant">
-              <Hash size={12} />
-              {r.channel_name} · {r.server}
+            <p className="flex min-w-0 items-center gap-1 text-xs text-on-surface-variant">
+              <Hash size={12} className="shrink-0" />
+              <span className="truncate">{r.channel_name}</span>
+              <span className="shrink-0">·</span>
+              <span className="streamer truncate">{r.server}</span>
             </p>
             <div className="mt-1 flex items-center gap-2">
               <UserAvatar
@@ -156,7 +158,9 @@ export default function SearchPanel() {
                 avatarColor={r.message.author.avatar_color}
                 size={20}
               />
-              <span className="truncate text-sm font-medium">{r.message.author.display_name}</span>
+              <span className="streamer truncate text-sm font-medium">
+                {r.message.author.display_name}
+              </span>
               <span className="shrink-0 text-xs text-on-surface-variant">
                 {fmtTime(r.message.created_at)}
               </span>

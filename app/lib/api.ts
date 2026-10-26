@@ -82,8 +82,16 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     headers['Content-Type'] = 'application/json'
     init.body = JSON.stringify(body)
   }
-  return handleResponse<T>(await fetch(`${API}${path}`, init))
+  let response: Response
+  try {
+    response = await fetch(`${API}${path}`, init)
+  } catch {
+    throw new ApiError("Can't reach the server", 0)
+  }
+  return handleResponse<T>(response)
 }
+
+export const apiOrigin = () => new URL(API, window.location.href).origin
 
 const seg = encodeURIComponent
 

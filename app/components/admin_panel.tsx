@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import * as api from '../lib/api'
 import type { ServerDetail, ServerSummaryLite } from '../lib/types'
-import { useStore } from '../lib/store'
+import { errorText, useStore } from '../lib/store'
+import { canDeleteChannel } from '../lib/rules'
 import { UserAvatar } from './user_avatar'
 import {
   AdminPermsEditor,
@@ -358,7 +359,6 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
 
   if (!detail) return null
   const run = (fn: () => Promise<void>) => void fn().then(refresh)
-  const soleChannel = detail.channels.length === 1
 
   return (
     <div className="space-y-2 border-t border-outline-variant px-3 py-3">
@@ -368,7 +368,9 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
             initial={detail.display_name}
             placeholder="Server name"
             submitLabel="Rename"
-            onSubmit={v => void renameServer(name, v).then(onCollapse)}
+            onSubmit={v =>
+              renameServer(name, v).then(onCollapse, (e: unknown) => setError(errorText(e)))
+            }
           />
           <ServerPasswordField server={name} hasPassword={detail.has_password} refresh={refresh} />
         </>
@@ -376,34 +378,43 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
       <p className={sectionCls}>Roles</p>
       <RolesEditor server={name} roles={detail.roles} refresh={refresh} />
       <p className={sectionCls}>Channels</p>
-      {detail.channels.map(c => (
-        <ChannelControls
-          key={c.id}
-          server={name}
-          channel={c}
-          roles={detail.roles}
-          refresh={refresh}
-          lead={
-            <>
-              <NameForm
-                initial={c.name}
-                placeholder="Channel name"
-                submitLabel="Rename"
-                onSubmit={v => run(() => renameChannel(c.id, v))}
-              />
-              <button
-                disabled={soleChannel}
-                onClick={() => run(() => deleteChannel(c.id))}
-                aria-label={`Delete ${c.name}`}
-                title={soleChannel ? 'Cannot delete the only channel' : `Delete ${c.name}`}
-                className={dangerBtn}
-              >
-                <Trash2 size={16} />
-              </button>
-            </>
-          }
-        />
-      ))}
+      {detail.channels.map(c => {
+        const deletable = canDeleteChannel(detail.channels, c)
+        return (
+          <ChannelControls
+            key={c.id}
+            server={name}
+            channel={c}
+            roles={detail.roles}
+            refresh={refresh}
+            lead={
+              <>
+                <NameForm
+                  initial={c.name}
+                  placeholder="Channel name"
+                  submitLabel="Rename"
+                  onSubmit={v => run(() => renameChannel(c.id, v))}
+                />
+                <button
+                  disabled={!deletable}
+                  onClick={() => run(() => deleteChannel(c.id))}
+                  aria-label={`Delete ${c.name}`}
+                  title={
+                    deletable
+                      ? `Delete ${c.name}`
+                      : c.kind === 'text'
+                        ? 'Cannot delete the only text channel'
+                        : 'Cannot delete the only channel'
+                  }
+                  className={dangerBtn}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </>
+            }
+          />
+        )
+      })}
       <NameForm
         placeholder="New channel"
         submitLabel="Add"

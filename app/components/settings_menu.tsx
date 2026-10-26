@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useId, useState } from 'react'
 import { X } from 'lucide-react'
 import { useStore } from '../lib/store'
 import type { AvatarKind } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
 import { SettingSwitch } from './admin_panel'
-import { filledBtn, sectionCls } from './server_settings'
+import { filledBtn, sectionCls, useEscape } from './server_settings'
 
 type Section = 'settings' | 'information'
 
@@ -167,14 +167,8 @@ function InformationSection() {
 function Menu() {
   const closeDialog = useStore(s => s.closeDialog)
   const [section, setSection] = useState<Section>('settings')
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeDialog()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [closeDialog])
+  const titleId = useId()
+  useEscape(closeDialog)
 
   const sections: [Section, string][] = [
     ['settings', 'Settings'],
@@ -182,9 +176,17 @@ function Menu() {
   ]
 
   return (
-    <div className="fixed inset-x-0 top-0 z-50 flex h-app flex-col bg-surface px-safe md:flex-row">
-      <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-outline-variant bg-surface-container-low p-3 md:w-56 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r md:p-4">
-        <p className="hidden px-3 pb-2 text-xs font-medium tracking-wide text-on-surface-variant uppercase md:block">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      className="fixed inset-x-0 top-0 z-50 flex h-app flex-col bg-surface px-safe md:flex-row"
+    >
+      <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-outline-variant bg-surface-container-low p-3 pr-16 md:w-56 md:flex-col md:overflow-y-auto md:border-r md:border-b-0 md:p-4">
+        <p
+          id={titleId}
+          className="hidden px-3 pb-2 text-xs font-medium tracking-wide text-on-surface-variant uppercase md:block"
+        >
           Settings
         </p>
         {sections.map(([key, label]) => (
@@ -201,14 +203,14 @@ function Menu() {
           </button>
         ))}
       </nav>
-      <div className="relative flex-1 overflow-y-auto p-6 md:p-10">
-        <button
-          title="Close settings"
-          onClick={closeDialog}
-          className="absolute top-4 right-4 rounded-full border border-outline-variant p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-        >
-          <X size={18} />
-        </button>
+      <button
+        title="Close settings"
+        onClick={closeDialog}
+        className="absolute top-[max(0.75rem,env(safe-area-inset-top))] right-[max(1rem,env(safe-area-inset-right))] z-10 rounded-full border border-outline-variant bg-surface p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface md:top-4"
+      >
+        <X size={18} />
+      </button>
+      <div className="min-h-0 flex-1 overflow-y-auto p-6 md:p-10">
         <div className="max-w-lg pb-10">
           {section === 'settings' ? <SettingsSection /> : <InformationSection />}
         </div>

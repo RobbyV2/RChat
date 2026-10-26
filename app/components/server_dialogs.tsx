@@ -1,31 +1,32 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { Lock, X } from 'lucide-react'
 import * as api from '../lib/api'
-import { useStore } from '../lib/store'
+import { errorText, useStore } from '../lib/store'
 import type { ServerMatch } from '../lib/types'
+import { FieldError, useBackdrop, useEscape } from './server_settings'
 
 function Dialog({ title, children }: { title: string; children: React.ReactNode }) {
   const closeDialog = useStore(s => s.closeDialog)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeDialog()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [closeDialog])
+  const titleId = useId()
+  const backdrop = useBackdrop(closeDialog)
+  useEscape(closeDialog)
   return (
     <div
       className="fixed inset-x-0 top-0 z-50 flex h-app items-center justify-center bg-scrim/60 px-safe-4 py-4"
-      onMouseDown={closeDialog}
+      {...backdrop}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className="max-h-full w-full max-w-sm overflow-y-auto rounded-3xl bg-surface-container-high p-6 shadow-elevation-3"
-        onMouseDown={e => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-medium">{title}</h2>
+          <h2 id={titleId} className="text-lg font-medium">
+            {title}
+          </h2>
           <button
             title="Close"
             onClick={closeDialog}
@@ -40,16 +41,18 @@ function Dialog({ title, children }: { title: string; children: React.ReactNode 
   )
 }
 
-function AddServerDialog() {
+function AddServerDialog({ join }: { join?: string }) {
   const guest = useStore(s => s.guest)
   const guestGrants = useStore(s => s.guestGrants)
   const createServer = useStore(s => s.createServer)
   const joinServer = useStore(s => s.joinServer)
   const guestJoinServer = useStore(s => s.guestJoinServer)
   const closeDialog = useStore(s => s.closeDialog)
-  const [tab, setTab] = useState<'create' | 'join'>(guest ? 'join' : 'create')
-  const [name, setName] = useState('')
+  const [tab, setTab] = useState<'create' | 'join'>(guest || join ? 'join' : 'create')
+  const [name, setName] = useState(join ?? '')
   const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
   const [protectedServer, setProtectedServer] = useState(false)
   const [suggestions, setSuggestions] = useState<ServerMatch[]>([])
   const creating = tab === 'create' && !guest
@@ -76,22 +79,20 @@ function AddServerDialog() {
     return () => clearTimeout(t)
   }, [id, joining])
 
-  const submit = () => {
+  const submit = async () => {
     const trimmed = name.trim()
-    if (!trimmed) return
-    closeDialog()
+    if (!trimmed || busy) return
     const pw = password.trim() || undefined
-    if (guest) {
-      void guestJoinServer(trimmed, pw)
-      return
-    }
-    switch (tab) {
-      case 'create':
-        void createServer(trimmed, pw)
-        return
-      case 'join':
-        void joinServer(trimmed, pw)
-        return
+    setBusy(true)
+    setError(null)
+    try {
+      if (guest) await guestJoinServer(trimmed, pw)
+      else if (tab === 'create') await createServer(trimmed, pw)
+      else await joinServer(trimmed, pw)
+      closeDialog()
+    } catch (e) {
+      setError(errorText(e))
+      setBusy(false)
     }
   }
 
@@ -102,7 +103,10 @@ function AddServerDialog() {
           {(['create', 'join'] as const).map(t => (
             <button
               key={t}
-              onClick={() => setTab(t)}
+              onClick={() => {
+                setTab(t)
+                setError(null)
+              }}
               className={`flex-1 rounded-full py-1.5 text-sm capitalize ${
                 tab === t
                   ? 'bg-secondary-container text-on-secondary-container'
@@ -124,7 +128,7 @@ function AddServerDialog() {
         value={name}
         onChange={e => setName(e.target.value)}
         onKeyDown={e => {
-          if (e.key === 'Enter') submit()
+          if (e.key === 'Enter') void submit()
         }}
         placeholder="server name"
         className="w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
@@ -155,12 +159,13 @@ function AddServerDialog() {
           value={password}
           onChange={e => setPassword(e.target.value)}
           onKeyDown={e => {
-            if (e.key === 'Enter') submit()
+            if (e.key === 'Enter') void submit()
           }}
           placeholder={creating ? 'password (optional)' : 'password'}
           className="mt-3 w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
         />
       )}
+      <FieldError message={error} />
       <div className="mt-5 flex justify-end gap-2">
         <button
           onClick={closeDialog}
@@ -169,7 +174,8 @@ function AddServerDialog() {
           Cancel
         </button>
         <button
-          onClick={submit}
+          onClick={() => void submit()}
+          disabled={busy || !name.trim()}
           className="rounded-full bg-primary px-4 py-2 text-sm text-on-primary hover:opacity-90 disabled:opacity-40"
         >
           {creating ? 'Create' : 'Join'}
@@ -181,5 +187,5 @@ function AddServerDialog() {
 
 export function ServerDialogs() {
   const dialog = useStore(s => s.activeDialog)
-  return dialog?.kind === 'add_server' ? <AddServerDialog /> : null
+  return dialog?.kind === 'add_server' ? <AddServerDialog join={dialog.join} /> : null
 }

@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Hash, Plus, Settings, Volume2 } from 'lucide-react'
 import { myPerms, serverAdminPerms, userRefFor, useStore } from '../lib/store'
+import { canDeleteChannel } from '../lib/rules'
 import { rtc } from '../lib/rtc'
 import { Perm, hasPerm, type Channel, type ChannelKind } from '../lib/types'
 import { UserAvatar } from './user_avatar'
@@ -29,6 +30,7 @@ export function ChannelSidebar() {
   const createChannel = useStore(s => s.createChannel)
   const renameChannel = useStore(s => s.renameChannel)
   const deleteChannel = useStore(s => s.deleteChannel)
+  const askConfirm = useStore(s => s.askConfirm)
   const joinVoice = useStore(s => s.joinVoice)
   const voiceUsers = useStore(s => s.voiceUsers)
   const voice = useStore(s => s.voice)
@@ -43,12 +45,15 @@ export function ChannelSidebar() {
   const [editing, setEditing] = useState<Editing | null>(null)
   const [name, setName] = useState('')
   const [dmInput, setDmInput] = useState<string | null>(null)
+  const settled = useRef(false)
 
   if (view?.kind === 'dm') {
     const sortedDms = [...dms].sort((a, b) => Number(b.is_self) - Number(a.is_self))
     const submitDm = () => {
       const target = (dmInput ?? '').trim().toLowerCase()
       setDmInput(null)
+      if (settled.current) return
+      settled.current = true
       if (target) void startDm(target)
     }
     return (
@@ -59,7 +64,10 @@ export function ChannelSidebar() {
           </span>
           <button
             title="New direct message"
-            onClick={() => setDmInput('')}
+            onClick={() => {
+              settled.current = false
+              setDmInput('')
+            }}
             className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
           >
             <Plus size={16} />
@@ -72,7 +80,10 @@ export function ChannelSidebar() {
             onChange={e => setDmInput(e.target.value)}
             onKeyDown={e => {
               if (e.key === 'Enter') submitDm()
-              if (e.key === 'Escape') setDmInput(null)
+              if (e.key === 'Escape') {
+                settled.current = true
+                setDmInput(null)
+              }
             }}
             onBlur={submitDm}
             placeholder="username"
@@ -138,6 +149,7 @@ export function ChannelSidebar() {
   const canManage = hasPerm(perms, Perm.ManageChannels)
 
   const startEdit = (next: Editing, initial: string) => {
+    settled.current = false
     setEditing(next)
     setName(initial)
   }
@@ -147,6 +159,8 @@ export function ChannelSidebar() {
     const current = editing
     setEditing(null)
     setName('')
+    if (settled.current) return
+    settled.current = true
     if (!trimmed || !current) return
     switch (current.mode) {
       case 'create':
@@ -173,12 +187,21 @@ export function ChannelSidebar() {
               label: 'Rename Channel',
               action: () => startEdit({ mode: 'rename', id: c.id }, c.name),
             },
-            ...(detail.channels.length > 1
+            ...(canDeleteChannel(detail.channels, c)
               ? [
                   {
                     label: 'Delete Channel',
                     danger: true,
-                    action: () => void deleteChannel(c.id),
+                    action: () =>
+                      askConfirm({
+                        title: 'Delete Channel',
+                        body:
+                          c.kind === 'text'
+                            ? `Delete #${c.name}? Its messages are deleted for everyone.`
+                            : `Delete the voice channel ${c.name}?`,
+                        confirm: 'Delete',
+                        action: () => void deleteChannel(c.id),
+                      }),
                   },
                 ]
               : []),
@@ -194,7 +217,10 @@ export function ChannelSidebar() {
       onChange={e => setName(e.target.value)}
       onKeyDown={e => {
         if (e.key === 'Enter') submit()
-        if (e.key === 'Escape') setEditing(null)
+        if (e.key === 'Escape') {
+          settled.current = true
+          setEditing(null)
+        }
       }}
       onBlur={submit}
       placeholder="channel name"

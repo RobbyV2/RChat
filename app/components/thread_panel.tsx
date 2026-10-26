@@ -119,7 +119,7 @@ export default function ThreadPanel() {
           <button
             title="Delete reply"
             onClick={() => void deleteMessage(m.id)}
-            className="invisible absolute top-1 right-3 rounded-full bg-surface-container-high p-1.5 text-on-surface-variant group-hover:visible hover:text-error"
+            className="pointer-events-none absolute top-1 right-3 rounded-full bg-surface-container-high p-1.5 text-on-surface-variant opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 hover:text-error"
           >
             <Trash2 size={14} />
           </button>

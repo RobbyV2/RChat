@@ -1,11 +1,13 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Clock, Download, EllipsisVertical, EyeOff, FileText, Share2, X } from 'lucide-react'
-import { mediaUrl } from '../lib/api'
+import { apiOrigin, mediaUrl } from '../lib/api'
+import { splitMentions } from '../lib/mentions'
 import { base64ToBlob, p2p } from '../lib/p2p'
+import { sameOriginImage } from '../lib/rules'
 import { userRefFor, useStore, type ContextMenuItem } from '../lib/store'
 import type { Embed, Message, MessageMedia } from '../lib/types'
 import { longPress } from './context_menu'
@@ -59,6 +61,42 @@ const splitSpoilers = (node: MdNode) => {
 
 const remarkSpoiler = () => (tree: unknown) => splitSpoilers(tree as MdNode)
 
+const markMentions = (node: MdNode, username: string) => {
+  const { children } = node
+  if (!children) return
+  node.children = children.flatMap(child => {
+    if (child.type !== 'text' || child.value === undefined) {
+      markMentions(child, username)
+      return [child]
+    }
+    return splitMentions(child.value, username).map(({ text, mention }) =>
+      mention
+        ? {
+            type: 'emphasis',
+            data: { hName: 'span', hProperties: { 'data-mention': '' } },
+            children: [{ type: 'text', value: text }],
+          }
+        : { type: 'text', value: text }
+    )
+  })
+}
+
+const remarkMention = (username: string) => () => (tree: unknown) =>
+  markMentions(tree as MdNode, username)
+
+function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+  const previews = useStore(s => s.settings.asset_previews)
+  const local = sameOriginImage(src, window.location.href, [window.location.origin, apiOrigin()])
+  if (previews && local)
+    return <img src={src} alt={alt ?? ''} className="my-1 max-h-80 max-w-full rounded-xl" />
+  if (!src) return <>{alt}</>
+  return (
+    <a href={src} target="_blank" rel="noreferrer" className="text-primary underline">
+      {alt || src}
+    </a>
+  )
+}
+
 function SpoilerText({ children }: { children?: ReactNode }) {
   const [revealed, setRevealed] = useState(false)
   return (
@@ -77,7 +115,18 @@ function SpoilerText({ children }: { children?: ReactNode }) {
 
 const components: Components = {
   span: ({ node, ...props }) =>
-    'data-spoiler' in props ? <SpoilerText>{props.children}</SpoilerText> : <span {...props} />,
+    'data-spoiler' in props ? (
+      <SpoilerText>{props.children}</SpoilerText>
+    ) : 'data-mention' in props ? (
+      <span className="streamer rounded bg-primary-container px-0.5 font-medium text-on-primary-container">
+        {props.children}
+      </span>
+    ) : (
+      <span {...props} />
+    ),
+  img: ({ src, alt }) => (
+    <MarkdownImage src={typeof src === 'string' ? src : undefined} alt={alt} />
+  ),
   a: ({ node, ...props }) => (
     <a {...props} target="_blank" rel="noreferrer" className="text-primary underline" />
   ),
@@ -102,7 +151,11 @@ const components: Components = {
   h1: ({ node, ...props }) => <h1 {...props} className="my-1 text-lg font-bold" />,
   h2: ({ node, ...props }) => <h2 {...props} className="my-1 text-base font-bold" />,
   h3: ({ node, ...props }) => <h3 {...props} className="my-1 text-sm font-bold" />,
-  table: ({ node, ...props }) => <table {...props} className="my-1 border-collapse text-xs" />,
+  table: ({ node, ...props }) => (
+    <div className="my-1 max-w-full overflow-x-auto">
+      <table {...props} className="border-collapse text-xs" />
+    </div>
+  ),
   th: ({ node, ...props }) => (
     <th {...props} className="border border-outline-variant px-2 py-1 text-left" />
   ),
@@ -402,7 +455,7 @@ function EmbedCard({
         <button
           title="Embed options"
           onClick={e => menu(e.clientX, e.clientY)}
-          className="absolute top-1.5 right-1.5 rounded-full p-1 text-on-surface-variant opacity-0 group-hover/embed:opacity-100 hover:bg-surface-container-highest max-md:opacity-100"
+          className="absolute top-1.5 right-1.5 rounded-full p-1 text-on-surface-variant opacity-0 group-focus-within/embed:opacity-100 group-hover/embed:opacity-100 hover:bg-surface-container-highest max-md:opacity-100"
         >
           <EllipsisVertical size={14} />
         </button>
@@ -420,11 +473,16 @@ export function MarkdownMessage({
 }) {
   const deleteMedia = useStore(s => s.deleteMedia)
   const previews = useStore(s => s.settings.asset_previews)
+  const username = useStore(s => s.me?.username ?? '')
+  const plugins = useMemo(
+    () => [remarkGfm, remarkSpoiler, ...(username ? [remarkMention(username)] : [])],
+    [username]
+  )
   const { content, media, embeds } = message
   return (
     <div className="min-w-0 text-sm leading-relaxed break-words">
       {content.trim() !== '' && (
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkSpoiler]} components={components}>
+        <ReactMarkdown remarkPlugins={plugins} components={components}>
           {content}
         </ReactMarkdown>
       )}
@@ -439,7 +497,7 @@ export function MarkdownMessage({
             <button
               title="Remove attachment"
               onClick={() => void deleteMedia(message.id)}
-              className="absolute -top-1.5 -right-1.5 rounded-full bg-surface-container-highest p-1 text-on-surface-variant opacity-0 shadow-elevation-1 group-hover/att:opacity-100 hover:text-error max-md:opacity-100"
+              className="absolute -top-1.5 -right-1.5 rounded-full bg-surface-container-highest p-1 text-on-surface-variant opacity-0 shadow-elevation-1 group-focus-within/att:opacity-100 group-hover/att:opacity-100 hover:text-error max-md:opacity-100"
             >
               <X size={12} />
             </button>

@@ -8,9 +8,9 @@ use utoipa::{IntoParams, ToSchema};
 use crate::api::admin::{fuzzy_match, is_fuzzy, like_pattern};
 use crate::api::auth::{hash_password, new_token, verify_password};
 use crate::api::{
-    ApiError, Authed, Channel, ChannelPerm, MaybeAuthed, Member, Role, ServerDetail,
-    ServerSummaryLite, UserRef, check_profanity, require_guest_ok, require_server_view, user_ref,
-    valid_color,
+    ApiError, Authed, Channel, ChannelPerm, MaybeAuthed, Member, NAME_MAX, Role, SLOWMODE_MAX,
+    ServerDetail, ServerSummaryLite, UserRef, check_len, check_profanity, require_guest_ok,
+    require_server_view, user_ref, valid_color,
 };
 use crate::db::{ALL_PERMS, ChannelKind, Db, Perm, User, channel_access, get_user, has_perm, now};
 use crate::state::AppState;
@@ -123,11 +123,20 @@ fn forbidden(msg: &str) -> ApiError {
     ApiError(StatusCode::FORBIDDEN, msg.to_string())
 }
 
-async fn check_name(db: &Db, name: &str) -> Result<(), ApiError> {
+async fn check_name(db: &Db, what: &str, name: &str) -> Result<(), ApiError> {
     if name.trim().is_empty() {
         return Err(bad("Name required"));
     }
+    check_len(name, NAME_MAX, what)?;
     check_profanity(db, name).await
+}
+
+async fn check_server_name(db: &Db, name: &str) -> Result<(), ApiError> {
+    check_name(db, "Server name", name).await?;
+    match name {
+        "." | ".." => Err(bad("Server name cannot be \".\" or \"..\"")),
+        _ => Ok(()),
+    }
 }
 
 fn guard_rchat(key: &str) -> Result<(), ApiError> {
@@ -384,7 +393,7 @@ pub(crate) async fn create_server(
 ) -> Result<Json<ServerDetail>, ApiError> {
     let display = req.name.trim().to_string();
     let key = display.to_lowercase();
-    check_name(&state.db, &display).await?;
+    check_server_name(&state.db, &display).await?;
     if server_lite(&state.db, &key).await?.is_some() {
         return Err(bad("Server name is taken"));
     }
@@ -650,7 +659,7 @@ pub(crate) async fn update_server(
         Some(n) => {
             let display = n.trim().to_string();
             let new_key = display.to_lowercase();
-            check_name(&state.db, &display).await?;
+            check_server_name(&state.db, &display).await?;
             if new_key != key && server_lite(&state.db, &new_key).await?.is_some() {
                 return Err(bad("Server name is taken"));
             }
@@ -726,7 +735,7 @@ pub(crate) async fn create_channel(
     let key = name.to_lowercase();
     let channel_name = req.name.trim().to_string();
     let kind = req.kind.unwrap_or(ChannelKind::Text);
-    check_name(&state.db, &channel_name).await?;
+    check_name(&state.db, "Channel name", &channel_name).await?;
     require_server(&state.db, &key).await?;
     require_perm(&state.db, &key, &user, Perm::ManageChannels).await?;
     let taken = sqlx::query("SELECT 1 FROM channels WHERE server = $1 AND name = $2")
@@ -772,15 +781,41 @@ pub(crate) async fn update_channel(
         name,
         slowmode_seconds,
     } = req;
-    let server = channel_server(&state.db, id).await?;
+    let row = sqlx::query("SELECT server, kind FROM channels WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?;
+    let (server, kind): (String, ChannelKind) = match &row {
+        Some(r) => (
+            r.try_get(0)?,
+            ChannelKind::parse(&r.try_get::<String, _>(1)?)?,
+        ),
+        None => return Err(not_found("Channel not found")),
+    };
     require_perm(&state.db, &server, &user, Perm::ManageChannels).await?;
-    if let Some(name) = &name {
-        let channel_name = name.trim().to_string();
-        check_name(&state.db, &channel_name).await?;
+    if let Some(secs) = slowmode_seconds {
+        if !(0..=SLOWMODE_MAX).contains(&secs) {
+            return Err(bad(&format!(
+                "Slow mode must be between 0 and {SLOWMODE_MAX} seconds"
+            )));
+        }
+        if kind == ChannelKind::Voice && secs != 0 {
+            return Err(bad("Slow mode only applies to text channels"));
+        }
+    }
+    let channel_name = match &name {
+        Some(name) => {
+            let channel_name = name.trim().to_string();
+            check_name(&state.db, "Channel name", &channel_name).await?;
+            Some(channel_name)
+        }
+        None => None,
+    };
+    if let Some(channel_name) = &channel_name {
         let taken =
             sqlx::query("SELECT 1 FROM channels WHERE server = $1 AND name = $2 AND id != $3")
                 .bind(&server)
-                .bind(&channel_name)
+                .bind(channel_name)
                 .bind(id)
                 .fetch_optional(&state.db)
                 .await?
@@ -789,14 +824,14 @@ pub(crate) async fn update_channel(
             return Err(bad("Channel name is taken"));
         }
         sqlx::query("UPDATE channels SET name = $1 WHERE id = $2")
-            .bind(&channel_name)
+            .bind(channel_name)
             .bind(id)
             .execute(&state.db)
             .await?;
     }
     if let Some(secs) = slowmode_seconds {
         sqlx::query("UPDATE channels SET slowmode_seconds = $1 WHERE id = $2")
-            .bind(secs.max(0))
+            .bind(secs)
             .bind(id)
             .execute(&state.db)
             .await?;
@@ -1086,7 +1121,7 @@ pub(crate) async fn create_role(
 ) -> Result<Json<Role>, ApiError> {
     let key = role_guard(&state, &name, &user).await?;
     let role_name = req.name.trim().to_string();
-    check_name(&state.db, &role_name).await?;
+    check_name(&state.db, "Role name", &role_name).await?;
     check_color(&req.color)?;
     let perms = req.perms & ALL_PERMS;
     let id: i64 = sqlx::query(
@@ -1120,7 +1155,7 @@ pub(crate) async fn update_role(
     let RolePatch { name, color, perms } = req;
     if let Some(role_name) = &name {
         let role_name = role_name.trim().to_string();
-        check_name(&state.db, &role_name).await?;
+        check_name(&state.db, "Role name", &role_name).await?;
         sqlx::query("UPDATE roles SET name = $1 WHERE id = $2")
             .bind(&role_name)
             .bind(id)
@@ -1407,6 +1442,154 @@ mod tests {
             sole_text,
             Err(ApiError(StatusCode::BAD_REQUEST, _))
         ));
+        done(state, path).await;
+    }
+
+    fn rejected<T>(res: Result<T, ApiError>) -> bool {
+        matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, _)))
+    }
+
+    async fn make_server(state: &AppState, name: &str) -> Result<Json<ServerDetail>, ApiError> {
+        create_server(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Json(CreateServerReq {
+                name: name.to_string(),
+                password: None,
+            }),
+        )
+        .await
+    }
+
+    async fn rename(state: &AppState, server: &str, name: &str) -> Result<(), ApiError> {
+        update_server(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path(server.to_string()),
+            Json(ServerPatch {
+                name: Some(name.to_string()),
+                password: None,
+            }),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    #[tokio::test]
+    async fn server_name_rules() {
+        let (state, path) = temp_state("server_names").await;
+        assert!(rejected(make_server(&state, &"é".repeat(101)).await));
+        assert!(rejected(make_server(&state, ".").await));
+        assert!(rejected(make_server(&state, " .. ").await));
+        let long = "é".repeat(100);
+        let detail = make_server(&state, &long).await.expect("100 chars ok").0;
+        assert_eq!(detail.display_name, long);
+        let _ = make_server(&state, "dots...")
+            .await
+            .expect("dots inside ok");
+        assert!(rejected(rename(&state, "dots...", "..").await));
+        assert!(rejected(rename(&state, "dots...", &"x".repeat(101)).await));
+        rename(&state, "dots...", "a.b").await.expect("rename ok");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn channel_and_role_limits() {
+        let (state, path) = temp_state("channel_limits").await;
+        let _ = make_server(&state, "lim").await.expect("create server");
+        let alice = || Authed(mem_user("alice", false));
+        let channel = |name: String, kind: ChannelKind| {
+            let state = state.clone();
+            async move {
+                create_channel(
+                    State(state),
+                    Authed(mem_user("alice", false)),
+                    Path("lim".to_string()),
+                    Json(CreateChannelReq {
+                        name,
+                        kind: Some(kind),
+                    }),
+                )
+                .await
+            }
+        };
+        assert!(rejected(channel("c".repeat(101), ChannelKind::Text).await));
+        let text = channel("😀".repeat(100), ChannelKind::Text)
+            .await
+            .expect("100 emoji ok")
+            .0;
+        let voice = channel("lounge".to_string(), ChannelKind::Voice)
+            .await
+            .expect("voice")
+            .0;
+        let slow = |id: i64, secs: i64| {
+            let state = state.clone();
+            async move {
+                update_channel(
+                    State(state),
+                    Authed(mem_user("alice", false)),
+                    Path(id),
+                    Json(ChannelPatch {
+                        name: None,
+                        slowmode_seconds: Some(secs),
+                    }),
+                )
+                .await
+            }
+        };
+        assert!(rejected(slow(text.id, -1).await));
+        assert!(rejected(slow(text.id, SLOWMODE_MAX + 1).await));
+        assert_eq!(
+            slow(text.id, SLOWMODE_MAX)
+                .await
+                .expect("max slowmode")
+                .0
+                .slowmode_seconds,
+            SLOWMODE_MAX
+        );
+        assert!(rejected(slow(voice.id, 5).await));
+        let _ = slow(voice.id, 0).await.expect("zero on voice ok");
+        let renamed = update_channel(
+            State(state.clone()),
+            alice(),
+            Path(text.id),
+            Json(ChannelPatch {
+                name: Some("x".repeat(101)),
+                slowmode_seconds: None,
+            }),
+        )
+        .await;
+        assert!(rejected(renamed));
+        let role = |name: String| {
+            let state = state.clone();
+            async move {
+                create_role(
+                    State(state),
+                    Authed(mem_user("alice", false)),
+                    Path("lim".to_string()),
+                    Json(RoleReq {
+                        name,
+                        color: "#ffffff".to_string(),
+                        perms: 0,
+                    }),
+                )
+                .await
+            }
+        };
+        assert!(rejected(role("r".repeat(101)).await));
+        let made = role("r".repeat(100)).await.expect("100 char role").0;
+        let patched = update_role(
+            State(state.clone()),
+            alice(),
+            Path(("lim".to_string(), made.id)),
+            Json(RolePatch {
+                name: Some("r".repeat(101)),
+                color: None,
+                perms: None,
+            }),
+        )
+        .await;
+        assert!(rejected(patched));
         done(state, path).await;
     }
 }

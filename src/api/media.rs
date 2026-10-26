@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Multipart, Path, State};
@@ -52,7 +54,7 @@ async fn fresh_id(db: &Db) -> Result<String, ApiError> {
 #[utoipa::path(post, path = "/api/media", request_body(content = Vec<u8>, content_type = "multipart/form-data"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef)), security(("bearer" = [])))]
 pub(crate) async fn upload_media(
     State(state): State<AppState>,
-    Authed(_user): Authed,
+    Authed(user): Authed,
     mut multipart: Multipart,
 ) -> Result<Json<MediaRef>, ApiError> {
     if !setting_on(&state.db, "asset_uploads").await {
@@ -94,13 +96,14 @@ pub(crate) async fn upload_media(
         None => Some(data.to_vec()),
     };
     sqlx::query(
-        "INSERT INTO media(id, filename, mime, size, data, uploaded_at) VALUES($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at) VALUES($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(&id)
     .bind(&filename)
     .bind(&mime)
     .bind(data.len() as i64)
     .bind(blob)
+    .bind(&user.username)
     .bind(uploaded_at)
     .execute(&state.db)
     .await?;
@@ -146,16 +149,27 @@ pub(crate) async fn delete_media(
         }
         MediaKind::Server => {
             let mut tx = state.db.begin().await?;
-            sqlx::query("DELETE FROM media WHERE id = $1")
-                .bind(&media_id)
-                .execute(&mut *tx)
-                .await?;
             sqlx::query("UPDATE messages SET media_removed = 2 WHERE id = $1")
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
+            let shared = sqlx::query(
+                "SELECT 1 FROM messages WHERE media_id = $1 AND media_kind = 'server' AND media_removed = 0",
+            )
+            .bind(&media_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .is_some();
+            if !shared {
+                sqlx::query("DELETE FROM media WHERE id = $1")
+                    .bind(&media_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
             tx.commit().await?;
-            s3_delete(state.s3.as_deref(), &media_id).await;
+            if !shared {
+                s3_delete(state.s3.as_deref(), &media_id).await;
+            }
         }
     }
     state.hub.broadcast(WsEvent::MediaRemoved {
@@ -189,9 +203,18 @@ async fn media_view_ok(
     .fetch_all(&state.db)
     .await?;
     if rows.is_empty() {
-        return match user {
-            Some(_) => Ok(()),
-            None => Err(ApiError(StatusCode::FORBIDDEN, "Not allowed".to_string())),
+        let uploader: Option<String> = match sqlx::query("SELECT uploader FROM media WHERE id = $1")
+            .bind(media_id)
+            .fetch_optional(&state.db)
+            .await?
+        {
+            Some(r) => r.try_get(0)?,
+            None => None,
+        };
+        return match (user, uploader) {
+            (Some(u), Some(owner)) if u.username == owner => Ok(()),
+            (Some(_), None) => Ok(()),
+            (_, _) => Err(ApiError(StatusCode::FORBIDDEN, "Not allowed".to_string())),
         };
     }
     let mut grants = header_grants(headers);
@@ -287,20 +310,9 @@ pub(crate) async fn download_media(
             ));
         }
     };
-    let safe: String = filename
-        .chars()
-        .map(|c| match c {
-            '"' | '\\' => '_',
-            c if c.is_ascii_graphic() || c == ' ' => c,
-            _ => '_',
-        })
-        .collect();
     Response::builder()
         .header(header::CONTENT_TYPE, mime)
-        .header(
-            header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{safe}\""),
-        )
+        .header(header::CONTENT_DISPOSITION, content_disposition(&filename))
         .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
         .header(
             header::CONTENT_SECURITY_POLICY,
@@ -308,6 +320,41 @@ pub(crate) async fn download_media(
         )
         .body(body)
         .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+}
+
+pub(crate) fn content_disposition(filename: &str) -> String {
+    let fallback: String = filename
+        .chars()
+        .map(|c| match c {
+            '"' | '\\' => '_',
+            c if c.is_ascii_graphic() || c == ' ' => c,
+            _ => '_',
+        })
+        .collect();
+    let mut encoded = String::with_capacity(filename.len());
+    for b in filename.bytes() {
+        match b {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'!'
+            | b'#'
+            | b'$'
+            | b'&'
+            | b'+'
+            | b'-'
+            | b'.'
+            | b'^'
+            | b'_'
+            | b'`'
+            | b'|'
+            | b'~' => encoded.push(char::from(b)),
+            _ => {
+                let _ = write!(encoded, "%{b:02X}");
+            }
+        }
+    }
+    format!("attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}")
 }
 
 async fn sweep(db: &Db, s3: Option<&Bucket>) -> sqlx::Result<Vec<WsEvent>> {
@@ -403,9 +450,72 @@ pub async fn sweep_expired(state: &AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::sweep;
+    use super::{content_disposition, delete_media, sweep};
+    use crate::api::Authed;
+    use crate::api::test_util::{done, mem_user, temp_state};
     use crate::db::{now, open};
+    use axum::extract::{Path, State};
     use sqlx::Row;
+
+    #[test]
+    fn disposition_keeps_unicode() {
+        assert_eq!(
+            content_disposition("résumé.pdf"),
+            "attachment; filename=\"r_sum_.pdf\"; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf"
+        );
+        assert_eq!(
+            content_disposition("a \"b\"\\c.txt"),
+            "attachment; filename=\"a _b__c.txt\"; filename*=UTF-8''a%20%22b%22%5Cc.txt"
+        );
+        assert_eq!(
+            content_disposition("😀.png"),
+            "attachment; filename=\"_.png\"; filename*=UTF-8''%F0%9F%98%80.png"
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_legacy_blob_survives_one_removal() {
+        let (state, path) = temp_state("media_shared").await;
+        let id = "dd".repeat(16);
+        sqlx::query("INSERT INTO media(id, filename, mime, size, data, uploaded_at) VALUES($1, 'a.txt', 'text/plain', 1, $2, $3)")
+            .bind(&id)
+            .bind(vec![0u8])
+            .bind(now())
+            .execute(&state.db)
+            .await
+            .expect("insert media");
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let mid: i64 = sqlx::query("INSERT INTO messages(dm_id, author, content, media_id, media_filename, media_kind, created_at) VALUES(NULL, 'alice', '', $1, 'a.txt', 'server', $2) RETURNING id")
+                .bind(&id)
+                .bind(now())
+                .fetch_one(&state.db)
+                .await
+                .expect("insert message")
+                .try_get(0)
+                .expect("message id");
+            ids.push(mid);
+        }
+        let blob = |state: crate::state::AppState, id: String| async move {
+            sqlx::query("SELECT 1 FROM media WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&state.db)
+                .await
+                .expect("read media")
+                .is_some()
+        };
+        for (n, mid) in ids.iter().enumerate() {
+            let _ = delete_media(
+                State(state.clone()),
+                Path(*mid),
+                Authed(mem_user("alice", false)),
+            )
+            .await
+            .expect("remove attachment");
+            assert_eq!(blob(state.clone(), id.clone()).await, n == 0);
+        }
+        done(state, path).await;
+    }
 
     #[tokio::test]
     async fn sweep_skips_p2p() {

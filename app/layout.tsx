@@ -31,7 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script
           dangerouslySetInnerHTML={{
             __html:
-              "try{document.documentElement.dataset.theme=localStorage.getItem('rchat_theme')||'dark'}catch(e){}",
+              "try{var t=localStorage.getItem('rchat_theme')||'dark';document.documentElement.dataset.theme=t;var m=document.querySelector('meta[name=\"theme-color\"]');if(m)m.setAttribute('content',t==='light'?'#fef7ff':'#141218')}catch(e){}",
           }}
         />
         <PwaRegister />

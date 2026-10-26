@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   Eye,
@@ -12,8 +12,9 @@ import {
   Share2,
   X,
 } from 'lucide-react'
-import { useStore } from '../lib/store'
-import { Dialog, fieldCls, filledBtn } from './server_settings'
+import { errorText, useStore, viewKey } from '../lib/store'
+import { MESSAGE_MAX, charCount } from '../lib/rules'
+import { Dialog, FieldError, fieldCls, filledBtn } from './server_settings'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
   { label: '1 hour', seconds: 3600 },
@@ -89,12 +90,73 @@ function ExpiryDialog({
   )
 }
 
+function JoinBar({ server }: { server: string }) {
+  const detail = useStore(s => s.servers[server])
+  const joinServer = useStore(s => s.joinServer)
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const locked = detail?.has_password ?? false
+  const ready = !busy && (!locked || password.trim() !== '')
+
+  const join = async () => {
+    if (!ready) return
+    setBusy(true)
+    setError(null)
+    try {
+      await joinServer(server, locked ? password.trim() : undefined)
+    } catch (e) {
+      setError(errorText(e))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] shrink-0 rounded-2xl bg-surface-container px-4 py-3 keyboard:mb-3">
+      <form
+        onSubmit={e => {
+          e.preventDefault()
+          void join()
+        }}
+        className="flex flex-wrap items-center gap-2"
+      >
+        <p className="min-w-48 flex-1 text-sm text-on-surface-variant">
+          You are viewing{' '}
+          <span className="streamer font-medium text-on-surface">
+            {detail?.display_name ?? server}
+          </span>
+          . Join this server to send messages.
+        </p>
+        {locked && (
+          <input
+            type="password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            placeholder="Server password"
+            className={`${fieldCls} max-w-56`}
+          />
+        )}
+        <button disabled={!ready} className={filledBtn}>
+          Join this server
+        </button>
+      </form>
+      <FieldError message={error} />
+    </div>
+  )
+}
+
 export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const guest = useStore(s => s.guest)
   const logout = useStore(s => s.logout)
   const view = useStore(s => s.view)
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
+  const streamer = useStore(s => s.streamer)
+  const rootId = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.id : null))
+  const member = useStore(s => {
+    const v = s.view
+    return !s.me || v?.kind !== 'channel' || s.me.servers.some(x => x.name === v.server)
+  })
   const pending = useStore(s => (thread ? s.threadPending : s.pending))
   const assetUploads = useStore(s => s.settings.asset_uploads)
   const uploadFile = useStore(s => s.uploadFile)
@@ -102,11 +164,23 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const toggleUploadMode = useStore(s => s.toggleUploadMode)
   const sendMessage = useStore(s => s.sendMessage)
   const sendThreadMessage = useStore(s => s.sendThreadMessage)
-  const [text, setText] = useState('')
+  const setDraft = useStore(s => s.setDraft)
+  const draftKey = thread ? (rootId !== null ? `t${rootId}` : null) : view ? viewKey(view) : null
+  const text = useStore(s => (draftKey ? (s.drafts[draftKey] ?? '') : ''))
   const [expiryOpen, setExpiryOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  useLayoutEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  }, [text, draftKey])
 
   if (!thread && !view) return null
+
+  if (!guest && !member && view?.kind === 'channel') return <JoinBar server={view.server} />
 
   if (guest) {
     return (
@@ -120,11 +194,20 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     )
   }
 
-  const target = thread
-    ? 'thread'
+  const placeholder = thread
+    ? 'Message thread'
     : view?.kind === 'channel'
-      ? `#${servers[view.server]?.channels.find(c => c.id === view.channelId)?.name ?? ''}`
-      : (dms.find(d => d.id === view?.dmId)?.other.display_name ?? '')
+      ? `Message #${servers[view.server]?.channels.find(c => c.id === view.channelId)?.name ?? ''}`
+      : streamer
+        ? 'Send a direct message'
+        : `Message ${dms.find(d => d.id === view?.dmId)?.other.display_name ?? ''}`
+
+  const setText = (value: string) => {
+    if (draftKey) setDraft(draftKey, value)
+  }
+
+  const count = charCount(text)
+  const tooLong = count > MESSAGE_MAX
 
   const doSend = (p2pExpiresIn?: number | null) => {
     void (thread ? sendThreadMessage(text, p2pExpiresIn) : sendMessage(text, p2pExpiresIn))
@@ -132,7 +215,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   }
 
   const send = () => {
-    if (!text.trim() && !pending) return
+    if ((!text.trim() && !pending) || tooLong) return
     if (pending?.mode === 'p2p') setExpiryOpen(true)
     else doSend()
   }
@@ -217,13 +300,10 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           </>
         )}
         <textarea
+          ref={inputRef}
           rows={1}
           value={text}
-          onChange={e => {
-            setText(e.target.value)
-            e.target.style.height = 'auto'
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`
-          }}
+          onChange={e => setText(e.target.value)}
           onKeyDown={e => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
@@ -240,13 +320,22 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
               uploadFile(namePasted(file), thread)
             }
           }}
-          placeholder={`Message ${target}`}
+          placeholder={placeholder}
           className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:text-on-surface-variant md:text-sm"
         />
+        {count > MESSAGE_MAX - 500 && (
+          <span
+            title={`Messages can be up to ${MESSAGE_MAX} characters`}
+            className={`shrink-0 self-center text-xs tabular-nums ${tooLong ? 'font-medium text-error' : 'text-on-surface-variant'}`}
+          >
+            {MESSAGE_MAX - count}
+          </span>
+        )}
         <button
-          title="Send"
+          title={tooLong ? 'Message is too long' : 'Send'}
           onClick={send}
-          className="shrink-0 rounded-full bg-primary p-2 text-on-primary hover:opacity-90"
+          disabled={tooLong}
+          className="shrink-0 rounded-full bg-primary p-2 text-on-primary hover:opacity-90 disabled:opacity-40"
         >
           <SendHorizontal size={16} />
         </button>

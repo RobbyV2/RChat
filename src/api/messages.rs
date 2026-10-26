@@ -9,8 +9,9 @@ use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::{
-    ApiError, Authed, CallLog, Embed, MaybeAuthed, MediaRef, Message, UserRef, check_profanity,
-    embeds, header_grants, media::MEDIA_TTL_SECS, require_guest_ok, require_server_view, user_ref,
+    ApiError, Authed, CallLog, Embed, MESSAGE_MAX, MaybeAuthed, MediaRef, Message, UserRef,
+    check_len, check_profanity, embeds, header_grants, media::MEDIA_TTL_SECS, require_guest_ok,
+    require_server_view, user_ref,
 };
 use crate::db::{
     ChannelAccess, ChannelKind, Db, MediaKind, Perm, User, channel_access, effective_perms,
@@ -212,6 +213,59 @@ async fn page(
     Ok(msgs)
 }
 
+async fn claim_media(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    id: &str,
+    username: &str,
+    spoiler: bool,
+) -> Result<MediaRef, ApiError> {
+    let claimed = sqlx::query(
+        "UPDATE media SET uploader = $1 WHERE id = $2 AND (uploader IS NULL OR uploader = $1)",
+    )
+    .bind(username)
+    .bind(id)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    let row = sqlx::query("SELECT filename, uploaded_at FROM media WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    let (filename, uploaded_at): (String, i64) = match &row {
+        Some(r) => (r.try_get(0)?, r.try_get(1)?),
+        None => {
+            return Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                "Unknown media".to_string(),
+            ));
+        }
+    };
+    if claimed == 0 {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "You can only attach files you uploaded".to_string(),
+        ));
+    }
+    let attached =
+        sqlx::query("SELECT 1 FROM messages WHERE media_id = $1 AND media_kind = 'server'")
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .is_some();
+    if attached {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "This file is already attached to a message".to_string(),
+        ));
+    }
+    Ok(MediaRef::server(
+        id.to_string(),
+        filename,
+        spoiler,
+        uploaded_at + MEDIA_TTL_SECS,
+    ))
+}
+
 async fn insert_message(
     db: &Db,
     channel_id: Option<i64>,
@@ -226,7 +280,9 @@ async fn insert_message(
         media_spoiler,
         p2p,
     } = req;
+    check_len(&content, MESSAGE_MAX, "Message")?;
     let spoiler = media_spoiler.unwrap_or(false);
+    let mut tx = db.begin().await?;
     let media = match (&media_id, p2p) {
         (Some(_), Some(_)) => {
             return Err(ApiError(
@@ -234,26 +290,7 @@ async fn insert_message(
                 "Choose server or P2P attachment, not both".to_string(),
             ));
         }
-        (Some(id), None) => {
-            let row = sqlx::query("SELECT filename, uploaded_at FROM media WHERE id = $1")
-                .bind(id)
-                .fetch_optional(db)
-                .await?;
-            match row {
-                Some(r) => Some(MediaRef::server(
-                    id.clone(),
-                    r.try_get(0)?,
-                    spoiler,
-                    r.try_get::<i64, _>(1)? + MEDIA_TTL_SECS,
-                )),
-                None => {
-                    return Err(ApiError(
-                        StatusCode::BAD_REQUEST,
-                        "Unknown media".to_string(),
-                    ));
-                }
-            }
-        }
+        (Some(id), None) => Some(claim_media(&mut tx, id, &user.username, spoiler).await?),
         (None, Some(p2p)) => {
             let P2pAttachment {
                 filename,
@@ -314,9 +351,10 @@ async fn insert_message(
     .bind(media.as_ref().and_then(|m| m.size))
     .bind(media.as_ref().and_then(|m| m.mime.clone()))
     .bind(t)
-    .fetch_one(db)
+    .fetch_one(&mut *tx)
     .await?
     .try_get(0)?;
+    tx.commit().await?;
     Ok(Message {
         id,
         channel_id,
@@ -1001,6 +1039,111 @@ mod tests {
         )
         .await
         .map(|r| r.0)
+    }
+
+    async fn send_with(
+        state: &AppState,
+        cid: i64,
+        name: &str,
+        content: String,
+        media_id: Option<&str>,
+    ) -> Result<Json<Message>, ApiError> {
+        send_channel_message(
+            State(state.clone()),
+            Path(cid),
+            Authed(mem_user(name, false)),
+            Json(SendReq {
+                content,
+                media_id: media_id.map(str::to_string),
+                media_spoiler: None,
+                p2p: None,
+            }),
+        )
+        .await
+    }
+
+    async fn add_media(db: &Db, id: &str, uploader: Option<&str>) {
+        sqlx::query("INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at) VALUES($1, 'a.txt', 'text/plain', 1, $2, $3, $4)")
+            .bind(id)
+            .bind(vec![0u8])
+            .bind(uploader)
+            .bind(now())
+            .execute(db)
+            .await
+            .expect("insert media");
+    }
+
+    #[tokio::test]
+    async fn message_length_limit() {
+        let (state, path) = temp_state("msg_len").await;
+        let cid = general_id(&state.db).await;
+        add_member(&state.db, "rchat", "alice", 0, 0, now()).await;
+        let ok = send_with(&state, cid, "alice", "😀".repeat(MESSAGE_MAX), None).await;
+        assert_eq!(
+            ok.expect("4000 emoji ok").0.content.chars().count(),
+            MESSAGE_MAX
+        );
+        let long = send_with(&state, cid, "alice", "a".repeat(MESSAGE_MAX + 1), None).await;
+        assert!(matches!(long, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'alice') RETURNING id")
+                .fetch_one(&state.db)
+                .await
+                .expect("insert dm")
+                .try_get(0)
+                .expect("dm id");
+        let dm_long = send_dm_message(
+            State(state.clone()),
+            Path(dm),
+            Authed(mem_user("alice", false)),
+            Json(SendReq {
+                content: "a".repeat(MESSAGE_MAX + 1),
+                media_id: None,
+                media_spoiler: None,
+                p2p: None,
+            }),
+        )
+        .await;
+        assert!(matches!(dm_long, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn media_single_use() {
+        let (state, path) = temp_state("media_once").await;
+        let cid = general_id(&state.db).await;
+        add_member(&state.db, "rchat", "alice", 0, 0, now()).await;
+        add_member(&state.db, "rchat", "bob", 0, 0, now()).await;
+        let owned = "aa".repeat(16);
+        add_media(&state.db, &owned, Some("alice")).await;
+        let stolen = send_with(&state, cid, "bob", String::new(), Some(&owned)).await;
+        assert!(matches!(stolen, Err(ApiError(StatusCode::FORBIDDEN, _))));
+        let first = send_with(&state, cid, "alice", String::new(), Some(&owned))
+            .await
+            .expect("owner attaches")
+            .0;
+        assert_eq!(first.media.map(|m| m.id), Some(owned.clone()));
+        let reuse = send_with(&state, cid, "alice", String::new(), Some(&owned)).await;
+        assert!(matches!(reuse, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        let legacy = "bb".repeat(16);
+        add_media(&state.db, &legacy, None).await;
+        let _ = send_with(&state, cid, "bob", String::new(), Some(&legacy))
+            .await
+            .expect("legacy upload attachable once");
+        let other = send_with(&state, cid, "alice", String::new(), Some(&legacy)).await;
+        assert!(matches!(other, Err(ApiError(StatusCode::FORBIDDEN, _))));
+        let again = send_with(&state, cid, "bob", String::new(), Some(&legacy)).await;
+        assert!(matches!(again, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        let unknown = send_with(&state, cid, "bob", String::new(), Some(&"cc".repeat(16))).await;
+        assert!(matches!(unknown, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        let count: i64 = sqlx::query("SELECT COUNT(*) FROM messages WHERE media_id IS NOT NULL")
+            .fetch_one(&state.db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("count value");
+        assert_eq!(count, 2);
+        done(state, path).await;
     }
 
     #[tokio::test]

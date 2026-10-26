@@ -10,7 +10,7 @@ import { MessagePane } from '../components/message_pane'
 import { ServerDialogs } from '../components/server_dialogs'
 import MemberSidebar from '../components/member_sidebar'
 import AdminPanel from '../components/admin_panel'
-import ServerSettings from '../components/server_settings'
+import ServerSettings, { ConfirmDialog } from '../components/server_settings'
 import SettingsMenu from '../components/settings_menu'
 import ThreadPanel from '../components/thread_panel'
 import SearchPanel from '../components/search_panel'
@@ -26,6 +26,7 @@ export default function AppShell() {
   const notices = useStore(s => s.notices)
   const dismissNotice = useStore(s => s.dismissNotice)
   const error = useStore(s => s.error)
+  const bootError = useStore(s => s.bootError)
   const bootstrap = useStore(s => s.bootstrap)
   const booted = useRef(false)
   const [leftOpen, setLeftOpen] = useState(false)
@@ -80,8 +81,9 @@ export default function AppShell() {
 
   if (!me && !guest) {
     return (
-      <div className="flex h-app items-center justify-center text-on-surface-variant">
-        Loading RChat
+      <div className="flex h-app flex-col items-center justify-center gap-1 px-6 text-center text-on-surface-variant">
+        <span>Loading RChat</span>
+        {bootError && <span className="text-sm">{bootError}. Retrying…</span>}
       </div>
     )
   }
@@ -135,6 +137,7 @@ export default function AppShell() {
       <ServerSettings />
       <SettingsMenu />
       <AdminPanel />
+      <ConfirmDialog />
       <ContextMenu />
       <CallBanner />
       {notices.length > 0 && (
@@ -148,7 +151,10 @@ export default function AppShell() {
               }}
               className="rounded-xl bg-surface-container-high p-3 text-left shadow-elevation-2 hover:bg-surface-container-highest"
             >
-              <p className="truncate text-sm font-medium">{n.title}</p>
+              <p className="truncate text-sm font-medium">
+                <span className="streamer">{n.name}</span>
+                {n.title && ` ${n.title}`}
+              </p>
               <p className="truncate text-xs text-on-surface-variant">{n.body}</p>
             </button>
           ))}

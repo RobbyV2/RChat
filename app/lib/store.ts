@@ -3,6 +3,7 @@ import * as api from './api'
 import { wsClient } from './ws'
 import { rtc } from './rtc'
 import { newP2pId, p2p } from './p2p'
+import { mentionsUser } from './mentions'
 import { ALL_PERMS } from './types'
 import type {
   AdminOverview,
@@ -66,9 +67,17 @@ export interface ContextMenuState {
   items: ContextMenuItem[]
 }
 
+export interface ConfirmRequest {
+  title: string
+  body: string
+  confirm: string
+  action: () => void
+}
+
 export type ActiveDialog =
-  | { kind: 'add_server' }
+  | { kind: 'add_server'; join?: string }
   | { kind: 'server_settings'; server: string }
+  | ({ kind: 'confirm' } & ConfirmRequest)
   | { kind: 'admin_panel' }
   | { kind: 'ban_confirm'; username: string }
   | { kind: 'delete_user_confirm'; username: string }
@@ -98,6 +107,7 @@ export interface Outgoing {
 
 export interface Notice {
   id: number
+  name: string
   title: string
   body: string
   go: () => void
@@ -168,7 +178,12 @@ const LS = {
   guestGrants: 'rchat_guest_grants',
   theme: 'rchat_theme',
   streamer: 'rchat_streamer',
+  lastDm: 'rchat_last_dm',
 }
+
+export const THEME_COLORS: Record<Theme, string> = { dark: '#141218', light: '#fef7ff' }
+
+export const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 export const viewKey = (view: View) =>
   view.kind === 'channel' ? `c${view.channelId}` : `d${view.dmId}`
@@ -225,6 +240,7 @@ interface RChatState {
   unreadAnchor: Record<string, number>
   atBottom: boolean
   authExpired: boolean
+  bootError: string | null
   wsStatus: WsStatus
   theme: Theme
   streamer: boolean
@@ -234,6 +250,7 @@ interface RChatState {
   pending: PendingUpload | null
   threadPending: PendingUpload | null
   notices: Notice[]
+  drafts: Record<string, string>
   search: SearchState
   error: string | null
   adminOverview: AdminOverview | null
@@ -253,7 +270,9 @@ interface RChatState {
   openServer: (name: string, channelId?: number, nav?: Nav) => Promise<void>
   openChannel: (server: string, channelId: number, nav?: Nav) => Promise<void>
   openDm: (dmId: number, nav?: Nav) => Promise<void>
+  openLastDm: () => void
   startDm: (username: string) => Promise<void>
+  setDraft: (key: string, text: string) => void
   sendMessage: (content: string, p2pExpiresIn?: number | null) => void
   markRead: (scope: string, messageId: number) => void
   setAtBottom: (v: boolean) => void
@@ -328,6 +347,7 @@ interface RChatState {
   closeContextMenu: () => void
   openDialog: (dialog: ActiveDialog) => void
   closeDialog: () => void
+  askConfirm: (req: ConfirmRequest) => void
   setError: (message: string | null) => void
 }
 
@@ -396,7 +416,7 @@ export const roleMenuItems = (server: string, username: string): ContextMenuItem
 
 export const useStore = create<RChatState>()((set, get) => {
   const fail = (e: unknown) => {
-    const message = e instanceof Error ? e.message : String(e)
+    const message = errorText(e)
     set({ error: message })
     setTimeout(() => {
       if (get().error === message) set({ error: null })
@@ -425,6 +445,33 @@ export const useStore = create<RChatState>()((set, get) => {
         if (e instanceof api.ApiError && e.status === 401) expireSession()
         else fail(e)
       })
+
+  let meRetry: ReturnType<typeof setTimeout> | null = null
+  let recovering = false
+
+  const recoverMe = async () => {
+    if (meRetry) clearTimeout(meRetry)
+    meRetry = null
+    if (recovering || get().me || !get().token) return
+    recovering = true
+    try {
+      const me = await api.me()
+      if (!get().token) return
+      set({ me, dms: me.dms, bootError: null })
+      p2p.announce()
+      void loadUnreads()
+      await resolveUrl('replace')
+    } catch (e) {
+      if (e instanceof api.ApiError && e.status === 401) {
+        expireSession()
+        return
+      }
+      set({ bootError: errorText(e) })
+      meRetry = setTimeout(() => void recoverMe(), 5000)
+    } finally {
+      recovering = false
+    }
+  }
 
   const refreshView = async () => {
     const { view } = get()
@@ -513,7 +560,15 @@ export const useStore = create<RChatState>()((set, get) => {
       )
       .catch(() => {})
 
+  const catchUp = () => {
+    void refreshView()
+    if (get().me) void loadUnreads()
+    const { view, members } = get()
+    if (view?.kind === 'channel' && members[view.server]) void get().loadMembers(view.server, true)
+  }
+
   const startWs = () => {
+    let connected = false
     wsClient.onEvent = ev => get().applyWsEvent(ev)
     wsClient.onStatus = wsStatus => {
       set({ wsStatus })
@@ -523,14 +578,17 @@ export const useStore = create<RChatState>()((set, get) => {
         if (get().me) {
           p2p.announce()
           void refetchMe()
-        }
+        } else if (get().token) void recoverMe()
         const { view } = get()
         if (view) askP2p(get().messages[viewKey(view)] ?? [])
+        if (connected) catchUp()
+        connected = true
       }
     }
     wsClient.onPoll = () => {
       void refreshView()
       if (get().me) void refetchMe()
+      else if (get().token) void recoverMe()
       void get().loadSettings()
     }
     wsClient.start(get().token)
@@ -595,8 +653,17 @@ export const useStore = create<RChatState>()((set, get) => {
     let detail: ServerDetail
     try {
       detail = await fetchServer(target.server)
-    } catch {
-      return fallback()
+    } catch (e) {
+      await fallback()
+      const locked =
+        e instanceof api.ApiError &&
+        (e.status === 403 || (e.status === 401 && get().settings.guests_enabled))
+      const missing = e instanceof api.ApiError && e.status === 404
+      if (locked) {
+        fail(new Error('That server is password protected. Enter its password to join.'))
+        get().openDialog({ kind: 'add_server', join: target.server })
+      } else fail(missing ? new Error('That server does not exist') : e)
+      return
     }
     const { guest, guestServers } = get()
     if (guest && !guestServers.includes(target.server)) {
@@ -618,7 +685,14 @@ export const useStore = create<RChatState>()((set, get) => {
     setTokenCookie(res.token)
     localStorage.removeItem(LS.guest)
     api.setToken(res.token)
-    set({ token: res.token, me: res.user, dms: res.user.dms, guest: false, authExpired: false })
+    set({
+      token: res.token,
+      me: res.user,
+      dms: res.user.dms,
+      guest: false,
+      authExpired: false,
+      bootError: null,
+    })
     startWs()
   }
 
@@ -729,10 +803,10 @@ export const useStore = create<RChatState>()((set, get) => {
     set(s => ({ members: { ...s.members, [server]: page } }))
 
   let noticeId = 0
-  const notify = (title: string, body: string, go: () => void) => {
+  const notify = (name: string, title: string, body: string, go: () => void) => {
     noticeId += 1
     const id = noticeId
-    set(s => ({ notices: [...s.notices, { id, title, body, go }].slice(-3) }))
+    set(s => ({ notices: [...s.notices, { id, name, title, body, go }].slice(-3) }))
     setTimeout(() => set(s => ({ notices: s.notices.filter(n => n.id !== id) })), 5000)
   }
 
@@ -864,6 +938,7 @@ export const useStore = create<RChatState>()((set, get) => {
     unreadAnchor: {},
     atBottom: true,
     authExpired: false,
+    bootError: null,
     wsStatus: 'red',
     theme: 'dark',
     streamer: false,
@@ -873,6 +948,7 @@ export const useStore = create<RChatState>()((set, get) => {
     pending: null,
     threadPending: null,
     notices: [],
+    drafts: {},
     search: emptySearch(),
     error: null,
     adminOverview: null,
@@ -894,6 +970,9 @@ export const useStore = create<RChatState>()((set, get) => {
     setTheme: theme => {
       localStorage.setItem(LS.theme, theme)
       document.documentElement.dataset.theme = theme
+      document
+        .querySelector('meta[name="theme-color"]')
+        ?.setAttribute('content', THEME_COLORS[theme])
       set({ theme })
     },
 
@@ -928,16 +1007,25 @@ export const useStore = create<RChatState>()((set, get) => {
       if (!guestServers.includes('rchat')) guestServers.unshift('rchat')
       if (token) {
         api.setToken(token)
+        let me: Me
         try {
-          const me = await api.me()
-          setTokenCookie(token)
-          set({ token, me, dms: me.dms, guest: false })
-          startWs()
-          await resolveUrl('replace')
+          me = await api.me()
         } catch (e) {
-          fail(e)
-          expireSession()
+          if (e instanceof api.ApiError && e.status === 401) {
+            fail(e)
+            expireSession()
+            return
+          }
+          setTokenCookie(token)
+          set({ token, guest: false, bootError: errorText(e) })
+          startWs()
+          meRetry = setTimeout(() => void recoverMe(), 5000)
+          return
         }
+        setTokenCookie(token)
+        set({ token, me, dms: me.dms, guest: false, bootError: null })
+        startWs()
+        await resolveUrl('replace')
       } else if (guest) {
         const storedGrants = localStorage.getItem(LS.guestGrants)
         persistGrants(storedGrants ? (JSON.parse(storedGrants) as Record<string, string>) : {})
@@ -953,6 +1041,8 @@ export const useStore = create<RChatState>()((set, get) => {
     login: body => act(async () => enter(await api.login(body))),
 
     logout: () => {
+      if (meRetry) clearTimeout(meRetry)
+      meRetry = null
       wsClient.stop()
       rtc.leave()
       p2p.endMedia()
@@ -991,6 +1081,8 @@ export const useStore = create<RChatState>()((set, get) => {
         pending: null,
         threadPending: null,
         notices: [],
+        drafts: {},
+        bootError: null,
         search: emptySearch(),
         adminOverview: null,
       })
@@ -1005,19 +1097,18 @@ export const useStore = create<RChatState>()((set, get) => {
         startWs()
       }),
 
-    guestJoinServer: (name, password) =>
-      act(async () => {
-        const id = name.trim().toLowerCase()
-        if (password) {
-          const { grant } = await api.guestAccess(id, password)
-          persistGrants({ ...get().guestGrants, [id]: grant })
-        }
-        await fetchServer(id)
-        const list = get().guestServers
-        persistGuestServers(list.includes(id) ? list : [...list, id])
-        wsClient.subscribe([id])
-        await get().openServer(id)
-      }),
+    guestJoinServer: async (name, password) => {
+      const id = name.trim().toLowerCase()
+      if (password) {
+        const { grant } = await api.guestAccess(id, password)
+        persistGrants({ ...get().guestGrants, [id]: grant })
+      }
+      await fetchServer(id)
+      const list = get().guestServers
+      persistGuestServers(list.includes(id) ? list : [...list, id])
+      wsClient.subscribe([id])
+      await get().openServer(id)
+    },
 
     openServer: (name, channelId, nav = 'push') =>
       act(async () => {
@@ -1060,9 +1151,27 @@ export const useStore = create<RChatState>()((set, get) => {
         }))
         syncUrl(view, nav)
         get().setViewing(null)
+        const username = get().me?.username
+        if (username) localStorage.setItem(`${LS.lastDm}:${username}`, String(dmId))
         const msgs = await api.dmMessages(dmId)
         set(s => ({ messages: { ...s.messages, [`d${dmId}`]: applyEmbeds([...msgs].sort(byId)) } }))
         askP2p(msgs)
+      }),
+
+    openLastDm: () => {
+      const { me, dms } = get()
+      if (!me) return
+      const stored = Number(localStorage.getItem(`${LS.lastDm}:${me.username}`))
+      const target = dms.find(d => d.id === stored) ?? dms.find(d => d.is_self) ?? dms[0]
+      if (target) void get().openDm(target.id)
+    },
+
+    setDraft: (key, text) =>
+      set(s => {
+        const drafts = { ...s.drafts }
+        if (text) drafts[key] = text
+        else delete drafts[key]
+        return { drafts }
       }),
 
     startDm: username =>
@@ -1316,20 +1425,20 @@ export const useStore = create<RChatState>()((set, get) => {
         patchMessage(messageId, m => ({ ...m, embeds: withoutEmbed(m.embeds, ord, banner) }))
       }),
 
-    createServer: (name, password) =>
-      act(async () => {
-        await api.createServer(name, password)
-        await refetchMe()
-        await get().openServer(name.trim().toLowerCase())
-      }),
+    createServer: async (name, password) => {
+      await api.createServer(name, password)
+      await refetchMe()
+      await get().openServer(name.trim().toLowerCase())
+    },
 
-    joinServer: (name, password) =>
-      act(async () => {
-        const id = name.trim().toLowerCase()
-        await api.joinServer(id, password)
-        await refetchMe()
-        await get().openServer(id)
-      }),
+    joinServer: async (name, password) => {
+      const id = name.trim().toLowerCase()
+      await api.joinServer(id, password)
+      await refetchMe()
+      const { view } = get()
+      const here = view?.kind === 'channel' && view.server === id ? view.channelId : undefined
+      await get().openServer(id, here, here === undefined ? 'push' : 'replace')
+    },
 
     leaveServer: name =>
       act(async () => {
@@ -1341,10 +1450,8 @@ export const useStore = create<RChatState>()((set, get) => {
         dropServer(name)
       }),
 
-    renameServer: (name, newName) =>
-      act(async () => void (await api.updateServer(name, { name: newName }))),
-    setServerPassword: (name, password) =>
-      act(async () => void (await api.updateServer(name, { password }))),
+    renameServer: async (name, newName) => void (await api.updateServer(name, { name: newName })),
+    setServerPassword: async (name, password) => void (await api.updateServer(name, { password })),
     deleteServer: name => act(async () => void (await api.deleteServer(name))),
     createChannel: (server, name, kind = 'text') =>
       act(async () => void (await api.createChannel(server, name, kind))),
@@ -1618,17 +1725,22 @@ export const useStore = create<RChatState>()((set, get) => {
           const { server, channel_id, dm_id } = ev
           if (dm_id !== null) {
             if (view?.kind === 'dm' && view.dmId === dm_id) return
-            notify(m.author.display_name, m.content || m.media?.filename || 'Attachment', () => {
-              void get().openDm(dm_id)
-            })
+            notify(
+              m.author.display_name,
+              '',
+              m.content || m.media?.filename || 'Attachment',
+              () => {
+                void get().openDm(dm_id)
+              }
+            )
           } else if (channel_id !== null && server !== null) {
-            if (!m.content.toLowerCase().includes(`@${me.username}`)) return
+            if (!mentionsUser(m.content, me.username)) return
             const viewingIt =
               rootId !== null
                 ? panel?.kind === 'thread' && panel.root.id === rootId
                 : view?.kind === 'channel' && view.channelId === channel_id
             if (viewingIt) return
-            notify(`${m.author.display_name} mentioned you`, m.content, () => {
+            notify(m.author.display_name, 'mentioned you', m.content, () => {
               void get().openServer(server, channel_id)
             })
           }
@@ -2145,6 +2257,7 @@ export const useStore = create<RChatState>()((set, get) => {
     closeContextMenu: () => set({ contextMenu: null }),
     openDialog: dialog => set({ activeDialog: dialog }),
     closeDialog: () => set({ activeDialog: null }),
+    askConfirm: req => set({ activeDialog: { kind: 'confirm', ...req } }),
     setError: message => set({ error: message }),
   }
 })

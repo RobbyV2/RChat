@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { LogOut, MessageCircle, Plus, Settings, Shield } from 'lucide-react'
 import { dmsUnread, serverUnread, useStore } from '../lib/store'
+import { serverInitial } from '../lib/rules'
 import { longPress } from './context_menu'
 import { InstallButton } from './pwa_register'
 import { ThemeToggle } from './status_clock'
@@ -14,13 +15,13 @@ export function ServerRail() {
   const me = useStore(s => s.me)
   const guestServers = useStore(s => s.guestServers)
   const servers = useStore(s => s.servers)
-  const dms = useStore(s => s.dms)
   const view = useStore(s => s.view)
-  const openDm = useStore(s => s.openDm)
+  const openLastDm = useStore(s => s.openLastDm)
   const openServer = useStore(s => s.openServer)
   const openDialog = useStore(s => s.openDialog)
   const openContextMenu = useStore(s => s.openContextMenu)
   const leaveServer = useStore(s => s.leaveServer)
+  const askConfirm = useStore(s => s.askConfirm)
   const logout = useStore(s => s.logout)
   useStore(s => s.reads)
   const dot = (
@@ -44,10 +45,7 @@ export function ServerRail() {
       {me && (
         <button
           title="Direct messages"
-          onClick={() => {
-            const target = dms.find(d => d.is_self) ?? dms[0]
-            if (target) void openDm(target.id)
-          }}
+          onClick={openLastDm}
           className={`${tile} relative ${
             view?.kind === 'dm'
               ? 'bg-primary text-on-primary'
@@ -79,7 +77,13 @@ export function ServerRail() {
                       {
                         label: 'Leave Server',
                         danger: true,
-                        action: () => void leaveServer(name),
+                        action: () =>
+                          askConfirm({
+                            title: 'Leave Server',
+                            body: 'Leave this server? You can join it again later.',
+                            confirm: 'Leave',
+                            action: () => void leaveServer(name),
+                          }),
                       },
                     ]),
               ])
@@ -93,7 +97,7 @@ export function ServerRail() {
             {name === 'rchat' ? (
               <img src="/rchat_r.png" alt="RChat" className="h-full w-full object-contain p-1" />
             ) : (
-              <span className="streamer">{display_name.trim().charAt(0).toUpperCase() || '?'}</span>
+              <span className="streamer">{serverInitial(display_name)}</span>
             )}
             {mine && (
               <span
