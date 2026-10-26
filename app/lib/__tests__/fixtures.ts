@@ -84,6 +84,7 @@ export const serverDetail = (name: string, over: Partial<ServerDetail> = {}): Se
 export const me = (username: string, over: Partial<Me> = {}): Me => ({
   ...user(username),
   is_site_admin: false,
+  appear_offline: false,
   servers: [],
   dms: [],
   ...over,

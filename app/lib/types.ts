@@ -146,6 +146,7 @@ export interface ServerMatch {
 
 export interface Me extends UserRef {
   is_site_admin: boolean
+  appear_offline: boolean
   servers: ServerSummary[]
   dms: DmSummary[]
 }
@@ -239,6 +240,7 @@ export type WsEvent =
   | { type: 'user_updated'; user: UserRef }
   | { type: 'user_registered'; user: UserRef }
   | { type: 'presence_changed'; server: string; username: string; online: boolean }
+  | { type: 'presence_mode'; username: string; appear_offline: boolean }
   | { type: 'read_updated'; username: string; scope: string; last_read: number }
   | { type: 'voice_state'; server: string; channel_id: number; users: string[] }
   | {

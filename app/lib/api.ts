@@ -108,6 +108,8 @@ export const words = (username: string) =>
 export const me = () => req<Me>('GET', '/me')
 export const patchMe = (avatar_kind: AvatarKind, avatar_color?: string) =>
   req<UserRef>('PATCH', '/me', { avatar_kind, avatar_color })
+export const setAppearOffline = (appear_offline: boolean) =>
+  req<UserRef>('PATCH', '/me', { appear_offline })
 
 export const createServer = (name: string, password?: string) =>
   req<unknown>('POST', '/servers', { name, password })

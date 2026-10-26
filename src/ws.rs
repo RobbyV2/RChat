@@ -139,6 +139,10 @@ pub enum WsEvent {
         username: String,
         online: bool,
     },
+    PresenceMode {
+        username: String,
+        appear_offline: bool,
+    },
     ReadUpdated {
         username: String,
         scope: String,
@@ -361,10 +365,24 @@ impl VoiceMap {
     }
 }
 
+#[derive(Default)]
+struct Presence {
+    servers: HashMap<String, HashMap<String, HashSet<u64>>>,
+    conns: HashMap<u64, String>,
+}
+
+impl Presence {
+    fn forget(&mut self, viewers: &HashSet<u64>) {
+        for conn in viewers {
+            self.conns.remove(conn);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Hub {
     tx: broadcast::Sender<WsEvent>,
-    presence: Arc<Mutex<HashMap<String, HashMap<String, usize>>>>,
+    presence: Arc<Mutex<Presence>>,
     voice: Arc<Mutex<VoiceMap>>,
     p2p: Arc<Mutex<HashMap<String, BTreeMap<u64, P2pHost>>>>,
 }
@@ -379,7 +397,7 @@ impl Hub {
     pub fn new() -> Hub {
         Hub {
             tx: broadcast::channel(256).0,
-            presence: Arc::new(Mutex::new(HashMap::new())),
+            presence: Arc::new(Mutex::new(Presence::default())),
             voice: Arc::new(Mutex::new(VoiceMap::default())),
             p2p: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -395,16 +413,25 @@ impl Hub {
             let mut p = self.presence.lock().unwrap();
             match &ev {
                 WsEvent::ServerRenamed { old_name, server } => {
-                    if let Some(v) = p.remove(old_name) {
-                        p.insert(server.name.clone(), v);
+                    if let Some(users) = p.servers.remove(old_name) {
+                        for conn in users.values().flatten() {
+                            p.conns.insert(*conn, server.name.clone());
+                        }
+                        p.servers.insert(server.name.clone(), users);
                     }
                 }
                 WsEvent::ServerDeleted { name } => {
-                    p.remove(name);
+                    if let Some(users) = p.servers.remove(name) {
+                        for viewers in users.values() {
+                            p.forget(viewers);
+                        }
+                    }
                 }
                 WsEvent::Banned { username } => {
-                    for (server, users) in p.iter_mut() {
-                        if users.remove(username).is_some() {
+                    let mut gone = Vec::new();
+                    for (server, users) in p.servers.iter_mut() {
+                        if let Some(viewers) = users.remove(username) {
+                            gone.push(viewers);
                             extra.push(WsEvent::PresenceChanged {
                                 server: server.clone(),
                                 username: username.clone(),
@@ -412,6 +439,10 @@ impl Hub {
                             });
                         }
                     }
+                    for viewers in &gone {
+                        p.forget(viewers);
+                    }
+                    p.servers.retain(|_, users| !users.is_empty());
                     self.p2p.lock().unwrap().remove(username);
                 }
                 _ => {}
@@ -713,7 +744,7 @@ impl Hub {
     }
 
     pub fn online_set(&self, server: &str) -> HashSet<String> {
-        match self.presence.lock().unwrap().get(server) {
+        match self.presence.lock().unwrap().servers.get(server) {
             Some(users) => users.keys().cloned().collect(),
             None => HashSet::new(),
         }
@@ -723,6 +754,7 @@ impl Hub {
         self.presence
             .lock()
             .unwrap()
+            .servers
             .get(server)
             .map_or(0, |users| users.len() as i64)
     }
@@ -731,40 +763,42 @@ impl Hub {
         self.presence
             .lock()
             .unwrap()
+            .servers
             .get(server)
             .is_some_and(|users| users.contains_key(username))
     }
 
-    pub fn set_viewing(&self, user: &str, old: Option<&str>, new: Option<&str>) {
-        if old == new {
-            return;
-        }
+    pub fn set_viewing(&self, conn: u64, user: &str, new: Option<&str>) {
         let mut deltas = Vec::new();
         {
             let mut p = self.presence.lock().unwrap();
-            if let Some(s) = old {
-                let users = p.entry(s.to_string()).or_default();
-                match users.get(user).copied().unwrap_or(0) {
-                    0 => {}
-                    1 => {
-                        users.remove(user);
-                        deltas.push((s.to_string(), false));
-                    }
-                    n => {
-                        users.insert(user.to_string(), n - 1);
-                    }
+            let Presence { servers, conns } = &mut *p;
+            if conns.get(&conn).map(String::as_str) == new {
+                return;
+            }
+            if let Some(old) = conns.remove(&conn)
+                && let Some(users) = servers.get_mut(&old)
+                && let Some(viewers) = users.get_mut(user)
+                && viewers.remove(&conn)
+                && viewers.is_empty()
+            {
+                users.remove(user);
+                if users.is_empty() {
+                    servers.remove(&old);
                 }
+                deltas.push((old, false));
             }
             if let Some(s) = new {
-                let count = p
+                let viewers = servers
                     .entry(s.to_string())
                     .or_default()
                     .entry(user.to_string())
-                    .or_insert(0);
-                *count += 1;
-                if *count == 1 {
+                    .or_default();
+                viewers.insert(conn);
+                if viewers.len() == 1 {
                     deltas.push((s.to_string(), true));
                 }
+                conns.insert(conn, s.to_string());
             }
         }
         for (server, online) in deltas {
@@ -777,12 +811,23 @@ impl Hub {
     }
 
     pub fn force_offline(&self, server: &str, user: &str) {
-        let removed = self
-            .presence
-            .lock()
-            .unwrap()
-            .get_mut(server)
-            .is_some_and(|users| users.remove(user).is_some());
+        let removed = {
+            let mut p = self.presence.lock().unwrap();
+            let gone = p.servers.get_mut(server).and_then(|users| {
+                let gone = users.remove(user);
+                gone.map(|viewers| (viewers, users.is_empty()))
+            });
+            match gone {
+                Some((viewers, empty)) => {
+                    p.forget(&viewers);
+                    if empty {
+                        p.servers.remove(server);
+                    }
+                    true
+                }
+                None => false,
+            }
+        };
         if removed {
             self.broadcast(WsEvent::PresenceChanged {
                 server: server.to_string(),
@@ -1187,6 +1232,41 @@ async fn send_voice_snapshot(
     true
 }
 
+struct ConnPresence {
+    conn: u64,
+    viewing: Option<String>,
+    hidden: bool,
+}
+
+impl ConnPresence {
+    fn sync(&self, hub: &Hub, user: &str) {
+        let target = match self.hidden {
+            true => None,
+            false => self.viewing.as_deref(),
+        };
+        hub.set_viewing(self.conn, user, target);
+    }
+
+    fn view(&mut self, hub: &Hub, user: &str, target: Option<String>) {
+        self.viewing = target;
+        self.sync(hub, user);
+    }
+
+    fn set_hidden(&mut self, hub: &Hub, user: &str, hidden: bool) {
+        self.hidden = hidden;
+        self.sync(hub, user);
+    }
+
+    fn resync(&mut self, hub: &Hub, user: &str, hidden: bool, member_servers: &HashSet<String>) {
+        self.viewing = self.viewing.take().filter(|s| member_servers.contains(s));
+        self.set_hidden(hub, user, hidden);
+    }
+
+    fn leave(&self, hub: &Hub, user: &str) {
+        hub.set_viewing(self.conn, user, None);
+    }
+}
+
 async fn run(state: AppState, mut socket: WebSocket) {
     let conn = CONN_SEQ.fetch_add(1, Ordering::Relaxed);
     let token = loop {
@@ -1200,10 +1280,10 @@ async fn run(state: AppState, mut socket: WebSocket) {
         }
     };
     let mut rx = state.hub.subscribe();
-    let (username, is_site_admin): (Option<String>, bool) = match token {
+    let (username, is_site_admin, hidden): (Option<String>, bool, bool) = match token {
         Some(token) => {
             let row = sqlx::query(
-                "SELECT u.username, u.is_site_admin FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1",
+                "SELECT u.username, u.is_site_admin, u.appear_offline FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1",
             )
             .bind(token)
             .fetch_optional(&state.db)
@@ -1214,11 +1294,12 @@ async fn run(state: AppState, mut socket: WebSocket) {
                 Some(r) => (
                     r.try_get(0).ok(),
                     r.try_get::<i64, _>(1).map(|v| v != 0).unwrap_or(false),
+                    r.try_get::<i64, _>(2).map(|v| v != 0).unwrap_or(false),
                 ),
-                None => (None, false),
+                None => (None, false, false),
             }
         }
-        None => (None, false),
+        None => (None, false, false),
     };
     let mut member_servers: HashSet<String> = match &username {
         Some(user) => member_servers_of(&state.db, user).await,
@@ -1229,7 +1310,11 @@ async fn run(state: AppState, mut socket: WebSocket) {
     }
     let mut subs: HashSet<String> = HashSet::new();
     let mut guest_grants: HashMap<String, String> = HashMap::new();
-    let mut viewing: Option<String> = None;
+    let mut presence = ConnPresence {
+        conn,
+        viewing: None,
+        hidden,
+    };
     let mut viewable: HashMap<i64, bool> = HashMap::new();
     if !send_voice_snapshot(
         &state,
@@ -1253,17 +1338,18 @@ async fn run(state: AppState, mut socket: WebSocket) {
                         viewable.clear();
                         match &username {
                             Some(user) => {
-                                let exists = sqlx::query("SELECT 1 FROM users WHERE username = $1")
+                                let row = sqlx::query("SELECT appear_offline FROM users WHERE username = $1")
                                     .bind(user)
                                     .fetch_optional(&state.db)
                                     .await
                                     .ok()
-                                    .flatten()
-                                    .is_some();
-                                if !exists {
-                                    break;
-                                }
+                                    .flatten();
+                                let hidden = match row {
+                                    Some(r) => r.try_get::<i64, _>(0).map(|v| v != 0).unwrap_or(presence.hidden),
+                                    None => break,
+                                };
                                 member_servers = member_servers_of(&state.db, user).await;
+                                presence.resync(&state.hub, user, hidden, &member_servers);
                             }
                             None => {
                                 if !setting_on(&state.db, "guests_enabled").await {
@@ -1276,7 +1362,7 @@ async fn run(state: AppState, mut socket: WebSocket) {
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
                 let mut deliver = wants(&ev, username.as_deref(), is_site_admin, &member_servers, &subs);
-                track(&ev, username.as_deref(), &mut member_servers, &mut subs, &mut viewing, &mut viewable);
+                track(&ev, username.as_deref(), &mut member_servers, &mut subs, &mut presence.viewing, &mut viewable);
                 if username.is_none() {
                     match &ev {
                         WsEvent::ServerRenamed { old_name, server } => {
@@ -1308,6 +1394,9 @@ async fn run(state: AppState, mut socket: WebSocket) {
                 match &ev {
                     WsEvent::Banned { username: banned } if Some(banned.as_str()) == username.as_deref() => break,
                     WsEvent::SettingsChanged { settings } if username.is_none() && !settings.guests_enabled => break,
+                    WsEvent::PresenceMode { username: user, appear_offline } if Some(user.as_str()) == username.as_deref() => {
+                        presence.set_hidden(&state.hub, user, *appear_offline);
+                    }
                     _ => {}
                 }
             }
@@ -1322,8 +1411,9 @@ async fn run(state: AppState, mut socket: WebSocket) {
                                 }
                                 (_, _) => None,
                             };
-                            if let Some(user) = &username { state.hub.set_viewing(user, viewing.as_deref(), target.as_deref()) }
-                            viewing = target;
+                            if let Some(user) = &username {
+                                presence.view(&state.hub, user, target);
+                            }
                         }
                         Ok(ClientMsg::Subscribe { servers, grants }) => {
                             subs.clear();
@@ -1430,9 +1520,7 @@ async fn run(state: AppState, mut socket: WebSocket) {
                 });
             }
         }
-        if let Some(server) = &viewing {
-            state.hub.set_viewing(user, Some(server), None)
-        }
+        presence.leave(&state.hub, user);
     }
 }
 
@@ -1665,7 +1753,11 @@ fn wants(
             username: _,
             online: _,
         } => in_server(server),
-        WsEvent::ReadUpdated {
+        WsEvent::PresenceMode {
+            username,
+            appear_offline: _,
+        }
+        | WsEvent::ReadUpdated {
             username,
             scope: _,
             last_read: _,
@@ -1719,5 +1811,198 @@ fn wants(
             reason: _,
         } => scoped(server, dm_users),
         WsEvent::Error { message: _ } => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn presence_events(rx: &mut broadcast::Receiver<WsEvent>) -> Vec<(String, bool)> {
+        let mut out = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let WsEvent::PresenceChanged {
+                server,
+                username: _,
+                online,
+            } = ev
+            {
+                out.push((server, online));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn appear_offline_suppresses_and_restores_presence() {
+        let hub = Hub::new();
+        let mut rx = hub.subscribe();
+        let conn = |conn, hidden| ConnPresence {
+            conn,
+            viewing: None,
+            hidden,
+        };
+        let (mut a, mut b) = (conn(1, false), conn(2, false));
+        a.view(&hub, "alice", Some("rchat".to_string()));
+        b.view(&hub, "alice", Some("rchat".to_string()));
+        assert!(hub.is_online("rchat", "alice"));
+        assert_eq!(hub.online_count("rchat"), 1);
+        assert_eq!(presence_events(&mut rx), vec![("rchat".to_string(), true)]);
+        a.set_hidden(&hub, "alice", true);
+        assert!(hub.is_online("rchat", "alice"));
+        b.set_hidden(&hub, "alice", true);
+        assert!(!hub.is_online("rchat", "alice"));
+        assert_eq!(hub.online_count("rchat"), 0);
+        assert!(hub.online_set("rchat").is_empty());
+        assert_eq!(presence_events(&mut rx), vec![("rchat".to_string(), false)]);
+        let mut c = conn(3, true);
+        c.view(&hub, "alice", Some("rchat".to_string()));
+        a.view(&hub, "alice", Some("other".to_string()));
+        b.set_hidden(&hub, "alice", true);
+        assert!(!hub.is_online("rchat", "alice"));
+        assert!(!hub.is_online("other", "alice"));
+        assert!(presence_events(&mut rx).is_empty());
+        a.set_hidden(&hub, "alice", false);
+        assert!(hub.is_online("other", "alice"));
+        assert!(!hub.is_online("rchat", "alice"));
+        c.set_hidden(&hub, "alice", false);
+        b.set_hidden(&hub, "alice", false);
+        assert!(hub.is_online("rchat", "alice"));
+        assert_eq!(hub.online_count("rchat"), 1);
+        assert_eq!(
+            presence_events(&mut rx),
+            vec![("other".to_string(), true), ("rchat".to_string(), true)]
+        );
+        a.set_hidden(&hub, "alice", true);
+        a.leave(&hub, "alice");
+        c.leave(&hub, "alice");
+        assert!(hub.is_online("rchat", "alice"));
+        b.leave(&hub, "alice");
+        assert!(!hub.is_online("rchat", "alice"));
+        assert!(!hub.is_online("other", "alice"));
+        assert_eq!(
+            presence_events(&mut rx),
+            vec![("other".to_string(), false), ("rchat".to_string(), false)]
+        );
+    }
+
+    fn rename(hub: &Hub, old_name: &str, name: &str) {
+        hub.broadcast(WsEvent::ServerRenamed {
+            old_name: old_name.to_string(),
+            server: ServerSummaryLite {
+                name: name.to_string(),
+                display_name: name.to_string(),
+                creator: None,
+                has_password: false,
+            },
+        });
+    }
+
+    fn servers(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn lagged_rename_drops_stale_presence() {
+        let hub = Hub::new();
+        let mut rx = hub.subscribe();
+        let mut a = ConnPresence {
+            conn: 1,
+            viewing: None,
+            hidden: false,
+        };
+        a.view(&hub, "alice", Some("rchat".to_string()));
+        rename(&hub, "rchat", "chat");
+        assert!(hub.is_online("chat", "alice"));
+        let _ = presence_events(&mut rx);
+        a.resync(&hub, "alice", true, &servers(&["chat"]));
+        assert_eq!(a.viewing, None);
+        assert!(!hub.is_online("chat", "alice"));
+        assert_eq!(presence_events(&mut rx), vec![("chat".to_string(), false)]);
+        a.set_hidden(&hub, "alice", false);
+        a.leave(&hub, "alice");
+        assert!(presence_events(&mut rx).is_empty());
+        let p = hub.presence.lock().unwrap();
+        assert!(p.servers.is_empty());
+        assert!(p.conns.is_empty());
+    }
+
+    #[test]
+    fn lagged_resync_keeps_valid_presence() {
+        let hub = Hub::new();
+        let mut a = ConnPresence {
+            conn: 1,
+            viewing: None,
+            hidden: false,
+        };
+        a.view(&hub, "alice", Some("rchat".to_string()));
+        rename(&hub, "rchat", "chat");
+        a.viewing = Some("chat".to_string());
+        a.resync(&hub, "alice", false, &servers(&["chat"]));
+        assert!(hub.is_online("chat", "alice"));
+        a.resync(&hub, "alice", true, &servers(&["chat"]));
+        assert!(!hub.is_online("chat", "alice"));
+        a.resync(&hub, "alice", false, &servers(&["chat"]));
+        assert!(hub.is_online("chat", "alice"));
+        a.leave(&hub, "alice");
+        assert!(!hub.is_online("chat", "alice"));
+        assert!(hub.presence.lock().unwrap().servers.is_empty());
+    }
+
+    #[test]
+    fn leave_after_lagged_rename_removes_presence() {
+        let hub = Hub::new();
+        let mut a = ConnPresence {
+            conn: 1,
+            viewing: None,
+            hidden: false,
+        };
+        a.view(&hub, "alice", Some("rchat".to_string()));
+        rename(&hub, "rchat", "chat");
+        a.leave(&hub, "alice");
+        assert!(!hub.is_online("chat", "alice"));
+        assert!(hub.presence.lock().unwrap().servers.is_empty());
+    }
+
+    #[test]
+    fn force_offline_does_not_steal_other_connections() {
+        let hub = Hub::new();
+        let conn = |conn| ConnPresence {
+            conn,
+            viewing: None,
+            hidden: false,
+        };
+        let (mut a, mut b) = (conn(1), conn(2));
+        a.view(&hub, "alice", Some("rchat".to_string()));
+        hub.force_offline("rchat", "alice");
+        assert!(!hub.is_online("rchat", "alice"));
+        b.view(&hub, "alice", Some("rchat".to_string()));
+        a.view(&hub, "alice", None);
+        assert!(hub.is_online("rchat", "alice"));
+        a.view(&hub, "alice", Some("rchat".to_string()));
+        b.leave(&hub, "alice");
+        assert!(hub.is_online("rchat", "alice"));
+        let mut rx = hub.subscribe();
+        hub.broadcast(WsEvent::Banned {
+            username: "alice".to_string(),
+        });
+        assert!(!hub.is_online("rchat", "alice"));
+        a.leave(&hub, "alice");
+        assert_eq!(presence_events(&mut rx), vec![("rchat".to_string(), false)]);
+        let p = hub.presence.lock().unwrap();
+        assert!(p.servers.is_empty());
+        assert!(p.conns.is_empty());
+    }
+
+    #[test]
+    fn presence_mode_reaches_only_its_user() {
+        let ev = WsEvent::PresenceMode {
+            username: "alice".to_string(),
+            appear_offline: true,
+        };
+        let none = HashSet::new();
+        assert!(wants(&ev, Some("alice"), false, &none, &none));
+        assert!(!wants(&ev, Some("bob"), true, &none, &none));
+        assert!(!wants(&ev, None, false, &none, &none));
     }
 }

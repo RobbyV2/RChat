@@ -148,6 +148,18 @@ describe('presence_changed', () => {
   })
 })
 
+describe('presence_mode', () => {
+  test('syncs appear_offline only for the signed-in user', () => {
+    useStore.setState({ me: me('alice') })
+    dispatch({ type: 'presence_mode', username: 'bob', appear_offline: true })
+    expect(st().me?.appear_offline).toBe(false)
+    dispatch({ type: 'presence_mode', username: 'alice', appear_offline: true })
+    expect(st().me?.appear_offline).toBe(true)
+    dispatch({ type: 'presence_mode', username: 'alice', appear_offline: false })
+    expect(st().me?.appear_offline).toBe(false)
+  })
+})
+
 describe('membership count math', () => {
   test('member_joined bumps member_count and adds the row', () => {
     useStore.setState({

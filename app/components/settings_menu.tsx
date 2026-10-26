@@ -44,6 +44,25 @@ function AccountSection() {
   )
 }
 
+function StatusSection() {
+  const appearOffline = useStore(s => s.me?.appear_offline)
+  const setAppearOffline = useStore(s => s.setAppearOffline)
+  if (appearOffline === undefined) return null
+  return (
+    <section>
+      <p className={sectionCls}>Status</p>
+      <SettingSwitch
+        label="Appear offline"
+        value={appearOffline}
+        onChange={v => void setAppearOffline(v)}
+      />
+      <p className="mt-2 px-2 text-xs text-on-surface-variant">
+        You will never appear online to others. You can still chat normally.
+      </p>
+    </section>
+  )
+}
+
 function SettingsSection() {
   const theme = useStore(s => s.theme)
   const setTheme = useStore(s => s.setTheme)
@@ -52,6 +71,7 @@ function SettingsSection() {
   return (
     <div className="flex flex-col gap-8">
       <AccountSection />
+      <StatusSection />
       <section>
         <p className={sectionCls}>Appearance</p>
         <SettingSwitch

@@ -26,6 +26,7 @@ pub struct Me {
     pub avatar_kind: AvatarKind,
     pub avatar_color: Option<String>,
     pub is_site_admin: bool,
+    pub appear_offline: bool,
     pub servers: Vec<ServerSummary>,
     pub dms: Vec<DmSummary>,
 }
@@ -168,6 +169,7 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
         avatar_kind: user.avatar_kind,
         avatar_color: user.avatar_color.clone(),
         is_site_admin: user.is_site_admin,
+        appear_offline: user.appear_offline,
         servers,
         dms,
     })
@@ -352,11 +354,12 @@ pub(crate) async fn me(
 
 #[derive(Deserialize, ToSchema)]
 pub struct MePatch {
-    avatar_kind: AvatarKind,
+    avatar_kind: Option<AvatarKind>,
     avatar_color: Option<String>,
+    appear_offline: Option<bool>,
 }
 
-#[utoipa::path(patch, path = "/api/me", request_body = MePatch, responses((status = 200, description = "Avatar updated; returns the user's public profile", body = UserRef)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/me", request_body = MePatch, responses((status = 200, description = "Avatar and/or appear-offline preference updated; returns the user's public profile", body = UserRef)), security(("bearer" = [])))]
 pub(crate) async fn patch_me(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -365,23 +368,44 @@ pub(crate) async fn patch_me(
     let MePatch {
         avatar_kind,
         avatar_color,
+        appear_offline,
     } = req;
-    let avatar_color = check_avatar(avatar_kind, avatar_color)?;
-    sqlx::query("UPDATE users SET avatar_kind = $1, avatar_color = $2 WHERE username = $3")
-        .bind(avatar_kind.as_str())
-        .bind(&avatar_color)
-        .bind(&user.username)
-        .execute(&state.db)
-        .await?;
-    let user_ref = UserRef {
-        username: user.username,
-        display_name: user.display_name,
-        avatar_kind,
-        avatar_color,
+    let avatar = match avatar_kind {
+        Some(kind) => Some((kind, check_avatar(kind, avatar_color)?)),
+        None => None,
     };
-    state.hub.broadcast(WsEvent::UserUpdated {
-        user: user_ref.clone(),
-    });
+    let mut tx = state.db.begin().await?;
+    if let Some((kind, color)) = &avatar {
+        sqlx::query("UPDATE users SET avatar_kind = $1, avatar_color = $2 WHERE username = $3")
+            .bind(kind.as_str())
+            .bind(color)
+            .bind(&user.username)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(hidden) = appear_offline {
+        sqlx::query("UPDATE users SET appear_offline = $1 WHERE username = $2")
+            .bind(i64::from(hidden))
+            .bind(&user.username)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    let stored = get_user(&state.db, &user.username)
+        .await?
+        .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string()))?;
+    let user_ref = UserRef::from_user(&stored);
+    if avatar.is_some() {
+        state.hub.broadcast(WsEvent::UserUpdated {
+            user: user_ref.clone(),
+        });
+    }
+    if appear_offline.is_some() {
+        state.hub.broadcast(WsEvent::PresenceMode {
+            username: stored.username,
+            appear_offline: stored.appear_offline,
+        });
+    }
     Ok(Json(user_ref))
 }
 
@@ -499,6 +523,84 @@ mod tests {
         .expect("prime attempts");
         let locked = attempt("a").await;
         assert!(matches!(locked, Err(ApiError(StatusCode::LOCKED, _))));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn appear_offline_persists() {
+        let (state, path) = temp_state("appear_offline").await;
+        let _ = register_text(&state, "olive").await.expect("register");
+        let mut rx = state.hub.subscribe();
+        let patch =
+            |avatar_kind: Option<AvatarKind>, avatar_color: Option<&str>, appear_offline| {
+                let state = state.clone();
+                let avatar_color = avatar_color.map(str::to_string);
+                async move {
+                    let user = get_user(&state.db, "olive")
+                        .await
+                        .expect("load user")
+                        .expect("user exists");
+                    patch_me(
+                        State(state),
+                        Authed(user),
+                        Json(MePatch {
+                            avatar_kind,
+                            avatar_color,
+                            appear_offline,
+                        }),
+                    )
+                    .await
+                    .expect("patch me")
+                }
+            };
+        let stored = |state: AppState| async move {
+            let user = get_user(&state.db, "olive")
+                .await
+                .expect("load user")
+                .expect("user exists");
+            me_payload(&state.db, &user)
+                .await
+                .expect("me payload")
+                .appear_offline
+        };
+        assert!(!stored(state.clone()).await);
+        let _ = patch(None, None, Some(true)).await;
+        assert!(stored(state.clone()).await);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::PresenceMode { username, appear_offline: true }) if username == "olive"
+        ));
+        let _ = patch(Some(AvatarKind::Identicon), None, None).await;
+        assert!(stored(state.clone()).await);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::UserUpdated { user: _ })
+        ));
+        let _ = patch(None, None, Some(false)).await;
+        assert!(!stored(state.clone()).await);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::PresenceMode {
+                username: _,
+                appear_offline: false
+            })
+        ));
+        let both = patch(Some(AvatarKind::Color), Some("#ABCDEF"), Some(true))
+            .await
+            .0;
+        assert_eq!(both.avatar_color.as_deref(), Some("#abcdef"));
+        assert!(stored(state.clone()).await);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::UserUpdated { user }) if user.avatar_color.as_deref() == Some("#abcdef")
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::PresenceMode {
+                username: _,
+                appear_offline: true
+            })
+        ));
         done(state, path).await;
     }
 }

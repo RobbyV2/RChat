@@ -554,6 +554,7 @@ pub(crate) mod test_util {
             avatar_kind: AvatarKind::Identicon,
             avatar_color: None,
             is_site_admin: site_admin,
+            appear_offline: false,
             created_at: now(),
         }
     }

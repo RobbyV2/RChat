@@ -243,6 +243,7 @@ interface RChatState {
   setTheme: (theme: Theme) => void
   setStreamer: (streamer: boolean) => void
   patchMe: (avatar_kind: AvatarKind, avatar_color?: string) => Promise<void>
+  setAppearOffline: (appearOffline: boolean) => Promise<void>
   syncFromUrl: (nav: 'replace' | 'none') => Promise<void>
   register: (body: api.RegisterRequest) => Promise<void>
   login: (body: api.LoginRequest) => Promise<void>
@@ -906,6 +907,12 @@ export const useStore = create<RChatState>()((set, get) => {
       act(async () => {
         const user = await api.patchMe(avatar_kind, avatar_color)
         set(s => (s.me ? { me: { ...s.me, ...user } } : {}))
+      }),
+
+    setAppearOffline: appearOffline =>
+      act(async () => {
+        await api.setAppearOffline(appearOffline)
+        set(s => (s.me ? { me: { ...s.me, appear_offline: appearOffline } } : {}))
       }),
 
     bootstrap: async () => {
@@ -1930,6 +1937,14 @@ export const useStore = create<RChatState>()((set, get) => {
           }))
           patchMembers(ev.server, list =>
             list.map(m => (m.username === ev.username ? { ...m, online: ev.online } : m))
+          )
+          return
+        }
+        case 'presence_mode': {
+          set(s =>
+            s.me?.username === ev.username
+              ? { me: { ...s.me, appear_offline: ev.appear_offline } }
+              : {}
           )
           return
         }
