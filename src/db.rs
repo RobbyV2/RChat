@@ -101,7 +101,7 @@ async fn reconcile_columns(pool: &Db, is_sqlite: bool) -> anyhow::Result<()> {
     for (table, col) in MIGRATIONS {
         let coldef = col.replace("{INT}", int);
         let sql = format!("ALTER TABLE {table} ADD COLUMN {coldef}");
-        match sqlx::query(&sql).execute(pool).await {
+        match sqlx::query(sqlx::AssertSqlSafe(sql)).execute(pool).await {
             Ok(_) => {
                 let name = coldef.split_whitespace().next().unwrap_or(&coldef);
                 tracing::info!("added missing column {table}.{name}");

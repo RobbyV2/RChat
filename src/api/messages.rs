@@ -142,7 +142,11 @@ async fn row_message(db: &Db, r: &AnyRow) -> Result<Message, ApiError> {
 
 pub(crate) async fn load_message(db: &Db, id: i64) -> Result<Option<Message>, ApiError> {
     let sql = format!("SELECT {COLS} FROM messages m WHERE m.id = $1");
-    match sqlx::query(&sql).bind(id).fetch_optional(db).await? {
+    match sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(id)
+        .fetch_optional(db)
+        .await?
+    {
         Some(r) => Ok(Some(row_message(db, &r).await?)),
         None => Ok(None),
     }
@@ -157,7 +161,7 @@ async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), ApiError> {
         "SELECT me.message_id, me.ord, me.url, me.banner_removed, e.site_name, e.title, e.description, e.image_url FROM message_embeds me JOIN embeds e ON e.url = me.url WHERE me.removed = 0 AND me.message_id IN ({}) ORDER BY me.message_id, me.ord",
         ph.join(", ")
     );
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
     for m in msgs.iter() {
         query = query.bind(m.id);
     }
@@ -192,7 +196,7 @@ async fn page(
     let sql = format!(
         "SELECT {COLS} FROM messages m WHERE {cond} AND m.id < $2 AND m.created_at >= $3 ORDER BY m.id DESC LIMIT $4"
     );
-    let rows = sqlx::query(&sql)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(key)
         .bind(q.before.unwrap_or(i64::MAX))
         .bind(min_ts.unwrap_or(i64::MIN))
@@ -475,7 +479,7 @@ async fn send_gate(db: &Db, server: &str, channel_id: i64, user: &User) -> Resul
     }
 }
 
-#[utoipa::path(get, path = "/api/channels/{id}/messages", params(("id" = i64, Path), PageQuery), responses((status = 200, body = Vec<Message>)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/channels/{id}/messages", params(("id" = i64, Path), PageQuery), responses((status = 200, description = "Up to `limit` (default 50) top-level messages before `before`, oldest first; without read-history access only messages since joining are returned", body = Vec<Message>)), security((), ("bearer" = [])))]
 pub(crate) async fn channel_messages(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -497,7 +501,7 @@ pub(crate) async fn channel_messages(
     ))
 }
 
-#[utoipa::path(post, path = "/api/channels/{id}/messages", params(("id" = i64, Path)), request_body = SendReq, responses((status = 200, body = Message)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/channels/{id}/messages", params(("id" = i64, Path)), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `EmbedsResolved` WebSocket event", body = Message)), security(("bearer" = [])))]
 pub(crate) async fn send_channel_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -529,7 +533,7 @@ pub(crate) async fn send_channel_message(
     Ok(Json(message))
 }
 
-#[utoipa::path(get, path = "/api/messages/{id}/thread", params(("id" = i64, Path), PageQuery), responses((status = 200, body = Vec<Message>)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/messages/{id}/thread", params(("id" = i64, Path), PageQuery), responses((status = 200, description = "Up to `limit` (default 50) thread replies before `before`, oldest first", body = Vec<Message>)), security((), ("bearer" = [])))]
 pub(crate) async fn thread_messages(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -545,7 +549,7 @@ pub(crate) async fn thread_messages(
     ))
 }
 
-#[utoipa::path(post, path = "/api/messages/{id}/thread", params(("id" = i64, Path)), request_body = SendReq, responses((status = 200, body = Message)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/messages/{id}/thread", params(("id" = i64, Path)), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `EmbedsResolved` WebSocket event", body = Message)), security(("bearer" = [])))]
 pub(crate) async fn send_thread_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -578,7 +582,7 @@ pub(crate) async fn send_thread_message(
     Ok(Json(message))
 }
 
-#[utoipa::path(get, path = "/api/dms/{id}/messages", params(("id" = i64, Path), PageQuery), responses((status = 200, body = Vec<Message>)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/dms/{id}/messages", params(("id" = i64, Path), PageQuery), responses((status = 200, description = "Up to `limit` (default 50) DM messages before `before`, oldest first", body = Vec<Message>)), security(("bearer" = [])))]
 pub(crate) async fn dm_messages(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -595,7 +599,7 @@ pub(crate) async fn dm_messages(
     Ok(Json(page(&state.db, "m.dm_id = $1", id, &q, None).await?))
 }
 
-#[utoipa::path(post, path = "/api/dms/{id}/messages", params(("id" = i64, Path)), request_body = SendReq, responses((status = 200, body = Message)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/dms/{id}/messages", params(("id" = i64, Path)), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `EmbedsResolved` WebSocket event", body = Message)), security(("bearer" = [])))]
 pub(crate) async fn send_dm_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -737,7 +741,7 @@ enum Bind {
     I(i64),
 }
 
-#[utoipa::path(get, path = "/api/search", params(SearchQuery), responses((status = 200, body = Vec<SearchResult>)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/search", params(SearchQuery), responses((status = 200, description = "Up to 25 matching messages from channels the caller can view, newest first", body = Vec<SearchResult>)), security((), ("bearer" = [])))]
 pub(crate) async fn search(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -863,7 +867,7 @@ pub(crate) async fn search(
         conds.join(" AND "),
         binds.len()
     );
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
     for b in &binds {
         query = match b {
             Bind::S(s) => query.bind(s),
@@ -890,7 +894,7 @@ pub(crate) async fn search(
     Ok(Json(out))
 }
 
-#[utoipa::path(get, path = "/api/unreads", responses((status = 200, body = Unreads)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/unreads", responses((status = 200, description = "Latest and last-read message ids for each text channel and DM that has messages", body = Unreads)), security(("bearer" = [])))]
 pub(crate) async fn unreads(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -918,7 +922,7 @@ pub(crate) async fn unreads(
     Ok(Json(Unreads { items }))
 }
 
-#[utoipa::path(post, path = "/api/read", request_body = ReadReq, responses((status = 200, body = ReadState)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/read", request_body = ReadReq, responses((status = 200, description = "The stored read position, which never moves backwards", body = ReadState)), security(("bearer" = [])))]
 pub(crate) async fn mark_read(
     State(state): State<AppState>,
     Authed(user): Authed,

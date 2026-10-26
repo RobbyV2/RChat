@@ -14,7 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 axum = { version = "0.8", features = ["multipart", "ws"] }
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
+tower-http = { version = "0.7", features = ["fs", "trace", "cors"] }
 hyper = { version = "1", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "tokio"] }
 serde = { version = "1", features = ["derive"] }
@@ -26,27 +26,25 @@ dotenvy = "0.15"
 config = "0.15"
 clap = { version = "4", features = ["derive"] }
 tower_governor = "0.8"
-sqlx = { version = "0.8", features = [
+sqlx = { version = "0.9", features = [
   "any",
   "sqlite",
   "postgres",
   "runtime-tokio",
 ] }
-rustrict = "0.7.38"
-sha2 = "0.11.0"
+rustrict = "0.7.39"
+sha2 = "0.11.1"
 hex = "0.4.3"
-rand = "0.10.2"
+rand = "0.10.3"
 rand_chacha = "0.10.0"
 memorable-wordlist = "0.1.7"
-argon2 = { version = "0.5", features = ["std"] }
-utoipa = { version = "5", features = ["axum_extras"] }
-utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
-reqwest = { version = "0.12", default-features = false, features = [
-  "rustls-tls",
-] }
+argon2 = "0.6"
+utoipa = { version = "6", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "10", features = ["axum", "vendored"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 tl = "0.7.8"
 url = "2.5.8"
-rust-s3 = { version = "0.37.2", default-features = false, features = [
+rust-s3 = { version = "0.38.0", default-features = false, features = [
   "tokio-rustls-tls",
   "fail-on-err",
 ] }

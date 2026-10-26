@@ -299,7 +299,7 @@ async fn server_detail(
     })
 }
 
-#[utoipa::path(get, path = "/api/servers/{name}/members", params(("name" = String, Path), MembersQuery), responses((status = 200, body = Vec<Member>)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/servers/{name}/members", params(("name" = String, Path), MembersQuery), responses((status = 200, description = "Up to 50 members, online first and then alphabetical", body = Vec<Member>)), security((), ("bearer" = [])))]
 pub(crate) async fn list_members(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -346,7 +346,7 @@ pub(crate) async fn list_members(
     Ok(Json(members))
 }
 
-#[utoipa::path(get, path = "/api/servers/{name}/interacted", params(("name" = String, Path), MembersQuery), responses((status = 200, body = Vec<UserRef>)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/servers/{name}/interacted", params(("name" = String, Path), MembersQuery), responses((status = 200, description = "Up to 50 non-members who interacted with the server, most recent first", body = Vec<UserRef>)), security((), ("bearer" = [])))]
 pub(crate) async fn list_interacted(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -376,7 +376,7 @@ pub(crate) async fn list_interacted(
     Ok(Json(users))
 }
 
-#[utoipa::path(post, path = "/api/servers", request_body = CreateServerReq, responses((status = 200, body = ServerDetail)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/servers", request_body = CreateServerReq, responses((status = 200, description = "The created server, with the caller as admin and a default general channel", body = ServerDetail)), security(("bearer" = [])))]
 pub(crate) async fn create_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -433,7 +433,7 @@ pub(crate) async fn create_server(
     Ok(Json(detail))
 }
 
-#[utoipa::path(get, path = "/api/servers/{name}", params(("name" = String, Path)), responses((status = 200, body = ServerDetail)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/servers/{name}", params(("name" = String, Path)), responses((status = 200, description = "Server details: channels, roles, and member and online counts", body = ServerDetail)), security((), ("bearer" = [])))]
 pub(crate) async fn get_server(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -449,7 +449,7 @@ pub(crate) async fn get_server(
     ))
 }
 
-#[utoipa::path(get, path = "/api/servers/{name}/exists", params(("name" = String, Path)), responses((status = 200, body = ServerExists)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/servers/{name}/exists", params(("name" = String, Path)), responses((status = 200, description = "The server exists; reports whether it is password-protected", body = ServerExists)), security((), ("bearer" = [])))]
 pub(crate) async fn server_exists(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -465,7 +465,7 @@ pub(crate) async fn server_exists(
     Ok(Json(ServerExists { has_password }))
 }
 
-#[utoipa::path(get, path = "/api/server_search", params(ServerSearchQuery), responses((status = 200, body = Vec<ServerMatch>)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/server_search", params(ServerSearchQuery), responses((status = 200, description = "Up to 10 servers whose name or display name matches the query", body = Vec<ServerMatch>)), security((), ("bearer" = [])))]
 pub(crate) async fn search_servers(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -502,7 +502,7 @@ pub(crate) async fn search_servers(
     Ok(Json(out))
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/guest_access", params(("name" = String, Path)), request_body = GuestAccessReq, responses((status = 200, body = GuestGrant), (status = 401, description = "Wrong password"), (status = 400, description = "Server has no password")))]
+#[utoipa::path(post, path = "/api/servers/{name}/guest_access", params(("name" = String, Path)), request_body = GuestAccessReq, responses((status = 200, description = "Password accepted; returns a guest grant for viewing the server without an account", body = GuestGrant), (status = 401, description = "Wrong password"), (status = 400, description = "Server has no password")))]
 pub(crate) async fn guest_access(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -537,7 +537,7 @@ pub(crate) async fn guest_access(
     Ok(Json(GuestGrant { grant }))
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/join", params(("name" = String, Path)), request_body = JoinReq, responses((status = 200, body = ServerDetail)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/servers/{name}/join", params(("name" = String, Path)), request_body = JoinReq, responses((status = 200, description = "Joined, or already a member; returns the server details", body = ServerDetail)), security(("bearer" = [])))]
 pub(crate) async fn join_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -602,7 +602,7 @@ pub(crate) async fn join_server(
     Ok(Json(detail))
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/leave", params(("name" = String, Path)), responses((status = 200, body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/servers/{name}/leave", params(("name" = String, Path)), responses((status = 200, description = "Left the server and dropped its roles", body = OkResp)), security(("bearer" = [])))]
 pub(crate) async fn leave_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -634,7 +634,7 @@ pub(crate) async fn leave_server(
     }
 }
 
-#[utoipa::path(patch, path = "/api/servers/{name}", params(("name" = String, Path)), request_body = ServerPatch, responses((status = 200, body = ServerSummaryLite)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/servers/{name}", params(("name" = String, Path)), request_body = ServerPatch, responses((status = 200, description = "Server renamed or password changed; changing the password revokes existing guest grants", body = ServerSummaryLite)), security(("bearer" = [])))]
 pub(crate) async fn update_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -698,7 +698,7 @@ pub(crate) async fn update_server(
     Ok(Json(server))
 }
 
-#[utoipa::path(delete, path = "/api/servers/{name}", params(("name" = String, Path)), responses((status = 200, body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/servers/{name}", params(("name" = String, Path)), responses((status = 200, description = "Server deleted along with its channels, members, and roles", body = OkResp)), security(("bearer" = [])))]
 pub(crate) async fn delete_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -716,7 +716,7 @@ pub(crate) async fn delete_server(
     Ok(ok())
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/channels", params(("name" = String, Path)), request_body = CreateChannelReq, responses((status = 200, body = Channel)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/servers/{name}/channels", params(("name" = String, Path)), request_body = CreateChannelReq, responses((status = 200, description = "The created channel", body = Channel)), security(("bearer" = [])))]
 pub(crate) async fn create_channel(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -761,7 +761,7 @@ pub(crate) async fn create_channel(
     Ok(Json(channel))
 }
 
-#[utoipa::path(patch, path = "/api/channels/{id}", params(("id" = i64, Path)), request_body = ChannelPatch, responses((status = 200, body = Channel)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/channels/{id}", params(("id" = i64, Path)), request_body = ChannelPatch, responses((status = 200, description = "The updated channel", body = Channel)), security(("bearer" = [])))]
 pub(crate) async fn update_channel(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -818,7 +818,7 @@ pub(crate) async fn update_channel(
     Ok(Json(channel))
 }
 
-#[utoipa::path(delete, path = "/api/channels/{id}", params(("id" = i64, Path)), responses((status = 200, body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/channels/{id}", params(("id" = i64, Path)), responses((status = 200, description = "Channel deleted", body = OkResp)), security(("bearer" = [])))]
 pub(crate) async fn delete_channel(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -866,7 +866,7 @@ pub(crate) async fn delete_channel(
     Ok(ok())
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/kick", params(("name" = String, Path)), request_body = UsernameReq, responses((status = 200, body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/servers/{name}/kick", params(("name" = String, Path)), request_body = UsernameReq, responses((status = 200, description = "Member removed from the server and their roles dropped", body = OkResp)), security(("bearer" = [])))]
 pub(crate) async fn kick_member(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -933,7 +933,7 @@ async fn set_admin(
     }
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/admins", params(("name" = String, Path)), request_body = UsernameReq, responses((status = 200, body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/servers/{name}/admins", params(("name" = String, Path)), request_body = UsernameReq, responses((status = 200, description = "Member promoted to admin with permissions reset", body = OkResp)), security(("bearer" = [])))]
 pub(crate) async fn grant_admin(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -950,7 +950,7 @@ pub(crate) async fn grant_admin(
     .await
 }
 
-#[utoipa::path(delete, path = "/api/servers/{name}/admins/{username}", params(("name" = String, Path), ("username" = String, Path)), responses((status = 200, body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/servers/{name}/admins/{username}", params(("name" = String, Path), ("username" = String, Path)), responses((status = 200, description = "Admin status and permissions revoked", body = OkResp)), security(("bearer" = [])))]
 pub(crate) async fn revoke_admin(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -966,7 +966,7 @@ pub(crate) async fn revoke_admin(
     .await
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/transfer_admin", params(("name" = String, Path)), request_body = UsernameReq, responses((status = 200, body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/servers/{name}/transfer_admin", params(("name" = String, Path)), request_body = UsernameReq, responses((status = 200, description = "Admin granted to the target member and revoked from the caller", body = OkResp)), security(("bearer" = [])))]
 pub(crate) async fn transfer_admin(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1016,7 +1016,7 @@ pub(crate) async fn transfer_admin(
     Ok(ok())
 }
 
-#[utoipa::path(patch, path = "/api/servers/{name}/admins/{username}/perms", params(("name" = String, Path), ("username" = String, Path)), request_body = PermsReq, responses((status = 200, body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/servers/{name}/admins/{username}/perms", params(("name" = String, Path), ("username" = String, Path)), request_body = PermsReq, responses((status = 200, description = "Admin permissions updated", body = OkResp)), security(("bearer" = [])))]
 pub(crate) async fn set_admin_perms(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1077,7 +1077,7 @@ fn check_color(color: &str) -> Result<(), ApiError> {
     }
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/roles", params(("name" = String, Path)), request_body = RoleReq, responses((status = 200, body = Role)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/servers/{name}/roles", params(("name" = String, Path)), request_body = RoleReq, responses((status = 200, description = "The created role", body = Role)), security(("bearer" = [])))]
 pub(crate) async fn create_role(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1108,7 +1108,7 @@ pub(crate) async fn create_role(
     }))
 }
 
-#[utoipa::path(patch, path = "/api/servers/{name}/roles/{id}", params(("name" = String, Path), ("id" = i64, Path)), request_body = RolePatch, responses((status = 200, body = Role)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/servers/{name}/roles/{id}", params(("name" = String, Path), ("id" = i64, Path)), request_body = RolePatch, responses((status = 200, description = "The updated role", body = Role)), security(("bearer" = [])))]
 pub(crate) async fn update_role(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1159,7 +1159,7 @@ pub(crate) async fn update_role(
     Ok(Json(role))
 }
 
-#[utoipa::path(delete, path = "/api/servers/{name}/roles/{id}", params(("name" = String, Path), ("id" = i64, Path)), responses((status = 200, body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/servers/{name}/roles/{id}", params(("name" = String, Path), ("id" = i64, Path)), responses((status = 200, description = "Role deleted and removed from channel permission rules", body = OkResp)), security(("bearer" = [])))]
 pub(crate) async fn delete_role(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1182,7 +1182,7 @@ pub(crate) async fn delete_role(
     Ok(ok())
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/roles/{id}/assign", params(("name" = String, Path), ("id" = i64, Path)), request_body = UsernameReq, responses((status = 200, body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/servers/{name}/roles/{id}/assign", params(("name" = String, Path), ("id" = i64, Path)), request_body = UsernameReq, responses((status = 200, description = "Role assigned to the member", body = OkResp)), security(("bearer" = [])))]
 pub(crate) async fn assign_role(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1213,7 +1213,7 @@ pub(crate) async fn assign_role(
     Ok(ok())
 }
 
-#[utoipa::path(delete, path = "/api/servers/{name}/roles/{id}/assign/{username}", params(("name" = String, Path), ("id" = i64, Path), ("username" = String, Path)), responses((status = 200, body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/servers/{name}/roles/{id}/assign/{username}", params(("name" = String, Path), ("id" = i64, Path), ("username" = String, Path)), responses((status = 200, description = "Role removed from the member", body = OkResp)), security(("bearer" = [])))]
 pub(crate) async fn unassign_role(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1261,7 +1261,7 @@ async fn check_subject(db: &Db, server: &str, subject: &str) -> Result<(), ApiEr
     }
 }
 
-#[utoipa::path(get, path = "/api/channels/{id}/perms", params(("id" = i64, Path)), responses((status = 200, body = Vec<ChannelPerm>)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/channels/{id}/perms", params(("id" = i64, Path)), responses((status = 200, description = "Permission rules on the channel, ordered by subject", body = Vec<ChannelPerm>)), security(("bearer" = [])))]
 pub(crate) async fn list_channel_perms(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1286,7 +1286,7 @@ pub(crate) async fn list_channel_perms(
     Ok(Json(perms))
 }
 
-#[utoipa::path(put, path = "/api/channels/{id}/perms", params(("id" = i64, Path)), request_body = ChannelPerm, responses((status = 200, body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(put, path = "/api/channels/{id}/perms", params(("id" = i64, Path)), request_body = ChannelPerm, responses((status = 200, description = "Permission rule created or replaced for the subject", body = OkResp)), security(("bearer" = [])))]
 pub(crate) async fn set_channel_perm(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1320,7 +1320,7 @@ pub(crate) async fn set_channel_perm(
     Ok(ok())
 }
 
-#[utoipa::path(delete, path = "/api/channels/{id}/perms/{subject}", params(("id" = i64, Path), ("subject" = String, Path)), responses((status = 200, body = OkResp)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/channels/{id}/perms/{subject}", params(("id" = i64, Path), ("subject" = String, Path)), responses((status = 200, description = "Permission rule removed for the subject", body = OkResp)), security(("bearer" = [])))]
 pub(crate) async fn clear_channel_perm(
     State(state): State<AppState>,
     Authed(user): Authed,

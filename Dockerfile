@@ -1,5 +1,5 @@
 # Stage 1: Prepare dependency recipe
-FROM rust:slim-bookworm AS chef
+FROM rust:slim-trixie AS chef
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef
 RUN curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
@@ -33,7 +33,7 @@ RUN bun run build
 RUN mkdir -p /peer && cd /peer && echo '{"name":"peer-runtime","dependencies":{"peer":"^1.0.2"}}' > package.json && bun install
 
 # Stage 5: Runtime
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*

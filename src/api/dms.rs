@@ -15,7 +15,7 @@ pub struct OpenDmReq {
     username: String,
 }
 
-#[utoipa::path(get, path = "/api/dms", responses((status = 200, body = Vec<DmSummary>)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/dms", responses((status = 200, description = "DM conversations the signed-in user is part of, including the self DM", body = Vec<DmSummary>)), security(("bearer" = [])))]
 pub(crate) async fn list_dms(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -44,7 +44,7 @@ pub(crate) async fn list_dms(
     Ok(Json(dms))
 }
 
-#[utoipa::path(post, path = "/api/dms", request_body = OpenDmReq, responses((status = 200, body = DmSummary)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/dms", request_body = OpenDmReq, responses((status = 200, description = "The DM with the given user, created if it did not exist yet", body = DmSummary)), security(("bearer" = [])))]
 pub(crate) async fn open_dm(
     State(state): State<AppState>,
     Authed(user): Authed,

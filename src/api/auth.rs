@@ -1,6 +1,6 @@
 use argon2::Argon2;
-use argon2::password_hash::rand_core::OsRng;
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::phc::PasswordHash;
+use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -67,8 +67,7 @@ fn word_set(username: &str) -> Vec<String> {
 }
 
 pub(crate) fn hash_password(secret: &str) -> Result<String, ApiError> {
-    let salt = SaltString::generate(&mut OsRng);
-    match Argon2::default().hash_password(secret.as_bytes(), &salt) {
+    match Argon2::default().hash_password(secret.as_bytes()) {
         Ok(hash) => Ok(hash.to_string()),
         Err(e) => Err(anyhow::anyhow!(e).into()),
     }
@@ -174,14 +173,14 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
     })
 }
 
-#[utoipa::path(get, path = "/api/auth/words/{username}", params(("username" = String, Path)), responses((status = 200, body = WordsResp)))]
+#[utoipa::path(get, path = "/api/auth/words/{username}", params(("username" = String, Path)), responses((status = 200, description = "The 20 candidate words derived deterministically from the username; word-based accounts pick 7 of them", body = WordsResp)))]
 pub(crate) async fn words(Path(username): Path<String>) -> Json<WordsResp> {
     Json(WordsResp {
         words: word_set(&username),
     })
 }
 
-#[utoipa::path(post, path = "/api/auth/register", request_body = RegisterReq, responses((status = 200, body = AuthResp)))]
+#[utoipa::path(post, path = "/api/auth/register", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp)))]
 pub(crate) async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
@@ -272,7 +271,7 @@ pub(crate) async fn register(
     Ok(Json(AuthResp { token, user: me }))
 }
 
-#[utoipa::path(post, path = "/api/auth/login", request_body = LoginReq, responses((status = 200, body = AuthResp)))]
+#[utoipa::path(post, path = "/api/auth/login", request_body = LoginReq, responses((status = 200, description = "Credentials accepted; returns a new session token and the user's profile", body = AuthResp)))]
 pub(crate) async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginReq>,
@@ -343,7 +342,7 @@ pub(crate) async fn login(
     Ok(Json(AuthResp { token, user: me }))
 }
 
-#[utoipa::path(get, path = "/api/me", responses((status = 200, body = Me)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/me", responses((status = 200, description = "The signed-in user's profile with joined servers and DMs", body = Me)), security(("bearer" = [])))]
 pub(crate) async fn me(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -357,7 +356,7 @@ pub struct MePatch {
     avatar_color: Option<String>,
 }
 
-#[utoipa::path(patch, path = "/api/me", request_body = MePatch, responses((status = 200, body = UserRef)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/me", request_body = MePatch, responses((status = 200, description = "Avatar updated; returns the user's public profile", body = UserRef)), security(("bearer" = [])))]
 pub(crate) async fn patch_me(
     State(state): State<AppState>,
     Authed(user): Authed,

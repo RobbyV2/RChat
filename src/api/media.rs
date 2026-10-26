@@ -49,7 +49,7 @@ async fn fresh_id(db: &Db) -> Result<String, ApiError> {
     }
 }
 
-#[utoipa::path(post, path = "/api/media", request_body(content = Vec<u8>, content_type = "multipart/form-data"), responses((status = 200, body = MediaRef)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/media", request_body(content = Vec<u8>, content_type = "multipart/form-data"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef)), security(("bearer" = [])))]
 pub(crate) async fn upload_media(
     State(state): State<AppState>,
     Authed(_user): Authed,

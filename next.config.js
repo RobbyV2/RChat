@@ -6,6 +6,7 @@ const nextConfig = {
   output: staticExport ? 'export' : 'standalone',
   trailingSlash: true,
   allowedDevOrigins: ['127.0.0.1', 'localhost'],
+  agentRules: false,
   images: {
     unoptimized: staticExport,
   },

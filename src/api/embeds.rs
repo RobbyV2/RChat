@@ -376,7 +376,7 @@ pub(crate) async fn delete_embed(
         false => "removed",
     };
     let sql = format!("UPDATE message_embeds SET {col} = 1 WHERE message_id = $1 AND ord = $2");
-    let res = sqlx::query(&sql)
+    let res = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .bind(ord)
         .execute(&state.db)

@@ -93,7 +93,7 @@ fn require_site_admin(user: &User) -> Result<(), ApiError> {
     }
 }
 
-#[utoipa::path(get, path = "/api/settings", responses((status = 200, body = Settings)))]
+#[utoipa::path(get, path = "/api/settings", responses((status = 200, description = "Site-wide feature toggles: profanity filter, link previews, uploads, and guest access", body = Settings)))]
 pub(crate) async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
     Json(Settings::load(&state.db).await)
 }
@@ -484,7 +484,7 @@ mod tests {
     }
 
     async fn count(db: &Db, sql: &str) -> i64 {
-        sqlx::query(sql)
+        sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_one(db)
             .await
             .expect("count query")
