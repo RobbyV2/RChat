@@ -208,4 +208,88 @@ describe('voice and call mic state', () => {
     expect(st().selfAudio).toEqual(SELF_AUDIO_IDLE)
     expect(sent.some(m => m.type === 'voice_leave')).toBe(true)
   })
+
+  test('a room update from before our join is not a removal', async () => {
+    const roomState = (users: string[]) =>
+      st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id: 3, users })
+    await st().joinVoice('lounge', 3)
+    // bob's join was applied just before ours, so this state doesn't list us yet
+    roomState(['bob'])
+    expect(rtc.active()).toBe(true)
+    expect(st().voice?.channelId).toBe(3)
+    roomState(['alice'])
+    expect(rtc.active()).toBe(true)
+    // once the server has listed us, a state without us means we were removed
+    roomState(['bob'])
+    expect(rtc.active()).toBe(false)
+    expect(st().voice).toBeNull()
+  })
+
+  test('switching back to a channel ignores its state from before the rejoin', async () => {
+    const roomState = (channel_id: number, users: string[]) =>
+      st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id, users })
+    await st().joinVoice('lounge', 3)
+    roomState(3, ['alice'])
+    await st().joinVoice('lounge', 4)
+    await st().joinVoice('lounge', 3)
+    // our leave from channel 3 arrives after we already rejoined it
+    roomState(3, [])
+    expect(rtc.active()).toBe(true)
+    expect(st().voice?.channelId).toBe(3)
+  })
+
+  test('a quick A -> B -> A before any join is acknowledged keeps the session', async () => {
+    const roomState = (channel_id: number, users: string[]) =>
+      st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id, users })
+    await st().joinVoice('lounge', 13)
+    await st().joinVoice('lounge', 14)
+    await st().joinVoice('lounge', 13)
+    // the server applies the three joins in order
+    roomState(13, ['alice'])
+    roomState(13, [])
+    roomState(14, ['alice'])
+    expect(rtc.active()).toBe(true)
+    roomState(14, [])
+    roomState(13, ['alice'])
+    expect(rtc.active()).toBe(true)
+    expect(st().voice?.channelId).toBe(13)
+    roomState(13, [])
+    expect(rtc.active()).toBe(false)
+  })
+
+  test('overlapping joins: the earlier one is dropped and its mic stopped', async () => {
+    const media = navigator.mediaDevices as unknown as { getUserMedia: () => Promise<unknown> }
+    const open = media.getUserMedia
+    const grants: (() => void)[] = []
+    const stopped: boolean[] = []
+    media.getUserMedia = () =>
+      new Promise(done =>
+        grants.push(() =>
+          done(
+            open().then(m => {
+              const t = (m as { getTracks: () => FakeTrack[] }).getTracks()[0]
+              const k = stopped.push(false) - 1
+              t.stop = () => (stopped[k] = true)
+              return m
+            })
+          )
+        )
+      )
+    const first = st().joinVoice('lounge', 11)
+    const second = st().joinVoice('lounge', 12)
+    await Promise.resolve()
+    await Promise.resolve()
+    grants[1]?.()
+    await second
+    grants[0]?.()
+    await first
+    expect(st().error).toBeNull()
+    expect(st().voice?.channelId).toBe(12)
+    expect(rtc.active()).toBe(true)
+    expect(sent.filter(m => m.type === 'voice_join')).toEqual([
+      { type: 'voice_join', channel_id: 12 },
+    ])
+    expect(sent.some(m => m.type === 'voice_leave')).toBe(false)
+    expect(stopped).toEqual([false, true])
+  })
 })

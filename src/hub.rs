@@ -399,6 +399,23 @@ fn room_state(channel_id: i64, room: &Room) -> WsEvent {
     }
 }
 
+// A relayed rtc signal is checked when it is sent, but the target may leave
+// the room (or switch to another) before the broadcast is applied. Signals
+// for a session the two users no longer share are dropped here, in log order
+// with the joins and leaves.
+fn stale_signal(replica: &Replica, ev: &WsEvent) -> bool {
+    match ev {
+        WsEvent::RtcSignal {
+            to,
+            from,
+            channel_id,
+            dm_id,
+            payload: _,
+        } => !replica.rtc_shared(from, to, *channel_id, *dm_id),
+        _ => false,
+    }
+}
+
 fn call_state(dm_id: i64, call: &Call, state: CallPhase) -> WsEvent {
     WsEvent::CallState {
         dm_id,
@@ -920,6 +937,7 @@ impl Replica {
             self.purge(*id, t, &mut evs, &mut purge);
         }
         let outcome = match op {
+            Op::Broadcast { event } if stale_signal(self, &event) => Outcome::Done,
             Op::Broadcast { event } => {
                 let mut extra = Vec::new();
                 self.side_effects(&event, t, &mut extra);
@@ -968,7 +986,11 @@ impl Replica {
                     .and_then(|room| room.users.iter_mut().find(|(u, _)| *u == user));
                 match (slot, full) {
                     (Some(slot), _) => {
+                        let moved = slot.1 != conn;
                         slot.1 = conn;
+                        if moved && let Some(room) = self.rooms.get(&channel_id) {
+                            evs.push(room_state(channel_id, room));
+                        }
                         Outcome::Ends(Vec::new())
                     }
                     (None, true) => Outcome::Full,
@@ -2900,6 +2922,185 @@ pub(crate) mod tests {
         ));
         assert_eq!(replica.rooms[&6].users, vec![("c".to_string(), 3)]);
         assert_eq!(replica.rooms[&5].users.len(), 2);
+    }
+
+    #[test]
+    fn signals_for_a_left_room_are_dropped() {
+        let mut replica = Replica::default();
+        let join = |user: &str, conn: u64, channel_id: i64| Op::VoiceJoin {
+            user: user.to_string(),
+            conn,
+            server: "rchat".to_string(),
+            channel_id,
+            cap: 0,
+        };
+        let signal = |channel_id: i64| Op::Broadcast {
+            event: WsEvent::RtcSignal {
+                to: "b".to_string(),
+                from: "a".to_string(),
+                channel_id: Some(channel_id),
+                dm_id: None,
+                payload: serde_json::json!({ "candidate": {} }),
+            },
+        };
+        let relayed = |applied: &Applied| {
+            applied
+                .events
+                .iter()
+                .filter(|ev| matches!(ev, WsEvent::RtcSignal { .. }))
+                .count()
+        };
+        replica.apply(1, join("a", 1, 5), T0);
+        replica.apply(1, join("b", 2, 5), T0);
+        assert_eq!(relayed(&replica.apply(1, signal(5), T0)), 1);
+        replica.apply(1, join("b", 2, 6), T0);
+        assert_eq!(relayed(&replica.apply(1, signal(5), T0)), 0);
+        assert_eq!(relayed(&replica.apply(1, signal(6), T0)), 0);
+        replica.apply(1, join("a", 1, 6), T0);
+        assert_eq!(relayed(&replica.apply(1, signal(6), T0)), 1);
+        replica.apply(
+            1,
+            Op::VoiceLeave {
+                user: "b".to_string(),
+            },
+            T0,
+        );
+        assert_eq!(relayed(&replica.apply(1, signal(6), T0)), 0);
+    }
+
+    #[test]
+    fn rejoin_from_another_connection_restates_the_room() {
+        let mut replica = Replica::default();
+        let join = |conn: u64| Op::VoiceJoin {
+            user: "a".to_string(),
+            conn,
+            server: "rchat".to_string(),
+            channel_id: 5,
+            cap: 0,
+        };
+        replica.apply(1, join(1), T0);
+        let moved = replica.apply(1, join(9), T0);
+        assert_eq!(voice_of(&moved.events), vec![(5, vec!["a".to_string()])]);
+        assert_eq!(replica.rooms[&5].users, vec![("a".to_string(), 9)]);
+        assert!(replica.apply(1, join(9), T0).events.is_empty());
+    }
+
+    fn signal(from: &str, to: &str, channel_id: Option<i64>, dm_id: Option<i64>) -> WsEvent {
+        WsEvent::RtcSignal {
+            to: to.to_string(),
+            from: from.to_string(),
+            channel_id,
+            dm_id,
+            payload: serde_json::json!({ "candidate": {}, "sid": "s1" }),
+        }
+    }
+
+    fn signals_of(evs: &[WsEvent]) -> Vec<(String, String)> {
+        evs.iter()
+            .filter_map(|ev| match ev {
+                WsEvent::RtcSignal {
+                    to,
+                    from,
+                    channel_id: _,
+                    dm_id: _,
+                    payload: _,
+                } => Some((from.clone(), to.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dm_call_signals_relay_only_while_the_call_is_active() {
+        let mut replica = Replica::default();
+        let s = |v: &str| v.to_string();
+        let relay = |replica: &mut Replica| {
+            let op = Op::Broadcast {
+                event: signal("bob", "alice", None, Some(9)),
+            };
+            signals_of(&replica.apply(1, op, T0).events).len()
+        };
+        let start = Op::CallStart {
+            user: s("alice"),
+            conn: 1,
+            dm_id: 9,
+            dm_users: dm_users(),
+            kind: CallKind::Rtc,
+            log_id: 70,
+        };
+        assert!(matches!(
+            replica.apply(1, start, T0).outcome,
+            Outcome::Started(Ok(()))
+        ));
+        assert_eq!(relay(&mut replica), 0);
+        let accept = Op::CallAccept {
+            user: s("bob"),
+            conn: 2,
+            dm_id: 9,
+        };
+        assert!(matches!(
+            replica.apply(2, accept, T0).outcome,
+            Outcome::Accepted(Ok(_))
+        ));
+        assert_eq!(relay(&mut replica), 1);
+        let wrong_call = Op::Broadcast {
+            event: signal("bob", "alice", None, Some(10)),
+        };
+        assert!(signals_of(&replica.apply(1, wrong_call, T0).events).is_empty());
+        let end = Op::CallEnd {
+            user: s("alice"),
+            dm_id: 9,
+        };
+        replica.apply(1, end, T0);
+        assert_eq!(relay(&mut replica), 0);
+    }
+
+    #[tokio::test]
+    async fn signals_relay_across_instances_in_log_order() {
+        let bus = MemBus::new();
+        let (a, b) = (bus.join(), bus.join());
+        let (mut rx_a, mut rx_b) = (a.subscribe(), b.subscribe());
+        let (alice, bob) = (a.next_conn(), b.next_conn());
+        a.voice_join("alice", alice, "rchat", 5).await;
+        b.voice_join("bob", bob, "rchat", 5).await;
+        a.flush().await;
+        assert!(a.rtc_shared("alice", "bob", Some(5), None));
+        a.broadcast(signal("alice", "bob", Some(5), None));
+        a.flush().await;
+        b.flush().await;
+        let relayed = vec![("alice".to_string(), "bob".to_string())];
+        assert_eq!(signals_of(&drain(&mut rx_b)), relayed);
+        assert_eq!(signals_of(&drain(&mut rx_a)), relayed);
+        // a still saw bob in the room when it checked, but bob's leave on b
+        // lands in the log first, so neither instance relays the signal
+        assert!(a.rtc_shared("alice", "bob", Some(5), None));
+        b.voice_leave("bob").await;
+        a.broadcast(signal("alice", "bob", Some(5), None));
+        a.flush().await;
+        b.flush().await;
+        assert!(signals_of(&drain(&mut rx_a)).is_empty());
+        assert!(signals_of(&drain(&mut rx_b)).is_empty());
+
+        a.call_start("alice", alice, 9, dm_users(), CallKind::Rtc, 70)
+            .await
+            .unwrap();
+        b.broadcast(signal("bob", "alice", None, Some(9)));
+        b.flush().await;
+        a.flush().await;
+        assert!(signals_of(&drain(&mut rx_a)).is_empty());
+        b.call_accept("bob", bob, 9).await.unwrap();
+        b.broadcast(signal("bob", "alice", None, Some(9)));
+        b.flush().await;
+        a.flush().await;
+        let back = vec![("bob".to_string(), "alice".to_string())];
+        assert_eq!(signals_of(&drain(&mut rx_a)), back);
+        assert_eq!(signals_of(&drain(&mut rx_b)), back);
+        a.call_end("alice", 9).await.unwrap();
+        b.broadcast(signal("bob", "alice", None, Some(9)));
+        b.flush().await;
+        a.flush().await;
+        assert!(signals_of(&drain(&mut rx_a)).is_empty());
+        assert!(signals_of(&drain(&mut rx_b)).is_empty());
     }
 
     #[test]

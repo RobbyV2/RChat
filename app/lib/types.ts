@@ -282,6 +282,11 @@ export interface RtcPayload {
   candidate?: RTCIceCandidateInit
   muted?: boolean
   cam?: boolean
+  // Asks the impolite side for an ICE restart.
+  restart?: boolean
+  // The sender's session, and the session of ours it is meant for.
+  sid?: string
+  rsid?: string
 }
 
 export type VoiceMsg =

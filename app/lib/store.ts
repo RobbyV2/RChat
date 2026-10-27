@@ -15,7 +15,8 @@ import {
   selectHome,
   writeLocal,
 } from './instances'
-import { rtc } from './rtc'
+import { JoinAborted, rtc } from './rtc'
+import { JoinTracker } from './negotiation'
 import { newP2pId, p2p } from './p2p'
 import { mentionsUser } from './mentions'
 import { catchUpDelay, due } from './backoff'
@@ -1066,6 +1067,7 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   let pendingDial: string | null = null
+  const joins = new JoinTracker()
 
   const applyMic = () => {
     const { muted } = get().selfAudio
@@ -1080,6 +1082,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const endRtc = () => {
     rtc.leave()
+    joins.reset()
     p2p.endMedia()
     pendingDial = null
     set(s => ({
@@ -1104,7 +1107,7 @@ export const useStore = create<RChatState>()((set, get) => {
   const abandonMedia = () => {
     const { voice, call, me } = get()
     const ours = call !== null && (call.state === 'active' || call.from === me?.username)
-    if (voice) home.ws.sendVoice({ type: 'voice_leave' })
+    if (voice && home.ws.sendVoice({ type: 'voice_leave' })) joins.left()
     if (ours) home.ws.sendVoice({ type: 'call_leave', dm_id: call.dmId })
     rtc.leave()
     p2p.endMedia()
@@ -2217,6 +2220,9 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   let endedVoice: number | null = null
+  // Whether the server has listed us in the room we last joined. Until it has,
+  // a voice_state without us predates our join and is not a removal.
+  let voiceListed = false
   rtc.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
   p2p.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
   p2p.onError = message => fail(new Error(message))
@@ -2562,6 +2568,7 @@ export const useStore = create<RChatState>()((set, get) => {
       stopCatchUp()
       home.ws.stop()
       rtc.leave()
+      joins.reset()
       p2p.endMedia()
       pendingDial = null
       writeLocal(LS.token, null)
@@ -3333,6 +3340,7 @@ export const useStore = create<RChatState>()((set, get) => {
           await rtc.join(me.username, { channelId }, get().selfAudio.muted)
           applyMic()
         } catch (e) {
+          if (e instanceof JoinAborted) return
           abandonMedia()
           throw e
         }
@@ -3340,11 +3348,13 @@ export const useStore = create<RChatState>()((set, get) => {
           abandonMedia()
           throw new Error('Not connected')
         }
+        joins.joined(channelId, (get().voiceUsers[channelId] ?? []).includes(me.username))
+        voiceListed = false
         set({ voice: { server, channelId }, call: null })
       }),
 
     leaveVoice: () => {
-      home.ws.sendVoice({ type: 'voice_leave' })
+      if (home.ws.sendVoice({ type: 'voice_leave' })) joins.left()
       endVoiceMedia()
     },
 
@@ -3375,6 +3385,7 @@ export const useStore = create<RChatState>()((set, get) => {
           applyMic()
           if (video) await rtc.camera(true)
         } catch (e) {
+          if (e instanceof JoinAborted) return
           abandonMedia()
           throw e
         }
@@ -3420,6 +3431,7 @@ export const useStore = create<RChatState>()((set, get) => {
           }
           applyMic()
         } catch (e) {
+          if (e instanceof JoinAborted) return
           abandonMedia()
           throw e
         }
@@ -4020,9 +4032,13 @@ export const useStore = create<RChatState>()((set, get) => {
             return { voiceUsers }
           })
           const { me, voice } = get()
-          if (me && voice?.channelId === ev.channel_id) {
-            if (ev.users.includes(me.username)) rtc.sync(ev.users)
-            else {
+          if (!me) return
+          const listing = joins.state(ev.channel_id, ev.users.includes(me.username))
+          if (voice?.channelId === ev.channel_id) {
+            if (listing === 'listed') {
+              voiceListed = true
+              rtc.sync(ev.users)
+            } else if (listing === 'absent' && voiceListed) {
               endedVoice = ev.channel_id
               endVoiceMedia()
             }
@@ -4081,7 +4097,9 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         case 'rtc_signal': {
           if (get().me?.username === ev.to)
-            rtc.onSignal(ev.from, ev.payload).catch((e: unknown) => console.error('rtc signal', e))
+            rtc
+              .onSignal(ev.from, ev.payload, { channelId: ev.channel_id, dmId: ev.dm_id })
+              .catch((e: unknown) => console.error('rtc signal', e))
           return
         }
         case 'voice_ended': {
@@ -4102,6 +4120,7 @@ export const useStore = create<RChatState>()((set, get) => {
               me !== null &&
               (voiceUsers[voice.channelId] ?? []).includes(me.username))
           if (confirmed) return
+          if (voice) joins.refused()
           if (rtc.active() || voice) endVoiceMedia()
           if (p2p.mediaActive()) p2p.endMedia()
           set({ selfAudio: SELF_AUDIO_IDLE })
