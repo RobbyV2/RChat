@@ -7,12 +7,15 @@ export interface Folder {
 
 export type RailEntry = string | Folder
 
+export type SelfPin = 'auto' | 'unpinned'
+
 export interface Layout {
   v: 2
   servers: RailEntry[]
   dmOrder: number[]
   dmPinned: number[]
   dmSeen: number
+  selfPin: SelfPin
 }
 
 export type RailItem<T> =
@@ -28,7 +31,14 @@ export interface DmSections<T> {
 
 export const FOLDER_NAME_MAX = 50
 
-export const emptyLayout: Layout = { v: 2, servers: [], dmOrder: [], dmPinned: [], dmSeen: 0 }
+export const emptyLayout: Layout = {
+  v: 2,
+  servers: [],
+  dmOrder: [],
+  dmPinned: [],
+  dmSeen: 0,
+  selfPin: 'auto',
+}
 
 export const layoutKey = (username: string | null) => `rchat_layout:${username ?? 'guest'}`
 
@@ -99,7 +109,7 @@ const folderOf = (x: unknown): RailEntry[] => {
 export const parseLayout = (raw: string | null): Layout => {
   const data = parseJson(raw)
   if (typeof data !== 'object' || data === null) return emptyLayout
-  const { v, servers, dmOrder, dmPinned, dmSeen } = data as Record<string, unknown>
+  const { v, servers, dmOrder, dmPinned, dmSeen, selfPin } = data as Record<string, unknown>
   if (v !== 1 && v !== 2) return emptyLayout
   return {
     v: 2,
@@ -110,6 +120,7 @@ export const parseLayout = (raw: string | null): Layout => {
     dmOrder: listOf(dmOrder, isId),
     dmPinned: listOf(dmPinned, isId),
     dmSeen: isId(dmSeen) ? dmSeen : 0,
+    selfPin: selfPin === 'unpinned' ? 'unpinned' : 'auto',
   }
 }
 
@@ -247,6 +258,17 @@ export const unpinDm = (layout: Layout, id: number): Layout => ({
   dmPinned: layout.dmPinned.filter(x => x !== id),
   dmOrder: layout.dmSeen === 0 ? layout.dmOrder : [id, ...layout.dmOrder.filter(x => x !== id)],
 })
+
+export const autoPinSelf = (layout: Layout, selfId: number | undefined): Layout =>
+  layout.selfPin === 'auto' && selfId !== undefined && !layout.dmPinned.includes(selfId)
+    ? { ...layout, dmPinned: [selfId, ...layout.dmPinned] }
+    : layout
+
+export const noteSelfPin = (layout: Layout, selfId: number | undefined, id: number): Layout => {
+  if (selfId === undefined || id !== selfId) return layout
+  const selfPin: SelfPin = layout.dmPinned.includes(id) ? 'auto' : 'unpinned'
+  return selfPin === layout.selfPin ? layout : { ...layout, selfPin }
+}
 
 const materialize = (entries: RailEntry[], loaded: string[]): RailEntry[] => {
   const placed = new Set(layoutServers(entries))

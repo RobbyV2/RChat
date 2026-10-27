@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   addToFolder,
+  autoPinSelf,
   bootDms,
   dmSections,
   emptyLayout,
@@ -17,6 +18,7 @@ import {
   moveIntoFolder,
   moveServer,
   newFolderId,
+  noteSelfPin,
   parseLayout,
   pinDm,
   placeDm,
@@ -92,6 +94,7 @@ describe('layout storage', () => {
       dmOrder: [2],
       dmPinned: [5],
       dmSeen: 4,
+      selfPin: 'auto',
     })
     expect(parseLayout(JSON.stringify({ v: 1, servers: [F('x', ['a', 'b'])] })).servers).toEqual([])
   })
@@ -408,6 +411,59 @@ describe('dm placement', () => {
     const manual = unpinDm(L({ dmPinned: [2], dmOrder: [1, 2, 3], dmSeen: 3 }), 2)
     expect(manual.dmOrder).toEqual([2, 1, 3])
     expect(view(dms(1, 2, 3), manual).recent).toEqual([2, 1, 3])
+  })
+})
+
+describe('self dm pin', () => {
+  test('a fresh layout pins the self dm at the top once it is known', () => {
+    expect(autoPinSelf(emptyLayout, undefined)).toBe(emptyLayout)
+    const next = autoPinSelf(emptyLayout, 4)
+    expect(next).toEqual(L({ dmPinned: [4] }))
+    expect(autoPinSelf(next, 4)).toBe(next)
+  })
+
+  test('an existing layout gets the self dm on top of its pins', () => {
+    const layout = L({ dmPinned: [7, 2], dmOrder: [4, 3], dmSeen: 7 })
+    const next = autoPinSelf(layout, 4)
+    expect(next.dmPinned).toEqual([4, 7, 2])
+    expect(view(dms(4, 7, 3, 2), next)).toEqual({ pinned: [4, 7, 2], recent: [3] })
+  })
+
+  test('a self dm already pinned elsewhere keeps its spot', () => {
+    const layout = L({ dmPinned: [7, 4] })
+    expect(autoPinSelf(layout, 4)).toBe(layout)
+  })
+
+  test('an unpinned self dm stays unpinned and keeps the fallback order', () => {
+    const layout = L({ selfPin: 'unpinned' })
+    expect(autoPinSelf(layout, 2)).toBe(layout)
+    const list = [{ id: 4 }, { id: 2, is_self: true }, { id: 3 }]
+    expect(view(list, autoPinSelf(layout, 2))).toEqual({ pinned: [], recent: [2, 4, 3] })
+  })
+
+  test('unpinning or dragging the self dm out records the choice, pinning it again clears it', () => {
+    const pinned = autoPinSelf(emptyLayout, 1)
+    const off = noteSelfPin(unpinDm(pinned, 1), 1, 1)
+    expect(off).toEqual(L({ selfPin: 'unpinned' }))
+    const shown = view(dms(1, 2), off)
+    const dragged = noteSelfPin(placeDm(pinned, shown, 1, 'recent', 1, 2), 1, 1)
+    expect(dragged.selfPin).toBe('unpinned')
+    const back = noteSelfPin(pinDm(off, 1), 1, 1)
+    expect(back).toEqual(L({ dmPinned: [1] }))
+    expect(noteSelfPin(unpinDm(pinned, 5), 1, 5)).toEqual(pinned)
+    expect(noteSelfPin(off, undefined, 1)).toBe(off)
+  })
+
+  test('the choice survives a reload and old layouts without it auto pin', () => {
+    const off = L({ dmPinned: [3], selfPin: 'unpinned' })
+    const reloaded = parseLayout(JSON.stringify(off))
+    expect(reloaded).toEqual(off)
+    expect(autoPinSelf(reloaded, 1)).toBe(reloaded)
+    const old = { v: 2, servers: [], dmOrder: [2], dmPinned: [3], dmSeen: 3 }
+    const upgraded = parseLayout(JSON.stringify(old))
+    expect(upgraded.selfPin).toBe('auto')
+    expect(autoPinSelf(upgraded, 1).dmPinned).toEqual([1, 3])
+    expect(parseLayout(JSON.stringify({ ...old, selfPin: 'bogus' })).selfPin).toBe('auto')
   })
 })
 

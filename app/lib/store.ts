@@ -52,6 +52,7 @@ import {
 import { SEARCH_PAGE, SEARCH_TRIES, addSearchPage, searchParams, type SearchArgs } from './search'
 import {
   addToFolder as addIn,
+  autoPinSelf,
   bootDms,
   dmSections,
   emptyLayout,
@@ -66,6 +67,7 @@ import {
   moveIntoFolder as moveIntoIn,
   moveServer as moveServerIn,
   newFolderId,
+  noteSelfPin,
   parseLayout,
   pinDm as pinIn,
   placeDm as placeIn,
@@ -784,7 +786,10 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const dmPager = createPager<DmSummary>({
     read: () => get().dms,
-    write: (dms, dmsMore) => set({ dms, dmsMore }),
+    write: (dms, dmsMore) => {
+      set({ dms, dmsMore })
+      pinSelf()
+    },
     fetchPage: api.listDms,
     keyOf: dmKey,
     page: PAGE,
@@ -830,6 +835,12 @@ export const useStore = create<RChatState>()((set, get) => {
     if (me || guest) writeLocal(home.scoped(layoutKey(me?.username ?? null)), JSON.stringify(next))
   }
 
+  const selfDmId = () => get().dms.find(isSelfDm)?.id
+
+  const pinSelf = () => {
+    if (get().me) saveLayout(autoPinSelf(get().layout, selfDmId()))
+  }
+
   const syncLayout = async (username: string) => {
     const { servers } = get().layout
     const asked = bootDms(get().layout, PAGE)
@@ -847,6 +858,7 @@ export const useStore = create<RChatState>()((set, get) => {
       asked
     )
     saveLayout(pruneLayout(s.layout, serverNames(s), dmIds))
+    pinSelf()
   }
 
   const loadGuestLayout = () => {
@@ -878,6 +890,7 @@ export const useStore = create<RChatState>()((set, get) => {
       dmsMore: fresh.dms_more,
       ...(same ? {} : { layout: readLayout(fresh.username) }),
     })
+    pinSelf()
     if (resume.servers) void get().loadMoreServers()
     if (resume.dms) void get().loadMoreDms()
     if (!same) void syncLayout(fresh.username)
@@ -1959,11 +1972,13 @@ export const useStore = create<RChatState>()((set, get) => {
     send: (scope, id) => (get().token ? api.postRead(scope, id, true) : Promise.resolve()),
   })
 
-  const moveDmUp = (id: number) =>
+  const moveDmUp = (id: number) => {
     set(s => {
       const dm = s.dms.find(d => d.id === id)
       return dm ? { dms: bumpFront(s.dms, dm, dmKey, isSelfDm) } : {}
     })
+    pinSelf()
+  }
 
   const bumpDm = (id: number) => {
     if (get().dms.some(d => d.id === id)) moveDmUp(id)
@@ -2670,6 +2685,7 @@ export const useStore = create<RChatState>()((set, get) => {
       act(async () => {
         const dm = await api.openDm(username)
         set(s => ({ dms: bumpFront(s.dms, dm, dmKey, isSelfDm) }))
+        pinSelf()
         await get().openDm(dm.id)
       }),
 
@@ -2680,6 +2696,7 @@ export const useStore = create<RChatState>()((set, get) => {
         const dm = await api.openDm(username)
         if (!sameUser(me.username)) return
         set(s => ({ dms: bumpFront(s.dms, dm, dmKey, isSelfDm) }))
+        pinSelf()
         await get().openDm(dm.id)
         const author = get().me
         if (content.trim() && author?.username === me.username)
@@ -2709,6 +2726,7 @@ export const useStore = create<RChatState>()((set, get) => {
         )
         if (!sameUser(me.username)) return
         set(s => ({ dms: appendUnique(s.dms, found, dmKey) }))
+        pinSelf()
       }
     },
 
@@ -2765,11 +2783,11 @@ export const useStore = create<RChatState>()((set, get) => {
       const { pinned, recent } = dmView(s)
       const shown = { pinned: pinned.map(d => d.id), recent: recent.map(d => d.id) }
       const maxId = s.dms.reduce((m, d) => Math.max(m, d.id), 0)
-      saveLayout(placeIn(s.layout, shown, id, zone, index, maxId))
+      saveLayout(noteSelfPin(placeIn(s.layout, shown, id, zone, index, maxId), selfDmId(), id))
     },
 
-    pinDm: id => saveLayout(pinIn(get().layout, id)),
-    unpinDm: id => saveLayout(unpinIn(get().layout, id)),
+    pinDm: id => saveLayout(noteSelfPin(pinIn(get().layout, id), selfDmId(), id)),
+    unpinDm: id => saveLayout(noteSelfPin(unpinIn(get().layout, id), selfDmId(), id)),
 
     reloadLayout: () => {
       const { me, guest } = get()

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { dmView, folderLabel, railOrder, railServers, useStore } from '../store'
 import { emptyLayout, type Folder, type Layout } from '../nav_layout'
+import { home } from '../instances'
 import type { DmSummary, ServerSummary, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 
@@ -211,7 +212,8 @@ describe('server folders', () => {
 })
 
 describe('dm order', () => {
-  test('before any reorder activity moves dms below the self dm', () => {
+  test('before any reorder activity moves dms below an unpinned self dm', () => {
+    useStore.setState({ layout: { ...emptyLayout, selfPin: 'unpinned' } })
     dispatch({
       type: 'message',
       server: null,
@@ -230,6 +232,7 @@ describe('dm order', () => {
       ...emptyLayout,
       dmOrder: [2, 3, 1],
       dmSeen: 3,
+      selfPin: 'unpinned',
     })
     dispatch({
       type: 'message',
@@ -260,6 +263,76 @@ describe('dm order', () => {
     st().placeDm(1, 'recent', 0)
     expect(pinned()).toEqual([])
     expect(recent()).toEqual([1, 2, 3])
+  })
+})
+
+describe('self dm pin', () => {
+  const g = globalThis as { window?: unknown; document?: unknown }
+  const real = { window: g.window, document: g.document }
+  beforeEach(() => {
+    g.window = {
+      location: { pathname: '/', href: 'http://x/', origin: 'http://x', protocol: 'http:' },
+      history: { state: null, pushState: () => {}, replaceState: () => {} },
+    }
+    g.document = { cookie: '' }
+  })
+  afterEach(() => {
+    home.ws.stop()
+    g.window = real.window
+    g.document = real.document
+    useStore.setState({ token: null })
+  })
+  const auth = (dms: DmSummary[]) =>
+    serve({ token: 'tok', user: me('alice', { servers: [srv('rchat')], dms }) })
+
+  test('signing in pins the self dm on top of saved pins and persists it', async () => {
+    storage.set('rchat_layout:alice', JSON.stringify({ ...emptyLayout, dmPinned: [3] }))
+    useStore.setState({ me: null, dms: [] })
+    auth([dm(1, 'alice', true), dm(2, 'bob'), dm(3, 'carol')])
+    await st().login({ username: 'alice', password: 'x' } as never)
+    expect(pinned()).toEqual([1, 3])
+    expect(recent()).toEqual([2])
+    expect(saved('rchat_layout:alice')?.dmPinned).toEqual([1, 3])
+  })
+
+  test('unpinning sticks across a reload and a new sign in', async () => {
+    st().reloadLayout()
+    useStore.setState({ dms: [...st().dms] })
+    st().pinDm(2)
+    st().unpinDm(1)
+    expect(pinned()).toEqual([2])
+    expect(recent()).toEqual([1, 3])
+    expect(saved('rchat_layout:alice')?.selfPin).toBe('unpinned')
+    st().reloadLayout()
+    expect(pinned()).toEqual([2])
+    useStore.setState({ me: null, dms: [], layout: emptyLayout })
+    auth([dm(1, 'alice', true), dm(2, 'bob'), dm(3, 'carol')])
+    await st().login({ username: 'alice', password: 'x' } as never)
+    expect(pinned()).toEqual([2])
+    expect(recent()).toEqual([1, 3])
+  })
+
+  test('dragging it back into pinned turns auto pinning on again', () => {
+    st().unpinDm(1)
+    st().placeDm(1, 'pinned', 0)
+    expect(pinned()).toEqual([1])
+    expect(saved('rchat_layout:alice')?.selfPin).toBe('auto')
+  })
+
+  test('a self dm created later goes to the top of pinned', async () => {
+    useStore.setState({
+      dms: [dm(2, 'bob'), dm(3, 'carol')],
+      layout: { ...emptyLayout, dmPinned: [3] },
+    })
+    serve(dm(8, 'alice', true))
+    globalThis.fetch = (async (input: string | URL | Request) =>
+      new Response(
+        JSON.stringify(String(input).includes('/messages') ? [] : dm(8, 'alice', true)),
+        { status: 200 }
+      )) as unknown as typeof fetch
+    await st().startDm('alice')
+    expect(pinned()).toEqual([8, 3])
+    expect(recent()).toEqual([2])
   })
 })
 
