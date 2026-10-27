@@ -3048,6 +3048,8 @@ mod tests {
             display_name: name.to_string(),
             creator: None,
             has_password: false,
+            banner_color: None,
+            name_color: None,
         }
     }
 
@@ -3452,6 +3454,8 @@ mod tests {
             server: ServerSummaryLite {
                 creator: Some(s("frank")),
                 has_password: true,
+                banner_color: None,
+                name_color: None,
                 ..lite("vault")
             },
         };
@@ -3695,6 +3699,8 @@ mod tests {
                 display_name: "vault".to_string(),
                 creator: creator.map(str::to_string),
                 has_password: true,
+                banner_color: None,
+                name_color: None,
             },
         };
         assert_eq!(
@@ -5403,6 +5409,8 @@ mod tests {
             old_name: s("open"),
             server: ServerSummaryLite {
                 has_password: true,
+                banner_color: None,
+                name_color: None,
                 ..lite("open")
             },
         };

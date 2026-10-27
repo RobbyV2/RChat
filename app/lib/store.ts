@@ -3650,6 +3650,8 @@ export const useStore = create<RChatState>()((set, get) => {
                 name: server.name,
                 display_name: server.display_name,
                 has_password: server.has_password,
+                banner_color: server.banner_color ?? null,
+                name_color: server.name_color ?? null,
               }
             }
             const members = { ...s.members }
@@ -3682,19 +3684,28 @@ export const useStore = create<RChatState>()((set, get) => {
               memberInfo,
               interacted,
               reads,
-              voice: s.voice?.server === old_name ? { ...s.voice, server: server.name } : s.voice,
+              voice:
+                s.voice?.server === old_name && old_name !== server.name
+                  ? { ...s.voice, server: server.name }
+                  : s.voice,
               me: s.me
                 ? {
                     ...s.me,
                     servers: s.me.servers.map(x =>
                       x.name === old_name
-                        ? { ...x, name: server.name, display_name: server.display_name }
+                        ? {
+                            ...x,
+                            name: server.name,
+                            display_name: server.display_name,
+                            banner_color: server.banner_color ?? null,
+                            name_color: server.name_color ?? null,
+                          }
                         : x
                     ),
                   }
                 : s.me,
               view:
-                s.view?.kind === 'channel' && s.view.server === old_name
+                s.view?.kind === 'channel' && s.view.server === old_name && old_name !== server.name
                   ? { ...s.view, server: server.name }
                   : s.view,
               adminServers: {
@@ -3705,30 +3716,35 @@ export const useStore = create<RChatState>()((set, get) => {
           })
           saveLayout(renameServer(get().layout, old_name, server.name))
           serverGen += 1
-          if (old_name !== server.name) droppedAt.set(old_name, serverGen)
-          memberGen[old_name] = (memberGen[old_name] ?? 0) + 1
-          memberGen[server.name] = (memberGen[server.name] ?? 0) + 1
+          const renamed = old_name !== server.name
+          if (renamed) {
+            droppedAt.set(old_name, serverGen)
+            memberGen[old_name] = (memberGen[old_name] ?? 0) + 1
+            memberGen[server.name] = (memberGen[server.name] ?? 0) + 1
+          }
           if (serverPager.removed()) void get().loadMoreServers()
           if (get().guest && get().guestServers.includes(old_name)) {
             persistGuestServers(get().guestServers.map(n => (n === old_name ? server.name : n)))
             const names = { ...get().guestNames, [server.name]: server.display_name }
-            if (old_name !== server.name) delete names[old_name]
+            if (renamed) delete names[old_name]
             persistGuestNames(names)
             const grants = get().guestGrants
-            if (old_name !== server.name && grants[old_name]) {
+            if (renamed && grants[old_name]) {
               const next = { ...grants, [server.name]: grants[old_name] }
               delete next[old_name]
               persistGrants(next)
             }
-            home.ws.unsubscribe(old_name)
-            home.ws.subscribe([server.name])
+            if (renamed) {
+              home.ws.unsubscribe(old_name)
+              home.ws.subscribe([server.name])
+            }
             if (server.has_password)
               void api.getServer(server.name).catch((e: unknown) => {
                 if (lockedOut(e)) guestLocked(server.name)
               })
           }
           const renamedView = get().view
-          if (renamedView?.kind === 'channel' && renamedView.server === server.name)
+          if (renamed && renamedView?.kind === 'channel' && renamedView.server === server.name)
             syncUrl(renamedView, 'replace')
           return
         }

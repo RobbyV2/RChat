@@ -57,6 +57,12 @@ pub struct ServerPatch {
     members: PasswordMembers,
     #[serde(default)]
     keep_guests: bool,
+    #[serde(default, deserialize_with = "crate::api::auth::present")]
+    #[schema(value_type = Option<String>)]
+    banner_color: Option<Option<String>>,
+    #[serde(default, deserialize_with = "crate::api::auth::present")]
+    #[schema(value_type = Option<String>)]
+    name_color: Option<Option<String>>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -386,7 +392,7 @@ pub(crate) async fn server_lite(
     name: &str,
 ) -> Result<Option<ServerSummaryLite>, ApiError> {
     let row = sqlx::query(
-        "SELECT name, display_name, creator, password_hash FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
     )
     .bind(name)
     .fetch_optional(db)
@@ -397,6 +403,8 @@ pub(crate) async fn server_lite(
             display_name: r.try_get(1)?,
             creator: r.try_get(2)?,
             has_password: r.try_get::<Option<String>, _>(3)?.is_some(),
+            banner_color: r.try_get(4)?,
+            name_color: r.try_get(5)?,
         })),
         None => Ok(None),
     }
@@ -476,7 +484,7 @@ async fn role_ids_of(
     Ok(map)
 }
 
-const MY_SERVERS: &str = "SELECT s.name, s.display_name, s.creator, m.is_admin, m.joined_at FROM members m JOIN servers s ON s.name = m.server WHERE m.username = $1";
+const MY_SERVERS: &str = "SELECT s.name, s.display_name, s.creator, m.is_admin, m.joined_at, s.banner_color, s.name_color FROM members m JOIN servers s ON s.name = m.server WHERE m.username = $1";
 
 fn summary_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<ServerSummary>, ApiError> {
     let mut servers = Vec::with_capacity(rows.len());
@@ -486,6 +494,8 @@ fn summary_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<ServerSummary>, ApiErr
             display_name: r.try_get(1)?,
             creator: r.try_get(2)?,
             is_admin: r.try_get::<i64, _>(3)? != 0,
+            banner_color: r.try_get(5)?,
+            name_color: r.try_get(6)?,
         });
     }
     Ok(servers)
@@ -700,6 +710,8 @@ async fn server_detail(
         display_name,
         creator,
         has_password,
+        banner_color,
+        name_color,
     } = require_server(db, name).await?;
     let rows = sqlx::query(
         "SELECT id, name, kind, slowmode_seconds FROM channels WHERE server = $1 ORDER BY id",
@@ -738,6 +750,8 @@ async fn server_detail(
         display_name,
         creator,
         has_password,
+        banner_color,
+        name_color,
         channels,
         roles: server_roles(db, &name).await?,
         member_count,
@@ -1121,6 +1135,8 @@ pub(crate) async fn create_server(
             display_name: display,
             creator: Some(user.username),
             has_password: password_hash.is_some(),
+            banner_color: None,
+            name_color: None,
         },
     });
     Ok(Json(detail))
@@ -1156,6 +1172,8 @@ pub(crate) async fn server_exists(
         display_name: _,
         creator: _,
         has_password,
+        banner_color: _,
+        name_color: _,
     } = require_server(db, &name.to_lowercase()).await?;
     Ok(Json(ServerExists { has_password }))
 }
@@ -1468,7 +1486,7 @@ pub(crate) async fn leave_server(
     }
 }
 
-#[utoipa::path(patch, path = "/api/servers/{name}", params(("name" = String, Path)), request_body = ServerPatch, responses((status = 200, description = "Server renamed or password set, changed or cleared (an empty password clears it). `members` only applies when `password` is present: `keep` (default) keeps every member; `remove` removes every other member whose server permissions are a strict subset of yours (site admins remove everyone else) as if kicked. Setting, changing or clearing the password revokes every guest grant unless `keep_guests` is true together with `members: keep`. Returns the server with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated), (status = 403, description = "Missing permission: changing the server needs Delete server, and `remove` also needs Kick; the rchat server is protected")), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/servers/{name}", params(("name" = String, Path)), request_body = ServerPatch, responses((status = 200, description = "Server renamed or password set, changed or cleared (an empty password clears it). `members` only applies when `password` is present: `keep` (default) keeps every member; `remove` removes every other member whose server permissions are a strict subset of yours (site admins remove everyone else) as if kicked. Setting, changing or clearing the password revokes every guest grant unless `keep_guests` is true together with `members: keep`. `banner_color` (the channel sidebar header background) and `name_color` (the server name in that header) are `#rrggbb` colors, or `null` to go back to the theme colors; they may also be changed on the rchat server. Returns the server with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated), (status = 400, description = "Invalid server name or color"), (status = 403, description = "Missing permission: changing the server needs Delete server, and `remove` also needs Kick; the rchat server can't be renamed or given a password")), security(("bearer" = [])))]
 pub(crate) async fn update_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1476,15 +1494,21 @@ pub(crate) async fn update_server(
     Json(req): Json<ServerPatch>,
 ) -> Result<Json<ServerUpdated>, ApiError> {
     let key = name.to_lowercase();
-    guard_rchat(&key)?;
-    let lite = require_server(&state.db, &key).await?;
-    require_perm(&state.db, &key, &user, Perm::DeleteServer).await?;
     let ServerPatch {
         name,
         password,
         members,
         keep_guests,
+        banner_color,
+        name_color,
     } = req;
+    if name.is_some() || password.is_some() {
+        guard_rchat(&key)?;
+    }
+    let lite = require_server(&state.db, &key).await?;
+    require_perm(&state.db, &key, &user, Perm::DeleteServer).await?;
+    let banner_color = server_color(banner_color, "banner")?;
+    let name_color = server_color(name_color, "name")?;
     let purge = password.is_some() && members == PasswordMembers::Remove;
     if purge {
         require_perm(&state.db, &key, &user, Perm::Kick).await?;
@@ -1509,6 +1533,13 @@ pub(crate) async fn update_server(
     };
     let mut tx = state.db.begin().await?;
     rename_live(&mut tx, &key, &new_key, &display, password_hash.as_ref()).await?;
+    set_colors(
+        &mut tx,
+        &new_key,
+        banner_color.as_ref(),
+        name_color.as_ref(),
+    )
+    .await?;
     let (removed, kept) = match purge {
         true => purge_members(&mut tx, &new_key, &user, mine).await?,
         false => (
@@ -1531,6 +1562,8 @@ pub(crate) async fn update_server(
             Some(hash) => hash.is_some(),
             None => lite.has_password,
         },
+        banner_color: banner_color.unwrap_or(lite.banner_color),
+        name_color: name_color.unwrap_or(lite.name_color),
     };
     state.hub.broadcast(WsEvent::ServerRenamed {
         old_name: key,
@@ -1542,6 +1575,42 @@ pub(crate) async fn update_server(
         removed: removed.len() as i64,
         kept,
     }))
+}
+
+fn server_color(
+    color: Option<Option<String>>,
+    what: &str,
+) -> Result<Option<Option<String>>, ApiError> {
+    match color {
+        None => Ok(None),
+        Some(None) => Ok(Some(None)),
+        Some(Some(c)) if valid_color(&c) => Ok(Some(Some(c.to_lowercase()))),
+        Some(Some(_)) => Err(bad(&format!("Invalid {what} color"))),
+    }
+}
+
+async fn set_colors(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    key: &str,
+    banner: Option<&Option<String>>,
+    name: Option<&Option<String>>,
+) -> Result<(), ApiError> {
+    for (sql, color) in [
+        (
+            "UPDATE servers SET banner_color = $1 WHERE name = $2",
+            banner,
+        ),
+        ("UPDATE servers SET name_color = $1 WHERE name = $2", name),
+    ] {
+        if let Some(color) = color {
+            sqlx::query(sql)
+                .bind(color)
+                .bind(key)
+                .execute(&mut **tx)
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 async fn rename_live(
@@ -2620,6 +2689,8 @@ mod tests {
                 password: None,
                 members: PasswordMembers::Keep,
                 keep_guests: false,
+                banner_color: None,
+                name_color: None,
             }),
         )
         .await
@@ -3506,6 +3577,8 @@ mod tests {
                 password: Some(password.to_string()),
                 members: PasswordMembers::Keep,
                 keep_guests: false,
+                banner_color: None,
+                name_color: None,
             }),
         )
         .await
@@ -3851,6 +3924,8 @@ mod tests {
                 password: password.map(str::to_string),
                 members,
                 keep_guests,
+                banner_color: None,
+                name_color: None,
             }),
         )
         .await
@@ -3906,6 +3981,134 @@ mod tests {
             .execute(db)
             .await
             .expect("assign");
+    }
+
+    async fn patch_colors(
+        state: &AppState,
+        actor: User,
+        server: &str,
+        body: &str,
+    ) -> Result<ServerUpdated, ApiError> {
+        let patch: ServerPatch = serde_json::from_str(body).expect("patch json");
+        update_server(
+            State(state.clone()),
+            Authed(actor),
+            Path(server.to_string()),
+            Json(patch),
+        )
+        .await
+        .map(|Json(updated)| updated)
+    }
+
+    #[tokio::test]
+    async fn server_colors_are_validated_gated_and_broadcast() {
+        let (state, path) = temp_state("server_colors").await;
+        let db = &state.db;
+        let _ = make_server(&state, "club").await.expect("club");
+        add_user(db, "bob", "bob").await;
+        join(&state, "bob", "club").await.expect("join");
+        let alice = || mem_user("alice", false);
+        let mut rx = state.hub.subscribe();
+        let set = patch_colors(
+            &state,
+            alice(),
+            "club",
+            r##"{"banner_color":"#FF0066","name_color":"#ffffff"}"##,
+        )
+        .await
+        .expect("set colors");
+        assert_eq!(set.server.banner_color.as_deref(), Some("#ff0066"));
+        assert_eq!(set.server.name_color.as_deref(), Some("#ffffff"));
+        assert!(!set.server.has_password);
+        let mut renamed = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let WsEvent::ServerRenamed { old_name, server } = ev {
+                renamed.push((old_name, server.banner_color, server.name_color));
+            }
+        }
+        assert_eq!(
+            renamed,
+            [(
+                "club".to_string(),
+                Some("#ff0066".to_string()),
+                Some("#ffffff".to_string())
+            )]
+        );
+        let detail = server_detail(db, &state.hub, "club", None)
+            .await
+            .expect("detail");
+        assert_eq!(detail.banner_color.as_deref(), Some("#ff0066"));
+        assert_eq!(detail.name_color.as_deref(), Some("#ffffff"));
+        let mine = my_servers_by_names(db, "bob", &["club".to_string()])
+            .await
+            .expect("mine");
+        assert_eq!(mine[0].banner_color.as_deref(), Some("#ff0066"));
+        let renamed = patch_colors(&state, alice(), "club", r#"{"name":"Club"}"#)
+            .await
+            .expect("rename keeps colors");
+        assert_eq!(renamed.server.banner_color.as_deref(), Some("#ff0066"));
+        assert_eq!(renamed.server.name_color.as_deref(), Some("#ffffff"));
+        let cleared = patch_colors(&state, alice(), "club", r#"{"name_color":null}"#)
+            .await
+            .expect("clear name color");
+        assert_eq!(cleared.server.banner_color.as_deref(), Some("#ff0066"));
+        assert_eq!(cleared.server.name_color, None);
+        let lite = require_server(db, "club").await.expect("lite");
+        assert_eq!(
+            (lite.banner_color.as_deref(), lite.name_color),
+            (Some("#ff0066"), None)
+        );
+        for bad in [
+            r#"{"banner_color":"red"}"#,
+            r##"{"banner_color":"#12345"}"##,
+            r##"{"name_color":"#12345g"}"##,
+            r#"{"name_color":""}"#,
+        ] {
+            let err = patch_colors(&state, alice(), "club", bad)
+                .await
+                .err()
+                .expect(bad);
+            assert_eq!(err.0, StatusCode::BAD_REQUEST, "{bad}");
+        }
+        let err = patch_colors(
+            &state,
+            mem_user("bob", false),
+            "club",
+            r##"{"banner_color":"#000000"}"##,
+        )
+        .await
+        .err()
+        .expect("bob is not allowed");
+        assert_eq!(err.0, StatusCode::FORBIDDEN);
+        let lite = require_server(db, "club").await.expect("lite");
+        assert_eq!(lite.banner_color.as_deref(), Some("#ff0066"));
+        let rchat = patch_colors(
+            &state,
+            mem_user("root", true),
+            "rchat",
+            r##"{"banner_color":"#000000"}"##,
+        )
+        .await
+        .expect("site admin colors rchat");
+        assert_eq!(rchat.server.banner_color.as_deref(), Some("#000000"));
+        let err = patch_colors(
+            &state,
+            mem_user("root", true),
+            "rchat",
+            r##"{"name":"other","banner_color":"#111111"}"##,
+        )
+        .await
+        .err()
+        .expect("rchat rename stays protected");
+        assert_eq!(err.0, StatusCode::FORBIDDEN);
+        let err = patch_colors(&state, alice(), "rchat", r##"{"banner_color":"#111111"}"##)
+            .await
+            .err()
+            .expect("members can't color rchat");
+        assert_eq!(err.0, StatusCode::FORBIDDEN);
+        let lite = require_server(db, "rchat").await.expect("rchat");
+        assert_eq!(lite.banner_color.as_deref(), Some("#000000"));
+        done(state, path).await;
     }
 
     #[tokio::test]

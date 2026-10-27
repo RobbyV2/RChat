@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { Hash, Trash2, X } from 'lucide-react'
+import { Hash, Trash2, TriangleAlert, X } from 'lucide-react'
 import type { Page } from '../lib/lists'
 import { api } from '../lib/instances'
 import {
@@ -15,8 +15,18 @@ import {
 import { SLOWMODE_MAX, passwordDone, passwordPrompt } from '../lib/rules'
 import { inviteUrl } from '../lib/invite'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
-import type { Channel, ChannelPerm, ConfirmChoice, Member, Role } from '../lib/types'
+import type { Channel, ChannelPerm, ConfirmChoice, Member, Role, ServerDetail } from '../lib/types'
 import { UserAvatar } from './user_avatar'
+import { ColorField } from './color_field'
+import { ServerHeader } from './server_header'
+import {
+  BANNER_PRESETS,
+  NAME_PRESETS,
+  THEME_ON_SURFACE,
+  THEME_SURFACES,
+  contrastWarning,
+  headerColors,
+} from '../lib/server_colors'
 
 export const fieldCls =
   'min-w-0 flex-1 rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm'
@@ -737,6 +747,154 @@ export function ServerPasswordField({
   )
 }
 
+export function ServerAppearance({
+  server,
+  detail: fetched,
+  refresh,
+}: {
+  server: string
+  detail?: ServerDetail
+  refresh?: () => void
+}) {
+  const detail = useStore(s => s.servers[server]) ?? fetched
+  const theme = useStore(s => s.theme)
+  const showGear = useStore(s => serverAdminPerms(s, server) !== 0)
+  const savedBanner = detail?.banner_color ?? null
+  const savedName = detail?.name_color ?? null
+  const [banner, setBanner] = useState(savedBanner)
+  const [name, setName] = useState(savedName)
+  const [seen, setSeen] = useState({ banner: savedBanner, name: savedName })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+  if (seen.banner !== savedBanner || seen.name !== savedName) {
+    if (banner === seen.banner) setBanner(savedBanner)
+    if (name === seen.name) setName(savedName)
+    setSeen({ banner: savedBanner, name: savedName })
+  }
+  if (!detail) return null
+  const rchat = server === 'rchat'
+  const dirty = banner !== savedBanner || (!rchat && name !== savedName)
+  const warning = rchat ? null : contrastWarning(banner, name)
+  const auto = headerColors(banner, null)?.fg
+  const preview = detail.channels.filter(c => c.kind === 'text').slice(0, 2)
+  const edit = (apply: () => void) => {
+    apply()
+    setDone(false)
+    setError(null)
+  }
+  return (
+    <>
+      <p className={sectionCls}>Appearance</p>
+      <div className="flex flex-col gap-4">
+        <div
+          aria-label="Header preview"
+          role="img"
+          className="w-full max-w-60 overflow-hidden rounded-2xl border border-outline-variant bg-surface-container-low"
+        >
+          <ServerHeader
+            preview
+            showGear={showGear}
+            server={server}
+            displayName={detail.display_name}
+            bannerColor={banner}
+            nameColor={rchat ? null : name}
+          />
+          <div className="flex flex-col gap-0.5 px-2 py-2" aria-hidden>
+            {preview.map(c => (
+              <span
+                key={c.id}
+                className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-on-surface-variant"
+              >
+                <Hash size={16} className="shrink-0" />
+                <span className="truncate">{c.name}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm text-on-surface">Banner color</span>
+          <ColorField
+            label="Banner color"
+            value={banner}
+            shown={banner ?? THEME_SURFACES[theme]}
+            onChange={c => edit(() => setBanner(c))}
+            presets={BANNER_PRESETS}
+            defaultNote="Theme color"
+            resetLabel="Reset"
+          />
+        </div>
+        {!rchat && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm text-on-surface">Name color</span>
+            <ColorField
+              label="Name color"
+              value={name}
+              shown={name ?? auto ?? THEME_ON_SURFACE[theme]}
+              onChange={c => edit(() => setName(c))}
+              presets={NAME_PRESETS}
+              defaultNote={banner ? 'Automatic, readable on the banner' : 'Theme color'}
+              resetLabel="Reset"
+            />
+          </div>
+        )}
+        {warning && (
+          <p role="status" className="flex items-start gap-1.5 text-xs text-error">
+            <TriangleAlert size={14} className="mt-px shrink-0" aria-hidden />
+            {warning}
+          </p>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={!dirty || saving}
+            onClick={() => {
+              setSaving(true)
+              setError(null)
+              api
+                .updateServer(server, {
+                  ...(banner !== savedBanner ? { banner_color: banner } : {}),
+                  ...(!rchat && name !== savedName ? { name_color: name } : {}),
+                })
+                .then(
+                  () => {
+                    setDone(true)
+                    refresh?.()
+                  },
+                  (err: unknown) => setError(errorText(err))
+                )
+                .finally(() => setSaving(false))
+            }}
+            className={filledBtn}
+          >
+            {saving ? 'Saving…' : 'Save colors'}
+          </button>
+          {dirty && !saving && (
+            <button
+              type="button"
+              onClick={() =>
+                edit(() => {
+                  setBanner(savedBanner)
+                  setName(savedName)
+                })
+              }
+              className={textBtn}
+            >
+              Discard
+            </button>
+          )}
+          {done && !dirty && (
+            <span role="status" className="text-xs text-on-surface">
+              Colors saved.
+            </span>
+          )}
+        </div>
+        <FieldError message={error} />
+      </div>
+    </>
+  )
+}
+
 export function InviteLinkField({ server, hasPassword }: { server: string; hasPassword: boolean }) {
   const [password, setPassword] = useState('')
   const [copied, setCopied] = useState<string | null>(null)
@@ -1050,6 +1208,7 @@ function Settings({ server }: { server: string }) {
             <button className={filledBtn}>Rename</button>
           </form>
           <FieldError message={renameError} />
+          <ServerAppearance server={server} />
           <ServerPasswordField
             server={server}
             hasPassword={detail.has_password}
@@ -1079,6 +1238,9 @@ function Settings({ server }: { server: string }) {
             </button>
           </div>
         </>
+      )}
+      {server === 'rchat' && hasPerm(perms, Perm.DeleteServer) && (
+        <ServerAppearance server={server} />
       )}
       {hasPerm(perms, Perm.ManageAdmins) && (
         <>

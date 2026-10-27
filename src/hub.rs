@@ -2821,6 +2821,8 @@ pub(crate) mod tests {
                         display_name: s("deux"),
                         creator: None,
                         has_password: false,
+                        banner_color: None,
+                        name_color: None,
                     },
                 },
             },

@@ -20,6 +20,7 @@ import {
   MemberSearchField,
   RolesEditor,
   Sentinel,
+  ServerAppearance,
   ServerPasswordField,
   dangerBtn,
   useMemberSearch,
@@ -482,6 +483,7 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
           />
         </>
       )}
+      <ServerAppearance server={name} detail={detail} refresh={() => void refresh()} />
       <p className={sectionCls}>Roles</p>
       <RolesEditor server={name} roles={detail.roles} refresh={refresh} />
       <p className={sectionCls}>Channels</p>

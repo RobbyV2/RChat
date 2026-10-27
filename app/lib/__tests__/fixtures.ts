@@ -83,6 +83,8 @@ export const serverDetail = (name: string, over: Partial<ServerDetail> = {}): Se
   display_name: name,
   creator: null,
   has_password: false,
+  banner_color: null,
+  name_color: null,
   channels: [],
   roles: [],
   member_count: 0,

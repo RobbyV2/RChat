@@ -691,6 +691,8 @@ mod tests {
                 display_name: s("b"),
                 creator: None,
                 has_password: false,
+                banner_color: None,
+                name_color: None,
             },
         });
         router.deliver(WsEvent::PresenceChanged {

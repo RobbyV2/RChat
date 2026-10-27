@@ -273,7 +273,14 @@ export const endpoints = (c: ApiClient) => ({
   leaveServer: (name: string) => c.req<unknown>('POST', `/servers/${seg(name)}/leave`),
   updateServer: (
     name: string,
-    patch: { name?: string; password?: string; members?: PasswordMembers; keep_guests?: boolean }
+    patch: {
+      name?: string
+      password?: string
+      members?: PasswordMembers
+      keep_guests?: boolean
+      banner_color?: string | null
+      name_color?: string | null
+    }
   ) => c.req<ServerUpdated>('PATCH', `/servers/${seg(name)}`, patch),
   deleteServer: (name: string) => c.req<unknown>('DELETE', `/servers/${seg(name)}`),
   createChannel: (server: string, name: string, kind: ChannelKind = 'text') =>

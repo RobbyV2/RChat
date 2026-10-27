@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useState } from 'react'
-import { Hash, Pin, Plus, Settings, Volume2 } from 'lucide-react'
+import { Hash, Pin, Plus, Volume2 } from 'lucide-react'
 import { myPerms, serverAdminPerms, userRefFor, useStore } from '../lib/store'
 import { dmSections } from '../lib/nav_layout'
 import { canDeleteChannel } from '../lib/rules'
@@ -9,6 +9,7 @@ import { enterKey } from '../lib/keys'
 import { rtc } from '../lib/rtc'
 import { Perm, hasPerm, type Channel, type ChannelKind, type DmSummary } from '../lib/types'
 import { UserAvatar } from './user_avatar'
+import { ServerHeader } from './server_header'
 import { longPress } from './context_menu'
 import { dragScope, useDrag } from './drag'
 import { profileTrigger } from './profile_card'
@@ -318,22 +319,17 @@ export function ChannelSidebar() {
 
   return (
     <aside className={base}>
-      <header className="flex h-14 items-center justify-between border-b border-outline-variant px-4">
-        {detail.name === 'rchat' ? (
-          <img src="/rchat_logo.png" alt="RChat" className="h-8 w-auto" />
-        ) : (
-          <span className="streamer truncate font-medium">{detail.display_name}</span>
-        )}
-        {panelPerms !== 0 && (
-          <button
-            title="Server settings"
-            onClick={() => openDialog({ kind: 'server_settings', server: detail.name })}
-            className="shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-          >
-            <Settings size={18} />
-          </button>
-        )}
-      </header>
+      <ServerHeader
+        server={detail.name}
+        displayName={detail.display_name}
+        bannerColor={detail.banner_color}
+        nameColor={detail.name_color}
+        onSettings={
+          panelPerms !== 0
+            ? () => openDialog({ kind: 'server_settings', server: detail.name })
+            : undefined
+        }
+      />
       <div className="flex items-center justify-between px-4 pt-3 pb-1">
         <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
           Channels

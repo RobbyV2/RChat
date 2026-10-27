@@ -24,6 +24,8 @@ export interface ServerSummary {
   display_name: string
   creator: string | null
   is_admin: boolean
+  banner_color?: string | null
+  name_color?: string | null
 }
 
 export interface ServerSummaryLite {
@@ -31,6 +33,8 @@ export interface ServerSummaryLite {
   display_name: string
   creator: string | null
   has_password: boolean
+  banner_color?: string | null
+  name_color?: string | null
 }
 
 export type PasswordMembers = 'keep' | 'remove'
@@ -87,6 +91,8 @@ export interface ServerDetail {
   display_name: string
   creator: string | null
   has_password: boolean
+  banner_color: string | null
+  name_color: string | null
   channels: Channel[]
   roles: Role[]
   member_count: number

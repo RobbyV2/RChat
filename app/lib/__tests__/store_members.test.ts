@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { memberOf, serverAdminPerms, useStore } from '../store'
 import { Perm, type Member, type WsEvent } from '../types'
 import { me, member, paged, role, serverDetail } from './fixtures'
+import { home } from '../instances'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -120,5 +121,49 @@ describe('member lookups for authors', () => {
     await st().ensureMembers('s', ['bob'])
     dispatch({ type: 'member_left', server: 's', username: 'alice' })
     expect(st().memberInfo.s).toBeUndefined()
+  })
+})
+
+describe('same-name server updates', () => {
+  const recolor = (name: string): WsEvent => ({
+    type: 'server_renamed',
+    old_name: 's',
+    server: {
+      name,
+      display_name: name,
+      creator: null,
+      has_password: false,
+      banner_color: '#ff0066',
+      name_color: null,
+    },
+  })
+  const lookups = () => requests.filter(r => r.includes('usernames='))
+
+  test('a color change keeps an in-flight member lookup', async () => {
+    const pending = st().ensureMembers('s', ['bob'])
+    dispatch(recolor('s'))
+    await pending
+    await tick()
+    await tick()
+    expect(lookups()).toHaveLength(1)
+    expect(memberOf(st(), 's', 'bob')?.role_ids).toEqual([1])
+    expect(st().servers.s.banner_color).toBe('#ff0066')
+  })
+
+  test('a guest is resubscribed only on a real rename', () => {
+    const calls: string[] = []
+    const { subscribe, unsubscribe } = home.ws
+    home.ws.subscribe = servers => void calls.push(`sub ${servers.join(',')}`)
+    home.ws.unsubscribe = server => void calls.push(`unsub ${server}`)
+    try {
+      useStore.setState({ me: null, guest: true, guestServers: ['s'] })
+      dispatch(recolor('s'))
+      expect(calls).toEqual([])
+      dispatch(recolor('t'))
+      expect(calls).toEqual(['unsub s', 'sub t'])
+    } finally {
+      home.ws.subscribe = subscribe
+      home.ws.unsubscribe = unsubscribe
+    }
   })
 })

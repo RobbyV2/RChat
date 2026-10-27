@@ -216,6 +216,8 @@ pub struct ServerSummary {
     pub display_name: String,
     pub creator: Option<String>,
     pub is_admin: bool,
+    pub banner_color: Option<String>,
+    pub name_color: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
@@ -224,6 +226,10 @@ pub struct ServerSummaryLite {
     pub display_name: String,
     pub creator: Option<String>,
     pub has_password: bool,
+    #[serde(default)]
+    pub banner_color: Option<String>,
+    #[serde(default)]
+    pub name_color: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
@@ -267,6 +273,8 @@ pub struct ServerDetail {
     pub display_name: String,
     pub creator: Option<String>,
     pub has_password: bool,
+    pub banner_color: Option<String>,
+    pub name_color: Option<String>,
     pub channels: Vec<Channel>,
     pub roles: Vec<Role>,
     pub member_count: i64,

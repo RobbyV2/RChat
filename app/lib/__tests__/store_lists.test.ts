@@ -175,6 +175,44 @@ describe('unread dots for lists that are not loaded', () => {
   })
 })
 
+describe('server colors', () => {
+  test('a color change updates the server live without replacing the view', () => {
+    serve([])
+    const view = { kind: 'channel' as const, server: 'club', channelId: 3 }
+    useStore.setState({
+      view,
+      servers: { club: serverDetail('club') },
+      me: me('alice', {
+        servers: [{ name: 'club', display_name: 'club', creator: null, is_admin: true }],
+      }),
+    })
+    dispatch({
+      type: 'server_renamed',
+      old_name: 'club',
+      server: {
+        name: 'club',
+        display_name: 'club',
+        creator: null,
+        has_password: false,
+        banner_color: '#ff0066',
+        name_color: '#ffffff',
+      },
+    })
+    expect(st().view === view).toBe(true)
+    expect(st().servers.club.banner_color).toBe('#ff0066')
+    expect(st().servers.club.name_color).toBe('#ffffff')
+    expect(st().me?.servers[0].banner_color).toBe('#ff0066')
+    dispatch({
+      type: 'server_renamed',
+      old_name: 'club',
+      server: { name: 'club', display_name: 'club', creator: null, has_password: false },
+    })
+    expect(st().servers.club.banner_color).toBeNull()
+    expect(st().servers.club.name_color).toBeNull()
+    expect(st().view === view).toBe(true)
+  })
+})
+
 describe('removed or renamed list items stay gone', () => {
   test('a server deleted while a page is in flight is not appended back', async () => {
     useStore.setState({ me: me('alice', { servers: firstFifty() }), serversMore: true })

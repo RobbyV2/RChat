@@ -9,6 +9,7 @@ import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
 import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio } from '../lib/rules'
 import type { AvatarKind } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
+import { ColorField } from './color_field'
 import { InstanceDetails } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { SettingSwitch } from './admin_panel'
@@ -52,24 +53,14 @@ function BannerPicker({
           <span className="streamer truncate pb-1 font-medium text-on-surface">{displayName}</span>
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-on-surface-variant">
-        <label className="flex items-center gap-3">
-          Banner color
-          <input
-            type="color"
-            value={shown}
-            onChange={e => onBanner(e.target.value)}
-            className="h-8 w-12 cursor-pointer rounded bg-transparent"
-          />
-        </label>
-        {banner === null ? (
-          <span className="text-xs">Default, follows your avatar</span>
-        ) : (
-          <button type="button" onClick={() => onBanner(null)} className={textBtn}>
-            Use default
-          </button>
-        )}
-      </div>
+      <ColorField
+        label="Banner color"
+        value={banner}
+        shown={shown}
+        onChange={onBanner}
+        defaultNote="Default, follows your avatar"
+        resetLabel="Use default"
+      />
     </div>
   )
 }
