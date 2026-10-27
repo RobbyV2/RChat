@@ -38,6 +38,8 @@ afterEach(() => {
 
 describe('session', () => {
   test('logout sends the last read marks, then revokes the token it used', async () => {
+    st().logout()
+    calls = []
     api.setToken('tok')
     useStore.setState({ token: 'tok', me: me('bob'), authExpired: false, reads: {} })
     st().markRead('d424242', 1_000_000_000)
