@@ -38,6 +38,7 @@ import {
   bannerColor,
   cachedProfile,
   canEditRoles,
+  forgetProfile,
   freeRoles,
   heldRoles,
   placeCard,
@@ -155,7 +156,7 @@ export function ProfileCard() {
 }
 
 function Card({ target }: { target: ProfileTarget }) {
-  const { server, x, y } = target
+  const { server, x, y, rev } = target
   const username = target.user.username
   const close = useStore(s => s.closeProfile)
   const view = useStore(s => s.view)
@@ -208,12 +209,14 @@ function Card({ target }: { target: ProfileTarget }) {
         )
       })
       .catch((e: unknown) => {
-        if (current && e instanceof ApiError && e.status === 404) setMissing(true)
+        if (!(e instanceof ApiError && e.status === 404)) return
+        forgetProfile(key)
+        if (current) setMissing(true)
       })
     return () => {
       current = false
     }
-  }, [username, server])
+  }, [username, server, rev])
 
   useEffect(() => {
     if (view !== opened.current.view || dialog !== opened.current.dialog) close()
@@ -296,6 +299,7 @@ function Card({ target }: { target: ProfileTarget }) {
   const self = me?.username === username
   const user: UserRef = self && me ? me : (live ?? target.user)
   const banner = bannerColor(user, self ? me?.banner_color : profile?.banner_color)
+  const bio = self ? (me?.bio ?? null) : (profile?.bio ?? null)
   const fetched = profile?.member ?? null
   const known = server === null || live !== undefined || profile !== null || missing
   const member = server === null ? null : live !== undefined ? live : fetched
@@ -418,6 +422,22 @@ function Card({ target }: { target: ProfileTarget }) {
             @{remote ? formatQualified(user.username, remote) : user.username}
           </p>
           {remote && <InstanceChip host={remote} className="mt-1" />}
+          {bio && !missing && (
+            <p className="streamer mt-2 text-sm break-words whitespace-pre-wrap text-on-surface">
+              {bio}
+            </p>
+          )}
+          {self && me && !guest && (
+            <button
+              onClick={() => {
+                close()
+                useStore.getState().openDialog({ kind: 'settings', focus: 'bio' })
+              }}
+              className="mt-1 text-xs font-medium text-primary hover:underline"
+            >
+              {bio ? 'Edit description' : 'Add a description'}
+            </button>
+          )}
         </div>
         {missing ? (
           <p className="mt-3 rounded-xl bg-surface-container-low p-3 text-sm text-on-surface-variant">

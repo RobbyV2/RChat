@@ -186,12 +186,14 @@ export interface ProfileMember {
 export interface Profile {
   user: UserRef
   banner_color: string | null
+  bio: string | null
   created_at: number
   member: ProfileMember | null
 }
 
 export interface Me extends UserRef {
   banner_color: string | null
+  bio: string | null
   is_site_admin: boolean
   appear_offline: boolean
   password_kind: 'text' | 'words'
@@ -216,6 +218,7 @@ export interface ProfanityTargets {
   channel_names: boolean
   role_names: boolean
   file_names: boolean
+  bios: boolean
 }
 
 export type ProfanityTarget = keyof ProfanityTargets

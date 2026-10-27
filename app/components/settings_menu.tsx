@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useId, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { X } from 'lucide-react'
 import { api } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import { defaultBanner } from '../lib/profile'
 import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
+import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio } from '../lib/rules'
 import type { AvatarKind } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
 import { InstanceDetails } from './instance_badge'
@@ -13,6 +14,8 @@ import { UserAvatar } from './user_avatar'
 import { SettingSwitch } from './admin_panel'
 import { PassSwitch, WordGrid } from './word_grid'
 import { FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './server_settings'
+
+const bioFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
 type Section = 'settings' | 'information'
 
@@ -71,7 +74,117 @@ function BannerPicker({
   )
 }
 
+function AboutMe({ focus }: { focus: boolean }) {
+  const saved = useStore(s => s.me?.bio ?? '')
+  const setBio = useStore(s => s.setBio)
+  const [text, setText] = useState(saved)
+  const [seen, setSeen] = useState(saved)
+  if (seen !== saved) {
+    setSeen(saved)
+    if (text === seen) setText(saved)
+  }
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const id = useId()
+
+  useEffect(() => {
+    const el = ref.current
+    if (!focus || !el) return
+    el.scrollIntoView({ block: 'center' })
+    el.focus({ preventScroll: true })
+    el.setSelectionRange(el.value.length, el.value.length)
+  }, [focus])
+
+  const count = charCount(cleanBio(text))
+  const over = count > BIO_MAX
+  const changed = cleanBio(text) !== saved
+
+  const save = async () => {
+    const invalid = bioError(text)
+    if (invalid) {
+      setError(invalid)
+      return
+    }
+    setBusy(true)
+    const err = await setBio(text)
+    setBusy(false)
+    setError(err)
+    if (err) return
+    setDone(true)
+    setText(useStore.getState().me?.bio ?? '')
+  }
+
+  const cancel = () => {
+    setText(saved)
+    setError(null)
+    setDone(false)
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <label htmlFor={id} className="text-sm text-on-surface-variant">
+        About me
+      </label>
+      <textarea
+        id={id}
+        ref={ref}
+        rows={4}
+        value={text}
+        onChange={e => {
+          setText(e.target.value)
+          setError(null)
+          setDone(false)
+        }}
+        placeholder="Tell people a little about yourself"
+        aria-invalid={over || error !== null}
+        aria-describedby={error ? `${id}-count ${id}-error` : `${id}-count`}
+        className={`${bioFieldCls} resize-none ${
+          over || error !== null ? 'border-error' : 'border-outline focus:border-primary'
+        }`}
+      />
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <FieldError id={`${id}-error`} message={error} />
+          {done && !error && <p className="pt-1.5 text-xs text-on-surface-variant">Saved</p>}
+        </div>
+        <span aria-live="polite" className="sr-only">
+          {bioAnnouncement(count, done && !error)}
+        </span>
+        <span
+          id={`${id}-count`}
+          className={`shrink-0 pt-1.5 text-xs tabular-nums ${over ? 'text-error' : 'text-on-surface-variant'}`}
+        >
+          {count}/{BIO_MAX}
+        </span>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={cancel}
+          disabled={text === saved}
+          className={`${textBtn} disabled:opacity-40`}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={busy || over || !changed}
+          className={filledBtn}
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function AccountSection() {
+  const focusBio = useStore(
+    s => s.activeDialog?.kind === 'settings' && s.activeDialog.focus === 'bio'
+  )
   const me = useStore(s => s.me)
   const patchMe = useStore(s => s.patchMe)
   const [kind, setKind] = useState<AvatarKind>(me?.avatar_kind ?? 'identicon')
@@ -107,6 +220,9 @@ function AccountSection() {
       >
         Save profile
       </button>
+      <div className="mt-6">
+        <AboutMe focus={focusBio} />
+      </div>
     </section>
   )
 }
@@ -446,8 +562,9 @@ function InformationSection() {
       </Info>
       <Info title="Moderation">
         <p>
-          Profanity filtering runs server-side on usernames, server names, channel names, and
-          channel messages; DMs and passwords are exempt. Rate limits apply per IP across the API.
+          Profanity filtering runs server-side on usernames, server names, channel names, profile
+          descriptions and channel messages; DMs and passwords are exempt. Rate limits apply per IP
+          across the API.
         </p>
       </Info>
     </div>

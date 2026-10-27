@@ -34,6 +34,7 @@ pub struct Me {
     pub avatar_kind: AvatarKind,
     pub avatar_color: Option<String>,
     pub banner_color: Option<String>,
+    pub bio: Option<String>,
     pub is_site_admin: bool,
     pub appear_offline: bool,
     #[schema(schema_with = password_kind_schema)]
@@ -244,6 +245,7 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
         avatar_kind: user.avatar_kind,
         avatar_color: user.avatar_color.clone(),
         banner_color: user.banner_color.clone(),
+        bio: user.bio.clone(),
         is_site_admin: user.is_site_admin,
         appear_offline: user.appear_offline,
         password_kind: user.password_kind.clone(),
@@ -587,6 +589,9 @@ pub struct MePatch {
     #[serde(default, deserialize_with = "present")]
     #[schema(value_type = Option<String>)]
     banner_color: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<String>)]
+    bio: Option<Option<String>>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -594,7 +599,35 @@ pub struct MeUpdated {
     #[serde(flatten)]
     pub user: UserRef,
     pub banner_color: Option<String>,
+    pub bio: Option<String>,
     pub appear_offline: bool,
+}
+
+pub const BIO_MAX: usize = 190;
+
+pub fn clean_bio(text: &str) -> Result<Option<String>, ApiError> {
+    let kept: String = text
+        .chars()
+        .filter(|c| *c == '\n' || !c.is_control())
+        .collect();
+    let mut out = String::with_capacity(kept.len());
+    let mut newlines = 0;
+    for c in kept.trim().chars() {
+        newlines = match c {
+            '\n' => newlines + 1,
+            _ => 0,
+        };
+        if newlines <= 2 {
+            out.push(c);
+        }
+    }
+    match out.chars().count() {
+        0 => Ok(None),
+        n if n > BIO_MAX => Err(bad(&format!(
+            "Description must be at most {BIO_MAX} characters"
+        ))),
+        _ => Ok(Some(out)),
+    }
 }
 
 fn check_banner(color: Option<String>) -> Result<Option<String>, ApiError> {
@@ -605,7 +638,7 @@ fn check_banner(color: Option<String>) -> Result<Option<String>, ApiError> {
     }
 }
 
-#[utoipa::path(patch, path = "/api/me", request_body(content = MePatch, description = "Every field is optional and only the fields present change. `banner_color` is a `#rrggbb` color, or `null` to go back to the default derived from the avatar"), responses((status = 200, description = "Avatar, banner color and/or appear-offline preference updated; returns the user's public profile plus their banner color and appear-offline flag", body = MeUpdated)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/me", request_body(content = MePatch, description = "Every field is optional and only the fields present change. `banner_color` is a `#rrggbb` color, or `null` to go back to the default derived from the avatar. `bio` is the profile description: trimmed, control characters other than newlines removed, 3 or more newlines in a row collapsed to 2, at most 190 characters; empty or `null` clears it. It is checked by the profanity filter (`bios` target)"), responses((status = 200, description = "Avatar, banner color, description and/or appear-offline preference updated; returns the user's public profile plus their banner color, description and appear-offline flag", body = MeUpdated), (status = 400, description = "Invalid color, description too long, or description blocked by the profanity filter")), security(("bearer" = [])))]
 pub(crate) async fn patch_me(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -616,6 +649,7 @@ pub(crate) async fn patch_me(
         avatar_color,
         appear_offline,
         banner_color,
+        bio,
     } = req;
     let avatar = match avatar_kind {
         Some(kind) => Some((kind, check_avatar(kind, avatar_color)?)),
@@ -623,6 +657,16 @@ pub(crate) async fn patch_me(
     };
     let banner = match banner_color {
         Some(color) => Some(check_banner(color)?),
+        None => None,
+    };
+    let bio = match bio {
+        Some(text) => {
+            let text = clean_bio(text.as_deref().unwrap_or(""))?;
+            if let Some(text) = &text {
+                check_profanity(&state.db, ProfanityTarget::Bios, text).await?;
+            }
+            Some(text)
+        }
         None => None,
     };
     let mut tx = state.db.begin().await?;
@@ -641,6 +685,13 @@ pub(crate) async fn patch_me(
             .execute(&mut *tx)
             .await?;
     }
+    if let Some(text) = &bio {
+        sqlx::query("UPDATE users SET bio = $1 WHERE username = $2")
+            .bind(text)
+            .bind(&user.username)
+            .execute(&mut *tx)
+            .await?;
+    }
     if let Some(hidden) = appear_offline {
         sqlx::query("UPDATE users SET appear_offline = $1 WHERE username = $2")
             .bind(i64::from(hidden))
@@ -653,7 +704,7 @@ pub(crate) async fn patch_me(
         .await?
         .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string()))?;
     let user_ref = UserRef::from_user(&stored);
-    if avatar.is_some() {
+    if avatar.is_some() || bio.as_ref().is_some_and(|b| *b != user.bio) {
         state.hub.broadcast(WsEvent::UserUpdated {
             user: user_ref.clone(),
             scope: crate::ws::user_scope(&state.read(), &stored.username).await,
@@ -668,6 +719,7 @@ pub(crate) async fn patch_me(
     Ok(Json(MeUpdated {
         user: user_ref,
         banner_color: stored.banner_color,
+        bio: stored.bio,
         appear_offline: stored.appear_offline,
     }))
 }
@@ -1336,6 +1388,7 @@ mod tests {
                             avatar_color,
                             appear_offline,
                             banner_color: None,
+                            bio: None,
                         }),
                     )
                     .await
@@ -1390,6 +1443,225 @@ mod tests {
                 appear_offline: true
             })
         ));
+        done(state, path).await;
+    }
+
+    #[test]
+    fn bio_is_cleaned_and_limited() {
+        assert_eq!(clean_bio("").expect("empty"), None);
+        assert_eq!(clean_bio(" \n\t \n ").expect("blank"), None);
+        assert_eq!(
+            clean_bio("  hi\u{7} there \u{200b}\r\n").expect("trim"),
+            Some("hi there \u{200b}".to_string())
+        );
+        assert_eq!(
+            clean_bio("a\n\n\n\n\nb\n\nc\nd").expect("newlines"),
+            Some("a\n\nb\n\nc\nd".to_string())
+        );
+        assert_eq!(
+            clean_bio("a\r\n\r\n\r\nb").expect("crlf"),
+            Some("a\n\nb".to_string())
+        );
+        let max = "é".repeat(BIO_MAX);
+        assert_eq!(clean_bio(&max).expect("max"), Some(max.clone()));
+        assert_eq!(
+            clean_bio(&format!("  {max}\n\n\n")).expect("trimmed to max"),
+            Some(max.clone())
+        );
+        assert!(matches!(
+            clean_bio(&format!("{max}x")),
+            Err(ApiError(StatusCode::BAD_REQUEST, _))
+        ));
+        assert_eq!(
+            clean_bio(&format!("{}\n\n\n\n{}", "a".repeat(94), "b".repeat(94)))
+                .expect("collapsed fits")
+                .map(|b| b.chars().count()),
+            Some(190)
+        );
+        assert_eq!(
+            clean_bio("\u{a0}\u{2003}hi\u{3000}\u{2029}").expect("unicode spaces"),
+            Some("hi".to_string())
+        );
+        assert_eq!(
+            clean_bio(" \u{feff} ").expect("bom kept"),
+            Some("\u{feff}".to_string())
+        );
+        let edged = format!("\u{feff}{}\u{200b}", "a".repeat(BIO_MAX - 2));
+        assert_eq!(edged.chars().count(), BIO_MAX);
+        assert_eq!(
+            clean_bio(&format!(" {edged}\n")).expect("edged fits"),
+            Some(edged.clone())
+        );
+        for over in [format!("\u{feff}{edged}"), format!("{edged}\u{2060}")] {
+            assert!(matches!(
+                clean_bio(&over),
+                Err(ApiError(StatusCode::BAD_REQUEST, _))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn bio_is_saved_shown_and_broadcast() {
+        let (state, path) = temp_state("bio_patch").await;
+        let _ = register_text(&state, "bea").await.expect("register");
+        let mut rx = state.hub.subscribe();
+        let patch = |body: &str| {
+            let state = state.clone();
+            let body = body.to_string();
+            async move {
+                let user = get_user(&state.db, "bea")
+                    .await
+                    .expect("load user")
+                    .expect("user exists");
+                let req: MePatch = serde_json::from_str(&body).expect("patch body");
+                patch_me(State(state), Authed(user), Json(req))
+                    .await
+                    .map(|r| r.0.bio)
+            }
+        };
+        let shown = |state: AppState| async move {
+            let user = get_user(&state.db, "bea")
+                .await
+                .expect("load user")
+                .expect("user exists");
+            let me = me_payload(&state.db, &user).await.expect("me").bio;
+            let profile = crate::api::users::profile(
+                State(state.clone()),
+                crate::api::MaybeAuthed(None),
+                HeaderMap::new(),
+                axum::extract::Path("bea".to_string()),
+                axum::extract::Query(serde_json::from_str("{}").expect("empty profile query")),
+            )
+            .await
+            .expect("profile")
+            .0
+            .bio;
+            assert_eq!(me, profile);
+            me
+        };
+        assert_eq!(shown(state.clone()).await, None);
+        assert_eq!(
+            patch(r#"{"bio":"  Hello\n\n\n\nworld \u0007"}"#)
+                .await
+                .expect("set"),
+            Some("Hello\n\nworld".to_string())
+        );
+        assert_eq!(
+            shown(state.clone()).await.as_deref(),
+            Some("Hello\n\nworld")
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::UserUpdated { user, scope: _ }) if user.username == "bea"
+        ));
+        assert_eq!(
+            patch(r#"{"appear_offline":false}"#)
+                .await
+                .expect("other field")
+                .as_deref(),
+            Some("Hello\n\nworld")
+        );
+        assert!(!matches!(
+            rx.try_recv(),
+            Ok(WsEvent::UserUpdated { user: _, scope: _ })
+        ));
+        assert_eq!(
+            patch(r#"{"bio":"Hello\n\nworld  "}"#)
+                .await
+                .expect("unchanged")
+                .as_deref(),
+            Some("Hello\n\nworld")
+        );
+        assert!(rx.try_recv().is_err());
+        let long = format!(r#"{{"bio":"{}"}}"#, "x".repeat(BIO_MAX + 1));
+        assert!(matches!(
+            patch(&long).await,
+            Err(ApiError(StatusCode::BAD_REQUEST, _))
+        ));
+        assert!(matches!(
+            patch(r#"{"bio":"what the fuck"}"#).await,
+            Err(ApiError(StatusCode::BAD_REQUEST, e)) if e.contains("profanity")
+        ));
+        assert_eq!(
+            shown(state.clone()).await.as_deref(),
+            Some("Hello\n\nworld")
+        );
+        sqlx::query("UPDATE settings SET value = '0' WHERE key = 'profanity_bios'")
+            .execute(&state.db)
+            .await
+            .expect("bios off");
+        crate::api::Settings::forget(&state.db);
+        assert_eq!(
+            patch(r#"{"bio":"what the fuck"}"#)
+                .await
+                .expect("bios target off")
+                .as_deref(),
+            Some("what the fuck")
+        );
+        assert!(
+            check_profanity(&state.db, ProfanityTarget::Messages, "fuck")
+                .await
+                .is_err()
+        );
+        sqlx::query("UPDATE settings SET value = '1' WHERE key = 'profanity_bios'")
+            .execute(&state.db)
+            .await
+            .expect("bios on");
+        crate::api::Settings::forget(&state.db);
+        assert_eq!(patch(r#"{"bio":"   "}"#).await.expect("blank"), None);
+        assert_eq!(shown(state.clone()).await, None);
+        while rx.try_recv().is_ok() {}
+        assert_eq!(patch(r#"{"bio":null}"#).await.expect("still empty"), None);
+        assert!(rx.try_recv().is_err());
+        let _ = patch(r#"{"bio":"back"}"#).await.expect("set again");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::UserUpdated { user, scope: _ }) if user.username == "bea"
+        ));
+        assert_eq!(patch(r#"{"bio":null}"#).await.expect("null"), None);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::UserUpdated { user, scope: _ }) if user.username == "bea"
+        ));
+        assert_eq!(shown(state.clone()).await, None);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn guests_cannot_set_a_bio() {
+        use crate::server::client_ip::ProxyTrust;
+        let (state, path) = temp_state("bio_guest").await;
+        let trusted = ProxyTrust::from_config(false, Some("127.0.0.1")).expect("trust");
+        let app = crate::api::routes(
+            state.clone(),
+            &crate::config::Roles::ALL,
+            crate::server::client_ip::ClientIp(trusted),
+        )
+        .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+        });
+        let client = reqwest::Client::new();
+        for grant in [None, Some("some-guest-grant")] {
+            let mut req = client
+                .patch(format!("http://{addr}/me"))
+                .header("content-type", "application/json")
+                .body(r#"{"bio":"hi"}"#);
+            if let Some(grant) = grant {
+                req = req.header("x-guest-grant", grant);
+            }
+            let res = req.send().await.expect("request");
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{grant:?}");
+        }
+        server.abort();
         done(state, path).await;
     }
 

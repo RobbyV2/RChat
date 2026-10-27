@@ -30,6 +30,7 @@ pub struct ProfileMember {
 pub struct Profile {
     pub user: UserRef,
     pub banner_color: Option<String>,
+    pub bio: Option<String>,
     pub created_at: i64,
     pub member: Option<ProfileMember>,
 }
@@ -125,6 +126,7 @@ pub(crate) async fn profile(
     Ok(Json(Profile {
         user: UserRef::from_user(&user),
         banner_color: user.banner_color.clone(),
+        bio: user.bio.clone(),
         created_at: user.created_at,
         member,
     }))

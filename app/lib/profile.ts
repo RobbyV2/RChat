@@ -15,6 +15,13 @@ export const rememberProfile = (key: string, profile: Profile) => {
   if (profiles.size > PROFILE_CACHE) profiles.delete(profiles.keys().next().value as string)
 }
 
+export const forgetProfile = (key: string) => profiles.delete(key)
+
+export const forgetProfiles = (username: string) => {
+  for (const key of [...profiles.keys()])
+    if (key.startsWith(profileKey(username, null))) profiles.delete(key)
+}
+
 export const clearProfiles = () => profiles.clear()
 
 export interface Point {

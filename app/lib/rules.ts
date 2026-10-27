@@ -17,6 +17,7 @@ export const PROFANITY_TARGETS: { key: ProfanityTarget; label: string }[] = [
   { key: 'channel_names', label: 'Channel names' },
   { key: 'role_names', label: 'Role names' },
   { key: 'file_names', label: 'File names' },
+  { key: 'bios', label: 'Profile descriptions' },
 ]
 
 type ProfanitySettings = Pick<SiteSettings, 'profanity_filter'> & {
@@ -34,6 +35,29 @@ export const MESSAGE_MAX = 4000
 export const SLOWMODE_MAX = 21600
 
 export const charCount = (text: string) => Array.from(text).length
+
+export const BIO_MAX = 190
+
+export const BIO_WARN = 20
+
+export const cleanBio = (text: string) =>
+  text
+    .replace(/\p{Cc}/gu, c => (c === '\n' ? c : ''))
+    .replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '')
+    .replace(/\n{3,}/g, '\n\n')
+
+export const bioError = (text: string) =>
+  charCount(cleanBio(text)) > BIO_MAX ? `Description must be at most ${BIO_MAX} characters` : null
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+
+export const bioAnnouncement = (count: number, saved: boolean) => {
+  if (saved) return 'Description saved'
+  const left = BIO_MAX - count
+  if (left < 0) return `${plural(-left, 'character')} over the limit`
+  if (left <= BIO_WARN) return `${plural(left, 'character')} left`
+  return ''
+}
 
 export const canDeleteChannel = (channels: Channel[], channel: Channel) =>
   channels.length > 1 &&

@@ -15,7 +15,7 @@ const SQLITE_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users(
   username TEXT PRIMARY KEY, display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
   password_kind TEXT NOT NULL CHECK(password_kind IN ('text','words')),
-  avatar_kind TEXT NOT NULL CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, banner_color TEXT,
+  avatar_kind TEXT NOT NULL CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, banner_color TEXT, bio TEXT,
   is_site_admin INTEGER NOT NULL DEFAULT 0, appear_offline INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NOT NULL, count INTEGER NOT NULL, last_at INTEGER NOT NULL);
@@ -75,7 +75,7 @@ const POSTGRES_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users(
   username TEXT PRIMARY KEY, display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
   password_kind TEXT NOT NULL CHECK(password_kind IN ('text','words')),
-  avatar_kind TEXT NOT NULL CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, banner_color TEXT,
+  avatar_kind TEXT NOT NULL CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, banner_color TEXT, bio TEXT,
   is_site_admin BIGINT NOT NULL DEFAULT 0, appear_offline BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NOT NULL, count BIGINT NOT NULL, last_at BIGINT NOT NULL);
@@ -291,6 +291,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("messages", "call_outcome TEXT"),
     ("users", "appear_offline {INT} NOT NULL DEFAULT 0"),
     ("users", "banner_color TEXT"),
+    ("users", "bio TEXT"),
     ("media", "uploader TEXT"),
     ("dms", "last_message_id {INT} NOT NULL DEFAULT 0"),
     ("servers", "member_count {INT} NOT NULL DEFAULT 0"),
@@ -446,6 +447,7 @@ pub struct User {
     pub avatar_kind: AvatarKind,
     pub avatar_color: Option<String>,
     pub banner_color: Option<String>,
+    pub bio: Option<String>,
     pub is_site_admin: bool,
     pub appear_offline: bool,
     pub created_at: i64,
@@ -461,6 +463,7 @@ impl User {
             avatar_kind: AvatarKind::parse(&row.try_get::<String, _>("avatar_kind")?)?,
             avatar_color: row.try_get("avatar_color")?,
             banner_color: row.try_get("banner_color")?,
+            bio: row.try_get("bio")?,
             is_site_admin: row.try_get::<i64, _>("is_site_admin")? != 0,
             appear_offline: row.try_get::<i64, _>("appear_offline")? != 0,
             created_at: row.try_get("created_at")?,
@@ -1524,6 +1527,41 @@ mod tests {
             count(&db, "SELECT member_count FROM servers WHERE name = 'rchat'").await,
             3
         );
+        close(&db).await;
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+
+    #[tokio::test]
+    async fn existing_users_get_an_empty_bio_column() {
+        let path = std::env::temp_dir().join(format!("rchat_bio_col_{}.db", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "ALTER TABLE users DROP COLUMN bio",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('old', 'old', '', 'text', 'identicon', 1)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        assert!(
+            sqlx::query("SELECT bio FROM users")
+                .fetch_all(&db)
+                .await
+                .is_err()
+        );
+        close(&db).await;
+        let db = open(path.to_str()).await.expect("reopen");
+        let old = get_user(&db, "old").await.expect("load").expect("old");
+        assert_eq!(old.bio, None);
+        sqlx::query("UPDATE users SET bio = 'hi' WHERE username = 'old'")
+            .execute(&db)
+            .await
+            .expect("write bio");
+        let old = get_user(&db, "old").await.expect("load").expect("old");
+        assert_eq!(old.bio.as_deref(), Some("hi"));
         close(&db).await;
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));

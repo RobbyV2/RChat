@@ -29,10 +29,10 @@ export const dangerBtn =
 export const sectionCls =
   'pb-2 pt-5 text-xs font-medium uppercase tracking-wide text-on-surface-variant first:pt-0'
 
-export function FieldError({ message }: { message: string | null }) {
+export function FieldError({ message, id }: { message: string | null; id?: string }) {
   if (!message) return null
   return (
-    <p role="alert" className="pt-1.5 text-xs text-error">
+    <p id={id} role="alert" className="pt-1.5 text-xs text-error">
       {message}
     </p>
   )

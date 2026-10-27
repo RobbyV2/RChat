@@ -82,7 +82,7 @@ import {
   type Folder,
   type Layout,
 } from './nav_layout'
-import { memberPerms } from './rules'
+import { cleanBio, memberPerms } from './rules'
 import {
   dropStashedInvite,
   entryState,
@@ -94,7 +94,7 @@ import {
   type InviteEntry,
   type OpenInvite,
 } from './invite'
-import { clearProfiles } from './profile'
+import { clearProfiles, forgetProfiles } from './profile'
 import { retrySeconds, tooManyText } from './rate_limit'
 import {
   freshPresence,
@@ -194,7 +194,7 @@ export type ActiveDialog =
   | { kind: 'admin_panel' }
   | { kind: 'ban_confirm'; username: string }
   | { kind: 'delete_user_confirm'; username: string }
-  | { kind: 'settings' }
+  | { kind: 'settings'; focus?: 'bio' }
   | { kind: 'rename_folder'; id: string }
 
 export type Panel = { kind: 'thread'; root: Message } | { kind: 'search' }
@@ -210,6 +210,7 @@ export interface ProfileTarget {
   x: number
   y: number
   instance?: string | null
+  rev?: number
 }
 
 export type UploadMode = 'server' | 'p2p'
@@ -425,6 +426,7 @@ interface RChatState {
     banner_color?: string | null
   ) => Promise<void>
   setAppearOffline: (appearOffline: boolean) => Promise<void>
+  setBio: (bio: string) => Promise<string | null>
   changePassword: (current: Secret, next: Secret, kind: PassKind) => Promise<string | null>
   refreshAccount: () => Promise<void>
   syncFromUrl: (nav: 'replace' | 'none') => Promise<void>
@@ -2321,6 +2323,7 @@ export const useStore = create<RChatState>()((set, get) => {
         channel_names: true,
         role_names: true,
         file_names: true,
+        bios: true,
       },
       asset_previews: true,
       asset_uploads: true,
@@ -2388,6 +2391,18 @@ export const useStore = create<RChatState>()((set, get) => {
         const user = await api.patchMe(avatar_kind, avatar_color, banner_color)
         set(s => (s.me ? { me: { ...s.me, ...user } } : {}))
       }),
+
+    setBio: async bio => {
+      const me = get().me
+      if (!me) return 'Create an account to add a description'
+      try {
+        const user = await api.setBio(cleanBio(bio) ? bio : null)
+        set(s => (s.me?.username === me.username ? { me: { ...s.me, ...user } } : {}))
+        return null
+      } catch (e) {
+        return errorText(e)
+      }
+    },
 
     setAppearOffline: appearOffline =>
       act(async () => {
@@ -3843,7 +3858,9 @@ export const useStore = create<RChatState>()((set, get) => {
                 ? { ...s.panel, root: { ...s.panel.root, author: u } }
                 : s.panel,
             profile:
-              s.profile?.user.username === u.username ? { ...s.profile, user: u } : s.profile,
+              s.profile?.user.username === u.username
+                ? { ...s.profile, user: u, rev: (s.profile.rev ?? 0) + 1 }
+                : s.profile,
           }))
           mapMemberInfo((username, m) => (username === u.username ? { ...m, ...u } : m))
           return
@@ -4004,6 +4021,7 @@ export const useStore = create<RChatState>()((set, get) => {
             expireSession()
             return
           }
+          forgetProfiles(ev.username)
           const gone = get()
             .dms.filter(d => d.other.username === ev.username)
             .map(d => `d${d.id}`)

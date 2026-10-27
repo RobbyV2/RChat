@@ -93,6 +93,7 @@ export const serverDetail = (name: string, over: Partial<ServerDetail> = {}): Se
 export const me = (username: string, over: Partial<Me> = {}): Me => ({
   ...user(username),
   banner_color: null,
+  bio: null,
   is_site_admin: false,
   appear_offline: false,
   password_kind: 'text',

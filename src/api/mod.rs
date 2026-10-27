@@ -355,16 +355,18 @@ pub enum ProfanityTarget {
     ChannelNames,
     RoleNames,
     FileNames,
+    Bios,
 }
 
 impl ProfanityTarget {
-    pub const ALL: [ProfanityTarget; 6] = [
+    pub const ALL: [ProfanityTarget; 7] = [
         ProfanityTarget::Messages,
         ProfanityTarget::Usernames,
         ProfanityTarget::ServerNames,
         ProfanityTarget::ChannelNames,
         ProfanityTarget::RoleNames,
         ProfanityTarget::FileNames,
+        ProfanityTarget::Bios,
     ];
 
     pub fn switch(self) -> ProfanitySwitch {
@@ -375,6 +377,7 @@ impl ProfanityTarget {
             ProfanityTarget::ChannelNames => ProfanitySwitch::ChannelNames,
             ProfanityTarget::RoleNames => ProfanitySwitch::RoleNames,
             ProfanityTarget::FileNames => ProfanitySwitch::FileNames,
+            ProfanityTarget::Bios => ProfanitySwitch::Bios,
         }
     }
 }
@@ -389,10 +392,11 @@ pub enum ProfanitySwitch {
     ChannelNames,
     RoleNames,
     FileNames,
+    Bios,
 }
 
 impl ProfanitySwitch {
-    pub const ALL: [ProfanitySwitch; 7] = [
+    pub const ALL: [ProfanitySwitch; 8] = [
         ProfanitySwitch::Messages,
         ProfanitySwitch::Links,
         ProfanitySwitch::Usernames,
@@ -400,6 +404,7 @@ impl ProfanitySwitch {
         ProfanitySwitch::ChannelNames,
         ProfanitySwitch::RoleNames,
         ProfanitySwitch::FileNames,
+        ProfanitySwitch::Bios,
     ];
 
     pub fn name(self) -> &'static str {
@@ -411,6 +416,7 @@ impl ProfanitySwitch {
             ProfanitySwitch::ChannelNames => "channel_names",
             ProfanitySwitch::RoleNames => "role_names",
             ProfanitySwitch::FileNames => "file_names",
+            ProfanitySwitch::Bios => "bios",
         }
     }
 
@@ -423,6 +429,7 @@ impl ProfanitySwitch {
             ProfanitySwitch::ChannelNames => "profanity_channel_names",
             ProfanitySwitch::RoleNames => "profanity_role_names",
             ProfanitySwitch::FileNames => "profanity_file_names",
+            ProfanitySwitch::Bios => "profanity_bios",
         }
     }
 
@@ -457,6 +464,12 @@ pub struct ProfanityTargets {
     pub channel_names: bool,
     pub role_names: bool,
     pub file_names: bool,
+    #[serde(default = "target_default")]
+    pub bios: bool,
+}
+
+fn target_default() -> bool {
+    true
 }
 
 impl Default for ProfanityTargets {
@@ -474,6 +487,7 @@ impl ProfanityTargets {
         channel_names: true,
         role_names: true,
         file_names: true,
+        bios: true,
     };
 
     pub fn from_fn(mut on: impl FnMut(ProfanitySwitch) -> bool) -> ProfanityTargets {
@@ -485,6 +499,7 @@ impl ProfanityTargets {
             channel_names: on(ProfanitySwitch::ChannelNames),
             role_names: on(ProfanitySwitch::RoleNames),
             file_names: on(ProfanitySwitch::FileNames),
+            bios: on(ProfanitySwitch::Bios),
         }
     }
 
@@ -497,6 +512,7 @@ impl ProfanityTargets {
             channel_names,
             role_names,
             file_names,
+            bios,
         } = *self;
         match switch {
             ProfanitySwitch::Messages => messages,
@@ -506,6 +522,7 @@ impl ProfanityTargets {
             ProfanitySwitch::ChannelNames => channel_names,
             ProfanitySwitch::RoleNames => role_names,
             ProfanitySwitch::FileNames => file_names,
+            ProfanitySwitch::Bios => bios,
         }
     }
 
@@ -947,7 +964,8 @@ impl Settings {
             | ProfanityTarget::ServerNames
             | ProfanityTarget::ChannelNames
             | ProfanityTarget::RoleNames
-            | ProfanityTarget::FileNames => true,
+            | ProfanityTarget::FileNames
+            | ProfanityTarget::Bios => true,
         };
         self.profanity_filter && targets.get(target.switch()) && is_profane(text, links)
     }
@@ -1231,6 +1249,7 @@ pub(crate) mod test_util {
             avatar_kind: AvatarKind::Identicon,
             avatar_color: None,
             banner_color: None,
+            bio: None,
             is_site_admin: site_admin,
             appear_offline: false,
             created_at: now(),
@@ -1453,6 +1472,12 @@ mod tests {
         assert!(seed(None, Some("  ")).iter().all(|(_, v)| *v));
         let none = seed(None, Some("none"));
         assert!(none.iter().all(|(k, v)| *v == (*k == "profanity_filter")));
+        let bios = seed(None, Some("bios"));
+        for switch in ProfanitySwitch::ALL {
+            let want = switch == ProfanitySwitch::Bios;
+            assert_eq!(on(&bios, switch.key()), Some(want), "{switch:?}");
+        }
+        assert_eq!(on(&bios, "profanity_bios"), Some(true));
     }
 
     #[tokio::test]
@@ -1513,6 +1538,7 @@ mod tests {
             "guests_enabled": true,
         }))
         .expect("stale display_names field");
+        assert!(stale.profanity_targets.bios);
         assert!(!stale.profanity_targets.messages && stale.profanity_targets.usernames);
     }
 

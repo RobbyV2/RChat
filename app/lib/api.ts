@@ -165,6 +165,7 @@ export interface LoginRequest {
 
 export interface MeUpdated extends UserRef {
   banner_color: string | null
+  bio: string | null
   appear_offline: boolean
 }
 
@@ -228,6 +229,7 @@ export const endpoints = (c: ApiClient) => ({
     c.req<ServerSummary[]>('GET', `/me/servers?${names.map(n => `names=${seg(n)}`).join('&')}`),
   patchMe: (avatar_kind: AvatarKind, avatar_color?: string, banner_color?: string | null) =>
     c.req<MeUpdated>('PATCH', '/me', { avatar_kind, avatar_color, banner_color }),
+  setBio: (bio: string | null) => c.req<MeUpdated>('PATCH', '/me', { bio }),
   setAppearOffline: (appear_offline: boolean) =>
     c.req<MeUpdated>('PATCH', '/me', { appear_offline }),
   changePassword: (current: Secret, next: Secret) =>
