@@ -41,10 +41,12 @@ import {
   forgetProfile,
   freeRoles,
   heldRoles,
+  joinedServer,
   placeCard,
   profileActions,
   profileKey,
   rememberProfile,
+  serverJoinLine,
   type ActionInput,
   type Point,
   type ProfileAction,
@@ -186,6 +188,7 @@ function Card({ target }: { target: ProfileTarget }) {
     cachedProfile(profileKey(username, server))
   )
   const [missing, setMissing] = useState(false)
+  const [failed, setFailed] = useState(false)
   const [text, setText] = useState('')
   const [adding, setAdding] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -201,6 +204,7 @@ function Card({ target }: { target: ProfileTarget }) {
         rememberProfile(key, p)
         if (!current) return
         setProfile(p)
+        setFailed(false)
         const s = useStore.getState()
         if (server && s.servers[server]) s.rememberMember(server, username, asMember(p))
         if (server && p.member) s.notePresence(server, username, p.member.online)
@@ -209,7 +213,10 @@ function Card({ target }: { target: ProfileTarget }) {
         )
       })
       .catch((e: unknown) => {
-        if (!(e instanceof ApiError && e.status === 404)) return
+        if (!(e instanceof ApiError && e.status === 404)) {
+          if (current) setFailed(true)
+          return
+        }
         forgetProfile(key)
         if (current) setMissing(true)
       })
@@ -303,6 +310,12 @@ function Card({ target }: { target: ProfileTarget }) {
   const fetched = profile?.member ?? null
   const known = server === null || live !== undefined || profile !== null || missing
   const member = server === null ? null : live !== undefined ? live : fetched
+  const join = serverJoinLine(
+    server,
+    serverName,
+    joinedServer(member !== null, profile, missing || failed),
+    fetched?.joined_at
+  )
   const roles: Role[] = member
     ? serverRoles
       ? heldRoles(serverRoles, member.role_ids)
@@ -445,25 +458,27 @@ function Card({ target }: { target: ProfileTarget }) {
           </p>
         ) : (
           <div className="mt-3 flex flex-col gap-3 rounded-xl bg-surface-container-low p-3">
-            <div>
-              <p className={labelCls}>Member since</p>
-              <dl className="mt-1 flex flex-col gap-0.5 text-sm">
+            <dl className="flex flex-col gap-0.5 text-sm">
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-on-surface-variant">Member since</dt>
+                <dd className="shrink-0 text-on-surface">
+                  {profile ? fmtDate(profile.created_at) : '…'}
+                </dd>
+              </div>
+              {join && (
                 <div className="flex items-baseline justify-between gap-3">
-                  <dt className="text-on-surface-variant">RChat</dt>
+                  <dt className="flex min-w-0 text-on-surface-variant">
+                    <span className="shrink-0">Joined&nbsp;</span>
+                    <span className="streamer min-w-0 truncate" title={join.label}>
+                      {join.name}
+                    </span>
+                  </dt>
                   <dd className="shrink-0 text-on-surface">
-                    {profile ? fmtDate(profile.created_at) : '…'}
+                    {join.joinedAt === null ? '…' : fmtDate(join.joinedAt)}
                   </dd>
                 </div>
-                {member && fetched && serverName && server !== 'rchat' && (
-                  <div className="flex items-baseline justify-between gap-3">
-                    <dt className="streamer min-w-0 truncate text-on-surface-variant">
-                      {serverName}
-                    </dt>
-                    <dd className="shrink-0 text-on-surface">{fmtDate(fetched.joined_at)}</dd>
-                  </div>
-                )}
-              </dl>
-            </div>
+              )}
+            </dl>
             {showRoles && (
               <div>
                 <p className={labelCls}>{roles.length === 1 ? 'Role' : 'Roles'}</p>

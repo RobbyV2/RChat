@@ -9,12 +9,14 @@ import {
   heldRoles,
   hslHex,
   identiconHue,
+  joinedServer,
   placeCard,
   profileActions,
+  serverJoinLine,
   validColor,
   type ActionInput,
 } from '../profile'
-import { ALL_PERMS, Perm } from '../types'
+import { ALL_PERMS, Perm, type Profile } from '../types'
 import { role, user } from './fixtures'
 
 describe('banner colors', () => {
@@ -187,5 +189,40 @@ describe('roles and actions', () => {
       profileActions({ ...base, inServer: false, member: null, perms: ALL_PERMS, siteAdmin: true })
     ).toEqual(['site_ban'])
     expect(canEditRoles({ ...base, inServer: false, member: null, perms: ALL_PERMS })).toBe(false)
+  })
+})
+
+describe('server join line', () => {
+  test('shows Joined with the server display name in any server, rchat included', () => {
+    expect(serverJoinLine('club', 'The Club', true, 200)).toEqual({
+      label: 'Joined The Club',
+      name: 'The Club',
+      joinedAt: 200,
+    })
+    expect(serverJoinLine('rchat', 'RChat', true, 100)?.label).toBe('Joined RChat')
+  })
+
+  test('falls back to the server id and waits for the date while loading', () => {
+    expect(serverJoinLine('club', null, true, undefined)).toEqual({
+      label: 'Joined club',
+      name: 'club',
+      joinedAt: null,
+    })
+    expect(serverJoinLine('club', '', true, null)?.name).toBe('club')
+  })
+
+  test('is hidden for dms and for people who are not members', () => {
+    expect(serverJoinLine(null, null, true, 5)).toBeNull()
+    expect(serverJoinLine('club', 'The Club', false, 5)).toBeNull()
+  })
+
+  test('trusts the fetched profile over the live member cache, and never waits forever', () => {
+    const joined = { member: { joined_at: 5 } as NonNullable<Profile['member']> }
+    expect(joinedServer(true, null, false)).toBe(true)
+    expect(joinedServer(false, null, false)).toBe(false)
+    expect(joinedServer(true, { member: null }, false)).toBe(false)
+    expect(joinedServer(false, joined, false)).toBe(true)
+    expect(joinedServer(true, null, true)).toBe(false)
+    expect(joinedServer(true, joined, true)).toBe(true)
   })
 })

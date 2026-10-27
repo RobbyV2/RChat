@@ -89,6 +89,29 @@ export const placeCard = (
   }
 }
 
+export interface JoinLine {
+  label: string
+  name: string
+  joinedAt: number | null
+}
+
+export const serverJoinLine = (
+  server: string | null,
+  serverName: string | null,
+  isMember: boolean,
+  joinedAt: number | null | undefined
+): JoinLine | null => {
+  if (server === null || !isMember) return null
+  const name = serverName || server
+  return { label: `Joined ${name}`, name, joinedAt: joinedAt ?? null }
+}
+
+export const joinedServer = (
+  liveMember: boolean,
+  profile: Pick<Profile, 'member'> | null,
+  failed: boolean
+) => (profile ? profile.member !== null : liveMember && !failed)
+
 export const heldRoles = (roles: Role[], roleIds: number[]) =>
   roles.filter(r => roleIds.includes(r.id))
 
