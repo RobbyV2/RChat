@@ -876,6 +876,11 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
     .bind(guests)
     .execute(&mut *conn)
     .await?;
+    let profanity = crate::api::profanity_seed(
+        std::env::var("PROFANITY_FILTER").ok().as_deref(),
+        std::env::var("PROFANITY_TARGETS").ok().as_deref(),
+    );
+    seed_settings(&mut *conn, &profanity).await?;
     for (key, value) in [
         ("instance_id", crate::identity::random_id()),
         ("instance_signing_key", crate::identity::new_seed()),
@@ -883,6 +888,23 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
         sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO NOTHING")
             .bind(key)
             .bind(value)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn seed_settings(
+    conn: &mut AnyConnection,
+    pairs: &[(&str, bool)],
+) -> sqlx::Result<()> {
+    for (key, on) in pairs {
+        sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO NOTHING")
+            .bind(*key)
+            .bind(match on {
+                true => "1",
+                false => "0",
+            })
             .execute(&mut *conn)
             .await?;
     }

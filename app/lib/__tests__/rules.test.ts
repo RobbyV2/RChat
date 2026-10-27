@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  PROFANITY_TARGETS,
   canDeleteChannel,
   canModerate,
   charCount,
@@ -8,6 +9,8 @@ import {
   memberPerms,
   passwordDone,
   passwordPrompt,
+  profanityTargetLocked,
+  profanityTargetOn,
   sameOriginImage,
   serverInitial,
 } from '../rules'
@@ -185,5 +188,43 @@ describe('passwordDone', () => {
     expect(passwordDone('Change', 'remove', 0, 2)).toBe(
       'Password changed. No one was removed. 2 members with equal or higher permissions stayed.'
     )
+  })
+})
+
+describe('profanity targets', () => {
+  const all = {
+    messages: true,
+    links: true,
+    usernames: true,
+    server_names: true,
+    channel_names: true,
+    role_names: true,
+    file_names: true,
+  }
+
+  test('lists every target once', () => {
+    expect(PROFANITY_TARGETS.map(t => t.key as string).sort()).toEqual(Object.keys(all).sort())
+  })
+
+  test('reads stored values and defaults missing ones on', () => {
+    const settings = { profanity_filter: true, profanity_targets: { ...all, role_names: false } }
+    expect(profanityTargetOn(settings, 'role_names')).toBe(false)
+    expect(profanityTargetOn(settings, 'messages')).toBe(true)
+    expect(profanityTargetOn({ profanity_filter: true }, 'file_names')).toBe(true)
+  })
+
+  test('locks every target while the filter is off and links while messages are off', () => {
+    for (const { key } of PROFANITY_TARGETS) {
+      expect(profanityTargetLocked({ profanity_filter: false, profanity_targets: all }, key)).toBe(
+        true
+      )
+      expect(profanityTargetLocked({ profanity_filter: true, profanity_targets: all }, key)).toBe(
+        false
+      )
+    }
+    const noMessages = { profanity_filter: true, profanity_targets: { ...all, messages: false } }
+    expect(profanityTargetLocked(noMessages, 'links')).toBe(true)
+    expect(profanityTargetLocked(noMessages, 'messages')).toBe(false)
+    expect(profanityTargetLocked(noMessages, 'usernames')).toBe(false)
   })
 })

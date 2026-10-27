@@ -116,7 +116,33 @@ pub fn routes() -> Router<AppState> {
 
 #[cfg(test)]
 mod tests {
-    use super::swagger_on;
+    use utoipa::OpenApi;
+
+    use super::{ApiDoc, swagger_on};
+
+    #[test]
+    fn settings_schema_lists_profanity_targets() {
+        let doc = serde_json::to_value(ApiDoc::openapi()).expect("doc");
+        let schemas = &doc["components"]["schemas"];
+        let settings = &schemas["Settings"]["properties"];
+        assert!(settings["profanity_filter"].is_object());
+        assert!(settings["profanity_targets"].is_object());
+        for key in [
+            "messages",
+            "links",
+            "usernames",
+            "server_names",
+            "channel_names",
+            "role_names",
+            "file_names",
+        ] {
+            assert!(
+                schemas["ProfanityTargets"]["properties"][key].is_object(),
+                "{key}"
+            );
+        }
+        assert!(schemas["ProfanityTargets"]["properties"]["display_names"].is_null());
+    }
 
     #[test]
     fn swagger_ui_flag() {

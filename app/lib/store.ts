@@ -127,6 +127,7 @@ import type {
   ServerSummary,
   ServerSummaryLite,
   SiteSettings,
+  SiteSettingsPatch,
   InstanceInfo,
   Theme,
   UserRef,
@@ -538,7 +539,7 @@ interface RChatState {
   loadAdminServers: (q: string, reset?: boolean) => Promise<void>
   adminDeleteServer: (name: string) => Promise<void>
   banUser: (username: string) => Promise<void>
-  updateSettings: (patch: Partial<SiteSettings>) => Promise<void>
+  updateSettings: (patch: SiteSettingsPatch) => Promise<void>
   setViewing: (server: string | null) => void
   applyWsEvent: (ev: WsEvent) => void
   openContextMenu: (x: number, y: number, items: ContextMenuItem[]) => void
@@ -2297,6 +2298,15 @@ export const useStore = create<RChatState>()((set, get) => {
     adminOverview: null,
     settings: {
       profanity_filter: true,
+      profanity_targets: {
+        messages: true,
+        links: true,
+        usernames: true,
+        server_names: true,
+        channel_names: true,
+        role_names: true,
+        file_names: true,
+      },
       asset_previews: true,
       asset_uploads: true,
       guests_enabled: true,

@@ -5,7 +5,12 @@ import { Trash2 } from 'lucide-react'
 import { api } from '../lib/instances'
 import type { ServerDetail, ServerSummaryLite } from '../lib/types'
 import { confirmKick, errorText, revokeAdminFor, useStore } from '../lib/store'
-import { canDeleteChannel } from '../lib/rules'
+import {
+  PROFANITY_TARGETS,
+  canDeleteChannel,
+  profanityTargetLocked,
+  profanityTargetOn,
+} from '../lib/rules'
 import { UserAvatar } from './user_avatar'
 import {
   AdminPermsEditor,
@@ -107,6 +112,45 @@ export function SettingSwitch({
   )
 }
 
+function ProfanityTargetChecks() {
+  const settings = useStore(s => s.settings)
+  const updateSettings = useStore(s => s.updateSettings)
+  return (
+    <fieldset
+      aria-label="Profanity filter applies to"
+      className={`mx-2 mb-1 grid grid-cols-2 gap-x-3 gap-y-1 rounded-xl bg-surface-container px-3 py-2 ${
+        settings.profanity_filter ? '' : 'opacity-60'
+      }`}
+    >
+      {PROFANITY_TARGETS.map(({ key, label }) => {
+        const locked = profanityTargetLocked(settings, key)
+        return (
+          <label
+            key={key}
+            title={label}
+            className={`flex min-w-0 items-start gap-2 py-1 text-sm leading-5 ${
+              locked
+                ? 'cursor-not-allowed text-on-surface-variant'
+                : 'cursor-pointer text-on-surface'
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={profanityTargetOn(settings, key)}
+              disabled={locked}
+              onChange={e =>
+                void updateSettings({ profanity_targets: { [key]: e.target.checked } })
+              }
+              className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+            />
+            <span className="min-w-0 break-words">{label}</span>
+          </label>
+        )
+      })}
+    </fieldset>
+  )
+}
+
 export function SiteSwitches() {
   const settings = useStore(s => s.settings)
   const updateSettings = useStore(s => s.updateSettings)
@@ -117,6 +161,7 @@ export function SiteSwitches() {
         value={settings.profanity_filter}
         onChange={v => void updateSettings({ profanity_filter: v })}
       />
+      <ProfanityTargetChecks />
       <SettingSwitch
         label="Asset previews"
         value={settings.asset_previews}

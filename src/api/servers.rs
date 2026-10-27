@@ -12,10 +12,10 @@ use crate::api::auth::{hash_password, new_token, verify_password, verify_passwor
 use crate::api::messages::recent_channel_messages;
 use crate::api::{
     ApiError, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message, NAME_MAX,
-    OFFSET_MAX, Paged, Role, SLOWMODE_MAX, ServerDetail, ServerSummary, ServerSummaryLite, UserRef,
-    check_len, check_profanity, cursor_int, decode_cursor, encode_cursor, grant_matches,
-    header_grants, page_bounds, placeholders, require_guest_ok, require_server_view, unique_capped,
-    user_from, user_ref, user_refs, valid_color,
+    OFFSET_MAX, Paged, ProfanityTarget, Role, SLOWMODE_MAX, ServerDetail, ServerSummary,
+    ServerSummaryLite, UserRef, check_len, check_profanity, cursor_int, decode_cursor,
+    encode_cursor, grant_matches, header_grants, page_bounds, placeholders, require_guest_ok,
+    require_server_view, unique_capped, user_from, user_ref, user_refs, valid_color,
 };
 use crate::db::{
     ALL_PERMS, ChannelKind, Db, Perm, User, can_moderate, effective_perms, get_user, has_perm,
@@ -353,16 +353,21 @@ fn forbidden(msg: &str) -> ApiError {
     ApiError(StatusCode::FORBIDDEN, msg.to_string())
 }
 
-async fn check_name(db: &Db, what: &str, name: &str) -> Result<(), ApiError> {
+async fn check_name(
+    db: &Db,
+    target: ProfanityTarget,
+    what: &str,
+    name: &str,
+) -> Result<(), ApiError> {
     if name.trim().is_empty() {
         return Err(bad("Name required"));
     }
     check_len(name, NAME_MAX, what)?;
-    check_profanity(db, name).await
+    check_profanity(db, target, name).await
 }
 
 async fn check_server_name(db: &Db, name: &str) -> Result<(), ApiError> {
-    check_name(db, "Server name", name).await?;
+    check_name(db, ProfanityTarget::ServerNames, "Server name", name).await?;
     match name {
         "." | ".." => Err(bad("Server name cannot be \".\" or \"..\"")),
         _ => Ok(()),
@@ -1684,7 +1689,13 @@ pub(crate) async fn create_channel(
     let key = name.to_lowercase();
     let channel_name = req.name.trim().to_string();
     let kind = req.kind.unwrap_or(ChannelKind::Text);
-    check_name(&state.db, "Channel name", &channel_name).await?;
+    check_name(
+        &state.db,
+        ProfanityTarget::ChannelNames,
+        "Channel name",
+        &channel_name,
+    )
+    .await?;
     require_server(&state.db, &key).await?;
     require_perm(&state.db, &key, &user, Perm::ManageChannels).await?;
     let taken = sqlx::query("SELECT 1 FROM channels WHERE server = $1 AND name = $2")
@@ -1767,7 +1778,13 @@ pub(crate) async fn update_channel(
     let channel_name = match &name {
         Some(name) => {
             let channel_name = name.trim().to_string();
-            check_name(&state.db, "Channel name", &channel_name).await?;
+            check_name(
+                &state.db,
+                ProfanityTarget::ChannelNames,
+                "Channel name",
+                &channel_name,
+            )
+            .await?;
             Some(channel_name)
         }
         None => None,
@@ -2194,7 +2211,13 @@ pub(crate) async fn create_role(
 ) -> Result<Json<Role>, ApiError> {
     let key = role_guard(&state, &name, &user).await?;
     let role_name = req.name.trim().to_string();
-    check_name(&state.db, "Role name", &role_name).await?;
+    check_name(
+        &state.db,
+        ProfanityTarget::RoleNames,
+        "Role name",
+        &role_name,
+    )
+    .await?;
     check_color(&req.color)?;
     let perms = req.perms & ALL_PERMS;
     if count_rows(
@@ -2238,7 +2261,13 @@ pub(crate) async fn update_role(
     let RolePatch { name, color, perms } = req;
     if let Some(role_name) = &name {
         let role_name = role_name.trim().to_string();
-        check_name(&state.db, "Role name", &role_name).await?;
+        check_name(
+            &state.db,
+            ProfanityTarget::RoleNames,
+            "Role name",
+            &role_name,
+        )
+        .await?;
         sqlx::query("UPDATE roles SET name = $1 WHERE id = $2")
             .bind(&role_name)
             .bind(id)

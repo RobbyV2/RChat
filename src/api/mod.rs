@@ -346,9 +346,237 @@ pub struct Message {
     pub call: Option<CallLog>,
 }
 
+/// A text field the profanity filter can check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfanityTarget {
+    Messages,
+    Usernames,
+    ServerNames,
+    ChannelNames,
+    RoleNames,
+    FileNames,
+}
+
+impl ProfanityTarget {
+    pub const ALL: [ProfanityTarget; 6] = [
+        ProfanityTarget::Messages,
+        ProfanityTarget::Usernames,
+        ProfanityTarget::ServerNames,
+        ProfanityTarget::ChannelNames,
+        ProfanityTarget::RoleNames,
+        ProfanityTarget::FileNames,
+    ];
+
+    pub fn switch(self) -> ProfanitySwitch {
+        match self {
+            ProfanityTarget::Messages => ProfanitySwitch::Messages,
+            ProfanityTarget::Usernames => ProfanitySwitch::Usernames,
+            ProfanityTarget::ServerNames => ProfanitySwitch::ServerNames,
+            ProfanityTarget::ChannelNames => ProfanitySwitch::ChannelNames,
+            ProfanityTarget::RoleNames => ProfanitySwitch::RoleNames,
+            ProfanityTarget::FileNames => ProfanitySwitch::FileNames,
+        }
+    }
+}
+
+/// A stored profanity setting: one per target, plus `Links`, which only modifies `Messages`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfanitySwitch {
+    Messages,
+    Links,
+    Usernames,
+    ServerNames,
+    ChannelNames,
+    RoleNames,
+    FileNames,
+}
+
+impl ProfanitySwitch {
+    pub const ALL: [ProfanitySwitch; 7] = [
+        ProfanitySwitch::Messages,
+        ProfanitySwitch::Links,
+        ProfanitySwitch::Usernames,
+        ProfanitySwitch::ServerNames,
+        ProfanitySwitch::ChannelNames,
+        ProfanitySwitch::RoleNames,
+        ProfanitySwitch::FileNames,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ProfanitySwitch::Messages => "messages",
+            ProfanitySwitch::Links => "links",
+            ProfanitySwitch::Usernames => "usernames",
+            ProfanitySwitch::ServerNames => "server_names",
+            ProfanitySwitch::ChannelNames => "channel_names",
+            ProfanitySwitch::RoleNames => "role_names",
+            ProfanitySwitch::FileNames => "file_names",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            ProfanitySwitch::Messages => "profanity_messages",
+            ProfanitySwitch::Links => "profanity_links",
+            ProfanitySwitch::Usernames => "profanity_usernames",
+            ProfanitySwitch::ServerNames => "profanity_server_names",
+            ProfanitySwitch::ChannelNames => "profanity_channel_names",
+            ProfanitySwitch::RoleNames => "profanity_role_names",
+            ProfanitySwitch::FileNames => "profanity_file_names",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<ProfanitySwitch> {
+        ProfanitySwitch::ALL
+            .into_iter()
+            .find(|t| t.name().eq_ignore_ascii_case(name))
+    }
+}
+
+const DEPRECATED_DISPLAY_NAMES: &str = "display_names";
+
+static DISPLAY_NAMES_WARNED: std::sync::Once = std::sync::Once::new();
+
+fn warn_display_names() {
+    DISPLAY_NAMES_WARNED.call_once(|| {
+        tracing::warn!(
+            "profanity target \"display_names\" is deprecated and ignored: display names are covered by usernames and server_names"
+        );
+    });
+}
+
+/// Where the profanity filter applies when `profanity_filter` is on. `links` covers the
+/// domain part of URLs inside messages: off skips `scheme://host` and still reads the
+/// path and the prose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ProfanityTargets {
+    pub messages: bool,
+    pub links: bool,
+    pub usernames: bool,
+    pub server_names: bool,
+    pub channel_names: bool,
+    pub role_names: bool,
+    pub file_names: bool,
+}
+
+impl Default for ProfanityTargets {
+    fn default() -> ProfanityTargets {
+        ProfanityTargets::ALL
+    }
+}
+
+impl ProfanityTargets {
+    pub const ALL: ProfanityTargets = ProfanityTargets {
+        messages: true,
+        links: true,
+        usernames: true,
+        server_names: true,
+        channel_names: true,
+        role_names: true,
+        file_names: true,
+    };
+
+    pub fn from_fn(mut on: impl FnMut(ProfanitySwitch) -> bool) -> ProfanityTargets {
+        ProfanityTargets {
+            messages: on(ProfanitySwitch::Messages),
+            links: on(ProfanitySwitch::Links),
+            usernames: on(ProfanitySwitch::Usernames),
+            server_names: on(ProfanitySwitch::ServerNames),
+            channel_names: on(ProfanitySwitch::ChannelNames),
+            role_names: on(ProfanitySwitch::RoleNames),
+            file_names: on(ProfanitySwitch::FileNames),
+        }
+    }
+
+    pub fn get(&self, switch: ProfanitySwitch) -> bool {
+        let ProfanityTargets {
+            messages,
+            links,
+            usernames,
+            server_names,
+            channel_names,
+            role_names,
+            file_names,
+        } = *self;
+        match switch {
+            ProfanitySwitch::Messages => messages,
+            ProfanitySwitch::Links => links,
+            ProfanitySwitch::Usernames => usernames,
+            ProfanitySwitch::ServerNames => server_names,
+            ProfanitySwitch::ChannelNames => channel_names,
+            ProfanitySwitch::RoleNames => role_names,
+            ProfanitySwitch::FileNames => file_names,
+        }
+    }
+
+    pub fn parse_list(list: &str) -> ProfanityTargets {
+        let names: Vec<&str> = list
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if names
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case(DEPRECATED_DISPLAY_NAMES))
+        {
+            warn_display_names();
+        }
+        let names: Vec<&str> = names
+            .into_iter()
+            .filter(|n| !n.eq_ignore_ascii_case(DEPRECATED_DISPLAY_NAMES))
+            .collect();
+        let unknown: Vec<&str> = names
+            .iter()
+            .copied()
+            .filter(|n| {
+                ProfanitySwitch::parse(n).is_none()
+                    && !n.eq_ignore_ascii_case("none")
+                    && !n.eq_ignore_ascii_case("all")
+            })
+            .collect();
+        let none = names.iter().any(|n| n.eq_ignore_ascii_case("none"));
+        let all = names.iter().any(|n| n.eq_ignore_ascii_case("all"));
+        let known = names.iter().any(|n| ProfanitySwitch::parse(n).is_some());
+        if !unknown.is_empty() {
+            tracing::warn!(
+                "PROFANITY_TARGETS: unknown target(s) {unknown:?}, filtering everything instead"
+            );
+            return ProfanityTargets::ALL;
+        }
+        match (all, known, none) {
+            (true, _, _) | (false, false, false) => ProfanityTargets::ALL,
+            _ => ProfanityTargets::from_fn(|t| {
+                names.iter().any(|n| ProfanitySwitch::parse(n) == Some(t))
+            }),
+        }
+    }
+}
+
+pub fn profanity_seed(filter: Option<&str>, targets: Option<&str>) -> Vec<(&'static str, bool)> {
+    let filter = !filter.is_some_and(|v| {
+        matches!(
+            v.trim().to_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        )
+    });
+    let targets = match targets.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(list) => ProfanityTargets::parse_list(list),
+        None => ProfanityTargets::ALL,
+    };
+    std::iter::once(("profanity_filter", filter))
+        .chain(
+            ProfanitySwitch::ALL
+                .into_iter()
+                .map(|t| (t.key(), targets.get(t))),
+        )
+        .collect()
+}
+
 #[derive(Clone, Copy, Serialize, Deserialize, ToSchema)]
 pub struct Settings {
     pub profanity_filter: bool,
+    #[serde(default)]
+    pub profanity_targets: ProfanityTargets,
     pub asset_previews: bool,
     pub asset_uploads: bool,
     pub guests_enabled: bool,
@@ -362,6 +590,7 @@ static SETTINGS_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Settings)>>> =
 impl Settings {
     pub const DENY: Settings = Settings {
         profanity_filter: true,
+        profanity_targets: ProfanityTargets::ALL,
         asset_previews: false,
         asset_uploads: false,
         guests_enabled: false,
@@ -369,7 +598,7 @@ impl Settings {
 
     pub async fn load(db: &Db) -> Settings {
         let rows = match sqlx::query(
-            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'guests_enabled')",
+            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'guests_enabled') OR key LIKE 'profanity\\_%' ESCAPE '\\'",
         )
             .fetch_all(db)
             .await
@@ -384,6 +613,12 @@ impl Settings {
                     .unwrap_or(Settings::DENY);
             }
         };
+        if rows.iter().any(|r| {
+            r.try_get::<String, _>(0)
+                .is_ok_and(|k| k == "profanity_display_names")
+        }) {
+            warn_display_names();
+        }
         let on = |key: &str| {
             rows.iter()
                 .find(|r| r.try_get::<String, _>(0).is_ok_and(|k| k == key))
@@ -392,6 +627,7 @@ impl Settings {
         };
         let settings = Settings {
             profanity_filter: on("profanity_filter"),
+            profanity_targets: ProfanityTargets::from_fn(|t| on(t.key())),
             asset_previews: on("asset_previews"),
             asset_uploads: on("asset_uploads"),
             guests_enabled: on("guests_enabled"),
@@ -590,7 +826,40 @@ fn issue_refs(text: &str) -> String {
     out
 }
 
-fn phrases(text: &str, bridge: bool) -> Vec<String> {
+const NUMBER_RUN: usize = 5;
+const NUMBER_KEEP: usize = 3;
+const NUMBER_WORDS: [&str; 6] = ["58008", "80085", "800855", "5318008", "8008135", "55378008"];
+
+fn long_numbers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut prev = None;
+    while let Some(c) = rest.chars().next() {
+        let digits = rest.len() - rest.trim_start_matches(|d: char| d.is_ascii_digit()).len();
+        if digits == 0 {
+            out.push(c);
+            prev = Some(c);
+            rest = &rest[c.len_utf8()..];
+            continue;
+        }
+        let run = &rest[..digits];
+        let number = digits >= NUMBER_RUN
+            && !rest[digits..].starts_with(|n: char| n.is_alphanumeric())
+            && !NUMBER_WORDS.contains(&run);
+        let keep = match (number, prev.is_some_and(|p: char| p.is_alphanumeric())) {
+            (false, _) => digits,
+            (true, true) => NUMBER_KEEP,
+            (true, false) => 0,
+        };
+        out.push_str(&run[..keep]);
+        out.extend(std::iter::repeat_n(' ', digits - keep));
+        prev = run.chars().next_back();
+        rest = &rest[digits..];
+    }
+    out
+}
+
+fn phrases(text: &str, bridge: bool, links: bool) -> Vec<String> {
     let mut phrases = Vec::new();
     let mut phrase = String::with_capacity(text.len());
     let mut at = 0;
@@ -602,9 +871,11 @@ fn phrases(text: &str, bridge: bool) -> Vec<String> {
             continue;
         };
         push_words(&mut phrases, &mut phrase, &text[at..i], "");
-        let url = percent_encoding::percent_decode_str(&text[i..i + len]).decode_utf8_lossy();
+        let span = &text[i..i + len];
+        let skip_host = bridge || (!links && skips_host(span));
+        let url = percent_encoding::percent_decode_str(span).decode_utf8_lossy();
         for (n, part) in url.split(URL_DELIMS).filter(|p| !p.is_empty()).enumerate() {
-            match (bridge, n) {
+            match (skip_host, n) {
                 (true, 0 | 1) => {}
                 (false, 0) => push_words(&mut phrases, &mut phrase, part, ""),
                 (false, 1) => push_words(&mut phrases, &mut phrase, &part.replace('.', " "), " "),
@@ -618,22 +889,82 @@ fn phrases(text: &str, bridge: bool) -> Vec<String> {
     phrases
 }
 
-pub(crate) fn is_profane(text: &str) -> bool {
-    let text = issue_refs(text);
+const URL_TRAILING: &str = ".,;:!?)'\"";
+
+fn plausible_host(authority: &str) -> bool {
+    let host = match authority.rsplit_once(':') {
+        Some((host, port))
+            if !port.is_empty() && port.len() <= 5 && port.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            host
+        }
+        Some(_) => return false,
+        None => authority,
+    };
+    let labels: Vec<&str> = host.split('.').collect();
+    let label_ok = |l: &&str| {
+        !l.is_empty()
+            && l.len() <= 63
+            && !l.starts_with('-')
+            && !l.ends_with('-')
+            && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    };
+    let ipv4 = labels.len() == 4
+        && labels
+            .iter()
+            .all(|l| !l.is_empty() && l.len() <= 3 && l.parse::<u8>().is_ok());
+    let tld = labels
+        .last()
+        .is_some_and(|t| t.len() >= 2 && t.bytes().all(|b| b.is_ascii_alphabetic()));
+    host.eq_ignore_ascii_case("localhost")
+        || ipv4
+        || (labels.len() >= 2 && host.len() <= 253 && labels.iter().all(label_ok) && tld)
+}
+
+fn skips_host(span: &str) -> bool {
+    let span = span.trim_end_matches(|c| URL_TRAILING.contains(c));
+    let after_scheme = &span[span.find("://").map_or(span.len(), |n| n + 3)..];
+    let end = after_scheme
+        .find(['/', '?', '#'])
+        .unwrap_or(after_scheme.len());
+    plausible_host(&after_scheme[..end])
+}
+
+pub(crate) fn is_profane(text: &str, links: bool) -> bool {
+    let text = long_numbers(&issue_refs(text));
     [false, true]
         .into_iter()
-        .flat_map(|bridge| phrases(&text, bridge))
+        .flat_map(|bridge| phrases(&text, bridge, links))
         .any(|p| p.is_inappropriate())
 }
 
-pub async fn check_profanity(db: &Db, text: &str) -> Result<(), ApiError> {
-    match Settings::cached(db).await.profanity_filter && is_profane(text) {
-        true => Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Content blocked by profanity filter".to_string(),
-        )),
-        false => Ok(()),
+impl Settings {
+    pub fn blocks(&self, target: ProfanityTarget, text: &str) -> bool {
+        let targets = self.profanity_targets;
+        let links = match target {
+            ProfanityTarget::Messages => targets.links,
+            ProfanityTarget::Usernames
+            | ProfanityTarget::ServerNames
+            | ProfanityTarget::ChannelNames
+            | ProfanityTarget::RoleNames
+            | ProfanityTarget::FileNames => true,
+        };
+        self.profanity_filter && targets.get(target.switch()) && is_profane(text, links)
     }
+
+    pub fn check_profanity(&self, target: ProfanityTarget, text: &str) -> Result<(), ApiError> {
+        match self.blocks(target, text) {
+            true => Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                "Content blocked by profanity filter".to_string(),
+            )),
+            false => Ok(()),
+        }
+    }
+}
+
+pub async fn check_profanity(db: &Db, target: ProfanityTarget, text: &str) -> Result<(), ApiError> {
+    Settings::cached(db).await.check_profanity(target, text)
 }
 
 pub struct Authed(pub User);
@@ -958,6 +1289,463 @@ mod tests {
         done(state, path).await;
     }
 
+    fn settings_with(filter: bool, targets: ProfanityTargets) -> Settings {
+        Settings {
+            profanity_filter: filter,
+            profanity_targets: targets,
+            ..Settings::DENY
+        }
+    }
+
+    #[test]
+    fn each_profanity_target_switches_alone() {
+        for switch in ProfanitySwitch::ALL {
+            let off = ProfanityTargets::from_fn(|t| t != switch);
+            let all = settings_with(true, ProfanityTargets::ALL);
+            let without = settings_with(true, off);
+            let (checked, text) = match ProfanityTarget::ALL
+                .into_iter()
+                .find(|t| t.switch() == switch)
+            {
+                Some(target) => (target, "fuck"),
+                None => (ProfanityTarget::Messages, "see https://fuck.co/"),
+            };
+            assert!(all.blocks(checked, text), "{switch:?} on");
+            assert!(!without.blocks(checked, text), "{switch:?} off");
+            assert!(all.check_profanity(checked, "hello there").is_ok());
+            for other in ProfanityTarget::ALL {
+                if other.switch() != switch {
+                    assert!(without.blocks(other, "fuck"), "{switch:?} off, {other:?}");
+                }
+            }
+            assert_eq!(ProfanitySwitch::parse(switch.name()), Some(switch));
+        }
+        assert_eq!(ProfanitySwitch::parse("display_names"), None);
+    }
+
+    #[test]
+    fn master_switch_off_disables_every_target() {
+        let off = settings_with(false, ProfanityTargets::ALL);
+        for target in ProfanityTarget::ALL {
+            assert!(!off.blocks(target, "fuck https://x.co/shit"), "{target:?}");
+            assert!(off.check_profanity(target, "fuck").is_ok());
+        }
+    }
+
+    #[test]
+    fn links_off_skips_urls_and_still_reads_prose() {
+        let s = settings_with(
+            true,
+            ProfanityTargets {
+                links: false,
+                ..ProfanityTargets::ALL
+            },
+        );
+        let m = ProfanityTarget::Messages;
+        let on = settings_with(true, ProfanityTargets::ALL);
+        for clean in [
+            "https://fuck.co/",
+            "see https://shit.example.com/page and more",
+            "https://f.u.c.k.co/",
+            "https://cockburn.ca/",
+            "https://therapist.com/",
+        ] {
+            assert!(!s.blocks(m, clean), "{clean}");
+        }
+        for dirty in [
+            "nice https://example.com/ but fuck this",
+            "fuck https://x.co/",
+            "you are a fucking idiot",
+            "f u c k",
+            "http://fuck",
+            "http://nigger",
+            "http://you-fucking-idiot",
+            "http://x/you,are,a,fucking,idiot",
+            "http://x.co/kill-yourself",
+            "http://x.co/%66uck",
+            "http://x.co/!fuck!you",
+            "https://example.com/fuck",
+            "nice https://x.co/?q=shit see",
+            "kill https://x.co/yourself",
+            "kill http://x.co yourself",
+            "fu http://x.co ck",
+            "https://x.co/#fuck",
+            "https://x.co:8080/fuck",
+            "http://127.0.0.1/fuck",
+            "http://localhost:3000/a?b=fuck",
+            "http://fuck@x.co/",
+            "http://fuck.c0/",
+            "http://x.co:fuck/",
+            "see https://x.co/fuck).",
+        ] {
+            assert!(s.blocks(m, dirty), "{dirty}");
+            assert!(on.blocks(m, dirty), "links on: {dirty}");
+        }
+        for clean in [
+            "http://localhost:3000/invite/p0/?password=hunter2",
+            "join https://rchat.example.com/invite/My%20Club/?password=correct-horse-battery now",
+            "https://rchat-rebase.example/page",
+            "https://github.com/org/repo/pull/1550",
+            "see https://x.co/abc).",
+            "http://192.168.1.10:8080/status?ok=1",
+        ] {
+            assert!(!s.blocks(m, clean), "links off: {clean}");
+            assert!(!on.blocks(m, clean), "links on: {clean}");
+        }
+        assert!(s.blocks(ProfanityTarget::ChannelNames, "https://x.co/fuck"));
+        let no_messages = settings_with(
+            true,
+            ProfanityTargets {
+                messages: false,
+                ..ProfanityTargets::ALL
+            },
+        );
+        assert!(!no_messages.blocks(m, "https://x.co/fuck and fuck"));
+    }
+
+    #[test]
+    fn profanity_env_seed_parsing() {
+        let seed = |f: Option<&str>, t: Option<&str>| profanity_seed(f, t);
+        let on = |pairs: &[(&str, bool)], key: &str| {
+            pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
+        };
+        let defaults = seed(None, None);
+        assert_eq!(defaults.len(), 1 + ProfanitySwitch::ALL.len());
+        assert!(defaults.iter().all(|(_, v)| *v));
+        for off in ["off", "0", "false", " OFF ", "no"] {
+            assert_eq!(
+                on(&seed(Some(off), None), "profanity_filter"),
+                Some(false),
+                "{off}"
+            );
+        }
+        for v in ["on", "1", "true", ""] {
+            assert_eq!(
+                on(&seed(Some(v), None), "profanity_filter"),
+                Some(true),
+                "{v}"
+            );
+        }
+        let some = seed(None, Some(" Messages, server_names,display_names "));
+        for switch in ProfanitySwitch::ALL {
+            let want = matches!(
+                switch,
+                ProfanitySwitch::Messages | ProfanitySwitch::ServerNames
+            );
+            assert_eq!(on(&some, switch.key()), Some(want), "{switch:?}");
+        }
+        assert!(!some.iter().any(|(k, _)| k.contains("display")));
+        for typo in [
+            "message",
+            "bogus",
+            "messages,bogus",
+            "none,bogus",
+            "display_names",
+            ",",
+        ] {
+            assert!(
+                seed(None, Some(typo)).iter().all(|(_, v)| *v),
+                "{typo} must fail closed"
+            );
+        }
+        assert!(seed(None, Some("all")).iter().all(|(_, v)| *v));
+        assert!(seed(None, Some("messages,all")).iter().all(|(_, v)| *v));
+        assert!(seed(None, Some("  ")).iter().all(|(_, v)| *v));
+        let none = seed(None, Some("none"));
+        assert!(none.iter().all(|(k, v)| *v == (*k == "profanity_filter")));
+    }
+
+    #[tokio::test]
+    async fn profanity_env_seed_fills_only_missing_settings() {
+        let (state, path) = temp_state("profanity_seed").await;
+        let db = state.db.clone();
+        sqlx::query("DELETE FROM settings WHERE key LIKE 'profanity%'")
+            .execute(&db)
+            .await
+            .expect("clear");
+        sqlx::query("INSERT INTO settings(key, value) VALUES('profanity_role_names', '1'), ('profanity_display_names', '0')")
+            .execute(&db)
+            .await
+            .expect("stored");
+        let mut conn = db.acquire().await.expect("conn");
+        crate::db::seed_settings(
+            &mut conn,
+            &profanity_seed(Some("off"), Some("messages,links")),
+        )
+        .await
+        .expect("seed");
+        crate::db::seed_settings(&mut conn, &profanity_seed(None, None))
+            .await
+            .expect("reseed");
+        drop(conn);
+        let s = Settings::load(&db).await;
+        assert!(!s.profanity_filter);
+        assert_eq!(
+            s.profanity_targets,
+            ProfanityTargets {
+                messages: true,
+                links: true,
+                role_names: true,
+                ..ProfanityTargets::from_fn(|_| false)
+            }
+        );
+        done(state, path).await;
+    }
+
+    #[test]
+    fn settings_without_profanity_targets_parse_as_all_on() {
+        let old: Settings = serde_json::from_value(serde_json::json!({
+            "profanity_filter": true,
+            "asset_previews": true,
+            "asset_uploads": false,
+            "guests_enabled": true,
+        }))
+        .expect("old replica settings");
+        assert_eq!(old.profanity_targets, ProfanityTargets::ALL);
+        let stale: Settings = serde_json::from_value(serde_json::json!({
+            "profanity_filter": true,
+            "profanity_targets": {
+                "messages": false, "links": true, "usernames": true, "display_names": false,
+                "server_names": true, "channel_names": true, "role_names": true, "file_names": true,
+            },
+            "asset_previews": true,
+            "asset_uploads": false,
+            "guests_enabled": true,
+        }))
+        .expect("stale display_names field");
+        assert!(!stale.profanity_targets.messages && stale.profanity_targets.usernames);
+    }
+
+    #[tokio::test]
+    async fn profanity_settings_fail_closed() {
+        let (state, path) = temp_state("profanity_errors").await;
+        let db = state.db.clone();
+        sqlx::query("UPDATE settings SET value = '0' WHERE key LIKE 'profanity%'")
+            .execute(&db)
+            .await
+            .expect("all off");
+        let off = Settings::load(&db).await;
+        assert!(!off.profanity_filter);
+        assert_eq!(off.profanity_targets, ProfanityTargets::from_fn(|_| false));
+        crate::db::close(&db).await;
+        Settings::forget(&db);
+        let denied = Settings::cached(&db).await;
+        assert!(denied.profanity_filter);
+        assert_eq!(denied.profanity_targets, ProfanityTargets::ALL);
+        for target in ProfanityTarget::ALL {
+            assert!(denied.blocks(target, "fuck"), "{target:?}");
+        }
+        assert!(denied.blocks(ProfanityTarget::Messages, "https://fuck.co/"));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn profanity_targets_gate_each_write_path() {
+        use axum::Json;
+        use axum::extract::Path;
+        use serde_json::{Value, json};
+
+        use crate::api::test_util::mem_user;
+
+        fn req<T: serde::de::DeserializeOwned>(v: Value) -> Json<T> {
+            Json(serde_json::from_value(v).expect("request"))
+        }
+        fn blocked<T>(res: Result<T, ApiError>) -> bool {
+            matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m.contains("profanity"))
+        }
+        let (state, path) = temp_state("profanity_paths").await;
+        let st = || State(state.clone());
+        let alice = || Authed(mem_user("alice", false));
+        let patch = |body: Value| {
+            let state = state.clone();
+            async move {
+                admin::patch_settings(State(state), Authed(mem_user("root", true)), req(body))
+                    .await
+                    .expect("patch")
+                    .0
+            }
+        };
+        let server = |name: &str| servers::create_server(st(), alice(), req(json!({"name": name})));
+        let channel = |name: &str| {
+            servers::create_channel(
+                st(),
+                alice(),
+                Path("club".into()),
+                req(json!({"name": name})),
+            )
+        };
+        let role = |name: &str| {
+            servers::create_role(
+                st(),
+                alice(),
+                Path("club".into()),
+                req(json!({"name": name, "color": "#123456", "perms": 0})),
+            )
+        };
+        let register = |name: &str| {
+            auth::register(
+                st(),
+                req(json!({"username": name, "password": "a", "avatar_kind": "identicon"})),
+            )
+        };
+
+        assert!(
+            admin::patch_settings(st(), alice(), req(json!({"profanity_filter": false})))
+                .await
+                .is_err()
+        );
+        for name in ["alice", "bob"] {
+            sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $1, '', 'text', 'identicon', 0)")
+                .bind(name)
+                .execute(&state.db)
+                .await
+                .expect("user");
+        }
+        let media_seq = std::sync::atomic::AtomicU8::new(0);
+        let upload = |filename: &str| {
+            let n = media_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let id = format!("{n:02x}").repeat(16);
+            let state = state.clone();
+            let filename = filename.to_string();
+            async move {
+                sqlx::query("INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at) VALUES($1, $2, 'image/png', 1, $3, 'alice', $4)")
+                    .bind(&id)
+                    .bind(filename)
+                    .bind(vec![0u8])
+                    .bind(crate::db::now())
+                    .execute(&state.db)
+                    .await
+                    .expect("media");
+                json!({"content": "", "media_id": id})
+            }
+        };
+        let club = server("Club").await.expect("club").0;
+        let _ = server("Spare").await.expect("spare");
+        let general = club.channels[0].id;
+        let mods = role("mods").await.expect("mods").0;
+        let send =
+            |body: Value| messages::send_channel_message(st(), Path(general), alice(), req(body));
+        let root = send(json!({"content": "hello"})).await.expect("root").0.id;
+        let reply =
+            |body: Value| messages::send_thread_message(st(), Path(root), alice(), req(body));
+        let rename_server = |key: &str, name: &str| {
+            servers::update_server(st(), alice(), Path(key.into()), req(json!({"name": name})))
+        };
+        let rename_channel = |name: &str| {
+            servers::update_channel(st(), alice(), Path(general), req(json!({"name": name})))
+        };
+        let rename_role = |name: &str| {
+            servers::update_role(
+                st(),
+                alice(),
+                Path(("club".into(), mods.id)),
+                req(json!({"name": name})),
+            )
+        };
+        let p2p = |filename: &str| json!({"content": "", "p2p": {"filename": filename, "size": 1, "mime": "image/png", "p2p_id": "0123456789abcdef0123456789abcdef"}});
+
+        assert!(blocked(server("shit club").await));
+        assert!(blocked(rename_server("club", "shit club").await));
+        assert!(rename_server("club", "CLUB").await.is_ok());
+        assert!(blocked(channel("shit").await));
+        assert!(blocked(rename_channel("shit").await));
+        assert!(blocked(role("shit").await));
+        assert!(blocked(rename_role("shit").await));
+        assert!(blocked(send(json!({"content": "fuck"})).await));
+        assert!(blocked(reply(json!({"content": "fuck"})).await));
+        assert!(blocked(
+            send(json!({"content": "see https://x.co/fuck"})).await
+        ));
+        assert!(blocked(send(p2p("fuck.png")).await));
+        assert!(blocked(send(upload("fuck.png").await).await));
+        assert!(blocked(reply(upload("shit.png").await).await));
+        assert!(send(upload("cat.png").await).await.is_ok());
+        assert!(blocked(register("Fuck").await));
+
+        let dm = dms::open_dm(st(), alice(), req(json!({"username": "bob"})))
+            .await
+            .expect("dm")
+            .0
+            .id;
+        let dm_send = |body: Value| messages::send_dm_message(st(), Path(dm), alice(), req(body));
+        assert!(dm_send(json!({"content": "fuck"})).await.is_ok());
+        assert!(dm_send(p2p("fuck.png")).await.is_ok());
+        assert!(dm_send(upload("fuck.png").await).await.is_ok());
+
+        let got = patch(json!({"profanity_targets": {"usernames": false}})).await;
+        assert!(got.profanity_filter && !got.profanity_targets.usernames);
+        assert!(register("Fuck").await.is_ok());
+        let ignored = patch(json!({"profanity_targets": {"display_names": false}})).await;
+        assert_eq!(ignored.profanity_targets, got.profanity_targets);
+
+        patch(json!({"profanity_targets": {"server_names": false}})).await;
+        assert!(server("shit club").await.is_ok());
+        assert!(rename_server("spare", "shit spare").await.is_ok());
+        assert!(blocked(send(json!({"content": "fuck"})).await));
+        assert!(blocked(channel("shit").await));
+        assert!(blocked(rename_channel("shit").await));
+
+        patch(json!({"profanity_targets": {"channel_names": false}})).await;
+        assert!(channel("shit").await.is_ok());
+        assert!(rename_channel("shitpost").await.is_ok());
+        assert!(blocked(role("shit").await));
+        assert!(blocked(rename_role("shit").await));
+        patch(json!({"profanity_targets": {"role_names": false}})).await;
+        assert!(role("shit").await.is_ok());
+        assert!(rename_role("shitty").await.is_ok());
+
+        assert!(blocked(
+            send(json!({"content": "see https://fuck.co/"})).await
+        ));
+        patch(json!({"profanity_targets": {"links": false}})).await;
+        assert!(
+            send(json!({"content": "see https://fuck.co/"}))
+                .await
+                .is_ok()
+        );
+        assert!(
+            reply(json!({"content": "see https://fuck.co/"}))
+                .await
+                .is_ok()
+        );
+        assert!(blocked(
+            send(json!({"content": "see https://x.co/fuck"})).await
+        ));
+        assert!(blocked(send(json!({"content": "http://fuck"})).await));
+        assert!(blocked(
+            send(json!({"content": "fuck https://x.co/"})).await
+        ));
+        assert!(blocked(send(p2p("fuck.png")).await));
+        assert!(blocked(send(upload("fuck.png").await).await));
+        patch(json!({"profanity_targets": {"file_names": false}})).await;
+        assert!(send(p2p("fuck.png")).await.is_ok());
+        assert!(send(upload("fuck.png").await).await.is_ok());
+        assert!(reply(upload("shit.png").await).await.is_ok());
+        assert!(blocked(reply(json!({"content": "fuck"})).await));
+        patch(json!({"profanity_targets": {"messages": false}})).await;
+        assert!(send(json!({"content": "fuck"})).await.is_ok());
+        assert!(reply(json!({"content": "fuck"})).await.is_ok());
+
+        let all_on = json!({"profanity_targets": {
+            "messages": true, "links": true, "usernames": true,
+            "server_names": true, "channel_names": true, "role_names": true, "file_names": true,
+        }});
+        let got = patch(all_on).await;
+        assert_eq!(got.profanity_targets, ProfanityTargets::ALL);
+        assert!(blocked(send(json!({"content": "fuck"})).await));
+        let got = patch(json!({"profanity_filter": false})).await;
+        assert_eq!(got.profanity_targets, ProfanityTargets::ALL);
+        assert!(send(json!({"content": "fuck"})).await.is_ok());
+        assert!(server("fuck club").await.is_ok());
+        assert!(channel("fuck").await.is_ok());
+        assert!(role("fuck").await.is_ok());
+        assert!(register("Shit").await.is_ok());
+        let Json(fetched) = admin::get_settings(st()).await;
+        assert!(!fetched.profanity_filter);
+        assert_eq!(fetched.profanity_targets, ProfanityTargets::ALL);
+        done(state, path).await;
+    }
+
     #[test]
     fn profanity_ignores_url_punctuation() {
         let clean = [
@@ -981,7 +1769,9 @@ mod tests {
             "plain words",
         ];
         for text in clean {
-            assert!(!is_profane(text), "{text}");
+            for links in [true, false] {
+                assert!(!is_profane(text, links), "{text} links={links}");
+            }
         }
     }
 
@@ -1021,7 +1811,62 @@ mod tests {
             "you a#55",
         ];
         for text in dirty {
-            assert!(is_profane(text), "{text}");
+            for links in [true, false] {
+                assert!(is_profane(text, links), "{text} links={links}");
+            }
+        }
+    }
+
+    #[test]
+    fn profanity_reads_long_numbers_as_numbers() {
+        let all = settings_with(true, ProfanityTargets::ALL);
+        let clean = [
+            "club1793",
+            "room42",
+            "team2024",
+            "club1793012345678",
+            "club 1793012345678",
+            "Club Night 1802167024629",
+            "club1800884551090",
+            "1801598980006",
+            "order 40056 shipped",
+            "see https://github.com/org/repo/pull/12#issuecomment-1799207890733",
+        ];
+        for text in clean {
+            for links in [true, false] {
+                assert!(!is_profane(text, links), "{text} links={links}");
+            }
+            assert!(!all.blocks(ProfanityTarget::ServerNames, text), "{text}");
+            assert!(!all.blocks(ProfanityTarget::Messages, text), "{text}");
+        }
+        let dirty = [
+            "a55",
+            "a555",
+            "a55555",
+            "a5555555555",
+            "a55555555hole",
+            "5h1t",
+            "sh17",
+            "sh1t1234567",
+            "f4ck",
+            "fuck12345",
+            "fuck 1793012345678",
+            "1793012345678 fuck",
+            "b00b55555",
+            "pu55y",
+            "n1663r",
+            "8008",
+            "1488",
+            "80085",
+            "58008",
+            "5318008",
+            "club80085",
+        ];
+        for text in dirty {
+            for links in [true, false] {
+                assert!(is_profane(text, links), "{text} links={links}");
+            }
+            assert!(all.blocks(ProfanityTarget::ServerNames, text), "{text}");
         }
     }
 

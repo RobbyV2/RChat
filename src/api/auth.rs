@@ -20,8 +20,8 @@ use crate::api::dms::dm_page;
 use crate::api::servers::{OkResp, ok};
 use crate::api::servers::{Page, my_servers_page};
 use crate::api::{
-    ApiError, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, ServerSummary, UserRef, check_len,
-    check_profanity, request_token, valid_color,
+    ApiError, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, ProfanityTarget, ServerSummary,
+    UserRef, check_len, check_profanity, request_token, valid_color,
 };
 use crate::db::{AvatarKind, Db, User, get_user, now};
 use crate::state::AppState;
@@ -288,7 +288,7 @@ pub(crate) async fn register(
     let key = username.to_lowercase();
     let (secret, password_kind) = secret_from(&username, password, words, true)?;
     let avatar_color = check_avatar(avatar_kind, avatar_color)?;
-    check_profanity(&state.db, &username).await?;
+    check_profanity(&state.db, ProfanityTarget::Usernames, &username).await?;
     let password_hash = hash_password(&secret).await?;
     let mut tx = state.db.begin().await?;
     let banned = sqlx::query("SELECT 1 FROM banned_usernames WHERE username = $1")

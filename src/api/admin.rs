@@ -8,7 +8,8 @@ use sqlx::Row;
 
 use crate::api::messages::{MsgScope, message_scope};
 use crate::api::{
-    ApiError, Authed, Paged, ServerSummaryLite, Settings, UserRef, decode_cursor, encode_cursor,
+    ApiError, Authed, Paged, ProfanitySwitch, ServerSummaryLite, Settings, UserRef, decode_cursor,
+    encode_cursor,
 };
 use crate::db::{AvatarKind, Db, User, now, purge_messages, user_row};
 use crate::state::AppState;
@@ -147,9 +148,45 @@ pub struct OkResp {
     pub ok: bool,
 }
 
+#[derive(Clone, Copy, Deserialize, Default)]
+pub struct ProfanityTargetsPatch {
+    messages: Option<bool>,
+    links: Option<bool>,
+    usernames: Option<bool>,
+    server_names: Option<bool>,
+    channel_names: Option<bool>,
+    role_names: Option<bool>,
+    file_names: Option<bool>,
+}
+
+impl ProfanityTargetsPatch {
+    fn get(&self, switch: ProfanitySwitch) -> Option<bool> {
+        let ProfanityTargetsPatch {
+            messages,
+            links,
+            usernames,
+            server_names,
+            channel_names,
+            role_names,
+            file_names,
+        } = *self;
+        match switch {
+            ProfanitySwitch::Messages => messages,
+            ProfanitySwitch::Links => links,
+            ProfanitySwitch::Usernames => usernames,
+            ProfanitySwitch::ServerNames => server_names,
+            ProfanitySwitch::ChannelNames => channel_names,
+            ProfanitySwitch::RoleNames => role_names,
+            ProfanitySwitch::FileNames => file_names,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct SettingsPatch {
     profanity_filter: Option<bool>,
+    #[serde(default)]
+    profanity_targets: ProfanityTargetsPatch,
     asset_previews: Option<bool>,
     asset_uploads: Option<bool>,
     guests_enabled: Option<bool>,
@@ -162,7 +199,7 @@ fn require_site_admin(user: &User) -> Result<(), ApiError> {
     }
 }
 
-#[utoipa::path(get, path = "/api/settings", responses((status = 200, description = "Site-wide feature toggles: profanity filter, link previews, uploads, and guest access", body = Settings)))]
+#[utoipa::path(get, path = "/api/settings", responses((status = 200, description = "Site-wide feature toggles: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, and guest access", body = Settings)))]
 pub(crate) async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
     Json(Settings::cached(&state.db).await)
 }
@@ -175,6 +212,7 @@ pub(crate) async fn patch_settings(
     require_site_admin(&user)?;
     let SettingsPatch {
         profanity_filter,
+        profanity_targets,
         asset_previews,
         asset_uploads,
         guests_enabled,
@@ -184,7 +222,13 @@ pub(crate) async fn patch_settings(
         ("asset_previews", asset_previews),
         ("asset_uploads", asset_uploads),
         ("guests_enabled", guests_enabled),
-    ];
+    ]
+    .into_iter()
+    .chain(
+        ProfanitySwitch::ALL
+            .into_iter()
+            .map(|t| (t.key(), profanity_targets.get(t))),
+    );
     for (key, value) in pairs {
         if let Some(on) = value {
             sqlx::query(

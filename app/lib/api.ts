@@ -22,6 +22,7 @@ import type {
   ServerSummaryLite,
   ServerUpdated,
   SiteSettings,
+  SiteSettingsPatch,
   Unread,
   UserRef,
 } from './types'
@@ -351,8 +352,7 @@ export const endpoints = (c: ApiClient) => ({
   },
   mediaUrl: (id: string, server?: string) => c.mediaUrl(id, server),
   getSettings: () => c.req<SiteSettings>('GET', '/settings'),
-  patchSettings: (body: Partial<SiteSettings>) =>
-    c.req<SiteSettings>('PATCH', '/admin/settings', body),
+  patchSettings: (body: SiteSettingsPatch) => c.req<SiteSettings>('PATCH', '/admin/settings', body),
   adminOverview: () => c.req<AdminOverview>('GET', '/admin/overview'),
   adminUsers: (cursor: string | null, q: string) =>
     c.page<UserRef>(withCursor(`/admin/users?limit=50&q=${seg(q)}`, cursor)),

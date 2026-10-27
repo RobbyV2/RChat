@@ -11,9 +11,9 @@ use utoipa::{IntoParams, ToSchema};
 use crate::api::admin::like_pattern;
 use crate::api::{
     ApiError, Authed, CallLog, Embed, LIST_MAX, LIST_PAGE, MESSAGE_MAX, MaybeAuthed, MediaRef,
-    Message, Paged, UserRef, check_len, check_profanity, cursor_int, decode_cursor, embeds,
-    encode_cursor, header_grants, media::MEDIA_TTL_SECS, require_guest_ok, require_server_view,
-    unique_capped, user_from, user_refs,
+    Message, Paged, ProfanityTarget, Settings, UserRef, check_len, check_profanity, cursor_int,
+    decode_cursor, embeds, encode_cursor, header_grants, media::MEDIA_TTL_SECS, require_guest_ok,
+    require_server_view, unique_capped, user_from, user_refs,
 };
 use crate::db::{
     ChannelAccess, ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, Perm, PermRow, User,
@@ -409,6 +409,10 @@ async fn insert_message(
     } = req;
     check_len(&content, MESSAGE_MAX, "Message")?;
     let spoiler = media_spoiler.unwrap_or(false);
+    let settings = match channel_id {
+        Some(_) => Some(Settings::cached(db).await),
+        None => None,
+    };
     let mut tx = db.begin().await?;
     let media = match (&media_id, p2p) {
         (Some(_), Some(_)) => {
@@ -454,6 +458,9 @@ async fn insert_message(
         }
         (None, None) => None,
     };
+    if let (Some(settings), Some(media)) = (&settings, &media) {
+        settings.check_profanity(ProfanityTarget::FileNames, &media.filename)?;
+    }
     if content.trim().is_empty() && media.is_none() {
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
@@ -682,7 +689,7 @@ pub(crate) async fn send_channel_message(
     Authed(user): Authed,
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
-    check_profanity(&state.db, &req.content).await?;
+    check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
     let server = send_gate(&state.db, id, &user).await?;
     let message = insert_message(&state.db, Some(id), None, None, &user, req).await?;
     touch_interaction(&state.db, &server, &user.username).await?;
@@ -730,7 +737,7 @@ pub(crate) async fn send_thread_message(
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
     let channel_id = thread_root_channel(&state.db, id).await?;
-    check_profanity(&state.db, &req.content).await?;
+    check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
     let server = send_gate(&state.db, channel_id, &user).await?;
     let message = insert_message(&state.db, Some(channel_id), None, Some(id), &user, req).await?;
     touch_interaction(&state.db, &server, &user.username).await?;

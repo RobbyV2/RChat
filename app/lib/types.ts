@@ -208,11 +208,28 @@ export interface AuthResponse {
   user: Me
 }
 
+export interface ProfanityTargets {
+  messages: boolean
+  links: boolean
+  usernames: boolean
+  server_names: boolean
+  channel_names: boolean
+  role_names: boolean
+  file_names: boolean
+}
+
+export type ProfanityTarget = keyof ProfanityTargets
+
 export interface SiteSettings {
   profanity_filter: boolean
+  profanity_targets: ProfanityTargets
   asset_previews: boolean
   asset_uploads: boolean
   guests_enabled: boolean
+}
+
+export type SiteSettingsPatch = Partial<Omit<SiteSettings, 'profanity_targets'>> & {
+  profanity_targets?: Partial<ProfanityTargets>
 }
 
 export interface AdminOverview {

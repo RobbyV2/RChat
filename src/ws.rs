@@ -4980,6 +4980,7 @@ mod tests {
             WsEvent::SettingsChanged {
                 settings: Settings {
                     profanity_filter: false,
+                    profanity_targets: crate::api::ProfanityTargets::ALL,
                     asset_previews: false,
                     asset_uploads: false,
                     guests_enabled: false,

@@ -55,6 +55,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         asset_uploads,
         asset_previews,
         profanity_filter: _,
+        profanity_targets: _,
     } = Settings::cached(&state.read()).await;
     state.instance.discovery(
         &state.instance.origin(peer, headers),

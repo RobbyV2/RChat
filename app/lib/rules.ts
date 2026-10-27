@@ -4,8 +4,30 @@ import {
   type ConfirmChoice,
   type Member,
   type PasswordMembers,
+  type ProfanityTarget,
   type Role,
+  type SiteSettings,
 } from './types'
+
+export const PROFANITY_TARGETS: { key: ProfanityTarget; label: string }[] = [
+  { key: 'messages', label: 'Messages' },
+  { key: 'links', label: 'Links in messages' },
+  { key: 'usernames', label: 'Usernames' },
+  { key: 'server_names', label: 'Server names' },
+  { key: 'channel_names', label: 'Channel names' },
+  { key: 'role_names', label: 'Role names' },
+  { key: 'file_names', label: 'File names' },
+]
+
+type ProfanitySettings = Pick<SiteSettings, 'profanity_filter'> & {
+  profanity_targets?: Partial<SiteSettings['profanity_targets']>
+}
+
+export const profanityTargetOn = (settings: ProfanitySettings, key: ProfanityTarget) =>
+  settings.profanity_targets?.[key] ?? true
+
+export const profanityTargetLocked = (settings: ProfanitySettings, key: ProfanityTarget) =>
+  !settings.profanity_filter || (key === 'links' && !profanityTargetOn(settings, 'messages'))
 
 export const NAME_MAX = 100
 export const MESSAGE_MAX = 4000
