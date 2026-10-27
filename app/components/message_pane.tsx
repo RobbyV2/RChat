@@ -8,13 +8,17 @@ import {
   MessageSquareText,
   MessagesSquare,
   Phone,
+  PhoneCall,
+  PhoneIncoming,
   PhoneMissed,
   PhoneOff,
+  PhoneOutgoing,
   Search,
   Trash2,
   Users,
   Video,
   Volume2,
+  type LucideIcon,
 } from 'lucide-react'
 import {
   canModerate,
@@ -37,13 +41,15 @@ import {
   revokeAdminFor,
   roleColor,
   roleMenuItems,
+  userRefFor,
   useStore,
   myRolePerms,
   viewKey,
   type ContextMenuItem,
   type Outgoing,
 } from '../lib/store'
-import { Perm, hasPerm, type Member, type Message } from '../lib/types'
+import { Perm, hasPerm, type Member, type Message, type UserRef } from '../lib/types'
+import { callTone, fmtDuration, spokenDuration, type CallTone } from '../lib/voice_layout'
 import { UserAvatar } from './user_avatar'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
@@ -69,14 +75,6 @@ export const fmtTime = (ts: number) => {
   return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString()} ${time}`
 }
 
-const fmtDuration = (s: number) => {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const sec = s % 60
-  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`
-}
-
 function CallDuration({ from }: { from: number }) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
   useEffect(() => {
@@ -86,60 +84,98 @@ function CallDuration({ from }: { from: number }) {
   return <>{fmtDuration(Math.max(0, now - from))}</>
 }
 
+const CALL_ICON: Record<CallTone, { Icon: LucideIcon; cls: string }> = {
+  ringing: { Icon: PhoneIncoming, cls: 'text-status-green' },
+  active: { Icon: PhoneCall, cls: 'text-status-green' },
+  ended: { Icon: Phone, cls: 'text-on-surface-variant' },
+  declined: { Icon: PhoneOff, cls: 'text-on-surface-variant' },
+  missed: { Icon: PhoneMissed, cls: 'text-error' },
+}
+
 function CallLogRow({ message }: { message: Message }) {
   const me = useStore(s => s.me)
+  const dms = useStore(s => s.dms)
   const acceptCall = useStore(s => s.acceptCall)
   const declineCall = useStore(s => s.declineCall)
   const openDm = useStore(s => s.openDm)
   const call = message.call
   if (!call) return null
-  const ringing = call.answered_at === null && call.ended_at === null
-  const active = call.answered_at !== null && call.ended_at === null
+  const tone = callTone(call)
   const incoming = me !== null && me.username !== call.from
-  let icon = <Phone size={14} className="shrink-0" />
-  let label: ReactNode = 'Call'
-  if (ringing) label = incoming ? 'Incoming call' : 'Calling…'
-  else if (active && call.answered_at !== null)
-    label = (
-      <>
-        Call · <CallDuration from={call.answered_at} />
-      </>
-    )
-  else if (call.ended_at !== null) {
-    if (call.outcome === 'completed' && call.answered_at !== null)
-      label = `Call · ${fmtDuration(Math.max(0, call.ended_at - call.answered_at))}`
-    else if (call.outcome === 'declined') {
-      icon = <PhoneOff size={14} className="shrink-0" />
-      label = 'Call declined'
-    } else {
-      icon = <PhoneMissed size={14} className="shrink-0" />
-      label = 'Missed call'
+  const caller = userRefFor(useStore.getState(), call.from)
+  const other = dms.find(d => d.id === message.dm_id)?.other
+  const name = (u: UserRef | undefined) => (
+    <span className="streamer font-medium text-on-surface">{u?.display_name ?? 'Someone'}</span>
+  )
+  let text: ReactNode
+  switch (tone) {
+    case 'ringing':
+      text = incoming ? <>{name(caller)} is calling you</> : <>Calling {name(other)}…</>
+      break
+    case 'active':
+      text = <>{name(caller)} started a call</>
+      break
+    case 'ended': {
+      const lasted = Math.max(0, (call.ended_at ?? 0) - (call.answered_at ?? 0))
+      text = (
+        <>
+          {name(caller)} started a call that lasted{' '}
+          <span title={fmtDuration(lasted)}>{spokenDuration(lasted)}</span>
+        </>
+      )
+      break
     }
+    case 'declined':
+      text = incoming ? (
+        <>You declined a call from {name(caller)}</>
+      ) : (
+        <>{name(other)} declined your call</>
+      )
+      break
+    case 'missed':
+      text = incoming ? (
+        <>You missed a call from {name(caller)}</>
+      ) : (
+        <>{name(other)} missed your call</>
+      )
+      break
   }
+  const { Icon, cls } = CALL_ICON[tone]
+  const Lead = tone === 'ringing' && !incoming ? PhoneOutgoing : Icon
   return (
-    <div className="flex justify-center px-4 py-1.5">
-      <div className="flex items-center gap-2 rounded-full bg-surface-container px-3 py-1 text-xs text-on-surface-variant">
-        {icon}
-        <span>{label}</span>
-        <span className="opacity-60">{fmtTime(message.created_at)}</span>
-        {ringing && incoming && (
-          <span className="ml-1 flex items-center gap-1">
+    <div className="flex items-center gap-3 px-4 py-1 hover:bg-surface-container-low">
+      <span className={`flex w-9 shrink-0 justify-center ${cls}`}>
+        <Lead size={18} className={tone === 'ringing' ? 'motion-safe:animate-pulse' : ''} />
+      </span>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-on-surface-variant">
+        <span className="min-w-0">{text}</span>
+        {tone === 'active' && call.answered_at !== null && (
+          <span className="flex items-center gap-1 rounded-full bg-status-green/15 px-2 py-0.5 text-xs font-medium text-status-green tabular-nums">
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-status-green" />
+            <CallDuration from={call.answered_at} />
+          </span>
+        )}
+        <span className="text-xs opacity-70">{fmtTime(message.created_at)}</span>
+        {tone === 'ringing' && incoming && (
+          <span className="flex items-center gap-1.5">
             <button
               title="Accept"
               onClick={() => {
                 if (message.dm_id !== null) void openDm(message.dm_id)
                 void acceptCall()
               }}
-              className="rounded-full bg-primary p-1 text-on-primary hover:opacity-90"
+              className="flex items-center gap-1 rounded-full bg-status-green px-2.5 py-1 text-xs font-medium text-surface outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary"
             >
               <Phone size={12} />
+              Accept
             </button>
             <button
               title="Decline"
               onClick={declineCall}
-              className="rounded-full bg-error p-1 text-on-error hover:opacity-90"
+              className="flex items-center gap-1 rounded-full bg-danger px-2.5 py-1 text-xs font-medium text-on-danger outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary"
             >
               <PhoneOff size={12} />
+              Decline
             </button>
           </span>
         )}
@@ -743,12 +779,12 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         </div>
       </header>
       {isVoice && view?.kind === 'channel' ? (
-        <VoiceGrid channelId={view.channelId} />
+        <VoiceGrid key={`c${view.channelId}`} channelId={view.channelId} />
       ) : (
         <>
           {dm && dmCall && (
-            <div className="flex max-h-[45dvh] shrink-0 flex-col overflow-hidden border-b border-outline-variant">
-              <VoiceGrid dmId={dm.id} />
+            <div className="flex h-[45dvh] shrink-0 flex-col overflow-hidden">
+              <VoiceGrid key={`d${dm.id}`} dmId={dm.id} />
             </div>
           )}
           <div className="relative flex min-h-0 flex-1 flex-col">

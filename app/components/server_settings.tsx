@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { Hash, Trash2, TriangleAlert, X } from 'lucide-react'
+import { Hash, Trash2, TriangleAlert, Volume2, X } from 'lucide-react'
 import type { Page } from '../lib/lists'
 import { api } from '../lib/instances'
 import {
@@ -70,20 +70,27 @@ export function FieldError({ message, id }: { message: string | null; id?: strin
   )
 }
 
-export type EscapeLayer = 'panel' | 'dialog' | 'confirm'
+export type EscapeLayer = 'stage' | 'panel' | 'dialog' | 'confirm'
 
-const covered = (layer: EscapeLayer) => {
-  const s = useStore.getState()
+// Every handler sees the store as it was when the key went down, so one that
+// runs after another has already closed its layer still knows it was covered.
+const pressed = new WeakMap<Event, ReturnType<typeof useStore.getState>>()
+
+const covered = (layer: EscapeLayer, e: Event) => {
+  const s = pressed.get(e) ?? useStore.getState()
+  pressed.set(e, s)
   if (s.contextMenu) return true
   if (layer === 'confirm') return false
   if (s.confirm) return true
   if (layer === 'dialog') return false
-  return (
+  if (
     s.activeDialog !== null ||
     s.profile !== null ||
     s.invite !== null ||
     document.querySelector('[aria-modal="true"]') !== null
   )
+    return true
+  return layer === 'stage' && s.panel !== null
 }
 
 export function useEscape(onEscape: () => void, layer: EscapeLayer = 'dialog') {
@@ -93,7 +100,7 @@ export function useEscape(onEscape: () => void, layer: EscapeLayer = 'dialog') {
   })
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.isComposing && !covered(layer)) ref.current()
+      if (e.key === 'Escape' && !e.isComposing && !covered(layer, e)) ref.current()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -702,7 +709,11 @@ export function ChannelControls({
       <div className="flex flex-wrap items-center gap-2">
         {lead ?? (
           <span className="flex min-w-0 flex-1 basis-full items-center gap-1.5 text-sm sm:basis-0">
-            <Hash size={14} className="shrink-0 text-on-surface-variant" />
+            {channel.kind === 'voice' ? (
+              <Volume2 size={14} className="shrink-0 text-on-surface-variant" />
+            ) : (
+              <Hash size={14} className="shrink-0 text-on-surface-variant" />
+            )}
             <span className="truncate">{channel.name}</span>
           </span>
         )}

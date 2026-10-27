@@ -259,11 +259,13 @@ class P2pManager {
     return this.local !== null
   }
 
-  async startMedia() {
+  async startMedia(muted = false) {
     this.endMedia()
     const mic = await navigator.mediaDevices.getUserMedia({ audio: true }).catch((e: unknown) => {
       throw mediaError(e, 'microphone', 'call')
     })
+    for (const track of mic.getAudioTracks()) track.enabled = !muted
+    this.muted = muted
     const canvas = document.createElement('canvas')
     canvas.width = 2
     canvas.height = 2

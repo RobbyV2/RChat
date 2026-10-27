@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useState } from 'react'
-import { Hash, Pin, Plus, Volume2 } from 'lucide-react'
+import { HeadphoneOff, Hash, MicOff, Pin, Plus, Volume2 } from 'lucide-react'
 import { myPerms, serverAdminPerms, userRefFor, useStore } from '../lib/store'
 import { dmSections } from '../lib/nav_layout'
 import { canDeleteChannel } from '../lib/rules'
@@ -84,6 +84,100 @@ function DmRow({
         </span>
       )}
     </button>
+  )
+}
+
+function VoiceChannelRow({
+  channel,
+  active,
+  connected,
+  count,
+  onJoin,
+  menu,
+}: {
+  channel: Channel
+  active: boolean
+  connected: boolean
+  count: number
+  onJoin: () => void
+  menu: (x: number, y: number) => void
+}) {
+  return (
+    <button
+      title={connected ? 'Open voice channel' : 'Join voice channel'}
+      aria-label={`${connected ? 'Open' : 'Join'} voice channel ${channel.name}${
+        count ? `, ${count} connected` : ''
+      }`}
+      onClick={onJoin}
+      {...longPress(menu)}
+      className={`group mx-2 flex w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm outline-offset-[-2px] transition-colors focus-visible:outline-2 focus-visible:outline-primary active:scale-[0.98] ${
+        active
+          ? 'bg-secondary-container text-on-secondary-container'
+          : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
+      }`}
+    >
+      <Volume2 size={16} className={`shrink-0 ${connected ? 'text-status-green' : ''}`} />
+      <span className="truncate">{channel.name}</span>
+      {count > 0 && (
+        <span
+          title={`${count} in voice`}
+          className="ml-auto shrink-0 rounded-full bg-surface-container-highest px-1.5 text-[11px] leading-4 font-medium text-on-surface-variant tabular-nums"
+        >
+          {count}
+        </span>
+      )}
+    </button>
+  )
+}
+
+function VoiceMemberRow({
+  username,
+  server,
+  inRoom,
+}: {
+  username: string
+  server: string
+  inRoom: boolean
+}) {
+  const me = useStore(s => s.me)
+  const selfAudio = useStore(s => s.selfAudio)
+  useStore(s => s.rtcTick)
+  const user = userRefFor(useStore.getState(), username)
+  const self = me?.username === username
+  const speaking = inRoom && rtc.isSpeaking(username)
+  const muted = inRoom && (self ? selfAudio.muted : (rtc.peer(username)?.muted ?? false))
+  const deafened = inRoom && self && selfAudio.deafened
+  return (
+    <div
+      {...profileTrigger(user, server)}
+      className="mr-2 ml-7 flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm text-on-surface-variant outline-offset-[-2px] hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary active:bg-surface-container-high"
+    >
+      <span
+        className={`flex shrink-0 rounded-full transition-shadow ${
+          speaking ? 'ring-2 ring-status-green ring-offset-1 ring-offset-surface-container-low' : ''
+        }`}
+      >
+        <UserAvatar
+          username={user.username}
+          avatarKind={user.avatar_kind}
+          avatarColor={user.avatar_color}
+          size={22}
+        />
+      </span>
+      <span className={`streamer min-w-0 flex-1 truncate ${speaking ? 'text-on-surface' : ''}`}>
+        {user.display_name}
+      </span>
+      {muted && !deafened && (
+        <span title="Muted" className="flex shrink-0 text-mute-fg">
+          <MicOff size={14} />
+        </span>
+      )}
+      {deafened && (
+        <span title="Deafened" className="flex shrink-0 text-mute-fg">
+          <HeadphoneOff size={14} />
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -415,45 +509,23 @@ export function ChannelSidebar() {
               {editInput}
             </span>
           ) : (
-            <div key={c.id}>
-              <button
-                title="Join voice channel"
-                onClick={() => void joinVoice(detail.name, c.id)}
-                {...longPress(channelMenu(c))}
-                className={`mx-2 flex w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
-                  view?.kind === 'channel' && view.channelId === c.id
-                    ? 'bg-secondary-container text-on-secondary-container'
-                    : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
-                }`}
-              >
-                <Volume2 size={16} className="shrink-0" />
-                <span className="truncate">{c.name}</span>
-              </button>
-              {(voiceUsers[c.id] ?? []).map(u => {
-                const user = userRefFor(useStore.getState(), u)
-                const speaking = voice?.channelId === c.id && rtc.isSpeaking(u)
-                return (
-                  <div
-                    key={u}
-                    {...profileTrigger(user, detail.name)}
-                    className="mr-2 ml-9 flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-0.5 text-sm text-on-surface-variant outline-offset-[-2px] hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary"
-                  >
-                    <span
-                      className={`flex shrink-0 rounded-full ${
-                        speaking ? 'ring-2 ring-green-500' : ''
-                      }`}
-                    >
-                      <UserAvatar
-                        username={user.username}
-                        avatarKind={user.avatar_kind}
-                        avatarColor={user.avatar_color}
-                        size={18}
-                      />
-                    </span>
-                    <span className="streamer truncate">{user.display_name}</span>
-                  </div>
-                )
-              })}
+            <div key={c.id} className="flex flex-col">
+              <VoiceChannelRow
+                channel={c}
+                active={view?.kind === 'channel' && view.channelId === c.id}
+                connected={voice?.channelId === c.id}
+                count={(voiceUsers[c.id] ?? []).length}
+                onJoin={() => void joinVoice(detail.name, c.id)}
+                menu={channelMenu(c)}
+              />
+              {(voiceUsers[c.id] ?? []).map(u => (
+                <VoiceMemberRow
+                  key={u}
+                  username={u}
+                  server={detail.name}
+                  inRoom={voice?.channelId === c.id}
+                />
+              ))}
             </div>
           )
         )}

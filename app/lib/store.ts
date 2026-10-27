@@ -95,6 +95,7 @@ import {
   type OpenInvite,
 } from './invite'
 import { clearProfiles, forgetProfiles } from './profile'
+import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from './voice_layout'
 import { retrySeconds, tooManyText } from './rate_limit'
 import {
   freshPresence,
@@ -383,6 +384,7 @@ interface RChatState {
   voiceUsers: Record<number, string[]>
   p2pAvailability: Record<string, P2pAvailability>
   rtcTick: number
+  selfAudio: SelfAudio
   view: View | null
   invite: OpenInvite | null
   messages: Record<string, Message[]>
@@ -531,6 +533,7 @@ interface RChatState {
   joinVoice: (server: string, channelId: number) => Promise<void>
   leaveVoice: () => void
   toggleMute: () => void
+  toggleDeafen: () => void
   toggleCamera: () => Promise<void>
   toggleShare: () => Promise<void>
   startCall: (dmId: number, video: boolean) => Promise<void>
@@ -1064,17 +1067,49 @@ export const useStore = create<RChatState>()((set, get) => {
 
   let pendingDial: string | null = null
 
+  const applyMic = () => {
+    const { muted } = get().selfAudio
+    if (rtc.active() && rtc.muted !== muted) rtc.setMuted(muted)
+    if (p2p.mediaActive() && p2p.muted !== muted) p2p.setMuted(muted)
+  }
+
+  const setSelfAudio = (selfAudio: SelfAudio) => {
+    set({ selfAudio })
+    applyMic()
+  }
+
   const endRtc = () => {
     rtc.leave()
     p2p.endMedia()
     pendingDial = null
-    set(s => (s.voice || s.call ? { voice: null, call: null } : {}))
+    set(s => ({
+      selfAudio: SELF_AUDIO_IDLE,
+      ...(s.voice || s.call ? { voice: null, call: null } : {}),
+    }))
+  }
+
+  const endVoiceMedia = () => {
+    rtc.leave()
+    set({ voice: null, selfAudio: SELF_AUDIO_IDLE })
   }
 
   const endCallMedia = (kind: CallKind) => {
     pendingDial = null
+    if (get().voice) return
     if (kind === 'p2p') p2p.endMedia()
     else rtc.leave()
+    set({ selfAudio: SELF_AUDIO_IDLE })
+  }
+
+  const abandonMedia = () => {
+    const { voice, call, me } = get()
+    const ours = call !== null && (call.state === 'active' || call.from === me?.username)
+    if (voice) home.ws.sendVoice({ type: 'voice_leave' })
+    if (ours) home.ws.sendVoice({ type: 'call_leave', dm_id: call.dmId })
+    rtc.leave()
+    p2p.endMedia()
+    pendingDial = null
+    set({ voice: null, selfAudio: SELF_AUDIO_IDLE, ...(ours ? { call: null } : {}) })
   }
 
   let unreadsReady: Promise<void> = Promise.resolve()
@@ -2308,6 +2343,7 @@ export const useStore = create<RChatState>()((set, get) => {
     voiceUsers: {},
     p2pAvailability: {},
     rtcTick: 0,
+    selfAudio: SELF_AUDIO_IDLE,
     view: null,
     invite: null,
     messages: {},
@@ -2554,6 +2590,7 @@ export const useStore = create<RChatState>()((set, get) => {
         guestNames: {},
         voice: null,
         call: null,
+        selfAudio: SELF_AUDIO_IDLE,
         voiceUsers: {},
         servers: {},
         members: {},
@@ -3291,10 +3328,16 @@ export const useStore = create<RChatState>()((set, get) => {
         home.ws.ensureConnected()
         await get().openChannel(server, channelId)
         if (voice?.channelId === channelId) return
-        p2p.endMedia()
-        await rtc.join(me.username, { channelId })
+        try {
+          p2p.endMedia()
+          await rtc.join(me.username, { channelId }, get().selfAudio.muted)
+          applyMic()
+        } catch (e) {
+          abandonMedia()
+          throw e
+        }
         if (!home.ws.sendVoice({ type: 'voice_join', channel_id: channelId })) {
-          rtc.leave()
+          abandonMedia()
           throw new Error('Not connected')
         }
         set({ voice: { server, channelId }, call: null })
@@ -3302,15 +3345,12 @@ export const useStore = create<RChatState>()((set, get) => {
 
     leaveVoice: () => {
       home.ws.sendVoice({ type: 'voice_leave' })
-      rtc.leave()
-      set({ voice: null })
+      endVoiceMedia()
     },
 
-    toggleMute: () => {
-      const { call, voice } = get()
-      if (!voice && call?.kind === 'p2p') p2p.setMuted(!p2p.muted)
-      else rtc.setMuted(!rtc.muted)
-    },
+    toggleMute: () => setSelfAudio(toggleMicAudio(get().selfAudio)),
+
+    toggleDeafen: () => setSelfAudio(toggleDeafenAudio(get().selfAudio)),
     toggleCamera: () =>
       act(async () => {
         const { call, voice } = get()
@@ -3330,14 +3370,16 @@ export const useStore = create<RChatState>()((set, get) => {
         if (guest || !me) throw new Error('Create an account to start calls')
         if (call) throw new Error('Already in a call')
         try {
-          await rtc.join(me.username, { dmId })
+          p2p.endMedia()
+          await rtc.join(me.username, { dmId }, get().selfAudio.muted)
+          applyMic()
           if (video) await rtc.camera(true)
         } catch (e) {
-          rtc.leave()
+          abandonMedia()
           throw e
         }
         if (!home.ws.sendVoice({ type: 'call_start', dm_id: dmId })) {
-          rtc.leave()
+          abandonMedia()
           throw new Error('Not connected')
         }
         set({ voice: null })
@@ -3349,14 +3391,16 @@ export const useStore = create<RChatState>()((set, get) => {
         if (guest || !me) throw new Error('Create an account to start calls')
         if (call) throw new Error('Already in a call')
         try {
-          await p2p.startMedia()
+          rtc.leave()
+          await p2p.startMedia(get().selfAudio.muted)
+          applyMic()
           if (video) await p2p.toggleCamera()
         } catch (e) {
-          p2p.endMedia()
+          abandonMedia()
           throw e
         }
         if (!home.ws.sendVoice({ type: 'call_start', dm_id: dmId, p2p: true })) {
-          p2p.endMedia()
+          abandonMedia()
           throw new Error('Not connected')
         }
         set({ voice: null })
@@ -3366,10 +3410,26 @@ export const useStore = create<RChatState>()((set, get) => {
       act(async () => {
         const { me, call } = get()
         if (!me || !call || call.state !== 'ringing') return
-        if (call.kind === 'p2p') await p2p.startMedia()
-        else await rtc.join(me.username, { dmId: call.dmId })
+        try {
+          if (call.kind === 'p2p') {
+            rtc.leave()
+            await p2p.startMedia(get().selfAudio.muted)
+          } else {
+            p2p.endMedia()
+            await rtc.join(me.username, { dmId: call.dmId }, get().selfAudio.muted)
+          }
+          applyMic()
+        } catch (e) {
+          abandonMedia()
+          throw e
+        }
+        const ringing = get().call
+        if (ringing?.dmId !== call.dmId || ringing.state !== 'ringing') {
+          abandonMedia()
+          return
+        }
         if (!home.ws.sendVoice({ type: 'call_accept', dm_id: call.dmId })) {
-          endCallMedia(call.kind)
+          abandonMedia()
           throw new Error('Not connected')
         }
         set({ voice: null })
@@ -3615,10 +3675,7 @@ export const useStore = create<RChatState>()((set, get) => {
             ...d,
             channels: d.channels.filter(c => c.id !== ev.channel_id),
           }))
-          if (get().voice?.channelId === ev.channel_id) {
-            rtc.leave()
-            set({ voice: null })
-          }
+          if (get().voice?.channelId === ev.channel_id) endVoiceMedia()
           set(s => {
             const voiceUsers = { ...s.voiceUsers }
             delete voiceUsers[ev.channel_id]
@@ -3967,8 +4024,7 @@ export const useStore = create<RChatState>()((set, get) => {
             if (ev.users.includes(me.username)) rtc.sync(ev.users)
             else {
               endedVoice = ev.channel_id
-              rtc.leave()
-              set({ voice: null })
+              endVoiceMedia()
             }
           }
           return
@@ -4031,10 +4087,7 @@ export const useStore = create<RChatState>()((set, get) => {
         case 'voice_ended': {
           const { me, voice } = get()
           const mine = me !== null && (ev.dm_users?.includes(me.username) ?? false)
-          if (mine && ev.channel_id !== null && voice?.channelId === ev.channel_id) {
-            rtc.leave()
-            set({ voice: null })
-          }
+          if (mine && ev.channel_id !== null && voice?.channelId === ev.channel_id) endVoiceMedia()
           const endedChannel = ev.channel_id !== null && ev.channel_id === endedVoice
           if (endedChannel) endedVoice = null
           if (endedChannel || mine) fail(new Error(ev.reason))
@@ -4049,11 +4102,9 @@ export const useStore = create<RChatState>()((set, get) => {
               me !== null &&
               (voiceUsers[voice.channelId] ?? []).includes(me.username))
           if (confirmed) return
-          if (rtc.active() || voice) {
-            rtc.leave()
-            set({ voice: null })
-          }
+          if (rtc.active() || voice) endVoiceMedia()
           if (p2p.mediaActive()) p2p.endMedia()
+          set({ selfAudio: SELF_AUDIO_IDLE })
           return
         }
         case 'dm_created': {

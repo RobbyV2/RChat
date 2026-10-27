@@ -1,6 +1,7 @@
 import { home } from './instances'
 import { SpeakingDetector } from './vad'
 import { mediaError } from './rules'
+import { linkQuality, type LinkQuality } from './voice_layout'
 import type { RtcPayload } from './types'
 
 export type RtcTarget =
@@ -49,11 +50,13 @@ class RtcManager {
     return user === this.me ? this.localSpeaking : (this.peers.get(user)?.speaking ?? false)
   }
 
-  async join(me: string, target: RtcTarget) {
+  async join(me: string, target: RtcTarget, muted = false) {
     this.leave()
     const local = await navigator.mediaDevices.getUserMedia({ audio: true }).catch((e: unknown) => {
       throw mediaError(e, 'microphone', target.channelId !== undefined ? 'join voice' : 'call')
     })
+    for (const track of local.getAudioTracks()) track.enabled = !muted
+    this.muted = muted
     this.me = me
     this.target = target
     this.local = local
@@ -95,6 +98,16 @@ class RtcManager {
   peer(user: string): { stream: MediaStream | null; muted: boolean; camOn: boolean } | undefined {
     const p = this.peers.get(user)
     return p ? { stream: p.stream, muted: p.muted, camOn: p.camOn } : undefined
+  }
+
+  remoteStreams(): [string, MediaStream][] {
+    return [...this.peers].flatMap(([user, p]): [string, MediaStream][] =>
+      p.stream ? [[user, p.stream]] : []
+    )
+  }
+
+  quality(): LinkQuality {
+    return linkQuality([...this.peers.values()].map(p => p.pc.connectionState))
   }
 
   setMuted(muted: boolean) {
@@ -189,6 +202,7 @@ class RtcManager {
         }
       })()
     }
+    pc.onconnectionstatechange = () => this.onChange()
     pc.ontrack = e => {
       peer.stream = e.streams[0] ?? new MediaStream([e.track])
       if (e.track.kind === 'audio') this.detector.watch(user, new MediaStream([e.track]))
