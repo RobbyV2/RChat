@@ -19,12 +19,14 @@ Browser support: current Chromium and Firefox, and Safari and iOS 16.4 or newer 
 ## Features
 
 - Servers with channels, threads, roles, voice, attachments and link previews; direct messages and calls.
+- Voice and video: a Discord-style call stage with speaking rings, focus mode and a filmstrip, mute and deafen, a Voice Connected panel, and screen sharing (alongside your camera, with LIVE badges and tab or system audio where the browser can exclude the call's own sound).
 - Invite links: pasting one shows a join card (server icon, message preview, banned or already-joined states, an optional password in the link or a password prompt), and opening one shows a full invite page.
-- Mini profiles: click any avatar or name for roles with their colors, banner, a short description ("About me" in Settings, up to 190 characters), moderation controls you're allowed to use, and a quick DM box.
-- Server bans, and a kick/ban hierarchy: moderators can only remove members whose permissions are a strict subset of theirs.
+- Mini profiles: click any avatar or name for roles with their colors, banner, a short description ("About me" in Settings, up to 190 characters), when they joined RChat and the current server, moderation controls you're allowed to use, and a quick DM box.
+- Server bans, and a permission hierarchy: moderators can only remove members whose permissions are a strict subset of theirs, and nobody can grant permissions they don't have.
+- Server appearance: a custom banner and name color for the header at the top of the channel list.
 - Server password changes can keep everyone or remove everyone you're allowed to moderate, with a separate choice for guest access.
 - Account password changes, switching between a text password and a 7-word password either way.
-- Hold-and-drag reordering for servers and DMs, pinned DMs, and server folders (drop one server onto another).
+- Hold-and-drag reordering for servers and DMs, pinned DMs (your DM with yourself is pinned automatically), and server folders (drop one server onto another).
 - Appear offline, streamer mode, and per-target profanity filter controls for the site admin.
 - Lazy-loaded server, DM, member and message lists, and indexed message search with date filters.
 - Horizontal scaling: service roles, a shared Redis-protocol bus, Postgres, and Compose, Kubernetes and nginx references (see Scaling).
