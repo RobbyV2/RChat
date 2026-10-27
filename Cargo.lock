@@ -2431,7 +2431,7 @@ dependencies = [
 
 [[package]]
 name = "rust-next"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2470,7 +2470,7 @@ dependencies = [
 
 [[package]]
 name = "rust-next-wasm"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "console_error_panic_hook",
  "console_log",
