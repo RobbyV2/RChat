@@ -11,8 +11,8 @@ use crate::api::admin::{fuzzy_match, is_fuzzy, like_pattern};
 use crate::api::auth::{hash_password, new_token, verify_password, verify_password_cached};
 use crate::api::messages::recent_channel_messages;
 use crate::api::{
-    ApiError, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message, NAME_MAX,
-    OFFSET_MAX, Paged, ProfanityTarget, Role, SLOWMODE_MAX, ServerDetail, ServerSummary,
+    ApiError, ApiErrorBody, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message,
+    NAME_MAX, OFFSET_MAX, Paged, ProfanityTarget, Role, SLOWMODE_MAX, ServerDetail, ServerSummary,
     ServerSummaryLite, UserRef, check_len, check_profanity, cursor_int, decode_cursor,
     encode_cursor, grant_matches, header_grants, page_bounds, placeholders, require_guest_ok,
     require_server_view, unique_capped, user_from, user_ref, user_refs, valid_color,
@@ -24,23 +24,43 @@ use crate::db::{
 use crate::state::AppState;
 use crate::ws::{Hub, WsEvent, evict_unviewable};
 
+/// Request body for creating a channel.
 #[derive(Deserialize, ToSchema)]
 pub struct CreateChannelReq {
+    /// Channel name. Surrounding whitespace is trimmed; must not be blank, at most 100
+    /// characters, must pass the channel-name profanity filter and must not equal the name of
+    /// another channel in the server (exact, case-sensitive comparison).
+    #[schema(example = "general")]
     name: String,
+    /// Channel kind, `text` or `voice`. Optional; omitted or `null` creates a text channel.
     kind: Option<ChannelKind>,
 }
 
+/// Request body for creating a server.
 #[derive(Deserialize, ToSchema)]
 pub struct CreateServerReq {
+    /// Server name. Surrounding whitespace is trimmed and the result becomes the
+    /// `display_name`; its lowercase form becomes the `name` used in URLs. Must not be blank,
+    /// at most 100 characters, not `.` or `..`, must pass the server-name profanity filter and
+    /// must not be taken by another server (case-insensitive).
+    #[schema(example = "Club")]
     name: String,
+    /// Optional join password. Surrounding whitespace is trimmed; omitted, `null` or blank
+    /// creates a server without a password.
     password: Option<String>,
 }
 
+/// Optional request body for joining a server.
 #[derive(Deserialize, ToSchema)]
 pub struct JoinReq {
+    /// The server password. Needed only when the server is password-protected and the caller
+    /// is not already a member; ignored otherwise.
     password: Option<String>,
 }
 
+/// What happens to the other members when a server password is set, changed or cleared:
+/// `keep` (default) keeps everyone; `remove` removes every other member whose server
+/// permissions are a strict subset of the caller's, as if kicked.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PasswordMembers {
@@ -49,99 +69,177 @@ pub enum PasswordMembers {
     Remove,
 }
 
+/// Request body for updating a server. Every field is optional; omitted fields are left
+/// unchanged.
 #[derive(Deserialize, ToSchema)]
 pub struct ServerPatch {
+    /// New server name, with the same rules as when creating a server (trimmed, 1-100
+    /// characters, not `.` or `..`, profanity-filtered, not taken). Changes the lowercase `name`
+    /// used in URLs as well as the `display_name`. Not allowed on the rchat server.
     name: Option<String>,
+    /// New join password. Surrounding whitespace is trimmed; a blank value removes the
+    /// password. Omit to leave the password as it is. Not allowed on the rchat server.
     password: Option<String>,
+    /// What to do with the other members when `password` is present: `keep` (default) or
+    /// `remove`. Ignored when `password` is omitted.
     #[serde(default)]
     members: PasswordMembers,
+    /// When `password` is present, existing guest grants are revoked unless this is `true` and
+    /// `members` is `keep`. Defaults to `false`.
     #[serde(default)]
     keep_guests: bool,
+    /// Background color of the channel sidebar header as `#rrggbb` (stored lowercase). `null`
+    /// resets it to the theme color; omit to leave it unchanged.
     #[serde(default, deserialize_with = "crate::api::auth::present")]
-    #[schema(value_type = Option<String>)]
+    #[schema(value_type = Option<String>, example = "#1e293b")]
     banner_color: Option<Option<String>>,
+    /// Color of the server name in the channel sidebar header as `#rrggbb` (stored lowercase).
+    /// `null` resets it to the theme color; omit to leave it unchanged.
     #[serde(default, deserialize_with = "crate::api::auth::present")]
-    #[schema(value_type = Option<String>)]
+    #[schema(value_type = Option<String>, example = "#f8fafc")]
     name_color: Option<Option<String>>,
 }
 
+/// The server after an update, plus how many members a password change removed.
 #[derive(Serialize, ToSchema)]
 pub struct ServerUpdated {
+    /// The server as it is after the update (its fields appear at the top level).
     #[serde(flatten)]
     pub server: ServerSummaryLite,
+    /// Number of members removed because `members` was `remove`; 0 otherwise.
     pub removed: i64,
+    /// Number of members other than the caller who are still in the server.
     pub kept: i64,
 }
 
+/// Request body for updating a channel. Every field is optional; omitted fields are left
+/// unchanged.
 #[derive(Deserialize, ToSchema)]
 pub struct ChannelPatch {
+    /// New channel name: trimmed, not blank, at most 100 characters, profanity-filtered and
+    /// not equal to the name of another channel in the server.
     name: Option<String>,
+    /// Slow mode delay in seconds between messages from the same user, 0 (off) to 21600.
+    /// Voice channels only accept 0.
+    #[schema(example = 10)]
     slowmode_seconds: Option<i64>,
 }
 
+/// Request body naming a user.
 #[derive(Deserialize, ToSchema)]
 pub struct UsernameReq {
+    /// Target username, case-insensitive.
+    #[schema(example = "alice")]
     username: String,
 }
 
+/// Request body for setting a server admin's permissions.
 #[derive(Deserialize, ToSchema)]
 pub struct PermsReq {
+    /// Permission bitmask: 1 Manage channels, 2 Delete messages, 4 Kick, 8 Delete server,
+    /// 16 Manage admins. Bits outside 31 are dropped. For an admin, 0 means all permissions.
+    #[schema(example = 7)]
     perms: i64,
 }
 
+/// Request body for creating a role.
 #[derive(Deserialize, ToSchema)]
 pub struct RoleReq {
+    /// Role name: trimmed, not blank, at most 100 characters and profanity-filtered. Names do
+    /// not have to be unique.
+    #[schema(example = "Moderators")]
     name: String,
+    /// Role color as `#rrggbb`, stored as sent.
+    #[schema(example = "#22c55e")]
     color: String,
+    /// Permission bitmask granted to members holding the role: 1 Manage channels, 2 Delete
+    /// messages, 4 Kick, 8 Delete server, 16 Manage admins. Bits outside 31 are dropped. Roles
+    /// only add permissions to members who are not admins; admins use their own admin
+    /// permissions.
+    #[schema(example = 6)]
     perms: i64,
 }
 
+/// Request body for updating a role. Every field is optional; omitted fields are left
+/// unchanged.
 #[derive(Deserialize, ToSchema)]
 pub struct RolePatch {
+    /// New role name: trimmed, not blank, at most 100 characters and profanity-filtered.
     name: Option<String>,
+    /// New role color as `#rrggbb`, stored as sent.
     color: Option<String>,
+    /// New permission bitmask (see `RoleReq.perms`). Bits outside 31 are dropped.
     perms: Option<i64>,
 }
 
+/// Request body for getting guest access to a password-protected server.
 #[derive(Deserialize, ToSchema)]
 pub struct GuestAccessReq {
+    /// The server password.
     password: String,
 }
 
+/// A guest grant for a password-protected server.
 #[derive(Serialize, ToSchema)]
 pub struct GuestGrant {
+    /// Opaque grant token. Guests send it in the `X-Guest-Grant` header (comma-separated with
+    /// other grants) to view this server. It expires after `GUEST_GRANT_DAYS` days without use
+    /// (an instance setting, 30 by default) and is revoked when the server password changes, unless
+    /// the change kept guests.
     grant: String,
 }
 
+/// Whether a server exists, and whether it has a password.
 #[derive(Serialize, ToSchema)]
 pub struct ServerExists {
+    /// `true` when joining the server needs a password.
     has_password: bool,
 }
 
+/// Query parameters for server search.
 #[derive(Deserialize, IntoParams)]
 pub struct ServerSearchQuery {
+    /// Search text, trimmed and case-insensitive. Up to 8 characters it matches names that
+    /// contain the characters in order (fuzzy); longer queries match as a substring of the
+    /// name or display name. Omitted or blank returns an empty list.
+    #[param(example = "club")]
     q: Option<String>,
 }
 
+/// A server returned by server search.
 #[derive(Serialize, ToSchema)]
 pub struct ServerMatch {
+    /// Lowercase server name, used in URLs.
+    #[schema(example = "club")]
     pub name: String,
+    /// Server name in its original case.
+    #[schema(example = "Club")]
     pub display_name: String,
+    /// `true` when joining the server needs a password.
     pub has_password: bool,
 }
 
+/// Generic success response.
 #[derive(Serialize, ToSchema)]
 pub struct OkResp {
+    /// Always `true`.
+    #[schema(example = true)]
     ok: bool,
 }
 
+/// A user banned from a server.
 #[derive(Serialize, ToSchema)]
 pub struct ServerBan {
+    /// The banned user (their fields appear at the top level).
     #[serde(flatten)]
     pub user: UserRef,
+    /// When the ban was created, Unix seconds.
     pub banned_at: i64,
 }
 
+/// The viewer's relation to an invited server: `member` (already a member), `banned` (banned
+/// from the server), `joinable` (may join now: no password, or the invite password or a guest
+/// grant was accepted) or `password_required`. Guests never get `member` or `banned`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InviteStatus {
@@ -151,29 +249,55 @@ pub enum InviteStatus {
     PasswordRequired,
 }
 
+/// An invite card for a server.
 #[derive(Serialize, ToSchema)]
 pub struct Invite {
+    /// The invited server.
     pub server: ServerSummaryLite,
+    /// Number of members. `null` when the server has a password and the viewer is not a
+    /// member and gave no valid invite password or guest grant.
     pub member_count: Option<i64>,
+    /// Number of members online now. `null` in the same cases as `member_count`.
     pub online_count: Option<i64>,
+    /// The viewer's relation to the server.
     pub status: InviteStatus,
+    /// Name of the channel the preview comes from: the first text channel without any
+    /// permission rules. `null` when the preview is locked or no such channel exists.
     pub preview_channel: Option<String>,
+    /// The last 3 top-level messages of `preview_channel`. Empty when the viewer is banned,
+    /// when the server has a password that the viewer has not unlocked (membership, invite
+    /// password or guest grant), or when there is no preview channel.
     pub preview: Vec<Message>,
 }
 
+/// Paging query parameters.
 #[derive(Deserialize, IntoParams)]
 pub struct MembersQuery {
+    /// Legacy offset paging: number of items to skip (negative counts as 0). Ignored when
+    /// `cursor` is given.
     offset: Option<i64>,
+    /// Page size, default 50, clamped to 1-50.
     limit: Option<i64>,
+    /// Opaque cursor from the previous page's `X-Next-Cursor` header. Blank means the first
+    /// page.
     cursor: Option<String>,
 }
 
+/// Query parameters for listing your servers.
 #[derive(IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct MyServersQuery {
+    /// Legacy offset paging: number of servers to skip, clamped to 0-1000000. Ignored when
+    /// `cursor` or `names` is given. Must be an integer.
     offset: Option<i64>,
+    /// Page size, default 50, clamped to 1-100. Ignored with `names`. Must be an integer.
     limit: Option<i64>,
+    /// Opaque cursor from the previous page's `X-Next-Cursor` header. Blank means the first
+    /// page. Ignored with `names`.
     cursor: Option<String>,
+    /// Only return these servers (case-insensitive names), repeated once per server, e.g.
+    /// `names=a&names=b`. Duplicates and blanks are dropped and only the first 100 count.
+    /// Servers you are not a member of are skipped. Disables paging.
     names: Option<Vec<String>>,
 }
 
@@ -224,14 +348,29 @@ impl MyServersQuery {
     }
 }
 
+/// Query parameters for listing server members.
 #[derive(IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct MemberListQuery {
+    /// Legacy offset paging for the default (online-first) listing: number of members to skip,
+    /// clamped to 0-1000000. Ignored when `cursor`, `usernames`, `q` or `admins` is given. Must
+    /// be an integer.
     offset: Option<i64>,
+    /// Page size, default 50, clamped to 1-50. Ignored with `usernames`. Must be an integer.
     limit: Option<i64>,
+    /// Opaque cursor from the previous page's `X-Next-Cursor` header. Blank means the first
+    /// page. A cursor only works with the same kind of listing (default, or `q`/`admins`)
+    /// that produced it. Ignored with `usernames`.
     cursor: Option<String>,
+    /// Only return these users (case-insensitive usernames), repeated once per user, e.g.
+    /// `usernames=a&usernames=b`. Duplicates and blanks are dropped and only the first 100
+    /// count. Non-members are skipped. Disables paging and takes precedence over `q` and
+    /// `admins`.
     usernames: Option<Vec<String>>,
+    /// Username prefix, trimmed and case-insensitive. Returns matching members alphabetically
+    /// instead of online first.
     q: Option<String>,
+    /// `1` or `true` returns only server admins, alphabetically; any other value is ignored.
     admins: Option<bool>,
 }
 
@@ -573,7 +712,25 @@ pub(crate) async fn my_servers_by_names(
     summary_rows(&query.fetch_all(db).await?)
 }
 
-#[utoipa::path(get, path = "/api/me/servers", params(MyServersQuery), responses((status = 200, description = "A page (`cursor` or legacy `offset`, `limit` default 50, max 100) of the servers the signed-in user joined, oldest membership first. When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page. With `names` (repeated once per server, e.g. `names=a&names=b`, max 100) returns just those servers, skipping ones the user is not a member of", body = Vec<ServerSummary>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page")))), security(("bearer" = [])))]
+/// List your servers
+///
+/// Returns the servers the signed-in user is a member of, oldest membership first, as pages of
+/// `limit` (default 50, max 100). Page with `cursor` from the `X-Next-Cursor` response header (or
+/// the legacy `offset`). With `names` it returns just those servers instead, unpaged, skipping ones
+/// you are not a member of. Requires a bearer token. General rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/me/servers",
+    tag = "Account",
+    params(MyServersQuery),
+    responses(
+        (status = 200, description = "A page of the servers you joined, oldest membership first, or just the requested `names`", body = Vec<ServerSummary>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
+        (status = 400, description = "Invalid cursor, or a non-integer `offset` or `limit`", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn list_my_servers(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -931,7 +1088,32 @@ async fn members_page(
     Ok((rows.into_iter().map(|(_, r)| r).collect(), next))
 }
 
-#[utoipa::path(get, path = "/api/servers/{name}/members", params(("name" = String, Path), MemberListQuery), responses((status = 200, description = "A page (`cursor` or legacy `offset`, `limit` default and max 50) of members, online first and then alphabetical. When more members follow, the `X-Next-Cursor` response header holds the cursor for the next page (absent on the last page). With `usernames` (repeated once per user, e.g. `usernames=a&usernames=b`, max 100) returns just those users that are members, alphabetical, skipping the rest. With `q` (case-insensitive username prefix) and/or `admins=1` (admins only) returns matching members alphabetically, paged by the same cursor header (`offset` is ignored)", body = Vec<Member>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page")))), security((), ("bearer" = [])))]
+/// List server members
+///
+/// Returns members as pages of `limit` (default and max 50): online members first, then offline
+/// ones, each alphabetical by username. Page with `cursor` from the `X-Next-Cursor` response header
+/// (or the legacy `offset`). With `q` (username prefix) and/or `admins=1` it returns matching
+/// members alphabetically, paged by `cursor` only. With `usernames` it returns just those users
+/// that are members, alphabetical and unpaged.
+///
+/// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
+/// password-protected server signed-in callers must be members and guests need a valid
+/// `X-Guest-Grant`. General rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/servers/{name}/members",
+    tag = "Members",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), MemberListQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
+    responses(
+        (status = 200, description = "A page of members, or just the requested `usernames`", body = Vec<Member>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
+        (status = 400, description = "Invalid cursor (including a cursor from a different kind of listing), or a non-integer `offset` or `limit`", body = ApiErrorBody),
+        (status = 401, description = "Guest access is disabled (no or unknown token), or a guest on a password-protected server sent only invalid or expired grants", body = ApiErrorBody),
+        (status = 403, description = "You are banned from this server, or it is password-protected and you are not a member (signed in) or sent no guest grant (guest)", body = ApiErrorBody),
+        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security((), ("bearer" = []))
+)]
 pub(crate) async fn list_members(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -1049,7 +1231,31 @@ async fn recent_pairs(
     Ok((pairs, next))
 }
 
-#[utoipa::path(get, path = "/api/servers/{name}/interacted", params(("name" = String, Path), MembersQuery), responses((status = 200, description = "Up to 50 non-members who interacted with the server, most recent first (`cursor` or legacy `offset`). When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page", body = Vec<UserRef>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page")))), security((), ("bearer" = [])))]
+/// List non-members who interacted
+///
+/// Returns users who sent a message or joined a voice channel in the server but are not members
+/// now (for example former members), most recent interaction first, as pages of `limit` (default
+/// and max 50). Page with `cursor` from the `X-Next-Cursor` response header (or the legacy
+/// `offset`).
+///
+/// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
+/// password-protected server signed-in callers must be members and guests need a valid
+/// `X-Guest-Grant`. General rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/servers/{name}/interacted",
+    tag = "Members",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), MembersQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
+    responses(
+        (status = 200, description = "A page of users who interacted with the server and are not members, most recent first", body = Vec<UserRef>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
+        (status = 400, description = "Invalid cursor (JSON), or a non-integer `offset` or `limit` (plain-text framework error)", body = ApiErrorBody),
+        (status = 401, description = "Guest access is disabled (no or unknown token), or a guest on a password-protected server sent only invalid or expired grants", body = ApiErrorBody),
+        (status = 403, description = "You are banned from this server, or it is password-protected and you are not a member (signed in) or sent no guest grant (guest)", body = ApiErrorBody),
+        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security((), ("bearer" = []))
+)]
 pub(crate) async fn list_interacted(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -1085,7 +1291,26 @@ pub(crate) async fn list_interacted(
     ))
 }
 
-#[utoipa::path(post, path = "/api/servers", request_body = CreateServerReq, responses((status = 200, description = "The created server, with the caller as admin and a default general channel", body = ServerDetail)), security(("bearer" = [])))]
+/// Create a server
+///
+/// Creates a server owned by the caller: they become its creator and an admin with all
+/// permissions, and it starts with one text channel named `general`. Requires a bearer token.
+/// Emits `server_created` to the creator. General rate-limit bucket.
+#[utoipa::path(
+    post,
+    path = "/api/servers",
+    tag = "Servers",
+    request_body = CreateServerReq,
+    responses(
+        (status = 200, description = "The created server, with the caller as admin and a default `general` text channel", body = ServerDetail),
+        (status = 400, description = "Invalid name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter) or the name is taken. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 409, description = "That name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn create_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1142,7 +1367,29 @@ pub(crate) async fn create_server(
     Ok(Json(detail))
 }
 
-#[utoipa::path(get, path = "/api/servers/{name}", params(("name" = String, Path)), responses((status = 200, description = "Server details: channels, roles, and member and online counts", body = ServerDetail)), security((), ("bearer" = [])))]
+/// Get a server
+///
+/// Returns the server with its channels, roles and member and online counts. Channels that have
+/// permission rules are only listed when a rule lets the viewer see them or the viewer has the
+/// Manage channels permission; guests only see channels without rules.
+///
+/// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
+/// password-protected server signed-in callers must be members and guests need a valid
+/// `X-Guest-Grant`. General rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/servers/{name}",
+    tag = "Servers",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
+    responses(
+        (status = 200, description = "Server details: channels visible to the viewer, roles, and member and online counts", body = ServerDetail),
+        (status = 401, description = "Guest access is disabled (no or unknown token), or a guest on a password-protected server sent only invalid or expired grants", body = ApiErrorBody),
+        (status = 403, description = "You are banned from this server, or it is password-protected and you are not a member (signed in) or sent no guest grant (guest)", body = ApiErrorBody),
+        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security((), ("bearer" = []))
+)]
 pub(crate) async fn get_server(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -1159,7 +1406,23 @@ pub(crate) async fn get_server(
     ))
 }
 
-#[utoipa::path(get, path = "/api/servers/{name}/exists", params(("name" = String, Path)), responses((status = 200, description = "The server exists; reports whether it is password-protected", body = ServerExists)), security((), ("bearer" = [])))]
+/// Check that a server exists
+///
+/// Reports whether the server exists and needs a password. Does not check bans or membership.
+/// Signed-in users may call it, and guests when guest access is on. General rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/servers/{name}/exists",
+    tag = "Servers",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    responses(
+        (status = 200, description = "The server exists; reports whether it is password-protected", body = ServerExists),
+        (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody),
+        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security((), ("bearer" = []))
+)]
 pub(crate) async fn server_exists(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -1178,7 +1441,25 @@ pub(crate) async fn server_exists(
     Ok(Json(ServerExists { has_password }))
 }
 
-#[utoipa::path(get, path = "/api/server_search", params(ServerSearchQuery), responses((status = 200, description = "Up to 10 servers whose name or display name matches the query", body = Vec<ServerMatch>)), security((), ("bearer" = [])))]
+/// Search servers
+///
+/// Finds up to 10 servers, ordered by name, whose name or display name matches `q`. Queries of up
+/// to 8 characters match fuzzily (the characters in order, not necessarily adjacent); longer ones
+/// match as a substring. Password-protected servers are included and flagged. A blank `q` returns
+/// an empty list. Signed-in users may call it, and guests when guest access is on. General
+/// rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/server_search",
+    tag = "Search",
+    params(ServerSearchQuery),
+    responses(
+        (status = 200, description = "Up to 10 servers whose name or display name matches the query", body = Vec<ServerMatch>),
+        (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security((), ("bearer" = []))
+)]
 pub(crate) async fn search_servers(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -1216,7 +1497,29 @@ pub(crate) async fn search_servers(
     Ok(Json(out))
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/guest_access", params(("name" = String, Path)), request_body = GuestAccessReq, responses((status = 200, description = "Password accepted; returns a guest grant for viewing the server without an account", body = GuestGrant), (status = 401, description = "Wrong password"), (status = 400, description = "Server has no password")))]
+/// Get guest access to a server
+///
+/// Checks the password of a password-protected server and returns a guest grant. Guests send the
+/// grant in the `X-Guest-Grant` header to view the server without an account; it expires after
+/// `GUEST_GRANT_DAYS` days without use (30 by default) and is revoked when the password changes
+/// (unless the change kept guests). Anyone may call it, guests only when guest access is on.
+/// Strict and general rate-limit buckets.
+#[utoipa::path(
+    post,
+    path = "/api/servers/{name}/guest_access",
+    tag = "Servers",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = GuestAccessReq,
+    responses(
+        (status = 200, description = "Password accepted; returns a guest grant for viewing the server without an account", body = GuestGrant),
+        (status = 400, description = "The server has no password. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Wrong password, or guest access is disabled and no valid token was sent", body = ApiErrorBody),
+        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the strict or the general bucket", content_type = "text/plain", body = String)
+    ),
+    security((), ("bearer" = []))
+)]
 pub(crate) async fn guest_access(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -1319,7 +1622,34 @@ async fn invite_preview(db: &Db, server: &str) -> Result<(Option<String>, Vec<Me
     }
 }
 
-#[utoipa::path(get, path = "/api/invites/{name}", params(("name" = String, Path), ("X-Invite-Password" = Option<String>, Header, description = "Percent-encoded server password from the invite link")), responses((status = 200, description = "Invite card for the server: member and online counts (null unless the server has no password, the viewer is a member, or the password header or a guest grant is valid), the viewer's status (`member`, `banned`, `joinable` or `password_required`; guests never get `member` or `banned`) and the last few top-level messages of the first text channel anyone may view. The preview is empty for banned viewers, and otherwise unless the server has no password, the viewer is a member, or the password header (or a guest grant) is valid", body = Invite), (status = 404, description = "Invalid invite: the server does not exist")), security((), ("bearer" = [])))]
+/// Preview an invite
+///
+/// Returns an invite card for the server: the server, the viewer's `status`, member and online
+/// counts and a short preview of recent messages. Counts are `null` and the preview is empty while
+/// the server is locked: it has a password, the viewer is not a member, and neither a valid
+/// `X-Invite-Password` nor (for guests) a valid `X-Guest-Grant` was sent. Banned viewers get counts
+/// when unlocked but never a preview. The preview holds the last 3 top-level messages of the first
+/// text channel without permission rules.
+///
+/// Signed-in users may call it, and guests when guest access is on. Invite and general rate-limit
+/// buckets.
+#[utoipa::path(
+    get,
+    path = "/api/invites/{name}",
+    tag = "Invites",
+    params(
+        ("name" = String, Path, description = "Server name, case-insensitive"),
+        ("X-Invite-Password" = Option<String>, Header, description = "Percent-encoded server password from the invite link; blank counts as absent"),
+        ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests; a valid grant unlocks the card")
+    ),
+    responses(
+        (status = 200, description = "Invite card for the server", body = Invite),
+        (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody),
+        (status = 404, description = "Invalid invite: the server does not exist", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the invite or the general bucket", content_type = "text/plain", body = String)
+    ),
+    security((), ("bearer" = []))
+)]
 pub(crate) async fn get_invite(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -1394,7 +1724,31 @@ async fn insert_member(db: &Db, server: &str, username: &str) -> Result<bool, Ap
     }
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/join", params(("name" = String, Path)), request_body = JoinReq, responses((status = 200, description = "Joined, or already a member; returns the server details", body = ServerDetail), (status = 401, description = "Wrong password"), (status = 403, description = "You are banned from this server")), security(("bearer" = [])))]
+/// Join a server
+///
+/// Adds the caller as a member (not an admin) and returns the server details. A password-protected
+/// server needs `password` in the body unless the caller is already a member; the body may be
+/// omitted otherwise (send no `Content-Type`). Joining a server you are already in succeeds
+/// without changes. Requires a bearer token; banned users get 403. Emits `member_joined` to the
+/// server and the joining user when a new membership was created. Join and general rate-limit
+/// buckets.
+#[utoipa::path(
+    post,
+    path = "/api/servers/{name}/join",
+    tag = "Servers",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body(content = Option<JoinReq>, description = "Optional; only needed for a password-protected server you are not a member of"),
+    responses(
+        (status = 200, description = "Joined, or already a member; returns the server details", body = ServerDetail),
+        (status = 400, description = "Malformed JSON body (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 401, description = "Missing or unknown bearer token, or wrong or missing password", body = ApiErrorBody),
+        (status = 403, description = "You are banned from this server", body = ApiErrorBody),
+        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the join or the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn join_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1454,7 +1808,25 @@ pub(crate) async fn join_server(
     Ok(Json(detail))
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/leave", params(("name" = String, Path)), responses((status = 200, description = "Left the server and dropped its roles", body = OkResp)), security(("bearer" = [])))]
+/// Leave a server
+///
+/// Removes the caller from the server and drops their role assignments. Anyone may leave,
+/// including the creator and admins. Requires a bearer token. Emits `member_left` to the server
+/// and the caller, and the caller goes offline in the server. General rate-limit bucket.
+#[utoipa::path(
+    post,
+    path = "/api/servers/{name}/leave",
+    tag = "Servers",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    responses(
+        (status = 200, description = "Left the server and dropped its roles", body = OkResp),
+        (status = 400, description = "Not a member", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn leave_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1486,7 +1858,39 @@ pub(crate) async fn leave_server(
     }
 }
 
-#[utoipa::path(patch, path = "/api/servers/{name}", params(("name" = String, Path)), request_body = ServerPatch, responses((status = 200, description = "Server renamed or password set, changed or cleared (an empty password clears it). `members` only applies when `password` is present: `keep` (default) keeps every member; `remove` removes every other member whose server permissions are a strict subset of yours (site admins remove everyone else) as if kicked. Setting, changing or clearing the password revokes every guest grant unless `keep_guests` is true together with `members: keep`. `banner_color` (the channel sidebar header background) and `name_color` (the server name in that header) are `#rrggbb` colors, or `null` to go back to the theme colors; they may also be changed on the rchat server. Returns the server with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated), (status = 400, description = "Invalid server name or color"), (status = 403, description = "Missing permission: changing the server needs Delete server, and `remove` also needs Kick; the rchat server can't be renamed or given a password")), security(("bearer" = [])))]
+/// Update a server
+///
+/// Renames the server, sets, changes or clears its password, and changes its header colors; every
+/// field is optional. Requires the Delete server permission; `members: remove` together with
+/// `password` also requires Kick. The rchat server can't be renamed or given a password, but its
+/// colors may change.
+///
+/// When `password` is present, `members: remove` removes every other member whose server
+/// permissions are a strict subset of yours (their roles are dropped, as if kicked) and existing
+/// guest grants are revoked unless `keep_guests` is true with `members: keep`. The response
+/// carries `removed` and `kept` counts.
+///
+/// Emits `server_renamed` (with `old_name`) to the server on every successful update, even when
+/// only the password or colors changed, and `members_purged` to the server and the removed
+/// members. General rate-limit bucket.
+#[utoipa::path(
+    patch,
+    path = "/api/servers/{name}",
+    tag = "Servers",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = ServerPatch,
+    responses(
+        (status = 200, description = "The updated server, with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated),
+        (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Delete server permission, missing Kick for `members: remove`, or a rename or password change on the protected rchat server", body = ApiErrorBody),
+        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 409, description = "The new name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn update_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1732,7 +2136,27 @@ async fn purge_members(
     Ok((removed, kept))
 }
 
-#[utoipa::path(delete, path = "/api/servers/{name}", params(("name" = String, Path)), responses((status = 200, description = "Server deleted along with its channels, members, and roles", body = OkResp)), security(("bearer" = [])))]
+/// Delete a server
+///
+/// Deletes the server. Members, bans, role assignments and guest grants go at once and the server
+/// disappears from the API; its channels, messages and roles are purged in the background, and
+/// until that finishes its name can't be reused (409 on create). Requires the Delete server
+/// permission; the rchat server can't be deleted. Emits `server_deleted` to the server. General
+/// rate-limit bucket.
+#[utoipa::path(
+    delete,
+    path = "/api/servers/{name}",
+    tag = "Servers",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    responses(
+        (status = 200, description = "Server deleted along with its channels, members, and roles", body = OkResp),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Delete server permission, or the server is the protected rchat server", body = ApiErrorBody),
+        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn delete_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1748,7 +2172,28 @@ pub(crate) async fn delete_server(
     }
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/channels", params(("name" = String, Path)), request_body = CreateChannelReq, responses((status = 200, description = "The created channel", body = Channel)), security(("bearer" = [])))]
+/// Create a channel
+///
+/// Adds a text or voice channel to the server, with slow mode off. A server can have at most 500
+/// channels. Requires the Manage channels permission. Emits `channel_created` to the server.
+/// General rate-limit bucket.
+#[utoipa::path(
+    post,
+    path = "/api/servers/{name}/channels",
+    tag = "Channels",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = CreateChannelReq,
+    responses(
+        (status = 200, description = "The created channel", body = Channel),
+        (status = 400, description = "Invalid channel name (blank, longer than 100 characters or blocked by the profanity filter), the name is taken in this server, or the server already has 500 channels. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
+        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn create_channel(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1811,7 +2256,29 @@ pub(crate) async fn create_channel(
     Ok(Json(channel))
 }
 
-#[utoipa::path(patch, path = "/api/channels/{id}", params(("id" = i64, Path)), request_body = ChannelPatch, responses((status = 200, description = "The updated channel", body = Channel)), security(("bearer" = [])))]
+/// Update a channel
+///
+/// Renames a channel and/or sets its slow mode; omitted fields are left unchanged. Slow mode is 0
+/// to 21600 seconds and only text channels may have it. Requires the Manage channels permission
+/// in the channel's server. Emits `channel_renamed` with the updated channel to the server, also
+/// when only slow mode changed. General rate-limit bucket.
+#[utoipa::path(
+    patch,
+    path = "/api/channels/{id}",
+    tag = "Channels",
+    params(("id" = i64, Path, description = "Channel id")),
+    request_body = ChannelPatch,
+    responses(
+        (status = 200, description = "The updated channel", body = Channel),
+        (status = 400, description = "Slow mode out of range or set on a voice channel, an invalid channel name (blank, longer than 100 characters or blocked by the profanity filter), or the name is taken in this server. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
+        (status = 404, description = "Channel not found", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn update_channel(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1900,7 +2367,26 @@ pub(crate) async fn update_channel(
     Ok(Json(channel))
 }
 
-#[utoipa::path(delete, path = "/api/channels/{id}", params(("id" = i64, Path)), responses((status = 200, description = "Channel deleted", body = OkResp)), security(("bearer" = [])))]
+/// Delete a channel
+///
+/// Deletes a channel. A server always keeps at least one channel and at least one text channel.
+/// Requires the Manage channels permission in the channel's server. Emits `channel_deleted` to the
+/// server. General rate-limit bucket.
+#[utoipa::path(
+    delete,
+    path = "/api/channels/{id}",
+    tag = "Channels",
+    params(("id" = i64, Path, description = "Channel id")),
+    responses(
+        (status = 200, description = "Channel deleted", body = OkResp),
+        (status = 400, description = "It is the server's only channel or only text channel. A non-integer `id` gives a plain-text 400", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
+        (status = 404, description = "Channel not found", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn delete_channel(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1948,7 +2434,30 @@ pub(crate) async fn delete_channel(
     Ok(ok())
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/kick", params(("name" = String, Path)), request_body = UsernameReq, responses((status = 200, description = "Member removed from the server and their roles dropped", body = OkResp), (status = 403, description = "Missing permission, or the member's server permissions are not a strict subset of yours")), security(("bearer" = [])))]
+/// Kick a member
+///
+/// Removes `username` from the server and drops their role assignments. Requires the Kick server
+/// permission, and the target's server permissions must be a strict subset of yours (so you can't
+/// kick yourself or someone with the same permissions). Kicked users may rejoin. Emits
+/// `member_kicked` (with `banned: false`) to the server and the kicked user, who goes offline in
+/// the server. General rate-limit bucket.
+#[utoipa::path(
+    post,
+    path = "/api/servers/{name}/kick",
+    tag = "Moderation",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = UsernameReq,
+    responses(
+        (status = 200, description = "Member removed from the server and their roles dropped", body = OkResp),
+        (status = 400, description = "Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415 (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Kick permission, or the member's server permissions are not a strict subset of yours", body = ApiErrorBody),
+        (status = 404, description = "Server not found, or the user is not a member", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn kick_member(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1980,7 +2489,31 @@ pub(crate) async fn kick_member(
     }
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/bans", params(("name" = String, Path)), request_body = UsernameReq, responses((status = 200, description = "User banned: removed from the server with their roles dropped and voice ended, and blocked from rejoining until unbanned. Works on non-members too. Requires the Kick permission", body = OkResp), (status = 400, description = "You can't ban yourself"), (status = 403, description = "Missing permission, or the user's server permissions are not a strict subset of yours")), security(("bearer" = [])))]
+/// Ban a user
+///
+/// Bans `username` from the server: they are removed with their roles dropped, taken out of the
+/// server's voice channels, and blocked from rejoining until unbanned. Works on non-members too,
+/// and banning someone already banned succeeds without changes. Requires the Kick server
+/// permission, and the target's server permissions must be a strict subset of yours. Emits
+/// `member_kicked` (with `banned: true`) to the server and the user when they were a member,
+/// otherwise `server_banned` to the user. General rate-limit bucket.
+#[utoipa::path(
+    post,
+    path = "/api/servers/{name}/bans",
+    tag = "Moderation",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = UsernameReq,
+    responses(
+        (status = 200, description = "User banned", body = OkResp),
+        (status = 400, description = "You can't ban yourself. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Kick permission, or the user's server permissions are not a strict subset of yours", body = ApiErrorBody),
+        (status = 404, description = "Server or user not found", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn ban_member(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2035,7 +2568,24 @@ pub(crate) async fn ban_member(
     Ok(ok())
 }
 
-#[utoipa::path(delete, path = "/api/servers/{name}/bans/{username}", params(("name" = String, Path), ("username" = String, Path)), responses((status = 200, description = "Ban lifted; the user may join again. Requires the Kick permission", body = OkResp)), security(("bearer" = [])))]
+/// Unban a user
+///
+/// Lifts a ban so the user may join again. Requires the Kick server permission. Emits no
+/// WebSocket event. General rate-limit bucket.
+#[utoipa::path(
+    delete,
+    path = "/api/servers/{name}/bans/{username}",
+    tag = "Moderation",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), ("username" = String, Path, description = "Target username, case-insensitive")),
+    responses(
+        (status = 200, description = "Ban lifted; the user may join again", body = OkResp),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Kick permission", body = ApiErrorBody),
+        (status = 404, description = "Server not found, or the user is not banned", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn unban_member(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2056,7 +2606,26 @@ pub(crate) async fn unban_member(
     }
 }
 
-#[utoipa::path(get, path = "/api/servers/{name}/bans", params(("name" = String, Path), MembersQuery), responses((status = 200, description = "Up to 50 banned users, most recently banned first (`cursor` or legacy `offset`). When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page. Requires the Kick permission", body = Vec<ServerBan>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page")))), security(("bearer" = [])))]
+/// List bans
+///
+/// Returns the users banned from the server, most recently banned first, as pages of `limit`
+/// (default and max 50). Page with `cursor` from the `X-Next-Cursor` response header (or the
+/// legacy `offset`). Requires the Kick server permission. General rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/servers/{name}/bans",
+    tag = "Moderation",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), MembersQuery),
+    responses(
+        (status = 200, description = "A page of banned users, most recently banned first", body = Vec<ServerBan>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
+        (status = 400, description = "Invalid cursor (JSON), or a non-integer `offset` or `limit` (plain-text framework error)", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Kick permission", body = ApiErrorBody),
+        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn list_bans(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2127,7 +2696,29 @@ async fn set_admin(
     }
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/admins", params(("name" = String, Path)), request_body = UsernameReq, responses((status = 200, description = "Member promoted to admin with permissions reset", body = OkResp)), security(("bearer" = [])))]
+/// Make a member an admin
+///
+/// Marks `username` as a server admin and resets their admin permissions to 0, which means all
+/// permissions. Works on any member, including current admins (whose permissions are reset) and
+/// yourself; there is no permission-subset check. Requires the Manage admins server permission.
+/// Emits `admin_changed` to the server and the user. General rate-limit bucket.
+#[utoipa::path(
+    post,
+    path = "/api/servers/{name}/admins",
+    tag = "Moderation",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = UsernameReq,
+    responses(
+        (status = 200, description = "Member promoted to admin with permissions reset to all", body = OkResp),
+        (status = 400, description = "Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415 (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 404, description = "Server not found, or the user is not a member", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn grant_admin(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2144,7 +2735,26 @@ pub(crate) async fn grant_admin(
     .await
 }
 
-#[utoipa::path(delete, path = "/api/servers/{name}/admins/{username}", params(("name" = String, Path), ("username" = String, Path)), responses((status = 200, description = "Admin status and permissions revoked", body = OkResp)), security(("bearer" = [])))]
+/// Revoke admin
+///
+/// Clears the admin flag and admin permissions of `username`; they keep the permissions of their
+/// roles. Works on any member, including the creator and members who are not admins; there is no
+/// permission-subset check. Requires the Manage admins server permission. Emits `admin_changed` to
+/// the server and the user. General rate-limit bucket.
+#[utoipa::path(
+    delete,
+    path = "/api/servers/{name}/admins/{username}",
+    tag = "Moderation",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), ("username" = String, Path, description = "Target username, case-insensitive")),
+    responses(
+        (status = 200, description = "Admin status and permissions revoked", body = OkResp),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 404, description = "Server not found, or the user is not a member", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn revoke_admin(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2160,7 +2770,29 @@ pub(crate) async fn revoke_admin(
     .await
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/transfer_admin", params(("name" = String, Path)), request_body = UsernameReq, responses((status = 200, description = "Admin granted to the target member and revoked from the caller", body = OkResp)), security(("bearer" = [])))]
+/// Transfer admin
+///
+/// Makes `username` an admin and clears the caller's admin flag, in one transaction. Unlike
+/// granting admin, it does not reset the target's stored admin permission mask (normally 0,
+/// meaning all permissions), so an admin with restricted permissions keeps them. Requires the Manage admins server permission. Emits `admin_changed` for the target
+/// and for the caller, each to the server and that user. General rate-limit bucket.
+#[utoipa::path(
+    post,
+    path = "/api/servers/{name}/transfer_admin",
+    tag = "Moderation",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = UsernameReq,
+    responses(
+        (status = 200, description = "Admin granted to the target member and revoked from the caller", body = OkResp),
+        (status = 400, description = "Cannot transfer to yourself. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 404, description = "Server not found, or the user is not a member", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn transfer_admin(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2210,7 +2842,28 @@ pub(crate) async fn transfer_admin(
     Ok(ok())
 }
 
-#[utoipa::path(patch, path = "/api/servers/{name}/admins/{username}/perms", params(("name" = String, Path), ("username" = String, Path)), request_body = PermsReq, responses((status = 200, description = "Admin permissions updated", body = OkResp)), security(("bearer" = [])))]
+/// Set an admin's permissions
+///
+/// Replaces the permission bitmask of the admin `username` (bits outside 31 are dropped; 0 means
+/// all permissions). There is no permission-subset check. Requires the Manage admins server
+/// permission. Emits `admin_changed` to the server and the user. General rate-limit bucket.
+#[utoipa::path(
+    patch,
+    path = "/api/servers/{name}/admins/{username}/perms",
+    tag = "Moderation",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), ("username" = String, Path, description = "Target username, case-insensitive")),
+    request_body = PermsReq,
+    responses(
+        (status = 200, description = "Admin permissions updated", body = OkResp),
+        (status = 400, description = "Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415 (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 404, description = "Server not found, or the user is not an admin of it", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn set_admin_perms(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2271,7 +2924,27 @@ fn check_color(color: &str) -> Result<(), ApiError> {
     }
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/roles", params(("name" = String, Path)), request_body = RoleReq, responses((status = 200, description = "The created role", body = Role)), security(("bearer" = [])))]
+/// Create a role
+///
+/// Adds a role to the server. A server can have at most 250 roles. Requires the Manage admins
+/// server permission. Emits `roles_changed` to the server. General rate-limit bucket.
+#[utoipa::path(
+    post,
+    path = "/api/servers/{name}/roles",
+    tag = "Roles",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = RoleReq,
+    responses(
+        (status = 200, description = "The created role", body = Role),
+        (status = 400, description = "Invalid role name (blank, longer than 100 characters or blocked by the profanity filter), an invalid color, or the server already has 250 roles. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn create_role(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2318,7 +2991,29 @@ pub(crate) async fn create_role(
     }))
 }
 
-#[utoipa::path(patch, path = "/api/servers/{name}/roles/{id}", params(("name" = String, Path), ("id" = i64, Path)), request_body = RolePatch, responses((status = 200, description = "The updated role", body = Role)), security(("bearer" = [])))]
+/// Update a role
+///
+/// Changes a role's name, color and/or permissions; omitted fields are left unchanged. Fields are
+/// saved one after another, so a request whose `color` is invalid still saves a valid `name`.
+/// Requires the Manage admins server permission. Emits `roles_changed` to the server and removes
+/// users from voice channels they can no longer view. General rate-limit bucket.
+#[utoipa::path(
+    patch,
+    path = "/api/servers/{name}/roles/{id}",
+    tag = "Roles",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), ("id" = i64, Path, description = "Role id; the role must belong to this server")),
+    request_body = RolePatch,
+    responses(
+        (status = 200, description = "The updated role", body = Role),
+        (status = 400, description = "Invalid role name (blank, longer than 100 characters or blocked by the profanity filter) or color. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 404, description = "Server or role not found", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn update_role(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2375,7 +3070,26 @@ pub(crate) async fn update_role(
     Ok(Json(role))
 }
 
-#[utoipa::path(delete, path = "/api/servers/{name}/roles/{id}", params(("name" = String, Path), ("id" = i64, Path)), responses((status = 200, description = "Role deleted and removed from channel permission rules", body = OkResp)), security(("bearer" = [])))]
+/// Delete a role
+///
+/// Deletes the role, unassigns it from everyone and removes the channel permission rules that
+/// name it. Requires the Manage admins server permission. Emits `roles_changed` to the server and
+/// removes users from voice channels they can no longer view. General rate-limit bucket.
+#[utoipa::path(
+    delete,
+    path = "/api/servers/{name}/roles/{id}",
+    tag = "Roles",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), ("id" = i64, Path, description = "Role id; the role must belong to this server")),
+    responses(
+        (status = 200, description = "Role deleted and removed from channel permission rules", body = OkResp),
+        (status = 400, description = "Non-integer `id` (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 404, description = "Server or role not found", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn delete_role(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2398,7 +3112,28 @@ pub(crate) async fn delete_role(
     Ok(ok())
 }
 
-#[utoipa::path(post, path = "/api/servers/{name}/roles/{id}/assign", params(("name" = String, Path), ("id" = i64, Path)), request_body = UsernameReq, responses((status = 200, description = "Role assigned to the member", body = OkResp)), security(("bearer" = [])))]
+/// Assign a role
+///
+/// Gives the role to the member `username`; assigning a role they already hold succeeds without
+/// changes. There is no permission-subset check on the role's permissions. Requires the Manage
+/// admins server permission. Emits `roles_changed` to the server. General rate-limit bucket.
+#[utoipa::path(
+    post,
+    path = "/api/servers/{name}/roles/{id}/assign",
+    tag = "Roles",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), ("id" = i64, Path, description = "Role id; the role must belong to this server")),
+    request_body = UsernameReq,
+    responses(
+        (status = 200, description = "Role assigned to the member", body = OkResp),
+        (status = 400, description = "A non-integer `id`, malformed JSON or a missing `Content-Type` (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 404, description = "Server or role not found, or the user is not a member", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn assign_role(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2429,7 +3164,26 @@ pub(crate) async fn assign_role(
     Ok(ok())
 }
 
-#[utoipa::path(delete, path = "/api/servers/{name}/roles/{id}/assign/{username}", params(("name" = String, Path), ("id" = i64, Path), ("username" = String, Path)), responses((status = 200, description = "Role removed from the member", body = OkResp)), security(("bearer" = [])))]
+/// Unassign a role
+///
+/// Takes the role away from `username`. Requires the Manage admins server permission. Emits
+/// `roles_changed` to the server and removes users from voice channels they can no longer view.
+/// General rate-limit bucket.
+#[utoipa::path(
+    delete,
+    path = "/api/servers/{name}/roles/{id}/assign/{username}",
+    tag = "Roles",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), ("id" = i64, Path, description = "Role id; the role must belong to this server"), ("username" = String, Path, description = "Target username, case-insensitive")),
+    responses(
+        (status = 200, description = "Role removed from the member", body = OkResp),
+        (status = 400, description = "Non-integer `id` (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 404, description = "Server or role not found, or the user does not hold the role", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn unassign_role(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2477,13 +3231,36 @@ async fn check_subject(db: &Db, server: &str, subject: &str) -> Result<(), ApiEr
     }
 }
 
+/// Paging query parameters for channel permission rules.
 #[derive(Deserialize, IntoParams)]
 pub struct ChannelPermsQuery {
+    /// Page size, default 100, clamped to 1-100.
     limit: Option<i64>,
+    /// Opaque cursor from the previous page's `X-Next-Cursor` header. Blank means the first
+    /// page.
     cursor: Option<String>,
 }
 
-#[utoipa::path(get, path = "/api/channels/{id}/perms", params(("id" = i64, Path), ChannelPermsQuery), responses((status = 200, description = "Permission rules on the channel, ordered by subject, up to `limit` (default and max 100) per page. When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page", body = Vec<ChannelPerm>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page")))), security(("bearer" = [])))]
+/// List channel permission rules
+///
+/// Returns the permission rules on a channel, ordered by subject, as pages of `limit` (default and
+/// max 100). Page with `cursor` from the `X-Next-Cursor` response header. Requires the Manage
+/// channels permission in the channel's server. General rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/channels/{id}/perms",
+    tag = "Channels",
+    params(("id" = i64, Path, description = "Channel id"), ChannelPermsQuery),
+    responses(
+        (status = 200, description = "A page of permission rules on the channel, ordered by subject", body = Vec<ChannelPerm>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
+        (status = 400, description = "Invalid cursor (JSON), or a non-integer `id` or `limit` (plain-text framework error)", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
+        (status = 404, description = "Channel not found", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn list_channel_perms(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2523,7 +3300,30 @@ pub(crate) async fn list_channel_perms(
     Ok(Paged(perms, next))
 }
 
-#[utoipa::path(put, path = "/api/channels/{id}/perms", params(("id" = i64, Path)), request_body = ChannelPerm, responses((status = 200, description = "Permission rule created or replaced for the subject", body = OkResp)), security(("bearer" = [])))]
+/// Set a channel permission rule
+///
+/// Creates or replaces the rule for `subject` on the channel. The subject is `u:<username>` (any
+/// existing user) or `r:<role id>` (a role of the channel's server), case-insensitive. A channel
+/// can have at most 500 rules. Requires the Manage channels permission in the channel's server.
+/// Emits `channel_perms_changed` to the server and removes users from the channel's voice room if
+/// they can no longer view it. General rate-limit bucket.
+#[utoipa::path(
+    put,
+    path = "/api/channels/{id}/perms",
+    tag = "Channels",
+    params(("id" = i64, Path, description = "Channel id")),
+    request_body = ChannelPerm,
+    responses(
+        (status = 200, description = "Permission rule created or replaced for the subject", body = OkResp),
+        (status = 400, description = "Invalid subject, or the channel already has 500 rules. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
+        (status = 404, description = "Channel not found, or the subject's user or role does not exist", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn set_channel_perm(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2573,7 +3373,29 @@ pub(crate) async fn set_channel_perm(
     Ok(ok())
 }
 
-#[utoipa::path(delete, path = "/api/channels/{id}/perms/{subject}", params(("id" = i64, Path), ("subject" = String, Path)), responses((status = 200, description = "Permission rule removed for the subject", body = OkResp)), security(("bearer" = [])))]
+/// Remove a channel permission rule
+///
+/// Deletes the rule for `subject` on the channel. Requires the Manage channels permission in the
+/// channel's server. Emits `channel_perms_changed` to the server and removes users from the
+/// channel's voice room if they can no longer view it. General rate-limit bucket.
+#[utoipa::path(
+    delete,
+    path = "/api/channels/{id}/perms/{subject}",
+    tag = "Channels",
+    params(
+        ("id" = i64, Path, description = "Channel id"),
+        ("subject" = String, Path, description = "Rule subject, `u:<username>` or `r:<role id>`, case-insensitive")
+    ),
+    responses(
+        (status = 200, description = "Permission rule removed for the subject", body = OkResp),
+        (status = 400, description = "Non-integer `id` (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
+        (status = 404, description = "Channel not found, or no rule for that subject", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
 pub(crate) async fn clear_channel_perm(
     State(state): State<AppState>,
     Authed(user): Authed,

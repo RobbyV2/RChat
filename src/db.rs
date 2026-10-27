@@ -362,6 +362,8 @@ async fn reconcile_columns(
     Ok(added)
 }
 
+/// How an avatar is drawn: `identicon` is a pattern generated from the username, `color` is a
+/// solid `avatar_color` circle.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AvatarKind {
@@ -388,6 +390,7 @@ impl AvatarKind {
     }
 }
 
+/// `text` channels hold messages; `voice` channels hold voice and video calls.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ChannelKind {
@@ -414,6 +417,9 @@ impl ChannelKind {
     }
 }
 
+/// `server`: uploaded through `POST /api/media` and stored by the instance. `p2p`: kept in the
+/// sender's browser and shared peer to peer while they are online; the server stores only the
+/// metadata.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MediaKind {

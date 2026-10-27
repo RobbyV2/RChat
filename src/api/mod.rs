@@ -35,10 +35,17 @@ use crate::state::AppState;
 #[derive(Debug)]
 pub struct ApiError(pub StatusCode, pub String);
 
+/// The JSON body of every error the API itself returns.
+#[derive(Serialize, ToSchema)]
+pub struct ApiErrorBody {
+    /// A short, human-readable reason, e.g. `Server not found` or `Unauthorized`.
+    pub error: String,
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let ApiError(status, error) = self;
-        (status, axum::Json(serde_json::json!({ "error": error }))).into_response()
+        (status, axum::Json(ApiErrorBody { error })).into_response()
     }
 }
 
@@ -54,11 +61,21 @@ impl From<sqlx::Error> for ApiError {
     }
 }
 
+/// A user as shown next to messages and in lists. A deleted account still appears, as its
+/// username on a grey color avatar.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct UserRef {
+    /// Lowercase username, the user's unique key.
+    #[schema(example = "alice")]
     pub username: String,
+    /// The username in the casing chosen at registration.
+    #[schema(example = "Alice")]
     pub display_name: String,
+    /// How the avatar is drawn.
     pub avatar_kind: AvatarKind,
+    /// Avatar background as lowercase `#rrggbb` when `avatar_kind` is `color`; `null` for
+    /// identicons.
+    #[schema(example = "#4caf50")]
     pub avatar_color: Option<String>,
 }
 
@@ -210,95 +227,183 @@ pub(crate) fn page_bounds(offset: Option<i64>, limit: Option<i64>) -> (i64, i64)
     )
 }
 
+/// A server the signed-in user is a member of.
 #[derive(Clone, Serialize, ToSchema)]
 pub struct ServerSummary {
+    /// Lowercase server name, the server's unique key used in URLs.
+    #[schema(example = "rustaceans")]
     pub name: String,
+    /// The name in its original casing.
+    #[schema(example = "Rustaceans")]
     pub display_name: String,
+    /// Username of the creator; `null` for the built-in `rchat` server.
     pub creator: Option<String>,
+    /// Whether the signed-in user is an admin of this server.
     pub is_admin: bool,
+    /// Background of the server-name header above the channel list as `#rrggbb`; `null`
+    /// uses the theme color.
     pub banner_color: Option<String>,
+    /// Color of the server name in that header as `#rrggbb`; `null` uses the theme color.
     pub name_color: Option<String>,
 }
 
+/// Public facts about a server, without membership details.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct ServerSummaryLite {
+    /// Lowercase server name, the server's unique key used in URLs.
+    #[schema(example = "rustaceans")]
     pub name: String,
+    /// The name in its original casing.
+    #[schema(example = "Rustaceans")]
     pub display_name: String,
+    /// Username of the creator; `null` for the built-in `rchat` server.
     pub creator: Option<String>,
+    /// Whether joining (or viewing as a non-member) needs the server password.
     pub has_password: bool,
+    /// Background of the server-name header above the channel list as `#rrggbb`; `null`
+    /// uses the theme color.
     #[serde(default)]
     pub banner_color: Option<String>,
+    /// Color of the server name in that header as `#rrggbb`; `null` uses the theme color.
     #[serde(default)]
     pub name_color: Option<String>,
 }
 
+/// A channel in a server.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct Channel {
+    /// Channel id, unique across the instance.
     pub id: i64,
+    /// Channel name, unique within the server, at most 100 characters.
+    #[schema(example = "general")]
     pub name: String,
+    /// Text or voice.
     pub kind: ChannelKind,
+    /// Minimum seconds between two messages from the same member, 0 (off) to 21600; members
+    /// with Manage channels or Delete messages are exempt.
     pub slowmode_seconds: i64,
 }
 
+/// A server role.
 #[derive(Clone, Serialize, ToSchema)]
 pub struct Role {
+    /// Role id, unique across the instance.
     pub id: i64,
+    /// Role name, at most 100 characters.
+    #[schema(example = "Moderator")]
     pub name: String,
+    /// Name color as `#rrggbb`.
+    #[schema(example = "#e91e63")]
     pub color: String,
+    /// Permission bits the role grants: 1 Manage channels, 2 Delete messages, 4 Kick (also
+    /// bans), 8 Delete server (also edits the server), 16 Manage admins.
+    #[schema(example = 6)]
     pub perms: i64,
 }
 
+/// One permission rule on a channel. A channel with no rules is open to everyone who can see
+/// the server. Once it has rules, only members matching a rule with `can_view` (plus members
+/// with Manage channels) can see it, and the flags of every matching rule are combined.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelPerm {
+    /// Who the rule applies to: `u:<username>` for a user or `r:<role id>` for a role.
+    #[schema(example = "r:12")]
     pub subject: String,
+    /// The subject can see the channel. Without it the other flags grant nothing.
     pub can_view: bool,
+    /// The subject can send messages in the channel.
     pub can_send: bool,
+    /// The subject can read messages sent before now.
     pub can_read_history: bool,
 }
 
+/// A server member: the user's `UserRef` fields plus their standing in the server.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct Member {
+    /// The user, flattened into this object.
     #[serde(flatten)]
     pub user: UserRef,
+    /// Whether the member is a server admin.
     pub is_admin: bool,
+    /// Whether the member created the server.
     pub is_creator: bool,
+    /// Whether the member is online in this server right now. Members who chose to appear
+    /// offline are always `false`.
     pub online: bool,
+    /// Admin permission bits (see `Role.perms`). For an admin, 0 means every permission and
+    /// any other value is the granted subset; always 0 for non-admins, whose permissions come
+    /// from their roles.
     pub perms: i64,
+    /// Ids of the server roles assigned to the member.
     pub role_ids: Vec<i64>,
 }
 
+/// A server with its channels and roles.
 #[derive(Clone, Serialize, ToSchema)]
 pub struct ServerDetail {
+    /// Lowercase server name, the server's unique key used in URLs.
+    #[schema(example = "rustaceans")]
     pub name: String,
+    /// The name in its original casing.
+    #[schema(example = "Rustaceans")]
     pub display_name: String,
+    /// Username of the creator; `null` for the built-in `rchat` server.
     pub creator: Option<String>,
+    /// Whether joining (or viewing as a non-member) needs the server password.
     pub has_password: bool,
+    /// Background of the server-name header above the channel list as `#rrggbb`; `null`
+    /// uses the theme color.
     pub banner_color: Option<String>,
+    /// Color of the server name in that header as `#rrggbb`; `null` uses the theme color.
     pub name_color: Option<String>,
+    /// Channels the caller can see, oldest first. Channels with permission rules that do not
+    /// grant the caller `can_view` are left out.
     pub channels: Vec<Channel>,
+    /// Every role of the server, oldest first.
     pub roles: Vec<Role>,
+    /// Number of members.
     pub member_count: i64,
+    /// Number of members online in this server right now.
     pub online_count: i64,
 }
 
+/// A direct-message conversation of the signed-in user.
 #[derive(Clone, Serialize, ToSchema)]
 pub struct DmSummary {
+    /// Conversation id, used in `/api/dms/{id}/messages`.
     pub id: i64,
+    /// The other participant; the signed-in user for the conversation with yourself.
     pub other: UserRef,
+    /// Whether this is the conversation with yourself.
     pub is_self: bool,
 }
 
+/// A file attached to a message, stored on the server or shared peer to peer.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct MediaRef {
+    /// 32 hex characters. For `server` media, download it from `/api/media/{id}`; for `p2p`
+    /// it is the id the hoster's browser shares the file under.
+    #[schema(example = "9f86d081884c7d659a2feaa0c55ad015")]
     pub id: String,
+    /// Original file name.
+    #[schema(example = "photo.png")]
     pub filename: String,
+    /// Where the bytes live.
     pub kind: MediaKind,
+    /// Username of the user sharing a `p2p` file; `null` for `server` media.
     pub hoster: Option<String>,
+    /// Unix seconds when the file goes away: 24 hours after upload for `server` media, and
+    /// the sender's chosen expiry for `p2p` media (`null` means no expiry).
     pub expires_at: Option<i64>,
+    /// Size in bytes, known for `p2p` media; `null` for `server` media.
     pub size: Option<i64>,
+    /// MIME type, known for `p2p` media; `null` for `server` media.
     pub mime: Option<String>,
+    /// The attachment is gone: it expired, or its author or a moderator removed it.
     pub removed: bool,
+    /// The attachment was removed on purpose rather than expiring.
     pub removed_by_author: bool,
+    /// Clients blur the attachment until it is clicked.
     pub spoiler: bool,
 }
 
@@ -319,38 +424,70 @@ impl MediaRef {
     }
 }
 
+/// A link preview built from a page's OpenGraph, Twitter card or `<title>` metadata. Up to 3
+/// per message, fetched after the message is sent when link previews are on.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct Embed {
+    /// Position of the link among the message's previewed links, from 0.
     pub ord: i64,
+    /// The linked URL.
+    #[schema(example = "https://example.com/post")]
     pub url: String,
+    /// Site name, at most 200 characters, or `null` if the page has none.
     pub site_name: Option<String>,
+    /// Page title, at most 300 characters, or `null`.
     pub title: Option<String>,
+    /// Page description, at most 600 characters, or `null`.
     pub description: Option<String>,
+    /// Absolute http(s) URL of the preview image, or `null`.
     pub image_url: Option<String>,
+    /// The preview image was removed; the text part stays.
     pub banner_removed: bool,
 }
 
+/// What happened to a direct-message call.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct CallLog {
+    /// Username of the caller.
     pub from: String,
+    /// Unix seconds when the call was answered; `null` if it was not (yet).
     pub answered_at: Option<i64>,
+    /// Unix seconds when the call ended; `null` while it is still ringing or in progress.
     pub ended_at: Option<i64>,
+    /// `completed`, `declined` or `missed` once ended; `null` before that.
+    #[schema(example = "completed")]
     pub outcome: Option<String>,
 }
 
+/// A message in a channel, a direct-message conversation or a thread.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct Message {
+    /// Message id, unique across the instance and increasing over time.
     pub id: i64,
+    /// The channel it was sent in; `null` for direct messages.
     pub channel_id: Option<i64>,
+    /// The direct-message conversation it was sent in; `null` for channel messages.
     pub dm_id: Option<i64>,
+    /// For a thread reply, the id of the message the thread hangs off; `null` otherwise.
     pub thread_root_id: Option<i64>,
+    /// Who sent it.
     pub author: UserRef,
+    /// Text, at most 4000 characters; may be empty when there is an attachment, and is empty
+    /// for call logs.
     pub content: String,
+    /// Unix seconds when it was sent.
     pub created_at: i64,
+    /// Number of thread replies to this message.
     pub reply_count: i64,
+    /// The attachment, or `null`.
     pub media: Option<MediaRef>,
+    /// Link previews; empty until they are fetched, then delivered by the `embeds_resolved`
+    /// WebSocket event and included in later reads.
     pub embeds: Vec<Embed>,
+    /// `user` for a normal message or `call` for a direct-message call log.
+    #[schema(example = "user")]
     pub kind: String,
+    /// Call details when `kind` is `call`; `null` otherwise.
     pub call: Option<CallLog>,
 }
 
@@ -465,13 +602,21 @@ fn warn_display_names() {
 /// path and the prose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ProfanityTargets {
+    /// Message text in server channels and threads (not direct messages).
     pub messages: bool,
+    /// The domain part of URLs inside messages.
     pub links: bool,
+    /// Usernames at registration.
     pub usernames: bool,
+    /// Server names.
     pub server_names: bool,
+    /// Channel names.
     pub channel_names: bool,
+    /// Role names.
     pub role_names: bool,
+    /// File names of attachments in server channels and threads.
     pub file_names: bool,
+    /// Profile descriptions.
     #[serde(default = "target_default")]
     pub bios: bool,
 }
@@ -597,13 +742,21 @@ pub fn profanity_seed(filter: Option<&str>, targets: Option<&str>) -> Vec<(&'sta
         .collect()
 }
 
+/// Instance-wide feature switches. Changes reach clients through the `settings_changed`
+/// WebSocket event.
 #[derive(Clone, Copy, Serialize, Deserialize, ToSchema)]
 pub struct Settings {
+    /// Master switch of the profanity filter. When on, content matching a target in
+    /// `profanity_targets` is rejected with 400 `Content blocked by profanity filter`.
     pub profanity_filter: bool,
+    /// Which texts the filter checks while `profanity_filter` is on.
     #[serde(default)]
     pub profanity_targets: ProfanityTargets,
+    /// Link previews: the server fetches page metadata for links in messages.
     pub asset_previews: bool,
+    /// File uploads through `POST /api/media`.
     pub asset_uploads: bool,
+    /// Guest access: reading servers without an account.
     pub guests_enabled: bool,
 }
 

@@ -10,10 +10,10 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::api::admin::like_pattern;
 use crate::api::{
-    ApiError, Authed, CallLog, Embed, LIST_MAX, LIST_PAGE, MESSAGE_MAX, MaybeAuthed, MediaRef,
-    Message, Paged, ProfanityTarget, Settings, UserRef, check_len, check_profanity, cursor_int,
-    decode_cursor, embeds, encode_cursor, header_grants, media::MEDIA_TTL_SECS, require_guest_ok,
-    require_server_view, unique_capped, user_from, user_refs,
+    ApiError, ApiErrorBody, Authed, CallLog, Embed, LIST_MAX, LIST_PAGE, MESSAGE_MAX, MaybeAuthed,
+    MediaRef, Message, Paged, ProfanityTarget, Settings, UserRef, check_len, check_profanity,
+    cursor_int, decode_cursor, embeds, encode_cursor, header_grants, media::MEDIA_TTL_SECS,
+    require_guest_ok, require_server_view, unique_capped, user_from, user_refs,
 };
 use crate::db::{
     ChannelAccess, ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, Perm, PermRow, User,
@@ -25,11 +25,20 @@ use crate::ws::WsEvent;
 
 const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome";
 
+/// Message-id paging for message lists. Give at most one of `before`, `after` and `around`;
+/// if several are given, `around` wins over `after`, which wins over `before`.
 #[derive(Clone, Copy, Deserialize, IntoParams)]
 pub struct PageQuery {
+    /// Return the newest messages with an id lower than this one. Omit all three anchors for the
+    /// latest messages.
     before: Option<i64>,
+    /// Return the oldest messages with an id higher than this one.
     after: Option<i64>,
+    /// Return a window centred on this id: `limit / 2` older messages, then this id (if it
+    /// exists) and newer ones up to `limit` in total. The id itself does not need to exist.
     around: Option<i64>,
+    /// Page size. Default 50, clamped to 1..=100.
+    #[param(example = 50)]
     limit: Option<i64>,
 }
 
@@ -40,37 +49,85 @@ enum Span {
     After,
 }
 
+/// A new message. It needs non-blank `content` or an attachment; `media_id` and `p2p` are
+/// mutually exclusive.
 #[derive(Deserialize, ToSchema)]
 pub struct SendReq {
+    /// Message text, at most 4000 characters (Unicode code points). May be empty or blank when
+    /// an attachment is given. Up to 3 `http(s)` links in it (invite links excluded) get link
+    /// previews after the message is posted.
+    #[schema(example = "Hello https://example.com")]
     content: String,
+    /// Optional id of a file from `POST /api/media` to attach. The caller must be its uploader
+    /// and it must not already be attached to another message. Omit for no server-hosted file.
     media_id: Option<String>,
+    /// Optional; blur the attachment behind a spoiler. Defaults to `false`.
     media_spoiler: Option<bool>,
+    /// Optional peer-to-peer attachment hosted by the sender's client instead of the server.
+    /// Omit for no P2P file.
     p2p: Option<P2pAttachment>,
 }
 
+/// A file offered peer to peer by the sender, who becomes its `hoster`. The server stores only
+/// this metadata, never the file.
 #[derive(Deserialize, ToSchema)]
 pub struct P2pAttachment {
+    /// File name shown to recipients. In server channels it is checked by the profanity filter
+    /// when that is enabled for file names.
+    #[schema(example = "notes.pdf")]
     filename: String,
+    /// File size in bytes; must not be negative.
+    #[schema(example = 48213)]
     size: i64,
+    /// MIME type as reported by the sender, not verified.
+    #[schema(example = "application/pdf")]
     mime: String,
+    /// Transfer id chosen by the sender: exactly 32 hexadecimal characters.
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
     p2p_id: String,
+    /// Optional lifetime in seconds from now, must be positive. The message's `expires_at`
+    /// becomes now plus this; omit for no expiry.
+    #[schema(example = 86400)]
     expires_in_seconds: Option<i64>,
 }
 
+/// Message search filters. All are optional and combine with AND; unknown parameters are
+/// ignored.
 #[derive(Clone, Default, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct SearchQuery {
+    /// Text the message content must contain, case-insensitive substring match after trimming.
+    /// Omit or leave blank to match every message. Must not contain NUL.
+    #[param(example = "release")]
     q: Option<String>,
+    /// Only search this server (name, case-insensitive). Must not contain NUL.
     server: Option<String>,
+    /// Only search this channel id.
     channel_id: Option<i64>,
+    /// Only messages by this username (case-insensitive). Must not contain NUL.
     from: Option<String>,
+    /// `file` keeps only messages with an attachment; any other value is ignored. Must not
+    /// contain NUL.
+    #[param(example = "file")]
     has: Option<String>,
+    /// Only messages with an id lower than this (exclusive). Replaced by `cursor` when both are
+    /// given.
     before: Option<i64>,
+    /// Only messages with an id higher than this (exclusive).
     after: Option<i64>,
+    /// Only messages created before this Unix time in seconds (exclusive).
     before_ts: Option<i64>,
+    /// Only messages created after this Unix time in seconds (exclusive).
     after_ts: Option<i64>,
+    /// Legacy: skip this many results, capped at 500. Ignored when `cursor` is given. Prefer
+    /// `cursor`.
     offset: Option<i64>,
+    /// Opaque cursor from the previous page's `X-Next-Cursor` header. A blank value is ignored.
     cursor: Option<String>,
+    /// Guests only (ignored for signed-in callers, who search every server they are a member
+    /// of): the servers to search, as repeated parameters (`servers=a&servers=b`). Names are
+    /// trimmed and lowercased, duplicates dropped, at most 100 used. A guest who passes none
+    /// gets an empty result. Must not contain NUL.
     servers: Option<Vec<String>>,
 }
 
@@ -105,36 +162,69 @@ impl SearchQuery {
     }
 }
 
+/// One search hit with where it was posted.
 #[derive(Serialize, ToSchema)]
 pub struct SearchResult {
+    /// The matching message, with its link previews. It can be a thread reply (then
+    /// `thread_root_id` is set).
     pub message: Message,
+    /// Lowercase name of the server the message is in.
+    #[schema(example = "rust")]
     pub server: String,
+    /// Name of the channel the message is in.
+    #[schema(example = "general")]
     pub channel_name: String,
 }
 
+/// Read position of one channel or DM.
 #[derive(Serialize, ToSchema)]
 pub struct Unread {
+    /// `c<channel id>` for a text channel or `d<dm id>` for a DM.
+    #[schema(example = "c12")]
     pub scope: String,
+    /// Lowercase server name for a channel scope; `null` for a DM.
+    #[schema(example = "rust")]
     pub server: Option<String>,
+    /// Last message id the caller marked read with `POST /api/read`; 0 if never.
+    #[schema(example = 340)]
     pub last_read: i64,
+    /// Id of the newest message from someone else: in a channel the newest top-level one
+    /// (thread replies are not counted).
+    #[schema(example = 352)]
     pub latest: i64,
 }
 
+/// The caller's unread channels and DMs.
 #[derive(Serialize, ToSchema)]
 pub struct Unreads {
+    /// Unread scopes, newest `latest` first and at most 500. With `all=true`: every scope with
+    /// messages from others, read or not, in no particular order and without a cap.
     pub items: Vec<Unread>,
+    /// `true` when more than 500 scopes were unread and the list was cut; always `false` with
+    /// `all=true`.
     pub more: bool,
 }
 
+/// Mark a channel or DM read up to a message.
 #[derive(Deserialize, ToSchema)]
 pub struct ReadReq {
+    /// `c<channel id>` or `d<dm id>`: `c` or `d` followed by one or more ASCII digits. The id
+    /// is not checked for existence or access.
+    #[schema(example = "c12")]
     scope: String,
+    /// Id of the last message read. A value lower than the stored one leaves it unchanged.
+    #[schema(example = 352)]
     last_read: i64,
 }
 
+/// The stored read position of a scope.
 #[derive(Serialize, ToSchema)]
 pub struct ReadState {
+    /// The scope from the request, as given.
+    #[schema(example = "c12")]
     pub scope: String,
+    /// The stored last-read message id: the higher of the previous value and the request.
+    #[schema(example = 352)]
     pub last_read: i64,
 }
 
@@ -659,7 +749,17 @@ async fn send_gate(db: &Db, channel_id: i64, user: &User) -> Result<String, ApiE
     }
 }
 
-#[utoipa::path(get, path = "/api/channels/{id}/messages", params(("id" = i64, Path), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) top-level messages, oldest first: the newest ones before `before` (or the latest), or with `after` the oldest ones after that id, or with `around` a window of `limit / 2` messages before that id followed by the message itself and newer ones (`around` wins over `after`, which wins over `before`); without read-history access only messages since joining are returned", body = Vec<Message>)), security((), ("bearer" = [])))]
+/// List channel messages
+///
+/// Returns top-level messages of a text channel (thread replies are excluded; see
+/// `reply_count`), oldest first, with link previews attached. Paging is by message id with
+/// `before`, `after` or `around` (no cursor header). Works with a bearer token, or for guests
+/// when guest access is on. Password-protected servers need membership, or for guests a valid
+/// `X-Guest-Grant`. Banned users are refused. Channels with permission overrides need the view
+/// permission (guests can never see them). Without read-history access only messages posted
+/// since you joined the server are returned (none if you are not a member). General rate-limit
+/// bucket.
+#[utoipa::path(get, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) top-level messages, oldest first: the newest ones before `before` (or the latest), or with `after` the oldest ones after that id, or with `around` a window of `limit / 2` messages before that id followed by the message itself and newer ones (`around` wins over `after`, which wins over `before`); without read-history access only messages since joining are returned", body = Vec<Message>), (status = 400, description = "Non-numeric id or paging parameter (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`), or a guest whose `X-Guest-Grant` grants are all invalid for a password-protected server (`Invalid grant`)", body = ApiErrorBody), (status = 403, description = "Banned from the server, the server is password protected and you are not a member (or a guest sent no grant), or no permission to view the channel", body = ApiErrorBody), (status = 404, description = "Channel not found", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn channel_messages(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -682,7 +782,14 @@ pub(crate) async fn channel_messages(
     ))
 }
 
-#[utoipa::path(post, path = "/api/channels/{id}/messages", params(("id" = i64, Path)), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `EmbedsResolved` WebSocket event", body = Message)), security(("bearer" = [])))]
+/// Post a channel message
+///
+/// Posts a top-level message, optionally with one attachment (an uploaded file via `media_id`
+/// or a peer-to-peer file via `p2p`). Requires a bearer token. Message text is checked against the profanity filter when it is on. In server channels this needs membership and the send permission for the channel. If the channel has slow mode, members without the Manage channels or Delete messages permission must wait `slowmode_seconds` between messages in the channel (thread replies count).
+/// Voice channels take no messages. Emits `message` to clients in the server that can see the
+/// channel; when the text has links, `embeds_resolved` follows once previews are fetched.
+/// General rate-limit bucket.
+#[utoipa::path(post, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or attachment file name), voice channel, text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "Channel not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_channel_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -712,7 +819,13 @@ pub(crate) async fn send_channel_message(
     Ok(Json(message))
 }
 
-#[utoipa::path(get, path = "/api/messages/{id}/thread", params(("id" = i64, Path), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) thread replies, oldest first, paged with `before`, `after` or `around` like channel messages", body = Vec<Message>)), security((), ("bearer" = [])))]
+/// List thread replies
+///
+/// Returns the replies to a top-level channel message, oldest first, with link previews.
+/// Access is checked on the root's channel exactly as for `GET /api/channels/{id}/messages`
+/// (guests allowed when guest access is on, password-protected servers, bans, channel view
+/// and read-history permissions). General rate-limit bucket.
+#[utoipa::path(get, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) thread replies, oldest first, paged with `before`, `after` or `around` like channel messages; without read-history access only replies since joining are returned", body = Vec<Message>), (status = 400, description = "The message is a DM message or itself a thread reply (`Threads only start on channel messages`). A non-numeric id or paging parameter gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`), or a guest whose `X-Guest-Grant` grants are all invalid for a password-protected server (`Invalid grant`)", body = ApiErrorBody), (status = 403, description = "Banned from the server, the server is password protected and you are not a member (or a guest sent no grant), or no permission to view the channel", body = ApiErrorBody), (status = 404, description = "Message or its channel not found", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn thread_messages(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -729,7 +842,14 @@ pub(crate) async fn thread_messages(
     ))
 }
 
-#[utoipa::path(post, path = "/api/messages/{id}/thread", params(("id" = i64, Path)), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `EmbedsResolved` WebSocket event", body = Message)), security(("bearer" = [])))]
+/// Reply in a thread
+///
+/// Posts a reply to a top-level channel message, starting the thread if needed. The reply
+/// lives in the root's channel and has `thread_root_id` set. Requires a bearer token.
+/// Message text is checked against the profanity filter when it is on. In server channels this needs membership and the send permission for the channel. If the channel has slow mode, members without the Manage channels or Delete messages permission must wait `slowmode_seconds` between messages in the channel (thread replies count). Emits `message` to clients in the server that can see the channel; when the
+/// text has links, `embeds_resolved` follows once previews are fetched. General rate-limit
+/// bucket.
+#[utoipa::path(post, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or attachment file name), text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "Root message or its channel not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_thread_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -760,7 +880,11 @@ pub(crate) async fn send_thread_message(
     Ok(Json(message))
 }
 
-#[utoipa::path(get, path = "/api/dms/{id}/messages", params(("id" = i64, Path), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) DM messages, oldest first, paged with `before`, `after` or `around` like channel messages", body = Vec<Message>)), security(("bearer" = [])))]
+/// List DM messages
+///
+/// Returns messages of a direct-message conversation, oldest first, with link previews.
+/// Requires a bearer token and being one of the two participants. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) DM messages, oldest first, paged with `before`, `after` or `around` like channel messages", body = Vec<Message>), (status = 400, description = "Non-numeric id or paging parameter (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a participant", body = ApiErrorBody), (status = 404, description = "DM not found, or a participant's account is being deleted", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn dm_messages(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -778,7 +902,14 @@ pub(crate) async fn dm_messages(
     Ok(Json(page(db, "m.dm_id = $1", id, &q, None).await?))
 }
 
-#[utoipa::path(post, path = "/api/dms/{id}/messages", params(("id" = i64, Path)), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `EmbedsResolved` WebSocket event", body = Message)), security(("bearer" = [])))]
+/// Send a DM message
+///
+/// Posts a message, optionally with one attachment, in a direct-message conversation.
+/// Requires a bearer token and being one of the two participants. Unlike server channels,
+/// DM text and attachment names are not checked by the profanity filter and there is no slow
+/// mode. Emits `message` to both participants; when the text has links, `embeds_resolved`
+/// follows once previews are fetched. General rate-limit bucket.
+#[utoipa::path(post, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a participant, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "DM not found, or a participant's account is being deleted", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn send_dm_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -882,7 +1013,14 @@ pub(crate) async fn require_can_delete(
     }
 }
 
-#[utoipa::path(delete, path = "/api/messages/{id}", params(("id" = i64, Path)), responses((status = 200, description = "Deleted")), security(("bearer" = [])))]
+/// Delete a message
+///
+/// Permanently deletes a channel, thread or DM message; deleting a thread root also deletes
+/// its replies. Requires a bearer token. The author may always delete their own message; in
+/// servers, members with the Delete messages permission may delete anyone's. Emits
+/// `message_deleted` (with `thread_root_id` for replies) to clients in the server that can see
+/// the channel, or to both DM participants. General rate-limit bucket.
+#[utoipa::path(delete, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Deleted; body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Delete messages permission in the server (in DMs only the author may delete)", body = ApiErrorBody), (status = 404, description = "Message not found, or its author's account is being deleted", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn delete_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -934,7 +1072,16 @@ const LIKE_BUDGET: i64 = 250_000;
 const FTS_BATCH: i64 = 500;
 const FTS_ROUNDS: usize = 8;
 
-#[utoipa::path(get, path = "/api/search", params(SearchQuery), responses((status = 200, description = "Up to 25 messages from channels the caller can view whose content contains `q` (case-insensitive), newest first; `before`/`after` bound the message id and `before_ts`/`after_ts` bound `created_at` (exclusive, unix seconds). When more results may follow, the `X-Next-Cursor` response header holds a `cursor` for the next page (it is absent once the search reached the oldest message); a page can hold fewer than 25 results and still have a next cursor. Passing the oldest returned id as `before` also works when the page is full. The legacy `offset` is capped at 500. Guests pass the servers to search as repeated `servers` params (`servers=a&servers=b`, max 100)", body = Vec<SearchResult>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid number or cursor, or text containing a NUL character")), security((), ("bearer" = [])))]
+/// Search messages
+///
+/// Searches channel messages (including thread replies; DMs are never searched), newest
+/// first, with link previews. Signed-in callers search the servers they are members of,
+/// skipping channels they cannot view and, without read-history access, messages from before
+/// they joined. Guests (allowed when guest access is on) search only the servers listed in
+/// `servers`, only channels without permission overrides, and only servers without a password
+/// or with a valid grant in `X-Guest-Grant` (invalid grants are ignored). Messages by accounts
+/// being deleted are left out. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/search", tag = "Search", params(SearchQuery), responses((status = 200, description = "Up to 25 messages from channels the caller can view whose content contains `q` (case-insensitive), newest first; `before`/`after` bound the message id and `before_ts`/`after_ts` bound `created_at` (exclusive, unix seconds). When more results may follow, the `X-Next-Cursor` response header holds a `cursor` for the next page (it is absent once the search reached the oldest message); a page can hold fewer than 25 results and still have a next cursor. Passing the oldest returned id as `before` also works when the page is full. The legacy `offset` is capped at 500. Guests pass the servers to search as repeated `servers` params (`servers=a&servers=b`, max 100)", body = Vec<SearchResult>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid number or cursor, or text containing a NUL character", body = ApiErrorBody), (status = 401, description = "No valid token and guest access is disabled", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn search(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -1342,12 +1489,22 @@ async fn restricted_access(db: &Db, user: &User) -> Result<HashMap<i64, ChannelA
 
 const UNREADS_MAX: usize = 500;
 
+/// Options for the unread list.
 #[derive(Deserialize, IntoParams)]
 pub struct UnreadsQuery {
+    /// `true` lists every viewable channel and DM with messages from others, read or not, with
+    /// no cap. Default `false`: only unread scopes, capped at 500.
     all: Option<bool>,
 }
 
-#[utoipa::path(get, path = "/api/unreads", params(UnreadsQuery), responses((status = 200, description = "Unread scopes: the latest top-level message id from someone else and the last-read id for each text channel the caller can view (with its server) and each DM whose latest message is newer than its read position, newest first and capped at 500 (`more` is true when the cap cut the list). Scopes that are not listed are read. With `all=true` every viewable channel and DM with messages from others is listed, read or not (no cap)", body = Unreads)), security(("bearer" = [])))]
+/// List unread channels and DMs
+///
+/// Returns the caller's read positions for text channels in servers they are a member of
+/// (skipping channels they cannot view, or whose latest message they could not read without
+/// read-history access) and for their DMs (skipping DMs with an account being deleted). Only
+/// messages by other users count as unread. Requires a bearer token. General rate-limit
+/// bucket.
+#[utoipa::path(get, path = "/api/unreads", tag = "Messages", params(UnreadsQuery), responses((status = 200, description = "Unread scopes: the latest top-level message id from someone else and the last-read id for each text channel the caller can view (with its server) and each DM whose latest message is newer than its read position, newest first and capped at 500 (`more` is true when the cap cut the list). Scopes that are not listed are read. With `all=true` every viewable channel and DM with messages from others is listed, read or not (no cap)", body = Unreads), (status = 400, description = "`all` is not `true` or `false` (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn unreads(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1422,7 +1579,14 @@ pub(crate) async fn unreads(
     Ok(Json(Unreads { items, more }))
 }
 
-#[utoipa::path(post, path = "/api/read", request_body = ReadReq, responses((status = 200, description = "The stored read position, which never moves backwards", body = ReadState)), security(("bearer" = [])))]
+/// Mark a channel or DM read
+///
+/// Stores the caller's last-read message id for a scope (`c<channel id>` or `d<dm id>`). The
+/// position only moves forward: a lower `last_read` leaves the stored one unchanged. The scope
+/// is not checked for existence or access. Requires a bearer token. When the requested
+/// position is the one stored, emits `read_updated` to the caller's own connections (other
+/// devices). General rate-limit bucket.
+#[utoipa::path(post, path = "/api/read", tag = "Messages", request_body = ReadReq, responses((status = 200, description = "The stored read position, which never moves backwards", body = ReadState), (status = 400, description = "`scope` is not `c` or `d` followed by digits (`Invalid scope`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn mark_read(
     State(state): State<AppState>,
     Authed(user): Authed,

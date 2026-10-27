@@ -202,7 +202,13 @@ fn require_site_admin(user: &User) -> Result<(), ApiError> {
     }
 }
 
-#[utoipa::path(get, path = "/api/settings", responses((status = 200, description = "Site-wide feature toggles: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, and guest access", body = Settings)))]
+/// Get the instance settings
+///
+/// The instance-wide feature switches clients need to adapt their UI: profanity filter and
+/// its targets, link previews, uploads and guest access. No authentication. Values may lag
+/// a change by up to 5 seconds per server process; live changes also arrive as the
+/// `settings_changed` WebSocket event. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/settings", tag = "Instance", responses((status = 200, description = "Site-wide feature toggles: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, and guest access", body = Settings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
     Json(Settings::cached(&state.db).await)
 }

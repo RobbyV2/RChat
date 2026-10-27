@@ -11,7 +11,7 @@ use sqlx::Row;
 
 use crate::api::messages::{MsgScope, message_scope, require_can_delete};
 use crate::api::{
-    ApiError, Authed, MediaRef, Settings, grant_matches, header_grants, placeholders,
+    ApiError, ApiErrorBody, Authed, MediaRef, Settings, grant_matches, header_grants, placeholders,
     request_token, require_guest_ok, user_for_token,
 };
 use crate::db::{Db, MediaKind, User, now};
@@ -86,7 +86,17 @@ pub(crate) async fn store_media(
     Ok(())
 }
 
-#[utoipa::path(post, path = "/api/media", request_body(content = Vec<u8>, content_type = "multipart/form-data"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef)), security(("bearer" = [])))]
+/// Upload a file
+///
+/// Stores one file for attaching to a message: send it as the first part of a
+/// `multipart/form-data` body (any field name). The part's file name (default `file`) and
+/// content type (default `application/octet-stream`) are kept. Then pass the returned `id` as
+/// `media_id` when sending a message; only the uploader can attach it, and only to one
+/// message. The file is deleted 24 hours after upload whether attached or not, and messages
+/// carrying it then show it as removed (`media_removed` event). At most 25 MiB.
+///
+/// Requires a bearer token and the instance's uploads setting. Strict rate-limit bucket.
+#[utoipa::path(post, path = "/api/media", tag = "Media", request_body(content = Vec<u8>, content_type = "multipart/form-data", description = "A multipart form whose first part is the file"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef), (status = 400, description = "No file part (JSON `No file provided`) or a malformed multipart body (JSON). A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "File uploads are disabled on this instance", body = ApiErrorBody), (status = 413, description = "File over 25 MiB (`File exceeds 25MB limit`). A request body over 26 MiB is cut off while the file is read and answers with this status and the JSON error \"Error parsing `multipart/form-data` request\"", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket (shared with register, login, word hints, password change and guest access) or the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn upload_media(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -149,7 +159,14 @@ pub(crate) async fn upload_media(
     )))
 }
 
-#[utoipa::path(delete, path = "/api/messages/{id}/media", params(("id" = i64, Path)), responses((status = 200, description = "Removed")), security(("bearer" = [])))]
+/// Remove a message's attachment
+///
+/// Marks the attachment of a message as removed by its author (the message text stays) and,
+/// for a stored file no other live message uses, deletes the file. For a peer-to-peer
+/// attachment its metadata is cleared. The message's author can always do this; in a server
+/// channel, members with the Delete messages permission can too. Emits `media_removed` to
+/// whoever can see the message. Requires a bearer token. General rate-limit bucket.
+#[utoipa::path(delete, path = "/api/messages/{id}/media", tag = "Media", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Removed; the body is `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "Not the author and no Delete messages permission in the server", body = ApiErrorBody), (status = 404, description = "Message not found, or it has no attachment", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn delete_media(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -220,6 +237,9 @@ pub(crate) async fn delete_media(
 
 #[derive(serde::Deserialize, utoipa::IntoParams)]
 pub struct MediaQuery {
+    /// Guest grants (comma-separated) for password-protected servers, in addition to the
+    /// `X-Guest-Grant` header; useful for `<img>` and `<video>` sources that can't send
+    /// headers.
     grant: Option<String>,
 }
 
@@ -338,7 +358,20 @@ fn chunk_stream(
     })
 }
 
-#[utoipa::path(get, path = "/api/media/{id}", params(("id" = String, Path), MediaQuery), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag` and `Cache-Control: private, max-age=86400, immutable`"), (status = 304, description = "`If-None-Match` matched the media's ETag")), security((), ("bearer" = [])))]
+/// Download a file
+///
+/// Streams an uploaded file with its stored `Content-Type`, as an attachment
+/// (`Content-Disposition: attachment`), with `X-Content-Type-Options: nosniff` and a sandboxing
+/// `Content-Security-Policy`. The token may come from the `Authorization` header or the
+/// `rchat_token` cookie, so browsers can load it directly; guests may download when guest
+/// access is on.
+///
+/// Once attached, the file is visible to anyone who can see one of the messages carrying it:
+/// in a server without a password anyone not banned from it, in a password-protected server
+/// its members or guests holding a grant for it (header or `grant` query), and in a direct
+/// message its two participants. Before it is attached only the uploader can fetch it.
+/// General rate-limit bucket.
+#[utoipa::path(get, path = "/api/media/{id}", tag = "Media", params(("id" = String, Path, description = "Media id, 32 hex characters, from `MediaRef.id`"), MediaQuery), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag` and `Cache-Control: private, max-age=86400, immutable`"), (status = 304, description = "`If-None-Match` matched the media's ETag"), (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody), (status = 403, description = "Not allowed to see any message carrying this file", body = ApiErrorBody), (status = 404, description = "Media not found: unknown id, or the file expired or was deleted", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn download_media(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,

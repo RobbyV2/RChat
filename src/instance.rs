@@ -297,21 +297,39 @@ impl Instance {
     }
 }
 
+/// Optional features and whether they are on right now.
 #[derive(Clone, Copy, Serialize, ToSchema)]
 pub struct Features {
+    /// Guest access (reading servers without an account) is on.
     pub guests: bool,
+    /// File uploads through `POST /api/media` are on.
     pub uploads: bool,
+    /// Link previews are on.
     pub previews: bool,
+    /// `POST /api/identity/assertion` is available.
     pub identity_assertions: bool,
 }
 
+/// Fixed limits of this server build.
 #[derive(Clone, Copy, Serialize, ToSchema)]
 pub struct Limits {
+    /// Longest message text, in characters.
+    #[schema(example = 4000)]
     pub message_chars: usize,
+    /// Longest username, server, channel or role name, in characters.
+    #[schema(example = 100)]
     pub name_chars: usize,
+    /// Largest upload, in bytes.
+    #[schema(example = 26214400)]
     pub upload_bytes: usize,
+    /// Seconds an uploaded file is kept before it is deleted.
+    #[schema(example = 86400)]
     pub media_retention_secs: i64,
+    /// Default page size of list endpoints.
+    #[schema(example = 50)]
     pub page_size: i64,
+    /// Seconds an identity assertion stays valid.
+    #[schema(example = 300)]
     pub assertion_ttl_secs: i64,
 }
 
@@ -328,20 +346,49 @@ impl Limits {
     }
 }
 
+/// Who this instance is and where its services live. URLs come from `PUBLIC_URL` and the
+/// related settings when set, otherwise from the request's host (forwarded headers count only
+/// from trusted proxies).
 #[derive(Clone, Serialize, ToSchema)]
 pub struct InstanceInfo {
+    /// Always `rchat`.
+    #[schema(example = "rchat")]
     pub software: String,
+    /// Random id generated once per instance and kept in its database.
     pub id: String,
+    /// Display name of the instance (`INSTANCE_NAME`, default `RChat`).
+    #[schema(example = "RChat")]
     pub name: String,
+    /// Host (with port when not the default) users of this instance belong to, as in
+    /// `user@host`.
+    #[schema(example = "chat.example.com")]
     pub host: String,
+    /// Server software version.
+    #[schema(example = "0.2.0")]
     pub version: String,
+    /// Version of this API.
+    #[schema(example = "1.0")]
     pub api_version: String,
+    /// Origin of the web app, without a trailing slash.
+    #[schema(example = "https://chat.example.com")]
     pub public_url: String,
+    /// Base URL of the REST API.
+    #[schema(example = "https://chat.example.com/api")]
     pub api_url: String,
+    /// WebSocket gateway URL.
+    #[schema(example = "wss://chat.example.com/api/ws")]
     pub ws_url: String,
+    /// PeerJS signalling server used for peer-to-peer file sharing and calls.
+    #[schema(example = "https://chat.example.com:9001/peerjs")]
     pub peerjs_url: String,
+    /// URL of `GET /api/instance` on this instance.
+    #[schema(example = "https://chat.example.com/api/instance")]
     pub instance_url: String,
+    /// URL of the instance's JSON Web Key Set.
+    #[schema(example = "https://chat.example.com/.well-known/jwks.json")]
     pub jwks_uri: String,
+    /// Optional features and whether they are on.
     pub features: Features,
+    /// Fixed limits.
     pub limits: Limits,
 }

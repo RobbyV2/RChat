@@ -952,7 +952,24 @@ pub async fn depart(state: &AppState) {
     let _ = tokio::time::timeout(wait, state.hub.flush()).await;
 }
 
-#[utoipa::path(get, path = "/api/ws", responses((status = 101, description = "WebSocket upgrade"), (status = 503, description = "Realtime bus not ready")))]
+/// Open the realtime WebSocket
+///
+/// Upgrades to a WebSocket carrying JSON text frames, each an object tagged by `type` in
+/// snake_case. The first frame must be `{"type": "auth", "token": "<token>"}`; leave out
+/// `token` (or send an unknown one) to connect as a guest, which only works while guest access
+/// is on, otherwise the socket closes. Any other first frame also connects as a guest.
+///
+/// After that the client sends `viewing` (the server it has open, for presence), `subscribe`
+/// (servers to follow, with guest grants for password-protected ones), `voice_join` /
+/// `voice_leave`, `call_start` / `call_accept` / `call_decline` / `call_leave` for direct
+/// message calls, `rtc_signal` for WebRTC signalling, and `p2p_hosting` / `p2p_who` for
+/// peer-to-peer files. Guests are read-only: no presence, voice or calls. The server sends the
+/// events listed in `WsEvent` in `src/ws.rs`, e.g. `message`, `message_updated`,
+/// `message_deleted`, `member_joined`, `presence_changed`, `voice_state`, `call_state`,
+/// `error` and `resync` (refetch state after missed events). Frames are at most 64 KiB. Not
+/// part of the bearer security scheme: the token goes in the `auth` frame. General
+/// rate-limit bucket for the upgrade request.
+#[utoipa::path(get, path = "/api/ws", tag = "Realtime", responses((status = 101, description = "WebSocket upgrade"), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String), (status = 503, description = "Realtime bus not ready", content_type = "text/plain", body = String)), security(()))]
 pub async fn handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
     if !state.hub.ready() {
         return (StatusCode::SERVICE_UNAVAILABLE, "Realtime bus not ready").into_response();

@@ -8,23 +8,35 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::api::servers::Page;
 use crate::api::{
-    ApiError, Authed, DmSummary, Paged, cursor_int, decode_cursor, encode_cursor, page_bounds,
-    placeholders, split_list, user_from, user_ref, user_refs,
+    ApiError, ApiErrorBody, Authed, DmSummary, Paged, cursor_int, decode_cursor, encode_cursor,
+    page_bounds, placeholders, split_list, user_from, user_ref, user_refs,
 };
 use crate::db::{Db, LIVE_DM, get_user};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
+/// The user to open a DM with.
 #[derive(Deserialize, ToSchema)]
 pub struct OpenDmReq {
+    /// Username, case-insensitive. Your own username opens your self DM.
+    #[schema(example = "bob")]
     username: String,
 }
 
+/// Paging or selection for the DM list.
 #[derive(Deserialize, IntoParams)]
 pub struct DmListQuery {
+    /// Legacy offset into the list, 0 to 1000000 (clamped), default 0. Ignored when `cursor` is
+    /// given.
     offset: Option<i64>,
+    /// Page size, 1 to 100 (clamped), default 50.
     limit: Option<i64>,
+    /// Opaque cursor from the `X-Next-Cursor` header of the previous page (or `dms_cursor` from
+    /// `GET /api/me`). Empty means the first page.
     cursor: Option<String>,
+    /// Comma-separated DM ids to fetch instead of a page; up to 100 distinct ids, entries that
+    /// are not integers or not your DMs are skipped. Paging parameters are then ignored.
+    #[param(example = "12,40")]
     ids: Option<String>,
 }
 
@@ -164,7 +176,11 @@ pub(crate) async fn dms_by_ids(
     summaries(db, viewer, &rows).await
 }
 
-#[utoipa::path(get, path = "/api/dms", params(DmListQuery), responses((status = 200, description = "A page (`cursor` or legacy `offset`, `limit` default 50, max 100) of the signed-in user's DM conversations: the self DM first, then by latest message (call logs included) newest first, DMs without messages last by id newest first. When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page (`dms_cursor` in `/api/me` for the page after the first). With `ids` (comma-separated, max 100) returns just those DMs, skipping ones the user is not part of", body = Vec<DmSummary>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page")))), security(("bearer" = [])))]
+/// List your DMs
+///
+/// Returns the signed-in user's DM conversations, a page at a time or selected by id. Requires
+/// a bearer token. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/dms", tag = "Direct messages", params(DmListQuery), responses((status = 200, description = "A page (`cursor` or legacy `offset`, `limit` default 50, max 100) of the signed-in user's DM conversations: the self DM first, then by latest message (call logs included) newest first, DMs without messages last by id newest first. When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page (`dms_cursor` in `/api/me` for the page after the first). With `ids` (comma-separated, max 100) returns just those DMs, self DM first, without `X-Next-Cursor`, skipping ones the user is not part of", body = Vec<DmSummary>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid cursor (JSON), or a non-integer `offset`/`limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn list_dms(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -198,7 +214,12 @@ pub(crate) async fn list_dms(
     }
 }
 
-#[utoipa::path(post, path = "/api/dms", request_body = OpenDmReq, responses((status = 200, description = "The DM with the given user, created if it did not exist yet", body = DmSummary)), security(("bearer" = [])))]
+/// Open a DM
+///
+/// Returns the one-to-one conversation between the signed-in user and `username`, creating it
+/// if it does not exist yet. Opening a DM with yourself returns your self DM. A newly created
+/// DM emits `dm_created` to both users. Requires a bearer token. General rate-limit bucket.
+#[utoipa::path(post, path = "/api/dms", tag = "Direct messages", request_body = OpenDmReq, responses((status = 200, description = "The DM with the given user, created if it did not exist yet", body = DmSummary), (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework error; 415 for the latter)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "User not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn open_dm(
     State(state): State<AppState>,
     Authed(user): Authed,

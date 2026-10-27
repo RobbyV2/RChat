@@ -20,30 +20,50 @@ use crate::api::dms::dm_page;
 use crate::api::servers::{OkResp, ok};
 use crate::api::servers::{Page, my_servers_page};
 use crate::api::{
-    ApiError, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, ProfanityTarget, ServerSummary,
-    UserRef, check_len, check_profanity, request_token, valid_color,
+    ApiError, ApiErrorBody, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, ProfanityTarget,
+    ServerSummary, UserRef, check_len, check_profanity, request_token, valid_color,
 };
 use crate::db::{AvatarKind, Db, User, get_user, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
+/// The signed-in user's own account, with the first page of their servers and DMs.
 #[derive(Serialize, ToSchema)]
 pub struct Me {
+    /// Lowercase username, the account's unique key.
+    #[schema(example = "alice")]
     pub username: String,
+    /// The username in the case it was registered with.
+    #[schema(example = "Alice")]
     pub display_name: String,
+    /// Avatar style: a generated identicon or a solid color.
     pub avatar_kind: AvatarKind,
+    /// Lowercase `#rrggbb` avatar color when `avatar_kind` is `color`; null for identicons.
+    #[schema(example = "#3366ff")]
     pub avatar_color: Option<String>,
+    /// Lowercase `#rrggbb` profile banner color; null means the default derived from the avatar.
+    #[schema(example = "#112233")]
     pub banner_color: Option<String>,
+    /// Profile description (at most 190 characters, may contain newlines); null when unset.
     pub bio: Option<String>,
+    #[schema(ignore)]
     pub is_site_admin: bool,
+    /// Whether the user chose to appear offline: others do not see them as online.
     pub appear_offline: bool,
     #[schema(schema_with = password_kind_schema)]
     pub password_kind: String,
+    /// First page (up to 50) of the servers the user has joined, oldest join first.
     pub servers: Vec<ServerSummary>,
+    /// Whether more joined servers follow; fetch them from `GET /api/me/servers`.
     pub servers_more: bool,
+    /// `cursor` value for the next page of `GET /api/me/servers`; null when there are no more.
     pub servers_cursor: Option<String>,
+    /// First page (up to 50) of the user's DM conversations: the self DM first, then by latest
+    /// message, newest first.
     pub dms: Vec<DmSummary>,
+    /// Whether more DMs follow; fetch them from `GET /api/dms`.
     pub dms_more: bool,
+    /// `cursor` value for the next page of `GET /api/dms`; null when there are no more.
     pub dms_cursor: Option<String>,
 }
 
@@ -55,42 +75,74 @@ fn password_kind_schema() -> utoipa::openapi::Object {
         .build()
 }
 
+/// A new session and the account it belongs to.
 #[derive(Serialize, ToSchema)]
 pub struct AuthResp {
+    /// Session token (64 hex characters). Send it as `Authorization: Bearer <token>`. It does
+    /// not expire; it stays valid until logout or a password change from another session.
     pub token: String,
+    /// The signed-in user's account, as returned by `GET /api/me`.
     pub user: Me,
 }
 
+/// The candidate words of a word-password account.
 #[derive(Serialize, ToSchema)]
 pub struct WordsResp {
+    /// 20 distinct lowercase words, derived deterministically from the lowercase username.
+    #[schema(example = json!(["apple", "river", "stone"]))]
     pub words: Vec<String>,
 }
 
+/// A new account. Give exactly one of `password` or `words`.
 #[derive(Deserialize, ToSchema)]
 pub struct RegisterReq {
+    /// 1 to 100 characters, not blank, without `@`. Unique case-insensitively; the given case
+    /// becomes the display name. Checked by the profanity filter (`usernames` target).
+    #[schema(example = "Alice")]
     username: String,
+    /// A non-empty text password. Omit when using `words`.
     password: Option<String>,
+    /// Exactly 7 words picked from `GET /api/auth/words/{username}` (case-insensitive). Their
+    /// order matters: logging in needs the same words in the same order. Omit when using
+    /// `password`.
     words: Option<Vec<String>>,
+    /// Avatar style.
     avatar_kind: AvatarKind,
+    /// `#rrggbb` color, required when `avatar_kind` is `color` and ignored for `identicon`.
+    /// Stored lowercase.
+    #[schema(example = "#3366ff")]
     avatar_color: Option<String>,
 }
 
+/// Login credentials. Give exactly one of `password` or `words`.
 #[derive(Deserialize, ToSchema)]
 pub struct LoginReq {
+    /// Username, case-insensitive.
+    #[schema(example = "alice")]
     username: String,
+    /// The text password. Omit when using `words`.
     password: Option<String>,
+    /// The account's 7 words in the order they were chosen (case-insensitive). Omit when using
+    /// `password`.
     words: Option<Vec<String>>,
 }
 
+/// A password: exactly one of `password` or `words`.
 #[derive(Deserialize, ToSchema)]
 pub struct Secret {
+    /// A text password (a new one must not be empty). Omit when using `words`.
     password: Option<String>,
+    /// 7 words, case-insensitive and in order. For a new password they must come from
+    /// `GET /api/auth/words/{username}`. Omit when using `password`.
     words: Option<Vec<String>>,
 }
 
+/// A password change.
 #[derive(Deserialize, ToSchema)]
 pub struct PasswordChange {
+    /// The account's current password or words.
     current: Secret,
+    /// The new password or words. Either kind is allowed, regardless of the current one.
     new: Secret,
 }
 
@@ -258,14 +310,26 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
     })
 }
 
-#[utoipa::path(get, path = "/api/auth/words/{username}", params(("username" = String, Path)), responses((status = 200, description = "The 20 candidate words derived deterministically from the username; word-based accounts pick 7 of them", body = WordsResp)))]
+/// Get the word set for a username
+///
+/// Returns the 20 candidate words for word-based passwords. The set is derived
+/// deterministically from the lowercase username, so it is the same on every call and exists
+/// for any username, registered or not. Accounts pick 7 of these words at registration or when
+/// changing their password. No authentication. Strict and general rate-limit buckets.
+#[utoipa::path(get, path = "/api/auth/words/{username}", tag = "Auth", params(("username" = String, Path, description = "Any username, case-insensitive; it does not have to exist")), responses((status = 200, description = "The 20 candidate words derived deterministically from the username; word-based accounts pick 7 of them", body = WordsResp), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn words(Path(username): Path<String>) -> Json<WordsResp> {
     Json(WordsResp {
         words: word_set(&username),
     })
 }
 
-#[utoipa::path(post, path = "/api/auth/register", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp)))]
+/// Create an account
+///
+/// Registers a user with either a text password or 7 words from their word set, signs them in
+/// and returns a session token. The new user joins the default `rchat` server (emitting
+/// `member_joined` to its members and to the user) and gets their self DM. No authentication.
+/// Strict and general rate-limit buckets.
+#[utoipa::path(post, path = "/api/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), `@`-containing, banned, taken or profanity-filtered username; empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; or a missing/invalid avatar color for `color` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
@@ -467,7 +531,14 @@ fn wrong_password() -> ApiError {
     ApiError(StatusCode::UNAUTHORIZED, "Wrong password".to_string())
 }
 
-#[utoipa::path(post, path = "/api/auth/login", request_body = LoginReq, responses((status = 200, description = "Credentials accepted; returns a new session token and the user's profile", body = AuthResp)))]
+/// Log in
+///
+/// Checks the username and password (or words) and returns a new session token; existing
+/// sessions stay valid. Each username, existing or not, admits one attempt every 3 seconds and
+/// at most 1000 attempts per UTC day (successful ones included); after that it is locked until
+/// the next UTC day. Throttled attempts are not checked. No authentication. Strict and general
+/// rate-limit buckets.
+#[utoipa::path(post, path = "/api/auth/login", tag = "Auth", request_body = LoginReq, responses((status = 200, description = "Credentials accepted; returns a new session token and the user's profile", body = AuthResp), (status = 400, description = "Not exactly one of `password` and `words`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Unknown username or wrong password (`Invalid credentials`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Over 1000 login attempts for this username today (UTC); locked until the next day", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since the last attempt for this username (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub(crate) async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginReq>,
@@ -494,7 +565,11 @@ async fn login_at(state: &AppState, req: LoginReq, t: i64) -> Result<Json<AuthRe
     Ok(Json(AuthResp { token, user: me }))
 }
 
-#[utoipa::path(get, path = "/api/me", responses((status = 200, description = "The signed-in user's profile with the first page (50) of joined servers and of DMs; `servers_more`/`dms_more` say whether `/api/me/servers` and `/api/dms` have more, and `servers_cursor`/`dms_cursor` are the `cursor` values for their next pages (null when there are no more)", body = Me)), security(("bearer" = [])))]
+/// Get the signed-in account
+///
+/// Returns the signed-in user's account and preferences together with the first page (50) of
+/// their joined servers and of their DMs. Requires a bearer token. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/me", tag = "Account", responses((status = 200, description = "The signed-in user's profile with the first page (50) of joined servers and of DMs; `servers_more`/`dms_more` say whether `/api/me/servers` and `/api/dms` have more, and `servers_cursor`/`dms_cursor` are the `cursor` values for their next pages (null when there are no more)", body = Me), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn me(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -502,7 +577,15 @@ pub(crate) async fn me(
     Ok(Json(me_payload(&state.read(), &user).await?))
 }
 
-#[utoipa::path(post, path = "/api/me/password", request_body(content = PasswordChange, description = "`current` and `new` each take exactly one of `password` (any non-empty text) or `words` (7 words, in order, from the account's word set). Switching between text and words is allowed"), responses((status = 200, description = "Password changed. Every other login token of the account is revoked and their live connections close; the token used for this request stays valid", body = OkResp), (status = 400, description = "Missing or invalid new password"), (status = 401, description = "Wrong current password"), (status = 423, description = "Password changes from this session locked for the day after 50 wrong current passwords (separate from the login lockout; other sessions are unaffected)"), (status = 429, description = "One attempt every 3 seconds per session")), security(("bearer" = [])))]
+/// Change the password
+///
+/// Replaces the account's password or words after checking the current one. Every other
+/// session token of the account is revoked and its WebSocket connections close; the token used
+/// for this request stays valid. Each session admits one attempt every 3 seconds, and after 50
+/// wrong current passwords in a UTC day it may not change the password again until the next
+/// day (other sessions and logins are unaffected). Requires a bearer token. Strict and general
+/// rate-limit buckets.
+#[utoipa::path(post, path = "/api/me/password", tag = "Account", request_body(content = PasswordChange, description = "`current` and `new` each take exactly one of `password` (any non-empty text) or `words` (7 words, in order, from the account's word set). Switching between text and words is allowed"), responses((status = 200, description = "Password changed. Every other login token of the account is revoked and their live connections close; the token used for this request stays valid", body = OkResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, or not exactly one of `password` and `words` in `current` or `new`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token (`Unauthorized`), or wrong current password (`Wrong password`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Password changes from this session locked for the day (UTC) after 50 wrong current passwords (separate from the login lockout; other sessions are unaffected)", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since this session's last attempt (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn change_password(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -564,7 +647,11 @@ async fn change_password_at(
     Ok(ok())
 }
 
-#[utoipa::path(post, path = "/api/auth/logout", responses((status = 200, description = "Signed out: the login token used for this request is revoked and its live connections close; the account's other sessions stay signed in", body = OkResp), (status = 401, description = "Not signed in")), security(("bearer" = [])))]
+/// Log out
+///
+/// Revokes the session token used for this request and closes its WebSocket connections. The
+/// account's other sessions stay signed in. Requires a bearer token. General rate-limit bucket.
+#[utoipa::path(post, path = "/api/auth/logout", tag = "Auth", responses((status = 200, description = "Signed out: the login token used for this request is revoked and its live connections close; the account's other sessions stay signed in", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn logout(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -593,25 +680,40 @@ where
     Option::<T>::deserialize(d).map(Some)
 }
 
+/// Changes to the signed-in account. Every field is optional; omitted fields stay unchanged.
 #[derive(Deserialize, ToSchema)]
 pub struct MePatch {
+    /// New avatar style. Omit to keep the current avatar (and ignore `avatar_color`).
     avatar_kind: Option<AvatarKind>,
+    /// `#rrggbb` color, required when `avatar_kind` is `color`; ignored for `identicon` and
+    /// when `avatar_kind` is omitted. Stored lowercase.
+    #[schema(example = "#3366ff")]
     avatar_color: Option<String>,
+    /// Appear offline to others (`true`) or show real presence again (`false`).
     appear_offline: Option<bool>,
+    /// `#rrggbb` banner color, stored lowercase; `null` resets it to the default derived from
+    /// the avatar. Omit to keep it.
     #[serde(default, deserialize_with = "present")]
-    #[schema(value_type = Option<String>)]
+    #[schema(value_type = Option<String>, example = "#112233")]
     banner_color: Option<Option<String>>,
+    /// Profile description, at most 190 characters (code points) after cleanup: trimmed,
+    /// control characters other than newlines dropped, runs of 3 or more newlines cut to 2.
+    /// Empty or `null` clears it. Omit to keep it.
     #[serde(default, deserialize_with = "present")]
     #[schema(value_type = Option<String>)]
     bio: Option<Option<String>>,
 }
 
+/// The signed-in user's public profile after an update, plus their own settings.
 #[derive(Serialize, ToSchema)]
 pub struct MeUpdated {
     #[serde(flatten)]
     pub user: UserRef,
+    /// Lowercase `#rrggbb` banner color; null means the default derived from the avatar.
     pub banner_color: Option<String>,
+    /// Profile description as stored after cleanup; null when unset.
     pub bio: Option<String>,
+    /// Whether the user appears offline to others.
     pub appear_offline: bool,
 }
 
@@ -650,7 +752,15 @@ fn check_banner(color: Option<String>) -> Result<Option<String>, ApiError> {
     }
 }
 
-#[utoipa::path(patch, path = "/api/me", request_body(content = MePatch, description = "Every field is optional and only the fields present change. `banner_color` is a `#rrggbb` color, or `null` to go back to the default derived from the avatar. `bio` is the profile description: trimmed, control characters other than newlines removed, 3 or more newlines in a row collapsed to 2, at most 190 characters; empty or `null` clears it. It is checked by the profanity filter (`bios` target)"), responses((status = 200, description = "Avatar, banner color, description and/or appear-offline preference updated; returns the user's public profile plus their banner color, description and appear-offline flag", body = MeUpdated), (status = 400, description = "Invalid color, description too long, or description blocked by the profanity filter")), security(("bearer" = [])))]
+/// Update the signed-in account
+///
+/// Changes the avatar, banner color, profile description and/or appear-offline preference;
+/// fields left out stay as they are. A new avatar or a changed description emits
+/// `user_updated` to users who share a server or DM with the user; changing `appear_offline`
+/// emits `presence_mode` to the user's own connections, and the user then shows as offline
+/// (or online again) to others. Banner color changes emit no event. Requires a bearer token.
+/// General rate-limit bucket.
+#[utoipa::path(patch, path = "/api/me", tag = "Account", request_body(content = MePatch, description = "Every field is optional and only the fields present change. `avatar_color` is only read together with `avatar_kind`. `banner_color` is a `#rrggbb` color, or `null` to go back to the default derived from the avatar. `bio` is the profile description: trimmed, control characters other than newlines removed, 3 or more newlines in a row collapsed to 2, at most 190 characters; empty or `null` clears it. It is checked by the profanity filter (`bios` target)"), responses((status = 200, description = "Avatar, banner color, description and/or appear-offline preference updated; returns the user's public profile plus their banner color, description and appear-offline flag", body = MeUpdated), (status = 400, description = "Invalid or missing avatar color for a `color` avatar, invalid banner color, description over 190 characters, or description blocked by the profanity filter. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn patch_me(
     State(state): State<AppState>,
     Authed(user): Authed,

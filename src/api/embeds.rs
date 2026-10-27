@@ -14,7 +14,7 @@ use url::{Host, Url};
 use utoipa::IntoParams;
 
 use crate::api::messages::{message_scope, require_can_delete};
-use crate::api::{ApiError, Authed, Embed};
+use crate::api::{ApiError, ApiErrorBody, Authed, Embed};
 use crate::db::{Db, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -543,12 +543,23 @@ pub async fn unfurl(state: &AppState, job: UnfurlJob) {
     });
 }
 
+/// What to remove from the link preview.
 #[derive(Deserialize, IntoParams)]
 pub struct BannerQuery {
+    /// `1` hides only the preview image (the embed's `banner_removed` becomes `true`); any
+    /// other value, or omitting it, removes the whole preview.
+    #[param(example = 1)]
     banner: Option<i64>,
 }
 
-#[utoipa::path(delete, path = "/api/messages/{id}/embeds/{ord}", params(("id" = i64, Path), ("ord" = i64, Path), BannerQuery), responses((status = 200, description = "Removed")), security(("bearer" = [])))]
+/// Remove a link preview
+///
+/// Removes one link preview (embed) from a message, or with `banner=1` only its image. Requires
+/// a bearer token and being the message's author, or in servers having the Delete messages
+/// permission. Repeating a removal succeeds again. Emits `embeds_removed` (with `ord` and
+/// `banner`) to clients in the server that can see the channel, or to both DM participants.
+/// General rate-limit bucket.
+#[utoipa::path(delete, path = "/api/messages/{id}/embeds/{ord}", tag = "Messages", params(("id" = i64, Path, description = "Message id"), ("ord" = i64, Path, description = "Position of the preview in the message's `embeds` (its `ord`, starting at 0)"), BannerQuery), responses((status = 200, description = "Removed; body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "Non-numeric id, ord or banner (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Delete messages permission in the server (in DMs only the author may remove previews)", body = ApiErrorBody), (status = 404, description = "Message not found (or its author's account is being deleted), or no preview with this `ord`", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn delete_embed(
     State(state): State<AppState>,
     Path((id, ord)): Path<(i64, i64)>,

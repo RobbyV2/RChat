@@ -6,32 +6,54 @@ use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::servers::server_lite;
-use crate::api::{ApiError, MaybeAuthed, Role, UserRef, require_guest_ok, require_server_view};
+use crate::api::{
+    ApiError, ApiErrorBody, MaybeAuthed, Role, UserRef, require_guest_ok, require_server_view,
+};
 use crate::db::{Db, User, get_user};
 use crate::state::AppState;
 
+/// Optional profile context.
 #[derive(Deserialize, IntoParams)]
 pub struct ProfileQuery {
+    /// Server name, case-insensitive. When given, the response's `member` describes the user's
+    /// membership in that server (if visible). Omit for no membership info.
     server: Option<String>,
 }
 
+/// A user's membership in the server asked for with `server`.
 #[derive(Serialize, ToSchema)]
 pub struct ProfileMember {
+    /// Whether the user is a server admin.
     pub is_admin: bool,
+    /// Whether the user created the server.
     pub is_creator: bool,
+    /// Admin permission bits granted to the user as a server admin; 0 for non-admins. Role
+    /// permissions are in `roles`.
     pub perms: i64,
+    /// Ids of the roles assigned to the user, ascending.
     pub role_ids: Vec<i64>,
+    /// The roles assigned to the user, by id ascending.
     pub roles: Vec<Role>,
+    /// When the user joined the server, Unix seconds.
     pub joined_at: i64,
+    /// Whether the user currently shows as online in the server (false while they appear
+    /// offline).
     pub online: bool,
 }
 
+/// A user's mini profile.
 #[derive(Serialize, ToSchema)]
 pub struct Profile {
+    /// The user's public identity and avatar.
     pub user: UserRef,
+    /// Lowercase `#rrggbb` banner color; null means the default derived from the avatar.
     pub banner_color: Option<String>,
+    /// Profile description, at most 190 characters, may contain newlines; null when unset.
     pub bio: Option<String>,
+    /// When the account was created, Unix seconds.
     pub created_at: i64,
+    /// Membership in the server given by `server`; null when `server` was omitted, the server
+    /// does not exist, the viewer may not view it, or the user is not a member.
     pub member: Option<ProfileMember>,
 }
 
@@ -97,7 +119,14 @@ async fn profile_member(
     }
 }
 
-#[utoipa::path(get, path = "/api/users/{username}/profile", params(("username" = String, Path), ProfileQuery), responses((status = 200, description = "A user's mini profile: public info, banner color (null means the default derived from the avatar) and account creation time. With `server`, `member` holds their membership in it (admin, creator, permissions, role ids, join time, presence); it is null when the server does not exist, the viewer may not view it (same rules as the member list, guests included) or the user is not a member", body = Profile), (status = 404, description = "User not found")), security((), ("bearer" = [])))]
+/// Get a user's profile
+///
+/// Returns a user's public mini profile: identity, banner color, description and account
+/// creation time, plus their membership in `server` when asked. Works without a token for
+/// guests when guest access is on. Membership is only shown when the viewer may view the server
+/// (not banned from it; for password-protected servers a member, or a guest with a valid
+/// `X-Guest-Grant`). General rate-limit bucket.
+#[utoipa::path(get, path = "/api/users/{username}/profile", tag = "Users", params(("username" = String, Path, description = "Username, case-insensitive"), ProfileQuery), responses((status = 200, description = "A user's mini profile: public info, banner color (null means the default derived from the avatar) and account creation time. With `server`, `member` holds their membership in it (admin, creator, permissions, role ids, join time, presence); it is null when the server does not exist, the viewer may not view it (same rules as the member list, guests included) or the user is not a member", body = Profile), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "User not found", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn profile(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,

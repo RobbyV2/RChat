@@ -9,7 +9,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::{ApiError, Authed, Settings};
+use super::{ApiError, ApiErrorBody, Authed, Settings};
 use crate::db::now;
 use crate::identity::{ASSERTION_TTL_SECS, Claims, random_id};
 use crate::instance::{Features, InstanceInfo};
@@ -68,7 +68,13 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
     )
 }
 
-#[utoipa::path(get, path = "/api/instance", responses((status = 200, description = "Who this instance is: id, name, URLs, versions, features and limits", body = InstanceInfo)))]
+/// Describe this instance
+///
+/// Who this instance is: id, name, host, versions, the URLs of its API, WebSocket gateway and
+/// PeerJS server, which optional features are on, and its fixed limits. No authentication.
+/// Cached for 60 seconds (`Cache-Control: public` when `PUBLIC_URL` is set, `private` when
+/// the URLs are derived from the request host). General rate-limit bucket.
+#[utoipa::path(get, path = "/api/instance", tag = "Instance", responses((status = 200, description = "Who this instance is: id, name, URLs, versions, features and limits", body = InstanceInfo), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn instance(
     State(state): State<AppState>,
     Peer(peer): Peer,
@@ -78,31 +84,62 @@ pub(crate) async fn instance(
     discovery_response(&state, body, 60)
 }
 
-#[utoipa::path(get, path = "/.well-known/rchat", responses((status = 200, description = "Discovery document, the same as GET /api/instance, with links to it and to the JWKS", body = InstanceInfo)))]
+/// Discover this instance
+///
+/// The well-known discovery document for other instances and clients: the same body and
+/// caching as `GET /api/instance`, whose URL it carries in `instance_url`, along with the
+/// JWKS URL in `jwks_uri`. No authentication. General rate-limit bucket.
+#[utoipa::path(get, path = "/.well-known/rchat", tag = "Instance", responses((status = 200, description = "Discovery document, the same as GET /api/instance, with links to it and to the JWKS", body = InstanceInfo), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn well_known(state: State<AppState>, peer: Peer, headers: HeaderMap) -> Response {
     instance(state, peer, headers).await
 }
 
-#[utoipa::path(get, path = "/.well-known/jwks.json", responses((status = 200, description = "Public signing keys of this instance as a JSON Web Key Set (RFC 7517); kid is the RFC 7638 thumbprint, the first key signs", body = Object)))]
+/// Get the instance signing keys
+///
+/// The public Ed25519 keys this instance signs identity assertions with, as a JSON Web Key
+/// Set. Verify an assertion from `POST /api/identity/assertion` against the key whose `kid`
+/// matches the JWT header. No authentication. Cached for 300 seconds. General rate-limit
+/// bucket.
+#[utoipa::path(get, path = "/.well-known/jwks.json", tag = "Instance", responses((status = 200, description = "Public signing keys of this instance as a JSON Web Key Set (RFC 7517); kid is the RFC 7638 thumbprint, the first key signs", body = Object), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn jwks(State(state): State<AppState>) -> Response {
     discovery_response(&state, state.instance.keys.jwks(), 300)
 }
 
+/// Request for an identity assertion.
 #[derive(Deserialize, ToSchema)]
 pub struct AssertionRequest {
+    /// Who the assertion is for, usually the origin of the other instance; 1 to 512 bytes
+    /// after trimming. Becomes the JWT `aud` claim.
+    #[schema(example = "https://other.example.org")]
     pub aud: String,
+    /// Optional challenge from the audience, 1 to 256 bytes, copied into the JWT `nonce`
+    /// claim. Omit it when there is none.
     pub nonce: Option<String>,
 }
 
+/// A signed identity assertion.
 #[derive(Serialize, Deserialize, ToSchema)]
 pub struct Assertion {
+    /// Compact EdDSA JWT with claims `iss`, `sub`, `aud`, `iat`, `exp`, `jti` and the
+    /// optional `nonce`.
     pub token: String,
+    /// Issuer: this instance's origin.
+    #[schema(example = "https://chat.example.com")]
     pub iss: String,
+    /// Subject: the caller as `username@host`.
+    #[schema(example = "alice@chat.example.com")]
     pub sub: String,
+    /// Unix seconds when the token expires, 300 seconds after issue.
     pub expires_at: i64,
 }
 
-#[utoipa::path(post, path = "/api/identity/assertion", request_body = AssertionRequest, responses((status = 200, description = "Short-lived EdDSA JWT proving the caller is sub = user@host on this instance", body = Assertion), (status = 400, description = "Missing or oversized aud or nonce"), (status = 401, description = "Not signed in"), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form")), security(("bearer" = [])))]
+/// Prove your identity to another instance
+///
+/// Signs a short-lived JWT (300 seconds) stating that the caller is `username@host` on this
+/// instance, for the audience named in `aud`. The audience verifies it with the keys at
+/// `/.well-known/jwks.json` of the issuer. Requires a bearer token; guests can't call it. No
+/// side effects. General rate-limit bucket.
+#[utoipa::path(post, path = "/api/identity/assertion", tag = "Instance", request_body = AssertionRequest, responses((status = 200, description = "Short-lived EdDSA JWT proving the caller is sub = user@host on this instance", body = Assertion), (status = 400, description = "Missing or oversized aud or nonce", body = ApiErrorBody), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn assertion(
     State(state): State<AppState>,
     Authed(user): Authed,
