@@ -3365,7 +3365,7 @@ export const useStore = create<RChatState>()((set, get) => {
       act(async () => {
         const { call, voice } = get()
         if (!voice && call?.kind === 'p2p') await p2p.toggleCamera()
-        else await rtc.camera(!(rtc.videoTrack !== null && !rtc.sharing))
+        else await rtc.camera(rtc.videoTrack === null)
       }),
     toggleShare: () =>
       act(async () => {

@@ -56,7 +56,7 @@ import { MessageComposer } from './message_composer'
 import StatusClock from './status_clock'
 import { longPress } from './context_menu'
 import { profileTrigger } from './profile_card'
-import { VoiceGrid } from './voice_grid'
+import { useCallShare, VoiceGrid } from './voice_grid'
 import {
   EdgeSentinel,
   OlderLoading,
@@ -504,6 +504,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   usePinnedBottom(listRef, atBottomRef, isVoice)
   const dmCall =
     dm && call?.dmId === dm.id && (call.state === 'active' || call.from === me?.username)
+  const callShare = useCallShare(dm?.id ?? -1)
 
   const onScroll = () => {
     const el = listRef.current
@@ -783,7 +784,11 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       ) : (
         <>
           {dm && dmCall && (
-            <div className="flex h-[45dvh] shrink-0 flex-col overflow-hidden">
+            <div
+              className={`flex shrink-0 flex-col overflow-hidden ${
+                callShare ? 'h-[70dvh]' : 'h-[45dvh]'
+              }`}
+            >
               <VoiceGrid key={`d${dm.id}`} dmId={dm.id} />
             </div>
           )}

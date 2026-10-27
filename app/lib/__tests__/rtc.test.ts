@@ -7,11 +7,16 @@ let ids = 0
 class FakeTrack {
   id = `t${++ids}`
   enabled = true
+  contentHint = ''
   stopped = false
   onended: (() => void) | null = null
   constructor(public kind: 'audio' | 'video') {}
   stop() {
     this.stopped = true
+  }
+  // A captured video reads as a tab, whose audio is always shared.
+  getSettings() {
+    return this.kind === 'video' ? { displaySurface: 'browser' } : {}
   }
 }
 
@@ -434,11 +439,15 @@ describe('first negotiation', () => {
     expect(offersFrom('bob')).toHaveLength(1)
     expect(offersFrom('alice')).toHaveLength(0)
     expect(rollbacks()).toBe(0)
-    expect(alice.peer('bob')?.camOn).toBe(true)
+    expect(alice.peer('bob')?.camOn).toBe(false)
+    expect(alice.peer('bob')?.screenOn).toBe(true)
     expect(bob.peer('alice')?.camOn).toBe(true)
     const shown = (alice.peer('bob')?.stream as unknown as FakeStream).getTracks()
     expect(shown.map(t => t.kind)).toEqual(['audio', 'video'])
-    expect(pcOf(bob, 'alice')?.transceivers[2].sender.track === bob.videoTrack).toBe(true)
+    expect(pcOf(bob, 'alice')?.transceivers[2].sender.track).toBe(null)
+    expect(
+      pcOf(bob, 'alice')?.transceivers[3].sender.track === (bob.screen?.video as unknown)
+    ).toBe(true)
     expect(pcOf(alice, 'bob')?.transceivers[2].sender.track === alice.videoTrack).toBe(true)
   })
 
@@ -659,5 +668,228 @@ describe('joins', () => {
     m.sync(['alice', 'zed'])
     await sleep(5)
     expect(sent.every(w => w.channel_id === 2)).toBe(true)
+  })
+})
+
+describe('screen share', () => {
+  const display = (audio: boolean) => {
+    const nav = g.navigator as { mediaDevices: Record<string, unknown> }
+    nav.mediaDevices.getDisplayMedia = async () =>
+      new FakeStream([new FakeTrack('video'), ...(audio ? [new FakeTrack('audio')] : [])])
+  }
+
+  async function pair() {
+    const { alice, bob } = await room()
+    alice.sync(['alice', 'bob'])
+    bob.sync(['alice', 'bob'])
+    await settle()
+    return { alice, bob }
+  }
+
+  test('a share with the camera on goes out on its own slots, with no renegotiation', async () => {
+    display(true)
+    const { alice, bob } = await pair()
+    await alice.camera(true)
+    await alice.share(true)
+    await settle()
+    const pc = pcOf(alice, 'bob') as FakePC
+    expect(pc.transceivers[0].sender.track === (alice.screen?.audio as unknown)).toBe(true)
+    expect(pc.transceivers[2].sender.track === alice.videoTrack).toBe(true)
+    expect(pc.transceivers[3].sender.track === (alice.screen?.video as unknown)).toBe(true)
+    expect(alice.screen?.video.contentHint).toBe('detail')
+    const seen = bob.peer('alice')
+    expect(seen?.camOn).toBe(true)
+    expect(seen?.screenOn).toBe(true)
+    expect(typeof seen?.shareId).toBe('string')
+    const screen = (seen?.screen as unknown as FakeStream).getTracks().map(t => t.kind)
+    expect(screen).toEqual(['video', 'audio'])
+    expect(bob.remoteStreams().map(([k]) => k)).toEqual(['alice', 'alice:screen'])
+    expect(offersFrom('bob')).toHaveLength(1)
+    expect(offersFrom('alice')).toHaveLength(0)
+    expect(rollbacks()).toBe(0)
+  })
+
+  test('the browser ending the capture stops the share and tells the peers', async () => {
+    display(false)
+    const { alice, bob } = await pair()
+    await bob.share(true)
+    await settle()
+    const first = alice.peer('bob')?.shareId
+    expect(alice.peer('bob')?.screenOn).toBe(true)
+    const track = bob.screen?.video as unknown as FakeTrack
+    track.onended?.()
+    await settle()
+    expect(bob.sharing).toBe(false)
+    expect(bob.screenStream).toBe(null)
+    expect(alice.peer('bob')?.screenOn).toBe(false)
+    expect(alice.peer('bob')?.shareId).toBe(null)
+    expect(pcOf(bob, 'alice')?.transceivers[3].sender.track).toBe(null)
+    await bob.share(true)
+    await settle()
+    expect(alice.peer('bob')?.shareId === first).toBe(false)
+    expect(offersFrom('bob')).toHaveLength(1)
+  })
+
+  test('someone joining while a share is on learns about it and gets the track', async () => {
+    display(false)
+    const { alice, bob } = await room()
+    await bob.share(true)
+    alice.sync(['alice', 'bob'])
+    bob.sync(['alice', 'bob'])
+    await settle()
+    expect(alice.peer('bob')?.screenOn).toBe(true)
+    expect(
+      pcOf(bob, 'alice')?.transceivers[3].sender.track === (bob.screen?.video as unknown)
+    ).toBe(true)
+    await alice.share(true)
+    await settle()
+    expect(bob.peer('alice')?.screenOn).toBe(true)
+    expect(
+      pcOf(alice, 'bob')?.transceivers[3].sender.track === (alice.screen?.video as unknown)
+    ).toBe(true)
+  })
+
+  test('leaving stops the capture, and a share that resolves after leaving is dropped', async () => {
+    display(true)
+    const { alice } = await pair()
+    await alice.share(true)
+    const { video, audio } = alice.screen as unknown as { video: FakeTrack; audio: FakeTrack }
+    alice.leave()
+    expect(video.stopped && audio.stopped).toBe(true)
+    expect(alice.sharing).toBe(false)
+    await alice.join('alice', { channelId: 5 })
+    const pending = alice.share(true)
+    alice.leave()
+    await pending
+    expect(alice.sharing).toBe(false)
+  })
+
+  test('a closed picker is not an error', async () => {
+    const nav = g.navigator as { mediaDevices: Record<string, unknown> }
+    nav.mediaDevices.getDisplayMedia = async () => {
+      throw Object.assign(new Error('denied'), { name: 'NotAllowedError' })
+    }
+    const { alice } = await pair()
+    await alice.share(true)
+    expect(alice.sharing).toBe(false)
+  })
+
+  test('a legacy peer sees a share on the camera slot while the camera is off', async () => {
+    display(false)
+    const { alice, bob } = await room()
+    tamper = w => {
+      if (w.from !== 'bob') return w
+      const { sid: _sid, rsid: _rsid, ...payload } = w.payload
+      return { ...w, payload }
+    }
+    alice.sync(['alice', 'bob'])
+    bob.sync(['alice', 'bob'])
+    await settle()
+    const cam = () => pcOf(alice, 'bob')?.transceivers[2].sender.track
+    const screen = () => pcOf(alice, 'bob')?.transceivers[3].sender.track
+    await alice.share(true)
+    await settle()
+    expect(cam() === (alice.screen?.video as unknown)).toBe(true)
+    expect(screen()).toBe(null)
+    expect(bob.peer('alice')?.camOn).toBe(true)
+    await alice.camera(true)
+    await settle()
+    expect(cam() === alice.videoTrack).toBe(true)
+    expect(screen()).toBe(null)
+    await alice.camera(false)
+    await settle()
+    expect(cam() === (alice.screen?.video as unknown)).toBe(true)
+    expect(bob.peer('alice')?.camOn).toBe(true)
+    await alice.share(false)
+    await settle()
+    expect(cam()).toBe(null)
+    expect(bob.peer('alice')?.camOn).toBe(false)
+    expect(offersFrom('alice')).toHaveLength(0)
+  })
+
+  test('a peer with session ids never gets the screen on the camera slot', async () => {
+    display(false)
+    const { alice, bob } = await pair()
+    await alice.share(true)
+    await settle()
+    expect(pcOf(alice, 'bob')?.transceivers[2].sender.track).toBe(null)
+    expect(bob.peer('alice')?.camOn).toBe(false)
+    expect(bob.peer('alice')?.screenOn).toBe(true)
+  })
+
+  test('a share status from someone without a peer yet is held', async () => {
+    const { alice } = await room()
+    await alice.onSignal('bob', { screen: true, sid: 'b1' }, { channelId: 5 })
+    await alice.onSignal('bob', { muted: true, sid: 'b1' }, { channelId: 5 })
+    alice.sync(['alice', 'bob'])
+    expect(alice.peer('bob')?.screenOn).toBe(true)
+    expect(alice.peer('bob')?.muted).toBe(true)
+  })
+
+  test('a peer that turns out legacy after the share started gets it on the camera slot', async () => {
+    display(true)
+    // alice is polite towards bob and impolite towards aaron.
+    const { alice, bob } = await room()
+    const aaron = manager('aaron')
+    await aaron.join('aaron', { channelId: 5 })
+    await alice.share(true)
+    tamper = w => {
+      if (w.from !== 'bob' && w.from !== 'aaron') return w
+      const { sid: _sid, rsid: _rsid, ...payload } = w.payload
+      return { ...w, payload }
+    }
+    for (const m of [alice, bob, aaron]) m.sync(['alice', 'bob', 'aaron'])
+    await settle()
+    for (const [name, m] of [
+      ['bob', bob],
+      ['aaron', aaron],
+    ] as const) {
+      const slots = (pcOf(alice, name) as FakePC).transceivers
+      const at = (kind: 'video', n: number) => slots.filter(t => t.kind === kind)[n]?.sender.track
+      expect(connected(alice, name)).toBe(true)
+      expect(at('video', 0) === (alice.screen?.video as unknown)).toBe(true)
+      expect(at('video', 1) ?? null).toBe(null)
+      expect(m.peer('alice')?.camOn).toBe(true)
+    }
+    expect(offersFrom('alice')).toHaveLength(1)
+  })
+
+  test('one peer failing to take the share does not keep it from the others', async () => {
+    display(false)
+    const { alice, bob } = await room()
+    const carol = manager('carol')
+    await carol.join('carol', { channelId: 5 })
+    for (const m of [alice, bob, carol]) m.sync(['alice', 'bob', 'carol'])
+    await settle()
+    const broken = (pcOf(alice, 'bob') as FakePC).transceivers[3].sender
+    broken.replaceTrack = async () => {
+      throw new Error('closed')
+    }
+    await alice.share(true)
+    await settle()
+    expect(alice.sharing).toBe(true)
+    expect(
+      pcOf(alice, 'carol')?.transceivers[3].sender.track === (alice.screen?.video as unknown)
+    ).toBe(true)
+    expect(carol.peer('alice')?.screenOn).toBe(true)
+    expect(bob.peer('alice')?.screenOn).toBe(true)
+    expect(errors.some(e => e[0] === 'rtc share')).toBe(true)
+  })
+
+  test('one peer failing to take the camera does not keep it from the others', async () => {
+    const { alice, bob } = await room()
+    const carol = manager('carol')
+    await carol.join('carol', { channelId: 5 })
+    for (const m of [alice, bob, carol]) m.sync(['alice', 'bob', 'carol'])
+    await settle()
+    const broken = (pcOf(alice, 'bob') as FakePC).transceivers[2].sender
+    broken.replaceTrack = async () => {
+      throw new Error('closed')
+    }
+    await alice.camera(true)
+    await settle()
+    expect(pcOf(alice, 'carol')?.transceivers[2].sender.track === alice.videoTrack).toBe(true)
+    expect(carol.peer('alice')?.camOn).toBe(true)
+    expect(errors.some(e => e[0] === 'rtc camera')).toBe(true)
   })
 })

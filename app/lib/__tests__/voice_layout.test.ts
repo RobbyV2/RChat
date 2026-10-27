@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  autoFocus,
   callTone,
+  screenKey,
+  stageTiles,
   fitGrid,
   fmtDuration,
   keepFocus,
@@ -109,5 +112,61 @@ describe('call log', () => {
     expect(spokenDuration(150)).toBe('2 minutes')
     expect(spokenDuration(3600)).toBe('1 hour')
     expect(spokenDuration(3720)).toBe('1 hour 2 minutes')
+  })
+})
+
+describe('screen tiles', () => {
+  const tiles = (sharing: string[]) =>
+    stageTiles(['alice', 'bob', 'carol'], u => (sharing.includes(u) ? screenKey(u) : null))
+
+  test('a share is a tile of its own ahead of the people', () => {
+    expect(tiles([])).toEqual(['alice', 'bob', 'carol'])
+    expect(tiles(['bob'])).toEqual(['bob:screen', 'alice', 'bob', 'carol'])
+    expect(tiles(['carol', 'alice'])).toEqual([
+      'alice:screen',
+      'carol:screen',
+      'alice',
+      'bob',
+      'carol',
+    ])
+  })
+})
+
+describe('auto-focus', () => {
+  test('a new share takes the focus once', () => {
+    const first = autoFocus(new Set(), [{ key: 'bob:screen', id: 'r1', own: false }])
+    expect(first.focus).toBe('bob:screen')
+    const again = autoFocus(first.seen, [{ key: 'bob:screen', id: 'r1', own: false }])
+    expect(again.focus).toBe(null)
+    expect(again.seen).toBe(first.seen)
+  })
+
+  test('the newest of several fresh shares wins, and a restarted share is new', () => {
+    const both = autoFocus(new Set(), [
+      { key: 'alice:screen', id: 'r1', own: false },
+      { key: 'bob:screen', id: 'r2', own: false },
+    ])
+    expect(both.focus).toBe('bob:screen')
+    expect(autoFocus(both.seen, []).focus).toBe(null)
+    expect(autoFocus(both.seen, [{ key: 'bob:screen', id: 'r3', own: false }]).focus).toBe(
+      'bob:screen'
+    )
+  })
+
+  test('a share that ended and is seen again does not take the focus', () => {
+    const one = autoFocus(new Set(), [{ key: 'bob:screen', id: 'r1', own: false }])
+    const gone = autoFocus(one.seen, [])
+    expect(autoFocus(gone.seen, [{ key: 'bob:screen', id: 'r1', own: false }]).focus).toBe(null)
+  })
+
+  test('your own share never takes the focus, but a share that starts while you share does', () => {
+    const mine = { key: 'alice:screen', id: 'r1', own: true }
+    const alone = autoFocus(new Set(), [mine])
+    expect(alone.focus).toBe(null)
+    const joined = autoFocus(alone.seen, [mine, { key: 'bob:screen', id: 'r2', own: false }])
+    expect(joined.focus).toBe('bob:screen')
+    expect(autoFocus(joined.seen, [mine, { key: 'bob:screen', id: 'r2', own: false }]).focus).toBe(
+      null
+    )
   })
 })

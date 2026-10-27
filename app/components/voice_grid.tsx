@@ -7,6 +7,7 @@ import {
   Headphones,
   Mic,
   MicOff,
+  Monitor,
   Phone,
   PhoneOff,
   ScreenShare,
@@ -17,12 +18,23 @@ import {
   Video,
   VideoOff,
   Volume2,
+  VolumeOff,
 } from 'lucide-react'
 import { rtc } from '../lib/rtc'
 import { p2p } from '../lib/p2p'
 import { userRefFor, useStore } from '../lib/store'
 import { bannerColor, cachedProfile, profileKey } from '../lib/profile'
-import { fitGrid, keepFocus, toggleFocus, type LinkQuality } from '../lib/voice_layout'
+import {
+  autoFocus,
+  fitGrid,
+  keepFocus,
+  screenKey,
+  stageTiles,
+  toggleFocus,
+  type LinkQuality,
+  type LiveShare,
+} from '../lib/voice_layout'
+import { canShareScreen } from '../lib/screen'
 import type { UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
@@ -30,6 +42,7 @@ import { COARSE_QUERY, useMedia } from './context_menu'
 import { useEscape } from './server_settings'
 
 const useAudioGate = create<{ blocked: boolean }>(() => ({ blocked: false }))
+const useSeenShares = create<{ seen: ReadonlySet<string> }>(() => ({ seen: new Set() }))
 
 const unblockAudio = () => {
   const els = [...document.querySelectorAll<HTMLAudioElement>('audio[data-remote-audio]')]
@@ -55,14 +68,21 @@ function useCallMedia() {
     connected,
     deafened,
     muted,
-    camera: p2pCall ? p2p.camOn : rtc.videoTrack !== null && !rtc.sharing,
+    camera: p2pCall ? p2p.camOn : rtc.videoTrack !== null,
     sharing: p2pCall ? p2p.shareOn : rtc.sharing,
+    audioNote: p2pCall ? p2p.audioNote : rtc.audioNote,
     quality,
   }
 }
 
-const canShare = () =>
-  typeof navigator !== 'undefined' && typeof navigator.mediaDevices?.getDisplayMedia === 'function'
+// Whether a share is on in the DM call shown, which then gets a taller stage.
+export function useCallShare(dmId: number) {
+  useStore(s => s.rtcTick)
+  const call = useStore(s => s.call)
+  const voice = useStore(s => s.voice)
+  if (voice || call?.dmId !== dmId) return false
+  return call.kind === 'p2p' ? p2p.shareOn || p2p.remoteScreenOn : rtc.anyShare()
+}
 
 function VideoView({
   stream,
@@ -140,9 +160,12 @@ function VoiceAudio() {
   }, [connected])
   if (!connected) return null
   const streams: [string, MediaStream][] = p2pCall
-    ? p2p.remote
-      ? [['remote', p2p.remote]]
-      : []
+    ? [
+        ...(p2p.remote ? [['remote', p2p.remote] as [string, MediaStream]] : []),
+        ...(p2p.remoteScreen && p2p.remoteScreenOn
+          ? [['remote:screen', p2p.remoteScreen] as [string, MediaStream]]
+          : []),
+      ]
     : rtc.remoteStreams()
   return (
     <>
@@ -167,6 +190,27 @@ interface TileData {
   mirror: boolean
   pending: boolean
   tint: string
+  screen: boolean
+  shareId: string | null
+}
+
+export function LiveBadge({
+  size = 'md',
+  title = 'Sharing their screen',
+}: {
+  size?: 'sm' | 'md'
+  title?: string
+}) {
+  return (
+    <span
+      title={title}
+      className={`flex shrink-0 items-center rounded-[4px] bg-danger font-bold tracking-wide text-on-danger ${
+        size === 'sm' ? 'px-1 py-px text-[9px] leading-3' : 'px-1.5 py-0.5 text-[11px] leading-4'
+      }`}
+    >
+      LIVE
+    </span>
+  )
 }
 
 function StateIcons({
@@ -212,19 +256,23 @@ function Tile({
   height?: number
   onToggle: () => void
 }) {
-  const { user, stream, hasVideo, muted, deafened, speaking, mirror, pending, tint } = tile
+  const { user, stream, hasVideo, muted, deafened, speaking, mirror, pending, tint, screen } = tile
   const box = height ?? (compact ? 72 : 240)
   const avatar = compact ? 32 : Math.round(Math.max(40, Math.min(96, box * 0.3)))
+  const label = screen ? `${user.display_name}'s screen` : user.display_name
   return (
     <div
       style={{
         width,
         height,
-        background: hasVideo
-          ? undefined
-          : `color-mix(in srgb, ${tint} 34%, var(--color-surface-container))`,
+        background:
+          hasVideo || screen
+            ? undefined
+            : `color-mix(in srgb, ${tint} 34%, var(--color-surface-container))`,
       }}
-      className={`group/tile relative isolate flex shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-container select-none ${
+      className={`group/tile relative isolate flex shrink-0 items-center justify-center overflow-hidden rounded-xl select-none ${
+        screen ? 'bg-black ring-1 ring-white/10 ring-inset' : 'bg-surface-container'
+      } ${
         width === undefined && height === undefined
           ? compact
             ? 'aspect-video w-32 sm:w-40'
@@ -232,8 +280,22 @@ function Tile({
           : ''
       }`}
     >
-      {stream && <VideoView stream={stream} hidden={!hasVideo} mirror={mirror} contain={focused} />}
-      {!hasVideo && (
+      {stream && (
+        <VideoView
+          stream={stream}
+          hidden={!hasVideo}
+          mirror={mirror && !screen}
+          contain={focused || screen}
+        />
+      )}
+      {screen && (
+        <span
+          className={`pointer-events-none absolute z-10 ${compact ? 'top-1 left-1' : 'top-2 left-2'}`}
+        >
+          <LiveBadge size={compact ? 'sm' : 'md'} />
+        </span>
+      )}
+      {!hasVideo && !screen && (
         <span className="relative flex rounded-full">
           {(pending || speaking) && (
             <span
@@ -253,7 +315,7 @@ function Tile({
           />
         </span>
       )}
-      {speaking && (
+      {speaking && !screen && (
         <span
           aria-hidden
           className="pointer-events-none absolute inset-0 rounded-xl shadow-[inset_0_0_0_3px_var(--color-status-green)] motion-safe:animate-speak"
@@ -261,7 +323,7 @@ function Tile({
       )}
       <button
         data-tile={tile.key}
-        aria-label={`${focused ? 'Back to grid from' : 'Focus'} ${user.display_name}`}
+        aria-label={`${focused ? 'Back to grid from' : 'Focus'} ${label}`}
         aria-pressed={focused}
         title={focused ? 'Back to grid' : 'Focus'}
         onClick={onToggle}
@@ -274,7 +336,11 @@ function Tile({
           compact ? 'px-1.5 py-0.5 text-[11px]' : 'px-2 py-1 text-xs'
         }`}
       >
-        <StateIcons muted={muted} deafened={deafened} size={compact ? 10 : 12} />
+        {screen ? (
+          <Monitor size={compact ? 11 : 13} className="shrink-0" aria-hidden />
+        ) : (
+          <StateIcons muted={muted} deafened={deafened} size={compact ? 10 : 12} />
+        )}
         <span className="streamer truncate">{user.display_name}</span>
         {pending && <span className="shrink-0 opacity-75">Ringing…</span>}
       </span>
@@ -335,7 +401,7 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
       >
         {camera ? <Video size={icon} /> : <VideoOff size={icon} />}
       </button>
-      {canShare() && (
+      {canShareScreen() && (
         <button
           title={sharing ? 'Stop sharing' : 'Share screen'}
           aria-label={sharing ? 'Stop sharing' : 'Share screen'}
@@ -494,6 +560,51 @@ function useIdle(enabled: boolean, bar: RefObject<HTMLDivElement | null>) {
 
 const GAP = 8
 
+function SharePill() {
+  const { sharing, audioNote } = useCallMedia()
+  const toggleShare = useStore(s => s.toggleShare)
+  if (!sharing) return null
+  return (
+    <div className="flex shrink-0 justify-center px-3 pt-3 sm:px-4">
+      <div
+        role="status"
+        className={`flex max-w-full min-w-0 items-center gap-2.5 bg-surface-container-high py-1 pr-1 pl-3 text-sm text-on-surface shadow-elevation-2 ${
+          audioNote ? 'rounded-3xl' : 'rounded-full'
+        }`}
+      >
+        <span aria-hidden className="relative flex h-2.5 w-2.5 shrink-0">
+          <span className="absolute inset-0 rounded-full bg-danger/60 motion-safe:animate-ring" />
+          <span className="relative h-2.5 w-2.5 rounded-full bg-danger" />
+        </span>
+        <span className="flex min-w-0 flex-col">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <Monitor size={15} aria-hidden className="shrink-0 text-on-surface-variant" />
+            <span className="truncate">You&apos;re sharing your screen</span>
+          </span>
+          {audioNote && (
+            <span
+              data-share-audio-note
+              title="This browser can't keep the call's own sound out of system audio, so it isn't sent, or everyone would hear an echo. Share a tab to include its audio."
+              className="flex min-w-0 items-center gap-1.5 text-xs leading-4 text-on-surface-variant"
+            >
+              <VolumeOff size={13} aria-hidden className="shrink-0" />
+              <span className="truncate">System audio isn&apos;t shared on this browser</span>
+            </span>
+          )}
+        </span>
+        <button
+          title="Stop sharing"
+          onClick={() => void toggleShare()}
+          className={`${ctlBase} h-7 shrink-0 gap-1 bg-danger px-3 text-xs font-semibold text-on-danger hover:brightness-110`}
+        >
+          <ScreenShareOff size={14} aria-hidden />
+          Stop
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: number }) {
   useStore(s => s.rtcTick)
   useStore(s => s.members)
@@ -536,18 +647,18 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
         : cachedProfile(profileKey(user.username, server))?.banner_color
     )
 
-  const tiles: TileData[] = users.map(u => {
+  const people: TileData[] = users.map(u => {
     const user = userRefFor(state, u)
-    const base = { key: u, user, pending: false, tint: tint(user) }
+    const base = { key: u, user, pending: false, tint: tint(user), screen: false, shareId: null }
     if (joined && u === me?.username)
       return {
         ...base,
-        stream: p2pKind ? p2p.local : rtc.local,
-        hasVideo: p2pKind ? p2p.camOn || p2p.shareOn : rtc.videoTrack !== null,
+        stream: p2pKind ? p2p.camView : rtc.local,
+        hasVideo: p2pKind ? p2p.camOn : rtc.videoTrack !== null,
         muted: selfMuted,
         deafened,
         speaking: p2pKind ? p2p.localSpeaking : rtc.isSpeaking(u),
-        mirror: p2pKind ? p2p.camOn && !p2p.shareOn : rtc.videoTrack !== null && !rtc.sharing,
+        mirror: p2pKind ? p2p.camOn : rtc.videoTrack !== null,
       }
     if (p2pKind)
       return {
@@ -570,6 +681,33 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
       mirror: false,
     }
   })
+  const screenOf = (t: TileData): TileData | null => {
+    if (!joined) return null
+    const u = t.user.username
+    const share =
+      u === me?.username
+        ? p2pKind
+          ? { stream: p2p.screenView, id: p2p.shareId }
+          : { stream: rtc.screenStream, id: rtc.shareId }
+        : p2pKind
+          ? { stream: p2p.remoteScreenOn ? p2p.remoteScreen : null, id: p2p.remoteShareId }
+          : (() => {
+              const peer = rtc.peer(u)
+              return { stream: peer?.screenOn ? peer.screen : null, id: peer?.shareId ?? null }
+            })()
+    if (!share.stream || share.id === null) return null
+    return {
+      ...t,
+      key: screenKey(u),
+      stream: share.stream,
+      hasVideo: true,
+      speaking: false,
+      mirror: false,
+      screen: true,
+      shareId: share.id,
+    }
+  }
+  const tiles = stageTiles(people, screenOf)
   if (pendingOther) {
     const user = userRefFor(state, pendingOther)
     tiles.push({
@@ -583,6 +721,8 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
       mirror: false,
       pending: true,
       tint: tint(user),
+      screen: false,
+      shareId: null,
     })
   }
 
@@ -594,6 +734,18 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
   useEffect(() => {
     if (focus === null && focusRaw !== null) setFocus(null)
   }, [focus, focusRaw])
+  const shares = JSON.stringify(
+    tiles.flatMap((t): LiveShare[] =>
+      t.screen && t.shareId !== null
+        ? [{ key: t.key, id: t.shareId, own: t.user.username === me?.username }]
+        : []
+    )
+  )
+  useEffect(() => {
+    const next = autoFocus(useSeenShares.getState().seen, JSON.parse(shares) as LiveShare[])
+    useSeenShares.setState({ seen: next.seen })
+    if (next.focus !== null) setFocus(next.focus)
+  }, [shares])
   const area = useRef<HTMLDivElement>(null)
   const refocus = useRef<string | null>(null)
   useEscape(() => {
@@ -670,6 +822,7 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
           )}
         </div>
       )}
+      {joined && <SharePill />}
       <div
         ref={area}
         className={`min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 ${

@@ -282,6 +282,8 @@ export interface RtcPayload {
   candidate?: RTCIceCandidateInit
   muted?: boolean
   cam?: boolean
+  // A screen share goes out on its own slot; old clients ignore this.
+  screen?: boolean
   // Asks the impolite side for an ICE restart.
   restart?: boolean
   // The sender's session, and the session of ours it is meant for.

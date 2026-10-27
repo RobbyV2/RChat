@@ -13,7 +13,7 @@ import { ServerHeader } from './server_header'
 import { longPress } from './context_menu'
 import { dragScope, useDrag } from './drag'
 import { profileTrigger } from './profile_card'
-import { VoiceDock } from './voice_grid'
+import { LiveBadge, VoiceDock } from './voice_grid'
 import { Sentinel } from './server_settings'
 import { useAuthorMembers } from './message_pane'
 
@@ -147,6 +147,7 @@ function VoiceMemberRow({
   const speaking = inRoom && rtc.isSpeaking(username)
   const muted = inRoom && (self ? selfAudio.muted : (rtc.peer(username)?.muted ?? false))
   const deafened = inRoom && self && selfAudio.deafened
+  const live = inRoom && (self ? rtc.sharing : (rtc.peer(username)?.screenOn ?? false))
   return (
     <div
       {...profileTrigger(user, server)}
@@ -167,6 +168,9 @@ function VoiceMemberRow({
       <span className={`streamer min-w-0 flex-1 truncate ${speaking ? 'text-on-surface' : ''}`}>
         {user.display_name}
       </span>
+      {live && (
+        <LiveBadge size="sm" title={self ? "You're sharing your screen" : 'Sharing their screen'} />
+      )}
       {muted && !deafened && (
         <span title="Muted" className="flex shrink-0 text-mute-fg">
           <MicOff size={14} />

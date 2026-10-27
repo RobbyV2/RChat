@@ -45,6 +45,36 @@ export const toggleFocus = (current: string | null, key: string) => (current ===
 export const keepFocus = (current: string | null, keys: string[]) =>
   current !== null && keys.includes(current) ? current : null
 
+export const screenKey = (user: string) => `${user}:screen`
+
+// The stage shows every share as a tile of its own, ahead of the people, so
+// someone sharing with their camera on has two tiles.
+export const stageTiles = <T>(people: T[], screenOf: (person: T) => T | null): T[] => [
+  ...people.flatMap(p => {
+    const screen = screenOf(p)
+    return screen === null ? [] : [screen]
+  }),
+  ...people,
+]
+
+export interface LiveShare {
+  key: string
+  id: string
+  own: boolean
+}
+
+// A share that the stage hasn't seen yet takes the focus, once: after the
+// user leaves it, the same share never takes it again. Your own share never
+// takes it; you already know what you are showing.
+export const autoFocus = (
+  seen: ReadonlySet<string>,
+  shares: LiveShare[]
+): { focus: string | null; seen: ReadonlySet<string> } => {
+  const fresh = shares.filter(s => !s.own && !seen.has(s.id))
+  if (!fresh.length) return { focus: null, seen }
+  return { focus: fresh[fresh.length - 1].key, seen: new Set([...seen, ...fresh.map(s => s.id)]) }
+}
+
 export type LinkQuality = 'good' | 'connecting' | 'bad'
 
 export const linkQuality = (states: RTCPeerConnectionState[]): LinkQuality => {

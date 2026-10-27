@@ -3,10 +3,20 @@ import { SpeakingDetector } from './vad'
 import { mediaError } from './rules'
 import { linkQuality, type LinkQuality } from './voice_layout'
 import {
+  captureScreen,
+  nextShareId,
+  SCREEN_BITRATE,
+  SCREEN_FPS,
+  syncStream,
+  tuneScreen,
+  type ScreenCapture,
+} from './screen'
+import {
   CandidateQueue,
   CONNECT_TIMEOUT_MS,
   descriptionAction,
   mayOffer,
+  mergeStatus,
   newSid,
   RECOVER_GRACE_MS,
   RESTART_DEBOUNCE_MS,
@@ -16,6 +26,9 @@ import {
   SLOT_KIND,
   slotLayout,
   SLOTS,
+  statusOf,
+  videoPlan,
+  type MediaStatus,
   type RemoteSid,
   type SignalScope,
   type Slot,
@@ -52,10 +65,22 @@ interface Peer {
   watchdog: Timer | null
   grace: Timer | null
   stream: MediaStream | null
+  screen: MediaStream | null
   heard: MediaStreamTrack | null
   muted: boolean
   camOn: boolean
+  screenOn: boolean
+  shareId: string | null
   speaking: boolean
+}
+
+export interface PeerView {
+  stream: MediaStream | null
+  screen: MediaStream | null
+  muted: boolean
+  camOn: boolean
+  screenOn: boolean
+  shareId: string | null
 }
 
 interface Detector {
@@ -73,8 +98,6 @@ export interface RtcOptions {
   restartDebounceMs?: number
 }
 
-type Status = Pick<RtcPayload, 'muted' | 'cam'>
-
 export class RtcManager {
   private peers = new Map<string, Peer>()
   private me: string | null = null
@@ -82,10 +105,12 @@ export class RtcManager {
   private sid = ''
   private gen = 0
   private retired = new Map<string, Set<string>>()
-  private early = new Map<string, Status>()
+  private early = new Map<string, MediaStatus>()
   local: MediaStream | null = null
   videoTrack: MediaStreamTrack | null = null
-  sharing = false
+  screen: ScreenCapture | null = null
+  screenStream: MediaStream | null = null
+  shareId: string | null = null
   muted = false
   localSpeaking = false
   private detector: Detector
@@ -113,6 +138,19 @@ export class RtcManager {
 
   active(): boolean {
     return this.target !== null
+  }
+
+  get sharing(): boolean {
+    return this.screen !== null
+  }
+
+  // The share's system audio was left out; see shareAudio.
+  get audioNote(): boolean {
+    return this.screen?.audioNote ?? false
+  }
+
+  anyShare(): boolean {
+    return this.screen !== null || [...this.peers.values()].some(p => p.screenOn)
   }
 
   isSpeaking(user: string): boolean {
@@ -147,12 +185,16 @@ export class RtcManager {
     this.retired.clear()
     this.early.clear()
     for (const track of this.local?.getTracks() ?? []) track.stop()
+    this.screen?.video.stop()
+    this.screen?.audio?.stop()
     this.local = null
     this.videoTrack = null
+    this.screen = null
+    this.screenStream = null
+    this.shareId = null
     this.me = null
     this.target = null
     this.muted = false
-    this.sharing = false
     this.localSpeaking = false
     this.onChange()
   }
@@ -169,15 +211,20 @@ export class RtcManager {
     this.onChange()
   }
 
-  peer(user: string): { stream: MediaStream | null; muted: boolean; camOn: boolean } | undefined {
+  peer(user: string): PeerView | undefined {
     const p = this.peers.get(user)
-    return p ? { stream: p.stream, muted: p.muted, camOn: p.camOn } : undefined
+    if (!p) return undefined
+    const { stream, screen, muted, camOn, screenOn, shareId } = p
+    return { stream, screen, muted, camOn, screenOn, shareId }
   }
 
+  // Everything to play: each peer's mic and, while they share, the audio of
+  // their screen.
   remoteStreams(): [string, MediaStream][] {
-    return [...this.peers].flatMap(([user, p]): [string, MediaStream][] =>
-      p.stream ? [[user, p.stream]] : []
-    )
+    return [...this.peers].flatMap(([user, p]): [string, MediaStream][] => [
+      ...(p.stream ? [[user, p.stream] as [string, MediaStream]] : []),
+      ...(p.screen && p.screenOn ? [[`${user}:screen`, p.screen] as [string, MediaStream]] : []),
+    ])
   }
 
   quality(): LinkQuality {
@@ -193,42 +240,98 @@ export class RtcManager {
   }
 
   async camera(on: boolean) {
-    if (!on) return this.setVideo(null, false)
+    if (!on) return this.setVideo(null)
+    const gen = this.gen
     const media = await navigator.mediaDevices.getUserMedia({ video: true }).catch((e: unknown) => {
       throw mediaError(e, 'camera', 'turn on video')
     })
-    await this.setVideo(media.getVideoTracks()[0] ?? null, false)
+    if (gen !== this.gen || !this.target) {
+      for (const t of media.getTracks()) t.stop()
+      return
+    }
+    await this.setVideo(media.getVideoTracks()[0] ?? null)
   }
 
   async share(on: boolean) {
-    if (!on) return this.setVideo(null, false)
-    const media = await navigator.mediaDevices.getDisplayMedia({ video: true })
-    await this.setVideo(media.getVideoTracks()[0] ?? null, true)
+    if (!on) return this.setScreen(null)
+    const gen = this.gen
+    const capture = await captureScreen()
+    if (!capture) return
+    if (gen !== this.gen || !this.target) {
+      capture.video.stop()
+      capture.audio?.stop()
+      return
+    }
+    await this.setScreen(capture)
   }
 
-  // Camera and screen share both go out on the camera slot for now, which
-  // every client, old ones included, shows. Toggling only swaps the track.
-  private async setVideo(track: MediaStreamTrack | null, sharing: boolean) {
+  // Camera and screen each have their own slot, negotiated up front, so
+  // toggling only swaps the track and tells the peers.
+  private async setVideo(track: MediaStreamTrack | null) {
     const old = this.videoTrack
     if (old) {
       old.stop()
       this.local?.removeTrack(old)
     }
     this.videoTrack = track
-    this.sharing = track !== null && sharing
     if (track) {
       this.local?.addTrack(track)
       track.onended = () => {
-        if (this.videoTrack === track) void this.setVideo(null, false)
+        if (this.videoTrack === track) void this.setVideo(null)
       }
     }
-    for (const peer of this.peers.values()) await this.placeVideo(peer)
-    for (const peer of this.peers.values()) peer.send({ cam: track !== null })
+    await this.each('rtc camera', peer => this.placeVideo(peer))
+    for (const peer of this.peers.values()) peer.send({ cam: this.camFor(peer) !== null })
     this.onChange()
   }
 
+  // Runs a step on every peer on its own, so one peer failing (its pc closed
+  // midway, say) doesn't keep the others from getting the change.
+  private async each(what: string, step: (peer: Peer) => Promise<void>) {
+    await Promise.all(
+      [...this.peers].map(([user, peer]) => step(peer).catch(this.failed(user, peer, what)))
+    )
+  }
+
+  private async setScreen(capture: ScreenCapture | null) {
+    const old = this.screen
+    if (old && old !== capture) {
+      old.video.stop()
+      old.audio?.stop()
+    }
+    this.screen = capture
+    this.screenStream = capture ? new MediaStream([capture.video]) : null
+    this.shareId = capture ? nextShareId('r') : null
+    if (capture)
+      capture.video.onended = () => {
+        if (this.screen === capture) void this.setScreen(null)
+      }
+    this.onChange()
+    await this.each('rtc share', async peer => {
+      await this.placeScreen(peer)
+      if (peer.remoteSid === null) await this.placeVideo(peer)
+    })
+    for (const peer of this.peers.values())
+      peer.send({ cam: this.camFor(peer) !== null, screen: capture !== null })
+    this.onChange()
+  }
+
+  private async placeScreen(peer: Peer) {
+    for (const slot of ['screen', 'screenAudio'] as const) {
+      const t = peer.slots[slot]
+      const track = this.trackFor(slot, peer)
+      if (t && t.sender.track !== track) await t.sender.replaceTrack(track)
+    }
+    const screen = peer.slots.screen
+    if (screen?.sender.track) await tuneScreen(screen.sender)
+  }
+
+  private camFor(peer: Peer): MediaStreamTrack | null {
+    return this.trackFor('cam', peer)
+  }
+
   private async placeVideo(peer: Peer) {
-    const track = this.videoTrack
+    const track = this.camFor(peer)
     const slot = peer.slots.cam
     if (slot) {
       if (slot.sender.track !== track) await slot.sender.replaceTrack(track)
@@ -241,10 +344,14 @@ export class RtcManager {
     peer.slots.cam = peer.pc.getTransceivers().find(t => t.sender === sender)
   }
 
-  private trackFor(slot: Slot): MediaStreamTrack | null {
+  // What a peer gets on each slot; see videoPlan for a legacy peer. A peer
+  // whose version isn't known yet (no signal from it so far) is taken as
+  // current, and moved over when its first signal says otherwise.
+  private trackFor(slot: Slot, peer: Peer): MediaStreamTrack | null {
     if (slot === 'mic') return this.local?.getAudioTracks()[0] ?? null
-    if (slot === 'cam') return this.videoTrack
-    return null
+    if (slot === 'screenAudio') return this.screen?.audio ?? null
+    const plan = videoPlan(this.videoTrack, this.screen?.video ?? null, peer.remoteSid === null)
+    return plan[slot]
   }
 
   private signal(to: string, payload: RtcPayload, target: RtcTarget) {
@@ -309,9 +416,12 @@ export class RtcManager {
       watchdog: null,
       grace: null,
       stream: null,
+      screen: null,
       heard: null,
       muted: false,
       camOn: false,
+      screenOn: false,
+      shareId: null,
       speaking: false,
     }
     peer.send = payload => {
@@ -326,9 +436,12 @@ export class RtcManager {
       const local = this.local
       for (const slot of SLOTS) {
         const streams = local && slot !== 'screenAudio' ? [local] : []
-        peer.slots[slot] = pc.addTransceiver(this.trackFor(slot) ?? SLOT_KIND[slot], {
+        const sendEncodings =
+          slot === 'screen' ? [{ maxBitrate: SCREEN_BITRATE, maxFramerate: SCREEN_FPS }] : undefined
+        peer.slots[slot] = pc.addTransceiver(this.trackFor(slot, peer) ?? SLOT_KIND[slot], {
           direction: 'sendrecv',
           streams,
+          ...(sendEncodings ? { sendEncodings } : {}),
         })
       }
     }
@@ -361,8 +474,12 @@ export class RtcManager {
       this.early.delete(user)
       this.status(peer, early)
     }
-    if (this.muted || this.videoTrack)
-      peer.send({ muted: this.muted, cam: this.videoTrack !== null })
+    if (this.muted || this.videoTrack || this.screen)
+      peer.send({
+        muted: this.muted,
+        cam: this.camFor(peer) !== null,
+        screen: this.screen !== null,
+      })
     return peer
   }
 
@@ -428,8 +545,8 @@ export class RtcManager {
       .catch(this.failed(user, peer, 'rtc restart'))
   }
 
-  // Maps the remote side's slots onto the stream we show and play: its mic
-  // and its camera.
+  // Maps the remote side's slots onto the streams we show and play: its mic
+  // and camera, and its screen with the screen's audio.
   private hear(user: string, peer: Peer) {
     const all = peer.pc.getTransceivers()
     const at = slotLayout(
@@ -441,13 +558,8 @@ export class RtcManager {
       return i === undefined ? null : (all[i]?.receiver.track ?? null)
     }
     const mic = pick('mic')
-    const wanted = [mic, pick('cam')].filter((t): t is MediaStreamTrack => t !== null)
-    if (!peer.stream) peer.stream = new MediaStream(wanted)
-    else {
-      const stream = peer.stream
-      for (const t of stream.getTracks()) if (!wanted.includes(t)) stream.removeTrack(t)
-      for (const t of wanted) if (!stream.getTracks().includes(t)) stream.addTrack(t)
-    }
+    peer.stream = syncStream(peer.stream, [mic, pick('cam')])
+    peer.screen = syncStream(peer.screen, [pick('screen'), pick('screenAudio')])
     if (mic && mic !== peer.heard) {
       peer.heard = mic
       this.detector.watch(user, new MediaStream([mic]))
@@ -480,15 +592,23 @@ export class RtcManager {
         t.direction = 'sendrecv'
         if (this.local && slot !== 'screenAudio') t.sender.setStreams?.(this.local)
       }
-      const track = this.trackFor(slot)
+      const track = this.trackFor(slot, peer)
       if (t.sender.track !== track) await t.sender.replaceTrack(track)
     }
+    if (peer.slots.screen?.sender.track) await tuneScreen(peer.slots.screen.sender)
     await this.placeVideo(peer)
   }
 
-  private status(peer: Peer, { muted, cam }: Status) {
-    if (muted !== undefined) peer.muted = muted
-    if (cam !== undefined) peer.camOn = cam
+  private status(peer: Peer, status: MediaStatus) {
+    const { muted, cam, screen } = mergeStatus(
+      { muted: peer.muted, cam: peer.camOn, screen: peer.screenOn },
+      status
+    )
+    if (screen && !peer.screenOn) peer.shareId = nextShareId('r')
+    if (!screen) peer.shareId = null
+    peer.muted = muted ?? false
+    peer.camOn = cam ?? false
+    peer.screenOn = screen ?? false
   }
 
   // scope is the channel or call the sender tagged the signal with. Signals
@@ -498,7 +618,8 @@ export class RtcManager {
   async onSignal(from: string, payload: RtcPayload, scope: SignalScope) {
     const { target } = this
     if (!target || !sameScope(target, scope) || from === this.me) return
-    const { description, candidate, muted, cam, restart, sid, rsid } = payload
+    const { description, candidate, restart, sid, rsid } = payload
+    const status = statusOf(payload)
     if (rsid !== undefined && rsid !== this.sid) return
     const retired = sid !== undefined && (this.retired.get(from)?.has(sid) ?? false)
     const negotiating = description !== undefined || candidate !== undefined
@@ -508,10 +629,7 @@ export class RtcManager {
       // Only negotiation creates a peer; a status update from someone we
       // don't have a peer for yet is kept until we do.
       if (!negotiating) {
-        const held = this.early.get(from) ?? {}
-        if (muted !== undefined) held.muted = muted
-        if (cam !== undefined) held.cam = cam
-        if (muted !== undefined || cam !== undefined) this.early.set(from, held)
+        if (status) this.early.set(from, mergeStatus(this.early.get(from) ?? {}, status))
         return
       }
       peer = this.connect(from, target)
@@ -522,9 +640,18 @@ export class RtcManager {
       this.retire(from, peer)
       peer = this.connect(from, target)
     }
+    const known = peer.remoteSid !== undefined
     peer.remoteSid = sid ?? null
-    if (muted !== undefined || cam !== undefined) {
-      this.status(peer, { muted, cam })
+    if (!known && peer.remoteSid === null && this.screen) {
+      if (!this.videoTrack) peer.send({ cam: true })
+      const p = peer
+      void (async () => {
+        await this.placeScreen(p)
+        await this.placeVideo(p)
+      })().catch(this.failed(from, p, 'rtc legacy share'))
+    }
+    if (status) {
+      this.status(peer, status)
       this.onChange()
     }
     if (restart && !peer.polite && Date.now() - peer.offeredAt > this.restartDebounceMs)

@@ -100,6 +100,19 @@ export const SLOT_KIND: Record<Slot, 'audio' | 'video'> = {
   screen: 'video',
 }
 
+// What goes out on the camera and screen slots. A legacy (0.2.0) peer only
+// ever shows the camera slot, so while the camera is off it gets the screen
+// there, as before screens had a slot of their own, and never on the screen
+// slot, which it can't show.
+export const videoPlan = <T>(
+  cam: T | null,
+  screen: T | null,
+  legacy: boolean
+): { cam: T | null; screen: T | null } => ({
+  cam: cam ?? (legacy ? screen : null),
+  screen: legacy ? null : screen,
+})
+
 // Which transceiver (by index) carries each slot. A connection negotiated
 // with the full layout uses it by position; a legacy one (a single audio and
 // at most one video, added as tracks) is read by kind order.
@@ -226,3 +239,24 @@ export class JoinTracker {
     this.last = []
   }
 }
+
+// What a peer tells us about its media in the small status signal. Fields a
+// signal leaves out keep their last value; old clients never send screen.
+export interface MediaStatus {
+  muted?: boolean
+  cam?: boolean
+  screen?: boolean
+}
+
+export function statusOf(payload: MediaStatus): MediaStatus | null {
+  const out: MediaStatus = {}
+  if (payload.muted !== undefined) out.muted = payload.muted
+  if (payload.cam !== undefined) out.cam = payload.cam
+  if (payload.screen !== undefined) out.screen = payload.screen
+  return Object.keys(out).length ? out : null
+}
+
+export const mergeStatus = (prev: MediaStatus, payload: MediaStatus): MediaStatus => ({
+  ...prev,
+  ...statusOf(payload),
+})

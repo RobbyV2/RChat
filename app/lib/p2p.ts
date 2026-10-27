@@ -3,6 +3,8 @@ import { backoffDelay } from './backoff'
 import { home, writeLocal } from './instances'
 import { SpeakingDetector } from './vad'
 import { mediaError } from './rules'
+import { slotLayout, videoPlan, type Slot } from './negotiation'
+import { captureScreen, nextShareId, syncStream, tuneScreen, type ScreenCapture } from './screen'
 
 export interface StoredFile {
   name: string
@@ -16,7 +18,7 @@ type WireMsg =
   | { type: 'get'; id: string }
   | { type: 'file'; id: string; name: string; mime: string; data: string }
   | { type: 'missing'; id: string }
-  | { type: 'cam'; on: boolean; share: boolean }
+  | { type: 'cam'; on: boolean; share: boolean; screen?: boolean }
 
 const LS_ID = 'rchat_peer_id'
 const LS_FILES = 'rchat_p2p_files'
@@ -47,7 +49,7 @@ export const base64ToBlob = (data: string, mime: string) => {
 export const servable = (file: StoredFile | null, now: number) =>
   file && (file.expires_at === null || file.expires_at > now) ? file : null
 
-class P2pManager {
+export class P2pManager {
   private peer: Peer | null = null
   private retry: ReturnType<typeof setTimeout> | null = null
   private attempt = 0
@@ -57,14 +59,29 @@ class P2pManager {
   private cached: Record<string, StoredFile> | null = null
   private id: string | null = null
   private placeholder: MediaStreamTrack | null = null
+  private screenPlaceholder: MediaStreamTrack | null = null
+  private silence: MediaStreamTrack | null = null
+  private silenceCtx: AudioContext | null = null
   private cameraTrack: MediaStreamTrack | null = null
-  private shareTrack: MediaStreamTrack | null = null
+  private screen: ScreenCapture | null = null
+  // Bumped whenever the call's media ends, so a camera or screen that was
+  // still being picked for an earlier call is dropped instead of joining
+  // the next one.
+  private gen = 0
+  // A 0.2.0 peer, told apart by its cam messages, which lack screen.
+  private remoteLegacy = false
   local: MediaStream | null = null
+  camView: MediaStream | null = null
+  screenView: MediaStream | null = null
+  shareId: string | null = null
   remote: MediaStream | null = null
+  remoteScreen: MediaStream | null = null
   muted = false
   camOn = false
   shareOn = false
   remoteCamOn = false
+  remoteScreenOn = false
+  remoteShareId: string | null = null
   localSpeaking = false
   remoteSpeaking = false
   private detector = new SpeakingDetector()
@@ -259,6 +276,11 @@ class P2pManager {
     return this.local !== null
   }
 
+  // The share's system audio was left out; see shareAudio.
+  get audioNote(): boolean {
+    return this.screen?.audioNote ?? false
+  }
+
   async startMedia(muted = false) {
     this.endMedia()
     const mic = await navigator.mediaDevices.getUserMedia({ audio: true }).catch((e: unknown) => {
@@ -273,23 +295,64 @@ class P2pManager {
     const placeholder = canvas.captureStream(1).getVideoTracks()[0] ?? null
     if (placeholder) placeholder.enabled = false
     this.placeholder = placeholder
-    this.local = new MediaStream(
-      placeholder ? [...mic.getAudioTracks(), placeholder] : mic.getAudioTracks()
-    )
+    this.screenPlaceholder = placeholder?.clone() ?? null
+    try {
+      const ctx = new AudioContext()
+      this.silenceCtx = ctx
+      this.silence = ctx.createMediaStreamDestination().stream.getAudioTracks()[0] ?? null
+    } catch {
+      this.silence = null
+    }
+    // Without a silent track the screen's audio would get no slot at all; a
+    // disabled copy of the mic sends silence just as well.
+    if (!this.silence) {
+      const quiet = mic.getAudioTracks()[0]?.clone() ?? null
+      if (quiet) quiet.enabled = false
+      this.silence = quiet
+    }
+    this.local = new MediaStream(mic.getAudioTracks())
     this.detector.watch('local', this.local)
     this.ensurePeer()
     this.onChange()
   }
 
-  private swapVideo(track: MediaStreamTrack | null) {
-    const { local } = this
-    if (!local) return
-    for (const t of local.getVideoTracks()) local.removeTrack(t)
-    if (track) local.addTrack(track)
-    const sender = this.media?.peerConnection
-      .getTransceivers()
-      .find(t => t.receiver.track.kind === 'video')?.sender
-    if (sender) void sender.replaceTrack(track)
+  // What we send on each slot. Every slot always carries a track (a disabled
+  // placeholder while off), so the call is negotiated once with all four: the
+  // mic, the screen's audio, the camera and the screen, in that kind order.
+  private trackFor(slot: Slot): MediaStreamTrack | null {
+    if (slot === 'mic') return this.local?.getAudioTracks()[0] ?? null
+    if (slot === 'screenAudio') return this.screen?.audio ?? this.silence
+    const plan = videoPlan(this.cameraTrack, this.screen?.video ?? null, this.remoteLegacy)
+    return plan[slot] ?? (slot === 'cam' ? this.placeholder : this.screenPlaceholder)
+  }
+
+  private callStream(): MediaStream {
+    const order: Slot[] = ['mic', 'screenAudio', 'cam', 'screen']
+    return new MediaStream(
+      order.map(s => this.trackFor(s)).filter((t): t is MediaStreamTrack => t !== null)
+    )
+  }
+
+  private transceivers(): Partial<Record<Slot, RTCRtpTransceiver>> {
+    const all = this.media?.peerConnection?.getTransceivers() ?? []
+    const at = slotLayout(
+      all.map(t => t.receiver.track.kind),
+      true
+    )
+    const out: Partial<Record<Slot, RTCRtpTransceiver>> = {}
+    for (const [slot, i] of Object.entries(at) as [Slot, number][]) out[slot] = all[i]
+    return out
+  }
+
+  private place(...slots: Slot[]) {
+    const at = this.transceivers()
+    for (const slot of slots) {
+      const sender = at[slot]?.sender
+      const track = this.trackFor(slot)
+      if (sender && sender.track !== track) void sender.replaceTrack(track).catch(() => {})
+      if (sender && slot === 'screen' && track && track === this.screen?.video)
+        void tuneScreen(sender)
+    }
   }
 
   async toggleCamera() {
@@ -297,9 +360,11 @@ class P2pManager {
     if (this.camOn) {
       this.cameraTrack?.stop()
       this.cameraTrack = null
+      this.camView = null
       this.camOn = false
-      if (!this.shareOn) this.swapVideo(this.placeholder)
+      this.place('cam')
     } else {
+      const gen = this.gen
       const cam = (
         await navigator.mediaDevices
           .getUserMedia({ video: { facingMode: 'user' } })
@@ -311,9 +376,14 @@ class P2pManager {
       cam.onended = () => {
         if (this.cameraTrack === cam && this.camOn) void this.toggleCamera()
       }
+      if (gen !== this.gen || !this.local) {
+        cam.stop()
+        return
+      }
       this.cameraTrack = cam
+      this.camView = new MediaStream([cam])
       this.camOn = true
-      if (!this.shareOn) this.swapVideo(cam)
+      this.place('cam')
     }
     this.sendCam()
     this.onChange()
@@ -322,88 +392,130 @@ class P2pManager {
   async toggleShare() {
     if (!this.local) return
     if (this.shareOn) return this.stopShare()
-    const track = (
-      await navigator.mediaDevices.getDisplayMedia({ video: true })
-    ).getVideoTracks()[0]
-    if (!track) throw new Error('No screen track available')
-    track.onended = () => {
-      if (this.shareTrack === track && this.shareOn) this.stopShare()
+    const gen = this.gen
+    const capture = await captureScreen()
+    if (!capture) return
+    if (gen !== this.gen || !this.local) {
+      capture.video.stop()
+      capture.audio?.stop()
+      return
     }
-    this.shareTrack = track
+    capture.video.onended = () => {
+      if (this.screen === capture) this.stopShare()
+    }
+    this.screen = capture
+    this.screenView = new MediaStream([capture.video])
+    this.shareId = nextShareId('p')
     this.shareOn = true
-    this.swapVideo(track)
+    this.place('cam', 'screen', 'screenAudio')
     this.sendCam()
     this.onChange()
   }
 
   private stopShare() {
-    this.shareTrack?.stop()
-    this.shareTrack = null
+    this.screen?.video.stop()
+    this.screen?.audio?.stop()
+    this.screen = null
+    this.screenView = null
+    this.shareId = null
     this.shareOn = false
-    this.swapVideo(this.camOn ? this.cameraTrack : this.placeholder)
+    this.place('cam', 'screen', 'screenAudio')
     this.sendCam()
     this.onChange()
   }
 
+  // on is whether the camera slot shows something: the camera, or for a
+  // 0.2.0 peer, which reads it as "show the video", the screen in its place.
   private sendCam() {
     const { control } = this
     if (control?.open)
-      void control.send({ type: 'cam', on: this.camOn || this.shareOn, share: this.shareOn })
+      void control.send({
+        type: 'cam',
+        on: this.camOn || (this.remoteLegacy && this.shareOn),
+        share: this.shareOn,
+        screen: this.shareOn,
+      })
+  }
+
+  private setLegacy(legacy: boolean) {
+    if (legacy === this.remoteLegacy) return
+    this.remoteLegacy = legacy
+    this.place('cam', 'screen')
+    if (this.shareOn) this.sendCam()
   }
 
   private attachControl(conn: DataConnection) {
     this.control?.close()
     this.control = conn
+    this.setLegacy(false)
     conn.on('open', () => this.sendCam())
     conn.on('data', d => {
       const msg = d as WireMsg
-      if (msg?.type !== 'cam') return
+      if (msg?.type !== 'cam' || this.control !== conn) return
+      this.setLegacy(!('screen' in msg))
+      const screen = msg.screen === true
+      if (screen && !this.remoteScreenOn) this.remoteShareId = nextShareId('p')
+      if (!screen) this.remoteShareId = null
       this.remoteCamOn = msg.on
+      this.remoteScreenOn = screen
       this.onChange()
     })
     conn.on('close', () => {
       if (this.control === conn) {
         this.control = null
         this.remoteCamOn = false
+        this.remoteScreenOn = false
+        this.remoteShareId = null
         this.onChange()
       }
     })
   }
 
   dial(peerId: string) {
-    const { local } = this
-    if (!local) return
+    if (!this.local) return
     const peer = this.ensurePeer(true)
-    this.attach(peer.call(peerId, local))
+    this.attach(peer.call(peerId, this.callStream()))
     this.attachControl(peer.connect(peerId, { label: 'call', reliable: true }))
   }
 
   private answer(call: MediaConnection) {
-    const { local } = this
-    if (!local) {
+    if (!this.local) {
       call.close()
       return
     }
-    call.answer(local)
+    call.answer(this.callStream())
     this.attach(call)
   }
 
   private attach(call: MediaConnection) {
     this.media?.close()
     this.media = call
-    call.on('stream', stream => {
-      this.remote = stream
-      this.detector.watch('remote', stream)
+    call.on('stream', () => {
+      if (this.media !== call) return
+      this.hear()
       this.onChange()
     })
     call.on('close', () => {
       if (this.media === call) {
         this.detector.unwatch('remote')
         this.remote = null
+        this.remoteScreen = null
         this.onChange()
       }
     })
     call.on('error', err => this.onError(`P2P call failed: ${err.type}`))
+  }
+
+  // The remote side's mic and camera make the stream we show and play; its
+  // screen and the screen's audio make the other one.
+  private hear() {
+    const at = this.transceivers()
+    const track = (slot: Slot) => at[slot]?.receiver.track ?? null
+    const mic = track('mic')
+    const fresh = !this.remote
+    this.remote = syncStream(this.remote, [mic, track('cam')])
+    this.remoteScreen = syncStream(this.remoteScreen, [track('screen'), track('screenAudio')])
+    if (fresh && mic) this.detector.watch('remote', new MediaStream([mic]))
   }
 
   setMuted(muted: boolean) {
@@ -414,23 +526,38 @@ class P2pManager {
   }
 
   endMedia() {
+    this.gen += 1
+    this.remoteLegacy = false
     this.detector.clear()
     this.media?.close()
     this.media = null
     this.control?.close()
     this.control = null
     this.remoteCamOn = false
+    this.remoteScreenOn = false
+    this.remoteShareId = null
     this.localSpeaking = false
     this.remoteSpeaking = false
     for (const track of this.local?.getTracks() ?? []) track.stop()
     this.placeholder?.stop()
     this.placeholder = null
+    this.screenPlaceholder?.stop()
+    this.screenPlaceholder = null
+    this.silence?.stop()
+    this.silence = null
+    void this.silenceCtx?.close().catch(() => {})
+    this.silenceCtx = null
     this.cameraTrack?.stop()
     this.cameraTrack = null
-    this.shareTrack?.stop()
-    this.shareTrack = null
+    this.screen?.video.stop()
+    this.screen?.audio?.stop()
+    this.screen = null
+    this.camView = null
+    this.screenView = null
+    this.shareId = null
     this.local = null
     this.remote = null
+    this.remoteScreen = null
     this.muted = false
     this.camOn = false
     this.shareOn = false

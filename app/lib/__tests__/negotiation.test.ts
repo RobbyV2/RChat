@@ -3,12 +3,15 @@ import {
   CandidateQueue,
   descriptionAction,
   JoinTracker,
+  mergeStatus,
+  statusOf,
   mayOffer,
   newSid,
   sameScope,
   Serial,
   sidAction,
   slotLayout,
+  videoPlan,
 } from '../negotiation'
 
 describe('signal scope', () => {
@@ -243,5 +246,66 @@ describe('join tracking', () => {
     j.refused()
     expect(j.state(1, true)).toBe('listed')
     expect(j.state(1, false)).toBe('absent')
+  })
+})
+
+describe('status signals', () => {
+  test('only the media fields of a payload are status', () => {
+    expect(statusOf({ screen: true, sid: 'a', candidate: {} } as never)).toEqual({ screen: true })
+    expect(statusOf({ sid: 'a' } as never)).toBe(null)
+    expect(statusOf({ muted: false, cam: false })).toEqual({ muted: false, cam: false })
+  })
+
+  test('a merge keeps fields the signal leaves out', () => {
+    const prev = { muted: true, cam: true, screen: false }
+    expect(mergeStatus(prev, { screen: true })).toEqual({ muted: true, cam: true, screen: true })
+    expect(mergeStatus(prev, { cam: false, screen: undefined })).toEqual({
+      muted: true,
+      cam: false,
+      screen: false,
+    })
+  })
+
+  test('an old client never sends screen, so its share stays a camera', () => {
+    expect(mergeStatus({}, { muted: false, cam: true })).toEqual({ muted: false, cam: true })
+  })
+})
+
+describe('p2p slots', () => {
+  // A P2P call sends its tracks as one stream in the order mic, screen
+  // audio, camera, screen, and reads every connection by kind order.
+  test('a new pair maps all four slots', () => {
+    expect(slotLayout(['audio', 'audio', 'video', 'video'], true)).toEqual({
+      mic: 0,
+      screenAudio: 1,
+      cam: 2,
+      screen: 3,
+    })
+  })
+
+  test("a 0.2.0 peer's two-track call maps to the mic and camera", () => {
+    expect(slotLayout(['audio', 'video'], true)).toEqual({ mic: 0, cam: 1 })
+    // Answering a 0.2.0 offer: the two offered m-lines first, then the
+    // tracks it didn't offer, which never get negotiated.
+    expect(slotLayout(['audio', 'video', 'audio', 'video'], true)).toEqual({
+      mic: 0,
+      cam: 1,
+      screenAudio: 2,
+      screen: 3,
+    })
+  })
+})
+
+describe('videoPlan', () => {
+  test('a current peer gets the camera and screen on their own slots', () => {
+    expect(videoPlan('cam', 'screen', false)).toEqual({ cam: 'cam', screen: 'screen' })
+    expect(videoPlan(null, 'screen', false)).toEqual({ cam: null, screen: 'screen' })
+  })
+
+  test('a legacy peer gets the screen once, on the camera slot while the camera is off', () => {
+    expect(videoPlan(null, 'screen', true)).toEqual({ cam: 'screen', screen: null })
+    expect(videoPlan('cam', 'screen', true)).toEqual({ cam: 'cam', screen: null })
+    expect(videoPlan('cam', null, true)).toEqual({ cam: 'cam', screen: null })
+    expect(videoPlan(null, null, true)).toEqual({ cam: null, screen: null })
   })
 })
