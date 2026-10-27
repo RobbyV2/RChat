@@ -147,6 +147,10 @@ export const avatarTriggerCls =
   'block cursor-pointer rounded-full outline-offset-2 hover:opacity-85 focus-visible:outline-2 focus-visible:outline-primary'
 export const nameTriggerCls =
   'cursor-pointer rounded-sm outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'
+export const messageToolbarCls =
+  'pointer-events-none absolute top-1 right-3 z-10 flex gap-0.5 rounded-lg border border-outline-variant bg-surface-container p-0.5 opacity-0 shadow-sm group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100'
+export const messageToolCls =
+  'rounded-md p-1.5 text-on-surface-variant hover:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-primary'
 
 export const authorKey = (messages: Message[], extra: string[] = []) =>
   [...new Set([...messages.map(m => m.author.username), ...extra])].sort().join('\n')
@@ -252,12 +256,12 @@ const MessageRow = memo(function MessageRow({
             </button>
           )}
         </div>
-        <div className="pointer-events-none absolute top-1 right-3 flex gap-1 opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+        <div className={messageToolbarCls}>
           {channel && (
             <button
               title="Reply in thread"
               onClick={() => void openThread(m)}
-              className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-primary"
+              className={`${messageToolCls} hover:text-primary`}
             >
               <MessageSquareText size={14} />
             </button>
@@ -266,7 +270,7 @@ const MessageRow = memo(function MessageRow({
             <button
               title="Delete message (hold Shift to skip confirmation)"
               onClick={e => confirmDeleteMessage(m.id, e.shiftKey)}
-              className="rounded-full bg-surface-container-high p-1.5 text-on-surface-variant hover:text-error"
+              className={`${messageToolCls} hover:text-error`}
             >
               <Trash2 size={14} />
             </button>
