@@ -16,6 +16,20 @@ Anonymous chat with a Discord-style layout and Google Material 3 dark theme. Ser
 
 Browser support: current Chromium and Firefox, and Safari and iOS 16.4 or newer (message rendering needs regular-expression lookbehind, which older Safari lacks).
 
+## Features
+
+- Servers with channels, threads, roles, voice, attachments and link previews; direct messages and calls.
+- Invite links: pasting one shows a join card (server icon, message preview, banned or already-joined states, an optional password in the link or a password prompt), and opening one shows a full invite page.
+- Mini profiles: click any avatar or name for roles with their colors, banner, moderation controls you're allowed to use, and a quick DM box.
+- Server bans, and a kick/ban hierarchy: moderators can only remove members whose permissions are a strict subset of theirs.
+- Server password changes can keep everyone or remove everyone you're allowed to moderate, with a separate choice for guest access.
+- Account password changes, switching between a text password and a 7-word password either way.
+- Hold-and-drag reordering for servers and DMs, pinned DMs, and server folders (drop one server onto another).
+- Appear offline, streamer mode, and per-target profanity filter controls for the site admin.
+- Lazy-loaded server, DM, member and message lists, and indexed message search with date filters.
+- Horizontal scaling: service roles, a shared Redis-protocol bus, Postgres, and Compose, Kubernetes and nginx references (see Scaling).
+- Instance identity and discovery as groundwork for a multi-instance client (see Instances and identity).
+
 ## Setup
 
 Prerequisites: Rust (stable), Bun, wasm-pack, and the just command runner.
@@ -161,7 +175,7 @@ These are intentional per the project spec. Site-level protections exist (per-IP
 
 - No password rules. Any non-empty password is accepted, including a single character. There is no strength meter and no minimum length.
 - Deterministic word passwords. As an alternative to text passwords, each username maps to a fixed set of 20 words: sha256 of the lowercase username seeds a ChaCha8 RNG that samples the `memorable-wordlist` crate. The user picks 7 of those 20 in order. Anyone can request any username's word set at `GET /api/auth/words/{username}`; the secret is the ordered selection, not the set.
-- Unlimited but throttled logins. There is no attempt cap and no lockout on failures. Per username: attempts must be 3 seconds apart, and more than 1000 attempts in one day lock logins to the account until the next day (attempts rejected by the 3 second gap do not count). Changing the password from a signed-in session has its own throttle, counted per session token (3 seconds apart, 50 wrong current passwords a day pause changes from that session only), so nobody can block a password change by failing logins, and someone holding a stolen token cannot block the owner's other sessions.
+- Throttled logins instead of a short lockout. A few wrong passwords never lock an account. Per username: attempts must be 3 seconds apart, and more than 1000 attempts in one day lock logins to the account until the next day (attempts rejected by the 3 second gap do not count). Changing the password from a signed-in session has its own throttle, counted per session token (3 seconds apart, 50 wrong current passwords a day pause changes from that session only), so nobody can block a password change by failing logins, and someone holding a stolen token cannot block the owner's other sessions.
 - Anonymous accounts. No email, no phone, no recovery flow. Usernames accept any characters. A lost password means a lost account.
 - Unencrypted single sqlite file by default. All data, including uploaded file blobs, lives in one unencrypted `.db` file (or a postgres database via `DATABASE_URL`). Anyone with the file has everything.
 - Public identifiers. Lowercased usernames are user IDs. Lowercased server names are server IDs and also the invite codes; knowing a server's name is sufficient to join or view it.
