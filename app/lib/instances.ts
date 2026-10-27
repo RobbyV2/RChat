@@ -363,10 +363,15 @@ function write(store: StorageLike | null, key: string, value: string | null) {
   try {
     if (value === null) store?.removeItem(key)
     else store?.setItem(key, value)
+    return true
   } catch (e) {
     console.warn('localStorage write failed', key, e)
+    return false
   }
 }
+
+export const writeLocal = (key: string, value: string | null) =>
+  write(typeof localStorage === 'undefined' ? null : localStorage, key, value)
 
 export function readKnown(store: StorageLike | null = storage()): Record<string, InstanceInfo> {
   try {

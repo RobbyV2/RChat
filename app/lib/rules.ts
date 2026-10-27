@@ -47,7 +47,7 @@ export const passwordPrompt = (
       value: 'keep',
       label: 'Keep everyone',
       detail: changed
-        ? 'Current members stay, and guests who entered the old password keep access.'
+        ? 'Current members stay. Guests who entered the old password lose access unless you also keep guest access.'
         : 'Current members stay.',
       danger: false,
     },

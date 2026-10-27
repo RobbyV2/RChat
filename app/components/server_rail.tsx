@@ -1,7 +1,15 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { FolderOpen, LogOut, MessageCircle, Plus, Settings, Shield } from 'lucide-react'
+import {
+  Folder as FolderIcon,
+  FolderOpen,
+  LogOut,
+  MessageCircle,
+  Plus,
+  Settings,
+  Shield,
+} from 'lucide-react'
 import {
   dmsUnread,
   folderLabel,
@@ -177,8 +185,9 @@ function FolderEntry({
   const openContextMenu = useStore(s => s.openContextMenu)
   const unread = useStore(s => !folder.open && servers.some(x => serverUnread(s, x.name)))
   const key = folderKey(folder.id)
+  const label = useStore(s => (s.streamer ? folder.name || 'Folder' : folderLabel(s, folder)))
   const header = {
-    title: folderLabel(useStore.getState(), folder),
+    title: label,
     'aria-expanded': folder.open,
     'data-drop-onto': 'Add to folder',
     onClick: () => toggleFolder(folder.id),
@@ -206,6 +215,12 @@ function FolderEntry({
           {servers.slice(0, 4).map(s => (
             <MiniIcon key={s.name} server={s} />
           ))}
+        </span>
+        <span
+          aria-hidden
+          className="absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-primary text-on-primary"
+        >
+          <FolderIcon size={9} strokeWidth={2.5} />
         </span>
         {unread && <UnreadDot />}
       </button>

@@ -23,6 +23,8 @@ const JWKS_MAX_BYTES: usize = 64 * 1024;
 const LEEWAY_SECS: i64 = 30;
 const CACHE_MAX: usize = 1024;
 const JTI_MAX: usize = 128;
+const SEEN_MAX: usize = 10_000;
+const SEEN_PER_ISSUER: usize = 2_000;
 
 pub fn new_seed() -> String {
     let mut seed = [0u8; 32];
@@ -231,6 +233,7 @@ pub enum VerifyError {
     Nonce,
     Subject,
     Lifetime,
+    Replay,
     Fetch(String),
 }
 
@@ -247,6 +250,7 @@ impl std::fmt::Display for VerifyError {
             VerifyError::Nonce => write!(f, "wrong nonce"),
             VerifyError::Subject => write!(f, "subject is not on the issuer's host"),
             VerifyError::Lifetime => write!(f, "assertion lifetime too long"),
+            VerifyError::Replay => write!(f, "assertion already used"),
             VerifyError::Fetch(e) => write!(f, "could not fetch issuer keys: {e}"),
         }
     }
@@ -401,7 +405,9 @@ pub fn verify_with(
         .and_then(host_of)
         .ok_or(VerifyError::Issuer)?;
     match split_qualified(&claims.sub) {
-        Some((_, host)) if host.eq_ignore_ascii_case(&issuer_host) => Ok(claims),
+        Some((name, host)) if !name.contains('@') && host.eq_ignore_ascii_case(&issuer_host) => {
+            Ok(claims)
+        }
         _ => Err(VerifyError::Subject),
     }
 }
@@ -426,6 +432,7 @@ pub struct Verifier {
     ttl: Duration,
     allow_local: bool,
     cache: Mutex<HashMap<String, Cached>>,
+    seen: Mutex<HashMap<String, HashMap<String, i64>>>,
 }
 
 impl Default for Verifier {
@@ -458,6 +465,7 @@ impl Verifier {
             ttl,
             allow_local: false,
             cache: Mutex::new(HashMap::new()),
+            seen: Mutex::new(HashMap::new()),
         }
     }
 
@@ -555,7 +563,49 @@ impl Verifier {
         }
     }
 
+    fn first_use(&self, claims: &Claims, now: i64) -> Result<(), VerifyError> {
+        let mut seen = self.seen.lock().map_err(|_| VerifyError::Replay)?;
+        let live = |exp: &i64| *exp + LEEWAY_SECS >= now;
+        if seen
+            .get(&claims.iss)
+            .and_then(|jtis| jtis.get(&claims.jti))
+            .is_some_and(live)
+        {
+            return Err(VerifyError::Replay);
+        }
+        let full = |seen: &HashMap<String, HashMap<String, i64>>| {
+            seen.values().map(HashMap::len).sum::<usize>() >= SEEN_MAX
+                || seen
+                    .get(&claims.iss)
+                    .is_some_and(|jtis| jtis.len() >= SEEN_PER_ISSUER)
+        };
+        if full(&seen) {
+            for jtis in seen.values_mut() {
+                jtis.retain(|_, exp| live(exp));
+            }
+            seen.retain(|_, jtis| !jtis.is_empty());
+        }
+        if full(&seen) {
+            return Err(VerifyError::Replay);
+        }
+        seen.entry(claims.iss.clone())
+            .or_default()
+            .insert(claims.jti.clone(), claims.exp);
+        Ok(())
+    }
+
     pub async fn verify(
+        &self,
+        token: &str,
+        aud: &str,
+        nonce: Option<&str>,
+    ) -> Result<Claims, VerifyError> {
+        let claims = self.verify_signed(token, aud, nonce).await?;
+        self.first_use(&claims, crate::db::now())?;
+        Ok(claims)
+    }
+
+    async fn verify_signed(
         &self,
         token: &str,
         aud: &str,
@@ -759,6 +809,13 @@ mod tests {
             verify_with(&ring.sign(&no_jti).unwrap(), &jwks, ISS, AUD, None),
             Err(VerifyError::Malformed)
         );
+        let doubled = ring
+            .sign(&claims(ISS, "a@b@chat.example", AUD, 60, None))
+            .unwrap();
+        assert_eq!(
+            verify_with(&doubled, &jwks, ISS, AUD, None),
+            Err(VerifyError::Subject)
+        );
         let foreign = ring
             .sign(&claims(ISS, "alice@evil.example", AUD, 60, None))
             .unwrap();
@@ -954,6 +1011,69 @@ mod tests {
             verifier.cached(url.as_str(), JWKS_TTL),
             Some(Err(VerifyError::Fetch(_)))
         ));
+    }
+
+    #[tokio::test]
+    async fn verifier_rejects_replayed_assertions() {
+        let ring = Keyring::parse(&new_seed()).unwrap();
+        let verifier = Verifier::default();
+        let url = jwks_url(ISS, false).unwrap();
+        verifier.remember(&url, &Ok(ring.jwks()));
+        let token = ring.sign(&claims(ISS, SUB, AUD, 60, None)).unwrap();
+        assert!(verifier.verify(&token, AUD, None).await.is_ok());
+        assert_eq!(
+            verifier.verify(&token, AUD, None).await,
+            Err(VerifyError::Replay)
+        );
+        let fresh = ring.sign(&claims(ISS, SUB, AUD, 60, None)).unwrap();
+        assert!(verifier.verify(&fresh, AUD, None).await.is_ok());
+        let now = crate::db::now();
+        let first = claims(ISS, SUB, AUD, 60, None);
+        let other = |n: usize, iss: &str| {
+            let mut c = claims(iss, SUB, AUD, 60, None);
+            c.jti = format!("j{n}");
+            c
+        };
+        for n in 0..SEEN_PER_ISSUER - 2 {
+            assert!(verifier.first_use(&other(n, ISS), now).is_ok());
+        }
+        assert_eq!(
+            verifier.first_use(&other(SEEN_PER_ISSUER, ISS), now),
+            Err(VerifyError::Replay),
+            "a full issuer fails closed"
+        );
+        assert_eq!(
+            verifier.first_use(&first, now),
+            Err(VerifyError::Replay),
+            "old entries are never evicted while live"
+        );
+        let elsewhere = "https://b.example";
+        assert!(verifier.first_use(&other(0, elsewhere), now).is_ok());
+        let later = now + 60 + LEEWAY_SECS + 1;
+        assert!(
+            verifier
+                .first_use(&other(SEEN_PER_ISSUER, ISS), later)
+                .is_ok()
+        );
+        let left: usize = verifier
+            .seen
+            .lock()
+            .unwrap()
+            .values()
+            .map(HashMap::len)
+            .sum();
+        assert_eq!(left, 1, "expired entries are dropped once full");
+        let busy = Verifier::default();
+        for i in 0..SEEN_MAX / SEEN_PER_ISSUER {
+            let iss = format!("https://i{i}.example");
+            for n in 0..SEEN_PER_ISSUER {
+                assert!(busy.first_use(&other(n, &iss), now).is_ok());
+            }
+        }
+        assert_eq!(
+            busy.first_use(&other(0, elsewhere), now),
+            Err(VerifyError::Replay)
+        );
     }
 
     #[test]

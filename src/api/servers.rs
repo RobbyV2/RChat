@@ -55,6 +55,8 @@ pub struct ServerPatch {
     password: Option<String>,
     #[serde(default)]
     members: PasswordMembers,
+    #[serde(default)]
+    keep_guests: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -639,7 +641,7 @@ pub(crate) async fn server_roles(db: &Db, server: &str) -> Result<Vec<Role>, Api
     Ok(roles)
 }
 
-async fn visible_restricted(
+pub(crate) async fn visible_restricted(
     db: &Db,
     server: &str,
     viewer: Option<&User>,
@@ -651,18 +653,10 @@ async fn visible_restricted(
     if restricted.is_empty() {
         return Ok(HashSet::new());
     }
-    if effective_perms(db, server, user).await? & Perm::ManageChannels as i64 != 0 {
+    if crate::db::manages_channels(db, server, user).await? {
         return Ok(restricted.iter().copied().collect());
     }
-    let mut subjects = vec![format!("u:{}", user.username)];
-    for r in &sqlx::query("SELECT role_id FROM user_roles WHERE server = $1 AND username = $2")
-        .bind(server)
-        .bind(&user.username)
-        .fetch_all(db)
-        .await?
-    {
-        subjects.push(format!("r:{}", r.try_get::<i64, _>(0)?));
-    }
+    let subjects = crate::db::perm_subjects(db, Some(server), &user.username).await?;
     let sql = format!(
         "SELECT DISTINCT cp.channel_id FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1 AND cp.can_view != 0 AND cp.subject IN ({})",
         placeholders(2, subjects.len())
@@ -1469,7 +1463,7 @@ pub(crate) async fn leave_server(
     }
 }
 
-#[utoipa::path(patch, path = "/api/servers/{name}", params(("name" = String, Path)), request_body = ServerPatch, responses((status = 200, description = "Server renamed or password set, changed or cleared (an empty password clears it). `members` only applies when `password` is present: `keep` (default) keeps every member and, unless the password is cleared, existing guest grants; `remove` removes every other member whose server permissions are a strict subset of yours (site admins remove everyone else) as if kicked, and revokes all guest grants. Returns the server with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated), (status = 403, description = "Missing permission: changing the server needs Delete server, and `remove` also needs Kick; the rchat server is protected")), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/servers/{name}", params(("name" = String, Path)), request_body = ServerPatch, responses((status = 200, description = "Server renamed or password set, changed or cleared (an empty password clears it). `members` only applies when `password` is present: `keep` (default) keeps every member; `remove` removes every other member whose server permissions are a strict subset of yours (site admins remove everyone else) as if kicked. Setting, changing or clearing the password revokes every guest grant unless `keep_guests` is true together with `members: keep`. Returns the server with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated), (status = 403, description = "Missing permission: changing the server needs Delete server, and `remove` also needs Kick; the rchat server is protected")), security(("bearer" = [])))]
 pub(crate) async fn update_server(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1484,6 +1478,7 @@ pub(crate) async fn update_server(
         name,
         password,
         members,
+        keep_guests,
     } = req;
     let purge = password.is_some() && members == PasswordMembers::Remove;
     if purge {
@@ -1516,7 +1511,7 @@ pub(crate) async fn update_server(
             other_members(&mut tx, &new_key, &user.username).await?,
         ),
     };
-    if purge || matches!(password_hash, Some(None)) {
+    if password_hash.is_some() && !(keep_guests && members == PasswordMembers::Keep) {
         sqlx::query("DELETE FROM guest_grants WHERE server = $1")
             .bind(&new_key)
             .execute(&mut *tx)
@@ -1939,8 +1934,12 @@ pub(crate) async fn ban_member(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    if removed > 0 {
-        announce_kick(&state.hub, &key, &target, true);
+    match removed {
+        0 => state.hub.broadcast(WsEvent::ServerBanned {
+            server: key.clone(),
+            username: target.clone(),
+        }),
+        _ => announce_kick(&state.hub, &key, &target, true),
     }
     for (cid, users) in state.hub.rooms_in(&key, None) {
         if users.contains(&target) {
@@ -2591,6 +2590,7 @@ mod tests {
                 name: Some(name.to_string()),
                 password: None,
                 members: PasswordMembers::Keep,
+                keep_guests: false,
             }),
         )
         .await
@@ -3476,6 +3476,7 @@ mod tests {
                 name: None,
                 password: Some(password.to_string()),
                 members: PasswordMembers::Keep,
+                keep_guests: false,
             }),
         )
         .await
@@ -3491,6 +3492,55 @@ mod tests {
             .await
             .expect("insert grant");
         grant
+    }
+
+    #[tokio::test]
+    async fn banned_users_cannot_read_an_open_server() {
+        let (state, path) = temp_state("ban_hides").await;
+        let db = &state.db;
+        let _ = make_server(&state, "Club").await.expect("club");
+        add_user(db, "carol", "Carol").await;
+        add_user(db, "dave", "Dave").await;
+        let mut rx = state.hub.subscribe();
+        ban(&state, mem_user("alice", false), "club", "carol")
+            .await
+            .expect("ban carol");
+        let mut notices = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                WsEvent::ServerBanned { server, username } => notices.push((server, username)),
+                WsEvent::MemberKicked { .. } => panic!("carol was never a member"),
+                _ => {}
+            }
+        }
+        assert_eq!(notices, vec![("club".to_string(), "carol".to_string())]);
+        let view = |who: &str| {
+            get_server(
+                State(state.clone()),
+                MaybeAuthed(Some(mem_user(who, false))),
+                HeaderMap::new(),
+                Path("club".to_string()),
+            )
+        };
+        assert!(matches!(
+            view("carol").await,
+            Err(ApiError(StatusCode::FORBIDDEN, m)) if m == "You are banned from this server"
+        ));
+        assert!(view("dave").await.is_ok());
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'club'")
+            .fetch_one(db)
+            .await
+            .expect("channel")
+            .try_get(0)
+            .expect("id");
+        let carol = mem_user("carol", false);
+        let lite = require_server(db, "club").await.expect("lite");
+        assert!(matches!(
+            require_server_view(db, &HeaderMap::new(), &lite, Some(&carol)).await,
+            Err(ApiError(StatusCode::FORBIDDEN, _))
+        ));
+        assert!(crate::db::channel_viewable(db, "club", cid, Some("dave")).await);
+        done(state, path).await;
     }
 
     #[tokio::test]
@@ -3751,6 +3801,18 @@ mod tests {
         password: Option<&str>,
         members: PasswordMembers,
     ) -> Result<ServerUpdated, ApiError> {
+        change_keeping(state, actor, server, name, password, members, false).await
+    }
+
+    async fn change_keeping(
+        state: &AppState,
+        actor: User,
+        server: &str,
+        name: Option<&str>,
+        password: Option<&str>,
+        members: PasswordMembers,
+        keep_guests: bool,
+    ) -> Result<ServerUpdated, ApiError> {
         update_server(
             State(state.clone()),
             Authed(actor),
@@ -3759,6 +3821,7 @@ mod tests {
                 name: name.map(str::to_string),
                 password: password.map(str::to_string),
                 members,
+                keep_guests,
             }),
         )
         .await
@@ -3848,18 +3911,45 @@ mod tests {
             member_names(db, "club").await,
             ["alice", "bob", "carol", "dave", "erin"]
         );
+        assert!(!grant_valid(&state, "club", &grant).await);
+        let grant = insert_grant(db, "club").await;
+        let _ = change_keeping(
+            &state,
+            alice(),
+            "club",
+            None,
+            Some("new2"),
+            PasswordMembers::Keep,
+            true,
+        )
+        .await
+        .expect("keep everyone and guests");
+        assert!(grant_valid(&state, "club", &grant).await);
+        let renamed = change_keeping(
+            &state,
+            alice(),
+            "club",
+            Some("Club"),
+            None,
+            PasswordMembers::Keep,
+            false,
+        )
+        .await
+        .expect("rename only");
+        assert!(renamed.server.has_password);
         assert!(grant_valid(&state, "club", &grant).await);
         assert!(kicks(&mut rx).is_empty());
         let _ = state.hub.voice_join("bob", 7, "club", cid).await;
         state.hub.set_viewing("carol", 8, None, Some("club"));
         assert!(state.hub.is_online("club", "carol"));
-        let removed = change_password(
+        let removed = change_keeping(
             &state,
             alice(),
             "club",
             None,
             Some("newer"),
             PasswordMembers::Remove,
+            true,
         )
         .await
         .expect("remove everyone");
@@ -4000,7 +4090,8 @@ mod tests {
         .await
         .expect("delete-server admin keeps everyone");
         assert_eq!((kept.removed, kept.kept), (0, 6));
-        assert!(grant_valid(&state, "club", &grant).await);
+        assert!(!grant_valid(&state, "club", &grant).await);
+        let grant = insert_grant(db, "club").await;
         let narrow = change_password(
             &state,
             mem_user("carol", false),

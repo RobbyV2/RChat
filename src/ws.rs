@@ -46,6 +46,10 @@ pub enum CallKind {
 
 const P2P_IDS_CAP: usize = 256;
 const P2P_ID_MAX: usize = 128;
+const P2P_WHO_CAP: usize = 64;
+const P2P_WHO_EVERY: Duration = Duration::from_secs(2);
+const P2P_WHO_TTL: Duration = Duration::from_secs(10);
+const P2P_WHO_CACHE_MAX: usize = 1024;
 const SUBSCRIBE_CAP: usize = 100;
 const FRAME_MAX: usize = 64 * 1024;
 const SIGNAL_MAX: usize = 32 * 1024;
@@ -352,10 +356,20 @@ pub enum WsEvent {
         server: String,
         username: String,
         online: bool,
+        online_count: i64,
     },
     PresenceMode {
         username: String,
         appear_offline: bool,
+    },
+    PresenceSnapshot {
+        server: String,
+        online: Vec<String>,
+        online_count: i64,
+    },
+    ServerBanned {
+        server: String,
+        username: String,
     },
     ReadUpdated {
         username: String,
@@ -782,6 +796,11 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 usernames: gone,
             })
         }
+        WsEvent::ServerBanned { server, username } => match is_banned(db, &server, &username).await
+        {
+            Ok(true) => Some(WsEvent::ServerBanned { server, username }),
+            Ok(false) | Err(_) => None,
+        },
         WsEvent::PresenceMode {
             username,
             appear_offline: _,
@@ -965,6 +984,24 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             {
                 return Err("You are banned from this server".to_string());
             }
+            match server_password_hash(&state.read(), &server)
+                .await
+                .map_err(db_err)?
+            {
+                None => return Err("Channel not found".to_string()),
+                Some(Some(hash)) if hash == crate::db::PURGING_HASH => {
+                    return Err("Channel not found".to_string());
+                }
+                Some(Some(_)) => {
+                    if !is_member(&state.read(), &server, user)
+                        .await
+                        .map_err(db_err)?
+                    {
+                        return Err("Join this server to use voice".to_string());
+                    }
+                }
+                Some(None) => {}
+            }
             if !channel_viewable(&state.read(), &server, channel_id, Some(user)).await {
                 return Err("Not allowed".to_string());
             }
@@ -1074,6 +1111,250 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
     }
 }
 
+struct Who {
+    pace: Pace,
+    pending: Vec<String>,
+    peers: HashMap<String, (Instant, Option<Peer>)>,
+    media: HashMap<(String, String), (Instant, bool)>,
+}
+
+#[derive(Clone)]
+struct Peer {
+    offline: bool,
+    dm: bool,
+    servers: Vec<String>,
+}
+
+impl Who {
+    fn new() -> Who {
+        Who {
+            pace: Pace::new(P2P_WHO_EVERY),
+            pending: Vec::new(),
+            peers: HashMap::new(),
+            media: HashMap::new(),
+        }
+    }
+
+    fn ask(&mut self, hosters: Vec<String>) {
+        for hoster in hosters {
+            let hoster = hoster.to_lowercase();
+            if self.pending.len() >= P2P_WHO_CAP {
+                break;
+            }
+            if !self.pending.contains(&hoster) {
+                self.pending.push(hoster);
+            }
+        }
+    }
+
+    fn forget(&mut self) {
+        self.peers.clear();
+        self.media.clear();
+    }
+
+    fn trim(&mut self, now: Instant) {
+        if self.peers.len() > P2P_WHO_CACHE_MAX {
+            self.peers.retain(|_, (at, _)| now < *at + P2P_WHO_TTL);
+        }
+        if self.peers.len() > P2P_WHO_CACHE_MAX {
+            self.peers.clear();
+        }
+        if self.media.len() > P2P_WHO_CACHE_MAX {
+            self.media.retain(|_, (at, _)| now < *at + P2P_WHO_TTL);
+        }
+        if self.media.len() > P2P_WHO_CACHE_MAX {
+            self.media.clear();
+        }
+    }
+}
+
+async fn appear_offline(db: &Db, hoster: &str) -> sqlx::Result<Option<bool>> {
+    sqlx::query("SELECT appear_offline FROM users WHERE username = $1")
+        .bind(hoster)
+        .fetch_optional(db)
+        .await?
+        .map(|row| row.try_get::<i64, _>(0).map(|v| v != 0))
+        .transpose()
+}
+
+async fn peer_facts(db: &Db, me: &str, hoster: &str) -> sqlx::Result<Option<Peer>> {
+    let Some(offline) = appear_offline(db, hoster).await? else {
+        return Ok(None);
+    };
+    let dm = sqlx::query(
+        "SELECT 1 FROM dms WHERE (user_a = $1 AND user_b = $2) OR (user_a = $2 AND user_b = $1)",
+    )
+    .bind(me)
+    .bind(hoster)
+    .fetch_optional(db)
+    .await?
+    .is_some();
+    let servers = member_servers_of(db, hoster).await?.into_iter().collect();
+    Ok(Some(Peer {
+        offline,
+        dm,
+        servers,
+    }))
+}
+
+async fn p2p_visible(
+    state: &AppState,
+    access: &mut Access,
+    me: &str,
+    hoster: &str,
+) -> Option<(String, Vec<String>)> {
+    let (peer_id, ids) = state.hub.p2p_of(hoster)?;
+    if me == hoster {
+        return Some((peer_id, ids));
+    }
+    let db = state.read();
+    let calling = state.hub.in_p2p_call(me, hoster);
+    let now = Instant::now();
+    let peer = match access.who.peers.get(hoster) {
+        Some((at, peer)) if now < *at + P2P_WHO_TTL => match peer.clone() {
+            Some(peer) => Some(Peer {
+                offline: appear_offline(&db, hoster).await.ok()??,
+                ..peer
+            }),
+            None => None,
+        },
+        Some(_) | None => {
+            let peer = peer_facts(&db, me, hoster).await.ok()?;
+            access.who.trim(now);
+            access
+                .who
+                .peers
+                .insert(hoster.to_string(), (now, peer.clone()));
+            peer
+        }
+    }?;
+    if peer.offline && !calling {
+        return None;
+    }
+    let shared = peer.dm
+        || calling
+        || peer
+            .servers
+            .iter()
+            .any(|s| access.member_servers.contains(s) || access.subs.contains(s));
+    if !shared {
+        return None;
+    }
+    Some((
+        peer_id,
+        readable_p2p_ids(&db, access, me, hoster, ids).await,
+    ))
+}
+
+async fn readable_p2p_ids(
+    db: &Db,
+    access: &mut Access,
+    me: &str,
+    hoster: &str,
+    ids: Vec<String>,
+) -> Vec<String> {
+    let now = Instant::now();
+    let cached = |access: &Access, id: &String| {
+        access
+            .who
+            .media
+            .get(&(hoster.to_string(), id.clone()))
+            .filter(|(at, _)| now < *at + P2P_WHO_TTL)
+            .map(|(_, readable)| *readable)
+    };
+    let unknown: Vec<String> = ids
+        .iter()
+        .filter(|id| cached(access, id).is_none())
+        .cloned()
+        .collect();
+    if !unknown.is_empty() {
+        let found = lookup_p2p_ids(db, access, me, hoster, &unknown).await;
+        access.who.trim(now);
+        for id in unknown {
+            let readable = found.contains(&id);
+            access
+                .who
+                .media
+                .insert((hoster.to_string(), id), (now, readable));
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    for id in ids {
+        if cached(access, &id) == Some(true) && !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    out
+}
+
+async fn lookup_p2p_ids(
+    db: &Db,
+    access: &Access,
+    me: &str,
+    hoster: &str,
+    ids: &[String],
+) -> Vec<String> {
+    let sql = format!(
+        "SELECT m.media_id, m.channel_id, c.server, d.user_a, d.user_b FROM messages m LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN dms d ON d.id = m.dm_id WHERE m.media_kind = 'p2p' AND m.media_removed = 0 AND m.media_hoster = $1 AND m.media_id IN ({})",
+        (2..ids.len() + 2)
+            .map(|n| format!("${n}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(hoster);
+    for id in ids {
+        query = query.bind(id);
+    }
+    let Ok(rows) = query.fetch_all(db).await else {
+        return Vec::new();
+    };
+    let mut servers: HashMap<String, bool> = HashMap::new();
+    let mut channels: HashMap<i64, bool> = HashMap::new();
+    let mut out: Vec<String> = Vec::new();
+    for r in &rows {
+        let Ok(id) = r.try_get::<String, _>(0) else {
+            continue;
+        };
+        if out.contains(&id) {
+            continue;
+        }
+        let channel: Option<i64> = r.try_get(1).ok().flatten();
+        let server: Option<String> = r.try_get(2).ok().flatten();
+        let pair: (Option<String>, Option<String>) =
+            (r.try_get(3).ok().flatten(), r.try_get(4).ok().flatten());
+        let readable = match (channel, server, pair) {
+            (Some(cid), Some(server), _) => {
+                let open = match servers.get(&server) {
+                    Some(open) => *open,
+                    None => {
+                        let open = authed_sub_ok(db, &server, me, access.site_admin)
+                            .await
+                            .unwrap_or(false);
+                        servers.insert(server.clone(), open);
+                        open
+                    }
+                };
+                let view = match (channels.get(&cid), access.viewable.get(&cid)) {
+                    (Some(view), _) => *view,
+                    (None, Some((owner, view))) => *view && *owner == server,
+                    (None, None) => {
+                        let view = channel_viewable(db, &server, cid, Some(me)).await;
+                        channels.insert(cid, view);
+                        view
+                    }
+                };
+                open && view
+            }
+            (_, _, (Some(a), Some(b))) => a == me || b == me,
+            (_, _, _) => false,
+        };
+        if readable {
+            out.push(id);
+        }
+    }
+    out
+}
+
 type P2pScope = (Vec<String>, Vec<String>);
 
 async fn p2p_scope(db: &Db, user: &str) -> P2pScope {
@@ -1128,6 +1409,9 @@ async fn guest_sub_ok(db: &Db, server: &str, grant: Option<&str>) -> sqlx::Resul
 }
 
 async fn authed_sub_ok(db: &Db, server: &str, user: &str, site_admin: bool) -> sqlx::Result<bool> {
+    if is_banned(db, server, user).await? {
+        return Ok(false);
+    }
     match server_password_hash(db, server).await? {
         None => Ok(false),
         Some(None) => Ok(true),
@@ -1293,6 +1577,8 @@ struct Access {
     subs: HashSet<String>,
     grants: HashMap<String, String>,
     viewing: Option<String>,
+    looking: Option<String>,
+    peek: Option<String>,
     hidden: bool,
     shown: Option<String>,
     dark: bool,
@@ -1300,6 +1586,7 @@ struct Access {
     hosting: Option<(String, Vec<String>)>,
     hosted_scope: Option<(Instant, P2pScope)>,
     hosting_pace: Pace,
+    who: Who,
     viewable: Viewable,
     retry: Retry,
     topics_dirty: bool,
@@ -1315,6 +1602,8 @@ impl Access {
             subs: HashSet::new(),
             grants: HashMap::new(),
             viewing: None,
+            looking: None,
+            peek: None,
             hidden: false,
             shown: None,
             dark: false,
@@ -1322,6 +1611,7 @@ impl Access {
             hosting: None,
             hosted_scope: None,
             hosting_pace: Pace::new(P2P_ANNOUNCE_EVERY),
+            who: Who::new(),
             viewable: HashMap::new(),
             retry: Retry::new(),
             topics_dirty: false,
@@ -1367,6 +1657,28 @@ impl Access {
         self.topics_dirty |= self.viewing != target;
         self.viewing = target;
         self.sync(hub, conn);
+    }
+
+    fn set_peek(&mut self, server: Option<String>) {
+        if self.peek == server {
+            return;
+        }
+        if let Some(old) = self.peek.take() {
+            self.subs.remove(&old);
+            self.topics_dirty = true;
+        }
+        if let Some(server) = server
+            && self.subs.insert(server.clone())
+        {
+            self.peek = Some(server);
+            self.topics_dirty = true;
+        }
+    }
+
+    fn tidy_peek(&mut self) {
+        if self.peek.as_ref().is_some_and(|p| !self.subs.contains(p)) {
+            self.peek = None;
+        }
     }
 
     fn set_hidden(&mut self, hub: &Hub, conn: u64, hidden: bool) {
@@ -1533,6 +1845,15 @@ async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::Result<bool
     access.hidden = hidden;
     access.grants.retain(|server, _| kept.contains(server));
     access.subs = kept;
+    access.tidy_peek();
+    if let (Some(user), Some(server), None) = (&access.user, &access.looking, &access.peek)
+        && !access.member_servers.contains(server)
+        && !access.subs.contains(server)
+        && authed_sub_ok(db, server, user, access.site_admin).await?
+    {
+        access.peek = Some(server.clone());
+        access.subs.insert(server.clone());
+    }
     if access
         .viewing
         .as_ref()
@@ -1550,6 +1871,9 @@ async fn still_held(db: &Db, access: &Access, name: &str) -> sqlx::Result<bool> 
     };
     match &access.user {
         Some(user) => {
+            if is_banned(db, name, user).await? {
+                return Ok(false);
+            }
             let member = access.member_servers.contains(name);
             let check = member || (hash.is_some() && !access.site_admin);
             Ok(!check || is_member(db, name, user).await?)
@@ -1646,6 +1970,17 @@ async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent
     }
     let mut deliver = access.wants(ev);
     track(ev, access);
+    if let WsEvent::MemberLeft { server, username }
+    | WsEvent::MemberKicked {
+        server,
+        username,
+        banned: false,
+    } = ev
+        && access.user.as_deref() == Some(username.as_str())
+        && !access.recheck(state, conn, server).await
+    {
+        return None;
+    }
     if let WsEvent::ServerRenamed {
         old_name: _,
         server,
@@ -1716,6 +2051,31 @@ impl Out {
     }
 }
 
+async fn answer_who(state: &AppState, access: &mut Access, out: &Out) -> bool {
+    let me = access.user.clone();
+    for hoster in std::mem::take(&mut access.who.pending) {
+        let shown = match &me {
+            Some(me) => p2p_visible(state, access, me, &hoster).await,
+            None => None,
+        };
+        let ev = match shown {
+            Some((peer_id, ids)) => WsEvent::P2pAvailability {
+                hoster,
+                peer_id: Some(peer_id),
+                ids,
+                online: true,
+                scope_servers: Vec::new(),
+                scope_users: Vec::new(),
+            },
+            None => p2p_offline(hoster, Vec::new(), Vec::new()),
+        };
+        if !sent(access, out.event(&ev)) {
+            return false;
+        }
+    }
+    true
+}
+
 fn sent(access: &mut Access, res: Sent) -> bool {
     match res {
         Sent::Queued => true,
@@ -1767,6 +2127,31 @@ fn client_frame(fanned: &crate::fanout::Fanned, me: Option<&str>) -> Option<Utf8
         }
         (_, _) => fanned.frame(),
     }
+}
+
+const PRESENCE_SNAPSHOT_MAX: usize = 50;
+
+fn presence_snapshot(hub: &Hub, access: &Access, server: &str) -> Option<WsEvent> {
+    if access.retry.pending() || !access.held(server) {
+        return None;
+    }
+    let mut online = hub.online_after(server, None, PRESENCE_SNAPSHOT_MAX);
+    let mut online_count = hub.online_count(server);
+    if let Some(user) = access.user.as_deref()
+        && access.shown.as_deref() == Some(server)
+        && !hub.is_online(server, user)
+    {
+        online_count += 1;
+        if let Err(at) = online.binary_search_by(|n| n.as_str().cmp(user)) {
+            online.insert(at, user.to_string());
+            online.truncate(PRESENCE_SNAPSHOT_MAX);
+        }
+    }
+    Some(WsEvent::PresenceSnapshot {
+        server: server.to_string(),
+        online,
+        online_count,
+    })
 }
 
 async fn send_voice_snapshot(state: &AppState, out: &Out, access: &mut Access) -> bool {
@@ -1941,22 +2326,16 @@ async fn run(state: AppState, mut socket: WebSocket) {
                 match msg {
                     Some(Ok(Frame::Text(text))) => match serde_json::from_str::<ClientMsg>(&text) {
                         Ok(ClientMsg::Viewing { server }) => {
-                            let target = match (&access.user, server) {
-                                (Some(user), Some(s)) => {
-                                    let s = s.to_lowercase();
-                                    state.hub.listen(conn, &[Topic::View(s.clone())]);
-                                    let member = is_member(&state.read(), &s, user).await.unwrap_or(false);
-                                    access.topics_dirty |= !member && !access.subs.contains(&s);
-                                    member.then_some(s)
-                                }
-                                (_, _) => None,
-                            };
-                            access.view(&state.hub, conn, target);
+                            let seen = look(&state, conn, &mut access, server).await;
+                            if let Some(ev) = seen.and_then(|s| presence_snapshot(&state.hub, &access, &s)) && !sent(&mut access, out.event(&ev)) {
+                                break;
+                            }
                         }
                         Ok(ClientMsg::Subscribe { servers, grants }) => {
                             let servers: Vec<String> = servers.into_iter().take(SUBSCRIBE_CAP).map(|s| s.to_lowercase()).collect();
                             let early: Vec<Topic> = servers.iter().flat_map(|s| [Topic::Server(s.clone()), Topic::View(s.clone())]).collect();
                             state.hub.listen(conn, &early);
+                            let peek = access.peek.take();
                             access.subs.clear();
                             access.grants.clear();
                             access.topics_dirty = true;
@@ -1973,6 +2352,7 @@ async fn run(state: AppState, mut socket: WebSocket) {
                                     access.subs.insert(s);
                                 }
                             }
+                            access.set_peek(peek);
                             if !send_voice_snapshot(&state, &out, &mut access).await {
                                 break;
                             }
@@ -1984,26 +2364,8 @@ async fn run(state: AppState, mut socket: WebSocket) {
                         }
                         Ok(ClientMsg::P2pWho { hosters: _ }) if access.retry.pending() => {}
                         Ok(ClientMsg::P2pWho { hosters }) => {
-                            let mut closed = false;
-                            for hoster in hosters.into_iter().take(P2P_IDS_CAP) {
-                                let hoster = hoster.to_lowercase();
-                                let ev = match state.hub.p2p_of(&hoster) {
-                                    Some((peer_id, ids)) => WsEvent::P2pAvailability {
-                                        hoster,
-                                        peer_id: Some(peer_id),
-                                        ids,
-                                        online: true,
-                                        scope_servers: Vec::new(),
-                                        scope_users: Vec::new(),
-                                    },
-                                    None => p2p_offline(hoster, Vec::new(), Vec::new()),
-                                };
-                                if !sent(&mut access, out.event(&ev)) {
-                                    closed = true;
-                                    break;
-                                }
-                            }
-                            if closed {
+                            access.who.ask(hosters);
+                            if access.who.pace.hit(Instant::now()) && !answer_who(&state, &mut access, &out).await {
                                 break;
                             }
                         }
@@ -2034,6 +2396,12 @@ async fn run(state: AppState, mut socket: WebSocket) {
             }
             _ = tokio::time::sleep_until(access.retry.at.unwrap_or_else(Instant::now)), if access.retry.pending() => {
                 if !access.refresh(&state, conn).await {
+                    break;
+                }
+            }
+            _ = tokio::time::sleep_until(access.who.pace.due.unwrap_or_else(Instant::now)), if access.who.pace.due.is_some() => {
+                access.who.pace.fire(Instant::now());
+                if !access.retry.pending() && !answer_who(&state, &mut access, &out).await {
                     break;
                 }
             }
@@ -2088,10 +2456,42 @@ async fn run(state: AppState, mut socket: WebSocket) {
     }
 }
 
+async fn look(
+    state: &AppState,
+    conn: u64,
+    access: &mut Access,
+    server: Option<String>,
+) -> Option<String> {
+    let server = server.map(|s| s.to_lowercase());
+    access.looking = server.clone().filter(|_| access.user.is_some());
+    let (target, peek, seen) = match (access.user.clone(), server) {
+        (Some(user), Some(s)) if !is_banned(&state.read(), &s, &user).await.unwrap_or(true) => {
+            state
+                .hub
+                .listen(conn, &[Topic::View(s.clone()), Topic::Server(s.clone())]);
+            let member = is_member(&state.read(), &s, &user).await.unwrap_or(false);
+            let open = !member
+                && !access.retry.pending()
+                && authed_sub_ok(&state.read(), &s, &user, access.site_admin)
+                    .await
+                    .unwrap_or(false);
+            (member.then(|| s.clone()), open.then(|| s.clone()), Some(s))
+        }
+        (_, _) => (None, None, None),
+    };
+    access.set_peek(peek);
+    if let Some(s) = &seen {
+        access.topics_dirty |= !access.held(s);
+    }
+    access.view(&state.hub, conn, target);
+    seen
+}
+
 fn leave(access: &mut Access, server: &str) {
     access.member_servers.remove(server);
     access.hosted_scope = None;
     access.viewable.clear();
+    access.who.forget();
     access.topics_dirty = true;
     if access.viewing.as_deref() == Some(server) {
         access.viewing = None;
@@ -2106,6 +2506,7 @@ fn track(ev: &WsEvent, access: &mut Access) {
                 access.member_servers.insert(server.clone());
                 access.hosted_scope = None;
                 access.viewable.clear();
+                access.who.forget();
                 access.topics_dirty = true;
             }
         }
@@ -2113,10 +2514,25 @@ fn track(ev: &WsEvent, access: &mut Access) {
         | WsEvent::MemberKicked {
             server,
             username,
-            banned: _,
+            banned: false,
         } => {
             if Some(username.as_str()) == me {
                 leave(access, server);
+            }
+        }
+        WsEvent::MemberKicked {
+            server,
+            username,
+            banned: true,
+        }
+        | WsEvent::ServerBanned { server, username } => {
+            if Some(username.as_str()) == me {
+                leave(access, server);
+                access.subs.remove(server);
+                access.grants.remove(server);
+                if access.looking.as_deref() == Some(server.as_str()) {
+                    access.looking = None;
+                }
             }
         }
         WsEvent::MembersPurged { server, usernames } => {
@@ -2129,6 +2545,7 @@ fn track(ev: &WsEvent, access: &mut Access) {
                 access.member_servers.insert(server.name.clone());
                 access.hosted_scope = None;
                 access.viewable.clear();
+                access.who.forget();
                 access.topics_dirty = true;
             }
         }
@@ -2140,10 +2557,12 @@ fn track(ev: &WsEvent, access: &mut Access) {
         } => {
             if Some(username.as_str()) == me {
                 access.viewable.retain(|_, (owner, _)| owner != server);
+                access.who.forget();
             }
         }
         WsEvent::RolesChanged { server } => {
             access.viewable.retain(|_, (owner, _)| owner != server);
+            access.who.forget();
         }
         WsEvent::ChannelPermsChanged {
             server: _,
@@ -2154,6 +2573,7 @@ fn track(ev: &WsEvent, access: &mut Access) {
             channel_id,
         } => {
             access.viewable.remove(channel_id);
+            access.who.forget();
         }
         WsEvent::ServerRenamed { old_name, server } => {
             access.topics_dirty |= access.held(old_name);
@@ -2170,7 +2590,14 @@ fn track(ev: &WsEvent, access: &mut Access) {
             if access.viewing.as_deref() == Some(old_name.as_str()) {
                 access.viewing = Some(server.name.clone());
             }
+            if access.peek.as_deref() == Some(old_name.as_str()) {
+                access.peek = Some(server.name.clone());
+            }
+            if access.looking.as_deref() == Some(old_name.as_str()) {
+                access.looking = Some(server.name.clone());
+            }
             access.viewable.retain(|_, (owner, _)| owner != old_name);
+            access.who.forget();
         }
         WsEvent::ServerDeleted { name } => {
             access.topics_dirty |= access.held(name);
@@ -2181,10 +2608,15 @@ fn track(ev: &WsEvent, access: &mut Access) {
             if access.viewing.as_deref() == Some(name.as_str()) {
                 access.viewing = None;
             }
+            if access.looking.as_deref() == Some(name.as_str()) {
+                access.looking = None;
+            }
             access.viewable.retain(|_, (owner, _)| owner != name);
+            access.who.forget();
         }
         _ => {}
     }
+    access.tidy_peek();
 }
 
 fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
@@ -2358,8 +2790,18 @@ fn wants(
             server,
             username: _,
             online: _,
+            online_count: _,
         } => in_server(server),
-        WsEvent::PresenceMode {
+        WsEvent::PresenceSnapshot {
+            server: _,
+            online: _,
+            online_count: _,
+        } => false,
+        WsEvent::ServerBanned {
+            server: _,
+            username,
+        }
+        | WsEvent::PresenceMode {
             username,
             appear_offline: _,
         }
@@ -2873,6 +3315,7 @@ mod tests {
             server: s("vault"),
             username: s("bob"),
             online: true,
+            online_count: 1,
         };
         let created = WsEvent::ServerCreated {
             server: lite("elsewhere"),
@@ -3309,6 +3752,458 @@ mod tests {
             state.hub.rooms_in("rchat", None),
             vec![(cid, vec!["carol".to_string()])]
         );
+        assert!(
+            !authed_sub_ok(&state.db, "rchat", "bob", false)
+                .await
+                .expect("sub")
+        );
+        assert!(
+            authed_sub_ok(&state.db, "rchat", "carol", false)
+                .await
+                .expect("sub")
+        );
+        let access = Access::new(Some(s("bob")), false, set(&[]));
+        assert!(!still_held(&state.db, &access, "rchat").await.expect("held"));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    async fn add_user_row(db: &Db, name: &str) {
+        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $1, 'x', 'text', 'identicon', 0)")
+            .bind(name)
+            .execute(db)
+            .await
+            .expect("user");
+    }
+
+    #[tokio::test]
+    async fn locked_server_voice_needs_membership() {
+        let (state, path) = crate::api::test_util::temp_state("locked_voice").await;
+        let db = &state.db;
+        for name in ["alice", "bob", "eve", "root"] {
+            add_user_row(db, name).await;
+        }
+        exec(
+            db,
+            "UPDATE users SET is_site_admin = 1 WHERE username = 'root'",
+        )
+        .await;
+        exec(db, "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('vault', 'Vault', 'alice', 'hash', 0)").await;
+        let cid = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('vault', 'lounge', 'voice', 0) RETURNING id").await;
+        exec(db, "INSERT INTO members(server, username, is_admin, joined_at) VALUES('vault', 'alice', 1, 0)").await;
+        exec(db, "INSERT INTO members(server, username, is_admin, joined_at) VALUES('vault', 'bob', 0, 0)").await;
+        let join = |user| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id: cid });
+        join("bob").await.expect("member joins");
+        state.hub.voice_leave("bob").await;
+        exec(
+            db,
+            "DELETE FROM members WHERE server = 'vault' AND username = 'bob'",
+        )
+        .await;
+        for outsider in ["bob", "eve", "root"] {
+            assert_eq!(
+                join(outsider).await,
+                Err("Join this server to use voice".to_string()),
+                "{outsider}"
+            );
+        }
+        join("alice").await.expect("alice joins");
+        assert_eq!(
+            state.hub.rooms_in("vault", None),
+            vec![(cid, vec!["alice".to_string()])]
+        );
+        exec(
+            db,
+            "UPDATE servers SET password_hash = '!purging' WHERE name = 'vault'",
+        )
+        .await;
+        state.hub.voice_leave("alice").await;
+        assert_eq!(join("alice").await, Err("Channel not found".to_string()));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn p2p_who_answers_only_shared_scopes_and_readable_ids() {
+        let (state, path) = crate::api::test_util::temp_state("p2p_who_scope").await;
+        let db = &state.db;
+        for name in ["alice", "bob", "carol", "eve"] {
+            add_user_row(db, name).await;
+        }
+        exec(db, "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('vault', 'Vault', 'alice', 'hash', 0)").await;
+        let vault = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('vault', 'general', 'text', 0) RETURNING id").await;
+        let general = insert_id(db, "SELECT id FROM channels WHERE server = 'rchat'").await;
+        for (server, user) in [("rchat", "alice"), ("vault", "alice"), ("rchat", "bob")] {
+            sqlx::query(
+                "INSERT INTO members(server, username, is_admin, joined_at) VALUES($1, $2, 0, 0)",
+            )
+            .bind(server)
+            .bind(user)
+            .execute(db)
+            .await
+            .expect("member");
+        }
+        let dm = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'carol') RETURNING id",
+        )
+        .await;
+        let ids: Vec<String> = ["f1", "f2", "f3", "f4"].map(str::to_string).to_vec();
+        for (id, channel, dm_id) in [
+            ("f1", Some(general), None),
+            ("f2", Some(vault), None),
+            ("f3", None, Some(dm)),
+        ] {
+            sqlx::query("INSERT INTO messages(channel_id, dm_id, author, content, media_id, media_kind, media_hoster, created_at) VALUES($1, $2, 'alice', '', $3, 'p2p', 'alice', 0)")
+                .bind(channel)
+                .bind(dm_id)
+                .bind(id)
+                .execute(db)
+                .await
+                .expect("p2p message");
+        }
+        state
+            .hub
+            .set_p2p("alice", 1, "peer-a".to_string(), ids.clone());
+        let ask = |me: &'static str, servers: &[&str]| {
+            let mut access = Access::new(Some(s(me)), false, set(servers));
+            let state = state.clone();
+            async move { p2p_visible(&state, &mut access, me, "alice").await }
+        };
+        assert_eq!(
+            ask("bob", &["rchat"]).await,
+            Some(("peer-a".to_string(), vec![s("f1")]))
+        );
+        let mut carol = ask("carol", &[]).await.expect("dm partner").1;
+        carol.sort();
+        assert_eq!(carol, [s("f1"), s("f3")]);
+        assert_eq!(ask("eve", &[]).await, None);
+        let mut own = ask("alice", &["rchat", "vault"]).await.expect("self").1;
+        own.sort();
+        assert_eq!(own, ids);
+        exec(
+            db,
+            "UPDATE users SET appear_offline = 1 WHERE username = 'alice'",
+        )
+        .await;
+        assert_eq!(ask("bob", &["rchat"]).await, None);
+        assert_eq!(ask("carol", &[]).await, None);
+        exec(
+            db,
+            "UPDATE users SET appear_offline = 0 WHERE username = 'alice'",
+        )
+        .await;
+        let mut bob = Access::new(Some(s("bob")), false, set(&["rchat"]));
+        let first = p2p_visible(&state, &mut bob, "bob", "alice").await;
+        assert_eq!(first, Some(("peer-a".to_string(), vec![s("f1")])));
+        assert_eq!((bob.who.peers.len(), bob.who.media.len()), (1, 4));
+        exec(db, "DELETE FROM messages WHERE media_id = 'f1'").await;
+        assert_eq!(
+            p2p_visible(&state, &mut bob, "bob", "alice").await,
+            first,
+            "a burst within the cache window reuses the scope lookups"
+        );
+        exec(
+            db,
+            "UPDATE users SET appear_offline = 1 WHERE username = 'alice'",
+        )
+        .await;
+        assert_eq!(
+            p2p_visible(&state, &mut bob, "bob", "alice").await,
+            None,
+            "appear offline applies at once, even within the cache window"
+        );
+        let left = WsEvent::MemberLeft {
+            server: s("rchat"),
+            username: s("bob"),
+        };
+        track(&left, &mut bob);
+        assert!(bob.who.peers.is_empty() && bob.who.media.is_empty());
+        bob.member_servers = set(&["rchat"]);
+        assert_eq!(p2p_visible(&state, &mut bob, "bob", "alice").await, None);
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[test]
+    fn p2p_who_is_paced_and_merged_per_connection() {
+        let mut who = Who::new();
+        let now = Instant::now();
+        who.ask(vec![s("Alice"), s("bob"), s("alice")]);
+        assert_eq!(who.pending, [s("alice"), s("bob")]);
+        assert!(who.pace.hit(now));
+        who.pending.clear();
+        who.ask(vec![s("carol")]);
+        assert!(!who.pace.hit(now + Duration::from_millis(100)));
+        who.ask(vec![s("dave"), s("carol")]);
+        assert_eq!(who.pending, [s("carol"), s("dave")]);
+        assert_eq!(who.pace.due, Some(now + P2P_WHO_EVERY));
+        who.ask((0..200).map(|n| format!("u{n}")).collect());
+        assert_eq!(who.pending.len(), P2P_WHO_CAP);
+    }
+
+    #[tokio::test]
+    async fn p2p_who_shows_an_offline_hoster_only_to_their_call_partner() {
+        let (state, path) = crate::api::test_util::temp_state("p2p_who_call").await;
+        let db = &state.db;
+        for name in ["alice", "carol", "eve"] {
+            add_user_row(db, name).await;
+        }
+        exec(
+            db,
+            "UPDATE users SET appear_offline = 1 WHERE username = 'alice'",
+        )
+        .await;
+        let dm = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'carol') RETURNING id",
+        )
+        .await;
+        state
+            .hub
+            .set_p2p("alice", 1, "peer-a".to_string(), Vec::new());
+        let ask = |me: &'static str| {
+            let mut access = Access::new(Some(s(me)), false, set(&[]));
+            let state = state.clone();
+            async move { p2p_visible(&state, &mut access, me, "alice").await }
+        };
+        assert_eq!(ask("carol").await, None);
+        let pair = vec![s("alice"), s("carol")];
+        state
+            .hub
+            .call_start("alice", 1, dm, pair.clone(), CallKind::Rtc, 1)
+            .await
+            .expect("voice call");
+        assert_eq!(ask("carol").await, None, "only P2P calls share the peer id");
+        state.hub.call_end("alice", dm).await.expect("end");
+        state
+            .hub
+            .call_start("alice", 1, dm, pair, CallKind::P2p, 2)
+            .await
+            .expect("p2p call");
+        assert_eq!(ask("carol").await, Some(("peer-a".to_string(), Vec::new())));
+        assert_eq!(ask("eve").await, None);
+        state.hub.call_end("alice", dm).await.expect("end");
+        assert_eq!(ask("carol").await, None);
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn viewing_snapshot_is_bounded_and_counts_the_viewer() {
+        let hub = Hub::new();
+        let mut names: Vec<String> = (0..60).map(|i| format!("u{i:02}")).collect();
+        for (i, name) in names.iter().enumerate() {
+            hub.set_viewing(name, 100 + i as u64, None, Some("rchat"));
+        }
+        let mut me = viewer("aaron", false);
+        me.view(&hub, 1, Some(s("rchat")));
+        let Some(WsEvent::PresenceSnapshot {
+            server,
+            online,
+            online_count,
+        }) = presence_snapshot(&hub, &me, "rchat")
+        else {
+            panic!("snapshot");
+        };
+        names.insert(0, s("aaron"));
+        names.truncate(PRESENCE_SNAPSHOT_MAX);
+        assert_eq!(
+            (server.as_str(), online, online_count),
+            ("rchat", names, 61)
+        );
+        let hidden = viewer("zed", true);
+        let Some(WsEvent::PresenceSnapshot {
+            online,
+            online_count,
+            ..
+        }) = presence_snapshot(&hub, &hidden, "rchat")
+        else {
+            panic!("snapshot");
+        };
+        assert!(!online.iter().any(|n| n == "zed"));
+        assert_eq!(online_count, 61);
+        let mut early = viewer("ab", false);
+        early.shown = Some(s("rchat"));
+        let Some(WsEvent::PresenceSnapshot {
+            online,
+            online_count,
+            ..
+        }) = presence_snapshot(&hub, &early, "rchat")
+        else {
+            panic!("snapshot");
+        };
+        assert_eq!(
+            (online.len(), &online[..3], online_count),
+            (50, &[s("aaron"), s("ab"), s("u00")][..], 62)
+        );
+        assert!(presence_snapshot(&hub, &me, "elsewhere").is_none());
+        let ev = presence_snapshot(&hub, &me, "rchat").expect("snapshot");
+        assert!(!wants(
+            &ev,
+            Some("aaron"),
+            true,
+            &set(&["rchat"]),
+            &set(&[])
+        ));
+    }
+
+    #[test]
+    fn presence_events_carry_the_online_count() {
+        let hub = Hub::new();
+        let mut rx = hub.subscribe();
+        hub.set_viewing("ann", 1, None, Some("rchat"));
+        hub.set_viewing("bo", 2, None, Some("rchat"));
+        hub.set_viewing("bo", 3, None, Some("rchat"));
+        hub.set_viewing("bo", 2, Some("rchat"), None);
+        hub.set_viewing("bo", 3, Some("rchat"), None);
+        hub.set_viewing("ann", 1, Some("rchat"), Some("other"));
+        let mut counts = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let WsEvent::PresenceChanged {
+                server,
+                username,
+                online,
+                online_count,
+            } = ev
+            {
+                counts.push((server, username, online, online_count));
+            }
+        }
+        assert_eq!(
+            counts,
+            [
+                (s("rchat"), s("ann"), true, 1),
+                (s("rchat"), s("bo"), true, 2),
+                (s("rchat"), s("bo"), false, 1),
+                (s("rchat"), s("ann"), false, 0),
+                (s("other"), s("ann"), true, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn presence_order_matches_the_client() {
+        let hub = Hub::new();
+        let names = [
+            "\u{1f600}",
+            "z",
+            "\u{ff21}",
+            "a",
+            "\u{e9}",
+            "ab",
+            "\u{1f600}a",
+        ];
+        for (i, name) in names.iter().enumerate() {
+            hub.set_viewing(name, 10 + i as u64, None, Some("rchat"));
+        }
+        assert_eq!(
+            hub.online_after("rchat", None, 50),
+            [
+                "a",
+                "ab",
+                "z",
+                "\u{e9}",
+                "\u{ff21}",
+                "\u{1f600}",
+                "\u{1f600}a"
+            ]
+        );
+    }
+
+    #[test]
+    fn server_ban_notice_goes_only_to_the_banned_user() {
+        let ev = WsEvent::ServerBanned {
+            server: s("open"),
+            username: s("bob"),
+        };
+        let none = set(&[]);
+        assert!(wants(&ev, Some("bob"), false, &none, &none));
+        assert!(!wants(
+            &ev,
+            Some("carol"),
+            false,
+            &set(&["open"]),
+            &set(&["open"])
+        ));
+        assert!(!wants(&ev, None, false, &none, &set(&["open"])));
+    }
+
+    #[tokio::test]
+    async fn a_ban_drops_live_subscriptions() {
+        let (state, path) = crate::api::test_util::temp_state("ws_ban_drops_subs").await;
+        let conn = state.hub.next_conn();
+        let post = |server: &str| WsEvent::Message {
+            server: Some(s(server)),
+            channel_id: Some(7),
+            dm_id: None,
+            dm_users: None,
+            message: Box::new(message()),
+        };
+        let presence = WsEvent::PresenceChanged {
+            server: s("open"),
+            username: s("bob"),
+            online: true,
+            online_count: 1,
+        };
+        let mut carol = Access::new(Some(s("carol")), false, set(&["rchat"]));
+        carol.subs = set(&["open", "other"]);
+        carol.viewing = Some(s("open"));
+        carol.viewable = HashMap::from([(7, (s("open"), true))]);
+        assert_eq!(
+            on_event(&state, conn, &mut carol, &post("open")).await,
+            Some(true)
+        );
+        let banned = WsEvent::ServerBanned {
+            server: s("open"),
+            username: s("carol"),
+        };
+        let elsewhere = WsEvent::ServerBanned {
+            server: s("open"),
+            username: s("dave"),
+        };
+        assert_eq!(
+            on_event(&state, conn, &mut carol, &elsewhere).await,
+            Some(false)
+        );
+        assert_eq!(carol.subs, set(&["open", "other"]));
+        assert_eq!(
+            on_event(&state, conn, &mut carol, &banned).await,
+            Some(true)
+        );
+        assert_eq!(carol.subs, set(&["other"]));
+        assert_eq!(carol.viewing, None);
+        assert!(carol.topics_dirty);
+        let topics = carol.topics();
+        assert!(!topics.contains(&Topic::Server(s("open"))));
+        assert!(!topics.contains(&Topic::View(s("open"))));
+        assert_eq!(
+            on_event(&state, conn, &mut carol, &post("open")).await,
+            Some(false)
+        );
+        assert_eq!(
+            on_event(&state, conn, &mut carol, &presence).await,
+            Some(false)
+        );
+        let mut bert = Access::new(Some(s("bert")), false, set(&["open"]));
+        bert.subs = set(&["open"]);
+        bert.viewable = HashMap::from([(7, (s("open"), true))]);
+        let kicked = WsEvent::MemberKicked {
+            server: s("open"),
+            username: s("bert"),
+            banned: true,
+        };
+        assert_eq!(on_event(&state, conn, &mut bert, &kicked).await, Some(true));
+        assert!(bert.subs.is_empty() && bert.member_servers.is_empty());
+        assert_eq!(
+            on_event(&state, conn, &mut bert, &post("open")).await,
+            Some(false)
+        );
+        let mut gail = Access::new(Some(s("gail")), false, set(&["open"]));
+        gail.subs = set(&["open"]);
+        let left = WsEvent::MemberKicked {
+            server: s("open"),
+            username: s("gail"),
+            banned: false,
+        };
+        on_event(&state, conn, &mut gail, &left).await;
+        assert_eq!(gail.subs, set(&["open"]));
         crate::api::test_util::done(state, path).await;
     }
 
@@ -3319,6 +4214,7 @@ mod tests {
                 server,
                 username: _,
                 online,
+                online_count: _,
             } = ev
             {
                 out.push((server, online));
@@ -3680,6 +4576,7 @@ mod tests {
                 server: s("open"),
                 username: s("bob"),
                 online: true,
+                online_count: 1,
             },
             WsEvent::ServerCreated {
                 server: lite("seeded"),
@@ -4150,6 +5047,7 @@ mod tests {
             server: s(server),
             username: s("x"),
             online: true,
+            online_count: 1,
         };
         fn viewers(ev: &WsEvent) -> Vec<crate::fanout::Target<'_>> {
             match crate::fanout::route(ev) {
@@ -4360,6 +5258,247 @@ mod tests {
         assert_eq!(bob.viewable.len(), 1);
         track(&WsEvent::RolesChanged { server: s("rchat") }, &mut bob);
         assert!(bob.viewable.is_empty());
+        crate::api::test_util::done(state, path).await;
+    }
+
+    async fn routed(inbox: &mut crate::fanout::Inbox, hub: &Hub, ev: WsEvent) -> Option<WsEvent> {
+        hub.broadcast(ev);
+        let wait = tokio::time::sleep(Duration::from_millis(300));
+        tokio::pin!(wait);
+        loop {
+            tokio::select! {
+                got = inbox.rx.recv() => match got.map(|f| f.ev.clone()) {
+                    Some(ev @ WsEvent::Message { .. }) => return Some(ev),
+                    Some(_) => {}
+                    None => return None,
+                },
+                _ = &mut wait => return None,
+            }
+        }
+    }
+
+    async fn peek_world(name: &str) -> (AppState, std::path::PathBuf, i64, i64) {
+        let (state, path) = crate::api::test_util::temp_state(name).await;
+        let db = &state.db;
+        add_user(db, "alice").await;
+        add_user(db, "nora").await;
+        exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('open', 'Open', 'alice', 1)").await;
+        exec(db, "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('vault', 'Vault', 'alice', 'hash', 1)").await;
+        exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('home', 'Home', 'nora', 1)").await;
+        exec(
+            db,
+            "INSERT INTO members(server, username, joined_at) VALUES('open', 'alice', 1)",
+        )
+        .await;
+        exec(
+            db,
+            "INSERT INTO members(server, username, joined_at) VALUES('home', 'nora', 1)",
+        )
+        .await;
+        let general = insert_id(db, "INSERT INTO channels(server, name, created_at) VALUES('open', 'general', 1) RETURNING id").await;
+        let secret = insert_id(db, "INSERT INTO channels(server, name, created_at) VALUES('open', 'secret', 1) RETURNING id").await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'r:999', 1, 1, 1)")
+            .bind(secret)
+            .execute(db)
+            .await
+            .unwrap();
+        (state, path, general, secret)
+    }
+
+    fn post_in(server: &str, cid: i64) -> WsEvent {
+        WsEvent::Message {
+            server: Some(s(server)),
+            channel_id: Some(cid),
+            dm_id: None,
+            dm_users: None,
+            message: Box::new(message()),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_non_member_viewer_of_an_open_server_gets_its_live_events() {
+        let (state, path, general, secret) = peek_world("ws_peek_live").await;
+        let conn = state.hub.next_conn();
+        let mut inbox = state
+            .hub
+            .open(conn, &HashSet::from([Topic::User(s("nora"))]));
+        let mut nora = Access::new(Some(s("nora")), false, set(&["home"]));
+        assert_eq!(
+            look(&state, conn, &mut nora, Some(s("Open"))).await,
+            Some(s("open"))
+        );
+        state.hub.reconcile(conn, &nora.topics(), 0);
+        assert_eq!(nora.peek.as_deref(), Some("open"));
+        assert_eq!(nora.viewing, None);
+        let topics = state.hub.topics(conn);
+        assert!(
+            topics.contains(&Topic::Server(s("open"))) && topics.contains(&Topic::View(s("open")))
+        );
+        let got = routed(&mut inbox, &state.hub, post_in("open", general))
+            .await
+            .expect("routed");
+        assert_eq!(on_event(&state, conn, &mut nora, &got).await, Some(true));
+        let hidden = routed(&mut inbox, &state.hub, post_in("open", secret))
+            .await
+            .expect("routed");
+        assert_eq!(
+            on_event(&state, conn, &mut nora, &hidden).await,
+            Some(false)
+        );
+        assert!(presence_snapshot(&state.hub, &nora, "open").is_some());
+
+        let mut alice = Access::new(Some(s("alice")), false, set(&["open"]));
+        look(&state, state.hub.next_conn(), &mut alice, Some(s("open"))).await;
+        assert_eq!(alice.peek, None);
+        assert!(alice.subs.is_empty());
+        assert_eq!(alice.viewing.as_deref(), Some("open"));
+
+        look(&state, conn, &mut nora, Some(s("vault"))).await;
+        state.hub.reconcile(conn, &nora.topics(), u64::MAX);
+        assert_eq!(nora.peek, None);
+        assert!(nora.subs.is_empty());
+        let topics = state.hub.topics(conn);
+        assert!(!topics.iter().any(
+            |t| matches!(t, Topic::Server(v) | Topic::View(v) if v == "open" || v == "vault")
+        ));
+        assert!(
+            routed(&mut inbox, &state.hub, post_in("open", general))
+                .await
+                .is_none()
+        );
+        assert_eq!(
+            on_event(&state, conn, &mut nora, &post_in("open", general)).await,
+            Some(false)
+        );
+
+        look(&state, conn, &mut nora, Some(s("open"))).await;
+        assert_eq!(nora.peek.as_deref(), Some("open"));
+        look(&state, conn, &mut nora, Some(s("home"))).await;
+        assert_eq!(nora.peek, None);
+        assert_eq!(nora.viewing.as_deref(), Some("home"));
+        assert!(!nora.topics().contains(&Topic::Server(s("open"))));
+        look(&state, conn, &mut nora, Some(s("open"))).await;
+        look(&state, conn, &mut nora, None).await;
+        assert_eq!(nora.peek, None);
+        assert!(!nora.topics().contains(&Topic::Server(s("open"))));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_non_member_viewer_loses_live_events_with_access() {
+        let (state, path, general, _) = peek_world("ws_peek_lost").await;
+        let db = &state.db;
+        let conn = state.hub.next_conn();
+        let mut nora = Access::new(Some(s("nora")), false, set(&["home"]));
+        nora.viewable = HashMap::from([(general, (s("open"), true))]);
+
+        look(&state, conn, &mut nora, Some(s("open"))).await;
+        exec(
+            db,
+            "UPDATE servers SET password_hash = 'hash' WHERE name = 'open'",
+        )
+        .await;
+        let locked = WsEvent::ServerRenamed {
+            old_name: s("open"),
+            server: ServerSummaryLite {
+                has_password: true,
+                ..lite("open")
+            },
+        };
+        assert_eq!(
+            on_event(&state, conn, &mut nora, &locked).await,
+            Some(false)
+        );
+        assert_eq!(nora.peek, None);
+        assert!(!nora.topics().contains(&Topic::Server(s("open"))));
+        assert_eq!(
+            on_event(&state, conn, &mut nora, &post_in("open", general)).await,
+            Some(false)
+        );
+        assert!(reauthorize(&state, &mut nora).await.unwrap());
+        assert_eq!(nora.peek, None);
+        exec(
+            db,
+            "UPDATE servers SET password_hash = NULL WHERE name = 'open'",
+        )
+        .await;
+
+        look(&state, conn, &mut nora, Some(s("open"))).await;
+        nora.viewable = HashMap::from([(general, (s("open"), true))]);
+        assert_eq!(
+            on_event(&state, conn, &mut nora, &post_in("open", general)).await,
+            Some(true)
+        );
+        exec(db, "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('open', 'nora', 'alice', 2)").await;
+        let banned = WsEvent::ServerBanned {
+            server: s("open"),
+            username: s("nora"),
+        };
+        assert_eq!(on_event(&state, conn, &mut nora, &banned).await, Some(true));
+        assert_eq!((nora.peek.as_ref(), nora.looking.as_ref()), (None, None));
+        assert!(!nora.topics().contains(&Topic::Server(s("open"))));
+        assert_eq!(
+            on_event(&state, conn, &mut nora, &post_in("open", general)).await,
+            Some(false)
+        );
+        look(&state, conn, &mut nora, Some(s("open"))).await;
+        assert_eq!(nora.peek, None);
+        assert!(nora.subs.is_empty());
+        assert!(reauthorize(&state, &mut nora).await.unwrap());
+        assert_eq!(nora.peek, None);
+        exec(db, "DELETE FROM server_bans").await;
+
+        look(&state, conn, &mut nora, Some(s("open"))).await;
+        let gone = WsEvent::ServerDeleted { name: s("open") };
+        on_event(&state, conn, &mut nora, &gone).await;
+        assert_eq!((nora.peek.as_ref(), nora.looking.as_ref()), (None, None));
+        assert!(nora.subs.is_empty() && !nora.topics().contains(&Topic::Server(s("open"))));
+
+        look(&state, conn, &mut nora, Some(s("open"))).await;
+        assert!(nora.hold(sqlx::Error::PoolClosed, Instant::now()));
+        assert!(!nora.wants(&post_in("open", general)));
+        look(&state, conn, &mut nora, Some(s("open"))).await;
+        assert_eq!(nora.peek, None);
+        assert!(!nora.topics().contains(&Topic::Server(s("open"))));
+        assert!(nora.refresh(&state, conn).await && !nora.retry.pending());
+        assert_eq!(nora.peek.as_deref(), Some("open"));
+        assert!(nora.wants(&post_in("open", general)));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn leaving_a_locked_server_drops_its_subscription() {
+        let (state, path, general, _) = peek_world("ws_leave_locked").await;
+        let db = &state.db;
+        let conn = state.hub.next_conn();
+        exec(
+            db,
+            "UPDATE servers SET password_hash = 'hash' WHERE name = 'open'",
+        )
+        .await;
+        let mut nora = Access::new(Some(s("nora")), false, set(&["home", "open"]));
+        nora.subs.insert(s("open"));
+        nora.viewable = HashMap::from([(general, (s("open"), true))]);
+        for left in [
+            WsEvent::MemberLeft {
+                server: s("open"),
+                username: s("nora"),
+            },
+            WsEvent::MemberKicked {
+                server: s("open"),
+                username: s("nora"),
+                banned: false,
+            },
+        ] {
+            nora.member_servers.insert(s("open"));
+            nora.subs.insert(s("open"));
+            on_event(&state, conn, &mut nora, &left).await;
+            assert!(!nora.held("open"));
+            assert_eq!(
+                on_event(&state, conn, &mut nora, &post_in("open", general)).await,
+                Some(false)
+            );
+        }
         crate::api::test_util::done(state, path).await;
     }
 }

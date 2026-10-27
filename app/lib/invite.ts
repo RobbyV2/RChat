@@ -210,3 +210,57 @@ export const takeStashedInvite = (server: string | null) => {
 }
 
 export const dropStashedInvite = () => session()?.removeItem(STASH)
+
+const INVITE_VERSIONS_MAX = 500
+const inviteVersions = new Map<string, number>()
+const inviteWatchers = new Set<() => void>()
+let inviteEpoch = 0
+
+export const inviteVersion = (server: string) => inviteEpoch + (inviteVersions.get(server) ?? 0)
+
+export const staleInvites = (server: string | null) => {
+  if (server === null || inviteVersions.size >= INVITE_VERSIONS_MAX) {
+    inviteEpoch += 1 + Math.max(0, ...inviteVersions.values())
+    inviteVersions.clear()
+  } else inviteVersions.set(server, (inviteVersions.get(server) ?? 0) + 1)
+  for (const fn of inviteWatchers) fn()
+}
+
+export const watchInvites = (fn: () => void) => {
+  inviteWatchers.add(fn)
+  return () => {
+    inviteWatchers.delete(fn)
+  }
+}
+
+export const INVITE_QUIET = 2_000
+export const INVITE_MAX_WAIT = 10_000
+export const INVITE_GAP = 15_000
+
+export const refreshDelay = (
+  staleSince: number,
+  lastBump: number,
+  fetchedAt: number,
+  now: number
+) => {
+  const due = Math.min(lastBump + INVITE_QUIET, staleSince + INVITE_MAX_WAIT)
+  return Math.max(0, Math.max(due, fetchedAt + INVITE_GAP) - now)
+}
+
+export const keepsPreview = (status: number | null) =>
+  status === null || status === 429 || status >= 500
+
+export const hostParts = (text: string, host: string): { text: string; host: boolean }[] => {
+  if (!host) return [{ text, host: false }]
+  return text
+    .split(host)
+    .flatMap((part, i) =>
+      i
+        ? [
+            { text: host, host: true },
+            { text: part, host: false },
+          ]
+        : [{ text: part, host: false }]
+    )
+    .filter(p => p.text !== '')
+}

@@ -101,7 +101,7 @@ pub struct Assertion {
     pub expires_at: i64,
 }
 
-#[utoipa::path(post, path = "/api/identity/assertion", request_body = AssertionRequest, responses((status = 200, description = "Short-lived EdDSA JWT proving the caller is sub = user@host on this instance", body = Assertion), (status = 400, description = "Missing or oversized aud or nonce"), (status = 401, description = "Not signed in")), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/identity/assertion", request_body = AssertionRequest, responses((status = 200, description = "Short-lived EdDSA JWT proving the caller is sub = user@host on this instance", body = Assertion), (status = 400, description = "Missing or oversized aud or nonce"), (status = 401, description = "Not signed in"), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form")), security(("bearer" = [])))]
 pub(crate) async fn assertion(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -110,6 +110,12 @@ pub(crate) async fn assertion(
     Json(req): Json<AssertionRequest>,
 ) -> Result<Json<Assertion>, ApiError> {
     let AssertionRequest { aud, nonce } = req;
+    if user.username.contains('@') {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "This username can't be used across instances".to_string(),
+        ));
+    }
     let aud = aud.trim().to_string();
     let bad = |m: &str| ApiError(StatusCode::BAD_REQUEST, m.to_string());
     if aud.is_empty() || aud.len() > AUD_MAX {
@@ -381,6 +387,25 @@ mod tests {
             verifier.verify(&foreign, "https://b.example", None).await,
             Err(VerifyError::UnknownKey)
         );
+        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('old@name', 'old@name', 'x', 'text', 'identicon', 0)")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO tokens(token, username, created_at) VALUES('legacy', 'old@name', 0)",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+        let legacy = client
+            .post(format!("{base}/api/identity/assertion"))
+            .bearer_auth("legacy")
+            .header("content-type", "application/json")
+            .body(r#"{"aud":"https://b.example"}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(legacy.status(), StatusCode::FORBIDDEN);
         server.abort();
         done(state, path).await;
     }

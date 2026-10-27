@@ -15,7 +15,7 @@ import {
 import { SLOWMODE_MAX, passwordDone, passwordPrompt } from '../lib/rules'
 import { inviteUrl } from '../lib/invite'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
-import type { Channel, ChannelPerm, Member, Role } from '../lib/types'
+import type { Channel, ChannelPerm, ConfirmChoice, Member, Role } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 
 export const fieldCls =
@@ -596,7 +596,7 @@ export function ChannelControls({
     <div className="rounded-xl px-2 py-1.5">
       <div className="flex flex-wrap items-center gap-2">
         {lead ?? (
-          <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
+          <span className="flex min-w-0 flex-1 basis-full items-center gap-1.5 text-sm sm:basis-0">
             <Hash size={14} className="shrink-0 text-on-surface-variant" />
             <span className="truncate">{channel.name}</span>
           </span>
@@ -635,6 +635,27 @@ export function ChannelControls({
   )
 }
 
+export interface OptionChoice extends ConfirmChoice {
+  option?: { label: string; detail: string }
+}
+
+export const WITH_OPTION = '+option'
+
+export const keepGuestsChoices = (choices: ConfirmChoice[], changed: boolean): OptionChoice[] =>
+  changed
+    ? choices.map(c =>
+        c.value === 'keep'
+          ? {
+              ...c,
+              option: {
+                label: 'Also keep guest access',
+                detail: 'Guests who entered the old password can keep viewing.',
+              },
+            }
+          : c
+      )
+    : choices
+
 export function ServerPasswordField({
   server,
   hasPassword,
@@ -646,7 +667,6 @@ export function ServerPasswordField({
   canRemove: boolean
   refresh?: () => void
 }) {
-  const setServerPassword = useStore(s => s.setServerPassword)
   const askConfirm = useStore(s => s.askConfirm)
   const siteAdmin = useStore(s => s.me?.is_site_admin ?? false)
   const [password, setPassword] = useState('')
@@ -662,14 +682,23 @@ export function ServerPasswordField({
           setError(null)
           setDone(null)
           const prompt = passwordPrompt(hasPassword, next, canRemove, siteAdmin)
+          const changed = hasPassword && next !== ''
           askConfirm({
             ...prompt,
+            choices: keepGuestsChoices(prompt.choices, changed),
             action: choice => {
-              const members = choice === 'remove' ? 'remove' : 'keep'
-              setServerPassword(server, next, members).then(
+              const members = choice.startsWith('remove') ? 'remove' : 'keep'
+              const keepGuests = choice === `keep${WITH_OPTION}`
+              api.updateServer(server, { password: next, members, keep_guests: keepGuests }).then(
                 res => {
                   setPassword('')
-                  setDone(passwordDone(prompt.confirm, members, res.removed, res.kept))
+                  const guests =
+                    changed && members === 'keep'
+                      ? keepGuests
+                        ? ' Guests kept access.'
+                        : ' Guests lost access.'
+                      : ''
+                  setDone(passwordDone(prompt.confirm, members, res.removed, res.kept) + guests)
                   refresh?.()
                 },
                 (err: unknown) => setError(errorText(err))
@@ -845,35 +874,55 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
   const { title, body, confirm, action, choices } = request
   const name = useId()
   const [choice, setChoice] = useState(choices?.[0]?.value ?? '')
-  const danger = choices?.find(c => c.value === choice)?.danger ?? true
+  const [optionOn, setOptionOn] = useState(false)
+  const picked: OptionChoice | undefined = choices?.find(c => c.value === choice)
+  const danger = picked?.danger ?? true
   return (
     <Dialog title={title} onClose={onClose} layer="confirm">
       <p className="text-sm text-on-surface-variant">{body}</p>
       {choices && (
         <fieldset className="mt-4 space-y-2">
           <legend className="sr-only">{title}</legend>
-          {choices.map(c => (
-            <label
+          {choices.map((c: OptionChoice) => (
+            <div
               key={c.value}
-              className={`flex cursor-pointer gap-3 rounded-xl border px-3 py-2.5 ${
+              className={`rounded-xl border ${
                 c.value === choice
                   ? 'border-primary bg-surface-container-highest'
                   : 'border-outline-variant hover:bg-surface-container-highest'
               }`}
             >
-              <input
-                type="radio"
-                name={name}
-                value={c.value}
-                checked={c.value === choice}
-                onChange={() => setChoice(c.value)}
-                className="mt-0.5 shrink-0 accent-primary"
-              />
-              <span className="min-w-0">
-                <span className="block text-sm font-medium text-on-surface">{c.label}</span>
-                <span className="block pt-0.5 text-xs text-on-surface-variant">{c.detail}</span>
-              </span>
-            </label>
+              <label className="flex cursor-pointer gap-3 px-3 py-2.5">
+                <input
+                  type="radio"
+                  name={name}
+                  value={c.value}
+                  checked={c.value === choice}
+                  onChange={() => setChoice(c.value)}
+                  className="mt-0.5 shrink-0 accent-primary"
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-on-surface">{c.label}</span>
+                  <span className="block pt-0.5 text-xs text-on-surface-variant">{c.detail}</span>
+                </span>
+              </label>
+              {c.option && c.value === choice && (
+                <label className="flex cursor-pointer gap-3 border-t border-outline-variant py-2.5 pr-3 pl-9">
+                  <input
+                    type="checkbox"
+                    checked={optionOn}
+                    onChange={e => setOptionOn(e.target.checked)}
+                    className="mt-0.5 shrink-0 accent-primary"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm text-on-surface">{c.option.label}</span>
+                    <span className="block pt-0.5 text-xs text-on-surface-variant">
+                      {c.option.detail}
+                    </span>
+                  </span>
+                </label>
+              )}
+            </div>
           ))}
         </fieldset>
       )}
@@ -884,7 +933,7 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
         <button
           onClick={() => {
             onClose()
-            action(choice)
+            action(optionOn && picked?.option ? `${choice}${WITH_OPTION}` : choice)
           }}
           className={
             danger

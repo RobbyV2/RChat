@@ -164,32 +164,37 @@ export default function AppShell() {
         <ProfileCard />
         <ContextMenu />
         <CallBanner />
-        {notices.length > 0 && (
-          <div className="fixed top-16 right-[max(1rem,env(safe-area-inset-right))] z-50 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
-            {notices.map(n => (
-              <button
-                key={n.id}
-                onClick={() => {
-                  dismissNotice(n.id)
-                  n.go()
-                }}
-                className="rounded-xl bg-surface-container-high p-3 text-left shadow-elevation-2 hover:bg-surface-container-highest"
-              >
-                <p className="truncate text-sm font-medium">
-                  {n.lead && `${n.lead} `}
-                  <span className="streamer">{n.name}</span>
-                  {n.title && ` ${n.title}`}
-                </p>
-                {n.body && <p className="truncate text-xs text-on-surface-variant">{n.body}</p>}
-              </button>
-            ))}
-          </div>
-        )}
-        {error && (
-          <div className="fixed bottom-4 left-1/2 z-60 -translate-x-1/2 rounded-xl bg-error-container px-4 py-2 text-sm text-on-error-container shadow-elevation-2">
-            {error}
-          </div>
-        )}
+        <div className="pointer-events-none fixed inset-x-4 top-[calc(env(safe-area-inset-top)+4rem)] z-60 flex flex-col gap-2 sm:contents">
+          {error && (
+            <div
+              role="alert"
+              className="pointer-events-auto max-w-full self-center rounded-xl sm:fixed sm:top-[calc(env(safe-area-inset-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2 bg-error-container px-4 py-2 text-center text-sm text-on-error-container shadow-elevation-2"
+            >
+              {error}
+            </div>
+          )}
+          {notices.length > 0 && (
+            <div className="pointer-events-auto flex w-full flex-col gap-2 sm:fixed sm:top-16 sm:right-[max(1rem,env(safe-area-inset-right))] sm:z-50 sm:w-80 sm:max-w-[calc(100vw-2rem)]">
+              {notices.map(n => (
+                <button
+                  key={n.id}
+                  onClick={() => {
+                    dismissNotice(n.id)
+                    n.go()
+                  }}
+                  className="rounded-xl bg-surface-container-high p-3 text-left shadow-elevation-2 hover:bg-surface-container-highest"
+                >
+                  <p className="truncate text-sm font-medium">
+                    {n.lead && `${n.lead} `}
+                    <span className="streamer">{n.name}</span>
+                    {n.title && ` ${n.title}`}
+                  </p>
+                  {n.body && <p className="truncate text-xs text-on-surface-variant">{n.body}</p>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <InvitePage />
     </>

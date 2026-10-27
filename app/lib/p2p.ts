@@ -1,5 +1,6 @@
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs'
-import { home } from './instances'
+import { backoffDelay } from './backoff'
+import { home, writeLocal } from './instances'
 import { SpeakingDetector } from './vad'
 import { mediaError } from './rules'
 
@@ -43,12 +44,18 @@ export const base64ToBlob = (data: string, mime: string) => {
   return new Blob([bytes], { type: mime })
 }
 
+export const servable = (file: StoredFile | null, now: number) =>
+  file && (file.expires_at === null || file.expires_at > now) ? file : null
+
 class P2pManager {
   private peer: Peer | null = null
+  private retry: ReturnType<typeof setTimeout> | null = null
+  private attempt = 0
   private media: MediaConnection | null = null
   private control: DataConnection | null = null
   private purgeTimer: ReturnType<typeof setInterval> | null = null
   private cached: Record<string, StoredFile> | null = null
+  private id: string | null = null
   private placeholder: MediaStreamTrack | null = null
   private cameraTrack: MediaStreamTrack | null = null
   private shareTrack: MediaStreamTrack | null = null
@@ -73,11 +80,16 @@ class P2pManager {
   }
 
   peerId(): string {
-    const stored = localStorage.getItem(LS_ID)
-    if (stored) return stored
-    const id = randomHex(16)
-    localStorage.setItem(LS_ID, id)
-    return id
+    if (this.id) return this.id
+    let stored: string | null
+    try {
+      stored = localStorage.getItem(LS_ID)
+    } catch {
+      stored = null
+    }
+    this.id = stored || randomHex(16)
+    if (!stored) writeLocal(LS_ID, this.id)
+    return this.id
   }
 
   files(): Record<string, StoredFile> {
@@ -91,7 +103,12 @@ class P2pManager {
   }
 
   private write(files: Record<string, StoredFile>) {
-    localStorage.setItem(LS_FILES, JSON.stringify(files))
+    if (!writeLocal(LS_FILES, JSON.stringify(files))) throw new Error('storage write failed')
+    this.cached = files
+  }
+
+  private drop(files: Record<string, StoredFile>) {
+    writeLocal(LS_FILES, JSON.stringify(files))
     this.cached = files
   }
 
@@ -121,7 +138,7 @@ class P2pManager {
     const files = { ...this.files() }
     if (!(id in files)) return
     delete files[id]
-    this.write(files)
+    this.drop(files)
     this.announce()
   }
 
@@ -136,7 +153,7 @@ class P2pManager {
       }
     }
     if (changed) {
-      this.write(files)
+      this.drop(files)
       this.announce()
     }
   }
@@ -155,23 +172,41 @@ class P2pManager {
     })
   }
 
-  private ensurePeer(): Peer {
+  private retryLater() {
+    if (this.retry) return
+    this.retry = setTimeout(() => {
+      this.retry = null
+      this.ensurePeer(true)
+    }, backoffDelay(this.attempt++))
+  }
+
+  private ensurePeer(now = false): Peer {
     const cur = this.peer
+    if (cur && !cur.destroyed && !cur.disconnected) return cur
+    if (cur && !now) {
+      this.retryLater()
+      return cur
+    }
+    if (this.retry) clearTimeout(this.retry)
+    this.retry = null
     if (cur && !cur.destroyed) {
-      if (cur.disconnected) cur.reconnect()
+      cur.reconnect()
       return cur
     }
     const peer = new Peer(this.peerId(), home.peer())
+    peer.on('open', () => {
+      this.attempt = 0
+    })
     peer.on('connection', conn =>
       conn.label === 'call' ? this.attachControl(conn) : this.serve(conn)
     )
     peer.on('call', call => this.answer(call))
     peer.on('disconnected', () => {
-      if (!peer.destroyed) peer.reconnect()
+      if (this.peer === peer) this.retryLater()
     })
     peer.on('error', err => {
       if (err.type === 'unavailable-id') {
-        localStorage.setItem(LS_ID, randomHex(16))
+        writeLocal(LS_ID, randomHex(16))
         peer.destroy()
         this.peer = null
         this.announce()
@@ -184,10 +219,12 @@ class P2pManager {
   }
 
   private serve(conn: DataConnection) {
+    let answered = false
     conn.on('data', d => {
       const msg = d as WireMsg
-      if (msg?.type !== 'get') return
-      const f = this.file(msg.id)
+      if (answered || msg?.type !== 'get' || typeof msg.id !== 'string') return
+      answered = true
+      const f = servable(this.file(msg.id), Math.floor(Date.now() / 1000))
       void conn.send(
         f
           ? { type: 'file', id: msg.id, name: f.name, mime: f.mime, data: f.data }
@@ -198,7 +235,7 @@ class P2pManager {
 
   download(peerId: string, id: string): Promise<Blob> {
     return new Promise((resolve, reject) => {
-      const conn = this.ensurePeer().connect(peerId, { reliable: true })
+      const conn = this.ensurePeer(true).connect(peerId, { reliable: true })
       const timer = setTimeout(() => {
         conn.close()
         reject(new Error('P2P download timed out'))
@@ -334,7 +371,7 @@ class P2pManager {
   dial(peerId: string) {
     const { local } = this
     if (!local) return
-    const peer = this.ensurePeer()
+    const peer = this.ensurePeer(true)
     this.attach(peer.call(peerId, local))
     this.attachControl(peer.connect(peerId, { label: 'call', reliable: true }))
   }

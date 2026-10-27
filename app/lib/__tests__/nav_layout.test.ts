@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import {
   addToFolder,
+  bootDms,
   dmSections,
   emptyLayout,
   folderChildren,
   folderTitle,
   forgetServer,
+  knownDms,
   layoutKey,
   layoutServers,
   mergeOrder,
@@ -429,5 +431,23 @@ describe('order helpers', () => {
     expect(pruneLayout(layout, ['a', 'b'], [1, 2, 3])).toBe(layout)
     expect(pruneLayout(layout, ['b'], null)).toEqual({ ...layout, servers: ['b'] })
     expect(pruneLayout(layout, null, [2])).toEqual({ ...layout, dmOrder: [2], dmPinned: [] })
+  })
+})
+
+describe('dm boot', () => {
+  const order = Array.from({ length: 120 }, (_, i) => i + 1)
+  const layout: Layout = { ...emptyLayout, dmPinned: [200, 3], dmOrder: order }
+
+  test('loads pinned dms and only the first page of the manual order', () => {
+    const asked = bootDms(layout, 50)
+    expect(asked).toEqual([200, 3, ...order.slice(0, 50).filter(id => id !== 3)])
+  })
+
+  test('keeps the unasked part of the order when pruning', () => {
+    const asked = bootDms(layout, 50)
+    const loaded = asked.filter(id => id !== 7)
+    const kept = pruneLayout(layout, null, knownDms(layout, loaded, asked))
+    expect(kept.dmOrder).toEqual(order.filter(id => id !== 7))
+    expect(kept.dmPinned).toEqual([200, 3])
   })
 })

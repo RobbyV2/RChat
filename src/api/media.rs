@@ -267,7 +267,12 @@ async fn media_view_ok(
             Option<String>,
             Option<String>,
         ) = (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?, r.try_get(3)?);
+        let banned = match (&server, user) {
+            (Some(sv), Some(u)) => crate::db::is_banned(db, sv, &u.username).await?,
+            (_, _) => false,
+        };
         let ok = match (&server, &hash) {
+            (Some(_), _) if banned => false,
             (Some(_), None) => true,
             (Some(sv), Some(_)) => match user {
                 Some(u) => {
@@ -553,8 +558,8 @@ pub async fn sweep_expired(state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::{
-        MediaQuery, SWEEP_BATCH, content_disposition, delete_media, download_media, store_media,
-        sweep,
+        MediaQuery, SWEEP_BATCH, content_disposition, delete_media, download_media, media_view_ok,
+        store_media, sweep,
     };
     use crate::api::Authed;
     use crate::api::test_util::{done, mem_user, temp_state};
@@ -714,6 +719,54 @@ mod tests {
             .await
             .expect("body");
         assert!(body.is_empty());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn banned_users_cannot_fetch_an_open_servers_media() {
+        let (state, path) = temp_state("media_banned").await;
+        let id = "be".repeat(16);
+        store_media(
+            &state.db,
+            &id,
+            "a.txt",
+            "text/plain",
+            1,
+            Some(&[1]),
+            "alice",
+            now(),
+        )
+        .await
+        .expect("store media");
+        let cid = general(&state.db).await;
+        sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, created_at) VALUES($1, 'alice', '', $2, 'a.txt', 1)")
+            .bind(cid)
+            .bind(&id)
+            .execute(&state.db)
+            .await
+            .expect("attach");
+        let headers = axum::http::HeaderMap::new();
+        let see = |who: &'static str, admin: bool| {
+            let (state, headers, id) = (state.clone(), headers.clone(), id.clone());
+            async move {
+                media_view_ok(&state.db, &headers, &id, Some(&mem_user(who, admin)), None)
+                    .await
+                    .is_ok()
+            }
+        };
+        assert!(see("carol", false).await && see("root", true).await);
+        sqlx::query("INSERT INTO server_bans(server, username, created_at) VALUES('rchat', 'carol', 1), ('rchat', 'root', 1)")
+            .execute(&state.db)
+            .await
+            .expect("ban");
+        assert!(!see("carol", false).await);
+        assert!(!see("root", true).await);
+        assert!(see("dave", false).await);
+        assert!(
+            media_view_ok(&state.db, &headers, &id, None, None)
+                .await
+                .is_ok()
+        );
         done(state, path).await;
     }
 

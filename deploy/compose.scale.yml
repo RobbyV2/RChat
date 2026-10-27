@@ -30,7 +30,7 @@ x-rchat: &rchat
 
 x-env: &env
   HOST: 0.0.0.0
-  DATABASE_URL: postgres://rchat:${POSTGRES_PASSWORD:-rchat}@postgres:5432/rchat
+  DATABASE_URL: postgres://rchat:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/rchat
   REDIS_URL: redis://:${VALKEY_PASSWORD:?set VALKEY_PASSWORD}@valkey:6379
   TRUSTED_PROXIES: ${RCHAT_EDGE_SUBNET:-10.240.80.0/24}
   RUST_LOG: ${RUST_LOG:-info}
@@ -54,7 +54,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: rchat
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rchat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: rchat
     networks: [backend]
     volumes:
@@ -68,13 +68,19 @@ services:
   valkey:
     image: valkey/valkey:8-alpine
     restart: unless-stopped
+    # The password goes into a config file (mode 600 in the container's /tmp), not onto the
+    # command line, so ps on the host does not show it.
     command:
-      - valkey-server
-      - --appendonly
-      - "yes"
-      - --requirepass
-      - ${VALKEY_PASSWORD:?set VALKEY_PASSWORD}
+      - sh
+      - -c
+      - >-
+        case "$$VALKEY_PASSWORD" in *"'"*) echo "VALKEY_PASSWORD may not contain a single quote" >&2; exit 1;; esac;
+        umask 077;
+        printf "requirepass '%s'\n" "$$VALKEY_PASSWORD" > /tmp/valkey.conf;
+        chown valkey:valkey /tmp/valkey.conf;
+        exec docker-entrypoint.sh valkey-server /tmp/valkey.conf --appendonly yes
     environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?set VALKEY_PASSWORD}
       REDISCLI_AUTH: ${VALKEY_PASSWORD:?set VALKEY_PASSWORD}
     networks: [backend]
     volumes:

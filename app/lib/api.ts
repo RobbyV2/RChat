@@ -98,16 +98,18 @@ export class ApiClient {
     path: string,
     body?: unknown,
     extra: Record<string, string> = {},
-    keepalive = false
+    keepalive = false,
+    timeoutMs = 0
   ): Promise<Response> {
     const headers: Record<string, string> = { ...extra }
-    if (this.token) {
+    if (headers.Authorization === undefined && this.token) {
       headers.Authorization = `Bearer ${this.token}`
-    } else {
+    } else if (headers.Authorization === undefined) {
       const grants = Object.values(this.grants)
       if (grants.length) headers['X-Guest-Grant'] = grants.join(',')
     }
     const init: RequestInit = keepalive ? { method, headers, keepalive } : { method, headers }
+    if (timeoutMs) init.signal = AbortSignal.timeout(timeoutMs)
     if (body instanceof FormData) {
       init.body = body
     } else if (body !== undefined) {
@@ -126,9 +128,10 @@ export class ApiClient {
     path: string,
     body?: unknown,
     extra: Record<string, string> = {},
-    keepalive = false
+    keepalive = false,
+    timeoutMs = 0
   ): Promise<T> {
-    return handleResponse<T>(await this.send(method, path, body, extra, keepalive))
+    return handleResponse<T>(await this.send(method, path, body, extra, keepalive, timeoutMs))
   }
 
   async page<T>(path: string): Promise<Page<T>> {
@@ -207,6 +210,15 @@ export interface SearchParams {
 export const endpoints = (c: ApiClient) => ({
   register: (body: RegisterRequest) => c.req<AuthResponse>('POST', '/auth/register', body),
   login: (body: LoginRequest) => c.req<AuthResponse>('POST', '/auth/login', body),
+  logout: (token: string) =>
+    c.req<{ ok: boolean }>(
+      'POST',
+      '/auth/logout',
+      undefined,
+      { Authorization: `Bearer ${token}` },
+      true,
+      3000
+    ),
   words: (username: string) => c.req<{ words: string[] }>('GET', `/auth/words/${seg(username)}`),
   me: () => c.req<Me>('GET', '/me'),
   myServers: (cursor: string | null, limit: number) =>
@@ -258,7 +270,7 @@ export const endpoints = (c: ApiClient) => ({
   leaveServer: (name: string) => c.req<unknown>('POST', `/servers/${seg(name)}/leave`),
   updateServer: (
     name: string,
-    patch: { name?: string; password?: string; members?: PasswordMembers }
+    patch: { name?: string; password?: string; members?: PasswordMembers; keep_guests?: boolean }
   ) => c.req<ServerUpdated>('PATCH', `/servers/${seg(name)}`, patch),
   deleteServer: (name: string) => c.req<unknown>('DELETE', `/servers/${seg(name)}`),
   createChannel: (server: string, name: string, kind: ChannelKind = 'text') =>

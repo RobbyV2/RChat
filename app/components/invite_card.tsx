@@ -5,6 +5,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
   type Ref,
   type RefObject,
@@ -14,14 +15,19 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { ExternalLink, Globe, Hash, Link2Off, Lock, Paperclip, X } from 'lucide-react'
 import { ApiError } from '../lib/api'
-import { api } from '../lib/instances'
+import { InstanceError, api } from '../lib/instances'
 import { errorText, useStore, type Nav } from '../lib/store'
 import {
+  hostParts,
   invitePath,
+  inviteVersion,
   previewText,
   remoteInviteUrl,
+  keepsPreview,
+  refreshDelay,
   remoteKey,
   stashInvite,
+  watchInvites,
   type RemoteInvite,
 } from '../lib/invite'
 import { formatQualified, hostOf } from '../lib/qualified'
@@ -38,6 +44,7 @@ import { Dialog, FieldError, fieldCls, filledBtn, textBtn } from './server_setti
 import { ThemeToggle } from './status_clock'
 import { InstanceChip } from './instance_badge'
 import { UserAvatar } from './user_avatar'
+import { profileTrigger } from './profile_card'
 
 export type InviteVariant = 'embed' | 'page'
 
@@ -66,27 +73,86 @@ interface Loaded {
   error: unknown
 }
 
-function useInvite(server: string, password: string | null) {
+function useVisible(ref: RefObject<HTMLElement | null>, always: boolean) {
+  const [visible, setVisible] = useState(true)
+  useEffect(() => {
+    const el = ref.current
+    if (always || !el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(entries => {
+      const last = entries.at(-1)
+      if (last) setVisible(last.isIntersecting)
+    })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [ref, always])
+  return always || visible
+}
+
+function useSettledVersion(version: number, visible: boolean) {
+  const [settled, setSettled] = useState(version)
+  const stale = useRef<{ since: number; bump: number } | null>(null)
+  const fetchedAt = useRef(0)
+  useEffect(() => {
+    const now = Date.now()
+    stale.current = { since: stale.current?.since ?? now, bump: now }
+  }, [version])
+  useEffect(() => {
+    const due = stale.current
+    if (version === settled) stale.current = null
+    if (version === settled || !visible || !due) return
+    const timer = setTimeout(
+      () => {
+        stale.current = null
+        fetchedAt.current = Date.now()
+        setSettled(version)
+      },
+      refreshDelay(due.since, due.bump, fetchedAt.current, Date.now())
+    )
+    return () => clearTimeout(timer)
+  }, [version, settled, visible])
+  return settled
+}
+
+const transient = (error: unknown) => keepsPreview(error instanceof ApiError ? error.status : null)
+
+function useInvite(
+  server: string,
+  password: string | null,
+  root: RefObject<HTMLElement | null>,
+  always: boolean
+) {
   const viewer = useStore(s => s.me?.username ?? '')
   const key = `${viewer}\n${server}\n${password ?? ''}`
+  const bumped = useSyncExternalStore(
+    watchInvites,
+    () => inviteVersion(server),
+    () => 0
+  )
+  const visible = useVisible(root, always)
+  const version = useSettledVersion(bumped, visible)
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [tick, setTick] = useState(0)
   const maxAge = useRef(TTL)
   useEffect(() => {
     let live = true
-    fetchInvite(key, server, password, maxAge.current).then(
+    fetchInvite(`${key}\n${version}`, server, password, maxAge.current).then(
       data => {
         if (live) setLoaded({ key, data, error: null })
       },
       (error: unknown) => {
-        if (live) setLoaded({ key, data: null, error })
+        if (!live) return
+        setLoaded(prev =>
+          prev?.key === key && prev.data && transient(error)
+            ? { key, data: prev.data, error: null }
+            : { key, data: null, error }
+        )
       }
     )
     maxAge.current = TTL
     return () => {
       live = false
     }
-  }, [key, server, password, tick])
+  }, [key, server, password, tick, version])
   const reload = useCallback(() => {
     maxAge.current = FRESH
     setTick(t => t + 1)
@@ -261,6 +327,7 @@ function Counts({ invite, center }: { invite: Invite; center: boolean }) {
 }
 
 function PreviewLine({ message, big, host }: { message: Message; big: boolean; host?: string }) {
+  const streamer = useStore(s => s.streamer)
   const { author, content, media } = message
   const text = previewText(content)
   return (
@@ -277,8 +344,9 @@ function PreviewLine({ message, big, host }: { message: Message; big: boolean; h
         }`}
       >
         <span
-          title={host ? formatQualified(author.username, host) : undefined}
-          className="streamer font-medium text-on-surface"
+          {...(host ? {} : profileTrigger(author, null))}
+          title={host && !streamer ? formatQualified(author.username, host) : undefined}
+          className={`streamer font-medium text-on-surface ${host ? '' : 'cursor-pointer hover:underline'}`}
         >
           {author.display_name}
         </span>{' '}
@@ -369,7 +437,8 @@ function Layout({
   sub,
   actions,
   extra,
-}: Body & { big: boolean; invalid: boolean }) {
+  stack = false,
+}: Body & { big: boolean; invalid: boolean; stack?: boolean }) {
   if (big)
     return (
       <>
@@ -396,7 +465,9 @@ function Layout({
           <div className="mt-0.5">{sub}</div>
         </div>
         {actions && (
-          <div className="flex w-full flex-wrap gap-1.5 @sm:w-auto @sm:shrink-0 @sm:flex-col @sm:items-end">
+          <div
+            className={`flex w-full flex-wrap gap-1.5 ${stack ? '' : '@sm:w-auto @sm:shrink-0 @sm:flex-col @sm:items-end'}`}
+          >
             {actions}
           </div>
         )}
@@ -449,13 +520,13 @@ export function InviteCard({
   const joined = useStore(s =>
     s.me ? s.me.servers.some(x => x.name === server) : s.guest && s.guestServers.includes(server)
   )
-  const { data, error, reload } = useInvite(server, password)
+  const root = useRef<HTMLDivElement>(null)
+  const big = variant === 'page'
+  const { data, error, reload } = useInvite(server, password, root, big)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const [asking, setAsking] = useState<{ guest: boolean; error: string | null } | null>(null)
-  const root = useRef<HTMLDivElement>(null)
   const seen = useRef(joined)
-  const big = variant === 'page'
   const nav: Nav = big ? 'replace' : 'push'
   const authed = me !== null || guest
   const status: InviteStatus | null = data ? (joined ? 'member' : data.status) : null
@@ -687,13 +758,14 @@ export function InviteCard({
 }
 
 function RemoteOrigin({ host, name }: { host: string; name?: string }) {
+  const streamer = useStore(s => s.streamer)
   return (
-    <span className="flex max-w-full min-w-0 items-center gap-1.5">
-      <InstanceChip host={host} className="shrink-0" />
+    <span className="flex max-w-full min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+      <InstanceChip host={host} />
       {name && name !== host && (
         <span
-          title={`${host} calls itself ${name}`}
-          className="streamer min-w-0 shrink-[3] truncate text-[11px] text-on-surface-variant"
+          title={streamer ? 'The name this site gives itself' : `${host} calls itself ${name}`}
+          className="streamer max-w-full min-w-0 truncate text-[11px] text-on-surface-variant"
         >
           {name}
         </span>
@@ -745,6 +817,7 @@ export function RemoteInviteCard({
   onResolved?: (key: string, ok: boolean) => void
 }) {
   const previews = useStore(s => s.settings.asset_previews)
+  const streamer = useStore(s => s.streamer)
   const key = remoteKey(invite)
   const [asked, setAsked] = useState(() => previewRequested(key))
   const wanted = previews && (asked || previewRequested(key))
@@ -766,10 +839,10 @@ export function RemoteInviteCard({
   const openBtn = (
     <button
       onClick={open}
-      title={`Opens ${host} in a new tab`}
-      className={`${filledBtn} inline-flex shrink-0 items-center gap-1.5`}
+      title={streamer ? 'Opens the invite in a new tab' : `Opens ${host} in a new tab`}
+      className={`${filledBtn} inline-flex max-w-full min-w-0 items-center gap-1.5`}
     >
-      <span className="max-w-40 truncate">
+      <span className="min-w-0 truncate">
         Open on <span className="streamer">{host}</span>
       </span>
       <ExternalLink size={14} className="shrink-0" />
@@ -798,7 +871,7 @@ export function RemoteInviteCard({
         actions: (
           <button
             onClick={load}
-            title={`Fetch this invite from ${host}`}
+            title={streamer ? 'Fetch this invite from its site' : `Fetch this invite from ${host}`}
             className={`${filledBtn} shrink-0`}
           >
             Load preview
@@ -822,7 +895,17 @@ export function RemoteInviteCard({
                 ? 'This invite may have expired, or the server no longer exists.'
                 : rchat
                   ? errorText(error)
-                  : 'This link is not an RChat invite, or that site could not be reached.'}
+                  : error instanceof InstanceError
+                    ? hostParts(errorText(error), host).map((p, i) =>
+                        p.host ? (
+                          <span key={i} className="streamer">
+                            {p.text}
+                          </span>
+                        ) : (
+                          p.text
+                        )
+                      )
+                    : 'This link is not an RChat invite, or that site could not be reached.'}
             </p>
           </div>
         ),
@@ -839,7 +922,7 @@ export function RemoteInviteCard({
     const { name, display_name, has_password } = data.server
     return {
       icon: (
-        <span title={`${display_name} on ${host}`}>
+        <span title={streamer ? 'Server icon' : `${display_name} on ${host}`}>
           <ServerTile name={name} displayName={display_name} big={false} />
         </span>
       ),
@@ -866,7 +949,11 @@ export function RemoteInviteCard({
   const view = body()
   return (
     <Frame ref={root} big={false} invalid={invalid} heading={heading}>
-      {view ? <Layout big={false} invalid={invalid} {...view} /> : <Skeleton big={false} />}
+      {view ? (
+        <Layout big={false} invalid={invalid} stack={wanted} {...view} />
+      ) : (
+        <Skeleton big={false} />
+      )}
     </Frame>
   )
 }

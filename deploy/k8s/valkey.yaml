@@ -2,7 +2,8 @@
 # Redis/Valkey with failover and point REDIS_URL at it instead. The bus is trusted (any
 # client can inject realtime events), so it requires VALKEY_PASSWORD and the
 # NetworkPolicy below only lets the RChat role pods reach it (enforced only by a CNI that
-# implements NetworkPolicy, e.g. Calico or Cilium).
+# implements NetworkPolicy, e.g. Calico or Cilium). The password goes into a config file
+# (mode 600 in the container's /tmp), not onto the command line, so ps does not show it.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,7 +26,11 @@ spec:
             - -c
             - >-
               test -n "$VALKEY_PASSWORD" || { echo "VALKEY_PASSWORD is empty" >&2; exit 1; };
-              exec docker-entrypoint.sh valkey-server --appendonly yes --requirepass "$VALKEY_PASSWORD"
+              case "$VALKEY_PASSWORD" in *"'"*) echo "VALKEY_PASSWORD may not contain a single quote" >&2; exit 1;; esac;
+              umask 077;
+              printf "requirepass '%s'\n" "$VALKEY_PASSWORD" > /tmp/valkey.conf;
+              chown valkey:valkey /tmp/valkey.conf 2>/dev/null || true;
+              exec docker-entrypoint.sh valkey-server /tmp/valkey.conf --appendonly yes
           env:
             - name: VALKEY_PASSWORD
               valueFrom:

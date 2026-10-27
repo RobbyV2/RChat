@@ -182,8 +182,18 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             server,
             username: _,
             online: _,
+            online_count: _,
         } => to(vec![Target::View(server)]),
-        WsEvent::PresenceMode {
+        WsEvent::PresenceSnapshot {
+            server: _,
+            online: _,
+            online_count: _,
+        } => to(Vec::new()),
+        WsEvent::ServerBanned {
+            server: _,
+            username,
+        }
+        | WsEvent::PresenceMode {
             username,
             appear_offline: _,
         }
@@ -687,6 +697,7 @@ mod tests {
             server: s("b"),
             username: s("x"),
             online: true,
+            online_count: 1,
         });
         router.deliver(roles("b"));
         assert_eq!(drain(&mut viewer), vec![1, 2, 3]);

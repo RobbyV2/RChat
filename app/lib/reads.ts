@@ -7,7 +7,7 @@ type Timer = ReturnType<typeof setTimeout>
 export interface ReadQueue {
   mark: (scope: string, id: number) => void
   seen: (scope: string, id: number) => void
-  flush: (scope?: string) => void
+  flush: (scope?: string) => Promise<void>
   clear: () => void
   queued: () => number
   pending: (scope: string) => number
@@ -47,7 +47,7 @@ export const createReadQueue = (opts: {
   const send = (scope: string, id: number) => {
     sent.set(scope, id)
     const mine = gen
-    opts.send(scope, id).then(
+    return opts.send(scope, id).then(
       () => {
         if (mine === gen && (queue.get(scope)?.id ?? 0) <= id) failures.delete(scope)
       },
@@ -70,16 +70,18 @@ export const createReadQueue = (opts: {
 
   const flush = (scope?: string) => {
     const scopes = scope === undefined ? [...queue.keys()] : [scope]
+    const sending: Promise<void>[] = []
     for (const s of scopes) {
       const q = queue.get(s)
       if (!q) continue
       queue.delete(s)
-      if (q.id > (sent.get(s) ?? 0)) send(s, q.id)
+      if (q.id > (sent.get(s) ?? 0)) sending.push(send(s, q.id))
     }
     if (timer !== null && queue.size === 0) {
       clearTimer(timer)
       timer = null
     }
+    return Promise.all(sending).then(() => {})
   }
 
   const flushDue = () => {

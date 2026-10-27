@@ -292,7 +292,15 @@ export type WsEvent =
   | { type: 'channel_perms_changed'; server: string; channel_id: number }
   | { type: 'user_updated'; user: UserRef }
   | { type: 'user_registered'; user: UserRef }
-  | { type: 'presence_changed'; server: string; username: string; online: boolean }
+  | {
+      type: 'presence_changed'
+      server: string
+      username: string
+      online: boolean
+      online_count?: number
+    }
+  | { type: 'presence_snapshot'; server: string; online: string[]; online_count: number }
+  | { type: 'server_banned'; server: string; username: string }
   | { type: 'presence_mode'; username: string; appear_offline: boolean }
   | { type: 'read_updated'; username: string; scope: string; last_read: number }
   | { type: 'voice_state'; server: string; channel_id: number; users: string[] }

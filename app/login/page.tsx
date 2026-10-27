@@ -52,6 +52,7 @@ function InstancePicker({
   const host = useStore(s => s.instanceHost)
   const loadInstance = useStore(s => s.loadInstance)
   const switchInstance = useStore(s => s.switchInstance)
+  const streamer = useStore(s => s.streamer)
   const [open, setOpen] = useState(false)
   const [address, setAddress] = useState('')
   const [error, setError] = useState<ReactNode>(null)
@@ -107,7 +108,12 @@ function InstancePicker({
         <Globe size={18} className="shrink-0 text-on-surface-variant" />
         <div className="min-w-0 flex-1">
           <p className="text-xs text-on-surface-variant">Instance</p>
-          <p className="truncate text-sm" title={host ? `${name} (${host})` : name}>
+          <p
+            className="truncate text-sm"
+            title={
+              streamer ? 'The RChat instance you sign in to' : host ? `${name} (${host})` : name
+            }
+          >
             <span className="streamer font-medium text-on-surface">{name}</span>
             {host && <span className="streamer ml-1.5 text-on-surface-variant">{host}</span>}
           </p>
@@ -134,14 +140,14 @@ function InstancePicker({
           id={`${listId}-input`}
           value={address}
           onChange={e => setAddress(e.target.value)}
-          list={listId}
-          placeholder={home.origin}
+          list={streamer ? undefined : listId}
+          placeholder={streamer ? 'chat.example.com' : home.origin}
           inputMode="url"
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
           aria-invalid={error !== null}
-          className={`${inputCls} min-w-0 flex-1`}
+          className={`${inputCls} streamer min-w-0 flex-1`}
         />
         <button
           disabled={busy}
@@ -150,13 +156,15 @@ function InstancePicker({
           {busy ? 'Checking…' : 'Connect'}
         </button>
       </div>
-      <datalist id={listId}>
-        {known.map(k => (
-          <option key={k.origin} value={k.origin}>
-            {k.name}
-          </option>
-        ))}
-      </datalist>
+      {!streamer && (
+        <datalist id={listId}>
+          {known.map(k => (
+            <option key={k.origin} value={k.origin}>
+              {k.name}
+            </option>
+          ))}
+        </datalist>
+      )}
       {error ? (
         <p role="alert" className="text-xs text-error">
           {error}
@@ -202,6 +210,10 @@ export default function LoginPage() {
   const [avatarKind, setAvatarKind] = useState<AvatarKind>('identicon')
   const [avatarColor, setAvatarColor] = useState('#6750a4')
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    useStore.getState().setStreamer(localStorage.getItem('rchat_streamer') === '1')
+  }, [])
 
   useEffect(() => {
     if (!authed) return

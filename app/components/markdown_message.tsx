@@ -23,6 +23,7 @@ import {
   parseInviteAt,
   remoteKey,
 } from '../lib/invite'
+import { postedUrl } from '../lib/embed_links'
 import { expiryText, sameOriginImage } from '../lib/rules'
 import { userRefFor, useStore, type ContextMenuItem } from '../lib/store'
 import type { Embed, Message, MessageMedia } from '../lib/types'
@@ -466,7 +467,8 @@ function EmbedCard({
 }) {
   const deleteEmbed = useStore(s => s.deleteEmbed)
   const openContextMenu = useStore(s => s.openContextMenu)
-  const { ord, url, site_name, title, description, image_url, banner_removed } = embed
+  const { ord, site_name, title, description, image_url, banner_removed } = embed
+  const url = useMemo(() => postedUrl(message.content, embed.url), [message.content, embed.url])
 
   const menu = (x: number, y: number) => {
     const items: ContextMenuItem[] = [

@@ -19,9 +19,12 @@ export function useInstanceSync() {
 }
 
 export function InstanceChip({ host, className = '' }: { host: string; className?: string }) {
+  const streamer = useStore(s => s.streamer)
   return (
     <span
-      title={`Lives on ${host}, another RChat instance`}
+      title={
+        streamer ? 'Lives on another RChat instance' : `Lives on ${host}, another RChat instance`
+      }
       className={`inline-flex max-w-full min-w-0 items-center gap-1 rounded-full bg-tertiary-container px-2 py-0.5 text-[11px] leading-4 font-medium text-on-tertiary-container ${className}`}
     >
       <Globe size={11} className="shrink-0" />
@@ -33,9 +36,10 @@ export function InstanceChip({ host, className = '' }: { host: string; className
 export function RailInstance() {
   const { name, host } = useInstance()
   const openDialog = useStore(s => s.openDialog)
+  const streamer = useStore(s => s.streamer)
   return (
     <button
-      title={host ? `${name} (${host})` : name}
+      title={streamer ? 'Instance' : host ? `${name} (${host})` : name}
       aria-label={`Instance ${name}${host ? ` on ${host}` : ''}`}
       onClick={() => openDialog({ kind: 'settings' })}
       className="flex w-15 shrink-0 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"

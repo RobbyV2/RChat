@@ -24,5 +24,7 @@ data:
   # The name and public origin this instance announces at /api/instance and signs identity
   # assertions with; every replica shares the id and signing key stored in Postgres.
   INSTANCE_NAME: RChat
-  # PUBLIC_URL: "https://chat.example.com"
+  # REPLACE with the origin users open (for example https://chat.example.com); the pods refuse
+  # to start until you do, since unset they would announce localhost as their issuer.
+  PUBLIC_URL: "REPLACE-with-your-public-origin"
   # ALLOWED_HOSTS: "chat.example.com"

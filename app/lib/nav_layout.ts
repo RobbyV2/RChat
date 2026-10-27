@@ -393,3 +393,12 @@ export const pruneLayout = (
     next.dmPinned.length === layout.dmPinned.length
   return same ? layout : next
 }
+
+export const bootDms = (layout: Layout, cap: number) => [
+  ...new Set([...layout.dmPinned, ...layout.dmOrder.slice(0, cap)]),
+]
+
+export const knownDms = (layout: Layout, loaded: number[], asked: number[]) => {
+  const ask = new Set(asked)
+  return [...loaded, ...layout.dmOrder.filter(id => !ask.has(id))]
+}

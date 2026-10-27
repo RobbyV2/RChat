@@ -110,6 +110,25 @@ describe('jumping to a message', () => {
     expect(st().newer.c1).toBeUndefined()
   })
 
+  test('a failed jump keeps live messages held while detached, leaving no gap', async () => {
+    replies = [range(75, 124)]
+    await st().jumpTo('c1', 100)
+    dispatch(live(500))
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      requests.push(String(input))
+      return new Response(JSON.stringify({ error: 'boom' }), { status: 500 })
+    }) as typeof fetch
+    await st()
+      .jumpTo('c1', 10)
+      .catch(() => {})
+    expect(ids('c1')).toEqual(span(75, 124))
+    expect(st().newer.c1).toEqual({ more: true, loading: false })
+    serve()
+    replies = [range(125, 130)]
+    await st().loadNewer()
+    expect(ids('c1')).toEqual([...span(75, 130), 500])
+  })
+
   test('jumping to the present loads the latest page and scrolls to the bottom', async () => {
     replies = [range(75, 124)]
     await st().jumpTo('c1', 100)
@@ -160,6 +179,44 @@ describe('jumping to a message', () => {
     expect(content('c1', 200)).toBe('v2')
     expect(content('c1', 201)).toBe('v2')
     expect(st().messages.c1.at(-1)?.media?.removed).toBe(true)
+  })
+
+  test('messages held during a jump survive a window that looks detached', async () => {
+    let release = () => {}
+    const gate = new Promise<void>(r => (release = r))
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      requests.push(String(input))
+      await gate
+      return new Response(JSON.stringify(range(76, 124)), { status: 200 })
+    }) as typeof fetch
+    const jump = st().jumpTo('c1', 100)
+    dispatch(live(125))
+    release()
+    await jump
+    expect(st().newer.c1).toEqual({ more: true, loading: false })
+    serve()
+    replies = [[]]
+    await st().loadNewer()
+    expect(ids('c1')).toEqual(span(76, 125))
+    expect(st().newer.c1).toBeUndefined()
+  })
+
+  test('a deleted channel drops its held messages', async () => {
+    useStore.setState({ servers: { s: serverDetail('s', { channels: [] }) } })
+    replies = [range(75, 124)]
+    await st().jumpTo('c1', 100)
+    dispatch(live(300))
+    ;(globalThis as { window?: unknown }).window = {
+      location: { pathname: '/', href: 'http://x/', origin: 'http://x', protocol: 'http:' },
+      history: { state: null, pushState: () => {}, replaceState: () => {} },
+    }
+    dispatch({ type: 'channel_deleted', server: 's', channel_id: 1 })
+    useStore.setState({ view: { kind: 'channel', server: 's', channelId: 1 } })
+    replies = [range(75, 124)]
+    await st().jumpTo('c1', 100)
+    replies = [[]]
+    await st().loadNewer()
+    expect(ids('c1')).toEqual(span(75, 124))
   })
 
   test('a fetched page replaces held copies of the same messages', async () => {

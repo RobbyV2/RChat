@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -8,7 +10,7 @@ use crate::api::messages::{MsgScope, message_scope};
 use crate::api::{
     ApiError, Authed, Paged, ServerSummaryLite, Settings, UserRef, decode_cursor, encode_cursor,
 };
-use crate::db::{AvatarKind, User, now, purge_messages, user_row};
+use crate::db::{AvatarKind, Db, User, now, purge_messages, user_row};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -313,7 +315,9 @@ pub(crate) async fn delete_server(
 
 pub(crate) const PURGING_HASH: &str = crate::db::PURGING_HASH;
 
-pub(crate) const PURGE_LEASE: i64 = 600;
+pub(crate) const PURGE_LEASE: i64 = 300;
+pub const PURGE_SWEEP_SECS: u64 = 120;
+const LEASE_RENEW: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PurgeKind {
@@ -328,6 +332,13 @@ impl PurgeKind {
             PurgeKind::Server => "server",
             PurgeKind::User => "user",
             PurgeKind::Ban => "ban",
+        }
+    }
+
+    fn tags(self) -> [&'static str; 2] {
+        match self {
+            PurgeKind::Server => [PurgeKind::Server.tag(), PurgeKind::Server.tag()],
+            PurgeKind::User | PurgeKind::Ban => [PurgeKind::User.tag(), PurgeKind::Ban.tag()],
         }
     }
 
@@ -481,12 +492,72 @@ fn spawn_purge(state: &AppState, kind: PurgeKind, key: &str) {
                 "purge of {} {key} paused, the sweeper resumes it: {e}",
                 kind.tag()
             );
-            release_purge(&state, kind, &key).await;
         }
     });
 }
 
+struct Lease {
+    renew: Option<tokio::task::JoinHandle<()>>,
+    job: (Db, PurgeKind, String),
+}
+
+impl Lease {
+    fn start(db: &Db, kind: PurgeKind, key: &str, every: Duration) -> Lease {
+        let job = (db.clone(), kind, key.to_string());
+        let (db, key) = (db.clone(), key.to_string());
+        let renew = tokio::spawn(async move {
+            let mut ticks = tokio::time::interval(every);
+            ticks.tick().await;
+            loop {
+                ticks.tick().await;
+                if let Err(e) = stamp_purge(&db, kind, &key, now()).await {
+                    tracing::warn!("renewing the {} {key} purge lease failed: {e}", kind.tag());
+                }
+            }
+        });
+        Lease {
+            renew: Some(renew),
+            job,
+        }
+    }
+
+    async fn end(mut self, finished: bool) {
+        let Some(renew) = self.renew.take() else {
+            return;
+        };
+        renew.abort();
+        let _ = renew.await;
+        if !finished {
+            let (db, kind, key) = &self.job;
+            release_purge(db, *kind, key).await;
+        }
+    }
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        let Some(renew) = self.renew.take() else {
+            return;
+        };
+        renew.abort();
+        let (db, kind, key) = self.job.clone();
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            rt.spawn(async move {
+                let _ = renew.await;
+                release_purge(&db, kind, &key).await;
+            });
+        }
+    }
+}
+
 pub(crate) async fn finish_purge(state: &AppState, kind: PurgeKind, key: &str) -> sqlx::Result<()> {
+    let lease = Lease::start(&state.db, kind, key, LEASE_RENEW);
+    let out = run_purge(state, kind, key).await;
+    lease.end(out.is_ok()).await;
+    out
+}
+
+async fn run_purge(state: &AppState, kind: PurgeKind, key: &str) -> sqlx::Result<()> {
     match kind {
         PurgeKind::Server => {
             purge_messages(
@@ -513,6 +584,10 @@ pub(crate) async fn finish_purge(state: &AppState, kind: PurgeKind, key: &str) -
             )
             .await?;
             let mut tx = state.db.begin().await?;
+            sqlx::query("UPDATE users SET password_hash = password_hash WHERE username = $1")
+                .bind(key)
+                .execute(&mut *tx)
+                .await?;
             let purging = user_row(&mut *tx, key)
                 .await?
                 .is_none_or(|u| u.password_hash == PURGING_HASH);
@@ -530,10 +605,7 @@ async fn clear_purge(
     kind: PurgeKind,
     key: &str,
 ) -> sqlx::Result<()> {
-    let kinds = match kind {
-        PurgeKind::Server => [PurgeKind::Server.tag(), PurgeKind::Server.tag()],
-        PurgeKind::User | PurgeKind::Ban => [PurgeKind::User.tag(), PurgeKind::Ban.tag()],
-    };
+    let kinds = kind.tags();
     sqlx::query("DELETE FROM pending_purges WHERE kind IN ($1, $2) AND key = $3")
         .bind(kinds[0])
         .bind(kinds[1])
@@ -557,13 +629,24 @@ async fn claim_purge(state: &AppState, kind: PurgeKind, key: &str, t: i64) -> sq
         == 1)
 }
 
-async fn release_purge(state: &AppState, kind: PurgeKind, key: &str) {
-    let released =
-        sqlx::query("UPDATE pending_purges SET claimed_at = 0 WHERE kind = $1 AND key = $2")
-            .bind(kind.tag())
-            .bind(key)
-            .execute(&state.db)
-            .await;
+async fn stamp_purge(db: &Db, kind: PurgeKind, key: &str, at: i64) -> sqlx::Result<u64> {
+    let [a, b] = kind.tags();
+    Ok(
+        sqlx::query(
+            "UPDATE pending_purges SET claimed_at = $1 WHERE kind IN ($2, $3) AND key = $4",
+        )
+        .bind(at)
+        .bind(a)
+        .bind(b)
+        .bind(key)
+        .execute(db)
+        .await?
+        .rows_affected(),
+    )
+}
+
+async fn release_purge(db: &Db, kind: PurgeKind, key: &str) {
+    let released = stamp_purge(db, kind, key, 0).await;
     if let Err(e) = released {
         tracing::warn!("releasing the {} {key} purge failed: {e}", kind.tag());
     }
@@ -583,7 +666,7 @@ pub async fn resume_purges(state: &AppState) -> sqlx::Result<u64> {
         let Some(kind) = PurgeKind::parse(&tag) else {
             continue;
         };
-        match claim_purge(state, kind, &key, t).await {
+        match claim_purge(state, kind, &key, now()).await {
             Ok(true) => {}
             Ok(false) => continue,
             Err(e) => {
@@ -595,7 +678,6 @@ pub async fn resume_purges(state: &AppState) -> sqlx::Result<u64> {
             Ok(()) => done += 1,
             Err(e) => {
                 tracing::warn!("purge of {tag} {key} failed, retrying on the next sweep: {e}");
-                release_purge(state, kind, &key).await;
             }
         }
     }
@@ -1041,15 +1123,22 @@ mod tests {
             .expect("general")
             .try_get(0)
             .expect("channel id");
+        let mut posted = Vec::new();
         for author in ["alice", "bob"] {
-            sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, $2, 'needle', $3)")
+            let id: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, $2, 'needle', $3) RETURNING id")
                 .bind(cid)
                 .bind(author)
                 .bind(now())
-                .execute(db)
+                .fetch_one(db)
                 .await
-                .expect("message");
+                .expect("message")
+                .try_get(0)
+                .expect("id");
+            posted.push(id);
         }
+        let [alice_msg, bob_msg] = posted[..] else {
+            panic!("two messages");
+        };
         let dm: i64 =
             sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
                 .fetch_one(db)
@@ -1148,6 +1237,37 @@ mod tests {
             count(db, "SELECT COUNT(*) FROM members WHERE username = 'bob'").await,
             0
         );
+        assert!(
+            crate::api::messages::load_message(db, bob_msg)
+                .await
+                .expect("load")
+                .is_none()
+        );
+        assert!(
+            crate::api::messages::load_message(db, alice_msg)
+                .await
+                .expect("load")
+                .is_some()
+        );
+        assert!(matches!(
+            crate::api::messages::message_scope(db, bob_msg).await,
+            Err(ApiError(StatusCode::NOT_FOUND, _))
+        ));
+        let carol = get_user(db, "carol").await.expect("q").expect("carol");
+        let carol_unread = unreads(
+            State(state.clone()),
+            Authed(carol),
+            Query(serde_json::from_value(json!({"all": true})).expect("uq")),
+        )
+        .await
+        .expect("unreads")
+        .0;
+        let general = carol_unread
+            .items
+            .iter()
+            .find(|u| u.scope == format!("c{cid}"))
+            .expect("general unread");
+        assert_eq!(general.latest, alice_msg);
         let history = recent_channel_messages(db, cid, 50).await.expect("history");
         assert!(history.iter().all(|m| m.author.username != "bob"));
         assert!(history.iter().any(|m| m.author.username == "alice"));
@@ -1270,6 +1390,93 @@ mod tests {
             Err(ApiError(StatusCode::BAD_REQUEST, msg)) => assert_eq!(msg, "Username is banned"),
             _ => panic!("expected banned after the purge"),
         }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn release_covers_a_user_purge_turned_ban() {
+        let (state, path) = temp_state("release_kinds").await;
+        let db = &state.db;
+        sqlx::query("INSERT INTO pending_purges(kind, key, created_at, claimed_at) VALUES('ban', 'bob', 1, $1)")
+            .bind(now())
+            .execute(db)
+            .await
+            .expect("job");
+        release_purge(db, PurgeKind::User, "bob").await;
+        assert_eq!(
+            count(
+                db,
+                "SELECT claimed_at FROM pending_purges WHERE key = 'bob'"
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            stamp_purge(db, PurgeKind::User, "bob", 7)
+                .await
+                .expect("stamp"),
+            1
+        );
+        assert_eq!(
+            count(
+                db,
+                "SELECT claimed_at FROM pending_purges WHERE key = 'bob'"
+            )
+            .await,
+            7
+        );
+        assert!(PURGE_LEASE < 600 && (PURGE_SWEEP_SECS as i64) < PURGE_LEASE);
+        assert!((LEASE_RENEW.as_secs() as i64) * 2 < PURGE_LEASE);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_lease_is_claimed_once_and_released_when_the_purge_dies() {
+        let (state, path) = temp_state("lease_guard").await;
+        let db = &state.db;
+        sqlx::query("INSERT INTO pending_purges(kind, key, created_at, claimed_at) VALUES('user', 'bob', 1, 1)")
+            .execute(db)
+            .await
+            .expect("job");
+        let claimed = |at| claim_purge(&state, PurgeKind::User, "bob", at);
+        assert!(claimed(now()).await.expect("claim"));
+        assert!(!claimed(now()).await.expect("second claim"));
+        assert!(
+            !claimed(now() + PURGE_LEASE - 1)
+                .await
+                .expect("inside the lease")
+        );
+        let stamp = "SELECT claimed_at FROM pending_purges WHERE key = 'bob'";
+        sqlx::query("UPDATE pending_purges SET claimed_at = 1")
+            .execute(db)
+            .await
+            .expect("reset");
+        let held = db.clone();
+        let died = tokio::spawn(async move {
+            let _lease = Lease::start(&held, PurgeKind::User, "bob", Duration::from_millis(20));
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            panic!("purge blew up");
+        })
+        .await;
+        assert!(died.is_err());
+        let mut released = false;
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if count(db, stamp).await == 0 {
+                released = true;
+                break;
+            }
+        }
+        assert!(released, "the lease was released after the panic");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(count(db, stamp).await, 0, "the renewer stopped");
+        let lease = Lease::start(db, PurgeKind::User, "bob", Duration::from_millis(20));
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert!(count(db, stamp).await > 1, "the renewer stamps the lease");
+        lease.end(false).await;
+        assert_eq!(count(db, stamp).await, 0);
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert_eq!(count(db, stamp).await, 0);
         done(state, path).await;
     }
 

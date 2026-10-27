@@ -379,7 +379,7 @@ function Card({ target }: { target: ProfileTarget }) {
         className={`relative shrink-0 ${sheet ? 'h-24' : 'h-16'}`}
       >
         {sheet && (
-          <div className="absolute top-2 left-1/2 h-1 w-8 -translate-x-1/2 rounded-full bg-white/70 ring-1 ring-black/10" />
+          <div className="absolute top-2 left-1/2 h-1 w-8 -translate-x-1/2 rounded-full bg-surface-container-highest/80 ring-1 ring-outline-variant" />
         )}
       </div>
       <div className={sheet ? 'px-5' : 'px-4'}>

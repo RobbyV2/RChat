@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { dmView, folderLabel, railOrder, railServers, useStore } from '../store'
 import { emptyLayout, type Folder, type Layout } from '../nav_layout'
 import type { DmSummary, ServerSummary, WsEvent } from '../types'
-import { me, msg, serverDetail, user } from './fixtures'
+import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -57,7 +57,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = realFetch
-  delete (globalThis as { localStorage?: unknown }).localStorage
+  Object.assign(globalThis, { localStorage: memoryStorage })
 })
 
 describe('rail order', () => {

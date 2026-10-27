@@ -88,6 +88,8 @@ describe('verifyAssertion against a local JWKS', () => {
     expect(await code(verifyAssertion(foreign, { aud: AUD, keys }))).toBe('subject')
     const bare = await sign(key, { sub: 'alice' })
     expect(await code(verifyAssertion(bare, { aud: AUD, keys }))).toBe('subject')
+    const doubled = await sign(key, { sub: 'a@b@chat.example.com' })
+    expect(await code(verifyAssertion(doubled, { aud: AUD, keys }))).toBe('subject')
     const long = await sign(key, {}, { ttl: 3600 })
     expect(await code(verifyAssertion(long, { aud: AUD, keys }))).toBe('lifetime')
     const old = await sign(key, {}, { iat: Math.floor(Date.now() / 1000) - 1000 })

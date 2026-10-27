@@ -8,15 +8,24 @@ import {
   findRemoteInvites,
   entryState,
   handoffFor,
+  hostParts,
   inviteEntry,
+  INVITE_GAP,
+  INVITE_MAX_WAIT,
+  INVITE_QUIET,
+  inviteVersion,
   invitePath,
   inviteUrl,
   parseInvite,
   parseInviteAt,
   previewText,
   remoteInviteUrl,
+  keepsPreview,
+  refreshDelay,
   remoteKey,
   safeNext,
+  staleInvites,
+  watchInvites,
 } from '../invite'
 
 const ORIGIN = 'https://chat.example.com'
@@ -307,4 +316,86 @@ describe('remote invites', () => {
       'https://b.example\nc',
     ])
   })
+})
+
+describe('invite preview freshness', () => {
+  test('a server bump changes only that server, a global bump changes all', () => {
+    const a = inviteVersion('a')
+    const b = inviteVersion('b')
+    let calls = 0
+    const stop = watchInvites(() => (calls += 1))
+    staleInvites('a')
+    expect(inviteVersion('a') > a).toBe(true)
+    expect(inviteVersion('b')).toBe(b)
+    const a2 = inviteVersion('a')
+    staleInvites(null)
+    expect(inviteVersion('a') > a2).toBe(true)
+    expect(inviteVersion('b') > b).toBe(true)
+    stop()
+    staleInvites('a')
+    expect(calls).toBe(2)
+  })
+})
+
+describe('host parts', () => {
+  test('splits out every host so it can be blurred', () => {
+    expect(hostParts('x.co claims to be another site', 'x.co')).toEqual([
+      { text: 'x.co', host: true },
+      { text: ' claims to be another site', host: false },
+    ])
+    expect(hostParts("Can't reach x.co", 'x.co')).toEqual([
+      { text: "Can't reach ", host: false },
+      { text: 'x.co', host: true },
+    ])
+    expect(hostParts('plain', '')).toEqual([{ text: 'plain', host: false }])
+  })
+})
+
+describe('invite refresh pacing', () => {
+  test('waits for a quiet spell after the last change', () => {
+    expect(refreshDelay(0, 0, -INVITE_GAP, 0)).toBe(INVITE_QUIET)
+    expect(refreshDelay(0, 1_500, -INVITE_GAP, 2_000)).toBe(INVITE_QUIET - 500)
+  })
+
+  test('a steady stream of changes still refreshes after the max wait', () => {
+    const since = 0
+    const bump = INVITE_MAX_WAIT - 100
+    expect(refreshDelay(since, bump, -INVITE_GAP, bump)).toBe(100)
+    expect(refreshDelay(since, INVITE_MAX_WAIT + 5_000, -INVITE_GAP, INVITE_MAX_WAIT + 5_000)).toBe(
+      0
+    )
+  })
+
+  test('never refetches sooner than the gap after the last fetch', () => {
+    expect(refreshDelay(1_000, 1_000, 0, 1_000)).toBe(INVITE_GAP - 1_000)
+    expect(refreshDelay(30_000, 30_000, 0, 30_000)).toBe(INVITE_QUIET)
+  })
+
+  test('a burst of 100 changes costs at most one fetch per gap', () => {
+    let fetchedAt = -INVITE_GAP
+    let fetches = 0
+    let since: number | null = null
+    let bump = 0
+    for (let now = 0; now < 60_000; now += 100) {
+      if (now % 600 === 0) {
+        since ??= now
+        bump = now
+      }
+      if (since !== null && refreshDelay(since, bump, fetchedAt, now) === 0) {
+        fetches += 1
+        fetchedAt = now
+        since = null
+      }
+    }
+    expect(fetches <= Math.ceil(60_000 / INVITE_GAP) + 1).toBe(true)
+    expect(fetches > 0).toBe(true)
+  })
+})
+
+test('a failed refresh keeps the last preview unless the invite is gone', () => {
+  expect(keepsPreview(null)).toBe(true)
+  expect(keepsPreview(429)).toBe(true)
+  expect(keepsPreview(503)).toBe(true)
+  expect(keepsPreview(404)).toBe(false)
+  expect(keepsPreview(403)).toBe(false)
 })

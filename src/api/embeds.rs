@@ -26,28 +26,37 @@ const MAX_URLS: usize = 3;
 pub(crate) fn ip_ok(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
-            let [a, b, _, _] = v4.octets();
+            let [a, b, c, _] = v4.octets();
             !(v4.is_loopback()
                 || v4.is_private()
                 || v4.is_link_local()
                 || v4.is_unspecified()
                 || v4.is_broadcast()
                 || v4.is_multicast()
+                || v4.is_documentation()
                 || a == 0
                 || a >= 240
-                || (a == 100 && (64..128).contains(&b)))
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 192 && b == 0 && c == 0)
+                || (a == 198 && (18..20).contains(&b)))
         }
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => ip_ok(IpAddr::V4(v4)),
-            None => {
-                let seg = v6.segments()[0];
-                !(v6.is_loopback()
-                    || v6.is_unspecified()
-                    || v6.is_multicast()
-                    || (seg & 0xfe00) == 0xfc00
-                    || (seg & 0xffc0) == 0xfe80)
+        IpAddr::V6(v6) => {
+            let seg = v6.segments();
+            let embedded = |hi: u16, lo: u16| {
+                ip_ok(IpAddr::V4(std::net::Ipv4Addr::from(
+                    (u32::from(hi) << 16) | u32::from(lo),
+                )))
+            };
+            match seg {
+                [0, 0, 0, 0, 0, 0 | 0xffff, hi, lo]
+                | [0, 0, 0, 0, 0xffff, 0, hi, lo]
+                | [0x64, 0xff9b, 0, 0, 0, 0, hi, lo]
+                | [0x2002, hi, lo, ..] => embedded(hi, lo),
+                [0x2001, second, ..] => second >= 0x200 && second != 0xdb8,
+                [0x3fff, second, ..] => second >= 0x1000,
+                [first, ..] => first & 0xe000 == 0x2000,
             }
-        },
+        }
     }
 }
 
@@ -80,6 +89,7 @@ async fn fetch_html(start: &Url) -> anyhow::Result<(Url, String)> {
         let addrs = guard(&url).await?;
         let mut builder = reqwest::Client::builder()
             .redirect(Policy::none())
+            .no_proxy()
             .timeout(Duration::from_secs(5));
         if let Some(Host::Domain(domain)) = url.host() {
             builder = builder.resolve_to_addrs(domain, &addrs);
@@ -226,6 +236,54 @@ fn parse_meta(html: &str, base: &Url) -> Meta {
     meta
 }
 
+const SECRET_PARAMS: &[&str] = &[
+    "password",
+    "passwd",
+    "pass",
+    "pwd",
+    "token",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "auth",
+    "secret",
+    "api_key",
+    "apikey",
+    "key",
+    "sig",
+    "signature",
+    "code",
+];
+
+fn is_invite(url: &Url) -> bool {
+    let mut parts = url.path().split('/').skip(1);
+    matches!(
+        (parts.next(), parts.next(), parts.next(), parts.next()),
+        (Some("invite"), Some(name), None | Some(""), None) if !name.is_empty()
+    )
+}
+
+fn scrub(mut url: Url) -> Url {
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_fragment(None);
+    let kept: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(k, _)| {
+            let k = k.to_ascii_lowercase();
+            !SECRET_PARAMS.contains(&k.as_str()) && !k.starts_with("x-amz-")
+        })
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    match kept.is_empty() {
+        true => url.set_query(None),
+        false => {
+            url.query_pairs_mut().clear().extend_pairs(kept);
+        }
+    }
+    url
+}
+
 fn extract_urls(content: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for word in content.split(|c: char| c.is_whitespace() || c == '<' || c == '>') {
@@ -234,8 +292,8 @@ fn extract_urls(content: &str) -> Vec<String> {
             continue;
         }
         match Url::parse(trimmed) {
-            Ok(url) if url.host().is_some() => {
-                let s = url.to_string();
+            Ok(url) if url.host().is_some() && !is_invite(&url) => {
+                let s = scrub(url).to_string();
                 if !out.contains(&s) {
                     out.push(s);
                     if out.len() == MAX_URLS {
@@ -250,6 +308,9 @@ fn extract_urls(content: &str) -> Vec<String> {
 }
 
 const FETCH_CONCURRENCY: usize = 16;
+const QUEUE_MAX: usize = 256;
+
+static QUEUED: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(QUEUE_MAX)));
 
 static FETCHING: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(FETCH_CONCURRENCY));
 static IN_FLIGHT: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
@@ -360,6 +421,17 @@ async fn resolve_once(db: &Db, url: &str) -> anyhow::Result<Option<Embed>> {
     Ok(Some(embed(site_name, title, description, image)))
 }
 
+async fn live_server(db: &Db, message_id: i64) -> sqlx::Result<Option<Option<String>>> {
+    sqlx::query(
+        "SELECT c.server FROM messages m LEFT JOIN channels c ON c.id = m.channel_id WHERE m.id = $1",
+    )
+    .bind(message_id)
+    .fetch_optional(db)
+    .await?
+    .map(|r| r.try_get::<Option<String>, _>(0))
+    .transpose()
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct UnfurlJob {
     server: Option<String>,
@@ -392,8 +464,13 @@ pub(crate) fn spawn_unfurl(
         message_id,
         urls,
     };
+    let Ok(permit) = QUEUED.clone().try_acquire_owned() else {
+        tracing::debug!("embed queue full, no previews for message {message_id}");
+        return;
+    };
     let state = state.clone();
     tokio::spawn(async move {
+        let _permit = permit;
         match &state.bus {
             Some(bus) if !bus.unfurls_locally() => {
                 if let Err(e) = bus.enqueue_unfurl(&job).await {
@@ -417,6 +494,9 @@ pub async fn unfurl(state: &AppState, job: UnfurlJob) {
         message_id,
         urls,
     } = job;
+    if !matches!(live_server(&state.db, message_id).await, Ok(Some(_))) {
+        return;
+    }
     let mut embeds: Vec<Embed> = Vec::new();
     for url in urls {
         match resolve(&state.db, &url).await {
@@ -448,6 +528,11 @@ pub async fn unfurl(state: &AppState, job: UnfurlJob) {
             }
         }
     }
+    let server = match live_server(&state.db, message_id).await {
+        Ok(Some(current)) => current,
+        Ok(None) => return,
+        Err(_) => server,
+    };
     state.hub.broadcast(WsEvent::EmbedsResolved {
         server,
         channel_id,
@@ -504,6 +589,137 @@ pub(crate) async fn delete_embed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invite_links_and_secrets_never_reach_the_fetcher() {
+        let urls = extract_urls(
+            "join https://chat.example/invite/club/?password=hunter2 or http://other.example/invite/x and https://site.example/page?token=abc&id=7#frag https://u:p@site.example/a?password=x&q=1",
+        );
+        assert_eq!(
+            urls,
+            [
+                "https://site.example/page?id=7",
+                "https://site.example/a?q=1"
+            ]
+        );
+        assert!(
+            urls.iter()
+                .all(|u| !u.contains("hunter2") && !u.contains("password"))
+        );
+        assert_eq!(
+            extract_urls("https://x.example/invite/club/sub https://x.example/invites/a"),
+            [
+                "https://x.example/invite/club/sub",
+                "https://x.example/invites/a"
+            ]
+        );
+        assert_eq!(
+            extract_urls("https://s3.example/o?X-Amz-Signature=s&X-Amz-Credential=c&v=1"),
+            ["https://s3.example/o?v=1"]
+        );
+    }
+
+    #[test]
+    fn scrubbed_urls_match_the_client() {
+        for (posted, stored) in [
+            (
+                "https://dl.example/f.zip?sig=abc&exp=9",
+                "https://dl.example/f.zip?exp=9",
+            ),
+            (
+                "https://site.example/page?code=123",
+                "https://site.example/page",
+            ),
+            (
+                "https://site.example/a?q=a+b&Key=k#x",
+                "https://site.example/a?q=a+b",
+            ),
+            ("https://Site.Example/Path", "https://site.example/Path"),
+            (
+                "https://site.example/a?q=%2F&x",
+                "https://site.example/a?q=%2F&x=",
+            ),
+        ] {
+            assert_eq!(extract_urls(posted), [stored], "app/lib/embed_links.ts");
+        }
+    }
+
+    #[test]
+    fn translated_and_special_ranges_are_not_routable() {
+        let bad = [
+            "64:ff9b::a9fe:a9fe",
+            "64:ff9b::7f00:1",
+            "64:ff9b:1::1",
+            "2002:c0a8:0101::1",
+            "2002:7f00:1::",
+            "::a9fe:a9fe",
+            "::ffff:10.0.0.1",
+            "::1",
+            "::",
+            "fec0::1",
+            "fe80::1",
+            "fd00::1",
+            "2001::1",
+            "2001:db8::1",
+            "::ffff:0:a9fe:a9fe",
+            "::ffff:0:7f00:1",
+            "100::1",
+            "ff02::1",
+            "2001:10::1",
+            "2001:2::1",
+            "3fff::1",
+            "4000::1",
+            "192.0.0.8",
+            "198.18.0.1",
+            "198.19.255.255",
+            "192.0.2.1",
+            "203.0.113.9",
+            "169.254.169.254",
+            "100.64.0.1",
+            "10.1.2.3",
+        ];
+        for ip in bad {
+            assert!(!ip_ok(ip.parse().expect("ip")), "{ip}");
+        }
+        let good = [
+            "93.184.216.34",
+            "64:ff9b::5db8:d822",
+            "2002:5db8:d822::1",
+            "2606:4700::1111",
+            "2001:4860:4860::8888",
+            "2a00:1450:4001::200e",
+            "::ffff:0:5db8:d822",
+            "198.20.0.1",
+        ];
+        for ip in good {
+            assert!(ip_ok(ip.parse().expect("ip")), "{ip}");
+        }
+    }
+
+    #[tokio::test]
+    async fn unfurl_skips_deleted_messages_and_uses_the_current_server() {
+        let (state, path) = crate::api::test_util::temp_state("unfurl_live").await;
+        let db = &state.db;
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
+            .fetch_one(db)
+            .await
+            .expect("general")
+            .try_get(0)
+            .expect("id");
+        let mid: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'a', 'x', 1) RETURNING id")
+            .bind(cid)
+            .fetch_one(db)
+            .await
+            .expect("msg")
+            .try_get(0)
+            .expect("id");
+        assert_eq!(
+            live_server(db, mid).await.expect("q"),
+            Some(Some("rchat".to_string()))
+        );
+        assert_eq!(live_server(db, mid + 1).await.expect("q"), None);
+        crate::api::test_util::done(state, path).await;
+    }
 
     #[test]
     fn failed_urls_are_skipped_for_a_while() {

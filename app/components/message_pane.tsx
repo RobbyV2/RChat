@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
+  ChevronDown,
   Hash,
   Menu,
   MessageSquareText,
@@ -609,7 +610,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           </span>
         )}
         {dm && (
-          <span className="flex min-w-0 items-center gap-2 font-medium">
+          <span className="flex min-w-20 items-center gap-2 font-medium">
             <span
               {...profileTrigger(dm.other, null)}
               className="-ml-1.5 flex min-w-0 cursor-pointer items-center gap-2 rounded-full py-1 pr-2.5 pl-1.5 outline-offset-2 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary"
@@ -631,7 +632,27 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         )}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {dm && !dm.is_self && !guest && (
-            <>
+            <button
+              title="Call options"
+              aria-haspopup="menu"
+              disabled={call !== null}
+              onClick={e => {
+                const r = e.currentTarget.getBoundingClientRect()
+                openContextMenu(r.left, r.bottom, [
+                  { label: 'Call', action: () => void startCall(dm.id, false) },
+                  { label: 'Video call', action: () => void startCall(dm.id, true) },
+                  { label: 'P2P call', action: () => void startP2pCall(dm.id, false) },
+                  { label: 'P2P video call', action: () => void startP2pCall(dm.id, true) },
+                ])
+              }}
+              className="flex items-center rounded-full p-1.5 hover:bg-surface-container-high disabled:opacity-40 sm:hidden"
+            >
+              <Phone size={20} />
+              <ChevronDown size={14} />
+            </button>
+          )}
+          {dm && !dm.is_self && !guest && (
+            <div className="hidden items-center gap-2 sm:flex">
               <button
                 title="Call"
                 disabled={call !== null}
@@ -670,7 +691,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                   P2P
                 </span>
               </button>
-            </>
+            </div>
           )}
           <StatusClock />
           {view?.kind === 'channel' && !isVoice && (

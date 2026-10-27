@@ -484,6 +484,14 @@ pub(crate) async fn require_server_view(
     server: &ServerSummaryLite,
     viewer: Option<&User>,
 ) -> Result<(), ApiError> {
+    if let Some(u) = viewer
+        && crate::db::is_banned(db, &server.name, &u.username).await?
+    {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "You are banned from this server".to_string(),
+        ));
+    }
     if !server.has_password {
         return Ok(());
     }
@@ -566,7 +574,23 @@ fn push_words(phrases: &mut Vec<String>, phrase: &mut String, text: &str, gap: &
     phrase.push_str(text);
 }
 
-pub(crate) fn is_profane(text: &str) -> bool {
+fn issue_refs(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut prev = None;
+    for (i, c) in text.char_indices() {
+        let rest = &text[i + c.len_utf8()..];
+        let digits = rest.len() - rest.trim_start_matches(|d: char| d.is_ascii_digit()).len();
+        let reference = c == '#'
+            && !prev.is_some_and(|p: char| p.is_alphanumeric())
+            && digits > 0
+            && !rest[digits..].starts_with(|n: char| n.is_alphanumeric());
+        out.push(if reference { ' ' } else { c });
+        prev = Some(c);
+    }
+    out
+}
+
+fn phrases(text: &str, bridge: bool) -> Vec<String> {
     let mut phrases = Vec::new();
     let mut phrase = String::with_capacity(text.len());
     let mut at = 0;
@@ -580,18 +604,26 @@ pub(crate) fn is_profane(text: &str) -> bool {
         push_words(&mut phrases, &mut phrase, &text[at..i], "");
         let url = percent_encoding::percent_decode_str(&text[i..i + len]).decode_utf8_lossy();
         for (n, part) in url.split(URL_DELIMS).filter(|p| !p.is_empty()).enumerate() {
-            push_words(
-                &mut phrases,
-                &mut phrase,
-                part,
-                if n == 0 { "" } else { " " },
-            );
+            match (bridge, n) {
+                (true, 0 | 1) => {}
+                (false, 0) => push_words(&mut phrases, &mut phrase, part, ""),
+                (false, 1) => push_words(&mut phrases, &mut phrase, &part.replace('.', " "), " "),
+                _ => push_words(&mut phrases, &mut phrase, part, " "),
+            }
         }
         at = i + len;
     }
     push_words(&mut phrases, &mut phrase, &text[at..], "");
     phrases.push(phrase);
-    phrases.iter().any(|p| p.is_inappropriate())
+    phrases
+}
+
+pub(crate) fn is_profane(text: &str) -> bool {
+    let text = issue_refs(text);
+    [false, true]
+        .into_iter()
+        .flat_map(|bridge| phrases(&text, bridge))
+        .any(|p| p.is_inappropriate())
 }
 
 pub async fn check_profanity(db: &Db, text: &str) -> Result<(), ApiError> {
@@ -692,7 +724,12 @@ pub fn routes(state: AppState, roles: &Roles, key: ClientIp) -> Router<AppState>
     if roles.api {
         let invite_routes = Router::new()
             .route("/invites/{name}", get(servers::get_invite))
-            .route_layer(limiter());
+            .route_layer(limiter())
+            .merge(
+                Router::new()
+                    .route("/servers/{name}/join", post(servers::join_server))
+                    .route_layer(limiter()),
+            );
         let strict_routes = Router::new()
             .route("/auth/register", post(auth::register))
             .route("/auth/login", post(auth::login))
@@ -731,6 +768,7 @@ fn api_routes(
 ) -> Router<AppState> {
     Router::new()
         .route("/me", get(auth::me).patch(auth::patch_me))
+        .route("/auth/logout", post(auth::logout))
         .route("/me/servers", get(servers::list_my_servers))
         .route("/users/{username}/profile", get(users::profile))
         .route("/servers", post(servers::create_server))
@@ -743,7 +781,6 @@ fn api_routes(
         .route("/servers/{name}/exists", get(servers::server_exists))
         .route("/servers/{name}/members", get(servers::list_members))
         .route("/servers/{name}/interacted", get(servers::list_interacted))
-        .route("/servers/{name}/join", post(servers::join_server))
         .route("/servers/{name}/leave", post(servers::leave_server))
         .route("/servers/{name}/channels", post(servers::create_channel))
         .route(
@@ -935,6 +972,12 @@ mod tests {
             "https://example.com/v1/photos/p0/pizza",
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "https://github.com/RobbyV2/RChat/pull/12#issuecomment-123",
+            "https://rchat-rebase.example/page",
+            "see https://rchat-rebase.example/page please",
+            "see #55",
+            "PR #1550 merged",
+            "issue #560",
+            "fixed in (#66) and #65, #656",
             "plain words",
         ];
         for text in clean {
@@ -961,11 +1004,21 @@ mod tests {
             "x https://a\u{2800}f\u{2800}u\u{2800}c\u{2800}k",
             "https://x.co/f%75ck",
             "https://x.co/f/u/c/k",
+            // Blocked by design: single-letter path parts are read together.
             "https://x.co/a/s/s",
+            "https://example.com/a/s/s",
             "https://x.co/kill/yourself",
             "https://x.co/?q=kill+yourself",
             "https://x.co/kill%20yourself",
             "https://x.co/sh!t",
+            "kill https://x.co/yourself",
+            "kill https://rchat-rebase.example/yourself",
+            "https://f.u.c.k/",
+            "ass",
+            "a55",
+            "#ss",
+            "#55hole",
+            "you a#55",
         ];
         for text in dirty {
             assert!(is_profane(text), "{text}");
@@ -990,25 +1043,36 @@ mod tests {
         });
         let client = reqwest::Client::new();
         let mut limited = HashMap::new();
-        for (path, tries) in [
-            ("/invites/rchat", 40),
-            ("/auth/words/nobody", 20),
-            ("/settings", 40),
+        let mut first = HashMap::new();
+        for (post, path, tries) in [
+            (true, "/servers/rchat/join", 40),
+            (false, "/invites/rchat", 40),
+            (false, "/auth/words/nobody", 20),
+            (false, "/settings", 40),
         ] {
             let mut count = 0;
-            for _ in 0..tries {
-                let res = client
-                    .get(format!("http://{addr}{path}"))
+            for n in 0..tries {
+                let url = format!("http://{addr}{path}");
+                let req = match post {
+                    true => client.post(url),
+                    false => client.get(url),
+                };
+                let res = req
                     .header("X-Forwarded-For", "203.0.113.7")
                     .send()
                     .await
                     .expect("request");
+                if n == 0 {
+                    first.insert(path, res.status());
+                }
                 if res.status() == StatusCode::TOO_MANY_REQUESTS {
                     count += 1;
                 }
             }
             limited.insert(path, count);
         }
+        assert!(limited["/servers/rchat/join"] >= 5, "{limited:?}");
+        assert_eq!(first["/invites/rchat"], StatusCode::OK, "{first:?}");
         let other = client
             .get(format!("http://{addr}/invites/rchat"))
             .header("X-Forwarded-For", "198.51.100.9")

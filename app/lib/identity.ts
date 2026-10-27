@@ -160,6 +160,12 @@ export async function verifyAssertion(
     throw new AssertionError('lifetime')
   if (nonce !== undefined && claims.nonce !== nonce) throw new AssertionError('nonce')
   const subject = parseQualified(claims.sub)
-  if (subject.host === null || subject.host !== hostOf(iss)) throw new AssertionError('subject')
+  if (
+    typeof claims.sub !== 'string' ||
+    claims.sub.split('@').length !== 2 ||
+    subject.host === null ||
+    subject.host !== hostOf(iss)
+  )
+    throw new AssertionError('subject')
   return claims
 }

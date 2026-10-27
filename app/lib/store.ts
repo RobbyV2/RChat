@@ -6,7 +6,15 @@ import {
   type RegisterRequest,
   type SendOpts,
 } from './api'
-import { api, fitsHome, home, noteHomeInfo, resolveInstance, selectHome } from './instances'
+import {
+  api,
+  fitsHome,
+  home,
+  noteHomeInfo,
+  resolveInstance,
+  selectHome,
+  writeLocal,
+} from './instances'
 import { rtc } from './rtc'
 import { newP2pId, p2p } from './p2p'
 import { mentionsUser } from './mentions'
@@ -44,11 +52,13 @@ import {
 import { SEARCH_PAGE, SEARCH_TRIES, addSearchPage, searchParams, type SearchArgs } from './search'
 import {
   addToFolder as addIn,
+  bootDms,
   dmSections,
   emptyLayout,
   folderChildren,
   folderTitle,
   forgetServer,
+  knownDms,
   layoutKey,
   layoutServers,
   mergeServers as mergeIn,
@@ -77,11 +87,23 @@ import {
   inviteEntry,
   invitePath,
   parseInvite,
+  staleInvites,
   takeStashedInvite,
   type InviteEntry,
   type OpenInvite,
 } from './invite'
 import { clearProfiles } from './profile'
+import { retrySeconds, tooManyText } from './rate_limit'
+import {
+  freshPresence,
+  knownPresence,
+  notePresence,
+  presenceDelta,
+  presenceSnap,
+  snapOnline,
+  type PresenceLog,
+  type PresenceSnap,
+} from './presence'
 import type { PassKind, Secret } from './password'
 import { ALL_PERMS } from './types'
 import type {
@@ -98,14 +120,12 @@ import type {
   Member,
   Message,
   P2pAvailability,
-  PasswordMembers,
   Role,
   SearchResult,
   ServerBan,
   ServerDetail,
   ServerSummary,
   ServerSummaryLite,
-  ServerUpdated,
   SiteSettings,
   InstanceInfo,
   Theme,
@@ -245,6 +265,10 @@ export const MAX_UPLOAD = 25 * 1024 * 1024
 export const PAGE = 50
 export const LIST_MAX = 100
 
+const BANNED = 'You are banned from this server'
+
+class Banned extends Error {}
+
 export interface Paged<T> {
   list: T[]
   hasMore: boolean
@@ -286,15 +310,6 @@ export const viewKey = (view: View) =>
   view.kind === 'channel' ? `c${view.channelId}` : `d${view.dmId}`
 
 export const threadKey = (rootId: number) => `t${rootId}`
-
-const writeLocal = (key: string, value: string | null) => {
-  try {
-    if (value === null) localStorage.removeItem(key)
-    else localStorage.setItem(key, value)
-  } catch (e) {
-    console.warn('localStorage write failed', key, e)
-  }
-}
 
 const readJson = <T>(key: string, fallback: T): T => {
   try {
@@ -408,6 +423,7 @@ interface RChatState {
   ) => Promise<void>
   setAppearOffline: (appearOffline: boolean) => Promise<void>
   changePassword: (current: Secret, next: Secret, kind: PassKind) => Promise<string | null>
+  refreshAccount: () => Promise<void>
   syncFromUrl: (nav: 'replace' | 'none') => Promise<void>
   register: (body: RegisterRequest) => Promise<void>
   login: (body: LoginRequest) => Promise<void>
@@ -472,11 +488,6 @@ interface RChatState {
   joinServer: (name: string, password?: string, nav?: Nav) => Promise<void>
   leaveServer: (name: string) => Promise<void>
   renameServer: (name: string, newName: string) => Promise<void>
-  setServerPassword: (
-    name: string,
-    password: string,
-    members: PasswordMembers
-  ) => Promise<ServerUpdated>
   deleteServer: (name: string) => Promise<void>
   createChannel: (server: string, name: string, kind?: ChannelKind) => Promise<void>
   renameChannel: (id: number, name: string) => Promise<void>
@@ -733,6 +744,7 @@ export const useStore = create<RChatState>()((set, get) => {
   const epochs: Record<string, number> = {}
 
   const fail = (e: unknown) => {
+    if (e instanceof Banned) return
     const message = errorText(e)
     set({ error: message })
     setTimeout(() => {
@@ -748,10 +760,25 @@ export const useStore = create<RChatState>()((set, get) => {
     }
   }
 
+  const authRequest = async (path: string, body: LoginRequest | RegisterRequest) => {
+    const res = await api.send('POST', path, body)
+    if (res.ok) return (await res.json()) as AuthResponse
+    const text = await res.text().catch(() => '')
+    if (res.status === 429)
+      throw new ApiError(tooManyText(retrySeconds(res.headers.get('Retry-After'), text)), 429)
+    let message: string
+    try {
+      message = (JSON.parse(text) as { error?: string }).error || res.statusText
+    } catch {
+      message = res.statusText
+    }
+    throw new ApiError(message || `HTTP ${res.status}`, res.status)
+  }
+
   const expireSession = () => {
     if (get().authExpired) return
-    get().logout()
     set({ authExpired: true })
+    get().logout()
   }
 
   const dmPager = createPager<DmSummary>({
@@ -803,16 +830,21 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   const syncLayout = async (username: string) => {
-    const { servers, dmPinned, dmOrder } = get().layout
+    const { servers } = get().layout
+    const asked = bootDms(get().layout, PAGE)
     try {
       await get().ensureServers(layoutServers(servers))
-      await get().ensureDms([...dmPinned, ...dmOrder])
+      await get().ensureDms(asked)
     } catch {
       return
     }
     if (!sameUser(username)) return
     const s = get()
-    const dmIds = s.dms.map(d => d.id)
+    const dmIds = knownDms(
+      s.layout,
+      s.dms.map(d => d.id),
+      asked
+    )
     saveLayout(pruneLayout(s.layout, serverNames(s), dmIds))
   }
 
@@ -1212,14 +1244,22 @@ export const useStore = create<RChatState>()((set, get) => {
     persistGrants(grants)
   }
 
+  const bannedHere = new Set<string>()
+  const banCheck = (e: unknown, server: string | null | undefined) => {
+    if (!server || !(e instanceof ApiError && e.status === 403 && e.message === BANNED)) return e
+    bannedFrom(server)
+    return new Banned(BANNED)
+  }
+
   const fetchServer = async (name: string) => {
     try {
       const detail = await api.getServer(name)
+      bannedHere.delete(name)
       if (get().guest) rememberGuestName(detail.name, detail.display_name)
       return detail
     } catch (e) {
       if (get().guest && e instanceof ApiError && e.status === 401) dropGrant(name)
-      throw e
+      throw banCheck(e, name)
     }
   }
 
@@ -1299,7 +1339,7 @@ export const useStore = create<RChatState>()((set, get) => {
     const target = parsePath(window.location.pathname)
     const fallback = async () => {
       await unreadsReady
-      return get().openServer('rchat', undefined, 'replace')
+      return leaveForSafety()
     }
     const cur = get().view
     if (target && target.kind !== 'server' && cur && viewPath(target) === viewPath(cur)) return
@@ -1319,6 +1359,11 @@ export const useStore = create<RChatState>()((set, get) => {
     try {
       detail = (await Promise.all([fetchServer(target.server), ensureMembership(target.server)]))[0]
     } catch (e) {
+      if (e instanceof Banned) {
+        const now = get().view
+        if (now) syncUrl(now, 'replace')
+        return
+      }
       await fallback()
       const locked =
         e instanceof ApiError &&
@@ -1366,10 +1411,13 @@ export const useStore = create<RChatState>()((set, get) => {
     droppedAt.set(name, serverGen)
     const reload = serverPager.removed()
     const scopes = new Set((get().servers[name]?.channels ?? []).map(c => `c${c.id}`))
+    for (const scope of scopes) tails.delete(scope)
     forgetViews(views.keys().filter(k => scopes.has(k) && !liveKey(k)))
     forgetPending((_, upload) => !scopes.has(upload.scope))
     forgetReads((_, mark) => mark.server !== name)
     forgetMemberInfo(name)
+    presenceLogs.delete(name)
+    presenceSnaps.delete(name)
     saveLayout(forgetServer(get().layout, name))
     set(s => {
       const servers = { ...s.servers }
@@ -1397,11 +1445,24 @@ export const useStore = create<RChatState>()((set, get) => {
       }
     }
     const { view } = get()
-    if (view?.kind === 'channel' && view.server === name)
-      void get().openServer('rchat', undefined, 'replace')
+    if (view?.kind === 'channel' && view.server === name) void leaveForSafety()
+  }
+
+  const leaveForSafety = (nav: Nav = 'replace') => {
+    if (bannedHere.has('rchat') && get().me) get().openLastDm()
+    else return get().openServer('rchat', undefined, nav)
+  }
+
+  const bannedFrom = (server: string) => {
+    if (bannedHere.has(server)) return
+    const { view } = get()
+    removedFrom(server, true)
+    const stuck = view?.kind === 'channel' && view.server !== server && bannedHere.has(view.server)
+    if (!view || stuck) void leaveForSafety()
   }
 
   const removedFrom = (server: string, banned: boolean, title?: string) => {
+    if (banned) bannedHere.add(server)
     const { servers, me } = get()
     const name =
       servers[server]?.display_name ??
@@ -1437,7 +1498,7 @@ export const useStore = create<RChatState>()((set, get) => {
       return await run()
     } catch (e) {
       if (heads.get(key) === 1) {
-        const caught = takeTail(key, 0)
+        const caught = detached(key) ? [] : takeTail(key, 0)
         set(s => ({
           messages:
             caught.length && s.messages[key]
@@ -1581,8 +1642,21 @@ export const useStore = create<RChatState>()((set, get) => {
     return out ?? pages
   }
 
-  const presence: Extract<WsEvent, { type: 'presence_changed' }>[] = []
+  const presence: { ev: Extract<WsEvent, { type: 'presence_changed' }>; seq: number }[] = []
+  const presenceLogs = new Map<string, PresenceLog>()
+  const presenceSnaps = new Map<string, PresenceSnap>()
+  let presenceSeq = 0
   let presenceFrame = false
+
+  const knownOnline = (server: string, username: string) => {
+    const noted = knownPresence(presenceLogs.get(server), presenceSnaps.get(server), username)
+    if (noted !== undefined) return noted
+    const s = get()
+    return (
+      s.members[server]?.list.find(m => m.username === username)?.online ??
+      s.memberInfo[server]?.[username]?.online
+    )
+  }
 
   const flushPresence = () => {
     presenceFrame = false
@@ -1590,11 +1664,17 @@ export const useStore = create<RChatState>()((set, get) => {
     if (!batch.length) return
     const byServer = new Map<string, Map<string, boolean>>()
     const delta = new Map<string, number>()
-    for (const ev of batch) {
+    const counts = new Map<string, number>()
+    for (const { ev, seq } of batch) {
+      if (typeof ev.online_count === 'number') counts.set(ev.server, ev.online_count)
       const users = byServer.get(ev.server) ?? new Map<string, boolean>()
       users.set(ev.username, ev.online)
       byServer.set(ev.server, users)
-      delta.set(ev.server, (delta.get(ev.server) ?? 0) + (ev.online ? 1 : -1))
+      const known = knownOnline(ev.server, ev.username)
+      delta.set(ev.server, (delta.get(ev.server) ?? 0) + presenceDelta(known, ev.online))
+      const log = presenceLogs.get(ev.server) ?? new Map()
+      notePresence(log, ev.username, ev.online, seq)
+      presenceLogs.set(ev.server, log)
     }
     set(s => {
       let servers = s.servers
@@ -1603,8 +1683,10 @@ export const useStore = create<RChatState>()((set, get) => {
       for (const [server, users] of byServer) {
         const detail = servers[server]
         if (detail) {
-          const online_count = Math.max(0, detail.online_count + (delta.get(server) ?? 0))
-          servers = { ...servers, [server]: { ...detail, online_count } }
+          const online_count =
+            counts.get(server) ?? Math.max(0, detail.online_count + (delta.get(server) ?? 0))
+          if (online_count !== detail.online_count)
+            servers = { ...servers, [server]: { ...detail, online_count } }
         }
         const cache = members[server]
         if (cache) {
@@ -1631,8 +1713,42 @@ export const useStore = create<RChatState>()((set, get) => {
     })
   }
 
+  const applySnapshot = (ev: Extract<WsEvent, { type: 'presence_snapshot' }>) => {
+    flushPresence()
+    presenceSeq += 1
+    const snap = presenceSnap(ev.online, ev.online_count, presenceSeq)
+    presenceSnaps.set(ev.server, snap)
+    const fix = <T extends { username: string; online: boolean }>(m: T) => {
+      const online = snapOnline(snap, m.username)
+      return online === undefined || online === m.online ? m : { ...m, online }
+    }
+    set(s => {
+      const out: Partial<RChatState> = {}
+      const detail = s.servers[ev.server]
+      if (detail && detail.online_count !== ev.online_count)
+        out.servers = { ...s.servers, [ev.server]: { ...detail, online_count: ev.online_count } }
+      const cache = s.members[ev.server]
+      if (cache) {
+        const list = mapWhere(cache.list, m => fix(m) !== m, fix)
+        if (list !== cache.list) out.members = { ...s.members, [ev.server]: { ...cache, list } }
+      }
+      const known = s.memberInfo[ev.server]
+      if (known) {
+        let next: Record<string, Member | null> | null = null
+        for (const [username, m] of Object.entries(known)) {
+          if (!m || fix(m) === m) continue
+          next ??= { ...known }
+          next[username] = fix(m)
+        }
+        if (next) out.memberInfo = { ...s.memberInfo, [ev.server]: next }
+      }
+      return out
+    })
+  }
+
   const queuePresence = (ev: Extract<WsEvent, { type: 'presence_changed' }>) => {
-    presence.push(ev)
+    presenceSeq += 1
+    presence.push({ ev, seq: presenceSeq })
     if (presenceFrame) return
     presenceFrame = true
     if (typeof requestAnimationFrame === 'function' && pageVisible())
@@ -1745,8 +1861,16 @@ export const useStore = create<RChatState>()((set, get) => {
       const gen = memberGen[server] ?? 0
       for (const n of batch) memberPending.add(pendingKey(server, n))
       let found: Member[]
+      const since = presenceSeq
       try {
-        found = await api.membersByName(server, batch)
+        found = freshPresence(
+          await api.membersByName(server, batch).catch(e => {
+            throw banCheck(e, server)
+          }),
+          presenceLogs.get(server),
+          presenceSnaps.get(server),
+          since
+        )
       } finally {
         for (const n of batch) memberPending.delete(pendingKey(server, n))
       }
@@ -1852,15 +1976,28 @@ export const useStore = create<RChatState>()((set, get) => {
   const setOlder = (key: string, state: OlderState) =>
     set(s => ({ older: { ...s.older, [key]: state } }))
 
-  const fetchPage = (key: string, page: PageOpts): Promise<Message[]> => {
+  const fetchPage = async (key: string, page: PageOpts): Promise<Message[]> => {
     const id = Number(key.slice(1))
-    switch (key[0]) {
-      case 'c':
-        return api.channelMessages(id, page)
-      case 'd':
-        return api.dmMessages(id, page)
-      default:
-        return api.threadMessages(id, page)
+    try {
+      switch (key[0]) {
+        case 'c':
+          return await api.channelMessages(id, page)
+        case 'd':
+          return await api.dmMessages(id, page)
+        default:
+          return await api.threadMessages(id, page)
+      }
+    } catch (e) {
+      const { servers, view } = get()
+      const server =
+        key[0] === 'c'
+          ? Object.values(servers).find(d => d.channels.some(c => c.id === id))?.name
+          : key[0] === 'd'
+            ? null
+            : view?.kind === 'channel'
+              ? view.server
+              : null
+      throw banCheck(e, server)
     }
   }
 
@@ -1960,7 +2097,12 @@ export const useStore = create<RChatState>()((set, get) => {
       PAGE
     )
     const caught = edges.newer ? [] : takeTail(key, (sorted[0]?.id ?? 1) - 1)
-    tails.delete(key)
+    if (edges.newer) {
+      const last = sorted.at(-1)?.id ?? 0
+      const held = (tails.get(key) ?? []).filter(m => m.id > last)
+      if (held.length) tails.set(key, held)
+      else tails.delete(key)
+    }
     set(s => ({
       messages: { ...s.messages, [key]: applyEmbeds(merge(caught, sorted)) },
       older: { ...s.older, [key]: { more: edges.older, loading: false } },
@@ -2228,6 +2370,19 @@ export const useStore = create<RChatState>()((set, get) => {
         set(s => (s.me ? { me: { ...s.me, appear_offline: appearOffline } } : {}))
       }),
 
+    refreshAccount: async () => {
+      if (!get().token || !get().me) return
+      const fresh = await api.me().catch(() => null)
+      if (fresh)
+        set(s =>
+          s.me?.username === fresh.username
+            ? {
+                me: { ...s.me, password_kind: fresh.password_kind },
+              }
+            : {}
+        )
+    },
+
     changePassword: async (current, next, kind) => {
       try {
         await api.changePassword(current, next)
@@ -2291,14 +2446,19 @@ export const useStore = create<RChatState>()((set, get) => {
 
     syncFromUrl: nav => resolveUrl(nav),
 
-    register: body => act(async () => enter(await api.register(body))),
-    login: body => act(async () => enter(await api.login(body))),
+    register: body => act(async () => enter(await authRequest('/auth/register', body))),
+    login: body => act(async () => enter(await authRequest('/auth/login', body))),
 
     logout: () => {
+      const token = get().authExpired ? null : get().token
       if (meRetry) clearTimeout(meRetry)
       meRetry = null
-      readQueue.flush()
+      const flushed = readQueue.flush()
       readQueue.clear()
+      if (token)
+        void Promise.race([flushed, new Promise(r => setTimeout(r, 3000))])
+          .then(() => api.logout(token))
+          .catch(() => {})
       unreadsMore = false
       stopCatchUp()
       home.ws.stop()
@@ -2318,6 +2478,9 @@ export const useStore = create<RChatState>()((set, get) => {
       sticky.clear()
       views.clear()
       presence.length = 0
+      presenceLogs.clear()
+      presenceSnaps.clear()
+      bannedHere.clear()
       clearProfiles()
       dropStashedInvite()
       set({
@@ -2465,7 +2628,7 @@ export const useStore = create<RChatState>()((set, get) => {
       leaveInvite()
       if (pushed) window.history.back()
       else if (view) syncUrl(view, 'push')
-      else void get().openServer('rchat', undefined, 'push')
+      else void leaveForSafety('push')
     },
 
     syncInvite: readInvite,
@@ -2901,7 +3064,6 @@ export const useStore = create<RChatState>()((set, get) => {
       }),
 
     renameServer: async (name, newName) => void (await api.updateServer(name, { name: newName })),
-    setServerPassword: (name, password, members) => api.updateServer(name, { password, members }),
     deleteServer: name => act(async () => void (await api.deleteServer(name))),
     createChannel: (server, name, kind = 'text') =>
       act(async () => void (await api.createChannel(server, name, kind))),
@@ -2968,7 +3130,21 @@ export const useStore = create<RChatState>()((set, get) => {
           `m:${server}`,
           () => get().members[server] ?? emptyPage<Member>(),
           writeMembers(server),
-          cursor => api.listMembers(server, cursor),
+          async cursor => {
+            const since = presenceSeq
+            const page = await api.listMembers(server, cursor).catch(e => {
+              throw banCheck(e, server)
+            })
+            return {
+              ...page,
+              items: freshPresence(
+                page.items,
+                presenceLogs.get(server),
+                presenceSnaps.get(server),
+                since
+              ),
+            }
+          },
           m => m.username,
           '',
           reset
@@ -2981,7 +3157,10 @@ export const useStore = create<RChatState>()((set, get) => {
           `i:${server}`,
           () => get().interacted[server] ?? emptyPage<UserRef>(),
           page => set(s => ({ interacted: { ...s.interacted, [server]: page } })),
-          cursor => api.listInteracted(server, cursor),
+          cursor =>
+            api.listInteracted(server, cursor).catch(e => {
+              throw banCheck(e, server)
+            }),
           u => u.username,
           '',
           reset
@@ -3288,6 +3467,7 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'message_deleted': {
+          if (ev.server !== null) staleInvites(ev.server)
           const rootOf = ev.thread_root_id
           const drop = (list: Message[]) => {
             const i = indexOfId(list, ev.id)
@@ -3379,6 +3559,7 @@ export const useStore = create<RChatState>()((set, get) => {
           })
           forgetReads(scope => scope !== `c${ev.channel_id}`)
           forgetPending((_, upload) => upload.scope !== `c${ev.channel_id}`)
+          tails.delete(`c${ev.channel_id}`)
           if (!liveKey(`c${ev.channel_id}`)) forgetViews([`c${ev.channel_id}`])
           const { view, servers } = get()
           if (view?.kind === 'channel' && view.channelId === ev.channel_id) {
@@ -3415,6 +3596,7 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         case 'server_renamed': {
           const { old_name, server } = ev
+          staleInvites(old_name)
           set(s => {
             const servers = { ...s.servers }
             const detail = servers[old_name]
@@ -3508,6 +3690,7 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'server_deleted': {
+          staleInvites(ev.name)
           dropServer(ev.name)
           set(s => ({
             adminOverview: s.adminOverview
@@ -3521,6 +3704,7 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'member_joined': {
+          staleInvites(ev.server)
           const self = get().me?.username === ev.member.username
           if (!self) patchServer(ev.server, d => ({ ...d, member_count: d.member_count + 1 }))
           patchMembers(ev.server, list => [
@@ -3534,6 +3718,7 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         case 'member_left':
         case 'member_kicked': {
+          staleInvites(ev.server)
           const banned = ev.type === 'member_kicked' && ev.banned
           if (get().me?.username === ev.username) {
             if (ev.type === 'member_kicked') removedFrom(ev.server, banned)
@@ -3637,6 +3822,17 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         case 'presence_changed': {
           queuePresence(ev)
+          return
+        }
+        case 'presence_snapshot': {
+          applySnapshot(ev)
+          return
+        }
+        case 'server_banned': {
+          staleInvites(ev.server)
+          const { me, servers, view } = get()
+          const here = view?.kind === 'channel' && view.server === ev.server
+          if (me?.username === ev.username && (here || servers[ev.server])) bannedFrom(ev.server)
           return
         }
         case 'presence_mode': {
@@ -3775,6 +3971,7 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'banned': {
+          staleInvites(null)
           if (get().me?.username === ev.username) {
             expireSession()
             return
@@ -3792,6 +3989,7 @@ export const useStore = create<RChatState>()((set, get) => {
               .map(m => threadKey(m.id))
           )
           forgetPending((key, upload) => !gone.includes(upload.scope) && !roots.has(key))
+          for (const scope of gone) tails.delete(scope)
           const unban = (list: Message[]) => dropWhere(list, byBanned)
           mapTails(unban)
           if (get().me) void loadUnreads()

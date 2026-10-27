@@ -60,6 +60,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  st().applyWsEvent({ type: 'channel_deleted', server: 's', channel_id: 1 })
   globalThis.fetch = realFetch
   ;(globalThis as { window?: unknown }).window = realWindow
 })

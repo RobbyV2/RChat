@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Perm, hasPerm, type Member, type UserRef } from '../lib/types'
 import { prefixHeights, visibleRange } from '../lib/window'
 import { canModerate, memberPerms } from '../lib/rules'
+import { onlineTotals } from '../lib/presence'
 import {
   banMenuItem,
   confirmKick,
@@ -107,8 +108,14 @@ export default function MemberSidebar() {
       out.push({ kind: 'head', key: `h${id}`, label: `${label} (${count})` })
       for (const m of list) out.push({ kind: 'member', key: `m${m.username}`, m })
     }
-    section('on', 'Online', detail.online_count, online)
-    section('off', 'Offline', Math.max(0, detail.member_count - detail.online_count), offline)
+    const totals = onlineTotals(
+      detail.online_count,
+      detail.member_count,
+      cache?.list,
+      cache ? !cache.hasMore && !cache.loading : false
+    )
+    section('on', 'Online', totals.online, online)
+    section('off', 'Offline', totals.offline, offline)
     if (cache?.hasMore) out.push({ kind: 'more', key: `more${loaded.length}`, onVisible: more })
     const users = inter?.list ?? []
     if (users.length) {

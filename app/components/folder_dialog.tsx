@@ -9,7 +9,7 @@ import { Dialog, fieldCls, filledBtn, textBtn } from './server_settings'
 function RenameFolder({ folder }: { folder: Folder }) {
   const closeDialog = useStore(s => s.closeDialog)
   const renameFolder = useStore(s => s.renameFolder)
-  const fallback = useStore(s => folderLabel(s, folder, null))
+  const fallback = useStore(s => (s.streamer ? 'Folder name' : folderLabel(s, folder, null)))
   const [name, setName] = useState(folder.name ?? '')
   const save = () => {
     renameFolder(folder.id, name)

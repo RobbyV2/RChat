@@ -163,7 +163,7 @@ describe('passwordPrompt', () => {
   test('explains who stays', () => {
     const change = passwordPrompt(true, 'pw', true, false)
     expect(change.choices[0].detail).toBe(
-      'Current members stay, and guests who entered the old password keep access.'
+      'Current members stay. Guests who entered the old password lose access unless you also keep guest access.'
     )
     expect(change.choices[1].detail).toBe(
       'Other members are removed, not banned, and can rejoin with the new password. Guests who entered the old password lose access. Members with equal or higher permissions stay.'

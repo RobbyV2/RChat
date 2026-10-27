@@ -16,8 +16,9 @@ use crate::api::{
     unique_capped, user_from, user_refs,
 };
 use crate::db::{
-    ChannelAccess, ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, Perm, User, channel_access,
-    effective_perms, has_fts, has_perm, is_sqlite, now, touch_interaction,
+    ChannelAccess, ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, Perm, PermRow, User,
+    channel_access, channel_manager_servers, effective_perms, fold_access, has_fts, has_perm,
+    is_sqlite, manages_channels, now, perm_row, perm_subjects, touch_interaction,
 };
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -199,7 +200,7 @@ async fn rows_messages(db: &Db, rows: &[AnyRow]) -> Result<Vec<Message>, ApiErro
 }
 
 pub(crate) async fn load_message(db: &Db, id: i64) -> Result<Option<Message>, ApiError> {
-    let sql = format!("SELECT {COLS} FROM messages m WHERE m.id = $1");
+    let sql = format!("SELECT {COLS} FROM messages m WHERE m.id = $1 AND {LIVE_AUTHOR}");
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .fetch_all(db)
@@ -817,12 +818,13 @@ pub(crate) struct MsgScope {
 }
 
 pub(crate) async fn message_scope(db: &Db, id: i64) -> Result<MsgScope, ApiError> {
-    let row = sqlx::query(
-        "SELECT channel_id, dm_id, thread_root_id, author, media_id, media_filename, media_kind FROM messages WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(db)
-    .await?;
+    let sql = format!(
+        "SELECT m.channel_id, m.dm_id, m.thread_root_id, m.author, m.media_id, m.media_filename, m.media_kind FROM messages m WHERE m.id = $1 AND {LIVE_AUTHOR}"
+    );
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(id)
+        .fetch_optional(db)
+        .await?;
     let r = match &row {
         Some(r) => r,
         None => {
@@ -922,6 +924,8 @@ fn fts_phrase(text: &str) -> String {
 const SEARCH_OFFSET_MAX: i64 = 500;
 const SEARCH_WINDOW: i64 = 4096;
 const LIKE_BUDGET: i64 = 250_000;
+const FTS_BATCH: i64 = 500;
+const FTS_ROUNDS: usize = 8;
 
 #[utoipa::path(get, path = "/api/search", params(SearchQuery), responses((status = 200, description = "Up to 25 messages from channels the caller can view whose content contains `q` (case-insensitive), newest first; `before`/`after` bound the message id and `before_ts`/`after_ts` bound `created_at` (exclusive, unix seconds). When more results may follow, the `X-Next-Cursor` response header holds a `cursor` for the next page (it is absent once the search reached the oldest message); a page can hold fewer than 25 results and still have a next cursor. Passing the oldest returned id as `before` also works when the page is full. The legacy `offset` is capped at 500. Guests pass the servers to search as repeated `servers` params (`servers=a&servers=b`, max 100)", body = Vec<SearchResult>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid number or cursor, or text containing a NUL character")), security((), ("bearer" = [])))]
 pub(crate) async fn search(
@@ -965,10 +969,12 @@ async fn search_paged(
     let text = sq.q.as_deref().map(str::trim).unwrap_or("");
     let short = text.chars().count() < FTS_MIN_CHARS || !has_fts(db);
     let unscoped = sq.server.is_none() && sq.channel_id.is_none();
-    let windowed = !text.is_empty()
-        && (short || unscoped)
-        && is_sqlite(db)
-        && sq.offset.is_none_or(|n| n <= 0);
+    let first_page = sq.offset.is_none_or(|n| n <= 0);
+    if !text.is_empty() && !short && is_sqlite(db) && first_page {
+        let phrase = fts_phrase(text);
+        return fts_paged(db, user, headers, sq, &phrase).await;
+    }
+    let windowed = !text.is_empty() && (short || unscoped) && is_sqlite(db) && first_page;
     let budget = match short {
         true => LIKE_BUDGET,
         false => i64::MAX,
@@ -1006,6 +1012,51 @@ async fn search_paged(
         size = size.saturating_mul(8);
     }
     let next = match (results.len() as i64 == SEARCH_PAGE, hi > floor + 1) {
+        (true, _) => results.last().map(|r| r.message.id),
+        (false, true) => Some(hi),
+        (false, false) => None,
+    };
+    Ok((results, next))
+}
+
+async fn fts_paged(
+    db: &Db,
+    user: Option<&User>,
+    headers: &HeaderMap,
+    sq: SearchQuery,
+    phrase: &str,
+) -> Result<(Vec<SearchResult>, Option<i64>), ApiError> {
+    let floor = sq.after.unwrap_or(0).max(0);
+    let mut hi = sq.before.unwrap_or(i64::MAX);
+    let mut results: Vec<SearchResult> = Vec::new();
+    let mut more = true;
+    for _ in 0..FTS_ROUNDS {
+        if results.len() as i64 >= SEARCH_PAGE {
+            break;
+        }
+        let rows = sqlx::query(
+            "SELECT rowid FROM messages_fts WHERE messages_fts MATCH $1 AND rowid < $2 AND rowid > $3 ORDER BY rowid DESC LIMIT $4",
+        )
+        .bind(phrase)
+        .bind(hi)
+        .bind(floor)
+        .bind(FTS_BATCH)
+        .fetch_all(db)
+        .await?;
+        let Some(last) = rows.last() else {
+            more = false;
+            break;
+        };
+        let lo: i64 = last.try_get(0)?;
+        let want = SEARCH_PAGE - results.len() as i64;
+        results.extend(search_once(db, user, headers, sq.clone(), Some((lo, hi)), want).await?);
+        hi = lo;
+        if (rows.len() as i64) < FTS_BATCH {
+            more = false;
+            break;
+        }
+    }
+    let next = match (results.len() as i64 == SEARCH_PAGE, more) {
         (true, _) => results.last().map(|r| r.message.id),
         (false, true) => Some(hi),
         (false, false) => None,
@@ -1109,25 +1160,26 @@ async fn search_sql(
                 binds.len()
             ));
             if !u.is_site_admin {
-                let mut subjects = vec![format!("u:{}", u.username)];
-                let role_rows = sqlx::query("SELECT role_id FROM user_roles WHERE username = $1")
-                    .bind(&u.username)
-                    .fetch_all(db)
-                    .await?;
-                for r in &role_rows {
-                    subjects.push(format!("r:{}", r.try_get::<i64, _>(0)?));
-                }
-                let mut ph = Vec::with_capacity(subjects.len());
-                for subject in subjects {
+                let mut ph = Vec::new();
+                for subject in perm_subjects(db, None, &u.username).await? {
                     binds.push(Bind::S(subject));
                     ph.push(format!("${}", binds.len()));
                 }
+                let mut managed = Vec::new();
+                for server in channel_manager_servers(db, u).await? {
+                    binds.push(Bind::S(server));
+                    managed.push(format!("${}", binds.len()));
+                }
+                let bypass = match managed.is_empty() {
+                    true => String::new(),
+                    false => format!("c.server IN ({}) OR ", managed.join(", ")),
+                };
                 conds.push(format!(
-                    "(NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.can_view != 0 AND cp.subject IN ({})))",
+                    "({bypass}NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.can_view != 0 AND cp.subject IN ({})))",
                     ph.join(", ")
                 ));
                 conds.push(format!(
-                    "(NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.can_read_history != 0 AND cp.subject IN ({})) OR m.created_at >= (SELECT joined_at FROM members mm WHERE mm.server = c.server AND mm.username = $1))",
+                    "({bypass}NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.can_read_history != 0 AND cp.subject IN ({})) OR m.created_at >= (SELECT joined_at FROM members mm WHERE mm.server = c.server AND mm.username = $1))",
                     ph.join(", ")
                 ));
             }
@@ -1255,51 +1307,28 @@ async fn restricted_access(db: &Db, user: &User) -> Result<HashMap<i64, ChannelA
     if rows.is_empty() {
         return Ok(HashMap::new());
     }
-    let mut subjects = vec![format!("u:{}", user.username)];
-    let role_rows = sqlx::query("SELECT role_id FROM user_roles WHERE username = $1")
-        .bind(&user.username)
-        .fetch_all(db)
-        .await?;
-    for r in &role_rows {
-        subjects.push(format!("r:{}", r.try_get::<i64, _>(0)?));
-    }
-    let mut restricted: HashMap<i64, (String, ChannelAccess)> = HashMap::new();
+    let subjects = perm_subjects(db, None, &user.username).await?;
+    let mut restricted: HashMap<i64, (String, Vec<PermRow>)> = HashMap::new();
     for r in &rows {
-        let (id, server, subject): (i64, String, String) =
-            (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
-        let entry = restricted
+        let (id, server): (i64, String) = (r.try_get(0)?, r.try_get(1)?);
+        restricted
             .entry(id)
-            .or_insert_with(|| (server, ChannelAccess::all(false)));
-        if subjects.contains(&subject) {
-            entry.1.view |= r.try_get::<i64, _>(3)? != 0;
-            entry.1.send |= r.try_get::<i64, _>(4)? != 0;
-            entry.1.history |= r.try_get::<i64, _>(5)? != 0;
-        }
+            .or_insert_with(|| (server, Vec::new()))
+            .1
+            .push(perm_row(r, 2)?);
     }
     let mut manages: HashMap<String, bool> = HashMap::new();
     let mut out = HashMap::with_capacity(restricted.len());
-    for (id, (server, acc)) in restricted {
-        let ChannelAccess {
-            view,
-            send,
-            history,
-        } = acc;
-        let can_manage = match (view && send && history, manages.get(&server)) {
-            (true, _) => false,
-            (false, Some(m)) => *m,
-            (false, None) => {
-                let m =
-                    effective_perms(db, &server, user).await? & Perm::ManageChannels as i64 != 0;
+    for (id, (server, perms)) in restricted {
+        let manage = match manages.get(&server) {
+            Some(m) => *m,
+            None => {
+                let m = manages_channels(db, &server, user).await?;
                 manages.insert(server, m);
                 m
             }
         };
-        let access = match (can_manage, view) {
-            (true, _) => ChannelAccess::all(true),
-            (false, true) => acc,
-            (false, false) => ChannelAccess::all(false),
-        };
-        out.insert(id, access);
+        out.insert(id, fold_access(&perms, &subjects, manage));
     }
     Ok(out)
 }
@@ -1320,12 +1349,13 @@ pub(crate) async fn unreads(
     let all = q.all.unwrap_or(false);
     let db = &state.read();
     let restricted = restricted_access(db, &user).await?;
-    let channel_rows = sqlx::query(
-        "SELECT x.id, x.server, x.latest, (SELECT lm.created_at FROM messages lm WHERE lm.id = x.latest), x.last_read, x.joined_at FROM (SELECT c.id, c.server, (SELECT MAX(m.id) FROM messages m WHERE m.channel_id = c.id AND m.thread_root_id IS NULL AND m.author <> $1) AS latest, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'c' || c.id), 0) AS last_read, mem.joined_at FROM channels c JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text') x",
-    )
-    .bind(&user.username)
-    .fetch_all(db)
-    .await?;
+    let channel_sql = format!(
+        "SELECT x.id, x.server, x.latest, (SELECT lm.created_at FROM messages lm WHERE lm.id = x.latest), x.last_read, x.joined_at FROM (SELECT c.id, c.server, (SELECT m.id FROM messages m WHERE m.channel_id = c.id AND m.thread_root_id IS NULL AND m.author <> $1 AND {LIVE_AUTHOR} ORDER BY m.id DESC LIMIT 1) AS latest, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'c' || c.id), 0) AS last_read, mem.joined_at FROM channels c JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text') x"
+    );
+    let channel_rows = sqlx::query(sqlx::AssertSqlSafe(channel_sql))
+        .bind(&user.username)
+        .fetch_all(db)
+        .await?;
     let dm_sql = match all {
         true => {
             "SELECT d.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = d.id AND m.author <> $1), COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) FROM dms d WHERE (d.user_a = $1 OR d.user_b = $1) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')"
@@ -1709,6 +1739,115 @@ mod tests {
             .execute(db)
             .await
             .expect("insert perm");
+    }
+
+    #[tokio::test]
+    async fn channel_permission_paths_agree() {
+        let (state, path) = temp_state("perm_paths").await;
+        let db = &state.db;
+        let private = add_channel(db, "private", "text").await;
+        let t = now();
+        for (name, admin, perms) in [
+            ("alice", 0, 0),
+            ("bob", 0, 0),
+            ("mod", 1, Perm::ManageChannels as i64),
+            ("kicker", 1, Perm::Kick as i64),
+            ("roler", 0, 0),
+            ("plainrole", 0, 0),
+        ] {
+            add_member(db, "rchat", name, admin, perms, t - 100).await;
+        }
+        for (holder, perms) in [
+            ("roler", Perm::ManageChannels as i64),
+            ("plainrole", Perm::Kick as i64),
+        ] {
+            let role: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES('rchat', $1, '#ffffff', $2) RETURNING id")
+                .bind(holder)
+                .bind(perms)
+                .fetch_one(db)
+                .await
+                .expect("role")
+                .try_get(0)
+                .expect("role id");
+            sqlx::query(
+                "INSERT INTO user_roles(server, username, role_id) VALUES('rchat', $1, $2)",
+            )
+            .bind(holder)
+            .bind(role)
+            .execute(db)
+            .await
+            .expect("assign role");
+        }
+        perm(db, private, "u:alice", 0).await;
+        perm(db, private, "u:bob", 1).await;
+        let needle = post(db, private, "eve", "secret needle", t - 200).await;
+        for (name, want) in [
+            ("alice", false),
+            ("bob", true),
+            ("mod", true),
+            ("kicker", false),
+            ("roler", true),
+            ("plainrole", false),
+        ] {
+            let user = mem_user(name, false);
+            let direct = channel_access(db, "rchat", private, Some(&user))
+                .await
+                .expect("access")
+                .view;
+            let unread = restricted_access(db, &user).await.expect("restricted")[&private].view;
+            let listed =
+                crate::api::servers::visible_restricted(db, "rchat", Some(&user), &[private])
+                    .await
+                    .expect("visible")
+                    .contains(&private);
+            let searched = found(&state, Some(user), HeaderMap::new(), query(Some("needle")))
+                .await
+                .contains(&needle);
+            assert_eq!([direct, unread, listed, searched], [want; 4], "{name}");
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn common_terms_page_through_bounded_fts_batches() {
+        let (state, path) = temp_state("fts_batches").await;
+        let db = &state.db;
+        let general = general_id(db).await;
+        let private = add_channel(db, "hidden", "text").await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        perm(db, private, "u:alice", 0).await;
+        let mut visible = Vec::new();
+        for n in 0..3 {
+            visible.push(post(db, general, "eve", &format!("common word {n}"), 1).await);
+        }
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 6000) INSERT INTO messages(channel_id, author, content, created_at) SELECT $1, 'eve', 'common word hidden ' || i, 2 FROM n")
+            .bind(private)
+            .execute(db)
+            .await
+            .expect("seed hidden");
+        let alice = mem_user("alice", false);
+        let mut sq = query(Some("common"));
+        let mut got = Vec::new();
+        let mut calls = 0;
+        loop {
+            calls += 1;
+            let (page, next) = search_paged(&state, Some(&alice), &HeaderMap::new(), sq.clone())
+                .await
+                .expect("search");
+            got.extend(page.iter().map(|r| r.message.id));
+            match next {
+                Some(before) => sq.before = Some(before),
+                None => break,
+            }
+            assert!(calls < 10, "search never finished");
+        }
+        assert!(
+            calls > 1,
+            "a common term must not scan every match in one call"
+        );
+        visible.reverse();
+        assert_eq!(got, visible);
+        done(state, path).await;
     }
 
     #[tokio::test]

@@ -29,6 +29,7 @@ impl Modify for Bearer {
         super::auth::me,
         super::auth::patch_me,
         super::auth::change_password,
+        super::auth::logout,
         super::users::profile,
         super::servers::list_my_servers,
         super::servers::create_server,
@@ -96,8 +97,34 @@ async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
     Json(ApiDoc::openapi())
 }
 
+fn swagger_on(value: Option<&str>) -> bool {
+    !matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("0" | "false" | "off" | "no")
+    )
+}
+
 pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/openapi.json", get(openapi_json))
-        .merge(SwaggerUi::new("/swagger-ui").url("/api/openapi.json", ApiDoc::openapi()))
+    let router = Router::new().route("/openapi.json", get(openapi_json));
+    match swagger_on(std::env::var("SWAGGER_UI").ok().as_deref()) {
+        true => {
+            router.merge(SwaggerUi::new("/swagger-ui").url("/api/openapi.json", ApiDoc::openapi()))
+        }
+        false => router,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::swagger_on;
+
+    #[test]
+    fn swagger_ui_flag() {
+        for off in ["false", "0", " OFF ", "no"] {
+            assert!(!swagger_on(Some(off)), "{off}");
+        }
+        for on in [None, Some("true"), Some("1"), Some("")] {
+            assert!(swagger_on(on), "{on:?}");
+        }
+    }
 }

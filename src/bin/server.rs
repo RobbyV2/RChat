@@ -101,17 +101,34 @@ async fn main() -> anyhow::Result<()> {
                     None => true,
                 };
                 if mine {
-                    match rust_next::api::admin::resume_purges(&stale).await {
-                        Ok(0) => {}
-                        Ok(n) => info!("resumed {n} interrupted deletions"),
-                        Err(e) => tracing::warn!("resuming interrupted deletions failed: {e}"),
-                    }
                     match rust_next::db::sweep_stale(&stale.db).await {
                         Ok(swept) if swept != rust_next::db::Swept::default() => {
                             info!("swept stale rows: {swept:?}")
                         }
                         Ok(_) => {}
                         Err(e) => tracing::warn!("stale row sweep failed: {e}"),
+                    }
+                }
+            }
+        });
+        let purges = state.clone();
+        tokio::spawn(async move {
+            let every = rust_next::api::admin::PURGE_SWEEP_SECS;
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(every));
+            loop {
+                interval.tick().await;
+                let mine = match &purges.bus {
+                    Some(bus) => {
+                        bus.try_lock("purge-sweep", std::time::Duration::from_secs(every - 5))
+                            .await
+                    }
+                    None => true,
+                };
+                if mine {
+                    match rust_next::api::admin::resume_purges(&purges).await {
+                        Ok(0) => {}
+                        Ok(n) => info!("resumed {n} interrupted deletions"),
+                        Err(e) => tracing::warn!("resuming interrupted deletions failed: {e}"),
                     }
                 }
             }

@@ -4,7 +4,8 @@
 # rchat-peerjs on 9001 with a LoadBalancer Service instead.
 #
 # rchat-strict (below) adds the cluster-wide rate limit for auth, password changes,
-# guest_access and media uploads, and rchat-invites the same limit in a bucket of its own for invite lookups.
+# guest_access and media uploads, and rchat-invites and rchat-joins the same limit, each in a
+# bucket of its own, for invite lookups and server joins (both check server passwords).
 # rchat-strict's regex paths make ingress-nginx treat every path of this host as a
 # case-insensitive regex prefix (use-regex is host-wide); the paths here stay correct.
 #
@@ -171,6 +172,30 @@ spec:
       http:
         paths:
           - path: /api/invites/
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
+---
+# Server joins check the server password, so they get the same limit in a bucket of their
+# own (the backends keep a separate bucket for them too).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rchat-joins
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/limit-rps: "2"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "15"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: chat.example.com
+      http:
+        paths:
+          - path: /api/servers/.+/join$
             pathType: ImplementationSpecific
             backend:
               service:

@@ -3,6 +3,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::any::{AnyPoolOptions, AnyRow, install_default_drivers};
 use sqlx::{AnyConnection, AnyPool, Row};
 
@@ -18,6 +19,7 @@ CREATE TABLE IF NOT EXISTS users(
   is_site_admin INTEGER NOT NULL DEFAULT 0, appear_offline INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NOT NULL, count INTEGER NOT NULL, last_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NOT NULL, failures INTEGER NOT NULL, last_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at INTEGER NOT NULL, claimed_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
 CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
@@ -55,6 +57,8 @@ CREATE INDEX IF NOT EXISTS idx_tokens_username ON tokens(username);
 CREATE INDEX IF NOT EXISTS idx_guest_grants_server ON guest_grants(server);
 CREATE INDEX IF NOT EXISTS idx_guest_grants_used ON guest_grants(last_used_at);
 CREATE INDEX IF NOT EXISTS idx_login_attempts_last ON login_attempts(last_at);
+CREATE INDEX IF NOT EXISTS idx_change_attempts_last ON change_attempts(last_at);
+CREATE INDEX IF NOT EXISTS idx_users_purging ON users(username) WHERE password_hash = '!purging';
 CREATE INDEX IF NOT EXISTS idx_embeds_fetched ON embeds(fetched_at);
 CREATE INDEX IF NOT EXISTS idx_channel_perms_subject ON channel_perms(subject);
 CREATE INDEX IF NOT EXISTS idx_interactions_username ON interactions(username);
@@ -75,6 +79,7 @@ CREATE TABLE IF NOT EXISTS users(
   is_site_admin BIGINT NOT NULL DEFAULT 0, appear_offline BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NOT NULL, count BIGINT NOT NULL, last_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NOT NULL, failures BIGINT NOT NULL, last_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at BIGINT NOT NULL, claimed_at BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
 CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL);
@@ -112,6 +117,8 @@ CREATE INDEX IF NOT EXISTS idx_tokens_username ON tokens(username);
 CREATE INDEX IF NOT EXISTS idx_guest_grants_server ON guest_grants(server);
 CREATE INDEX IF NOT EXISTS idx_guest_grants_used ON guest_grants(last_used_at);
 CREATE INDEX IF NOT EXISTS idx_login_attempts_last ON login_attempts(last_at);
+CREATE INDEX IF NOT EXISTS idx_change_attempts_last ON change_attempts(last_at);
+CREATE INDEX IF NOT EXISTS idx_users_purging ON users(username) WHERE password_hash = '!purging';
 CREATE INDEX IF NOT EXISTS idx_embeds_fetched ON embeds(fetched_at);
 CREATE INDEX IF NOT EXISTS idx_channel_perms_subject ON channel_perms(subject);
 CREATE INDEX IF NOT EXISTS idx_interactions_username ON interactions(username);
@@ -288,7 +295,6 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("dms", "last_message_id {INT} NOT NULL DEFAULT 0"),
     ("servers", "member_count {INT} NOT NULL DEFAULT 0"),
     ("guest_grants", "last_used_at {INT} NOT NULL DEFAULT 0"),
-    ("pending_purges", "claimed_at {INT} NOT NULL DEFAULT 0"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -572,6 +578,99 @@ impl ChannelAccess {
     }
 }
 
+pub async fn perm_subjects(
+    db: &Db,
+    server: Option<&str>,
+    username: &str,
+) -> sqlx::Result<Vec<String>> {
+    let rows = match server {
+        Some(server) => {
+            sqlx::query("SELECT role_id FROM user_roles WHERE server = $1 AND username = $2")
+                .bind(server)
+                .bind(username)
+                .fetch_all(db)
+                .await?
+        }
+        None => {
+            sqlx::query("SELECT role_id FROM user_roles WHERE username = $1")
+                .bind(username)
+                .fetch_all(db)
+                .await?
+        }
+    };
+    let mut subjects = Vec::with_capacity(rows.len() + 1);
+    subjects.push(format!("u:{username}"));
+    for r in &rows {
+        subjects.push(format!("r:{}", r.try_get::<i64, _>(0)?));
+    }
+    Ok(subjects)
+}
+
+pub struct PermRow {
+    pub subject: String,
+    pub view: bool,
+    pub send: bool,
+    pub history: bool,
+}
+
+pub fn perm_row(r: &AnyRow, at: usize) -> sqlx::Result<PermRow> {
+    Ok(PermRow {
+        subject: r.try_get(at)?,
+        view: r.try_get::<i64, _>(at + 1)? != 0,
+        send: r.try_get::<i64, _>(at + 2)? != 0,
+        history: r.try_get::<i64, _>(at + 3)? != 0,
+    })
+}
+
+pub fn fold_access<'a>(
+    rows: impl IntoIterator<Item = &'a PermRow>,
+    subjects: &[String],
+    manages: bool,
+) -> ChannelAccess {
+    if manages {
+        return ChannelAccess::all(true);
+    }
+    let mut acc = ChannelAccess::all(false);
+    for row in rows {
+        let PermRow {
+            subject,
+            view,
+            send,
+            history,
+        } = row;
+        if subjects.contains(subject) {
+            acc.view |= *view;
+            acc.send |= *send;
+            acc.history |= *history;
+        }
+    }
+    match acc.view {
+        true => acc,
+        false => ChannelAccess::all(false),
+    }
+}
+
+pub async fn manages_channels(db: &Db, server: &str, user: &User) -> sqlx::Result<bool> {
+    Ok(effective_perms(db, server, user).await? & Perm::ManageChannels as i64 != 0)
+}
+
+pub async fn channel_manager_servers(db: &Db, user: &User) -> sqlx::Result<Vec<String>> {
+    let rows = sqlx::query(
+        "SELECT server FROM members WHERE username = $1 AND is_admin <> 0 UNION SELECT ur.server FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.username = $1 AND r.perms <> 0",
+    )
+    .bind(&user.username)
+    .fetch_all(db)
+    .await?;
+    let mut out = Vec::new();
+    for r in &rows {
+        let server: String = r.try_get(0)?;
+        if manages_channels(db, &server, user).await? {
+            out.push(server);
+        }
+    }
+    Ok(out)
+}
+
 pub async fn channel_access(
     db: &Db,
     server: &str,
@@ -587,36 +686,18 @@ pub async fn channel_access(
     if rows.is_empty() {
         return Ok(ChannelAccess::all(true));
     }
-    let user = match user {
-        Some(u) => u,
-        None => return Ok(ChannelAccess::all(false)),
+    let Some(user) = user else {
+        return Ok(ChannelAccess::all(false));
     };
-    if effective_perms(db, server, user).await? & Perm::ManageChannels as i64 != 0 {
+    if manages_channels(db, server, user).await? {
         return Ok(ChannelAccess::all(true));
     }
-    let mut subjects = vec![format!("u:{}", user.username)];
-    let role_rows =
-        sqlx::query("SELECT role_id FROM user_roles WHERE server = $1 AND username = $2")
-            .bind(server)
-            .bind(&user.username)
-            .fetch_all(db)
-            .await?;
-    for r in &role_rows {
-        subjects.push(format!("r:{}", r.try_get::<i64, _>(0)?));
-    }
-    let mut acc = ChannelAccess::all(false);
-    for r in &rows {
-        let subject: String = r.try_get(0)?;
-        if subjects.contains(&subject) {
-            acc.view |= r.try_get::<i64, _>(1)? != 0;
-            acc.send |= r.try_get::<i64, _>(2)? != 0;
-            acc.history |= r.try_get::<i64, _>(3)? != 0;
-        }
-    }
-    match acc.view {
-        true => Ok(acc),
-        false => Ok(ChannelAccess::all(false)),
-    }
+    let subjects = perm_subjects(db, Some(server), &user.username).await?;
+    let rows = rows
+        .iter()
+        .map(|r| perm_row(r, 0))
+        .collect::<sqlx::Result<Vec<_>>>()?;
+    Ok(fold_access(&rows, &subjects, false))
 }
 
 pub async fn channel_viewable(
@@ -713,6 +794,33 @@ fn env_num<T: std::str::FromStr>(key: &str) -> Option<T> {
     std::env::var(key).ok().and_then(|v| v.trim().parse().ok())
 }
 
+pub fn trigger_version(stmts: &[&str]) -> String {
+    let hash = Sha256::digest(stmts.join(";\n").as_bytes());
+    hash.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+async fn postgres_triggers(conn: &mut AnyConnection) -> anyhow::Result<()> {
+    let want = trigger_version(POSTGRES_TRIGGERS);
+    let have: Option<String> =
+        sqlx::query("SELECT value FROM settings WHERE key = 'trigger_version'")
+            .fetch_optional(&mut *conn)
+            .await?
+            .map(|r| r.try_get(0))
+            .transpose()?;
+    if have.as_deref() == Some(want.as_str()) {
+        return Ok(());
+    }
+    for stmt in POSTGRES_TRIGGERS {
+        sqlx::query(*stmt).execute(&mut *conn).await?;
+    }
+    sqlx::query("INSERT INTO settings(key, value) VALUES('trigger_version', $1) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .bind(&want)
+        .execute(&mut *conn)
+        .await?;
+    tracing::info!("installed database triggers version {want}");
+    Ok(())
+}
+
 async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Result<()> {
     let schema = match is_sqlite {
         true => SQLITE_SCHEMA,
@@ -730,12 +838,13 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
     for stmt in rest {
         sqlx::query(stmt).execute(&mut *conn).await?;
     }
-    let triggers = match is_sqlite {
-        true => SQLITE_TRIGGERS,
-        false => POSTGRES_TRIGGERS,
-    };
-    for stmt in triggers {
-        sqlx::query(*stmt).execute(&mut *conn).await?;
+    match is_sqlite {
+        true => {
+            for stmt in SQLITE_TRIGGERS {
+                sqlx::query(*stmt).execute(&mut *conn).await?;
+            }
+        }
+        false => postgres_triggers(conn).await?,
     }
     for (table, col, sql) in BACKFILLS {
         if added.iter().any(|(t, c)| t == table && c == col) {
@@ -794,12 +903,13 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
         None => "sqlite://rchat.db?mode=rwc".to_string(),
     };
     let is_sqlite = url.starts_with("sqlite:");
-    let mut options = AnyPoolOptions::new().max_connections(
-        env_num("DATABASE_MAX_CONNECTIONS").unwrap_or(match is_sqlite {
-            true => 1,
-            false => 8,
-        }),
-    );
+    let max = env_num::<u32>("DATABASE_MAX_CONNECTIONS");
+    if is_sqlite && max.is_some_and(|n| n != 1) {
+        tracing::warn!(
+            "DATABASE_MAX_CONNECTIONS is ignored for sqlite: it has a single writer; use DATABASE_READ_CONNECTIONS for reads"
+        );
+    }
+    let mut options = AnyPoolOptions::new().max_connections(writer_connections(is_sqlite, max));
     if let Some(min) = env_num("DATABASE_MIN_CONNECTIONS") {
         options = options.min_connections(min);
     }
@@ -870,6 +980,14 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
     Ok(pool)
 }
 
+pub fn writer_connections(is_sqlite: bool, configured: Option<u32>) -> u32 {
+    match (is_sqlite, configured) {
+        (true, _) => 1,
+        (false, Some(n)) => n,
+        (false, None) => 8,
+    }
+}
+
 async fn open_reader(url: &str, max: u32) -> anyhow::Result<Db> {
     let mut options = AnyPoolOptions::new().max_connections(max);
     if let Some(secs) = env_num("DATABASE_ACQUIRE_TIMEOUT_SECS") {
@@ -896,6 +1014,7 @@ async fn open_reader(url: &str, max: u32) -> anyhow::Result<Db> {
 pub struct Swept {
     pub guest_grants: u64,
     pub login_attempts: u64,
+    pub password_attempts: u64,
     pub embeds: u64,
 }
 
@@ -1041,6 +1160,12 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
         login_attempts: delete_batched(
             db,
             "DELETE FROM login_attempts WHERE username IN (SELECT username FROM login_attempts WHERE last_at < $1 LIMIT $2)",
+            t - 2 * 86400,
+        )
+        .await?,
+        password_attempts: delete_batched(
+            db,
+            "DELETE FROM change_attempts WHERE session IN (SELECT session FROM change_attempts WHERE last_at < $1 LIMIT $2)",
             t - 2 * 86400,
         )
         .await?,
@@ -1477,6 +1602,18 @@ mod tests {
         done(state, path).await;
     }
 
+    #[test]
+    fn sqlite_keeps_one_writer_and_trigger_versions_track_definitions() {
+        assert_eq!(writer_connections(true, Some(8)), 1);
+        assert_eq!(writer_connections(true, None), 1);
+        assert_eq!(writer_connections(false, Some(20)), 20);
+        assert_eq!(writer_connections(false, None), 8);
+        let v = trigger_version(POSTGRES_TRIGGERS);
+        assert_eq!(v, trigger_version(POSTGRES_TRIGGERS));
+        assert_eq!(v.len(), 16);
+        assert_ne!(v, trigger_version(&POSTGRES_TRIGGERS[1..]));
+    }
+
     #[tokio::test]
     async fn stale_rows_are_swept() {
         let (state, path) = temp_state("sweep_stale").await;
@@ -1503,6 +1640,14 @@ mod tests {
             (
                 "INSERT INTO login_attempts(username, day, count, last_at) VALUES('a', '1', 1, $1)",
                 old,
+            ),
+            (
+                "INSERT INTO change_attempts(session, day, failures, last_at) VALUES('a', '1', 1, $1)",
+                old,
+            ),
+            (
+                "INSERT INTO change_attempts(session, day, failures, last_at) VALUES('b', '1', 1, $1)",
+                t,
             ),
             (
                 "INSERT INTO embeds(url, fetched_at) VALUES('https://old.example/', $1)",
@@ -1534,6 +1679,7 @@ mod tests {
             Swept {
                 guest_grants: 1,
                 login_attempts: 1,
+                password_attempts: 1,
                 embeds: 1,
             }
         );

@@ -416,11 +416,12 @@ fn call_phase(call: &Call) -> CallPhase {
     }
 }
 
-fn presence_ev(server: &str, username: &str, online: bool) -> WsEvent {
+fn presence_ev(server: &str, username: &str, online: bool, online_count: usize) -> WsEvent {
     WsEvent::PresenceChanged {
         server: server.to_string(),
         username: username.to_string(),
         online,
+        online_count: online_count as i64,
     }
 }
 
@@ -580,7 +581,7 @@ impl Replica {
             }
             if emptied {
                 users.remove(user);
-                evs.push(presence_ev(server, user, false));
+                evs.push(presence_ev(server, user, false, users.len()));
             }
             if users.is_empty() {
                 self.presence.remove(server);
@@ -600,7 +601,8 @@ impl Replica {
             link(&mut self.index.views, conn, server.to_string());
         }
         if fresh {
-            evs.push(presence_ev(server, user, true));
+            let count = self.presence.get(server).map_or(0, BTreeMap::len);
+            evs.push(presence_ev(server, user, true, count));
         }
     }
 
@@ -611,13 +613,14 @@ impl Replica {
         let Some(conns) = users.remove(user) else {
             return;
         };
+        let count = users.len();
         if users.is_empty() {
             self.presence.remove(server);
         }
         for conn in &conns {
             unlink(&mut self.index.views, conn, server);
         }
-        evs.push(presence_ev(server, user, false));
+        evs.push(presence_ev(server, user, false, count));
     }
 
     fn present(&mut self, user: &str, conn: u64, server: Option<&str>, evs: &mut Vec<WsEvent>) {
@@ -772,7 +775,7 @@ impl Replica {
             }
             for user in gone {
                 users.remove(&user);
-                evs.push(presence_ev(server, &user, false));
+                evs.push(presence_ev(server, &user, false, users.len()));
             }
         }
         self.presence.retain(|_, users| !users.is_empty());
@@ -1197,6 +1200,14 @@ impl Replica {
                 .is_some_and(|c| c.active && c.kind == CallKind::Rtc && both(&c.occupants)),
             (_, _) => false,
         }
+    }
+
+    fn in_p2p_call(&self, a: &str, b: &str) -> bool {
+        self.calls.values().any(|c| {
+            c.kind == CallKind::P2p
+                && c.dm_users.iter().any(|u| u == a)
+                && c.occupants.iter().any(|(u, _)| u == b)
+        })
     }
 
     fn voice_snapshot(&self) -> Vec<WsEvent> {
@@ -1971,6 +1982,10 @@ impl Hub {
             .rtc_shared(a, b, channel_id, dm_id)
     }
 
+    pub fn in_p2p_call(&self, a: &str, b: &str) -> bool {
+        self.inner.store.lock().unwrap().replica.in_p2p_call(a, b)
+    }
+
     pub async fn drop_conn(&self, user: &str, conn: u64) -> (Vec<CallEnd>, P2pDrop) {
         let op = Op::DropConn {
             user: user.to_string(),
@@ -2225,6 +2240,7 @@ pub(crate) mod tests {
                     server,
                     username,
                     online,
+                    online_count: _,
                 } => Some((server.clone(), username.clone(), *online)),
                 _ => None,
             })

@@ -158,8 +158,15 @@ function PasswordSection() {
   const username = useStore(s => s.me?.username)
   const savedKind = useStore(s => s.me?.password_kind ?? 'text')
   const changePassword = useStore(s => s.changePassword)
+  const refreshAccount = useStore(s => s.refreshAccount)
   const [currentKind, setCurrentKind] = useState<PassKind>(savedKind)
   const [newKind, setNewKind] = useState<PassKind>(savedKind)
+  const [seenKind, setSeenKind] = useState<PassKind>(savedKind)
+  if (seenKind !== savedKind) {
+    setSeenKind(savedKind)
+    if (currentKind === seenKind) setCurrentKind(savedKind)
+    if (newKind === seenKind) setNewKind(savedKind)
+  }
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -172,6 +179,10 @@ function PasswordSection() {
   const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
   const needWords = currentKind === 'words' || newKind === 'words'
+
+  useEffect(() => {
+    void refreshAccount()
+  }, [refreshAccount])
 
   useEffect(() => {
     if (!needWords || words.length || !username) return
@@ -297,7 +308,7 @@ function PasswordSection() {
         </SecretField>
         <div>
           <p className="text-xs text-on-surface-variant">
-            Changing your password signs out every other device and tab.
+            Other devices and browsers are signed out when you change your password.
           </p>
           <FieldError message={error} />
           {done && (
@@ -397,9 +408,11 @@ function InformationSection() {
         </p>
         <p>
           Login attempts per username are throttled to one every 3 seconds, and over 1000 failures
-          in a day lock the account until the next day; changing your password in settings counts as
-          an attempt. Login tokens never expire, but changing your password signs out every other
-          session.
+          in a day lock the account until the next day. Changing your password in settings has its
+          own limit for each signed-in session, separate from logins: one try every 3 seconds, and
+          50 wrong current passwords in a day pause password changes from that session until the
+          next day, while your other sessions can still change it. Login tokens never expire, but
+          changing your password signs out every other session, and logging out ends that session.
         </p>
       </Info>
       <Info title="Files and attachments">

@@ -10,6 +10,15 @@ import type {
   UserRef,
 } from '../types'
 
+const memory = new Map<string, string>()
+export const memoryStorage = {
+  getItem: (k: string) => memory.get(k) ?? null,
+  setItem: (k: string, v: string) => void memory.set(k, String(v)),
+  removeItem: (k: string) => void memory.delete(k),
+  clear: () => memory.clear(),
+}
+if (!('localStorage' in globalThis)) Object.assign(globalThis, { localStorage: memoryStorage })
+
 export const user = (username: string, over: Partial<UserRef> = {}): UserRef => ({
   username,
   display_name: username,
