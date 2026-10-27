@@ -472,6 +472,10 @@ pub(crate) async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginReq>,
 ) -> Result<Json<AuthResp>, ApiError> {
+    login_at(&state, req, now()).await
+}
+
+async fn login_at(state: &AppState, req: LoginReq, t: i64) -> Result<Json<AuthResp>, ApiError> {
     let LoginReq {
         username,
         password,
@@ -479,7 +483,6 @@ pub(crate) async fn login(
     } = req;
     let key = username.to_lowercase();
     let db = &state.db;
-    let t = now();
     throttle_attempt(db, &key, t).await?;
     let (secret, _) = secret_from(&username, password, words, false)?;
     let user = match get_user(db, &key).await? {
@@ -506,6 +509,16 @@ pub(crate) async fn change_password(
     headers: HeaderMap,
     Json(req): Json<PasswordChange>,
 ) -> Result<Json<OkResp>, ApiError> {
+    change_password_at(&state, user, &headers, req, now()).await
+}
+
+async fn change_password_at(
+    state: &AppState,
+    user: User,
+    headers: &HeaderMap,
+    req: PasswordChange,
+    t: i64,
+) -> Result<Json<OkResp>, ApiError> {
     let PasswordChange { current, new } = req;
     let Secret {
         password: new_password,
@@ -517,8 +530,7 @@ pub(crate) async fn change_password(
     let (new_secret, new_kind) = secret_from(&user.username, new_password, new_words, true)?;
     let Secret { password, words } = current;
     let (secret, _) = secret_from(&user.username, password, words, false)?;
-    let t = now();
-    let token = request_token(&headers).unwrap_or_default();
+    let token = request_token(headers).unwrap_or_default();
     let session = session_key(&token);
     throttle_change(&state.db, &session, t).await?;
     if !verify_password(&secret, &user.password_hash).await {
@@ -878,37 +890,41 @@ mod tests {
     async fn login_throttle() {
         let (state, path) = temp_state("throttle").await;
         let _ = register_text(&state, "tom").await.expect("register");
-        let attempt = |password: &str| {
+        let attempt = |password: &str, t: i64| {
             let state = state.clone();
             let password = password.to_string();
             async move {
-                login(
-                    State(state),
-                    Json(LoginReq {
+                login_at(
+                    &state,
+                    LoginReq {
                         username: "tom".to_string(),
                         password: Some(password),
                         words: None,
-                    }),
+                    },
+                    t,
                 )
                 .await
             }
         };
-        let _ = attempt("a").await.expect("first login");
-        let fast = attempt("a").await;
+        let _ = attempt("a", CLOCK).await.expect("first login");
+        let fast = attempt("a", CLOCK + 2).await;
         assert!(matches!(
             fast,
             Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
         ));
-        sqlx::query(
-            "UPDATE login_attempts SET count = 1000, last_at = last_at - 10 WHERE username = 'tom'",
-        )
-        .execute(&state.db)
-        .await
-        .expect("prime attempts");
-        let locked = attempt("a").await;
+        assert_eq!(attempts(&state, "tom").await, 1);
+        let wrong = attempt("b", CLOCK + 3).await;
+        assert!(matches!(wrong, Err(ApiError(StatusCode::UNAUTHORIZED, _))));
+        sqlx::query("UPDATE login_attempts SET count = 1000 WHERE username = 'tom'")
+            .execute(&state.db)
+            .await
+            .expect("prime attempts");
+        let locked = attempt("a", CLOCK + 6).await;
         assert!(matches!(locked, Err(ApiError(StatusCode::LOCKED, _))));
         done(state, path).await;
     }
+
+    const CLOCK: i64 = 20_000 * 86400 + 3600;
 
     fn text(password: &str) -> Secret {
         Secret {
@@ -936,6 +952,25 @@ mod tests {
             .expect("load user")
             .expect("user exists");
         change_as(state, user, token, current, new).await
+    }
+
+    async fn change_at(
+        state: &AppState,
+        token: &str,
+        current: Secret,
+        new: Secret,
+        t: i64,
+    ) -> Result<Json<OkResp>, ApiError> {
+        let user = get_user(&state.db, "uma")
+            .await
+            .expect("load user")
+            .expect("user exists");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {token}").parse().expect("header"),
+        );
+        change_password_at(state, user, &headers, PasswordChange { current, new }, t).await
     }
 
     async fn change_as(
@@ -1094,25 +1129,23 @@ mod tests {
             .expect("uma")
             .password_hash;
         let words = word_set("uma");
-        let wrong = change(&state, "uma", &mine, text("nope"), text("b")).await;
+        let wrong = change_at(&state, &mine, text("nope"), text("b"), CLOCK).await;
         assert!(
             matches!(&wrong, Err(ApiError(StatusCode::UNAUTHORIZED, m)) if m == "Wrong password")
         );
         assert_eq!(failures(&state, &mine).await, 1);
-        let fast = change(&state, "uma", &mine, text("a"), text("b")).await;
+        let fast = change_at(&state, &mine, text("a"), text("b"), CLOCK + 2).await;
         assert!(matches!(
             fast,
             Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
         ));
         assert_eq!(failures(&state, &mine).await, 1);
-        rewind(&state).await;
-        let wrong_words = change(&state, "uma", &mine, picked(&words[..7]), text("b")).await;
+        let wrong_words = change_at(&state, &mine, picked(&words[..7]), text("b"), CLOCK + 3).await;
         assert!(matches!(
             wrong_words,
             Err(ApiError(StatusCode::UNAUTHORIZED, _))
         ));
         assert_eq!(failures(&state, &mine).await, 2);
-        rewind(&state).await;
         let invalid = [
             text(""),
             picked(&words[..6]),
@@ -1133,18 +1166,18 @@ mod tests {
             },
         ];
         for new in invalid {
-            let res = change(&state, "uma", &mine, text("a"), new).await;
+            let res = change_at(&state, &mine, text("a"), new, CLOCK + 6).await;
             assert!(matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, _))));
         }
-        let no_current = change(
+        let no_current = change_at(
             &state,
-            "uma",
             &mine,
             Secret {
                 password: None,
                 words: None,
             },
             text("b"),
+            CLOCK + 6,
         )
         .await;
         assert!(matches!(
@@ -1165,11 +1198,10 @@ mod tests {
             .execute(&state.db)
             .await
             .expect("prime failures");
-        rewind(&state).await;
-        let locked = change(&state, "uma", &mine, text("a"), text("b")).await;
+        let locked = change_at(&state, &mine, text("a"), text("b"), CLOCK + 6).await;
         assert!(matches!(locked, Err(ApiError(StatusCode::LOCKED, _))));
         assert_eq!(failures(&state, "other").await, 0);
-        let owner = change(&state, "uma", "other", text("a"), text("b")).await;
+        let owner = change_at(&state, "other", text("a"), text("b"), CLOCK).await;
         assert!(owner.is_ok());
         assert_eq!(tokens_of(&state, "uma").await, vec!["other".to_string()]);
         done(state, path).await;
@@ -1298,17 +1330,17 @@ mod tests {
             .0
             .token;
         add_token(&state, "ann", "thief").await;
-        let t = now();
         for n in 0..1001 {
-            let _ = throttle_attempt(&state.db, "ann", t + 3 * n).await;
+            let _ = throttle_attempt(&state.db, "ann", CLOCK + 3 * n).await;
         }
-        let locked = login(
-            State(state.clone()),
-            Json(LoginReq {
+        let locked = login_at(
+            &state,
+            LoginReq {
                 username: "ann".to_string(),
                 password: Some("a".to_string()),
                 words: None,
-            }),
+            },
+            CLOCK + 3 * 1001,
         )
         .await;
         assert!(matches!(locked, Err(ApiError(StatusCode::LOCKED, _))));

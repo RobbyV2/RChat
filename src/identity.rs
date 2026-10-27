@@ -1032,6 +1032,8 @@ mod tests {
         let other = |n: usize, iss: &str| {
             let mut c = claims(iss, SUB, AUD, 60, None);
             c.jti = format!("j{n}");
+            c.iat = now;
+            c.exp = now + 60;
             c
         };
         for n in 0..SEEN_PER_ISSUER - 2 {
