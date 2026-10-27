@@ -5,6 +5,7 @@ import { Hash, Trash2, TriangleAlert, X } from 'lucide-react'
 import type { Page } from '../lib/lists'
 import { api } from '../lib/instances'
 import {
+  changeableRoles,
   errorText,
   revokeAdminFor,
   roleMenuItems,
@@ -12,10 +13,31 @@ import {
   useStore,
   type ConfirmRequest,
 } from '../lib/store'
-import { SLOWMODE_MAX, passwordDone, passwordPrompt } from '../lib/rules'
+import {
+  SLOWMODE_MAX,
+  adminMask,
+  canGrant,
+  canPromote,
+  canSetAdminPerms,
+  REVOKE_RAISES,
+  canRevoke,
+  passwordDone,
+  passwordPrompt,
+  roleDeleteBlock,
+  roleEditBlock,
+  rolePerms,
+} from '../lib/rules'
 import { inviteUrl } from '../lib/invite'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
-import type { Channel, ChannelPerm, ConfirmChoice, Member, Role, ServerDetail } from '../lib/types'
+import type {
+  Channel,
+  ChannelPerm,
+  ConfirmChoice,
+  Member,
+  Role,
+  RoleLimits,
+  ServerDetail,
+} from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { ColorField } from './color_field'
 import { ServerHeader } from './server_header'
@@ -325,30 +347,61 @@ const PERM_ITEMS: { label: string; bit: number }[] = [
   { label: 'Manage admins', bit: Perm.ManageAdmins },
 ]
 
-function PermChecks({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+const GRANT_NOTE = 'You can only give permissions you have.'
+
+function PermChecks({
+  value,
+  onChange,
+  allowed,
+  locked,
+}: {
+  value: number
+  onChange: (v: number) => void
+  allowed?: (v: number) => boolean
+  locked?: string | null
+}) {
   return (
     <div className="flex flex-wrap gap-x-3 gap-y-1">
-      {PERM_ITEMS.map(({ label, bit }) => (
-        <label key={bit} className="flex items-center gap-1.5 text-sm">
-          <input
-            type="checkbox"
-            checked={hasPerm(value, bit)}
-            onChange={() => onChange(value ^ bit)}
-            className="accent-primary"
-          />
-          {label}
-        </label>
-      ))}
+      {PERM_ITEMS.map(({ label, bit }) => {
+        const off = !!locked || (allowed !== undefined && !allowed(value ^ bit))
+        return (
+          <label
+            key={bit}
+            title={off ? (locked ?? GRANT_NOTE) : undefined}
+            className={`flex items-center gap-1.5 text-sm ${off ? 'opacity-60' : ''}`}
+          >
+            <input
+              type="checkbox"
+              checked={hasPerm(value, bit)}
+              disabled={off}
+              onChange={() => onChange(value ^ bit)}
+              className="accent-primary"
+            />
+            {label}
+          </label>
+        )
+      })}
     </div>
+  )
+}
+
+function LockedNote() {
+  return (
+    <p className="pt-1.5 text-xs text-on-surface-variant">
+      This admin has permissions you don&apos;t have. You can take permissions away, but you can
+      only give permissions you have.
+    </p>
   )
 }
 
 function ColorSwatch({
   initial,
   onCommit,
+  locked,
 }: {
   initial: string
   onCommit: (color: string) => void
+  locked?: string | null
 }) {
   const [color, setColor] = useState(initial)
   useEffect(() => setColor(initial), [initial])
@@ -356,59 +409,90 @@ function ColorSwatch({
     <input
       type="color"
       value={color}
-      title="Role color"
+      title={locked ?? 'Role color'}
+      disabled={!!locked}
       onChange={e => setColor(e.target.value)}
       onBlur={() => {
         if (color !== initial) onCommit(color)
       }}
-      className="h-9 w-9 shrink-0 cursor-pointer rounded-lg border border-outline bg-transparent p-0.5"
+      className="h-9 w-9 shrink-0 cursor-pointer rounded-lg border border-outline bg-transparent p-0.5 disabled:cursor-not-allowed disabled:opacity-60"
     />
   )
 }
 
-function RoleRow({ server, role, refresh }: { server: string; role: Role; refresh?: () => void }) {
+function RoleRow({
+  server,
+  role,
+  refresh,
+  limit,
+  limits,
+}: {
+  server: string
+  role: Role
+  refresh?: () => void
+  limit?: number
+  limits?: RoleLimits
+}) {
   const updateRole = useStore(s => s.updateRole)
   const deleteRole = useStore(s => s.deleteRole)
   const [name, setName] = useState(role.name)
   useEffect(() => setName(role.name), [role.name])
   const after = () => refresh?.()
+  const locked = limit === undefined ? null : roleEditBlock(limit, false, role, limits)
+  const noDelete = limit === undefined ? null : roleDeleteBlock(limit, false, role, limits)
   return (
     <div className="space-y-1.5 rounded-xl bg-surface-container p-2">
       <div className="flex items-center gap-2">
         <ColorSwatch
           initial={role.color}
+          locked={locked}
           onCommit={color => void updateRole(server, role.id, { color }).then(after)}
         />
         <form
           onSubmit={e => {
             e.preventDefault()
             const trimmed = name.trim()
-            if (trimmed && trimmed !== role.name)
+            if (!locked && trimmed && trimmed !== role.name)
               void updateRole(server, role.id, { name: trimmed }).then(after)
           }}
+          title={locked ?? undefined}
           className="flex min-w-0 flex-1 gap-2"
         >
           <input
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="Role name"
-            className={fieldCls}
+            disabled={!!locked}
+            className={`${fieldCls} disabled:opacity-60`}
           />
-          <button className={textBtn}>Rename</button>
+          <button
+            disabled={!!locked}
+            className={`${textBtn} disabled:opacity-60 disabled:hover:bg-transparent`}
+          >
+            Rename
+          </button>
         </form>
-        <button
-          onClick={() => void deleteRole(server, role.id).then(after)}
-          aria-label={`Delete ${role.name}`}
-          title={`Delete ${role.name}`}
-          className={dangerBtn}
-        >
-          <Trash2 size={16} />
-        </button>
+        <span title={noDelete ?? `Delete ${role.name}`} className="shrink-0">
+          <button
+            onClick={() => void deleteRole(server, role.id).then(after)}
+            disabled={!!noDelete}
+            aria-label={`Delete ${role.name}`}
+            title={noDelete ?? `Delete ${role.name}`}
+            className={`${dangerBtn} disabled:pointer-events-none`}
+          >
+            <Trash2 size={16} />
+          </button>
+        </span>
       </div>
       <PermChecks
         value={role.perms}
+        locked={locked}
+        allowed={limit === undefined ? undefined : v => canGrant(limit, false, v)}
         onChange={v => void updateRole(server, role.id, { perms: v }).then(after)}
       />
+      {(locked ?? noDelete) && (
+        <p className="pt-1.5 text-xs text-on-surface-variant">{locked ?? noDelete}</p>
+      )}
     </div>
   )
 }
@@ -417,15 +501,26 @@ export function RolesEditor({
   server,
   roles,
   refresh,
+  limit,
+  limits,
 }: {
   server: string
   roles: Role[]
   refresh?: () => void
+  limit?: number
+  limits?: RoleLimits
 }) {
   return (
     <div className="space-y-2">
       {roles.map(r => (
-        <RoleRow key={r.id} server={server} role={r} refresh={refresh} />
+        <RoleRow
+          key={r.id}
+          server={server}
+          role={r}
+          refresh={refresh}
+          limit={limit}
+          limits={limits}
+        />
       ))}
       <RoleCreate server={server} refresh={refresh} />
     </div>
@@ -953,18 +1048,24 @@ export function AdminPermsEditor({
   username,
   perms,
   refresh,
+  limit,
 }: {
   server: string
   username: string
   perms: number
   refresh?: () => void
+  limit?: number
 }) {
   const setAdminPerms = useStore(s => s.setAdminPerms)
   const [lastBlocked, setLastBlocked] = useState(false)
+  const value = adminMask(perms)
   return (
     <>
       <PermChecks
-        value={perms === 0 ? ALL_PERMS : perms}
+        value={value}
+        allowed={
+          limit === undefined ? undefined : v => v === 0 || canSetAdminPerms(limit, false, perms, v)
+        }
         onChange={v => {
           setLastBlocked(v === 0)
           if (v !== 0)
@@ -977,6 +1078,7 @@ export function AdminPermsEditor({
           admin instead.
         </p>
       )}
+      {limit !== undefined && !canGrant(limit, false, value) && <LockedNote />}
     </>
   )
 }
@@ -1128,6 +1230,9 @@ function Settings({ server }: { server: string }) {
   const [editingAdmin, setEditingAdmin] = useState<string | null>(null)
   const [q, setQ] = useState('')
   const canAdmin = hasPerm(perms, Perm.ManageAdmins)
+  const siteAdmin = me?.is_site_admin ?? false
+  const limit = siteAdmin ? undefined : perms
+  const promote = canPromote(perms, siteAdmin)
   const found = useMemberSearch(server, q)
   const adminList = useMemberSearch(server, q, true, canAdmin)
   const reloadFound = found.reload
@@ -1155,7 +1260,8 @@ function Settings({ server }: { server: string }) {
   const others = (found.active ? found.list : loaded).filter(m => !m.is_admin)
 
   const rolesButton = (m: Member) =>
-    detail.roles.length > 0 && hasPerm(perms, Perm.ManageAdmins) ? (
+    hasPerm(perms, Perm.ManageAdmins) &&
+    changeableRoles(useStore.getState(), server, m.username).length > 0 ? (
       <button
         onClick={e => openContextMenu(e.clientX, e.clientY, roleMenuItems(server, m.username))}
         className={textBtn}
@@ -1245,7 +1351,12 @@ function Settings({ server }: { server: string }) {
       {hasPerm(perms, Perm.ManageAdmins) && (
         <>
           <p className={sectionCls}>Roles</p>
-          <RolesEditor server={server} roles={detail.roles} />
+          <RolesEditor
+            server={server}
+            roles={detail.roles}
+            limit={limit}
+            limits={detail.role_limits}
+          />
         </>
       )}
       {hasPerm(perms, Perm.ManageChannels) && (
@@ -1276,16 +1387,34 @@ function Settings({ server }: { server: string }) {
                 >
                   Perms
                 </button>
-                <button
-                  onClick={() => revokeAdminFor(server, m.username, reloadBoth)}
-                  className={dangerBtn}
+                <span
+                  title={
+                    limit !== undefined &&
+                    !canRevoke(limit, false, m.perms, rolePerms(m, detail.roles))
+                      ? REVOKE_RAISES
+                      : undefined
+                  }
                 >
-                  Remove
-                </button>
+                  <button
+                    onClick={() => revokeAdminFor(server, m.username, reloadBoth)}
+                    disabled={
+                      limit !== undefined &&
+                      !canRevoke(limit, false, m.perms, rolePerms(m, detail.roles))
+                    }
+                    className={`${dangerBtn} disabled:pointer-events-none`}
+                  >
+                    Remove
+                  </button>
+                </span>
               </>,
               editingAdmin === m.username && (
                 <div className="mt-1.5 pl-9">
-                  <AdminPermsEditor server={server} username={m.username} perms={m.perms} />
+                  <AdminPermsEditor
+                    server={server}
+                    username={m.username}
+                    perms={m.perms}
+                    limit={limit}
+                  />
                 </div>
               )
             )
@@ -1296,12 +1425,14 @@ function Settings({ server }: { server: string }) {
             others.map(m =>
               memberRow(
                 m,
-                <button
-                  onClick={() => void grantAdmin(server, m.username).then(reloadBoth)}
-                  className={textBtn}
-                >
-                  Make Admin
-                </button>
+                promote && (
+                  <button
+                    onClick={() => void grantAdmin(server, m.username).then(reloadBoth)}
+                    className={textBtn}
+                  >
+                    Make Admin
+                  </button>
+                )
               )
             )
           ) : (

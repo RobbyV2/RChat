@@ -567,6 +567,10 @@ pub fn can_moderate(actor: i64, actor_site_admin: bool, target: i64) -> bool {
     actor_site_admin || ((target & !actor) == 0 && target != actor)
 }
 
+pub fn can_grant(actor: i64, actor_site_admin: bool, perms: i64) -> bool {
+    actor_site_admin || (perms & ALL_PERMS & !actor) == 0
+}
+
 pub async fn has_perm(db: &Db, server: &str, user: &User, perm: Perm) -> bool {
     effective_perms(db, server, user)
         .await

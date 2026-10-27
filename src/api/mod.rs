@@ -301,6 +301,23 @@ pub struct Role {
     pub perms: i64,
 }
 
+/// Roles the caller can't edit, delete or assign because of who holds them or of the channel
+/// permission rules that name them. Every list is empty unless the caller has the Manage admins
+/// permission.
+#[derive(Clone, Default, Serialize, ToSchema)]
+pub struct RoleLimits {
+    /// Roles held by another member whose server permissions are not a strict subset of yours.
+    /// You can't edit or delete them.
+    pub held_above: Vec<i64>,
+    /// Roles whose channel permission rules give access you don't have in that channel. You
+    /// can't assign them. Always empty when you have Manage channels.
+    pub channel_grants: Vec<i64>,
+    /// Roles that are the only permission rule on some channel. Deleting one would open that
+    /// channel to everyone, so it needs Manage channels. Always empty when you have Manage
+    /// channels.
+    pub sole_rules: Vec<i64>,
+}
+
 /// One permission rule on a channel. A channel with no rules is open to everyone who can see
 /// the server. Once it has rules, only members matching a rule with `can_view` (plus members
 /// with Manage channels) can see it, and the flags of every matching rule are combined.
@@ -361,6 +378,8 @@ pub struct ServerDetail {
     pub channels: Vec<Channel>,
     /// Every role of the server, oldest first.
     pub roles: Vec<Role>,
+    /// Roles the caller can't change even though the permission rules on `perms` allow it.
+    pub role_limits: RoleLimits,
     /// Number of members.
     pub member_count: i64,
     /// Number of members online in this server right now.

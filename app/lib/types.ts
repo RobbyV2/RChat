@@ -95,8 +95,15 @@ export interface ServerDetail {
   name_color: string | null
   channels: Channel[]
   roles: Role[]
+  role_limits?: RoleLimits
   member_count: number
   online_count: number
+}
+
+export interface RoleLimits {
+  held_above: number[]
+  channel_grants: number[]
+  sole_rules: number[]
 }
 
 export type InviteStatus = 'member' | 'banned' | 'joinable' | 'password_required'
@@ -306,9 +313,11 @@ export type WsEvent =
   | ({ type: 'embeds_removed'; message_id: number; ord: number; banner: boolean } & Scoped)
   | { type: 'channel_created'; server: string; channel: Channel }
   | { type: 'channel_renamed'; server: string; channel: Channel }
+  | { type: 'channel_updated'; server: string; channel: Channel }
   | { type: 'channel_deleted'; server: string; channel_id: number }
   | { type: 'server_created'; server: ServerSummaryLite }
   | { type: 'server_renamed'; old_name: string; server: ServerSummaryLite }
+  | { type: 'server_updated'; server: ServerSummaryLite }
   | { type: 'server_deleted'; name: string }
   | { type: 'member_joined'; server: string; member: Member }
   | { type: 'member_left'; server: string; username: string }

@@ -3,15 +3,24 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Perm, hasPerm, type Member, type UserRef } from '../lib/types'
 import { prefixHeights, visibleRange } from '../lib/window'
-import { canModerate, memberPerms } from '../lib/rules'
+import {
+  canModerate,
+  canPromote,
+  canRevoke,
+  canTransferTo,
+  memberPerms,
+  rolePerms,
+} from '../lib/rules'
 import { onlineTotals } from '../lib/presence'
 import {
   banMenuItem,
+  changeableRoles,
   confirmKick,
   confirmTransfer,
   myPerms,
   revokeAdminFor,
   roleColor,
+  myRolePerms,
   roleMenuItems,
   useStore,
   type ContextMenuItem,
@@ -156,21 +165,32 @@ export default function MemberSidebar() {
         banMenuItem(detail.name, m.username)
       )
     if (hasPerm(perms, Perm.ManageAdmins)) {
-      items.push(
-        m.is_admin
-          ? {
-              label: 'Revoke Admin',
-              danger: true,
-              action: () => revokeAdminFor(detail.name, m.username),
-            }
-          : { label: 'Promote to Admin', action: () => void grantAdmin(detail.name, m.username) }
+      if (m.is_admin) {
+        if (canRevoke(perms, me.is_site_admin, m.perms, rolePerms(m, detail.roles)))
+          items.push({
+            label: 'Revoke Admin',
+            danger: true,
+            action: () => revokeAdminFor(detail.name, m.username),
+          })
+      } else if (canPromote(perms, me.is_site_admin))
+        items.push({
+          label: 'Promote to Admin',
+          action: () => void grantAdmin(detail.name, m.username),
+        })
+      if (
+        !self &&
+        canTransferTo(
+          perms,
+          me.is_site_admin,
+          m.perms,
+          myRolePerms(useStore.getState(), detail.name)
+        )
       )
-      if (!self)
         items.push({
           label: 'Transfer Admin',
           action: () => confirmTransfer(detail.name, m.username),
         })
-      if (detail.roles.length)
+      if (changeableRoles(useStore.getState(), detail.name, m.username).length)
         items.push({
           label: 'Assign Role',
           action: () => openContextMenu(x, y, roleMenuItems(detail.name, m.username)),

@@ -82,7 +82,7 @@ import {
   type Folder,
   type Layout,
 } from './nav_layout'
-import { cleanBio, memberPerms } from './rules'
+import { canChangeRole, cleanBio, memberPerms, rolePerms } from './rules'
 import {
   dropStashedInvite,
   entryState,
@@ -107,7 +107,7 @@ import {
   type PresenceSnap,
 } from './presence'
 import type { PassKind, Secret } from './password'
-import { ALL_PERMS } from './types'
+import { ALL_PERMS, Perm, hasPerm } from './types'
 import type {
   AdminOverview,
   AuthResponse,
@@ -591,6 +591,9 @@ export const serverAdminPerms = (s: RChatState, server: string): number => {
   return (me.servers.find(x => x.name === server)?.is_admin ?? false) ? ALL_PERMS : 0
 }
 
+export const myRolePerms = (s: RChatState, server: string): number =>
+  rolePerms(s.me ? memberOf(s, server, s.me.username) : undefined, s.servers[server]?.roles ?? [])
+
 export const myPerms = (s: RChatState, server: string): number =>
   s.me?.is_site_admin ? ALL_PERMS : serverAdminPerms(s, server)
 
@@ -669,11 +672,31 @@ export const userRefFor = (s: RChatState, username: string): UserRef => {
   return { username, display_name: username, avatar_kind: 'identicon', avatar_color: null }
 }
 
+export const changeableRoles = (s: RChatState, server: string, username: string): Role[] => {
+  const roles = s.servers[server]?.roles ?? []
+  const perms = myPerms(s, server)
+  const siteAdmin = s.me?.is_site_admin ?? false
+  const target = memberPerms(memberOf(s, server, username), roles)
+  const self = s.me?.username === username
+  const held = memberOf(s, server, username)?.role_ids ?? []
+  const locked = s.servers[server]?.role_limits?.channel_grants ?? []
+  return roles.filter(r =>
+    canChangeRole(
+      perms,
+      siteAdmin,
+      r.perms,
+      held.includes(r.id),
+      self,
+      target,
+      locked.includes(r.id)
+    )
+  )
+}
+
 export const roleMenuItems = (server: string, username: string): ContextMenuItem[] => {
   const s = useStore.getState()
-  const roles = s.servers[server]?.roles ?? []
   const roleIds = memberOf(s, server, username)?.role_ids ?? []
-  return roles.map(r => {
+  return changeableRoles(s, server, username).map(r => {
     const assigned = roleIds.includes(r.id)
     return {
       label: `${assigned ? 'Remove' : 'Assign'} ${r.name}`,
@@ -3579,7 +3602,8 @@ export const useStore = create<RChatState>()((set, get) => {
           )
           return
         }
-        case 'channel_renamed': {
+        case 'channel_renamed':
+        case 'channel_updated': {
           patchServer(ev.server, d => ({
             ...d,
             channels: d.channels.map(c => (c.id === ev.channel.id ? ev.channel : c)),
@@ -3637,8 +3661,10 @@ export const useStore = create<RChatState>()((set, get) => {
           }))
           return
         }
-        case 'server_renamed': {
-          const { old_name, server } = ev
+        case 'server_renamed':
+        case 'server_updated': {
+          const { server } = ev
+          const old_name = ev.type === 'server_renamed' ? ev.old_name : server.name
           staleInvites(old_name)
           set(s => {
             const servers = { ...s.servers }
@@ -3820,7 +3846,11 @@ export const useStore = create<RChatState>()((set, get) => {
                 }
               : {}
           )
-          if (get().me?.username === ev.username) refetchServer(ev.server)
+          if (
+            get().me?.username === ev.username ||
+            hasPerm(myPerms(get(), ev.server), Perm.ManageAdmins)
+          )
+            refetchServer(ev.server)
           return
         }
         case 'roles_changed': {

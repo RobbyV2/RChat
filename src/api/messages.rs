@@ -1582,22 +1582,41 @@ pub(crate) async fn unreads(
 /// Mark a channel or DM read
 ///
 /// Stores the caller's last-read message id for a scope (`c<channel id>` or `d<dm id>`). The
-/// position only moves forward: a lower `last_read` leaves the stored one unchanged. The scope
-/// is not checked for existence or access. Requires a bearer token. When the requested
+/// position only moves forward: a lower `last_read` leaves the stored one unchanged. The caller
+/// must be able to read the scope: for a channel the same checks as listing its messages (not
+/// banned, a member of a password-protected server, the view permission), for a DM being one of
+/// its participants; otherwise nothing is stored. Requires a bearer token. When the requested
 /// position is the one stored, emits `read_updated` to the caller's own connections (other
 /// devices). General rate-limit bucket.
-#[utoipa::path(post, path = "/api/read", tag = "Messages", request_body = ReadReq, responses((status = 200, description = "The stored read position, which never moves backwards", body = ReadState), (status = 400, description = "`scope` is not `c` or `d` followed by digits (`Invalid scope`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/read", tag = "Messages", request_body = ReadReq, responses((status = 200, description = "The stored read position, which never moves backwards", body = ReadState), (status = 400, description = "`scope` is not `c` or `d` followed by digits (`Invalid scope`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Banned from the channel's server, the server is password protected and you are not a member, no permission to view the channel, or not a participant of the DM", body = ApiErrorBody), (status = 404, description = "Channel or DM not found, or a DM participant's account is being deleted", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn mark_read(
     State(state): State<AppState>,
     Authed(user): Authed,
     Json(req): Json<ReadReq>,
 ) -> Result<Json<ReadState>, ApiError> {
     let ReadReq { scope, last_read } = req;
-    if !valid_scope(&scope) {
+    let id = match valid_scope(&scope) {
+        true => scope[1..].parse::<i64>().ok(),
+        false => None,
+    };
+    let Some(id) = id else {
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
             "Invalid scope".to_string(),
         ));
+    };
+    match scope.as_bytes()[0] {
+        b'c' => {
+            read_gate(&state.db, &HeaderMap::new(), id, Some(&user)).await?;
+        }
+        _ => {
+            if !live_dm_users(&state.db, id).await?.contains(&user.username) {
+                return Err(ApiError(
+                    StatusCode::FORBIDDEN,
+                    "Not a participant".to_string(),
+                ));
+            }
+        }
     }
     let stored: i64 = sqlx::query(
         "INSERT INTO read_state(username, scope, last_read) VALUES($1, $2, $3) ON CONFLICT(username, scope) DO UPDATE SET last_read = CASE WHEN excluded.last_read > read_state.last_read THEN excluded.last_read ELSE read_state.last_read END RETURNING last_read",
@@ -1633,6 +1652,88 @@ mod tests {
             .expect("general channel")
             .try_get(0)
             .expect("channel id")
+    }
+
+    #[tokio::test]
+    async fn read_markers_need_access_to_the_scope() {
+        let (state, path) = temp_state("read_access").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        let hidden: i64 = sqlx::query("INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'hidden', 'text', 1) RETURNING id")
+            .fetch_one(db)
+            .await
+            .expect("channel")
+            .try_get(0)
+            .expect("id");
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:hist', 1, 1, 1)")
+            .bind(hidden)
+            .execute(db)
+            .await
+            .expect("restrict");
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("dm id");
+        sqlx::query(
+            "INSERT INTO server_bans(server, username, created_at) VALUES('rchat', 'eve', 1)",
+        )
+        .execute(db)
+        .await
+        .expect("ban");
+        let mark = |who: &'static str, scope: String| {
+            let state = state.clone();
+            async move {
+                mark_read(
+                    State(state),
+                    Authed(mem_user(who, false)),
+                    Json(ReadReq {
+                        scope,
+                        last_read: 7,
+                    }),
+                )
+                .await
+                .map(|Json(r)| r.last_read)
+                .map_err(|ApiError(code, _)| code)
+            }
+        };
+        assert_eq!(
+            mark("carol", format!("c{hidden}")).await,
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            mark("eve", format!("c{cid}")).await,
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            mark("carol", format!("d{dm}")).await,
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            mark("carol", "c999999".to_string()).await,
+            Err(StatusCode::NOT_FOUND)
+        );
+        assert_eq!(
+            mark("carol", "d999999".to_string()).await,
+            Err(StatusCode::NOT_FOUND)
+        );
+        assert_eq!(
+            mark("carol", "c99999999999999999999".to_string()).await,
+            Err(StatusCode::BAD_REQUEST)
+        );
+        let rows: i64 = sqlx::query("SELECT COUNT(*) FROM read_state")
+            .fetch_one(db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("n");
+        assert_eq!(rows, 0);
+        assert_eq!(mark("carol", format!("c{cid}")).await, Ok(7));
+        assert_eq!(mark("hist", format!("c{hidden}")).await, Ok(7));
+        assert_eq!(mark("bob", format!("d{dm}")).await, Ok(7));
+        done(state, path).await;
     }
 
     async fn send(state: &AppState, cid: i64, name: &str) -> Result<Json<Message>, ApiError> {

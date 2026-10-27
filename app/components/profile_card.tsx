@@ -29,6 +29,7 @@ import {
   confirmTransfer,
   memberState,
   myPerms,
+  myRolePerms,
   revokeAdminFor,
   useStore,
   type ProfileTarget,
@@ -46,12 +47,13 @@ import {
   profileActions,
   profileKey,
   rememberProfile,
+  roleEditable,
   serverJoinLine,
   type ActionInput,
   type Point,
   type ProfileAction,
 } from '../lib/profile'
-import { MESSAGE_MAX, memberPerms } from '../lib/rules'
+import { MESSAGE_MAX, memberPerms, rolePerms } from '../lib/rules'
 import { sendKey } from '../lib/keys'
 import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
@@ -170,6 +172,10 @@ function Card({ target }: { target: ProfileTarget }) {
   const remote = isHomeHost(target.instance, homeHost) ? null : (target.instance as string)
   const live = useStore(s => (server ? memberState(s, server, username) : undefined))
   const serverRoles = useStore(s => (server ? s.servers[server]?.roles : undefined))
+  const mine = useStore(s => (server ? myRolePerms(s, server) : 0))
+  const channelLocked = useStore(s =>
+    server ? s.servers[server]?.role_limits?.channel_grants : undefined
+  )
   const serverName = useStore(s =>
     server
       ? (s.servers[server]?.display_name ??
@@ -327,12 +333,18 @@ function Card({ target }: { target: ProfileTarget }) {
     siteAdmin: me?.is_site_admin ?? false,
     inServer: server !== null,
     perms,
-    member: member && { is_admin: member.is_admin },
+    member: member && { is_admin: member.is_admin, perms: member.perms },
     targetPerms: memberPerms(member, serverRoles ?? fetched?.roles ?? []),
+    channelLocked,
+    targetRolePerms: rolePerms(member, serverRoles ?? fetched?.roles ?? []),
+    myRolePerms: mine,
   }
   const actions = known && !missing ? profileActions(input) : []
   const editRoles = known && !missing && canEditRoles(input) && serverRoles !== undefined
-  const addable = editRoles && serverRoles && member ? freeRoles(serverRoles, member.role_ids) : []
+  const addable =
+    editRoles && serverRoles && member
+      ? freeRoles(serverRoles, member.role_ids).filter(r => roleEditable(input, r, false))
+      : []
   const showRoles = member !== null && (roles.length > 0 || addable.length > 0)
 
   const run = (action: ProfileAction) => {
@@ -493,8 +505,12 @@ function Card({ target }: { target: ProfileTarget }) {
                         style={{ background: r.color }}
                         className="h-2.5 w-2.5 shrink-0 rounded-full"
                       />
-                      <span className={`truncate ${editRoles ? '' : 'pr-1'}`}>{r.name}</span>
-                      {editRoles && (
+                      <span
+                        className={`truncate ${editRoles && roleEditable(input, r, true) ? '' : 'pr-1'}`}
+                      >
+                        {r.name}
+                      </span>
+                      {editRoles && roleEditable(input, r, true) && (
                         <button
                           title={`Remove ${r.name}`}
                           onClick={() => roleChange(r, false)}

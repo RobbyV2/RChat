@@ -299,6 +299,10 @@ pub enum WsEvent {
         server: String,
         channel: Channel,
     },
+    ChannelUpdated {
+        server: String,
+        channel: Channel,
+    },
     ChannelDeleted {
         server: String,
         channel_id: i64,
@@ -308,6 +312,9 @@ pub enum WsEvent {
     },
     ServerRenamed {
         old_name: String,
+        server: ServerSummaryLite,
+    },
+    ServerUpdated {
         server: ServerSummaryLite,
     },
     ServerDeleted {
@@ -737,6 +744,10 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             let (owner, channel) = channel_now(db, channel.id).await.ok().flatten()?;
             (owner == server).then_some(WsEvent::ChannelRenamed { server, channel })
         }
+        WsEvent::ChannelUpdated { server, channel } => {
+            let (owner, channel) = channel_now(db, channel.id).await.ok().flatten()?;
+            (owner == server).then_some(WsEvent::ChannelUpdated { server, channel })
+        }
         WsEvent::ServerCreated { server } => {
             let server = server_lite(db, &server.name).await.ok().flatten()?;
             Some(WsEvent::ServerCreated { server })
@@ -746,6 +757,10 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 old_name != server.name && !matches!(server_lite(db, &old_name).await, Ok(None));
             let server = server_lite(db, &server.name).await.ok().flatten()?;
             (!reused).then_some(WsEvent::ServerRenamed { old_name, server })
+        }
+        WsEvent::ServerUpdated { server } => {
+            let server = server_lite(db, &server.name).await.ok().flatten()?;
+            Some(WsEvent::ServerUpdated { server })
         }
         WsEvent::ServerDeleted { name } => match server_lite(db, &name).await {
             Ok(Some(_)) => None,
@@ -2002,6 +2017,7 @@ async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent
         old_name: _,
         server,
     }
+    | WsEvent::ServerUpdated { server }
     | WsEvent::ServerCreated { server } = ev
         && !access.recheck(state, conn, &server.name).await
     {
@@ -2010,7 +2026,8 @@ async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent
     if let WsEvent::ServerRenamed {
         old_name: _,
         server,
-    } = ev
+    }
+    | WsEvent::ServerUpdated { server } = ev
     {
         deliver &= access.site_admin || access.held(&server.name);
     }
@@ -2616,6 +2633,12 @@ fn track(ev: &WsEvent, access: &mut Access) {
             access.viewable.retain(|_, (owner, _)| owner != old_name);
             access.who.forget();
         }
+        WsEvent::ServerUpdated { server } => {
+            access
+                .viewable
+                .retain(|_, (owner, _)| *owner != server.name);
+            access.who.forget();
+        }
         WsEvent::ServerDeleted { name } => {
             access.topics_dirty |= access.held(name);
             if access.member_servers.remove(name) {
@@ -2685,7 +2708,8 @@ fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
             ord: _,
             banner: _,
         } => scoped(server, channel_id),
-        WsEvent::ChannelRenamed { server, channel } => Some((server.as_str(), channel.id)),
+        WsEvent::ChannelRenamed { server, channel }
+        | WsEvent::ChannelUpdated { server, channel } => Some((server.as_str(), channel.id)),
         WsEvent::VoiceState {
             server,
             channel_id,
@@ -2764,7 +2788,8 @@ fn wants(
             banner: _,
         } => scoped(server, dm_users),
         WsEvent::ChannelCreated { server, channel: _ }
-        | WsEvent::ChannelRenamed { server, channel: _ } => in_server(server),
+        | WsEvent::ChannelRenamed { server, channel: _ }
+        | WsEvent::ChannelUpdated { server, channel: _ } => in_server(server),
         WsEvent::ChannelDeleted {
             server,
             channel_id: _,
@@ -2834,6 +2859,7 @@ fn wants(
             old_name,
             server: _,
         } => is_site_admin || in_server(old_name),
+        WsEvent::ServerUpdated { server } => is_site_admin || in_server(&server.name),
         WsEvent::ServerDeleted { name } => is_site_admin || in_server(name),
         WsEvent::Banned { username: _ } | WsEvent::SettingsChanged { settings: _ } => true,
         WsEvent::DmCreated { dm_id: _, dm_users } => {
@@ -5422,8 +5448,7 @@ mod tests {
             "UPDATE servers SET password_hash = 'hash' WHERE name = 'open'",
         )
         .await;
-        let locked = WsEvent::ServerRenamed {
-            old_name: s("open"),
+        let locked = WsEvent::ServerUpdated {
             server: ServerSummaryLite {
                 has_password: true,
                 banner_color: None,

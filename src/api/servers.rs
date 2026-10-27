@@ -12,14 +12,16 @@ use crate::api::auth::{hash_password, new_token, verify_password, verify_passwor
 use crate::api::messages::recent_channel_messages;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message,
-    NAME_MAX, OFFSET_MAX, Paged, ProfanityTarget, Role, SLOWMODE_MAX, ServerDetail, ServerSummary,
-    ServerSummaryLite, UserRef, check_len, check_profanity, cursor_int, decode_cursor,
-    encode_cursor, grant_matches, header_grants, page_bounds, placeholders, require_guest_ok,
-    require_server_view, unique_capped, user_from, user_ref, user_refs, valid_color,
+    NAME_MAX, OFFSET_MAX, Paged, ProfanityTarget, Role, RoleLimits, SLOWMODE_MAX, ServerDetail,
+    ServerSummary, ServerSummaryLite, UserRef, check_len, check_profanity, cursor_int,
+    decode_cursor, encode_cursor, grant_matches, header_grants, page_bounds, placeholders,
+    require_guest_ok, require_server_view, unique_capped, user_from, user_ref, user_refs,
+    valid_color,
 };
 use crate::db::{
-    ALL_PERMS, ChannelKind, Db, Perm, User, can_moderate, effective_perms, get_user, has_perm,
-    is_banned, member_perms, now, perm_bits,
+    ALL_PERMS, ChannelKind, Db, Perm, PermRow, User, can_grant, can_moderate, effective_perms,
+    fold_access, get_user, has_perm, is_banned, member_perms, now, perm_bits, perm_row,
+    perm_subjects,
 };
 use crate::state::AppState;
 use crate::ws::{Hub, WsEvent, evict_unviewable};
@@ -576,6 +578,14 @@ async fn require_moderate(
     }
 }
 
+async fn require_grant(db: &Db, server: &str, actor: &User, perms: i64) -> Result<(), ApiError> {
+    let mine = effective_perms(db, server, actor).await?;
+    match can_grant(mine, actor.is_site_admin, perms) {
+        true => Ok(()),
+        false => Err(forbidden("You can't grant permissions you don't have")),
+    }
+}
+
 fn announce_kick(hub: &Hub, server: &str, username: &str, banned: bool) {
     hub.broadcast(WsEvent::MemberKicked {
         server: server.to_string(),
@@ -911,6 +921,7 @@ async fn server_detail(
         name_color,
         channels,
         roles: server_roles(db, &name).await?,
+        role_limits: role_limits(db, &name, viewer).await?,
         member_count,
         online_count,
     })
@@ -1371,7 +1382,8 @@ pub(crate) async fn create_server(
 ///
 /// Returns the server with its channels, roles and member and online counts. Channels that have
 /// permission rules are only listed when a rule lets the viewer see them or the viewer has the
-/// Manage channels permission; guests only see channels without rules.
+/// Manage channels permission; guests only see channels without rules. For callers with Manage
+/// admins, `role_limits` lists the roles they can't edit, delete or assign.
 ///
 /// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
 /// password-protected server signed-in callers must be members and guests need a valid
@@ -1870,9 +1882,9 @@ pub(crate) async fn leave_server(
 /// guest grants are revoked unless `keep_guests` is true with `members: keep`. The response
 /// carries `removed` and `kept` counts.
 ///
-/// Emits `server_renamed` (with `old_name`) to the server on every successful update, even when
-/// only the password or colors changed, and `members_purged` to the server and the removed
-/// members. General rate-limit bucket.
+/// Emits `server_renamed` (with `old_name`) to the server when the name or display name changed,
+/// otherwise `server_updated` with the new state (password flag and colors), and
+/// `members_purged` to the server and the removed members. General rate-limit bucket.
 #[utoipa::path(
     patch,
     path = "/api/servers/{name}",
@@ -1928,7 +1940,7 @@ pub(crate) async fn update_server(
             }
             (new_key, display)
         }
-        None => (key.clone(), lite.display_name),
+        None => (key.clone(), lite.display_name.clone()),
     };
     let password_hash = match password.as_deref().map(str::trim) {
         Some("") => Some(None),
@@ -1958,6 +1970,7 @@ pub(crate) async fn update_server(
             .await?;
     }
     tx.commit().await?;
+    let renamed = new_key != key || display != lite.display_name;
     let server = ServerSummaryLite {
         name: new_key,
         display_name: display,
@@ -1969,9 +1982,14 @@ pub(crate) async fn update_server(
         banner_color: banner_color.unwrap_or(lite.banner_color),
         name_color: name_color.unwrap_or(lite.name_color),
     };
-    state.hub.broadcast(WsEvent::ServerRenamed {
-        old_name: key,
-        server: server.clone(),
+    state.hub.broadcast(match renamed {
+        true => WsEvent::ServerRenamed {
+            old_name: key,
+            server: server.clone(),
+        },
+        false => WsEvent::ServerUpdated {
+            server: server.clone(),
+        },
     });
     crate::ws::announce_purge(&state.hub, &server.name, &removed);
     Ok(Json(ServerUpdated {
@@ -2260,8 +2278,9 @@ pub(crate) async fn create_channel(
 ///
 /// Renames a channel and/or sets its slow mode; omitted fields are left unchanged. Slow mode is 0
 /// to 21600 seconds and only text channels may have it. Requires the Manage channels permission
-/// in the channel's server. Emits `channel_renamed` with the updated channel to the server, also
-/// when only slow mode changed. General rate-limit bucket.
+/// in the channel's server. Emits `channel_renamed` with the updated channel to the server when
+/// the name changed, otherwise `channel_updated` (for example a slow-mode-only change). General
+/// rate-limit bucket.
 #[utoipa::path(
     patch,
     path = "/api/channels/{id}",
@@ -2289,14 +2308,15 @@ pub(crate) async fn update_channel(
         name,
         slowmode_seconds,
     } = req;
-    let row = sqlx::query("SELECT server, kind FROM channels WHERE id = $1")
+    let row = sqlx::query("SELECT server, kind, name FROM channels WHERE id = $1")
         .bind(id)
         .fetch_optional(&state.db)
         .await?;
-    let (server, kind): (String, ChannelKind) = match &row {
+    let (server, kind, old_name): (String, ChannelKind, String) = match &row {
         Some(r) => (
             r.try_get(0)?,
             ChannelKind::parse(&r.try_get::<String, _>(1)?)?,
+            r.try_get(2)?,
         ),
         None => return Err(not_found("Channel not found")),
     };
@@ -2360,9 +2380,15 @@ pub(crate) async fn update_channel(
         kind: ChannelKind::parse(&row.try_get::<String, _>(1)?)?,
         slowmode_seconds: row.try_get(2)?,
     };
-    state.hub.broadcast(WsEvent::ChannelRenamed {
-        server,
-        channel: channel.clone(),
+    state.hub.broadcast(match channel.name == old_name {
+        true => WsEvent::ChannelUpdated {
+            server,
+            channel: channel.clone(),
+        },
+        false => WsEvent::ChannelRenamed {
+            server,
+            channel: channel.clone(),
+        },
     });
     Ok(Json(channel))
 }
@@ -2664,6 +2690,24 @@ pub(crate) async fn list_bans(
     ))
 }
 
+async fn role_perms<'e, E>(ex: E, server: &str, username: &str) -> Result<i64, ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Any>,
+{
+    let rows = sqlx::query("SELECT r.perms FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2")
+        .bind(server)
+        .bind(username)
+        .fetch_all(ex)
+        .await?;
+    let mut acc = 0;
+    for r in &rows {
+        acc |= r.try_get::<i64, _>(0)?;
+    }
+    Ok(acc & ALL_PERMS)
+}
+
+const REVOKE_RAISES: &str = "They hold roles with permissions you don't have, so revoking their admin would give them those";
+
 async fn set_admin(
     state: &AppState,
     actor: &User,
@@ -2673,6 +2717,25 @@ async fn set_admin(
 ) -> Result<Json<OkResp>, ApiError> {
     require_server(&state.db, server).await?;
     require_perm(&state.db, server, actor, Perm::ManageAdmins).await?;
+    if is_admin {
+        require_grant(&state.db, server, actor, ALL_PERMS).await?;
+    } else if !actor.is_site_admin {
+        let row = sqlx::query(
+            "SELECT perms FROM members WHERE server = $1 AND username = $2 AND is_admin <> 0",
+        )
+        .bind(server)
+        .bind(target)
+        .fetch_optional(&state.db)
+        .await?;
+        if let Some(r) = row {
+            let old = perm_bits(true, r.try_get(0)?, 0);
+            let roles = role_perms(&state.db, server, target).await?;
+            let mine = effective_perms(&state.db, server, actor).await?;
+            if roles & !old != 0 && !can_grant(mine, false, roles) {
+                return Err(forbidden(REVOKE_RAISES));
+            }
+        }
+    }
     let changed = sqlx::query(
         "UPDATE members SET is_admin = $1, perms = 0 WHERE server = $2 AND username = $3",
     )
@@ -2700,8 +2763,9 @@ async fn set_admin(
 ///
 /// Marks `username` as a server admin and resets their admin permissions to 0, which means all
 /// permissions. Works on any member, including current admins (whose permissions are reset) and
-/// yourself; there is no permission-subset check. Requires the Manage admins server permission.
-/// Emits `admin_changed` to the server and the user. General rate-limit bucket.
+/// yourself. Requires the Manage admins server permission, and because the new admin gets every
+/// permission, the caller must hold every permission too. Emits `admin_changed` to the server and
+/// the user. General rate-limit bucket.
 #[utoipa::path(
     post,
     path = "/api/servers/{name}/admins",
@@ -2712,7 +2776,7 @@ async fn set_admin(
         (status = 200, description = "Member promoted to admin with permissions reset to all", body = OkResp),
         (status = 400, description = "Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415 (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission, or you don't hold every permission (`You can't grant permissions you don't have`)", body = ApiErrorBody),
         (status = 404, description = "Server not found, or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
@@ -2738,8 +2802,11 @@ pub(crate) async fn grant_admin(
 /// Revoke admin
 ///
 /// Clears the admin flag and admin permissions of `username`; they keep the permissions of their
-/// roles. Works on any member, including the creator and members who are not admins; there is no
-/// permission-subset check. Requires the Manage admins server permission. Emits `admin_changed` to
+/// roles. Works on any member, including the creator, admins with more permissions than you and
+/// members who are not admins. The one limit: an admin's roles count again once admin is
+/// revoked, so if their roles have permissions their admin permissions lack, those role
+/// permissions must be a subset of yours (otherwise revoking would raise them, or yourself, above
+/// what you can grant). Requires the Manage admins server permission. Emits `admin_changed` to
 /// the server and the user. General rate-limit bucket.
 #[utoipa::path(
     delete,
@@ -2749,7 +2816,7 @@ pub(crate) async fn grant_admin(
     responses(
         (status = 200, description = "Admin status and permissions revoked", body = OkResp),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission, or the admin's roles have permissions that neither their admin permissions nor yours include (`They hold roles with permissions you don't have, so revoking their admin would give them those`)", body = ApiErrorBody),
         (status = 404, description = "Server not found, or the user is not a member", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -2772,10 +2839,14 @@ pub(crate) async fn revoke_admin(
 
 /// Transfer admin
 ///
-/// Makes `username` an admin and clears the caller's admin flag, in one transaction. Unlike
-/// granting admin, it does not reset the target's stored admin permission mask (normally 0,
-/// meaning all permissions), so an admin with restricted permissions keeps them. Requires the Manage admins server permission. Emits `admin_changed` for the target
-/// and for the caller, each to the server and that user. General rate-limit bucket.
+/// Makes `username` an admin and clears the caller's admin flag and admin permissions, in one
+/// transaction. Unlike granting admin, it does not reset the target's stored admin permission
+/// mask (0, meaning all permissions, for members who are not admins), so an admin with
+/// restricted permissions keeps them. The permissions the target ends up with must be a subset of
+/// yours (equal is fine), and so must the permissions of your own roles, which count again once
+/// you are no longer an admin. Requires the Manage admins server permission. Emits `admin_changed` for the target with
+/// their stored mask and for the caller with 0, each to the server and that user. General
+/// rate-limit bucket.
 #[utoipa::path(
     post,
     path = "/api/servers/{name}/transfer_admin",
@@ -2786,7 +2857,7 @@ pub(crate) async fn revoke_admin(
         (status = 200, description = "Admin granted to the target member and revoked from the caller", body = OkResp),
         (status = 400, description = "Cannot transfer to yourself. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission; the target would get permissions you don't have (`You can't grant permissions you don't have`); or your own roles have permissions your admin permissions don't include, which you would gain by giving up admin", body = ApiErrorBody),
         (status = 404, description = "Server not found, or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
@@ -2806,30 +2877,45 @@ pub(crate) async fn transfer_admin(
     }
     require_server(&state.db, &key).await?;
     require_perm(&state.db, &key, &user, Perm::ManageAdmins).await?;
+    let mine = effective_perms(&state.db, &key, &user).await?;
     let mut tx = state.db.begin().await?;
-    let granted =
-        sqlx::query("UPDATE members SET is_admin = 1 WHERE server = $1 AND username = $2")
-            .bind(&key)
-            .bind(&target)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-    if granted == 0 {
-        return Err(not_found("Not a member"));
+    let stored: i64 = match sqlx::query(
+        "UPDATE members SET is_admin = 1 WHERE server = $1 AND username = $2 RETURNING perms",
+    )
+    .bind(&key)
+    .bind(&target)
+    .fetch_optional(&mut *tx)
+    .await?
+    {
+        Some(r) => r.try_get(0)?,
+        None => return Err(not_found("Not a member")),
+    };
+    if !can_grant(mine, user.is_site_admin, perm_bits(true, stored, 0)) {
+        return Err(forbidden("You can't grant permissions you don't have"));
     }
-    let revoked =
-        sqlx::query("UPDATE members SET is_admin = 0 WHERE server = $1 AND username = $2")
-            .bind(&key)
-            .bind(&user.username)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
+    if !can_grant(
+        mine,
+        user.is_site_admin,
+        role_perms(&mut *tx, &key, &user.username).await?,
+    ) {
+        return Err(forbidden(
+            "You hold roles with permissions your admin permissions don't include, so giving up admin would give you those",
+        ));
+    }
+    let revoked = sqlx::query(
+        "UPDATE members SET is_admin = 0, perms = 0 WHERE server = $1 AND username = $2",
+    )
+    .bind(&key)
+    .bind(&user.username)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
     tx.commit().await?;
     state.hub.broadcast(WsEvent::AdminChanged {
         server: key.clone(),
         username: target,
         is_admin: true,
-        perms: 0,
+        perms: stored,
     });
     if revoked > 0 {
         state.hub.broadcast(WsEvent::AdminChanged {
@@ -2845,8 +2931,10 @@ pub(crate) async fn transfer_admin(
 /// Set an admin's permissions
 ///
 /// Replaces the permission bitmask of the admin `username` (bits outside 31 are dropped; 0 means
-/// all permissions). There is no permission-subset check. Requires the Manage admins server
-/// permission. Emits `admin_changed` to the server and the user. General rate-limit bucket.
+/// all permissions). Taking permissions away works on any admin, like revoking admin. When the new
+/// permissions add any the admin did not have, all of the new permissions must be ones you have
+/// (equal is fine), so only callers holding every permission can set 0. Requires the Manage admins
+/// server permission. Emits `admin_changed` to the server and the user. General rate-limit bucket.
 #[utoipa::path(
     patch,
     path = "/api/servers/{name}/admins/{username}/perms",
@@ -2857,7 +2945,7 @@ pub(crate) async fn transfer_admin(
         (status = 200, description = "Admin permissions updated", body = OkResp),
         (status = 400, description = "Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415 (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission, or the change adds permissions and the new permissions include some you don't have (`You can't grant permissions you don't have`)", body = ApiErrorBody),
         (status = 404, description = "Server not found, or the user is not an admin of it", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
@@ -2874,39 +2962,49 @@ pub(crate) async fn set_admin_perms(
     let target = target.to_lowercase();
     require_server(&state.db, &key).await?;
     require_perm(&state.db, &key, &user, Perm::ManageAdmins).await?;
-    let changed = sqlx::query(
-        "UPDATE members SET perms = $1 WHERE server = $2 AND username = $3 AND is_admin != 0",
+    let perms = req.perms & ALL_PERMS;
+    let mine = effective_perms(&state.db, &key, &user).await?;
+    let mut tx = state.db.begin().await?;
+    let stored: i64 = match sqlx::query(
+        "SELECT perms FROM members WHERE server = $1 AND username = $2 AND is_admin != 0",
     )
-    .bind(req.perms & ALL_PERMS)
     .bind(&key)
     .bind(&target)
-    .execute(&state.db)
+    .fetch_optional(&mut *tx)
     .await?
-    .rows_affected();
-    match changed {
-        0 => Err(not_found("Not an admin")),
-        _ => {
-            state.hub.broadcast(WsEvent::AdminChanged {
-                server: key,
-                username: target,
-                is_admin: true,
-                perms: req.perms & ALL_PERMS,
-            });
-            Ok(ok())
-        }
+    {
+        Some(r) => r.try_get(0)?,
+        None => return Err(not_found("Not an admin")),
+    };
+    let (old, new) = (perm_bits(true, stored, 0), perm_bits(true, perms, 0));
+    if new & !old != 0 && !can_grant(mine, user.is_site_admin, new) {
+        return Err(forbidden("You can't grant permissions you don't have"));
     }
+    sqlx::query("UPDATE members SET perms = $1 WHERE server = $2 AND username = $3")
+        .bind(perms)
+        .bind(&key)
+        .bind(&target)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    state.hub.broadcast(WsEvent::AdminChanged {
+        server: key,
+        username: target,
+        is_admin: true,
+        perms,
+    });
+    Ok(ok())
 }
 
-async fn require_role(db: &Db, server: &str, id: i64) -> Result<(), ApiError> {
-    let found = sqlx::query("SELECT 1 FROM roles WHERE id = $1 AND server = $2")
+async fn require_role(db: &Db, server: &str, id: i64) -> Result<i64, ApiError> {
+    match sqlx::query("SELECT perms FROM roles WHERE id = $1 AND server = $2")
         .bind(id)
         .bind(server)
         .fetch_optional(db)
         .await?
-        .is_some();
-    match found {
-        true => Ok(()),
-        false => Err(not_found("Role not found")),
+    {
+        Some(r) => Ok(r.try_get(0)?),
+        None => Err(not_found("Role not found")),
     }
 }
 
@@ -2915,6 +3013,161 @@ async fn role_guard(state: &AppState, name: &str, user: &User) -> Result<String,
     require_server(&state.db, &key).await?;
     require_perm(&state.db, &key, user, Perm::ManageAdmins).await?;
     Ok(key)
+}
+
+fn held_above_sql(one: bool) -> String {
+    let bits = [
+        Perm::ManageChannels,
+        Perm::DeleteMessages,
+        Perm::Kick,
+        Perm::DeleteServer,
+        Perm::ManageAdmins,
+    ]
+    .map(|p| format!("MAX(r.perms & {})", p as i64))
+    .join(" | ");
+    let role = match one {
+        true => " AND h.role_id = $4",
+        false => "",
+    };
+    format!(
+        "SELECT DISTINCT t.role_id FROM (SELECT h.role_id AS role_id, CASE WHEN m.is_admin <> 0 THEN CASE WHEN m.perms = 0 THEN {ALL_PERMS} ELSE m.perms & {ALL_PERMS} END ELSE {bits} END AS eff FROM user_roles h JOIN members m ON m.server = h.server AND m.username = h.username JOIN user_roles ur ON ur.server = h.server AND ur.username = h.username JOIN roles r ON r.id = ur.role_id WHERE h.server = $1 AND h.username <> $2{role} GROUP BY h.role_id, h.username, m.is_admin, m.perms) t WHERE (t.eff | $3) <> $3 OR t.eff = $3"
+    )
+}
+
+async fn held_above(
+    db: &Db,
+    server: &str,
+    actor: &User,
+    mine: i64,
+    role: Option<i64>,
+) -> Result<HashSet<i64>, ApiError> {
+    let mut out = HashSet::new();
+    if actor.is_site_admin {
+        return Ok(out);
+    }
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(held_above_sql(role.is_some())))
+        .bind(server)
+        .bind(&actor.username)
+        .bind(mine);
+    if let Some(id) = role {
+        query = query.bind(id);
+    }
+    for r in &query.fetch_all(db).await? {
+        out.insert(r.try_get::<i64, _>(0)?);
+    }
+    Ok(out)
+}
+
+#[derive(Default)]
+struct ChannelLimits {
+    grants: HashSet<i64>,
+    sole: HashSet<i64>,
+}
+
+async fn channel_limits(
+    db: &Db,
+    server: &str,
+    actor: &User,
+    mine: i64,
+    role: Option<i64>,
+) -> Result<ChannelLimits, ApiError> {
+    let mut out = ChannelLimits::default();
+    if actor.is_site_admin || mine & Perm::ManageChannels as i64 != 0 {
+        return Ok(out);
+    }
+    let filter = match role {
+        Some(_) => "cp.subject = $2",
+        None => "cp.subject LIKE 'r:%'",
+    };
+    let sql = format!(
+        "SELECT cp.channel_id, cp.subject, cp.can_view, cp.can_send, cp.can_read_history, (SELECT COUNT(*) FROM channel_perms o WHERE o.channel_id = cp.channel_id) FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1 AND {filter}"
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(server);
+    if let Some(id) = role {
+        query = query.bind(format!("r:{id}"));
+    }
+    let rules = query.fetch_all(db).await?;
+    if rules.is_empty() {
+        return Ok(out);
+    }
+    let subjects = perm_subjects(db, Some(server), &actor.username).await?;
+    let sql = format!(
+        "SELECT cp.channel_id, cp.subject, cp.can_view, cp.can_send, cp.can_read_history FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1 AND cp.subject IN ({})",
+        placeholders(2, subjects.len())
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(server);
+    for subject in &subjects {
+        query = query.bind(subject);
+    }
+    let mut own: HashMap<i64, Vec<PermRow>> = HashMap::new();
+    for r in &query.fetch_all(db).await? {
+        own.entry(r.try_get(0)?).or_default().push(perm_row(r, 1)?);
+    }
+    for r in &rules {
+        let channel: i64 = r.try_get(0)?;
+        let rule = perm_row(r, 1)?;
+        let Some(id) = rule
+            .subject
+            .strip_prefix("r:")
+            .and_then(|id| id.parse::<i64>().ok())
+        else {
+            continue;
+        };
+        let have = fold_access(own.get(&channel).into_iter().flatten(), &subjects, false);
+        if (rule.view && !have.view) || (rule.send && !have.send) || (rule.history && !have.history)
+        {
+            out.grants.insert(id);
+        }
+        if r.try_get::<i64, _>(5)? == 1 {
+            out.sole.insert(id);
+        }
+    }
+    Ok(out)
+}
+
+async fn role_limits(db: &Db, server: &str, viewer: Option<&User>) -> Result<RoleLimits, ApiError> {
+    let Some(user) = viewer.filter(|u| !u.is_site_admin) else {
+        return Ok(RoleLimits::default());
+    };
+    let mine = effective_perms(db, server, user).await?;
+    if mine & Perm::ManageAdmins as i64 == 0 {
+        return Ok(RoleLimits::default());
+    }
+    let sorted = |set: HashSet<i64>| {
+        let mut ids: Vec<i64> = set.into_iter().collect();
+        ids.sort_unstable();
+        ids
+    };
+    let ChannelLimits { grants, sole } = channel_limits(db, server, user, mine, None).await?;
+    Ok(RoleLimits {
+        held_above: sorted(held_above(db, server, user, mine, None).await?),
+        channel_grants: sorted(grants),
+        sole_rules: sorted(sole),
+    })
+}
+
+async fn require_role_change(
+    db: &Db,
+    server: &str,
+    actor: &User,
+    id: i64,
+    role_perms: i64,
+) -> Result<i64, ApiError> {
+    let mine = effective_perms(db, server, actor).await?;
+    if !can_grant(mine, actor.is_site_admin, role_perms) {
+        return Err(forbidden(
+            "You can't change a role that has permissions you don't have",
+        ));
+    }
+    if !held_above(db, server, actor, mine, Some(id))
+        .await?
+        .is_empty()
+    {
+        return Err(forbidden(
+            "You can't change a role held by a member you can't moderate",
+        ));
+    }
+    Ok(mine)
 }
 
 fn check_color(color: &str) -> Result<(), ApiError> {
@@ -2926,8 +3179,9 @@ fn check_color(color: &str) -> Result<(), ApiError> {
 
 /// Create a role
 ///
-/// Adds a role to the server. A server can have at most 250 roles. Requires the Manage admins
-/// server permission. Emits `roles_changed` to the server. General rate-limit bucket.
+/// Adds a role to the server. A server can have at most 250 roles. The role's permissions must be
+/// a subset of yours (equal is fine). Requires the Manage admins server permission. Emits
+/// `roles_changed` to the server. General rate-limit bucket.
 #[utoipa::path(
     post,
     path = "/api/servers/{name}/roles",
@@ -2938,7 +3192,7 @@ fn check_color(color: &str) -> Result<(), ApiError> {
         (status = 200, description = "The created role", body = Role),
         (status = 400, description = "Invalid role name (blank, longer than 100 characters or blocked by the profanity filter), an invalid color, or the server already has 250 roles. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission, or the role's permissions include some you don't have (`You can't grant permissions you don't have`)", body = ApiErrorBody),
         (status = 404, description = "Server not found", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
@@ -2962,6 +3216,7 @@ pub(crate) async fn create_role(
     .await?;
     check_color(&req.color)?;
     let perms = req.perms & ALL_PERMS;
+    require_grant(&state.db, &key, &user, perms).await?;
     if count_rows(
         &state.db,
         "SELECT COUNT(*) FROM roles WHERE server = $1",
@@ -2993,10 +3248,15 @@ pub(crate) async fn create_role(
 
 /// Update a role
 ///
-/// Changes a role's name, color and/or permissions; omitted fields are left unchanged. Fields are
-/// saved one after another, so a request whose `color` is invalid still saves a valid `name`.
-/// Requires the Manage admins server permission. Emits `roles_changed` to the server and removes
-/// users from voice channels they can no longer view. General rate-limit bucket.
+/// Changes a role's name, color and/or permissions; omitted fields are left unchanged. Every field
+/// is validated before anything is saved, and the changes are saved together, so a rejected
+/// request changes nothing. Any edit, a rename or recolor included, needs the role's current
+/// permissions to be a subset of yours, and every other member who holds the role must have
+/// server permissions that are a strict subset of yours (the kick and ban rule; see
+/// `role_limits.held_above` in the server detail). New permissions must be a subset of yours
+/// (equal is fine). Requires the Manage admins server permission. Emits `roles_changed` to the
+/// server and removes users from voice channels they can no longer view. General rate-limit
+/// bucket.
 #[utoipa::path(
     patch,
     path = "/api/servers/{name}/roles/{id}",
@@ -3005,9 +3265,9 @@ pub(crate) async fn create_role(
     request_body = RolePatch,
     responses(
         (status = 200, description = "The updated role", body = Role),
-        (status = 400, description = "Invalid role name (blank, longer than 100 characters or blocked by the profanity filter) or color. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Invalid role name (blank, longer than 100 characters or blocked by the profanity filter) or color; nothing is saved. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 403, description = "Nothing is saved. Missing the Manage admins permission; the role has permissions you don't have (`You can't change a role that has permissions you don't have`); another holder of the role does not have fewer permissions than you (`You can't change a role held by a member you can't moderate`); or the new permissions include some you don't have (`You can't grant permissions you don't have`)", body = ApiErrorBody),
         (status = 404, description = "Server or role not found", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
@@ -3021,38 +3281,53 @@ pub(crate) async fn update_role(
     Json(req): Json<RolePatch>,
 ) -> Result<Json<Role>, ApiError> {
     let key = role_guard(&state, &name, &user).await?;
-    require_role(&state.db, &key, id).await?;
+    let current = require_role(&state.db, &key, id).await?;
+    require_role_change(&state.db, &key, &user, id, current).await?;
     let RolePatch { name, color, perms } = req;
-    if let Some(role_name) = &name {
-        let role_name = role_name.trim().to_string();
-        check_name(
-            &state.db,
-            ProfanityTarget::RoleNames,
-            "Role name",
-            &role_name,
-        )
-        .await?;
+    let role_name = match &name {
+        Some(role_name) => {
+            let role_name = role_name.trim().to_string();
+            check_name(
+                &state.db,
+                ProfanityTarget::RoleNames,
+                "Role name",
+                &role_name,
+            )
+            .await?;
+            Some(role_name)
+        }
+        None => None,
+    };
+    if let Some(color) = &color {
+        check_color(color)?;
+    }
+    let perms = perms.map(|p| p & ALL_PERMS);
+    if let Some(perms) = perms {
+        require_grant(&state.db, &key, &user, perms).await?;
+    }
+    let mut tx = state.db.begin().await?;
+    if let Some(role_name) = &role_name {
         sqlx::query("UPDATE roles SET name = $1 WHERE id = $2")
-            .bind(&role_name)
+            .bind(role_name)
             .bind(id)
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await?;
     }
     if let Some(color) = &color {
-        check_color(color)?;
         sqlx::query("UPDATE roles SET color = $1 WHERE id = $2")
             .bind(color)
             .bind(id)
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await?;
     }
     if let Some(perms) = perms {
         sqlx::query("UPDATE roles SET perms = $1 WHERE id = $2")
-            .bind(perms & ALL_PERMS)
+            .bind(perms)
             .bind(id)
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await?;
     }
+    tx.commit().await?;
     let row = sqlx::query("SELECT name, color, perms FROM roles WHERE id = $1")
         .bind(id)
         .fetch_one(&state.db)
@@ -3073,8 +3348,12 @@ pub(crate) async fn update_role(
 /// Delete a role
 ///
 /// Deletes the role, unassigns it from everyone and removes the channel permission rules that
-/// name it. Requires the Manage admins server permission. Emits `roles_changed` to the server and
-/// removes users from voice channels they can no longer view. General rate-limit bucket.
+/// name it. The role's permissions must be a subset of yours, and every other member who holds it
+/// must have server permissions that are a strict subset of yours (the kick and ban rule). If the
+/// role is the only permission rule on a channel, removing that rule would open the channel to
+/// everyone, so you also need Manage channels. Requires the Manage admins server permission.
+/// Emits `roles_changed` to the server and removes users from voice channels they can no longer
+/// view. General rate-limit bucket.
 #[utoipa::path(
     delete,
     path = "/api/servers/{name}/roles/{id}",
@@ -3084,7 +3363,7 @@ pub(crate) async fn update_role(
         (status = 200, description = "Role deleted and removed from channel permission rules", body = OkResp),
         (status = 400, description = "Non-integer `id` (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission; the role has permissions you don't have (`You can't change a role that has permissions you don't have`); another holder of the role does not have fewer permissions than you (`You can't change a role held by a member you can't moderate`); or the role is the only rule on a channel and you lack Manage channels", body = ApiErrorBody),
         (status = 404, description = "Server or role not found", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -3096,7 +3375,17 @@ pub(crate) async fn delete_role(
     Path((name, id)): Path<(String, i64)>,
 ) -> Result<Json<OkResp>, ApiError> {
     let key = role_guard(&state, &name, &user).await?;
-    require_role(&state.db, &key, id).await?;
+    let current = require_role(&state.db, &key, id).await?;
+    let mine = require_role_change(&state.db, &key, &user, id, current).await?;
+    if !channel_limits(&state.db, &key, &user, mine, Some(id))
+        .await?
+        .sole
+        .is_empty()
+    {
+        return Err(forbidden(
+            "This role is the only permission rule on a channel, so deleting it would open the channel to everyone. That needs Manage channels",
+        ));
+    }
     sqlx::query("DELETE FROM roles WHERE id = $1")
         .bind(id)
         .execute(&state.db)
@@ -3114,9 +3403,12 @@ pub(crate) async fn delete_role(
 
 /// Assign a role
 ///
-/// Gives the role to the member `username`; assigning a role they already hold succeeds without
-/// changes. There is no permission-subset check on the role's permissions. Requires the Manage
-/// admins server permission. Emits `roles_changed` to the server. General rate-limit bucket.
+/// Gives the role to the member `username`, who can be anyone in the server, including yourself;
+/// assigning a role they already hold succeeds without changes. The role's permissions must be a
+/// subset of yours (equal is fine). Without Manage channels, the channel permission rules that
+/// name the role must not give anything you don't have in that channel (see
+/// `role_limits.channel_grants` in the server detail). Requires the Manage admins server
+/// permission. Emits `roles_changed` to the server. General rate-limit bucket.
 #[utoipa::path(
     post,
     path = "/api/servers/{name}/roles/{id}/assign",
@@ -3127,7 +3419,7 @@ pub(crate) async fn delete_role(
         (status = 200, description = "Role assigned to the member", body = OkResp),
         (status = 400, description = "A non-integer `id`, malformed JSON or a missing `Content-Type` (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission, the role has permissions you don't have (`You can't grant permissions you don't have`), or its channel rules give access you don't have (`This role gives channel access you don't have`)", body = ApiErrorBody),
         (status = 404, description = "Server or role not found, or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
@@ -3141,7 +3433,7 @@ pub(crate) async fn assign_role(
     Json(req): Json<UsernameReq>,
 ) -> Result<Json<OkResp>, ApiError> {
     let key = role_guard(&state, &name, &user).await?;
-    require_role(&state.db, &key, id).await?;
+    let role_perms = require_role(&state.db, &key, id).await?;
     let target = req.username.to_lowercase();
     let member = sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
         .bind(&key)
@@ -3151,6 +3443,15 @@ pub(crate) async fn assign_role(
         .is_some();
     if !member {
         return Err(not_found("Not a member"));
+    }
+    require_grant(&state.db, &key, &user, role_perms).await?;
+    let mine = effective_perms(&state.db, &key, &user).await?;
+    if !channel_limits(&state.db, &key, &user, mine, Some(id))
+        .await?
+        .grants
+        .is_empty()
+    {
+        return Err(forbidden("This role gives channel access you don't have"));
     }
     sqlx::query(
         "INSERT INTO user_roles(server, username, role_id) VALUES($1, $2, $3) ON CONFLICT(server, username, role_id) DO NOTHING",
@@ -3166,9 +3467,11 @@ pub(crate) async fn assign_role(
 
 /// Unassign a role
 ///
-/// Takes the role away from `username`. Requires the Manage admins server permission. Emits
-/// `roles_changed` to the server and removes users from voice channels they can no longer view.
-/// General rate-limit bucket.
+/// Takes the role away from `username`. Any role can be taken away from yourself. When `username`
+/// is someone else, their server permissions must be a strict subset of yours (the kick and ban
+/// rule); the role's own permissions don't matter. Requires the Manage admins server permission.
+/// Emits `roles_changed` to the server and removes users from voice channels they can no longer
+/// view. General rate-limit bucket.
 #[utoipa::path(
     delete,
     path = "/api/servers/{name}/roles/{id}/assign/{username}",
@@ -3178,7 +3481,7 @@ pub(crate) async fn assign_role(
         (status = 200, description = "Role removed from the member", body = OkResp),
         (status = 400, description = "Non-integer `id` (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage admins permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission, or the member does not have fewer permissions than you (`You can't moderate this member`)", body = ApiErrorBody),
         (status = 404, description = "Server or role not found, or the user does not hold the role", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -3191,10 +3494,14 @@ pub(crate) async fn unassign_role(
 ) -> Result<Json<OkResp>, ApiError> {
     let key = role_guard(&state, &name, &user).await?;
     require_role(&state.db, &key, id).await?;
+    let target = target.to_lowercase();
+    if target != user.username {
+        require_moderate(&state.db, &key, &user, &target).await?;
+    }
     let removed =
         sqlx::query("DELETE FROM user_roles WHERE server = $1 AND username = $2 AND role_id = $3")
             .bind(&key)
-            .bind(target.to_lowercase())
+            .bind(&target)
             .bind(id)
             .execute(&state.db)
             .await?
@@ -3225,7 +3532,7 @@ async fn check_subject(db: &Db, server: &str, subject: &str) -> Result<(), ApiEr
         },
         Some(("r", id)) => {
             let id: i64 = id.parse().map_err(|_| bad("Invalid subject"))?;
-            require_role(db, server, id).await
+            require_role(db, server, id).await.map(|_| ())
         }
         Some((_, _)) | None => Err(bad("Invalid subject")),
     }
@@ -4842,16 +5149,22 @@ mod tests {
         assert_eq!(set.server.banner_color.as_deref(), Some("#ff0066"));
         assert_eq!(set.server.name_color.as_deref(), Some("#ffffff"));
         assert!(!set.server.has_password);
-        let mut renamed = Vec::new();
+        let mut updated = Vec::new();
         while let Ok(ev) = rx.try_recv() {
-            if let WsEvent::ServerRenamed { old_name, server } = ev {
-                renamed.push((old_name, server.banner_color, server.name_color));
+            match ev {
+                WsEvent::ServerRenamed { old_name, server } => {
+                    updated.push((Some(old_name), server.banner_color, server.name_color))
+                }
+                WsEvent::ServerUpdated { server } => {
+                    updated.push((None, server.banner_color, server.name_color))
+                }
+                _ => {}
             }
         }
         assert_eq!(
-            renamed,
+            updated,
             [(
-                "club".to_string(),
+                None,
                 Some("#ff0066".to_string()),
                 Some("#ffffff".to_string())
             )]
@@ -5576,6 +5889,854 @@ mod tests {
         }
         let want: Vec<String> = (1..=230).map(|i| format!("u:p{i:03}")).collect();
         assert_eq!(seen, want);
+        done(state, path).await;
+    }
+
+    fn code<T>(res: Result<T, ApiError>) -> Result<(), (StatusCode, String)> {
+        res.map(|_| ()).map_err(|ApiError(code, msg)| (code, msg))
+    }
+
+    async fn member_row(db: &Db, username: &str) -> (i64, i64) {
+        let r = sqlx::query(
+            "SELECT is_admin, perms FROM members WHERE server = 'club' AND username = $1",
+        )
+        .bind(username)
+        .fetch_one(db)
+        .await
+        .expect("member row");
+        (
+            r.try_get(0).expect("is_admin"),
+            r.try_get(1).expect("perms"),
+        )
+    }
+
+    async fn role_row(db: &Db, id: i64) -> (String, String, i64) {
+        let r = sqlx::query("SELECT name, color, perms FROM roles WHERE id = $1")
+            .bind(id)
+            .fetch_one(db)
+            .await
+            .expect("role row");
+        (
+            r.try_get(0).expect("name"),
+            r.try_get(1).expect("color"),
+            r.try_get(2).expect("perms"),
+        )
+    }
+
+    async fn holds(db: &Db, username: &str, role: i64) -> bool {
+        sqlx::query(
+            "SELECT 1 FROM user_roles WHERE server = 'club' AND username = $1 AND role_id = $2",
+        )
+        .bind(username)
+        .bind(role)
+        .fetch_optional(db)
+        .await
+        .expect("holds")
+        .is_some()
+    }
+
+    async fn new_role(db: &Db, name: &str, perms: i64) -> i64 {
+        sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES('club', $1, '#ffffff', $2) RETURNING id")
+            .bind(name)
+            .bind(perms)
+            .fetch_one(db)
+            .await
+            .expect("role")
+            .try_get(0)
+            .expect("role id")
+    }
+
+    async fn club_with(state: &AppState, names: &[&str]) {
+        let db = &state.db;
+        let _ = make_server(state, "club").await.expect("club");
+        for name in names {
+            add_user(db, name, name).await;
+            join(state, name, "club").await.expect("join");
+        }
+        add_user(db, "root", "root").await;
+        sqlx::query("UPDATE users SET is_site_admin = 1 WHERE username = 'root'")
+            .execute(db)
+            .await
+            .expect("site admin");
+    }
+
+    const MA: i64 = Perm::ManageAdmins as i64;
+    const KICK: i64 = Perm::Kick as i64;
+
+    async fn grant(
+        state: &AppState,
+        actor: User,
+        target: &str,
+    ) -> Result<(), (StatusCode, String)> {
+        code(
+            grant_admin(
+                State(state.clone()),
+                Authed(actor),
+                Path("club".to_string()),
+                Json(UsernameReq {
+                    username: target.to_string(),
+                }),
+            )
+            .await,
+        )
+    }
+
+    async fn set_perms(
+        state: &AppState,
+        actor: User,
+        target: &str,
+        perms: i64,
+    ) -> Result<(), (StatusCode, String)> {
+        code(
+            set_admin_perms(
+                State(state.clone()),
+                Authed(actor),
+                Path(("club".to_string(), target.to_string())),
+                Json(PermsReq { perms }),
+            )
+            .await,
+        )
+    }
+
+    fn no_grant() -> Result<(), (StatusCode, String)> {
+        Err((
+            StatusCode::FORBIDDEN,
+            "You can't grant permissions you don't have".to_string(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn admin_grants_stay_within_the_actors_perms() {
+        let (state, path) = temp_state("admin_escalation").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "carol", "dave", "frank", "gina"]).await;
+        set_admin_row(db, "bob", MA | KICK).await;
+        set_admin_row(db, "dave", KICK).await;
+        set_admin_row(db, "frank", 0).await;
+        set_admin_row(db, "gina", 0).await;
+        let bob = || mem_user("bob", false);
+        assert_eq!(grant(&state, bob(), "carol").await, no_grant());
+        assert_eq!(grant(&state, bob(), "bob").await, no_grant());
+        assert_eq!(grant(&state, bob(), "dave").await, no_grant());
+        assert_eq!(member_row(db, "carol").await, (0, 0));
+        assert_eq!(member_row(db, "dave").await, (1, KICK));
+        for perms in [0, ALL_PERMS, KICK | Perm::DeleteMessages as i64, MA | 8] {
+            assert_eq!(
+                set_perms(&state, bob(), "dave", perms)
+                    .await
+                    .map_err(|e| e.0),
+                Err(StatusCode::FORBIDDEN),
+                "{perms}"
+            );
+        }
+        assert_eq!(set_perms(&state, bob(), "bob", 0).await, no_grant());
+        assert_eq!(member_row(db, "dave").await, (1, KICK));
+        assert_eq!(member_row(db, "bob").await, (1, MA | KICK));
+        set_perms(&state, bob(), "dave", MA | KICK)
+            .await
+            .expect("equal is fine");
+        set_perms(&state, bob(), "bob", MA)
+            .await
+            .expect("narrow yourself");
+        assert_eq!(member_row(db, "bob").await, (1, MA));
+        set_admin_row(db, "bob", MA | KICK).await;
+        let delete = Perm::DeleteServer as i64;
+        set_perms(&state, bob(), "gina", ALL_PERMS & !KICK)
+            .await
+            .expect("lowering a stronger admin is revoke-like");
+        set_perms(&state, bob(), "gina", delete)
+            .await
+            .expect("lowering again");
+        assert_eq!(member_row(db, "gina").await, (1, delete));
+        for perms in [0, delete | KICK, delete | 1] {
+            assert_eq!(set_perms(&state, bob(), "gina", perms).await, no_grant());
+        }
+        assert_eq!(member_row(db, "gina").await, (1, delete));
+        set_perms(&state, bob(), "gina", KICK)
+            .await
+            .expect("a new mask within yours");
+        assert_eq!(member_row(db, "gina").await, (1, KICK));
+        code(
+            revoke_admin(
+                State(state.clone()),
+                Authed(bob()),
+                Path(("club".to_string(), "alice".to_string())),
+            )
+            .await,
+        )
+        .expect("revoking the creator stays allowed");
+        assert_eq!(member_row(db, "alice").await, (0, 0));
+        grant(&state, mem_user("frank", false), "carol")
+            .await
+            .expect("full admin grants");
+        assert_eq!(member_row(db, "carol").await, (1, 0));
+        grant(&state, mem_user("root", true), "alice")
+            .await
+            .expect("site admin grants");
+        set_perms(&state, mem_user("root", true), "carol", 0)
+            .await
+            .expect("site admin sets");
+        done(state, path).await;
+    }
+
+    async fn assign(
+        state: &AppState,
+        actor: User,
+        role: i64,
+        target: &str,
+    ) -> Result<(), (StatusCode, String)> {
+        code(
+            assign_role(
+                State(state.clone()),
+                Authed(actor),
+                Path(("club".to_string(), role)),
+                Json(UsernameReq {
+                    username: target.to_string(),
+                }),
+            )
+            .await,
+        )
+    }
+
+    async fn unassign(
+        state: &AppState,
+        actor: User,
+        role: i64,
+        target: &str,
+    ) -> Result<(), (StatusCode, String)> {
+        code(
+            unassign_role(
+                State(state.clone()),
+                Authed(actor),
+                Path(("club".to_string(), role, target.to_string())),
+            )
+            .await,
+        )
+    }
+
+    #[tokio::test]
+    async fn roles_stay_within_the_actors_perms() {
+        let (state, path) = temp_state("role_escalation").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "carol", "erin"]).await;
+        set_admin_row(db, "bob", MA | KICK).await;
+        set_admin_row(db, "erin", MA | KICK).await;
+        let bob = || mem_user("bob", false);
+        let create = |perms: i64| {
+            let state = state.clone();
+            async move {
+                create_role(
+                    State(state),
+                    Authed(mem_user("bob", false)),
+                    Path("club".to_string()),
+                    Json(RoleReq {
+                        name: "made".to_string(),
+                        color: "#123456".to_string(),
+                        perms,
+                    }),
+                )
+                .await
+                .map(|Json(role)| role.id)
+            }
+        };
+        assert_eq!(code(create(Perm::DeleteServer as i64).await), no_grant());
+        assert_eq!(code(create(ALL_PERMS).await), no_grant());
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM roles WHERE server = 'club'").await,
+            0
+        );
+        let made = create(MA | KICK).await.expect("equal perms create");
+        let patch = |name: Option<&str>, perms: Option<i64>| {
+            let state = state.clone();
+            let name = name.map(str::to_string);
+            async move {
+                update_role(
+                    State(state),
+                    Authed(mem_user("bob", false)),
+                    Path(("club".to_string(), made)),
+                    Json(RolePatch {
+                        name,
+                        color: None,
+                        perms,
+                    }),
+                )
+                .await
+            }
+        };
+        assert_eq!(
+            code(patch(Some("renamed"), Some(ALL_PERMS)).await),
+            no_grant()
+        );
+        assert_eq!(
+            role_row(db, made).await,
+            ("made".to_string(), "#123456".to_string(), MA | KICK)
+        );
+        let _ = patch(Some("renamed"), Some(KICK))
+            .await
+            .expect("narrower edit");
+        assert_eq!(role_row(db, made).await.2, KICK);
+        let high = new_role(db, "high", ALL_PERMS).await;
+        let foreign = new_role(db, "foreign", Perm::DeleteServer as i64).await;
+        let equal = new_role(db, "equal", MA | KICK).await;
+        let low = new_role(db, "low", KICK).await;
+        let plain = new_role(db, "plain", 0).await;
+        for role in [high, foreign] {
+            for target in ["carol", "bob", "erin"] {
+                assert_eq!(assign(&state, bob(), role, target).await, no_grant());
+                assert!(!holds(db, target, role).await);
+            }
+        }
+        assign(&state, bob(), equal, "carol")
+            .await
+            .expect("equal role");
+        assign(&state, bob(), low, "carol")
+            .await
+            .expect("lower role");
+        assign(&state, bob(), plain, "bob")
+            .await
+            .expect("plain role on yourself");
+        assign(&state, bob(), low, "erin")
+            .await
+            .expect("granting to a peer");
+        assign(&state, bob(), low, "alice")
+            .await
+            .expect("granting to a stronger admin");
+        let alice = || mem_user("alice", false);
+        assign(&state, alice(), high, "carol")
+            .await
+            .expect("a full admin assigns an all-perms role");
+        assign(&state, alice(), high, "alice")
+            .await
+            .expect("a full admin assigns it to themselves");
+        let peer = Err((
+            StatusCode::FORBIDDEN,
+            "You can't moderate this member".to_string(),
+        ));
+        for (role, target) in [(low, "erin"), (high, "carol"), (low, "alice")] {
+            assert_eq!(unassign(&state, bob(), role, target).await, peer);
+            assert!(holds(db, target, role).await);
+        }
+        unassign(&state, bob(), plain, "bob")
+            .await
+            .expect("dropping your own role");
+        let root = || mem_user("root", true);
+        unassign(&state, root(), high, "carol")
+            .await
+            .expect("site admin bypasses");
+        assign(&state, root(), foreign, "erin")
+            .await
+            .expect("site admin bypasses");
+        unassign(&state, alice(), equal, "carol")
+            .await
+            .expect("alice unassigns");
+        unassign(&state, bob(), low, "carol")
+            .await
+            .expect("a member you can moderate");
+        assert!(!holds(db, "carol", low).await && !holds(db, "carol", equal).await);
+        done(state, path).await;
+    }
+
+    async fn hold(db: &Db, username: &str, role: i64) {
+        sqlx::query("INSERT INTO user_roles(server, username, role_id) VALUES('club', $1, $2)")
+            .bind(username)
+            .bind(role)
+            .execute(db)
+            .await
+            .expect("hold");
+    }
+
+    async fn edit(
+        state: &AppState,
+        actor: User,
+        role: i64,
+        name: Option<&str>,
+        perms: Option<i64>,
+    ) -> Result<(), (StatusCode, String)> {
+        code(
+            update_role(
+                State(state.clone()),
+                Authed(actor),
+                Path(("club".to_string(), role)),
+                Json(RolePatch {
+                    name: name.map(str::to_string),
+                    color: None,
+                    perms,
+                }),
+            )
+            .await,
+        )
+    }
+
+    async fn drop_role(
+        state: &AppState,
+        actor: User,
+        role: i64,
+    ) -> Result<(), (StatusCode, String)> {
+        code(
+            delete_role(
+                State(state.clone()),
+                Authed(actor),
+                Path(("club".to_string(), role)),
+            )
+            .await,
+        )
+    }
+
+    async fn limits_of(state: &AppState, who: User) -> (Vec<i64>, Vec<i64>, Vec<i64>) {
+        let RoleLimits {
+            held_above,
+            channel_grants,
+            sole_rules,
+        } = server_detail(&state.db, &state.hub, "club", Some(&who))
+            .await
+            .expect("detail")
+            .role_limits;
+        (held_above, channel_grants, sole_rules)
+    }
+
+    fn forbid(msg: &str) -> Result<(), (StatusCode, String)> {
+        Err((StatusCode::FORBIDDEN, msg.to_string()))
+    }
+
+    #[tokio::test]
+    async fn role_edits_and_deletes_need_every_holder_below_you() {
+        let (state, path) = temp_state("role_holders").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "carol", "dave", "erin", "fay", "gina"]).await;
+        set_admin_row(db, "bob", MA | KICK).await;
+        set_admin_row(db, "erin", MA | KICK).await;
+        set_admin_row(db, "gina", 0).await;
+        let (bob, alice, root) = (
+            || mem_user("bob", false),
+            || mem_user("alice", false),
+            || mem_user("root", true),
+        );
+        let held = forbid("You can't change a role held by a member you can't moderate");
+        let foreign_msg = forbid("You can't change a role that has permissions you don't have");
+        let peer = new_role(db, "peer", KICK).await;
+        hold(db, "carol", peer).await;
+        hold(db, "erin", peer).await;
+        let ma = new_role(db, "ma", MA).await;
+        let kick = new_role(db, "kick", KICK).await;
+        hold(db, "dave", ma).await;
+        hold(db, "dave", kick).await;
+        let full = new_role(db, "full", KICK).await;
+        hold(db, "gina", full).await;
+        let lower = new_role(db, "lower", KICK).await;
+        hold(db, "fay", lower).await;
+        hold(db, "bob", lower).await;
+        let foreign = new_role(db, "foreign", Perm::DeleteServer as i64).await;
+        assert_eq!(limits_of(&state, bob()).await.0, {
+            let mut ids = vec![peer, ma, kick, full];
+            ids.sort_unstable();
+            ids
+        });
+        for role in [peer, ma, kick, full] {
+            assert_eq!(edit(&state, bob(), role, None, Some(0)).await, held);
+            assert_eq!(edit(&state, bob(), role, Some("x"), None).await, held);
+            assert_eq!(drop_role(&state, bob(), role).await, held);
+            assert_ne!(role_row(db, role).await.0, "x");
+        }
+        assert_eq!(role_row(db, peer).await.2, KICK);
+        assert_eq!(
+            edit(&state, bob(), foreign, Some("x"), None).await,
+            foreign_msg
+        );
+        assert_eq!(drop_role(&state, bob(), foreign).await, foreign_msg);
+        assert_eq!(role_row(db, foreign).await.0, "foreign");
+        assert_eq!(
+            edit(&state, bob(), lower, None, Some(MA | KICK | 1)).await,
+            no_grant()
+        );
+        assert_eq!(role_row(db, lower).await.2, KICK);
+        edit(&state, bob(), lower, Some("raised"), Some(MA))
+            .await
+            .expect("raise within your own perms");
+        edit(&state, bob(), lower, Some("lowered"), Some(0))
+            .await
+            .expect("lower a role held by yourself and someone below you");
+        assert_eq!(
+            role_row(db, lower).await,
+            ("lowered".to_string(), "#ffffff".to_string(), 0)
+        );
+        edit(&state, bob(), lower, None, Some(MA | KICK))
+            .await
+            .expect("raise to equal");
+        assert_eq!(edit(&state, bob(), lower, None, Some(0)).await, held);
+        assert_eq!(drop_role(&state, bob(), lower).await, held);
+        edit(&state, alice(), lower, None, Some(KICK))
+            .await
+            .expect("alice lowers it");
+        drop_role(&state, bob(), lower).await.expect("delete");
+        assert_eq!(limits_of(&state, alice()).await.0, vec![full]);
+        edit(&state, alice(), peer, Some("helpers"), Some(0))
+            .await
+            .expect("a full admin edits a role held by lesser members");
+        edit(&state, alice(), ma, None, Some(ALL_PERMS))
+            .await
+            .expect("a full admin raises one");
+        assert_eq!(drop_role(&state, alice(), full).await, held);
+        assert_eq!(drop_role(&state, alice(), kick).await, held);
+        drop_role(&state, alice(), peer)
+            .await
+            .expect("full admin deletes");
+        assert_eq!(limits_of(&state, root()).await, (vec![], vec![], vec![]));
+        edit(&state, root(), full, Some("root"), Some(ALL_PERMS))
+            .await
+            .expect("site admin bypasses");
+        drop_role(&state, root(), full)
+            .await
+            .expect("site admin bypasses");
+        drop_role(&state, root(), foreign)
+            .await
+            .expect("site admin bypasses");
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM roles WHERE server = 'club'").await,
+            2
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn role_channel_rules_limit_assign_and_delete() {
+        let (state, path) = temp_state("role_channels").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "carol"]).await;
+        set_admin_row(db, "bob", MA | KICK).await;
+        let (bob, alice) = (|| mem_user("bob", false), || mem_user("alice", false));
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'club'")
+            .fetch_one(db)
+            .await
+            .expect("channel")
+            .try_get(0)
+            .expect("id");
+        let rule = |subject: String, view: i64, send: i64| async move {
+            sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, $3, $4, 0)")
+                .bind(cid)
+                .bind(subject)
+                .bind(view)
+                .bind(send)
+                .execute(db)
+                .await
+                .expect("rule");
+        };
+        let vip = new_role(db, "vip", 0).await;
+        rule(format!("r:{vip}"), 1, 1).await;
+        assert_eq!(
+            limits_of(&state, bob()).await,
+            (vec![], vec![vip], vec![vip])
+        );
+        assert_eq!(
+            assign(&state, bob(), vip, "carol").await,
+            forbid("This role gives channel access you don't have")
+        );
+        assert_eq!(
+            assign(&state, bob(), vip, "bob").await,
+            forbid("This role gives channel access you don't have")
+        );
+        assert!(!holds(db, "bob", vip).await);
+        assert_eq!(
+            drop_role(&state, bob(), vip).await.map_err(|e| e.0),
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(limits_of(&state, alice()).await, (vec![], vec![], vec![]));
+        assign(&state, alice(), vip, "carol")
+            .await
+            .expect("Manage channels assigns");
+        rule("u:bob".to_string(), 1, 0).await;
+        assert_eq!(limits_of(&state, bob()).await, (vec![], vec![vip], vec![]));
+        assert_eq!(
+            assign(&state, bob(), vip, "bob").await.map_err(|e| e.0),
+            Err(StatusCode::FORBIDDEN)
+        );
+        sqlx::query("UPDATE channel_perms SET can_send = 1 WHERE subject = 'u:bob'")
+            .execute(db)
+            .await
+            .expect("send");
+        assert_eq!(limits_of(&state, bob()).await, (vec![], vec![], vec![]));
+        assign(&state, bob(), vip, "bob")
+            .await
+            .expect("access you already have");
+        drop_role(&state, bob(), vip)
+            .await
+            .expect("not the only rule any more");
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM channel_perms WHERE subject LIKE 'r:%'"
+            )
+            .await,
+            0
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn revoking_admin_cannot_raise_anyone_above_you() {
+        let (state, path) = temp_state("revoke_raise").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "dave", "erin", "frank", "gina"]).await;
+        for (who, perms) in [
+            ("bob", MA | KICK),
+            ("dave", KICK),
+            ("erin", KICK),
+            ("frank", KICK),
+            ("gina", KICK),
+        ] {
+            set_admin_row(db, who, perms).await;
+        }
+        let owner = new_role(db, "owner", ALL_PERMS).await;
+        let mods = new_role(db, "mods", MA | KICK).await;
+        hold(db, "dave", owner).await;
+        hold(db, "erin", mods).await;
+        hold(db, "gina", owner).await;
+        let revoke = |actor: User, target: &str| {
+            let state = state.clone();
+            let target = target.to_string();
+            async move {
+                code(
+                    revoke_admin(
+                        State(state),
+                        Authed(actor),
+                        Path(("club".to_string(), target)),
+                    )
+                    .await,
+                )
+            }
+        };
+        let raises = forbid(REVOKE_RAISES);
+        let bob = || mem_user("bob", false);
+        assert_eq!(revoke(bob(), "dave").await, raises);
+        assert_eq!(member_row(db, "dave").await, (1, KICK));
+        revoke(bob(), "erin").await.expect("roles within yours");
+        revoke(bob(), "alice")
+            .await
+            .expect("revoking still works on anyone");
+        revoke(mem_user("root", true), "gina")
+            .await
+            .expect("site admin bypasses");
+        sqlx::query("UPDATE members SET is_admin = 1, perms = 0 WHERE server = 'club' AND username = 'alice'")
+            .execute(db)
+            .await
+            .expect("restore alice");
+        revoke(mem_user("alice", false), "dave")
+            .await
+            .expect("a full admin can");
+        hold(db, "bob", owner).await;
+        assert_eq!(revoke(bob(), "bob").await, raises);
+        let transfer = code(
+            transfer_admin(
+                State(state.clone()),
+                Authed(bob()),
+                Path("club".to_string()),
+                Json(UsernameReq {
+                    username: "frank".to_string(),
+                }),
+            )
+            .await,
+        );
+        assert_eq!(transfer.map_err(|e| e.0), Err(StatusCode::FORBIDDEN));
+        assert_eq!(member_row(db, "bob").await, (1, MA | KICK));
+        assert_eq!(member_row(db, "frank").await, (1, KICK));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn role_updates_validate_everything_first() {
+        let (state, path) = temp_state("role_atomic").await;
+        let db = &state.db;
+        club_with(&state, &[]).await;
+        let id = new_role(db, "mods", KICK).await;
+        let patch = |name: &str, color: &str, perms: Option<i64>| {
+            let state = state.clone();
+            let (name, color) = (name.to_string(), color.to_string());
+            async move {
+                update_role(
+                    State(state),
+                    Authed(mem_user("alice", false)),
+                    Path(("club".to_string(), id)),
+                    Json(RolePatch {
+                        name: Some(name),
+                        color: Some(color),
+                        perms,
+                    }),
+                )
+                .await
+            }
+        };
+        let before = ("mods".to_string(), "#ffffff".to_string(), KICK);
+        let err = patch("helpers", "red", Some(MA)).await.err().map(|e| e.0);
+        assert_eq!(err, Some(StatusCode::BAD_REQUEST));
+        assert_eq!(role_row(db, id).await, before);
+        let err = patch(" ", "#000000", Some(MA)).await.err().map(|e| e.0);
+        assert_eq!(err, Some(StatusCode::BAD_REQUEST));
+        assert_eq!(role_row(db, id).await, before);
+        let Json(role) = patch("helpers", "#00ff00", Some(MA | 64))
+            .await
+            .expect("valid");
+        assert_eq!(
+            (role.name.as_str(), role.color.as_str(), role.perms),
+            ("helpers", "#00ff00", MA)
+        );
+        assert_eq!(
+            role_row(db, id).await,
+            ("helpers".to_string(), "#00ff00".to_string(), MA)
+        );
+        done(state, path).await;
+    }
+
+    fn admin_events(
+        rx: &mut tokio::sync::broadcast::Receiver<WsEvent>,
+    ) -> Vec<(String, bool, i64)> {
+        let mut out = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let WsEvent::AdminChanged {
+                server: _,
+                username,
+                is_admin,
+                perms,
+            } = ev
+            {
+                out.push((username, is_admin, perms));
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn transfer_reports_stored_perms_and_cannot_escalate() {
+        let (state, path) = temp_state("transfer_admin").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "carol", "dave"]).await;
+        set_admin_row(db, "bob", MA | KICK).await;
+        set_admin_row(db, "dave", KICK).await;
+        let transfer = |actor: &str, target: &str| {
+            let state = state.clone();
+            let (actor, target) = (actor.to_string(), target.to_string());
+            async move {
+                code(
+                    transfer_admin(
+                        State(state),
+                        Authed(mem_user(&actor, false)),
+                        Path("club".to_string()),
+                        Json(UsernameReq { username: target }),
+                    )
+                    .await,
+                )
+            }
+        };
+        let mut rx = state.hub.subscribe();
+        assert_eq!(transfer("bob", "carol").await, no_grant());
+        assert_eq!(member_row(db, "carol").await, (0, 0));
+        assert_eq!(member_row(db, "bob").await, (1, MA | KICK));
+        transfer("bob", "dave")
+            .await
+            .expect("restricted admin target");
+        assert_eq!(member_row(db, "dave").await, (1, KICK));
+        assert_eq!(member_row(db, "bob").await, (0, 0));
+        assert_eq!(
+            admin_events(&mut rx),
+            [
+                ("dave".to_string(), true, KICK),
+                ("bob".to_string(), false, 0)
+            ]
+        );
+        transfer("alice", "carol").await.expect("full admin");
+        assert_eq!(member_row(db, "carol").await, (1, 0));
+        assert_eq!(
+            admin_events(&mut rx),
+            [
+                ("carol".to_string(), true, 0),
+                ("alice".to_string(), false, 0)
+            ]
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn rename_events_only_for_real_renames() {
+        let (state, path) = temp_state("rename_events").await;
+        let db = &state.db;
+        club_with(&state, &[]).await;
+        let mut rx = state.hub.subscribe();
+        let kinds = |rx: &mut tokio::sync::broadcast::Receiver<WsEvent>| {
+            let mut out = Vec::new();
+            while let Ok(ev) = rx.try_recv() {
+                match ev {
+                    WsEvent::ServerRenamed { old_name, server } => {
+                        out.push(format!("server_renamed {old_name} {}", server.display_name))
+                    }
+                    WsEvent::ServerUpdated { server } => out.push(format!(
+                        "server_updated {} {}",
+                        server.display_name, server.has_password
+                    )),
+                    WsEvent::ChannelRenamed { server: _, channel } => {
+                        out.push(format!("channel_renamed {}", channel.name))
+                    }
+                    WsEvent::ChannelUpdated { server: _, channel } => out.push(format!(
+                        "channel_updated {} {}",
+                        channel.name, channel.slowmode_seconds
+                    )),
+                    _ => {}
+                }
+            }
+            out
+        };
+        let patch =
+            |body: &'static str| patch_colors(&state, mem_user("alice", false), "club", body);
+        patch(r#"{"password":"hunter22"}"#).await.expect("password");
+        patch(r#"{"name":"club"}"#).await.expect("same name");
+        patch(r##"{"banner_color":"#101010"}"##)
+            .await
+            .expect("color");
+        patch(r#"{"name":"Club"}"#).await.expect("display rename");
+        patch(r#"{"name":"Den"}"#).await.expect("rename");
+        assert_eq!(
+            kinds(&mut rx),
+            [
+                "server_updated club true",
+                "server_updated club true",
+                "server_updated club true",
+                "server_renamed club Club",
+                "server_renamed club Den",
+            ]
+        );
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'den'")
+            .fetch_one(db)
+            .await
+            .expect("channel")
+            .try_get(0)
+            .expect("id");
+        let channel = |name: Option<&str>, slowmode_seconds: Option<i64>| {
+            let state = state.clone();
+            let name = name.map(str::to_string);
+            async move {
+                update_channel(
+                    State(state),
+                    Authed(mem_user("alice", false)),
+                    Path(cid),
+                    Json(ChannelPatch {
+                        name,
+                        slowmode_seconds,
+                    }),
+                )
+                .await
+                .expect("channel patch")
+            }
+        };
+        let current = channel(None, None).await.0.name;
+        let _ = channel(None, Some(30)).await;
+        let _ = channel(Some(&current), None).await;
+        let _ = channel(Some("talk"), Some(0)).await;
+        assert_eq!(
+            kinds(&mut rx),
+            [
+                format!("channel_updated {current} 0"),
+                format!("channel_updated {current} 30"),
+                format!("channel_updated {current} 30"),
+                "channel_renamed talk".to_string(),
+            ]
+        );
         done(state, path).await;
     }
 }

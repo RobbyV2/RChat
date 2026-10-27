@@ -1,4 +1,4 @@
-import { canModerate } from './rules'
+import { canChangeRole, canModerate, canPromote, canRevoke, canTransferTo } from './rules'
 import { Perm, hasPerm, type Profile, type Role, type UserRef } from './types'
 
 const PROFILE_CACHE = 100
@@ -126,8 +126,11 @@ export interface ActionInput {
   siteAdmin: boolean
   inServer: boolean
   perms: number
-  member: { is_admin: boolean } | null
+  member: { is_admin: boolean; perms: number } | null
   targetPerms: number
+  channelLocked?: number[]
+  targetRolePerms?: number
+  myRolePerms?: number
 }
 
 export const profileActions = ({
@@ -138,6 +141,8 @@ export const profileActions = ({
   perms,
   member,
   targetPerms,
+  targetRolePerms = 0,
+  myRolePerms = 0,
 }: ActionInput): ProfileAction[] => {
   if (!signedIn) return []
   const out: ProfileAction[] = []
@@ -146,8 +151,11 @@ export const profileActions = ({
     const admins = hasPerm(perms, Perm.ManageAdmins)
     if (kick && member) out.push('kick')
     if (kick) out.push('server_ban')
-    if (admins && member) out.push(member.is_admin ? 'revoke' : 'promote')
-    if (admins && member && !self) out.push('transfer')
+    if (admins && member?.is_admin && canRevoke(perms, siteAdmin, member.perms, targetRolePerms))
+      out.push('revoke')
+    if (admins && member && !member.is_admin && canPromote(perms, siteAdmin)) out.push('promote')
+    if (admins && member && !self && canTransferTo(perms, siteAdmin, member.perms, myRolePerms))
+      out.push('transfer')
   }
   if (siteAdmin && !self) out.push('site_ban')
   return out
@@ -155,3 +163,18 @@ export const profileActions = ({
 
 export const canEditRoles = ({ signedIn, inServer, perms, member }: ActionInput) =>
   signedIn && inServer && member !== null && hasPerm(perms, Perm.ManageAdmins)
+
+export const roleEditable = (
+  { self, siteAdmin, perms, targetPerms, channelLocked }: ActionInput,
+  role: Pick<Role, 'perms'> & { id?: number },
+  held: boolean
+) =>
+  canChangeRole(
+    perms,
+    siteAdmin,
+    role.perms,
+    held,
+    self,
+    targetPerms,
+    role.id !== undefined && (channelLocked?.includes(role.id) ?? false)
+  )

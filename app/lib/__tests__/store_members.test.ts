@@ -125,18 +125,18 @@ describe('member lookups for authors', () => {
 })
 
 describe('same-name server updates', () => {
-  const recolor = (name: string): WsEvent => ({
-    type: 'server_renamed',
-    old_name: 's',
-    server: {
-      name,
-      display_name: name,
-      creator: null,
-      has_password: false,
-      banner_color: '#ff0066',
-      name_color: null,
-    },
+  const lite = (name: string) => ({
+    name,
+    display_name: name,
+    creator: null,
+    has_password: false,
+    banner_color: '#ff0066',
+    name_color: null,
   })
+  const recolor = (name: string): WsEvent =>
+    name === 's'
+      ? { type: 'server_updated', server: lite(name) }
+      : { type: 'server_renamed', old_name: 's', server: lite(name) }
   const lookups = () => requests.filter(r => r.includes('usernames='))
 
   test('a color change keeps an in-flight member lookup', async () => {
@@ -148,6 +148,21 @@ describe('same-name server updates', () => {
     expect(lookups()).toHaveLength(1)
     expect(memberOf(st(), 's', 'bob')?.role_ids).toEqual([1])
     expect(st().servers.s.banner_color).toBe('#ff0066')
+  })
+
+  test('server_updated and channel_updated patch the cached detail', () => {
+    dispatch({ type: 'server_updated', server: { ...lite('s'), has_password: true } })
+    expect(st().servers.s.has_password).toBe(true)
+    expect(st().servers.s.banner_color).toBe('#ff0066')
+    const channel = { id: 7, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
+    useStore.setState(x => ({ servers: { s: { ...x.servers.s, channels: [channel] } } }))
+    dispatch({
+      type: 'channel_updated',
+      server: 's',
+      channel: { ...channel, slowmode_seconds: 30 },
+    })
+    expect(st().servers.s.channels[0].slowmode_seconds).toBe(30)
+    expect(st().servers.s.channels[0].name).toBe(channel.name)
   })
 
   test('a guest is resubscribed only on a real rename', () => {

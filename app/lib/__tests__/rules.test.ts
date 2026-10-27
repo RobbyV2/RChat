@@ -1,8 +1,17 @@
 import { describe, expect, test } from 'bun:test'
 import {
   PROFANITY_TARGETS,
+  adminMask,
+  canChangeRole,
+  canRevoke,
+  canSetAdminPerms,
+  roleDeleteBlock,
+  roleEditBlock,
   canDeleteChannel,
+  canGrant,
   canModerate,
+  canPromote,
+  canTransferTo,
   charCount,
   expiryText,
   mediaError,
@@ -72,6 +81,84 @@ describe('canModerate', () => {
 
   test('site admins bypass the rule', () => {
     expect(canModerate(ALL_PERMS, true, ALL_PERMS)).toBe(true)
+  })
+})
+
+describe('granting perms', () => {
+  const ma = Perm.ManageAdmins
+  const kick = Perm.Kick
+  test('grants stay within your own perms', () => {
+    expect(canGrant(ma | kick, false, kick)).toBe(true)
+    expect(canGrant(ma | kick, false, ma | kick)).toBe(true)
+    expect(canGrant(ma | kick, false, Perm.DeleteServer)).toBe(false)
+    expect(canGrant(ma, false, 64)).toBe(true)
+    expect(canGrant(0, true, ALL_PERMS)).toBe(true)
+    expect(adminMask(0)).toBe(ALL_PERMS)
+    expect(adminMask(kick | 64)).toBe(kick)
+    expect(canPromote(ma | kick, false)).toBe(false)
+    expect(canPromote(ALL_PERMS, false)).toBe(true)
+    expect(canPromote(ma, true)).toBe(true)
+    expect(canTransferTo(ma | kick, false, 0)).toBe(false)
+    expect(canTransferTo(ma | kick, false, kick)).toBe(true)
+    expect(canTransferTo(ma, false, kick)).toBe(false)
+  })
+
+  test('assigning grants the role, taking it away moderates the member', () => {
+    const del = Perm.DeleteServer
+    expect(canChangeRole(ma | kick, false, kick, false, false, 0)).toBe(true)
+    expect(canChangeRole(ma | kick, false, ma | kick, false, false, 0)).toBe(true)
+    expect(canChangeRole(ma | kick, false, del, false, false, 0)).toBe(false)
+    expect(canChangeRole(ma | kick, false, 0, false, false, ALL_PERMS)).toBe(true)
+    expect(canChangeRole(ALL_PERMS, false, ALL_PERMS, false, false, 0)).toBe(true)
+    expect(canChangeRole(ma | kick, false, 0, true, false, ma | kick)).toBe(false)
+    expect(canChangeRole(ma | kick, false, ALL_PERMS, true, false, kick)).toBe(true)
+    expect(canChangeRole(ma | kick, false, ALL_PERMS, true, true, ALL_PERMS)).toBe(true)
+    expect(canChangeRole(ma, true, ALL_PERMS, false, false, ALL_PERMS)).toBe(true)
+    expect(canChangeRole(ma, true, ALL_PERMS, true, false, ALL_PERMS)).toBe(true)
+    expect(canChangeRole(ma | kick, false, 0, false, false, 0, true)).toBe(false)
+    expect(canChangeRole(ma | kick, false, 0, true, false, 0, true)).toBe(true)
+    expect(canChangeRole(ma, true, 0, false, false, 0, true)).toBe(true)
+  })
+
+  test('revoking admin or giving it up never raises anyone above the actor', () => {
+    expect(canRevoke(ma | kick, false, kick, ALL_PERMS)).toBe(false)
+    expect(canRevoke(ma | kick, false, kick, ma | kick)).toBe(true)
+    expect(canRevoke(ma | kick, false, 0, ALL_PERMS)).toBe(true)
+    expect(canRevoke(ma | kick, false, kick, 0)).toBe(true)
+    expect(canRevoke(ALL_PERMS, false, kick, ALL_PERMS)).toBe(true)
+    expect(canRevoke(ma, true, kick, ALL_PERMS)).toBe(true)
+    expect(canTransferTo(ma | kick, false, kick, ALL_PERMS)).toBe(false)
+    expect(canTransferTo(ma | kick, false, kick, kick)).toBe(true)
+    expect(canTransferTo(ma, true, 0, ALL_PERMS)).toBe(true)
+  })
+
+  test('editing or deleting a role needs its perms and every holder below you', () => {
+    const limits = { held_above: [2], channel_grants: [3], sole_rules: [4] }
+    const role = (id: number, perms: number = kick) => ({ id, perms })
+    expect(roleEditBlock(ma | kick, false, role(1), limits)).toBeNull()
+    expect(roleEditBlock(ma | kick, false, role(1, Perm.DeleteServer), limits)).toContain(
+      "permissions you don't have"
+    )
+    expect(roleEditBlock(ma | kick, false, role(2), limits)).toContain("can't moderate")
+    expect(roleEditBlock(ma | kick, false, role(3), limits)).toBeNull()
+    expect(roleEditBlock(ma | kick, false, role(4), limits)).toBeNull()
+    expect(roleDeleteBlock(ma | kick, false, role(4), limits)).toContain('only rule on a channel')
+    expect(roleDeleteBlock(ma | kick, false, role(2), limits)).toContain("can't moderate")
+    expect(roleDeleteBlock(ma | kick, false, role(1), limits)).toBeNull()
+    expect(roleEditBlock(ma | kick, false, role(2))).toBeNull()
+    expect(roleEditBlock(ma, true, role(2, ALL_PERMS), limits)).toBeNull()
+    expect(roleDeleteBlock(ma, true, role(4, ALL_PERMS), limits)).toBeNull()
+  })
+
+  test('admin perms can always be lowered, raised only within yours', () => {
+    const del = Perm.DeleteServer
+    expect(canSetAdminPerms(ma | kick, false, 0, ALL_PERMS & ~kick)).toBe(true)
+    expect(canSetAdminPerms(ma | kick, false, del | kick, del)).toBe(true)
+    expect(canSetAdminPerms(ma | kick, false, del, del | kick)).toBe(false)
+    expect(canSetAdminPerms(ma | kick, false, del, kick)).toBe(true)
+    expect(canSetAdminPerms(ma | kick, false, kick, 0)).toBe(false)
+    expect(canSetAdminPerms(ma | kick, false, kick, ma | kick)).toBe(true)
+    expect(canSetAdminPerms(ma, true, kick, 0)).toBe(true)
   })
 })
 

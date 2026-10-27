@@ -6,6 +6,7 @@ import {
   type PasswordMembers,
   type ProfanityTarget,
   type Role,
+  type RoleLimits,
   type SiteSettings,
 } from './types'
 
@@ -77,6 +78,89 @@ export const memberPerms = (
 
 export const canModerate = (perms: number, siteAdmin: boolean, target: number) =>
   siteAdmin || ((target & ~perms) === 0 && target !== perms)
+
+export const canGrant = (perms: number, siteAdmin: boolean, granted: number) =>
+  siteAdmin || (granted & ALL_PERMS & ~perms) === 0
+
+export const adminMask = (stored: number) => (stored === 0 ? ALL_PERMS : stored & ALL_PERMS)
+
+export const canPromote = (perms: number, siteAdmin: boolean) =>
+  canGrant(perms, siteAdmin, ALL_PERMS)
+
+export const rolePerms = (
+  member: Pick<Member, 'role_ids'> | null | undefined,
+  roles: Pick<Role, 'id' | 'perms'>[]
+) => memberPerms(member && { is_admin: false, perms: 0, role_ids: member.role_ids }, roles)
+
+export const REVOKE_RAISES =
+  "They have roles with permissions you don't have, so removing their admin would give them those."
+
+export const canRevoke = (perms: number, siteAdmin: boolean, stored: number, roles: number) =>
+  (roles & ALL_PERMS & ~adminMask(stored)) === 0 || canGrant(perms, siteAdmin, roles)
+
+export const canTransferTo = (
+  perms: number,
+  siteAdmin: boolean,
+  storedPerms: number,
+  myRoles = 0
+) => canGrant(perms, siteAdmin, adminMask(storedPerms)) && canGrant(perms, siteAdmin, myRoles)
+
+export const canSetAdminPerms = (perms: number, siteAdmin: boolean, stored: number, next: number) =>
+  (adminMask(next) & ~adminMask(stored)) === 0 || canGrant(perms, siteAdmin, adminMask(next))
+
+export const canAssignRole = (
+  perms: number,
+  siteAdmin: boolean,
+  rolePerms: number,
+  channelLocked = false
+) => canGrant(perms, siteAdmin, rolePerms) && (siteAdmin || !channelLocked)
+
+export const canUnassignRole = (
+  perms: number,
+  siteAdmin: boolean,
+  self: boolean,
+  targetPerms: number
+) => self || canModerate(perms, siteAdmin, targetPerms)
+
+export const canChangeRole = (
+  perms: number,
+  siteAdmin: boolean,
+  rolePerms: number,
+  held: boolean,
+  self: boolean,
+  targetPerms: number,
+  channelLocked = false
+) =>
+  held
+    ? canUnassignRole(perms, siteAdmin, self, targetPerms)
+    : canAssignRole(perms, siteAdmin, rolePerms, channelLocked)
+
+export const NO_ROLE_LIMITS: RoleLimits = { held_above: [], channel_grants: [], sole_rules: [] }
+
+export const roleEditBlock = (
+  perms: number,
+  siteAdmin: boolean,
+  role: Pick<Role, 'id' | 'perms'>,
+  limits: RoleLimits = NO_ROLE_LIMITS
+) => {
+  if (siteAdmin) return null
+  if (!canGrant(perms, false, role.perms))
+    return "This role has permissions you don't have, so you can't change it."
+  if (limits.held_above.includes(role.id))
+    return "Someone you can't moderate has this role, so you can't change it."
+  return null
+}
+
+export const roleDeleteBlock = (
+  perms: number,
+  siteAdmin: boolean,
+  role: Pick<Role, 'id' | 'perms'>,
+  limits: RoleLimits = NO_ROLE_LIMITS
+) =>
+  roleEditBlock(perms, siteAdmin, role, limits) ??
+  (!siteAdmin && limits.sole_rules.includes(role.id)
+    ? 'This role is the only rule on a channel. Deleting it would open the channel to everyone, so it needs Manage channels.'
+    : null)
 
 export type PasswordVerb = 'Set' | 'Change' | 'Clear'
 

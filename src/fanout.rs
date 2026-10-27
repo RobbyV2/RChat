@@ -143,6 +143,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
         } => to(users(dm_users)),
         WsEvent::ChannelCreated { server, channel: _ }
         | WsEvent::ChannelRenamed { server, channel: _ }
+        | WsEvent::ChannelUpdated { server, channel: _ }
         | WsEvent::ChannelDeleted {
             server,
             channel_id: _,
@@ -220,6 +221,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             Target::Server(old_name),
             Target::Server(&server.name),
         ]),
+        WsEvent::ServerUpdated { server } => to(vec![Target::Admins, Target::Server(&server.name)]),
         WsEvent::ServerDeleted { name } => to(vec![Target::Admins, Target::Server(name)]),
         WsEvent::P2pAvailability {
             hoster,
@@ -566,7 +568,8 @@ impl Channels {
     pub fn observe(&self, ev: &WsEvent) {
         match ev {
             WsEvent::ChannelCreated { server: _, channel }
-            | WsEvent::ChannelRenamed { server: _, channel } => {
+            | WsEvent::ChannelRenamed { server: _, channel }
+            | WsEvent::ChannelUpdated { server: _, channel } => {
                 self.slots.lock().unwrap().remove(&channel.id);
             }
             WsEvent::ChannelDeleted {
@@ -583,6 +586,7 @@ impl Channels {
                 old_name,
                 server: _,
             } => self.forget_server(old_name),
+            WsEvent::ServerUpdated { server } => self.forget_server(&server.name),
             WsEvent::ServerDeleted { name } => self.forget_server(name),
             _ => {}
         }
@@ -703,6 +707,37 @@ mod tests {
         });
         router.deliver(roles("b"));
         assert_eq!(drain(&mut viewer), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn updates_reach_the_server_and_admins_only() {
+        let router = Router::default();
+        let mut member = router.open(1, &topics(&[Topic::Server(s("a"))]));
+        let mut admin = router.open(2, &topics(&[Topic::Admin]));
+        let mut other = router.open(3, &topics(&[Topic::Server(s("b"))]));
+        let channel = crate::api::Channel {
+            id: 9,
+            name: s("general"),
+            kind: crate::db::ChannelKind::Text,
+            slowmode_seconds: 5,
+        };
+        router.deliver(WsEvent::ServerUpdated {
+            server: crate::api::ServerSummaryLite {
+                name: s("a"),
+                display_name: s("a"),
+                creator: None,
+                has_password: true,
+                banner_color: None,
+                name_color: None,
+            },
+        });
+        router.deliver(WsEvent::ChannelUpdated {
+            server: s("a"),
+            channel,
+        });
+        assert_eq!(drain(&mut member), vec![1, 2]);
+        assert_eq!(drain(&mut admin), vec![1]);
+        assert!(drain(&mut other).is_empty());
     }
 
     #[test]

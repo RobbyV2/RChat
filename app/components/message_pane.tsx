@@ -16,11 +16,19 @@ import {
   Video,
   Volume2,
 } from 'lucide-react'
-import { canModerate, memberPerms } from '../lib/rules'
+import {
+  canModerate,
+  canPromote,
+  canRevoke,
+  canTransferTo,
+  memberPerms,
+  rolePerms,
+} from '../lib/rules'
 import { unreadMark } from '../lib/lists'
 import {
   banMenuItem,
   byUsername,
+  changeableRoles,
   confirmDeleteMessage,
   confirmKick,
   confirmTransfer,
@@ -30,6 +38,7 @@ import {
   roleColor,
   roleMenuItems,
   useStore,
+  myRolePerms,
   viewKey,
   type ContextMenuItem,
   type Outgoing,
@@ -519,24 +528,39 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           },
           banMenuItem(view.server, author.username)
         )
-      if (hasPerm(perms, Perm.ManageAdmins))
-        items.push(
-          target?.is_admin
-            ? {
-                label: 'Revoke Admin',
-                action: () => revokeAdminFor(view.server, author.username),
-              }
-            : {
-                label: 'Promote to Admin',
-                action: () => void grantAdmin(view.server, author.username),
-              },
-          {
+      if (hasPerm(perms, Perm.ManageAdmins)) {
+        if (target?.is_admin) {
+          if (
+            canRevoke(perms, me.is_site_admin, target.perms, rolePerms(target, detail?.roles ?? []))
+          )
+            items.push({
+              label: 'Revoke Admin',
+              action: () => revokeAdminFor(view.server, author.username),
+            })
+        } else if (canPromote(perms, me.is_site_admin))
+          items.push({
+            label: 'Promote to Admin',
+            action: () => void grantAdmin(view.server, author.username),
+          })
+        if (
+          canTransferTo(
+            perms,
+            me.is_site_admin,
+            target?.perms ?? 0,
+            myRolePerms(useStore.getState(), view.server)
+          )
+        )
+          items.push({
             label: 'Transfer Admin',
             action: () => confirmTransfer(view.server, author.username),
-          }
-        )
+          })
+      }
     }
-    if (view?.kind === 'channel' && hasPerm(perms, Perm.ManageAdmins) && detail?.roles.length)
+    if (
+      view?.kind === 'channel' &&
+      hasPerm(perms, Perm.ManageAdmins) &&
+      changeableRoles(useStore.getState(), view.server, author.username).length
+    )
       items.push({
         label: 'Assign Role',
         action: () => openContextMenu(x, y, roleMenuItems(view.server, author.username)),

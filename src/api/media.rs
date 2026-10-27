@@ -14,7 +14,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, MediaRef, Settings, grant_matches, header_grants, placeholders,
     request_token, require_guest_ok, user_for_token,
 };
-use crate::db::{Db, MediaKind, User, now};
+use crate::db::{ChannelAccess, Db, MediaKind, User, channel_access, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -251,7 +251,7 @@ async fn media_view_ok(
     query_grant: Option<&str>,
 ) -> Result<(), ApiError> {
     let rows = sqlx::query(
-        "SELECT s.name, s.password_hash, d.user_a, d.user_b FROM messages m LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN dms d ON d.id = m.dm_id LEFT JOIN servers s ON s.name = c.server WHERE m.media_id = $1 AND m.media_removed = 0",
+        "SELECT s.name, s.password_hash, d.user_a, d.user_b, m.channel_id, m.created_at FROM messages m LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN dms d ON d.id = m.dm_id LEFT JOIN servers s ON s.name = c.server WHERE m.media_id = $1 AND m.media_removed = 0",
     )
     .bind(media_id)
     .fetch_all(db)
@@ -287,6 +287,7 @@ async fn media_view_ok(
             Option<String>,
             Option<String>,
         ) = (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?, r.try_get(3)?);
+        let (channel_id, created_at): (Option<i64>, i64) = (r.try_get(4)?, r.try_get(5)?);
         let banned = match (&server, user) {
             (Some(sv), Some(u)) => crate::db::is_banned(db, sv, &u.username).await?,
             (_, _) => false,
@@ -320,11 +321,47 @@ async fn media_view_ok(
                 (_, _, _) => false,
             },
         };
+        let ok = match (ok, &server, channel_id) {
+            (true, Some(sv), Some(cid)) => channel_readable(db, sv, cid, user, created_at).await?,
+            (ok, _, _) => ok,
+        };
         if ok {
             return Ok(());
         }
     }
     Err(ApiError(StatusCode::FORBIDDEN, "Not allowed".to_string()))
+}
+
+async fn channel_readable(
+    db: &Db,
+    server: &str,
+    channel_id: i64,
+    user: Option<&User>,
+    created_at: i64,
+) -> Result<bool, ApiError> {
+    let ChannelAccess {
+        view,
+        send: _,
+        history,
+    } = channel_access(db, server, channel_id, user).await?;
+    if !view {
+        return Ok(false);
+    }
+    if history {
+        return Ok(true);
+    }
+    let Some(user) = user else {
+        return Ok(false);
+    };
+    let joined: Option<i64> =
+        sqlx::query("SELECT joined_at FROM members WHERE server = $1 AND username = $2")
+            .bind(server)
+            .bind(&user.username)
+            .fetch_optional(db)
+            .await?
+            .map(|r| r.try_get(0))
+            .transpose()?;
+    Ok(joined.is_some_and(|t| created_at >= t))
 }
 
 fn chunk_stream(
@@ -366,12 +403,15 @@ fn chunk_stream(
 /// `rchat_token` cookie, so browsers can load it directly; guests may download when guest
 /// access is on.
 ///
-/// Once attached, the file is visible to anyone who can see one of the messages carrying it:
-/// in a server without a password anyone not banned from it, in a password-protected server
-/// its members or guests holding a grant for it (header or `grant` query), and in a direct
-/// message its two participants. Before it is attached only the uploader can fetch it.
-/// General rate-limit bucket.
-#[utoipa::path(get, path = "/api/media/{id}", tag = "Media", params(("id" = String, Path, description = "Media id, 32 hex characters, from `MediaRef.id`"), MediaQuery), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag` and `Cache-Control: private, max-age=86400, immutable`"), (status = 304, description = "`If-None-Match` matched the media's ETag"), (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody), (status = 403, description = "Not allowed to see any message carrying this file", body = ApiErrorBody), (status = 404, description = "Media not found: unknown id, or the file expired or was deleted", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
+/// Once attached, the file is visible to anyone who can read one of the messages carrying it,
+/// with the same checks as listing messages: in a server without a password anyone not banned
+/// from it, in a password-protected server its members or guests holding a grant for it (header
+/// or `grant` query); in a channel with permission overrides (thread replies use their channel)
+/// also the view permission, and without read-history access only messages posted since you
+/// joined count; in a direct message its two participants. Before it is attached only the
+/// uploader can fetch it. Access is checked before `If-None-Match`, so a 304 is only sent to
+/// callers allowed to see the file. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/media/{id}", tag = "Media", params(("id" = String, Path, description = "Media id, 32 hex characters, from `MediaRef.id`"), MediaQuery), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag` and `Cache-Control: private, max-age=86400, immutable`"), (status = 304, description = "`If-None-Match` matched the media's ETag and you may see the file"), (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody), (status = 403, description = "Not allowed to read any message carrying this file (banned, locked out of a password-protected server, no view permission or no read-history access in its channel, or not a DM participant)", body = ApiErrorBody), (status = 404, description = "Media not found: unknown id, or the file expired or was deleted", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn download_media(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -882,6 +922,104 @@ mod tests {
             .try_get(0)
             .expect("n");
         assert_eq!(left, 0);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn restricted_channel_and_dm_media_follow_message_reads() {
+        let (state, path) = temp_state("media_channel_perms").await;
+        let db = &state.db;
+        let cid = general(db).await;
+        let attach = |n: u8, sql: &'static str, key: i64, created_at: i64| {
+            let state = state.clone();
+            async move {
+                let id = format!("{n:02x}").repeat(16);
+                store_media(
+                    &state.db,
+                    &id,
+                    "a.txt",
+                    "text/plain",
+                    1,
+                    Some(&[1]),
+                    "alice",
+                    now(),
+                )
+                .await
+                .expect("store media");
+                sqlx::query(sqlx::AssertSqlSafe(sql))
+                    .bind(key)
+                    .bind(&id)
+                    .bind(created_at)
+                    .execute(&state.db)
+                    .await
+                    .expect("attach");
+                id
+            }
+        };
+        let old = attach(1, "INSERT INTO messages(channel_id, author, content, media_id, media_filename, created_at) VALUES($1, 'alice', '', $2, 'a.txt', $3)", cid, 50).await;
+        let fresh = attach(2, "INSERT INTO messages(channel_id, author, content, media_id, media_filename, created_at) VALUES($1, 'alice', '', $2, 'a.txt', $3)", cid, 150).await;
+        let root: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'alice', 'root', 150) RETURNING id")
+            .bind(cid)
+            .fetch_one(db)
+            .await
+            .expect("root")
+            .try_get(0)
+            .expect("root id");
+        let reply = attach(3, "INSERT INTO messages(channel_id, thread_root_id, author, content, media_id, media_filename, created_at) VALUES((SELECT channel_id FROM messages WHERE id = $1), $1, 'alice', '', $2, 'a.txt', $3)", root, 150).await;
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("dm id");
+        let in_dm = attach(4, "INSERT INTO messages(dm_id, author, content, media_id, media_filename, created_at) VALUES($1, 'alice', '', $2, 'a.txt', $3)", dm, 150).await;
+        for (name, joined) in [("bob", 100), ("carol", 100), ("hist", 100)] {
+            crate::api::test_util::add_member(db, "rchat", name, 0, 0, joined).await;
+        }
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:bob', 1, 1, 0), ($1, 'u:hist', 1, 1, 1)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("restrict");
+        let headers = axum::http::HeaderMap::new();
+        let see = |who: Option<&'static str>, id: String| {
+            let (state, headers) = (state.clone(), headers.clone());
+            async move {
+                let user = who.map(|w| mem_user(w, w == "root"));
+                media_view_ok(&state.db, &headers, &id, user.as_ref(), None)
+                    .await
+                    .is_ok()
+            }
+        };
+        for id in [&old, &fresh, &reply] {
+            assert!(!see(Some("carol"), id.clone()).await, "carol {id}");
+            assert!(!see(None, id.clone()).await, "guest {id}");
+            assert!(see(Some("hist"), id.clone()).await, "hist {id}");
+            assert!(see(Some("root"), id.clone()).await, "root {id}");
+        }
+        assert!(!see(Some("bob"), old.clone()).await);
+        assert!(see(Some("bob"), fresh.clone()).await);
+        assert!(see(Some("bob"), reply.clone()).await);
+        assert!(see(Some("alice"), in_dm.clone()).await && see(Some("bob"), in_dm.clone()).await);
+        assert!(!see(Some("carol"), in_dm.clone()).await);
+        assert!(!see(None, in_dm.clone()).await);
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::IF_NONE_MATCH,
+            format!("\"{fresh}\"").parse().expect("etag"),
+        );
+        let cached = download_media(
+            State(state.clone()),
+            headers,
+            Path(fresh.clone()),
+            axum::extract::Query(MediaQuery { grant: None }),
+        )
+        .await;
+        assert_eq!(
+            cached.err().map(|e| e.0),
+            Some(axum::http::StatusCode::FORBIDDEN)
+        );
         done(state, path).await;
     }
 

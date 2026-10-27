@@ -12,6 +12,7 @@ import {
   joinedServer,
   placeCard,
   profileActions,
+  roleEditable,
   serverJoinLine,
   validColor,
   type ActionInput,
@@ -130,9 +131,10 @@ describe('roles and actions', () => {
     siteAdmin: false,
     inServer: true,
     perms: 0,
-    member: { is_admin: false },
+    member: { is_admin: false, perms: 0 },
     targetPerms: 0,
   }
+  const admin = (perms: number) => ({ is_admin: true, perms })
 
   test('plain members and guests get no controls', () => {
     expect(profileActions(base)).toEqual([])
@@ -151,13 +153,11 @@ describe('roles and actions', () => {
   test('kick and server ban need strictly more perms than the target', () => {
     const kick = { ...base, perms: Perm.Kick }
     expect(profileActions({ ...kick, targetPerms: Perm.Kick })).toEqual([])
-    expect(profileActions({ ...kick, member: { is_admin: true }, targetPerms: ALL_PERMS })).toEqual(
-      []
-    )
+    expect(profileActions({ ...kick, member: admin(0), targetPerms: ALL_PERMS })).toEqual([])
     expect(profileActions({ ...kick, targetPerms: Perm.ManageChannels })).toEqual([])
     const mod = { ...base, perms: Perm.Kick | Perm.ManageAdmins, targetPerms: Perm.Kick }
-    expect(profileActions(mod)).toEqual(['kick', 'server_ban', 'promote', 'transfer'])
-    const full = { ...base, perms: ALL_PERMS, member: { is_admin: true }, targetPerms: ALL_PERMS }
+    expect(profileActions(mod)).toEqual(['kick', 'server_ban'])
+    const full = { ...base, perms: ALL_PERMS, member: admin(0), targetPerms: ALL_PERMS }
     expect(profileActions(full)).toEqual(['revoke', 'transfer'])
     expect(profileActions({ ...full, siteAdmin: true })).toEqual([
       'kick',
@@ -168,18 +168,79 @@ describe('roles and actions', () => {
     ])
   })
 
-  test('manage admins allows promote/revoke and transfer', () => {
-    expect(profileActions({ ...base, perms: Perm.ManageAdmins })).toEqual(['promote', 'transfer'])
+  test('promote and transfer never hand out perms you lack, revoke unless it raises', () => {
+    const ma = { ...base, perms: Perm.ManageAdmins }
+    expect(profileActions(ma)).toEqual([])
+    expect(profileActions({ ...ma, perms: ALL_PERMS })).toEqual([
+      'kick',
+      'server_ban',
+      'promote',
+      'transfer',
+    ])
+    expect(profileActions({ ...ma, siteAdmin: true })).toEqual(['promote', 'transfer', 'site_ban'])
+    expect(profileActions({ ...ma, member: admin(0) })).toEqual(['revoke'])
+    expect(profileActions({ ...ma, member: admin(Perm.ManageAdmins) })).toEqual([
+      'revoke',
+      'transfer',
+    ])
+    const narrow = Perm.ManageAdmins | Perm.Kick
+    expect(profileActions({ ...base, perms: narrow, member: admin(Perm.Kick) })).toEqual([
+      'kick',
+      'server_ban',
+      'revoke',
+      'transfer',
+    ])
+    expect(profileActions({ ...base, perms: narrow, member: admin(Perm.DeleteServer) })).toEqual([
+      'kick',
+      'server_ban',
+      'revoke',
+    ])
+    expect(profileActions({ ...ma, self: true, member: admin(Perm.ManageAdmins) })).toEqual([
+      'revoke',
+    ])
+    expect(profileActions({ ...ma, member: null })).toEqual([])
+    const kickAdmin = { ...base, perms: narrow, member: admin(Perm.Kick) }
+    expect(profileActions({ ...kickAdmin, targetRolePerms: ALL_PERMS })).toEqual([
+      'kick',
+      'server_ban',
+      'transfer',
+    ])
+    expect(profileActions({ ...kickAdmin, targetRolePerms: narrow })).toContain('revoke')
+    expect(profileActions({ ...kickAdmin, myRolePerms: ALL_PERMS })).toEqual([
+      'kick',
+      'server_ban',
+      'revoke',
+    ])
     expect(
-      profileActions({ ...base, perms: Perm.ManageAdmins, member: { is_admin: true } })
-    ).toEqual(['revoke', 'transfer'])
-    expect(
-      profileActions({ ...base, perms: Perm.ManageAdmins, self: true, member: { is_admin: true } })
-    ).toEqual(['revoke'])
-    expect(profileActions({ ...base, perms: Perm.ManageAdmins, member: null })).toEqual([])
-    expect(canEditRoles({ ...base, perms: Perm.ManageAdmins })).toBe(true)
-    expect(canEditRoles({ ...base, perms: Perm.ManageAdmins, member: null })).toBe(false)
+      profileActions({
+        ...kickAdmin,
+        siteAdmin: true,
+        targetRolePerms: ALL_PERMS,
+        myRolePerms: ALL_PERMS,
+      })
+    ).toContain('revoke')
+  })
+
+  test('role adds stay within your perms, removals need to moderate the member', () => {
+    const ma = { ...base, perms: Perm.ManageAdmins | Perm.Kick }
+    const higher = { ...ma, targetPerms: Perm.ManageAdmins | Perm.Kick }
+    expect(canEditRoles(ma)).toBe(true)
+    expect(canEditRoles({ ...ma, member: null })).toBe(false)
     expect(canEditRoles({ ...base, perms: Perm.Kick })).toBe(false)
+    expect(canEditRoles(higher)).toBe(true)
+    expect(roleEditable(ma, { perms: 0 }, false)).toBe(true)
+    expect(roleEditable(ma, { perms: Perm.Kick | Perm.ManageAdmins }, false)).toBe(true)
+    expect(roleEditable(ma, { perms: Perm.DeleteServer }, false)).toBe(false)
+    expect(roleEditable(higher, { perms: Perm.Kick }, false)).toBe(true)
+    expect(roleEditable(higher, { perms: 0 }, true)).toBe(false)
+    expect(roleEditable({ ...higher, self: true }, { perms: 0 }, true)).toBe(true)
+    expect(roleEditable(ma, { perms: ALL_PERMS }, true)).toBe(true)
+    expect(roleEditable({ ...base, perms: ALL_PERMS }, { perms: ALL_PERMS }, false)).toBe(true)
+    expect(roleEditable({ ...base, siteAdmin: true }, { perms: ALL_PERMS }, false)).toBe(true)
+    const locked = { ...ma, channelLocked: [7] }
+    expect(roleEditable(locked, { id: 7, perms: 0 }, false)).toBe(false)
+    expect(roleEditable(locked, { id: 8, perms: 0 }, false)).toBe(true)
+    expect(roleEditable(locked, { id: 7, perms: 0 }, true)).toBe(true)
   })
 
   test('site ban only for site admins, and outside servers only that', () => {
