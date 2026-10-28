@@ -45,7 +45,7 @@ export function applySed(content: string, { find, replace, global }: Sed): strin
 }
 
 export const canEdit = (m: Message, me: string | undefined) =>
-  me !== undefined && m.kind === 'user' && m.author.username === me
+  me !== undefined && m.kind === 'user' && m.author.username === me && !m.forward
 
 // The newest message `me` can edit in a loaded list, then in `fallback` (a thread's root).
 export function lastEditable(

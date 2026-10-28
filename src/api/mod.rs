@@ -524,6 +524,9 @@ pub struct ReplyRef {
     /// message list (`around` = the reply's id).
     #[serde(default)]
     pub partial: bool,
+    /// The quoted message is itself a forward (shown with a small "Forwarded" marker).
+    #[serde(default)]
+    pub forwarded: bool,
 }
 
 /// A message in a channel, a direct-message conversation or a thread.
@@ -567,6 +570,33 @@ pub struct Message {
     /// Unix seconds of the last edit; `null` if the message was never edited.
     #[serde(default)]
     pub edited_at: Option<i64>,
+    /// For a forwarded message, where its content came from; `null` otherwise. The content,
+    /// attachment and link previews above are a copy made when it was forwarded.
+    #[serde(default)]
+    pub forward: Option<ForwardRef>,
+}
+
+/// The original of a forwarded message. The copy never changes when the original is edited or
+/// deleted.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct ForwardRef {
+    /// Who wrote the original; `null` once that account is deleted or banned (shown as a
+    /// deleted user). The copy itself stays.
+    pub author: Option<UserRef>,
+    /// Unix seconds when the original was sent.
+    pub created_at: i64,
+    /// Id of the forwarded message. `GET /api/messages/{id}/location` tells where it is, if you
+    /// can read it.
+    pub source_id: i64,
+    /// Where it came from: `Direct message`, `#channel · Server` when forwarded inside the same
+    /// server, or the server's display name when that server had no password. `null` otherwise
+    /// (a password-protected server's name never leaves it). Fixed at forward time: later
+    /// renames or password changes do not update it.
+    #[schema(example = "#general · Rustaceans")]
+    pub origin: Option<String>,
+    /// File name of a peer-to-peer attachment of the original. Those are not forwarded.
+    #[schema(example = "notes.pdf")]
+    pub dropped: Option<String>,
 }
 
 /// A text field the profanity filter can check.
@@ -1378,6 +1408,7 @@ fn api_routes(
             delete(messages::delete_message).patch(messages::edit_message),
         )
         .route("/messages/{id}/media", delete(media::delete_media))
+        .route("/messages/{id}/location", get(messages::message_location))
         .route(
             "/messages/{id}/reactions/{emoji}",
             get(reactions::list_reactors)

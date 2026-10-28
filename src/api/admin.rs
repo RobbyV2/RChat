@@ -742,6 +742,7 @@ pub async fn resume_purges(state: &AppState) -> sqlx::Result<u64> {
 async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) -> sqlx::Result<()> {
     for sql in [
         "DELETE FROM messages WHERE author = $1",
+        "UPDATE messages SET fwd_author = NULL WHERE fwd_author = $1",
         "DELETE FROM dms WHERE user_a = $1",
         "DELETE FROM dms WHERE user_b = $1",
         "DELETE FROM members WHERE username = $1",
@@ -1391,6 +1392,130 @@ mod tests {
             0
         );
         let _ = reg(&state, "bob").await.expect("name free after the purge");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn purging_an_author_keeps_forwards_and_anonymizes_them() {
+        use crate::api::messages::{
+            Quotes, SendReq, load_message, send_channel_message, send_thread_message,
+        };
+
+        let (state, path) = temp_state("purge_forwards").await;
+        for name in ["root", "alice", "bob", "carol"] {
+            let _ = reg(&state, name).await.expect("register");
+        }
+        let db = &state.db;
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
+            .fetch_one(db)
+            .await
+            .expect("general")
+            .try_get(0)
+            .expect("channel id");
+        sqlx::query("INSERT INTO members(server, username, joined_at) SELECT 'rchat', username, 0 FROM users WHERE username IN ('alice', 'bob', 'carol') AND NOT EXISTS(SELECT 1 FROM members WHERE server = 'rchat' AND members.username = users.username)")
+            .execute(db)
+            .await
+            .expect("members");
+        let source: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'bob', 'bob wrote this', 5) RETURNING id")
+            .bind(cid)
+            .fetch_one(db)
+            .await
+            .expect("source")
+            .try_get(0)
+            .expect("id");
+        let who = |name: &'static str| async move {
+            Authed(get_user(db, name).await.expect("q").expect("user"))
+        };
+        let req = |id: i64| -> SendReq {
+            serde_json::from_value(json!({"content": "", "forward_of": id})).expect("send req")
+        };
+        let copy = send_channel_message(
+            State(state.clone()),
+            Path(cid),
+            who("alice").await,
+            Json(req(source)),
+        )
+        .await
+        .expect("forward")
+        .0;
+        let reply: SendReq =
+            serde_json::from_value(json!({"content": "carol replies"})).expect("send req");
+        let reply = send_thread_message(
+            State(state.clone()),
+            Path(copy.id),
+            who("carol").await,
+            Json(reply),
+        )
+        .await
+        .expect("thread reply")
+        .0;
+        let author_of = |id: i64| async move {
+            load_message(db, id, Quotes::Skip)
+                .await
+                .expect("load")
+                .expect("still there")
+                .forward
+                .expect("still a forward")
+                .author
+                .map(|a| a.username)
+        };
+        assert_eq!(author_of(copy.id).await.as_deref(), Some("bob"));
+
+        let _ = hide_user_rows(&state, "bob", PurgeKind::User)
+            .await
+            .expect("hide")
+            .expect("hidden now");
+        assert_eq!(
+            author_of(copy.id).await,
+            None,
+            "a pending purge hides the original author"
+        );
+        let again = send_channel_message(
+            State(state.clone()),
+            Path(cid),
+            who("carol").await,
+            Json(req(copy.id)),
+        )
+        .await
+        .expect("forward the forward")
+        .0;
+        let again_ref = again.forward.expect("forward ref");
+        assert!(again_ref.author.is_none(), "never the forwarder's name");
+        assert_eq!(again_ref.created_at, 5);
+
+        sqlx::query("UPDATE pending_purges SET claimed_at = 0")
+            .execute(db)
+            .await
+            .expect("expire lease");
+        assert_eq!(resume_purges(&state).await.expect("resume"), 1);
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM messages WHERE author = 'bob'").await,
+            0
+        );
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM messages WHERE fwd_author = 'bob'").await,
+            0
+        );
+        let kept = load_message(db, copy.id, Quotes::Skip)
+            .await
+            .expect("load")
+            .expect("the copy stays");
+        assert_eq!(kept.content, "bob wrote this");
+        assert_eq!(kept.reply_count, 1);
+        assert!(
+            load_message(db, reply.id, Quotes::Skip)
+                .await
+                .expect("load")
+                .is_some(),
+            "thread replies to the copy stay"
+        );
+        let _ = reg(&state, "bob").await.expect("name free after the purge");
+        assert_eq!(
+            author_of(copy.id).await,
+            None,
+            "a new account with the name never inherits the forward"
+        );
+        assert_eq!(author_of(again.id).await, None);
         done(state, path).await;
     }
 

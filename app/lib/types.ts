@@ -216,6 +216,23 @@ export interface Message {
   reactions?: Reaction[]
   reply_to?: ReplyRef | null
   edited_at?: number | null
+  forward?: ForwardRef | null
+}
+
+export interface ForwardRef {
+  // null once the original author's account is deleted or banned
+  author: UserRef | null
+  created_at: number
+  source_id: number
+  origin: string | null
+  dropped: string | null
+}
+
+export interface MessageLocation {
+  server: string | null
+  channel_id: number | null
+  dm_id: number | null
+  thread_root_id: number | null
 }
 
 export interface ReplyRef {
@@ -226,6 +243,7 @@ export interface ReplyRef {
   deleted: boolean
   mention: boolean
   partial?: boolean
+  forwarded?: boolean
 }
 
 export interface Reaction {

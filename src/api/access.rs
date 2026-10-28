@@ -601,6 +601,18 @@ impl ResolvedChannel {
         &self.name
     }
 
+    /// Whether the channel has permission overrides, so not everyone in its server may see it
+    /// (its name stays inside that audience, e.g. in forward origins).
+    pub async fn restricted(&self, db: &Db) -> Result<bool, ApiError> {
+        Ok(
+            sqlx::query("SELECT 1 FROM channel_perms WHERE channel_id = $1 LIMIT 1")
+                .bind(self.id)
+                .fetch_optional(db)
+                .await?
+                .is_some(),
+        )
+    }
+
     pub async fn read_since(&self, db: &Db) -> Result<Option<i64>, ApiError> {
         if self.rights.history {
             return Ok(None);

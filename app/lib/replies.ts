@@ -70,6 +70,7 @@ export const quoteFrom = (original: Message, mention: boolean): ReplyRef => ({
   has_media: original.media !== null,
   deleted: false,
   mention,
+  ...(original.forward ? { forwarded: true } : {}),
 })
 
 // Fills a partial quote (WebSocket events carry only the id): from `known`, a quote already

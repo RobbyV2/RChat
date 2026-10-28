@@ -1,0 +1,81 @@
+import { plainLine } from './replies'
+import type { Message, UserRef } from './types'
+
+// The forward clipboard: one copied message per account, kept until it is sent or dismissed.
+export interface ForwardClip {
+  id: number
+  author: UserRef | null
+  snippet: string
+  has_media: boolean
+  created_at: number
+}
+
+export const forwardKey = (username: string) => `rchat_forward:${username}`
+
+export const canForward = (m: Message) => m.kind === 'user' && m.id > 0
+
+// The original author and time travel with forwards of forwards (the server does the same).
+export const clipOf = (m: Message): ForwardClip => ({
+  id: m.id,
+  author: m.forward ? m.forward.author : m.author,
+  snippet: plainLine(m.content),
+  has_media: (m.media !== null && !m.media.removed) || !!m.forward?.dropped,
+  created_at: m.forward?.created_at ?? m.created_at,
+})
+
+const isUser = (u: unknown): u is UserRef => {
+  if (typeof u !== 'object' || u === null) return false
+  const { username, display_name, avatar_kind, avatar_color } = u as Record<string, unknown>
+  return (
+    typeof username === 'string' &&
+    typeof display_name === 'string' &&
+    (avatar_kind === 'identicon' || avatar_kind === 'color') &&
+    (avatar_color === null || avatar_color === undefined || typeof avatar_color === 'string')
+  )
+}
+
+export function parseForward(raw: string | null): ForwardClip | null {
+  let data: unknown
+  try {
+    data = raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+  if (typeof data !== 'object' || data === null) return null
+  const { v, clip } = data as Record<string, unknown>
+  if (v !== 1 || typeof clip !== 'object' || clip === null) return null
+  const { id, author, snippet, has_media, created_at } = clip as Record<string, unknown>
+  if (
+    typeof id !== 'number' ||
+    !Number.isSafeInteger(id) ||
+    id <= 0 ||
+    (author !== null && !isUser(author)) ||
+    typeof snippet !== 'string' ||
+    typeof has_media !== 'boolean' ||
+    typeof created_at !== 'number'
+  )
+    return null
+  return {
+    id,
+    author:
+      author === null
+        ? null
+        : {
+            username: author.username,
+            display_name: author.display_name,
+            avatar_kind: author.avatar_kind,
+            avatar_color: author.avatar_color ?? null,
+          },
+    snippet: [...snippet].slice(0, 200).join(''),
+    has_media,
+    created_at,
+  }
+}
+
+export const forwardValue = (clip: ForwardClip | null) =>
+  clip ? JSON.stringify({ v: 1, clip }) : null
+
+// Whether a forward of clip `id` is already queued, sending or failed in this scope's outbox
+// (one at a time; a failed one is retried or deleted from its row).
+export const forwardPending = (outbox: readonly { msg: Message }[] | undefined, id: number) =>
+  !!outbox?.some(o => o.msg.forward?.source_id === id)

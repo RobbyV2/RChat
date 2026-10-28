@@ -83,6 +83,8 @@ import { QuickReactions, ReactionBar, rowAt } from './reactions'
 import { ReplyPreview } from './replies'
 import { MessageEditor, editAction, editMenuItem } from './message_editor'
 import { canEdit as ownEditable } from '../lib/sed'
+import { canForward } from '../lib/forward'
+import { ForwardCard, forwardAction, forwardMenuItem } from './forwards'
 
 const EMPTY: Message[] = []
 
@@ -227,10 +229,11 @@ export const usePeopleKey = (messages: Message[], extra: string[] = []) => {
 export const mentionRowCls =
   'bg-primary/8 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-primary hover:bg-primary/12'
 
+// Forwarded text is a copy of someone else's words: its mentions never highlight or ping.
 export const mentionsMe = (m: Message, me: string | undefined) =>
   me !== undefined &&
   m.author.username !== me &&
-  (mentionsUser(m.content, me) || repliesToMe(m, me))
+  ((!m.forward && mentionsUser(m.content, me)) || repliesToMe(m, me))
 
 export const replyAction = (onClick: () => void): ToolbarAction => ({
   key: 'reply',
@@ -274,6 +277,7 @@ interface RowProps {
   canReact: boolean
   canUnreact: boolean
   canEdit: boolean
+  canForward: boolean
   editing: boolean
   channel: boolean
   server: string | null
@@ -294,6 +298,7 @@ const MessageRow = memo(function MessageRow({
   canReact,
   canUnreact,
   canEdit,
+  canForward,
   editing,
   channel,
   server,
@@ -305,9 +310,11 @@ const MessageRow = memo(function MessageRow({
   onJump,
 }: RowProps) {
   const openThread = useStore(s => s.openThread)
+  const copyForward = useStore(s => s.copyForward)
   const actions: ToolbarAction[] = []
   if (canEdit && !editing) actions.push(editAction(() => onEdit(m)))
   if (canReact && canQuote(m)) actions.push(replyAction(() => onReply(m)))
+  if (canForward) actions.push(forwardAction(() => copyForward(m)))
   if (channel)
     actions.push({
       key: 'thread',
@@ -375,11 +382,15 @@ const MessageRow = memo(function MessageRow({
                 {fmtTime(m.created_at)}
               </span>
             </div>
-            <MarkdownMessage
-              message={m}
-              canDelete={canDelete}
-              editor={editing ? <MessageEditor /> : undefined}
-            />
+            {m.forward ? (
+              <ForwardCard m={m} canDelete={canDelete} />
+            ) : (
+              <MarkdownMessage
+                message={m}
+                canDelete={canDelete}
+                editor={editing ? <MessageEditor /> : undefined}
+              />
+            )}
             <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
             {channel && m.reply_count > 0 && (
               <button
@@ -459,7 +470,11 @@ export function OutboxRows({ msgKey, size = 36 }: { msgKey: string; size?: numbe
                     {failed ? 'Failed to send' : o.status === 'sending' ? 'Sending' : 'Queued'}
                   </span>
                 </div>
-                <MarkdownMessage message={o.msg} canDelete={false} />
+                {o.msg.forward ? (
+                  <ForwardCard m={o.msg} canDelete={false} sending />
+                ) : (
+                  <MarkdownMessage message={o.msg} canDelete={false} />
+                )}
                 {o.pending && (
                   <span className="text-xs text-on-surface-variant">{o.pending.file.name}</span>
                 )}
@@ -514,6 +529,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const jumpTo = useStore(s => s.jumpTo)
   const startReply = useStore(s => s.startReply)
   const startEdit = useStore(s => s.startEdit)
+  const copyForward = useStore(s => s.copyForward)
   const editingId = useStore(s =>
     s.editing && s.view && s.editing.key === viewKey(s.view) ? s.editing.id : null
   )
@@ -614,6 +630,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         action: () => void openThread(msg),
       })
     }
+    if (forwardable(msg)) items.unshift(forwardMenuItem(() => copyForward(msg)))
     if (canReact && canQuote(msg)) items.unshift(replyMenuItem(() => replyTo(msg)))
     if (canEdit(msg)) items.unshift(editMenuItem(() => editMsg(msg)))
     if (view?.kind === 'channel' && !self) {
@@ -699,6 +716,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       (view?.kind === 'channel' && hasPerm(perms, Perm.DeleteMessages)))
 
   const canEdit = (m: Message) => canReact && ownEditable(m, me?.username)
+
+  const forwardable = (m: Message) => canUnreact && canForward(m)
 
   const replyTo = (msg: Message) => {
     if (scope) startReply(scope, msg)
@@ -944,6 +963,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     canReact={canReact}
                     canUnreact={canUnreact}
                     canEdit={canEdit(m)}
+                    canForward={forwardable(m)}
                     editing={editingId === m.id}
                     channel={view?.kind === 'channel'}
                     server={memberServer}

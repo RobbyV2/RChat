@@ -43,7 +43,7 @@ function Dialog({ title, children }: { title: string; children: React.ReactNode 
   )
 }
 
-function AddServerDialog({ join }: { join?: string }) {
+function AddServerDialog({ join, locked }: { join?: string; locked?: boolean }) {
   const guest = useStore(s => s.guest)
   const createServer = useStore(s => s.createServer)
   const joinServer = useStore(s => s.joinServer)
@@ -54,7 +54,7 @@ function AddServerDialog({ join }: { join?: string }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [step, setStep] = useState<JoinStep>('name')
+  const [step, setStep] = useState<JoinStep>(join && locked ? 'password' : 'name')
   const [taken, setTaken] = useState<{ id: string; taken: boolean } | null>(null)
   const [suggestions, setSuggestions] = useState<ServerMatch[]>([])
   const creating = tab === 'create' && !guest
@@ -226,5 +226,7 @@ function AddServerDialog({ join }: { join?: string }) {
 
 export function ServerDialogs() {
   const dialog = useStore(s => s.activeDialog)
-  return dialog?.kind === 'add_server' ? <AddServerDialog join={dialog.join} /> : null
+  return dialog?.kind === 'add_server' ? (
+    <AddServerDialog join={dialog.join} locked={dialog.locked} />
+  ) : null
 }

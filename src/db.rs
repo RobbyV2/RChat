@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS roles(id INTEGER PRIMARY KEY AUTOINCREMENT, server TE
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
 CREATE TABLE IF NOT EXISTS channel_perms(channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view INTEGER NOT NULL DEFAULT 1, can_send INTEGER NOT NULL DEFAULT 1, can_read_history INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(channel_id, subject));
 CREATE TABLE IF NOT EXISTS dms(id INTEGER PRIMARY KEY AUTOINCREMENT, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id INTEGER NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
-CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER REFERENCES channels(id) ON DELETE CASCADE, dm_id INTEGER REFERENCES dms(id) ON DELETE CASCADE, thread_root_id INTEGER REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed INTEGER NOT NULL DEFAULT 0, media_spoiler INTEGER NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at INTEGER, media_size INTEGER, media_mime TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at INTEGER, call_ended_at INTEGER, call_outcome TEXT, reply_to INTEGER, reply_mention INTEGER NOT NULL DEFAULT 0, edited_at INTEGER, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER REFERENCES channels(id) ON DELETE CASCADE, dm_id INTEGER REFERENCES dms(id) ON DELETE CASCADE, thread_root_id INTEGER REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed INTEGER NOT NULL DEFAULT 0, media_spoiler INTEGER NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at INTEGER, media_size INTEGER, media_mime TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at INTEGER, call_ended_at INTEGER, call_outcome TEXT, reply_to INTEGER, reply_mention INTEGER NOT NULL DEFAULT 0, edited_at INTEGER, fwd_author TEXT, fwd_created_at INTEGER, fwd_source_id INTEGER, fwd_origin TEXT, fwd_dropped TEXT, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB, uploader TEXT, uploaded_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS media_chunks(media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE, seq INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(media_id, seq));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -81,6 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_pings_seen ON pings(id) WHERE seen <> 0;
 CREATE INDEX IF NOT EXISTS idx_pings_actor ON pings(actor);
 CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id, emoji, created_at);
 CREATE INDEX IF NOT EXISTS idx_reactions_username ON reactions(username);
+CREATE INDEX IF NOT EXISTS idx_messages_fwd_author ON messages(fwd_author) WHERE fwd_author IS NOT NULL;
 ";
 
 const POSTGRES_SCHEMA: &str = "
@@ -101,7 +102,7 @@ CREATE TABLE IF NOT EXISTS roles(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY 
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
 CREATE TABLE IF NOT EXISTS channel_perms(channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view BIGINT NOT NULL DEFAULT 1, can_send BIGINT NOT NULL DEFAULT 1, can_read_history BIGINT NOT NULL DEFAULT 1, PRIMARY KEY(channel_id, subject));
 CREATE TABLE IF NOT EXISTS dms(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id BIGINT NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
-CREATE TABLE IF NOT EXISTS messages(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, channel_id BIGINT REFERENCES channels(id) ON DELETE CASCADE, dm_id BIGINT REFERENCES dms(id) ON DELETE CASCADE, thread_root_id BIGINT REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed BIGINT NOT NULL DEFAULT 0, media_spoiler BIGINT NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at BIGINT, media_size BIGINT, media_mime TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at BIGINT, call_ended_at BIGINT, call_outcome TEXT, reply_to BIGINT, reply_mention BIGINT NOT NULL DEFAULT 0, edited_at BIGINT, created_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS messages(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, channel_id BIGINT REFERENCES channels(id) ON DELETE CASCADE, dm_id BIGINT REFERENCES dms(id) ON DELETE CASCADE, thread_root_id BIGINT REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed BIGINT NOT NULL DEFAULT 0, media_spoiler BIGINT NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at BIGINT, media_size BIGINT, media_mime TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at BIGINT, call_ended_at BIGINT, call_outcome TEXT, reply_to BIGINT, reply_mention BIGINT NOT NULL DEFAULT 0, edited_at BIGINT, fwd_author TEXT, fwd_created_at BIGINT, fwd_source_id BIGINT, fwd_origin TEXT, fwd_dropped TEXT, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size BIGINT NOT NULL, data BYTEA, uploader TEXT, uploaded_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS media_chunks(media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE, seq BIGINT NOT NULL, data BYTEA NOT NULL, PRIMARY KEY(media_id, seq));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -154,6 +155,7 @@ CREATE INDEX IF NOT EXISTS idx_pings_seen ON pings(id) WHERE seen <> 0;
 CREATE INDEX IF NOT EXISTS idx_pings_actor ON pings(actor);
 CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id, emoji, created_at);
 CREATE INDEX IF NOT EXISTS idx_reactions_username ON reactions(username);
+CREATE INDEX IF NOT EXISTS idx_messages_fwd_author ON messages(fwd_author) WHERE fwd_author IS NOT NULL;
 ";
 
 const SQLITE_SEARCH: &[&str] = &[
@@ -348,6 +350,11 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("messages", "reply_to {INT}"),
     ("messages", "reply_mention {INT} NOT NULL DEFAULT 0"),
     ("messages", "edited_at {INT}"),
+    ("messages", "fwd_author TEXT"),
+    ("messages", "fwd_created_at {INT}"),
+    ("messages", "fwd_source_id {INT}"),
+    ("messages", "fwd_origin TEXT"),
+    ("messages", "fwd_dropped TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -1724,6 +1731,87 @@ mod tests {
                     assert_eq!(loaded.edited_at, Some(9), "the edit survives a restart");
                 }
             }
+            close(&db).await;
+        }
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn forward_columns_are_added_to_an_old_database() {
+        let path =
+            std::env::temp_dir().join(format!("rchat_fwd_upgrade_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let cols = "('fwd_author', 'fwd_created_at', 'fwd_source_id', 'fwd_origin', 'fwd_dropped')";
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_messages_fwd_author",
+            "ALTER TABLE messages DROP COLUMN fwd_author",
+            "ALTER TABLE messages DROP COLUMN fwd_created_at",
+            "ALTER TABLE messages DROP COLUMN fwd_source_id",
+            "ALTER TABLE messages DROP COLUMN fwd_origin",
+            "ALTER TABLE messages DROP COLUMN fwd_dropped",
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES((SELECT id FROM channels WHERE server = 'rchat'), 'alice', 'old message', 7)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        let present =
+            format!("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name IN {cols}");
+        assert_eq!(count(&db, &present).await, 0);
+        close(&db).await;
+        for round in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(count(&db, &present).await, 5);
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_messages_fwd_author'"
+                )
+                .await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM messages WHERE author = 'alice' AND content = 'old message' AND created_at = 7 AND fwd_author IS NULL AND fwd_created_at IS NULL AND fwd_source_id IS NULL AND fwd_origin IS NULL AND fwd_dropped IS NULL").await,
+                1
+            );
+            let old: i64 = sqlx::query("SELECT id FROM messages WHERE content = 'old message'")
+                .fetch_one(&db)
+                .await
+                .expect("old")
+                .try_get(0)
+                .expect("id");
+            let loaded =
+                crate::api::messages::load_message(&db, old, crate::api::messages::Quotes::Skip)
+                    .await
+                    .expect("load")
+                    .expect("old message");
+            assert!(loaded.forward.is_none());
+            if round == 0 {
+                sqlx::query("INSERT INTO messages(channel_id, author, content, fwd_author, fwd_created_at, fwd_source_id, fwd_origin, created_at) VALUES((SELECT id FROM channels WHERE server = 'rchat'), 'bob', 'old message', 'alice', 7, $1, '#general · RChat', 8)")
+                    .bind(old)
+                    .execute(&db)
+                    .await
+                    .expect("forward an old message");
+            }
+            let copy: i64 = sqlx::query("SELECT id FROM messages WHERE author = 'bob'")
+                .fetch_one(&db)
+                .await
+                .expect("copy")
+                .try_get(0)
+                .expect("id");
+            let fwd =
+                crate::api::messages::load_message(&db, copy, crate::api::messages::Quotes::Skip)
+                    .await
+                    .expect("load")
+                    .expect("copy")
+                    .forward
+                    .expect("forward survives a restart");
+            assert_eq!((fwd.source_id, fwd.created_at), (old, 7));
+            assert_eq!(fwd.origin.as_deref(), Some("#general · RChat"));
             close(&db).await;
         }
         wipe();

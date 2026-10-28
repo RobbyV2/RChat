@@ -32,6 +32,7 @@ export default function AppShell() {
   const confirming = useStore(s => s.confirm !== null)
   const panel = useStore(s => s.panel)
   const notices = useStore(s => s.notices)
+  const toast = useStore(s => s.toast)
   const dismissNotice = useStore(s => s.dismissNotice)
   const error = useStore(s => s.error)
   const bootError = useStore(s => s.bootError)
@@ -83,6 +84,7 @@ export default function AppShell() {
     const onStorage = (e: StorageEvent) => {
       if (e.key?.startsWith('rchat_layout:')) useStore.getState().reloadLayout()
       if (e.key?.startsWith('rchat_emoji:')) useStore.getState().reloadEmoji()
+      if (e.key?.startsWith('rchat_forward:')) useStore.getState().reloadForward()
     }
     window.addEventListener('popstate', onPop)
     window.addEventListener('storage', onStorage)
@@ -182,6 +184,20 @@ export default function AppShell() {
               className="pointer-events-auto max-w-full self-center rounded-xl sm:fixed sm:top-[calc(env(safe-area-inset-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2 bg-error-container px-4 py-2 text-center text-sm text-on-error-container shadow-elevation-2"
             >
               {error}
+            </div>
+          )}
+          {toast && !error && (
+            <div
+              role="status"
+              className="pointer-events-auto max-w-full self-center rounded-xl bg-inverse-surface px-4 py-2 text-center text-sm text-inverse-on-surface shadow-elevation-2 sm:fixed sm:top-[calc(env(safe-area-inset-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2"
+            >
+              {toast.text}
+              {toast.name && (
+                <>
+                  {' '}
+                  <span className="streamer font-medium">{toast.name}</span>
+                </>
+              )}
             </div>
           )}
           {notices.length > 0 && (

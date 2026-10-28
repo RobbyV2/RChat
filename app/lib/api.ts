@@ -11,6 +11,7 @@ import type {
   Me,
   Member,
   Message,
+  MessageLocation,
   PasswordMembers,
   CreatedPassword,
   NewPassword,
@@ -191,6 +192,7 @@ export interface SendOpts {
   p2p?: P2pAttachment
   reply_to?: number
   mention_reply?: boolean
+  forward_of?: number
 }
 
 export interface PageOpts {
@@ -352,6 +354,7 @@ export const endpoints = (c: ApiClient) => ({
   editMessage: (id: number, content: string) =>
     c.req<Message>('PATCH', `/messages/${id}`, { content }),
   deleteMedia: (id: number) => c.req<unknown>('DELETE', `/messages/${id}/media`),
+  messageLocation: (id: number) => c.req<MessageLocation>('GET', `/messages/${id}/location`),
   deleteEmbed: (id: number, ord: number, banner: boolean) =>
     c.req<unknown>('DELETE', `/messages/${id}/embeds/${ord}${banner ? '?banner=1' : ''}`),
   addReaction: (id: number, emoji: string) =>

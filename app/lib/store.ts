@@ -54,6 +54,15 @@ import {
   type Replying,
 } from './replies'
 import { applySed, lastEditable, type Sed } from './sed'
+import {
+  canForward,
+  clipOf,
+  forwardKey,
+  forwardPending,
+  forwardValue,
+  parseForward,
+  type ForwardClip,
+} from './forward'
 import { catchUpDelay, due } from './backoff'
 import { createReadQueue, mergeReads } from './reads'
 import {
@@ -133,7 +142,7 @@ import {
 import { clearProfiles, forgetProfiles } from './profile'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from './voice_layout'
 import { retrySeconds, tooManyText } from './rate_limit'
-import { deniedAccess } from './join_flow'
+import { deniedAccess, runJoinStep } from './join_flow'
 import { secretsKey } from './passwords'
 import {
   freshPresence,
@@ -161,6 +170,7 @@ import type {
   Me,
   Member,
   Message,
+  MessageLocation,
   P2pAvailability,
   Ping,
   ReplyRef,
@@ -242,7 +252,7 @@ export interface ConfirmRequest {
 }
 
 export type ActiveDialog =
-  | { kind: 'add_server'; join?: string }
+  | { kind: 'add_server'; join?: string; locked?: boolean }
   | { kind: 'server_settings'; server: string }
   | { kind: 'admin_panel' }
   | { kind: 'ban_confirm'; username: string }
@@ -302,6 +312,13 @@ export interface Notice {
   title: string
   body: string
   go: () => void
+}
+
+// A short neutral message at the top; `name` is shown after `text` with the streamer blur.
+export interface Toast {
+  id: number
+  text: string
+  name?: string
 }
 
 export interface SearchState {
@@ -477,6 +494,8 @@ interface RChatState {
   notices: Notice[]
   drafts: Record<string, string>
   replying: Record<string, Replying>
+  forwardClip: ForwardClip | null
+  toast: Toast | null
   composerFocus: { key: string; n: number } | null
   editing: Editing | null
   search: SearchState
@@ -539,6 +558,11 @@ interface RChatState {
   startReply: (key: string, m: Message) => void
   cancelReply: (key: string) => void
   toggleReplyMention: (key: string) => void
+  copyForward: (m: Message) => void
+  clearForward: () => void
+  reloadForward: () => void
+  sendForward: (key: string) => void
+  openForward: (m: Message) => Promise<void>
   startEdit: (key: string, m: Message) => void
   setEditText: (text: string) => void
   cancelEdit: (refocus?: boolean) => void
@@ -576,6 +600,7 @@ interface RChatState {
   deleteEmbed: (messageId: number, ord: number, banner: boolean) => Promise<void>
   createServer: (name: string, password?: string) => Promise<void>
   joinServer: (name: string, password?: string, nav?: Nav) => Promise<void>
+  joinPreview: (name: string) => Promise<void>
   leaveServer: (name: string) => Promise<void>
   renameServer: (name: string, newName: string) => Promise<void>
   deleteServer: (name: string) => Promise<void>
@@ -712,6 +737,15 @@ export interface RailServer {
 }
 
 type RailSource = Pick<RChatState, 'me' | 'guestServers' | 'guestNames' | 'servers'>
+
+// The server a signed-in user is previewing: a server open without being a member (only
+// public ones can be, the server enforces that). It has a temporary rail icon and a join bar,
+// and is forgotten as soon as the view moves elsewhere.
+export const previewServer = (s: RChatState): string | null => {
+  const v = s.view
+  if (!s.me || s.guest || v?.kind !== 'channel') return null
+  return s.me.servers.some(x => x.name === v.server) ? null : v.server
+}
 
 export const railServers = (s: RailSource): RailServer[] =>
   s.me
@@ -989,6 +1023,31 @@ export const useStore = create<RChatState>()((set, get) => {
     }
   }
 
+  const readForward = (username: string) => {
+    try {
+      return parseForward(localStorage.getItem(home.scoped(forwardKey(username))))
+    } catch {
+      return null
+    }
+  }
+
+  const saveForward = (clip: ForwardClip | null) => {
+    const username = get().me?.username
+    if (!username) return
+    set({ forwardClip: clip })
+    writeLocal(home.scoped(forwardKey(username)), forwardValue(clip))
+  }
+
+  let toastSeq = 0
+  const toast = (text: string, name?: string) => {
+    toastSeq += 1
+    const id = toastSeq
+    set({ toast: { id, text, name } })
+    setTimeout(() => {
+      if (get().toast?.id === id) set({ toast: null })
+    }, 4000)
+  }
+
   const saveEmoji = (next: EmojiPrefs) => {
     const username = get().me?.username
     if (!username || next === get().emoji) return
@@ -1056,7 +1115,13 @@ export const useStore = create<RChatState>()((set, get) => {
       dms: same ? mergeHead(cur.dms, fresh.dms, fresh.dms_more, dmKey) : fresh.dms,
       serversMore: fresh.servers_more,
       dmsMore: fresh.dms_more,
-      ...(same ? {} : { layout: readLayout(fresh.username), emoji: readEmoji(fresh.username) }),
+      ...(same
+        ? {}
+        : {
+            layout: readLayout(fresh.username),
+            emoji: readEmoji(fresh.username),
+            forwardClip: readForward(fresh.username),
+          }),
     })
     pinSelf()
     if (resume.servers) void get().loadMoreServers()
@@ -1174,20 +1239,18 @@ export const useStore = create<RChatState>()((set, get) => {
     void api
       .getServer(server)
       .then(detail => {
-        set(s => ({ servers: { ...s.servers, [server]: detail } }))
         const { view } = get()
-        if (
+        const lost =
           view?.kind === 'channel' &&
           view.server === server &&
           !detail.channels.some(c => c.id === view.channelId)
-        ) {
-          const next = detail.channels[0]
-          if (next) void get().openChannel(server, next.id, 'replace')
-          else {
-            set({ view: null })
-            syncUrl(null, 'replace')
-          }
+        const next = detail.channels[0]
+        if (lost && !next) {
+          clearView()
+          if (!get().servers[server]) return
         }
+        set(s => ({ servers: { ...s.servers, [server]: detail } }))
+        if (lost && next) void get().openChannel(server, next.id, 'replace')
       })
       .catch(fail)
   }
@@ -2192,10 +2255,34 @@ export const useStore = create<RChatState>()((set, get) => {
     else setTimeout(flushPresence, 16)
   }
 
+  // Leaving a previewed server forgets it: its detail, cached messages, reads and member info
+  // go, so nothing of it is left once the rail icon disappears.
+  const forgetPreview = (name: string) => {
+    const scopes = new Set((get().servers[name]?.channels ?? []).map(c => `c${c.id}`))
+    const { panel, view } = get()
+    if (view?.kind === 'channel' && view.server === name) scopes.add(`c${view.channelId}`)
+    const thread =
+      panel?.kind === 'thread' && scopes.has(`c${panel.root.channel_id}`)
+        ? [threadKey(panel.root.id)]
+        : []
+    forgetViews([...scopes, ...thread])
+    forgetPending((_, upload) => !scopes.has(upload.scope))
+    forgetReads(scope => !scopes.has(scope))
+    forgetMemberInfo(name)
+    presenceLogs.delete(name)
+    presenceSnaps.delete(name)
+    set(s => {
+      const servers = { ...s.servers }
+      delete servers[name]
+      return { servers }
+    })
+  }
+
   const leaveServerView = (next: string | null) => {
     const cur = get().view
     const prev = cur?.kind === 'channel' ? cur.server : null
     if (prev === null || prev === next) return
+    if (previewServer(get()) === prev) forgetPreview(prev)
     const { activeDialog } = get()
     if (activeDialog?.kind === 'server_settings' && activeDialog.server === prev) return
     for (const id of [`m:${prev}`, `i:${prev}`]) epochs[id] = (epochs[id] ?? 0) + 1
@@ -2207,6 +2294,14 @@ export const useStore = create<RChatState>()((set, get) => {
       delete interacted[prev]
       return { members, interacted }
     })
+  }
+
+  // Leaves the current view for none (home); a previewed server is forgotten on the way out.
+  const clearView = () => {
+    leaveServerView(null)
+    set({ view: null })
+    syncUrl(null, 'replace')
+    get().setViewing(null)
   }
 
   const matches = (q: string, ...names: string[]) => {
@@ -2797,6 +2892,8 @@ export const useStore = create<RChatState>()((set, get) => {
     notices: [],
     drafts: {},
     replying: {},
+    forwardClip: null,
+    toast: null,
     composerFocus: null,
     editing: null,
     search: emptySearch(),
@@ -3070,6 +3167,8 @@ export const useStore = create<RChatState>()((set, get) => {
         notices: [],
         drafts: {},
         replying: {},
+        forwardClip: null,
+        toast: null,
         composerFocus: null,
         editing: null,
         bootError: null,
@@ -3360,9 +3459,124 @@ export const useStore = create<RChatState>()((set, get) => {
 
     cancelReply: key => set(s => ({ replying: keyed(s.replying, key, null) })),
 
+    copyForward: m => {
+      const { me, guest } = get()
+      if (!me || guest || !canForward(m)) return
+      saveForward(clipOf(m))
+      toast('Message copied for forwarding')
+    },
+
+    clearForward: () => saveForward(null),
+
+    reloadForward: () => {
+      const username = get().me?.username
+      if (username) set({ forwardClip: readForward(username) })
+    },
+
+    sendForward: key => {
+      const { me, guest, forwardClip: clip } = get()
+      if (!me || guest || !clip || forwardPending(get().outbox[key], clip.id)) return
+      const id = Number(key.slice(1))
+      const kind = key[0]
+      if (!Number.isSafeInteger(id) || !'cdt'.includes(kind)) return
+      const s = get()
+      const target =
+        kind === 'c'
+          ? {
+              text: `Forwarded to #${
+                Object.values(s.servers)
+                  .flatMap(d => d.channels)
+                  .find(c => c.id === id)?.name ?? 'channel'
+              }`,
+            }
+          : kind === 'd'
+            ? {
+                text: 'Forwarded to',
+                name: s.dms.find(d => d.id === id)?.other.display_name ?? 'direct message',
+              }
+            : { text: 'Forwarded to the thread' }
+      home.ws.ensureConnected()
+      if (kind !== 't') clearAnchor(key)
+      if (detached(key)) void get().jumpToPresent(key)
+      const tempId = OPT_BASE + ++optSeq
+      const opts = { forward_of: clip.id }
+      enqueue({
+        tempId,
+        key,
+        status: 'queued',
+        pending: null,
+        p2pExpiresIn: null,
+        msg: {
+          id: tempId,
+          channel_id: kind === 'c' ? id : null,
+          dm_id: kind === 'd' ? id : null,
+          thread_root_id: kind === 't' ? id : null,
+          author: me,
+          content: clip.snippet,
+          created_at: Math.floor(Date.now() / 1000),
+          reply_count: 0,
+          media: null,
+          embeds: [],
+          kind: 'user',
+          call: null,
+          reply_to: null,
+          forward: {
+            author: clip.author,
+            created_at: clip.created_at,
+            source_id: clip.id,
+            origin: null,
+            dropped: null,
+          },
+        },
+        send: () =>
+          kind === 'c'
+            ? api.sendChannelMessage(id, '', opts)
+            : kind === 'd'
+              ? api.sendDmMessage(id, '', opts)
+              : api.sendThreadMessage(id, '', opts),
+      })
+      void sentAs(tempId).then(sent => {
+        if (!sent) return
+        if (get().forwardClip?.id === clip.id) saveForward(null)
+        toast(target.text, target.name)
+      })
+    },
+
+    openForward: m =>
+      act(async () => {
+        const fwd = m.forward
+        if (!fwd) return
+        const id = fwd.source_id
+        let loc: MessageLocation
+        try {
+          loc = await api.messageLocation(id)
+        } catch (e) {
+          if (e instanceof ApiError && e.status >= 400 && e.status < 500) {
+            toast("You can't open this message")
+            return
+          }
+          throw e
+        }
+        if (loc.dm_id !== null) {
+          const v = get().view
+          if (v?.kind === 'dm' && v.dmId === loc.dm_id) await get().jumpTo(`d${loc.dm_id}`, id)
+          else await get().openDm(loc.dm_id, 'push', id)
+          return
+        }
+        const { server, channel_id } = loc
+        if (server === null || channel_id === null) return toast("You can't open this message")
+        const { guest, guestServers } = get()
+        if (guest && !guestServers.includes(server)) {
+          persistGuestServers([...guestServers, server])
+          home.ws.subscribe([server])
+        }
+        await openChannelAt(server, channel_id, loc.thread_root_id, id)
+      }),
+
     startEdit: (key, m) => {
       const { me, guest } = get()
-      if (guest || !me || m.author.username !== me.username || m.kind !== 'user') return
+      if (guest || !me || m.author.username !== me.username || m.kind !== 'user' || m.forward)
+        return
       set({ editing: { key, id: m.id, text: m.content } })
     },
 
@@ -3479,7 +3693,10 @@ export const useStore = create<RChatState>()((set, get) => {
           pings: clearPings(s.pings, scope, until),
         }
       })
-      if (get().token) readQueue.mark(scope, messageId)
+      const preview = previewServer(get())
+      const previewed =
+        preview !== null && !!get().servers[preview]?.channels.some(c => `c${c.id}` === scope)
+      if (get().token && !previewed) readQueue.mark(scope, messageId)
     },
 
     seeThread: rootId => seePings(`t${rootId}`),
@@ -3744,6 +3961,16 @@ export const useStore = create<RChatState>()((set, get) => {
       const { view } = get()
       const here = view?.kind === 'channel' && view.server === id ? view.channelId : undefined
       await get().openServer(id, here, here === undefined ? nav : 'replace')
+    },
+
+    // Join from the preview tile's menu: the JoinBar's steps, with the password asked in the
+    // join dialog when the server wants one.
+    joinPreview: async name => {
+      const out = await runJoinStep('name', '', pw => get().joinServer(name, pw), errorText)
+      if (out.done) return
+      if (out.step === 'password')
+        get().openDialog({ kind: 'add_server', join: name, locked: true })
+      else get().setError(out.error)
     },
 
     leaveServer: name =>
@@ -4168,7 +4395,7 @@ export const useStore = create<RChatState>()((set, get) => {
             if (view?.kind === 'dm' && view.dmId === dm_id) return
             const toMe =
               repliesToMe(m, me.username) || (m.reply_to?.partial === true && m.reply_to.mention)
-            if (mentionsUser(m.content, me.username) || toMe) return
+            if (!m.forward && (mentionsUser(m.content, me.username) || toMe)) return
             notify(
               m.author.display_name,
               '',
@@ -4319,8 +4546,7 @@ export const useStore = create<RChatState>()((set, get) => {
             const next = servers[ev.server]?.channels[0]
             if (next) void get().openChannel(ev.server, next.id, 'replace')
             else {
-              set({ view: null })
-              syncUrl(null, 'replace')
+              clearView()
             }
           }
           return
@@ -4847,8 +5073,7 @@ export const useStore = create<RChatState>()((set, get) => {
             const self = dms.find(d => d.is_self)
             if (self) void get().openDm(self.id, 'replace')
             else {
-              set({ view: null })
-              syncUrl(null, 'replace')
+              clearView()
             }
           }
           return

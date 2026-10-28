@@ -165,7 +165,9 @@ pub(crate) async fn upload_media(
 /// for a stored file no other live message uses, deletes the file. For a peer-to-peer
 /// attachment its metadata is cleared. The message's author can always do this; in a server
 /// channel, members with the Delete messages permission can too. Emits `media_removed` to
-/// whoever can see the message. Requires a bearer token. General rate-limit bucket.
+/// whoever can see the message. Forwarded copies of the message elsewhere keep their own
+/// reference to the file (and so the file itself); moderators of the destination remove it there
+/// with this endpoint on the copy. Requires a bearer token. General rate-limit bucket.
 #[utoipa::path(delete, path = "/api/messages/{id}/media", tag = "Media", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Removed; the body is `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "Not the author and no Delete messages permission in the server", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses; or it has no attachment (`No attachment`)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn delete_media(
     State(state): State<AppState>,
@@ -247,7 +249,7 @@ fn media_hidden() -> ApiError {
     ApiError(StatusCode::NOT_FOUND, "Media not found".to_string())
 }
 
-async fn media_view_ok(
+pub(crate) async fn media_view_ok(
     db: &Db,
     headers: &axum::http::HeaderMap,
     media_id: &str,

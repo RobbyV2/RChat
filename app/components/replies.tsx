@@ -1,11 +1,24 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { Image as ImageIcon, X } from 'lucide-react'
+import { Forward, Image as ImageIcon, X } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { snippetParts } from '../lib/replies'
 import type { ReplyRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
+
+// A small marker for forwarded messages where only a line of them is shown (search, quotes).
+export function ForwardedTag() {
+  return (
+    <span
+      data-forwarded-tag
+      className="flex shrink-0 items-center gap-0.5 text-on-surface-variant italic"
+    >
+      <Forward size={11} className="shrink-0" />
+      Forwarded
+    </span>
+  )
+}
 
 function Snippet({ quote }: { quote: ReplyRef }) {
   if (!quote.content)
@@ -110,6 +123,7 @@ export function ReplyPreview({
           {quote.mention ? '@' : ''}
           {author.display_name}
         </span>
+        {quote.forwarded && <ForwardedTag />}
         <Snippet quote={quote} />
       </button>
     </div>

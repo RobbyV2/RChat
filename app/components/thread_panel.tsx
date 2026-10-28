@@ -47,6 +47,8 @@ import {
 import { useEscape } from './server_settings'
 import { ReplyPreview } from './replies'
 import { canQuote } from '../lib/replies'
+import { canForward } from '../lib/forward'
+import { ForwardCard, forwardAction, forwardMenuItem } from './forwards'
 import { canEdit as ownEditable } from '../lib/sed'
 import { MessageEditor, editAction, editMenuItem } from './message_editor'
 
@@ -87,6 +89,7 @@ export default function ThreadPanel() {
   const openContextMenu = useStore(s => s.openContextMenu)
   const startReply = useStore(s => s.startReply)
   const startEdit = useStore(s => s.startEdit)
+  const copyForward = useStore(s => s.copyForward)
   const editingId = useStore(s =>
     s.editing && s.panel?.kind === 'thread' && s.editing.key === threadKey(s.panel.root.id)
       ? s.editing.id
@@ -161,6 +164,7 @@ export default function ThreadPanel() {
   }
 
   const canReply = (m: Message) => canReact && canQuote(m)
+  const forwardable = (m: Message) => canUnreact && canForward(m)
   const replyTo = (m: Message) => startReply(key, m)
   const canEdit = (m: Message) => canReact && ownEditable(m, me?.username)
   const editMsg = (m: Message) => startEdit(key, m)
@@ -175,6 +179,7 @@ export default function ThreadPanel() {
     const items: ContextMenuItem[] = []
     if (canEdit(m)) items.push(editMenuItem(() => editMsg(m)))
     if (canReply(m)) items.push(replyMenuItem(() => replyTo(m)))
+    if (forwardable(m)) items.push(forwardMenuItem(() => copyForward(m)))
     if (m.id !== root.id && canDelete(m))
       items.push({
         label: 'Delete Message',
@@ -192,6 +197,7 @@ export default function ThreadPanel() {
     const actions: ToolbarAction[] = []
     if (canEdit(m) && !editing) actions.push(editAction(() => editMsg(m)))
     if (canReply(m)) actions.push(replyAction(() => replyTo(m)))
+    if (forwardable(m)) actions.push(forwardAction(() => copyForward(m)))
     if (m.id !== root.id && canDelete(m))
       actions.push({
         key: 'delete',
@@ -253,11 +259,15 @@ export default function ThreadPanel() {
                 {fmtTime(m.created_at)}
               </span>
             </div>
-            <MarkdownMessage
-              message={m}
-              canDelete={canDelete(m)}
-              editor={editing ? <MessageEditor /> : undefined}
-            />
+            {m.forward ? (
+              <ForwardCard m={m} canDelete={canDelete(m)} />
+            ) : (
+              <MarkdownMessage
+                message={m}
+                canDelete={canDelete(m)}
+                editor={editing ? <MessageEditor /> : undefined}
+              />
+            )}
             <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
           </div>
         </div>

@@ -155,6 +155,11 @@ describe('partial quotes from WebSocket events', () => {
       deleted: false,
       mention: true,
     })
+    const copy = {
+      ...original,
+      forward: { author: null, created_at: 1, source_id: 9, origin: null, dropped: null },
+    }
+    expect(fillQuote(reply, undefined, copy)?.reply_to?.forwarded).toBe(true)
     expect(fillQuote(reply, undefined, { ...original, channel_id: 99 })).toBeNull()
     expect(fillQuote(reply, undefined, { ...original, id: 3 })).toBeNull()
   })

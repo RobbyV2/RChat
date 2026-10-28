@@ -8,6 +8,7 @@ import { UserAvatar } from './user_avatar'
 import { Sentinel, fieldCls, useEscape } from './server_settings'
 import { avatarTriggerCls, fmtTime, nameTriggerCls } from './message_pane'
 import { profileTrigger } from './profile_card'
+import { ForwardedTag } from './replies'
 
 const chipCls = (on: boolean) =>
   `rounded-full border px-3 py-1 text-xs font-medium ${
@@ -172,6 +173,11 @@ export default function SearchPanel() {
               <span className="shrink-0 text-xs text-on-surface-variant">
                 {fmtTime(r.message.created_at)}
               </span>
+              {r.message.forward && (
+                <span className="text-xs">
+                  <ForwardedTag />
+                </span>
+              )}
             </div>
             <p className="mt-0.5 line-clamp-2 text-sm break-words text-on-surface">
               {r.message.content || r.message.media?.filename}

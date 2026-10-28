@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import {
+  Eye,
   Folder as FolderIcon,
   FolderOpen,
   LogOut,
@@ -14,6 +15,7 @@ import {
   dmPingCount,
   dmsUnread,
   folderLabel,
+  previewServer,
   railServers,
   serverPingCount,
   serverUnread,
@@ -152,6 +154,50 @@ function ServerTile({
         </span>
       )}
       {pings > 0 ? <RailPingBadge count={pings} /> : unread && <UnreadDot />}
+    </button>
+  )
+}
+
+// The server being previewed (open without joining): shown only while it is open, never saved
+// to the layout or dragged. A dashed, dimmed tile with an eye badge sets it apart.
+function PreviewTile() {
+  const name = useStore(previewServer)
+  const display = useStore(s => (name ? (s.servers[name]?.display_name ?? name) : ''))
+  const openServer = useStore(s => s.openServer)
+  const joinPreview = useStore(s => s.joinPreview)
+  const openContextMenu = useStore(s => s.openContextMenu)
+  if (!name) return null
+  const label = `Previewing ${display}`
+  return (
+    <button
+      data-preview-tile={name}
+      title={label}
+      aria-label={label}
+      aria-current="page"
+      onClick={() => void openServer(name)}
+      {...longPress((x, y) =>
+        openContextMenu(x, y, [
+          {
+            label: 'Join Server',
+            action: () => void joinPreview(name),
+          },
+          {
+            label: 'Copy Server ID',
+            action: () => void navigator.clipboard.writeText(name),
+          },
+        ])
+      )}
+      className={`${tile} relative border-2 border-dashed border-primary bg-surface-container-high text-lg font-semibold text-on-surface`}
+    >
+      <span className="flex h-full w-full items-center justify-center opacity-60">
+        <ServerGlyph name={name} displayName={display} />
+      </span>
+      <span
+        aria-hidden
+        className="absolute -right-1.5 -bottom-1.5 flex size-5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-primary text-on-primary"
+      >
+        <Eye size={11} strokeWidth={2.5} />
+      </span>
     </button>
   )
 }
@@ -301,6 +347,7 @@ export function ServerRail() {
           </button>
         )}
         {me && <div className="my-1 h-px w-8 shrink-0 bg-outline-variant" />}
+        {me && <PreviewTile />}
         <div
           data-drop-zone="servers"
           data-drop-label="Remove from folder"

@@ -25,6 +25,7 @@ import { Dialog, FieldError, fieldCls, filledBtn } from './server_settings'
 import { EmojiPicker, SHEET_QUERY } from './emoji_picker'
 import { useMedia } from './context_menu'
 import { ReplyBar } from './replies'
+import { ForwardBar } from './forwards'
 import { useTextAssist } from './text_assist'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
@@ -123,7 +124,10 @@ function JoinBar({ server }: { server: string }) {
   }
 
   return (
-    <div className="mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] shrink-0 rounded-2xl bg-surface-container px-4 py-3 keyboard:mb-3">
+    <div
+      data-preview-bar
+      className="mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] shrink-0 rounded-2xl border border-dashed border-outline bg-surface-container px-4 py-3 keyboard:mb-3"
+    >
       <form
         onSubmit={e => {
           e.preventDefault()
@@ -131,12 +135,14 @@ function JoinBar({ server }: { server: string }) {
         }}
         className="flex flex-wrap items-center gap-2"
       >
-        <p className="min-w-48 flex-1 text-sm text-on-surface-variant">
-          You are viewing{' '}
-          <span className="streamer font-medium text-on-surface">
-            {detail?.display_name ?? server}
+        <p className="flex min-w-48 flex-1 items-center gap-2 text-sm text-on-surface-variant">
+          <Eye size={16} className="shrink-0 text-primary" />
+          <span className="min-w-0">
+            You&apos;re previewing{' '}
+            <span className="streamer font-medium text-on-surface">
+              {detail?.display_name ?? server}
+            </span>
           </span>
-          . Join this server to send messages.
         </p>
         {locked && (
           <input
@@ -148,7 +154,7 @@ function JoinBar({ server }: { server: string }) {
           />
         )}
         <button disabled={!ready} className={filledBtn}>
-          Join this server
+          Join server
         </button>
       </form>
       <FieldError message={error} />
@@ -179,6 +185,8 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const setDraft = useStore(s => s.setDraft)
   const text = useStore(s => (draftKey ? (s.drafts[draftKey] ?? '') : ''))
   const replying = useStore(s => (draftKey ? s.replying[draftKey] !== undefined : false))
+  const forwarding = useStore(s => s.forwardClip !== null)
+  const threadChannel = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.channel_id : null))
   const cancelReply = useStore(s => s.cancelReply)
   const focusAsk = useStore(s => s.composerFocus)
   const editLast = useStore(s => s.editLast)
@@ -278,8 +286,16 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const count = charCount(text)
   const tooLong = count > MESSAGE_MAX
 
+  const sendable =
+    view?.kind !== 'channel' ||
+    !readOnly(servers[view.server], thread ? threadChannel : view.channelId)
   const closeBar = replying && draftKey ? () => cancelReply(draftKey) : null
-  const bar = closeBar && draftKey ? <ReplyBar draftKey={draftKey} onClose={closeBar} /> : null
+  const bar =
+    closeBar && draftKey ? (
+      <ReplyBar draftKey={draftKey} onClose={closeBar} />
+    ) : forwarding && sendable && draftKey ? (
+      <ForwardBar draftKey={draftKey} />
+    ) : null
 
   const doSend = (p2pExpiresIn?: number | null) => {
     void (thread ? sendThreadMessage(text, p2pExpiresIn) : sendMessage(text, p2pExpiresIn))
