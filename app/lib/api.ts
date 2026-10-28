@@ -349,6 +349,8 @@ export const endpoints = (c: ApiClient) => ({
   sendDmMessage: (id: number, content: string, opts: SendOpts = {}) =>
     c.req<Message>('POST', `/dms/${id}/messages`, { content, ...opts }),
   deleteMessage: (id: number) => c.req<unknown>('DELETE', `/messages/${id}`),
+  editMessage: (id: number, content: string) =>
+    c.req<Message>('PATCH', `/messages/${id}`, { content }),
   deleteMedia: (id: number) => c.req<unknown>('DELETE', `/messages/${id}/media`),
   deleteEmbed: (id: number, ord: number, banner: boolean) =>
     c.req<unknown>('DELETE', `/messages/${id}/embeds/${ord}${banner ? '?banner=1' : ''}`),

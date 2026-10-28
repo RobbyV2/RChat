@@ -80,6 +80,7 @@ impl Modify for Bearer {
         super::messages::dm_messages,
         super::messages::send_dm_message,
         super::messages::delete_message,
+        super::messages::edit_message,
         super::messages::search,
         super::messages::unreads,
         super::messages::mark_read,

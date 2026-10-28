@@ -152,7 +152,15 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             reason: _,
         } => to(scoped(server, dm_users)),
         WsEvent::MessageUpdated {
-            message: _,
+            server: Some(server),
+            channel_id: _,
+            update: _,
+            dm_users: _,
+        } => to(vec![Target::Server(server)]),
+        WsEvent::MessageUpdated {
+            server: None,
+            channel_id: _,
+            update: _,
             dm_users,
         }
         | WsEvent::DmCreated { dm_id: _, dm_users }

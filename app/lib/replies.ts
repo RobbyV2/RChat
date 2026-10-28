@@ -121,6 +121,21 @@ export function quoteDeleted(list: Message[], id: number): Message[] {
   )
 }
 
+// Shown quotes of a message that was just edited take its new text. Placeholders and partial
+// quotes stay as they are: the viewer may not be allowed to see the original.
+export const editedQuote = (ref: ReplyRef, edited: Message): ReplyRef =>
+  ref.id === edited.id && !ref.deleted && !ref.partial
+    ? { ...ref, content: plainLine(edited.content), has_media: edited.media !== null }
+    : ref
+
+export function quoteEdited(list: Message[], edited: Message): Message[] {
+  if (!list.some(m => m.reply_to && editedQuote(m.reply_to, edited) !== m.reply_to)) return list
+  return list.map(m => {
+    const ref = m.reply_to && editedQuote(m.reply_to, edited)
+    return ref && ref !== m.reply_to ? { ...m, reply_to: ref } : m
+  })
+}
+
 export interface SnippetPart {
   text: string
   spoiler: boolean

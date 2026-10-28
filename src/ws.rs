@@ -241,6 +241,53 @@ pub fn to_bus_json<T: Serialize>(value: &T) -> serde_json::Result<String> {
     serde_json::to_string(value)
 }
 
+/// What a `message_updated` carries: the whole message (DMs, call logs), or for an edit in a
+/// server channel only which message changed, so viewers without read history of it learn
+/// nothing; clients holding it re-read it through the gated REST list.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Updated {
+    Stub(EditStub),
+    Full { message: Box<Message> },
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct EditStub {
+    pub id: i64,
+    pub thread_root_id: Option<i64>,
+    pub edited_at: Option<i64>,
+    pub stub: bool,
+}
+
+impl Updated {
+    pub fn full(message: Message) -> Self {
+        Updated::Full {
+            message: Box::new(message),
+        }
+    }
+
+    pub fn stub(id: i64, thread_root_id: Option<i64>, edited_at: Option<i64>) -> Self {
+        Updated::Stub(EditStub {
+            id,
+            thread_root_id,
+            edited_at,
+            stub: true,
+        })
+    }
+
+    pub fn id(&self) -> i64 {
+        match self {
+            Updated::Stub(EditStub {
+                id,
+                thread_root_id: _,
+                edited_at: _,
+                stub: _,
+            }) => *id,
+            Updated::Full { message } => message.id,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsEvent {
@@ -252,7 +299,12 @@ pub enum WsEvent {
         message: Box<Message>,
     },
     MessageUpdated {
-        message: Box<Message>,
+        #[serde(default)]
+        server: Option<String>,
+        #[serde(default)]
+        channel_id: Option<i64>,
+        #[serde(flatten)]
+        update: Updated,
         #[serde(default, skip_serializing_if = "routing_only")]
         dm_users: Vec<String>,
     },
@@ -561,7 +613,9 @@ async fn broadcast_call_log(state: &AppState, dm_id: i64, dm_users: Vec<String>,
 async fn broadcast_call_update(state: &AppState, dm_users: Vec<String>, log_id: i64) {
     if let Ok(Some(message)) = load_broadcast(&state.read(), log_id).await {
         state.hub.broadcast(WsEvent::MessageUpdated {
-            message: Box::new(message),
+            server: None,
+            channel_id: None,
+            update: Updated::full(message),
             dm_users,
         });
     }
@@ -751,10 +805,23 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 message: Box::new(message),
             })
         }
-        WsEvent::MessageUpdated { message, dm_users } => {
-            let message = load_broadcast(db, message.id).await.ok().flatten()?;
+        WsEvent::MessageUpdated {
+            server,
+            channel_id,
+            update,
+            dm_users,
+        } => {
+            let message = load_broadcast(db, update.id()).await.ok().flatten()?;
+            let update = match update {
+                Updated::Stub(_) => {
+                    Updated::stub(message.id, message.thread_root_id, message.edited_at)
+                }
+                Updated::Full { message: _ } => Updated::full(message),
+            };
             Some(WsEvent::MessageUpdated {
-                message: Box::new(message),
+                server,
+                channel_id,
+                update,
                 dm_users,
             })
         }
@@ -2783,6 +2850,12 @@ fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
             dm_users: _,
             message: _,
         } => scoped(server, channel_id),
+        WsEvent::MessageUpdated {
+            server,
+            channel_id,
+            update: _,
+            dm_users: _,
+        } => scoped(server, channel_id),
         WsEvent::MessageDeleted {
             server,
             channel_id,
@@ -2881,7 +2954,15 @@ fn wants(
             message: _,
         } => scoped(server, dm_users),
         WsEvent::MessageUpdated {
-            message: _,
+            server: Some(server),
+            channel_id: _,
+            update: _,
+            dm_users: _,
+        } => in_server(server),
+        WsEvent::MessageUpdated {
+            server: None,
+            channel_id: _,
+            update: _,
             dm_users,
         } => me.is_some_and(|user| dm_users.iter().any(|u| u == user)),
         WsEvent::MessageDeleted {
@@ -3100,6 +3181,7 @@ mod tests {
             call: None,
             reactions: Vec::new(),
             reply_to: None,
+            edited_at: None,
         }
     }
 
@@ -3129,14 +3211,16 @@ mod tests {
             serde_json::to_string(&availability).unwrap()
         );
         let updated = WsEvent::MessageUpdated {
-            message: Box::new(message()),
+            server: None,
+            channel_id: None,
+            update: Updated::full(message()),
             dm_users: vec!["alice".to_string(), "bob".to_string()],
         };
         let client = serde_json::to_string(&updated).unwrap();
         assert!(!client.contains("dm_users"));
         let back: WsEvent = serde_json::from_str(&to_bus_json(&updated).unwrap()).unwrap();
         assert!(
-            matches!(&back, WsEvent::MessageUpdated { message: _, dm_users } if dm_users.len() == 2)
+            matches!(&back, WsEvent::MessageUpdated { server: None, channel_id: None, update: Updated::Full { message: _ }, dm_users } if dm_users.len() == 2)
         );
         assert_eq!(serde_json::to_string(&back).unwrap(), client);
         let member = WsEvent::MemberJoined {
@@ -5087,6 +5171,12 @@ mod tests {
                 dm_users: dm_users.clone(),
                 message: Box::new(message()),
             });
+            evs.push(WsEvent::MessageUpdated {
+                server: server.clone(),
+                channel_id: server.as_ref().map(|_| 1),
+                update: Updated::full(message()),
+                dm_users: dm_users.clone().unwrap_or_default(),
+            });
             evs.push(WsEvent::MessageDeleted {
                 server: server.clone(),
                 channel_id: Some(1),
@@ -5241,10 +5331,6 @@ mod tests {
             ]);
         }
         evs.extend([
-            WsEvent::MessageUpdated {
-                message: Box::new(message()),
-                dm_users: vec![s("alice"), s("bob")],
-            },
             WsEvent::CallState {
                 dm_id: 1,
                 dm_users: vec![s("alice"), s("bob")],
@@ -5842,6 +5928,118 @@ mod tests {
             assert_eq!(wire["emoji"], "👍");
             assert_eq!(wire["username"], "bob");
         }
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn edits_reach_only_those_who_can_see_the_channel() {
+        let (state, path, general, secret) = peek_world("ws_edit_routes").await;
+        let conn = state.hub.next_conn();
+        let mut alice = Access::new(Some(s("alice")), false, set(&["open"]));
+        let mut nora = Access::new(Some(s("nora")), false, set(&["home"]));
+        let edit = |server: Option<&str>, channel_id: Option<i64>, dm_users: &[&str]| {
+            WsEvent::MessageUpdated {
+                server: server.map(s),
+                channel_id,
+                update: Updated::full(message()),
+                dm_users: dm_users.iter().map(|u| s(u)).collect(),
+            }
+        };
+        let seen = edit(Some("open"), Some(general), &[]);
+        let hidden = edit(Some("open"), Some(secret), &[]);
+        assert_eq!(
+            crate::fanout::route(&seen),
+            crate::fanout::Route::To(vec![crate::fanout::Target::Server("open")])
+        );
+        assert_eq!(event_channel(&seen), Some(("open", general)));
+        assert_eq!(event_channel(&hidden), Some(("open", secret)));
+        assert_eq!(on_event(&state, conn, &mut alice, &seen).await, Some(true));
+        assert_eq!(
+            on_event(&state, conn, &mut alice, &hidden).await,
+            Some(false)
+        );
+        assert_eq!(on_event(&state, conn, &mut nora, &seen).await, Some(false));
+        let dm = edit(None, None, &["alice", "bob"]);
+        assert_eq!(event_channel(&dm), None);
+        assert_eq!(
+            crate::fanout::route(&dm),
+            crate::fanout::Route::To(vec![
+                crate::fanout::Target::User("alice"),
+                crate::fanout::Target::User("bob")
+            ])
+        );
+        assert!(wants(
+            &dm,
+            Some("alice"),
+            false,
+            &HashSet::new(),
+            &HashSet::new()
+        ));
+        assert!(!wants(
+            &dm,
+            Some("nora"),
+            true,
+            &set(&["open"]),
+            &HashSet::new()
+        ));
+        let wire = serde_json::to_value(&seen).expect("json");
+        assert_eq!(wire["type"], "message_updated");
+        assert_eq!(wire["server"], "open");
+        assert_eq!(wire["channel_id"], general);
+        assert!(wire.get("dm_users").is_none());
+        let bus = to_bus_json(&WsEvent::MessageUpdated {
+            server: None,
+            channel_id: None,
+            update: Updated::full(message()),
+            dm_users: vec![s("alice"), s("bob")],
+        })
+        .expect("bus");
+        let stub = WsEvent::MessageUpdated {
+            server: Some(s("open")),
+            channel_id: Some(secret),
+            update: Updated::stub(7, Some(3), Some(99)),
+            dm_users: Vec::new(),
+        };
+        assert_eq!(event_channel(&stub), Some(("open", secret)));
+        assert_eq!(on_event(&state, conn, &mut alice, &stub).await, Some(false));
+        let wire = serde_json::to_value(&stub).expect("json");
+        assert_eq!(
+            wire,
+            serde_json::json!({"type": "message_updated", "server": "open", "channel_id": secret, "id": 7, "thread_root_id": 3, "edited_at": 99, "stub": true})
+        );
+        let back: WsEvent =
+            serde_json::from_str(&to_bus_json(&stub).expect("bus")).expect("stub parses");
+        assert!(matches!(
+            back,
+            WsEvent::MessageUpdated {
+                update: Updated::Stub(EditStub {
+                    id: 7,
+                    thread_root_id: Some(3),
+                    edited_at: Some(99),
+                    stub: true
+                }),
+                ..
+            }
+        ));
+        let back: WsEvent =
+            serde_json::from_str(&to_bus_json(&seen).expect("bus")).expect("full parses");
+        assert!(matches!(
+            back,
+            WsEvent::MessageUpdated { update: Updated::Full { message }, .. } if message.id == 4
+        ));
+        let routing = ",\"server\":null,\"channel_id\":null";
+        assert!(bus.contains(routing));
+        let old: WsEvent = serde_json::from_str(&bus.replace(routing, ""))
+            .expect("an event without server and channel_id still parses");
+        assert!(matches!(
+            old,
+            WsEvent::MessageUpdated {
+                server: None,
+                channel_id: None,
+                update: Updated::Full { message: _ },
+                dm_users
+            } if dm_users.len() == 2
+        ));
         crate::api::test_util::done(state, path).await;
     }
 

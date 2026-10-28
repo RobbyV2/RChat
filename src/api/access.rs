@@ -859,6 +859,32 @@ impl ResolvedMessage {
         }
     }
 
+    /// Editing: only the author, and only while they could still send there (a member with the
+    /// channel's send permission, or a participant of a live DM). Slow mode does not apply.
+    pub async fn edit_gate(&self, db: &Db) -> Result<(), ApiError> {
+        let own = self
+            .user
+            .as_ref()
+            .is_some_and(|u| u.username == self.scope.author);
+        if !own {
+            return Err(forbidden("You can only edit your own messages"));
+        }
+        match (&self.channel, self.scope.dm_id) {
+            (Some(channel), _) => {
+                channel.server.require_member()?;
+                match channel.rights.send {
+                    true => Ok(()),
+                    false => Err(forbidden("No permission to send in this channel")),
+                }
+            }
+            (None, Some(did)) => match dm_pair(db, did, true).await? {
+                Some(_) => Ok(()),
+                None => Err(not_found()),
+            },
+            (None, None) => Err(not_found()),
+        }
+    }
+
     pub async fn require_can_delete(&self, db: &Db) -> Result<(), ApiError> {
         let own = self
             .user

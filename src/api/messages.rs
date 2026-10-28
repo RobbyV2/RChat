@@ -29,9 +29,9 @@ use crate::db::{
     touch_interaction,
 };
 use crate::state::AppState;
-use crate::ws::WsEvent;
+use crate::ws::{Updated, WsEvent};
 
-const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention";
+const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at";
 const SNIPPET_MAX: usize = 200;
 
 /// Message-id paging for message lists. Give at most one of `before`, `after` and `around`;
@@ -332,6 +332,7 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
             }),
             None => None,
         },
+        edited_at: r.try_get(23)?,
     })
 }
 
@@ -984,6 +985,7 @@ async fn insert_message(
             mention: q.mention,
             partial: false,
         }),
+        edited_at: None,
     }];
     attach_quotes(db, &mut msgs, None).await?;
     let [message] = msgs;
@@ -1295,6 +1297,128 @@ pub(crate) async fn delete_message(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+/// New text for a message.
+#[derive(Deserialize, ToSchema)]
+pub struct EditReq {
+    /// The new text, at most 4000 characters (Unicode code points). It may only be blank when
+    /// the message has an attachment.
+    #[schema(example = "Hello again")]
+    content: String,
+}
+
+/// Edit a message
+///
+/// Replaces the text of your own message and sets `edited_at`. Requires a bearer token. Only
+/// the author may edit, only `user` messages (not call logs), and only while they could still
+/// send there: in server channels a member with the channel's send permission (slow mode does
+/// not apply), in DMs a participant. The text is validated like a new message (length, blank
+/// text without attachment, profanity filter in server channels). Sending the same text again
+/// changes nothing. Edits never ping anyone and keep the reply quote, reactions and attachment.
+/// When the links in the text change, the old link previews are removed and new ones are
+/// resolved. In server channels, clients that can see the channel get a content-free
+/// `message_updated` stub (`id`, `thread_root_id`, `edited_at`, `stub: true`; also sent once new
+/// previews are stored) and re-read the message through the message list (`around=id`), which
+/// applies the read-history rules. In DMs both participants get `message_updated` with the
+/// whole message, and new previews as `embeds_resolved`. General rate-limit bucket.
+#[utoipa::path(patch, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), request_body = EditReq, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Blocked by the profanity filter, text over 4000 characters, blank text on a message without attachment (`Message is empty`), or not a user message (`Cannot edit this message`). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not your message (`You can only edit your own messages`), no longer a member of the server, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+pub(crate) async fn edit_message(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Authed(user): Authed,
+    Json(req): Json<EditReq>,
+) -> Result<Json<Message>, ApiError> {
+    let EditReq { content } = req;
+    let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
+    message.edit_gate(&state.db).await?;
+    let row = sqlx::query("SELECT content, kind, media_removed FROM messages WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(crate::api::access::not_found)?;
+    let (old, kind, media_removed): (String, String, i64) =
+        (row.try_get(0)?, row.try_get(1)?, row.try_get(2)?);
+    if kind != "user" {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Cannot edit this message".to_string(),
+        ));
+    }
+    check_len(&content, MESSAGE_MAX, "Message")?;
+    let attached = message.scope().media_id.is_some() && media_removed == 0;
+    if content.trim().is_empty() && !attached {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Message is empty".to_string(),
+        ));
+    }
+    if message.channel().is_some() {
+        check_profanity(&state.db, ProfanityTarget::Messages, &content).await?;
+    }
+    let floor = match message.channel() {
+        Some(channel) => channel.read_since(&state.db).await?,
+        None => None,
+    };
+    if content != old {
+        let relink = embeds::extract_urls(&content) != embeds::extract_urls(&old);
+        let mut tx = state.db.begin().await?;
+        sqlx::query("UPDATE messages SET content = $1, edited_at = $2 WHERE id = $3")
+            .bind(&content)
+            .bind(now())
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        if relink {
+            sqlx::query("DELETE FROM message_embeds WHERE message_id = $1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        let crate::api::access::MsgScope {
+            channel_id,
+            dm_id,
+            thread_root_id: _,
+            author: _,
+            media_id: _,
+            media_filename: _,
+            media_kind: _,
+            server,
+            dm_users,
+        } = message.into_scope();
+        if relink {
+            embeds::spawn_unfurl(
+                &state,
+                server.clone(),
+                channel_id,
+                dm_id,
+                dm_users.clone(),
+                id,
+                &content,
+            );
+        }
+        if let Some(updated) = load_broadcast(&state.db, id).await? {
+            let update = match server {
+                Some(_) => Updated::stub(id, updated.thread_root_id, updated.edited_at),
+                None => Updated::full(updated),
+            };
+            state.hub.broadcast(WsEvent::MessageUpdated {
+                server,
+                channel_id,
+                update,
+                dm_users: dm_users.unwrap_or_default(),
+            });
+        }
+    }
+    let Some(edited) = load_message(&state.db, id, Quotes::Since(floor)).await? else {
+        return Err(crate::api::access::not_found());
+    };
+    let mut msgs = [edited];
+    attach_embeds(&state.db, &mut msgs).await?;
+    attach_reactions(&state.db, &mut msgs, Some(&user)).await?;
+    let [edited] = msgs;
+    Ok(Json(edited))
+}
+
 enum Bind {
     S(String),
     I(i64),
@@ -1477,7 +1601,7 @@ async fn search_once(
     let mut msgs = rows_messages(db, &rows, Quotes::Skip).await?;
     let mut ctx: Vec<(String, String)> = Vec::with_capacity(rows.len());
     for r in &rows {
-        ctx.push((r.try_get(23)?, r.try_get(24)?));
+        ctx.push((r.try_get(24)?, r.try_get(25)?));
     }
     attach_embeds(db, &mut msgs).await?;
     Ok(msgs
@@ -4751,6 +4875,518 @@ mod tests {
                 .pings,
             0,
             "the thread ping clears by reading the thread"
+        );
+        done(state, path).await;
+    }
+
+    async fn edit(
+        state: &AppState,
+        id: i64,
+        who: &str,
+        content: &str,
+    ) -> Result<Message, ApiError> {
+        edit_message(
+            State(state.clone()),
+            Path(id),
+            Authed(mem_user(who, false)),
+            Json(EditReq {
+                content: content.to_string(),
+            }),
+        )
+        .await
+        .map(|r| r.0)
+    }
+
+    fn edits(rx: &mut tokio::sync::broadcast::Receiver<WsEvent>) -> Vec<WsEvent> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .filter(|ev| matches!(ev, WsEvent::MessageUpdated { .. } | WsEvent::Ping { .. }))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn only_authors_edit_their_messages() {
+        let (state, path) = temp_state("edit_author").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob", "carol"] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        add_user(db, "nora", "nora").await;
+        let hidden = add_channel(db, "hidden", "text").await;
+        perm(db, hidden, "u:alice", 1).await;
+        let note = say(&state, (Some(cid), None, None), "alice", "hello").await;
+        let secret = say(&state, (Some(hidden), None, None), "alice", "psst").await;
+        let status = |r: Result<Message, ApiError>| r.err().map(|ApiError(code, _)| code);
+        assert_eq!(
+            status(edit(&state, note.id, "bob", "hijack").await),
+            Some(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            status(edit(&state, note.id, "nora", "hijack").await),
+            Some(StatusCode::FORBIDDEN),
+            "a readable message of a server you are not in"
+        );
+        let missing = status(edit(&state, secret.id + 1000, "bob", "x").await);
+        let unreadable = status(edit(&state, secret.id, "bob", "x").await);
+        assert_eq!(missing, Some(StatusCode::NOT_FOUND));
+        assert_eq!(
+            unreadable, missing,
+            "unreadable and unknown ids look the same"
+        );
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        let mine = say(&state, (None, Some(dm), None), "alice", "dm text").await;
+        assert_eq!(
+            status(edit(&state, mine.id, "carol", "x").await),
+            Some(StatusCode::NOT_FOUND)
+        );
+        assert_eq!(
+            status(edit(&state, mine.id, "bob", "x").await),
+            Some(StatusCode::FORBIDDEN)
+        );
+        let call: i64 = sqlx::query("INSERT INTO messages(dm_id, author, content, kind, created_at) VALUES($1, 'alice', '', 'call', 5) RETURNING id")
+            .bind(dm)
+            .fetch_one(db)
+            .await
+            .expect("call log")
+            .try_get(0)
+            .expect("id");
+        assert_eq!(
+            edit(&state, call, "alice", "not a call")
+                .await
+                .err()
+                .map(|e| e.1),
+            Some("Cannot edit this message".to_string())
+        );
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:alice', 1, 0, 1)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("no send");
+        assert_eq!(
+            status(edit(&state, note.id, "alice", "muted").await),
+            Some(StatusCode::FORBIDDEN),
+            "editing needs the send permission"
+        );
+        let kept = load_message(db, note.id, Quotes::Skip)
+            .await
+            .expect("load")
+            .expect("note");
+        assert_eq!(kept.content, "hello");
+        assert_eq!(kept.edited_at, None);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn edits_are_validated_like_new_messages() {
+        let (state, path) = temp_state("edit_validate").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "alice").await;
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        let note = say(&state, (Some(cid), None, None), "alice", "hello").await;
+        let error = |r: Result<Message, ApiError>| r.err().map(|ApiError(code, e)| (code, e));
+        assert_eq!(
+            error(edit(&state, note.id, "alice", "  \n ").await),
+            Some((StatusCode::BAD_REQUEST, "Message is empty".to_string()))
+        );
+        assert_eq!(
+            error(edit(&state, note.id, "alice", &"a".repeat(MESSAGE_MAX + 1)).await).map(|e| e.0),
+            Some(StatusCode::BAD_REQUEST)
+        );
+        assert!(
+            edit(&state, note.id, "alice", &"😀".repeat(MESSAGE_MAX))
+                .await
+                .is_ok()
+        );
+        assert_eq!(
+            error(edit(&state, note.id, "alice", "well fuck").await),
+            Some((
+                StatusCode::BAD_REQUEST,
+                "Content blocked by profanity filter".to_string()
+            ))
+        );
+        add_media(db, "pic", Some("alice")).await;
+        let pic = send_with(&state, cid, "alice", "caption".to_string(), Some("pic"))
+            .await
+            .expect("send with media")
+            .0;
+        let blank = edit(&state, pic.id, "alice", "")
+            .await
+            .expect("attachment stays");
+        assert_eq!(blank.content, "");
+        assert!(blank.media.is_some() && blank.edited_at.is_some());
+        add_media(db, "pic2", Some("alice")).await;
+        let gone = send_with(&state, cid, "alice", "caption".to_string(), Some("pic2"))
+            .await
+            .expect("send with media")
+            .0;
+        for removed in [1, 2] {
+            sqlx::query("UPDATE messages SET media_removed = $1 WHERE id = $2")
+                .bind(removed)
+                .bind(gone.id)
+                .execute(db)
+                .await
+                .expect("attachment removed");
+            assert_eq!(
+                error(edit(&state, gone.id, "alice", " ").await),
+                Some((StatusCode::BAD_REQUEST, "Message is empty".to_string())),
+                "a removed attachment counts as none"
+            );
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn edits_reach_viewers_without_pinging() {
+        let (state, path) = temp_state("edit_events").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob"] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let asked = say(&state, (Some(cid), None, None), "bob", "lunch?").await;
+        let answer = say_to(
+            &state,
+            (Some(cid), None, None),
+            "alice",
+            "sure",
+            Some(asked.id),
+            true,
+        )
+        .await
+        .expect("reply");
+        let mut rx = state.hub.subscribe();
+        let before = now();
+        let edited = edit(&state, answer.id, "alice", "sure @bob, noon")
+            .await
+            .expect("edit");
+        assert_eq!(edited.content, "sure @bob, noon");
+        assert!(edited.edited_at.is_some_and(|t| t >= before));
+        let quote = edited.reply_to.clone().expect("quote kept");
+        assert_eq!(quote.id, asked.id);
+        assert_eq!(quote.content, "lunch?");
+        let events = edits(&mut rx);
+        assert_eq!(events.len(), 1, "one update, no ping");
+        let WsEvent::MessageUpdated {
+            server,
+            channel_id,
+            update: Updated::Stub(stub),
+            dm_users,
+        } = &events[0]
+        else {
+            panic!("not an edit stub");
+        };
+        assert_eq!(server.as_deref(), Some("rchat"));
+        assert_eq!(*channel_id, Some(cid));
+        assert!(dm_users.is_empty());
+        assert_eq!(stub.id, answer.id);
+        assert_eq!(stub.thread_root_id, None);
+        assert_eq!(stub.edited_at, edited.edited_at);
+        assert!(stub.stub);
+        let json = serde_json::to_string(&events[0]).expect("json");
+        for leak in ["lunch?", "noon", "alice", "\"message\"", "content"] {
+            assert!(!json.contains(leak), "{leak} in {json}");
+        }
+        assert!(json.contains("\"stub\":true"), "{json}");
+        let reposted = crate::ws::current(&state, events[0].clone())
+            .await
+            .expect("repost");
+        assert!(matches!(
+            reposted,
+            WsEvent::MessageUpdated { update: Updated::Stub(s), .. }
+                if s.id == answer.id && s.edited_at == edited.edited_at
+        ));
+        assert_eq!(
+            ping_rows(db, "bob").await.len(),
+            1,
+            "only the reply ping, nothing from the edit"
+        );
+        let same = edit(&state, answer.id, "alice", "sure @bob, noon")
+            .await
+            .expect("same text");
+        assert_eq!(same.edited_at, edited.edited_at);
+        assert!(edits(&mut rx).is_empty(), "no change, no event");
+        let listed = list(&state, cid, Some("bob")).await.expect("list");
+        let row = listed.iter().find(|m| m.id == answer.id).expect("listed");
+        assert_eq!(row.edited_at, edited.edited_at);
+        assert_eq!(row.content, "sure @bob, noon");
+        assert_eq!(row.reply_to.as_ref().map(|q| q.id), Some(asked.id));
+        let thread = say(&state, (None, None, Some(asked.id)), "alice", "in thread").await;
+        edit(&state, thread.id, "alice", "in the thread")
+            .await
+            .expect("thread edit");
+        let events = edits(&mut rx);
+        assert!(matches!(
+            events.as_slice(),
+            [WsEvent::MessageUpdated { server: Some(s), channel_id: Some(c), update: Updated::Stub(stub), .. }]
+                if s == "rchat" && *c == cid && stub.id == thread.id && stub.thread_root_id == Some(asked.id)
+        ));
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        let mine = say(&state, (None, Some(dm), None), "alice", "dm text").await;
+        edit(&state, mine.id, "alice", "dm text!")
+            .await
+            .expect("dm edit");
+        let events = edits(&mut rx);
+        assert!(matches!(
+            events.as_slice(),
+            [WsEvent::MessageUpdated { server: None, channel_id: None, update: Updated::Full { message }, dm_users }]
+                if dm_users.len() == 2 && dm_users.iter().any(|u| u == "bob") && message.content == "dm text!"
+        ));
+        let reposted = crate::ws::current(&state, events[0].clone())
+            .await
+            .expect("repost");
+        assert!(matches!(
+            reposted,
+            WsEvent::MessageUpdated { update: Updated::Full { message }, dm_users, .. }
+                if message.content == "dm text!" && dm_users.len() == 2
+        ));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn edits_of_old_messages_tell_no_history_viewers_nothing() {
+        let (state, path) = temp_state("edit_no_history").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob"] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let joined = now() - 1000;
+        let early = say(&state, (Some(cid), None, None), "alice", "early plan").await;
+        let early_reply = say(
+            &state,
+            (None, None, Some(early.id)),
+            "alice",
+            "early detail",
+        )
+        .await;
+        for id in [early.id, early_reply.id] {
+            sqlx::query("UPDATE messages SET created_at = $1 WHERE id = $2")
+                .bind(joined - 500)
+                .bind(id)
+                .execute(db)
+                .await
+                .expect("backdate");
+        }
+        add_user(db, "dave", "dave").await;
+        add_member(db, "rchat", "dave", 0, 0, joined).await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:dave', 1, 1, 0)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("no history");
+        perm(db, cid, "u:alice", 1).await;
+        perm(db, cid, "u:bob", 1).await;
+        let late = say(&state, (Some(cid), None, None), "bob", "after dave").await;
+        let mut rx = state.hub.subscribe();
+        edit(
+            &state,
+            early.id,
+            "alice",
+            "secret new plan https://edit.example/x",
+        )
+        .await
+        .expect("edit");
+        edit(&state, early_reply.id, "alice", "secret new detail")
+            .await
+            .expect("thread edit");
+        let events = edits(&mut rx);
+        assert_eq!(events.len(), 2);
+        for (ev, id, root) in [
+            (&events[0], early.id, None),
+            (&events[1], early_reply.id, Some(early.id)),
+        ] {
+            assert!(matches!(
+                ev,
+                WsEvent::MessageUpdated { server: Some(s), channel_id: Some(c), update: Updated::Stub(stub), .. }
+                    if s == "rchat" && *c == cid && stub.id == id && stub.thread_root_id == root
+            ));
+            let json = serde_json::to_string(ev).expect("json");
+            for leak in [
+                "secret",
+                "early",
+                "edit.example",
+                "alice",
+                "content",
+                "author",
+            ] {
+                assert!(!json.contains(leak), "{leak} in {json}");
+            }
+        }
+        let page = |id: i64| PageQuery {
+            before: None,
+            after: None,
+            around: Some(id),
+            limit: Some(1),
+        };
+        let reread = |user: &'static str, id: i64| {
+            channel_messages(
+                State(state.clone()),
+                MaybeAuthed(Some(mem_user(user, false))),
+                HeaderMap::new(),
+                Path(cid),
+                Query(page(id)),
+            )
+        };
+        let hidden = reread("dave", early.id).await.expect("dave").0;
+        assert!(hidden.iter().all(|m| m.id != early.id));
+        assert_eq!(
+            hidden.iter().map(|m| m.id).collect::<Vec<_>>(),
+            vec![late.id]
+        );
+        let thread = thread_messages(
+            State(state.clone()),
+            MaybeAuthed(Some(mem_user("dave", false))),
+            HeaderMap::new(),
+            Path(early.id),
+            Query(page(early_reply.id)),
+        )
+        .await;
+        assert!(matches!(thread, Err(ApiError(StatusCode::NOT_FOUND, _))));
+        let shown = reread("bob", early.id).await.expect("bob").0;
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].id, early.id);
+        assert_eq!(shown[0].content, "secret new plan https://edit.example/x");
+        assert!(shown[0].edited_at.is_some());
+        let shown = thread_messages(
+            State(state.clone()),
+            MaybeAuthed(Some(mem_user("bob", false))),
+            HeaderMap::new(),
+            Path(early.id),
+            Query(page(early_reply.id)),
+        )
+        .await
+        .expect("bob thread")
+        .0;
+        assert_eq!(shown[0].id, early_reply.id);
+        assert_eq!(shown[0].content, "secret new detail");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn edits_replace_link_previews_when_links_change() {
+        let (state, path) = temp_state("edit_embeds").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "alice").await;
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        let note = say(
+            &state,
+            (Some(cid), None, None),
+            "alice",
+            "see https://old.example/a",
+        )
+        .await;
+        for (url, title) in [
+            ("https://old.example/a", "Old"),
+            ("https://new.example/b", "New"),
+        ] {
+            sqlx::query("INSERT INTO embeds(url, title, fetched_at) VALUES($1, $2, $3)")
+                .bind(url)
+                .bind(title)
+                .bind(now())
+                .execute(db)
+                .await
+                .expect("cached preview");
+        }
+        sqlx::query("INSERT INTO message_embeds(message_id, ord, url, banner_removed, removed) VALUES($1, 0, 'https://old.example/a', 1, 0)")
+            .bind(note.id)
+            .execute(db)
+            .await
+            .expect("preview");
+        let titles = |m: &Message| m.embeds.iter().map(|e| e.title.clone()).collect::<Vec<_>>();
+        let same = edit(&state, note.id, "alice", "look https://old.example/a")
+            .await
+            .expect("same link");
+        assert_eq!(titles(&same), vec![Some("Old".to_string())]);
+        assert!(
+            same.embeds[0].banner_removed,
+            "a kept preview keeps its state"
+        );
+        let mut rx = state.hub.subscribe();
+        let moved = edit(&state, note.id, "alice", "now https://new.example/b")
+            .await
+            .expect("new link");
+        assert!(
+            titles(&moved).iter().all(|t| t.as_deref() == Some("New")),
+            "old previews are removed"
+        );
+        let mut stubs = 0;
+        let resolved = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                match rx.recv().await {
+                    Ok(WsEvent::EmbedsResolved { message_id, .. }) if message_id == note.id => {
+                        panic!("previews of an edited channel message travel as a stub")
+                    }
+                    Ok(WsEvent::MessageUpdated {
+                        server,
+                        channel_id,
+                        update: Updated::Stub(stub),
+                        ..
+                    }) if stub.id == note.id => {
+                        stubs += 1;
+                        if stubs == 2 {
+                            break (server, channel_id, stub);
+                        }
+                    }
+                    Ok(_) => continue,
+                    Err(e) => panic!("{e}"),
+                }
+            }
+        })
+        .await
+        .expect("a second stub once the new previews are stored");
+        assert_eq!(resolved.0.as_deref(), Some("rchat"));
+        assert_eq!(resolved.1, Some(cid));
+        assert_eq!(resolved.2.edited_at, moved.edited_at);
+        let listed = list(&state, cid, Some("alice")).await.expect("list");
+        let row = listed.iter().find(|m| m.id == note.id).expect("listed");
+        assert_eq!(titles(row), vec![Some("New".to_string())]);
+        assert!(!row.embeds[0].banner_removed);
+        sqlx::query("UPDATE messages SET content = 'gone' WHERE id = $1")
+            .bind(note.id)
+            .execute(db)
+            .await
+            .expect("edited behind the job");
+        sqlx::query("DELETE FROM message_embeds WHERE message_id = $1")
+            .bind(note.id)
+            .execute(db)
+            .await
+            .expect("clear");
+        embeds::spawn_unfurl(
+            &state,
+            Some("rchat".to_string()),
+            Some(cid),
+            None,
+            None,
+            note.id,
+            "now https://new.example/b",
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(
+            list(&state, cid, Some("alice"))
+                .await
+                .expect("list")
+                .iter()
+                .find(|m| m.id == note.id)
+                .map(|m| m.embeds.len()),
+            Some(0),
+            "a job for links the message no longer has stores nothing"
         );
         done(state, path).await;
     }

@@ -76,12 +76,14 @@ export function AutocompletePopup<T>({
   ac,
   keyOf,
   render,
+  below = false,
 }: {
   id: string
   title: ReactNode
   ac: Autocomplete<T>
   keyOf: (item: T) => string
   render: (item: T, active: boolean) => ReactNode
+  below?: boolean
 }) {
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -103,7 +105,7 @@ export function AutocompletePopup<T>({
   return (
     <div
       data-popover
-      className="absolute inset-x-0 bottom-full z-30 mb-2 overflow-hidden rounded-2xl bg-surface-container-high py-2 shadow-elevation-2"
+      className={`absolute inset-x-0 z-30 overflow-hidden rounded-2xl ${below ? 'top-full mt-2' : 'bottom-full mb-2'} bg-surface-container-high py-2 shadow-elevation-2`}
       onMouseDown={e => e.preventDefault()}
     >
       <div className="truncate px-4 pb-1 text-xs font-medium tracking-wide text-on-surface-variant uppercase">

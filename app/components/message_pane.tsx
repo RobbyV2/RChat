@@ -81,6 +81,8 @@ import { PingBadge, pingLabel } from './ping_badge'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { QuickReactions, ReactionBar, rowAt } from './reactions'
 import { ReplyPreview } from './replies'
+import { MessageEditor, editAction, editMenuItem } from './message_editor'
+import { canEdit as ownEditable } from '../lib/sed'
 
 const EMPTY: Message[] = []
 
@@ -271,12 +273,15 @@ interface RowProps {
   canDelete: boolean
   canReact: boolean
   canUnreact: boolean
+  canEdit: boolean
+  editing: boolean
   channel: boolean
   server: string | null
   color: string | undefined
   quoteColor: string | undefined
   onMenu: (m: Message, x: number, y: number) => void
   onReply: (m: Message) => void
+  onEdit: (m: Message) => void
   onJump: (id: number) => void
 }
 
@@ -288,16 +293,20 @@ const MessageRow = memo(function MessageRow({
   canDelete,
   canReact,
   canUnreact,
+  canEdit,
+  editing,
   channel,
   server,
   color,
   quoteColor,
   onMenu,
   onReply,
+  onEdit,
   onJump,
 }: RowProps) {
   const openThread = useStore(s => s.openThread)
   const actions: ToolbarAction[] = []
+  if (canEdit && !editing) actions.push(editAction(() => onEdit(m)))
   if (canReact && canQuote(m)) actions.push(replyAction(() => onReply(m)))
   if (channel)
     actions.push({
@@ -366,7 +375,11 @@ const MessageRow = memo(function MessageRow({
                 {fmtTime(m.created_at)}
               </span>
             </div>
-            <MarkdownMessage message={m} canDelete={canDelete} />
+            <MarkdownMessage
+              message={m}
+              canDelete={canDelete}
+              editor={editing ? <MessageEditor /> : undefined}
+            />
             <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
             {channel && m.reply_count > 0 && (
               <button
@@ -500,6 +513,10 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const jumpToPresent = useStore(s => s.jumpToPresent)
   const jumpTo = useStore(s => s.jumpTo)
   const startReply = useStore(s => s.startReply)
+  const startEdit = useStore(s => s.startEdit)
+  const editingId = useStore(s =>
+    s.editing && s.view && s.editing.key === viewKey(s.view) ? s.editing.id : null
+  )
   const dismissUnread = useStore(s => s.dismissUnread)
   const startDm = useStore(s => s.startDm)
   const grantAdmin = useStore(s => s.grantAdmin)
@@ -598,6 +615,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       })
     }
     if (canReact && canQuote(msg)) items.unshift(replyMenuItem(() => replyTo(msg)))
+    if (canEdit(msg)) items.unshift(editMenuItem(() => editMsg(msg)))
     if (view?.kind === 'channel' && !self) {
       const target = memberOf(useStore.getState(), view.server, author.username)
       if (
@@ -680,21 +698,30 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     (m.author.username === me.username ||
       (view?.kind === 'channel' && hasPerm(perms, Perm.DeleteMessages)))
 
+  const canEdit = (m: Message) => canReact && ownEditable(m, me?.username)
+
   const replyTo = (msg: Message) => {
     if (scope) startReply(scope, msg)
   }
 
+  const editMsg = (msg: Message) => {
+    if (scope) startEdit(scope, msg)
+  }
+
   const menuRef = useRef(messageMenu)
   const replyRef = useRef(replyTo)
+  const editRef = useRef(editMsg)
   useEffect(() => {
     menuRef.current = messageMenu
     replyRef.current = replyTo
+    editRef.current = editMsg
   })
   const rowMenu = useCallback(
     (msg: Message, x: number, y: number) => menuRef.current(msg, x, y),
     []
   )
   const rowReply = useCallback((msg: Message) => replyRef.current(msg), [])
+  const rowEdit = useCallback((msg: Message) => editRef.current(msg), [])
   const rowJump = useCallback(
     (id: number) => {
       if (scope) void jumpTo(scope, id)
@@ -916,6 +943,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     canDelete={canDelete(m)}
                     canReact={canReact}
                     canUnreact={canUnreact}
+                    canEdit={canEdit(m)}
+                    editing={editingId === m.id}
                     channel={view?.kind === 'channel'}
                     server={memberServer}
                     color={roleColor(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])}
@@ -929,6 +958,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     }
                     onMenu={rowMenu}
                     onReply={rowReply}
+                    onEdit={rowEdit}
                     onJump={rowJump}
                   />
                 ))}

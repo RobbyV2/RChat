@@ -215,6 +215,7 @@ export interface Message {
   call: CallLog | null
   reactions?: Reaction[]
   reply_to?: ReplyRef | null
+  edited_at?: number | null
 }
 
 export interface ReplyRef {
@@ -395,9 +396,21 @@ export type VoiceMsg =
       payload: RtcPayload
     }
 
+// An edit in a server channel: only which message changed; holders re-read it.
+export interface EditStub {
+  type: 'message_updated'
+  stub: true
+  id: number
+  server: string
+  channel_id: number
+  thread_root_id: number | null
+  edited_at: number | null
+}
+
 export type WsEvent =
   | ({ type: 'message'; message: Message } & Scoped)
-  | { type: 'message_updated'; message: Message }
+  | { type: 'message_updated'; message: Message; stub?: false }
+  | EditStub
   | ({
       type: 'reaction_added' | 'reaction_removed'
       message_id: number

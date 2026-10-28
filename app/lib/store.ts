@@ -40,10 +40,12 @@ import {
 import { EMPTY_PREFS, emojiKey, noteUse, parseEmojiPrefs, setTone, type EmojiPrefs } from './emoji'
 import { canAddEmoji, emojiBase, reacted, reactorKey, withReaction } from './reactions'
 import {
+  editedQuote,
   fetchedQuote,
   fillQuote,
   parseReplyMention,
   quoteDeleted,
+  quoteEdited,
   quoteOf,
   replyMentionKey,
   replyMentionValue,
@@ -51,6 +53,7 @@ import {
   sendReply,
   type Replying,
 } from './replies'
+import { applySed, lastEditable, type Sed } from './sed'
 import { catchUpDelay, due } from './backoff'
 import { createReadQueue, mergeReads } from './reads'
 import {
@@ -115,7 +118,7 @@ import {
   type Folder,
   type Layout,
 } from './nav_layout'
-import { canChangeRole, cleanBio, memberPerms, rolePerms } from './rules'
+import { MESSAGE_MAX, canChangeRole, charCount, cleanBio, memberPerms, rolePerms } from './rules'
 import {
   dropStashedInvite,
   entryState,
@@ -153,6 +156,7 @@ import type {
   ChannelPerm,
   ConfirmChoice,
   DmSummary,
+  EditStub,
   Embed,
   Me,
   Member,
@@ -247,6 +251,14 @@ export type ActiveDialog =
   | { kind: 'rename_folder'; id: string }
 
 export type Panel = { kind: 'thread'; root: Message } | { kind: 'search' }
+
+// The message being edited inline: the list it was started from and the text so far.
+export interface Editing {
+  key: string
+  id: number
+  text: string
+  focus?: number
+}
 
 export interface Focus {
   id: number | null
@@ -466,6 +478,7 @@ interface RChatState {
   drafts: Record<string, string>
   replying: Record<string, Replying>
   composerFocus: { key: string; n: number } | null
+  editing: Editing | null
   search: SearchState
   error: string | null
   adminOverview: AdminOverview | null
@@ -526,6 +539,12 @@ interface RChatState {
   startReply: (key: string, m: Message) => void
   cancelReply: (key: string) => void
   toggleReplyMention: (key: string) => void
+  startEdit: (key: string, m: Message) => void
+  setEditText: (text: string) => void
+  cancelEdit: (refocus?: boolean) => void
+  saveEdit: (refocus?: boolean) => void
+  editLast: (key: string) => boolean
+  sedEdit: (key: string, sed: Sed) => Promise<boolean>
   sendMessage: (content: string, p2pExpiresIn?: number | null) => void
   markRead: (scope: string, messageId: number) => void
   seeThread: (rootId: number) => void
@@ -1838,6 +1857,131 @@ export const useStore = create<RChatState>()((set, get) => {
     return fillQuote(m, known, findMessage(m.reply_to.id)) ?? m
   }
 
+  // Does anything shown quote message `id` (a reply's quote we may refresh)?
+  const quoted = (id: number) => {
+    const quotes_ = (list: Message[]) =>
+      list.some(m => m.reply_to?.id === id && !m.reply_to.deleted)
+    const { messages, panel } = get()
+    return (
+      Object.values(messages).some(quotes_) ||
+      [...tails.values()].some(quotes_) ||
+      [...quotes.values()].some(q => q.id === id && !q.deleted) ||
+      (panel?.kind === 'thread' && panel.root.reply_to?.id === id)
+    )
+  }
+
+  // An edit in a server channel arrives as a stub without content: whoever shows the message
+  // (or a quote of it) re-reads it through the list, which applies the read-history rules.
+  const rereads = new Map<number, boolean>()
+  const rereadEdited = (ev: EditStub) => {
+    const { id, channel_id } = ev
+    const root = ev.thread_root_id ?? null
+    if (!held(id) && !quoted(id)) return
+    if (rereads.has(id)) {
+      rereads.set(id, true)
+      return
+    }
+    rereads.set(id, false)
+    const gen = quoteGen
+    const page = { around: id, limit: 1 }
+    const read =
+      root !== null ? api.threadMessages(root, page) : api.channelMessages(channel_id, page)
+    read
+      .then(list => {
+        if (gen !== quoteGen) return
+        const m = list.find(x => x.id === id)
+        if (m) applyUpdated(m)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (gen !== quoteGen) return
+        const again = rereads.get(id)
+        rereads.delete(id)
+        if (again) rereadEdited(ev)
+      })
+  }
+
+  // A newer copy of a message (an edit, a call log update): replaces the shown one but keeps
+  // its reactions, and quotes of it take the new text.
+  const applyUpdated = (m: Message) => {
+    const next = withQuote(m)
+    patchReactions(next.id, x => ({ ...next, reactions: x.reactions }))
+    readQuote(next)
+    for (const [id, q] of quotes) {
+      const e = editedQuote(q, next)
+      if (e !== q) quotes.set(id, e)
+    }
+    mapTails(list => quoteEdited(list, next))
+    set(s => {
+      const messages = mapLists(s.messages, list => quoteEdited(list, next))
+      const root = s.panel?.kind === 'thread' ? s.panel.root : null
+      const rootQuote = root?.reply_to ? editedQuote(root.reply_to, next) : undefined
+      const replying = Object.entries(s.replying).some(([, r]) => r.message.id === next.id)
+        ? Object.fromEntries(
+            Object.entries(s.replying).map(([k, r]) => [
+              k,
+              r.message.id === next.id
+                ? { ...r, message: { ...next, reactions: r.message.reactions } }
+                : r,
+            ])
+          )
+        : s.replying
+      return {
+        ...(messages === s.messages ? {} : { messages }),
+        ...(root && rootQuote !== root.reply_to
+          ? { panel: { kind: 'thread' as const, root: { ...root, reply_to: rootQuote } } }
+          : {}),
+        ...(replying === s.replying ? {} : { replying }),
+      }
+    })
+  }
+
+  // The message Up and `s/` edit from the composer of `key`: your newest one there.
+  const editTarget = (key: string) => {
+    const { messages, panel, me } = get()
+    const root =
+      panel?.kind === 'thread' && threadKey(panel.root.id) === key
+        ? (findMessage(panel.root.id) ?? panel.root)
+        : null
+    return lastEditable(messages[key] ?? [], me?.username, root)
+  }
+
+  // A message still showing its attachment (not removed or expired) may have no text.
+  const attached = (m: Message) => !!m.media && !m.media.removed
+
+  // Resolves with the sent message once the outgoing `tempId` is delivered, or `null` when it
+  // fails or is cancelled.
+  const sentWaiters = new Map<number, ((m: Message | null) => void)[]>()
+  const settleSent = (tempId: number, m: Message | null) => {
+    const waiting = sentWaiters.get(tempId)
+    sentWaiters.delete(tempId)
+    for (const w of waiting ?? []) w(m)
+  }
+  const sentAs = (tempId: number) =>
+    new Promise<Message | null>(resolve => {
+      sentWaiters.set(tempId, [...(sentWaiters.get(tempId) ?? []), resolve])
+    })
+
+  const sedOn = async (m: Message, sed: Sed) => {
+    const next = applySed(m.content, sed)
+    if (next === null) {
+      fail(new Error('No match in your last message'))
+      return false
+    }
+    if (next === m.content) return true
+    if (!next.trim() && !attached(m)) {
+      confirmDeleteMessage(m.id)
+      return true
+    }
+    try {
+      applyUpdated(await api.editMessage(m.id, next))
+      return true
+    } catch (e) {
+      fail(e)
+      return false
+    }
+  }
+
   const liveKey = (key: string) => {
     const { view, panel } = get()
     return (
@@ -2578,12 +2722,14 @@ export const useStore = create<RChatState>()((set, get) => {
           }
         } catch (e) {
           patchOutgoing(key, head.tempId, 'failed')
+          settleSent(head.tempId, null)
           fail(e)
           break
         }
         if (holding(key)) holdTail(key, real)
         const next = holding(key) ? {} : (appendLive(key, [real], true) ?? holdLive(key, [real]))
         set(s => ({ outbox: dropOutgoing(s.outbox, key, head.tempId), ...next }))
+        settleSent(head.tempId, real)
         if (key[0] !== 't') get().markRead(key, real.id)
       }
     } finally {
@@ -2652,6 +2798,7 @@ export const useStore = create<RChatState>()((set, get) => {
     drafts: {},
     replying: {},
     composerFocus: null,
+    editing: null,
     search: emptySearch(),
     error: null,
     adminOverview: null,
@@ -2870,6 +3017,8 @@ export const useStore = create<RChatState>()((set, get) => {
       reactorCache.clear()
       quotes.clear()
       quoteReads.clear()
+      rereads.clear()
+      for (const id of [...sentWaiters.keys()]) settleSent(id, null)
       quoteGen += 1
       clearProfiles()
       dropStashedInvite()
@@ -2922,6 +3071,7 @@ export const useStore = create<RChatState>()((set, get) => {
         drafts: {},
         replying: {},
         composerFocus: null,
+        editing: null,
         bootError: null,
         search: emptySearch(),
         adminOverview: null,
@@ -3210,6 +3360,97 @@ export const useStore = create<RChatState>()((set, get) => {
 
     cancelReply: key => set(s => ({ replying: keyed(s.replying, key, null) })),
 
+    startEdit: (key, m) => {
+      const { me, guest } = get()
+      if (guest || !me || m.author.username !== me.username || m.kind !== 'user') return
+      set({ editing: { key, id: m.id, text: m.content } })
+    },
+
+    setEditText: text => set(s => (s.editing ? { editing: { ...s.editing, text } } : {})),
+
+    cancelEdit: refocus => {
+      const ed = get().editing
+      if (!ed) return
+      set(s => ({
+        editing: null,
+        ...(refocus ? { composerFocus: { key: ed.key, n: (s.composerFocus?.n ?? 0) + 1 } } : {}),
+      }))
+    },
+
+    saveEdit: refocus => {
+      const ed = get().editing
+      if (!ed) return
+      const m = findMessage(ed.id)
+      if (!m) {
+        set({ editing: null })
+        fail(new Error('This message is no longer here'))
+        return
+      }
+      const text = ed.text
+      if (!text.trim() && !attached(m)) {
+        confirmDeleteMessage(m.id)
+        return
+      }
+      if (charCount(text) > MESSAGE_MAX) return
+      get().cancelEdit(refocus)
+      if (text === m.content) return
+      const edited_at = Math.floor(Date.now() / 1000)
+      patchReactions(m.id, x => ({ ...x, content: text, edited_at }))
+      api
+        .editMessage(m.id, text)
+        .then(saved => {
+          if (findMessage(m.id)?.content === text) applyUpdated(saved)
+        })
+        .catch(e => {
+          patchReactions(m.id, x =>
+            x.content === text ? { ...x, content: m.content, edited_at: m.edited_at } : x
+          )
+          fail(e)
+        })
+    },
+
+    editLast: key => {
+      const ed = get().editing
+      if (ed && liveKey(ed.key)) {
+        set({ editing: { ...ed, focus: (ed.focus ?? 0) + 1 } })
+        return true
+      }
+      if (ed && ed.text !== findMessage(ed.id)?.content) {
+        fail(new Error('Finish your other edit first'))
+        return true
+      }
+      const m = editTarget(key)
+      if (!m) return false
+      get().startEdit(key, m)
+      return get().editing?.id === m.id
+    },
+
+    sedEdit: async (key, sed) => {
+      const sending = (get().outbox[key] ?? []).at(-1)
+      if (sending) {
+        if (sending.status === 'failed') {
+          fail(new Error('Your last message was not sent'))
+          return false
+        }
+        if (applySed(sending.msg.content, sed) === null) {
+          fail(new Error('No match in your last message'))
+          return false
+        }
+        const sent = await sentAs(sending.tempId)
+        if (!sent) {
+          fail(new Error('Your last message was not sent'))
+          return false
+        }
+        return sedOn(sent, sed)
+      }
+      const m = editTarget(key)
+      if (!m) {
+        fail(new Error('You have no message here to edit'))
+        return false
+      }
+      return sedOn(m, sed)
+    },
+
     toggleReplyMention: key => {
       const cur = get().replying[key]
       const username = get().me?.username
@@ -3253,6 +3494,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
     cancelOutgoing: (key, tempId) => {
       set(s => ({ outbox: dropOutgoing(s.outbox, key, tempId) }))
+      settleSent(tempId, null)
       void drain(key)
     },
 
@@ -3458,7 +3700,10 @@ export const useStore = create<RChatState>()((set, get) => {
           return i === -1 ? list : [...list.slice(0, i), ...list.slice(i + 1)]
         }
         mapTails(drop)
-        set(s => ({ messages: mapLists(s.messages, drop) }))
+        set(s => ({
+          messages: mapLists(s.messages, drop),
+          ...(s.editing?.id === id ? { editing: null } : {}),
+        }))
       }),
 
     deleteMedia: messageId =>
@@ -3936,9 +4181,8 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'message_updated': {
-          const next = withQuote(ev.message)
-          patchMessage(next.id, m => ({ ...next, reactions: m.reactions }))
-          readQuote(next)
+          if (ev.stub) rereadEdited(ev)
+          else applyUpdated(ev.message)
           return
         }
         case 'reaction_added':
@@ -4007,6 +4251,9 @@ export const useStore = create<RChatState>()((set, get) => {
               ...(Object.keys(replying).length === Object.keys(s.replying).length
                 ? {}
                 : { replying }),
+              ...(s.editing && (s.editing.id === ev.id || s.editing.key === threadKey(ev.id))
+                ? { editing: null }
+                : {}),
             }
           })
           return

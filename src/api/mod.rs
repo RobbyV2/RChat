@@ -564,6 +564,9 @@ pub struct Message {
     /// For an inline reply, the message it quotes; `null` otherwise and in search results.
     #[serde(default)]
     pub reply_to: Option<ReplyRef>,
+    /// Unix seconds of the last edit; `null` if the message was never edited.
+    #[serde(default)]
+    pub edited_at: Option<i64>,
 }
 
 /// A text field the profanity filter can check.
@@ -1370,7 +1373,10 @@ fn api_routes(
             "/dms/{id}/messages",
             get(messages::dm_messages).post(messages::send_dm_message),
         )
-        .route("/messages/{id}", delete(messages::delete_message))
+        .route(
+            "/messages/{id}",
+            delete(messages::delete_message).patch(messages::edit_message),
+        )
         .route("/messages/{id}/media", delete(media::delete_media))
         .route(
             "/messages/{id}/reactions/{emoji}",

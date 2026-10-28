@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   Eye,
@@ -14,34 +14,18 @@ import {
   X,
 } from 'lucide-react'
 import { errorText, useStore, viewKey } from '../lib/store'
-import { api } from '../lib/instances'
-import type { Message, UserRef } from '../lib/types'
-import {
-  MENTION_QUERY,
-  SUGGEST_DEBOUNCE,
-  mentionText,
-  recentAuthors,
-  suggestKey,
-  suggestPeople,
-} from '../lib/mention_suggest'
 import { MESSAGE_MAX, charCount } from '../lib/rules'
-import { sendKey } from '../lib/keys'
+import { composing, sendKey } from '../lib/keys'
 import { runJoinStep, type JoinStep } from '../lib/join_flow'
-import { findTrigger, spliceText } from '../lib/autocomplete'
-import {
-  boostFor,
-  findShortcode,
-  loadEmojiData,
-  matchShortcodes,
-  withTone,
-  type CodeMatch,
-} from '../lib/emoji'
+import { spliceText } from '../lib/autocomplete'
+import { loadEmojiData } from '../lib/emoji'
+import { parseSed } from '../lib/sed'
+import { readOnly } from '../lib/reactions'
 import { Dialog, FieldError, fieldCls, filledBtn } from './server_settings'
-import { AutocompletePopup, useAutocomplete } from './autocomplete'
-import { EmojiPicker, SHEET_QUERY, useEmojiData } from './emoji_picker'
+import { EmojiPicker, SHEET_QUERY } from './emoji_picker'
 import { useMedia } from './context_menu'
-import { UserAvatar } from './user_avatar'
 import { ReplyBar } from './replies'
+import { useTextAssist } from './text_assist'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
   { label: '1 hour', seconds: 3600 },
@@ -114,70 +98,6 @@ function ExpiryDialog({
         </button>
       </div>
     </Dialog>
-  )
-}
-
-const NO_MESSAGES: Message[] = []
-const NO_PEOPLE: UserRef[] = []
-const CACHE_MAX = 200
-
-// Mention suggestions for the composer: recent authors in view, then members matching the
-// query from the server (debounced, cached per server and query), then the cached member
-// list. DMs offer the other participant.
-function useMentionSearch(draftKey: string | null, query: string | null) {
-  const me = useStore(s => s.me?.username ?? null)
-  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
-  const dmOther = useStore(s => {
-    const v = s.view
-    return v?.kind === 'dm' ? (s.dms.find(d => d.id === v.dmId)?.other ?? null) : null
-  })
-  const own = useStore(s => (draftKey ? s.messages[draftKey] : undefined)) ?? NO_MESSAGES
-  const parent =
-    useStore(s =>
-      draftKey?.[0] === 't' && s.view?.kind === 'channel' ? s.messages[viewKey(s.view)] : undefined
-    ) ?? NO_MESSAGES
-  const list = useStore(s => (server ? s.members[server]?.list : undefined)) ?? NO_PEOPLE
-  const info = useStore(s => (server ? s.memberInfo[server] : undefined))
-  const cache = useRef(new Map<string, UserRef[]>())
-  const [tick, setTick] = useState(0)
-
-  useEffect(() => {
-    if (!server || !query) return
-    const key = suggestKey(server, query)
-    if (cache.current.has(key)) return
-    const t = setTimeout(() => {
-      api
-        .suggestMembers(server, query)
-        .then(found => {
-          if (cache.current.size >= CACHE_MAX) cache.current.clear()
-          cache.current.set(key, found)
-          setTick(n => n + 1)
-        })
-        .catch(() => {})
-    }, SUGGEST_DEBOUNCE)
-    return () => clearTimeout(t)
-  }, [server, query])
-
-  return useCallback(
-    (q: string): UserRef[] => {
-      void tick
-      if (dmOther) return suggestPeople(q, [[dmOther]], () => false)
-      if (!server) return []
-      let remote: UserRef[] = NO_PEOPLE
-      for (let n = q.length; n > 0; n -= 1) {
-        const hit = cache.current.get(suggestKey(server, q.slice(0, n)))
-        if (hit) {
-          remote = hit
-          break
-        }
-      }
-      return suggestPeople(
-        q,
-        [recentAuthors(own), recentAuthors(parent), remote, list],
-        name => name === me || info?.[name] === null
-      )
-    },
-    [tick, dmOther, server, own, parent, list, info, me]
   )
 }
 
@@ -258,22 +178,18 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const sendThreadMessage = useStore(s => s.sendThreadMessage)
   const setDraft = useStore(s => s.setDraft)
   const text = useStore(s => (draftKey ? (s.drafts[draftKey] ?? '') : ''))
-  const prefs = useStore(s => s.emoji)
-  const noteEmoji = useStore(s => s.noteEmoji)
   const replying = useStore(s => (draftKey ? s.replying[draftKey] !== undefined : false))
   const cancelReply = useStore(s => s.cancelReply)
   const focusAsk = useStore(s => s.composerFocus)
+  const editLast = useStore(s => s.editLast)
+  const sedEdit = useStore(s => s.sedEdit)
   const [expiryOpen, setExpiryOpen] = useState(false)
   const [pickerFor, setPickerFor] = useState<string | null>(null)
-  const [caret, setCaret] = useState<number | null>(null)
   const sheet = useMedia(SHEET_QUERY)
   const fileRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const emojiRef = useRef<HTMLButtonElement>(null)
   const sel = useRef({ start: 0, end: 0 })
-  const placeCaret = useRef<number | null>(null)
-  const acId = useId()
-  const peopleId = useId()
   const pickerOpen = pickerFor !== null && pickerFor === draftKey
   const focusSeen = useRef(focusAsk?.n ?? 0)
 
@@ -283,84 +199,20 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     if (focusAsk.key === draftKey) inputRef.current?.focus()
   }, [focusAsk, draftKey])
 
-  useLayoutEffect(() => {
-    const el = inputRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
-    const at = placeCaret.current
-    placeCaret.current = null
-    if (at !== null && document.activeElement === el) {
-      el.setSelectionRange(at, at)
-      setCaret(at)
-    }
-  }, [text, draftKey])
-
-  const trigger = caret !== null && !pickerOpen ? findTrigger(text, caret, ':', 2) : null
-  const atTrigger =
-    caret !== null && !pickerOpen && !trigger
-      ? findTrigger(text, caret, '@', 0, MENTION_QUERY)
-      : null
-  const searchPeople = useMentionSearch(draftKey, atTrigger?.query ?? null)
-  const { data: emoji } = useEmojiData(trigger !== null)
-  const searchCodes = useCallback(
-    (q: string) => (emoji ? matchShortcodes(emoji, q, 10, boostFor(prefs, Date.now())) : []),
-    [emoji, prefs]
-  )
-
   const draftNow = () => (draftKey ? (useStore.getState().drafts[draftKey] ?? '') : '')
 
-  const ac = useAutocomplete<CodeMatch>({
-    scope: trigger ? `${draftKey}:${trigger.start}` : null,
-    query: trigger?.query ?? '',
-    search: searchCodes,
-    onAccept: m => {
-      if (!draftKey || !trigger) return
-      const picked = withTone(m.emoji, prefs.tone)
-      const cur = draftNow()
-      const pad = /\s/.test(cur[trigger.end] ?? '') ? '' : ' '
-      placeCaret.current = trigger.start + picked.length + pad.length
-      setDraft(draftKey, spliceText(cur, trigger.start, trigger.end, picked + pad))
-      noteEmoji(m.emoji.emoji, picked)
-      inputRef.current?.focus()
+  const assist = useTextAssist({
+    listKey: draftKey,
+    text,
+    getText: draftNow,
+    setText: value => {
+      if (draftKey) setDraft(draftKey, value)
     },
+    inputRef,
+    paused: pickerOpen,
+    maxHeight: 160,
   })
-
-  const people = useAutocomplete<UserRef>({
-    scope: atTrigger ? `${draftKey}@${atTrigger.start}` : null,
-    query: atTrigger?.query ?? '',
-    search: searchPeople,
-    onAccept: u => {
-      if (!draftKey || !atTrigger) return
-      const token = mentionText(u.username)
-      const cur = draftNow()
-      const pad = /\s/.test(cur[atTrigger.end] ?? '') ? '' : ' '
-      placeCaret.current = atTrigger.start + token.length + pad.length
-      setDraft(draftKey, spliceText(cur, atTrigger.start, atTrigger.end, token + pad))
-      inputRef.current?.focus()
-    },
-  })
-  const popup = people.open ? people : ac
-  const popupId = people.open ? peopleId : acId
-
-  const onType = (value: string, at: number | null) => {
-    if (!draftKey) return
-    if (emoji && at !== null && value[at - 1] === ':' && value.length === text.length + 1) {
-      const t = findTrigger(value, at - 1, ':', 2)
-      const hit = t ? findShortcode(emoji, t.query) : null
-      if (t && hit) {
-        const picked = withTone(hit, prefs.tone)
-        placeCaret.current = t.start + picked.length
-        setDraft(draftKey, spliceText(value, t.start, at, picked))
-        noteEmoji(hit.emoji, picked)
-        return
-      }
-    }
-    setDraft(draftKey, value)
-  }
-
-  const trackCaret = (el: HTMLTextAreaElement) =>
-    setCaret(el.selectionStart === el.selectionEnd ? el.selectionStart : null)
+  const { trackCaret } = assist
 
   const openPicker = () => {
     const el = inputRef.current
@@ -436,6 +288,14 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
 
   const send = () => {
     if ((!text.trim() && !pending) || tooLong) return
+    const sed = pending || !draftKey ? null : parseSed(text)
+    if (sed && draftKey) {
+      const key = draftKey
+      void sedEdit(key, sed).then(ok => {
+        if (ok && draftNow() === text) setDraft(key, '')
+      })
+      return
+    }
     if (pending?.mode === 'p2p') setExpiryOpen(true)
     else doSend()
   }
@@ -505,40 +365,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       <div
         className={`relative flex items-end gap-2 bg-surface-container-high px-3 py-2 ${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}
       >
-        <AutocompletePopup
-          id={acId}
-          title={`Emoji matching :${trigger?.query ?? ''}`}
-          ac={ac}
-          keyOf={m => m.emoji.emoji}
-          render={m => (
-            <>
-              <span className="w-7 shrink-0 text-center font-emoji text-[22px] leading-none">
-                {withTone(m.emoji, prefs.tone)}
-              </span>
-              <span className="min-w-0 truncate">:{m.code}:</span>
-            </>
-          )}
-        />
-        <AutocompletePopup
-          id={peopleId}
-          title="Members"
-          ac={people}
-          keyOf={u => u.username}
-          render={u => (
-            <>
-              <UserAvatar
-                username={u.username}
-                avatarKind={u.avatar_kind}
-                avatarColor={u.avatar_color}
-                size={24}
-              />
-              <span className="streamer min-w-0 truncate font-medium">{u.display_name}</span>
-              <span className="streamer min-w-0 shrink truncate text-xs opacity-70">
-                @{u.username}
-              </span>
-            </>
-          )}
-        />
+        {assist.popups}
         {assetUploads && (
           <>
             <button
@@ -562,22 +389,24 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         <textarea
           ref={inputRef}
           rows={1}
-          value={text}
-          onChange={e => {
-            const el = e.currentTarget
-            onType(el.value, el.selectionStart === el.selectionEnd ? el.selectionStart : null)
-            trackCaret(el)
-          }}
-          onSelect={e => trackCaret(e.currentTarget)}
-          onBlur={() => setCaret(null)}
-          role="combobox"
-          aria-autocomplete="list"
-          aria-haspopup="listbox"
-          aria-expanded={popup.open}
-          aria-controls={popup.open ? popupId : undefined}
-          aria-activedescendant={popup.open ? `${popupId}-${popup.active}` : undefined}
+          {...assist.textarea}
           onKeyDown={e => {
-            if (ac.onKeyDown(e) || people.onKeyDown(e)) return
+            if (assist.popupKey(e)) return
+            if (
+              e.key === 'ArrowUp' &&
+              !text &&
+              !e.shiftKey &&
+              !e.altKey &&
+              !e.metaKey &&
+              !e.ctrlKey &&
+              !composing(e) &&
+              draftKey &&
+              !(view?.kind === 'channel' && readOnly(servers[view.server], view.channelId)) &&
+              editLast(draftKey)
+            ) {
+              e.preventDefault()
+              return
+            }
             if (e.key === 'Escape' && !e.nativeEvent.isComposing && closeBar) {
               e.preventDefault()
               closeBar()

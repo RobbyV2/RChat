@@ -47,6 +47,8 @@ import {
 import { useEscape } from './server_settings'
 import { ReplyPreview } from './replies'
 import { canQuote } from '../lib/replies'
+import { canEdit as ownEditable } from '../lib/sed'
+import { MessageEditor, editAction, editMenuItem } from './message_editor'
 
 const EMPTY: Message[] = []
 
@@ -84,6 +86,12 @@ export default function ThreadPanel() {
   const jumpToPresent = useStore(s => s.jumpToPresent)
   const openContextMenu = useStore(s => s.openContextMenu)
   const startReply = useStore(s => s.startReply)
+  const startEdit = useStore(s => s.startEdit)
+  const editingId = useStore(s =>
+    s.editing && s.panel?.kind === 'thread' && s.editing.key === threadKey(s.panel.root.id)
+      ? s.editing.id
+      : null
+  )
   const jumpTo = useStore(s => s.jumpTo)
   const wide = useMedia('(min-width: 768px)')
   const listRef = useRef<HTMLDivElement>(null)
@@ -154,6 +162,8 @@ export default function ThreadPanel() {
 
   const canReply = (m: Message) => canReact && canQuote(m)
   const replyTo = (m: Message) => startReply(key, m)
+  const canEdit = (m: Message) => canReact && ownEditable(m, me?.username)
+  const editMsg = (m: Message) => startEdit(key, m)
   const jump = (id: number) => void jumpTo(key, id)
   const jumpMain = (id: number) => {
     if (root.channel_id === null) return
@@ -163,6 +173,7 @@ export default function ThreadPanel() {
 
   const rowMenu = (m: Message) => (x: number, y: number) => {
     const items: ContextMenuItem[] = []
+    if (canEdit(m)) items.push(editMenuItem(() => editMsg(m)))
     if (canReply(m)) items.push(replyMenuItem(() => replyTo(m)))
     if (m.id !== root.id && canDelete(m))
       items.push({
@@ -177,7 +188,10 @@ export default function ThreadPanel() {
 
   const row = (m: Message) => {
     const mentioned = mentionsMe(m, me?.username)
-    const actions: ToolbarAction[] = canReply(m) ? [replyAction(() => replyTo(m))] : []
+    const editing = editingId === m.id
+    const actions: ToolbarAction[] = []
+    if (canEdit(m) && !editing) actions.push(editAction(() => editMsg(m)))
+    if (canReply(m)) actions.push(replyAction(() => replyTo(m)))
     if (m.id !== root.id && canDelete(m))
       actions.push({
         key: 'delete',
@@ -239,7 +253,11 @@ export default function ThreadPanel() {
                 {fmtTime(m.created_at)}
               </span>
             </div>
-            <MarkdownMessage message={m} canDelete={canDelete(m)} />
+            <MarkdownMessage
+              message={m}
+              canDelete={canDelete(m)}
+              editor={editing ? <MessageEditor /> : undefined}
+            />
             <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
           </div>
         </div>

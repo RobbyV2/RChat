@@ -17,7 +17,7 @@ use crate::api::access::{Proof, resolve_message};
 use crate::api::{ApiError, ApiErrorBody, Authed, Embed};
 use crate::db::{Db, now};
 use crate::state::AppState;
-use crate::ws::WsEvent;
+use crate::ws::{Updated, WsEvent};
 
 const MAX_BODY: usize = 1024 * 1024;
 const CACHE_TTL: i64 = 86400;
@@ -284,7 +284,7 @@ fn scrub(mut url: Url) -> Url {
     url
 }
 
-fn extract_urls(content: &str) -> Vec<String> {
+pub(crate) fn extract_urls(content: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for word in content.split(|c: char| c.is_whitespace() || c == '<' || c == '>') {
         let trimmed = word.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '"', '\'']);
@@ -432,6 +432,55 @@ async fn live_server(db: &Db, message_id: i64) -> sqlx::Result<Option<Option<Str
     .transpose()
 }
 
+/// Where stored previews belong: the message's thread root and edit time.
+struct Stored {
+    thread_root_id: Option<i64>,
+    edited_at: Option<i64>,
+}
+
+/// Stores the previews only while the message still has exactly the links `urls`. The no-op
+/// update locks the message row first, so an edit (which rewrites the row and clears previews
+/// in one transaction) runs wholly before or after: a stale job never adds previews of links
+/// the text no longer has. `None` when nothing was stored.
+async fn store_embeds(
+    db: &Db,
+    message_id: i64,
+    urls: &[String],
+    embeds: &[Embed],
+) -> sqlx::Result<Option<Stored>> {
+    let mut tx = db.begin().await?;
+    let locked = sqlx::query("UPDATE messages SET edited_at = edited_at WHERE id = $1")
+        .bind(message_id)
+        .execute(&mut *tx)
+        .await?;
+    if locked.rows_affected() == 0 {
+        return Ok(None);
+    }
+    let row = sqlx::query("SELECT content, thread_root_id, edited_at FROM messages WHERE id = $1")
+        .bind(message_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if extract_urls(&row.try_get::<String, _>(0)?) != urls {
+        return Ok(None);
+    }
+    let stored = Stored {
+        thread_root_id: row.try_get(1)?,
+        edited_at: row.try_get(2)?,
+    };
+    for embed in embeds {
+        sqlx::query(
+            "INSERT INTO message_embeds(message_id, ord, url, banner_removed, removed) VALUES($1, $2, $3, 0, 0) ON CONFLICT(message_id, ord) DO NOTHING",
+        )
+        .bind(message_id)
+        .bind(embed.ord)
+        .bind(&embed.url)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(Some(stored))
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct UnfurlJob {
     server: Option<String>,
@@ -498,8 +547,8 @@ pub async fn unfurl(state: &AppState, job: UnfurlJob) {
         return;
     }
     let mut embeds: Vec<Embed> = Vec::new();
-    for url in urls {
-        match resolve(&state.db, &url).await {
+    for url in &urls {
+        match resolve(&state.db, url).await {
             Ok(Some(mut embed)) => {
                 embed.ord = embeds.len() as i64;
                 embeds.push(embed);
@@ -511,36 +560,40 @@ pub async fn unfurl(state: &AppState, job: UnfurlJob) {
     if embeds.is_empty() {
         return;
     }
-    for embed in &embeds {
-        let inserted = sqlx::query(
-            "INSERT INTO message_embeds(message_id, ord, url, banner_removed, removed) VALUES($1, $2, $3, 0, 0) ON CONFLICT(message_id, ord) DO NOTHING",
-        )
-        .bind(message_id)
-        .bind(embed.ord)
-        .bind(&embed.url)
-        .execute(&state.db)
-        .await;
-        match inserted {
-            Ok(_) => {}
-            Err(e) => {
-                tracing::debug!("embed insert for message {message_id} skipped: {e}");
-                return;
-            }
+    let stored = match store_embeds(&state.db, message_id, &urls, &embeds).await {
+        Ok(Some(stored)) => stored,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::debug!("embed insert for message {message_id} skipped: {e}");
+            return;
         }
-    }
+    };
     let server = match live_server(&state.db, message_id).await {
         Ok(Some(current)) => current,
         Ok(None) => return,
         Err(_) => server,
     };
-    state.hub.broadcast(WsEvent::EmbedsResolved {
-        server,
-        channel_id,
-        dm_id,
-        dm_users,
-        message_id,
-        embeds,
-    });
+    let Stored {
+        thread_root_id,
+        edited_at,
+    } = stored;
+    let event = match (&server, edited_at) {
+        (Some(_), Some(_)) => WsEvent::MessageUpdated {
+            server,
+            channel_id,
+            update: Updated::stub(message_id, thread_root_id, edited_at),
+            dm_users: Vec::new(),
+        },
+        (_, _) => WsEvent::EmbedsResolved {
+            server,
+            channel_id,
+            dm_id,
+            dm_users,
+            message_id,
+            embeds,
+        },
+    };
+    state.hub.broadcast(event);
 }
 
 /// What to remove from the link preview.
@@ -730,6 +783,86 @@ mod tests {
             Some(Some("rchat".to_string()))
         );
         assert_eq!(live_server(db, mid + 1).await.expect("q"), None);
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn previews_are_stored_only_for_the_links_the_message_has() {
+        let (state, path) = crate::api::test_util::temp_state("unfurl_stale").await;
+        let db = state.db.clone();
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
+            .fetch_one(&db)
+            .await
+            .expect("general")
+            .try_get(0)
+            .expect("id");
+        let mid: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'a', 'see https://a.example/x', 1) RETURNING id")
+            .bind(cid)
+            .fetch_one(&db)
+            .await
+            .expect("msg")
+            .try_get(0)
+            .expect("id");
+        let preview = |url: &str| Embed {
+            ord: 0,
+            url: url.to_string(),
+            site_name: None,
+            title: Some("T".to_string()),
+            description: None,
+            image_url: None,
+            banner_removed: false,
+        };
+        let count = |db: Db| async move {
+            sqlx::query("SELECT COUNT(*) FROM message_embeds WHERE message_id = $1")
+                .bind(mid)
+                .fetch_one(&db)
+                .await
+                .expect("count")
+                .try_get::<i64, _>(0)
+                .expect("n")
+        };
+        let old = vec!["https://a.example/x".to_string()];
+        let new = vec!["https://b.example/y".to_string()];
+        assert!(
+            store_embeds(&db, mid, &new, &[preview(&new[0])])
+                .await
+                .expect("store")
+                .is_none()
+        );
+        assert_eq!(count(db.clone()).await, 0);
+        let mut edit = db.begin().await.expect("edit tx");
+        sqlx::query(
+            "UPDATE messages SET content = 'now https://b.example/y', edited_at = 5 WHERE id = $1",
+        )
+        .bind(mid)
+        .execute(&mut *edit)
+        .await
+        .expect("edit");
+        let job = {
+            let db = db.clone();
+            let old = old.clone();
+            tokio::spawn(async move { store_embeds(&db, mid, &old, &[preview(&old[0])]).await })
+        };
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        sqlx::query("DELETE FROM message_embeds WHERE message_id = $1")
+            .bind(mid)
+            .execute(&mut *edit)
+            .await
+            .expect("clear");
+        edit.commit().await.expect("commit");
+        let stale = job.await.expect("join").expect("store");
+        assert!(
+            stale.is_none(),
+            "a job queued before the edit stores nothing"
+        );
+        assert_eq!(count(db.clone()).await, 0);
+        let stored = store_embeds(&db, mid, &new, &[preview(&new[0])])
+            .await
+            .expect("store")
+            .expect("current links");
+        assert_eq!(stored.edited_at, Some(5));
+        assert_eq!(stored.thread_root_id, None);
+        assert_eq!(count(db.clone()).await, 1);
         crate::api::test_util::done(state, path).await;
     }
 

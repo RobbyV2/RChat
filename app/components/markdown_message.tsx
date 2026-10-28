@@ -30,6 +30,7 @@ import type { Embed, Message, MessageMedia } from '../lib/types'
 import { longPress } from './context_menu'
 import { InviteCard, RemoteInviteCard } from './invite_card'
 import { profileTrigger } from './profile_card'
+import { EditedMark } from './message_editor'
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -104,6 +105,19 @@ const markMentions = (node: MdNode, known: ReadonlySet<string>) => {
 
 const remarkMention = (known: ReadonlySet<string>) => () => (tree: unknown) =>
   markMentions(tree as MdNode, known)
+
+// `(edited)` at the end of the last paragraph, or on its own line after other blocks.
+const remarkEdited = (at: number) => () => (tree: unknown) => {
+  const root = tree as MdNode
+  const mark: MdNode = {
+    type: 'emphasis',
+    data: { hName: 'span', hProperties: { 'data-edited': String(at) } },
+    children: [{ type: 'text', value: '(edited)' }],
+  }
+  const last = root.children?.[root.children.length - 1]
+  if (last?.type === 'paragraph') last.children = [...(last.children ?? []), mark]
+  else root.children = [...(root.children ?? []), { type: 'paragraph', children: [mark] }]
+}
 
 const InLink = createContext(false)
 
@@ -185,6 +199,8 @@ const components: Components = {
   span: ({ node, ...props }) =>
     'data-spoiler' in props ? (
       <SpoilerText>{props.children}</SpoilerText>
+    ) : 'data-edited' in props ? (
+      <EditedMark at={Number((props as Record<string, unknown>)['data-edited'])} />
     ) : 'data-mention' in props ? (
       <Mention username={String((props as Record<string, unknown>)['data-mention'])} />
     ) : (
@@ -535,21 +551,28 @@ function EmbedCard({
 export const MarkdownMessage = memo(function MarkdownMessage({
   message,
   canDelete = false,
+  editor,
 }: {
   message: Message
   canDelete?: boolean
+  editor?: ReactNode
 }) {
   const deleteMedia = useStore(s => s.deleteMedia)
   const previews = useStore(s => s.settings.asset_previews)
-  const { content, media, embeds } = message
+  const { content, media, embeds, edited_at: edited } = message
   const candidates = useMemo(
     () => (content.includes('@') ? mentionCandidates(content) : []),
     [content]
   )
   const known = useStore(s => knownMentions(s, message, candidates))
   const plugins = useMemo(
-    () => [remarkGfm, remarkSpoiler, remarkMention(new Set(known ? known.split('\n') : []))],
-    [known]
+    () => [
+      remarkGfm,
+      remarkSpoiler,
+      remarkMention(new Set(known ? known.split('\n') : [])),
+      ...(edited ? [remarkEdited(edited)] : []),
+    ],
+    [known, edited]
   )
   const homePublic = useStore(s => s.instance?.public_url ?? null)
   const local = useMemo(() => localOrigins(homePublic), [homePublic])
@@ -577,11 +600,18 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   )
   return (
     <div className="min-w-0 text-sm leading-relaxed break-words">
-      {content.trim() !== '' && (
-        <ReactMarkdown remarkPlugins={plugins} components={components}>
-          {content}
-        </ReactMarkdown>
-      )}
+      {editor ??
+        (content.trim() !== '' ? (
+          <ReactMarkdown remarkPlugins={plugins} components={components}>
+            {content}
+          </ReactMarkdown>
+        ) : (
+          edited && (
+            <p className="my-0.5">
+              <EditedMark at={edited} />
+            </p>
+          )
+        ))}
       {media !== null && (
         <div className="group/att relative w-fit">
           {media.kind === 'p2p' && !media.removed ? (
