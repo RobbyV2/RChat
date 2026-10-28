@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@typescript/native": "npm:typescript@^7.0.2",
+    "emojibase-data": "^18.0.0",
     "jose": "^6.2.13",
     "lucide-react": "^1.61.0",
     "minidenticons": "^4.2.1",

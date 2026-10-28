@@ -73,6 +73,7 @@ export default function AppShell() {
     const onPop = () => void useStore.getState().syncFromUrl('none')
     const onStorage = (e: StorageEvent) => {
       if (e.key?.startsWith('rchat_layout:')) useStore.getState().reloadLayout()
+      if (e.key?.startsWith('rchat_emoji:')) useStore.getState().reloadEmoji()
     }
     window.addEventListener('popstate', onPop)
     window.addEventListener('storage', onStorage)

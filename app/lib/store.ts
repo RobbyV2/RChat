@@ -19,6 +19,7 @@ import { JoinAborted, rtc } from './rtc'
 import { JoinTracker } from './negotiation'
 import { newP2pId, p2p } from './p2p'
 import { mentionsUser } from './mentions'
+import { EMPTY_PREFS, emojiKey, noteUse, parseEmojiPrefs, setTone, type EmojiPrefs } from './emoji'
 import { catchUpDelay, due } from './backoff'
 import { createReadQueue, mergeReads } from './reads'
 import {
@@ -383,6 +384,7 @@ interface RChatState {
   dmsMore: boolean
   serversMore: boolean
   layout: Layout
+  emoji: EmojiPrefs
   voice: VoiceSession | null
   call: CallSession | null
   voiceUsers: Record<number, string[]>
@@ -467,6 +469,9 @@ interface RChatState {
   pinDm: (id: number) => void
   unpinDm: (id: number) => void
   reloadLayout: () => void
+  noteEmoji: (base: string, picked: string) => void
+  setSkinTone: (tone: number) => void
+  reloadEmoji: () => void
   setDraft: (key: string, text: string) => void
   sendMessage: (content: string, p2pExpiresIn?: number | null) => void
   markRead: (scope: string, messageId: number) => void
@@ -860,6 +865,21 @@ export const useStore = create<RChatState>()((set, get) => {
     }
   }
 
+  const readEmoji = (username: string) => {
+    try {
+      return parseEmojiPrefs(localStorage.getItem(home.scoped(emojiKey(username))))
+    } catch {
+      return EMPTY_PREFS
+    }
+  }
+
+  const saveEmoji = (next: EmojiPrefs) => {
+    const username = get().me?.username
+    if (!username || next === get().emoji) return
+    set({ emoji: next })
+    writeLocal(home.scoped(emojiKey(username)), JSON.stringify(next))
+  }
+
   const saveLayout = (next: Layout) => {
     if (next === get().layout) return
     set({ layout: next })
@@ -920,7 +940,7 @@ export const useStore = create<RChatState>()((set, get) => {
       dms: same ? mergeHead(cur.dms, fresh.dms, fresh.dms_more, dmKey) : fresh.dms,
       serversMore: fresh.servers_more,
       dmsMore: fresh.dms_more,
-      ...(same ? {} : { layout: readLayout(fresh.username) }),
+      ...(same ? {} : { layout: readLayout(fresh.username), emoji: readEmoji(fresh.username) }),
     })
     pinSelf()
     if (resume.servers) void get().loadMoreServers()
@@ -2383,6 +2403,7 @@ export const useStore = create<RChatState>()((set, get) => {
     dmsMore: false,
     serversMore: false,
     layout: emptyLayout,
+    emoji: EMPTY_PREFS,
     voice: null,
     call: null,
     voiceUsers: {},
@@ -2653,6 +2674,7 @@ export const useStore = create<RChatState>()((set, get) => {
         dmsMore: false,
         serversMore: false,
         layout: emptyLayout,
+        emoji: EMPTY_PREFS,
         view: null,
         invite: null,
         messages: {},
@@ -2923,6 +2945,13 @@ export const useStore = create<RChatState>()((set, get) => {
     reloadLayout: () => {
       const { me, guest } = get()
       if (me || guest) set({ layout: readLayout(me?.username ?? null) })
+    },
+
+    noteEmoji: (base, picked) => saveEmoji(noteUse(get().emoji, base, picked, Date.now())),
+    setSkinTone: tone => saveEmoji(setTone(get().emoji, tone)),
+    reloadEmoji: () => {
+      const username = get().me?.username
+      if (username) set({ emoji: readEmoji(username) })
     },
 
     sendMessage: (content, p2pExpiresIn) => {

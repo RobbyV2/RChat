@@ -1,6 +1,6 @@
 'use client'
 
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useId, useLayoutEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   Eye,
@@ -10,13 +10,26 @@ import {
   SendHorizontal,
   Server,
   Share2,
+  Smile,
   X,
 } from 'lucide-react'
 import { errorText, useStore, viewKey } from '../lib/store'
 import { MESSAGE_MAX, charCount } from '../lib/rules'
 import { sendKey } from '../lib/keys'
 import { runJoinStep, type JoinStep } from '../lib/join_flow'
+import { findTrigger, spliceText } from '../lib/autocomplete'
+import {
+  boostFor,
+  findShortcode,
+  loadEmojiData,
+  matchShortcodes,
+  withTone,
+  type CodeMatch,
+} from '../lib/emoji'
 import { Dialog, FieldError, fieldCls, filledBtn } from './server_settings'
+import { AutocompletePopup, useAutocomplete } from './autocomplete'
+import { EmojiPicker, SHEET_QUERY, useEmojiData } from './emoji_picker'
+import { useMedia } from './context_menu'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
   { label: '1 hour', seconds: 3600 },
@@ -169,16 +182,105 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const sendThreadMessage = useStore(s => s.sendThreadMessage)
   const setDraft = useStore(s => s.setDraft)
   const text = useStore(s => (draftKey ? (s.drafts[draftKey] ?? '') : ''))
+  const prefs = useStore(s => s.emoji)
+  const noteEmoji = useStore(s => s.noteEmoji)
   const [expiryOpen, setExpiryOpen] = useState(false)
+  const [pickerFor, setPickerFor] = useState<string | null>(null)
+  const [caret, setCaret] = useState<number | null>(null)
+  const sheet = useMedia(SHEET_QUERY)
   const fileRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const emojiRef = useRef<HTMLButtonElement>(null)
+  const sel = useRef({ start: 0, end: 0 })
+  const placeCaret = useRef<number | null>(null)
+  const acId = useId()
+  const pickerOpen = pickerFor !== null && pickerFor === draftKey
 
   useLayoutEffect(() => {
     const el = inputRef.current
     if (!el) return
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+    const at = placeCaret.current
+    placeCaret.current = null
+    if (at !== null && document.activeElement === el) {
+      el.setSelectionRange(at, at)
+      setCaret(at)
+    }
   }, [text, draftKey])
+
+  const trigger = caret !== null && !pickerOpen ? findTrigger(text, caret, ':', 2) : null
+  const { data: emoji } = useEmojiData(trigger !== null)
+  const searchCodes = useCallback(
+    (q: string) => (emoji ? matchShortcodes(emoji, q, 10, boostFor(prefs, Date.now())) : []),
+    [emoji, prefs]
+  )
+
+  const draftNow = () => (draftKey ? (useStore.getState().drafts[draftKey] ?? '') : '')
+
+  const ac = useAutocomplete<CodeMatch>({
+    scope: trigger ? `${draftKey}:${trigger.start}` : null,
+    query: trigger?.query ?? '',
+    search: searchCodes,
+    onAccept: m => {
+      if (!draftKey || !trigger) return
+      const picked = withTone(m.emoji, prefs.tone)
+      const cur = draftNow()
+      const pad = /\s/.test(cur[trigger.end] ?? '') ? '' : ' '
+      placeCaret.current = trigger.start + picked.length + pad.length
+      setDraft(draftKey, spliceText(cur, trigger.start, trigger.end, picked + pad))
+      noteEmoji(m.emoji.emoji, picked)
+      inputRef.current?.focus()
+    },
+  })
+
+  const onType = (value: string, at: number | null) => {
+    if (!draftKey) return
+    if (emoji && at !== null && value[at - 1] === ':' && value.length === text.length + 1) {
+      const t = findTrigger(value, at - 1, ':', 2)
+      const hit = t ? findShortcode(emoji, t.query) : null
+      if (t && hit) {
+        const picked = withTone(hit, prefs.tone)
+        placeCaret.current = t.start + picked.length
+        setDraft(draftKey, spliceText(value, t.start, at, picked))
+        noteEmoji(hit.emoji, picked)
+        return
+      }
+    }
+    setDraft(draftKey, value)
+  }
+
+  const trackCaret = (el: HTMLTextAreaElement) =>
+    setCaret(el.selectionStart === el.selectionEnd ? el.selectionStart : null)
+
+  const openPicker = () => {
+    const el = inputRef.current
+    if (el) sel.current = { start: el.selectionStart, end: el.selectionEnd }
+    setPickerFor(pickerOpen ? null : draftKey)
+  }
+
+  const insertEmoji = (picked: string) => {
+    if (!draftKey) return
+    const cur = draftNow()
+    const start = Math.min(sel.current.start, cur.length)
+    const end = Math.min(Math.max(sel.current.end, start), cur.length)
+    const at = start + picked.length
+    sel.current = { start: at, end: at }
+    setDraft(draftKey, spliceText(cur, start, end, picked))
+  }
+
+  const closePicker = () => {
+    setPickerFor(null)
+    if (sheet) return
+    requestAnimationFrame(() => {
+      const el = inputRef.current
+      const focused = document.activeElement
+      if (!el || (focused && focused !== document.body)) return
+      el.focus({ preventScroll: true })
+      el.setSelectionRange(sel.current.start, sel.current.end)
+      trackCaret(el)
+    })
+  }
 
   if (!thread && !view) return null
 
@@ -284,7 +386,24 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           </span>
         </div>
       )}
-      <div className="flex items-end gap-2 rounded-3xl bg-surface-container-high px-3 py-2">
+      {pickerOpen && (
+        <EmojiPicker anchor={emojiRef.current} onPick={insertEmoji} onClose={closePicker} />
+      )}
+      <div className="relative flex items-end gap-2 rounded-3xl bg-surface-container-high px-3 py-2">
+        <AutocompletePopup
+          id={acId}
+          title={`Emoji matching :${trigger?.query ?? ''}`}
+          ac={ac}
+          keyOf={m => m.emoji.emoji}
+          render={m => (
+            <>
+              <span className="w-7 shrink-0 text-center font-emoji text-[22px] leading-none">
+                {withTone(m.emoji, prefs.tone)}
+              </span>
+              <span className="min-w-0 truncate">:{m.code}:</span>
+            </>
+          )}
+        />
         {assetUploads && (
           <>
             <button
@@ -309,8 +428,21 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           ref={inputRef}
           rows={1}
           value={text}
-          onChange={e => setText(e.target.value)}
+          onChange={e => {
+            const el = e.currentTarget
+            onType(el.value, el.selectionStart === el.selectionEnd ? el.selectionStart : null)
+            trackCaret(el)
+          }}
+          onSelect={e => trackCaret(e.currentTarget)}
+          onBlur={() => setCaret(null)}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          aria-expanded={ac.open}
+          aria-controls={ac.open ? acId : undefined}
+          aria-activedescendant={ac.open ? `${acId}-${ac.active}` : undefined}
           onKeyDown={e => {
+            if (ac.onKeyDown(e)) return
             if (sendKey(e)) {
               e.preventDefault()
               send()
@@ -337,6 +469,22 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             {MESSAGE_MAX - count}
           </span>
         )}
+        <button
+          ref={emojiRef}
+          type="button"
+          title="Emoji"
+          aria-label="Emoji"
+          aria-expanded={pickerOpen}
+          onPointerEnter={() => void loadEmojiData().catch(() => {})}
+          onClick={openPicker}
+          className={`shrink-0 rounded-full p-1.5 ${
+            pickerOpen
+              ? 'bg-surface-container-highest text-primary'
+              : 'text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface'
+          }`}
+        >
+          <Smile size={20} />
+        </button>
         <button
           title={tooLong ? 'Message is too long' : 'Send'}
           onClick={send}

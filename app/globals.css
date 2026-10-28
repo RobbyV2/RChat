@@ -44,6 +44,7 @@
   --color-mute-hover: #b71c1c;
   --color-mute-fg: #ff8a80;
   --font-sans: Roboto, 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', var(--font-sans);
   --shadow-elevation-1: 0 1px 3px 1px rgb(0 0 0 / 0.15), 0 1px 2px rgb(0 0 0 / 0.3);
   --shadow-elevation-2: 0 2px 6px 2px rgb(0 0 0 / 0.15), 0 1px 2px rgb(0 0 0 / 0.3);
   --shadow-elevation-3: 0 4px 8px 3px rgb(0 0 0 / 0.15), 0 1px 3px rgb(0 0 0 / 0.3);
