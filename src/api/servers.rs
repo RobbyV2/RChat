@@ -22,8 +22,8 @@ use crate::api::{
     unique_capped, user_from, user_ref, user_refs, valid_color,
 };
 use crate::db::{
-    ALL_PERMS, ChannelKind, Db, Perm, PermRow, User, can_grant, can_moderate, fold_access,
-    get_user, now, perm_bits, perm_row, perm_subjects,
+    ALL_PERMS, ChannelKind, Db, NO_PERMANENT_HASH, Perm, PermRow, User, can_grant, can_moderate,
+    fold_access, get_user, now, perm_bits, perm_row, perm_subjects,
 };
 use crate::state::AppState;
 use crate::ws::{Hub, WsEvent, evict_unviewable};
@@ -82,9 +82,15 @@ pub struct ServerPatch {
     /// characters, not `.` or `..`, profanity-filtered, not taken). Changes the lowercase `name`
     /// used in URLs as well as the `display_name`. Not allowed on the rchat server.
     name: Option<String>,
-    /// New join password. Surrounding whitespace is trimmed; a blank value removes the
-    /// password. Omit to leave the password as it is. Not allowed on the rchat server.
+    /// New permanent join password. Surrounding whitespace is trimmed; a blank value removes
+    /// the permanent password, which makes the server public unless `protected` is `true`. Omit
+    /// to leave the password as it is. Not allowed on the rchat server.
     password: Option<String>,
+    /// `false` makes the server public: the permanent password is removed and every extra
+    /// password is revoked. `true` makes it password protected; without a permanent password
+    /// and without live extra passwords it is closed (nobody new can join). Omit to keep the
+    /// current state. Not allowed on the rchat server.
+    protected: Option<bool>,
     /// What to do with the other members when `password` is present: `keep` (default) or
     /// `remove`. Ignored when `password` is omitted.
     #[serde(default)]
@@ -273,6 +279,12 @@ pub struct Invite {
     /// The last 3 top-level messages of `preview_channel`. Empty when the viewer is banned or
     /// there is no preview channel.
     pub preview: Vec<Message>,
+    /// When the extra password that unlocked this card expires, Unix seconds. `null` unless an
+    /// extra password with an expiry unlocked it.
+    pub password_expires_at: Option<i64>,
+    /// Uses left on the extra password that unlocked this card. `null` unless an extra
+    /// password with a use limit unlocked it.
+    pub password_uses_left: Option<i64>,
 }
 
 /// Paging query parameters.
@@ -491,7 +503,7 @@ pub(crate) fn ok() -> Json<OkResp> {
     Json(OkResp { ok: true })
 }
 
-fn bad(msg: &str) -> ApiError {
+pub(crate) fn bad(msg: &str) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, msg.to_string())
 }
 
@@ -524,7 +536,7 @@ async fn check_server_name(db: &Db, name: &str) -> Result<(), ApiError> {
     }
 }
 
-fn guard_rchat(key: &str) -> Result<(), ApiError> {
+pub(crate) fn guard_rchat(key: &str) -> Result<(), ApiError> {
     match key {
         "rchat" => Err(forbidden("The rchat server is protected")),
         _ => Ok(()),
@@ -736,6 +748,7 @@ async fn build_member(
         online: hub.is_online(server, username),
         perms,
         role_ids: role_ids(db, server, username).await?,
+        joined_via: None,
     })
 }
 
@@ -1106,6 +1119,10 @@ pub(crate) async fn list_members(
     let online = state.hub.online_among(&key, &names);
     let refs = user_refs(db, &names).await;
     let mut roles = role_ids_of(db, &key, &names).await?;
+    let mut via = match access.has_perm(db, Perm::DeleteServer).await {
+        true => crate::api::passwords::joined_via(db, &key, &names).await?,
+        false => HashMap::new(),
+    };
     let members = rows
         .into_iter()
         .map(|(username, is_admin, perms)| Member {
@@ -1114,6 +1131,7 @@ pub(crate) async fn list_members(
             is_creator: creator.as_deref() == Some(username.as_str()),
             perms,
             role_ids: roles.remove(&username).unwrap_or_default(),
+            joined_via: via.remove(&username),
             user: user_from(&refs, &username),
         })
         .collect();
@@ -1487,12 +1505,16 @@ pub(crate) async fn guest_access(
         return Ok(Json(GuestGrant { grant: None }));
     }
     let grant = new_token();
-    sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, $2, $3, $3)")
+    let mut tx = state.db.begin().await?;
+    access.spend_ticket(&mut tx).await?;
+    sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at, password_id) VALUES($1, $2, $3, $3, $4)")
         .bind(&grant)
         .bind(access.name())
         .bind(now())
-        .execute(&state.db)
+        .bind(access.password_id())
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(Json(GuestGrant { grant: Some(grant) }))
 }
 
@@ -1577,15 +1599,15 @@ pub(crate) async fn get_invite(
         &Proof::password(given.as_deref()).and_grants(grants),
     )
     .await?;
-    let (server, status, (preview_channel, preview)) = match view {
-        InviteView::Banned(lite) => (lite, InviteStatus::Banned, (None, Vec::new())),
+    let (server, status, (preview_channel, preview), ticket) = match view {
+        InviteView::Banned(lite) => (lite, InviteStatus::Banned, (None, Vec::new()), None),
         InviteView::Open(access) => {
             let status = match access.is_member() {
                 true => InviteStatus::Member,
                 false => InviteStatus::Joinable,
             };
             let preview = invite_preview(db, access.name()).await?;
-            (access.lite().clone(), status, preview)
+            (access.lite().clone(), status, preview, access.ticket())
         }
     };
     Ok(Json(Invite {
@@ -1595,28 +1617,36 @@ pub(crate) async fn get_invite(
         status,
         preview_channel,
         preview,
+        password_expires_at: ticket.and_then(|t| t.expires_at),
+        password_uses_left: ticket.and_then(|t| t.uses_left),
     }))
 }
 
-async fn insert_member(db: &Db, server: &str, username: &str) -> Result<bool, ApiError> {
+async fn insert_member(db: &Db, access: &ServerAccess, username: &str) -> Result<bool, ApiError> {
+    let server = access.name();
+    let mut tx = db.begin().await?;
     let inserted = sqlx::query(
-        "INSERT INTO members(server, username, is_admin, joined_at) SELECT $1, $2, 0, $3 WHERE NOT EXISTS(SELECT 1 FROM server_bans WHERE server = $1 AND username = $2) ON CONFLICT(server, username) DO NOTHING",
+        "INSERT INTO members(server, username, is_admin, joined_at, joined_via) SELECT $1, $2, 0, $3, $4 WHERE NOT EXISTS(SELECT 1 FROM server_bans WHERE server = $1 AND username = $2) ON CONFLICT(server, username) DO NOTHING",
     )
     .bind(server)
     .bind(username)
     .bind(now())
-    .execute(db)
+    .bind(access.password_id())
+    .execute(&mut *tx)
     .await?
     .rows_affected();
     if inserted > 0 {
+        access.spend_ticket(&mut tx).await?;
+        tx.commit().await?;
         return Ok(true);
     }
     let member = sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
         .bind(server)
         .bind(username)
-        .fetch_optional(db)
+        .fetch_optional(&mut *tx)
         .await?
         .is_some();
+    tx.commit().await?;
     match member {
         true => Ok(false),
         false => Err(forbidden(BANNED)),
@@ -1662,7 +1692,7 @@ pub(crate) async fn join_server(
     let given = body.as_ref().and_then(|Json(j)| j.password.as_deref());
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::password(given)).await?;
     let key = access.name().to_string();
-    let inserted = insert_member(&state.db, &key, &user.username).await?;
+    let inserted = insert_member(&state.db, &access, &user.username).await?;
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     let detail = server_detail(&state.db, &state.hub, &access).await?;
     let member = build_member(
@@ -1736,15 +1766,18 @@ pub(crate) async fn leave_server(
 
 /// Update a server
 ///
-/// Renames the server, sets, changes or clears its password, and changes its header colors; every
-/// field is optional. Requires the Delete server permission; `members: remove` together with
-/// `password` also requires Kick. The rchat server can't be renamed or given a password, but its
-/// colors may change.
+/// Renames the server, switches it between public and password protected, sets, changes or
+/// clears its permanent password, and changes its header colors; every field is optional.
+/// Requires the Delete server permission; `members: remove` together with `password` also
+/// requires Kick. The rchat server can't be renamed or given a password, but its colors may
+/// change.
 ///
 /// When `password` is present, `members: remove` removes every other member whose server
 /// permissions are a strict subset of yours (their roles are dropped, as if kicked) and existing
 /// guest grants are revoked unless `keep_guests` is true with `members: keep`. The response
-/// carries `removed` and `kept` counts.
+/// carries `removed` and `kept` counts. Making the server public, or changing its lowercase
+/// name, revokes every extra password (extra password lookups are bound to the name, and invite
+/// links carry it); revoked passwords stay listed until they are purged.
 ///
 /// Emits `server_renamed` (with `old_name`) to the server when the name or display name changed,
 /// otherwise `server_updated` with the new state (password flag and colors), and
@@ -1757,7 +1790,7 @@ pub(crate) async fn leave_server(
     request_body = ServerPatch,
     responses(
         (status = 200, description = "The updated server, with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated),
-        (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color, or a new password that is already a live extra password of the server. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Delete server permission, missing Kick for `members: remove`, or a rename or password change on the protected rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
@@ -1777,12 +1810,13 @@ pub(crate) async fn update_server(
     let ServerPatch {
         name,
         password,
+        protected,
         members,
         keep_guests,
         banner_color,
         name_color,
     } = req;
-    if name.is_some() || password.is_some() {
+    if name.is_some() || password.is_some() || protected.is_some() {
         guard_rchat(&key)?;
     }
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
@@ -1808,11 +1842,19 @@ pub(crate) async fn update_server(
         }
         None => (key.clone(), lite.display_name.clone()),
     };
-    let password_hash = match password.as_deref().map(str::trim) {
-        Some("") => Some(None),
-        Some(p) => Some(Some(hash_password(p).await?)),
-        None => None,
+    let password_hash = match (password.as_deref().map(str::trim), protected) {
+        (Some(""), Some(true)) => Some(Some(NO_PERMANENT_HASH.to_string())),
+        (Some(""), _) | (None, Some(false)) => Some(None),
+        (Some(p), _) => {
+            if new_key == key && access.is_live_extra_password(&state.db, p).await? {
+                return Err(bad("That password is already in use for this server"));
+            }
+            Some(Some(hash_password(p).await?))
+        }
+        (None, Some(true)) if !lite.has_password => Some(Some(NO_PERMANENT_HASH.to_string())),
+        (None, _) => None,
     };
+    let public_now = matches!(password_hash, Some(None));
     let mut tx = state.db.begin().await?;
     rename_live(&mut tx, &key, &new_key, &display, password_hash.as_ref()).await?;
     set_colors(
@@ -1834,6 +1876,9 @@ pub(crate) async fn update_server(
             .bind(&new_key)
             .execute(&mut *tx)
             .await?;
+    }
+    if public_now || new_key != key {
+        crate::api::passwords::revoke_all(&mut tx, &new_key).await?;
     }
     tx.commit().await?;
     let renamed = new_key != key || display != lite.display_name;
@@ -3713,6 +3758,7 @@ mod tests {
             Json(ServerPatch {
                 name: Some(name.to_string()),
                 password: None,
+                protected: None,
                 members: PasswordMembers::Keep,
                 keep_guests: false,
                 banner_color: None,
@@ -4390,7 +4436,10 @@ mod tests {
             .execute(db)
             .await
             .expect("ban after check");
-        match insert_member(db, "club", "bob").await {
+        let club = resolve_server(db, "club", Some(&mem_user("alice", false)), &Proof::none())
+            .await
+            .expect("club");
+        match insert_member(db, &club, "bob").await {
             Err(ApiError(StatusCode::FORBIDDEN, msg)) => {
                 assert_eq!(msg, "You are banned from this server")
             }
@@ -4405,17 +4454,13 @@ mod tests {
             0
         );
         assert!(
-            !insert_member(db, "club", "alice")
+            !insert_member(db, &club, "alice")
                 .await
                 .expect("already a member")
         );
+        assert!(insert_member(db, &club, "carol").await.expect("new member"));
         assert!(
-            insert_member(db, "club", "carol")
-                .await
-                .expect("new member")
-        );
-        assert!(
-            !insert_member(db, "club", "carol")
+            !insert_member(db, &club, "carol")
                 .await
                 .expect("repeat join")
         );
@@ -4596,6 +4641,7 @@ mod tests {
             Json(ServerPatch {
                 name: None,
                 password: Some(password.to_string()),
+                protected: None,
                 members: PasswordMembers::Keep,
                 keep_guests: false,
                 banner_color: None,
@@ -4964,6 +5010,7 @@ mod tests {
             Json(ServerPatch {
                 name: name.map(str::to_string),
                 password: password.map(str::to_string),
+                protected: None,
                 members,
                 keep_guests,
                 banner_color: None,

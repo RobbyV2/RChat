@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at INTEGER NOT NULL, claimed_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
 CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count INTEGER NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, UNIQUE(server, name));
-CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, perms INTEGER NOT NULL DEFAULT 0, joined_at INTEGER NOT NULL, PRIMARY KEY(server, username));
+CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, perms INTEGER NOT NULL DEFAULT 0, joined_at INTEGER NOT NULL, joined_via INTEGER, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
 CREATE TABLE IF NOT EXISTS channel_perms(channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view INTEGER NOT NULL DEFAULT 1, can_send INTEGER NOT NULL DEFAULT 1, can_read_history INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(channel_id, subject));
@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS embeds(url TEXT PRIMARY KEY, site_name TEXT, title TEXT, description TEXT, image_url TEXT, fetched_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS message_embeds(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, ord INTEGER NOT NULL, url TEXT NOT NULL, banner_removed INTEGER NOT NULL DEFAULT 0, removed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(message_id, ord));
 CREATE TABLE IF NOT EXISTS interactions(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, last_at INTEGER NOT NULL, PRIMARY KEY(server, username));
-CREATE TABLE IF NOT EXISTS guest_grants(\"grant\" TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS guest_grants(\"grant\" TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL DEFAULT 0, password_id INTEGER);
+CREATE TABLE IF NOT EXISTS server_passwords(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, label TEXT, hash TEXT NOT NULL, lookup TEXT NOT NULL, created_by TEXT, created_at INTEGER NOT NULL, expires_at INTEGER, max_uses INTEGER, uses INTEGER NOT NULL DEFAULT 0, revoked_at INTEGER, used_up_at INTEGER, UNIQUE(server, lookup));
 CREATE TABLE IF NOT EXISTS read_state(username TEXT NOT NULL, scope TEXT NOT NULL, last_read INTEGER NOT NULL, PRIMARY KEY(username, scope));
 CREATE TABLE IF NOT EXISTS server_bans(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, banned_by TEXT, created_at INTEGER NOT NULL, PRIMARY KEY(server, username));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
@@ -56,6 +57,8 @@ CREATE INDEX IF NOT EXISTS idx_roles_server ON roles(server, id);
 CREATE INDEX IF NOT EXISTS idx_tokens_username ON tokens(username);
 CREATE INDEX IF NOT EXISTS idx_guest_grants_server ON guest_grants(server);
 CREATE INDEX IF NOT EXISTS idx_guest_grants_used ON guest_grants(last_used_at);
+CREATE INDEX IF NOT EXISTS idx_guest_grants_password ON guest_grants(password_id) WHERE password_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_server_passwords_server ON server_passwords(server, created_at);
 CREATE INDEX IF NOT EXISTS idx_login_attempts_last ON login_attempts(last_at);
 CREATE INDEX IF NOT EXISTS idx_change_attempts_last ON change_attempts(last_at);
 CREATE INDEX IF NOT EXISTS idx_users_purging ON users(username) WHERE password_hash = '!purging';
@@ -84,7 +87,7 @@ CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at BIGINT NOT NULL, claimed_at BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
 CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count BIGINT NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS channels(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, UNIQUE(server, name));
-CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin BIGINT NOT NULL DEFAULT 0, perms BIGINT NOT NULL DEFAULT 0, joined_at BIGINT NOT NULL, PRIMARY KEY(server, username));
+CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin BIGINT NOT NULL DEFAULT 0, perms BIGINT NOT NULL DEFAULT 0, joined_at BIGINT NOT NULL, joined_via BIGINT, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms BIGINT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
 CREATE TABLE IF NOT EXISTS channel_perms(channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view BIGINT NOT NULL DEFAULT 1, can_send BIGINT NOT NULL DEFAULT 1, can_read_history BIGINT NOT NULL DEFAULT 1, PRIMARY KEY(channel_id, subject));
@@ -96,7 +99,8 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS embeds(url TEXT PRIMARY KEY, site_name TEXT, title TEXT, description TEXT, image_url TEXT, fetched_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS message_embeds(message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, ord BIGINT NOT NULL, url TEXT NOT NULL, banner_removed BIGINT NOT NULL DEFAULT 0, removed BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(message_id, ord));
 CREATE TABLE IF NOT EXISTS interactions(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, last_at BIGINT NOT NULL, PRIMARY KEY(server, username));
-CREATE TABLE IF NOT EXISTS guest_grants(\"grant\" TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, created_at BIGINT NOT NULL, last_used_at BIGINT NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS guest_grants(\"grant\" TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, created_at BIGINT NOT NULL, last_used_at BIGINT NOT NULL DEFAULT 0, password_id BIGINT);
+CREATE TABLE IF NOT EXISTS server_passwords(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, label TEXT, hash TEXT NOT NULL, lookup TEXT NOT NULL, created_by TEXT, created_at BIGINT NOT NULL, expires_at BIGINT, max_uses BIGINT, uses BIGINT NOT NULL DEFAULT 0, revoked_at BIGINT, used_up_at BIGINT, UNIQUE(server, lookup));
 CREATE TABLE IF NOT EXISTS read_state(username TEXT NOT NULL, scope TEXT NOT NULL, last_read BIGINT NOT NULL, PRIMARY KEY(username, scope));
 CREATE TABLE IF NOT EXISTS server_bans(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, banned_by TEXT, created_at BIGINT NOT NULL, PRIMARY KEY(server, username));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
@@ -116,6 +120,8 @@ CREATE INDEX IF NOT EXISTS idx_roles_server ON roles(server, id);
 CREATE INDEX IF NOT EXISTS idx_tokens_username ON tokens(username);
 CREATE INDEX IF NOT EXISTS idx_guest_grants_server ON guest_grants(server);
 CREATE INDEX IF NOT EXISTS idx_guest_grants_used ON guest_grants(last_used_at);
+CREATE INDEX IF NOT EXISTS idx_guest_grants_password ON guest_grants(password_id) WHERE password_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_server_passwords_server ON server_passwords(server, created_at);
 CREATE INDEX IF NOT EXISTS idx_login_attempts_last ON login_attempts(last_at);
 CREATE INDEX IF NOT EXISTS idx_change_attempts_last ON change_attempts(last_at);
 CREATE INDEX IF NOT EXISTS idx_users_purging ON users(username) WHERE password_hash = '!purging';
@@ -171,6 +177,23 @@ const POSTGRES_TRIGGERS: &[&str] = &[
 
 static FTS_READY: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
 static READERS: LazyLock<Mutex<HashMap<String, Db>>> = LazyLock::new(Default::default);
+static PEPPERS: LazyLock<Mutex<HashMap<String, Vec<u8>>>> = LazyLock::new(Default::default);
+
+pub async fn pepper(db: &Db) -> sqlx::Result<Vec<u8>> {
+    let key = pool_key(db);
+    if let Some(pepper) = PEPPERS.lock().ok().and_then(|m| m.get(&key).cloned()) {
+        return Ok(pepper);
+    }
+    let value: String = sqlx::query("SELECT value FROM settings WHERE key = 'password_pepper'")
+        .fetch_one(db)
+        .await?
+        .try_get(0)?;
+    let pepper = value.into_bytes();
+    if let Ok(mut peppers) = PEPPERS.lock() {
+        peppers.insert(key, pepper.clone());
+    }
+    Ok(pepper)
+}
 
 pub fn reader(db: &Db) -> Db {
     READERS
@@ -181,6 +204,9 @@ pub fn reader(db: &Db) -> Db {
 }
 
 pub async fn close(db: &Db) {
+    if let Ok(mut peppers) = PEPPERS.lock() {
+        peppers.remove(&pool_key(db));
+    }
     let read = READERS
         .lock()
         .ok()
@@ -298,6 +324,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "banner_color TEXT"),
     ("servers", "name_color TEXT"),
     ("guest_grants", "last_used_at {INT} NOT NULL DEFAULT 0"),
+    ("members", "joined_via {INT}"),
+    ("guest_grants", "password_id {INT}"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -480,6 +508,8 @@ impl User {
 }
 
 pub const PURGING_HASH: &str = "!purging";
+
+pub const NO_PERMANENT_HASH: &str = "!none";
 
 pub const LIVE_DM: &str = "NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (user_a, user_b) AND pu.password_hash = '!purging')";
 
@@ -781,6 +811,7 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
     for (key, value) in [
         ("instance_id", crate::identity::random_id()),
         ("instance_signing_key", crate::identity::new_seed()),
+        ("password_pepper", crate::api::auth::new_token()),
     ] {
         sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO NOTHING")
             .bind(key)
@@ -896,6 +927,7 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
         }
         false => set_fts(&pool, false),
     }
+    pepper(&pool).await?;
     Ok(pool)
 }
 
@@ -932,6 +964,7 @@ async fn open_reader(url: &str, max: u32) -> anyhow::Result<Db> {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Swept {
     pub guest_grants: u64,
+    pub server_passwords: u64,
     pub login_attempts: u64,
     pub password_attempts: u64,
     pub embeds: u64,
@@ -1026,13 +1059,28 @@ pub async fn flush_grant_touches(db: &Db) -> sqlx::Result<u64> {
     Ok(total)
 }
 
+pub const SERVER_PASSWORD_KEEP: i64 = 30 * 86400;
+
 pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
     let t = now();
+    let stale_grants = delete_batched(
+        db,
+        "DELETE FROM guest_grants WHERE \"grant\" IN (SELECT \"grant\" FROM guest_grants WHERE last_used_at < $1 AND (last_used_at > 0 OR created_at < $1) LIMIT $2)",
+        t - guest_grant_ttl(),
+    )
+    .await?;
+    let ended_grants = delete_batched(
+        db,
+        "DELETE FROM guest_grants WHERE \"grant\" IN (SELECT g.\"grant\" FROM guest_grants g WHERE g.password_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM server_passwords p WHERE p.id = g.password_id AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at > $1)) LIMIT $2)",
+        t,
+    )
+    .await?;
     Ok(Swept {
-        guest_grants: delete_batched(
+        guest_grants: stale_grants + ended_grants,
+        server_passwords: delete_batched(
             db,
-            "DELETE FROM guest_grants WHERE \"grant\" IN (SELECT \"grant\" FROM guest_grants WHERE last_used_at < $1 AND (last_used_at > 0 OR created_at < $1) LIMIT $2)",
-            t - guest_grant_ttl(),
+            "DELETE FROM server_passwords WHERE id IN (SELECT id FROM server_passwords WHERE revoked_at < $1 OR expires_at < $1 OR used_up_at < $1 LIMIT $2)",
+            t - SERVER_PASSWORD_KEEP,
         )
         .await?,
         login_attempts: delete_batched(
@@ -1411,6 +1459,131 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn server_passwords_migrate_onto_an_old_database() {
+        let path = std::env::temp_dir().join(format!("rchat_pw_upgrade_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_guest_grants_password",
+            "DROP INDEX idx_server_passwords_server",
+            "DROP TABLE server_passwords",
+            "ALTER TABLE members DROP COLUMN joined_via",
+            "ALTER TABLE guest_grants DROP COLUMN password_id",
+            "DELETE FROM settings WHERE key = 'password_pepper'",
+            "UPDATE settings SET value = 'old-instance' WHERE key = 'instance_id'",
+            "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('club', 'Club', 'alice', 'hash', 1)",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('club', 'alice', 1, 0, 5)",
+            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('g', 'club', 1, 1)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        let mut peppers = Vec::new();
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM members WHERE server = 'club' AND username = 'alice' AND joined_via IS NULL AND joined_at = 5 AND is_admin = 1").await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM guest_grants WHERE \"grant\" = 'g' AND password_id IS NULL AND last_used_at = 1").await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'club' AND password_hash = 'hash' AND member_count = 1").await,
+                1
+            );
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM server_passwords").await, 0);
+            sqlx::query("INSERT INTO server_passwords(server, hash, lookup, created_at) VALUES('club', 'h', 'l', 1)")
+                .execute(&db)
+                .await
+                .expect("new table");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM server_passwords WHERE uses = 0 AND label IS NULL AND expires_at IS NULL AND max_uses IS NULL AND revoked_at IS NULL AND used_up_at IS NULL").await,
+                1
+            );
+            sqlx::query("DELETE FROM server_passwords")
+                .execute(&db)
+                .await
+                .expect("clear");
+            let instance: String =
+                sqlx::query("SELECT value FROM settings WHERE key = 'instance_id'")
+                    .fetch_one(&db)
+                    .await
+                    .expect("instance")
+                    .try_get(0)
+                    .expect("value");
+            assert_eq!(instance, "old-instance");
+            let p = pepper(&db).await.expect("pepper");
+            assert_eq!(p.len(), 64);
+            peppers.push(p);
+            close(&db).await;
+        }
+        assert_eq!(peppers[0], peppers[1], "the pepper is inserted once");
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn dead_server_passwords_are_purged_after_30_days() {
+        let (state, path) = temp_state("sweep_passwords").await;
+        let db = &state.db;
+        sqlx::query("UPDATE servers SET password_hash = '!none' WHERE name = 'rchat'")
+            .execute(db)
+            .await
+            .expect("protect");
+        let t = now();
+        let old = t - SERVER_PASSWORD_KEEP - 10;
+        let recent = t - 86400;
+        let mut ids = Vec::new();
+        for (expires, revoked, used_up) in [
+            (Some(old), None, None),
+            (None, Some(old), None),
+            (None, None, Some(old)),
+            (Some(recent), None, None),
+            (None, Some(recent), None),
+            (None, None, None),
+        ] {
+            let id: i64 = sqlx::query("INSERT INTO server_passwords(server, hash, lookup, created_at, expires_at, revoked_at, used_up_at) VALUES('rchat', 'h', $1, 0, $2, $3, $4) RETURNING id")
+                .bind(format!("l{}", ids.len()))
+                .bind(expires)
+                .bind(revoked)
+                .bind(used_up)
+                .fetch_one(db)
+                .await
+                .expect("password")
+                .try_get(0)
+                .expect("id");
+            ids.push(id);
+        }
+        for (grant, id) in [("dead", ids[4]), ("live", ids[5])] {
+            sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at, password_id) VALUES($1, 'rchat', $2, $2, $3)")
+                .bind(grant)
+                .bind(t)
+                .bind(id)
+                .execute(db)
+                .await
+                .expect("grant");
+        }
+        let swept = sweep_stale(db).await.expect("sweep");
+        assert_eq!((swept.server_passwords, swept.guest_grants), (3, 1));
+        assert_eq!(count(db, "SELECT COUNT(*) FROM server_passwords").await, 3);
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM guest_grants WHERE \"grant\" = 'live'"
+            )
+            .await,
+            1
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn in_memory_databases_read_from_the_writer() {
         let db = open(Some("sqlite::memory:")).await.expect("memory");
         sqlx::query("INSERT INTO settings(key, value) VALUES('probe', '1')")
@@ -1529,6 +1702,7 @@ mod tests {
             swept,
             Swept {
                 guest_grants: 1,
+                server_passwords: 0,
                 login_attempts: 1,
                 password_attempts: 1,
                 embeds: 1,

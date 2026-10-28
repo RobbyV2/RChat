@@ -38,6 +38,7 @@ import {
   requestPreview,
 } from '../lib/remote_invite'
 import { deniedAccess, needsPassword } from '../lib/join_flow'
+import { absoluteTime, countdown, tickMs, useNow, usesLeftText } from '../lib/passwords'
 import { serverInitial } from '../lib/rules'
 import type { InstanceInfo, Invite, InviteStatus, Message } from '../lib/types'
 import { ServerGlyph } from './server_rail'
@@ -332,6 +333,20 @@ function Counts({ invite, center }: { invite: Invite; center: boolean }) {
         {member_count} {member_count === 1 ? 'Member' : 'Members'}
       </span>
     </div>
+  )
+}
+
+function TicketNote({ invite, now, center }: { invite: Invite; now: number; center: boolean }) {
+  const { password_expires_at: ends, password_uses_left: left } = invite
+  if (ends === null && left === null) return null
+  return (
+    <p
+      className={`flex flex-wrap gap-x-2 pt-0.5 text-xs text-on-surface-variant ${center ? 'justify-center' : ''}`}
+    >
+      {ends !== null && <span title={absoluteTime(ends)}>{countdown(ends, now)}</span>}
+      {ends !== null && left !== null && <span aria-hidden>·</span>}
+      {left !== null && <span>{usesLeftText(left)}</span>}
+    </p>
   )
 }
 
@@ -631,7 +646,12 @@ export function InviteCard({
   const btn = big ? 'w-full py-2.5' : 'shrink-0'
   const fit = big ? 'break-words' : 'truncate'
   const errorCode = error instanceof ApiError ? error.status : null
-  const hidden = needsPassword(error) || deniedAccess(error)
+  const ticketEnds = data?.password_expires_at ?? null
+  const now = useNow(
+    ticketEnds === null ? 60_000 : tickMs(ticketEnds - Math.floor(Date.now() / 1000))
+  )
+  const ticketGone = ticketEnds !== null && ticketEnds <= now
+  const hidden = needsPassword(error) || deniedAccess(error) || ticketGone
   const invalid = errorCode === 404 && !hidden
   const locked = !authed && errorCode === 401 && !hidden
 
@@ -731,7 +751,12 @@ export function InviteCard({
           )}
         </>
       ),
-      sub: <Counts invite={data} center={big} />,
+      sub: (
+        <>
+          <Counts invite={data} center={big} />
+          <TicketNote invite={data} now={now} center={big} />
+        </>
+      ),
       actions: !authed ? (
         <>
           <button onClick={logIn} className={`${filledBtn} ${btn}`}>

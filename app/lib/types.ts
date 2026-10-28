@@ -80,6 +80,44 @@ export interface Member extends UserRef {
   online: boolean
   perms: number
   role_ids: number[]
+  joined_via?: JoinedVia
+}
+
+export interface JoinedVia {
+  id: number
+  label: string | null
+}
+
+export type PasswordStatus = 'live' | 'expired' | 'used_up' | 'revoked'
+
+export interface ServerPassword {
+  id: number
+  label: string | null
+  created_by: string | null
+  created_at: number
+  expires_at: number | null
+  max_uses: number | null
+  uses: number
+  status: PasswordStatus
+}
+
+export interface ServerPasswords {
+  protected: boolean
+  permanent: boolean
+  closed: boolean
+  passwords: ServerPassword[]
+}
+
+export interface CreatedPassword extends ServerPassword {
+  password: string
+}
+
+export interface NewPassword {
+  label?: string
+  password?: string
+  expires_in?: number
+  expires_at?: number
+  max_uses?: number
 }
 
 export interface ServerBan extends UserRef {
@@ -115,6 +153,8 @@ export interface Invite {
   status: InviteStatus
   preview_channel: string | null
   preview: Message[]
+  password_expires_at: number | null
+  password_uses_left: number | null
 }
 
 export interface DmSummary {

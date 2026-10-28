@@ -213,6 +213,32 @@ pub(crate) async fn verify_password(secret: &str, hash: &str) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(test)]
+thread_local! {
+    static DERIVE_RUNS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn derive_runs() -> u64 {
+    DERIVE_RUNS.with(|c| c.get())
+}
+
+/// Argon2id of `secret` under a fixed `salt`, with the same parameters as `verify_password`,
+/// hex-encoded. Deterministic, so it can be looked up.
+pub(crate) async fn derive_key(secret: &str, salt: [u8; 16]) -> Result<String, ApiError> {
+    #[cfg(test)]
+    DERIVE_RUNS.with(|c| c.set(c.get() + 1));
+    let secret = secret.to_string();
+    off_runtime(move || {
+        let mut out = [0u8; 32];
+        Argon2::default()
+            .hash_password_into(secret.as_bytes(), &salt, &mut out)
+            .map(|()| hex::encode(out))
+            .map_err(|e| ApiError::from(anyhow::anyhow!(e)))
+    })
+    .await?
+}
+
 static DUMMY_HASH: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
 
 pub(crate) async fn dummy_hash() -> &'static str {
@@ -412,6 +438,7 @@ pub(crate) async fn register(
             online: false,
             perms: 0,
             role_ids: Vec::new(),
+            joined_via: None,
         },
     });
     state.hub.broadcast(WsEvent::UserRegistered {

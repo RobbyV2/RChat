@@ -140,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or(60);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+            let mut since = rust_next::db::now();
             loop {
                 interval.tick().await;
                 let mine = match &voice.bus {
@@ -151,6 +152,11 @@ async fn main() -> anyhow::Result<()> {
                 };
                 if mine {
                     rust_next::ws::sweep_and_log(&voice, idle).await;
+                    let until = rust_next::db::now();
+                    match rust_next::ws::announce_expired_passwords(&voice, since, until).await {
+                        Ok(()) => since = until,
+                        Err(e) => tracing::warn!("password expiry recheck failed: {e}"),
+                    }
                 }
             }
         });

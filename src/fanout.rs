@@ -671,6 +671,7 @@ mod tests {
                 online: false,
                 perms: 0,
                 role_ids: Vec::new(),
+                joined_via: None,
             },
         });
         router.deliver(roles("club"));

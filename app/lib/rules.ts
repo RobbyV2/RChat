@@ -168,7 +168,8 @@ export const passwordPrompt = (
   had: boolean,
   next: string,
   canRemove: boolean,
-  siteAdmin: boolean
+  siteAdmin: boolean,
+  staysProtected = false
 ) => {
   const verb: PasswordVerb = next ? (had ? 'Change' : 'Set') : 'Clear'
   const changed = had && next !== ''
@@ -199,7 +200,9 @@ export const passwordPrompt = (
     title: `${verb} Password`,
     body: next
       ? 'Joining will require the new password.'
-      : 'Anyone will be able to join with the server name.',
+      : staysProtected
+        ? 'The server stays password protected. New people need one of the other passwords.'
+        : 'Anyone will be able to join with the server name. All other passwords are revoked.',
     confirm: verb,
     choices,
   }

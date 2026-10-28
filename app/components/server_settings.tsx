@@ -39,6 +39,7 @@ import type {
   ServerDetail,
 } from '../lib/types'
 import { UserAvatar } from './user_avatar'
+import { ServerAccessSection, passwordName } from './server_access'
 import { ColorField } from './color_field'
 import { ServerHeader } from './server_header'
 import {
@@ -1290,7 +1291,14 @@ function Settings({ server }: { server: string }) {
           avatarColor={m.avatar_color}
           size={28}
         />
-        <span className="streamer min-w-0 flex-1 truncate text-sm">{m.display_name}</span>
+        <span className="min-w-0 flex-1">
+          <span className="streamer block truncate text-sm">{m.display_name}</span>
+          {m.joined_via && (
+            <span className="block truncate text-xs text-on-surface-variant">
+              Joined with: {passwordName(m.joined_via.label)}
+            </span>
+          )}
+        </span>
         {rolesButton(m)}
         {action}
       </div>
@@ -1326,7 +1334,7 @@ function Settings({ server }: { server: string }) {
           </form>
           <FieldError message={renameError} />
           <ServerAppearance server={server} />
-          <ServerPasswordField
+          <ServerAccessSection
             server={server}
             hasPassword={detail.has_password}
             canRemove={hasPerm(perms, Perm.Kick)}

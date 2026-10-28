@@ -117,16 +117,25 @@ pub(super) async fn is_banned(db: &Db, server: &str, username: &str) -> sqlx::Re
     )
 }
 
+fn password_live(at: &str) -> String {
+    format!(
+        "(password_id IS NULL OR EXISTS(SELECT 1 FROM server_passwords p WHERE p.id = guest_grants.password_id AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at > {at})))"
+    )
+}
+
 pub(super) async fn grant_live(db: &Db, grant: &str, server: &str) -> sqlx::Result<bool> {
     let t = now();
-    let row = sqlx::query(
-        "SELECT last_used_at FROM guest_grants WHERE \"grant\" = $1 AND server = $2 AND (last_used_at >= $3 OR (last_used_at = 0 AND created_at >= $3))",
-    )
-    .bind(grant)
-    .bind(server)
-    .bind(t - guest_grant_ttl())
-    .fetch_optional(db)
-    .await?;
+    let sql = format!(
+        "SELECT last_used_at FROM guest_grants WHERE \"grant\" = $1 AND server = $2 AND (last_used_at >= $3 OR (last_used_at = 0 AND created_at >= $3)) AND {}",
+        password_live("$4")
+    );
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(grant)
+        .bind(server)
+        .bind(t - guest_grant_ttl())
+        .bind(t)
+        .fetch_optional(db)
+        .await?;
     let Some(row) = row else {
         return Ok(false);
     };
@@ -143,10 +152,13 @@ pub(super) async fn live_grant_servers(db: &Db, grants: &[String]) -> sqlx::Resu
     }
     let t = now();
     let sql = format!(
-        "SELECT \"grant\", server, last_used_at FROM guest_grants WHERE \"grant\" IN ({}) AND (last_used_at >= $1 OR (last_used_at = 0 AND created_at >= $1))",
-        crate::api::placeholders(2, grants.len())
+        "SELECT \"grant\", server, last_used_at FROM guest_grants WHERE \"grant\" IN ({}) AND (last_used_at >= $1 OR (last_used_at = 0 AND created_at >= $1)) AND {}",
+        crate::api::placeholders(3, grants.len()),
+        password_live("$2")
     );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(t - guest_grant_ttl());
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(t - guest_grant_ttl())
+        .bind(t);
     for grant in grants {
         query = query.bind(grant);
     }

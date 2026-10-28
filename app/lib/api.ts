@@ -12,6 +12,9 @@ import type {
   Member,
   Message,
   PasswordMembers,
+  CreatedPassword,
+  NewPassword,
+  ServerPasswords,
   Profile,
   Role,
   SearchResult,
@@ -276,6 +279,7 @@ export const endpoints = (c: ApiClient) => ({
     patch: {
       name?: string
       password?: string
+      protected?: boolean
       members?: PasswordMembers
       keep_guests?: boolean
       banner_color?: string | null
@@ -283,6 +287,11 @@ export const endpoints = (c: ApiClient) => ({
     }
   ) => c.req<ServerUpdated>('PATCH', `/servers/${seg(name)}`, patch),
   deleteServer: (name: string) => c.req<unknown>('DELETE', `/servers/${seg(name)}`),
+  listPasswords: (name: string) => c.req<ServerPasswords>('GET', `/servers/${seg(name)}/passwords`),
+  createPassword: (name: string, body: NewPassword) =>
+    c.req<CreatedPassword>('POST', `/servers/${seg(name)}/passwords`, body),
+  revokePassword: (name: string, id: number) =>
+    c.req<unknown>('DELETE', `/servers/${seg(name)}/passwords/${id}`),
   createChannel: (server: string, name: string, kind: ChannelKind = 'text') =>
     c.req<Channel>('POST', `/servers/${seg(server)}/channels`, { name, kind }),
   updateChannel: (id: number, patch: { name?: string; slowmode_seconds?: number }) =>

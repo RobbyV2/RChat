@@ -99,6 +99,7 @@ import { clearProfiles, forgetProfiles } from './profile'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from './voice_layout'
 import { retrySeconds, tooManyText } from './rate_limit'
 import { deniedAccess } from './join_flow'
+import { secretsKey } from './passwords'
 import {
   freshPresence,
   knownPresence,
@@ -2594,6 +2595,8 @@ export const useStore = create<RChatState>()((set, get) => {
 
     logout: () => {
       const token = get().authExpired ? null : get().token
+      const username = get().me?.username
+      if (username) writeLocal(home.scoped(secretsKey(username)), null)
       if (meRetry) clearTimeout(meRetry)
       meRetry = null
       const flushed = readQueue.flush()

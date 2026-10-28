@@ -16,7 +16,8 @@ use tokio::time::Instant;
 use tracing::{debug, warn};
 
 use crate::api::access::{
-    ws_banned, ws_channel_view, ws_channel_viewable, ws_server_open, ws_voice_channel,
+    servers_with_expired_passwords, ws_banned, ws_channel_view, ws_channel_viewable,
+    ws_grant_deadline, ws_server_open, ws_voice_channel,
 };
 use crate::api::messages::{load_message, load_message_with_embeds};
 use crate::api::{Channel, Embed, Member, Message, ServerSummaryLite, Settings, UserRef};
@@ -566,6 +567,22 @@ async fn finalize_call_log(state: &AppState, end: CallEnd, declined: bool) {
     if matches!(res, Ok(r) if r.rows_affected() > 0) {
         broadcast_call_update(state, dm_users, log_id).await;
     }
+}
+
+/// Asks the connections on servers whose extra passwords expired in `(since, until]` to
+/// recheck their access, so guests let in through those passwords are cut even when idle.
+pub async fn announce_expired_passwords(
+    state: &AppState,
+    since: i64,
+    until: i64,
+) -> sqlx::Result<()> {
+    let db = &state.read();
+    for name in servers_with_expired_passwords(db, since, until).await? {
+        if let Some(server) = refresh_lite(db, &name).await? {
+            state.hub.broadcast(WsEvent::ServerUpdated { server });
+        }
+    }
+    Ok(())
 }
 
 pub async fn sweep_and_log(state: &AppState, idle: i64) {
@@ -1582,6 +1599,7 @@ struct Access {
     member_servers: HashSet<String>,
     subs: HashSet<String>,
     grants: HashMap<String, String>,
+    deadlines: HashMap<String, i64>,
     viewing: Option<String>,
     looking: Option<String>,
     peek: Option<String>,
@@ -1607,6 +1625,7 @@ impl Access {
             member_servers,
             subs: HashSet::new(),
             grants: HashMap::new(),
+            deadlines: HashMap::new(),
             viewing: None,
             looking: None,
             peek: None,
@@ -1797,6 +1816,25 @@ impl Access {
         true
     }
 
+    async fn past_deadlines(&mut self, state: &AppState, conn: u64) -> bool {
+        let t = now();
+        let due: Vec<String> = self
+            .deadlines
+            .iter()
+            .filter(|(_, at)| **at <= t)
+            .map(|(server, _)| server.clone())
+            .collect();
+        for server in due {
+            if !self.recheck(state, conn, &server).await {
+                return false;
+            }
+            if !self.retry.pending() {
+                self.deadlines.remove(&server);
+            }
+        }
+        true
+    }
+
     async fn recheck(&mut self, state: &AppState, conn: u64, name: &str) -> bool {
         if self.retry.pending() || !self.held(name) {
             return true;
@@ -1850,6 +1888,7 @@ async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::Result<bool
     access.member_servers = servers;
     access.hidden = hidden;
     access.grants.retain(|server, _| kept.contains(server));
+    access.deadlines = grant_deadlines(db, &access.grants).await?;
     access.subs = kept;
     access.tidy_peek();
     if let (Some(user), Some(server), None) = (&access.user, &access.looking, &access.peek)
@@ -1869,6 +1908,19 @@ async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::Result<bool
     }
     access.topics_dirty = true;
     Ok(true)
+}
+
+async fn grant_deadlines(
+    db: &Db,
+    grants: &HashMap<String, String>,
+) -> sqlx::Result<HashMap<String, i64>> {
+    let mut deadlines = HashMap::new();
+    for (server, grant) in grants {
+        if let Some(at) = ws_grant_deadline(db, server, grant).await? {
+            deadlines.insert(server.clone(), at);
+        }
+    }
+    Ok(deadlines)
 }
 
 async fn still_held(db: &Db, access: &Access, name: &str) -> sqlx::Result<bool> {
@@ -1956,6 +2008,9 @@ async fn channel_gate(
 }
 
 async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent) -> Option<bool> {
+    if !access.past_deadlines(state, conn).await {
+        return None;
+    }
     if let (Some(server), Some(user)) = (self_grant(ev, access.user.as_deref()), &access.user) {
         let started = Instant::now();
         match is_member(&state.read(), server, user).await {
@@ -2350,6 +2405,10 @@ async fn run(state: AppState, mut socket: WebSocket) {
                                     access.subs.insert(s);
                                 }
                             }
+                            access.deadlines = match grant_deadlines(&state.read(), &access.grants).await {
+                                Ok(deadlines) => deadlines,
+                                Err(_) => access.grants.keys().map(|s| (s.clone(), 0)).collect(),
+                            };
                             access.set_peek(peek);
                             if !send_voice_snapshot(&state, &out, &mut access).await {
                                 break;
@@ -2581,6 +2640,9 @@ fn track(ev: &WsEvent, access: &mut Access) {
             }
             if access.subs.remove(old_name) {
                 access.subs.insert(server.name.clone());
+            }
+            if let Some(at) = access.deadlines.remove(old_name) {
+                access.deadlines.insert(server.name.clone(), at);
             }
             if let Some(grant) = access.grants.remove(old_name) {
                 access.grants.insert(server.name.clone(), grant);
@@ -2948,6 +3010,7 @@ mod tests {
                 online: true,
                 perms: 0,
                 role_ids: vec![3],
+                joined_via: None,
             },
         };
         let back: WsEvent = serde_json::from_str(&to_bus_json(&member).unwrap()).unwrap();
@@ -3298,6 +3361,7 @@ mod tests {
                 online: false,
                 perms: 0,
                 role_ids: Vec::new(),
+                joined_via: None,
             },
         }
     }
@@ -3696,6 +3760,7 @@ mod tests {
                 online: false,
                 perms: 0,
                 role_ids: Vec::new(),
+                joined_via: None,
             },
         };
         assert_eq!(self_grant(&joined, Some("alice")), Some("vault"));
@@ -3746,6 +3811,70 @@ mod tests {
         guest.grants = HashMap::from([(s("locked"), s("g1")), (s("kept"), s("g2"))]);
         assert!(guest.refresh(&state, 1).await);
         assert_eq!(guest.subs, set(&["kept", "open"]));
+        assert_eq!(guest.grants.keys().collect::<Vec<_>>(), ["kept"]);
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn guests_of_an_expiring_password_are_cut_at_its_expiry() {
+        let (state, path) = crate::api::test_util::temp_state("guest_deadline").await;
+        let db = &state.db;
+        for name in ["tmp", "kept"] {
+            sqlx::query("INSERT INTO servers(name, display_name, password_hash, created_at) VALUES($1, $1, 'h', 0)")
+                .bind(name)
+                .execute(db)
+                .await
+                .unwrap();
+        }
+        let at = now() + 1;
+        let id: i64 = sqlx::query("INSERT INTO server_passwords(server, hash, lookup, created_by, created_at, expires_at) VALUES('tmp', 'h', 'l', 'alice', 0, $1) RETURNING id")
+            .bind(at)
+            .fetch_one(db)
+            .await
+            .unwrap()
+            .try_get(0)
+            .unwrap();
+        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at, password_id) VALUES('g1', 'tmp', 0, 4000000000, $1)")
+            .bind(id)
+            .execute(db)
+            .await
+            .unwrap();
+        exec(
+            db,
+            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('g2', 'kept', 0, 4000000000)",
+        )
+        .await;
+        let mut guest = Access::new(None, false, HashSet::new());
+        guest.subs = set(&["tmp", "kept"]);
+        guest.grants = HashMap::from([(s("tmp"), s("g1")), (s("kept"), s("g2"))]);
+        assert!(guest.refresh(&state, 1).await);
+        assert_eq!(guest.subs, set(&["tmp", "kept"]));
+        assert_eq!(guest.deadlines, HashMap::from([(s("tmp"), at)]));
+        assert_eq!(
+            servers_with_expired_passwords(db, at - 10, at - 1)
+                .await
+                .unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            servers_with_expired_passwords(db, at - 1, at)
+                .await
+                .unwrap(),
+            vec![s("tmp")]
+        );
+        while now() < at {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let ev = WsEvent::PresenceChanged {
+            server: s("tmp"),
+            username: s("bob"),
+            online: true,
+            online_count: 1,
+        };
+        let conn = state.hub.next_conn();
+        assert_eq!(on_event(&state, conn, &mut guest, &ev).await, Some(false));
+        assert_eq!(guest.subs, set(&["kept"]));
+        assert!(guest.deadlines.is_empty());
         assert_eq!(guest.grants.keys().collect::<Vec<_>>(), ["kept"]);
         crate::api::test_util::done(state, path).await;
     }
@@ -4659,6 +4788,7 @@ mod tests {
                 online: false,
                 perms: 0,
                 role_ids: Vec::new(),
+                joined_via: None,
             },
         });
         let first = inbox.rx.recv().await.unwrap();

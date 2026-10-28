@@ -2443,6 +2443,7 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "hex",
+ "hmac 0.13.0",
  "hyper",
  "hyper-util",
  "memorable-wordlist",

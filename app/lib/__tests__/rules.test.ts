@@ -241,7 +241,12 @@ describe('passwordPrompt', () => {
     expect(passwordPrompt(true, 'pw', true, false).title).toBe('Change Password')
     const clear = passwordPrompt(true, '', true, false)
     expect([clear.title, clear.confirm]).toEqual(['Clear Password', 'Clear'])
-    expect(clear.body).toBe('Anyone will be able to join with the server name.')
+    expect(clear.body).toBe(
+      'Anyone will be able to join with the server name. All other passwords are revoked.'
+    )
+    expect(passwordPrompt(true, '', true, false, true).body).toBe(
+      'The server stays password protected. New people need one of the other passwords.'
+    )
     expect(values(clear)).toEqual(['keep', 'remove'])
     expect(clear.choices.map(c => c.danger)).toEqual([false, true])
   })

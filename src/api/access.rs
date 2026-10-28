@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
 use axum::http::{HeaderMap, StatusCode};
-use sqlx::Row;
+use hmac::{Hmac, KeyInit, Mac};
+use sha2::Sha256;
+use sqlx::{AnyConnection, Row};
 
-use crate::api::auth::{dummy_hash, verify_password};
+use crate::api::auth::{derive_key, dummy_hash, verify_password};
 use crate::api::{ApiError, ServerSummaryLite, header_grants};
 use crate::db::{
     ChannelAccess, ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, Perm, PermRow, User,
@@ -128,6 +130,97 @@ async fn check_password(given: &str, hash: Option<&str>) -> bool {
     }
 }
 
+/// Lookup key of a server password: argon2id of the password, salted with the first 16 bytes
+/// of HMAC-SHA256 under the instance pepper of the lowercase server name, hex-encoded. A
+/// matching row is the proof of the password. Works the same for names that do not exist.
+pub async fn password_lookup(db: &Db, server: &str, password: &str) -> Result<String, ApiError> {
+    let pepper = crate::db::pepper(db).await?;
+    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&pepper)
+        .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+    mac.update(server.to_lowercase().as_bytes());
+    let mut salt = [0u8; 16];
+    salt.copy_from_slice(&mac.finalize().into_bytes()[..16]);
+    derive_key(password, salt).await
+}
+
+struct Extra {
+    id: i64,
+    expires_at: Option<i64>,
+    max_uses: Option<i64>,
+    uses: i64,
+    revoked: bool,
+}
+
+impl Extra {
+    fn ticket(&self, t: i64) -> Option<Ticket> {
+        let Extra {
+            id,
+            expires_at,
+            max_uses,
+            uses,
+            revoked,
+        } = *self;
+        let live =
+            !revoked && expires_at.is_none_or(|at| at > t) && max_uses.is_none_or(|max| uses < max);
+        live.then_some(Ticket {
+            id,
+            expires_at,
+            uses_left: max_uses.map(|max| max - uses),
+        })
+    }
+}
+
+async fn extra_password(db: &Db, key: &str, lookup: &str) -> sqlx::Result<Option<Extra>> {
+    let row = sqlx::query(
+        "SELECT id, expires_at, max_uses, uses, revoked_at FROM server_passwords WHERE server = $1 AND lookup = $2",
+    )
+    .bind(key)
+    .bind(lookup)
+    .fetch_optional(db)
+    .await?;
+    match row {
+        Some(r) => Ok(Some(Extra {
+            id: r.try_get(0)?,
+            expires_at: r.try_get(1)?,
+            max_uses: r.try_get(2)?,
+            uses: r.try_get(3)?,
+            revoked: r.try_get::<Option<i64>, _>(4)?.is_some(),
+        })),
+        None => Ok(None),
+    }
+}
+
+fn real_hash(hash: Option<&str>) -> Option<&str> {
+    hash.filter(|h| !h.starts_with('!'))
+}
+
+/// The extra password (temporary or ticket) that opened a server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ticket {
+    id: i64,
+    pub expires_at: Option<i64>,
+    pub uses_left: Option<i64>,
+}
+
+/// Every attempt that carries a password runs exactly two argon2 operations, at the same time:
+/// the permanent password verify (or the dummy hash) and the lookup key derivation. The extra
+/// password is the row with that key. Nothing depends on whether the server exists, is public,
+/// or how many passwords it has.
+async fn check_passwords(
+    db: &Db,
+    key: &str,
+    given: &str,
+    permanent: Option<&str>,
+) -> Result<(bool, Option<Ticket>), ApiError> {
+    let (permanent_ok, lookup) = tokio::join!(
+        check_password(given, real_hash(permanent)),
+        password_lookup(db, key, given),
+    );
+    let extra = extra_password(db, key, &lookup?).await?;
+    let ticket = extra.and_then(|extra| extra.ticket(now()));
+    Ok((permanent_ok, ticket))
+}
+
 #[derive(Clone, Copy)]
 struct Who<'a> {
     username: Option<&'a str>,
@@ -147,6 +240,7 @@ struct Gate {
     lite: ServerSummaryLite,
     via: Via,
     banned: bool,
+    ticket: Option<Ticket>,
 }
 
 async fn exists(db: &Db, sql: &'static str, server: &str, username: &str) -> sqlx::Result<bool> {
@@ -201,17 +295,20 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
             }
         }
     }
+    let hash: Option<String> = match &row {
+        Some(row) => row.try_get(3)?,
+        None => None,
+    };
+    let checked = match proof.password {
+        Slot::Open(Some(given)) => Some(check_passwords(db, &key, given, hash.as_deref()).await?),
+        Slot::Open(None) | Slot::Closed => None,
+    };
     let Some(row) = row else {
         return Err(match proof.password {
-            Slot::Open(Some(given)) => {
-                check_password(given, None).await;
-                denied()
-            }
+            Slot::Open(Some(_)) | Slot::Closed => denied(),
             Slot::Open(None) => password_required(),
-            Slot::Closed => denied(),
         });
     };
-    let hash: Option<String> = row.try_get(3)?;
     let lite = ServerSummaryLite {
         name: row.try_get(0)?,
         display_name: row.try_get(1)?,
@@ -220,29 +317,38 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
         banner_color: row.try_get(4)?,
         name_color: row.try_get(5)?,
     };
-    let via = match (hash.as_deref(), member) {
+    let mut ticket = None;
+    let via = match (hash.is_some(), member) {
         (_, true) => Via::Member,
-        (None, false) => Via::Public,
-        (Some(hash), false) => match (granted, who.site_admin, proof.password) {
-            (true, _, _) => Via::Grant,
-            (false, true, Slot::Closed) => Via::Staff,
-            (false, _, Slot::Open(Some(given))) => match check_password(given, Some(hash)).await {
-                true => Via::Password,
-                false => return Err(denied()),
-            },
-            (false, _, Slot::Open(None)) if banned && history => return Err(self::banned()),
-            (false, _, Slot::Open(None)) => return Err(password_required()),
-            (false, _, Slot::Closed) if banned && history => return Err(self::banned()),
-            (false, _, Slot::Closed) => return Err(denied()),
+        (false, false) => Via::Public,
+        (true, false) => match (granted, who.site_admin, proof.password, checked) {
+            (true, _, _, _) => Via::Grant,
+            (false, true, Slot::Closed, _) => Via::Staff,
+            (false, _, Slot::Open(Some(_)), Some((true, _))) => Via::Password,
+            (false, _, Slot::Open(Some(_)), Some((false, Some(t)))) => {
+                ticket = Some(t);
+                Via::Password
+            }
+            (false, _, Slot::Open(Some(_)), _) => return Err(denied()),
+            (false, _, Slot::Open(None), _) if banned && history => return Err(self::banned()),
+            (false, _, Slot::Open(None), _) => return Err(password_required()),
+            (false, _, Slot::Closed, _) if banned && history => return Err(self::banned()),
+            (false, _, Slot::Closed, _) => return Err(denied()),
         },
     };
-    Ok(Gate { lite, via, banned })
+    Ok(Gate {
+        lite,
+        via,
+        banned,
+        ticket,
+    })
 }
 
 pub struct ServerAccess {
     lite: ServerSummaryLite,
     via: Via,
     user: Option<User>,
+    ticket: Option<Ticket>,
 }
 
 pub async fn resolve_server(
@@ -253,13 +359,13 @@ pub async fn resolve_server(
 ) -> Result<ServerAccess, ApiError> {
     match resolve_invite(db, name, viewer, proof).await? {
         InviteView::Banned(_) => Err(banned()),
-        InviteView::Open(access) => Ok(access),
+        InviteView::Open(access) => Ok(*access),
     }
 }
 
 pub enum InviteView {
     Banned(ServerSummaryLite),
-    Open(ServerAccess),
+    Open(Box<ServerAccess>),
 }
 
 pub async fn resolve_invite(
@@ -268,14 +374,20 @@ pub async fn resolve_invite(
     viewer: Option<&User>,
     proof: &Proof<'_>,
 ) -> Result<InviteView, ApiError> {
-    let Gate { lite, via, banned } = gate(db, name, Who::of(viewer), proof).await?;
+    let Gate {
+        lite,
+        via,
+        banned,
+        ticket,
+    } = gate(db, name, Who::of(viewer), proof).await?;
     match banned {
         true => Ok(InviteView::Banned(lite)),
-        false => Ok(InviteView::Open(ServerAccess {
+        false => Ok(InviteView::Open(Box::new(ServerAccess {
             lite,
             via,
             user: viewer.cloned(),
-        })),
+            ticket,
+        }))),
     }
 }
 
@@ -294,6 +406,72 @@ impl ServerAccess {
 
     pub fn is_member(&self) -> bool {
         self.via == Via::Member
+    }
+
+    /// The extra password that opened the server, when one did (not the permanent password).
+    pub fn ticket(&self) -> Option<Ticket> {
+        self.ticket
+    }
+
+    /// Id of the extra password that opened the server, for `members.joined_via` and
+    /// `guest_grants.password_id`.
+    pub fn password_id(&self) -> Option<i64> {
+        self.ticket.map(|t| t.id)
+    }
+
+    /// Consumes one use of the extra password that opened the server, atomically. Zero rows
+    /// (revoked, expired or used up since the check) answer the uniform denial.
+    pub async fn spend_ticket(&self, conn: &mut AnyConnection) -> Result<(), ApiError> {
+        let Some(ticket) = self.ticket else {
+            return Ok(());
+        };
+        let spent = sqlx::query(
+            "UPDATE server_passwords SET uses = uses + 1, used_up_at = CASE WHEN max_uses IS NOT NULL AND uses + 1 >= max_uses THEN $2 ELSE used_up_at END WHERE id = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $2) AND (max_uses IS NULL OR uses < max_uses)",
+        )
+        .bind(ticket.id)
+        .bind(now())
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+        match spent {
+            0 => Err(denied()),
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether the server has a permanent password (for managers of the access settings).
+    pub async fn has_permanent_password(&self, db: &Db) -> Result<bool, ApiError> {
+        Ok(real_hash(self.permanent_hash(db).await?.as_deref()).is_some())
+    }
+
+    /// Whether `password` is the permanent password (extra passwords must differ from it).
+    pub async fn is_permanent_password(&self, db: &Db, password: &str) -> Result<bool, ApiError> {
+        match real_hash(self.permanent_hash(db).await?.as_deref()) {
+            Some(hash) => Ok(verify_password(password, hash).await),
+            None => Ok(false),
+        }
+    }
+
+    /// Whether `password` is a live extra password of the server (the permanent password must
+    /// differ from them).
+    pub async fn is_live_extra_password(&self, db: &Db, password: &str) -> Result<bool, ApiError> {
+        let lookup = password_lookup(db, self.name(), password).await?;
+        Ok(extra_password(db, self.name(), &lookup)
+            .await?
+            .and_then(|extra| extra.ticket(now()))
+            .is_some())
+    }
+
+    async fn permanent_hash(&self, db: &Db) -> Result<Option<String>, ApiError> {
+        Ok(
+            sqlx::query("SELECT password_hash FROM servers WHERE name = $1")
+                .bind(self.name())
+                .fetch_optional(db)
+                .await?
+                .map(|r| r.try_get(0))
+                .transpose()?
+                .flatten(),
+        )
     }
 
     pub fn viewer(&self) -> Option<&User> {
@@ -762,6 +940,44 @@ pub(crate) async fn ws_server_open(
     ws_result(gate(db, name, who, &proof).await.map(|g| !g.banned))
 }
 
+/// When the guest grant `grant` on `server` ends because the extra password it came through
+/// expires (None: no such expiry). Realtime subscriptions recheck at this time.
+pub(crate) async fn ws_grant_deadline(
+    db: &Db,
+    server: &str,
+    grant: &str,
+) -> sqlx::Result<Option<i64>> {
+    Ok(sqlx::query(
+        "SELECT p.expires_at FROM guest_grants g JOIN server_passwords p ON p.id = g.password_id WHERE g.\"grant\" = $1 AND g.server = $2",
+    )
+    .bind(grant)
+    .bind(server)
+    .fetch_optional(db)
+    .await?
+    .map(|r| r.try_get::<Option<i64>, _>(0))
+    .transpose()?
+    .flatten())
+}
+
+/// Servers with an extra password that expired in `(since, until]`, so realtime connections
+/// let in through them can recheck even when nothing else happens on the server.
+pub(crate) async fn servers_with_expired_passwords(
+    db: &Db,
+    since: i64,
+    until: i64,
+) -> sqlx::Result<Vec<String>> {
+    sqlx::query(
+        "SELECT DISTINCT server FROM server_passwords WHERE revoked_at IS NULL AND expires_at > $1 AND expires_at <= $2",
+    )
+    .bind(since)
+    .bind(until)
+    .fetch_all(db)
+    .await?
+    .iter()
+    .map(|r| r.try_get(0))
+    .collect()
+}
+
 pub(crate) async fn ws_voice_channel(
     db: &Db,
     username: &str,
@@ -783,15 +999,25 @@ mod tests {
     use std::net::SocketAddr;
 
     use super::*;
-    use crate::api::auth::{hash_password, verify_runs};
+    use crate::api::auth::{derive_runs, hash_password, verify_runs};
+    use crate::api::passwords::EXPIRY_MAX;
     use crate::api::routes;
     use crate::api::test_util::{add_member, done, mem_user, temp_state};
     use crate::config::Roles;
     use crate::server::client_ip::{ClientIp, ProxyTrust};
     use crate::state::AppState;
 
-    const HANDLERS: [(&str, &str); 13] = [
+    fn argon2_runs() -> (u64, u64) {
+        (verify_runs(), derive_runs())
+    }
+
+    fn diff(after: (u64, u64), before: (u64, u64)) -> (u64, u64) {
+        (after.0 - before.0, after.1 - before.1)
+    }
+
+    const HANDLERS: [(&str, &str); 14] = [
         ("servers.rs", include_str!("servers.rs")),
+        ("passwords.rs", include_str!("passwords.rs")),
         ("messages.rs", include_str!("messages.rs")),
         ("media.rs", include_str!("media.rs")),
         ("embeds.rs", include_str!("embeds.rs")),
@@ -924,12 +1150,50 @@ mod tests {
             "INSERT INTO roles(server, name, color, perms) VALUES('vault', 'r', '#ffffff', 0)",
         )
         .await;
+        exec(db, "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('closed', 'Closed', 'alice', '!none', 0)").await;
+        add_member(db, "closed", "alice", 1, 0, 0).await;
+        exec(
+            db,
+            "INSERT INTO roles(server, name, color, perms) VALUES('closed', 'r', '#ffffff', 0)",
+        )
+        .await;
+        extra(db, "closed", "gone-pw", Some(1), None, 0, None).await;
+        extra(db, "vault", "expired-pw", Some(now() - 1), None, 0, None).await;
+        extra(db, "vault", "revoked-pw", None, None, 0, Some(1)).await;
+        extra(db, "vault", "used-pw", None, Some(2), 2, None).await;
         Fixture {
             vault_channel,
             vault_message,
             hidden_channel,
             hidden_message,
         }
+    }
+
+    pub(crate) async fn extra(
+        db: &Db,
+        server: &str,
+        secret: &str,
+        expires_at: Option<i64>,
+        max_uses: Option<i64>,
+        uses: i64,
+        revoked_at: Option<i64>,
+    ) -> i64 {
+        let hash = hash_password(secret).await.expect("hash");
+        let lookup = password_lookup(db, server, secret).await.expect("lookup");
+        sqlx::query("INSERT INTO server_passwords(server, label, hash, lookup, created_by, created_at, expires_at, max_uses, uses, revoked_at) VALUES($1, $2, $3, $4, 'alice', 0, $5, $6, $7, $8) RETURNING id")
+            .bind(server)
+            .bind(secret)
+            .bind(hash)
+            .bind(lookup)
+            .bind(expires_at)
+            .bind(max_uses)
+            .bind(uses)
+            .bind(revoked_at)
+            .fetch_one(db)
+            .await
+            .expect("extra password")
+            .try_get(0)
+            .expect("id")
     }
 
     struct Client {
@@ -1099,6 +1363,62 @@ mod tests {
             &[("x-invite-password", "wrong")],
         ),
         ("GET", "/invites/{s}", None, &[("x-guest-grant", "bogus")]),
+        (
+            "POST",
+            "/servers/{s}/join",
+            Some(r#"{"password":"expired-pw"}"#),
+            &[],
+        ),
+        (
+            "POST",
+            "/servers/{s}/join",
+            Some(r#"{"password":"revoked-pw"}"#),
+            &[],
+        ),
+        (
+            "POST",
+            "/servers/{s}/join",
+            Some(r#"{"password":"used-pw"}"#),
+            &[],
+        ),
+        (
+            "POST",
+            "/servers/{s}/guest_access",
+            Some(r#"{"password":"used-pw"}"#),
+            &[],
+        ),
+        (
+            "POST",
+            "/servers/{s}/guest_access",
+            Some(r#"{"password":"expired-pw"}"#),
+            &[],
+        ),
+        (
+            "GET",
+            "/invites/{s}",
+            None,
+            &[("x-invite-password", "revoked-pw")],
+        ),
+        (
+            "GET",
+            "/invites/{s}",
+            None,
+            &[("x-invite-password", "expired-pw")],
+        ),
+        (
+            "POST",
+            "/servers/{s}/join",
+            Some(r#"{"password":"gone-pw"}"#),
+            &[],
+        ),
+        ("GET", "/servers/{s}/passwords", None, &[]),
+        (
+            "POST",
+            "/servers/{s}/passwords",
+            Some(r#"{"label":"x"}"#),
+            &[],
+        ),
+        ("DELETE", "/servers/{s}/passwords/1", None, &[]),
         ("GET", "/users/alice/profile?server={s}", None, &[]),
     ];
 
@@ -1135,12 +1455,13 @@ mod tests {
         for &(method, route, body, headers) in SERVER_ROUTES {
             for token in viewers {
                 let mut replies = Vec::new();
-                for name in ["vault", "ghost", "VAULT"] {
+                for name in ["vault", "ghost", "VAULT", "closed"] {
                     let path = route.replace("{s}", name);
                     replies.push(client.call(method, &path, token, body, headers).await);
                 }
-                assert_eq!(replies[0], replies[1], "{method} {route} as {token:?}");
-                assert_eq!(replies[0], replies[2], "{method} {route} as {token:?}");
+                for (i, reply) in replies.iter().enumerate().skip(1) {
+                    assert_eq!(&replies[0], reply, "{method} {route} as {token:?} ({i})");
+                }
                 assert!(replies[0].1.iter().any(|(k, _)| k == "content-type"));
                 let (status, _, body) = &replies[0];
                 let body = String::from_utf8_lossy(body);
@@ -1390,15 +1711,19 @@ mod tests {
         let db = &state.db;
         let bob = mem_user("bob", false);
         let before = verify_counts();
+        let derived = derive_runs();
         let _ = resolve_server(db, "ghost", Some(&bob), &Proof::password(Some("x"))).await;
         assert_eq!(verify_counts(), (before.0, before.1 + 1));
+        assert_eq!(derive_runs(), derived + 1);
         let _ = resolve_server(db, "vault", Some(&bob), &Proof::password(Some("x"))).await;
         assert_eq!(verify_counts(), (before.0 + 1, before.1 + 1));
+        assert_eq!(derive_runs(), derived + 2);
         for name in ["ghost", "vault"] {
             let _ = resolve_server(db, name, Some(&bob), &Proof::password(None)).await;
             let _ = resolve_server(db, name, Some(&bob), &Proof::none()).await;
         }
         assert_eq!(verify_counts(), (before.0 + 1, before.1 + 1));
+        assert_eq!(derive_runs(), derived + 2);
         let root = mem_user("root", true);
         let staff = resolve_server(db, "vault", Some(&root), &Proof::none()).await;
         assert_eq!(staff.map(|a| a.via()).ok(), Some(Via::Staff));
@@ -1455,10 +1780,10 @@ mod tests {
         let attempt = |name: &'static str| {
             let bob = &bob;
             async move {
-                let before = verify_runs();
+                let before = argon2_runs();
                 let res = resolve_server(db, name, Some(bob), &Proof::password(Some("p"))).await;
                 let res = res.err().map(|ApiError(c, m)| (c, m));
-                (res, verify_runs() - before)
+                (res, diff(argon2_runs(), before))
             }
         };
         let first = attempt("ghost").await;
@@ -1468,7 +1793,7 @@ mod tests {
         let vault_again = attempt("vault").await;
         let denied = Some((StatusCode::NOT_FOUND, DENIED.to_string()));
         for (res, runs) in [first, missing, protected, again, vault_again] {
-            assert_eq!((res, runs), (denied.clone(), 1));
+            assert_eq!((res, runs), (denied.clone(), (1, 1)));
         }
         done(state, path).await;
     }
@@ -1538,6 +1863,773 @@ mod tests {
             ),
             ["rchat"]
         );
+        server.abort();
+        done(state, path).await;
+    }
+
+    async fn user(db: &Db, name: &str) {
+        exec(db, &format!("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, is_site_admin, created_at) VALUES('{name}', '{name}', 'x', 'text', 'identicon', 0, 0)")).await;
+        exec(
+            db,
+            &format!(
+                "INSERT INTO tokens(token, username, created_at) VALUES('{name}', '{name}', 0)"
+            ),
+        )
+        .await;
+    }
+
+    async fn scalar(db: &Db, sql: &str) -> Option<i64> {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .fetch_one(db)
+            .await
+            .expect(sql)
+            .try_get(0)
+            .expect("value")
+    }
+
+    fn json(reply: &Reply) -> serde_json::Value {
+        serde_json::from_slice(&reply.2).expect("json")
+    }
+
+    #[tokio::test]
+    async fn lookups_are_argon2_with_a_per_server_salt() {
+        let (state, path) = temp_state("access_lookup_kdf").await;
+        let db = &state.db;
+        let derived = derive_runs();
+        let vault = password_lookup(db, "vault", "secret")
+            .await
+            .expect("lookup");
+        assert_eq!(derive_runs(), derived + 1);
+        assert_eq!(vault.len(), 64);
+        assert!(vault.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(
+            password_lookup(db, "VAULT", "secret")
+                .await
+                .expect("lookup"),
+            vault
+        );
+        assert_ne!(
+            password_lookup(db, "ghost", "secret")
+                .await
+                .expect("lookup"),
+            vault
+        );
+        assert_ne!(
+            password_lookup(db, "vault", "secret2")
+                .await
+                .expect("lookup"),
+            vault
+        );
+        let pepper = crate::db::pepper(db).await.expect("pepper");
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&pepper).expect("mac");
+        mac.update(b"vault\0secret");
+        assert_ne!(hex::encode(mac.finalize().into_bytes()), vault);
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&pepper).expect("mac");
+        mac.update(b"vault");
+        let salt: [u8; 16] = mac.finalize().into_bytes()[..16].try_into().expect("salt");
+        let mut out = [0u8; 32];
+        argon2::Argon2::default()
+            .hash_password_into(b"secret", &salt, &mut out)
+            .expect("argon2");
+        assert_eq!(hex::encode(out), vault);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn every_password_attempt_runs_two_argon2_operations() {
+        let (state, path) = temp_state("access_two_verifies").await;
+        fixture(&state).await;
+        let db = &state.db;
+        extra(db, "vault", "live-pw", None, None, 0, None).await;
+        let bob = mem_user("bob", false);
+        let alice = mem_user("alice", false);
+        let cases: [(&str, &User, &str, bool); 12] = [
+            ("ghost", &bob, "x", false),
+            ("vault", &bob, "x", false),
+            ("vault", &bob, "pw", true),
+            ("vault", &bob, "live-pw", true),
+            ("vault", &bob, "expired-pw", false),
+            ("vault", &bob, "revoked-pw", false),
+            ("vault", &bob, "used-pw", false),
+            ("closed", &bob, "x", false),
+            ("closed", &bob, "gone-pw", false),
+            ("rchat", &bob, "x", true),
+            ("vault", &alice, "x", true),
+            ("VAULT", &bob, "live-pw", true),
+        ];
+        for (name, who, given, opens) in cases {
+            let before = argon2_runs();
+            let res = resolve_server(db, name, Some(who), &Proof::password(Some(given))).await;
+            assert_eq!(diff(argon2_runs(), before), (1, 1), "{name} {given}");
+            assert_eq!(res.is_ok(), opens, "{name} {given}");
+            if !opens {
+                let err = res.err().map(|ApiError(c, m)| (c, m));
+                assert_eq!(err, Some((StatusCode::NOT_FOUND, DENIED.to_string())));
+            }
+        }
+        let ticket = resolve_server(db, "vault", Some(&bob), &Proof::password(Some("live-pw")))
+            .await
+            .expect("ticket");
+        assert_eq!(ticket.via(), Via::Password);
+        assert!(ticket.password_id().is_some());
+        let permanent = resolve_server(db, "vault", Some(&bob), &Proof::password(Some("pw")))
+            .await
+            .expect("permanent");
+        assert_eq!(permanent.password_id(), None);
+        let before = argon2_runs();
+        for proof in [Proof::password(None), Proof::none()] {
+            let _ = resolve_server(db, "closed", Some(&bob), &proof).await;
+            let _ = resolve_server(db, "ghost", Some(&bob), &proof).await;
+        }
+        assert_eq!(argon2_runs(), before, "no password, no argon2");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_one_use_ticket_admits_exactly_one() {
+        let (state, path) = temp_state("access_ticket_race").await;
+        fixture(&state).await;
+        let db = &state.db;
+        user(db, "carol").await;
+        user(db, "dave").await;
+        let id = extra(db, "vault", "one-pw", None, Some(1), 0, None).await;
+        let carol = mem_user("carol", false);
+        let dave = mem_user("dave", false);
+        let proof = Proof::password(Some("one-pw"));
+        let a = resolve_server(db, "vault", Some(&carol), &proof)
+            .await
+            .expect("a");
+        let b = resolve_server(db, "vault", Some(&dave), &proof)
+            .await
+            .expect("b");
+        let mut ta = db.begin().await.expect("tx");
+        assert!(a.spend_ticket(&mut ta).await.is_ok());
+        ta.commit().await.expect("commit");
+        let mut tb = db.begin().await.expect("tx");
+        let lost = b
+            .spend_ticket(&mut tb)
+            .await
+            .err()
+            .map(|ApiError(c, m)| (c, m));
+        assert_eq!(lost, Some((StatusCode::NOT_FOUND, DENIED.to_string())));
+        drop(tb);
+        exec(
+            db,
+            &format!("UPDATE server_passwords SET uses = 0, used_up_at = NULL WHERE id = {id}"),
+        )
+        .await;
+        let (client, server) = serve(&state).await;
+        let body = Some(r#"{"password":"one-pw"}"#);
+        let (x, y) = tokio::join!(
+            client.call("POST", "/servers/vault/join", Some("carol"), body, &[]),
+            client.call("POST", "/servers/vault/join", Some("dave"), body, &[]),
+        );
+        let mut statuses = [x.0, y.0];
+        statuses.sort();
+        assert_eq!(statuses, [200, 404]);
+        let loser = if x.0 == 404 { &x } else { &y };
+        assert_eq!(
+            loser.2,
+            br#"{"error":"Server not found or wrong password"}"#
+        );
+        assert_eq!(
+            scalar(
+                db,
+                &format!("SELECT uses FROM server_passwords WHERE id = {id}")
+            )
+            .await,
+            Some(1)
+        );
+        assert!(
+            scalar(
+                db,
+                &format!("SELECT used_up_at FROM server_passwords WHERE id = {id}")
+            )
+            .await
+            .is_some()
+        );
+        assert_eq!(
+            scalar(db, "SELECT COUNT(*) FROM members WHERE server = 'vault' AND username IN ('carol', 'dave')").await,
+            Some(1)
+        );
+        assert_eq!(
+            scalar(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM members WHERE server = 'vault' AND joined_via = {id}"
+                )
+            )
+            .await,
+            Some(1)
+        );
+        let late = client
+            .call("POST", "/servers/vault/join", Some("bob"), body, &[])
+            .await;
+        let ghost = client
+            .call("POST", "/servers/ghost/join", Some("bob"), body, &[])
+            .await;
+        assert_eq!(late, ghost, "a used-up ticket looks like a missing server");
+        server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn invites_show_ticket_limits_only_after_proof_and_never_spend() {
+        let (state, path) = temp_state("access_invite_ticket").await;
+        fixture(&state).await;
+        let db = &state.db;
+        let at = now() + 3 * 3600;
+        let id = extra(db, "vault", "temp-pw", Some(at), Some(2), 0, None).await;
+        let (client, server) = serve(&state).await;
+        for _ in 0..3 {
+            let card = client
+                .call(
+                    "GET",
+                    "/invites/vault",
+                    Some("bob"),
+                    None,
+                    &[("x-invite-password", "temp-pw")],
+                )
+                .await;
+            assert_eq!(card.0, 200);
+            let card = json(&card);
+            assert_eq!(card["password_expires_at"], at);
+            assert_eq!(card["password_uses_left"], 2);
+            assert_eq!(card["status"], "joinable");
+        }
+        assert_eq!(
+            scalar(
+                db,
+                &format!("SELECT uses FROM server_passwords WHERE id = {id}")
+            )
+            .await,
+            Some(0),
+            "previews never use the ticket"
+        );
+        let locked = client
+            .call("GET", "/invites/vault", Some("bob"), None, &[])
+            .await;
+        assert_eq!(locked.2, br#"{"error":"Password required"}"#);
+        let permanent = client
+            .call(
+                "GET",
+                "/invites/vault",
+                Some("bob"),
+                None,
+                &[("x-invite-password", "pw")],
+            )
+            .await;
+        let permanent = json(&permanent);
+        assert!(permanent["password_expires_at"].is_null());
+        assert!(permanent["password_uses_left"].is_null());
+        let member = json(
+            &client
+                .call("GET", "/invites/vault", Some("alice"), None, &[])
+                .await,
+        );
+        assert_eq!(member["status"], "member");
+        assert!(member["password_expires_at"].is_null());
+        let grant = client
+            .call(
+                "POST",
+                "/servers/vault/guest_access",
+                None,
+                Some(r#"{"password":"temp-pw"}"#),
+                &[],
+            )
+            .await;
+        assert_eq!(grant.0, 200);
+        let joined = client
+            .call(
+                "POST",
+                "/servers/vault/join",
+                Some("bob"),
+                Some(r#"{"password":"temp-pw"}"#),
+                &[],
+            )
+            .await;
+        assert_eq!(joined.0, 200);
+        assert_eq!(
+            scalar(
+                db,
+                &format!("SELECT uses FROM server_passwords WHERE id = {id}")
+            )
+            .await,
+            Some(2),
+            "the grant and the join each used one"
+        );
+        let used = client
+            .call(
+                "GET",
+                "/invites/vault",
+                Some("root"),
+                None,
+                &[("x-invite-password", "temp-pw")],
+            )
+            .await;
+        let ghost = client
+            .call(
+                "GET",
+                "/invites/ghost",
+                Some("root"),
+                None,
+                &[("x-invite-password", "temp-pw")],
+            )
+            .await;
+        assert_eq!(used, ghost);
+        exec(
+            db,
+            &format!(
+                "UPDATE server_passwords SET max_uses = NULL, expires_at = {} WHERE id = {id}",
+                now() - 1
+            ),
+        )
+        .await;
+        let expired = client
+            .call(
+                "GET",
+                "/invites/vault",
+                Some("root"),
+                None,
+                &[("x-invite-password", "temp-pw")],
+            )
+            .await;
+        assert_eq!(expired, ghost);
+        server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn guest_grants_end_with_their_password() {
+        let (state, path) = temp_state("access_grant_end").await;
+        fixture(&state).await;
+        let db = &state.db;
+        user(db, "carol").await;
+        let (client, server) = serve(&state).await;
+        let created = client
+            .call(
+                "POST",
+                "/servers/vault/passwords",
+                Some("alice"),
+                Some(r#"{"label":"Friends","expires_in":3600}"#),
+                &[],
+            )
+            .await;
+        assert_eq!(created.0, 200, "{}", String::from_utf8_lossy(&created.2));
+        let created = json(&created);
+        let id = created["id"].as_i64().expect("id");
+        let secret = created["password"].as_str().expect("password").to_string();
+        assert_eq!(secret.split('-').count(), 4);
+        assert!(secret.chars().all(|c| c == '-' || c.is_ascii_lowercase()));
+        let body = format!(r#"{{"password":"{secret}"}}"#);
+        let grant_of = |r: Reply| json(&r)["grant"].as_str().expect("grant").to_string();
+        let a = grant_of(
+            client
+                .call(
+                    "POST",
+                    "/servers/vault/guest_access",
+                    None,
+                    Some(&body),
+                    &[],
+                )
+                .await,
+        );
+        let b = grant_of(
+            client
+                .call(
+                    "POST",
+                    "/servers/vault/guest_access",
+                    None,
+                    Some(&body),
+                    &[],
+                )
+                .await,
+        );
+        let permanent = grant_of(
+            client
+                .call(
+                    "POST",
+                    "/servers/vault/guest_access",
+                    None,
+                    Some(r#"{"password":"pw"}"#),
+                    &[],
+                )
+                .await,
+        );
+        let joined = client
+            .call(
+                "POST",
+                "/servers/vault/join",
+                Some("carol"),
+                Some(&body),
+                &[],
+            )
+            .await;
+        assert_eq!(joined.0, 200);
+        let view = |grant: String| {
+            let client = &client;
+            async move {
+                client
+                    .call(
+                        "GET",
+                        "/servers/vault",
+                        None,
+                        None,
+                        &[("x-guest-grant", &grant)],
+                    )
+                    .await
+                    .0
+            }
+        };
+        assert_eq!(view(a.clone()).await, 200);
+        assert_eq!(view(b.clone()).await, 200);
+        exec(
+            db,
+            &format!(
+                "UPDATE server_passwords SET expires_at = {} WHERE id = {id}",
+                now() - 1
+            ),
+        )
+        .await;
+        assert_eq!(view(b.clone()).await, 404, "expiry ends the grant");
+        exec(
+            db,
+            &format!("UPDATE server_passwords SET expires_at = NULL WHERE id = {id}"),
+        )
+        .await;
+        assert_eq!(view(a.clone()).await, 200);
+        let revoked = client
+            .call(
+                "DELETE",
+                &format!("/servers/vault/passwords/{id}"),
+                Some("alice"),
+                None,
+                &[],
+            )
+            .await;
+        assert_eq!(revoked.0, 200);
+        assert_eq!(view(a).await, 404, "revoking ends the grant");
+        assert_eq!(view(permanent).await, 200);
+        let carol = client
+            .call("GET", "/servers/vault", Some("carol"), None, &[])
+            .await;
+        assert_eq!(carol.0, 200, "members who joined with it stay");
+        let list = json(
+            &client
+                .call("GET", "/servers/vault/passwords", Some("alice"), None, &[])
+                .await,
+        );
+        let row = list["passwords"]
+            .as_array()
+            .expect("list")
+            .iter()
+            .find(|p| p["id"] == id)
+            .expect("still listed")
+            .clone();
+        assert_eq!(row["status"], "revoked");
+        assert_eq!(row["uses"], 3);
+        assert_eq!(row["label"], "Friends");
+        let raw = String::from_utf8_lossy(
+            &client
+                .call("GET", "/servers/vault/passwords", Some("alice"), None, &[])
+                .await
+                .2,
+        )
+        .into_owned();
+        assert!(!raw.contains("argon2") && !raw.contains("lookup") && !raw.contains(&secret));
+        let members = json(
+            &client
+                .call("GET", "/servers/vault/members", Some("alice"), None, &[])
+                .await,
+        );
+        let carol = members
+            .as_array()
+            .expect("members")
+            .iter()
+            .find(|m| m["username"] == "carol")
+            .expect("carol")
+            .clone();
+        assert_eq!(carol["joined_via"]["label"], "Friends");
+        let as_carol = json(
+            &client
+                .call("GET", "/servers/vault/members", Some("carol"), None, &[])
+                .await,
+        );
+        assert!(
+            as_carol
+                .as_array()
+                .expect("members")
+                .iter()
+                .all(|m| m.get("joined_via").is_none())
+        );
+        server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn password_admin_rules() {
+        let (state, path) = temp_state("access_password_admin").await;
+        fixture(&state).await;
+        let db = &state.db;
+        let (client, server) = serve(&state).await;
+        let create = |who: &'static str, server: &'static str, body: String| {
+            let client = &client;
+            async move {
+                let r = client
+                    .call(
+                        "POST",
+                        &format!("/servers/{server}/passwords"),
+                        Some(who),
+                        Some(&body),
+                        &[],
+                    )
+                    .await;
+                (r.0, String::from_utf8_lossy(&r.2).into_owned())
+            }
+        };
+        let err = |m: &str| (400, format!(r#"{{"error":"{m}"}}"#));
+        assert_eq!(create("bob", "rchat", "{}".into()).await.0, 403);
+        exec(db, "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('vault', 'bob', 0, 0, 0)").await;
+        assert_eq!(create("bob", "vault", "{}".into()).await.0, 403);
+        exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('open', 'Open', 'alice', 0)").await;
+        add_member(db, "open", "alice", 1, 0, 0).await;
+        assert_eq!(
+            create("alice", "open", "{}".into()).await,
+            err("Make the server password protected first")
+        );
+        assert_eq!(
+            create("alice", "vault", r#"{"password":"pw"}"#.into()).await,
+            err("That password is already in use")
+        );
+        assert_eq!(
+            create("alice", "vault", r#"{"password":"used-pw"}"#.into()).await,
+            err("That password was already used here. Pick another one")
+        );
+        assert_eq!(
+            create("alice", "vault", r#"{"expires_in":30}"#.into()).await,
+            err("The expiry must be at least a minute away")
+        );
+        assert_eq!(
+            create(
+                "alice",
+                "vault",
+                format!(r#"{{"expires_at":{}}}"#, now() + EXPIRY_MAX + 3600)
+            )
+            .await,
+            err("The expiry can be at most a year away")
+        );
+        assert_eq!(
+            create(
+                "alice",
+                "vault",
+                r#"{"expires_in":60,"expires_at":99999999999}"#.into()
+            )
+            .await,
+            err("Use either expires_in or expires_at")
+        );
+        for uses in [0, 10_001] {
+            assert_eq!(
+                create("alice", "vault", format!(r#"{{"max_uses":{uses}}}"#)).await,
+                err("Uses must be between 1 and 10000")
+            );
+        }
+        assert_eq!(
+            create(
+                "alice",
+                "vault",
+                format!(r#"{{"expires_at":{}}}"#, i64::MIN)
+            )
+            .await,
+            err("The expiry must be at least a minute away")
+        );
+        let patch = |body: &'static str| {
+            let client = &client;
+            async move {
+                let r = client
+                    .call("PATCH", "/servers/vault", Some("alice"), Some(body), &[])
+                    .await;
+                (r.0, String::from_utf8_lossy(&r.2).into_owned())
+            }
+        };
+        let clash = err("That password is already in use for this server");
+        let live = extra(db, "vault", "live-pw", None, None, 0, None).await;
+        assert_eq!(patch(r#"{"password":"live-pw"}"#).await, clash);
+        assert_eq!(patch(r#"{"password":"  live-pw "}"#).await, clash);
+        let dead = patch(r#"{"password":"expired-pw"}"#).await;
+        assert_eq!(dead.0, 200, "{}", dead.1);
+        let back = patch(r#"{"password":"pw"}"#).await;
+        assert_eq!(back.0, 200, "{}", back.1);
+        exec(
+            db,
+            &format!("DELETE FROM server_passwords WHERE id = {live}"),
+        )
+        .await;
+        let (status, body) = create(
+            "alice",
+            "vault",
+            r#"{"label":"  Ticket  ","password":"  my ticket ","max_uses":1,"expires_in":1800}"#
+                .into(),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        let made: serde_json::Value = serde_json::from_str(&body).expect("json");
+        assert_eq!(made["label"], "Ticket");
+        assert_eq!(made["password"], "my ticket");
+        assert_eq!(made["status"], "live");
+        assert_eq!(made["max_uses"], 1);
+        assert_eq!(made["uses"], 0);
+        let opens = resolve_server(
+            db,
+            "vault",
+            Some(&mem_user("root", true)),
+            &Proof::password(Some("my ticket")),
+        )
+        .await;
+        assert!(opens.is_ok());
+        for _ in 1..crate::api::passwords::ACTIVE_MAX {
+            assert_eq!(create("alice", "vault", "{}".into()).await.0, 200);
+        }
+        assert_eq!(
+            create("alice", "vault", "{}".into()).await,
+            err("A server can have at most 50 active passwords")
+        );
+        let list = json(
+            &client
+                .call("GET", "/servers/vault/passwords", Some("alice"), None, &[])
+                .await,
+        );
+        assert_eq!(list["protected"], true);
+        assert_eq!(list["permanent"], true);
+        assert_eq!(list["closed"], false);
+        let rows = list["passwords"].as_array().expect("rows");
+        assert_eq!(rows.iter().filter(|p| p["status"] == "live").count(), 50);
+        let statuses: Vec<&str> = rows.iter().filter_map(|p| p["status"].as_str()).collect();
+        let first_dead = statuses
+            .iter()
+            .position(|s| *s != "live")
+            .expect("dead rows");
+        assert!(
+            statuses[first_dead..].iter().all(|s| *s != "live"),
+            "live first"
+        );
+        for s in ["expired", "revoked", "used_up"] {
+            assert!(statuses.contains(&s), "{s}");
+        }
+        let closed = json(
+            &client
+                .call("GET", "/servers/closed/passwords", Some("alice"), None, &[])
+                .await,
+        );
+        assert_eq!(
+            (
+                closed["protected"].clone(),
+                closed["permanent"].clone(),
+                closed["closed"].clone()
+            ),
+            (true.into(), false.into(), true.into())
+        );
+        let missing = client
+            .call(
+                "DELETE",
+                "/servers/vault/passwords/999999",
+                Some("alice"),
+                None,
+                &[],
+            )
+            .await;
+        assert_eq!(
+            (missing.0, missing.2),
+            (404, br#"{"error":"Password not found"}"#.to_vec())
+        );
+        server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn going_public_or_renaming_revokes_extra_passwords() {
+        let (state, path) = temp_state("access_password_switch").await;
+        fixture(&state).await;
+        let db = &state.db;
+        let id = extra(db, "vault", "live-pw", None, None, 0, None).await;
+        let (client, server) = serve(&state).await;
+        let patch = |name: &'static str, body: &'static str| {
+            let client = &client;
+            async move {
+                client
+                    .call(
+                        "PATCH",
+                        &format!("/servers/{name}"),
+                        Some("alice"),
+                        Some(body),
+                        &[],
+                    )
+                    .await
+                    .0
+            }
+        };
+        assert_eq!(
+            patch("vault", r#"{"password":"","protected":true}"#).await,
+            200
+        );
+        let list = json(
+            &client
+                .call("GET", "/servers/vault/passwords", Some("alice"), None, &[])
+                .await,
+        );
+        assert_eq!(
+            (
+                list["protected"].clone(),
+                list["permanent"].clone(),
+                list["closed"].clone()
+            ),
+            (true.into(), false.into(), false.into())
+        );
+        let bob = mem_user("bob", false);
+        assert!(
+            resolve_server(db, "vault", Some(&bob), &Proof::password(Some("pw")))
+                .await
+                .is_err()
+        );
+        assert!(
+            resolve_server(db, "vault", Some(&bob), &Proof::password(Some("live-pw")))
+                .await
+                .is_ok()
+        );
+        assert_eq!(patch("vault", r#"{"name":"Vault"}"#).await, 200);
+        assert!(
+            resolve_server(db, "vault", Some(&bob), &Proof::password(Some("live-pw")))
+                .await
+                .is_ok(),
+            "a case change keeps them"
+        );
+        assert_eq!(patch("vault", r#"{"name":"Safe"}"#).await, 200);
+        assert_eq!(
+            scalar(db, &format!("SELECT COUNT(*) FROM server_passwords WHERE id = {id} AND server = 'safe' AND revoked_at IS NOT NULL")).await,
+            Some(1)
+        );
+        let list = json(
+            &client
+                .call("GET", "/servers/safe/passwords", Some("alice"), None, &[])
+                .await,
+        );
+        assert_eq!(list["closed"], true);
+        let other = extra(db, "safe", "new-pw", None, None, 0, None).await;
+        assert_eq!(patch("safe", r#"{"protected":false}"#).await, 200);
+        assert_eq!(
+            scalar(db, &format!("SELECT COUNT(*) FROM server_passwords WHERE id = {other} AND revoked_at IS NOT NULL")).await,
+            Some(1)
+        );
+        let opened = resolve_server(db, "safe", Some(&bob), &Proof::none())
+            .await
+            .expect("public");
+        assert_eq!(opened.via(), Via::Public);
+        assert_eq!(patch("safe", r#"{"protected":true}"#).await, 200);
+        let list = json(
+            &client
+                .call("GET", "/servers/safe/passwords", Some("alice"), None, &[])
+                .await,
+        );
+        assert_eq!(list["closed"], true, "revoked passwords never come back");
         server.abort();
         done(state, path).await;
     }

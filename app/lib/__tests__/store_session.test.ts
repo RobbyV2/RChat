@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { api } from '../instances'
+import { api, home } from '../instances'
+import { secretsKey } from '../passwords'
 import { useStore } from '../store'
 import { me, serverDetail } from './fixtures'
 
@@ -54,6 +55,27 @@ describe('session', () => {
       ['/read', 'Bearer tok'],
       ['/auth/logout', 'Bearer tok'],
     ])
+  })
+
+  test('logout forgets the server passwords kept on this device', () => {
+    const real = (globalThis as { localStorage?: unknown }).localStorage
+    const storage = new Map<string, string>()
+    Object.assign(globalThis, {
+      localStorage: {
+        getItem: (k: string) => storage.get(k) ?? null,
+        setItem: (k: string, v: string) => void storage.set(k, v),
+        removeItem: (k: string) => void storage.delete(k),
+      },
+    })
+    const key = home.scoped(secretsKey('bob'))
+    const other = home.scoped(secretsKey('carol'))
+    storage.set(key, '{"v":1,"servers":{"vault":{"1":"secret"}}}')
+    storage.set(other, '{"v":1,"servers":{}}')
+    useStore.setState({ token: null, me: me('bob'), authExpired: true })
+    st().logout()
+    expect(storage.has(key)).toBe(false)
+    expect(storage.has(other)).toBe(true)
+    Object.assign(globalThis, { localStorage: real })
   })
 
   test('refreshing the account only takes the password kind', async () => {

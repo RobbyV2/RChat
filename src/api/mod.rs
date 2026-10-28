@@ -8,6 +8,7 @@ pub mod instance;
 pub mod media;
 pub mod messages;
 pub mod openapi;
+pub mod passwords;
 pub mod servers;
 pub mod users;
 
@@ -354,6 +355,21 @@ pub struct Member {
     pub perms: i64,
     /// Ids of the server roles assigned to the member.
     pub role_ids: Vec<i64>,
+    /// The extra password the member joined with. Only in `GET /api/servers/{name}/members`
+    /// for callers with the Delete server permission, and only for members who joined with an
+    /// extra password that is still listed; absent otherwise. It disappears once the password
+    /// row is purged, 30 days after the password was revoked, expired or used up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joined_via: Option<JoinedVia>,
+}
+
+/// The extra server password a member joined with.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct JoinedVia {
+    /// Id of the password.
+    pub id: i64,
+    /// Its label; `null` when it has none.
+    pub label: Option<String>,
 }
 
 /// A server with its channels and roles.
@@ -1254,6 +1270,14 @@ fn api_routes(
         .route(
             "/channels/{id}",
             patch(servers::update_channel).delete(servers::delete_channel),
+        )
+        .route(
+            "/servers/{name}/passwords",
+            get(passwords::list_passwords).post(passwords::create_password),
+        )
+        .route(
+            "/servers/{name}/passwords/{id}",
+            delete(passwords::revoke_password),
         )
         .route("/servers/{name}/kick", post(servers::kick_member))
         .route(
