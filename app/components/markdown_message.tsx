@@ -14,7 +14,7 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Clock, Download, EllipsisVertical, EyeOff, FileText, Share2, X } from 'lucide-react'
 import { api, home, localOrigins, remoteAllowed } from '../lib/instances'
-import { splitMentions } from '../lib/mentions'
+import { mentionCandidates, splitKnownMentions } from '../lib/mentions'
 import { base64ToBlob, p2p } from '../lib/p2p'
 import {
   findInvites,
@@ -25,7 +25,7 @@ import {
 } from '../lib/invite'
 import { postedUrl } from '../lib/embed_links'
 import { expiryText, sameOriginImage } from '../lib/rules'
-import { userRefFor, useStore, type ContextMenuItem } from '../lib/store'
+import { knownMentions, userRefFor, useStore, type ContextMenuItem } from '../lib/store'
 import type { Embed, Message, MessageMedia } from '../lib/types'
 import { longPress } from './context_menu'
 import { InviteCard, RemoteInviteCard } from './invite_card'
@@ -80,28 +80,30 @@ const splitSpoilers = (node: MdNode) => {
 
 const remarkSpoiler = () => (tree: unknown) => splitSpoilers(tree as MdNode)
 
-const markMentions = (node: MdNode, username: string) => {
+const markMentions = (node: MdNode, known: ReadonlySet<string>) => {
   const { children } = node
   if (!children) return
   node.children = children.flatMap(child => {
+    if (child.type === 'link' || child.type === 'linkReference') return [child]
     if (child.type !== 'text' || child.value === undefined) {
-      markMentions(child, username)
+      markMentions(child, known)
       return [child]
     }
-    return splitMentions(child.value, username).map(({ text, mention }) =>
-      mention
-        ? {
-            type: 'emphasis',
-            data: { hName: 'span', hProperties: { 'data-mention': '' } },
-            children: [{ type: 'text', value: text }],
-          }
-        : { type: 'text', value: text }
+    return splitKnownMentions(child.value, name => (known.has(name) ? name : undefined)).map(
+      ({ text, user }) =>
+        user !== null
+          ? {
+              type: 'emphasis',
+              data: { hName: 'span', hProperties: { 'data-mention': user } },
+              children: [{ type: 'text', value: text }],
+            }
+          : { type: 'text', value: text }
     )
   })
 }
 
-const remarkMention = (username: string) => () => (tree: unknown) =>
-  markMentions(tree as MdNode, username)
+const remarkMention = (known: ReadonlySet<string>) => () => (tree: unknown) =>
+  markMentions(tree as MdNode, known)
 
 const InLink = createContext(false)
 
@@ -137,15 +139,19 @@ function SpoilerText({ children }: { children?: ReactNode }) {
   )
 }
 
-function Mention({ children }: { children?: ReactNode }) {
-  const me = useStore(s => s.me)
+function Mention({ username }: { username: string }) {
+  const user = useStore(s => userRefFor(s, username))
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
+  const mine = useStore(s => s.me?.username === username)
   return (
     <span
-      {...(me ? profileTrigger(me, server) : {})}
-      className="streamer cursor-pointer rounded bg-primary-container px-0.5 font-medium text-on-primary-container hover:underline"
+      {...profileTrigger(user, server)}
+      data-mention={username}
+      className={`streamer cursor-pointer rounded px-0.5 font-medium hover:underline ${
+        mine ? 'bg-primary-container text-on-primary-container' : 'bg-primary/15 text-primary'
+      }`}
     >
-      {children}
+      @{user.display_name}
     </span>
   )
 }
@@ -180,7 +186,7 @@ const components: Components = {
     'data-spoiler' in props ? (
       <SpoilerText>{props.children}</SpoilerText>
     ) : 'data-mention' in props ? (
-      <Mention>{props.children}</Mention>
+      <Mention username={String((props as Record<string, unknown>)['data-mention'])} />
     ) : (
       <span {...props} />
     ),
@@ -535,12 +541,16 @@ export const MarkdownMessage = memo(function MarkdownMessage({
 }) {
   const deleteMedia = useStore(s => s.deleteMedia)
   const previews = useStore(s => s.settings.asset_previews)
-  const username = useStore(s => s.me?.username ?? '')
-  const plugins = useMemo(
-    () => [remarkGfm, remarkSpoiler, ...(username ? [remarkMention(username)] : [])],
-    [username]
-  )
   const { content, media, embeds } = message
+  const candidates = useMemo(
+    () => (content.includes('@') ? mentionCandidates(content) : []),
+    [content]
+  )
+  const known = useStore(s => knownMentions(s, message, candidates))
+  const plugins = useMemo(
+    () => [remarkGfm, remarkSpoiler, remarkMention(new Set(known ? known.split('\n') : []))],
+    [known]
+  )
   const homePublic = useStore(s => s.instance?.public_url ?? null)
   const local = useMemo(() => localOrigins(homePublic), [homePublic])
   const invites = useMemo(() => {

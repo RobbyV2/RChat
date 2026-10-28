@@ -30,6 +30,7 @@ import {
 } from '../lib/rules'
 import { lastOwn, newSince, unreadMark } from '../lib/lists'
 import { escapeMarksRead } from '../lib/follow'
+import { mentionLookups, mentionsUser } from '../lib/mentions'
 import {
   banMenuItem,
   byUsername,
@@ -46,6 +47,7 @@ import {
   useStore,
   myRolePerms,
   viewKey,
+  allPings,
   type ContextMenuItem,
   type Outgoing,
 } from '../lib/store'
@@ -68,6 +70,7 @@ import {
   useScrollAnchor,
 } from './viewport_height'
 import { useEscape } from './server_settings'
+import { PingBadge, pingLabel } from './ping_badge'
 
 const EMPTY: Message[] = []
 
@@ -202,6 +205,21 @@ export const messageToolCls =
 export const authorKey = (messages: Message[], extra: string[] = []) =>
   [...new Set([...messages.map(m => m.author.username), ...extra])].sort().join('\n')
 
+const mentionedNames = (messages: Message[]) =>
+  messages.flatMap(m => (m.content.includes('@') ? mentionLookups(m.content) : []))
+
+// Authors plus everyone the messages may mention, so mention pills can show display names.
+export const usePeopleKey = (messages: Message[], extra: string[] = []) => {
+  const mentioned = useMemo(() => mentionedNames(messages), [messages])
+  return authorKey(messages, [...extra, ...mentioned])
+}
+
+export const mentionRowCls =
+  'bg-primary/8 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-primary hover:bg-primary/12'
+
+export const mentionsMe = (m: Message, me: string | undefined) =>
+  me !== undefined && m.author.username !== me && mentionsUser(m.content, me)
+
 export function useAuthorMembers(server: string | null, key: string) {
   const ensureMembers = useStore(s => s.ensureMembers)
   const cached = useStore(s => (server ? s.memberInfo[server] !== undefined : false))
@@ -224,6 +242,7 @@ export function useMemberLookup(server: string | null) {
 
 interface RowProps {
   m: Message
+  mentioned: boolean
   divider: boolean
   flash: boolean
   canDelete: boolean
@@ -235,6 +254,7 @@ interface RowProps {
 
 const MessageRow = memo(function MessageRow({
   m,
+  mentioned,
   divider,
   flash,
   canDelete,
@@ -262,7 +282,8 @@ const MessageRow = memo(function MessageRow({
       <div
         {...longPress((x, y) => onMenu(m, x, y))}
         data-flash={flash ? '' : undefined}
-        className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container-low"
+        data-mentioned={mentioned ? '' : undefined}
+        className={`group relative flex gap-3 px-4 py-1.5 ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
       >
         <div className="shrink-0 pt-0.5">
           <span
@@ -417,9 +438,10 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const stale = useStore(s => (s.view ? s.stale[viewKey(s.view)] === true : false))
   const focus = useStore(s => (s.view ? s.focus[viewKey(s.view)] : undefined))
   const markRead = useStore(s => s.markRead)
+  const menuPings = useStore(allPings)
   const memberServer = view?.kind === 'channel' ? view.server : null
   const memberFor = useMemberLookup(memberServer)
-  useAuthorMembers(memberServer, authorKey(messages, me ? [me.username] : []))
+  useAuthorMembers(memberServer, usePeopleKey(messages, me ? [me.username] : []))
   const perms = useStore(s => (s.view?.kind === 'channel' ? myPerms(s, s.view.server) : 0))
   const loadOlder = useStore(s => s.loadOlder)
   const loadNewer = useStore(s => s.loadNewer)
@@ -453,6 +475,11 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     older?.loading === true || newer?.loading === true
   )
   const ids = useMemo(() => messages.map(m => m.id), [messages])
+  const myName = me?.username
+  const mentionedIds = useMemo(
+    () => new Set(messages.filter(m => mentionsMe(m, myName)).map(m => m.id)),
+    [messages, myName]
+  )
   const mark = unreadMark(ids, anchor, older?.more !== false, lastOwn(messages, me?.username))
   const dividerIndex = mark.divider
 
@@ -620,11 +647,16 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     >
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-outline-variant px-4">
         <button
-          title="Menu"
+          title={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
+          aria-label="Menu"
           onClick={onMenu}
-          className="rounded-full p-1.5 hover:bg-surface-container-high md:hidden"
+          className="relative rounded-full p-1.5 hover:bg-surface-container-high md:hidden"
         >
           <Menu size={20} />
+          <PingBadge
+            count={menuPings}
+            className="absolute -top-1 -right-1.5 border-2 border-surface"
+          />
         </button>
         {view?.kind === 'channel' && (
           <span className="flex min-w-0 items-center gap-1.5 font-medium">
@@ -798,6 +830,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                   <MessageRow
                     key={m.id}
                     m={m}
+                    mentioned={mentionedIds.has(m.id)}
                     divider={i === dividerIndex}
                     flash={flash === m.id}
                     canDelete={canDelete(m)}

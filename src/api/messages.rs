@@ -13,6 +13,10 @@ use crate::api::access::{
     resolve_dm, resolve_message,
 };
 use crate::api::admin::like_pattern;
+use crate::api::pings::{
+    PingScope, ScopePings, SeenScope, ThreadPings, announce_counts, mark_seen, ping_mentions,
+    pinged_by, unseen_counts,
+};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, CallLog, Embed, LIST_MAX, LIST_PAGE, MESSAGE_MAX, MaybeAuthed,
     MediaRef, Message, Paged, ProfanityTarget, Settings, UserRef, check_len, check_profanity,
@@ -195,6 +199,17 @@ pub struct Unread {
     /// (thread replies are not counted).
     #[schema(example = 352)]
     pub latest: i64,
+    /// Unseen pings (mentions, replies and reactions for the caller) in this scope, including
+    /// thread replies of a channel. A scope with pings is listed even when it is read.
+    #[schema(example = 2)]
+    pub pings: i64,
+    /// Highest unseen ping id outside threads (0: none). Send it as `pings_until` to
+    /// `POST /api/read` for this scope.
+    #[schema(example = 918)]
+    pub pings_until: i64,
+    /// Unseen pings on thread replies in this channel, per thread (included in `pings`). Read
+    /// with scope `t<root id>`.
+    pub thread_pings: Vec<ThreadPings>,
 }
 
 /// The caller's unread channels and DMs.
@@ -208,16 +223,22 @@ pub struct Unreads {
     pub more: bool,
 }
 
-/// Mark a channel or DM read up to a message.
+/// Mark a channel, DM or thread read up to a message.
 #[derive(Deserialize, ToSchema)]
 pub struct ReadReq {
-    /// `c<channel id>` or `d<dm id>`: `c` or `d` followed by one or more ASCII digits. The id
-    /// is not checked for existence or access.
+    /// `c<channel id>`, `d<dm id>` or `t<thread root id>`: the letter followed by one or more
+    /// ASCII digits.
     #[schema(example = "c12")]
     scope: String,
     /// Id of the last message read. A value lower than the stored one leaves it unchanged.
+    /// Threads store no position (send 0 or the last reply id).
     #[schema(example = 352)]
     last_read: i64,
+    /// Highest ping id the client has shown for this scope: only pings up to it are marked
+    /// seen, so a ping that arrives meanwhile keeps its badge. Omitted: every unseen ping.
+    #[serde(default)]
+    #[schema(example = 918)]
+    pings_until: Option<i64>,
 }
 
 /// The stored read position of a scope.
@@ -234,7 +255,7 @@ pub struct ReadState {
 fn valid_scope(scope: &str) -> bool {
     let bytes = scope.as_bytes();
     bytes.len() >= 2
-        && matches!(bytes[0], b'c' | b'd')
+        && matches!(bytes[0], b'c' | b'd' | b't')
         && bytes[1..].iter().all(|b| b.is_ascii_digit())
 }
 
@@ -638,8 +659,10 @@ pub(crate) async fn channel_messages(
 /// Posts a top-level message, optionally with one attachment (an uploaded file via `media_id`
 /// or a peer-to-peer file via `p2p`). Requires a bearer token. Message text is checked against the profanity filter when it is on. In server channels this needs membership and the send permission for the channel. If the channel has slow mode, members without the Manage channels or Delete messages permission must wait `slowmode_seconds` between messages in the channel (thread replies count).
 /// Voice channels take no messages. Emits `message` to clients in the server that can see the
-/// channel; when the text has links, `embeds_resolved` follows once previews are fetched.
-/// General rate-limit bucket.
+/// channel; when the text has links, `embeds_resolved` follows once previews are fetched. Each
+/// `@username` in the text (outside code; at most 20 users, not yourself) pings that user if
+/// they are a member who can see the channel: stored for `GET /api/unreads` and sent to them as
+/// a `ping` event. General rate-limit bucket.
 #[utoipa::path(post, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or attachment file name), voice channel, text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_channel_message(
     State(state): State<AppState>,
@@ -669,6 +692,7 @@ pub(crate) async fn send_channel_message(
         dm_users: None,
         message: Box::new(message.clone()),
     });
+    ping_mentions(&state, PingScope::Channel(&channel), &message, &user).await;
     Ok(Json(message))
 }
 
@@ -700,8 +724,10 @@ pub(crate) async fn thread_messages(
 /// Posts a reply to a top-level channel message, starting the thread if needed. The reply
 /// lives in the root's channel and has `thread_root_id` set. Requires a bearer token.
 /// Message text is checked against the profanity filter when it is on. In server channels this needs membership and the send permission for the channel. If the channel has slow mode, members without the Manage channels or Delete messages permission must wait `slowmode_seconds` between messages in the channel (thread replies count). Emits `message` to clients in the server that can see the channel; when the
-/// text has links, `embeds_resolved` follows once previews are fetched. General rate-limit
-/// bucket.
+/// text has links, `embeds_resolved` follows once previews are fetched. Each `@username` in
+/// the text (outside code; at most 20 users, not yourself) pings that user if they are a member
+/// who can see the channel: stored for `GET /api/unreads` and sent to them as a `ping` event.
+/// General rate-limit bucket.
 #[utoipa::path(post, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or attachment file name), text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_thread_message(
     State(state): State<AppState>,
@@ -732,6 +758,7 @@ pub(crate) async fn send_thread_message(
         dm_users: None,
         message: Box::new(message.clone()),
     });
+    ping_mentions(&state, PingScope::Channel(channel), &message, &user).await;
     Ok(Json(message))
 }
 
@@ -757,7 +784,8 @@ pub(crate) async fn dm_messages(
 /// Requires a bearer token and being one of the two participants. Unlike server channels,
 /// DM text and attachment names are not checked by the profanity filter and there is no slow
 /// mode. Emits `message` to both participants; when the text has links, `embeds_resolved`
-/// follows once previews are fetched. General rate-limit bucket.
+/// follows once previews are fetched. `@username` of the other participant pings them (`ping`
+/// event). General rate-limit bucket.
 #[utoipa::path(post, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn send_dm_message(
     State(state): State<AppState>,
@@ -780,19 +808,22 @@ pub(crate) async fn send_dm_message(
         server: None,
         channel_id: None,
         dm_id: Some(id),
-        dm_users: Some(users),
+        dm_users: Some(users.clone()),
         message: Box::new(message.clone()),
     });
+    ping_mentions(&state, PingScope::Dm { id, users: &users }, &message, &user).await;
     Ok(Json(message))
 }
 
 /// Delete a message
 ///
 /// Permanently deletes a channel, thread or DM message; deleting a thread root also deletes
-/// its replies. Requires a bearer token. The author may always delete their own message; in
-/// servers, members with the Delete messages permission may delete anyone's. Emits
-/// `message_deleted` (with `thread_root_id` for replies) to clients in the server that can see
-/// the channel, or to both DM participants. General rate-limit bucket.
+/// its replies. Pings on the deleted messages are removed; each affected user gets
+/// `ping_count` with the scope's new unseen count. Requires a bearer token. The author may
+/// always delete their own message; in servers, members with the Delete messages permission
+/// may delete anyone's. Emits `message_deleted` (with `thread_root_id` for replies) to clients
+/// in the server that can see the channel, or to both DM participants. General rate-limit
+/// bucket.
 #[utoipa::path(delete, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Deleted; body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Delete messages permission in the server (in DMs only the author may delete)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn delete_message(
     State(state): State<AppState>,
@@ -802,10 +833,12 @@ pub(crate) async fn delete_message(
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
     message.require_can_delete(&state.db).await?;
     let scope = message.into_scope();
+    let pinged = pinged_by(&state.db, id).await?;
     sqlx::query("DELETE FROM messages WHERE id = $1")
         .bind(id)
         .execute(&state.db)
         .await?;
+    announce_counts(&state, pinged).await;
     let crate::api::access::MsgScope {
         channel_id,
         dm_id,
@@ -1240,9 +1273,10 @@ pub struct UnreadsQuery {
 /// Returns the caller's read positions for text channels in servers they are a member of
 /// (skipping channels they cannot view, or whose latest message they could not read without
 /// read-history access) and for their DMs (skipping DMs with an account being deleted). Only
-/// messages by other users count as unread. Requires a bearer token. General rate-limit
-/// bucket.
-#[utoipa::path(get, path = "/api/unreads", tag = "Messages", params(UnreadsQuery), responses((status = 200, description = "Unread scopes: the latest top-level message id from someone else and the last-read id for each text channel the caller can view (with its server) and each DM whose latest message is newer than its read position, newest first and capped at 500 (`more` is true when the cap cut the list). Scopes that are not listed are read. With `all=true` every viewable channel and DM with messages from others is listed, read or not (no cap)", body = Unreads), (status = 400, description = "`all` is not `true` or `false` (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// messages by other users count as unread. Each item carries the caller's unseen ping count
+/// for the scope; scopes with unseen pings are listed even when read. Requires a bearer token.
+/// General rate-limit bucket.
+#[utoipa::path(get, path = "/api/unreads", tag = "Messages", params(UnreadsQuery), responses((status = 200, description = "Unread scopes: the latest top-level message id from someone else and the last-read id for each text channel the caller can view (with its server) and each DM whose latest message is newer than its read position, plus every such scope with unseen pings (`pings`), scopes with pings first, then newest first, capped at 500 (`more` is true when the cap cut the list). Scopes that are not listed are read. With `all=true` every viewable channel and DM with messages from others is listed, read or not (no cap)", body = Unreads), (status = 400, description = "`all` is not `true` or `false` (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn unreads(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1263,13 +1297,15 @@ pub(crate) async fn unreads(
             "SELECT d.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = d.id AND m.author <> $1), COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) FROM dms d WHERE (d.user_a = $1 OR d.user_b = $1) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')"
         }
         false => {
-            "SELECT x.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = x.id AND m.author <> $1), x.last_read FROM (SELECT d.id, d.last_message_id, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) AS last_read FROM dms d WHERE (d.user_a = $1 OR d.user_b = $1) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')) x WHERE x.last_message_id > x.last_read"
+            "SELECT x.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = x.id AND m.author <> $1), x.last_read FROM (SELECT d.id, d.last_message_id, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) AS last_read FROM dms d WHERE (d.user_a = $1 OR d.user_b = $1) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')) x WHERE x.last_message_id > x.last_read OR EXISTS(SELECT 1 FROM pings p WHERE p.username = $1 AND p.seen = 0 AND p.scope = 'd' || x.id)"
         }
     };
     let dm_rows = sqlx::query(dm_sql)
         .bind(&user.username)
         .fetch_all(db)
         .await?;
+    let mut pings = unseen_counts(db, &user.username).await?;
+    let mut pings_of = |scope: &str| pings.remove(scope).unwrap_or_default();
     let mut items = Vec::with_capacity(channel_rows.len() + dm_rows.len());
     for r in &channel_rows {
         let id: i64 = r.try_get(0)?;
@@ -1284,55 +1320,88 @@ pub(crate) async fn unreads(
             }) => *view && (*history || latest_at.is_some_and(|t| t >= joined_at)),
         };
         let last_read: i64 = r.try_get(4)?;
-        if let (Some(latest), true) = (latest, readable)
-            && (all || latest > last_read)
-        {
+        let scope = format!("c{id}");
+        let pinged = pings_of(&scope);
+        let latest = latest.filter(|_| readable);
+        let ScopePings {
+            pings: pinged,
+            pings_until,
+            threads,
+        } = match restricted.get(&id) {
+            Some(ChannelAccess {
+                view: false,
+                send: _,
+                history: _,
+            }) => ScopePings::default(),
+            _ => pinged,
+        };
+        if latest.is_some_and(|latest| all || latest > last_read) || pinged > 0 {
             items.push(Unread {
-                scope: format!("c{id}"),
+                scope,
                 server: Some(r.try_get(1)?),
                 last_read,
-                latest,
+                latest: latest.unwrap_or(last_read),
+                pings: pinged,
+                pings_until,
+                thread_pings: threads,
             });
         }
     }
     for r in &dm_rows {
         let id: i64 = r.try_get(0)?;
         let last_read: i64 = r.try_get(2)?;
+        let scope = format!("d{id}");
+        let ScopePings {
+            pings: pinged,
+            pings_until,
+            threads,
+        } = pings_of(&scope);
         if let Some(latest) = r.try_get::<Option<i64>, _>(1)?
-            && (all || latest > last_read)
+            && (all || latest > last_read || pinged > 0)
         {
             items.push(Unread {
-                scope: format!("d{id}"),
+                scope,
                 server: None,
                 last_read,
                 latest,
+                pings: pinged,
+                pings_until,
+                thread_pings: threads,
             });
         }
     }
     let more = !all && items.len() > UNREADS_MAX;
     if !all {
-        items.sort_by_key(|u| std::cmp::Reverse(u.latest));
+        items.sort_by_key(|u| std::cmp::Reverse((u.pings > 0, u.latest)));
         items.truncate(UNREADS_MAX);
     }
     Ok(Json(Unreads { items, more }))
 }
 
-/// Mark a channel or DM read
+/// Mark a channel, DM or thread read
 ///
 /// Stores the caller's last-read message id for a scope (`c<channel id>` or `d<dm id>`). The
 /// position only moves forward: a lower `last_read` leaves the stored one unchanged. The caller
 /// must be able to read the scope: for a channel the same checks as listing its messages (not
 /// banned, a member of a password-protected server, the view permission), for a DM being one of
-/// its participants; otherwise nothing is stored. Requires a bearer token. When the requested
-/// position is the one stored, emits `read_updated` to the caller's own connections (other
-/// devices). General rate-limit bucket.
-#[utoipa::path(post, path = "/api/read", tag = "Messages", request_body = ReadReq, responses((status = 200, description = "The stored read position, which never moves backwards", body = ReadState), (status = 400, description = "`scope` is not `c` or `d` followed by digits (`Invalid scope`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the channel or DM does not exist or you cannot read it (hidden channel, a server you have no access to or are banned from, a DM you are not in, or a participant's account is being deleted); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// its participants; otherwise nothing is stored. Also marks the caller's unseen pings in the
+/// scope seen (any kind, outside threads, ids up to `pings_until` when given). A thread scope
+/// (`t<root id>`) stores no position; it marks the pings on that thread's replies seen and is
+/// checked like listing the thread. Requires a bearer token. When the requested position is the
+/// one stored, or pings were marked seen, emits `read_updated` to the caller's own connections
+/// with `pings_until`, the highest ping id marked seen (0: none), so other devices clear those
+/// badges and keep newer ones. General rate-limit bucket.
+#[utoipa::path(post, path = "/api/read", tag = "Messages", request_body = ReadReq, responses((status = 200, description = "The stored read position, which never moves backwards (for a thread, `last_read` as sent)", body = ReadState), (status = 400, description = "`scope` is not `c`, `d` or `t` followed by digits (`Invalid scope`), or a `t` scope names a DM message or a thread reply (`Threads only start on channel messages`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the channel, DM or thread root does not exist or you cannot read it (hidden channel, before your join without read history, a server you have no access to or are banned from, a DM you are not in, or a participant's account is being deleted); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn mark_read(
     State(state): State<AppState>,
     Authed(user): Authed,
     Json(req): Json<ReadReq>,
 ) -> Result<Json<ReadState>, ApiError> {
-    let ReadReq { scope, last_read } = req;
+    let ReadReq {
+        scope,
+        last_read,
+        pings_until,
+    } = req;
     let id = match valid_scope(&scope) {
         true => scope[1..].parse::<i64>().ok(),
         false => None,
@@ -1343,6 +1412,29 @@ pub(crate) async fn mark_read(
             "Invalid scope".to_string(),
         ));
     };
+    if scope.as_bytes()[0] == b't' {
+        let root = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
+        let channel = format!("c{}", root.thread_channel()?.id());
+        let seen = mark_seen(
+            &state.db,
+            &user.username,
+            SeenScope::Thread {
+                scope: &channel,
+                root: id,
+            },
+            pings_until,
+        )
+        .await?;
+        if let Some(pings_until) = seen {
+            state.hub.broadcast(WsEvent::ReadUpdated {
+                username: user.username,
+                scope: scope.clone(),
+                last_read,
+                pings_until,
+            });
+        }
+        return Ok(Json(ReadState { scope, last_read }));
+    }
     match scope.as_bytes()[0] {
         b'c' => {
             resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
@@ -1360,11 +1452,19 @@ pub(crate) async fn mark_read(
     .fetch_one(&state.db)
     .await?
     .try_get(0)?;
-    if stored == last_read {
+    let seen = mark_seen(
+        &state.db,
+        &user.username,
+        SeenScope::Scope(&scope),
+        pings_until,
+    )
+    .await?;
+    if stored == last_read || seen.is_some() {
         state.hub.broadcast(WsEvent::ReadUpdated {
             username: user.username,
             scope: scope.clone(),
             last_read: stored,
+            pings_until: seen.unwrap_or(0),
         });
     }
     Ok(Json(ReadState {
@@ -1428,6 +1528,7 @@ mod tests {
                     Json(ReadReq {
                         scope,
                         last_read: 7,
+                        pings_until: None,
                     }),
                 )
                 .await
@@ -2981,6 +3082,766 @@ mod tests {
             send("alice", voice).await,
             Err(ApiError(StatusCode::BAD_REQUEST, _))
         ));
+        done(state, path).await;
+    }
+
+    async fn say(
+        state: &AppState,
+        to: (Option<i64>, Option<i64>, Option<i64>),
+        author: &str,
+        content: &str,
+    ) -> Message {
+        let req = SendReq {
+            content: content.to_string(),
+            media_id: None,
+            media_spoiler: None,
+            p2p: None,
+        };
+        let user = Authed(mem_user(author, false));
+        let sent = match to {
+            (Some(cid), _, _) => {
+                send_channel_message(State(state.clone()), Path(cid), user, Json(req)).await
+            }
+            (_, Some(dm), _) => {
+                send_dm_message(State(state.clone()), Path(dm), user, Json(req)).await
+            }
+            (_, _, Some(root)) => {
+                send_thread_message(State(state.clone()), Path(root), user, Json(req)).await
+            }
+            (None, None, None) => panic!("no target"),
+        };
+        sent.expect("send").0
+    }
+
+    async fn ping_rows(db: &Db, who: &str) -> Vec<(String, String, i64, String, i64)> {
+        sqlx::query("SELECT kind, scope, message_id, actor, seen FROM pings WHERE username = $1 ORDER BY id")
+            .bind(who)
+            .fetch_all(db)
+            .await
+            .expect("pings")
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get(0).expect("kind"),
+                    r.try_get(1).expect("scope"),
+                    r.try_get(2).expect("message"),
+                    r.try_get(3).expect("actor"),
+                    r.try_get(4).expect("seen"),
+                )
+            })
+            .collect()
+    }
+
+    fn pings_sent(
+        rx: &mut tokio::sync::broadcast::Receiver<WsEvent>,
+    ) -> Vec<(String, String, i64)> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|ev| match ev {
+                WsEvent::Ping { username, ping } => {
+                    assert_eq!(ping.kind, crate::api::pings::PingKind::Mention);
+                    Some((username, ping.scope, ping.message_id))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    async fn unread_pings(state: &AppState, name: &str, all: bool) -> HashMap<String, (i64, i64)> {
+        unreads(
+            State(state.clone()),
+            Authed(mem_user(name, false)),
+            Query(UnreadsQuery { all: Some(all) }),
+        )
+        .await
+        .expect("unreads")
+        .0
+        .items
+        .into_iter()
+        .map(|u| (u.scope, (u.pings, u.latest)))
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn mentions_ping_members_who_can_see_the_message() {
+        let (state, path) = temp_state("mention_pings").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob", "carol", "dave", "gone"] {
+            add_user(db, name, &name.to_uppercase()).await;
+        }
+        for name in ["alice", "bob", "carol", "gone"] {
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        sqlx::query("UPDATE users SET password_hash = '!purging' WHERE username = 'gone'")
+            .execute(db)
+            .await
+            .expect("purging");
+        let secret = add_channel(db, "secret", "text").await;
+        perm(db, secret, "u:alice", 1).await;
+        perm(db, secret, "u:bob", 1).await;
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        let mut rx = state.hub.subscribe();
+
+        let top = say(
+            &state,
+            (Some(cid), None, None),
+            "alice",
+            "hi @Bob, @carol and @dave and @alice @gone @nobody `@carol` mail@bob @bob",
+        )
+        .await;
+        let c = format!("c{cid}");
+        assert_eq!(
+            pings_sent(&mut rx),
+            vec![
+                ("bob".to_string(), c.clone(), top.id),
+                ("carol".to_string(), c.clone(), top.id)
+            ]
+        );
+        let hidden = say(&state, (Some(secret), None, None), "alice", "@bob @carol").await;
+        assert_eq!(
+            pings_sent(&mut rx),
+            vec![("bob".to_string(), format!("c{secret}"), hidden.id)]
+        );
+        let reply = say(
+            &state,
+            (None, None, Some(top.id)),
+            "bob",
+            "@carol @bob look",
+        )
+        .await;
+        assert_eq!(reply.thread_root_id, Some(top.id));
+        assert_eq!(
+            pings_sent(&mut rx),
+            vec![("carol".to_string(), c.clone(), reply.id)]
+        );
+        let direct = say(&state, (None, Some(dm), None), "alice", "@bob @carol dm").await;
+        assert_eq!(
+            pings_sent(&mut rx),
+            vec![("bob".to_string(), format!("d{dm}"), direct.id)]
+        );
+        let plain = say(&state, (Some(cid), None, None), "alice", "no mentions").await;
+        assert!(pings_sent(&mut rx).is_empty());
+
+        assert_eq!(
+            ping_rows(db, "bob").await,
+            vec![
+                (
+                    "mention".to_string(),
+                    c.clone(),
+                    top.id,
+                    "alice".to_string(),
+                    0
+                ),
+                (
+                    "mention".to_string(),
+                    format!("c{secret}"),
+                    hidden.id,
+                    "alice".to_string(),
+                    0
+                ),
+                (
+                    "mention".to_string(),
+                    format!("d{dm}"),
+                    direct.id,
+                    "alice".to_string(),
+                    0
+                ),
+            ]
+        );
+        for nobody in ["alice", "dave", "gone"] {
+            assert!(ping_rows(db, nobody).await.is_empty(), "{nobody}");
+        }
+        let bob = unread_pings(&state, "bob", false).await;
+        assert_eq!(bob.get(&c), Some(&(1, plain.id)));
+        assert_eq!(bob.get(&format!("c{secret}")), Some(&(1, hidden.id)));
+        assert_eq!(bob.get(&format!("d{dm}")), Some(&(1, direct.id)));
+        let carol = unread_pings(&state, "carol", false).await;
+        assert_eq!(carol.get(&c), Some(&(2, plain.id)));
+        assert_eq!(carol.get(&format!("c{secret}")), None);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn reading_a_scope_clears_its_pings_everywhere() {
+        let (state, path) = temp_state("ping_read").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob"] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let c = format!("c{cid}");
+        let first = say(&state, (Some(cid), None, None), "alice", "@bob one").await;
+        let read = |last_read: i64| {
+            let state = state.clone();
+            let scope = c.clone();
+            async move {
+                mark_read(
+                    State(state),
+                    Authed(mem_user("bob", false)),
+                    Json(ReadReq {
+                        scope,
+                        last_read,
+                        pings_until: None,
+                    }),
+                )
+                .await
+                .expect("read")
+                .0
+                .last_read
+            }
+        };
+        assert_eq!(read(first.id).await, first.id);
+        assert_eq!(ping_rows(db, "bob").await[0].4, 1);
+        assert_eq!(
+            unread_pings(&state, "bob", true).await.get(&c),
+            Some(&(0, first.id))
+        );
+        assert!(!unread_pings(&state, "bob", false).await.contains_key(&c));
+
+        let second = say(&state, (Some(cid), None, None), "alice", "@bob two").await;
+        assert_eq!(
+            unread_pings(&state, "bob", false).await.get(&c),
+            Some(&(1, second.id))
+        );
+        let mut rx = state.hub.subscribe();
+        assert_eq!(read(0).await, first.id);
+        let echoed = std::iter::from_fn(|| rx.try_recv().ok()).any(|ev| {
+            matches!(ev, WsEvent::ReadUpdated { username, scope, last_read, pings_until }
+                if username == "bob" && scope == c && last_read == first.id && pings_until > 0)
+        });
+        assert!(echoed, "clearing pings echoes read_updated to other tabs");
+        assert!(
+            unread_pings(&state, "bob", false)
+                .await
+                .get(&c)
+                .is_some_and(|(p, _)| *p == 0)
+        );
+        assert!(read(0).await == first.id && rx.try_recv().is_err());
+
+        let third = say(&state, (Some(cid), None, None), "alice", "@bob three").await;
+        let mut rx = state.hub.subscribe();
+        let _ = delete_message(
+            State(state.clone()),
+            Path(third.id),
+            Authed(mem_user("alice", false)),
+        )
+        .await
+        .expect("delete");
+        let counted = std::iter::from_fn(|| rx.try_recv().ok()).any(|ev| {
+            matches!(ev, WsEvent::PingCount { username, scope, pings: 0, pings_until: 0, thread_pings } if username == "bob" && scope == c && thread_pings.is_empty())
+        });
+        assert!(counted, "deleting a mention recounts the badge");
+        assert_eq!(
+            ping_rows(db, "bob")
+                .await
+                .iter()
+                .filter(|p| p.4 == 0)
+                .count(),
+            0
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn pinged_scopes_are_listed_even_when_read() {
+        let (state, path) = temp_state("ping_unreads").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob"] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let root = say(&state, (Some(cid), None, None), "bob", "root").await;
+        say(
+            &state,
+            (None, None, Some(root.id)),
+            "alice",
+            "@bob in a thread",
+        )
+        .await;
+        let c = format!("c{cid}");
+        assert_eq!(
+            unread_pings(&state, "bob", false).await.get(&c),
+            Some(&(1, 0))
+        );
+        let hidden = add_channel(db, "hidden", "text").await;
+        perm(db, hidden, "u:alice", 1).await;
+        let mid = insert(db, Some(hidden), None, None, "alice").await;
+        sqlx::query("INSERT INTO pings(username, kind, scope, server, message_id, actor, created_at) VALUES('bob', 'mention', $1, 'rchat', $2, 'alice', 1)")
+            .bind(format!("c{hidden}"))
+            .bind(mid)
+            .execute(db)
+            .await
+            .expect("stale ping");
+        assert!(
+            !unread_pings(&state, "bob", true)
+                .await
+                .contains_key(&format!("c{hidden}")),
+            "pings in a channel you can no longer see stay hidden"
+        );
+        done(state, path).await;
+    }
+
+    async fn read_as(
+        state: &AppState,
+        who: &str,
+        scope: String,
+        last_read: i64,
+        pings_until: Option<i64>,
+    ) -> Result<i64, ApiError> {
+        mark_read(
+            State(state.clone()),
+            Authed(mem_user(who, false)),
+            Json(ReadReq {
+                scope,
+                last_read,
+                pings_until,
+            }),
+        )
+        .await
+        .map(|Json(r)| r.last_read)
+    }
+
+    async fn unread_item(state: &AppState, name: &str, scope: &str) -> Option<Unread> {
+        unreads(
+            State(state.clone()),
+            Authed(mem_user(name, false)),
+            Query(UnreadsQuery { all: Some(true) }),
+        )
+        .await
+        .expect("unreads")
+        .0
+        .items
+        .into_iter()
+        .find(|u| u.scope == scope)
+    }
+
+    fn read_echoes(rx: &mut tokio::sync::broadcast::Receiver<WsEvent>) -> Vec<(String, i64)> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|ev| match ev {
+                WsEvent::ReadUpdated {
+                    username: _,
+                    scope,
+                    last_read: _,
+                    pings_until,
+                } => Some((scope, pings_until)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn ping_ids(rx: &mut tokio::sync::broadcast::Receiver<WsEvent>) -> Vec<i64> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|ev| match ev {
+                WsEvent::Ping { username: _, ping } => Some(ping.id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn reads_only_clear_pings_up_to_the_bound() {
+        let (state, path) = temp_state("ping_bound").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob"] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let c = format!("c{cid}");
+        let mut rx = state.hub.subscribe();
+        let first = say(&state, (Some(cid), None, None), "alice", "@bob one").await;
+        let shown = ping_ids(&mut rx)[0];
+        let second = say(&state, (Some(cid), None, None), "alice", "@bob two").await;
+        let late = ping_ids(&mut rx)[0];
+        assert!(late > shown);
+        let item = unread_item(&state, "bob", &c).await.expect("listed");
+        assert_eq!((item.pings, item.pings_until), (2, late));
+
+        assert_eq!(
+            read_as(&state, "bob", c.clone(), first.id, Some(shown))
+                .await
+                .expect("read"),
+            first.id
+        );
+        assert_eq!(read_echoes(&mut rx), vec![(c.clone(), shown)]);
+        let item = unread_item(&state, "bob", &c).await.expect("listed");
+        assert_eq!(
+            (item.pings, item.pings_until),
+            (1, late),
+            "a ping newer than the bound keeps its badge"
+        );
+
+        read_as(&state, "bob", c.clone(), first.id, Some(shown))
+            .await
+            .expect("read again");
+        assert_eq!(
+            read_echoes(&mut rx),
+            vec![(c.clone(), 0)],
+            "nothing new to clear"
+        );
+        read_as(&state, "bob", c.clone(), second.id, None)
+            .await
+            .expect("read all");
+        assert_eq!(read_echoes(&mut rx), vec![(c.clone(), late)]);
+        assert_eq!(
+            unread_item(&state, "bob", &c).await.expect("listed").pings,
+            0
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn thread_pings_clear_only_with_their_thread() {
+        let (state, path) = temp_state("ping_thread").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob"] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let c = format!("c{cid}");
+        let mut rx = state.hub.subscribe();
+        let root = say(&state, (Some(cid), None, None), "alice", "root").await;
+        let reply = say(
+            &state,
+            (None, None, Some(root.id)),
+            "alice",
+            "@bob in the thread",
+        )
+        .await;
+        let thread_ping = ping_ids(&mut rx)[0];
+        let top = say(&state, (Some(cid), None, None), "alice", "@bob up top").await;
+        let top_ping = ping_ids(&mut rx)[0];
+        let stored: Option<i64> = sqlx::query("SELECT thread_root_id FROM pings WHERE id = $1")
+            .bind(thread_ping)
+            .fetch_one(db)
+            .await
+            .expect("ping")
+            .try_get(0)
+            .expect("root");
+        assert_eq!(stored, Some(root.id));
+        let item = unread_item(&state, "bob", &c).await.expect("listed");
+        assert_eq!((item.pings, item.pings_until), (2, top_ping));
+        assert_eq!(
+            item.thread_pings,
+            vec![ThreadPings {
+                root_id: root.id,
+                pings: 1,
+                pings_until: thread_ping,
+            }]
+        );
+
+        read_as(&state, "bob", c.clone(), top.id, None)
+            .await
+            .expect("read channel");
+        assert_eq!(read_echoes(&mut rx), vec![(c.clone(), top_ping)]);
+        let item = unread_item(&state, "bob", &c).await.expect("listed");
+        assert_eq!(
+            (item.pings, item.pings_until, item.thread_pings.len()),
+            (1, 0, 1),
+            "reading the channel keeps the thread ping"
+        );
+
+        let t = format!("t{}", root.id);
+        assert_eq!(
+            read_as(&state, "bob", t.clone(), reply.id, Some(thread_ping))
+                .await
+                .expect("read thread"),
+            reply.id
+        );
+        assert_eq!(read_echoes(&mut rx), vec![(t.clone(), thread_ping)]);
+        let item = unread_item(&state, "bob", &c).await.expect("listed");
+        assert_eq!((item.pings, item.thread_pings.len()), (0, 0));
+        let position: Option<i64> =
+            sqlx::query("SELECT last_read FROM read_state WHERE username = 'bob' AND scope = $1")
+                .bind(&t)
+                .fetch_optional(db)
+                .await
+                .expect("read state")
+                .map(|r| r.try_get(0).expect("last_read"));
+        assert_eq!(position, None, "threads store no read position");
+
+        let hidden = add_channel(db, "hidden", "text").await;
+        perm(db, hidden, "u:alice", 1).await;
+        let secret = insert(db, Some(hidden), None, None, "alice").await;
+        let missing = read_as(&state, "bob", "t999999".to_string(), 0, None)
+            .await
+            .expect_err("missing");
+        let denied = read_as(&state, "bob", format!("t{secret}"), 0, None)
+            .await
+            .expect_err("hidden");
+        assert_eq!(missing.0, StatusCode::NOT_FOUND);
+        assert_eq!(
+            (denied.0, denied.1.as_str()),
+            (missing.0, missing.1.as_str())
+        );
+        let not_root = read_as(&state, "bob", format!("t{}", reply.id), 0, None)
+            .await
+            .expect_err("reply");
+        assert_eq!(not_root.0, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            read_as(&state, "bob", "x5".to_string(), 0, None)
+                .await
+                .expect_err("scope")
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn ping_recipients_match_channel_access() {
+        let (state, path) = temp_state("ping_viewers").await;
+        let db = &state.db;
+        let names = [
+            "admin", "manager", "granted", "rolled", "denied", "plain", "site", "gone", "outside",
+        ];
+        for name in names {
+            add_user(db, name, name).await;
+        }
+        for (name, admin, perms) in [
+            ("admin", 1, 0),
+            ("manager", 0, 0),
+            ("granted", 0, 0),
+            ("rolled", 0, 0),
+            ("denied", 0, 0),
+            ("plain", 0, 0),
+            ("site", 0, 0),
+            ("gone", 0, 0),
+        ] {
+            add_member(db, "rchat", name, admin, perms, 1).await;
+        }
+        sqlx::query("UPDATE users SET is_site_admin = 1 WHERE username = 'site'")
+            .execute(db)
+            .await
+            .expect("site admin");
+        sqlx::query("UPDATE users SET password_hash = '!purging' WHERE username = 'gone'")
+            .execute(db)
+            .await
+            .expect("purging");
+        let private = add_channel(db, "private", "text").await;
+        let mut roles = Vec::new();
+        for (holder, perms) in [("manager", Perm::ManageChannels as i64), ("rolled", 0)] {
+            let role: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES('rchat', $1, '#ffffff', $2) RETURNING id")
+                .bind(holder)
+                .bind(perms)
+                .fetch_one(db)
+                .await
+                .expect("role")
+                .try_get(0)
+                .expect("role id");
+            sqlx::query(
+                "INSERT INTO user_roles(server, username, role_id) VALUES('rchat', $1, $2)",
+            )
+            .bind(holder)
+            .bind(role)
+            .execute(db)
+            .await
+            .expect("assign role");
+            roles.push(role);
+        }
+        perm(db, private, "u:granted", 1).await;
+        perm(db, private, "u:denied", 0).await;
+        perm(db, private, &format!("r:{}", roles[1]), 1).await;
+        let wanted: Vec<String> = names.iter().rev().map(|n| n.to_string()).collect();
+        for cid in [general_id(db).await, private] {
+            let channel = resolve_channel(db, cid, Some(&mem_user("admin", false)), &Proof::none())
+                .await
+                .expect("channel");
+            let got = channel
+                .viewers_among(db, &wanted, None)
+                .await
+                .expect("viewers");
+            let mut expected = Vec::new();
+            for name in &wanted {
+                let member = name != "outside" && name != "gone";
+                let Some(user) = crate::db::get_user(db, name).await.expect("user") else {
+                    continue;
+                };
+                if member
+                    && channel_access(db, "rchat", cid, Some(&user))
+                        .await
+                        .expect("access")
+                        .view
+                {
+                    expected.push(name.clone());
+                }
+            }
+            assert_eq!(got, expected, "channel {cid}");
+        }
+        let channel = resolve_channel(db, private, Some(&mem_user("admin", false)), &Proof::none())
+            .await
+            .expect("channel");
+        assert_eq!(
+            channel
+                .viewers_among(db, &wanted, None)
+                .await
+                .expect("viewers"),
+            vec!["site", "rolled", "granted", "manager", "admin"]
+        );
+        assert!(
+            channel
+                .viewers_among(db, &["outside".to_string()], None)
+                .await
+                .expect("none")
+                .is_empty()
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn thread_pings_need_a_readable_root() {
+        let (state, path) = temp_state("ping_root").await;
+        let db = &state.db;
+        let general = general_id(db).await;
+        let quiet = add_channel(db, "quiet", "text").await;
+        let names = ["alice", "early", "late", "history", "manager"];
+        for (name, admin, joined) in [
+            ("alice", 1, 1),
+            ("early", 0, 1),
+            ("late", 0, 200),
+            ("history", 0, 200),
+            ("manager", 0, 200),
+        ] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, admin, 0, joined).await;
+        }
+        let role: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'mod', '#ffffff', $1) RETURNING id")
+            .bind(Perm::ManageChannels as i64)
+            .fetch_one(db)
+            .await
+            .expect("role")
+            .try_get(0)
+            .expect("role id");
+        sqlx::query(
+            "INSERT INTO user_roles(server, username, role_id) VALUES('rchat', 'manager', $1)",
+        )
+        .bind(role)
+        .execute(db)
+        .await
+        .expect("assign role");
+        for (subject, history) in [("u:early", 0), ("u:late", 0), ("u:history", 1)] {
+            sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, 1, 1, $3)")
+                .bind(quiet)
+                .bind(subject)
+                .bind(history)
+                .execute(db)
+                .await
+                .expect("perm");
+        }
+        let mut roots = Vec::new();
+        for cid in [general, quiet] {
+            let root: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'alice', 'root', 100) RETURNING id")
+                .bind(cid)
+                .fetch_one(db)
+                .await
+                .expect("root")
+                .try_get(0)
+                .expect("root id");
+            roots.push((cid, root));
+        }
+        let wanted: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+        for (cid, root) in &roots {
+            let channel =
+                resolve_channel(db, *cid, Some(&mem_user("alice", false)), &Proof::none())
+                    .await
+                    .expect("channel");
+            let got = channel
+                .viewers_among(db, &wanted, Some(*root))
+                .await
+                .expect("viewers");
+            let mut expected = Vec::new();
+            for name in &wanted {
+                let user = crate::db::get_user(db, name)
+                    .await
+                    .expect("user")
+                    .expect("exists");
+                if resolve_message(db, *root, Some(&user), &Proof::none())
+                    .await
+                    .is_ok()
+                {
+                    expected.push(name.clone());
+                }
+            }
+            assert_eq!(got, expected, "root {root} matches resolve_message");
+            let unthreaded = channel
+                .viewers_among(db, &wanted, None)
+                .await
+                .expect("viewers");
+            assert!(got.iter().all(|n| unthreaded.contains(n)));
+        }
+        let quiet_root = roots[1].1;
+        let channel = resolve_channel(db, quiet, Some(&mem_user("alice", false)), &Proof::none())
+            .await
+            .expect("channel");
+        assert_eq!(
+            channel
+                .viewers_among(db, &wanted, Some(quiet_root))
+                .await
+                .expect("viewers"),
+            vec!["alice", "early", "history", "manager"]
+        );
+        assert!(
+            channel
+                .viewers_among(db, &wanted, Some(roots[0].1))
+                .await
+                .expect("other channel")
+                .is_empty(),
+            "a root from another channel never qualifies"
+        );
+
+        let mut rx = state.hub.subscribe();
+        let reply = say(
+            &state,
+            (None, None, Some(quiet_root)),
+            "alice",
+            "@early @late @history thread",
+        )
+        .await;
+        let pinged: Vec<(String, i64)> = std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|ev| match ev {
+                WsEvent::Ping { username, ping } => Some((username, ping.id)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            pinged.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            vec!["early", "history"],
+            "a member who joined after the root without read history is not pinged"
+        );
+        let c = format!("c{quiet}");
+        assert!(
+            unread_item(&state, "late", &c)
+                .await
+                .is_none_or(|i| i.pings == 0)
+        );
+        let item = unread_item(&state, "history", &c).await.expect("listed");
+        assert_eq!((item.pings, item.thread_pings.len()), (1, 1));
+        read_as(
+            &state,
+            "history",
+            format!("t{quiet_root}"),
+            reply.id,
+            Some(pinged[1].1),
+        )
+        .await
+        .expect("read thread");
+        assert_eq!(
+            unread_item(&state, "history", &c)
+                .await
+                .expect("listed")
+                .pings,
+            0,
+            "the thread ping clears by reading the thread"
+        );
         done(state, path).await;
     }
 }

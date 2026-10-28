@@ -16,6 +16,8 @@ import { profileTrigger } from './profile_card'
 import { LiveBadge, VoiceDock } from './voice_grid'
 import { Sentinel } from './server_settings'
 import { useAuthorMembers } from './message_pane'
+import { PingBadge } from './ping_badge'
+import { scopePings } from '../lib/pings'
 
 type Editing = { mode: 'create'; kind: ChannelKind } | { mode: 'rename'; id: number }
 
@@ -26,11 +28,13 @@ function DmRow({
   pinned,
   active,
   unread,
+  pings,
 }: {
   dm: DmSummary
   pinned: boolean
   active: boolean
   unread: boolean
+  pings: number
 }) {
   const openDm = useStore(s => s.openDm)
   const openContextMenu = useStore(s => s.openContextMenu)
@@ -75,7 +79,7 @@ function DmRow({
         size={28}
       />
       <span className="streamer truncate">{other.display_name}</span>
-      {unread && (
+      {unread && !pings && (
         <span title="Unread" aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-error" />
       )}
       {is_self && (
@@ -83,6 +87,7 @@ function DmRow({
           you
         </span>
       )}
+      <PingBadge count={pings} className={is_self ? '' : 'ml-auto'} />
     </button>
   )
 }
@@ -212,10 +217,12 @@ export function ChannelSidebar() {
   const voiceUsers = useStore(s => s.voiceUsers)
   const voice = useStore(s => s.voice)
   const reads = useStore(s => s.reads)
+  const pings = useStore(s => s.pings)
   const unread = (scope: string) => {
     const r = reads[scope]
     return !!r && r.latest > r.lastRead
   }
+  const pingsOf = (scope: string) => scopePings(pings, scope)
   useStore(s => s.rtcTick)
   useStore(s => s.members)
   useStore(s => s.memberInfo)
@@ -250,6 +257,7 @@ export function ChannelSidebar() {
         pinned={isPinned}
         active={view.dmId === dm.id}
         unread={unread(`d${dm.id}`)}
+        pings={pingsOf(`d${dm.id}`)}
       />
     )
     return (
@@ -461,12 +469,16 @@ export function ChannelSidebar() {
             >
               <Hash size={16} className="shrink-0" />
               <span className="truncate">{c.name}</span>
-              {unread(`c${c.id}`) && (
-                <span
-                  title="Unread"
-                  aria-hidden
-                  className="ml-auto h-2 w-2 shrink-0 rounded-full bg-error"
-                />
+              {pingsOf(`c${c.id}`) > 0 ? (
+                <PingBadge count={pingsOf(`c${c.id}`)} className="ml-auto" />
+              ) : (
+                unread(`c${c.id}`) && (
+                  <span
+                    title="Unread"
+                    aria-hidden
+                    className="ml-auto h-2 w-2 shrink-0 rounded-full bg-error"
+                  />
+                )
               )}
             </button>
           )

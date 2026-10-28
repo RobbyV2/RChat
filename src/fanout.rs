@@ -202,6 +202,15 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             username,
             scope: _,
             last_read: _,
+            pings_until: _,
+        }
+        | WsEvent::Ping { username, ping: _ }
+        | WsEvent::PingCount {
+            username,
+            scope: _,
+            pings: _,
+            pings_until: _,
+            thread_pings: _,
         }
         | WsEvent::TokensRevoked { username } => to(vec![Target::User(username)]),
         WsEvent::RtcSignal {

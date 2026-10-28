@@ -264,6 +264,8 @@ export const endpoints = (c: ApiClient) => ({
         cursor
       )
     ),
+  suggestMembers: (name: string, q: string) =>
+    c.req<Member[]>('GET', `/servers/${seg(name)}/members?suggest=1&q=${seg(q)}`),
   membersByName: (name: string, usernames: string[]) =>
     c.req<Member[]>(
       'GET',
@@ -361,8 +363,14 @@ export const endpoints = (c: ApiClient) => ({
     return c.page<SearchResult>(`/search?${qs.toString()}`)
   },
   getUnreads: () => c.req<{ items: Unread[]; more: boolean }>('GET', '/unreads'),
-  postRead: (scope: string, last_read: number, keepalive = false) =>
-    c.req<void>('POST', '/read', { scope, last_read }, {}, keepalive),
+  postRead: (scope: string, last_read: number, keepalive = false, pings_until?: number) =>
+    c.req<void>(
+      'POST',
+      '/read',
+      pings_until === undefined ? { scope, last_read } : { scope, last_read, pings_until },
+      {},
+      keepalive
+    ),
   uploadMedia: (file: File) => {
     const form = new FormData()
     form.append('file', file, file.name)

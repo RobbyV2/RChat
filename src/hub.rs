@@ -1287,7 +1287,7 @@ struct Posted {
     reply: Reply,
 }
 
-type Reads = BTreeMap<(String, String), i64>;
+type Reads = BTreeMap<(String, String), (i64, i64)>;
 
 struct Link {
     out: mpsc::Sender<Envelope>,
@@ -1861,12 +1861,13 @@ impl Hub {
             Some(reads) => std::mem::take(reads),
             None => return,
         };
-        for ((username, scope), last_read) in batch {
+        for ((username, scope), (last_read, pings_until)) in batch {
             self.post(Op::Broadcast {
                 event: WsEvent::ReadUpdated {
                     username,
                     scope,
                     last_read,
+                    pings_until,
                 },
             });
         }
@@ -1878,6 +1879,7 @@ impl Hub {
                 username,
                 scope,
                 last_read,
+                pings_until,
             },
             Some(link),
         ) = (&ev, &self.inner.link)
@@ -1885,8 +1887,8 @@ impl Hub {
         {
             let at = reads
                 .entry((username.clone(), scope.clone()))
-                .or_insert(*last_read);
-            *at = (*at).max(*last_read);
+                .or_insert((*last_read, *pings_until));
+            *at = (at.0.max(*last_read), at.1.max(*pings_until));
             return;
         }
         self.post(Op::Broadcast { event: ev });
@@ -3181,29 +3183,36 @@ pub(crate) mod tests {
     async fn reads_are_coalesced_per_scope() {
         let (hub, mut out) = Hub::replicated();
         hub.coalesce_reads();
-        let read = |scope: &str, last_read| WsEvent::ReadUpdated {
+        let read = |scope: &str, last_read, pings_until| WsEvent::ReadUpdated {
             username: "alice".to_string(),
             scope: scope.to_string(),
             last_read,
+            pings_until,
         };
-        hub.broadcast(read("c1", 5));
-        hub.broadcast(read("c1", 9));
-        hub.broadcast(read("c1", 7));
-        hub.broadcast(read("c2", 1));
+        hub.broadcast(read("c1", 5, 40));
+        hub.broadcast(read("c1", 9, 0));
+        hub.broadcast(read("c1", 7, 12));
+        hub.broadcast(read("c2", 1, 0));
         assert!(out.try_recv().is_err());
         hub.flush_reads();
-        let posted: Vec<(String, i64)> = std::iter::from_fn(|| out.try_recv().ok())
+        let posted: Vec<(String, i64, i64)> = std::iter::from_fn(|| out.try_recv().ok())
             .map(|env| match env.op {
                 Op::Broadcast {
                     event:
                         WsEvent::ReadUpdated {
-                            scope, last_read, ..
+                            scope,
+                            last_read,
+                            pings_until,
+                            ..
                         },
-                } => (scope, last_read),
+                } => (scope, last_read, pings_until),
                 _ => panic!("expected reads"),
             })
             .collect();
-        assert_eq!(posted, vec![("c1".to_string(), 9), ("c2".to_string(), 1)]);
+        assert_eq!(
+            posted,
+            vec![("c1".to_string(), 9, 40), ("c2".to_string(), 1, 0)]
+        );
     }
 
     #[tokio::test]

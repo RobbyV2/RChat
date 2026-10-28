@@ -146,7 +146,8 @@ describe('read coalescing', () => {
     replies = [[]]
     await st().openDm(5)
     expect(reads()).toHaveLength(1)
-    expect(JSON.parse(reads()[0].body ?? '{}')).toEqual({ scope: 'c1', last_read: 30 })
+    const { scope, last_read } = JSON.parse(reads()[0].body ?? '{}')
+    expect({ scope, last_read }).toEqual({ scope: 'c1', last_read: 30 })
   })
 
   test('a channel that is not on screen is not marked read', async () => {

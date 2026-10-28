@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   Eye,
@@ -14,6 +14,16 @@ import {
   X,
 } from 'lucide-react'
 import { errorText, useStore, viewKey } from '../lib/store'
+import { api } from '../lib/instances'
+import type { Message, UserRef } from '../lib/types'
+import {
+  MENTION_QUERY,
+  SUGGEST_DEBOUNCE,
+  mentionText,
+  recentAuthors,
+  suggestKey,
+  suggestPeople,
+} from '../lib/mention_suggest'
 import { MESSAGE_MAX, charCount } from '../lib/rules'
 import { sendKey } from '../lib/keys'
 import { runJoinStep, type JoinStep } from '../lib/join_flow'
@@ -30,6 +40,7 @@ import { Dialog, FieldError, fieldCls, filledBtn } from './server_settings'
 import { AutocompletePopup, useAutocomplete } from './autocomplete'
 import { EmojiPicker, SHEET_QUERY, useEmojiData } from './emoji_picker'
 import { useMedia } from './context_menu'
+import { UserAvatar } from './user_avatar'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
   { label: '1 hour', seconds: 3600 },
@@ -102,6 +113,70 @@ function ExpiryDialog({
         </button>
       </div>
     </Dialog>
+  )
+}
+
+const NO_MESSAGES: Message[] = []
+const NO_PEOPLE: UserRef[] = []
+const CACHE_MAX = 200
+
+// Mention suggestions for the composer: recent authors in view, then members matching the
+// query from the server (debounced, cached per server and query), then the cached member
+// list. DMs offer the other participant.
+function useMentionSearch(draftKey: string | null, query: string | null) {
+  const me = useStore(s => s.me?.username ?? null)
+  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
+  const dmOther = useStore(s => {
+    const v = s.view
+    return v?.kind === 'dm' ? (s.dms.find(d => d.id === v.dmId)?.other ?? null) : null
+  })
+  const own = useStore(s => (draftKey ? s.messages[draftKey] : undefined)) ?? NO_MESSAGES
+  const parent =
+    useStore(s =>
+      draftKey?.[0] === 't' && s.view?.kind === 'channel' ? s.messages[viewKey(s.view)] : undefined
+    ) ?? NO_MESSAGES
+  const list = useStore(s => (server ? s.members[server]?.list : undefined)) ?? NO_PEOPLE
+  const info = useStore(s => (server ? s.memberInfo[server] : undefined))
+  const cache = useRef(new Map<string, UserRef[]>())
+  const [tick, setTick] = useState(0)
+
+  useEffect(() => {
+    if (!server || !query) return
+    const key = suggestKey(server, query)
+    if (cache.current.has(key)) return
+    const t = setTimeout(() => {
+      api
+        .suggestMembers(server, query)
+        .then(found => {
+          if (cache.current.size >= CACHE_MAX) cache.current.clear()
+          cache.current.set(key, found)
+          setTick(n => n + 1)
+        })
+        .catch(() => {})
+    }, SUGGEST_DEBOUNCE)
+    return () => clearTimeout(t)
+  }, [server, query])
+
+  return useCallback(
+    (q: string): UserRef[] => {
+      void tick
+      if (dmOther) return suggestPeople(q, [[dmOther]], () => false)
+      if (!server) return []
+      let remote: UserRef[] = NO_PEOPLE
+      for (let n = q.length; n > 0; n -= 1) {
+        const hit = cache.current.get(suggestKey(server, q.slice(0, n)))
+        if (hit) {
+          remote = hit
+          break
+        }
+      }
+      return suggestPeople(
+        q,
+        [recentAuthors(own), recentAuthors(parent), remote, list],
+        name => name === me || info?.[name] === null
+      )
+    },
+    [tick, dmOther, server, own, parent, list, info, me]
   )
 }
 
@@ -194,6 +269,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const sel = useRef({ start: 0, end: 0 })
   const placeCaret = useRef<number | null>(null)
   const acId = useId()
+  const peopleId = useId()
   const pickerOpen = pickerFor !== null && pickerFor === draftKey
 
   useLayoutEffect(() => {
@@ -210,6 +286,11 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   }, [text, draftKey])
 
   const trigger = caret !== null && !pickerOpen ? findTrigger(text, caret, ':', 2) : null
+  const atTrigger =
+    caret !== null && !pickerOpen && !trigger
+      ? findTrigger(text, caret, '@', 0, MENTION_QUERY)
+      : null
+  const searchPeople = useMentionSearch(draftKey, atTrigger?.query ?? null)
   const { data: emoji } = useEmojiData(trigger !== null)
   const searchCodes = useCallback(
     (q: string) => (emoji ? matchShortcodes(emoji, q, 10, boostFor(prefs, Date.now())) : []),
@@ -233,6 +314,23 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       inputRef.current?.focus()
     },
   })
+
+  const people = useAutocomplete<UserRef>({
+    scope: atTrigger ? `${draftKey}@${atTrigger.start}` : null,
+    query: atTrigger?.query ?? '',
+    search: searchPeople,
+    onAccept: u => {
+      if (!draftKey || !atTrigger) return
+      const token = mentionText(u.username)
+      const cur = draftNow()
+      const pad = /\s/.test(cur[atTrigger.end] ?? '') ? '' : ' '
+      placeCaret.current = atTrigger.start + token.length + pad.length
+      setDraft(draftKey, spliceText(cur, atTrigger.start, atTrigger.end, token + pad))
+      inputRef.current?.focus()
+    },
+  })
+  const popup = people.open ? people : ac
+  const popupId = people.open ? peopleId : acId
 
   const onType = (value: string, at: number | null) => {
     if (!draftKey) return
@@ -404,6 +502,26 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             </>
           )}
         />
+        <AutocompletePopup
+          id={peopleId}
+          title="Members"
+          ac={people}
+          keyOf={u => u.username}
+          render={u => (
+            <>
+              <UserAvatar
+                username={u.username}
+                avatarKind={u.avatar_kind}
+                avatarColor={u.avatar_color}
+                size={24}
+              />
+              <span className="streamer min-w-0 truncate font-medium">{u.display_name}</span>
+              <span className="streamer min-w-0 shrink truncate text-xs opacity-70">
+                @{u.username}
+              </span>
+            </>
+          )}
+        />
         {assetUploads && (
           <>
             <button
@@ -438,11 +556,11 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           role="combobox"
           aria-autocomplete="list"
           aria-haspopup="listbox"
-          aria-expanded={ac.open}
-          aria-controls={ac.open ? acId : undefined}
-          aria-activedescendant={ac.open ? `${acId}-${ac.active}` : undefined}
+          aria-expanded={popup.open}
+          aria-controls={popup.open ? popupId : undefined}
+          aria-activedescendant={popup.open ? `${popupId}-${popup.active}` : undefined}
           onKeyDown={e => {
-            if (ac.onKeyDown(e)) return
+            if (ac.onKeyDown(e) || people.onKeyDown(e)) return
             if (sendKey(e)) {
               e.preventDefault()
               send()

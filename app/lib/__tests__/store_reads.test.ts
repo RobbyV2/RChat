@@ -134,7 +134,9 @@ describe('unread state from the server', () => {
     useStore.setState({ dms: [{ id: 5, other: user('u5'), is_self: false }] })
     await st().openDm(5)
     const posted = requests.filter(r => r.url.endsWith('/read'))
-    expect(posted.map(r => JSON.parse(r.body ?? '{}'))).toEqual([{ scope: 'c41', last_read: 30 }])
+    expect(posted).toHaveLength(1)
+    const { scope, last_read } = JSON.parse(posted[0].body ?? '{}')
+    expect({ scope, last_read }).toEqual({ scope: 'c41', last_read: 30 })
   })
 
   test('a scope created while /unreads is in flight is kept', async () => {

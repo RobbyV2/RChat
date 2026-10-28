@@ -20,6 +20,7 @@ use crate::api::access::{
     ws_grant_deadline, ws_server_open, ws_voice_channel,
 };
 use crate::api::messages::{load_message, load_message_with_embeds};
+use crate::api::pings::{Ping, ThreadPings};
 use crate::api::{Channel, Embed, Member, Message, ServerSummaryLite, Settings, UserRef};
 use crate::db::{ChannelKind, Db, get_user, now, setting_on, touch_interaction};
 use crate::fanout::Topic;
@@ -380,6 +381,18 @@ pub enum WsEvent {
         username: String,
         scope: String,
         last_read: i64,
+        pings_until: i64,
+    },
+    Ping {
+        username: String,
+        ping: Ping,
+    },
+    PingCount {
+        username: String,
+        scope: String,
+        pings: i64,
+        pings_until: i64,
+        thread_pings: Vec<ThreadPings>,
     },
     VoiceState {
         server: String,
@@ -2877,6 +2890,15 @@ fn wants(
             username,
             scope: _,
             last_read: _,
+            pings_until: _,
+        }
+        | WsEvent::Ping { username, ping: _ }
+        | WsEvent::PingCount {
+            username,
+            scope: _,
+            pings: _,
+            pings_until: _,
+            thread_pings: _,
         } => Some(username.as_str()) == me,
         WsEvent::ServerCreated { server } => {
             is_site_admin || (me.is_some() && server.creator.as_deref() == me)
@@ -5024,6 +5046,7 @@ mod tests {
                         username: s(user),
                         scope: s("c1"),
                         last_read: 1,
+                        pings_until: 0,
                     },
                     WsEvent::TokensRevoked { username: s(user) },
                     WsEvent::RtcSignal {

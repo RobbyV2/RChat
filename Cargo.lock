@@ -2451,6 +2451,7 @@ dependencies = [
  "rand 0.10.3",
  "rand_chacha 0.10.0",
  "redis",
+ "regex",
  "reqwest 0.13.5",
  "rust-s3",
  "rustrict",

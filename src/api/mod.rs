@@ -9,6 +9,7 @@ pub mod media;
 pub mod messages;
 pub mod openapi;
 pub mod passwords;
+pub mod pings;
 pub mod servers;
 pub mod users;
 

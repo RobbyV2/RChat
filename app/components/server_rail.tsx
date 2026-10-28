@@ -11,9 +11,11 @@ import {
   Shield,
 } from 'lucide-react'
 import {
+  dmPingCount,
   dmsUnread,
   folderLabel,
   railServers,
+  serverPingCount,
   serverUnread,
   useStore,
   type RailServer,
@@ -29,6 +31,7 @@ import { InstallButton } from './pwa_register'
 import { RailInstance } from './instance_badge'
 import { Sentinel } from './server_settings'
 import { ThemeToggle } from './status_clock'
+import { RailPingBadge, pingLabel } from './ping_badge'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 const idle =
@@ -87,6 +90,7 @@ function ServerTile({
   const me = useStore(s => s.me)
   const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name)
   const unread = useStore(s => serverUnread(s, name))
+  const pings = useStore(s => serverPingCount(s, name))
   const openServer = useStore(s => s.openServer)
   const openContextMenu = useStore(s => s.openContextMenu)
   const leaveServer = useStore(s => s.leaveServer)
@@ -96,7 +100,7 @@ function ServerTile({
   const parent = folder === null ? null : folderKey(folder)
   return (
     <button
-      title={mine ? `${display_name} (Creator)` : display_name}
+      title={`${mine ? `${display_name} (Creator)` : display_name}${pings ? `, ${pingLabel(pings)}` : ''}`}
       onClick={() => void openServer(name)}
       {...longPress(
         (x, y) =>
@@ -147,7 +151,7 @@ function ServerTile({
           C
         </span>
       )}
-      {unread && <UnreadDot />}
+      {pings > 0 ? <RailPingBadge count={pings} /> : unread && <UnreadDot />}
     </button>
   )
 }
@@ -184,6 +188,9 @@ function FolderEntry({
   const openDialog = useStore(s => s.openDialog)
   const openContextMenu = useStore(s => s.openContextMenu)
   const unread = useStore(s => !folder.open && servers.some(x => serverUnread(s, x.name)))
+  const pings = useStore(s =>
+    folder.open ? 0 : servers.reduce((n, x) => n + serverPingCount(s, x.name), 0)
+  )
   const key = folderKey(folder.id)
   const label = useStore(s => (s.streamer ? folder.name || 'Folder' : folderLabel(s, folder)))
   const header = {
@@ -222,7 +229,7 @@ function FolderEntry({
         >
           <FolderIcon size={9} strokeWidth={2.5} />
         </span>
-        {unread && <UnreadDot />}
+        {pings > 0 ? <RailPingBadge count={pings} /> : unread && <UnreadDot />}
       </button>
     )
   }
@@ -258,6 +265,7 @@ export function ServerRail() {
   const servers = useStore(s => (s.me ? NO_DETAILS : s.servers))
   const view = useStore(s => s.view)
   const dmUnread = useStore(dmsUnread)
+  const dmPings = useStore(dmPingCount)
   const openLastDm = useStore(s => s.openLastDm)
   const serversMore = useStore(s => s.serversMore)
   const loadMoreServers = useStore(s => s.loadMoreServers)
@@ -283,12 +291,13 @@ export function ServerRail() {
       >
         {me && (
           <button
-            title="Direct messages"
+            title={dmPings ? `Direct messages, ${pingLabel(dmPings)}` : 'Direct messages'}
+            aria-label="Direct messages"
             onClick={openLastDm}
             className={`${tile} relative ${view?.kind === 'dm' ? 'bg-primary text-on-primary' : idle}`}
           >
             <MessageCircle size={22} />
-            {dmUnread && <UnreadDot />}
+            {dmPings > 0 ? <RailPingBadge count={dmPings} /> : dmUnread && <UnreadDot />}
           </button>
         )}
         {me && <div className="my-1 h-px w-8 shrink-0 bg-outline-variant" />}

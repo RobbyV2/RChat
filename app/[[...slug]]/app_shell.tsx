@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useStore } from '../lib/store'
+import { allPings, useStore } from '../lib/store'
+import { pingTitle } from '../lib/pings'
 import { home } from '../lib/instances'
 import { ContextMenu } from '../components/context_menu'
 import { ProfileCard } from '../components/profile_card'
@@ -34,7 +35,9 @@ export default function AppShell() {
   const error = useStore(s => s.error)
   const bootError = useStore(s => s.bootError)
   const bootstrap = useStore(s => s.bootstrap)
+  const pings = useStore(allPings)
   const booted = useRef(false)
+  const baseTitle = useRef<string | null>(null)
   const [leftOpen, setLeftOpen] = useState(false)
   const [rightOpen, setRightOpen] = useState(false)
 
@@ -52,6 +55,11 @@ export default function AppShell() {
     }
     void bootstrap()
   }, [router, bootstrap])
+
+  useEffect(() => {
+    baseTitle.current ??= document.title.replace(/^\(\d+\+?\) /, '')
+    document.title = pingTitle(baseTitle.current, pings)
+  }, [pings])
 
   const guestBlocked = useStore(s => s.guest && !s.settings.guests_enabled)
   useEffect(() => {

@@ -19,6 +19,22 @@ import { JoinAborted, rtc } from './rtc'
 import { JoinTracker } from './negotiation'
 import { newP2pId, p2p } from './p2p'
 import { mentionsUser } from './mentions'
+import {
+  NO_PINGS,
+  addPing,
+  clearPings,
+  dmPings,
+  forgetPings,
+  mergePings,
+  pingAction,
+  pingAlert,
+  pingKey,
+  pingUntil,
+  serverPings,
+  setScopePings,
+  totalPings,
+  type Pings,
+} from './pings'
 import { EMPTY_PREFS, emojiKey, noteUse, parseEmojiPrefs, setTone, type EmojiPrefs } from './emoji'
 import { catchUpDelay, due } from './backoff'
 import { createReadQueue, mergeReads } from './reads'
@@ -127,6 +143,7 @@ import type {
   Member,
   Message,
   P2pAvailability,
+  Ping,
   Role,
   SearchResult,
   ServerBan,
@@ -400,6 +417,7 @@ interface RChatState {
   focus: Record<string, Focus>
   outbox: Record<string, Outgoing[]>
   reads: Record<string, ReadMark>
+  pings: Pings
   unreadAnchor: Record<string, number>
   atBottom: Record<string, boolean>
   authExpired: boolean
@@ -475,6 +493,7 @@ interface RChatState {
   setDraft: (key: string, text: string) => void
   sendMessage: (content: string, p2pExpiresIn?: number | null) => void
   markRead: (scope: string, messageId: number) => void
+  seeThread: (rootId: number) => void
   setAtBottom: (key: string, v: boolean) => void
   retryOutgoing: (key: string, tempId: number) => void
   cancelOutgoing: (key: string, tempId: number) => void
@@ -486,6 +505,7 @@ interface RChatState {
   dismissUnread: (key: string) => void
   clearFocus: (key: string) => void
   openResult: (result: SearchResult) => Promise<void>
+  openPing: (ping: Ping) => Promise<void>
   uploadFile: (key: string, file: File | null) => void
   toggleSpoiler: (key: string) => void
   toggleUploadMode: (key: string) => void
@@ -663,6 +683,39 @@ export const dmsUnread = (s: RChatState): boolean => {
   if (dmUnreadMemo?.reads !== s.reads)
     dmUnreadMemo = { reads: s.reads, unread: anyDmUnread(s.reads) }
   return dmUnreadMemo.unread
+}
+
+export const serverPingCount = (s: RChatState, name: string) => serverPings(s.pings, name)
+
+export const dmPingCount = (s: RChatState) => dmPings(s.pings)
+
+export const allPings = (s: RChatState) => totalPings(s.pings)
+
+const messageServer = (s: RChatState, m: Message): string | null => {
+  if (m.channel_id === null) return null
+  const v = s.view
+  if (v?.kind === 'channel' && s.servers[v.server]?.channels.some(c => c.id === m.channel_id))
+    return v.server
+  for (const [name, detail] of Object.entries(s.servers))
+    if (detail.channels.some(c => c.id === m.channel_id)) return name
+  return null
+}
+
+const knowsUser = (s: RChatState, m: Message, server: string | null, name: string) => {
+  if (s.me?.username === name || m.author.username === name) return true
+  if (m.dm_id !== null) return s.dms.some(d => d.id === m.dm_id && d.other.username === name)
+  if (server === null) return false
+  const list = s.members[server]?.list
+  if (list && byUsername(list).has(name)) return true
+  return !!s.memberInfo[server]?.[name]
+}
+
+// Usernames this message mentions that are known members (or DM participants), newline-joined
+// so the selector result is a stable string.
+export const knownMentions = (s: RChatState, m: Message, candidates: string[]) => {
+  if (!candidates.length) return ''
+  const server = messageServer(s, m)
+  return candidates.filter(n => knowsUser(s, m, server, n)).join('\n')
 }
 
 export const userRefFor = (s: RChatState, username: string): UserRef => {
@@ -1158,13 +1211,17 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const loadUnreads = () => {
     const before = get().reads
+    const pingsBefore = get().pings
     unreadsLoading += 1
     unreadsReady = api
       .getUnreads()
       .then(({ items, more }) => {
         unreadsMore = more
         placeLate(items)
-        set(s => ({ reads: mergeReads(before, s.reads, items, readQueue.pending) }))
+        set(s => ({
+          reads: mergeReads(before, s.reads, items, readQueue.pending),
+          pings: mergePings(pingsBefore, s.pings, items),
+        }))
       })
       .catch(() => {})
       .finally(() => {
@@ -1284,7 +1341,11 @@ export const useStore = create<RChatState>()((set, get) => {
         readQueue.flush()
         return
       }
-      const { view, atBottom, messages, reads, unreadAnchor } = get()
+      const { view, atBottom, messages, reads, unreadAnchor, panel } = get()
+      if (panel?.kind === 'thread') {
+        const thread = threadKey(panel.root.id)
+        if (atBottom[thread] === true && !detached(thread)) get().seeThread(panel.root.id)
+      }
       if (!view) return
       const key = viewKey(view)
       if (atBottom[key] !== true || detached(key)) return
@@ -1406,7 +1467,14 @@ export const useStore = create<RChatState>()((set, get) => {
     set(s => {
       const entries = Object.entries(s.reads)
       const kept = entries.filter(([scope, mark]) => keep(scope, mark))
-      return kept.length === entries.length ? {} : { reads: Object.fromEntries(kept) }
+      const pings = forgetPings(
+        s.pings,
+        (scope, p) => !keep(scope, { lastRead: 0, latest: 0, server: p.server ?? undefined })
+      )
+      return {
+        ...(kept.length === entries.length ? {} : { reads: Object.fromEntries(kept) }),
+        ...(pings === s.pings ? {} : { pings }),
+      }
     })
 
   const forgetPending = (keep: (key: string, upload: PendingUpload) => boolean) =>
@@ -2072,9 +2140,29 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const sameUser = (username: string) => get().me?.username === username
 
+  // Highest ping id cleared here per key, sent as `pings_until` so the server only marks pings
+  // this client showed; a ping that arrives meanwhile keeps its badge.
+  const seenPings = new Map<string, number>()
+  const noteSeen = (key: string, until: number) => {
+    if (until > (seenPings.get(key) ?? 0)) seenPings.set(key, until)
+  }
+
   const readQueue = createReadQueue({
-    send: (scope, id) => (get().token ? api.postRead(scope, id, true) : Promise.resolve()),
+    send: (scope, id) =>
+      get().token ? api.postRead(scope, id, true, seenPings.get(scope) ?? 0) : Promise.resolve(),
   })
+
+  // Clears the badge of a scope (outside threads) or of a thread (`t<root id>`) here and,
+  // through POST /api/read (which marks those pings seen and echoes read_updated), on the
+  // account's other tabs and devices.
+  const seePings = (key: string) => {
+    const until = pingUntil(get().pings[key])
+    if (until === 0) return
+    noteSeen(key, until)
+    set(s => ({ pings: clearPings(s.pings, key, until) }))
+    const lastRead = key[0] === 't' ? 0 : (get().reads[key]?.lastRead ?? 0)
+    if (get().token) void api.postRead(key, lastRead, false, until).catch(() => {})
+  }
 
   const moveDmUp = (id: number) => {
     set(s => {
@@ -2270,6 +2358,23 @@ export const useStore = create<RChatState>()((set, get) => {
     set(s => (s.unreadAnchor[key] ? { unreadAnchor: { ...s.unreadAnchor, [key]: 0 } } : {}))
   }
 
+  const openChannelAt = async (
+    server: string,
+    channelId: number,
+    threadRootId: number | null,
+    id: number
+  ) => {
+    const s = get()
+    const here = s.view?.kind === 'channel' && s.view.channelId === channelId
+    const at = threadRootId ?? id
+    set({ panel: null })
+    if (here) await get().jumpTo(viewKey({ kind: 'channel', server, channelId }), at)
+    else await get().openServer(server, channelId, 'push', at)
+    if (threadRootId === null) return
+    const root = (get().messages[`c${channelId}`] ?? []).find(m => m.id === threadRootId)
+    if (root) await get().openThread(root, id)
+  }
+
   let noticeId = 0
   const notify = (name: string, title: string, body: string, go: () => void, lead?: string) => {
     noticeId += 1
@@ -2419,6 +2524,7 @@ export const useStore = create<RChatState>()((set, get) => {
     focus: {},
     outbox: {},
     reads: {},
+    pings: NO_PINGS,
     unreadAnchor: {},
     atBottom: {},
     authExpired: false,
@@ -2649,6 +2755,7 @@ export const useStore = create<RChatState>()((set, get) => {
       presenceLogs.clear()
       presenceSnaps.clear()
       bannedHere.clear()
+      seenPings.clear()
       clearProfiles()
       dropStashedInvite()
       set({
@@ -2684,6 +2791,7 @@ export const useStore = create<RChatState>()((set, get) => {
         focus: {},
         outbox: {},
         reads: {},
+        pings: NO_PINGS,
         unreadAnchor: {},
         atBottom: {},
         p2pAvailability: {},
@@ -2968,7 +3076,12 @@ export const useStore = create<RChatState>()((set, get) => {
 
     markRead: (scope, messageId) => {
       const cur = get().reads[scope]
-      if (cur && messageId <= cur.lastRead) return
+      if (cur && messageId <= cur.lastRead) {
+        seePings(scope)
+        return
+      }
+      const until = pingUntil(get().pings[scope])
+      noteSeen(scope, until)
       set(s => {
         const prev = s.reads[scope] ?? { lastRead: 0, latest: messageId }
         const lastRead = Math.max(prev.lastRead, messageId)
@@ -2977,10 +3090,13 @@ export const useStore = create<RChatState>()((set, get) => {
             ...s.reads,
             [scope]: { ...prev, lastRead, latest: Math.max(prev.latest, messageId) },
           },
+          pings: clearPings(s.pings, scope, until),
         }
       })
       if (get().token) readQueue.mark(scope, messageId)
     },
+
+    seeThread: rootId => seePings(`t${rootId}`),
 
     setAtBottom: (key, v) =>
       set(s => (s.atBottom[key] === v ? {} : { atBottom: { ...s.atBottom, [key]: v } })),
@@ -3050,19 +3166,20 @@ export const useStore = create<RChatState>()((set, get) => {
         const { message, server } = result
         const { channel_id, thread_root_id, id } = message
         if (channel_id === null) return
-        const s = get()
-        const here = s.view?.kind === 'channel' && s.view.channelId === channel_id
-        const at = thread_root_id ?? id
-        if (here) {
-          set({ panel: null })
-          await get().jumpTo(viewKey({ kind: 'channel', server, channelId: channel_id }), at)
-        } else {
-          set({ panel: null })
-          await get().openServer(server, channel_id, 'push', at)
+        await openChannelAt(server, channel_id, thread_root_id, id)
+      }),
+
+    openPing: ping =>
+      act(async () => {
+        const id = Number(ping.scope.slice(1))
+        if (ping.scope[0] === 'c') {
+          if (ping.server !== null)
+            await openChannelAt(ping.server, id, ping.thread_root_id, ping.message_id)
+          return
         }
-        if (thread_root_id === null) return
-        const root = (get().messages[`c${channel_id}`] ?? []).find(m => m.id === thread_root_id)
-        if (root) await get().openThread(root, id)
+        const v = get().view
+        if (v?.kind === 'dm' && v.dmId === id) await get().jumpTo(ping.scope, ping.message_id)
+        else await get().openDm(id, 'push', ping.message_id)
       }),
 
     uploadFile: (key, file) => {
@@ -3651,11 +3768,12 @@ export const useStore = create<RChatState>()((set, get) => {
                 get().markRead(scope, m.id)
             }
           }
-          const { me, view, panel } = get()
+          const { me, view } = get()
           if (!me || m.author.username === me.username) return
-          const { server, channel_id, dm_id } = ev
+          const { dm_id } = ev
           if (dm_id !== null) {
             if (view?.kind === 'dm' && view.dmId === dm_id) return
+            if (mentionsUser(m.content, me.username)) return
             notify(
               m.author.display_name,
               '',
@@ -3664,16 +3782,6 @@ export const useStore = create<RChatState>()((set, get) => {
                 void get().openDm(dm_id)
               }
             )
-          } else if (channel_id !== null && server !== null) {
-            if (!mentionsUser(m.content, me.username)) return
-            const viewingIt =
-              rootId !== null
-                ? panel?.kind === 'thread' && panel.root.id === rootId
-                : view?.kind === 'channel' && view.channelId === channel_id
-            if (viewingIt) return
-            notify(m.author.display_name, 'mentioned you', m.content, () => {
-              void get().openServer(server, channel_id)
-            })
           }
           return
         }
@@ -3850,12 +3958,19 @@ export const useStore = create<RChatState>()((set, get) => {
                 mark.server === old_name ? { ...mark, server: server.name } : mark,
               ])
             )
+            const pings = Object.fromEntries(
+              Object.entries(s.pings).map(([scope, p]) => [
+                scope,
+                p.server === old_name ? { ...p, server: server.name } : p,
+              ])
+            )
             return {
               servers,
               members,
               memberInfo,
               interacted,
               reads,
+              pings,
               voice:
                 s.voice?.server === old_name && old_name !== server.name
                   ? { ...s.voice, server: server.name }
@@ -4082,6 +4197,12 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         case 'read_updated': {
           if (get().me?.username !== ev.username) return
+          const until = ev.pings_until ?? 0
+          noteSeen(ev.scope, until)
+          if (ev.scope[0] === 't') {
+            set(s => ({ pings: clearPings(s.pings, ev.scope, until) }))
+            return
+          }
           readQueue.seen(ev.scope, ev.last_read)
           set(s => {
             const prev = s.reads[ev.scope] ?? { lastRead: 0, latest: ev.last_read }
@@ -4091,6 +4212,51 @@ export const useStore = create<RChatState>()((set, get) => {
                 ...s.reads,
                 [ev.scope]: { ...prev, lastRead, latest: Math.max(prev.latest, ev.last_read) },
               },
+              pings: clearPings(s.pings, ev.scope, until),
+            }
+          })
+          return
+        }
+        case 'ping': {
+          const me = get().me
+          if (!me || me.username !== ev.username) return
+          const { ping } = ev
+          const s = get()
+          const alert = pingAlert(ping, {
+            view: s.view ? viewKey(s.view) : null,
+            thread: s.panel?.kind === 'thread' ? s.panel.root.id : null,
+            following: key => s.atBottom[key] === true && !detached(key),
+            visible: pageVisible(),
+          })
+          if (alert.badge) set(st => ({ pings: addPing(st.pings, ping) }))
+          else {
+            const key = pingKey(ping)
+            noteSeen(key, ping.id)
+            const lastRead = key[0] === 't' ? 0 : (get().reads[key]?.lastRead ?? 0)
+            if (get().token) void api.postRead(key, lastRead, false, ping.id).catch(() => {})
+          }
+          if (!alert.toast) return
+          const channel =
+            ping.server !== null
+              ? (s.servers[ping.server]?.channels.find(c => `c${c.id}` === ping.scope)?.name ??
+                null)
+              : null
+          notify(ping.actor.display_name, pingAction(ping, channel), ping.excerpt, () => {
+            void get().openPing(ping)
+          })
+          return
+        }
+        case 'ping_count': {
+          if (get().me?.username !== ev.username) return
+          set(s => {
+            const known = Object.values(s.pings).find(p => p.scope === ev.scope)
+            return {
+              pings: setScopePings(
+                s.pings,
+                ev.scope,
+                known?.server ?? s.reads[ev.scope]?.server ?? null,
+                ev
+              ),
             }
           })
           return

@@ -14,6 +14,7 @@ use crate::api::access::{
 use crate::api::admin::{fuzzy_match, is_fuzzy, like_pattern};
 use crate::api::auth::{hash_password, new_token};
 use crate::api::messages::recent_channel_messages;
+use crate::api::pings::forget_server_pings;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message,
     NAME_MAX, OFFSET_MAX, Paged, ProfanityTarget, Role, RoleLimits, SLOWMODE_MAX, ServerDetail,
@@ -389,6 +390,10 @@ pub struct MemberListQuery {
     q: Option<String>,
     /// `1` or `true` returns only server admins, alphabetically; any other value is ignored.
     admins: Option<bool>,
+    /// `1` or `true` with a non-blank `q` (mention autocomplete): at most 10 members whose
+    /// username or display name starts with `q` (case-insensitive), username matches first,
+    /// each group alphabetical, unpaged. Ignored without `q` and when `usernames` is given.
+    suggest: Option<bool>,
 }
 
 impl MemberListQuery {
@@ -401,10 +406,12 @@ impl MemberListQuery {
         } = paged_list(raw, "usernames")?;
         let mut q = None;
         let mut admins = None;
+        let mut suggest = None;
         for (key, value) in url::form_urlencoded::parse(raw.as_bytes()) {
             match key.as_ref() {
                 "q" if !value.trim().is_empty() => q = Some(value.trim().to_lowercase()),
                 "admins" => admins = Some(matches!(value.as_ref(), "1" | "true")),
+                "suggest" => suggest = Some(matches!(value.as_ref(), "1" | "true")),
                 _ => {}
             }
         }
@@ -415,8 +422,47 @@ impl MemberListQuery {
             usernames: list,
             q,
             admins,
+            suggest,
         })
     }
+}
+
+pub const SUGGEST_MAX: usize = 10;
+
+fn prefix_like(prefix: &str) -> String {
+    let mut p = String::with_capacity(prefix.len() + 1);
+    for c in prefix.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            p.push('\\');
+        }
+        p.push(c);
+    }
+    p.push('%');
+    p
+}
+
+async fn suggested_members(db: &Db, server: &str, q: &str) -> Result<Vec<MemberRow>, ApiError> {
+    let (mut rows, _) =
+        filtered_members(db, server, Some(q), false, Some(SUGGEST_MAX as i64), None).await?;
+    if rows.len() < SUGGEST_MAX {
+        let by_name = sqlx::query(
+            "SELECT m.username, m.is_admin, m.perms FROM members m JOIN users u ON u.username = m.username WHERE m.server = $1 AND lower(u.display_name) LIKE $2 ESCAPE '\\' ORDER BY m.username LIMIT $3",
+        )
+        .bind(server)
+        .bind(prefix_like(q))
+        .bind(2 * SUGGEST_MAX as i64)
+        .fetch_all(db)
+        .await?;
+        for row in member_rows(&by_name)? {
+            if rows.len() == SUGGEST_MAX {
+                break;
+            }
+            if !rows.iter().any(|(name, _, _)| *name == row.0) {
+                rows.push(row);
+            }
+        }
+    }
+    Ok(rows)
 }
 
 fn prefix_end(prefix: &str) -> Option<String> {
@@ -1050,8 +1096,9 @@ async fn members_page(
 /// Returns members as pages of `limit` (default and max 50): online members first, then offline
 /// ones, each alphabetical by username. Page with `cursor` from the `X-Next-Cursor` response header
 /// (or the legacy `offset`). With `q` (username prefix) and/or `admins=1` it returns matching
-/// members alphabetically, paged by `cursor` only. With `usernames` it returns just those users
-/// that are members, alphabetical and unpaged.
+/// members alphabetically, paged by `cursor` only. With `q` and `suggest=1` it returns at most
+/// 10 members whose username or display name starts with `q` (mention autocomplete). With
+/// `usernames` it returns just those users that are members, alphabetical and unpaged.
 ///
 /// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
 /// password-protected server signed-in callers must be members and guests need a valid
@@ -1086,6 +1133,7 @@ pub(crate) async fn list_members(
         usernames,
         q,
         admins,
+        suggest,
     } = MemberListQuery::parse(raw.as_deref().unwrap_or(""))?;
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
@@ -1100,6 +1148,10 @@ pub(crate) async fn list_members(
                 &unique_capped(names.iter().map(|n| n.to_lowercase())),
             )
             .await?,
+            None,
+        ),
+        None if suggest == Some(true) && q.is_some() => (
+            suggested_members(db, &key, q.as_deref().unwrap_or_default()).await?,
             None,
         ),
         None if q.is_some() || admins == Some(true) => {
@@ -1714,6 +1766,28 @@ pub(crate) async fn join_server(
     Ok(Json(detail))
 }
 
+/// Ends `username`'s membership of `server` (leave, kick, ban): drops the member row, their
+/// roles there and their pings in the server. Returns how many member rows were removed.
+async fn end_membership(
+    conn: &mut sqlx::AnyConnection,
+    server: &str,
+    username: &str,
+) -> sqlx::Result<u64> {
+    let removed = sqlx::query("DELETE FROM members WHERE server = $1 AND username = $2")
+        .bind(server)
+        .bind(username)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+    sqlx::query("DELETE FROM user_roles WHERE server = $1 AND username = $2")
+        .bind(server)
+        .bind(username)
+        .execute(&mut *conn)
+        .await?;
+    forget_server_pings(conn, server, username).await?;
+    Ok(removed)
+}
+
 /// Leave a server
 ///
 /// Removes the caller from the server and drops their role assignments. Anyone may leave,
@@ -1740,20 +1814,12 @@ pub(crate) async fn leave_server(
 ) -> Result<Json<OkResp>, ApiError> {
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
     let key = access.name().to_string();
-    let removed = sqlx::query("DELETE FROM members WHERE server = $1 AND username = $2")
-        .bind(&key)
-        .bind(&user.username)
-        .execute(&state.db)
-        .await?
-        .rows_affected();
+    let mut tx = state.db.begin().await?;
+    let removed = end_membership(&mut tx, &key, &user.username).await?;
+    tx.commit().await?;
     match removed {
         0 => Err(bad("Not a member")),
         _ => {
-            sqlx::query("DELETE FROM user_roles WHERE server = $1 AND username = $2")
-                .bind(&key)
-                .bind(&user.username)
-                .execute(&state.db)
-                .await?;
             state.hub.broadcast(WsEvent::MemberLeft {
                 server: key.clone(),
                 username: user.username.clone(),
@@ -2398,20 +2464,12 @@ pub(crate) async fn kick_member(
     access.require_perm(&state.db, Perm::Kick).await?;
     access.require_moderate(&state.db, &target).await?;
     let key = access.name().to_string();
-    let removed = sqlx::query("DELETE FROM members WHERE server = $1 AND username = $2")
-        .bind(&key)
-        .bind(&target)
-        .execute(&state.db)
-        .await?
-        .rows_affected();
+    let mut tx = state.db.begin().await?;
+    let removed = end_membership(&mut tx, &key, &target).await?;
+    tx.commit().await?;
     match removed {
         0 => Err(not_found("Not a member")),
         _ => {
-            sqlx::query("DELETE FROM user_roles WHERE server = $1 AND username = $2")
-                .bind(&key)
-                .bind(&target)
-                .execute(&state.db)
-                .await?;
             announce_kick(&state.hub, &key, &target, false);
             Ok(ok())
         }
@@ -2470,17 +2528,7 @@ pub(crate) async fn ban_member(
     .bind(now())
     .execute(&mut *tx)
     .await?;
-    let removed = sqlx::query("DELETE FROM members WHERE server = $1 AND username = $2")
-        .bind(&key)
-        .bind(&target)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-    sqlx::query("DELETE FROM user_roles WHERE server = $1 AND username = $2")
-        .bind(&key)
-        .bind(&target)
-        .execute(&mut *tx)
-        .await?;
+    let removed = end_membership(&mut tx, &key, &target).await?;
     tx.commit().await?;
     match removed {
         0 => state.hub.broadcast(WsEvent::ServerBanned {
@@ -5664,6 +5712,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn member_suggestions_match_username_or_display_name() {
+        let (state, path) = temp_state("member_suggest").await;
+        let db = &state.db;
+        for (name, display) in [
+            ("alice", "Alice"),
+            ("albert", "Bertie"),
+            ("bob", "Alfie"),
+            ("carol", "ALma"),
+            ("dan", "Dan"),
+            ("al_x", "x"),
+            ("alzz", "z"),
+        ] {
+            add_user(db, name, display).await;
+            add_member(db, "rchat", name, 0, 0, 0).await;
+        }
+        for n in 0..12 {
+            add_user(db, &format!("zz{n:02}"), "Zed").await;
+            add_member(db, "rchat", &format!("zz{n:02}"), 0, 0, 0).await;
+        }
+        add_user(db, "alfred", "Alfred").await;
+        let fetch = |who: Option<&'static str>, server: &'static str, raw: &'static str| {
+            let state = state.clone();
+            async move {
+                let res = list_members(
+                    State(state),
+                    MaybeAuthed(who.map(|w| mem_user(w, false))),
+                    HeaderMap::new(),
+                    Path(server.to_string()),
+                    RawQuery(Some(raw.to_string())),
+                )
+                .await?;
+                let res = axum::response::IntoResponse::into_response(res);
+                assert!(res.headers().get(crate::api::NEXT_CURSOR).is_none());
+                let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                    .await
+                    .expect("body");
+                let members: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("json");
+                Ok::<Vec<String>, ApiError>(
+                    members
+                        .iter()
+                        .map(|m| m["username"].as_str().expect("name").to_string())
+                        .collect(),
+                )
+            }
+        };
+        assert_eq!(
+            fetch(None, "rchat", "q=AL&suggest=1").await.expect("al"),
+            vec!["al_x", "albert", "alice", "alzz", "bob", "carol"]
+        );
+        assert_eq!(
+            fetch(None, "rchat", "q=al_&suggest=1")
+                .await
+                .expect("escaped"),
+            vec!["al_x"]
+        );
+        assert_eq!(
+            fetch(None, "rchat", "q=zed&suggest=true")
+                .await
+                .expect("zed")
+                .len(),
+            10
+        );
+        assert_eq!(
+            fetch(None, "rchat", "q=zz&suggest=1")
+                .await
+                .expect("zz")
+                .len(),
+            10
+        );
+        assert_eq!(
+            fetch(None, "rchat", "q=ber&suggest=1").await.expect("ber"),
+            vec!["albert"]
+        );
+        assert_eq!(
+            fetch(None, "rchat", "q=zz&limit=50")
+                .await
+                .expect("paged")
+                .len(),
+            12,
+            "plain q keeps its paged username listing"
+        );
+        let _ = make_server(&state, "club").await.expect("club");
+        sqlx::query("UPDATE servers SET password_hash = '!none' WHERE name = 'club'")
+            .execute(db)
+            .await
+            .expect("protect");
+        assert!(matches!(
+            fetch(Some("bob"), "club", "q=al&suggest=1").await,
+            Err(ApiError(StatusCode::NOT_FOUND, _))
+        ));
+        assert!(matches!(
+            fetch(None, "club", "q=al&suggest=1").await,
+            Err(ApiError(StatusCode::NOT_FOUND, _))
+        ));
+        assert_eq!(
+            fetch(Some("alice"), "club", "q=al&suggest=1")
+                .await
+                .expect("member"),
+            vec!["alice"]
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn ban_and_interacted_cursors_walk_everything() {
         let (state, path) = temp_state("pair_cursor").await;
         let db = &state.db;
@@ -6693,6 +6845,75 @@ mod tests {
                 "channel_renamed talk".to_string(),
             ]
         );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn ending_membership_drops_the_servers_pings() {
+        let (state, path) = temp_state("membership_pings").await;
+        let db = &state.db;
+        for name in ["alice", "bob", "carol", "dave"] {
+            add_user(db, name, name).await;
+        }
+        add_member(db, "rchat", "alice", 1, 0, 1).await;
+        for name in ["bob", "carol", "dave"] {
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let mid: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', 'hi', 1 FROM channels WHERE server = 'rchat' RETURNING id")
+            .fetch_one(db)
+            .await
+            .expect("message")
+            .try_get(0)
+            .expect("id");
+        for name in ["bob", "carol", "dave"] {
+            for server in [Some("rchat"), None] {
+                sqlx::query("INSERT INTO pings(username, kind, scope, server, message_id, actor, created_at) VALUES($1, 'mention', 'c1', $2, $3, 'alice', 1)")
+                    .bind(name)
+                    .bind(server)
+                    .bind(mid)
+                    .execute(db)
+                    .await
+                    .expect("ping");
+            }
+        }
+        let left = |name: &'static str| async move {
+            sqlx::query("SELECT server FROM pings WHERE username = $1")
+                .bind(name)
+                .fetch_all(db)
+                .await
+                .expect("pings")
+                .iter()
+                .map(|r| r.try_get::<Option<String>, _>(0).expect("server"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(left("bob").await.len(), 2);
+        let _ = leave_server(
+            State(state.clone()),
+            Authed(mem_user("bob", false)),
+            Path("rchat".to_string()),
+        )
+        .await
+        .expect("leave");
+        let _ = kick_member(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path("rchat".to_string()),
+            Json(UsernameReq {
+                username: "carol".to_string(),
+            }),
+        )
+        .await
+        .expect("kick");
+        ban(&state, mem_user("alice", false), "rchat", "dave")
+            .await
+            .expect("ban");
+        for name in ["bob", "carol", "dave"] {
+            assert_eq!(
+                left(name).await,
+                vec![None],
+                "{name} keeps only other pings"
+            );
+        }
         done(state, path).await;
     }
 }

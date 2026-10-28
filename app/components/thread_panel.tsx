@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { MessageSquareText, Trash2, X } from 'lucide-react'
 import {
   confirmDeleteMessage,
@@ -18,15 +18,17 @@ import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
 import {
   OutboxRows,
-  authorKey,
   avatarTriggerCls,
   fmtTime,
+  mentionRowCls,
+  mentionsMe,
   messageCopyItems,
   messageToolCls,
   messageToolbarCls,
   nameTriggerCls,
   useAuthorMembers,
   useMemberLookup,
+  usePeopleKey,
 } from './message_pane'
 import { longPress } from './context_menu'
 import { profileTrigger } from './profile_card'
@@ -59,13 +61,17 @@ export default function ThreadPanel() {
   )
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const memberFor = useMemberLookup(server)
-  useAuthorMembers(server, authorKey(root ? [root, ...replies] : replies))
+  const people = useMemo(() => (root ? [root, ...replies] : replies), [root, replies])
+  useAuthorMembers(server, usePeopleKey(people))
   const key = useStore(s => (s.panel?.kind === 'thread' ? threadKey(s.panel.root.id) : null))
   const older = useStore(s => (key ? s.older[key] : undefined))
   const newer = useStore(s => (key ? s.newer[key] : undefined))
   const stale = useStore(s => (key ? s.stale[key] === true : false))
   const focus = useStore(s => (key ? s.focus[key] : undefined))
   const outCount = useStore(s => (key ? (s.outbox[key]?.length ?? 0) : 0))
+  const following = useStore(s => (key ? s.atBottom[key] === true : false))
+  const unseen = useStore(s => (key ? s.pings[key] !== undefined : false))
+  const seeThread = useStore(s => s.seeThread)
   const closePanel = useStore(s => s.closePanel)
   const loadOlderThread = useStore(s => s.loadOlderThread)
   const loadNewerThread = useStore(s => s.loadNewerThread)
@@ -91,8 +97,21 @@ export default function ThreadPanel() {
     focus: focus !== undefined,
     detached,
     outCount,
-    onBottom: () => {},
+    onBottom: () => {
+      if (root && !detached && document.visibilityState === 'visible') seeThread(root.id)
+    },
   })
+  const rootId = root?.id ?? null
+  useEffect(() => {
+    if (
+      rootId !== null &&
+      unseen &&
+      following &&
+      !detached &&
+      document.visibilityState === 'visible'
+    )
+      seeThread(rootId)
+  }, [rootId, unseen, following, detached, seeThread])
   const fresh = newSince(replies, scroll.leftAt, me?.username)
 
   const flash = useFocusMessage(listRef, key, focus, replies, scroll.settle)
@@ -128,14 +147,16 @@ export default function ThreadPanel() {
   }
 
   const row = (m: Message) => {
+    const mentioned = mentionsMe(m, me?.username)
     return (
       <div
         key={m.id}
         data-row
         data-mid={m.id}
         data-flash={flash === m.id ? '' : undefined}
+        data-mentioned={mentioned ? '' : undefined}
         {...longPress(rowMenu(m))}
-        className="group relative flex gap-3 px-4 py-1.5 hover:bg-surface-container"
+        className={`group relative flex gap-3 px-4 py-1.5 ${mentioned ? mentionRowCls : 'hover:bg-surface-container'}`}
       >
         <div className="shrink-0 pt-0.5">
           <span

@@ -293,7 +293,21 @@ export interface AdminOverview {
   user_count: number
 }
 
-export interface Unread {
+export interface ThreadPings {
+  root_id: number
+  pings: number
+  pings_until: number
+}
+
+// Unseen pings of a scope: `pings` counts thread pings too; `pings_until` is the highest unseen
+// ping id outside threads.
+export interface PingSummary {
+  pings?: number
+  pings_until?: number
+  thread_pings?: ThreadPings[]
+}
+
+export interface Unread extends PingSummary {
   scope: string
   server: string | null
   last_read: number
@@ -329,6 +343,21 @@ export interface RtcPayload {
   // The sender's session, and the session of ours it is meant for.
   sid?: string
   rsid?: string
+}
+
+export type PingKind = 'mention' | 'reply' | 'reaction'
+
+export interface Ping {
+  id: number
+  kind: PingKind
+  scope: string
+  server: string | null
+  message_id: number
+  thread_root_id: number | null
+  actor: UserRef
+  emoji: string | null
+  excerpt: string
+  created_at: number
 }
 
 export type VoiceMsg =
@@ -384,7 +413,15 @@ export type WsEvent =
   | { type: 'presence_snapshot'; server: string; online: string[]; online_count: number }
   | { type: 'server_banned'; server: string; username: string }
   | { type: 'presence_mode'; username: string; appear_offline: boolean }
-  | { type: 'read_updated'; username: string; scope: string; last_read: number }
+  | {
+      type: 'read_updated'
+      username: string
+      scope: string
+      last_read: number
+      pings_until?: number
+    }
+  | { type: 'ping'; username: string; ping: Ping }
+  | ({ type: 'ping_count'; username: string; scope: string } & PingSummary)
   | { type: 'voice_state'; server: string; channel_id: number; users: string[] }
   | {
       type: 'call_state'

@@ -15,8 +15,8 @@ use crate::db::{
 mod rules;
 
 use rules::{
-    channel_access, channel_viewable, effective_perms, grant_live, is_banned, live_grant_servers,
-    member_perms,
+    channel_access, channel_viewable, channel_viewers, effective_perms, grant_live, is_banned,
+    live_grant_servers, member_perms,
 };
 
 pub const DENIED: &str = "Server not found or wrong password";
@@ -619,6 +619,29 @@ impl ResolvedChannel {
         }
     }
 
+    /// Which of `usernames` (lowercase) may be pinged in this channel: members of its server
+    /// whose account is not being deleted and who can view the channel right now, in the given
+    /// order. With `root` (a thread root in this channel), only those who can also read the root
+    /// under the `read_since` rule of `resolve_message`, so a thread ping can be cleared by
+    /// reading the thread. Batched (a fixed number of queries for any number of names). For
+    /// pings only; never send the result to the caller, so it cannot probe who can see a channel.
+    pub async fn viewers_among(
+        &self,
+        db: &Db,
+        usernames: &[String],
+        root: Option<i64>,
+    ) -> Result<Vec<String>, ApiError> {
+        let readable = match root {
+            Some(id) => match message_row(db, id).await {
+                Ok((scope, created_at)) if scope.channel_id == Some(self.id) => Some(created_at),
+                Ok(_) | Err(ApiError(StatusCode::NOT_FOUND, _)) => return Ok(Vec::new()),
+                Err(e) => return Err(e),
+            },
+            None => None,
+        };
+        Ok(channel_viewers(db, self.server.name(), self.id, usernames, readable).await?)
+    }
+
     pub async fn send_gate(&self, db: &Db) -> Result<(), ApiError> {
         let Some(user) = &self.server.user else {
             return Err(forbidden("Not a member"));
@@ -1015,7 +1038,7 @@ mod tests {
         (after.0 - before.0, after.1 - before.1)
     }
 
-    const HANDLERS: [(&str, &str); 14] = [
+    const HANDLERS: [(&str, &str); 15] = [
         ("servers.rs", include_str!("servers.rs")),
         ("passwords.rs", include_str!("passwords.rs")),
         ("messages.rs", include_str!("messages.rs")),
@@ -1030,6 +1053,7 @@ mod tests {
         ("hub.rs", include_str!("../hub.rs")),
         ("fanout.rs", include_str!("../fanout.rs")),
         ("db.rs", include_str!("../db.rs")),
+        ("pings.rs", include_str!("pings.rs")),
     ];
 
     fn calls(code: &str, token: &str) -> bool {
