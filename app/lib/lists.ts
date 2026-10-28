@@ -101,13 +101,30 @@ export const windowEdges = (
 export const unreadMark = (
   ids: number[],
   anchor: number | undefined,
-  olderMore: boolean
+  olderMore: boolean,
+  ownLast = 0
 ): { divider: number; above: boolean } => {
   if (anchor === undefined || anchor <= 0) return { divider: -1, above: false }
-  const first = ids.findIndex(id => id > anchor)
+  const at = Math.max(anchor, ownLast)
+  const first = ids.findIndex(id => id > at)
   if (first === -1) return { divider: -1, above: false }
-  if (first === 0 && olderMore && ids[0] !== anchor + 1) return { divider: -1, above: true }
+  if (first === 0 && olderMore && ids[0] !== at + 1) return { divider: -1, above: true }
   return { divider: first, above: false }
+}
+
+export const lastOwn = (list: Message[], username: string | undefined): number => {
+  if (username === undefined) return 0
+  for (let i = list.length - 1; i >= 0; i -= 1)
+    if (list[i].author.username === username) return list[i].id
+  return 0
+}
+
+export const newSince = (list: Message[], since: number | null, username: string | undefined) => {
+  if (since === null) return 0
+  let n = 0
+  for (let i = list.length - 1; i >= 0 && list[i].id > since; i -= 1)
+    if (list[i].author.username !== username && list[i].kind !== 'call') n += 1
+  return n
 }
 
 const byId = (a: Message, b: Message) => a.id - b.id

@@ -272,7 +272,7 @@ describe('jumping to a message', () => {
 })
 
 describe('unread anchor', () => {
-  test('stays where it was while catching up, and follows reads when nothing was unread', async () => {
+  test('is fixed at open: reads made while viewing do not move it', async () => {
     useStore.setState({
       reads: {
         c1: { lastRead: 10, latest: 20 },
@@ -286,12 +286,36 @@ describe('unread anchor', () => {
     dispatch({ type: 'read_updated', username: 'alice', scope: 'c1', last_read: 20 })
     expect(st().unreadAnchor.c1).toBe(10)
     expect(st().reads.c1.lastRead).toBe(20)
-    st().dismissUnread('c1')
-    expect(st().unreadAnchor.c1).toBe(20)
     await st().openChannel('s', 2, 'none')
-    expect(st().unreadAnchor.c2).toBe(20)
-    st().markRead('c2', 25)
-    expect(st().unreadAnchor.c2).toBe(25)
+    expect(st().unreadAnchor.c1).toBeUndefined()
+    expect(st().unreadAnchor.c2).toBe(0)
+    dispatch({
+      type: 'message',
+      ...scoped,
+      channel_id: 2,
+      message: msg(21, { author: user('bob'), channel_id: 2 }),
+    })
+    expect(st().reads.c2.latest).toBe(21)
+    expect(st().unreadAnchor.c2).toBe(0)
+  })
+
+  test('Mark as read clears it and marks the latest message read', async () => {
+    useStore.setState({ reads: { c1: { lastRead: 10, latest: 25 } } })
+    replies = [range(1, 20)]
+    await st().openChannel('s', 1, 'none')
+    expect(st().unreadAnchor.c1).toBe(10)
+    st().dismissUnread('c1')
+    expect(st().unreadAnchor.c1).toBe(0)
+    expect(st().reads.c1.lastRead).toBe(25)
+  })
+
+  test('sending a message clears it', async () => {
+    useStore.setState({ reads: { c1: { lastRead: 10, latest: 20 } } })
+    replies = [range(1, 20)]
+    await st().openChannel('s', 1, 'none')
+    hang()
+    st().sendMessage('hi')
+    expect(st().unreadAnchor.c1).toBe(0)
   })
 
   test('a never-read channel has no anchor', async () => {

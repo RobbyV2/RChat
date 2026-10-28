@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { resolveApiBase } from '../api'
+import { createApi, resolveApiBase } from '../api'
 import { wsUrlFrom } from '../ws'
 
 describe('resolveApiBase', () => {
@@ -53,5 +53,11 @@ describe('wsUrlFrom', () => {
       'wss://h:1/base/api/ws'
     )
     expect(wsUrlFrom(undefined, { protocol: 'http:', host: 'h' })).toBe('ws://h/api/ws')
+  })
+})
+
+describe('mediaUrl', () => {
+  test('builds the media path without recursing', () => {
+    expect(createApi('/api').mediaUrl('a b')).toBe('/api/media/a%20b')
   })
 })

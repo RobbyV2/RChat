@@ -134,6 +134,7 @@ import type {
   SiteSettingsPatch,
   InstanceInfo,
   Theme,
+  Unread,
   UserRef,
   WsEvent,
   WsStatus,
@@ -396,7 +397,7 @@ interface RChatState {
   outbox: Record<string, Outgoing[]>
   reads: Record<string, ReadMark>
   unreadAnchor: Record<string, number>
-  atBottom: boolean
+  atBottom: Record<string, boolean>
   authExpired: boolean
   bootError: string | null
   wsStatus: WsStatus
@@ -467,7 +468,7 @@ interface RChatState {
   setDraft: (key: string, text: string) => void
   sendMessage: (content: string, p2pExpiresIn?: number | null) => void
   markRead: (scope: string, messageId: number) => void
-  setAtBottom: (v: boolean) => void
+  setAtBottom: (key: string, v: boolean) => void
   retryOutgoing: (key: string, tempId: number) => void
   cancelOutgoing: (key: string, tempId: number) => void
   loadOlder: () => Promise<void>
@@ -1118,16 +1119,33 @@ export const useStore = create<RChatState>()((set, get) => {
   let unreadsReady: Promise<void> = Promise.resolve()
 
   let unreadsMore = false
+  let unreadsLoading = 0
+  const lateAnchor = new Set<string>()
+
+  const placeLate = (items: Unread[]) => {
+    const view = get().view
+    const key = view ? viewKey(view) : null
+    const item = items.find(i => i.scope === key)
+    if (key && lateAnchor.has(key) && item && item.latest > item.last_read && item.last_read > 0)
+      set(s => ({ unreadAnchor: { ...s.unreadAnchor, [key]: item.last_read } }))
+    lateAnchor.clear()
+  }
 
   const loadUnreads = () => {
     const before = get().reads
+    unreadsLoading += 1
     unreadsReady = api
       .getUnreads()
       .then(({ items, more }) => {
         unreadsMore = more
+        placeLate(items)
         set(s => ({ reads: mergeReads(before, s.reads, items, readQueue.pending) }))
       })
       .catch(() => {})
+      .finally(() => {
+        unreadsLoading -= 1
+        if (!unreadsLoading) lateAnchor.clear()
+      })
     return unreadsReady
   }
 
@@ -1241,11 +1259,16 @@ export const useStore = create<RChatState>()((set, get) => {
         readQueue.flush()
         return
       }
-      const { view, atBottom, messages } = get()
-      if (!view || !atBottom || detached(viewKey(view))) return
-      const list = messages[viewKey(view)] ?? []
+      const { view, atBottom, messages, reads, unreadAnchor } = get()
+      if (!view) return
+      const key = viewKey(view)
+      if (atBottom[key] !== true || detached(key)) return
+      const mark = reads[key]
+      if (mark && mark.latest > mark.lastRead && !(unreadAnchor[key] > 0))
+        set(s => ({ unreadAnchor: { ...s.unreadAnchor, [key]: mark.lastRead } }))
+      const list = messages[key] ?? []
       const last = list[list.length - 1]
-      if (last) get().markRead(viewKey(view), last.id)
+      if (last) get().markRead(key, last.id)
     })
     window.addEventListener('pagehide', () => readQueue.flush())
   }
@@ -1637,7 +1660,7 @@ export const useStore = create<RChatState>()((set, get) => {
       tails.delete(key)
       heads.delete(key)
       historyGen.delete(key)
-      sticky.delete(key)
+      lateAnchor.delete(key)
       views.delete(key)
     }
     const without = <T>(map: Record<string, T>) => {
@@ -1653,6 +1676,7 @@ export const useStore = create<RChatState>()((set, get) => {
       stale: without(s.stale),
       focus: without(s.focus),
       unreadAnchor: without(s.unreadAnchor),
+      atBottom: without(s.atBottom),
     }))
   }
 
@@ -1663,7 +1687,7 @@ export const useStore = create<RChatState>()((set, get) => {
     const cur = s.messages[key]
     if (!cur && !(create && liveKey(key))) return {}
     const merged = merge(cur ?? [], applyEmbeds(msgs))
-    const bottom = s.view !== null && viewKey(s.view) === key && s.atBottom
+    const bottom = liveKey(key) && s.atBottom[key] === true
     if (!bottom && merged.length > DETACH_AT) return null
     const bounded =
       bottom && !s.older[key]?.loading
@@ -1671,14 +1695,11 @@ export const useStore = create<RChatState>()((set, get) => {
         : { list: merged, trimmed: false }
     if (bounded.trimmed) newHistory(key)
     const anchor = s.unreadAnchor[key]
-    const cut = bounded.trimmed && anchor !== undefined && anchor < (bounded.list[0]?.id ?? 0)
-    if (cut) sticky.delete(key)
+    const cut = bounded.trimmed && anchor > 0 && anchor < (bounded.list[0]?.id ?? 0)
     return {
       messages: { ...s.messages, [key]: bounded.list },
       ...(bounded.trimmed ? { older: { ...s.older, [key]: { more: true, loading: false } } } : {}),
-      ...(cut
-        ? { unreadAnchor: { ...s.unreadAnchor, [key]: bounded.list[bounded.list.length - 1].id } }
-        : {}),
+      ...(cut ? { unreadAnchor: { ...s.unreadAnchor, [key]: 0 } } : {}),
     }
   }
 
@@ -2201,15 +2222,33 @@ export const useStore = create<RChatState>()((set, get) => {
     askP2p(msgs)
   }
 
-  const sticky = new Set<string>()
   const placeAnchor = (key: string) =>
     set(s => {
       const mark = s.reads[key]
-      const anchor = mark?.lastRead ?? 0
-      if (mark && anchor > 0 && mark.latest > anchor) sticky.add(key)
-      else sticky.delete(key)
+      if (!mark && unreadsLoading) lateAnchor.add(key)
+      else lateAnchor.delete(key)
+      const anchor = mark && mark.latest > mark.lastRead ? mark.lastRead : 0
       return { unreadAnchor: { ...s.unreadAnchor, [key]: anchor } }
     })
+
+  const enterView = (view: View) => {
+    const key = viewKey(view)
+    const before = get().view
+    const left = before ? viewKey(before) : null
+    if (left && left !== key) lateAnchor.delete(left)
+    set(s => ({
+      view,
+      atBottom: { ...s.atBottom, [key]: true },
+      focus: keyed(s.focus, key, null),
+      unreadAnchor: left && left !== key ? keyed(s.unreadAnchor, left, null) : s.unreadAnchor,
+    }))
+    placeAnchor(key)
+  }
+
+  const clearAnchor = (key: string) => {
+    lateAnchor.delete(key)
+    set(s => (s.unreadAnchor[key] ? { unreadAnchor: { ...s.unreadAnchor, [key]: 0 } } : {}))
+  }
 
   let noticeId = 0
   const notify = (name: string, title: string, body: string, go: () => void, lead?: string) => {
@@ -2360,7 +2399,7 @@ export const useStore = create<RChatState>()((set, get) => {
     outbox: {},
     reads: {},
     unreadAnchor: {},
-    atBottom: true,
+    atBottom: {},
     authExpired: false,
     bootError: null,
     wsStatus: 'red',
@@ -2581,7 +2620,7 @@ export const useStore = create<RChatState>()((set, get) => {
       serverPager.reset(null)
       historyGen.clear()
       tails.clear()
-      sticky.clear()
+      lateAnchor.clear()
       views.clear()
       presence.length = 0
       presenceLogs.clear()
@@ -2622,7 +2661,7 @@ export const useStore = create<RChatState>()((set, get) => {
         outbox: {},
         reads: {},
         unreadAnchor: {},
-        atBottom: true,
+        atBottom: {},
         p2pAvailability: {},
         wsStatus: 'red',
         contextMenu: null,
@@ -2681,8 +2720,7 @@ export const useStore = create<RChatState>()((set, get) => {
         readQueue.flush()
         leaveServerView(server)
         if (entering) refreshMemberInfo(server)
-        set(s => ({ view, atBottom: true, focus: keyed(s.focus, key, null) }))
-        placeAnchor(key)
+        enterView(view)
         syncUrl(view, nav)
         get().setViewing(server)
         const kind = get().servers[server]?.channels.find(c => c.id === channelId)?.kind
@@ -2702,8 +2740,7 @@ export const useStore = create<RChatState>()((set, get) => {
         const key = viewKey(view)
         readQueue.flush()
         leaveServerView(null)
-        set(s => ({ view, atBottom: true, focus: keyed(s.focus, key, null) }))
-        placeAnchor(key)
+        enterView(view)
         syncUrl(view, nav)
         get().setViewing(null)
         const username = get().me?.username
@@ -2883,6 +2920,7 @@ export const useStore = create<RChatState>()((set, get) => {
       const pending = get().pending[key] ?? null
       if (!content.trim() && !pending) return
       set(s => ({ pending: keyed(s.pending, key, null) }))
+      clearAnchor(key)
       if (detached(key)) void get().jumpToPresent(key)
       queueMessage(view, me, content, pending, p2pExpiresIn ?? null)
     },
@@ -2898,15 +2936,13 @@ export const useStore = create<RChatState>()((set, get) => {
             ...s.reads,
             [scope]: { ...prev, lastRead, latest: Math.max(prev.latest, messageId) },
           },
-          unreadAnchor: sticky.has(scope)
-            ? s.unreadAnchor
-            : { ...s.unreadAnchor, [scope]: lastRead },
         }
       })
       if (get().token) readQueue.mark(scope, messageId)
     },
 
-    setAtBottom: v => set({ atBottom: v }),
+    setAtBottom: (key, v) =>
+      set(s => (s.atBottom[key] === v ? {} : { atBottom: { ...s.atBottom, [key]: v } })),
 
     retryOutgoing: (key, tempId) => {
       patchOutgoing(key, tempId, 'queued')
@@ -2960,13 +2996,10 @@ export const useStore = create<RChatState>()((set, get) => {
       }),
 
     dismissUnread: key => {
-      sticky.delete(key)
-      set(s => ({
-        unreadAnchor: {
-          ...s.unreadAnchor,
-          [key]: Math.max(s.reads[key]?.latest ?? 0, s.unreadAnchor[key] ?? 0),
-        },
-      }))
+      clearAnchor(key)
+      const s = get()
+      const latest = Math.max(s.reads[key]?.latest ?? 0, s.messages[key]?.at(-1)?.id ?? 0)
+      if (latest > 0) s.markRead(key, latest)
     },
 
     clearFocus: key => set(s => (s.focus[key] ? { focus: keyed(s.focus, key, null) } : {})),
@@ -3558,7 +3591,10 @@ export const useStore = create<RChatState>()((set, get) => {
               const viewNow = get().view
               const viewingScope = viewNow ? viewKey(viewNow) : null
               set(s => {
-                const prev = s.reads[scope] ?? { lastRead: unreadsMore ? 0 : m.id - 1, latest: 0 }
+                const prev = s.reads[scope] ?? {
+                  lastRead: mine ? m.id : unreadsMore ? 0 : m.id - 1,
+                  latest: 0,
+                }
                 return {
                   reads: {
                     ...s.reads,
@@ -3570,7 +3606,7 @@ export const useStore = create<RChatState>()((set, get) => {
                   },
                 }
               })
-              if (mine || (scope === viewingScope && get().atBottom && pageVisible()))
+              if (mine || (scope === viewingScope && get().atBottom[scope] && pageVisible()))
                 get().markRead(scope, m.id)
             }
           }
@@ -4014,12 +4050,6 @@ export const useStore = create<RChatState>()((set, get) => {
                 ...s.reads,
                 [ev.scope]: { ...prev, lastRead, latest: Math.max(prev.latest, ev.last_read) },
               },
-              unreadAnchor: sticky.has(ev.scope)
-                ? s.unreadAnchor
-                : {
-                    ...s.unreadAnchor,
-                    [ev.scope]: Math.max(s.unreadAnchor[ev.scope] ?? 0, lastRead),
-                  },
             }
           })
           return

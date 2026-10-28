@@ -53,7 +53,7 @@ beforeEach(() => {
     outbox: {},
     reads: {},
     unreadAnchor: {},
-    atBottom: true,
+    atBottom: { c1: true },
     panel: null,
     error: null,
   })
@@ -110,7 +110,7 @@ describe('bounded message window', () => {
   })
 
   test('live messages while scrolled up grow the list, then detach', () => {
-    useStore.setState({ messages: { c1: range(1, 399) }, atBottom: false })
+    useStore.setState({ messages: { c1: range(1, 399) }, atBottom: { c1: false } })
     dispatch(live(400))
     expect(ids('c1').length).toBe(400)
     dispatch(live(401))

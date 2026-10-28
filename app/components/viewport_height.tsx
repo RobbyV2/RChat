@@ -3,8 +3,20 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { ArrowDown, LoaderCircle, X } from 'lucide-react'
 import { useStore, type Focus } from '../lib/store'
+import {
+  EDITABLE,
+  FOLLOWING,
+  nearBottom,
+  pillStep,
+  placed,
+  scrolled,
+  upKey,
+  userScrolling,
+  type Follow,
+  type Pill,
+  type PillEvent,
+} from '../lib/follow'
 
-const editable = 'input, textarea, select, [contenteditable]'
 const KEYBOARD_MIN = 120
 
 export default function ViewportHeight() {
@@ -23,7 +35,7 @@ export default function ViewportHeight() {
       root.style.setProperty('--app-height', `${h}px`)
       if (grew && root.scrollHeight <= window.innerHeight + 1) window.scrollTo(0, 0)
       const active = document.activeElement
-      if (shrank && active instanceof HTMLElement && active.matches(editable))
+      if (shrank && active instanceof HTMLElement && active.matches(EDITABLE))
         active.scrollIntoView({ block: 'nearest' })
     }
     sync()
@@ -33,37 +45,187 @@ export default function ViewportHeight() {
   return null
 }
 
-export function usePinnedBottom(
-  ref: RefObject<HTMLElement | null>,
-  pinned: RefObject<boolean>,
-  key: unknown
-) {
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    let height = el.clientHeight
-    const ro = new ResizeObserver(() => {
-      if (el.clientHeight === height) return
-      height = el.clientHeight
-      if (pinned.current) el.scrollTop = el.scrollHeight
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [ref, pinned, key])
-}
+export const ROW = '[data-row]'
 
 const offsetIn = (el: HTMLElement, id: number) => {
-  const node = el.querySelector(`[data-mid="${id}"]`)
+  const node = el.querySelector(`[data-row][data-mid="${id}"]`)
   return node ? node.getBoundingClientRect().top - el.getBoundingClientRect().top : null
 }
 
 const firstVisible = (el: HTMLElement) => {
   const box = el.getBoundingClientRect()
-  for (const node of el.querySelectorAll<HTMLElement>('[data-mid]')) {
-    const r = node.getBoundingClientRect()
-    if (r.bottom > box.top) return { id: Number(node.dataset.mid), top: r.top - box.top }
+  const rows = el.querySelectorAll<HTMLElement>(ROW)
+  let lo = 0
+  let hi = rows.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (rows[mid].getBoundingClientRect().bottom > box.top) hi = mid
+    else lo = mid + 1
   }
-  return null
+  const node = rows[lo]
+  if (!node) return null
+  return { id: Number(node.dataset.mid), top: node.getBoundingClientRect().top - box.top }
+}
+
+export function useChatScroll(opts: {
+  list: RefObject<HTMLElement | null>
+  content: RefObject<HTMLElement | null>
+  scope: string | null
+  count: number
+  lastId: number | undefined
+  stale: boolean
+  focus: boolean
+  detached: boolean
+  outCount: number
+  onBottom: () => void
+}) {
+  const { list, content, scope, count, lastId, stale, focus, detached, outCount } = opts
+  const setAtBottom = useStore(s => s.setAtBottom)
+  const [pill, setPill] = useState<Pill>({ scope, ready: null, left: null })
+  const step = useCallback((e: PillEvent) => setPill(p => pillStep(p, e)), [])
+  if (pill.scope !== scope) setPill(p => pillStep(p, { kind: 'scope', scope }))
+  const follow = useRef<Follow>(FOLLOWING)
+  const anchor = useRef<{ id: number; top: number } | null>(null)
+  const input = useRef({ touching: false, at: -Infinity })
+  const sent = useRef<{ scope: string | null; n: number }>({ scope: null, n: 0 })
+  const live = useRef({ ...opts, positioned: false })
+  const positioned = scope !== null && pill.ready === scope
+
+  useLayoutEffect(() => {
+    live.current = { ...opts, positioned }
+  })
+
+  useLayoutEffect(() => {
+    follow.current = FOLLOWING
+    anchor.current = null
+    if (scope) setAtBottom(scope, true)
+  }, [scope, setAtBottom])
+
+  const apply = useCallback(
+    (next: Follow) => {
+      const prev = follow.current
+      follow.current = next
+      const key = live.current.scope
+      if (next.following === prev.following || !key) return
+      setAtBottom(key, next.following)
+      step({
+        kind: 'follow',
+        scope: key,
+        following: next.following,
+        lastId: live.current.lastId ?? 0,
+      })
+    },
+    [setAtBottom, step]
+  )
+
+  const settle = useCallback(() => {
+    const el = list.current
+    if (!el || !live.current.scope) return
+    apply(placed(el, live.current.detached))
+    anchor.current = firstVisible(el)
+    if (nearBottom(el)) live.current.onBottom()
+  }, [list, apply])
+
+  const toBottom = useCallback(() => {
+    const el = list.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    settle()
+    step({ kind: 'bottom' })
+  }, [list, settle, step])
+
+  useLayoutEffect(() => {
+    const el = list.current
+    if (!el || !scope || positioned || !count || stale) return
+    if (!focus) {
+      const divider = el.querySelector<HTMLElement>('[data-divider]')
+      el.scrollTop = divider
+        ? Math.max(
+            0,
+            divider.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - 48
+          )
+        : el.scrollHeight
+      settle()
+    }
+    step({ kind: 'ready', scope })
+  }, [list, scope, positioned, count, stale, focus, settle, step])
+
+  useLayoutEffect(() => {
+    const grew = sent.current.scope === scope && outCount > sent.current.n
+    sent.current = { scope, n: outCount }
+    const el = list.current
+    if (!el || !positioned || focus || detached) return
+    if (grew && !follow.current.following) apply({ following: true, top: el.scrollTop })
+    if (follow.current.following) el.scrollTop = el.scrollHeight
+  }, [list, positioned, scope, count, lastId, outCount, focus, detached, apply])
+
+  useEffect(() => {
+    const el = list.current
+    const inner = content.current
+    if (!el || !inner) return
+    const ro = new ResizeObserver(() => {
+      const cur = live.current
+      if (!cur.positioned) return
+      if (follow.current.following && !cur.detached) {
+        el.scrollTop = el.scrollHeight
+        return
+      }
+      const a = anchor.current
+      const top = a ? offsetIn(el, a.id) : null
+      if (a && top !== null && Math.abs(top - a.top) >= 1) el.scrollTop += top - a.top
+    })
+    ro.observe(el)
+    ro.observe(inner)
+    const mark = () => {
+      input.current.at = performance.now()
+    }
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) mark()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (upKey(e.key, e.shiftKey)) mark()
+    }
+    const onTouch = (e: TouchEvent) => {
+      input.current.touching = e.type !== 'touchend' && e.type !== 'touchcancel'
+      mark()
+    }
+    const onPointer = (e: PointerEvent) => {
+      if (e.target === el) mark()
+    }
+    el.addEventListener('wheel', onWheel, { passive: true })
+    el.addEventListener('keydown', onKey)
+    el.addEventListener('pointerdown', onPointer)
+    for (const t of ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const)
+      el.addEventListener(t, onTouch, { passive: true })
+    return () => {
+      ro.disconnect()
+      el.removeEventListener('wheel', onWheel)
+      el.removeEventListener('keydown', onKey)
+      el.removeEventListener('pointerdown', onPointer)
+      for (const t of ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const)
+        el.removeEventListener(t, onTouch)
+    }
+  }, [list, content, scope])
+
+  const onScroll = useCallback(() => {
+    const el = list.current
+    const cur = live.current
+    if (!el || !cur.scope || !cur.positioned) return
+    const { touching, at } = input.current
+    apply(
+      scrolled(follow.current, el, userScrolling(touching, at, performance.now()), cur.detached)
+    )
+    anchor.current = firstVisible(el)
+    if (nearBottom(el)) cur.onBottom()
+  }, [list, apply])
+
+  return {
+    positioned,
+    leftAt: pill.scope === scope ? pill.left : null,
+    settle,
+    toBottom,
+    onScroll,
+  }
 }
 
 export function useScrollAnchor(
@@ -144,7 +306,7 @@ export const scrollToMessage = (list: HTMLElement, id: number | null) => {
     list.scrollTop = list.scrollHeight
     return true
   }
-  const rows = [...list.querySelectorAll<HTMLElement>('[data-mid]')]
+  const rows = [...list.querySelectorAll<HTMLElement>(ROW)]
   const node = rows.find(r => Number(r.dataset.mid) >= id) ?? rows[rows.length - 1]
   if (!node) return false
   const box = list.getBoundingClientRect()
@@ -199,7 +361,7 @@ export function UnreadBar({ onJump, onDismiss }: { onJump: () => void; onDismiss
   )
 }
 
-export function PresentBar({ onJump }: { onJump: () => void }) {
+export function PresentBar({ onJump, count = 0 }: { onJump: () => void; count?: number }) {
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
       <button
@@ -207,7 +369,7 @@ export function PresentBar({ onJump }: { onJump: () => void }) {
         className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-on-primary shadow-elevation-2 hover:opacity-90"
       >
         <ArrowDown size={14} />
-        Jump to present
+        {count > 0 ? `${count} new ${count === 1 ? 'message' : 'messages'}` : 'Jump to present'}
       </button>
     </div>
   )

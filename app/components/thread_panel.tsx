@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useRef } from 'react'
 import { MessageSquareText, Trash2, X } from 'lucide-react'
 import {
   confirmDeleteMessage,
@@ -12,6 +12,7 @@ import {
 } from '../lib/store'
 import { Perm, hasPerm, type Message } from '../lib/types'
 import { findById } from '../lib/window'
+import { newSince } from '../lib/lists'
 import { UserAvatar } from './user_avatar'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
@@ -33,8 +34,8 @@ import {
   EdgeSentinel,
   OlderLoading,
   PresentBar,
+  useChatScroll,
   useFocusMessage,
-  usePinnedBottom,
   useScrollAnchor,
 } from './viewport_height'
 import { useEscape } from './server_settings'
@@ -71,9 +72,7 @@ export default function ThreadPanel() {
   const jumpToPresent = useStore(s => s.jumpToPresent)
   const openContextMenu = useStore(s => s.openContextMenu)
   const listRef = useRef<HTMLDivElement>(null)
-  const stickBottom = useRef(true)
-  const [ready, setReady] = useState<string | null>(null)
-  const rootId = root?.id
+  const contentRef = useRef<HTMLDivElement>(null)
   const detached = newer?.more === true
   const snapEdge = useScrollAnchor(
     listRef,
@@ -82,35 +81,31 @@ export default function ThreadPanel() {
   )
   useEscape(closePanel, 'panel')
 
-  useEffect(() => {
-    stickBottom.current = true
-  }, [rootId])
-
-  useEffect(() => {
-    const el = listRef.current
-    if (!el || !key) return
-    if (stickBottom.current && !focus && !detached) el.scrollTop = el.scrollHeight
-    if (ready !== key && replies.length && !stale) setReady(key)
-  }, [replies, outCount, focus, detached, key, ready, stale])
-
-  const flash = useFocusMessage(listRef, key, focus, replies, () => {
-    const el = listRef.current
-    if (el) stickBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60 && !detached
+  const scroll = useChatScroll({
+    list: listRef,
+    content: contentRef,
+    scope: key,
+    count: replies.length,
+    lastId: replies[replies.length - 1]?.id,
+    stale,
+    focus: focus !== undefined,
+    detached,
+    outCount,
+    onBottom: () => {},
   })
+  const fresh = newSince(replies, scroll.leftAt, me?.username)
 
-  usePinnedBottom(listRef, stickBottom, rootId)
+  const flash = useFocusMessage(listRef, key, focus, replies, scroll.settle)
 
   if (!root || !key) return null
 
-  const positioned = ready === key
+  const positioned = scroll.positioned
 
   const canDelete = (m: Message) =>
     me !== null && (m.author.username === me.username || hasPerm(perms, Perm.DeleteMessages))
 
   const onScroll = () => {
-    const el = listRef.current
-    if (!el) return
-    stickBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60 && !detached
+    scroll.onScroll()
     if (older?.loading || newer?.loading) snapEdge()
   }
 
@@ -136,6 +131,7 @@ export default function ThreadPanel() {
     return (
       <div
         key={m.id}
+        data-row
         data-mid={m.id}
         data-flash={flash === m.id ? '' : undefined}
         {...longPress(rowMenu(m))}
@@ -204,30 +200,35 @@ export default function ThreadPanel() {
         {older?.loading && <OlderLoading />}
         {newer?.loading && <OlderLoading newer />}
         {detached && !newer?.loading && <PresentBar onJump={() => void jumpToPresent(key)} />}
+        {!detached && positioned && fresh > 0 && (
+          <PresentBar count={fresh} onJump={scroll.toBottom} />
+        )}
         <div ref={listRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-3">
-          {positioned && replies.length > 0 && older?.more !== false && (
-            <EdgeSentinel key={replies[0].id} root={listRef} edge="top" onVisible={onTop} />
-          )}
-          {row(root)}
-          <div className="my-2 flex items-center gap-2 px-4 text-xs text-on-surface-variant">
-            <span className="h-px flex-1 bg-outline-variant" />
-            {root.reply_count} {root.reply_count === 1 ? 'reply' : 'replies'}
-            <span className="h-px flex-1 bg-outline-variant" />
+          <div ref={contentRef}>
+            {positioned && replies.length > 0 && older?.more !== false && (
+              <EdgeSentinel key={replies[0].id} root={listRef} edge="top" onVisible={onTop} />
+            )}
+            {row(root)}
+            <div className="my-2 flex items-center gap-2 px-4 text-xs text-on-surface-variant">
+              <span className="h-px flex-1 bg-outline-variant" />
+              {root.reply_count} {root.reply_count === 1 ? 'reply' : 'replies'}
+              <span className="h-px flex-1 bg-outline-variant" />
+            </div>
+            {replies.map(row)}
+            {positioned && detached && replies.length > 0 && (
+              <EdgeSentinel
+                key={`n${replies[replies.length - 1].id}`}
+                root={listRef}
+                edge="bottom"
+                onVisible={() => {
+                  if (newer?.loading) return
+                  snapEdge()
+                  void loadNewerThread()
+                }}
+              />
+            )}
+            <OutboxRows msgKey={key} size={30} />
           </div>
-          {replies.map(row)}
-          {positioned && detached && replies.length > 0 && (
-            <EdgeSentinel
-              key={`n${replies[replies.length - 1].id}`}
-              root={listRef}
-              edge="bottom"
-              onVisible={() => {
-                if (newer?.loading) return
-                snapEdge()
-                void loadNewerThread()
-              }}
-            />
-          )}
-          <OutboxRows msgKey={key} size={30} />
         </div>
       </div>
       <MessageComposer thread />

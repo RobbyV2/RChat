@@ -359,7 +359,6 @@ export const endpoints = (c: ApiClient) => ({
     form.append('file', file, file.name)
     return c.req<{ id: string }>('POST', '/media', form)
   },
-  mediaUrl: (id: string, server?: string) => c.mediaUrl(id, server),
   getSettings: () => c.req<SiteSettings>('GET', '/settings'),
   patchSettings: (body: SiteSettingsPatch) => c.req<SiteSettings>('PATCH', '/admin/settings', body),
   adminOverview: () => c.req<AdminOverview>('GET', '/admin/overview'),

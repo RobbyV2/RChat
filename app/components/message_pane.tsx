@@ -28,7 +28,8 @@ import {
   memberPerms,
   rolePerms,
 } from '../lib/rules'
-import { unreadMark } from '../lib/lists'
+import { lastOwn, newSince, unreadMark } from '../lib/lists'
+import { escapeMarksRead } from '../lib/follow'
 import {
   banMenuItem,
   byUsername,
@@ -62,10 +63,11 @@ import {
   OlderLoading,
   PresentBar,
   UnreadBar,
+  useChatScroll,
   useFocusMessage,
-  usePinnedBottom,
   useScrollAnchor,
 } from './viewport_height'
+import { useEscape } from './server_settings'
 
 const EMPTY: Message[] = []
 
@@ -249,13 +251,13 @@ const MessageRow = memo(function MessageRow({
   )
   if (m.kind === 'call')
     return (
-      <div data-mid={m.id}>
+      <div data-row data-mid={m.id}>
         {mark}
         <CallLogRow message={m} />
       </div>
     )
   return (
-    <div data-mid={m.id}>
+    <div data-row data-mid={m.id}>
       {mark}
       <div
         {...longPress((x, y) => onMenu(m, x, y))}
@@ -415,7 +417,6 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const stale = useStore(s => (s.view ? s.stale[viewKey(s.view)] === true : false))
   const focus = useStore(s => (s.view ? s.focus[viewKey(s.view)] : undefined))
   const markRead = useStore(s => s.markRead)
-  const setAtBottom = useStore(s => s.setAtBottom)
   const memberServer = view?.kind === 'channel' ? view.server : null
   const memberFor = useMemberLookup(memberServer)
   useAuthorMembers(memberServer, authorKey(messages, me ? [me.username] : []))
@@ -436,93 +437,54 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const startP2pCall = useStore(s => s.startP2pCall)
   const call = useStore(s => s.call)
   const [dragging, setDragging] = useState(false)
-  const [ready, setReady] = useState<string | null>(null)
   const dragDepth = useRef(0)
   const listRef = useRef<HTMLDivElement>(null)
-  const autoScroll = useRef(true)
-  const lastScrollTop = useRef(0)
-  const initialScrolled = useRef(false)
-  const atBottomRef = useRef(true)
+  const contentRef = useRef<HTMLDivElement>(null)
 
-  const scope = view ? viewKey(view) : null
+  const channel =
+    view?.kind === 'channel' ? detail?.channels.find(c => c.id === view.channelId) : undefined
+  const channelName = channel?.name
+  const isVoice = channel?.kind === 'voice'
+  const scope = view && !isVoice ? viewKey(view) : null
   const detached = newer?.more === true
-  const positioned = scope !== null && ready === scope
   const snapEdge = useScrollAnchor(
     listRef,
     messages[0]?.id,
     older?.loading === true || newer?.loading === true
   )
   const ids = useMemo(() => messages.map(m => m.id), [messages])
-  const mark = unreadMark(ids, anchor, older?.more !== false)
+  const mark = unreadMark(ids, anchor, older?.more !== false, lastOwn(messages, me?.username))
   const dividerIndex = mark.divider
 
-  const settle = () => {
-    const el = listRef.current
-    if (!el) return
-    lastScrollTop.current = el.scrollTop
-    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
-    const live = bottom && !detached
-    autoScroll.current = live
-    atBottomRef.current = live
-    setAtBottom(live)
-    if (bottom && scope) {
+  const scroll = useChatScroll({
+    list: listRef,
+    content: contentRef,
+    scope,
+    count: messages.length,
+    lastId: messages[messages.length - 1]?.id,
+    stale,
+    focus: focus !== undefined,
+    detached,
+    outCount,
+    onBottom: () => {
       const last = messages[messages.length - 1]
-      if (last) markRead(scope, last.id)
-    }
-  }
+      if (last && scope) markRead(scope, last.id)
+    },
+  })
+  const positioned = scroll.positioned
+  const fresh = newSince(messages, scroll.leftAt, me?.username)
 
-  useEffect(() => {
-    autoScroll.current = true
-    initialScrolled.current = false
-    atBottomRef.current = true
-    lastScrollTop.current = 0
-  }, [view])
+  const flash = useFocusMessage(listRef, scope, focus, messages, scroll.settle)
+  useEscape(e => {
+    if (scope && !guest && escapeMarksRead(e)) dismissUnread(scope)
+  }, 'stage')
 
-  useEffect(() => {
-    const el = listRef.current
-    if (!el || !scope) return
-    if (!initialScrolled.current) {
-      if (!messages.length || stale) return
-      initialScrolled.current = true
-      if (!focus) {
-        const divider = el.querySelector<HTMLElement>('[data-divider]')
-        el.scrollTop = divider ? Math.max(0, divider.offsetTop - 48) : el.scrollHeight
-        settle()
-      }
-      setReady(scope)
-      return
-    }
-    if (autoScroll.current && atBottomRef.current && !detached) el.scrollTop = el.scrollHeight
-  }, [messages, outCount, scope, focus, detached, stale])
-
-  const flash = useFocusMessage(listRef, scope, focus, messages, settle)
-
-  const channel =
-    view?.kind === 'channel' ? detail?.channels.find(c => c.id === view.channelId) : undefined
-  const channelName = channel?.name
-  const isVoice = channel?.kind === 'voice'
-  usePinnedBottom(listRef, atBottomRef, isVoice)
   const dmCall =
     dm && call?.dmId === dm.id && (call.state === 'active' || call.from === me?.username)
   const callShare = useCallShare(dm?.id ?? -1)
 
   const onScroll = () => {
-    const el = listRef.current
-    if (!el || (stale && !positioned)) return
-    const st = el.scrollTop
-    const bottom = el.scrollHeight - st - el.clientHeight < 60
-    const live = bottom && !detached
-    if (live) autoScroll.current = true
-    else if (st < lastScrollTop.current - 2 || detached) autoScroll.current = false
-    lastScrollTop.current = st
-    if (live !== atBottomRef.current) {
-      atBottomRef.current = live
-      setAtBottom(live)
-    }
-    if (bottom && scope) {
-      const last = messages[messages.length - 1]
-      if (last) markRead(scope, last.id)
-    }
+    scroll.onScroll()
     if (older?.loading || newer?.loading) snapEdge()
   }
 
@@ -808,14 +770,14 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
             {detached && !newer?.loading && scope && (
               <PresentBar onJump={() => void jumpToPresent(scope)} />
             )}
+            {!detached && positioned && fresh > 0 && (
+              <PresentBar count={fresh} onJump={scroll.toBottom} />
+            )}
             <div
               ref={listRef}
               onScroll={onScroll}
               className={`flex-1 overflow-y-auto py-3 ${stale && !positioned ? 'invisible' : ''}`}
             >
-              {positioned && messages.length > 0 && older?.more !== false && (
-                <EdgeSentinel key={messages[0].id} root={listRef} edge="top" onVisible={onTop} />
-              )}
               {!view && (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-on-surface-variant">
                   <MessagesSquare size={40} />
@@ -828,28 +790,33 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                   <span className="text-sm">Be the first to say something.</span>
                 </div>
               )}
-              {messages.map((m, i) => (
-                <MessageRow
-                  key={m.id}
-                  m={m}
-                  divider={i === dividerIndex}
-                  flash={flash === m.id}
-                  canDelete={canDelete(m)}
-                  channel={view?.kind === 'channel'}
-                  server={memberServer}
-                  color={roleColor(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])}
-                  onMenu={rowMenu}
-                />
-              ))}
-              {positioned && detached && messages.length > 0 && (
-                <EdgeSentinel
-                  key={`n${messages[messages.length - 1].id}`}
-                  root={listRef}
-                  edge="bottom"
-                  onVisible={onBottom}
-                />
-              )}
-              {view && <OutboxRows msgKey={viewKey(view)} />}
+              <div ref={contentRef}>
+                {positioned && messages.length > 0 && older?.more !== false && (
+                  <EdgeSentinel key={messages[0].id} root={listRef} edge="top" onVisible={onTop} />
+                )}
+                {messages.map((m, i) => (
+                  <MessageRow
+                    key={m.id}
+                    m={m}
+                    divider={i === dividerIndex}
+                    flash={flash === m.id}
+                    canDelete={canDelete(m)}
+                    channel={view?.kind === 'channel'}
+                    server={memberServer}
+                    color={roleColor(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])}
+                    onMenu={rowMenu}
+                  />
+                ))}
+                {positioned && detached && messages.length > 0 && (
+                  <EdgeSentinel
+                    key={`n${messages[messages.length - 1].id}`}
+                    root={listRef}
+                    edge="bottom"
+                    onVisible={onBottom}
+                  />
+                )}
+                {view && <OutboxRows msgKey={viewKey(view)} />}
+              </div>
             </div>
           </div>
           <MessageComposer />

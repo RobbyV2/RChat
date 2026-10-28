@@ -59,7 +59,7 @@ beforeEach(() => {
     outbox: {},
     reads: {},
     unreadAnchor: {},
-    atBottom: true,
+    atBottom: { c2: true },
     panel: null,
     error: null,
   })

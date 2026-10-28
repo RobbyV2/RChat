@@ -4,7 +4,9 @@ import {
   appendUnique,
   bumpFront,
   keyed,
+  lastOwn,
   lostServers,
+  newSince,
   unreadMark,
   windowEdges,
   createPager,
@@ -12,7 +14,7 @@ import {
   refreshTail,
   unreadServers,
 } from '../lists'
-import { msg } from './fixtures'
+import { msg, user } from './fixtures'
 
 const id = (n: number) => n
 const ids = (list: { id: number }[]) => list.map(m => m.id)
@@ -298,5 +300,44 @@ describe('unreadMark', () => {
     expect(unreadMark(ids, 5, true)).toEqual({ divider: -1, above: true })
     expect(unreadMark(ids, 5, false)).toEqual({ divider: 0, above: false })
     expect(unreadMark(ids, 9, true)).toEqual({ divider: 0, above: false })
+  })
+  test('own messages after the read position count as read, and so does everything before them', () => {
+    expect(unreadMark(ids, 10, true, 11)).toEqual({ divider: 2, above: false })
+    expect(unreadMark(ids, 10, true, 13)).toEqual({ divider: -1, above: false })
+    expect(unreadMark(ids, 5, true, 11)).toEqual({ divider: 2, above: false })
+  })
+  test('an own message never creates a divider on its own', () => {
+    expect(unreadMark(ids, 0, true, 12)).toEqual({ divider: -1, above: false })
+  })
+})
+
+describe('lastOwn', () => {
+  const list = [
+    msg(1, { author: user('alice') }),
+    msg(2, { author: user('bob') }),
+    msg(3, { author: user('alice') }),
+    msg(4, { author: user('bob') }),
+  ]
+  test('finds the newest message by the user', () => {
+    expect(lastOwn(list, 'alice')).toBe(3)
+    expect(lastOwn(list, 'carol')).toBe(0)
+    expect(lastOwn(list, undefined)).toBe(0)
+  })
+})
+
+describe('newSince', () => {
+  const list = [
+    msg(1, { author: user('bob') }),
+    msg(2, { author: user('bob') }),
+    msg(3, { author: user('alice') }),
+    msg(4, { author: user('bob'), kind: 'call' }),
+    msg(5, { author: user('bob') }),
+  ]
+  test('counts messages from others after the point the user left the bottom', () => {
+    expect(newSince(list, 1, 'alice')).toBe(2)
+    expect(newSince(list, 5, 'alice')).toBe(0)
+  })
+  test('counts nothing while following the bottom', () => {
+    expect(newSince(list, null, 'alice')).toBe(0)
   })
 })

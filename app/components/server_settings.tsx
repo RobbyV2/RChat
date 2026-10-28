@@ -93,14 +93,14 @@ const covered = (layer: EscapeLayer, e: Event) => {
   return layer === 'stage' && s.panel !== null
 }
 
-export function useEscape(onEscape: () => void, layer: EscapeLayer = 'dialog') {
+export function useEscape(onEscape: (e: KeyboardEvent) => void, layer: EscapeLayer = 'dialog') {
   const ref = useRef(onEscape)
   useEffect(() => {
     ref.current = onEscape
   })
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.isComposing && !covered(layer, e)) ref.current()
+      if (e.key === 'Escape' && !e.isComposing && !covered(layer, e)) ref.current(e)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
