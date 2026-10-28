@@ -2,9 +2,12 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
+  AtSign,
   ChevronDown,
+  Copy,
   Hash,
   Menu,
+  MessageCircle,
   MessageSquareText,
   MessagesSquare,
   Phone,
@@ -31,6 +34,7 @@ import {
 import { lastOwn, newSince, unreadMark } from '../lib/lists'
 import { escapeMarksRead } from '../lib/follow'
 import { mentionLookups, mentionsUser } from '../lib/mentions'
+import { readOnly } from '../lib/reactions'
 import {
   banMenuItem,
   byUsername,
@@ -49,6 +53,7 @@ import {
   viewKey,
   allPings,
   type ContextMenuItem,
+  type ContextMenuOptions,
   type Outgoing,
 } from '../lib/store'
 import { Perm, hasPerm, type Member, type Message, type UserRef } from '../lib/types'
@@ -71,6 +76,8 @@ import {
 } from './viewport_height'
 import { useEscape } from './server_settings'
 import { PingBadge, pingLabel } from './ping_badge'
+import { MessageToolbar, type ToolbarAction } from './message_toolbar'
+import { QuickReactions, ReactionBar, rowAt } from './reactions'
 
 const EMPTY: Message[] = []
 
@@ -197,11 +204,6 @@ export const avatarTriggerCls =
   'block cursor-pointer rounded-full outline-offset-2 hover:opacity-85 focus-visible:outline-2 focus-visible:outline-primary'
 export const nameTriggerCls =
   'cursor-pointer rounded-sm outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'
-export const messageToolbarCls =
-  'pointer-events-none absolute top-1 right-3 z-10 flex gap-0.5 rounded-lg border border-outline-variant bg-surface-container p-0.5 opacity-0 shadow-sm group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100'
-export const messageToolCls =
-  'rounded-md p-1.5 text-on-surface-variant hover:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-primary'
-
 export const authorKey = (messages: Message[], extra: string[] = []) =>
   [...new Set([...messages.map(m => m.author.username), ...extra])].sort().join('\n')
 
@@ -246,6 +248,8 @@ interface RowProps {
   divider: boolean
   flash: boolean
   canDelete: boolean
+  canReact: boolean
+  canUnreact: boolean
   channel: boolean
   server: string | null
   color: string | undefined
@@ -258,12 +262,30 @@ const MessageRow = memo(function MessageRow({
   divider,
   flash,
   canDelete,
+  canReact,
+  canUnreact,
   channel,
   server,
   color,
   onMenu,
 }: RowProps) {
   const openThread = useStore(s => s.openThread)
+  const actions: ToolbarAction[] = []
+  if (channel)
+    actions.push({
+      key: 'thread',
+      label: 'Reply in thread',
+      icon: MessageSquareText,
+      onClick: () => void openThread(m),
+    })
+  if (canDelete)
+    actions.push({
+      key: 'delete',
+      label: 'Delete message (hold Shift to skip confirmation)',
+      icon: Trash2,
+      danger: true,
+      onClick: e => confirmDeleteMessage(m.id, e.shiftKey),
+    })
   const mark = divider && (
     <div data-divider className="px-4 py-1" aria-hidden>
       <div className="h-0.5 rounded-full bg-error" />
@@ -313,6 +335,7 @@ const MessageRow = memo(function MessageRow({
             </span>
           </div>
           <MarkdownMessage message={m} canDelete={canDelete} />
+          <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
           {channel && m.reply_count > 0 && (
             <button
               title="Open thread"
@@ -324,36 +347,26 @@ const MessageRow = memo(function MessageRow({
             </button>
           )}
         </div>
-        <div className={messageToolbarCls}>
-          {channel && (
-            <button
-              title="Reply in thread"
-              onClick={() => void openThread(m)}
-              className={`${messageToolCls} hover:text-primary`}
-            >
-              <MessageSquareText size={14} />
-            </button>
-          )}
-          {canDelete && (
-            <button
-              title="Delete message (hold Shift to skip confirmation)"
-              onClick={e => confirmDeleteMessage(m.id, e.shiftKey)}
-              className={`${messageToolCls} hover:text-error`}
-            >
-              <Trash2 size={14} />
-            </button>
-          )}
-        </div>
+        <MessageToolbar
+          m={m}
+          react={canReact}
+          actions={actions}
+          onMore={(x, y) => onMenu(m, x, y)}
+        />
       </div>
     </div>
   )
 })
 
 export const messageCopyItems = (m: Message): ContextMenuItem[] => [
-  ...(m.content.trim() ? [{ label: 'Copy Text', action: () => copy(m.content) }] : []),
-  { label: 'Copy Message ID', action: () => copy(String(m.id)) },
-  { label: 'Copy User ID', action: () => copy(m.author.username) },
+  ...(m.content.trim() ? [{ label: 'Copy Text', icon: Copy, action: () => copy(m.content) }] : []),
+  { label: 'Copy Message ID', icon: Hash, action: () => copy(String(m.id)) },
+  { label: 'Copy User ID', icon: AtSign, action: () => copy(m.author.username) },
 ]
+
+export const reactHeader = (m: Message, x: number, y: number): ContextMenuOptions => ({
+  header: <QuickReactions m={m} anchor={rowAt(x, y)} />,
+})
 
 export function OutboxRows({ msgKey, size = 36 }: { msgKey: string; size?: number }) {
   const me = useStore(s => s.me)
@@ -535,10 +548,14 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     const { author } = msg
     const self = author.username === me.username
     const items: ContextMenuItem[] = [
-      { label: 'Direct Message', action: () => void startDm(author.username) },
+      { label: 'Direct Message', icon: MessageCircle, action: () => void startDm(author.username) },
     ]
     if (view?.kind === 'channel') {
-      items.unshift({ label: 'Reply in thread', action: () => void openThread(msg) })
+      items.unshift({
+        label: 'Reply in thread',
+        icon: MessageSquareText,
+        action: () => void openThread(msg),
+      })
     }
     if (view?.kind === 'channel' && !self) {
       const target = memberOf(useStore.getState(), view.server, author.username)
@@ -602,11 +619,20 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       items.push({
         label: 'Delete Message',
         danger: true,
+        icon: Trash2,
         action: () => confirmDeleteMessage(msg.id),
       })
     items.push(...messageCopyItems(msg))
-    openContextMenu(x, y, items)
+    openContextMenu(x, y, items, canReact ? reactHeader(msg, x, y) : undefined)
   }
+
+  const canUnreact = me !== null && !guest
+  const canReact =
+    canUnreact &&
+    (view?.kind === 'dm' ||
+      (view?.kind === 'channel' &&
+        me.servers.some(x => x.name === view.server) &&
+        !readOnly(detail, view.channelId)))
 
   const canDelete = (m: Message) =>
     me !== null &&
@@ -834,6 +860,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     divider={i === dividerIndex}
                     flash={flash === m.id}
                     canDelete={canDelete(m)}
+                    canReact={canReact}
+                    canUnreact={canUnreact}
                     channel={view?.kind === 'channel'}
                     server={memberServer}
                     color={roleColor(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])}

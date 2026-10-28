@@ -132,6 +132,7 @@ export interface ServerDetail {
   banner_color: string | null
   name_color: string | null
   channels: Channel[]
+  read_only?: number[]
   roles: Role[]
   role_limits?: RoleLimits
   member_count: number
@@ -212,6 +213,14 @@ export interface Message {
   embeds: Embed[]
   kind: MessageKind
   call: CallLog | null
+  reactions?: Reaction[]
+}
+
+export interface Reaction {
+  emoji: string
+  count: number
+  me: boolean
+  first_at: number
 }
 
 export interface SearchResult {
@@ -378,6 +387,14 @@ export type VoiceMsg =
 export type WsEvent =
   | ({ type: 'message'; message: Message } & Scoped)
   | { type: 'message_updated'; message: Message }
+  | ({
+      type: 'reaction_added' | 'reaction_removed'
+      message_id: number
+      thread_root_id: number | null
+      emoji: string
+      username: string
+      count?: number
+    } & Scoped)
   | ({ type: 'message_deleted'; id: number; thread_root_id: number | null } & Scoped)
   | ({
       type: 'media_removed'

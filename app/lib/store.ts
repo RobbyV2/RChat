@@ -1,4 +1,6 @@
 import { create } from 'zustand'
+import type { ReactNode } from 'react'
+import type { LucideIcon } from 'lucide-react'
 import {
   ApiError,
   type LoginRequest,
@@ -36,6 +38,7 @@ import {
   type Pings,
 } from './pings'
 import { EMPTY_PREFS, emojiKey, noteUse, parseEmojiPrefs, setTone, type EmojiPrefs } from './emoji'
+import { canAddEmoji, emojiBase, reacted, reactorKey, withReaction } from './reactions'
 import { catchUpDelay, due } from './backoff'
 import { createReadQueue, mergeReads } from './reads'
 import {
@@ -194,13 +197,23 @@ export const parsePath = (pathname: string): PathTarget | null => {
 export interface ContextMenuItem {
   label: string
   danger?: boolean
+  icon?: LucideIcon
   action: () => void
 }
 
-export interface ContextMenuState {
+export interface ContextMenuOptions {
+  header?: ReactNode
+}
+
+export interface ContextMenuState extends ContextMenuOptions {
   x: number
   y: number
   items: ContextMenuItem[]
+}
+
+export interface ReactPicker {
+  message: Message
+  anchor: HTMLElement | null
 }
 
 export interface ConfirmRequest {
@@ -359,6 +372,9 @@ let optSeq = 0
 const draining = new Set<string>()
 
 const pendingEmbeds = new Map<number, Embed[]>()
+const reactorCache = new Map<string, Promise<UserRef[]>>()
+const reactionQueue = new Map<string, Promise<void>>()
+const REACTOR_CACHE = 200
 const PENDING_EMBEDS_MAX = 256
 const RESYNC_JITTER = 10_000
 const CATCH_UP_VIEW_MAX = 5_000
@@ -426,6 +442,7 @@ interface RChatState {
   theme: Theme
   streamer: boolean
   contextMenu: ContextMenuState | null
+  reactPicker: ReactPicker | null
   profile: ProfileTarget | null
   activeDialog: ActiveDialog | null
   confirm: ConfirmRequest | null
@@ -578,8 +595,17 @@ interface RChatState {
   updateSettings: (patch: SiteSettingsPatch) => Promise<void>
   setViewing: (server: string | null) => void
   applyWsEvent: (ev: WsEvent) => void
-  openContextMenu: (x: number, y: number, items: ContextMenuItem[]) => void
+  openContextMenu: (
+    x: number,
+    y: number,
+    items: ContextMenuItem[],
+    opts?: ContextMenuOptions
+  ) => void
   closeContextMenu: () => void
+  toggleReaction: (m: Message, emoji: string, note?: boolean) => void
+  loadReactors: (messageId: number, emoji: string) => Promise<UserRef[]>
+  openReactPicker: (m: Message, anchor: HTMLElement | null) => void
+  closeReactPicker: () => void
   openProfile: (user: UserRef, server: string | null, x: number, y: number) => void
   closeProfile: () => void
   openDialog: (dialog: ActiveDialog) => void
@@ -1732,6 +1758,26 @@ export const useStore = create<RChatState>()((set, get) => {
     })
   }
 
+  const findMessage = (id: number) => {
+    const { messages, panel } = get()
+    for (const list of Object.values(messages)) {
+      const m = findById(list, id)
+      if (m) return m
+    }
+    return panel?.kind === 'thread' && panel.root.id === id ? panel.root : undefined
+  }
+
+  const patchReactions = (id: number, fn: (m: Message) => Message) => {
+    patchMessage(id, fn)
+    set(s =>
+      s.panel?.kind === 'thread' && s.panel.root.id === id
+        ? { panel: { ...s.panel, root: fn(s.panel.root) } }
+        : {}
+    )
+  }
+
+  const forgetReactors = (key: string) => void reactorCache.delete(key)
+
   const liveKey = (key: string) => {
     const { view, panel } = get()
     return (
@@ -2533,6 +2579,7 @@ export const useStore = create<RChatState>()((set, get) => {
     theme: 'dark',
     streamer: false,
     contextMenu: null,
+    reactPicker: null,
     profile: null,
     activeDialog: null,
     confirm: null,
@@ -2756,6 +2803,7 @@ export const useStore = create<RChatState>()((set, get) => {
       presenceSnaps.clear()
       bannedHere.clear()
       seenPings.clear()
+      reactorCache.clear()
       clearProfiles()
       dropStashedInvite()
       set({
@@ -2797,6 +2845,7 @@ export const useStore = create<RChatState>()((set, get) => {
         p2pAvailability: {},
         wsStatus: 'red',
         contextMenu: null,
+        reactPicker: null,
         profile: null,
         activeDialog: null,
         confirm: null,
@@ -3786,7 +3835,23 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'message_updated': {
-          patchMessage(ev.message.id, () => ev.message)
+          patchMessage(ev.message.id, m => ({ ...ev.message, reactions: m.reactions }))
+          return
+        }
+        case 'reaction_added':
+        case 'reaction_removed': {
+          const mine = get().me?.username === ev.username
+          const key = reactorKey(ev.message_id, ev.emoji)
+          const added = ev.type === 'reaction_added'
+          const at = Math.floor(Date.now() / 1000)
+          forgetReactors(key)
+          patchReactions(ev.message_id, m => {
+            if (!mine || !reactionQueue.has(key) || ev.count === undefined)
+              return withReaction(m, ev.emoji, added, mine, at, ev.count)
+            const local = reacted(m, ev.emoji)
+            const count = ev.count - (added ? 1 : 0) + (local ? 1 : 0)
+            return withReaction(m, ev.emoji, local, true, at, count)
+          })
           return
         }
         case 'message_deleted': {
@@ -4454,8 +4519,58 @@ export const useStore = create<RChatState>()((set, get) => {
       }
     },
 
-    openContextMenu: (x, y, items) => set({ contextMenu: { x, y, items } }),
+    openContextMenu: (x, y, items, opts = {}) => set({ contextMenu: { ...opts, x, y, items } }),
     closeContextMenu: () => set({ contextMenu: null }),
+
+    toggleReaction: (m, emoji, note = true) => {
+      const { me, guest } = get()
+      if (!me || guest) return
+      const cur = findMessage(m.id) ?? m
+      const adding = !reacted(cur, emoji)
+      if (adding && !canAddEmoji(cur, emoji)) return
+      const key = reactorKey(m.id, emoji)
+      const apply = (added: boolean) => {
+        forgetReactors(key)
+        patchReactions(m.id, x =>
+          withReaction(x, emoji, added, true, Math.floor(Date.now() / 1000))
+        )
+      }
+      apply(adding)
+      if (adding && note) get().noteEmoji(emojiBase(get().emoji, emoji), emoji)
+      const prev = reactionQueue.get(key) ?? Promise.resolve()
+      const next = prev.then(async () => {
+        try {
+          if (adding) await api.addReaction(m.id, emoji)
+          else await api.removeReaction(m.id, emoji)
+        } catch (e) {
+          apply(!adding)
+          fail(e)
+        }
+      })
+      reactionQueue.set(key, next)
+      void next.then(() => {
+        if (reactionQueue.get(key) === next) reactionQueue.delete(key)
+      })
+    },
+
+    loadReactors: (messageId, emoji) => {
+      const key = reactorKey(messageId, emoji)
+      const known = reactorCache.get(key)
+      if (known) return known
+      const req = api.reactors(messageId, emoji).catch(e => {
+        if (reactorCache.get(key) === req) reactorCache.delete(key)
+        throw e
+      })
+      reactorCache.set(key, req)
+      if (reactorCache.size > REACTOR_CACHE) {
+        const oldest = reactorCache.keys().next().value
+        if (oldest !== undefined) reactorCache.delete(oldest)
+      }
+      return req
+    },
+
+    openReactPicker: (message, anchor) => set({ reactPicker: { message, anchor } }),
+    closeReactPicker: () => set({ reactPicker: null }),
     openProfile: (user, server, x, y) => set({ profile: { user, server, x, y } }),
     closeProfile: () => set(s => (s.profile ? { profile: null } : {})),
     openDialog: dialog => set({ activeDialog: dialog }),

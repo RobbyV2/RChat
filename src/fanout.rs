@@ -122,6 +122,28 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             ord: _,
             banner: _,
         }
+        | WsEvent::ReactionAdded {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            message_id: _,
+            thread_root_id: _,
+            emoji: _,
+            username: _,
+            count: _,
+        }
+        | WsEvent::ReactionRemoved {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            message_id: _,
+            thread_root_id: _,
+            emoji: _,
+            username: _,
+            count: _,
+        }
         | WsEvent::VoiceEnded {
             server,
             channel_id: _,

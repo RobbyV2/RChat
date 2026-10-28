@@ -830,6 +830,35 @@ impl ResolvedMessage {
         }
     }
 
+    /// Adding or removing a reaction: in a channel like sending (a signed-in member with the
+    /// channel's send permission), in a DM being a participant while both accounts are live.
+    pub async fn react_gate(&self, db: &Db) -> Result<(), ApiError> {
+        match (&self.channel, self.scope.dm_id) {
+            (Some(channel), _) => {
+                if channel.server.user.is_none() {
+                    return Err(forbidden("Not a member"));
+                }
+                channel.server.require_member()?;
+                match channel.rights.send {
+                    true => Ok(()),
+                    false => Err(forbidden("No permission to react in this channel")),
+                }
+            }
+            (None, Some(did)) => match dm_pair(db, did, true).await? {
+                Some(users)
+                    if self
+                        .user
+                        .as_ref()
+                        .is_some_and(|u| users.contains(&u.username)) =>
+                {
+                    Ok(())
+                }
+                _ => Err(not_found()),
+            },
+            (None, None) => Err(not_found()),
+        }
+    }
+
     pub async fn require_can_delete(&self, db: &Db) -> Result<(), ApiError> {
         let own = self
             .user
@@ -1038,7 +1067,7 @@ mod tests {
         (after.0 - before.0, after.1 - before.1)
     }
 
-    const HANDLERS: [(&str, &str); 15] = [
+    const HANDLERS: [(&str, &str); 16] = [
         ("servers.rs", include_str!("servers.rs")),
         ("passwords.rs", include_str!("passwords.rs")),
         ("messages.rs", include_str!("messages.rs")),
@@ -1054,6 +1083,7 @@ mod tests {
         ("fanout.rs", include_str!("../fanout.rs")),
         ("db.rs", include_str!("../db.rs")),
         ("pings.rs", include_str!("pings.rs")),
+        ("reactions.rs", include_str!("reactions.rs")),
     ];
 
     fn calls(code: &str, token: &str) -> bool {

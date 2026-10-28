@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS server_passwords(id INTEGER PRIMARY KEY AUTOINCREMENT
 CREATE TABLE IF NOT EXISTS read_state(username TEXT NOT NULL, scope TEXT NOT NULL, last_read INTEGER NOT NULL, PRIMARY KEY(username, scope));
 CREATE TABLE IF NOT EXISTS server_bans(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, banned_by TEXT, created_at INTEGER NOT NULL, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS pings(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('mention','reply','reaction')), scope TEXT NOT NULL, server TEXT REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, thread_root_id INTEGER, actor TEXT NOT NULL, emoji TEXT, created_at INTEGER NOT NULL, seen INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS reactions(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, username TEXT NOT NULL, emoji TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(message_id, username, emoji));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -78,6 +79,8 @@ CREATE INDEX IF NOT EXISTS idx_pings_message ON pings(message_id);
 CREATE INDEX IF NOT EXISTS idx_pings_created ON pings(created_at);
 CREATE INDEX IF NOT EXISTS idx_pings_seen ON pings(id) WHERE seen <> 0;
 CREATE INDEX IF NOT EXISTS idx_pings_actor ON pings(actor);
+CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id, emoji, created_at);
+CREATE INDEX IF NOT EXISTS idx_reactions_username ON reactions(username);
 ";
 
 const POSTGRES_SCHEMA: &str = "
@@ -110,6 +113,7 @@ CREATE TABLE IF NOT EXISTS server_passwords(id BIGINT GENERATED ALWAYS AS IDENTI
 CREATE TABLE IF NOT EXISTS read_state(username TEXT NOT NULL, scope TEXT NOT NULL, last_read BIGINT NOT NULL, PRIMARY KEY(username, scope));
 CREATE TABLE IF NOT EXISTS server_bans(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, banned_by TEXT, created_at BIGINT NOT NULL, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS pings(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, username TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('mention','reply','reaction')), scope TEXT NOT NULL, server TEXT REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, thread_root_id BIGINT, actor TEXT NOT NULL, emoji TEXT, created_at BIGINT NOT NULL, seen BIGINT NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS reactions(message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, username TEXT NOT NULL, emoji TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(message_id, username, emoji));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -148,6 +152,8 @@ CREATE INDEX IF NOT EXISTS idx_pings_message ON pings(message_id);
 CREATE INDEX IF NOT EXISTS idx_pings_created ON pings(created_at);
 CREATE INDEX IF NOT EXISTS idx_pings_seen ON pings(id) WHERE seen <> 0;
 CREATE INDEX IF NOT EXISTS idx_pings_actor ON pings(actor);
+CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id, emoji, created_at);
+CREATE INDEX IF NOT EXISTS idx_reactions_username ON reactions(username);
 ";
 
 const SQLITE_SEARCH: &[&str] = &[
@@ -1119,7 +1125,7 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
         .await?,
         pings: delete_batched(
             db,
-            "DELETE FROM pings WHERE id IN (SELECT id FROM pings WHERE seen <> 0 OR created_at < $1 LIMIT $2)",
+            "DELETE FROM pings WHERE id IN (SELECT id FROM pings WHERE (seen <> 0 AND seen <> 2) OR created_at < $1 LIMIT $2)",
             t - PING_KEEP,
         )
         .await?,
@@ -1639,6 +1645,87 @@ mod tests {
             );
             close(&db).await;
         }
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn reactions_table_is_added_to_an_old_database() {
+        let path =
+            std::env::temp_dir().join(format!("rchat_reaction_upgrade_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_reactions_message",
+            "DROP INDEX idx_reactions_username",
+            "DROP TABLE reactions",
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES((SELECT id FROM channels WHERE server = 'rchat'), 'alice', 'old message', 7)",
+            "INSERT INTO pings(username, kind, scope, message_id, actor, created_at) SELECT 'alice', 'mention', 'c1', id, 'bob', 8 FROM messages WHERE content = 'old message'",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'reactions'"
+            )
+            .await,
+            0
+        );
+        close(&db).await;
+        for round in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM messages WHERE author = 'alice' AND content = 'old message' AND created_at = 7").await,
+                1
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM pings WHERE username = 'alice' AND created_at = 8"
+                )
+                .await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_reactions_%'").await,
+                2
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM reactions").await,
+                round,
+                "rows survive a restart"
+            );
+            if round == 0 {
+                sqlx::query("INSERT INTO reactions(message_id, username, emoji, created_at) SELECT id, 'bob', '👍', 9 FROM messages WHERE content = 'old message'")
+                    .execute(&db)
+                    .await
+                    .expect("react to an old message");
+                assert!(
+                    sqlx::query("INSERT INTO reactions(message_id, username, emoji, created_at) SELECT id, 'bob', '👍', 10 FROM messages WHERE content = 'old message'")
+                        .execute(&db)
+                        .await
+                        .is_err(),
+                    "one row per user and emoji"
+                );
+            }
+            close(&db).await;
+        }
+        let db = open(path.to_str()).await.expect("reopen");
+        sqlx::query("DELETE FROM messages WHERE content = 'old message'")
+            .execute(&db)
+            .await
+            .expect("delete");
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM reactions").await,
+            0,
+            "cascade"
+        );
+        close(&db).await;
         wipe();
     }
 

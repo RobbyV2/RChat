@@ -14,6 +14,9 @@ use crate::ws::WsEvent;
 
 pub const MENTION_MAX: usize = 20;
 pub const PINGS_MAX: i64 = 1000;
+/// `pings.seen` of a reaction ping whose reaction was taken back: never counted or shown, kept
+/// until it ages out so adding the reaction again does not ping again.
+pub const RETRACTED: i64 = 2;
 const CANDIDATES_MAX: usize = 400;
 const EXCERPT_MAX: usize = 200;
 

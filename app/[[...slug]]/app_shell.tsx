@@ -6,6 +6,7 @@ import { allPings, useStore } from '../lib/store'
 import { pingTitle } from '../lib/pings'
 import { home } from '../lib/instances'
 import { ContextMenu } from '../components/context_menu'
+import { ReactionPickerHost } from '../components/reactions'
 import { ProfileCard } from '../components/profile_card'
 import { ServerRail } from '../components/server_rail'
 import { ChannelSidebar } from '../components/channel_sidebar'
@@ -172,6 +173,7 @@ export default function AppShell() {
         <ConfirmDialog />
         <ProfileCard />
         <ContextMenu />
+        <ReactionPickerHost />
         <CallBanner />
         <div className="pointer-events-none fixed inset-x-4 top-[calc(env(safe-area-inset-top)+4rem)] z-60 flex flex-col gap-2 sm:contents">
           {error && (

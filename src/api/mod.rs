@@ -10,6 +10,7 @@ pub mod messages;
 pub mod openapi;
 pub mod passwords;
 pub mod pings;
+pub mod reactions;
 pub mod servers;
 pub mod users;
 
@@ -394,6 +395,10 @@ pub struct ServerDetail {
     /// Channels the caller can see, oldest first. Channels with permission rules that do not
     /// grant the caller `can_view` are left out.
     pub channels: Vec<Channel>,
+    /// Ids of listed text channels where the caller, a member, can read but not send messages
+    /// or add reactions (their own reactions can still be removed). Empty for non-members, who
+    /// cannot send anywhere.
+    pub read_only: Vec<i64>,
     /// Every role of the server, oldest first.
     pub roles: Vec<Role>,
     /// Roles the caller can't change even though the permission rules on `perms` allow it.
@@ -526,6 +531,11 @@ pub struct Message {
     pub kind: String,
     /// Call details when `kind` is `call`; `null` otherwise.
     pub call: Option<CallLog>,
+    /// Emoji reactions in the order they were first added, with `me` for the caller. Filled in
+    /// message lists; empty in WebSocket events (clients apply `reaction_added` and
+    /// `reaction_removed`).
+    #[serde(default)]
+    pub reactions: Vec<reactions::Reaction>,
 }
 
 /// A text field the profanity filter can check.
@@ -1334,6 +1344,12 @@ fn api_routes(
         )
         .route("/messages/{id}", delete(messages::delete_message))
         .route("/messages/{id}/media", delete(media::delete_media))
+        .route(
+            "/messages/{id}/reactions/{emoji}",
+            get(reactions::list_reactors)
+                .put(reactions::add_reaction)
+                .delete(reactions::remove_reaction),
+        )
         .route("/messages/{id}/embeds/{ord}", delete(embeds::delete_embed))
         .route(
             "/messages/{id}/thread",

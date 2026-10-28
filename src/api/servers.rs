@@ -847,6 +847,45 @@ pub(crate) async fn visible_restricted(
     Ok(visible)
 }
 
+/// Restricted text channels among `channels` where the caller, a member, may look but not
+/// send (no reacting either). Non-members cannot send anywhere and get none.
+async fn read_only_restricted(
+    db: &Db,
+    access: &ServerAccess,
+    channels: &[i64],
+) -> Result<Vec<i64>, ApiError> {
+    let Some(user) = access.viewer() else {
+        return Ok(Vec::new());
+    };
+    if channels.is_empty() || !access.is_member() || access.manages_channels(db).await? {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query(
+        "SELECT cp.channel_id, cp.subject, cp.can_view, cp.can_send, cp.can_read_history FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1 AND c.kind = 'text'",
+    )
+    .bind(access.name())
+    .fetch_all(db)
+    .await?;
+    let mut rules: HashMap<i64, Vec<PermRow>> = HashMap::new();
+    for r in &rows {
+        rules
+            .entry(r.try_get(0)?)
+            .or_default()
+            .push(perm_row(r, 1)?);
+    }
+    let subjects = perm_subjects(db, Some(access.name()), &user.username).await?;
+    Ok(channels
+        .iter()
+        .copied()
+        .filter(|id| {
+            rules.get(id).is_some_and(|list| {
+                let got = fold_access(list, &subjects, false);
+                got.view && !got.send
+            })
+        })
+        .collect())
+}
+
 pub(crate) async fn member_count(db: &Db, server: &str) -> Result<i64, ApiError> {
     Ok(
         sqlx::query("SELECT member_count FROM servers WHERE name = $1")
@@ -902,6 +941,8 @@ async fn server_detail(
             slowmode_seconds: r.try_get(3)?,
         });
     }
+    let shown: Vec<i64> = channels.iter().map(|c| c.id).collect();
+    let read_only = read_only_restricted(db, access, &shown).await?;
     let member_count = member_count(db, &name).await?;
     let online_count = hub.online_count(&name);
     Ok(ServerDetail {
@@ -912,6 +953,7 @@ async fn server_detail(
         banner_color,
         name_color,
         channels,
+        read_only,
         roles: server_roles(db, &name).await?,
         role_limits: role_limits(db, access).await?,
         member_count,

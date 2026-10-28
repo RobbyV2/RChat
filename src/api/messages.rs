@@ -17,6 +17,7 @@ use crate::api::pings::{
     PingScope, ScopePings, SeenScope, ThreadPings, announce_counts, mark_seen, ping_mentions,
     pinged_by, unseen_counts,
 };
+use crate::api::reactions::attach_reactions;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, CallLog, Embed, LIST_MAX, LIST_PAGE, MESSAGE_MAX, MaybeAuthed,
     MediaRef, Message, Paged, ProfanityTarget, Settings, UserRef, check_len, check_profanity,
@@ -301,6 +302,7 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
         embeds: Vec::new(),
         kind,
         call,
+        reactions: Vec::new(),
     })
 }
 
@@ -616,6 +618,7 @@ async fn insert_message(
         embeds: Vec::new(),
         kind: "user".to_string(),
         call: None,
+        reactions: Vec::new(),
     })
 }
 
@@ -642,16 +645,16 @@ pub(crate) async fn channel_messages(
     require_guest_ok(db, user.as_ref()).await?;
     let channel = resolve_channel(db, id, user.as_ref(), &Proof::headers(&headers)).await?;
     let min_ts = channel.read_since(db).await?;
-    Ok(Json(
-        page(
-            db,
-            "m.channel_id = $1 AND m.thread_root_id IS NULL",
-            id,
-            &q,
-            min_ts,
-        )
-        .await?,
-    ))
+    let mut msgs = page(
+        db,
+        "m.channel_id = $1 AND m.thread_root_id IS NULL",
+        id,
+        &q,
+        min_ts,
+    )
+    .await?;
+    attach_reactions(db, &mut msgs, user.as_ref()).await?;
+    Ok(Json(msgs))
 }
 
 /// Post a channel message
@@ -714,9 +717,9 @@ pub(crate) async fn thread_messages(
     require_guest_ok(db, user.as_ref()).await?;
     let root = resolve_message(db, id, user.as_ref(), &Proof::headers(&headers)).await?;
     let min_ts = root.thread_channel()?.read_since(db).await?;
-    Ok(Json(
-        page(db, "m.thread_root_id = $1", id, &q, min_ts).await?,
-    ))
+    let mut msgs = page(db, "m.thread_root_id = $1", id, &q, min_ts).await?;
+    attach_reactions(db, &mut msgs, user.as_ref()).await?;
+    Ok(Json(msgs))
 }
 
 /// Reply in a thread
@@ -775,7 +778,9 @@ pub(crate) async fn dm_messages(
 ) -> Result<Json<Vec<Message>>, ApiError> {
     let db = &state.read();
     resolve_dm(db, id, &user).await?;
-    Ok(Json(page(db, "m.dm_id = $1", id, &q, None).await?))
+    let mut msgs = page(db, "m.dm_id = $1", id, &q, None).await?;
+    attach_reactions(db, &mut msgs, Some(&user)).await?;
+    Ok(Json(msgs))
 }
 
 /// Send a DM message
@@ -1356,14 +1361,13 @@ pub(crate) async fn unreads(
             pings_until,
             threads,
         } = pings_of(&scope);
-        if let Some(latest) = r.try_get::<Option<i64>, _>(1)?
-            && (all || latest > last_read || pinged > 0)
-        {
+        let latest: Option<i64> = r.try_get(1)?;
+        if latest.is_some_and(|latest| all || latest > last_read) || pinged > 0 {
             items.push(Unread {
                 scope,
                 server: None,
                 last_read,
-                latest,
+                latest: latest.unwrap_or(last_read),
                 pings: pinged,
                 pings_until,
                 thread_pings: threads,
@@ -3345,6 +3349,47 @@ mod tests {
                 .filter(|p| p.4 == 0)
                 .count(),
             0
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn reaction_pings_list_a_dm_without_messages_from_others() {
+        let (state, path) = temp_state("reaction_dm_unreads").await;
+        let db = &state.db;
+        for name in ["alice", "bob"] {
+            add_user(db, name, name).await;
+        }
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        let own = say(&state, (None, Some(dm), None), "alice", "only me here").await;
+        let scope = format!("d{dm}");
+        assert!(
+            !unread_pings(&state, "alice", false)
+                .await
+                .contains_key(&scope)
+        );
+        crate::api::reactions::add_reaction(
+            State(state.clone()),
+            Path((own.id, "👍".to_string())),
+            Authed(mem_user("bob", false)),
+        )
+        .await
+        .map(|_| ())
+        .expect("react");
+        assert_eq!(
+            unread_pings(&state, "alice", false).await.get(&scope),
+            Some(&(1, 0)),
+            "listed with latest = last_read"
+        );
+        assert_eq!(
+            unread_pings(&state, "alice", true).await.get(&scope),
+            Some(&(1, 0))
         );
         done(state, path).await;
     }

@@ -751,6 +751,7 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         "DELETE FROM tokens WHERE username = $1",
         "DELETE FROM pings WHERE username = $1",
         "DELETE FROM pings WHERE actor = $1",
+        "DELETE FROM reactions WHERE username = $1",
         "DELETE FROM users WHERE username = $1",
     ] {
         sqlx::query(sql).bind(key).execute(&mut **tx).await?;

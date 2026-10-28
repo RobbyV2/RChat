@@ -350,6 +350,12 @@ export const endpoints = (c: ApiClient) => ({
   deleteMedia: (id: number) => c.req<unknown>('DELETE', `/messages/${id}/media`),
   deleteEmbed: (id: number, ord: number, banner: boolean) =>
     c.req<unknown>('DELETE', `/messages/${id}/embeds/${ord}${banner ? '?banner=1' : ''}`),
+  addReaction: (id: number, emoji: string) =>
+    c.req<unknown>('PUT', `/messages/${id}/reactions/${seg(emoji)}`),
+  removeReaction: (id: number, emoji: string) =>
+    c.req<unknown>('DELETE', `/messages/${id}/reactions/${seg(emoji)}`),
+  reactors: (id: number, emoji: string) =>
+    c.req<UserRef[]>('GET', `/messages/${id}/reactions/${seg(emoji)}?limit=100`),
   threadMessages: (id: number, page: PageOpts = {}) =>
     c.req<Message[]>('GET', `/messages/${id}/thread${pageQuery(page)}`),
   sendThreadMessage: (id: number, content: string, opts: SendOpts = {}) =>

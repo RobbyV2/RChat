@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useRef } from 'react'
 import { MessageSquareText, Trash2, X } from 'lucide-react'
+import { MessageToolbar, type ToolbarAction } from './message_toolbar'
+import { ReactionBar } from './reactions'
+import { readOnly } from '../lib/reactions'
 import {
   confirmDeleteMessage,
   myPerms,
@@ -23,9 +26,8 @@ import {
   mentionRowCls,
   mentionsMe,
   messageCopyItems,
-  messageToolCls,
-  messageToolbarCls,
   nameTriggerCls,
+  reactHeader,
   useAuthorMembers,
   useMemberLookup,
   usePeopleKey,
@@ -55,10 +57,10 @@ export default function ThreadPanel() {
     useStore(s => (s.panel?.kind === 'thread' ? s.messages[`t${s.panel.root.id}`] : undefined)) ??
     EMPTY
   const me = useStore(s => s.me)
+  const guest = useStore(s => s.guest)
   const perms = useStore(s => (s.view?.kind === 'channel' ? myPerms(s, s.view.server) : 0))
-  const roles = useStore(s =>
-    s.view?.kind === 'channel' ? s.servers[s.view.server]?.roles : undefined
-  )
+  const detail = useStore(s => (s.view?.kind === 'channel' ? s.servers[s.view.server] : undefined))
+  const roles = detail?.roles
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const memberFor = useMemberLookup(server)
   const people = useMemo(() => (root ? [root, ...replies] : replies), [root, replies])
@@ -123,6 +125,13 @@ export default function ThreadPanel() {
   const canDelete = (m: Message) =>
     me !== null && (m.author.username === me.username || hasPerm(perms, Perm.DeleteMessages))
 
+  const canUnreact = me !== null && !guest
+  const canReact =
+    canUnreact &&
+    server !== null &&
+    me.servers.some(x => x.name === server) &&
+    !readOnly(detail, root.channel_id)
+
   const onScroll = () => {
     scroll.onScroll()
     if (older?.loading || newer?.loading) snapEdge()
@@ -140,14 +149,27 @@ export default function ThreadPanel() {
       items.push({
         label: 'Delete Message',
         danger: true,
+        icon: Trash2,
         action: () => confirmDeleteMessage(m.id),
       })
     items.push(...messageCopyItems(m))
-    openContextMenu(x, y, items)
+    openContextMenu(x, y, items, canReact ? reactHeader(m, x, y) : undefined)
   }
 
   const row = (m: Message) => {
     const mentioned = mentionsMe(m, me?.username)
+    const actions: ToolbarAction[] =
+      m.id !== root.id && canDelete(m)
+        ? [
+            {
+              key: 'delete',
+              label: 'Delete reply (hold Shift to skip confirmation)',
+              icon: Trash2,
+              danger: true,
+              onClick: e => confirmDeleteMessage(m.id, e.shiftKey),
+            },
+          ]
+        : []
     return (
       <div
         key={m.id}
@@ -188,18 +210,14 @@ export default function ThreadPanel() {
             </span>
           </div>
           <MarkdownMessage message={m} canDelete={canDelete(m)} />
+          <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
         </div>
-        {m.id !== root.id && canDelete(m) && (
-          <div className={messageToolbarCls}>
-            <button
-              title="Delete reply (hold Shift to skip confirmation)"
-              onClick={e => confirmDeleteMessage(m.id, e.shiftKey)}
-              className={`${messageToolCls} hover:text-error`}
-            >
-              <Trash2 size={14} />
-            </button>
-          </div>
-        )}
+        <MessageToolbar
+          m={m}
+          react={canReact}
+          actions={actions}
+          onMore={(x, y) => rowMenu(m)(x, y)}
+        />
       </div>
     )
   }

@@ -290,6 +290,28 @@ pub enum WsEvent {
         ord: i64,
         banner: bool,
     },
+    ReactionAdded {
+        server: Option<String>,
+        channel_id: Option<i64>,
+        dm_id: Option<i64>,
+        dm_users: Option<Vec<String>>,
+        message_id: i64,
+        thread_root_id: Option<i64>,
+        emoji: String,
+        username: String,
+        count: i64,
+    },
+    ReactionRemoved {
+        server: Option<String>,
+        channel_id: Option<i64>,
+        dm_id: Option<i64>,
+        dm_users: Option<Vec<String>>,
+        message_id: i64,
+        thread_root_id: Option<i64>,
+        emoji: String,
+        username: String,
+        count: i64,
+    },
     ChannelCreated {
         server: String,
         channel: Channel,
@@ -761,6 +783,60 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 dm_users,
                 message_id,
                 embeds: message.embeds,
+            })
+        }
+        WsEvent::ReactionAdded {
+            server,
+            channel_id,
+            dm_id,
+            dm_users,
+            message_id,
+            thread_root_id,
+            emoji,
+            username,
+            count: _,
+        } => {
+            let (stored, count) =
+                crate::api::reactions::reaction_state(db, message_id, &username, &emoji)
+                    .await
+                    .ok()?;
+            stored.then_some(WsEvent::ReactionAdded {
+                server,
+                channel_id,
+                dm_id,
+                dm_users,
+                message_id,
+                thread_root_id,
+                emoji,
+                username,
+                count,
+            })
+        }
+        WsEvent::ReactionRemoved {
+            server,
+            channel_id,
+            dm_id,
+            dm_users,
+            message_id,
+            thread_root_id,
+            emoji,
+            username,
+            count: _,
+        } => {
+            let (stored, count) =
+                crate::api::reactions::reaction_state(db, message_id, &username, &emoji)
+                    .await
+                    .ok()?;
+            (!stored).then_some(WsEvent::ReactionRemoved {
+                server,
+                channel_id,
+                dm_id,
+                dm_users,
+                message_id,
+                thread_root_id,
+                emoji,
+                username,
+                count,
             })
         }
         WsEvent::ChannelCreated { server, channel } => {
@@ -2747,6 +2823,28 @@ fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
             ord: _,
             banner: _,
         } => scoped(server, channel_id),
+        WsEvent::ReactionAdded {
+            server,
+            channel_id,
+            dm_id: _,
+            dm_users: _,
+            message_id: _,
+            thread_root_id: _,
+            emoji: _,
+            username: _,
+            count: _,
+        }
+        | WsEvent::ReactionRemoved {
+            server,
+            channel_id,
+            dm_id: _,
+            dm_users: _,
+            message_id: _,
+            thread_root_id: _,
+            emoji: _,
+            username: _,
+            count: _,
+        } => scoped(server, channel_id),
         WsEvent::ChannelRenamed { server, channel }
         | WsEvent::ChannelUpdated { server, channel } => Some((server.as_str(), channel.id)),
         WsEvent::VoiceState {
@@ -2825,6 +2923,28 @@ fn wants(
             message_id: _,
             ord: _,
             banner: _,
+        } => scoped(server, dm_users),
+        WsEvent::ReactionAdded {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            message_id: _,
+            thread_root_id: _,
+            emoji: _,
+            username: _,
+            count: _,
+        }
+        | WsEvent::ReactionRemoved {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            message_id: _,
+            thread_root_id: _,
+            emoji: _,
+            username: _,
+            count: _,
         } => scoped(server, dm_users),
         WsEvent::ChannelCreated { server, channel: _ }
         | WsEvent::ChannelRenamed { server, channel: _ }
@@ -2984,6 +3104,7 @@ mod tests {
             embeds: Vec::new(),
             kind: "user".to_string(),
             call: None,
+            reactions: Vec::new(),
         }
     }
 
@@ -5631,6 +5752,97 @@ mod tests {
         assert!(nora.refresh(&state, conn).await && !nora.retry.pending());
         assert_eq!(nora.peek.as_deref(), Some("open"));
         assert!(nora.wants(&post_in("open", general)));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    fn reaction_in(
+        server: Option<&str>,
+        cid: Option<i64>,
+        dm: Option<i64>,
+        added: bool,
+    ) -> WsEvent {
+        let (server, dm_users) = (server.map(s), dm.map(|_| vec![s("alice"), s("bob")]));
+        let (message_id, thread_root_id, emoji, username) = (4, None, s("👍"), s("bob"));
+        match added {
+            true => WsEvent::ReactionAdded {
+                server,
+                channel_id: cid,
+                dm_id: dm,
+                dm_users,
+                message_id,
+                thread_root_id,
+                emoji,
+                username,
+                count: 1,
+            },
+            false => WsEvent::ReactionRemoved {
+                server,
+                channel_id: cid,
+                dm_id: dm,
+                dm_users,
+                message_id,
+                thread_root_id,
+                emoji,
+                username,
+                count: 0,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn reactions_reach_only_those_who_can_see_the_channel() {
+        let (state, path, general, secret) = peek_world("ws_reaction_routes").await;
+        let conn = state.hub.next_conn();
+        let mut alice = Access::new(Some(s("alice")), false, set(&["open"]));
+        let mut nora = Access::new(Some(s("nora")), false, set(&["home"]));
+        for added in [true, false] {
+            let seen = reaction_in(Some("open"), Some(general), None, added);
+            let hidden = reaction_in(Some("open"), Some(secret), None, added);
+            assert_eq!(
+                crate::fanout::route(&seen),
+                crate::fanout::Route::To(vec![crate::fanout::Target::Server("open")])
+            );
+            assert_eq!(event_channel(&hidden), Some(("open", secret)));
+            assert_eq!(on_event(&state, conn, &mut alice, &seen).await, Some(true));
+            assert_eq!(
+                on_event(&state, conn, &mut alice, &hidden).await,
+                Some(false)
+            );
+            assert_eq!(on_event(&state, conn, &mut nora, &seen).await, Some(false));
+            let dm = reaction_in(None, None, Some(7), added);
+            assert_eq!(
+                crate::fanout::route(&dm),
+                crate::fanout::Route::To(vec![
+                    crate::fanout::Target::User("alice"),
+                    crate::fanout::Target::User("bob")
+                ])
+            );
+            assert!(wants(
+                &dm,
+                Some("alice"),
+                false,
+                &HashSet::new(),
+                &HashSet::new()
+            ));
+            assert!(!wants(
+                &dm,
+                Some("nora"),
+                true,
+                &set(&["open"]),
+                &HashSet::new()
+            ));
+            let wire = serde_json::to_value(&seen).expect("json");
+            assert_eq!(
+                wire["type"],
+                if added {
+                    "reaction_added"
+                } else {
+                    "reaction_removed"
+                }
+            );
+            assert_eq!(wire["emoji"], "👍");
+            assert_eq!(wire["username"], "bob");
+        }
         crate::api::test_util::done(state, path).await;
     }
 

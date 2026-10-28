@@ -59,6 +59,7 @@ redis = { version = "1.8", default-features = false, features = [
 ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
 base64 = "0.22"
 regex = "1"
+emojis = "0.9.1"
 
 [profile.release]
 opt-level = "z"

@@ -291,7 +291,7 @@ export function ContextMenu() {
 
   if (!menu) return null
 
-  const item = (it: (typeof menu.items)[number], i: number, cls: string) => (
+  const item = (it: (typeof menu.items)[number], i: number, cls: string, size: number) => (
     <button
       key={i}
       role="menuitem"
@@ -301,7 +301,8 @@ export function ContextMenu() {
       }}
       className={`${cls} ${it.danger ? 'text-error' : 'text-on-surface'}`}
     >
-      {it.label}
+      <span className="min-w-0 flex-1 truncate">{it.label}</span>
+      {it.icon && <it.icon size={size} aria-hidden className="shrink-0 opacity-80" />}
     </button>
   )
 
@@ -325,11 +326,15 @@ export function ContextMenu() {
           className="animate-sheet-up max-h-[70dvh] overflow-y-auto overscroll-contain rounded-t-3xl bg-surface-container-high px-safe pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-elevation-3 select-none"
         >
           <div aria-hidden className="mx-auto mb-2 h-1 w-8 rounded-full bg-outline-variant" />
+          {menu.header && (
+            <div className="border-b border-outline-variant px-4 pt-1 pb-3">{menu.header}</div>
+          )}
           {menu.items.map((it, i) =>
             item(
               it,
               i,
-              'flex min-h-13 w-full items-center px-6 text-left text-base active:bg-surface-container-highest'
+              'flex min-h-13 w-full items-center gap-3 px-6 text-left text-base active:bg-surface-container-highest',
+              20
             )
           )}
         </div>
@@ -353,8 +358,16 @@ export function ContextMenu() {
         className="absolute min-w-44 rounded-xl bg-surface-container-high py-2 shadow-elevation-2"
         onMouseDown={e => e.stopPropagation()}
       >
+        {menu.header && (
+          <div className="mb-1 border-b border-outline-variant px-2 pb-2">{menu.header}</div>
+        )}
         {menu.items.map((it, i) =>
-          item(it, i, 'block w-full px-4 py-2 text-left text-sm hover:bg-surface-container-highest')
+          item(
+            it,
+            i,
+            'flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-surface-container-highest',
+            16
+          )
         )}
       </div>
     </div>
