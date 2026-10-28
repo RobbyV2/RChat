@@ -1,10 +1,10 @@
 import { api, home } from './instances'
 import type { IceServers, InstanceIce } from './types'
 
-// The only source of ICE servers in the app. Nothing is built in: PeerJS would otherwise fall
-// back to its own public STUN/TURN servers, so every Peer and RTCPeerConnection takes its
-// config from iceConfig(). Servers come from the instance: the discovery `ice` STUN list, and
-// TURN credentials from /api/p2p/ice for signed-in users, refreshed at 80% of their lifetime.
+// The only source of ICE servers. Without it, PeerJS uses its own public STUN and TURN servers,
+// so every Peer and RTCPeerConnection gets its config from iceConfig(). The instance supplies the
+// servers: STUN from the discovery `ice` list, and TURN credentials from /api/p2p/ice for
+// signed-in users, refreshed at 80% of their lifetime.
 
 export interface IceSource {
   info: () => InstanceIce | null | undefined

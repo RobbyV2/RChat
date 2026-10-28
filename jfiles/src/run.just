@@ -1,6 +1,6 @@
 import "../common.just"
 
-# === FULL MODE (default) ===
+# Full mode (default)
 
 # Run full-stack development (Rust proxy + Next.js dev)
 dev:
@@ -37,7 +37,7 @@ prod:
   {{DOTENVX}} ./target/release/server 2>&1 | sed 's/^/[RUST] /' &
   wait
 
-# === API-ONLY MODE ===
+# API-only mode
 
 # Run API-only development (Rust API server only)
 api:
@@ -47,7 +47,7 @@ api:
 api-release:
   cd {{ROOT}} && APP_MODE=api-only {{DOTENVX}} cargo run --bin server --release
 
-# === FRONTEND-ONLY ===
+# Frontend only
 
 # Run Next.js dev server only
 frontend:
@@ -57,7 +57,7 @@ frontend:
 frontend-prod:
   cd {{ROOT}} && {{DOTENVX}} bun run start
 
-# === STATIC MODE (frontend only, connects to a remote api-only server) ===
+# Static mode: frontend only, with a remote api-only server
 
 # Preview the static build locally against a remote API.
 # Usage: just src static https://api.example.com

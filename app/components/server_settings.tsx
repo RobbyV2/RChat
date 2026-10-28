@@ -77,8 +77,8 @@ export function FieldError({ message, id }: { message: string | null; id?: strin
 
 export type EscapeLayer = 'stage' | 'panel' | 'dialog' | 'confirm'
 
-// Every handler sees the store as it was when the key went down, so one that
-// runs after another has already closed its layer still knows it was covered.
+// Each handler sees the store as it was at keydown. So a handler that runs after another closed
+// its layer still knows that the layer was covered.
 const pressed = new WeakMap<Event, ReturnType<typeof useStore.getState>>()
 
 const covered = (layer: EscapeLayer, e: Event) => {

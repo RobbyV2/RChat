@@ -257,8 +257,8 @@ const useCoarse = () => useMedia(COARSE_QUERY)
 
 type MenuItem = ContextMenuItem
 
-// The submenus open below the root menu: on desktop each is a flyout beside the row that opened
-// it, on touch the sheet shows only the deepest one with a Back row.
+// Submenus: on desktop, a flyout beside the parent row. On touch, the sheet shows only the
+// deepest submenu with a Back row.
 interface Level {
   items: MenuItem[]
   label: string
@@ -512,8 +512,8 @@ function OpenMenu({ menu, coarse }: { menu: ContextMenuState; coarse: boolean })
     }
   })
 
-  // Enter/Space (a click with no pointer) moves focus into the submenu. The sheet always does:
-  // the row that opened it is gone.
+  // Enter or Space moves focus into the submenu. The sheet always does this, because the parent
+  // row is gone.
   const pick = (level: number, index: number, el: HTMLElement, keyboard: boolean) => {
     const it = levels[level]?.[index]
     if (!it) return

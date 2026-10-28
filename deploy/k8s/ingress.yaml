@@ -1,33 +1,20 @@
-# Path routing identical to deploy/nginx.conf. The browser dials PeerJS on
-# NEXT_PUBLIC_PEERJS_PORT (9001 in the published image); to route /peerjs through this
-# Ingress on 443, build the image with --build-arg NEXT_PUBLIC_PEERJS_PORT=443, or expose
-# rchat-peerjs on 9001 with a LoadBalancer Service instead.
+# Same path routing as deploy/nginx.conf. The browser dials PeerJS on NEXT_PUBLIC_PEERJS_PORT
+# (9001 in the published image). To route /peerjs through this Ingress on 443, build the image
+# with --build-arg NEXT_PUBLIC_PEERJS_PORT=443, or expose rchat-peerjs on 9001 with a
+# LoadBalancer Service.
 #
-# rchat-strict (below) adds the cluster-wide rate limit for auth, password changes,
-# guest_access and media uploads, and rchat-invites and rchat-joins the same limit, each in a
-# bucket of its own, for invite lookups and server joins (both check server passwords).
-# rchat-strict's regex paths make ingress-nginx treat every path of this host as a
-# case-insensitive regex prefix (use-regex is host-wide); the paths here stay correct.
+# rchat-strict adds the cluster-wide rate limit for auth, password changes, guest_access and
+# media uploads. rchat-invites and rchat-joins add the same limit, each in its own bucket. The
+# regex paths of rchat-strict make all paths of this host case-insensitive regex prefixes. The
+# paths here stay correct.
 #
-# Client address: the backends honour X-Forwarded-For only from TRUSTED_PROXIES (the
-# controller's pod range, config.yaml) and key their rate limits on the right-most hop
-# that is not a trusted proxy, and rchat-strict keys on the address the controller
-# resolves. Both are only as good as the controller's view of the client, which is set
-# in the controller ConfigMap (see ingress-nginx.example.yaml), not here:
-# - Clients connect directly, or through an L4 balancer that keeps the source address
-#   (externalTrafficPolicy: Local) or sends the PROXY protocol (use-proxy-protocol: "true"):
-#   keep use-forwarded-headers "false" (the default). The controller then ignores client
-#   X-Forwarded-* headers and replaces X-Forwarded-For with the peer address.
-# - Behind an L7 balancer that appends to X-Forwarded-For: set use-forwarded-headers
-#   "true" and proxy-real-ip-cidr to the balancer's address range. The default
-#   proxy-real-ip-cidr 0.0.0.0/0 trusts every hop, so the left-most, client-written entry
-#   would become the address the controller limits and forwards.
-# The controller also sets X-Forwarded-Host and X-Forwarded-Proto itself, which the
-# backends use for the issuer when PUBLIC_URL is unset (bounded by ALLOWED_HOSTS). With
-# use-forwarded-headers "true" it passes the balancer's values on, so the balancer must
-# overwrite them too.
-# networkpolicy.yaml makes the controller the only peer that can reach the role pods, so
-# no other pod can present forged headers from inside the trusted range.
+# Client address: the controller ConfigMap sets it (see ingress-nginx.example.yaml):
+# - Direct clients, or an L4 balancer that keeps the source address or uses the PROXY protocol:
+#   keep use-forwarded-headers "false" (the default).
+# - An L7 balancer that appends to X-Forwarded-For: set use-forwarded-headers "true" and
+#   proxy-real-ip-cidr to the balancer range. The balancer must also overwrite
+#   X-Forwarded-Host and X-Forwarded-Proto.
+# networkpolicy.yaml lets only the controller reach the pods, so no other pod can forge headers.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -106,12 +93,9 @@ spec:
                 port:
                   name: http
 ---
-# The backends rate limit these routes per instance (2 requests/s, burst 30 per client
-# address); N replicas alone would allow N times as much, so the edge enforces the same
-# limit. ingress-nginx keeps the counters per controller pod (divide by the controller
-# replica count) and answers 503 unless the controller ConfigMap sets
-# limit-req-status-code: "429". The limit keys on the client address described at the
-# top of this file.
+# The backends limit these routes per instance (2 requests/s, burst 30 per client address).
+# The edge sets the same limit for all replicas. ingress-nginx counts per controller pod and
+# answers 503 unless the controller ConfigMap sets limit-req-status-code: "429".
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -156,8 +140,7 @@ spec:
                 port:
                   name: http
 ---
-# Invite lookups get the same limit as rchat-strict, counted separately (the backends
-# keep a separate bucket for them too), so invite cards cannot starve logins or uploads.
+# Invite lookups get the same limit in their own bucket, so they cannot block logins or uploads.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -179,8 +162,7 @@ spec:
                 port:
                   name: http
 ---
-# Server joins check the server password, so they get the same limit in a bucket of their
-# own (the backends keep a separate bucket for them too).
+# Server joins check the server password, so they get the same limit in their own bucket.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

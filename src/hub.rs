@@ -399,10 +399,9 @@ fn room_state(channel_id: i64, room: &Room) -> WsEvent {
     }
 }
 
-// A relayed rtc signal is checked when it is sent, but the target may leave
-// the room (or switch to another) before the broadcast is applied. Signals
-// for a session the two users no longer share are dropped here, in log order
-// with the joins and leaves.
+// A relayed rtc signal is checked when sent. But the target can leave or switch rooms before the
+// broadcast applies. So signals for a session the two users no longer share are dropped here, in
+// log order with the joins and leaves.
 fn stale_signal(replica: &Replica, ev: &WsEvent) -> bool {
     match ev {
         WsEvent::RtcSignal {

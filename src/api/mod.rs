@@ -310,8 +310,8 @@ pub struct Role {
     /// Name color as `#rrggbb`.
     #[schema(example = "#e91e63")]
     pub color: String,
-    /// Permission bits the role grants: 1 Manage channels, 2 Manage messages (delete and pin others' messages), 4 Kick (also
-    /// bans), 8 Delete server (also edits the server), 16 Manage admins.
+    /// Permission bits of the role: 1 Manage channels, 2 Manage messages (delete and pin messages
+    /// of others), 4 Kick (also bans), 8 Delete server (also edits the server), 16 Manage admins.
     #[schema(example = 6)]
     pub perms: i64,
 }

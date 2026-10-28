@@ -52,8 +52,7 @@ function Snippet({ quote }: { quote: ReplyRef }) {
   )
 }
 
-// The quoted message above a reply: a curved connector from the reply's avatar, the quoted
-// author's mini avatar and name, and a one-line snippet. Clicking jumps to the original.
+// The quoted message above a reply. Click it to go to the original.
 export function ReplyPreview({
   quote,
   avatar,
@@ -130,8 +129,8 @@ export function ReplyPreview({
   )
 }
 
-// One bar above the composer input (replying today, forwarding later). The composer shows at
-// most one; `onClose` runs on the X button and on Escape in the input.
+// A bar above the composer input. The composer shows one at most. `onClose` runs on X and on
+// Escape.
 export function ComposerBar({
   children,
   actions,

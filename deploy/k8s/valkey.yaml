@@ -1,9 +1,7 @@
-# Single-node Valkey for the realtime bus and job queue. For production prefer a managed
-# Redis/Valkey with failover and point REDIS_URL at it instead. The bus is trusted (any
-# client can inject realtime events), so it requires VALKEY_PASSWORD and the
-# NetworkPolicy below only lets the RChat role pods reach it (enforced only by a CNI that
-# implements NetworkPolicy, e.g. Calico or Cilium). The password goes into a config file
-# (mode 600 in the container's /tmp), not onto the command line, so ps does not show it.
+# Single-node Valkey for the realtime bus and job queue. For production, use a managed Redis
+# or Valkey with failover. Any client of the bus can send realtime events, so it needs
+# VALKEY_PASSWORD, and the NetworkPolicy below lets only the RChat pods reach it. The password
+# goes into a config file, not onto the command line, so ps does not show it.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -91,8 +89,7 @@ spec:
                   - rchat-search
                   - rchat-embeds
                   - rchat-jobs
-        # The optional hostNetwork rchat-relay pod (relay.yaml) connects from its node's
-        # address; admit that node when you run it:
+        # The optional rchat-relay pod connects from the address of its node. Add the node here:
         # - ipBlock:
         #     cidr: REPLACE-with-the-relay-node-internal-IP/32
       ports:

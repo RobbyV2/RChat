@@ -14,11 +14,10 @@ export const emojiKey = (e: string) => e.replace(/\uFE0F/g, '')
 
 export const sameEmoji = (a: string, b: string) => a === b || emojiKey(a) === emojiKey(b)
 
-// One reaction change from a WS event or an optimistic toggle. `mine` = the reactor is the
-// viewer. Events carry `count`, the reactors of the emoji after the change, so applying one
-// twice or on top of a page that already includes it changes nothing. Optimistic changes
-// (no count) step by one; a change of your own that is already shown is ignored.
-// New emojis go last (chronological), an emoji disappears at 0.
+// One reaction change from a WS event or an optimistic toggle. `mine` means the viewer reacted.
+// Events carry `count` (reactors of the emoji after the change), so a repeated event changes
+// nothing. Optimistic changes (no count) step by one. An own change that already shows is
+// ignored. New emojis go last. An emoji at 0 goes away.
 export function applyReaction(
   list: Reaction[] | undefined,
   emoji: string,

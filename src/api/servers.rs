@@ -157,8 +157,9 @@ pub struct UsernameReq {
 /// Request body for setting a server admin's permissions.
 #[derive(Deserialize, ToSchema)]
 pub struct PermsReq {
-    /// Permission bitmask: 1 Manage channels, 2 Manage messages (delete and pin others' messages), 4 Kick, 8 Delete server,
-    /// 16 Manage admins. Bits outside 31 are dropped. For an admin, 0 means all permissions.
+    /// Permission bitmask: 1 Manage channels, 2 Manage messages (delete and pin messages of
+    /// others), 4 Kick, 8 Delete server, 16 Manage admins. Bits outside 31 are dropped. For an
+    /// admin, 0 means all permissions.
     #[schema(example = 7)]
     perms: i64,
 }
@@ -173,10 +174,10 @@ pub struct RoleReq {
     /// Role color as `#rrggbb`, stored as sent.
     #[schema(example = "#22c55e")]
     color: String,
-    /// Permission bitmask granted to members holding the role: 1 Manage channels, 2 Manage
-    /// messages (delete and pin others' messages), 4 Kick, 8 Delete server, 16 Manage admins. Bits outside 31 are dropped. Roles
-    /// only add permissions to members who are not admins; admins use their own admin
-    /// permissions.
+    /// Permission bitmask for members with the role: 1 Manage channels, 2 Manage messages (delete
+    /// and pin messages of others), 4 Kick, 8 Delete server, 16 Manage admins. Bits outside 31 are
+    /// dropped. Roles only add permissions to members who are not admins. Admins use their own
+    /// admin permissions.
     #[schema(example = 6)]
     perms: i64,
 }
@@ -1599,15 +1600,15 @@ async fn invite_preview(db: &Db, server: &str) -> Result<(Option<String>, Vec<Me
 
 /// Preview an invite
 ///
-/// Returns an invite card for the server: the server, the viewer's `status`, member and online
-/// counts and a short preview of recent messages. The API drives the password step exactly like
-/// `POST /api/servers/{name}/join`: a server without a password, one you are a member of, or (for
-/// guests) one a valid `X-Guest-Grant` unlocks returns the card. Every other name returns the same
-/// minimal `401 Password required` without an `X-Invite-Password`, whether the server is
-/// password-protected or does not exist; with a wrong password, or for a name that does not exist,
-/// the same `404 Server not found or wrong password`. Banned viewers get the card (with counts)
-/// only once they proved access, and never a preview. The preview holds the last 3 top-level
-/// messages of the first text channel without permission rules.
+/// Returns an invite card: the server, the viewer `status`, member and online counts, and a short
+/// preview of recent messages. The password step is the same as for
+/// `POST /api/servers/{name}/join`. You get the card for a server without a password, a server you
+/// are a member of, or (for guests) a server that a valid `X-Guest-Grant` unlocks. All other names
+/// get the same `401 Password required` without `X-Invite-Password`, also when the server does not
+/// exist. A wrong password or an unknown name gets `404 Server not found or wrong password`.
+/// Banned viewers get the card (with counts) only after they prove access, and never a preview.
+/// The preview has the last 3 top-level messages of the first text channel without permission
+/// rules.
 ///
 /// Signed-in users may call it, and guests when guest access is on. Invite and general rate-limit
 /// buckets.
@@ -1715,19 +1716,17 @@ async fn insert_member(
 
 /// Join a server
 ///
-/// Adds the caller as a member (not an admin) and returns the server details. The API drives the
-/// password step: a server without a password is joined at once (any `password` is ignored), and
-/// so is a server you are already a member of. For every other name a call without `password`
-/// gets the same `401 Password required`, whether the server is password-protected or does not
-/// exist; call again with `password` to join, or get the same `404 Server not found or wrong
-/// password` for a wrong password and for a name that does not exist (the password is always
-/// hashed, also for names that do not exist). The body may be omitted (send no `Content-Type`).
-/// Requires a bearer token. A ban is only revealed (403) once access was proven: on servers
-/// without a password, with the correct password, or when you took part in the server before.
-/// Emits `member_joined` to the server and the joining user when a new membership was created,
-/// then a `join` system message (`message` event) in the server's system channel unless join
-/// messages are off or the same user got one in this server in the last 10 minutes. Join and
-/// general rate-limit buckets.
+/// Adds the caller as a member (not an admin) and returns the server details. Requires a
+/// bearer token. The body is optional (send no `Content-Type` without a body). Password step: a
+/// server without a password, or one you are a member of, is joined at once and `password` is
+/// ignored. For all other names, a call without `password` gets `401 Password required`, also
+/// when the server does not exist. A wrong password or an unknown name gets
+/// `404 Server not found or wrong password`. The password is always hashed, also for unknown
+/// names. A ban (403) shows only after you prove access: no password, the correct password, or
+/// earlier membership. A new membership emits `member_joined` to the server and the user. Then a
+/// `join` system message (`message` event) goes to the system channel, unless join messages are
+/// off or the user got one in this server in the last 10 minutes. Join and general rate-limit
+/// buckets.
 #[utoipa::path(
     post,
     path = "/api/servers/{name}/join",
@@ -2866,14 +2865,14 @@ pub(crate) async fn revoke_admin(
 
 /// Transfer admin
 ///
-/// Makes `username` an admin and clears the caller's admin flag and admin permissions, in one
-/// transaction. Unlike granting admin, it does not reset the target's stored admin permission
-/// mask (0, meaning all permissions, for members who are not admins), so an admin with
-/// restricted permissions keeps them. The permissions the target ends up with must be a subset of
-/// yours (equal is fine), and so must the permissions of your own roles, which count again once
-/// you are no longer an admin. Requires the Manage admins server permission. Emits `admin_changed` for the target with
-/// their stored mask and for the caller with 0, each to the server and that user. General
-/// rate-limit bucket.
+/// Makes `username` an admin and clears the admin flag and admin permissions of the caller, in
+/// one transaction. Unlike granting admin, it keeps the stored admin permission mask of the
+/// target (0, meaning all permissions, for members who are not admins). So an admin with limited
+/// permissions keeps them. The final permissions of the target must be a subset of yours (equal
+/// is fine). The permissions of your own roles must be too, because they count again when you
+/// are no longer an admin. Requires the Manage admins permission. Emits `admin_changed` for the
+/// target with their stored mask and for the caller with 0, each to the server and that user.
+/// General rate-limit bucket.
 #[utoipa::path(
     post,
     path = "/api/servers/{name}/transfer_admin",
@@ -3280,15 +3279,14 @@ pub(crate) async fn create_role(
 
 /// Update a role
 ///
-/// Changes a role's name, color and/or permissions; omitted fields are left unchanged. Every field
-/// is validated before anything is saved, and the changes are saved together, so a rejected
-/// request changes nothing. Any edit, a rename or recolor included, needs the role's current
-/// permissions to be a subset of yours, and every other member who holds the role must have
-/// server permissions that are a strict subset of yours (the kick and ban rule; see
-/// `role_limits.held_above` in the server detail). New permissions must be a subset of yours
-/// (equal is fine). Requires the Manage admins server permission. Emits `roles_changed` to the
-/// server and removes users from voice channels they can no longer view. General rate-limit
-/// bucket.
+/// Changes the name, color or permissions of a role. Omitted fields stay the same. All fields are
+/// checked before anything is saved, so a rejected request changes nothing. Every edit, also a
+/// rename or recolor, needs the current role permissions to be a subset of yours. Every other
+/// member with the role must have server permissions that are a strict subset of yours (the kick
+/// and ban rule; see `role_limits.held_above` in the server detail). New permissions must be a
+/// subset of yours (equal is fine). Requires the Manage admins permission. Emits `roles_changed`
+/// to the server and removes users from voice channels they can no longer view. General
+/// rate-limit bucket.
 #[utoipa::path(
     patch,
     path = "/api/servers/{name}/roles/{id}",

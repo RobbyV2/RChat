@@ -272,18 +272,17 @@ async fn unping_author(state: &AppState, message_id: i64, actor: &str, emoji: &s
 
 /// Add a reaction
 ///
-/// Reacts to a message with one emoji (percent-encoded in the path). Any emoji of the Unicode
-/// emoji list is accepted (with skin tones, ZWJ sequences, keycaps and flags) and stored
-/// fully qualified, so `❤` and `❤️` are the same reaction. Requires a bearer token; guests
-/// cannot react. Needs read access to the message and, in server channels, membership and the
-/// send permission for the channel; in DMs, being a participant. Only normal messages take
-/// reactions (not call logs). A message carries at most 20 distinct emojis. Reacting twice
-/// with the same emoji changes nothing. A new reaction emits `reaction_added`
-/// (`{server, channel_id, dm_id, dm_users, message_id, thread_root_id, emoji, username, count}`,
-/// `count` = reactors of that emoji afterwards) to clients that can see the message and, when
-/// the message is someone else's and its author can still see it, pings the author once per
-/// reactor and emoji (`ping` with kind `reaction`; taking the reaction back and adding it
-/// again does not ping again). General rate-limit bucket.
+/// Reacts to a message with one emoji (percent-encoded in the path). All emoji of the Unicode
+/// emoji list are accepted (skin tones, ZWJ sequences, keycaps, flags). The server stores the
+/// fully qualified form, so `❤` and `❤️` are one reaction. Requires a bearer token. Guests cannot
+/// react. Needs read access to the message. In server channels, also needs membership and the
+/// send permission. In DMs, needs to be a participant. Only normal messages take reactions (not
+/// call logs). A message has at most 20 different emojis. A repeated reaction changes nothing. A
+/// new reaction emits `reaction_added` (`{server, channel_id, dm_id, dm_users, message_id,
+/// thread_root_id, emoji, username, count}`, `count` = reactors of that emoji after the change)
+/// to clients that can see the message. If the message is from someone else and the author can
+/// still see it, the author gets one `ping` (kind `reaction`) per reactor and emoji. Removing and
+/// adding the reaction again does not ping again. General rate-limit bucket.
 #[utoipa::path(put, path = "/api/messages/{id}/reactions/{emoji}", tag = "Messages", params(("id" = i64, Path, description = "Message id"), ("emoji" = String, Path, description = "The emoji, percent-encoded: one emoji of the Unicode emoji list with optional skin tone, a ZWJ sequence, a keycap or a flag, at most 64 bytes")), responses((status = 200, description = "Reacted (or already reacted); body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "`Not an emoji`, `Cannot react to this message` (a call log), or `Too many reactions` (the message already has 20 other emojis). A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn add_reaction(
     State(state): State<AppState>,

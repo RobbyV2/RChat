@@ -1,25 +1,16 @@
-# Optional built-in STUN/TURN relay (off by default, not in kustomization.yaml). To run it:
-#   1. In config.yaml set RELAY_ENABLED: "true", RELAY_HOST (the name clients reach the relay
-#      on) and RELAY_PUBLIC_IP (the node's public address). Every role pod then advertises
-#      the relay in /api/instance and issues its short-lived TURN credentials.
+# Optional built-in STUN and TURN relay. Off by default and not in kustomization.yaml. To run it:
+#   1. In config.yaml, set RELAY_ENABLED: "true", RELAY_HOST (the name clients use) and
+#      RELAY_PUBLIC_IP (the public address of the node).
 #   2. Add relay.yaml to the resources in kustomization.yaml.
-#   3. The relay learns about bans and account deletions through Valkey, so it needs
-#      REDIS_URL (it refuses to start without it). Its traffic comes from the node's
-#      address, which the rchat-valkey NetworkPolicy does not admit: add the node's
-#      internal IP as an ipBlock there (valkey.yaml has the commented entry).
-# The relay runs as one pod with hostNetwork, because TURN needs the UDP listener (3478) and
-# the relay port range (49160-49415) on a public address, and a Service cannot forward a
-# port range. Pin it to a node with that public IP (nodeSelector) and open those UDP ports
-# in the node's firewall. Reserve the range on that node so nothing else listens there:
-# it lies in the default ephemeral range, so set
-# net.ipv4.ip_local_reserved_ports=49160-49415 on the node (or choose RELAY_MIN_PORT and
-# RELAY_MAX_PORT outside net.ipv4.ip_local_port_range). Leave RELAY_ALLOW_PRIVATE unset.
-# The relay refuses private, loopback, link-local, CGNAT and metadata addresses, and its
-# own RELAY_PUBLIC_IP on every port except the range ports its live allocations hold, so
-# pod, service and node-internal addresses are out of reach. It cannot know the cluster's other public addresses: the other nodes' public IPs
-# (kubelet, NodePorts), any further public addresses of this node, load balancer and
-# ingress IPs. List them in RELAY_DENIED_PEERS (config.yaml) or they stay reachable through
-# the relay. hostNetwork pods are not covered by NetworkPolicy.
+#   3. The relay needs REDIS_URL. Add the internal IP of the node as an ipBlock in the
+#      rchat-valkey NetworkPolicy (valkey.yaml has the entry as a comment).
+# The relay runs as one hostNetwork pod, because TURN needs UDP 3478 and the port range
+# 49160-49415 on a public address. Pin it to the node with that IP (nodeSelector) and open those
+# UDP ports in the firewall. Reserve the range on the node:
+# net.ipv4.ip_local_reserved_ports=49160-49415. Leave RELAY_ALLOW_PRIVATE unset.
+# The relay refuses private, loopback, link-local, CGNAT and metadata addresses, and its own
+# RELAY_PUBLIC_IP. It cannot know the other public addresses of the cluster (other nodes, load
+# balancers, ingress IPs). Put them in RELAY_DENIED_PEERS (config.yaml).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

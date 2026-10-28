@@ -87,12 +87,12 @@ pub struct SendReq {
     #[serde(default = "yes")]
     #[schema(default = true)]
     mention_reply: bool,
-    /// Optional id of a message to forward here. The new message is a copy of it, made by the
-    /// server: its text, its server-hosted attachment (unless removed or expired, or uploads are
-    /// turned off; peer-to-peer attachments are not forwarded) and its link previews, with `forward` naming the original
-    /// author and time. `content`, the attachment fields and `reply_to` are ignored then. It
-    /// must be a `user` message you can read; anything else, including ids that do not exist,
-    /// gives the same `400 Cannot forward that message`. Forwards never ping anyone.
+    /// Optional id of a message to forward here. The server makes the new message as a copy: its
+    /// text, its server-hosted attachment (unless removed, expired, or uploads are off; P2P
+    /// attachments are not forwarded) and its link previews. `forward` names the original author and
+    /// time. `content`, the attachment fields and `reply_to` are then ignored. It must be a `user`
+    /// message you can read. All else, also unknown ids, gives the same
+    /// `400 Cannot forward that message`. Forwards never ping anyone.
     #[schema(example = 42)]
     #[serde(default)]
     forward_of: Option<i64>,
@@ -1399,15 +1399,14 @@ pub(crate) async fn message_location(
 
 /// List channel messages
 ///
-/// Returns top-level messages of a text channel (thread replies are excluded; see
-/// `reply_count`), oldest first, with link previews attached. Paging is by message id with
-/// `before`, `after` or `around` (no cursor header). Works with a bearer token, or for guests
-/// when guest access is on. Password-protected servers need membership, or for guests a valid
-/// `X-Guest-Grant`. Banned users are refused. Every refusal is the same `404 Not found` as for a
-/// channel that does not exist. Channels with permission overrides need the view
-/// permission (guests can never see them). Without read-history access only messages posted
-/// since you joined the server are returned (none if you are not a member). General rate-limit
-/// bucket.
+/// Returns the top-level messages of a text channel, oldest first, with link previews. Thread
+/// replies are not included (see `reply_count`). Page by message id with `before`, `after` or
+/// `around`. Works with a bearer token, or for guests when guest access is on.
+/// Password-protected servers need membership, or for guests a valid `X-Guest-Grant`. Banned
+/// users are refused. All refusals are the same `404 Not found` as for an unknown channel.
+/// Channels with permission overrides need the view permission (guests never see them). Without
+/// read-history access, you get only messages posted after you joined (none if you are not a
+/// member). General rate-limit bucket.
 #[utoipa::path(get, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) top-level messages, oldest first: the newest ones before `before` (or the latest), or with `after` the oldest ones after that id, or with `around` a window of `limit / 2` messages before that id followed by the message itself and newer ones (`around` wins over `after`, which wins over `before`); without read-history access only messages since joining are returned", body = Vec<Message>), (status = 400, description = "Non-numeric id or paging parameter (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn channel_messages(
     State(state): State<AppState>,
@@ -1434,16 +1433,18 @@ pub(crate) async fn channel_messages(
 
 /// Post a channel message
 ///
-/// Posts a top-level message, optionally with one attachment (an uploaded file via `media_id`
-/// or a peer-to-peer file via `p2p`). Requires a bearer token. Message text is checked against the profanity filter when it is on. In server channels this needs membership and the send permission for the channel. If the channel has slow mode, members without the Manage channels or Manage messages permission must wait `slowmode_seconds` between messages in the channel (thread replies count).
-/// Voice channels take no messages. Emits `message` to clients in the server that can see the
-/// channel; when the text has links, `embeds_resolved` follows once previews are fetched. Each
-/// `@username` in the text (outside code; at most 20 users, not yourself) pings that user if
-/// they are a member who can see the channel: stored for `GET /api/unreads` and sent to them as
-/// a `ping` event. With `reply_to` the message quotes a top-level message of the channel, and
-/// with `mention_reply` (default) its author gets a `reply` ping instead (one ping, not two).
-/// With `forward_of` the message is a copy of a message you can read (see `SendReq`); forwards
-/// never ping anyone. General rate-limit bucket.
+/// Posts a top-level message with an optional attachment (an uploaded file with `media_id` or a
+/// P2P file with `p2p`). Requires a bearer token. The profanity filter checks the text when it is
+/// on. In server channels, needs membership and the send permission. With slow mode, members
+/// without Manage channels or Manage messages wait `slowmode_seconds` between messages in the
+/// channel (thread replies count). Voice channels take no messages. Emits `message` to clients in
+/// the server that can see the channel. If the text has links, `embeds_resolved` follows when the
+/// previews are fetched. Each `@username` outside code pings that user if they are a member who
+/// can see the channel (at most 20 users, not yourself). The ping is stored for
+/// `GET /api/unreads` and sent as a `ping` event. `reply_to` quotes a top-level message of the
+/// channel. With `mention_reply` (default), its author gets one `reply` ping instead. With
+/// `forward_of`, the message is a copy of a message you can read (see `SendReq`). Forwards never
+/// ping. General rate-limit bucket.
 #[utoipa::path(post, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or attachment file name), voice channel, text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_channel_message(
     State(state): State<AppState>,
@@ -1535,16 +1536,18 @@ pub(crate) async fn thread_messages(
 
 /// Reply in a thread
 ///
-/// Posts a reply to a top-level channel message, starting the thread if needed. The reply
-/// lives in the root's channel and has `thread_root_id` set. Requires a bearer token.
-/// Message text is checked against the profanity filter when it is on. In server channels this needs membership and the send permission for the channel. If the channel has slow mode, members without the Manage channels or Manage messages permission must wait `slowmode_seconds` between messages in the channel (thread replies count). Emits `message` to clients in the server that can see the channel; when the
-/// text has links, `embeds_resolved` follows once previews are fetched. Each `@username` in
-/// the text (outside code; at most 20 users, not yourself) pings that user if they are a member
-/// who can see the channel: stored for `GET /api/unreads` and sent to them as a `ping` event.
-/// `reply_to` may quote the root or another reply of the same thread; with `mention_reply`
-/// (default) its author gets a `reply` ping instead of a mention ping. With `forward_of` the
-/// reply is a copy of a message you can read (see `SendReq`) and pings nobody. General
-/// rate-limit bucket.
+/// Posts a reply to a top-level channel message and starts the thread if needed. The reply is in
+/// the channel of the root and has `thread_root_id` set. Requires a bearer token. The profanity
+/// filter checks the text when it is on. In server channels, needs membership and the send
+/// permission. With slow mode, members without Manage channels or Manage messages wait
+/// `slowmode_seconds` between messages in the channel (thread replies count). Emits `message` to
+/// clients in the server that can see the channel. If the text has links, `embeds_resolved`
+/// follows when the previews are fetched. Each `@username` outside code pings that user if they
+/// are a member who can see the channel (at most 20 users, not yourself). The ping is stored for
+/// `GET /api/unreads` and sent as a `ping` event. `reply_to` can quote the root or another reply
+/// of the thread. With `mention_reply` (default), its author gets a `reply` ping instead of a
+/// mention ping. With `forward_of`, the reply is a copy of a message you can read (see `SendReq`)
+/// and pings nobody. General rate-limit bucket.
 #[utoipa::path(post, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or attachment file name), text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_thread_message(
     State(state): State<AppState>,
@@ -1766,18 +1769,18 @@ pub struct EditReq {
 
 /// Edit a message
 ///
-/// Replaces the text of your own message and sets `edited_at`. Requires a bearer token. Only
-/// the author may edit, only `user` messages (not call logs), and only while they could still
-/// send there: in server channels a member with the channel's send permission (slow mode does
-/// not apply), in DMs a participant. The text is validated like a new message (length, blank
-/// text without attachment, profanity filter in server channels). Sending the same text again
-/// changes nothing. Edits never ping anyone and keep the reply quote, reactions and attachment.
-/// When the links in the text change, the old link previews are removed and new ones are
-/// resolved. In server channels, clients that can see the channel get a content-free
-/// `message_updated` stub (`id`, `thread_root_id`, `edited_at`, `stub: true`; also sent once new
-/// previews are stored) and re-read the message through the message list (`around=id`), which
-/// applies the read-history rules. In DMs both participants get `message_updated` with the
-/// whole message, and new previews as `embeds_resolved`. General rate-limit bucket.
+/// Replaces the text of your own message and sets `edited_at`. Requires a bearer token. Only the
+/// author can edit, only `user` messages (not call logs), and only while the author can still
+/// send there: in server channels, membership and the send permission (slow mode does not
+/// apply); in DMs, being a participant. The text is checked like a new message (length, blank
+/// text without attachment, profanity filter in server channels). The same text again changes
+/// nothing. Edits never ping and keep the reply quote, reactions and attachment. If the links
+/// change, old link previews are removed and new ones are fetched. In server channels, clients
+/// that can see the channel get a `message_updated` stub without content (`id`,
+/// `thread_root_id`, `edited_at`, `stub: true`; sent again when new previews are stored). They
+/// read the message again through the message list (`around=id`), which applies the
+/// read-history rules. In DMs, both participants get `message_updated` with the full message, and
+/// new previews as `embeds_resolved`. General rate-limit bucket.
 #[utoipa::path(patch, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), request_body = EditReq, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Blocked by the profanity filter, text over 4000 characters, blank text on a message without attachment (`Message is empty`), or not a user message (`Cannot edit this message`). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not your message (`You can only edit your own messages`), no longer a member of the server, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn edit_message(
     State(state): State<AppState>,
@@ -2394,16 +2397,16 @@ pub(crate) async fn unreads(
 
 /// Mark a channel, DM or thread read
 ///
-/// Stores the caller's last-read message id for a scope (`c<channel id>` or `d<dm id>`). The
-/// position only moves forward: a lower `last_read` leaves the stored one unchanged. The caller
-/// must be able to read the scope: for a channel the same checks as listing its messages (not
-/// banned, a member of a password-protected server, the view permission), for a DM being one of
-/// its participants; otherwise nothing is stored. Also marks the caller's unseen pings in the
-/// scope seen (any kind, outside threads, ids up to `pings_until` when given). A thread scope
-/// (`t<root id>`) stores no position; it marks the pings on that thread's replies seen and is
-/// checked like listing the thread. Requires a bearer token. When the requested position is the
-/// one stored, or pings were marked seen, emits `read_updated` to the caller's own connections
-/// with `pings_until`, the highest ping id marked seen (0: none), so other devices clear those
+/// Stores the last-read message id of the caller for a scope (`c<channel id>` or `d<dm id>`). The
+/// position only moves forward: a lower `last_read` changes nothing. The caller must be able to
+/// read the scope. For a channel, the checks are the same as for listing its messages (not
+/// banned, member of a password-protected server, view permission). For a DM, the caller must be
+/// a participant. Otherwise nothing is stored. Also marks the unseen pings of the caller in the
+/// scope as seen (all kinds, outside threads, ids up to `pings_until` if given). A thread scope
+/// (`t<root id>`) stores no position. It marks pings on the replies of the thread as seen and has
+/// the same checks as listing the thread. Requires a bearer token. If the position is stored or
+/// pings were marked seen, emits `read_updated` to the connections of the caller with
+/// `pings_until` (the highest ping id marked seen, 0 for none). Other devices then clear those
 /// badges and keep newer ones. General rate-limit bucket.
 #[utoipa::path(post, path = "/api/read", tag = "Messages", request_body = ReadReq, responses((status = 200, description = "The stored read position, which never moves backwards (for a thread, `last_read` as sent)", body = ReadState), (status = 400, description = "`scope` is not `c`, `d` or `t` followed by digits (`Invalid scope`), or a `t` scope names a DM message or a thread reply (`Threads only start on channel messages`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the channel, DM or thread root does not exist or you cannot read it (hidden channel, before your join without read history, a server you have no access to or are banned from, a DM you are not in, or a participant's account is being deleted); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn mark_read(

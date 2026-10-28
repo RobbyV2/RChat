@@ -853,9 +853,9 @@ export interface RailServer {
 
 type RailSource = Pick<RChatState, 'me' | 'guestServers' | 'guestNames' | 'servers'>
 
-// The server a signed-in user is previewing: a server open without being a member (only
-// public ones can be, the server enforces that). It has a temporary rail icon and a join bar,
-// and is forgotten as soon as the view moves elsewhere.
+// The server a signed-in user previews: open without membership (only public servers; the
+// server enforces it). It has a temporary rail icon and a join bar. It is forgotten when the view
+// moves away.
 export const previewServer = (s: RChatState): string | null => {
   const v = s.view
   if (!s.me || s.guest || v?.kind !== 'channel') return null

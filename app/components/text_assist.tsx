@@ -31,9 +31,8 @@ const NO_MESSAGES: Message[] = []
 const NO_PEOPLE: UserRef[] = []
 const CACHE_MAX = 200
 
-// Mention suggestions for a text box: recent authors in view, then members matching the
-// query from the server (debounced, cached per server and query), then the cached member
-// list. DMs offer the other participant.
+// Mention suggestions: recent authors in view, then server members that match the query
+// (debounced and cached), then cached members. DMs suggest the other person.
 function useMentionSearch(listKey: string | null, query: string | null) {
   const me = useStore(s => s.me?.username ?? null)
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
@@ -91,9 +90,9 @@ function useMentionSearch(listKey: string | null, query: string | null) {
   )
 }
 
-// `:shortcode` and `@mention` autocomplete for a message text box, plus auto-grow up to
-// `maxHeight`. `listKey` is the message list the box writes to (mention suggestions and the
-// popup scope); `getText` reads the current text when an item is accepted.
+// `:shortcode` and `@mention` autocomplete for a message box, and auto-grow up to `maxHeight`.
+// `listKey` is the message list of the box. `getText` reads the text when the user accepts an
+// item.
 export function useTextAssist({
   listKey,
   text,

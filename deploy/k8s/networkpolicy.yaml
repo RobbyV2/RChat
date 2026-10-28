@@ -1,14 +1,13 @@
-# Only the ingress controller may open connections to the RChat pods. The roles never
-# call each other (they share state through Postgres and rchat-valkey, which has its own
-# policy in valkey.yaml), so no pod-to-pod traffic is admitted; rchat-embeds and
-# rchat-jobs have no Ingress route and serve only their probes. Kubelet probes come from
-# the node, which common enforcing CNIs (Calico, Cilium) allow regardless. Takes effect
-# only with a CNI that implements NetworkPolicy. The optional rchat-relay pod
-# (relay.yaml) uses hostNetwork, which NetworkPolicy does not cover.
+# Only the ingress controller can connect to the RChat pods. The roles never call each other
+# (they share state through Postgres and rchat-valkey, see valkey.yaml), so no pod-to-pod
+# traffic is allowed. rchat-embeds and rchat-jobs have no Ingress route and serve only probes.
+# Kubelet probes come from the node, which Calico and Cilium allow. This needs a CNI that
+# enforces NetworkPolicy. The optional rchat-relay pod (relay.yaml) uses hostNetwork, which
+# NetworkPolicy does not cover.
 #
-# REPLACE the two selectors below if your controller is not a standard ingress-nginx
-# install (namespace ingress-nginx, controller pods labelled
-# app.kubernetes.io/name: ingress-nginx and app.kubernetes.io/component: controller).
+# REPLACE the two selectors below if your controller is not a standard ingress-nginx install
+# (namespace ingress-nginx, pods labelled app.kubernetes.io/name: ingress-nginx and
+# app.kubernetes.io/component: controller).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

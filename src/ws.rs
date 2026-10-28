@@ -1198,17 +1198,16 @@ pub async fn depart(state: &AppState) {
 /// `token` (or send an unknown one) to connect as a guest, which only works while guest access
 /// is on, otherwise the socket closes. Any other first frame also connects as a guest.
 ///
-/// After that the client sends `viewing` (the server it has open, for presence), `subscribe`
-/// (servers to follow, with guest grants for password-protected ones), `voice_join` /
-/// `voice_leave`, `call_start` / `call_accept` / `call_decline` / `call_leave` for direct
-/// message calls, `rtc_signal` for WebRTC signalling, and `p2p_hosting` / `p2p_who` for
-/// peer-to-peer files. Guests are read-only: no presence, voice or calls. The server sends the
-/// events listed in `WsEvent` in `src/ws.rs`, e.g. `message`, `message_updated`,
-/// `message_deleted`, `member_joined`, `presence_changed`, `voice_state`, `call_state`,
-/// `p2p_hosted` (to a `p2p_hosting` sender: which of its files are still live attachments),
-/// `error` and `resync` (refetch state after missed events). Frames are at most 64 KiB. Not
-/// part of the bearer security scheme: the token goes in the `auth` frame. General
-/// rate-limit bucket for the upgrade request.
+/// Then the client sends `viewing` (the open server, for presence), `subscribe` (servers to
+/// follow, with guest grants for password-protected ones), `voice_join` / `voice_leave`,
+/// `call_start` / `call_accept` / `call_decline` / `call_leave` for DM calls, `rtc_signal` for
+/// WebRTC signalling, and `p2p_hosting` / `p2p_who` for P2P files. Guests are read-only: no
+/// presence, voice or calls. The server sends the events in `WsEvent` (`src/ws.rs`), for example
+/// `message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`,
+/// `voice_state`, `call_state`, `p2p_hosted` (tells a `p2p_hosting` sender which of its files are
+/// still live attachments), `error` and `resync` (fetch state again after missed events). Frames
+/// are at most 64 KiB. The token goes in the `auth` frame, not in the bearer security scheme.
+/// General rate-limit bucket for the upgrade request.
 #[utoipa::path(get, path = "/api/ws", tag = "Realtime", responses((status = 101, description = "WebSocket upgrade"), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String), (status = 503, description = "Realtime bus not ready", content_type = "text/plain", body = String)), security(()))]
 pub async fn handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
     if !state.hub.ready() {
@@ -2295,9 +2294,9 @@ async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent
     Some(deliver)
 }
 
-// Hosted ids are read capabilities and a hoster's broadcast goes to everyone who shares a server
-// with them, so others learn about hosting only through p2p_who: filtered to the ids they can
-// read, and naming the hoster's tab that is in a P2P call with them.
+// Hosted ids are read capabilities, and the broadcast of a hoster goes to all who share a server
+// with them. So others learn about hosting only through p2p_who: filtered to the ids they can
+// read, with the tab of the hoster that is in a P2P call with them.
 fn hosting_via_who(access: &mut Access, ev: &WsEvent) -> bool {
     let me = access.user.as_deref();
     match ev {

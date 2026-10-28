@@ -21,9 +21,8 @@ images:
   - name: ghcr.io/robbyv2/rchat
     newTag: nightly
 
-# rchat-secrets is generated from secrets.env, which you create from secrets.env.example
-# and never commit (it is gitignored). The name gets a content hash, so changing a
-# secret rolls the pods that use it.
+# rchat-secrets comes from secrets.env. Create it from secrets.env.example and never commit
+# it. A change to a secret restarts the pods that use it.
 secretGenerator:
   - name: rchat-secrets
     envs:

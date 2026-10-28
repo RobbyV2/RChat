@@ -27,8 +27,8 @@ const scrollParent = (el: HTMLElement | null) => {
   return null
 }
 
-// Keeps the toolbar of a row at the top edge of its scroll area inside the viewport: it
-// normally overlaps the previous row by 12 px and moves down when that would be clipped.
+// Keeps the row toolbar inside the scroll area. It overlaps the previous row by 12 px and moves
+// down if the top would be clipped.
 function useClampedToolbar(ref: RefObject<HTMLDivElement | null>) {
   useEffect(() => {
     const bar = ref.current

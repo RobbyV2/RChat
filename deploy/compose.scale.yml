@@ -1,22 +1,18 @@
-# Horizontally scaled RChat: every service role runs as its own container behind nginx,
-# sharing one Postgres and one Valkey (any Redis-protocol server works).
+# Scaled RChat: each role runs in its own container behind nginx, with one Postgres and one
+# Valkey (any Redis-protocol server works).
 #
 #   VALKEY_PASSWORD=$(openssl rand -hex 24) docker compose -f deploy/compose.scale.yml up -d
 #
-# (or put VALKEY_PASSWORD in deploy/.env). Valkey is the trusted realtime bus: it requires
-# that password, is never published on the host, and must stay on a private network
-# (rediss:// TLS is not supported yet). Use a URL-safe password (hex), it is embedded in
-# REDIS_URL.
+# You can also put VALKEY_PASSWORD in deploy/.env. Use a hex password (it goes in REDIS_URL).
+# Valkey is not published on the host. Keep it on a private network (no TLS).
 #
-# nginx is the only proxy: it shares the edge network (fixed subnet RCHAT_EDGE_SUBNET,
-# default 10.240.80.0/24; pick another if it overlaps a local network) with the services
-# it routes to, and those trust X-Forwarded-For only from that subnet (TRUSTED_PROXIES).
+# nginx is the only proxy. It shares the edge network (RCHAT_EDGE_SUBNET, default
+# 10.240.80.0/24) with the services, and they trust X-Forwarded-For only from that subnet.
 # Postgres, Valkey, embeds and jobs are only on the backend network.
 #
-# Open http://localhost:8080 (RCHAT_HTTP_PORT). PeerJS is published on 9001
-# (RCHAT_PEERJS_PORT), the port the prebuilt frontend dials; change it only together
-# with an image built with --build-arg NEXT_PUBLIC_PEERJS_PORT=<port>.
-# Scale a role with: docker compose -f deploy/compose.scale.yml up -d --scale gateway=4
+# Open http://localhost:8080 (RCHAT_HTTP_PORT). PeerJS is on 9001 (RCHAT_PEERJS_PORT). To change
+# it, build the image with --build-arg NEXT_PUBLIC_PEERJS_PORT=<port>.
+# Scale a role: docker compose -f deploy/compose.scale.yml up -d --scale gateway=4
 
 x-rchat: &rchat
   image: ${RCHAT_IMAGE:-ghcr.io/robbyv2/rchat:nightly}
@@ -34,18 +30,14 @@ x-env: &env
   REDIS_URL: redis://:${VALKEY_PASSWORD:?set VALKEY_PASSWORD}@valkey:6379
   TRUSTED_PROXIES: ${RCHAT_EDGE_SUBNET:-10.240.80.0/24}
   RUST_LOG: ${RUST_LOG:-info}
-  # Instance identity: every replica shares the id and signing key stored in Postgres.
-  # PUBLIC_URL is the origin users open (it becomes the iss of identity assertions); set it.
-  # Unset, a request's Host (X-Forwarded-Host from nginx) is reported only if it is loopback
-  # or listed in ALLOWED_HOSTS (comma-separated host or host:port), otherwise the first
-  # ALLOWED_HOSTS entry, or localhost.
+  # Set PUBLIC_URL to the origin people open. Without it, the request host is used only if it is
+  # loopback or in ALLOWED_HOSTS.
   INSTANCE_NAME: ${RCHAT_INSTANCE_NAME:-RChat}
   PUBLIC_URL: ${RCHAT_PUBLIC_URL:-}
   ALLOWED_HOSTS: ${RCHAT_ALLOWED_HOSTS:-}
-  # Connection helpers for calls and P2P files, all off by default. RCHAT_PUBLIC_STUN=true
-  # advertises the bundled public STUN list. RCHAT_RELAY_ENABLED=true (with
-  # RCHAT_RELAY_PUBLIC_IP, and RCHAT_RELAY_HOST when clients reach it under another name)
-  # makes every replica advertise the built-in relay; run it with --profile relay.
+  # Connection helpers for calls and P2P files, all off by default. RCHAT_PUBLIC_STUN=true gives
+  # public STUN servers. RCHAT_RELAY_ENABLED=true (with RCHAT_RELAY_PUBLIC_IP, and
+  # RCHAT_RELAY_HOST if needed) turns on the built-in relay. Run it with --profile relay.
   PUBLIC_STUN: ${RCHAT_PUBLIC_STUN:-false}
   RELAY_ENABLED: ${RCHAT_RELAY_ENABLED:-false}
   RELAY_HOST: ${RCHAT_RELAY_HOST:-}
@@ -76,8 +68,7 @@ services:
   valkey:
     image: valkey/valkey:8-alpine
     restart: unless-stopped
-    # The password goes into a config file (mode 600 in the container's /tmp), not onto the
-    # command line, so ps on the host does not show it.
+    # The password goes into a config file, not onto the command line, so ps does not show it.
     command:
       - sh
       - -c
@@ -149,14 +140,11 @@ services:
     deploy:
       replicas: 2
 
-  # The built-in STUN/TURN relay, one container (allocations live in its memory). Off by
-  # default: start it with --profile relay and RCHAT_RELAY_ENABLED=true. It shares
-  # DATABASE_URL and REDIS_URL with the other roles (it hears about bans over the bus and
-  # refuses to start without them). It publishes UDP 3478 and the relay range 49160-49415
-  # on the host; reserve that range on the host so nothing else listens there (it lies in
-  # the default ephemeral range: sysctl net.ipv4.ip_local_reserved_ports=49160-49415). It
-  # never relays to private, loopback or metadata addresses, or to its own RELAY_PUBLIC_IP
-  # except the range ports its live allocations hold.
+  # The built-in STUN and TURN relay, one container. Start it with --profile relay and
+  # RCHAT_RELAY_ENABLED=true. It needs DATABASE_URL and REDIS_URL. It publishes UDP 3478 and
+  # 49160-49415. Reserve that range on the host:
+  # sysctl net.ipv4.ip_local_reserved_ports=49160-49415.
+  # It never relays to private, loopback or metadata addresses, or to its own RELAY_PUBLIC_IP.
   relay:
     <<: *rchat
     profiles: [relay]

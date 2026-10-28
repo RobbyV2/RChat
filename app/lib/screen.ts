@@ -59,13 +59,12 @@ export interface ShareAudioFacts {
   canRestrict: boolean
 }
 
-// Whether the share's audio is sent, and whether to tell the sharer that
-// system audio isn't. Anything but a tab can carry all system output, our
-// own playback of the call included, unless the browser confirms it left
-// that out; sent anyway, it would echo the call back to everyone. A tab is
-// never ours (selfBrowserSurface: 'exclude'), so its audio is always kept.
-// A whole screen that came without audio on a browser that can't leave our
-// playback out gets the note too: we would have dropped it all the same.
+// Tells if the share audio is sent, and if the sharer gets a note that system audio is not
+// sent. Any capture other than a tab can carry all system output, our playback of the call
+// included. If the browser does not confirm that it left our playback out, the audio would echo
+// the call to all, so we drop it. A tab is never ours (selfBrowserSurface: 'exclude'), so tab
+// audio is always kept. A full screen without audio, on a browser that cannot leave our playback
+// out, also gets the note.
 export function shareAudio(f: ShareAudioFacts): { keep: boolean; note: boolean } {
   if (f.audio) {
     const keep = f.restricted || f.surface === 'browser'
@@ -139,10 +138,9 @@ export async function captureScreen(): Promise<ScreenCapture | null> {
   return { video, audio, audioNote: plan.note }
 }
 
-// Caps the encoder for a screen sender and keeps text sharp rather than
-// smooth when bandwidth is short. Each step is applied on its own, so a
-// browser that rejects one still gets the other; browsers without
-// setParameters, or a sender not negotiated yet, just send with defaults.
+// Caps the encoder for a screen sender and keeps text sharp, not smooth, when bandwidth is low.
+// Each step applies separately, so if a browser rejects one, the other still applies. Without
+// setParameters, or before negotiation, the sender uses defaults.
 export async function tuneScreen(sender: RTCRtpSender) {
   if (typeof sender.getParameters !== 'function' || typeof sender.setParameters !== 'function')
     return

@@ -12,205 +12,168 @@
 
 # RChat
 
-Anonymous chat with a Discord-style layout and Google Material 3 dark theme. Servers, channels, and direct messages update live over a WebSocket. Everything runs locally; no external APIs, no telemetry, no email.
+RChat is an anonymous chat app with a layout like Discord. It runs on your own machine. It uses no external services, no email and no tracking.
 
-Browser support: current Chromium and Firefox, and Safari and iOS 16.4 or newer (message rendering needs regular-expression lookbehind, which older Safari lacks).
+<p align="center">
+  <img src="docs/screenshots/chat-dark.png" alt="A server channel in the dark theme with a join notice, mentions, replies, reactions, a forwarded message, a pin notice and online members" width="900">
+</p>
+
+Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or newer.
 
 ## Features
 
-- Servers with channels, threads, roles, voice, attachments and link previews; direct messages and calls.
-- Voice and video: a Discord-style call stage with speaking rings, focus mode and a filmstrip, mute and deafen, a Voice Connected panel, and screen sharing (alongside your camera, with LIVE badges and tab or system audio where the browser can exclude the call's own sound).
-- Invite links: pasting one shows a join card (server icon, message preview, banned or already-joined states, an optional password in the link or a password prompt), and opening one shows a full invite page.
-- Mini profiles: click any avatar or name for roles with their colors, banner, a short description ("About me" in Settings, up to 190 characters), when they joined RChat and the current server, moderation controls you're allowed to use, and a quick DM box.
-- Server bans, and a permission hierarchy: moderators can only remove members whose permissions are a strict subset of theirs, and nobody can grant permissions they don't have.
-- Server appearance: a custom banner and name color for the header at the top of the channel list.
-- Server password changes can keep everyone or remove everyone you're allowed to moderate, with a separate choice for guest access.
-- Account password changes, switching between a text password and a 7-word password either way.
-- Hold-and-drag reordering for servers and DMs, pinned DMs (your DM with yourself is pinned automatically), and server folders (drop one server onto another).
-- Appear offline, streamer mode, and per-target profanity filter controls for the site admin.
-- Lazy-loaded server, DM, member and message lists, and indexed message search with date filters.
-- Horizontal scaling: service roles, a shared Redis-protocol bus, Postgres, and Compose, Kubernetes and nginx references (see Scaling).
-- Instance identity and discovery as groundwork for a multi-instance client (see Instances and identity).
-- Optional connection helpers for calls and P2P files: a bundled public STUN list and a built-in STUN/TURN relay, both off by default (see Connection helpers).
+| Feature                | What it does                                                                                                          |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Servers and channels   | Make servers with text channels, voice channels and threads.                                                          |
+| Roles                  | Give members roles with a color and permissions. A member cannot give more permissions than they have.                |
+| Voice, video and share | Talk in voice channels. Turn on your camera or share your screen.                                                     |
+| Direct messages        | Send private messages. Start voice or video calls in a DM.                                                            |
+| P2P calls              | Call over a direct link between browsers.                                                                             |
+| P2P attachments        | Send files of any size from your browser. The server stores only the name, size and hash. Works when uploads are off. |
+| Relay servers          | Help calls and P2P files connect through STUN and TURN. Off by default. Users can turn helpers off.                   |
+| Uploads                | Upload files and images up to 25 MB. The server deletes them after one day. The site admin can turn them off.         |
+| Text only mode         | Turn off uploads and P2P attachments. Then messages can contain only text and emoji.                                  |
+| Link previews          | Show a card for links in a message. The server gets the preview, not your browser.                                    |
+| Mentions               | Type `@name` to ping a person. The app highlights messages that mention you.                                          |
+| Reactions              | React to a message with an emoji. Your own reactions show in blue.                                                    |
+| Emoji picker           | Search emoji by name. The picker keeps your frequent emoji and skin tone.                                             |
+| Replies                | Reply to a message. You can choose to ping the author or not.                                                         |
+| Edit messages          | Edit your message. Type `s/old/new` to fix your last message quickly.                                                 |
+| Forwarding             | Forward a message to a different channel or DM. Open a public server as a preview before you join.                    |
+| Pins                   | Pin important messages. Open all pins from the channel header.                                                        |
+| Join and leave notices | Show a notice when a member joins or leaves. Server admins choose the channel or turn notices off.                    |
+| Restricted channels    | Let only some roles or members see a channel or send in it.                                                           |
+| Slow mode              | Set a wait time between messages in a channel.                                                                        |
+| Server passwords       | Use a permanent password, temporary passwords or tickets with a use limit. Close the server to new members.           |
+| Private servers        | A server with a password stays hidden from people who are not members.                                                |
+| Invite links           | Paste an invite link to show a join card. Open it to see a full invite page.                                          |
+| Mini profiles          | Click a name to see roles, bio, join dates and a quick DM box.                                                        |
+| Moderation             | Kick and ban members. The site admin can delete users, servers and messages.                                          |
+| Notifications          | Choose all messages, mentions only or nothing per server or channel. Mute for a time. Get desktop alerts.             |
+| Organize               | Drag servers and DMs into your order. Drop a server on another to make a folder. Pin DMs.                             |
+| Search                 | Search messages with date filters. Search for servers by name.                                                        |
+| Sync config            | Export your settings and layout as text, a file, a share link or a QR code. Import them on a different device.        |
+| Appear offline         | Hide your online status from other people.                                                                            |
+| Streamer mode          | Blur names on screen while you stream. Hover to show a name.                                                          |
+| Guests                 | Read public servers without an account. Guests cannot send messages.                                                  |
+| Accounts               | Sign in with a text password or with 7 words in order. No email and no phone number.                                  |
+| Themes                 | Use the dark or the light theme. Install the app as a PWA.                                                            |
+| Profanity filter       | The site admin turns the filter on or off for messages, names, file names and bios.                                   |
+| Multiple instances     | Each instance has its own name and identity. The login page lets you pick a different instance.                       |
+
+<p align="center">
+  <img src="docs/screenshots/replies-reactions-forward.png" alt="A mention, a reply, reactions with your own reaction in blue, and a forwarded message card" width="440">
+  <img src="docs/screenshots/emoji-picker.png" alt="The emoji picker with frequent emoji and categories" width="440">
+</p>
+<p align="center">
+  <img src="docs/screenshots/notification-menu.png" alt="The server menu with notification settings: all messages, only mentions or nothing" width="440">
+  <img src="docs/screenshots/sync-config-qr.png" alt="The Sync config tab with a share link and its QR code" width="300">
+</p>
+<p align="center">
+  <img src="docs/screenshots/chat-light.png" alt="The same channel in the light theme" width="600">
+</p>
+<p align="center">
+  <img src="docs/screenshots/direct-messages-light.png" alt="A direct message in the light theme with call and P2P call buttons" width="600">
+</p>
+<p align="center">
+  <img src="docs/screenshots/mobile-chat.png" alt="A channel on a phone" width="260">
+  <img src="docs/screenshots/mobile-channels.png" alt="The server and channel list on a phone" width="260">
+</p>
 
 ## Setup
 
-Prerequisites: Rust (stable), Bun, wasm-pack, and the just command runner.
+You need Rust, Bun, wasm-pack and [just](https://github.com/casey/just).
+
+Copy the example settings:
 
 ```bash
 cp .env.local.example .env.local
+```
+
+Install the dependencies:
+
+```bash
 just src install
+```
+
+Start the app:
+
+```bash
 just src dev
 ```
 
-Fill out `.env.local` after renaming; the defaults work as-is for local development. Open http://localhost:3000. The first account registered becomes the hidden site admin.
-
-Production: `just src prod`. API-only backend: `just src api`.
+Open http://localhost:3000. The first account you register is the site admin. Nobody else can see this.
 
 ## Deployment modes
 
-- Full (default): one Rust server on port 3000 serves `/api` and proxies everything else to the Next.js server. `just src prod`.
-- Split: run the Rust API headless anywhere with `APP_MODE=api-only`, and deploy the frontend as a static site baked with that API's URL. The static bundle talks to the API over CORS and connects its WebSocket to the same host, so the two halves can live on different origins.
+Run everything in one process (the default):
 
 ```bash
-# on the API host (no UI, serves only /api)
-APP_MODE=api-only just src api
-
-# build the static frontend against that API (outputs to out/)
-just src build-static https://api.your-host.com
-# or preview it locally: just src static https://api.your-host.com
+just src prod
 ```
 
-The static build inlines `NEXT_PUBLIC_API_URL` as the default instance; every request and the WebSocket target it directly. It is optional: a static bundle built without it defaults to its own origin, and the login page's Instance field lets anyone point it at any RChat instance at runtime (see Instances and identity). `out/` is plain files for any static host (an `index.html` copy is written to `404.html` so deep links like `/s/rchat/1/` boot the app). Guest and public-server browsing work cross-origin; authenticated media loaded via `<img>` needs the API on the same site or a public server, since image tags cannot send the bearer token.
+Run only the API:
 
-Docker (nightly image, published by CI and matching the `nightly` git tag):
+```bash
+APP_MODE=api-only just src api
+```
+
+Build the frontend as static files for that API. The files go to `out/`:
+
+```bash
+just src build-static https://api.example.com
+```
+
+Run the nightly Docker image:
 
 ```bash
 docker run -p 3000:3000 -v rchat-data:/data ghcr.io/robbyv2/rchat:nightly
 ```
 
-Or `docker compose up` to build locally.
+Build the image locally with `docker compose up`.
 
 ## Scaling
 
-The same image and binary run either as one process (everything above, the default) or as many processes sharing one Postgres, each serving a subset of service roles behind any HTTP load balancer that routes by path. Realtime state (presence, voice rooms, calls, P2P hosting) is shared through an optional Redis-protocol server: Redis, Valkey, KeyDB and Dragonfly all work.
+One process is enough for most groups. For more load, run many copies of the same image. All copies share one Postgres database and one Redis server. Valkey, KeyDB and Dragonfly also work.
 
-```
-                                 browsers
-                                    |
-    +-------------------------------+--------------------------------+
-    |     HTTP load balancer (nginx, Ingress, ALB), routes by path     |
-    +----+-----------+------------+-------------+-----------+----+---+
-         |           |            |             |           |    |
-      /api/ws      /api       /api/media   /api/search      /   /peerjs
-         |           |            |             |           |    |
-    gateway xN    api xN      media xN      search xN    web xN  peerjs x1
-         |           |            |             |           |
-         +-----------+------+-----+-------------+-----------+
-                            |      embeds xN, jobs xN (no HTTP traffic)
-                            |             |
-             +--------------+-------------+
-             |                            |
-     Postgres (all data)        Valkey / Redis (realtime log, snapshot,
-                                embed job queue, locks)
+Give each copy one or more roles with `RCHAT_ROLES`. The roles are `api`, `gateway`, `media`, `search`, `embeds`, `jobs`, `web` and `relay`. Your load balancer sends each path to the correct role.
+
+There are two examples:
+
+```bash
+# Docker Compose with nginx
+POSTGRES_PASSWORD=$(openssl rand -hex 24) VALKEY_PASSWORD=$(openssl rand -hex 24) \
+  docker compose -f deploy/compose.scale.yml up -d
+
+# Kubernetes (fill in deploy/k8s/secrets.env first)
+kubectl apply -k deploy/k8s
 ```
 
-| Role      | Serves or runs                                                                    |
-| --------- | --------------------------------------------------------------------------------- |
-| `api`     | every `/api` REST route not listed below, plus Swagger                            |
-| `gateway` | `/api/ws` (the WebSocket)                                                         |
-| `media`   | `POST /api/media` uploads and `GET /api/media/{id}` downloads                     |
-| `search`  | `/api/search` and `/api/server_search`                                            |
-| `embeds`  | the URL unfurl worker                                                             |
-| `jobs`    | the expired media sweeper, the stale row sweeper and the voice idle sweeper       |
-| `web`     | proxies everything outside `/api` to the bundled Next.js server (`APP_MODE=full`) |
-| `relay`   | the built-in STUN/TURN relay on UDP, only with `RELAY_ENABLED=true` (one process) |
-
-`RCHAT_ROLES` (or `--roles`) is `all` or a comma list such as `api,search`. When it is unset, `APP_MODE=full` means `all` and `APP_MODE=api-only` means every role except `web`. A list that runs only part of the backend (some but not all of `api`, `gateway`, `media`, `search`, `embeds`, `jobs`; `web` and `relay` don't count) means other processes run the rest, so such an instance refuses to start unless `REDIS_URL` and a Postgres `DATABASE_URL` are set; a `DATABASE_URL` or `REDIS_URL` that is set but empty is a startup error too, so a blank secret cannot silently fall back to sqlite or the in-process hub. Every instance answers `GET /api/health` (the process is up) and `GET /api/ready` (the database is reachable and, with `REDIS_URL`, the instance can both write to and read from the realtime bus and has caught up; 503 otherwise), both outside the rate limiter.
-
-How the shared state works:
-
-- Without `REDIS_URL` the hub stays in-process, exactly as in a single-node deployment. With it, every hub mutation (event broadcasts, presence, voice joins and leaves, calls, P2P hosting, the idle sweep, heartbeats) is appended to one Redis Stream (`{REDIS_PREFIX}:hub`, capped at about `REDIS_HUB_MAXLEN` entries, default 100000). Every instance replays that stream in order into its own copy of the realtime state, using the stream entry time as the clock, so all copies agree. Reads such as who is online or who is in a voice room stay local, and each instance delivers events to its own WebSocket connections with the usual per-connection filtering.
-- Each instance numbers its own operations, and every copy only accepts increasing numbers. Once a later one of them has been applied, an earlier one that never showed up (a failed command in a pipeline, writes lost in a Redis failover) was applied nowhere and is reported as lost: whoever waited for it gets the fallback result, voice leaves and connection cleanup are posted again until they land, and the instance re-announces its connections' presence and P2P hosting, so no presence, voice or P2P ghosts are left behind. This, and an instance finding that the others purged it (it kept applying the stream, so its clients saw the purge), re-checks each connection's access but sends clients no `resync` hint, since no client event was lost. Lost broadcasts, forced offlines and voice evictions go to the instance's aftermath task, which checks each against the database and posts its current form again, in the original order, or drops it when it no longer holds: messages (with their link previews), resolved previews, call-log updates, channels, servers, admin flags, users and settings are re-read (a message deleted meanwhile is dropped, and one deleted while it is being posted again is followed by its deletion); a rename is dropped when the old name belongs to another server by now, a server deletion when the name was taken again, a ban when the account exists again, a join when the membership is gone, and a leave or kick when the user is a member again (the server's voice rooms are then re-checked against channel permissions instead); a lost P2P availability event skips the database check and is posted again at once, ahead of anything the instance posts after noticing the loss, unless the same instance already posted a later one for that hoster, so the newest one still lands last. Heartbeats bound the detection to about 5 seconds. The state snapshots record which numbers were skipped, so an instance that restores one tells its applied operations from its lost ones the same way.
-- Appear offline holds cluster-wide: changing it broadcasts a `presence_mode` event over the bus, and every connection of that account, on whichever gateway, withdraws or restores its own presence; a connection that re-checks its access also re-reads the setting. Kicks, bans and server password changes that remove members go out as ordered bus events followed by a forced offline, so every gateway updates its connections' access, presence and voice rooms in the same order. An account password change revokes the account's other login tokens and broadcasts a `tokens_revoked` event over the bus; each connection of that account, on any gateway, checks its own token and closes when it is gone (a connection that missed the event finds out at its next access re-check, which also checks the token). When the database cannot answer that check, the connection fails closed: it is held back as described below and closed after 30 seconds unless a retry confirms the token.
-- Instances heartbeat every 5 seconds. One that is silent for 30 seconds is purged: its users go offline, its voice occupants leave, its calls end and their call logs are finalized. A graceful shutdown (SIGTERM) removes its state immediately.
-- A starting instance loads the latest state snapshot (`{REDIS_PREFIX}:hub:snapshot`, refreshed every 5 seconds by one instance) and replays the stream from there. It reports not ready and refuses WebSocket upgrades until it has caught up.
-- An instance whose read position is no longer in the stream (it fell more than `REDIS_HUB_MAXLEN` entries behind and was trimmed past, or a failover lost entries) re-bootstraps from the newest snapshot the stream still covers, waiting up to 30 seconds for one before it replays what is left. Meanwhile it reports not ready and never writes a snapshot. If the stream was reset instead (Redis restarted without persistence), it keeps its state and continues at once, delivering everything written since the reset to its clients. After either, every connection re-checks its access (account, memberships, subscriptions, guest access, appear-offline setting) before re-announcing its presence, as it does when it falls behind its local event queue, and then sends its client the same `resync` hint, so the client reloads what it may have missed; if the database is unreachable at that moment, the connection stays open but is held back: it gets no server, channel or account-scoped events (no DMs, calls, signalling or events about the account itself, and P2P lookups and voice or call requests other than leaving are refused; only events every client gets, such as public profile updates, still arrive) while it retries with backoff (2 seconds, doubling; further errors before the next retry do not push it back), does not re-announce presence or P2P hosting until a retry succeeds, gets a `resync` hint once it does, and after 30 seconds of failures it is closed so the client reconnects and authenticates again (a connection whose account cannot be loaded is refused rather than treated as a guest). A connection follows a server rename only after the database confirms its membership in, or access to, the new name; when a server is created or renamed under a name the connection still holds (because it missed a rename or deletion of the server that had it), the connection checks that name against the database and reloads its access if the check fails. A rename whose new name no longer exists is followed as is, so a quick second rename still finds the server. Database errors during these checks hold the connection back the same way instead of dropping the server. Channel events are only delivered when the channel belongs to the server the event names, so an event or voice room still labelled with a reused name cannot reach the new server's members. However many connections hit one of these database errors, each kind is logged once and then summarized with a count at most every 10 seconds.
-- With `REDIS_URL`, an instance without the `embeds` role queues URL unfurls on a Redis Stream consumer group (`{REDIS_PREFIX}:embeds`), which `embeds` instances work through; jobs left unacknowledged for 60 seconds are reclaimed, and a job delivered 3 times without success is dropped with a warning. Workers remove consumers that have been idle for 10 minutes with nothing pending (each process registers a new one). Without Redis, or on an instance with the role, unfurling runs inline as before. Run at least one `embeds` and one `jobs` instance.
-- Each media sweep and stale row sweep tick takes a Redis `SET NX PX` lock, so several `jobs` instances are safe; the voice idle sweep is itself an ordered bus operation, so duplicates are harmless.
-- The WebSocket server pings every 30 seconds so load balancer idle timeouts do not cut connections, and drops a connection that has been silent for 90 seconds. No sticky sessions are needed.
-
-Reference deployments:
-
-- `deploy/compose.scale.yml`: postgres, valkey, api x2, gateway x2, media, search, embeds, jobs, web x2, peerjs and nginx, with the path routing and edge rate limits in `deploy/nginx.conf`. nginx shares the `edge` network (fixed subnet `RCHAT_EDGE_SUBNET`, default `10.240.80.0/24`; change it if it overlaps a local network) only with the services it proxies to, which trust forwarded headers from that subnet (`TRUSTED_PROXIES`); Postgres, Valkey, embeds and jobs are only on the `backend` network. Run `POSTGRES_PASSWORD=$(openssl rand -hex 24) VALKEY_PASSWORD=$(openssl rand -hex 24) docker compose -f deploy/compose.scale.yml up -d` (or put both in `deploy/.env`; the compose file refuses to start without them, and Valkey reads its password from a config file rather than its command line) and open http://localhost:8080 (`RCHAT_HTTP_PORT`; set `RCHAT_IMAGE` to use a locally built image).
-- `deploy/k8s/`: a kustomize base with a Deployment and Service per role, password-protected Valkey with a NetworkPolicy, PeerJS, an Ingress with the same routing plus rate-limited `rchat-strict` and `rchat-invites` Ingresses, HPAs for api, gateway and web, and a ConfigMap and Secret. The optional `relay.yaml` (not listed in the kustomization) runs the built-in relay as one hostNetwork pod; see Connection helpers. Copy `deploy/k8s/secrets.env.example` to `deploy/k8s/secrets.env` (gitignored), fill in `DATABASE_URL`, a strong `VALKEY_PASSWORD` (`openssl rand -hex 32`) and the matching `REDIS_URL`, then run `kubectl apply -k deploy/k8s`; a secretGenerator turns the file into `rchat-secrets`. Nothing ships a default password: kustomize refuses to build without the file, the role pods do not start without both URLs (missing or empty), and Valkey refuses an empty password. Replace the `TRUSTED_PROXIES` placeholder in `deploy/k8s/config.yaml` with the address range the ingress controller's pods use (usually the cluster pod CIDR; the node range if the controller runs with `hostNetwork`); the pods refuse to start until you do. `deploy/k8s/networkpolicy.yaml` admits only the ingress controller to the RChat pods (the roles never call each other; adjust its namespace and pod selectors if the controller is not a standard ingress-nginx install), so trusting the pod range trusts only the controller; like the Valkey policy it needs a CNI that enforces NetworkPolicy. Behind an L7 cloud balancer, configure the ingress-nginx controller as in `deploy/k8s/ingress-nginx.example.yaml` (see the client address note below).
-- The image's start script launches only what the roles need: Next.js only with `web` (or `all`), the PeerServer only when the roles are unset or `all` (override with `RCHAT_PEERJS=on|off`), and `/app/start.sh peer` runs the PeerServer alone. It forwards SIGTERM so the server shuts down gracefully. `docker run ghcr.io/robbyv2/rchat:nightly` still runs everything in one container.
-- Frontend: the Next.js standalone servers are stateless, so run any number behind the balancer, or serve the static export from a CDN. `NEXT_PUBLIC_API_URL` points REST at the API origin, `NEXT_PUBLIC_WS_URL` points the WebSocket at a gateway on another origin, and `NEXT_PUBLIC_PEERJS_HOST` and `NEXT_PUBLIC_PEERJS_PORT` locate the PeerServer. They are baked in at build time, e.g. `docker build --build-arg NEXT_PUBLIC_PEERJS_PORT=443 .` when `/peerjs` is routed through the balancer on 443.
-- The PeerServer keeps its registry in memory, so run exactly one.
-
-Database:
-
-- Multiple instances need Postgres. sqlite stays supported for single-node deployments only.
-- Instances can boot at the same time: schema creation, column reconciliation and seeding run in one transaction under a Postgres advisory lock.
-- Pool: `DATABASE_MAX_CONNECTIONS` (Postgres only, default 8; sqlite always has exactly one writer connection and ignores it with a warning, since more writers only cause "database is locked" errors), `DATABASE_MIN_CONNECTIONS`, `DATABASE_ACQUIRE_TIMEOUT_SECS`. On sqlite that single connection is the only writer; reads (GET endpoints and auth) go to a separate read-only WAL pool of `DATABASE_READ_CONNECTIONS` connections (default: CPU count clamped to 2-8, `0` sends reads to the writer), so a long write no longer blocks readers. Keep instances x max connections under the server's `max_connections`, or put PgBouncer in between.
-- Any Postgres-wire endpoint works: managed services (RDS and Aurora, Cloud SQL, Azure Database for PostgreSQL, Neon, Supabase) or an HA cluster behind a proxy (Patroni, Stolon or CloudNativePG behind HAProxy or PgBouncer, the Postgres counterpart of GitHub's MySQL `orchestrator` setup).
-- PgBouncer session pooling works as is. Transaction pooling works with PgBouncer 1.21 or newer and `max_prepared_statements` above 0 (the default since 1.24 is 200), because sqlx always uses named prepared statements. `statement-cache-capacity=0` in the URL does not help: sqlx, through the Any driver too, still names every statement and only stops caching them, so transaction pooling fails with `prepared statement "sqlx_s_1" already exists`. Verified against PgBouncer 1.26.
-
-The realtime bus is trusted: anything that can write to it can inject events to every client and rewrite presence, voice and call state. Keep it private and authenticated. Put the credentials in `REDIS_URL` (`redis://:password@host:6379` for `requirepass`, `redis://user:password@host:6379` for an ACL user; percent-encode special characters). TLS (`rediss://`) is not supported yet, so the Redis server must only be reachable over a private network. The compose file requires `VALKEY_PASSWORD` and never publishes Valkey on the host; the k8s base requires the Secret's `VALKEY_PASSWORD` and adds a NetworkPolicy that only admits the role pods to `rchat-valkey:6379` (it takes effect only with a CNI that enforces NetworkPolicy). Postgres is external to the k8s base, so restrict it on its side (security groups, `pg_hba.conf`).
-
-What stays per instance: rate limit buckets (tower_governor keeps them in memory), the per-connection channel visibility cache, and inline unfurls in flight. The in-process limiter therefore allows N instances about N times its limit; the cluster-wide limit belongs at the edge. `deploy/nginx.conf` applies the strict backend limit (2 requests/s, burst 30, per client address, one bucket shared by the routes) to `/api/auth/`, `POST /api/me/password`, `POST /api/media` and `/api/servers/{name}/guest_access` with `limit_req`, plus the same limit in buckets of their own to `/api/invites/` and `POST /api/servers/{name}/join`, which both check server passwords (the backends keep invite lookups and joins in separate buckets too, so invite cards and joins cannot starve logins or uploads), and the k8s `rchat-strict`, `rchat-invites` and `rchat-joins` Ingresses do the same with ingress-nginx `limit-rps` annotations (counted per controller pod). The per-username login throttle (3 seconds between attempts, lock after 1000 a day) and the separate password-change throttle live in the database and are already shared by all instances. Both reference configs pass the client's `Host` with its port (`$http_host`), so discovery on a non-default port such as the compose default 8080 reports the right origin.
-
-Behind a load balancer, tell the instances which peers are proxies so rate limiting keys on the client address instead of the proxy's. `TRUSTED_PROXIES` (a comma list of IP addresses and CIDR ranges) is the safe way and what the reference deployments use. Forwarded headers (`X-Forwarded-For`, else `X-Real-IP`, else `Forwarded`) are honoured only when the TCP peer is in the list, so every trusted proxy must set `X-Forwarded-For` itself (overwrite it or append its peer address): one that only sets `X-Real-IP` or `Forwarded` while passing a client's `X-Forwarded-For` through lets the client pick its own key. The client is the right-most `X-Forwarded-For` hop that is not itself a trusted proxy, the rule of Express `trust proxy` with a list or Rails `trusted_proxies`. Entries a client wrote further left never matter, so proxies that append (nginx `$proxy_add_x_forwarded_for`, ingress-nginx `compute-full-forwarded-for`, HAProxy `option forwardfor`, cloud L7 balancers) are fine as long as each hop up to the first untrusted one is listed; a malformed hop ends the walk at the trusted proxy that sent it. Every other peer is keyed by its own address, and the first request from such a peer that carries forwarded headers is logged once, which usually means the list misses a proxy. `TRUST_PROXY=true` is the all-or-nothing alternative: it trusts any peer, so the client becomes the left-most hop. Use it only when the instances are unreachable except through a proxy that overwrites `X-Forwarded-For` with the client address (nginx `proxy_set_header X-Forwarded-For $remote_addr`, as `deploy/nginx.conf` does, or ingress-nginx with its defaults); `TRUSTED_PROXIES` wins when both are set. For ingress-nginx behind an L7 cloud balancer, set `use-forwarded-headers` together with `proxy-real-ip-cidr` (its default `0.0.0.0/0` trusts every hop and hands the controller the client-written entry; see `deploy/k8s/ingress-nginx.example.yaml`). The edge limits in `deploy/nginx.conf` key on nginx's peer address, so behind another balancer configure nginx's `real_ip_header`/`set_real_ip_from` for it first.
-
-Scaling variables: `RCHAT_ROLES`, `REDIS_URL` (`redis://` with credentials; TLS `rediss://` is not supported yet, so keep Redis on a private network), `REDIS_PREFIX` (default `rchat`, lets deployments share one Redis), `REDIS_HUB_MAXLEN` (approximate cap of the realtime stream, default 100000, at least 1000; an instance that falls further behind re-bootstraps from a snapshot; set the same value on every instance and change it cluster-wide, because instances use it to tell a trimmed stream from a reset one), `TRUSTED_PROXIES`, `TRUST_PROXY`, `DATABASE_MAX_CONNECTIONS`, `DATABASE_MIN_CONNECTIONS`, `DATABASE_ACQUIRE_TIMEOUT_SECS`, `DATABASE_READ_CONNECTIONS`, `RCHAT_PEERJS` (start script), `RCHAT_EDGE_SUBNET`, `POSTGRES_PASSWORD` (required), `VALKEY_PASSWORD` (required, no single quotes), `RCHAT_HTTP_PORT`, `RCHAT_IMAGE`, `RCHAT_INSTANCE_NAME`, `RCHAT_PUBLIC_URL`, `RCHAT_ALLOWED_HOSTS`, `RCHAT_PEERJS_PORT`, `RCHAT_PUBLIC_STUN`, `RCHAT_RELAY_ENABLED`, `RCHAT_RELAY_HOST` and `RCHAT_RELAY_PUBLIC_IP` (compose file), and the build-time `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_PEERJS_HOST`, `NEXT_PUBLIC_PEERJS_PORT`. During a rolling upgrade that adds realtime event types, older instances skip bus entries they cannot parse and log a warning.
-
-## Instances and identity
-
-Every deployment is one **instance**, however many replicas it runs. Instances are independent: they never talk to each other, and accounts, servers and DMs live on exactly one of them. The client is built so that it can later be signed in to several instances at once.
-
-- Identity: a random instance id and an Ed25519 signing key are generated at first boot and stored in the `settings` table (on Postgres inside the schema advisory lock), so every replica shares them. `INSTANCE_NAME` (default `RChat`) is the display name. `PUBLIC_URL` is the origin users open (for example `https://chat.example.com`) and pins the issuer and every discovery URL; set it in production. Unset, the request's `Host` is used only if it is a loopback host or listed in `ALLOWED_HOSTS` (comma-separated `host` or `host:port`, for example `chat.example.com,chat.internal:8443`), otherwise the first `ALLOWED_HOSTS` entry, or `localhost`, is reported. `X-Forwarded-Host` and `X-Forwarded-Proto` are honoured only from peers trusted by `TRUSTED_PROXIES` (or `TRUST_PROXY`), the same rule as client addresses. The server warns at startup when `PUBLIC_URL` is unset while replicas share a Redis bus. `PUBLIC_API_URL`, `PUBLIC_WS_URL` and `PUBLIC_PEERJS_URL` override the advertised API, gateway and PeerServer URLs when they are not `{PUBLIC_URL}/api`, `{ws or wss}://{host}/api/ws` and `{PUBLIC_URL host}:9001/peerjs` (`PEERJS_PORT`, read once at startup, changes the port).
-- Discovery: `GET /api/instance` and `GET /.well-known/rchat` return the same document: `software` (`rchat`), `id`, `name`, `host`, `version`, `api_version`, `public_url`, `api_url`, `ws_url`, `peerjs_url`, `instance_url`, `jwks_uri`, `ice` (`stun` URLs, and whether `turn` and the instance `relay` are available; see Connection helpers), `features` (`guests`, `uploads`, `p2p_attachments`, `previews`, `identity_assertions`) and `limits` (message and name lengths, upload size, media retention, page size, assertion lifetime). All three discovery responses send `Vary: Host, X-Forwarded-Host, X-Forwarded-Proto`, and are `Cache-Control: public` only when `PUBLIC_URL` pins them (`private` otherwise, so a shared cache cannot be poisoned through `Host`). Route `/.well-known/rchat` and `/.well-known/jwks.json` to the `api` role; `deploy/nginx.conf` and the k8s Ingress do.
-- Runtime instance selection: the login page shows the instance it will use (the page origin, or the baked `NEXT_PUBLIC_API_URL`) with a Change button, and asks for one when nothing answers there. A chosen instance is checked through its discovery document and remembered; its API, WebSocket and PeerServer URLs come from that document, and the client refuses a document whose `host` or `public_url` does not name the origin it was fetched from, whose `api_url` is not on that origin, whose `ws_url` is not `ws`/`wss` (matching `http`/`https`) on the same host and port, or whose `peerjs_url` is on another host name. So a deployment that serves its API or gateway from another origin through `PUBLIC_API_URL`/`PUBLIC_WS_URL` (or `PUBLIC_PEERJS_URL` on another host) still works as the default instance of its own build, but cannot be chosen at runtime. Tokens and guest state are stored per instance (`rchat_token` for the default instance, `rchat_token@{host}` for others), and the `rchat_token` media cookie is only ever set for the default instance, so one instance's token never reaches another.
-- What is where: the top of the server rail and Settings show the instance name and host. Profile cards and invite cards show the host whenever something is not on your instance, and an invite link to another site (`https://{host}/invite/{server}/`) renders as a click-to-load card, "Invite on {host}" with a Load preview button, only while link previews are on (with previews off nothing extra renders). Nothing is fetched until you click: then your browser fetches that site's discovery document and, if it is RChat, the invite from its `/api/invites`, and the card shows the server and opens it there in a new tab. The host shown is always the one the link points at; the site's self-declared name appears only as secondary text beside it. Only `https` links to public hosts get a card; literal loopback, private, link-local, `localhost` and `.local` hosts are skipped unless your own instance is on such a host (development), and failed lookups are remembered for a minute so a non-RChat site is not asked again on every render. Qualified ids use `name@host`: new usernames may not contain `@`, but older ones still can, so ids split at the last `@` and the suffix only counts as a host if it parses as one (IDNs are compared in punycode).
-
-API versioning: `api_version` is `major.minor`, currently `1.1` (1.1 added `ice` and `GET /api/p2p/ice`). Within a major version the REST API, the WebSocket event schema and the discovery document only grow: new endpoints, optional request fields, new response fields, new event types and new feature flags; clients ignore fields and events they do not know. Removing or renaming anything, or changing a field's meaning or type, bumps the major version. The client accepts instances with its own major version, says that an instance needs a newer client when the major is higher, and refuses older majors. `version` is the software release and is informational only. The OpenAPI document at `/api/openapi.json` describes the current API.
-
-Identity proofs: `GET /.well-known/jwks.json` publishes the instance's public keys as a JSON Web Key Set (`OKP`/`Ed25519`, `alg` `EdDSA`, `kid` = RFC 7638 thumbprint; the first key signs, any further ones stay published for rotation). `POST /api/identity/assertion` with `{aud, nonce?}` (signed in) returns a compact JWS (a JWT, `alg: EdDSA`) with `iss` (the instance's public URL), `sub` (`user@host`), `aud`, `iat`, `exp` (5 minutes later), `jti` and `nonce`, and nothing else. Verifiers (`rust_next::identity::Verifier` in Rust, `verifyAssertion` in `app/lib/identity.ts`, the Rust one is compact JWS done directly with `ed25519-dalek` and base64url, the TS one is `jose`) fetch `https://{iss host}/.well-known/jwks.json` and refuse issuers on loopback, private, link-local, `localhost` or `.local` hosts or on any port but 443; the Rust verifier also checks the resolved addresses before connecting, ignores `HTTP(S)_PROXY`, follows no redirects, gives up after 5 seconds or 64 KB, caches key sets for 10 minutes and failures for 30 seconds, and keeps at most 1024 issuers (least recently used go first). Both refetch at most every 30 seconds on an unknown `kid`. The header must be exactly `alg: EdDSA`, `typ: JWT` and a string `kid` naming one Ed25519 key (`none`, other algorithms, `crit`, `jku` and friends are rejected); the signature is checked over the exact `header.payload` bytes, then issuer, audience, expiry (30 seconds of skew), `iat`, lifetime, `jti` (1 to 128 bytes), nonce, and that `sub` is on the issuer's own host with exactly one `@`. The Rust `Verifier` also remembers each `jti` until it expires (at most 10000 at once, 2000 per issuer) and rejects a second use, so a captured assertion cannot be replayed to it; when that memory is full of unexpired entries it rejects new assertions rather than forgetting old ones. The memory is per process: a verifier running on several replicas does not share it, so a multi-replica relying party should keep used `jti`s in its database or on the bus (not built yet) and should send a fresh `nonce` either way, which is the real replay protection. Relying parties that use `verify_with` or the TS verifier directly must send a fresh `nonce`. Accounts whose username contains `@` (allowed before 0.2.0) get 403 from the assertion endpoint, since `name@host` would be ambiguous for them. Tests and local development opt in to loopback issuers (`Verifier::allow_local()`, `allowLocal`). An instance is trusted only for its own `@host` identities; there is no central authority and no general OIDC. Nothing uses assertions yet: they are the building block for later cross-instance features. `INSTANCE_SIGNING_KEY` replaces the stored key with operator-managed ones: base64url 32-byte seeds separated by commas (`openssl rand 32 | basenc --base64url | tr -d =`), or PKCS#8 PEM blocks (`openssl genpkey -algorithm ed25519`); put the new key first to rotate and keep the old one listed for at least 5 minutes.
-
-Portability: `app/lib` is the core client, free of Next.js: the instance registry, API and WebSocket clients, identity verification and pure logic are plain TypeScript, and the store is zustand, whose `create` hook binds it to React (`useStore.getState()`/`setState` work without React, but a non-React shell would switch it to `zustand/vanilla`). It never imports `next/*` or `react-dom` (a test enforces this); its only build-time inputs are the `NEXT_PUBLIC_*` constants read in `app/lib/instances.ts`, which any bundler can define, and `basePath.ts` reads Next's asset prefix only when present. Pages and components under `app/` are the Next.js shell around it. Native apps are not built yet, but the static export (`just src build-static`, with or without an API URL) is the bundle to wrap: Tauri can load `out/` as its frontend and Capacitor can use it as `webDir`; since the instance is chosen at runtime, one bundle can serve every instance.
-
-## Connection helpers (STUN and TURN)
-
-Calls, voice channels and P2P files are WebRTC connections between browsers. By default the instance offers no ICE servers at all, so peers connect only over host candidates: the same machine, the same LAN, or a publicly reachable peer. Nothing external is contacted (PeerJS's built-in Google STUN and peerjs.com TURN fallback is never used). The operator can enable each helper; `GET /api/instance` advertises the result in `ice`, and every peer connection in the client takes its servers from there.
-
-- Public STUN (`PUBLIC_STUN=true`, `PUBLIC_STUN_COUNT` 1 to 4, default 3): a snapshot of [always-online-stun](https://github.com/pradt2/always-online-stun) is bundled in `assets/stun_servers.json` (at most 12 entries, host names only, one per operator, each answered a real STUN Binding request when the list was built; a short list of well-known long-lived operators comes first, the rest in a stable hash order). Each instance picks its entries with a stable hash of its id, so load spreads across servers. The server never fetches the list; `just src refresh-stun` rebuilds it (`assets/refresh_stun.ts`) and the result is committed.
-- Built-in relay (`RELAY_ENABLED=true`): the server answers STUN and, with `RELAY_TURN=true` (default), TURN allocations on UDP `RELAY_PORT` (default 3478), with relayed addresses `RELAY_PUBLIC_IP` plus a port from `RELAY_MIN_PORT`..`RELAY_MAX_PORT` (default 49160-49415). Clients reach it at `RELAY_HOST` (default the instance's host). The server refuses to start with TURN on and no `RELAY_PUBLIC_IP`. Open the UDP port and range in the firewall (`docker run ... -p 3478:3478/udp -p 49160-49415:49160-49415/udp`). Reserve the range for the relay: nothing else on the host may listen on those ports, and they must not overlap the kernel's ephemeral range (`sysctl net.ipv4.ip_local_port_range`, often 32768-60999, which contains the default), or the system hands them to outgoing connections. Either reserve them (`sysctl -w net.ipv4.ip_local_reserved_ports=49160-49415`, persisted in `/etc/sysctl.d/`; it covers IPv6 too) or pick a range outside the ephemeral one.
-  - Credentials follow the TURN REST convention: `GET /api/p2p/ice` (signed in, not guests, general rate-limit bucket) returns the STUN entries plus `turn:{RELAY_HOST}:{RELAY_PORT}?transport=udp` with username `{expiry}:{opaque}` (`opaque` is a keyed hash of the account, never the username) and password `base64(HMAC-SHA1(secret, username))`, valid for one hour. The client refreshes them at 80% of that. The secret is the `relay_secret` row in `settings`, generated once and shared by every replica.
-  - Capacity: every relayed peer connection holds one allocation, and every allocation one port of the range. `RELAY_USER_ALLOCATIONS` (default 16) caps one account; a fully relayed voice mesh of n people needs n-1 per person, so 16 covers a 17-person channel. `RELAY_MAX_ALLOCATIONS` (default and maximum: the size of the port range, 256 by default) caps the process; size the range to about the number of relayed connections you expect at peak (a relayed call between two people takes 2 to 4). Bandwidth: `RELAY_USER_KIB_PER_SEC` (default 1024, about 8 Mbit/s) per account and `RELAY_MAX_KIB_PER_SEC` (default 65536, about 512 Mbit/s) for the relay, each with a 4 second burst; excess packets are dropped, and only packets from peers the user gave a permission to count. An Allocate past a quota gets 486 (account) or 508 (process). An allocation ends after 10 minutes without traffic, and can keep refreshing for up to 12 hours on credentials that expired after it started.
-  - Requests without a valid nonce (Binding, and the first leg of every TURN request) are rate-limited per source address (per /64 for IPv6), per address block (IPv4 /24, IPv6 /48) and for the whole relay, so floods cannot use it as a reflector. A client that already holds an allocation pays only its own address's budget, so a flood cannot cut running calls off. Nonces live one hour; the table is capped and drops its oldest entries when full (their clients get a fresh nonce on their next request). A request carrying a nonce that was handed to another address is dropped. With `RELAY_TURN=false` the listener answers only Binding requests.
-  - Each allocation belongs to the account that created it: Refresh, CreatePermission and ChannelBind signed by another account are refused, even from the same address.
-  - Banning or deleting an account ends its allocations at once and refuses every credential issued to it before then, through the realtime bus when the relay runs in another process. In case an event is missed (the relay fell behind the event stream, or the bus reconnected) and every 5 minutes, the relay also checks the accounts holding allocations against the database and revokes those that are gone, banned or being deleted.
-  - The relay never forwards to or from loopback, private (RFC 1918, ULA), link-local, CGNAT, multicast, unspecified, documentation, reserved or cloud metadata addresses (169.254.169.254, fd00:ec2::254), IPv4-mapped and NAT64 or 6to4 forms included. It also refuses its own `RELAY_PUBLIC_IP` (and the listener's address) on every port except those of the range that a live allocation holds right now, so it cannot be pointed at other services on that address, while two relayed peers can still reach each other. `RELAY_DENIED_PEERS` (comma list of addresses or CIDR ranges) adds more: list the host's other public addresses and those of your other servers, nodes and load balancers, which the relay cannot know. CreatePermission, ChannelBind and Send towards refused peers get 403, and the relayed sockets drop such packets in both directions. `RELAY_ALLOW_PRIVATE=true` lifts the built-in checks (not `RELAY_DENIED_PEERS`) for LAN and development setups only.
-  - Roles: the relay runs in processes with the `relay` role (part of `all`). Run exactly one relay process (allocations, quotas and bandwidth caps live in its memory; a relay process logs a warning when `REDIS_URL` is set, as a reminder) and set `RELAY_ENABLED` and the other `RELAY_*` variables on every replica, so they all advertise the relay and issue credentials; a relay process without the `api` role needs the shared Postgres `DATABASE_URL` and the shared `REDIS_URL` (it learns about bans through the bus) and refuses to start without them. `deploy/compose.scale.yml` has a `relay` service behind `--profile relay`, and `deploy/k8s/relay.yaml` an optional hostNetwork Deployment. The site admin panel shows whether the relay is on, its port and its active allocations (when it runs in the process serving the panel).
-- Your own servers (`ICE_SERVERS`): a JSON array of `{urls, username?, credential?}`, for example a coturn with static credentials, added verbatim (STUN entries in discovery, TURN entries only in `GET /api/p2p/ice`).
-
-Users can turn helpers off under Settings, Voice and P2P ("Use connection helpers", on by default, stored per account in the browser); off means direct connections only. Helpers see IP addresses and traffic volumes, never content (connections are DTLS-encrypted end to end).
-
-## P2P attachments
-
-A P2P attachment stays in the sender's browser and is sent straight to whoever downloads it; the server only stores its name, size, declared type and SHA-256. It works whether or not server uploads are on and has no size limit, so it is the intended way to share files (the site admin "P2P attachments" switch, on by default, seeded by `P2P_ATTACHMENTS`). Turning off both "File uploads" and "P2P attachments" makes the instance text only: the attach button goes away, paste and drop are ignored, the server refuses any message with an attachment (403 `Attachments are turned off on this server`), stops serving stored files and offering P2P files, and existing attachments show "Attachments are turned off on this server". Link previews keep their own switch.
-
-Downloads are checked before anything is shown or saved: the sender's client computes the SHA-256 when the file is attached, the receiving client streams the transfer into its own storage and stops at the declared size, when storage runs out, or when the hash doesn't match (the copy is discarded). Files from older clients carry no hash and are marked unverified. Only PNG, JPEG, GIF, WebP and AVIF images, MP4 and WebM video, and MP3, Ogg, WAV and WebM audio up to 10 MB are previewed, recognized from their bytes rather than the declared type, and never from an unverified file; everything else (SVG and HTML included) is only offered as a download with a neutral type. Removing a P2P attachment makes the sender's app stop serving it and other clients drop their copies; a modified client that already has the file can still pass it on. P2P files, peer ids and downloaded copies are kept per account in the browser; signing out disconnects from the PeerJS server and deletes downloaded copies. A downloaded copy is only reused for a message with the same id, sender and hash, and the server refuses a P2P id another user already posted. The sender's app serves at most 4 transfers at once, 2 per requesting peer and 12 requests a minute per peer, and drops a transfer whose receiver stops reading for 20 seconds or that runs longer than 2 minutes plus 1 second per 64 KB. Peers are told apart only by their PeerJS id, which any client can change, so these limits keep the sender responsive but identify no one. The receiver acknowledges what it has stored and the sender stays at most 8 MB ahead, so a slow disk slows the transfer instead of filling memory.
-
-## Architecture
-
-- `src/` is a Rust axum server on port 3000. It serves everything under `/api` and proxies all other paths to the Next.js dev or standalone server on port 3001.
-- `app/` is a Next.js 16 app router frontend with Tailwind 4, zustand for state, react-markdown for message rendering, and lucide-react icons. Material 3 color tokens live as CSS variables in `app/globals.css`.
-- Storage is sqlx over sqlite or postgres, selected by `DATABASE_URL`: a `postgres://` URL uses postgres, anything else is treated as a sqlite file path (WAL mode), default `rchat.db`. Users, tokens, servers, channels, members, messages, and media blobs all live in the database. MongoDB is not supported (no single Rust library covers it alongside SQL backends).
-- `/api/ws` is a broadcast hub. Handlers write to the database, then broadcast typed events (messages, channel and server changes, membership, presence, bans, media removal). Each connection filters events to its member servers, guest subscriptions, and DMs.
-- Presence is per server: a user is online only in the single server they are currently viewing.
-- Rate limiting is per IP via tower_governor across `/api`, with a stricter layer on auth, account password change, guest access and media upload, and separate strict buckets for invite lookups and server joins. A 60 second background task sweeps expired media in batches, every 2 minutes the jobs role resumes account and server deletions an instance left unfinished (a running deletion renews its 5 minute lease every minute, so a crashed one is picked up within about 5 minutes), and every 10 minutes it deletes guest grants unused for `GUEST_GRANT_DAYS` (default 30), login and password-change throttle rows older than 2 days and link previews older than `EMBED_CACHE_DAYS` (default 30) that no message uses.
-- Link previews are fetched server-side (at most 3 per message, through a bounded queue of 256 pending messages; beyond that a message simply gets no preview) without any HTTP proxy and only from public addresses. Invite links (`/invite/{server}/` on any host) are never fetched or stored, since the client renders its own card for them, and credentials are dropped before a URL is fetched or stored: user info, the fragment and query parameters such as `password`, `token`, `key`, `sig`, `code` and `X-Amz-*`.
-- Server bans remove the member and hide the server from that account: reading it (attachments included), live updates on sockets that are already open, presence and voice all stop, while invite cards say "banned". A ban applies to the account: an open server stays readable to anyone signed out, as for any guest. Voice in a password-protected server needs membership; nobody, site admins included, joins it otherwise.
-- On Postgres the database triggers are installed or replaced only when their definitions change (a version kept in `settings`), so ordinary boots take no table locks.
-- Profanity filtering (rustrict) runs server-side. The site admin panel has a master switch (`profanity_filter`; off disables the filter everywhere) and, under it, one checkbox per target: messages (channel and thread messages), links (the domain part of URLs in those messages; off skips `scheme://host` only, so the path and query are still read as text, like the rest of the message), usernames (a user's display name is the username as typed), server names (name and display name), channel names, role names, file names (attachments posted in servers) and bios (profile descriptions). All are on by default; `PROFANITY_FILTER` (on/off) and `PROFANITY_TARGETS` (a comma list of those names, `all` or `none`; an unknown name logs a warning and starts every target on) set the values a database gets on its first start, after which the panel owns them. `GET /api/settings` reports them as `profanity_filter` and `profanity_targets`. If the settings cannot be read, every target is treated as on. DMs, passwords, client-side folder names and the operator-set `INSTANCE_NAME` are never filtered.
-- The `wasm/` crate and `jfiles/` recipes are retained template infrastructure.
-
-## Deliberate non-industry choices
-
-These are intentional per the project spec. Site-level protections exist (per-IP rate limits, server-side validation); user-level protections are deliberately loose.
-
-- No password rules. Any non-empty password is accepted, including a single character. There is no strength meter and no minimum length.
-- Deterministic word passwords. As an alternative to text passwords, each username maps to a fixed set of 20 words: sha256 of the lowercase username seeds a ChaCha8 RNG that samples the `memorable-wordlist` crate. The user picks 7 of those 20 in order. Anyone can request any username's word set at `GET /api/auth/words/{username}`; the secret is the ordered selection, not the set.
-- Throttled logins instead of a short lockout. A few wrong passwords never lock an account. Per username: attempts must be 3 seconds apart, and more than 1000 attempts in one day lock logins to the account until the next day (attempts rejected by the 3 second gap do not count). Changing the password from a signed-in session has its own throttle, counted per session token (3 seconds apart, 50 wrong current passwords a day pause changes from that session only), so nobody can block a password change by failing logins, and someone holding a stolen token cannot block the owner's other sessions.
-- Anonymous accounts. No email, no phone, no recovery flow. Usernames accept any characters. A lost password means a lost account.
-- Unencrypted single sqlite file by default. All data, including uploaded file blobs, lives in one unencrypted `.db` file (or a postgres database via `DATABASE_URL`). Anyone with the file has everything.
-- Public identifiers. Lowercased usernames are user IDs. Lowercased server names are server IDs and also the invite codes; knowing a server's name is sufficient to join or view it.
-- Hidden site admins. The first registered account is the site admin. No badge or indicator reveals this anywhere; admin-only routes return 404 rather than 403 to non-admins so the panel's existence stays hidden.
-- One-day media retention. Uploads are capped at 25MB and deleted exactly one day after posting. The message remains and renders a notice that the file was removed.
-- Guest read-only access. A "Skip to RChat" button on the login page enters a guest mode with no account. Guests can view any server by name (their server list is kept in localStorage), receive live updates, and cannot send messages or appear in presence.
-- Non-expiring tokens. Login tokens are random 32-byte values that never expire; they end only when revoked: signing out (`POST /api/auth/logout`) revokes that session's token, a password change signs out the account's other sessions, and deleting or banning the account removes all of them. Guest grants (the token a guest gets after entering a server password) expire after `GUEST_GRANT_DAYS` (default 30) days unused; each use slides the window, and the stored last-use time is refreshed at most once a day per grant.
+Keep Redis on a private network. Anything that can write to Redis can send events to all users.
 
 ## Configuration
 
-Environment variables, loaded from `.env.local` and `.env` (see `.env.local.example`): `APP_MODE` (full or api-only), `INSTANCE_NAME`, `PUBLIC_URL`, `PUBLIC_API_URL`, `PUBLIC_WS_URL`, `PUBLIC_PEERJS_URL`, `INSTANCE_SIGNING_KEY`, `ALLOWED_HOSTS`, `PEERJS_PORT` (see Instances and identity), `PUBLIC_STUN`, `PUBLIC_STUN_COUNT`, `RELAY_ENABLED`, `RELAY_TURN`, `RELAY_HOST`, `RELAY_PORT`, `RELAY_PUBLIC_IP`, `RELAY_MIN_PORT`, `RELAY_MAX_PORT`, `RELAY_ALLOW_PRIVATE`, `RELAY_DENIED_PEERS`, `RELAY_USER_ALLOCATIONS`, `RELAY_MAX_ALLOCATIONS`, `RELAY_USER_KIB_PER_SEC`, `RELAY_MAX_KIB_PER_SEC`, `ICE_SERVERS` (see Connection helpers), `RCHAT_ROLES`, `REDIS_URL`, `REDIS_PREFIX`, `REDIS_HUB_MAXLEN`, `TRUSTED_PROXIES`, `TRUST_PROXY`, `DATABASE_MAX_CONNECTIONS`, `DATABASE_MIN_CONNECTIONS`, `DATABASE_ACQUIRE_TIMEOUT_SECS`, `DATABASE_READ_CONNECTIONS` (see Scaling), `GUEST_GRANT_DAYS`, `EMBED_CACHE_DAYS`, `VOICE_IDLE_SECS`, `VOICE_ROOM_MAX` (most people in one voice channel, default 25, 0 = no limit), `HOST` (where the Rust server listens), `FRONTEND_HOST` (where Next.js listens behind it, default `127.0.0.1`, so the public `HOST=0.0.0.0` never exposes Next.js directly), `SERVER_PORT`, `PORT`, `DATABASE_URL`, `RATE_LIMIT_PER_SECOND`, `RATE_LIMIT_BURST`, `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION` (optional, default us-east-1; setting the other four S3 vars stores media blobs in the S3-compatible bucket at `media/{id}` instead of the database, path-style so minio works), `SERVER_PROXY_URL` (where the web role proxies non-API paths, default `http://127.0.0.1:{PORT}`), `GUESTS_ENABLED` (initial value of the guest access setting on a new database), `P2P_ATTACHMENTS` (initial value of the P2P attachments setting, default on; see P2P attachments), `PROFANITY_FILTER` and `PROFANITY_TARGETS` (initial profanity filter switch and targets, see Architecture), `SWAGGER_UI` (`false` turns off Swagger UI at `/api/swagger-ui`; it and `/api/openapi.json` need a login token), `RUST_LOG`, and the build-time `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_PEERJS_HOST` and `NEXT_PUBLIC_PEERJS_PORT`.
+Put settings in `.env.local`. Refer to `.env.local.example` for all settings. These are the most useful ones:
+
+| Variable          | Default     | What it does                                                                         |
+| ----------------- | ----------- | ------------------------------------------------------------------------------------ |
+| `APP_MODE`        | `full`      | `full` serves the API and the app. `api-only` serves only the API.                   |
+| `HOST`            | `127.0.0.1` | The address the server listens on. Use `0.0.0.0` for remote access.                  |
+| `SERVER_PORT`     | `3000`      | The public port.                                                                     |
+| `DATABASE_URL`    | `rchat.db`  | A sqlite file, or a `postgres://` URL.                                               |
+| `PUBLIC_URL`      | none        | The address people open, for example `https://chat.example.com`.                     |
+| `INSTANCE_NAME`   | `RChat`     | The name people see for your instance.                                               |
+| `GUESTS_ENABLED`  | `true`      | Lets people read public servers without an account.                                  |
+| `P2P_ATTACHMENTS` | `true`      | Lets people send P2P attachments. The admin panel controls it after the first start. |
+| `S3_ENDPOINT`     | none        | Stores uploads in an S3 bucket. Also set the bucket and keys.                        |
+| `RCHAT_ROLES`     | `all`       | The roles this process runs (see Scaling).                                           |
+| `REDIS_URL`       | none        | The shared Redis server for many processes.                                          |
+| `TRUSTED_PROXIES` | none        | Proxy addresses to trust for the real client address.                                |
+| `PUBLIC_STUN`     | `false`     | Gives calls a list of public STUN servers.                                           |
+| `RELAY_ENABLED`   | `false`     | Starts the built-in STUN and TURN relay on UDP port 3478.                            |
+| `RELAY_PUBLIC_IP` | none        | The public IP of the relay. TURN needs it.                                           |
+| `VOICE_ROOM_MAX`  | `25`        | The most people in one voice channel. `0` means no limit.                            |
+
+The relay uses UDP ports 49160 to 49415. Open them in the firewall. Reserve them so no other program uses them (`sysctl -w net.ipv4.ip_local_reserved_ports=49160-49415`).
+
+Data is not encrypted at rest. Anyone with the database file can read all messages and files.

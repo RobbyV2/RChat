@@ -46,7 +46,6 @@ const POPUP_ROOM = 340
 
 const touchBtn = 'min-h-10 rounded-full px-4 text-sm font-medium'
 
-// The inline editor of the message being edited (`editing` in the store).
 export function MessageEditor() {
   const text = useStore(s => s.editing?.text ?? '')
   const listKey = useStore(s => s.editing?.key ?? null)

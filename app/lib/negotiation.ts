@@ -23,12 +23,10 @@ export interface NegotiationState {
   signalingState: RTCSignalingState
 }
 
-// What to do with an incoming description. Offers that collide with our own
-// are ignored by the impolite side and applied (with implicit rollback) by
-// the polite side. The impolite side makes the first offer, so until that
-// negotiation is done any offer it gets collides with its own. An answer is
-// only meaningful while our offer is pending; anything else is a stale
-// duplicate.
+// What to do with an incoming description. The impolite side ignores an offer that collides
+// with its own. The polite side applies it with implicit rollback. The impolite side makes the
+// first offer, so until that negotiation is done, each offer it gets collides. An answer is
+// valid only while our offer is pending. All else is a stale duplicate.
 export function descriptionAction(
   type: RTCSdpType,
   s: NegotiationState
@@ -40,13 +38,11 @@ export function descriptionAction(
   return collision && !s.polite ? 'ignore' : 'apply'
 }
 
-// The first offer on a fresh connection comes from the impolite side only.
-// When both ends offer at once (two users meeting in a room learn about each
-// other from the same voice_state), the polite side has to roll its own offer
-// back, and Chromium can then leave that side's ICE transport without any
-// candidates: both ends end up "stable" with ICE "new" and never connect.
-// The polite side never offers before that first negotiation; if it doesn't
-// connect in time it asks the impolite side to restart instead.
+// Only the impolite side makes the first offer on a new connection. If both sides offer at once
+// (two users meet in a room through the same voice_state), the polite side must roll back. Then
+// Chromium can leave that side without ICE candidates: both sides stay "stable" with ICE "new"
+// and never connect. So the polite side never offers before the first negotiation. If it does
+// not connect in time, it asks the impolite side to restart.
 export function mayOffer(polite: boolean, negotiated: boolean): boolean {
   return !polite || negotiated
 }
@@ -87,10 +83,9 @@ export function sidAction(
   return 'replace'
 }
 
-// Transceivers, in the m-line order of a first offer. The screen audio slot
-// comes first and carries no stream id, so a legacy receiver, which watches
-// the last audio track it gets and plays the first one of the stream, still
-// picks the mic.
+// Transceivers in the m-line order of a first offer. The screen audio slot is first and has no
+// stream id. A legacy receiver plays the first audio track of the stream, so it still picks the
+// mic.
 export const SLOTS = ['screenAudio', 'mic', 'cam', 'screen'] as const
 export type Slot = (typeof SLOTS)[number]
 export const SLOT_KIND: Record<Slot, 'audio' | 'video'> = {
@@ -100,10 +95,9 @@ export const SLOT_KIND: Record<Slot, 'audio' | 'video'> = {
   screen: 'video',
 }
 
-// What goes out on the camera and screen slots. A legacy (0.2.0) peer only
-// ever shows the camera slot, so while the camera is off it gets the screen
-// there, as before screens had a slot of their own, and never on the screen
-// slot, which it can't show.
+// What goes out on the camera and screen slots. A legacy (0.2.0) peer shows only the camera
+// slot. While the camera is off, it gets the screen there. It never gets the screen slot,
+// because it cannot show it.
 export const videoPlan = <T>(
   cam: T | null,
   screen: T | null,
@@ -173,12 +167,11 @@ export class Serial {
   }
 }
 
-// Tells whether a voice_state for a room reflects our latest join or leave.
-// Each of our voice ops changes our membership of a room at most once in the
-// server's log (a join also takes us out of the room we were in), so a state
-// is current once every membership change we caused has shown up. Earlier
-// ones are stale: after a quick A -> B -> A, the state listing us from the
-// first join to A is followed by the one removing us for the switch to B.
+// Tells if a voice_state for a room shows our latest join or leave. Each of our voice ops changes
+// our room membership at most once in the server log (a join also removes us from our previous
+// room). So a state is current when all our membership changes have shown up. Earlier states
+// are stale. Example: after A -> B -> A, the state from the first join to A comes before the
+// state that removes us for B.
 export class JoinTracker {
   private rooms = new Map<number, { want: boolean; listed: boolean; pending: number }>()
   private last: [number, boolean][] = []
@@ -195,10 +188,9 @@ export class JoinTracker {
     r.pending += 1
   }
 
-  // We sent a voice_join; listed is whether the latest state for the room
-  // lists us. If it already does, the server still holds a slot for us
-  // (another tab, or a reload whose old socket is not gone yet), which the
-  // join takes over without listing us again.
+  // We sent a voice_join. `listed` tells if the latest state for the room lists us. If it does,
+  // the server still holds a slot for us (another tab, or a reload with the old socket still
+  // open). The join takes that slot without a new listing.
   joined(room: number, listed: boolean) {
     this.last = []
     for (const id of this.rooms.keys()) if (id !== room) this.expect(id, false)
@@ -210,9 +202,8 @@ export class JoinTracker {
     for (const id of this.rooms.keys()) this.expect(id, false)
   }
 
-  // The server refused our last join (a full room), so none of its changes
-  // will show up. If the error was about something else, the changes still
-  // arrive and are taken as they are.
+  // The server refused our last join (full room), so none of its changes will show up. For other
+  // errors, the changes still arrive and apply as usual.
   refused() {
     for (const [id, want] of this.last) {
       const r = this.rooms.get(id)

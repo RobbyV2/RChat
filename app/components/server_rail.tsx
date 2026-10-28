@@ -171,8 +171,8 @@ function ServerTile({
   )
 }
 
-// The server being previewed (open without joining): shown only while it is open, never saved
-// to the layout or dragged. A dashed, dimmed tile with an eye badge sets it apart.
+// The previewed server (open without joining). It shows only while open and is never saved to
+// the layout. A dashed, dimmed tile with an eye badge marks it.
 function PreviewTile() {
   const name = useStore(previewServer)
   const display = useStore(s => (name ? (s.servers[name]?.display_name ?? name) : ''))

@@ -99,14 +99,12 @@ export const PENDING_MAX = 32 * 1024 * 1024
 const STALE_GRACE_S = 120
 // A staged file whose send never finished (the tab closed mid-send) is dropped after this long.
 const PENDING_MAX_S = 3600
-// The hoster serves this many transfers at once, each peer this many at once and this many
-// requests a minute. Peers are told apart by their PeerJS id, which anyone can change, so the
-// per-peer limits only slow a client down; they say nothing about who is asking.
-// Known limits: the deadline grows with the file size (1 s per 64 KiB), so a slow downloader of
-// a big file can hold a slot for a long time; the stall timer resets on any progress, so a
-// downloader that acks a trickle of bytes is never cut off as stalled; and a client that
-// rotates PeerJS ids can keep taking all SERVE_MAX slots. A per-download token from the server
-// is the real fix.
+// Transfers served at once in total and per peer, and requests per peer per minute. The PeerJS
+// id identifies a peer, and anyone can change it. So per-peer limits only slow a client down.
+// Known limits: the deadline grows with file size (1 s per 64 KiB), so a slow downloader of a
+// big file can hold a slot for a long time. Any progress resets the stall timer, so a peer that
+// acks a trickle of bytes is never cut off. A client that rotates PeerJS ids can take all
+// SERVE_MAX slots. The real fix is a per-download token from the server.
 export const SERVE_MAX = 4
 export const PEER_SERVE_MAX = 2
 export const ASKS_PER_MIN = 12
@@ -509,9 +507,9 @@ export class P2pManager {
     this.legacy = legacy
   }
 
-  // The server's answer to an announce: which of the `checked` ids are still live attachments
-  // of this account. Ours that aren't are removed (unless just attached and maybe still being
-  // sent); files kept before per-account storage that are live become this account's.
+  // The answer of the server to an announce: which `checked` ids are still live attachments of
+  // this account. Ours that are not are removed, except files just attached that may still be
+  // sending. Live files from before per-account storage move to this account.
   async reconcile(live: string[], checked: string[]) {
     if (this.account === null) return
     const alive = new Set(live)
@@ -692,9 +690,9 @@ export class P2pManager {
     })
   }
 
-  // Chunked for current peers, so a large file streams and only a stall times out; a single
-  // base64 message for 0.2.x peers, which ask without chunked. The type sent is what the bytes
-  // are recognized as, so older receivers never get an active type from us either.
+  // Current peers get chunks, so a large file streams and only a stall times out. 0.2.x peers (no
+  // `chunked`) get one base64 message. We send the type the bytes are recognized as, so older
+  // receivers never get an active type.
   private async send(
     conn: DataConnection,
     id: string,
@@ -731,9 +729,8 @@ export class P2pManager {
     }
   }
 
-  // Waits for the downloader to take what was sent (and, with acks, to store all but
-  // ACK_WINDOW of it); false when it stopped taking anything for STALL_MS, the transfer ran past
-  // its deadline, or the connection closed.
+  // Waits until the downloader takes what was sent (with acks: stores all but ACK_WINDOW).
+  // Returns false on a STALL_MS stall, a passed deadline or a closed connection.
   private async drained(conn: DataConnection, deadline: number, unacked: () => number) {
     let last = [buffered(conn), unacked()]
     let moved = Date.now()

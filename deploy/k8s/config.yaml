@@ -1,17 +1,12 @@
-# TRUSTED_PROXIES: the backends honour X-Forwarded-For only from these peers and key their
-# rate limits on the right-most hop that is not one of them. REPLACE the placeholder with
-# the address range your ingress controller's pods use: usually the cluster pod CIDR
-# (for example 10.244.0.0/16 with kubeadm and flannel, 10.42.0.0/16 with k3s; see
+# TRUSTED_PROXIES: the backends read X-Forwarded-For only from these peers. REPLACE the
+# placeholder with the pod range of your ingress controller, usually the cluster pod CIDR
+# (10.244.0.0/16 with kubeadm and flannel, 10.42.0.0/16 with k3s; see
 # kubectl get nodes -o jsonpath='{.items[*].spec.podCIDR}'), or the node range if the
-# controller runs with hostNetwork. The role pods refuse to start until it is a valid
-# list. Trusting the whole pod range is safe because networkpolicy.yaml only lets the
-# controller reach them (with a CNI that enforces NetworkPolicy); a narrower range is
-# better if your controller pods have one. See the client address notes in ingress.yaml.
-# ingress-nginx sets X-Forwarded-For itself; any other proxy you list must set or
-# overwrite it too, because it is read before X-Real-IP (a proxy that only sets
-# X-Real-IP and passes the client's X-Forwarded-For through lets clients pick their key).
-# The secrets (DATABASE_URL, VALKEY_PASSWORD, REDIS_URL) come from secrets.env through
-# the secretGenerator in kustomization.yaml; see secrets.env.example.
+# controller uses hostNetwork. The pods do not start until it is a valid list. The full pod
+# range is safe because networkpolicy.yaml lets only the controller reach the pods. A narrower
+# range is better. Each listed proxy must set X-Forwarded-For itself (ingress-nginx does).
+# The secrets (DATABASE_URL, VALKEY_PASSWORD, REDIS_URL) come from secrets.env through the
+# secretGenerator in kustomization.yaml. See secrets.env.example.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -21,23 +16,19 @@ data:
   TRUSTED_PROXIES: "REPLACE-with-the-ingress-controller-pod-CIDR"
   RUST_LOG: info
   DATABASE_MAX_CONNECTIONS: "8"
-  # The name and public origin this instance announces at /api/instance and signs identity
-  # assertions with; every replica shares the id and signing key stored in Postgres.
+  # All replicas share the instance id and signing key in Postgres.
   INSTANCE_NAME: RChat
-  # REPLACE with the origin users open (for example https://chat.example.com); the pods refuse
-  # to start until you do, since unset they would announce localhost as their issuer.
+  # REPLACE with the origin people open (for example https://chat.example.com). The pods do
+  # not start until you do.
   PUBLIC_URL: "REPLACE-with-your-public-origin"
   # ALLOWED_HOSTS: "chat.example.com"
-  # Connection helpers for calls and P2P files, all off by default (see the README):
-  # PUBLIC_STUN: "true" advertises 3 servers from the bundled public STUN list.
+  # Connection helpers for calls and P2P files. All are off by default.
   # PUBLIC_STUN: "false"
-  # The built-in relay runs only in the rchat-relay pod (relay.yaml); every pod needs these
-  # to advertise it and issue TURN credentials.
+  # The relay runs only in the rchat-relay pod (relay.yaml). All pods need these values.
   # RELAY_ENABLED: "false"
   # RELAY_HOST: "relay.example.com"
   # RELAY_PUBLIC_IP: "203.0.113.10"
-  # Public addresses of the cluster's nodes, load balancers and other servers, which the
-  # relay must never reach (see relay.yaml):
+  # Public addresses the relay must never reach (see relay.yaml):
   # RELAY_DENIED_PEERS: "203.0.113.0/24"
   # RELAY_USER_ALLOCATIONS: "16"
   # ICE_SERVERS: '[{"urls":"turn:turn.example.com:3478","username":"u","credential":"p"}]'

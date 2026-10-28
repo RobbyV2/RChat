@@ -27,8 +27,8 @@ export const forwardMenuItem = (action: () => void): ContextMenuItem => ({
   action,
 })
 
-// The thin bar above a composer while a message sits in the forward clipboard: who wrote it,
-// one line of it, Send (forwards it here) and X (discards the clipboard).
+// The bar above a composer while the forward clipboard has a message. Send forwards it here. X
+// clears the clipboard.
 export function ForwardBar({ draftKey }: { draftKey: string }) {
   const clip = useStore(s => s.forwardClip)
   const busy = useStore(s => (clip ? forwardPending(s.outbox[draftKey], clip.id) : false))
@@ -74,8 +74,8 @@ export function ForwardBar({ draftKey }: { draftKey: string }) {
   )
 }
 
-// A forwarded message: a label, then a compact copy of the original (author, time, text,
-// attachment, previews) in a card, with a footer that opens the original when you can read it.
+// A forwarded message: a label and a card with a compact copy of the original. The footer opens
+// the original if you can read it.
 export function ForwardCard({
   m,
   canDelete,

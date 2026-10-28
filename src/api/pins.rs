@@ -80,16 +80,15 @@ fn cannot_pin() -> ApiError {
 
 /// Pin a message
 ///
-/// Pins a top-level message of a channel or DM. Requires a bearer token; guests cannot pin.
-/// Needs read access to the message and, in server channels, membership and the Manage
-/// messages permission (bit 2, which also allows deleting others' messages); in DMs, being a
-/// participant. Only normal messages can be pinned (not thread replies, call logs or pin
-/// notices). A channel or DM holds at most 100 pinned messages. Pinning a pinned message
-/// changes nothing. A new pin adds a `pin` message ("alice pinned a message"; `content` is
-/// empty and `pin_message_id` names the pinned message) and emits `message` with it, then
-/// `message_pinned` (`{server, channel_id, dm_id, dm_users, message_id, pinned_at,
-/// pinned_by}`, ids only) to clients that can see the channel, or to both DM participants.
-/// General rate-limit bucket.
+/// Pins a top-level message of a channel or DM. Requires a bearer token. Guests cannot pin.
+/// Needs read access to the message. In server channels, also needs membership and the Manage
+/// messages permission (bit 2, which also lets you delete messages of others). In DMs, needs to
+/// be a participant. Only normal messages can be pinned (not thread replies, call logs or pin
+/// notices). A channel or DM has at most 100 pins. Pinning a pinned message changes nothing. A
+/// new pin adds a `pin` message ("alice pinned a message"; empty `content`, `pin_message_id` is
+/// the pinned message) and emits `message` with it. Then it emits `message_pinned` (`{server,
+/// channel_id, dm_id, dm_users, message_id, pinned_at, pinned_by}`, ids only) to clients that can
+/// see the channel, or to both DM participants. General rate-limit bucket.
 #[utoipa::path(put, path = "/api/messages/{id}/pin", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Pinned (or already pinned); body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "`Cannot pin this message`: a thread reply, a call log or a pin notice. A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, or no Manage messages permission", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 409, description = "`This channel has reached the pin limit` or `This conversation has reached the pin limit` (100 pinned messages)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn pin_message(
     State(state): State<AppState>,

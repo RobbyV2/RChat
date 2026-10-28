@@ -37,7 +37,7 @@ const iconBtn =
 
 const areaCls = `${fieldCls} w-full resize-none font-mono text-xs break-all md:text-xs`
 
-// Always dark modules on white with a 4-module quiet zone, in both themes, so any scanner reads it.
+// Dark modules on white with a 4-module quiet zone in both themes, so all scanners can read it.
 export function QrCode({ text, label }: { text: string; label: string }) {
   const qr = useMemo(() => encode(text, { ecc: 'M', border: 4 }), [text])
   const path = useMemo(() => {

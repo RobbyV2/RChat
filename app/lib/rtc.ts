@@ -522,10 +522,9 @@ export class RtcManager {
     }
   }
 
-  // The impolite side re-offers with an ICE restart. The polite side asks it
-  // to, so it never makes a fresh offer that could collide with one; only a
-  // legacy peer, which doesn't know the request, gets a restart from the
-  // polite side, and only on a connection that was already negotiated.
+  // The impolite side re-offers with an ICE restart. The polite side asks it to, so it never makes
+  // an offer that can collide. Exception: a legacy peer does not know the request, so the polite
+  // side restarts it, but only on a negotiated connection.
   private recover(user: string, peer: Peer) {
     if (!this.current(user, peer) || peer.pc.connectionState === 'connected') return
     if (!peer.polite || (peer.remoteSid === null && peer.negotiated)) this.restart(user, peer)
@@ -612,10 +611,8 @@ export class RtcManager {
     peer.screenOn = screen ?? false
   }
 
-  // scope is the channel or call the sender tagged the signal with. Signals
-  // for any other session (in flight across a switch) are dropped, and so
-  // are signals for an earlier session of ours or from an earlier one of
-  // theirs.
+  // `scope` is the channel or call of the signal. Signals for other sessions (in flight across a
+  // switch) are dropped. So are signals for an earlier session of ours or of theirs.
   async onSignal(from: string, payload: RtcPayload, scope: SignalScope) {
     const { target } = this
     if (!target || !sameScope(target, scope) || from === this.me) return

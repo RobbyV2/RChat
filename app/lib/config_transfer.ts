@@ -1,11 +1,10 @@
-// Moving a user's local config between devices and accounts: an export document, its compact
-// string form (`rc1.` + base64url of deflate-raw JSON) and share links (`/config/{id}/`).
+// Moves local config between devices and accounts: an export document, its string form
+// (`rc1.` + base64url of deflate-raw JSON) and share links (`/config/{id}/`).
 //
-// Document: `{ v: 1, theme?, streamer?, appearOffline?, layout?, notify?, emoji? }`. Every
-// section is optional and decoded on its own; unknown sections and fields are dropped, so a
-// later version can add a section (e.g. an encrypted identity) that older readers skip. `v`
-// changes only when an existing section changes incompatibly. Only listed fields are copied out
-// of the store, so tokens, grants, drafts, passwords and P2P state can never end up in it.
+// Document: `{ v: 1, theme?, streamer?, appearOffline?, layout?, notify?, emoji? }`. All
+// sections are optional and decoded separately. Unknown sections and fields are dropped, so older
+// readers skip new sections. `v` changes only for an incompatible change. Only listed store
+// fields are copied, so tokens, grants, drafts, passwords and P2P state never get in.
 import type { Theme } from './types'
 import {
   cleanFolderName,
@@ -26,8 +25,7 @@ import {
 
 export const CONFIG_VERSION = 1
 export const PREFIX = 'rc1.'
-// Share links store at most this many bytes of config string; string and file exports have no
-// such cap.
+// Share links hold at most this many bytes. String and file exports have no limit.
 export const LINK_MAX = 16 * 1024
 // Sanity caps for pasted strings and what they inflate to.
 export const TEXT_MAX = 2 * 1024 * 1024
@@ -393,8 +391,8 @@ export const describeChanges = (doc: ConfigDoc, src: ConfigSource): Change[] => 
   }))
 }
 
-// A config opened from a link before logging in: the sections still to apply wait in this tab's
-// sessionStorage until the next login (at most 30 minutes), then are applied once and removed.
+// A config opened from a link before login. The sections to apply wait in sessionStorage for at
+// most 30 minutes. The next login applies them once.
 const STASH = 'rchat_config_stash'
 export const STASH_MS = 30 * 60 * 1000
 

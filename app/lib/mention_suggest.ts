@@ -11,9 +11,8 @@ export const matchesPerson = (u: UserRef, q: string) => {
   return u.username.startsWith(needle) || u.display_name.toLowerCase().startsWith(needle)
 }
 
-// Mention suggestions: each group in order (recent authors first), deduplicated by username,
-// prefix matches on username or display name, at most `max`. `skip` drops people (yourself,
-// known non-members).
+// Mention suggestions: groups in order, no duplicate usernames, prefix match on username or
+// display name, at most `max`. `skip` removes people (you, known non-members).
 export const suggestPeople = (
   query: string,
   groups: readonly (readonly UserRef[])[],
