@@ -58,6 +58,7 @@ export class IceCache {
   private expires = 0
   private signedIn = false
   private helpers = true
+  private relay = false
   private timer: unknown = null
   private gen = 0
   private listeners = new Set<() => void>()
@@ -74,7 +75,8 @@ export class IceCache {
 
   config(): RTCConfiguration {
     const config: RTCConfiguration = { iceServers: this.servers() }
-    if (this.policy) config.iceTransportPolicy = this.policy
+    const policy = this.policy ?? (this.relayActive() ? 'relay' : null)
+    if (policy) config.iceTransportPolicy = policy
     return config
   }
 
@@ -86,6 +88,19 @@ export class IceCache {
     if (this.helpers === on) return
     this.helpers = on
     this.emit()
+  }
+
+  setRelay(on: boolean) {
+    if (this.relay === on) return
+    this.relay = on
+    this.emit()
+  }
+
+  // Relay only is in force: the user asked for it, helpers are on and the instance has a TURN
+  // relay. Then connections use relayed candidates only, even before the credentials arrive,
+  // so they fail rather than show the user's IP address.
+  relayActive() {
+    return relayOnly(this.src.info(), this.helpers, this.relay)
   }
 
   setSignedIn(on: boolean) {
@@ -149,20 +164,34 @@ export class IceCache {
   }
 }
 
-// Stored per account: { v: 1, on }. Anything unreadable means on.
+export const relayOnly = (info: InstanceIce | null | undefined, helpers: boolean, relay: boolean) =>
+  relay && helpers && info?.turn === true
+
+// Stored per account: { v: 1, on, relay }. Anything unreadable means helpers on, relay only off.
 export const iceKey = (username: string | null) => `rchat_ice:${username ?? 'guest'}`
 
-export const parseHelpers = (raw: string | null): boolean => {
+export interface IcePrefs {
+  on: boolean
+  relay: boolean
+}
+
+export const parseIce = (raw: string | null): IcePrefs => {
   try {
     const v = raw ? (JSON.parse(raw) as unknown) : null
-    if (typeof v !== 'object' || v === null || (v as { v?: unknown }).v !== 1) return true
-    return (v as { on?: unknown }).on !== false
+    if (typeof v !== 'object' || v === null || (v as { v?: unknown }).v !== 1)
+      return { on: true, relay: false }
+    const { on, relay } = v as { on?: unknown; relay?: unknown }
+    return { on: on !== false, relay: relay === true }
   } catch {
-    return true
+    return { on: true, relay: false }
   }
 }
 
-export const helpersValue = (on: boolean) => JSON.stringify({ v: 1, on })
+export const parseHelpers = (raw: string | null): boolean => parseIce(raw).on
+
+export const iceValue = ({ on, relay }: IcePrefs) => JSON.stringify({ v: 1, on, relay })
+
+export const helpersValue = (on: boolean) => iceValue({ on, relay: false })
 
 // Test hook: `?ice=relay` forces relayed candidates for this tab, to check the relay path.
 const forcedPolicy = (): RTCIceTransportPolicy | null => {

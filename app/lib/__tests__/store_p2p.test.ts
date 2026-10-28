@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { home } from '../instances'
 import { attachModes, MAX_UPLOAD, siteSettings, startMode, useStore } from '../store'
-import { p2p } from '../p2p'
+import { p2p, type CallBinding } from '../p2p'
 import type { MessageMedia, SiteSettings, VoiceMsg, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 
@@ -139,7 +139,7 @@ describe('removals reach files and copies of messages not loaded here', () => {
     const settings = { ...st().settings, p2p_attachments: false }
     useStore.setState({
       settings,
-      p2pAvailability: { alice: { peer_id: 'p', ids: [], online: true } },
+      p2pAvailability: { alice: { ids: [], online: true } },
     })
     dispatch({ type: 'settings_changed', settings: { ...settings, p2p_attachments: true } })
     ws.sendVoice = realSend
@@ -291,50 +291,88 @@ describe('attachment settings', () => {
   })
 })
 
-describe('P2P call dialing', () => {
+describe('P2P call binding', () => {
   const ws = home.ws as unknown as { sendVoice: (m: VoiceMsg) => boolean }
   const realSend = ws.sendVoice
-  const realDial = p2p.dial.bind(p2p)
+  const real = {
+    dial: p2p.dial.bind(p2p),
+    bind: p2p.bind.bind(p2p),
+    peerId: p2p.peerId.bind(p2p),
+    mediaActive: p2p.mediaActive.bind(p2p),
+  }
   let sent: VoiceMsg[] = []
-  let dialed: string[] = []
+  let dialed = 0
+  let bound: CallBinding[] = []
+  let tab = 'bob-tab'
   beforeEach(() => {
     sent = []
-    dialed = []
+    dialed = 0
+    bound = []
+    tab = 'bob-tab'
     ws.sendVoice = m => {
       sent.push(m)
       return true
     }
-    p2p.dial = (peer: string) => {
-      dialed.push(peer)
+    p2p.dial = () => {
+      dialed += 1
     }
+    p2p.bind = b => {
+      if (bound.some(x => x.callId === b.callId)) return false
+      bound.push(b)
+      return true
+    }
+    p2p.peerId = () => tab
+    p2p.mediaActive = () => true
+    useStore.setState({ call: null, error: null })
   })
   afterEach(() => {
     ws.sendVoice = realSend
-    p2p.dial = realDial
+    Object.assign(p2p, real)
   })
 
-  test("the caller asks which of the callee's tabs took the call, never dialing a cached peer", () => {
-    useStore.setState({
-      call: null,
-      p2pAvailability: { alice: { peer_id: 'newest-tab', ids: [], online: true } },
-    })
+  const active = (from: string, peers?: { user: string; peer_id: string }[], id = 'c1') =>
     dispatch({
       type: 'call_state',
       dm_id: 5,
       dm_users: ['alice', 'bob'],
       state: 'active',
-      from: 'bob',
+      from,
       kind: 'p2p',
+      ...(peers ? { call_id: id, peers } : {}),
     })
-    expect(dialed).toEqual([])
-    expect(sent).toEqual([{ type: 'p2p_who', hosters: ['alice'] }])
-    dispatch({
-      type: 'p2p_availability',
-      hoster: 'alice',
-      peer_id: 'call-tab',
-      ids: [],
-      online: true,
-    })
-    expect(dialed).toEqual(['call-tab'])
+  const peers = [
+    { user: 'bob', peer_id: 'bob-tab' },
+    { user: 'alice', peer_id: 'alice-tab' },
+  ]
+
+  test('the caller dials only the tab the server named, once per call', () => {
+    active('bob', peers)
+    active('bob', peers)
+    expect(bound).toEqual([{ callId: 'c1', peer: 'alice-tab', dial: true }])
+    expect(dialed).toBe(1)
+    expect(sent).toEqual([])
+  })
+
+  test('the callee binds to the caller and waits for it to dial', () => {
+    active('alice', peers)
+    expect(bound).toEqual([{ callId: 'c1', peer: 'alice-tab', dial: false }])
+    expect(dialed).toBe(0)
+  })
+
+  test('other tabs of the same user and tabs without media stay out of the call', () => {
+    tab = 'bob-other-tab'
+    active('bob', peers)
+    tab = 'bob-tab'
+    p2p.mediaActive = () => false
+    active('bob', peers)
+    expect([bound, dialed]).toEqual([[], 0])
+  })
+
+  test('a call without a binding (an older server or app) never connects', () => {
+    active('bob')
+    expect([bound, dialed]).toEqual([[], 0])
+    active('bob', [peers[0]])
+    expect([bound, dialed]).toEqual([[], 0])
+    expect(st().error).toContain('older app')
   })
 })

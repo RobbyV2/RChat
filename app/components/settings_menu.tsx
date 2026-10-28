@@ -457,11 +457,19 @@ function StatusSection() {
 function ConnectionSection() {
   const on = useStore(s => s.iceHelpers)
   const setOn = useStore(s => s.setIceHelpers)
+  const relay = useStore(s => s.iceRelay)
+  const setRelay = useStore(s => s.setIceRelay)
+  const signedIn = useStore(s => s.me !== null)
   const info = useStore(s => s.instance?.ice)
   const offer = iceOffer(info)
+  const relayUsable = info?.turn === true && on && signedIn
   return (
     <section>
       <p className={sectionCls}>Voice and P2P</p>
+      <p className="mb-2 px-2 text-xs text-on-surface-variant">
+        Calls, voice and P2P files connect you straight to the other person, so they can see your IP
+        address. Relay only sends everything through the relay instead.
+      </p>
       <SettingSwitch label="Use connection helpers" value={on} onChange={setOn} />
       <p className="mt-2 px-2 text-xs text-on-surface-variant">
         {offer.length
@@ -474,6 +482,23 @@ function ConnectionSection() {
           what you send.
         </p>
       )}
+      <div className="mt-2">
+        <SettingSwitch
+          label="Use relay only for P2P (hides your IP)"
+          value={relay && relayUsable}
+          onChange={setRelay}
+          disabled={!relayUsable}
+        />
+      </div>
+      <p className="mt-2 px-2 text-xs text-on-surface-variant">
+        {relayUsable
+          ? 'Others see the relay, not you. Calls may have more delay.'
+          : info?.turn !== true
+            ? 'Not available: this instance has no relay.'
+            : !signedIn
+              ? 'Sign in to use the relay.'
+              : 'Turn on connection helpers to use the relay.'}
+      </p>
     </section>
   )
 }
@@ -568,6 +593,11 @@ function InformationSection() {
           the instance offers connection helpers (public STUN servers or its own relay), they help
           peers on different networks find each other, and a relay may forward the encrypted media.
           Turn them off under Voice and P2P to connect only directly.
+        </p>
+        <p>
+          A direct connection shows your IP address to the other person. With relay only on, they
+          see the relay instead. Images sent over P2P load when you click them, unless relay only is
+          on.
         </p>
       </Info>
       <Info title="Servers and identity">

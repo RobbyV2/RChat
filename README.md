@@ -30,7 +30,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 | Direct messages        | Send private messages. Start voice or video calls in a DM.                                                            |
 | P2P calls              | Call over a direct link between browsers.                                                                             |
 | P2P attachments        | Send files of any size from your browser. The server stores only the name, size and hash. Works when uploads are off. |
-| Relay servers          | Help calls and P2P files connect through STUN and TURN. Off by default. Users can turn helpers off.                   |
+| Relay servers          | Help calls and P2P files connect through STUN and TURN. Off by default. Relay only hides your IP address.             |
 | Uploads                | Upload files and images up to 25 MB. The server deletes them after one day. The site admin can turn them off.         |
 | Text only mode         | Turn off uploads and P2P attachments. Then messages can contain only text and emoji.                                  |
 | Link previews          | Show a card for links in a message. The server gets the preview, not your browser.                                    |

@@ -495,6 +495,12 @@ pub enum WsEvent {
         state: CallPhase,
         from: String,
         kind: CallKind,
+        /// Active P2P calls only: the call's id, which the caller puts in the PeerJS metadata.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        call_id: Option<String>,
+        /// Active P2P calls only: the peer id of the caller's tab and of the tab that accepted.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        peers: Vec<CallPeer>,
     },
     P2pAvailability {
         hoster: String,
@@ -541,8 +547,28 @@ pub enum WsEvent {
     P2pHosted {
         live: Vec<String>,
         checked: Vec<String>,
+        /// Hex key the hoster checks download tokens with, valid for `peer_id`.
+        key: String,
+        peer_id: String,
+        /// Server time in unix seconds, so the hoster can check token expiry on a skewed clock.
+        now: i64,
+    },
+    /// Answer to `p2p_peer`, to that connection only: where to fetch the attachment of
+    /// `message_id` and the token for it, or `error`.
+    P2pPeer {
+        message_id: i64,
+        peer_id: Option<String>,
+        token: Option<String>,
+        expires_at: Option<i64>,
+        error: Option<String>,
     },
     Resync,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CallPeer {
+    pub user: String,
+    pub peer_id: String,
 }
 
 #[derive(Deserialize)]
@@ -568,6 +594,8 @@ enum ClientMsg {
         dm_id: i64,
         #[serde(default)]
         p2p: bool,
+        #[serde(default)]
+        peer_id: Option<String>,
     },
     P2pHosting {
         peer_id: String,
@@ -576,8 +604,14 @@ enum ClientMsg {
     P2pWho {
         hosters: Vec<String>,
     },
+    P2pPeer {
+        message_id: i64,
+        peer_id: String,
+    },
     CallAccept {
         dm_id: i64,
+        #[serde(default)]
+        peer_id: Option<String>,
     },
     CallDecline {
         dm_id: i64,
@@ -1201,11 +1235,14 @@ pub async fn depart(state: &AppState) {
 /// Then the client sends `viewing` (the open server, for presence), `subscribe` (servers to
 /// follow, with guest grants for password-protected ones), `voice_join` / `voice_leave`,
 /// `call_start` / `call_accept` / `call_decline` / `call_leave` for DM calls, `rtc_signal` for
-/// WebRTC signalling, and `p2p_hosting` / `p2p_who` for P2P files. Guests are read-only: no
+/// WebRTC signalling, and `p2p_hosting` / `p2p_who` / `p2p_peer` for P2P files (`p2p_peer`
+/// gives a reader of one message the hoster's peer id and a short-lived download token; `p2p_who`
+/// never carries peer ids). Guests are read-only: no
 /// presence, voice or calls. The server sends the events in `WsEvent` (`src/ws.rs`), for example
 /// `message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`,
-/// `voice_state`, `call_state`, `p2p_hosted` (tells a `p2p_hosting` sender which of its files are
-/// still live attachments), `error` and `resync` (fetch state again after missed events). Frames
+/// `voice_state`, `call_state` (an active P2P call also carries its id and the peer id of both
+/// tabs), `p2p_hosted` (tells a `p2p_hosting` sender which of its files are still live
+/// attachments, and the key it checks download tokens with), `p2p_peer`, `error` and `resync` (fetch state again after missed events). Frames
 /// are at most 64 KiB. The token goes in the `auth` frame, not in the bearer security scheme.
 /// General rate-limit bucket for the upgrade request.
 #[utoipa::path(get, path = "/api/ws", tag = "Realtime", responses((status = 101, description = "WebSocket upgrade"), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String), (status = 503, description = "Realtime bus not ready", content_type = "text/plain", body = String)), security(()))]
@@ -1245,7 +1282,12 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             state.hub.voice_leave(user).await;
             Ok(())
         }
-        ClientMsg::CallStart { dm_id, p2p } => {
+        ClientMsg::CallStart {
+            dm_id,
+            p2p,
+            peer_id,
+        } => {
+            let peer_id = call_peer_id(peer_id)?;
             let row = sqlx::query("SELECT user_a, user_b FROM dms WHERE id = $1")
                 .bind(dm_id)
                 .fetch_optional(&state.read())
@@ -1270,7 +1312,7 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             let log_id = insert_call_log(state, dm_id, user).await.map_err(db_err)?;
             match state
                 .hub
-                .call_start(user, conn, dm_id, dm_users.clone(), kind, log_id)
+                .call_start(user, conn, dm_id, dm_users.clone(), kind, log_id, peer_id)
                 .await
             {
                 Ok(()) => {
@@ -1286,8 +1328,9 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
                 }
             }
         }
-        ClientMsg::CallAccept { dm_id } => {
-            let (log_id, dm_users) = state.hub.call_accept(user, conn, dm_id).await?;
+        ClientMsg::CallAccept { dm_id, peer_id } => {
+            let peer_id = call_peer_id(peer_id)?;
+            let (log_id, dm_users) = state.hub.call_accept(user, conn, dm_id, peer_id).await?;
             answer_call_log(state, dm_users, log_id).await;
             Ok(())
         }
@@ -1332,7 +1375,18 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             grants: _,
         }
         | ClientMsg::P2pHosting { peer_id: _, ids: _ }
+        | ClientMsg::P2pPeer {
+            message_id: _,
+            peer_id: _,
+        }
         | ClientMsg::P2pWho { hosters: _ } => Ok(()),
+    }
+}
+
+fn call_peer_id(peer_id: Option<String>) -> Result<Option<String>, String> {
+    match peer_id {
+        Some(id) if !crate::p2p::valid_peer_id(&id) => Err("Invalid peer id".to_string()),
+        other => Ok(other),
     }
 }
 
@@ -1433,18 +1487,17 @@ async fn peer_facts(db: &Db, me: &str, hoster: &str) -> sqlx::Result<Option<Peer
     }))
 }
 
+// Whether `hoster` shows as hosting to `me`, and which of their files `me` can read. Peer ids
+// are never part of it: a reader gets one per download, through `p2p_peer`.
 async fn p2p_visible(
     state: &AppState,
     access: &mut Access,
     me: &str,
     hoster: &str,
-) -> Option<(String, Vec<String>)> {
-    let (peer_id, ids) = match state.hub.p2p_call_peer(me, hoster) {
-        Some(found) => found,
-        None => state.hub.p2p_of(hoster)?,
-    };
+) -> Option<Vec<String>> {
+    let ids = state.hub.p2p_ids(hoster)?;
     if me == hoster {
-        return Some((peer_id, ids));
+        return Some(ids);
     }
     let db = state.read();
     let calling = state.hub.in_p2p_call(me, hoster);
@@ -1483,7 +1536,83 @@ async fn p2p_visible(
         true => readable_p2p_ids(&db, access, me, hoster, ids).await,
         false => Vec::new(),
     };
-    Some((peer_id, ids))
+    Some(ids)
+}
+
+const NOT_AVAILABLE: &str = "File not available";
+
+// The answer to `p2p_peer`: the peer id of the hoster's tab that has the attachment of
+// `message_id`, and a token for it, only for a signed-in user who can read that message. The
+// hoster must be online (not appearing offline) and still host the file. Requests are rate
+// limited per user, whatever the answer.
+async fn p2p_release(state: &AppState, access: &Access, message_id: i64, peer_id: &str) -> WsEvent {
+    let deny = |error: &str| WsEvent::P2pPeer {
+        message_id,
+        peer_id: None,
+        token: None,
+        expires_at: None,
+        error: Some(error.to_string()),
+    };
+    let Some(me) = access.user.clone() else {
+        return deny("Create an account to download P2P files");
+    };
+    if !state.hub.release_ok(&me) {
+        return deny("Too many downloads at once, try again in a moment");
+    }
+    if !crate::p2p::valid_peer_id(peer_id) {
+        return deny(NOT_AVAILABLE);
+    }
+    let db = state.read();
+    if !Settings::cached(&db).await.p2p_attachments {
+        return deny(NOT_AVAILABLE);
+    }
+    let row = sqlx::query(
+        "SELECT m.media_id, m.channel_id, c.server, d.user_a, d.user_b, m.created_at, m.media_hoster, m.media_expires_at FROM messages m LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN dms d ON d.id = m.dm_id WHERE m.id = $1 AND m.media_kind = 'p2p' AND m.media_removed = 0",
+    )
+    .bind(message_id)
+    .fetch_optional(&db)
+    .await;
+    let Ok(Some(row)) = row else {
+        return deny(NOT_AVAILABLE);
+    };
+    let (Ok(media_id), Ok(Some(hoster)), Ok(expires)) = (
+        row.try_get::<String, _>(0),
+        row.try_get::<Option<String>, _>(6),
+        row.try_get::<Option<i64>, _>(7),
+    ) else {
+        return deny(NOT_AVAILABLE);
+    };
+    let now = now();
+    let live = expires.is_none_or(|at| at > now);
+    if hoster == me || !live {
+        return deny(NOT_AVAILABLE);
+    }
+    if !row_readable(&db, access, &me, &mut ReadCache::default(), &row).await {
+        return deny(NOT_AVAILABLE);
+    }
+    let shown = matches!(appear_offline(&db, &hoster).await, Ok(Some(false)))
+        || state.hub.in_p2p_call(&me, &hoster);
+    let Some(hoster_peer) = state.hub.p2p_host_of(&hoster, &media_id).filter(|_| shown) else {
+        return deny(NOT_AVAILABLE);
+    };
+    let exp = now + crate::p2p::TOKEN_TTL;
+    let grant = crate::p2p::Grant {
+        v: 1,
+        message_id,
+        p2p_id: media_id,
+        requester: me,
+        hoster,
+        hoster_peer: hoster_peer.clone(),
+        requester_peer: peer_id.to_string(),
+        exp,
+    };
+    WsEvent::P2pPeer {
+        message_id,
+        peer_id: Some(hoster_peer),
+        token: Some(crate::p2p::issue(&state.instance.p2p_secret, &grant)),
+        expires_at: Some(exp),
+        error: None,
+    }
 }
 
 async fn readable_p2p_ids(
@@ -1548,58 +1677,71 @@ async fn lookup_p2p_ids(
     let Ok(rows) = query.fetch_all(db).await else {
         return Vec::new();
     };
-    let mut servers: HashMap<String, bool> = HashMap::new();
-    let mut channels: HashMap<i64, Option<Option<i64>>> = HashMap::new();
+    let mut cache = ReadCache::default();
     let mut out: Vec<String> = Vec::new();
     for r in &rows {
         let Ok(id) = r.try_get::<String, _>(0) else {
             continue;
         };
-        if out.contains(&id) {
-            continue;
-        }
-        let channel: Option<i64> = r.try_get(1).ok().flatten();
-        let server: Option<String> = r.try_get(2).ok().flatten();
-        let pair: (Option<String>, Option<String>) =
-            (r.try_get(3).ok().flatten(), r.try_get(4).ok().flatten());
-        let readable = match (channel, server, pair) {
-            (Some(cid), Some(server), _) => {
-                let open = match servers.get(&server) {
-                    Some(open) => *open,
-                    None => {
-                        let open = authed_sub_ok(db, &server, me, access.site_admin)
-                            .await
-                            .unwrap_or(false);
-                        servers.insert(server.clone(), open);
-                        open
-                    }
-                };
-                let hidden = access
-                    .viewable
-                    .get(&cid)
-                    .is_some_and(|(owner, view)| !*view || *owner != server);
-                let since = match (hidden, channels.get(&cid)) {
-                    (true, _) => None,
-                    (false, Some(since)) => *since,
-                    (false, None) => {
-                        let since = ws_channel_read_since(db, &server, cid, me).await;
-                        channels.insert(cid, since);
-                        since
-                    }
-                };
-                let created_at: Option<i64> = r.try_get(5).ok();
-                open && since.is_some_and(|floor| {
-                    floor.is_none_or(|floor| created_at.is_some_and(|at| at >= floor))
-                })
-            }
-            (_, _, (Some(a), Some(b))) => a == me || b == me,
-            (_, _, _) => false,
-        };
-        if readable {
+        if !out.contains(&id) && row_readable(db, access, me, &mut cache, r).await {
             out.push(id);
         }
     }
     out
+}
+
+#[derive(Default)]
+struct ReadCache {
+    servers: HashMap<String, bool>,
+    channels: HashMap<i64, Option<Option<i64>>>,
+}
+
+// Whether `me` can read a message row with channel_id, server, user_a, user_b and created_at in
+// columns 1 to 5: server access, channel view and the read-history floor, or DM membership.
+async fn row_readable(
+    db: &Db,
+    access: &Access,
+    me: &str,
+    cache: &mut ReadCache,
+    r: &sqlx::any::AnyRow,
+) -> bool {
+    let channel: Option<i64> = r.try_get(1).ok().flatten();
+    let server: Option<String> = r.try_get(2).ok().flatten();
+    let pair: (Option<String>, Option<String>) =
+        (r.try_get(3).ok().flatten(), r.try_get(4).ok().flatten());
+    match (channel, server, pair) {
+        (Some(cid), Some(server), _) => {
+            let open = match cache.servers.get(&server) {
+                Some(open) => *open,
+                None => {
+                    let open = authed_sub_ok(db, &server, me, access.site_admin)
+                        .await
+                        .unwrap_or(false);
+                    cache.servers.insert(server.clone(), open);
+                    open
+                }
+            };
+            let hidden = access
+                .viewable
+                .get(&cid)
+                .is_some_and(|(owner, view)| !*view || *owner != server);
+            let since = match (hidden, cache.channels.get(&cid)) {
+                (true, _) => None,
+                (false, Some(since)) => *since,
+                (false, None) => {
+                    let since = ws_channel_read_since(db, &server, cid, me).await;
+                    cache.channels.insert(cid, since);
+                    since
+                }
+            };
+            let created_at: Option<i64> = r.try_get(5).ok();
+            open && since.is_some_and(|floor| {
+                floor.is_none_or(|floor| created_at.is_some_and(|at| at >= floor))
+            })
+        }
+        (_, _, (Some(a), Some(b))) => a == me || b == me,
+        (_, _, _) => false,
+    }
 }
 
 type P2pScope = (Vec<String>, Vec<String>);
@@ -2296,7 +2438,7 @@ async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent
 
 // Hosted ids are read capabilities, and the broadcast of a hoster goes to all who share a server
 // with them. So others learn about hosting only through p2p_who: filtered to the ids they can
-// read, with the tab of the hoster that is in a P2P call with them.
+// read. Answers carry no peer ids: a peer id reaches a reader only through a p2p release.
 fn hosting_via_who(access: &mut Access, ev: &WsEvent) -> bool {
     let me = access.user.as_deref();
     match ev {
@@ -2385,9 +2527,9 @@ async fn answer_who(state: &AppState, access: &mut Access, out: &Out) -> bool {
             None => None,
         };
         let ev = match shown {
-            Some((peer_id, ids)) => WsEvent::P2pAvailability {
+            Some(ids) => WsEvent::P2pAvailability {
                 hoster,
-                peer_id: Some(peer_id),
+                peer_id: None,
                 ids,
                 online: true,
                 scope_servers: Vec::new(),
@@ -2712,16 +2854,27 @@ async fn run(state: AppState, mut socket: WebSocket) {
                             }
                         }
                         Ok(ClientMsg::P2pHosting { peer_id, ids }) => {
-                            if let Some(user) = access.user.clone() && peer_id.len() <= P2P_ID_MAX {
+                            if let Some(user) = access.user.clone() && crate::p2p::valid_peer_id(&peer_id) {
                                 let ids = hosting_ids(ids);
-                                let live = live_hosted(&state.read(), &user, &ids).await;
-                                let checked = ids.clone();
-                                access.host(&state, conn, (peer_id, ids)).await;
-                                if let Some(live) = live
-                                    && !sent(&mut access, out.event(&WsEvent::P2pHosted { live, checked }))
-                                {
+                                let (live, checked) = match live_hosted(&state.read(), &user, &ids).await {
+                                    Some(live) => (live, ids.clone()),
+                                    None => (Vec::new(), Vec::new()),
+                                };
+                                let key = hex::encode(crate::p2p::host_key(&state.instance.p2p_secret, &user, &peer_id));
+                                access.host(&state, conn, (peer_id.clone(), ids)).await;
+                                let hosted = WsEvent::P2pHosted { live, checked, key, peer_id, now: now() };
+                                if !sent(&mut access, out.event(&hosted)) {
                                     break;
                                 }
+                            }
+                        }
+                        Ok(ClientMsg::P2pPeer { message_id, peer_id }) => {
+                            let ev = match access.retry.pending() {
+                                true => WsEvent::P2pPeer { message_id, peer_id: None, token: None, expires_at: None, error: Some("Reconnecting, try again in a moment".to_string()) },
+                                false => p2p_release(&state, &access, message_id, &peer_id).await,
+                            };
+                            if !sent(&mut access, out.event(&ev)) {
+                                break;
                             }
                         }
                         Ok(ClientMsg::P2pWho { hosters: _ }) if access.retry.pending() => {}
@@ -3306,6 +3459,8 @@ fn wants(
             state: _,
             from: _,
             kind: _,
+            call_id: _,
+            peers: _,
         } => me.is_some_and(|user| dm_users.iter().any(|u| u == user)),
         WsEvent::P2pAvailability {
             hoster,
@@ -3338,6 +3493,16 @@ fn wants(
         | WsEvent::P2pHosted {
             live: _,
             checked: _,
+            key: _,
+            peer_id: _,
+            now: _,
+        }
+        | WsEvent::P2pPeer {
+            message_id: _,
+            peer_id: _,
+            token: _,
+            expires_at: _,
+            error: _,
         }
         | WsEvent::Resync => false,
     }
@@ -4432,15 +4597,12 @@ mod tests {
             let state = state.clone();
             async move { p2p_visible(&state, &mut access, me, "alice").await }
         };
-        assert_eq!(
-            ask("bob", &["rchat"]).await,
-            Some(("peer-a".to_string(), vec![s("f1")]))
-        );
-        let mut carol = ask("carol", &[]).await.expect("dm partner").1;
+        assert_eq!(ask("bob", &["rchat"]).await, Some(vec![s("f1")]));
+        let mut carol = ask("carol", &[]).await.expect("dm partner");
         carol.sort();
         assert_eq!(carol, [s("f1"), s("f3")]);
         assert_eq!(ask("eve", &[]).await, None);
-        let mut own = ask("alice", &["rchat", "vault"]).await.expect("self").1;
+        let mut own = ask("alice", &["rchat", "vault"]).await.expect("self");
         own.sort();
         assert_eq!(own, ids);
         exec(
@@ -4457,7 +4619,7 @@ mod tests {
         .await;
         let mut bob = Access::new(Some(s("bob")), false, set(&["rchat"]));
         let first = p2p_visible(&state, &mut bob, "bob", "alice").await;
-        assert_eq!(first, Some(("peer-a".to_string(), vec![s("f1")])));
+        assert_eq!(first, Some(vec![s("f1")]));
         assert_eq!((bob.who.peers.len(), bob.who.media.len()), (1, 4));
         exec(db, "DELETE FROM messages WHERE media_id = 'f1'").await;
         assert_eq!(
@@ -4521,10 +4683,10 @@ mod tests {
         };
         assert_eq!(
             ask("bob").await,
-            Some((s("peer-a"), vec![s("new")])),
+            Some(vec![s("new")]),
             "no read history: only files posted since joining"
         );
-        let mut dave = ask("dave").await.expect("dave").1;
+        let mut dave = ask("dave").await.expect("dave");
         dave.sort();
         assert_eq!(dave, [s("new"), s("old")]);
         exec(
@@ -4535,7 +4697,7 @@ mod tests {
         crate::api::Settings::forget(db);
         assert_eq!(
             ask("dave").await,
-            Some((s("peer-a"), Vec::new())),
+            Some(Vec::new()),
             "with P2P attachments off no file is offered; the peer stays for calls"
         );
         let mut live = live_hosted(db, "alice", &[s("old"), s("gone"), s("new")])
@@ -4615,7 +4777,7 @@ mod tests {
         assert!(carol.who.pace.due.is_some());
         assert_eq!(
             p2p_visible(&state, &mut carol, "carol", "alice").await,
-            Some((s("peer-a"), vec![s("pub")])),
+            Some(vec![s("pub")]),
             "the DM attachment's id never reaches a server co-member"
         );
         let mut alice = Access::new(Some(s("alice")), false, set(&["rchat"]));
@@ -4633,7 +4795,7 @@ mod tests {
         let mut bob = Access::new(Some(s("bob")), false, HashSet::new());
         assert_eq!(
             p2p_visible(&state, &mut bob, "bob", "alice").await,
-            Some((s("peer-a"), vec![s("pub"), s("dm")]))
+            Some(vec![s("pub"), s("dm")])
         );
         bob.who.pace.fire(Instant::now());
         bob.who
@@ -4669,6 +4831,189 @@ mod tests {
             "a hoster's new attachment is re-asked about on the next paced p2p_who"
         );
         crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn p2p_peer_ids_go_only_to_readers_of_the_message_with_a_token() {
+        let (state, path) = crate::api::test_util::temp_state("p2p_release").await;
+        let db = &state.db;
+        for name in ["alice", "bob", "carol", "dave", "eve"] {
+            add_user_row(db, name).await;
+        }
+        let general = insert_id(db, "SELECT id FROM channels WHERE server = 'rchat'").await;
+        for (user, joined) in [("alice", 0), ("bob", 50), ("dave", 50)] {
+            sqlx::query("INSERT INTO members(server, username, is_admin, joined_at) VALUES('rchat', $1, 0, $2)")
+                .bind(user)
+                .bind(joined)
+                .execute(db)
+                .await
+                .expect("member");
+        }
+        exec(db, "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) SELECT id, 'u:bob', 1, 1, 0 FROM channels WHERE server = 'rchat'").await;
+        exec(db, "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('vault', 'Vault', 'alice', 'hash', 0)").await;
+        exec(db, "INSERT INTO members(server, username, is_admin, joined_at) VALUES('vault', 'alice', 0, 0)").await;
+        let vault = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('vault', 'general', 'text', 0) RETURNING id").await;
+        let dm = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'carol') RETURNING id",
+        )
+        .await;
+        let mut ids = HashMap::new();
+        for (name, channel, dm_id, at, removed, expires) in [
+            ("old", Some(general), None, 10, 0, None),
+            ("new", Some(general), None, 60, 0, None),
+            ("dm", None, Some(dm), 60, 0, None),
+            ("vault", Some(vault), None, 60, 0, None),
+            ("gone", Some(general), None, 60, 1, None),
+            ("expired", Some(general), None, 60, 0, Some(1)),
+        ] {
+            let id: i64 = sqlx::query("INSERT INTO messages(channel_id, dm_id, author, content, media_id, media_kind, media_hoster, created_at, media_removed, media_expires_at) VALUES($1, $2, 'alice', '', $3, 'p2p', 'alice', $4, $5, $6) RETURNING id")
+                .bind(channel)
+                .bind(dm_id)
+                .bind(name)
+                .bind(at)
+                .bind(removed)
+                .bind(expires)
+                .fetch_one(db)
+                .await
+                .expect("p2p message")
+                .try_get(0)
+                .expect("id");
+            ids.insert(name, id);
+        }
+        state.hub.set_p2p(
+            "alice",
+            1,
+            s("peer-a"),
+            ["old", "new", "dm", "vault", "gone", "expired"]
+                .map(s)
+                .to_vec(),
+        );
+        let ask = |me: Option<&'static str>, file: &'static str| {
+            let access = Access::new(me.map(s), false, set(&["rchat"]));
+            let state = state.clone();
+            let id = ids[file];
+            async move { p2p_release(&state, &access, id, "peer-b").await }
+        };
+        let token = |ev: WsEvent| match ev {
+            WsEvent::P2pPeer {
+                message_id: _,
+                peer_id: Some(peer),
+                token: Some(token),
+                expires_at: Some(_),
+                error: None,
+            } => Some((peer, token)),
+            _ => None,
+        };
+        let refusal = |ev: WsEvent| match ev {
+            WsEvent::P2pPeer {
+                message_id,
+                peer_id: None,
+                token: None,
+                expires_at: None,
+                error: Some(error),
+            } => Some((message_id, error)),
+            _ => None,
+        };
+        let key = crate::p2p::host_key(&state.instance.p2p_secret, "alice", "peer-a");
+        let (peer, granted) = token(ask(Some("bob"), "new").await).expect("bob reads new");
+        assert_eq!(peer, "peer-a");
+        let grant = crate::p2p::verify(&key, &granted, now()).expect("signed for alice's tab");
+        assert_eq!(
+            (
+                grant.message_id,
+                grant.p2p_id.as_str(),
+                grant.requester.as_str(),
+                grant.hoster.as_str(),
+                grant.hoster_peer.as_str(),
+                grant.requester_peer.as_str(),
+            ),
+            (ids["new"], "new", "bob", "alice", "peer-a", "peer-b")
+        );
+        assert!((grant.exp - now() - crate::p2p::TOKEN_TTL).abs() <= 2);
+        assert_eq!(
+            crate::p2p::verify(&key, &granted, grant.exp),
+            None,
+            "short-lived"
+        );
+        assert!(token(ask(Some("dave"), "old").await).is_some());
+        assert!(token(ask(Some("carol"), "dm").await).is_some());
+        assert!(
+            token(ask(Some("eve"), "new").await).is_some(),
+            "a public server's messages can be read without joining"
+        );
+        for (me, file, why) in [
+            (
+                Some("bob"),
+                "old",
+                "before bob joined, without read history",
+            ),
+            (Some("bob"), "dm", "a DM bob is not in"),
+            (Some("eve"), "vault", "a protected server eve is not in"),
+            (Some("alice"), "new", "the hoster has the file"),
+            (Some("dave"), "gone", "removed"),
+            (Some("dave"), "expired", "expired"),
+        ] {
+            assert_eq!(
+                refusal(ask(me, file).await),
+                Some((ids[file], s(NOT_AVAILABLE))),
+                "{why}"
+            );
+        }
+        assert!(token(ask(None, "new").await).is_none(), "guests");
+        let dave = Access::new(Some(s("dave")), false, set(&["rchat"]));
+        assert!(token(p2p_release(&state, &dave, ids["new"], "bad id").await).is_none());
+        assert!(token(p2p_release(&state, &dave, 999_999, "peer-b").await).is_none());
+        exec(
+            db,
+            "UPDATE users SET appear_offline = 1 WHERE username = 'alice'",
+        )
+        .await;
+        assert!(
+            token(ask(Some("dave"), "new").await).is_none(),
+            "appears offline"
+        );
+        exec(
+            db,
+            "UPDATE users SET appear_offline = 0 WHERE username = 'alice'",
+        )
+        .await;
+        state.hub.set_p2p("alice", 1, s("peer-a"), vec![s("old")]);
+        assert!(
+            token(ask(Some("dave"), "new").await).is_none(),
+            "no tab hosts the file"
+        );
+        state.hub.set_p2p("alice", 2, s("peer-a2"), vec![s("new")]);
+        let (peer, _) = token(ask(Some("dave"), "new").await).expect("the other tab");
+        assert_eq!(peer, "peer-a2");
+        exec(
+            db,
+            "INSERT INTO settings(key, value) VALUES('p2p_attachments', '0') ON CONFLICT(key) DO UPDATE SET value = '0'",
+        )
+        .await;
+        crate::api::Settings::forget(db);
+        assert!(token(ask(Some("dave"), "new").await).is_none(), "P2P off");
+        let mut allowed = 0;
+        while state.hub.release_ok("zed") {
+            allowed += 1;
+        }
+        assert_eq!(allowed, crate::hub::RELEASE_BURST);
+        let limited = Access::new(Some(s("zed")), false, set(&["rchat"]));
+        assert_eq!(
+            refusal(p2p_release(&state, &limited, ids["new"], "peer-b").await),
+            Some((
+                ids["new"],
+                s("Too many downloads at once, try again in a moment")
+            ))
+        );
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[test]
+    fn calls_name_only_plain_peer_ids() {
+        assert_eq!(call_peer_id(None), Ok(None));
+        assert_eq!(call_peer_id(Some(s("peer-a"))), Ok(Some(s("peer-a"))));
+        assert_eq!(call_peer_id(Some(s("a b"))), Err(s("Invalid peer id")));
     }
 
     #[test]
@@ -4717,28 +5062,24 @@ mod tests {
         let pair = vec![s("alice"), s("carol")];
         state
             .hub
-            .call_start("alice", 1, dm, pair.clone(), CallKind::Rtc, 1)
+            .call_start("alice", 1, dm, pair.clone(), CallKind::Rtc, 1, None)
             .await
             .expect("voice call");
-        assert_eq!(ask("carol").await, None, "only P2P calls share the peer id");
+        assert_eq!(
+            ask("carol").await,
+            None,
+            "only P2P calls show an offline hoster"
+        );
         state.hub.call_end("alice", dm).await.expect("end");
         state
             .hub
-            .call_start("alice", 1, dm, pair, CallKind::P2p, 2)
+            .call_start("alice", 1, dm, pair, CallKind::P2p, 2, None)
             .await
             .expect("p2p call");
-        assert_eq!(ask("carol").await, Some(("peer-a".to_string(), Vec::new())));
-        state
-            .hub
-            .set_p2p("alice", 2, "peer-a2".to_string(), Vec::new());
-        assert_eq!(
-            state.hub.p2p_of("alice").map(|(peer, _)| peer).as_deref(),
-            Some("peer-a2")
-        );
         assert_eq!(
             ask("carol").await,
-            Some(("peer-a".to_string(), Vec::new())),
-            "the partner dials the tab that is in the call, not the newest tab"
+            Some(Vec::new()),
+            "online to the call partner, and never with a peer id"
         );
         assert_eq!(ask("eve").await, None);
         state.hub.call_end("alice", dm).await.expect("end");
@@ -5732,6 +6073,20 @@ mod tests {
                 state: CallPhase::Ringing,
                 from: s("alice"),
                 kind: CallKind::Rtc,
+                call_id: None,
+                peers: Vec::new(),
+            },
+            WsEvent::CallState {
+                dm_id: 1,
+                dm_users: vec![s("alice"), s("bob")],
+                state: CallPhase::Active,
+                from: s("alice"),
+                kind: CallKind::P2p,
+                call_id: Some(s("c")),
+                peers: vec![CallPeer {
+                    user: s("alice"),
+                    peer_id: s("pa"),
+                }],
             },
             WsEvent::DmCreated {
                 dm_id: 1,
@@ -5758,6 +6113,16 @@ mod tests {
             WsEvent::P2pHosted {
                 live: Vec::new(),
                 checked: Vec::new(),
+                key: s("k"),
+                peer_id: s("p"),
+                now: 1,
+            },
+            WsEvent::P2pPeer {
+                message_id: 1,
+                peer_id: Some(s("p")),
+                token: Some(s("t")),
+                expires_at: Some(2),
+                error: None,
             },
             WsEvent::Resync,
         ]);

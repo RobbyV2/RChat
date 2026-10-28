@@ -1,15 +1,15 @@
 use std::borrow::Borrow;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tracing::warn;
 
 use crate::fanout::{Channels, Inbox, Router, Topic};
-use crate::ws::{CallKind, CallPhase, WsEvent};
+use crate::ws::{CallKind, CallPeer, CallPhase, WsEvent};
 
 pub const DEAD_AFTER_MS: i64 = 30_000;
 const GAPS_KEPT: usize = 32;
@@ -20,6 +20,9 @@ pub const CALL_TIMEOUT: Duration = match cfg!(test) {
     false => Duration::from_secs(10),
 };
 pub const READ_FLUSH: Duration = Duration::from_millis(500);
+pub const RELEASE_BURST: u32 = 30;
+pub const RELEASE_EVERY: Duration = Duration::from_secs(2);
+const RELEASE_USERS_MAX: usize = 10_000;
 
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
@@ -82,6 +85,12 @@ struct Call {
     kind: CallKind,
     log_id: i64,
     lone_since: i64,
+    // A P2P call is bound to this id and to the peer ids of the caller's tab and of the tab
+    // that accepted. Only the two sides of the call learn them.
+    #[serde(default)]
+    call_id: String,
+    #[serde(default)]
+    peers: Vec<(String, String)>,
 }
 
 impl Call {
@@ -233,11 +242,17 @@ pub enum Op {
         dm_users: Vec<String>,
         kind: CallKind,
         log_id: i64,
+        #[serde(default)]
+        call_id: String,
+        #[serde(default)]
+        peer_id: Option<String>,
     },
     CallAccept {
         user: String,
         conn: u64,
         dm_id: i64,
+        #[serde(default)]
+        peer_id: Option<String>,
     },
     CallEnd {
         user: String,
@@ -310,11 +325,14 @@ impl Op {
                 dm_users: _,
                 kind: _,
                 log_id: _,
+                call_id: _,
+                peer_id: _,
             }
             | Op::CallAccept {
                 user: _,
                 conn: _,
                 dm_id: _,
+                peer_id: _,
             }
             | Op::CallEnd { user: _, dm_id: _ }
             | Op::DropConn { user: _, conn: _ }
@@ -415,13 +433,29 @@ fn stale_signal(replica: &Replica, ev: &WsEvent) -> bool {
     }
 }
 
+// An active P2P call also names its id and the peer id of each side, so the caller dials the
+// tab that accepted and that tab answers only the caller.
 fn call_state(dm_id: i64, call: &Call, state: CallPhase) -> WsEvent {
+    let bound =
+        state == CallPhase::Active && call.kind == CallKind::P2p && !call.call_id.is_empty();
     WsEvent::CallState {
         dm_id,
         dm_users: call.dm_users.clone(),
         state,
         from: call.from.clone(),
         kind: call.kind,
+        call_id: bound.then(|| call.call_id.clone()),
+        peers: match bound {
+            true => call
+                .peers
+                .iter()
+                .map(|(user, peer_id)| CallPeer {
+                    user: user.clone(),
+                    peer_id: peer_id.clone(),
+                })
+                .collect(),
+            false => Vec::new(),
+        },
     }
 }
 
@@ -1026,6 +1060,8 @@ impl Replica {
                 dm_users,
                 kind,
                 log_id,
+                call_id,
+                peer_id,
             } => Outcome::Started('start: {
                 if self.in_call(&user) {
                     break 'start Err("You are already in a call".to_string());
@@ -1040,6 +1076,11 @@ impl Replica {
                 }
                 let rooms = self.rooms_of(&user);
                 self.leave_rooms(rooms, |_, u, _| u == user, t, &mut evs);
+                let peers = self
+                    .call_peer(&user, conn, peer_id)
+                    .map(|p| (user.clone(), p))
+                    .into_iter()
+                    .collect();
                 let call = Call {
                     dm_users,
                     from: user.clone(),
@@ -1048,12 +1089,19 @@ impl Replica {
                     kind,
                     log_id,
                     lone_since: t,
+                    call_id,
+                    peers,
                 };
                 evs.push(call_state(dm_id, &call, CallPhase::Ringing));
                 self.add_call(dm_id, call);
                 Ok(())
             }),
-            Op::CallAccept { user, conn, dm_id } => Outcome::Accepted('accept: {
+            Op::CallAccept {
+                user,
+                conn,
+                dm_id,
+                peer_id,
+            } => Outcome::Accepted('accept: {
                 let valid = self
                     .calls
                     .get(&dm_id)
@@ -1063,10 +1111,15 @@ impl Replica {
                 }
                 let rooms = self.rooms_of(&user);
                 self.leave_rooms(rooms, |_, u, _| u == user, t, &mut evs);
+                let peer = self.call_peer(&user, conn, peer_id);
                 let Some(call) = self.calls.get_mut(&dm_id) else {
                     break 'accept Err("No incoming call".to_string());
                 };
                 call.active = true;
+                if let Some(peer) = peer {
+                    call.peers.retain(|(u, _)| *u != user);
+                    call.peers.push((user.clone(), peer));
+                }
                 call.occupants.push((user.clone(), conn));
                 evs.push(call_state(dm_id, call, CallPhase::Active));
                 let res = Ok((call.log_id, call.dm_users.clone()));
@@ -1231,14 +1284,15 @@ impl Replica {
         })
     }
 
-    fn p2p_call_peer(&self, me: &str, hoster: &str) -> Option<(String, Vec<String>)> {
-        let hosts = self.p2p.get(hoster)?;
-        self.calls
-            .values()
-            .filter(|c| c.kind == CallKind::P2p && c.dm_users.iter().any(|u| u == me))
-            .flat_map(|c| c.occupants.iter())
-            .find_map(|(u, conn)| (u == hoster).then(|| hosts.get(conn)).flatten())
-            .map(|h| (h.peer_id.clone(), h.ids.clone()))
+    // The peer id a tab named for a call, or for older apps that don't name one, the id it
+    // announced for hosting.
+    fn call_peer(&self, user: &str, conn: u64, named: Option<String>) -> Option<String> {
+        named.or_else(|| {
+            self.p2p
+                .get(user)
+                .and_then(|hosts| hosts.get(&conn))
+                .map(|h| h.peer_id.clone())
+        })
     }
 
     fn voice_snapshot(&self) -> Vec<WsEvent> {
@@ -1415,6 +1469,7 @@ struct Inner {
     epoch: watch::Sender<Epoch>,
     aftermath: mpsc::UnboundedSender<Aftermath>,
     aftermath_rx: Mutex<Option<mpsc::UnboundedReceiver<Aftermath>>>,
+    release: Mutex<HashMap<String, (f64, Instant)>>,
 }
 
 enum Waited {
@@ -1454,6 +1509,7 @@ impl Hub {
                 epoch: watch::channel(Epoch::default()).0,
                 aftermath,
                 aftermath_rx: Mutex::new(Some(aftermath_rx)),
+                release: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -1949,6 +2005,7 @@ impl Hub {
         self.call_applied(op).await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn call_start(
         &self,
         user: &str,
@@ -1957,6 +2014,7 @@ impl Hub {
         dm_users: Vec<String>,
         kind: CallKind,
         log_id: i64,
+        peer_id: Option<String>,
     ) -> Result<(), String> {
         let op = Op::CallStart {
             user: user.to_string(),
@@ -1965,6 +2023,8 @@ impl Hub {
             dm_users,
             kind,
             log_id,
+            call_id: crate::identity::random_id(),
+            peer_id,
         };
         match self.ask(op).await {
             Outcome::Started(res) => res,
@@ -1977,11 +2037,13 @@ impl Hub {
         user: &str,
         conn: u64,
         dm_id: i64,
+        peer_id: Option<String>,
     ) -> Result<(i64, Vec<String>), String> {
         let op = Op::CallAccept {
             user: user.to_string(),
             conn,
             dm_id,
+            peer_id,
         };
         match self.ask(op).await {
             Outcome::Accepted(res) => res,
@@ -2046,14 +2108,53 @@ impl Hub {
         });
     }
 
-    // The hoster's tab that is in a P2P call with `me`, when they have several tabs open.
-    pub fn p2p_call_peer(&self, me: &str, hoster: &str) -> Option<(String, Vec<String>)> {
-        self.inner
-            .store
-            .lock()
-            .unwrap()
+    // The ids `user` hosts across all their tabs.
+    pub fn p2p_ids(&self, user: &str) -> Option<Vec<String>> {
+        let store = self.inner.store.lock().unwrap();
+        let hosts = store.replica.p2p.get(user)?;
+        let mut ids: Vec<String> = Vec::new();
+        for id in hosts.values().flat_map(|h| h.ids.iter()) {
+            if !ids.contains(id) {
+                ids.push(id.clone());
+            }
+        }
+        Some(ids)
+    }
+
+    // The peer id of the newest tab of `user` that hosts the file `id`.
+    pub fn p2p_host_of(&self, user: &str, id: &str) -> Option<String> {
+        let store = self.inner.store.lock().unwrap();
+        store
             .replica
-            .p2p_call_peer(me, hoster)
+            .p2p
+            .get(user)?
+            .values()
+            .rev()
+            .find(|h| h.ids.iter().any(|x| x == id))
+            .map(|h| h.peer_id.clone())
+    }
+
+    // Peer id requests for downloads: a burst of RELEASE_BURST, then one every RELEASE_EVERY,
+    // per user and per process.
+    pub fn release_ok(&self, user: &str) -> bool {
+        let now = Instant::now();
+        let mut limits = self.inner.release.lock().unwrap();
+        if limits.len() > RELEASE_USERS_MAX {
+            limits.retain(|_, (_, at)| now.duration_since(*at) < RELEASE_EVERY * RELEASE_BURST);
+        }
+        let (tokens, at) = limits
+            .entry(user.to_string())
+            .or_insert((RELEASE_BURST as f64, now));
+        let refill = now.duration_since(*at).as_secs_f64() / RELEASE_EVERY.as_secs_f64();
+        *tokens = (*tokens + refill).min(RELEASE_BURST as f64);
+        *at = now;
+        match *tokens >= 1.0 {
+            true => {
+                *tokens -= 1.0;
+                true
+            }
+            false => false,
+        }
     }
 
     pub fn p2p_of(&self, user: &str) -> Option<(String, Vec<String>)> {
@@ -2312,6 +2413,8 @@ pub(crate) mod tests {
                     state,
                     from: _,
                     kind: _,
+                    call_id: _,
+                    peers: _,
                 } => Some((*dm_id, *state)),
                 _ => None,
             })
@@ -2395,6 +2498,8 @@ pub(crate) mod tests {
                     dm_users: dm_users(),
                     kind: CallKind::Rtc,
                     log_id: 70,
+                    call_id: String::new(),
+                    peer_id: None,
                 },
                 T0 + 30,
             ),
@@ -2581,15 +2686,15 @@ pub(crate) mod tests {
             voice_of(&drain(&mut rx_a)),
             vec![(5, vec!["alice".to_string()]), (5, both[0].1.clone())]
         );
-        a.call_start("alice", alice, 9, dm_users(), CallKind::Rtc, 70)
+        a.call_start("alice", alice, 9, dm_users(), CallKind::Rtc, 70, None)
             .await
             .unwrap();
         assert_eq!(
-            b.call_start("bob", bob, 9, dm_users(), CallKind::Rtc, 71)
+            b.call_start("bob", bob, 9, dm_users(), CallKind::Rtc, 71, None)
                 .await,
             Err("You are already in a call".to_string())
         );
-        let (log_id, users) = b.call_accept("bob", bob, 9).await.unwrap();
+        let (log_id, users) = b.call_accept("bob", bob, 9, None).await.unwrap();
         assert_eq!((log_id, users), (70, dm_users()));
         assert!(a.rooms_in("rchat", None).is_empty());
         assert!(a.rtc_shared("alice", "bob", None, Some(9)));
@@ -2633,6 +2738,95 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn p2p_calls_bind_their_id_and_the_peer_ids_of_both_tabs() {
+        let s = |v: &str| v.to_string();
+        let hub = Hub::new();
+        let mut rx = hub.subscribe();
+        type Bound = (CallPhase, Option<String>, Vec<(String, String)>);
+        let bound = |evs: Vec<WsEvent>| -> Vec<Bound> {
+            evs.into_iter()
+                .filter_map(|ev| match ev {
+                    WsEvent::CallState {
+                        dm_id: _,
+                        dm_users: _,
+                        state,
+                        from: _,
+                        kind: _,
+                        call_id,
+                        peers,
+                    } => Some((
+                        state,
+                        call_id,
+                        peers.into_iter().map(|p| (p.user, p.peer_id)).collect(),
+                    )),
+                    _ => None,
+                })
+                .collect()
+        };
+        let pair = |a: &str, b: &str| vec![(s("alice"), s(a)), (s("bob"), s(b))];
+        let (alice, bob, bob2) = (hub.next_conn(), hub.next_conn(), hub.next_conn());
+        hub.set_p2p("alice", alice, s("hosted-a"), Vec::new());
+        hub.set_p2p("bob", bob, s("hosted-b"), Vec::new());
+        hub.call_start(
+            "alice",
+            alice,
+            9,
+            dm_users(),
+            CallKind::P2p,
+            70,
+            Some(s("pa")),
+        )
+        .await
+        .unwrap();
+        hub.call_accept("bob", bob2, 9, Some(s("pb2")))
+            .await
+            .unwrap();
+        hub.call_end("alice", 9).await.unwrap();
+        let first = bound(drain(&mut rx));
+        assert_eq!(first.len(), 3);
+        assert_eq!(first[0], (CallPhase::Ringing, None, Vec::new()));
+        let id = first[1].1.clone().expect("an active P2P call has an id");
+        assert_eq!(id.len(), 32);
+        assert_eq!(
+            first[1],
+            (CallPhase::Active, Some(id.clone()), pair("pa", "pb2")),
+            "the tab that accepted, not bob's other tab"
+        );
+        assert_eq!(first[2], (CallPhase::Ended, None, Vec::new()));
+
+        hub.call_start("alice", alice, 9, dm_users(), CallKind::P2p, 71, None)
+            .await
+            .unwrap();
+        hub.call_accept("bob", bob, 9, None).await.unwrap();
+        let old = bound(drain(&mut rx));
+        assert_eq!(
+            old[1].2,
+            pair("hosted-a", "hosted-b"),
+            "older apps name no peer id, so the hosting one stands in"
+        );
+        assert!(old[1].1.as_ref().is_some_and(|other| *other != id));
+        hub.call_end("bob", 9).await.unwrap();
+
+        hub.call_start(
+            "alice",
+            alice,
+            9,
+            dm_users(),
+            CallKind::Rtc,
+            72,
+            Some(s("pa")),
+        )
+        .await
+        .unwrap();
+        hub.call_accept("bob", bob, 9, Some(s("pb"))).await.unwrap();
+        assert_eq!(
+            bound(drain(&mut rx)).last(),
+            Some(&(CallPhase::Active, None, Vec::new())),
+            "instance calls carry no peer ids"
+        );
+    }
+
+    #[tokio::test]
     async fn dead_instance_is_purged() {
         let bus = MemBus::new();
         let (a, b) = (bus.join(), bus.join());
@@ -2642,10 +2836,10 @@ pub(crate) mod tests {
         a.set_viewing("alice", alice, None, Some("rchat"));
         b.set_viewing("bob", bob, None, Some("rchat"));
         a.set_p2p("alice", alice, "peer-a".to_string(), vec!["f".to_string()]);
-        a.call_start("alice", alice, 9, dm_users(), CallKind::P2p, 70)
+        a.call_start("alice", alice, 9, dm_users(), CallKind::P2p, 70, None)
             .await
             .unwrap();
-        b.call_accept("bob", bob, 9).await.unwrap();
+        b.call_accept("bob", bob, 9, None).await.unwrap();
         assert!(
             b.voice_join("carol", b.next_conn(), "rchat", 5)
                 .await
@@ -2876,11 +3070,14 @@ pub(crate) mod tests {
                 dm_users: vec![s("frank"), s("gina")],
                 kind: CallKind::Rtc,
                 log_id: 9,
+                call_id: String::new(),
+                peer_id: None,
             },
             Op::CallAccept {
                 user: s("gina"),
                 conn: (3 << 32) | 3,
                 dm_id: 4,
+                peer_id: None,
             },
             Op::VoiceJoin {
                 user: s("gina"),
@@ -3048,6 +3245,8 @@ pub(crate) mod tests {
             dm_users: dm_users(),
             kind: CallKind::Rtc,
             log_id: 70,
+            call_id: String::new(),
+            peer_id: None,
         };
         assert!(matches!(
             replica.apply(1, start, T0).outcome,
@@ -3058,6 +3257,7 @@ pub(crate) mod tests {
             user: s("bob"),
             conn: 2,
             dm_id: 9,
+            peer_id: None,
         };
         assert!(matches!(
             replica.apply(2, accept, T0).outcome,
@@ -3102,14 +3302,14 @@ pub(crate) mod tests {
         assert!(signals_of(&drain(&mut rx_a)).is_empty());
         assert!(signals_of(&drain(&mut rx_b)).is_empty());
 
-        a.call_start("alice", alice, 9, dm_users(), CallKind::Rtc, 70)
+        a.call_start("alice", alice, 9, dm_users(), CallKind::Rtc, 70, None)
             .await
             .unwrap();
         b.broadcast(signal("bob", "alice", None, Some(9)));
         b.flush().await;
         a.flush().await;
         assert!(signals_of(&drain(&mut rx_a)).is_empty());
-        b.call_accept("bob", bob, 9).await.unwrap();
+        b.call_accept("bob", bob, 9, None).await.unwrap();
         b.broadcast(signal("bob", "alice", None, Some(9)));
         b.flush().await;
         a.flush().await;
@@ -3182,9 +3382,17 @@ pub(crate) mod tests {
         let s = |v: &str| v.to_string();
         hub.voice_join("alice", 1, "one", 5).await;
         hub.voice_join("bob", 2, "two", 6).await;
-        hub.call_start("carol", 3, 9, vec![s("carol"), s("dave")], CallKind::Rtc, 1)
-            .await
-            .unwrap();
+        hub.call_start(
+            "carol",
+            3,
+            9,
+            vec![s("carol"), s("dave")],
+            CallKind::Rtc,
+            1,
+            None,
+        )
+        .await
+        .unwrap();
         let held = [s("one")];
         assert_eq!(
             voice_of(&hub.voice_snapshot_for(held.iter(), Some("dave"))),

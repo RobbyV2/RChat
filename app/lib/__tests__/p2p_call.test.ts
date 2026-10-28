@@ -328,3 +328,181 @@ describe('p2p call setup', () => {
     expect(x.silence).toBe(null)
   })
 })
+
+describe('p2p call acceptance', () => {
+  type Conn = ReturnType<typeof incoming>
+  function incoming(peer: string, call?: string) {
+    const on = new Map<string, Handler>()
+    return {
+      peer,
+      metadata: call === undefined ? undefined : { call },
+      open: true,
+      answered: false,
+      closed: false,
+      on(event: string, cb: Handler) {
+        on.set(event, cb)
+      },
+      emit(event: string, arg?: unknown) {
+        on.get(event)?.(arg)
+      },
+      answer() {
+        this.answered = true
+      },
+      send() {},
+      close() {
+        this.closed = true
+        this.emit('close')
+      },
+    }
+  }
+  interface Gate {
+    incomingMedia: (c: Conn) => void
+    incomingControl: (c: Conn) => void
+    media: unknown
+    control: unknown
+    local: FakeStream | null
+    detector: unknown
+    ensurePeer: () => unknown
+  }
+  const inCall = () => {
+    const m = new P2pManager()
+    const x = m as unknown as Gate
+    x.detector = { ...quiet }
+    x.ensurePeer = () => null
+    x.local = new FakeStream([new FakeTrack('audio')])
+    return { m, x }
+  }
+  const answered = (c: Conn) => [c.answered, c.closed]
+
+  test('nothing is answered without a call the user accepted and the server bound', () => {
+    const { m, x } = inCall()
+    const early = incoming('caller', 'c1')
+    x.incomingMedia(early)
+    expect(answered(early)).toEqual([false, true])
+    m.endMedia()
+    const idle = incoming('caller', 'c1')
+    x.incomingMedia(idle)
+    expect(answered(idle)).toEqual([false, true])
+  })
+
+  test('only the bound caller with the call id gets an answer, and only once', () => {
+    const { m, x } = inCall()
+    m.expectCall()
+    const attacker = incoming('mallory', 'c1')
+    const caller = incoming('caller', 'c1')
+    x.incomingMedia(attacker)
+    x.incomingMedia(caller)
+    expect([answered(attacker), answered(caller)]).toEqual([
+      [false, false],
+      [false, false],
+    ])
+    expect(m.bind({ callId: 'c1', peer: 'caller', dial: false })).toBe(true)
+    expect(m.bind({ callId: 'c1', peer: 'caller', dial: false })).toBe(false)
+    expect([answered(attacker), answered(caller)]).toEqual([
+      [false, true],
+      [true, false],
+    ])
+    for (const c of [
+      incoming('mallory', 'c1'),
+      incoming('caller', 'c2'),
+      incoming('caller'),
+      incoming('caller', 'c1'),
+    ]) {
+      x.incomingMedia(c)
+      expect(answered(c)).toEqual([false, true])
+    }
+    expect(x.media).toBe(caller)
+  })
+
+  test('the control channel comes only from the caller, and a second one is refused', () => {
+    const { m, x } = inCall()
+    m.bind({ callId: 'c1', peer: 'caller', dial: false })
+    const spoof = incoming('mallory', 'c1')
+    x.incomingControl(spoof)
+    spoof.emit('data', { type: 'cam', on: true, share: true, screen: true, muted: true })
+    expect([spoof.closed, m.remoteCamOn, m.remoteMuted]).toEqual([true, false, false])
+    const control = incoming('caller', 'c1')
+    x.incomingControl(control)
+    expect(x.control).toBe(control)
+    const again = incoming('caller', 'c1')
+    x.incomingControl(again)
+    expect([again.closed, x.control]).toEqual([true, control])
+    control.emit('data', { type: 'cam', on: true, share: false, screen: false, muted: true })
+    expect([m.remoteCamOn, m.remoteMuted]).toEqual([true, true])
+  })
+
+  test('the caller answers nothing and dials the bound tab with the call id', () => {
+    const { m, x } = inCall()
+    const dialed: unknown[] = []
+    x.ensurePeer = () => ({
+      call: (peer: string, _stream: unknown, opts: unknown) => {
+        dialed.push(['call', peer, opts])
+        return incoming(peer)
+      },
+      connect: (peer: string, opts: unknown) => {
+        dialed.push(['connect', peer, opts])
+        return incoming(peer)
+      },
+    })
+    m.dial()
+    expect(dialed).toEqual([])
+    m.bind({ callId: 'c9', peer: 'callee-tab', dial: true })
+    const knock = incoming('callee-tab', 'c9')
+    x.incomingMedia(knock)
+    expect(answered(knock)).toEqual([false, true])
+    m.dial()
+    m.dial()
+    expect(dialed).toEqual([
+      ['call', 'callee-tab', { metadata: { call: 'c9' } }],
+      ['connect', 'callee-tab', { label: 'call', reliable: true, metadata: { call: 'c9' } }],
+    ])
+  })
+
+  test('a flood from one peer id cannot push out the real caller', () => {
+    const { m, x } = inCall()
+    const timers = globalThis as unknown as { setTimeout: typeof setTimeout }
+    const real = timers.setTimeout
+    timers.setTimeout = (() => 0) as unknown as typeof setTimeout
+    try {
+      m.expectCall()
+    } finally {
+      timers.setTimeout = real
+    }
+    const flood = [1, 2, 3, 4, 5].map(() => incoming('attacker', 'c1'))
+    for (const c of flood) x.incomingMedia(c)
+    const caller = incoming('caller', 'c1')
+    x.incomingMedia(caller)
+    expect(flood.map(c => c.closed)).toEqual([true, true, true, true, false])
+    expect(caller.closed).toBe(false)
+    m.bind({ callId: 'c1', peer: 'caller', dial: false })
+    expect(answered(caller)).toEqual([true, false])
+    expect(flood[4].closed).toBe(true)
+  })
+
+  test('held connections are dropped when no binding comes, and ending the call forgets it', async () => {
+    const { m, x } = inCall()
+    const timers = globalThis as unknown as { setTimeout: typeof setTimeout }
+    const real = timers.setTimeout
+    let fire: () => void = () => {}
+    timers.setTimeout = ((fn: () => void) => {
+      fire = fn
+      return 0
+    }) as unknown as typeof setTimeout
+    try {
+      m.expectCall()
+    } finally {
+      timers.setTimeout = real
+    }
+    const held = [incoming('a', 'c1'), incoming('b', 'c1'), incoming('c', 'c1')]
+    for (const c of held) x.incomingMedia(c)
+    expect(held.map(c => c.closed)).toEqual([true, false, false])
+    fire()
+    expect(held.map(c => c.closed)).toEqual([true, true, true])
+    m.bind({ callId: 'c1', peer: 'caller', dial: false })
+    m.endMedia()
+    x.local = new FakeStream([new FakeTrack('audio')])
+    const late = incoming('caller', 'c1')
+    x.incomingMedia(late)
+    expect(answered(late)).toEqual([false, true])
+  })
+})

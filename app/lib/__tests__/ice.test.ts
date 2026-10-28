@@ -9,7 +9,10 @@ import {
   helpersValue,
   iceConfig,
   iceOffer,
+  iceValue,
   parseHelpers,
+  parseIce,
+  relayOnly,
   type IceSource,
   type Timers,
 } from '../ice'
@@ -174,6 +177,31 @@ describe('IceCache', () => {
     expect(cache.config().iceTransportPolicy).toBe('relay')
   })
 
+  test('relay only forces relayed candidates while the instance has a relay and helpers are on', async () => {
+    const info = { stun: ['stun:r.example.org:3478'], turn: true, relay: true }
+    const { cache } = setup(info, [{ ice_servers: [turnEntry], expires_at: 1003600 }])
+    expect(cache.config().iceTransportPolicy).toBeUndefined()
+    let changes = 0
+    cache.onChange(() => (changes += 1))
+    cache.setRelay(true)
+    expect([changes, cache.relayActive()]).toEqual([1, true])
+    expect(cache.config()).toEqual({ iceServers: [], iceTransportPolicy: 'relay' })
+    await cache.setSignedIn(true)
+    expect(cache.config()).toEqual({ iceServers: [turnEntry], iceTransportPolicy: 'relay' })
+    cache.setHelpers(false)
+    expect(cache.config()).toEqual({ iceServers: [] })
+    cache.setHelpers(true)
+    cache.setRelay(false)
+    expect(cache.config().iceTransportPolicy).toBeUndefined()
+    expect(relayOnly({ stun: [], turn: false, relay: false }, true, true)).toBe(false)
+    expect(relayOnly(info, false, true)).toBe(false)
+    expect(relayOnly(null, true, true)).toBe(false)
+    expect(relayOnly(info, true, true)).toBe(true)
+    const none = setup({ stun: ['stun:s.example.org:3478'], turn: false, relay: false }, [])
+    none.cache.setRelay(true)
+    expect(none.cache.config().iceTransportPolicy).toBeUndefined()
+  })
+
   test('a slow answer from before a sign-out is ignored', async () => {
     let release: (v: IceServers) => void = () => {}
     const src: IceSource = {
@@ -212,6 +240,11 @@ describe('IceCache', () => {
     expect(parseHelpers('{"v":2,"on":false}')).toBe(true)
     expect(parseHelpers(helpersValue(false))).toBe(false)
     expect(parseHelpers(helpersValue(true))).toBe(true)
+    expect(parseIce(null)).toEqual({ on: true, relay: false })
+    expect(parseIce('{"v":1,"on":false}')).toEqual({ on: false, relay: false })
+    expect(parseIce('{"v":1,"on":true,"relay":"yes"}')).toEqual({ on: true, relay: false })
+    expect(parseIce(iceValue({ on: true, relay: true }))).toEqual({ on: true, relay: true })
+    expect(parseIce(iceValue({ on: false, relay: true }))).toEqual({ on: false, relay: true })
   })
 
   test('the offer line names what the instance runs', () => {

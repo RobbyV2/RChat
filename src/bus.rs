@@ -1146,8 +1146,16 @@ mod tests {
             let a = a.clone();
             let dm_users = vec!["alice".to_string(), "alice".to_string()];
             tokio::spawn(async move {
-                a.call_start("alice", tab, 9, dm_users, crate::ws::CallKind::Rtc, 70)
-                    .await
+                a.call_start(
+                    "alice",
+                    tab,
+                    9,
+                    dm_users,
+                    crate::ws::CallKind::Rtc,
+                    70,
+                    None,
+                )
+                .await
             })
         };
         settle().await;
@@ -1248,6 +1256,7 @@ mod tests {
                     vec!["alice".into(), "bob".into()],
                     crate::ws::CallKind::Rtc,
                     70,
+                    None,
                 )
                 .await
             })
@@ -1259,6 +1268,7 @@ mod tests {
             user: "bob".to_string(),
             conn: bob,
             dm_id: 3,
+            peer_id: None,
         };
         deliver(env(9, 1, accept));
         assert!(b.rtc_shared("alice", "bob", None, Some(3)));

@@ -93,7 +93,7 @@ describe('p2p storage failures', () => {
     expect(m.peerId()).toBe(id)
   })
 
-  test('a peer id taken by another tab is replaced for this tab only', () => {
+  test('peer ids are new each session, never stored, and a taken one is replaced', () => {
     const local = new Map<string, string>([['rchat_peer_id:alice', 'abc']])
     g.localStorage = {
       getItem: (k: string) => local.get(k) ?? null,
@@ -106,7 +106,9 @@ describe('p2p storage failures', () => {
     x.announce = () => {
       announced += 1
     }
-    expect(m.peerId()).toBe('abc')
+    const first = m.peerId()
+    expect(/^[0-9a-f]{32}$/.test(first)).toBe(true)
+    expect(local.has('rchat_peer_id:alice')).toBe(false)
     let destroyed = false
     x.taken({
       destroy: () => {
@@ -114,8 +116,8 @@ describe('p2p storage failures', () => {
       },
     })
     const fresh = m.peerId()
-    expect(/^[0-9a-f]{32}$/.test(fresh)).toBe(true)
-    expect([destroyed, announced, local.get('rchat_peer_id:alice')]).toEqual([true, 1, 'abc'])
+    expect(/^[0-9a-f]{32}$/.test(fresh) && fresh !== first).toBe(true)
+    expect([destroyed, announced, local.size]).toEqual([true, 1, 0])
     expect(m.peerId()).toBe(fresh)
   })
 
@@ -143,6 +145,7 @@ describe('p2p storage failures', () => {
 })
 
 type Handler = (arg?: unknown) => void
+type Handler2 = (event: string, arg?: unknown) => void
 
 function pipe(peer = 'remote') {
   const make = () => {
@@ -175,6 +178,37 @@ function pipe(peer = 'remote') {
   host.other = client
   return { client, host }
 }
+
+// Download tokens as the server makes them (src/p2p.rs), signed with the hoster's key.
+const KEY = new Uint8Array(32).fill(7)
+const KEY_HEX = '07'.repeat(32)
+const b64url = (b: Uint8Array) =>
+  btoa(String.fromCharCode(...b))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+const mint = async (grant: object, key: Uint8Array<ArrayBuffer> = KEY) => {
+  const payload = b64url(new TextEncoder().encode(JSON.stringify(grant)))
+  const k = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, [
+    'sign',
+  ])
+  const sig = await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(payload))
+  return `${payload}.${b64url(new Uint8Array(sig))}`
+}
+const nowS = () => Math.floor(Date.now() / 1000)
+// A token from `r` at peer `rp` for file `f` of the hoster `host`.
+const tokenFor = (host: P2pManager, f: string, rp: string, r = 'viewer', over: object = {}) =>
+  mint({
+    v: 1,
+    m: 7,
+    f,
+    r,
+    h: (host as unknown as { user: string }).user,
+    hp: host.peerId(),
+    rp,
+    exp: nowS() + 60,
+    ...over,
+  })
 
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 const SVG = new TextEncoder().encode(
@@ -235,7 +269,19 @@ describe('p2p transfer', () => {
     const x = m as unknown as Wire
     x.announce = () => {}
     m.setAccount(name)
+    m.setServeKey(KEY_HEX, m.peerId(), null)
     return { m, x }
+  }
+  // Asks `host` for a file on the connection `side`, with a token for that connection's peer.
+  const ask = async (
+    host: Wire,
+    side: { peer: string; emit: Handler2 },
+    msg: object,
+    r?: string
+  ) => {
+    const id = (msg as { id: string }).id
+    const token = await tokenFor(host as unknown as P2pManager, id, side.peer, r ?? side.peer)
+    side.emit('data', { type: 'get', ...msg, token })
   }
   const bytes = (n: number, head: number[] = []) => {
     const out = new Uint8Array(n)
@@ -262,8 +308,17 @@ describe('p2p transfer', () => {
       }
     }
     host.serve(side)
-    const got = m.download('host', id, { size: null, sha256: null, hoster: 'host', ...opts })
-    setTimeout(() => client.emit('open'), 0)
+    const got = tokenFor(host as unknown as P2pManager, id, peer).then(token => {
+      const out = m.download('host', id, {
+        size: null,
+        sha256: null,
+        hoster: 'host',
+        token,
+        ...opts,
+      })
+      setTimeout(() => client.emit('open'), 0)
+      return out
+    })
     return { got, m }
   }
 
@@ -394,7 +449,7 @@ describe('p2p transfer', () => {
     const answers: unknown[] = []
     client.on('data', d => answers.push(d))
     x.serve(host)
-    host.emit('data', { type: 'get', id: 'f' })
+    await ask(x, host, { id: 'f' })
     await new Promise(r => setTimeout(r, 20))
     const answer = answers[0] as { type: string; data: string; mime: string }
     expect(answer.type).toBe('file')
@@ -458,10 +513,10 @@ describe('p2p transfer', () => {
     await m.storeFile('f', new File([bytes(10)], 'f.bin'), null)
     const answers: string[] = []
     for (let i = 0; i < ASKS_PER_MIN + 2; i += 1) {
-      const { client, host } = pipe('greedy')
+      const { client, host } = pipe(`greedy-${i}`)
       client.on('data', d => answers.push((d as { type: string }).type))
       x.serve(host)
-      host.emit('data', { type: 'get', id: 'f', chunked: true })
+      await ask(x, host, { id: 'f', chunked: true }, 'greedy')
       await new Promise(r => setTimeout(r, 5))
     }
     expect(answers.filter(t => t === 'busy').length).toBe(2)
@@ -469,7 +524,7 @@ describe('p2p transfer', () => {
     const other: string[] = []
     client.on('data', d => other.push((d as { type: string }).type))
     x.serve(host)
-    host.emit('data', { type: 'get', id: 'f', chunked: true })
+    await ask(x, host, { id: 'f', chunked: true })
     await new Promise(r => setTimeout(r, 5))
     expect(other[0]).toBe('meta')
     const busy = m as unknown as { serving: number }
@@ -478,9 +533,82 @@ describe('p2p transfer', () => {
     const extra = pipe('late')
     extra.client.on('data', d => late.push((d as { type: string }).type))
     x.serve(extra.host)
-    extra.host.emit('data', { type: 'get', id: 'f', chunked: true })
+    await ask(x, extra.host, { id: 'f', chunked: true })
     await new Promise(r => setTimeout(r, 5))
     expect(late).toEqual(['busy'])
+  })
+
+  test('the hoster serves only requests with a token for this file, this tab and this peer', async () => {
+    const { m, x } = manager()
+    await m.storeFile('f', new File([bytes(10)], 'f.bin'), null)
+    const answer = async (token: unknown, peer = 'remote') => {
+      const { client, host } = pipe(peer)
+      const seen: string[] = []
+      client.on('data', d => seen.push((d as { type: string }).type))
+      x.serve(host)
+      host.emit('data', { type: 'get', id: 'f', chunked: true, token })
+      await new Promise(r => setTimeout(r, 20))
+      return seen[0]
+    }
+    const good = (over: object = {}) => tokenFor(m, 'f', 'remote', 'viewer', over)
+    expect(await answer(await good())).toBe('meta')
+    expect(await answer(undefined)).toBe('missing')
+    expect(await answer(42)).toBe('missing')
+    expect(await answer('x')).toBe('missing')
+    expect(await answer('a'.repeat(5000))).toBe('missing')
+    expect(await answer(await good(), 'someone-else')).toBe('missing')
+    for (const over of [
+      { f: 'g' },
+      { rp: 'other' },
+      { h: 'mallory' },
+      { hp: 'old-peer' },
+      { exp: nowS() - 1 },
+      { v: 2 },
+      { r: 5 },
+    ])
+      expect(await answer(await good(over))).toBe('missing')
+    const other = await mint(
+      { v: 1, m: 7, f: 'f', r: 'v', h: 'host', hp: m.peerId(), rp: 'remote', exp: nowS() + 60 },
+      new Uint8Array(32).fill(8)
+    )
+    expect(await answer(other)).toBe('missing')
+    const [payload, sig] = (await good()).split('.')
+    const forged = b64url(
+      new TextEncoder().encode(
+        JSON.stringify({
+          ...(JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as object),
+          f: 'g',
+        })
+      )
+    )
+    expect(await answer(`${forged}.${sig}`)).toBe('missing')
+
+    m.setServeKey(KEY_HEX, m.peerId(), nowS() - 1000)
+    expect(await answer(await good({ exp: nowS() - 900 }))).toBe('meta')
+    expect(await answer(await good({ exp: nowS() - 1001 }))).toBe('missing')
+    const old = await good({ exp: nowS() - 900 })
+    ;(x as unknown as { taken: (peer: unknown) => void }).taken({ destroy: () => {} })
+    expect(await answer(old)).toBe('missing')
+  })
+
+  test('tokens made by the server check out here', async () => {
+    const m = new P2pManager()
+    ;(m as unknown as { announce: () => void }).announce = () => {}
+    m.setAccount('alice')
+    const x = m as unknown as {
+      id: string
+      tokenUser: (t: unknown, f: string, p: string) => Promise<string | null>
+    }
+    x.id = 'peer-a'
+    m.setServeKey(
+      '41c3150761935a54207ccffc105ef1bf167f5fbabe7a3a57e54d0a2aaeeb9d04',
+      'peer-a',
+      null
+    )
+    const vector =
+      'eyJ2IjoxLCJtIjo3LCJmIjoiZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmYiLCJyIjoiYm9iIiwiaCI6ImFsaWNlIiwiaHAiOiJwZWVyLWEiLCJycCI6InBlZXItYiIsImV4cCI6NDEwMjQ0NDgwMH0.L7mKruWXwN9UL2xjXyqzUCW88A_LJAfvWoJzRpWiLfo'
+    expect(await x.tokenUser(vector, 'f'.repeat(32), 'peer-b')).toBe('bob')
+    expect(await x.tokenUser(vector, 'f'.repeat(32), 'peer-c')).toBeNull()
   })
 
   test('files, peer ids and downloads are kept per account', async () => {
@@ -494,7 +622,7 @@ describe('p2p transfer', () => {
     expect(await m.blob('a')).toBeNull()
     m.setAccount('alice')
     expect(m.file('a')?.name).toBe('a.bin')
-    expect(m.peerId()).toBe(alicePeer)
+    expect(m.peerId() === alicePeer).toBe(false)
     kept.set('d:alice:x', new Blob(['x']))
     kept.set('d:alice:x\u000000000000', new Blob(['x']))
     m.signOut()
@@ -612,12 +740,14 @@ describe('p2p transfer', () => {
     await Promise.resolve()
     expect(kept.has(`d:viewer:${id}`)).toBe(false)
     const one = await viewer.download('alice', id, {
+      token: await tokenFor(hosts.alice.m, id, 'viewer-peer'),
       size: real.length,
       sha256: hex(real),
       hoster: 'alice',
       messageId: 1,
     })
     const two = await viewer.download('mallory', id, {
+      token: await tokenFor(hosts.mallory.m, id, 'viewer-peer'),
       size: fake.length,
       sha256: hex(fake),
       hoster: 'mallory',
@@ -661,7 +791,7 @@ describe('p2p transfer', () => {
     client.on('data', d => seen.push((d as { type: string }).type))
     host.bufferSize = 100
     x.serve(host)
-    host.emit('data', { type: 'get', id: 'f', chunked: true })
+    await ask(x, host, { id: 'f', chunked: true })
     await tick(10)
     const state = m as unknown as { serving: number; servingBy: Map<string, number> }
     expect([state.serving, host.open]).toEqual([1, true])
@@ -680,7 +810,7 @@ describe('p2p transfer', () => {
       if ((msg as { type: string }).type === 'chunk') await new Promise(() => {})
     }
     x.serve(host)
-    host.emit('data', { type: 'get', id: 'f', chunked: true })
+    await ask(x, host, { id: 'f', chunked: true })
     await tick(10)
     const state = m as unknown as { serving: number }
     expect(state.serving).toBe(1)
@@ -691,8 +821,9 @@ describe('p2p transfer', () => {
   test('one peer holds at most a few transfers at once', async () => {
     const { m, x } = manager()
     await m.storeFile('f', new File([bytes(CHUNK_BYTES * 2)], 'f.bin'), null)
-    const ask = (peer: string) => {
-      const { client, host } = pipe(peer)
+    let n = 0
+    const start = async (user: string) => {
+      const { client, host } = pipe(`${user}-${(n += 1)}`)
       const seen: string[] = []
       client.on('data', d => seen.push((d as { type: string }).type))
       host.send = async (msg: unknown) => {
@@ -701,18 +832,19 @@ describe('p2p transfer', () => {
         seen.push(type)
       }
       x.serve(host)
-      host.emit('data', { type: 'get', id: 'f', chunked: true })
+      await ask(x, host, { id: 'f', chunked: true }, user)
       return { seen, host }
     }
-    const held = Array.from({ length: PEER_SERVE_MAX }, () => ask('greedy'))
+    const held: { seen: string[]; host: { close: () => void } }[] = []
+    for (let i = 0; i < PEER_SERVE_MAX; i += 1) held.push(await start('greedy'))
     await tick(10)
-    const extra = ask('greedy')
-    const other = ask('other')
+    const extra = await start('greedy')
+    const other = await start('other')
     await tick(10)
     expect(held.map(h => h.seen)).toEqual(held.map(() => ['meta']))
     expect([extra.seen, other.seen]).toEqual([['busy'], ['meta']])
     held[0].host.close()
-    const again = ask('greedy')
+    const again = await start('greedy')
     await tick(10)
     expect(again.seen).toEqual(['meta'])
   })
@@ -741,7 +873,7 @@ describe('p2p transfer', () => {
     const seen: string[] = []
     client.on('data', d => seen.push((d as { type: string }).type))
     x.serve(host)
-    host.emit('data', { type: 'get', id: 'f', chunked: true, acks: true })
+    await ask(x, host, { id: 'f', chunked: true, acks: true })
     await tick(60)
     const chunks = () => seen.filter(t => t === 'chunk').length
     expect([chunks(), seen.includes('end')]).toEqual([window + 1, false])
@@ -753,7 +885,7 @@ describe('p2p transfer', () => {
     const got: string[] = []
     quiet.client.on('data', d => got.push((d as { type: string }).type))
     x.serve(quiet.host)
-    quiet.host.emit('data', { type: 'get', id: 'f', chunked: true, acks: true })
+    await ask(x, quiet.host, { id: 'f', chunked: true, acks: true })
     await tick(400)
     expect([got.filter(t => t === 'chunk').length, quiet.host.open]).toEqual([window + 1, false])
     expect((m as unknown as { serving: number }).serving).toBe(0)

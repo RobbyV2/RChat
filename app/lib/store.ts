@@ -21,7 +21,7 @@ import { JoinAborted, rtc } from './rtc'
 import { JoinTracker } from './negotiation'
 import { newP2pId, p2p } from './p2p'
 import { hashBlob } from './sha256'
-import { helpersValue, ice, iceKey, parseHelpers } from './ice'
+import { ice, iceKey, iceValue, parseIce } from './ice'
 import { mentionsUser } from './mentions'
 import {
   NO_PINGS,
@@ -566,6 +566,7 @@ interface RChatState {
   theme: Theme
   streamer: boolean
   iceHelpers: boolean
+  iceRelay: boolean
   contextMenu: ContextMenuState | null
   reactPicker: ReactPicker | null
   profile: ProfileTarget | null
@@ -595,6 +596,7 @@ interface RChatState {
   setTheme: (theme: Theme) => void
   setStreamer: (streamer: boolean) => void
   setIceHelpers: (on: boolean) => void
+  setIceRelay: (on: boolean) => void
   patchMe: (
     avatar_kind: AvatarKind,
     avatar_color?: string,
@@ -1135,9 +1137,10 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   const armIce = (username: string | null, signedIn: boolean) => {
-    const on = parseHelpers(localStorage.getItem(home.scoped(iceKey(username))))
+    const { on, relay } = parseIce(localStorage.getItem(home.scoped(iceKey(username))))
     ice.setHelpers(on)
-    set({ iceHelpers: on })
+    ice.setRelay(relay)
+    set({ iceHelpers: on, iceRelay: relay })
     void ice.setSignedIn(signedIn)
   }
 
@@ -1651,7 +1654,19 @@ export const useStore = create<RChatState>()((set, get) => {
     if (hosters.length) home.ws.sendVoice({ type: 'p2p_who', hosters })
   }
 
-  let pendingDial: string | null = null
+  // An active P2P call names its id and the peer id of both tabs. The tab that started or
+  // accepted it binds to the other side: the caller dials, the callee answers only that peer.
+  const bindP2pCall = (me: string, ev: Extract<WsEvent, { type: 'call_state' }>) => {
+    const mine = ev.peers?.find(p => p.user === me)
+    if (!p2p.mediaActive() || !mine || mine.peer_id !== p2p.peerId()) return
+    const other = ev.peers?.find(p => p.user !== me)
+    if (!other || !ev.call_id) {
+      fail(new Error('This P2P call cannot connect: the other side uses an older app'))
+      return
+    }
+    const dial = ev.from === me
+    if (p2p.bind({ callId: ev.call_id, peer: other.peer_id, dial }) && dial) p2p.dial()
+  }
   const joins = new JoinTracker()
 
   const applyMic = () => {
@@ -1669,7 +1684,6 @@ export const useStore = create<RChatState>()((set, get) => {
     rtc.leave()
     joins.reset()
     p2p.endMedia()
-    pendingDial = null
     set(s => ({
       selfAudio: SELF_AUDIO_IDLE,
       ...(s.voice || s.call ? { voice: null, call: null } : {}),
@@ -1682,7 +1696,6 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   const endCallMedia = (kind: CallKind) => {
-    pendingDial = null
     if (get().voice) return
     if (kind === 'p2p') p2p.endMedia()
     else rtc.leave()
@@ -1696,7 +1709,6 @@ export const useStore = create<RChatState>()((set, get) => {
     if (ours) home.ws.sendVoice({ type: 'call_leave', dm_id: call.dmId })
     rtc.leave()
     p2p.endMedia()
-    pendingDial = null
     set({ voice: null, selfAudio: SELF_AUDIO_IDLE, ...(ours ? { call: null } : {}) })
   }
 
@@ -3386,6 +3398,7 @@ export const useStore = create<RChatState>()((set, get) => {
     theme: 'dark',
     streamer: false,
     iceHelpers: true,
+    iceRelay: false,
     contextMenu: null,
     reactPicker: null,
     profile: null,
@@ -3482,9 +3495,17 @@ export const useStore = create<RChatState>()((set, get) => {
     },
 
     setIceHelpers: on => {
-      writeLocal(home.scoped(iceKey(get().me?.username ?? null)), helpersValue(on))
+      const relay = get().iceRelay
+      writeLocal(home.scoped(iceKey(get().me?.username ?? null)), iceValue({ on, relay }))
       ice.setHelpers(on)
       set({ iceHelpers: on })
+    },
+
+    setIceRelay: relay => {
+      const on = get().iceHelpers
+      writeLocal(home.scoped(iceKey(get().me?.username ?? null)), iceValue({ on, relay }))
+      ice.setRelay(relay)
+      set({ iceRelay: relay })
     },
 
     patchMe: (avatar_kind, avatar_color, banner_color) =>
@@ -3612,7 +3633,6 @@ export const useStore = create<RChatState>()((set, get) => {
       rtc.leave()
       joins.reset()
       p2p.signOut()
-      pendingDial = null
       writeLocal(LS.token, null)
       setTokenCookie(null)
       writeLocal(LS.guest, null)
@@ -4815,7 +4835,8 @@ export const useStore = create<RChatState>()((set, get) => {
           abandonMedia()
           throw e
         }
-        if (!home.ws.sendVoice({ type: 'call_start', dm_id: dmId, p2p: true })) {
+        const start = { type: 'call_start', dm_id: dmId, p2p: true, peer_id: p2p.peerId() } as const
+        if (!home.ws.sendVoice(start)) {
           abandonMedia()
           throw new Error('Not connected')
         }
@@ -4845,7 +4866,12 @@ export const useStore = create<RChatState>()((set, get) => {
           abandonMedia()
           return
         }
-        if (!home.ws.sendVoice({ type: 'call_accept', dm_id: call.dmId })) {
+        if (call.kind === 'p2p') p2p.expectCall()
+        const accept =
+          call.kind === 'p2p'
+            ? { type: 'call_accept' as const, dm_id: call.dmId, peer_id: p2p.peerId() }
+            : { type: 'call_accept' as const, dm_id: call.dmId }
+        if (!home.ws.sendVoice(accept)) {
           abandonMedia()
           throw new Error('Not connected')
         }
@@ -5611,22 +5637,18 @@ export const useStore = create<RChatState>()((set, get) => {
             rtc.sync(ev.dm_users)
             return
           }
-          if (ev.from !== me.username) return
-          const other = ev.dm_users.find(u => u !== me.username)
-          if (!other) return
-          pendingDial = other
-          home.ws.sendVoice({ type: 'p2p_who', hosters: [other] })
+          bindP2pCall(me.username, ev)
           return
         }
         case 'p2p_availability': {
-          const { hoster, peer_id, ids, online } = ev
+          const { hoster, ids, online } = ev
           set(s => ({
-            p2pAvailability: { ...s.p2pAvailability, [hoster]: { peer_id, ids, online } },
+            p2pAvailability: { ...s.p2pAvailability, [hoster]: { ids, online } },
           }))
-          if (pendingDial === hoster && online && peer_id !== null) {
-            pendingDial = null
-            p2p.dial(peer_id)
-          }
+          return
+        }
+        case 'p2p_peer': {
+          p2p.granted(ev)
           return
         }
         case 'rtc_signal': {
@@ -5740,6 +5762,8 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'p2p_hosted': {
+          if (typeof ev.key === 'string' && typeof ev.peer_id === 'string')
+            p2p.setServeKey(ev.key, ev.peer_id, ev.now ?? null)
           void p2p.reconcile(ev.live, ev.checked)
           return
         }

@@ -100,6 +100,7 @@ pub struct Instance {
     pub stun: Vec<String>,
     pub ice: IceConfig,
     pub relay_secret: String,
+    pub p2p_secret: String,
 }
 
 pub fn origin_url(raw: &str, what: &str, schemes: &[&str]) -> anyhow::Result<Url> {
@@ -166,6 +167,7 @@ impl Instance {
             stun: crate::relay::pick_stun(&crate::relay::bundled_stun(), &id, ice.public_stun),
             ice: ice.clone(),
             relay_secret: setting(db, "relay_secret").await?,
+            p2p_secret: setting(db, "p2p_secret").await?,
             id,
             name: name
                 .as_deref()
@@ -200,6 +202,7 @@ impl Instance {
             stun: Vec::new(),
             ice: IceConfig::default(),
             relay_secret: crate::identity::random_id(),
+            p2p_secret: crate::identity::random_id(),
         })
     }
 

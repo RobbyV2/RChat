@@ -20,11 +20,13 @@ import {
   EllipsisVertical,
   EyeOff,
   FileText,
+  Image as ImageIcon,
   Play,
   Share2,
   ShieldAlert,
   X,
 } from 'lucide-react'
+import { relayOnly } from '../lib/ice'
 import { api, home, localOrigins, remoteAllowed } from '../lib/instances'
 import { mentionCandidates, splitKnownMentions } from '../lib/mentions'
 import {
@@ -292,6 +294,9 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   const me = useStore(s => s.me)
   const previews = useStore(s => s.settings.asset_previews)
   const avail = useStore(s => (media.hoster !== null ? s.p2pAvailability[media.hoster] : undefined))
+  // Fetching from the sender shows them our IP address, so images load on their own only when
+  // that goes through the relay, or when nothing has to be fetched.
+  const hidesIp = useStore(s => relayOnly(s.instance?.ice, s.iceHelpers, s.iceRelay))
   const { id, filename, hoster, expires_at, spoiler, size, mime } = media
   const sha256 = media.sha256 ?? null
   const [shown, setShown] = useState<Preview | null>(() => previewUrl(messageId))
@@ -318,8 +323,8 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   const live = unexpired(expires_at, Math.floor(Date.now() / 1000))
   const own = me !== null && hoster === me.username
   const localFile = live && own ? p2p.file(id) : null
-  const peerId = live && avail?.online === true && avail.ids.includes(id) ? avail.peer_id : null
-  const online = localFile !== null || peerId !== null
+  const hosted = live && avail?.online === true && avail.ids.includes(id)
+  const online = localFile !== null || hosted
   const hosterName =
     hoster !== null ? userRefFor(useStore.getState(), hoster).display_name : 'the sender'
   const guess = guessKind(filename)
@@ -329,6 +334,8 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
     previews && guess !== null && !unverified && size !== null && size <= PREVIEW_MAX
   const hidden = spoiler && !revealed
   const busy = progress !== null
+  const autoLoad =
+    hidesIp || localFile !== null || (hoster !== null && p2p.hasReceived(id, hoster, sha256))
 
   const fetchFile = async (signal: AbortSignal): Promise<Fetched> => {
     const kept = hoster !== null ? await p2p.receivedFile(id, hoster, sha256) : null
@@ -339,8 +346,11 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
       const type = safeType(await headOf(blob), audio)
       return { blob: new Blob([blob], { type }), type, verified: true }
     }
-    if (peerId === null || hoster === null) throw new Error('File not available')
-    return p2p.download(peerId, id, {
+    if (!hosted || hoster === null) throw new Error('File not available')
+    const grant = await p2p.requestPeer(messageId)
+    if (signal.aborted) throw new Error(CANCELED)
+    return p2p.download(grant.peerId, id, {
+      token: grant.token,
       size,
       sha256,
       hoster,
@@ -383,10 +393,10 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   }
 
   useEffect(() => {
-    if (!canPreview || guess !== 'image' || shown !== null || !online || hidden) return
+    if (!canPreview || guess !== 'image' || !autoLoad || shown !== null || !online || hidden) return
     if (ctl.current || failed !== null) return
     run(false)
-  }, [canPreview, guess, shown, online, hidden, failed])
+  }, [canPreview, guess, autoLoad, shown, online, hidden, failed])
 
   useEffect(() => {
     setFailed(null)
@@ -500,6 +510,16 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
           </button>
         ) : (
           <>
+            {canPreview && guess === 'image' && !autoLoad && (
+              <button
+                title="Show image (connects to the sender)"
+                aria-label="Show image"
+                onClick={() => run(false)}
+                className="shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary"
+              >
+                <ImageIcon size={14} />
+              </button>
+            )}
             {canPreview && guess !== 'image' && (
               <button
                 title={guess === 'video' ? 'Play video' : 'Play audio'}

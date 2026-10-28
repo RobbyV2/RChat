@@ -7,6 +7,7 @@ import { Sha256, validSha256 } from './sha256'
 import { kindOf, NEUTRAL_TYPE, safeType, SNIFF_BYTES, type PreviewKind } from './sniff'
 import { SpeakingDetector } from './vad'
 import { mediaError } from './rules'
+import type { WsEvent } from './types'
 import { slotLayout, videoPlan, type Slot } from './negotiation'
 import { captureScreen, nextShareId, syncStream, tuneScreen, type ScreenCapture } from './screen'
 
@@ -50,6 +51,8 @@ export interface Download {
 }
 
 export interface DownloadOpts {
+  // The server's token for this download (see requestPeer); hosters refuse requests without one.
+  token?: string
   // From the message: the download stops at this size and must match this hash.
   size: number | null
   sha256: string | null
@@ -63,7 +66,7 @@ export interface DownloadOpts {
 }
 
 type WireMsg =
-  | { type: 'get'; id: string; chunked?: boolean; acks?: boolean }
+  | { type: 'get'; id: string; chunked?: boolean; acks?: boolean; token?: string }
   | { type: 'file'; id: string; name: string; mime: string; data: string }
   | { type: 'meta'; id: string; mime: string; size: number }
   | { type: 'chunk'; id: string; data: ArrayBuffer | Uint8Array }
@@ -99,15 +102,22 @@ export const PENDING_MAX = 32 * 1024 * 1024
 const STALE_GRACE_S = 120
 // A staged file whose send never finished (the tab closed mid-send) is dropped after this long.
 const PENDING_MAX_S = 3600
-// Transfers served at once in total and per peer, and requests per peer per minute. The PeerJS
-// id identifies a peer, and anyone can change it. So per-peer limits only slow a client down.
-// Known limits: the deadline grows with file size (1 s per 64 KiB), so a slow downloader of a
-// big file can hold a slot for a long time. Any progress resets the stall timer, so a peer that
-// acks a trickle of bytes is never cut off. A client that rotates PeerJS ids can take all
-// SERVE_MAX slots. The real fix is a per-download token from the server.
+// Transfers served at once in total and per user, and requests per user per minute. The user is
+// the one the server's download token names, so a client can't get around the limits by
+// changing its PeerJS id. Known limits: the deadline grows with file size (1 s per 64 KiB), so
+// a slow downloader of a big file can hold a slot for a long time. Any progress resets the stall
+// timer, so a peer that acks a trickle of bytes is never cut off. Several accounts together can
+// still take all SERVE_MAX slots.
 export const SERVE_MAX = 4
 export const PEER_SERVE_MAX = 2
 export const ASKS_PER_MIN = 12
+// How long a download waits for the server to name the hoster's peer.
+const GRANT_MS = 10_000
+const TOKEN_MAX = 2048
+// After accepting a call, how long connections that arrive before the server names the caller
+// are held, and how many.
+const HOLD_MS = 15_000
+const HELD_MAX = 2
 // Downloaded copies kept per account, oldest dropped first.
 const RECEIVED_MAX = 32
 const RECEIVED_BYTES = 1024 * 1024 * 1024
@@ -226,6 +236,71 @@ const validReceived = (r: Received) =>
   typeof r.size === 'number' &&
   typeof r.at === 'number'
 
+// Where to fetch an attachment, from the server's answer to `p2p_peer`.
+export interface PeerGrant {
+  peerId: string
+  token: string
+}
+
+// The call the server set up: its id and the peer id of the other side's tab. The caller dials
+// it; the callee answers only connections from it that carry the id.
+export interface CallBinding {
+  callId: string
+  peer: string
+  dial: boolean
+}
+
+// The key from the server that download tokens for this tab's peer id are signed with.
+interface ServeKey {
+  peer: string
+  raw: Uint8Array<ArrayBuffer>
+  key: Promise<CryptoKey> | null
+  // Server clock minus ours, in seconds.
+  offset: number
+}
+
+// What a download token grants; see src/p2p.rs.
+interface Grant {
+  v: number
+  m: number
+  f: string
+  r: string
+  h: string
+  hp: string
+  rp: string
+  exp: number
+}
+
+const fromBase64Url = (text: string): Uint8Array<ArrayBuffer> | null => {
+  if (!/^[A-Za-z0-9_-]*$/.test(text)) return null
+  try {
+    const bin = atob(text.replace(/-/g, '+').replace(/_/g, '/'))
+    const out = new Uint8Array(new ArrayBuffer(bin.length))
+    for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i)
+    return out
+  } catch {
+    return null
+  }
+}
+
+const fromHex = (text: string): Uint8Array<ArrayBuffer> | null => {
+  if (!/^([0-9a-f]{2})+$/i.test(text)) return null
+  const out = new Uint8Array(new ArrayBuffer(text.length / 2))
+  for (let i = 0; i < out.length; i += 1) out[i] = parseInt(text.slice(i * 2, i * 2 + 2), 16)
+  return out
+}
+
+const validGrant = (g: unknown): g is Grant => {
+  if (typeof g !== 'object' || g === null) return false
+  const { v, m, f, r, h, hp, rp, exp } = g as Record<string, unknown>
+  return (
+    v === 1 &&
+    typeof m === 'number' &&
+    [f, r, h, hp, rp].every(x => typeof x === 'string' && x.length > 0) &&
+    typeof exp === 'number'
+  )
+}
+
 const dropPreviews = () => {
   for (const p of previews.values()) URL.revokeObjectURL(p.url)
   previews.clear()
@@ -241,6 +316,23 @@ export class P2pManager {
   private purgeTimer: ReturnType<typeof setInterval> | null = null
   // Whose files these are: the account's username, scoped to the instance; null signed out.
   private account: string | null = null
+  private user: string | null = null
+  private serveKey: ServeKey | null = null
+  // Whether the server was last told about any hosted files.
+  private announced = false
+  private grants = new Map<
+    number,
+    {
+      done: Promise<PeerGrant>
+      resolve: (g: PeerGrant) => void
+      reject: (e: Error) => void
+      timer: ReturnType<typeof setTimeout>
+    }
+  >()
+  private binding: CallBinding | null = null
+  private awaiting: ReturnType<typeof setTimeout> | null = null
+  private heldMedia: MediaConnection[] = []
+  private heldControl: DataConnection[] = []
   private cached: Record<string, StoredFile> | null = null
   private legacy: Record<string, StoredFile> | null = null
   private got: Record<string, Received> | null = null
@@ -290,13 +382,18 @@ export class P2pManager {
   }
 
   // Files, downloads and the peer id belong to one account at a time. Switching (or signing
-  // out with null) disconnects from the broker and forgets the previous account's state.
+  // out with null) disconnects from the broker and forgets the previous account's state. The
+  // peer id is new for each session and is never stored.
   setAccount(username: string | null) {
     const next = username === null ? null : home.scoped(username)
     if (next === this.account) return
     this.disconnect()
     this.account = next
-    if (next !== null) writeLocal(LEGACY_ID, null)
+    this.user = username
+    if (next !== null) {
+      writeLocal(LEGACY_ID, null)
+      writeLocal(this.key('rchat_peer_id'), null)
+    }
   }
 
   // Signing out: stop serving, leave the broker and delete the downloaded copies.
@@ -311,6 +408,7 @@ export class P2pManager {
     dropPreviews()
     this.disconnect()
     this.account = null
+    this.user = null
   }
 
   private disconnect() {
@@ -323,7 +421,14 @@ export class P2pManager {
     this.legacy = null
     this.got = null
     this.id = null
+    this.serveKey = null
+    this.announced = false
     this.asks.clear()
+    for (const [messageId, g] of this.grants) {
+      clearTimeout(g.timer)
+      g.reject(new Error('File not available'))
+      this.grants.delete(messageId)
+    }
   }
 
   private key(base: string) {
@@ -339,16 +444,7 @@ export class P2pManager {
   }
 
   peerId(): string {
-    if (this.id) return this.id
-    const key = this.key('rchat_peer_id')
-    let stored: string | null
-    try {
-      stored = this.account === null ? null : localStorage.getItem(key)
-    } catch {
-      stored = null
-    }
-    this.id = stored || randomHex(16)
-    if (!stored && this.account !== null) writeLocal(key, this.id)
+    this.id ??= randomHex(16)
     return this.id
   }
 
@@ -557,19 +653,102 @@ export class P2pManager {
     if (!this.purgeTimer) this.purgeTimer = setInterval(() => this.purgeExpired(), 60_000)
   }
 
+  // Tells the server which files this tab hosts. Without any, nothing is sent and the tab
+  // stays off the broker, unless an earlier list has to be cleared.
   announce() {
     if (this.account === null) return
-    this.ensurePeer()
-    home.ws.sendVoice({
-      type: 'p2p_hosting',
-      peer_id: this.peerId(),
-      ids: [
-        ...Object.entries(this.files())
-          .filter(([, f]) => !f.pending)
-          .map(([id]) => id),
-        ...Object.keys(this.legacyFiles()),
-      ],
+    const ids = [
+      ...Object.entries(this.files())
+        .filter(([, f]) => !f.pending)
+        .map(([id]) => id),
+      ...Object.keys(this.legacyFiles()),
+    ]
+    if (ids.length === 0 && !this.announced) return
+    if (ids.length) this.ensurePeer()
+    this.announced = ids.length > 0
+    home.ws.sendVoice({ type: 'p2p_hosting', peer_id: this.peerId(), ids })
+  }
+
+  // The server's key for checking download tokens, sent in answer to an announce.
+  setServeKey(hex: string, peer: string, serverNow: number | null) {
+    const raw = fromHex(hex)
+    if (raw === null || raw.length !== 32) return
+    const offset = serverNow === null ? 0 : serverNow - nowS()
+    this.serveKey = { peer, raw, key: null, offset }
+  }
+
+  // Which user a download token was issued to, when it is good for file `id` from this
+  // tab to the peer `from`; null otherwise.
+  private async tokenUser(token: unknown, id: string, from: string): Promise<string | null> {
+    const k = this.serveKey
+    const user = this.user
+    if (typeof token !== 'string' || token.length > TOKEN_MAX || !k || user === null) return null
+    if (k.peer !== this.id) return null
+    const dot = token.indexOf('.')
+    const payload = token.slice(0, dot)
+    const sig = dot > 0 ? fromBase64Url(token.slice(dot + 1)) : null
+    if (sig === null) return null
+    try {
+      k.key ??= crypto.subtle.importKey('raw', k.raw, { name: 'HMAC', hash: 'SHA-256' }, false, [
+        'verify',
+      ])
+      const good = await crypto.subtle.verify(
+        'HMAC',
+        await k.key,
+        sig,
+        new TextEncoder().encode(payload)
+      )
+      const bytes = good ? fromBase64Url(payload) : null
+      if (bytes === null) return null
+      const g: unknown = JSON.parse(new TextDecoder().decode(bytes))
+      if (!validGrant(g)) return null
+      const ok =
+        g.f === id &&
+        g.h.toLowerCase() === user.toLowerCase() &&
+        g.hp === k.peer &&
+        g.hp === this.id &&
+        g.rp === from &&
+        g.exp > nowS() + k.offset
+      return ok ? g.r : null
+    } catch {
+      return null
+    }
+  }
+
+  // Asks the server for the peer to download the attachment of `messageId` from, and a token
+  // for it. The server answers only users who can read that message.
+  requestPeer(messageId: number): Promise<PeerGrant> {
+    if (this.account === null) return Promise.reject(new Error('Sign in to download P2P files'))
+    const pending = this.grants.get(messageId)
+    if (pending) return pending.done
+    let resolve: (g: PeerGrant) => void = () => {}
+    let reject: (e: Error) => void = () => {}
+    const done = new Promise<PeerGrant>((ok, fail) => {
+      resolve = ok
+      reject = fail
     })
+    const timer = setTimeout(() => {
+      this.grants.delete(messageId)
+      reject(new Error('File not available'))
+    }, GRANT_MS)
+    this.grants.set(messageId, { done, resolve, reject, timer })
+    this.ensurePeer(true)
+    if (!home.ws.sendVoice({ type: 'p2p_peer', message_id: messageId, peer_id: this.peerId() })) {
+      clearTimeout(timer)
+      this.grants.delete(messageId)
+      reject(new Error('Not connected'))
+    }
+    return done
+  }
+
+  granted(ev: Extract<WsEvent, { type: 'p2p_peer' }>) {
+    const g = this.grants.get(ev.message_id)
+    if (!g) return
+    clearTimeout(g.timer)
+    this.grants.delete(ev.message_id)
+    if (typeof ev.peer_id === 'string' && typeof ev.token === 'string')
+      g.resolve({ peerId: ev.peer_id, token: ev.token })
+    else g.reject(new Error(ev.error ?? 'File not available'))
   }
 
   private retryLater() {
@@ -601,9 +780,9 @@ export class P2pManager {
       this.attempt = 0
     })
     peer.on('connection', conn =>
-      conn.label === 'call' ? this.attachControl(conn) : this.serve(conn)
+      conn.label === 'call' ? this.incomingControl(conn) : this.serve(conn)
     )
-    peer.on('call', call => this.answer(call))
+    peer.on('call', call => this.incomingMedia(call))
     peer.on('disconnected', () => {
       if (this.peer === peer) this.retryLater()
     })
@@ -617,15 +796,18 @@ export class P2pManager {
 
   // Another tab holds the stored id: use a fresh one for this tab only, so the
   // other tab keeps its id and this one doesn't retry the taken id forever.
+  // If someone takes the broker id during a call, the server's call binding stays on the old id.
+  // The call breaks, but this has no security impact.
   private taken(peer: Peer) {
     this.id = randomHex(16)
+    this.serveKey = null
     peer.destroy()
     if (this.peer === peer) this.peer = null
     this.announce()
   }
 
-  // Whether `peer` may start another transfer now: a few at a time overall, and a limited
-  // number of requests per peer per minute.
+  // Whether `peer` (the user a token was issued to) may start another transfer now: a few at a
+  // time overall, and a limited number of requests per user per minute.
   private admit(peer: string) {
     if (this.serving >= SERVE_MAX || (this.servingBy.get(peer) ?? 0) >= PEER_SERVE_MAX) return false
     const now = Date.now()
@@ -643,10 +825,13 @@ export class P2pManager {
     return true
   }
 
-  // A slot is held from the request until the transfer ends or the connection closes,
-  // whichever comes first, so a send stuck on a dead peer still gives its slot back.
+  // A request needs a token from the server for this file, this tab and the connecting peer.
+  // Limits apply per user the token names. A slot is held from the request until the transfer
+  // ends or the connection closes, whichever comes first, so a send stuck on a dead peer still
+  // gives its slot back.
   private serve(conn: DataConnection) {
-    const peer = String(conn.peer)
+    const from = String(conn.peer)
+    let peer = from
     let answered = false
     let held = false
     const release = () => {
@@ -676,17 +861,22 @@ export class P2pManager {
       answered = true
       if (msg.acks === true) flow.acked = 0
       clearTimeout(quiet)
-      if (!this.admit(peer)) {
-        void Promise.resolve(conn.send({ type: 'busy', id: msg.id })).catch(() => {})
-        setTimeout(() => conn.close(), 1000)
-        return
-      }
-      held = true
-      this.serving += 1
-      this.servingBy.set(peer, (this.servingBy.get(peer) ?? 0) + 1)
-      void this.send(conn, msg.id, msg.chunked === true, flow)
-        .catch(() => conn.close())
-        .finally(release)
+      const id = msg.id
+      void this.tokenUser(msg.token, id, from).then(user => {
+        const refuse = (type: 'busy' | 'missing') => {
+          void Promise.resolve(conn.send({ type, id })).catch(() => {})
+          setTimeout(() => conn.close(), 1000)
+        }
+        if (user === null || !conn.open) return refuse('missing')
+        peer = user
+        if (!this.admit(peer)) return refuse('busy')
+        held = true
+        this.serving += 1
+        this.servingBy.set(peer, (this.servingBy.get(peer) ?? 0) + 1)
+        void this.send(conn, id, msg.chunked === true, flow)
+          .catch(() => conn.close())
+          .finally(release)
+      })
     })
   }
 
@@ -763,6 +953,10 @@ export class P2pManager {
       }
     }
     return this.got
+  }
+
+  hasReceived(id: string, hoster: string, sha256: string | null): boolean {
+    return Object.hasOwn(this.received(), copyKey(id, hoster, sha256))
   }
 
   // A kept download of this exact file (same id, hoster and hash), rebuilt with its checked type.
@@ -933,7 +1127,11 @@ export class P2pManager {
         )
       }
       idle()
-      conn.on('open', () => void conn.send({ type: 'get', id, chunked: true, acks: true }))
+      conn.on('open', () => {
+        const get: WireMsg = { type: 'get', id, chunked: true, acks: true }
+        if (opts.token !== undefined) get.token = opts.token
+        void conn.send(get)
+      })
       conn.on('data', d => {
         if (state !== 'open') return
         const msg = d as WireMsg
@@ -1160,6 +1358,71 @@ export class P2pManager {
     if (this.shareOn) this.sendCam()
   }
 
+  // The user accepted a P2P call: until the server names the caller, a connection from it may
+  // already arrive. Those are held for a moment and checked once the call is bound.
+  expectCall() {
+    if (this.awaiting) clearTimeout(this.awaiting)
+    this.awaiting = setTimeout(() => {
+      this.awaiting = null
+      if (this.binding === null) this.dropHeld()
+    }, HOLD_MS)
+  }
+
+  // Binds the call the server set up. False when it was already bound to this call.
+  bind(b: CallBinding): boolean {
+    if (!this.local || this.binding?.callId === b.callId) return false
+    this.binding = { ...b }
+    if (this.awaiting) clearTimeout(this.awaiting)
+    this.awaiting = null
+    const media = this.heldMedia
+    const control = this.heldControl
+    this.heldMedia = []
+    this.heldControl = []
+    for (const call of media) this.incomingMedia(call)
+    for (const conn of control) this.incomingControl(conn)
+    return true
+  }
+
+  private dropHeld() {
+    for (const c of [...this.heldMedia, ...this.heldControl]) c.close()
+    this.heldMedia = []
+    this.heldControl = []
+  }
+
+  // From the peer the server named for the call we answer, carrying that call's id.
+  private fromCaller(conn: MediaConnection | DataConnection) {
+    const b = this.binding
+    const meta: unknown = conn.metadata
+    const callId =
+      typeof meta === 'object' && meta !== null ? (meta as { call?: unknown }).call : undefined
+    return b !== null && !b.dial && conn.peer === b.peer && callId === b.callId
+  }
+
+  private hold<T extends MediaConnection | DataConnection>(list: T[], conn: T) {
+    if (this.binding !== null || this.awaiting === null) return false
+    const same = list.findIndex(c => c.peer === conn.peer)
+    if (same >= 0) list.splice(same, 1)[0].close()
+    list.push(conn)
+    while (list.length > HELD_MAX) list.shift()?.close()
+    return true
+  }
+
+  // Never answered without a call the user accepted: anything else is closed without asking.
+  private incomingMedia(call: MediaConnection) {
+    if (!this.local) return call.close()
+    if (this.hold(this.heldMedia, call)) return
+    if (!this.fromCaller(call) || this.media !== null) return call.close()
+    call.answer(this.callStream())
+    this.attach(call)
+  }
+
+  private incomingControl(conn: DataConnection) {
+    if (!this.local) return conn.close()
+    if (this.hold(this.heldControl, conn)) return
+    if (!this.fromCaller(conn) || this.control !== null) return conn.close()
+    this.attachControl(conn)
+  }
+
   private attachControl(conn: DataConnection) {
     this.control?.close()
     this.control = conn
@@ -1189,20 +1452,14 @@ export class P2pManager {
     })
   }
 
-  dial(peerId: string) {
-    if (!this.local) return
+  // The caller connects to the callee's tab the server named, with the call's id.
+  dial() {
+    const b = this.binding
+    if (!this.local || b === null || !b.dial || this.media !== null) return
     const peer = this.ensurePeer(true)
-    this.attach(peer.call(peerId, this.callStream()))
-    this.attachControl(peer.connect(peerId, { label: 'call', reliable: true }))
-  }
-
-  private answer(call: MediaConnection) {
-    if (!this.local) {
-      call.close()
-      return
-    }
-    call.answer(this.callStream())
-    this.attach(call)
+    const metadata = { call: b.callId }
+    this.attach(peer.call(b.peer, this.callStream(), { metadata }))
+    this.attachControl(peer.connect(b.peer, { label: 'call', reliable: true, metadata }))
   }
 
   private attach(call: MediaConnection) {
@@ -1215,6 +1472,7 @@ export class P2pManager {
     })
     call.on('close', () => {
       if (this.media === call) {
+        this.media = null
         this.detector.unwatch('remote')
         this.remote = null
         this.remoteScreen = null
@@ -1246,6 +1504,10 @@ export class P2pManager {
 
   endMedia() {
     this.gen += 1
+    this.binding = null
+    if (this.awaiting) clearTimeout(this.awaiting)
+    this.awaiting = null
+    this.dropHeld()
     this.remoteLegacy = false
     this.detector.clear()
     this.media?.close()

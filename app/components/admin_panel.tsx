@@ -86,18 +86,21 @@ export function SettingSwitch({
   label,
   value,
   onChange,
+  disabled = false,
 }: {
   label: string
   value: boolean
   onChange: (value: boolean) => void
+  disabled?: boolean
 }) {
   return (
     <button
       role="switch"
       aria-checked={value}
       title={label}
+      disabled={disabled}
       onClick={() => onChange(!value)}
-      className="flex w-full items-center justify-between rounded-xl px-2 py-1.5 hover:bg-surface-container"
+      className="flex w-full items-center justify-between rounded-xl px-2 py-1.5 enabled:hover:bg-surface-container disabled:opacity-50"
     >
       <span className="text-sm">{label}</span>
       <span

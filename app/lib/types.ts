@@ -390,10 +390,16 @@ export type CallPhase = 'ringing' | 'active' | 'ended'
 
 export type CallKind = 'rtc' | 'p2p'
 
+// Whether a hoster is online and which of their files we can read. Peer ids are never shared
+// this way any more; a download asks for one with `p2p_peer`.
 export interface P2pAvailability {
-  peer_id: string | null
   ids: string[]
   online: boolean
+}
+
+export interface CallPeer {
+  user: string
+  peer_id: string
 }
 
 export interface RtcPayload {
@@ -428,10 +434,12 @@ export interface Ping {
 export type VoiceMsg =
   | { type: 'voice_join'; channel_id: number }
   | { type: 'voice_leave' }
-  | { type: 'call_start'; dm_id: number; p2p?: boolean }
-  | { type: 'call_accept' | 'call_decline' | 'call_leave'; dm_id: number }
+  | { type: 'call_start'; dm_id: number; p2p?: boolean; peer_id?: string }
+  | { type: 'call_accept'; dm_id: number; peer_id?: string }
+  | { type: 'call_decline' | 'call_leave'; dm_id: number }
   | { type: 'p2p_hosting'; peer_id: string; ids: string[] }
   | { type: 'p2p_who'; hosters: string[] }
+  | { type: 'p2p_peer'; message_id: number; peer_id: string }
   | {
       type: 'rtc_signal'
       to: string
@@ -522,8 +530,11 @@ export type WsEvent =
       state: CallPhase
       from: string
       kind: CallKind
+      // Active P2P calls only.
+      call_id?: string
+      peers?: CallPeer[]
     }
-  | ({ type: 'p2p_availability'; hoster: string } & P2pAvailability)
+  | ({ type: 'p2p_availability'; hoster: string; peer_id: string | null } & P2pAvailability)
   | {
       type: 'rtc_signal'
       to: string
@@ -537,7 +548,23 @@ export type WsEvent =
   | { type: 'dm_created'; dm_id: number; dm_users: string[] }
   | { type: 'banned'; username: string }
   | { type: 'settings_changed'; settings: SiteSettings }
-  | { type: 'p2p_hosted'; live: string[]; checked: string[] }
+  | {
+      type: 'p2p_hosted'
+      live: string[]
+      checked: string[]
+      // Older servers send none of these.
+      key?: string
+      peer_id?: string
+      now?: number
+    }
+  | {
+      type: 'p2p_peer'
+      message_id: number
+      peer_id: string | null
+      token: string | null
+      expires_at: number | null
+      error: string | null
+    }
   | { type: 'resync' }
 
 export type WsStatus = 'green' | 'yellow' | 'red'

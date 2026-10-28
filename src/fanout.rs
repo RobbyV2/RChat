@@ -186,6 +186,8 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             state: _,
             from: _,
             kind: _,
+            call_id: _,
+            peers: _,
         } => to(users(dm_users)),
         WsEvent::ChannelCreated { server, channel: _ }
         | WsEvent::ChannelRenamed { server, channel: _ }
@@ -311,6 +313,16 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
         | WsEvent::P2pHosted {
             live: _,
             checked: _,
+            key: _,
+            peer_id: _,
+            now: _,
+        }
+        | WsEvent::P2pPeer {
+            message_id: _,
+            peer_id: _,
+            token: _,
+            expires_at: _,
+            error: _,
         }
         | WsEvent::Resync => to(Vec::new()),
     }
