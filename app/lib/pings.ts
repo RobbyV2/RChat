@@ -1,4 +1,5 @@
 import type { Ping, PingSummary, Unread } from './types'
+import { pingToast, type Resolved } from './notify'
 
 // Unseen pings under one key: the channel or DM scope for pings outside threads, `t<root id>` for
 // pings on thread replies. `scope` is where the badge rolls up (the channel for a thread).
@@ -130,6 +131,15 @@ export const dmPings = (pings: Pings) => sum(pings, p => p.scope[0] === 'd')
 
 export const totalPings = (pings: Pings) => sum(pings, () => true)
 
+// The pings that count toward badges.
+export const shownPings = (
+  pings: Pings,
+  shown: (scope: string, server: string | null) => boolean
+) => {
+  const kept = Object.entries(pings).filter(([, p]) => shown(p.scope, p.server))
+  return kept.length === Object.keys(pings).length ? pings : Object.fromEntries(kept)
+}
+
 export const badgeText = (n: number) => (n > 99 ? '99+' : String(n))
 
 export const pingTitle = (base: string, n: number) => (n > 0 ? `(${badgeText(n)}) ${base}` : base)
@@ -147,15 +157,16 @@ export interface PingAlert {
 }
 
 // What an incoming ping does. Seen in place (its message is on screen and the view follows the
-// bottom) means no toast and no badge: the scope is marked seen instead. Task 9 adds the
-// per-scope notification level here.
-export const pingAlert = (ping: Ping, w: Watching): PingAlert => {
+// bottom) means no toast and no badge: the scope is marked seen instead. Otherwise it is counted
+// (badges hide it under "Nothing", see `pingShown`) and toasts unless the scope is muted or set
+// to "Nothing".
+export const pingAlert = (ping: Ping, w: Watching, rule?: Resolved): PingAlert => {
   const seen =
     w.visible &&
     (ping.thread_root_id !== null
       ? w.thread === ping.thread_root_id && w.following(`t${ping.thread_root_id}`)
       : w.view === ping.scope && w.following(ping.scope))
-  return { toast: !seen, badge: !seen }
+  return { toast: !seen && (rule === undefined || pingToast(rule)), badge: !seen }
 }
 
 const ACTION: Record<Ping['kind'], string> = {

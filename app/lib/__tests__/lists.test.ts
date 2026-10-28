@@ -118,6 +118,12 @@ describe('unread helpers', () => {
     expect(anyDmUnread(reads)).toBe(false)
     expect(anyDmUnread({ ...reads, d5: { lastRead: 1, latest: 2 } })).toBe(true)
   })
+
+  test('a filter skips scopes (muted ones)', () => {
+    expect([...unreadServers(reads, scope => scope !== 'c1')]).toEqual([])
+    const more = { ...reads, d5: { lastRead: 1, latest: 2 } }
+    expect(anyDmUnread(more, scope => scope !== 'd5')).toBe(false)
+  })
 })
 
 const fakeServer = (total: number) => {

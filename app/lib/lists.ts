@@ -142,16 +142,28 @@ export const refreshTail = (
   return { list: [...list.filter(m => m.id < lo), ...sorted], more }
 }
 
-export const unreadServers = (reads: Record<string, ReadMark>): Set<string> => {
+type ScopeFilter = (scope: string, r: ReadMark) => boolean
+
+const everyScope: ScopeFilter = () => true
+
+export const unreadServers = (
+  reads: Record<string, ReadMark>,
+  shown: ScopeFilter = everyScope
+): Set<string> => {
   const servers = new Set<string>()
-  for (const r of Object.values(reads)) {
-    if (r.server !== undefined && r.latest > r.lastRead) servers.add(r.server)
+  for (const [scope, r] of Object.entries(reads)) {
+    if (r.server !== undefined && r.latest > r.lastRead && shown(scope, r)) servers.add(r.server)
   }
   return servers
 }
 
-export const anyDmUnread = (reads: Record<string, ReadMark>): boolean =>
-  Object.entries(reads).some(([scope, r]) => scope[0] === 'd' && r.latest > r.lastRead)
+export const anyDmUnread = (
+  reads: Record<string, ReadMark>,
+  shown: ScopeFilter = everyScope
+): boolean =>
+  Object.entries(reads).some(
+    ([scope, r]) => scope[0] === 'd' && r.latest > r.lastRead && shown(scope, r)
+  )
 
 export interface Page<T> {
   items: T[]

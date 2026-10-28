@@ -362,7 +362,7 @@ function Card({ target }: { target: ProfileTarget }) {
         return
       case 'server_ban':
         close()
-        banMenuItem(server, username).action()
+        banMenuItem(server, username).action?.()
         return
       case 'promote':
         void s.grantAdmin(server, username)

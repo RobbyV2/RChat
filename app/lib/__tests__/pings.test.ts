@@ -14,6 +14,7 @@ import {
   scopePings,
   serverPings,
   setScopePings,
+  shownPings,
   totalPings,
   type PingCount,
   type Pings,
@@ -184,6 +185,35 @@ describe('pingAlert', () => {
       toast: true,
       badge: true,
     })
+  })
+
+  test('muted or Nothing: counted but no toast; seen in place stays silent', () => {
+    const away = watching({ view: 'c2' })
+    expect(pingAlert(ping(), away, { level: 'mentions', muted: true })).toEqual({
+      toast: false,
+      badge: true,
+    })
+    expect(pingAlert(ping(), away, { level: 'nothing', muted: false })).toEqual({
+      toast: false,
+      badge: true,
+    })
+    expect(pingAlert(ping(), away, { level: 'all', muted: false })).toEqual({
+      toast: true,
+      badge: true,
+    })
+    expect(pingAlert(ping(), watching(), { level: 'all', muted: false })).toEqual({
+      toast: false,
+      badge: false,
+    })
+  })
+
+  test('shownPings drops filtered scopes and keeps the object when nothing is dropped', () => {
+    const pings: Pings = {
+      c1: { scope: 'c1', server: 's', bulk: 1, bulkUntil: 1, ids: [] },
+      d4: { scope: 'd4', server: null, bulk: 2, bulkUntil: 2, ids: [] },
+    }
+    expect(shownPings(pings, () => true)).toBe(pings)
+    expect(totalPings(shownPings(pings, scope => scope !== 'd4'))).toBe(1)
   })
 
   test('toast wording', () => {

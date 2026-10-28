@@ -33,10 +33,39 @@ import {
   pingKey,
   pingUntil,
   serverPings,
+  scopePings,
   setScopePings,
+  shownPings,
   totalPings,
   type Pings,
 } from './pings'
+import {
+  EMPTY_NOTIFY,
+  extendMute,
+  keepScopes,
+  messageAlert,
+  mutedOf,
+  nextExpiry,
+  notifyKey,
+  notifyValue,
+  parseNotify,
+  pingShown,
+  pruneNotify,
+  renameServerRule,
+  resetAll as resetAllNotify,
+  resetScope,
+  resolve as resolveNotify,
+  scopeOfKey,
+  setDesktop,
+  setLevel,
+  setMute,
+  unreadShown,
+  type Level,
+  type MuteUntil,
+  type NotifyPrefs,
+  type NotifyScope,
+} from './notify'
+import { notifications } from './platform'
 import { EMPTY_PREFS, emojiKey, noteUse, parseEmojiPrefs, setTone, type EmojiPrefs } from './emoji'
 import { canAddEmoji, emojiBase, reacted, reactorKey, withReaction } from './reactions'
 import {
@@ -222,11 +251,17 @@ export const parsePath = (pathname: string): PathTarget | null => {
   return dm ? { kind: 'dm', dmId: Number(dm[1]) } : null
 }
 
+// A menu row. `submenu` opens a nested menu (a flyout on desktop, a sheet with Back on touch)
+// instead of running `action`. `checked` makes it a radio (`radio: true`) or check item.
 export interface ContextMenuItem {
   label: string
+  subtitle?: string
   danger?: boolean
   icon?: LucideIcon
-  action: () => void
+  checked?: boolean
+  radio?: boolean
+  submenu?: ContextMenuItem[]
+  action?: () => void
 }
 
 export interface ContextMenuOptions {
@@ -468,6 +503,7 @@ interface RChatState {
   serversMore: boolean
   layout: Layout
   emoji: EmojiPrefs
+  notifyPrefs: NotifyPrefs
   voice: VoiceSession | null
   call: CallSession | null
   voiceUsers: Record<number, string[]>
@@ -575,6 +611,14 @@ interface RChatState {
   openPinned: (key: string, id: number) => Promise<void>
   unpinMessage: (id: number) => Promise<void>
   reloadForward: () => void
+  setNotifyLevel: (scope: NotifyScope, level: Level | null) => void
+  muteScope: (scope: NotifyScope, until: MuteUntil | null) => void
+  muteServers: (names: string[], until: MuteUntil | null) => void
+  resetNotify: (scope: NotifyScope) => void
+  resetAllNotify: () => void
+  setDesktopNotify: (on: boolean) => void
+  reloadNotify: () => void
+  pruneNotify: () => void
   sendForward: (key: string) => void
   openForward: (m: Message) => Promise<void>
   startEdit: (key: string, m: Message) => void
@@ -778,29 +822,81 @@ export const folderLabel = (s: RailSource, folder: Folder, name = folder.name) =
 
 export const dmView = (s: RChatState) => dmSections(s.dms, s.layout)
 
-let unreadMemo: { reads: RChatState['reads']; servers: Set<string> } | null = null
+// Mutes are pruned by a timer when they end, so `notifyPrefs` changes whenever the answer does.
+export const scopeMuted = (s: RChatState, scope: NotifyScope) =>
+  mutedOf(s.notifyPrefs, scope, Date.now())
+
+export const scopeRule = (s: RChatState, scope: NotifyScope) =>
+  resolveNotify(s.notifyPrefs, scope, Date.now())
+
+// Unread dots: a muted channel, DM or server shows none.
+export const scopeUnread = (s: RChatState, scope: string): boolean =>
+  isUnread(s, scope) &&
+  unreadShown(s.notifyPrefs, scope, s.reads[scope]?.server ?? null, Date.now())
+
+let unreadMemo: {
+  reads: RChatState['reads']
+  prefs: NotifyPrefs
+  servers: Set<string>
+} | null = null
 
 export const serverUnread = (s: RChatState, name: string): boolean => {
+  const now = Date.now()
+  const prefs = s.notifyPrefs
+  if (mutedOf(prefs, { kind: 'server', name }, now)) return false
   const detail = s.servers[name]
-  if (detail) return detail.channels.some(c => c.kind === 'text' && isUnread(s, `c${c.id}`))
-  if (unreadMemo?.reads !== s.reads)
-    unreadMemo = { reads: s.reads, servers: unreadServers(s.reads) }
+  if (detail)
+    return detail.channels.some(
+      c => c.kind === 'text' && isUnread(s, `c${c.id}`) && unreadShown(prefs, `c${c.id}`, name, now)
+    )
+  if (unreadMemo?.reads !== s.reads || unreadMemo.prefs !== prefs)
+    unreadMemo = {
+      reads: s.reads,
+      prefs,
+      servers: unreadServers(s.reads, (scope, r) =>
+        unreadShown(prefs, scope, r.server ?? null, now)
+      ),
+    }
   return unreadMemo.servers.has(name)
 }
 
-let dmUnreadMemo: { reads: RChatState['reads']; unread: boolean } | null = null
+let dmUnreadMemo: { reads: RChatState['reads']; prefs: NotifyPrefs; unread: boolean } | null = null
 
 export const dmsUnread = (s: RChatState): boolean => {
-  if (dmUnreadMemo?.reads !== s.reads)
-    dmUnreadMemo = { reads: s.reads, unread: anyDmUnread(s.reads) }
+  const prefs = s.notifyPrefs
+  if (dmUnreadMemo?.reads !== s.reads || dmUnreadMemo.prefs !== prefs) {
+    const now = Date.now()
+    dmUnreadMemo = {
+      reads: s.reads,
+      prefs,
+      unread: anyDmUnread(s.reads, scope => unreadShown(prefs, scope, null, now)),
+    }
+  }
   return dmUnreadMemo.unread
 }
 
-export const serverPingCount = (s: RChatState, name: string) => serverPings(s.pings, name)
+let pingMemo: { pings: Pings; prefs: NotifyPrefs; shown: Pings } | null = null
 
-export const dmPingCount = (s: RChatState) => dmPings(s.pings)
+// The pings that badge: all of them except in scopes set to "Nothing".
+export const badgePings = (s: RChatState): Pings => {
+  if (pingMemo?.pings !== s.pings || pingMemo.prefs !== s.notifyPrefs) {
+    const prefs = s.notifyPrefs
+    pingMemo = {
+      pings: s.pings,
+      prefs,
+      shown: shownPings(s.pings, (scope, server) => pingShown(prefs, scope, server)),
+    }
+  }
+  return pingMemo.shown
+}
 
-export const allPings = (s: RChatState) => totalPings(s.pings)
+export const scopePingCount = (s: RChatState, scope: string) => scopePings(badgePings(s), scope)
+
+export const serverPingCount = (s: RChatState, name: string) => serverPings(badgePings(s), name)
+
+export const dmPingCount = (s: RChatState) => dmPings(badgePings(s))
+
+export const allPings = (s: RChatState) => totalPings(badgePings(s))
 
 const messageServer = (s: RChatState, m: Message): string | null => {
   if (m.channel_id === null) return null
@@ -1045,6 +1141,104 @@ export const useStore = create<RChatState>()((set, get) => {
     }
   }
 
+  const notifyOwner = () => {
+    const { me, guest } = get()
+    return me ? me.username : guest ? null : undefined
+  }
+
+  const readNotify = (username: string | null) => {
+    try {
+      return parseNotify(localStorage.getItem(home.scoped(notifyKey(username))))
+    } catch {
+      return EMPTY_NOTIFY
+    }
+  }
+
+  let expiryTimer: ReturnType<typeof setTimeout> | null = null
+
+  // One timer, set for the next mute to end; it prunes and sets itself for the one after.
+  const armExpiry = () => {
+    if (expiryTimer !== null) clearTimeout(expiryTimer)
+    expiryTimer = null
+    const now = Date.now()
+    const next = nextExpiry(get().notifyPrefs, now)
+    if (next === null) return
+    expiryTimer = setTimeout(
+      () => {
+        expiryTimer = null
+        get().pruneNotify()
+      },
+      Math.min(next - now + 50, 2 ** 31 - 1)
+    )
+  }
+
+  const useNotify = (prefs: NotifyPrefs) => {
+    set({ notifyPrefs: prefs })
+    armExpiry()
+  }
+
+  const saveNotify = (next: NotifyPrefs) => {
+    const pruned = pruneNotify(next, Date.now())
+    if (pruned === get().notifyPrefs) return
+    useNotify(pruned)
+    const owner = notifyOwner()
+    if (owner !== undefined) writeLocal(home.scoped(notifyKey(owner)), notifyValue(pruned))
+  }
+
+  // Rules are pruned only once this account's lists have been checked against them.
+  let notifySynced = false
+
+  // Drops rules for servers, channels and DMs the account is no longer in. Servers and DMs with
+  // rules are fetched first (the lists are paged); a channel whose server is unknown is kept.
+  const pruneScopes = async () => {
+    if (!notifySynced) return
+    const owner = notifyOwner()
+    const start = get()
+    const channelServer = (s: RChatState, id: number) => {
+      for (const [name, d] of Object.entries(s.servers))
+        if (d.channels.some(c => c.id === id)) return name
+      return s.reads[`c${id}`]?.server ?? null
+    }
+    const prefs = start.notifyPrefs
+    const asked = [
+      ...Object.keys(prefs.servers),
+      ...Object.keys(prefs.channels).flatMap(k => channelServer(start, Number(k)) ?? []),
+    ]
+    try {
+      await get().ensureServers(asked)
+      await get().ensureDms(Object.keys(prefs.dms).map(Number))
+    } catch {
+      return
+    }
+    if (!notifySynced || notifyOwner() !== owner) return
+    const s = get()
+    const members = new Set(serverNames(s))
+    const dms = new Set(s.dms.map(d => d.id))
+    saveNotify(
+      keepScopes(s.notifyPrefs, {
+        server: name => members.has(name),
+        channel: id => {
+          const server = channelServer(s, id)
+          return server === null || members.has(server)
+        },
+        dm: id => s.guest || dms.has(id),
+      })
+    )
+  }
+
+  const forgetServerRules = (name: string) => {
+    const channels = new Set((get().servers[name]?.channels ?? []).map(c => c.id))
+    for (const [scope, mark] of Object.entries(get().reads))
+      if (mark.server === name && scope[0] === 'c') channels.add(Number(scope.slice(1)))
+    saveNotify(
+      keepScopes(get().notifyPrefs, {
+        server: n => n !== name,
+        channel: id => !channels.has(id),
+        dm: () => true,
+      })
+    )
+  }
+
   const saveForward = (clip: ForwardClip | null) => {
     const username = get().me?.username
     if (!username) return
@@ -1100,11 +1294,16 @@ export const useStore = create<RChatState>()((set, get) => {
     )
     saveLayout(pruneLayout(s.layout, serverNames(s), dmIds))
     pinSelf()
+    notifySynced = true
+    await pruneScopes()
   }
 
   const loadGuestLayout = () => {
     set({ layout: readLayout(null) })
+    useNotify(readNotify(null))
     saveLayout(pruneLayout(get().layout, get().guestServers, null))
+    notifySynced = true
+    void pruneScopes()
   }
 
   const applyMe = (fresh: Me, keep: boolean) => {
@@ -1135,8 +1334,13 @@ export const useStore = create<RChatState>()((set, get) => {
             layout: readLayout(fresh.username),
             emoji: readEmoji(fresh.username),
             forwardClip: readForward(fresh.username),
+            notifyPrefs: readNotify(fresh.username),
           }),
     })
+    if (!same) {
+      notifySynced = false
+      armExpiry()
+    }
     pinSelf()
     if (resume.servers) void get().loadMoreServers()
     if (resume.dms) void get().loadMoreDms()
@@ -1711,6 +1915,7 @@ export const useStore = create<RChatState>()((set, get) => {
       home.ws.subscribe([target.server])
     }
     set(s => ({ servers: { ...s.servers, [target.server]: detail } }))
+    void pruneScopes()
     const wanted = target.kind === 'channel' ? target.channelId : null
     const channel = detail.channels.find(c => c.id === wanted) ?? detail.channels[0]
     if (!channel) return fallback()
@@ -1749,6 +1954,7 @@ export const useStore = create<RChatState>()((set, get) => {
     presenceLogs.delete(name)
     presenceSnaps.delete(name)
     saveLayout(forgetServer(get().layout, name))
+    forgetServerRules(name)
     set(s => {
       const servers = { ...s.servers }
       delete servers[name]
@@ -2781,6 +2987,42 @@ export const useStore = create<RChatState>()((set, get) => {
     setTimeout(() => set(s => ({ notices: s.notices.filter(n => n.id !== id) })), 5000)
   }
 
+  // A system notification for the same events that toast, only while the tab is in the
+  // background. Streamer mode leaves out names and message text.
+  const desktopAlert = (
+    name: string,
+    title: string,
+    body: string,
+    go: () => void,
+    tag: string,
+    generic: string
+  ) => {
+    const system = notifications()
+    if (!get().notifyPrefs.desktop || system.permission() !== 'granted') return
+    if (typeof document === 'undefined') return
+    if (document.visibilityState === 'visible' && document.hasFocus()) return
+    const hidden = get().streamer
+    system.show({
+      title: hidden ? generic : `${name}${title ? ` ${title}` : ''}`,
+      body: hidden ? '' : body,
+      tag,
+      renotify: true,
+      onClick: go,
+    })
+  }
+
+  const alertUser = (
+    name: string,
+    title: string,
+    body: string,
+    go: () => void,
+    tag: string,
+    generic: string
+  ) => {
+    notify(name, title, body, go)
+    desktopAlert(name, title, body, go, tag, generic)
+  }
+
   let endedVoice: number | null = null
   // Whether the server has listed us in the room we last joined. Until it has,
   // a voice_state without us predates our join and is not a removal.
@@ -2909,6 +3151,7 @@ export const useStore = create<RChatState>()((set, get) => {
     serversMore: false,
     layout: emptyLayout,
     emoji: EMPTY_PREFS,
+    notifyPrefs: EMPTY_NOTIFY,
     voice: null,
     call: null,
     voiceUsers: {},
@@ -3133,6 +3376,9 @@ export const useStore = create<RChatState>()((set, get) => {
       if (username) writeLocal(home.scoped(secretsKey(username)), null)
       if (meRetry) clearTimeout(meRetry)
       meRetry = null
+      if (expiryTimer !== null) clearTimeout(expiryTimer)
+      expiryTimer = null
+      notifySynced = false
       const flushed = readQueue.flush()
       readQueue.clear()
       if (token)
@@ -3195,6 +3441,7 @@ export const useStore = create<RChatState>()((set, get) => {
         serversMore: false,
         layout: emptyLayout,
         emoji: EMPTY_PREFS,
+        notifyPrefs: EMPTY_NOTIFY,
         view: null,
         invite: null,
         messages: {},
@@ -3268,6 +3515,7 @@ export const useStore = create<RChatState>()((set, get) => {
       act(async () => {
         const [detail] = await Promise.all([fetchServer(name), ensureMembership(name)])
         set(s => ({ servers: { ...s.servers, [name]: detail } }))
+        void pruneScopes()
         const target = detail.channels.find(c => c.id === channelId) ?? detail.channels[0]
         if (!target) throw new Error(`No channels you can view in ${detail.display_name}`)
         await get().openChannel(name, target.id, nav, target.id === channelId ? at : undefined)
@@ -3558,6 +3806,27 @@ export const useStore = create<RChatState>()((set, get) => {
     reloadForward: () => {
       const username = get().me?.username
       if (username) set({ forwardClip: readForward(username) })
+    },
+
+    setNotifyLevel: (scope, level) => saveNotify(setLevel(get().notifyPrefs, scope, level)),
+    muteScope: (scope, until) => saveNotify(setMute(get().notifyPrefs, scope, until)),
+    muteServers: (names, until) =>
+      saveNotify(
+        names.reduce((p, name) => {
+          const scope = { kind: 'server', name } as const
+          return until === null ? setMute(p, scope, null) : extendMute(p, scope, until, Date.now())
+        }, get().notifyPrefs)
+      ),
+    resetNotify: scope => saveNotify(resetScope(get().notifyPrefs, scope)),
+    resetAllNotify: () => saveNotify(resetAllNotify(get().notifyPrefs)),
+    setDesktopNotify: on => saveNotify(setDesktop(get().notifyPrefs, on)),
+    reloadNotify: () => {
+      const owner = notifyOwner()
+      if (owner !== undefined) useNotify(readNotify(owner))
+    },
+    pruneNotify: () => {
+      saveNotify(get().notifyPrefs)
+      armExpiry()
     },
 
     sendForward: key => {
@@ -4477,24 +4746,38 @@ export const useStore = create<RChatState>()((set, get) => {
             }
           }
           const { me, view } = get()
-          if (!me || m.author.username === me.username) return
-          const { dm_id } = ev
-          if (dm_id !== null) {
-            if (view?.kind === 'dm' && view.dmId === dm_id) return
-            const toMe =
-              repliesToMe(m, me.username) || (m.reply_to?.partial === true && m.reply_to.mention)
-            if (!m.forward && (mentionsUser(m.content, me.username) || toMe)) return
-            notify(
-              m.author.display_name,
-              '',
-              m.kind === 'pin'
-                ? 'Pinned a message'
-                : m.content || m.media?.filename || 'Attachment',
-              () => {
-                void get().openDm(dm_id)
-              }
-            )
-          }
+          if (!me || m.author.username === me.username || (rootId !== null && m.dm_id === null))
+            return
+          const scope = messageKey(m.channel_id, m.dm_id)
+          const target = scope ? scopeOfKey(scope, ev.server ?? null) : null
+          if (!scope || !target) return
+          const toMe =
+            repliesToMe(m, me.username) || (m.reply_to?.partial === true && m.reply_to.mention)
+          if (!m.forward && (mentionsUser(m.content, me.username) || toMe)) return
+          const watched =
+            view !== null &&
+            viewKey(view) === scope &&
+            get().atBottom[scope] === true &&
+            !detached(scope) &&
+            pageVisible()
+          if (!messageAlert(scopeRule(get(), target), watched)) return
+          const { dm_id, channel_id } = ev
+          const channel =
+            ev.server !== null && channel_id !== null
+              ? (get().servers[ev.server]?.channels.find(c => c.id === channel_id)?.name ?? null)
+              : null
+          alertUser(
+            m.author.display_name,
+            channel ? `in #${channel}` : '',
+            m.kind === 'pin' ? 'Pinned a message' : m.content || m.media?.filename || 'Attachment',
+            () => {
+              if (dm_id !== null) void get().openDm(dm_id)
+              else if (ev.server !== null && channel_id !== null)
+                void get().openChannel(ev.server, channel_id, 'push', m.id)
+            },
+            scope,
+            'New message'
+          )
           return
         }
         case 'message_updated': {
@@ -4629,6 +4912,9 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'channel_deleted': {
+          saveNotify(
+            resetScope(get().notifyPrefs, { kind: 'channel', id: ev.channel_id, server: null })
+          )
           patchServer(ev.server, d => ({
             ...d,
             channels: d.channels.filter(c => c.id !== ev.channel_id),
@@ -4762,6 +5048,7 @@ export const useStore = create<RChatState>()((set, get) => {
             }
           })
           saveLayout(renameServer(get().layout, old_name, server.name))
+          saveNotify(renameServerRule(get().notifyPrefs, old_name, server.name))
           serverGen += 1
           const renamed = old_name !== server.name
           if (renamed) {
@@ -4982,12 +5269,17 @@ export const useStore = create<RChatState>()((set, get) => {
           if (!me || me.username !== ev.username) return
           const { ping } = ev
           const s = get()
-          const alert = pingAlert(ping, {
-            view: s.view ? viewKey(s.view) : null,
-            thread: s.panel?.kind === 'thread' ? s.panel.root.id : null,
-            following: key => s.atBottom[key] === true && !detached(key),
-            visible: pageVisible(),
-          })
+          const target = scopeOfKey(ping.scope, ping.server)
+          const alert = pingAlert(
+            ping,
+            {
+              view: s.view ? viewKey(s.view) : null,
+              thread: s.panel?.kind === 'thread' ? s.panel.root.id : null,
+              following: key => s.atBottom[key] === true && !detached(key),
+              visible: pageVisible(),
+            },
+            target ? scopeRule(s, target) : undefined
+          )
           if (alert.badge) set(st => ({ pings: addPing(st.pings, ping) }))
           else {
             const key = pingKey(ping)
@@ -5001,9 +5293,14 @@ export const useStore = create<RChatState>()((set, get) => {
               ? (s.servers[ping.server]?.channels.find(c => `c${c.id}` === ping.scope)?.name ??
                 null)
               : null
-          notify(ping.actor.display_name, pingAction(ping, channel), ping.excerpt, () => {
-            void get().openPing(ping)
-          })
+          alertUser(
+            ping.actor.display_name,
+            pingAction(ping, channel),
+            ping.excerpt,
+            () => void get().openPing(ping),
+            ping.scope,
+            'New notification'
+          )
           return
         }
         case 'ping_count': {

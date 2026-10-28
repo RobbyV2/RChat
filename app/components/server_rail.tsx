@@ -17,6 +17,7 @@ import {
   folderLabel,
   previewServer,
   railServers,
+  scopeMuted,
   serverPingCount,
   serverUnread,
   useStore,
@@ -34,6 +35,7 @@ import { RailInstance } from './instance_badge'
 import { Sentinel } from './server_settings'
 import { ThemeToggle } from './status_clock'
 import { RailPingBadge, pingLabel } from './ping_badge'
+import { MutedIcon, folderNotifyItems, notifyMenuItems } from './notify_menu'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 const idle =
@@ -98,15 +100,17 @@ function ServerTile({
   const leaveServer = useStore(s => s.leaveServer)
   const askConfirm = useStore(s => s.askConfirm)
   const moveServer = useStore(s => s.moveServer)
+  const muted = useStore(s => scopeMuted(s, { kind: 'server', name }))
   const mine = me !== null && creator === me.username
   const parent = folder === null ? null : folderKey(folder)
   return (
     <button
-      title={`${mine ? `${display_name} (Creator)` : display_name}${pings ? `, ${pingLabel(pings)}` : ''}`}
+      title={`${mine ? `${display_name} (Creator)` : display_name}${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}`}
       onClick={() => void openServer(name)}
       {...longPress(
         (x, y) =>
           openContextMenu(x, y, [
+            ...notifyMenuItems({ kind: 'server', name }, 'Server'),
             {
               label: 'Copy invite link',
               action: () => void navigator.clipboard.writeText(inviteUrl(name)),
@@ -144,7 +148,16 @@ function ServerTile({
       data-drop-onto={folder === null ? 'Create folder' : undefined}
       className={`${tile} relative text-lg font-semibold ${active ? 'bg-primary text-on-primary' : idle}`}
     >
-      <ServerGlyph name={name} displayName={display_name} />
+      <span
+        className={`flex h-full w-full items-center justify-center ${muted && !active ? 'opacity-50' : ''}`}
+      >
+        <ServerGlyph name={name} displayName={display_name} />
+      </span>
+      <MutedIcon
+        scope={{ kind: 'server', name }}
+        size={10}
+        className="absolute -bottom-1 -left-1 size-5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-surface-container-highest text-on-surface-variant"
+      />
       {mine && (
         <span
           title="Creator"
@@ -247,6 +260,7 @@ function FolderEntry({
     ...longPress(
       (x, y) =>
         openContextMenu(x, y, [
+          ...folderNotifyItems(servers.map(x => x.name)),
           {
             label: 'Rename folder',
             action: () => openDialog({ kind: 'rename_folder', id: folder.id }),

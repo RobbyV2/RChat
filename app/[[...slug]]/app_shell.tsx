@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { allPings, useStore } from '../lib/store'
-import { pingTitle } from '../lib/pings'
+import { notifications } from '../lib/platform'
 import { home } from '../lib/instances'
 import { ContextMenu } from '../components/context_menu'
 import { ReactionPickerHost } from '../components/reactions'
@@ -39,7 +39,6 @@ export default function AppShell() {
   const bootstrap = useStore(s => s.bootstrap)
   const pings = useStore(allPings)
   const booted = useRef(false)
-  const baseTitle = useRef<string | null>(null)
   const [leftOpen, setLeftOpen] = useState(false)
   const [rightOpen, setRightOpen] = useState(false)
 
@@ -59,8 +58,7 @@ export default function AppShell() {
   }, [router, bootstrap])
 
   useEffect(() => {
-    baseTitle.current ??= document.title.replace(/^\(\d+\+?\) /, '')
-    document.title = pingTitle(baseTitle.current, pings)
+    notifications().setBadge(pings)
   }, [pings])
 
   const guestBlocked = useStore(s => s.guest && !s.settings.guests_enabled)
@@ -85,12 +83,20 @@ export default function AppShell() {
       if (e.key?.startsWith('rchat_layout:')) useStore.getState().reloadLayout()
       if (e.key?.startsWith('rchat_emoji:')) useStore.getState().reloadEmoji()
       if (e.key?.startsWith('rchat_forward:')) useStore.getState().reloadForward()
+      if (e.key?.startsWith('rchat_notify:')) useStore.getState().reloadNotify()
+    }
+    const onWake = () => {
+      if (document.visibilityState === 'visible') useStore.getState().pruneNotify()
     }
     window.addEventListener('popstate', onPop)
     window.addEventListener('storage', onStorage)
+    window.addEventListener('focus', onWake)
+    document.addEventListener('visibilitychange', onWake)
     return () => {
       window.removeEventListener('popstate', onPop)
       window.removeEventListener('storage', onStorage)
+      window.removeEventListener('focus', onWake)
+      document.removeEventListener('visibilitychange', onWake)
     }
   }, [])
 

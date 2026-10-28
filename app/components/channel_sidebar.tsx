@@ -2,7 +2,15 @@
 
 import { useMemo, useRef, useState } from 'react'
 import { HeadphoneOff, Hash, MicOff, Pin, Plus, Volume2 } from 'lucide-react'
-import { myPerms, serverAdminPerms, userRefFor, useStore } from '../lib/store'
+import {
+  badgePings,
+  myPerms,
+  scopeMuted,
+  scopeUnread,
+  serverAdminPerms,
+  userRefFor,
+  useStore,
+} from '../lib/store'
 import { dmSections } from '../lib/nav_layout'
 import { canDeleteChannel } from '../lib/rules'
 import { enterKey } from '../lib/keys'
@@ -18,6 +26,7 @@ import { Sentinel } from './server_settings'
 import { useAuthorMembers } from './message_pane'
 import { PingBadge } from './ping_badge'
 import { scopePings } from '../lib/pings'
+import { MutedIcon, notifyMenuItems } from './notify_menu'
 
 type Editing = { mode: 'create'; kind: ChannelKind } | { mode: 'rename'; id: number }
 
@@ -42,12 +51,14 @@ function DmRow({
   const unpinDm = useStore(s => s.unpinDm)
   const placeDm = useStore(s => s.placeDm)
   const { id, other, is_self } = dm
+  const muted = useStore(s => scopeMuted(s, { kind: 'dm', id }))
   return (
     <button
       onClick={() => void openDm(id)}
       {...longPress(
         (x, y) =>
           openContextMenu(x, y, [
+            ...notifyMenuItems({ kind: 'dm', id }, 'DM'),
             pinned
               ? { label: 'Unpin DM', action: () => unpinDm(id) }
               : { label: 'Pin DM', action: () => pinDm(id) },
@@ -70,7 +81,7 @@ function DmRow({
         active
           ? 'bg-secondary-container text-on-secondary-container'
           : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
-      }`}
+      } ${muted && !active ? 'opacity-60' : ''}`}
     >
       <UserAvatar
         username={other.username}
@@ -79,6 +90,7 @@ function DmRow({
         size={28}
       />
       <span className="streamer truncate">{other.display_name}</span>
+      <MutedIcon scope={{ kind: 'dm', id }} />
       {unread && !pings && (
         <span title="Unread" aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-error" />
       )}
@@ -216,12 +228,10 @@ export function ChannelSidebar() {
   const joinVoice = useStore(s => s.joinVoice)
   const voiceUsers = useStore(s => s.voiceUsers)
   const voice = useStore(s => s.voice)
-  const reads = useStore(s => s.reads)
-  const pings = useStore(s => s.pings)
-  const unread = (scope: string) => {
-    const r = reads[scope]
-    return !!r && r.latest > r.lastRead
-  }
+  useStore(s => s.reads)
+  useStore(s => s.notifyPrefs)
+  const pings = useStore(badgePings)
+  const unread = (scope: string) => scopeUnread(useStore.getState(), scope)
   const pingsOf = (scope: string) => scopePings(pings, scope)
   useStore(s => s.rtcTick)
   useStore(s => s.members)
@@ -372,6 +382,9 @@ export function ChannelSidebar() {
 
   const channelMenu = (c: Channel) => (x: number, y: number) => {
     openContextMenu(x, y, [
+      ...(c.kind === 'text'
+        ? notifyMenuItems({ kind: 'channel', id: c.id, server: detail.name }, 'Channel')
+        : []),
       {
         label: 'Copy Channel ID',
         action: () => void navigator.clipboard.writeText(String(c.id)),
@@ -464,11 +477,20 @@ export function ChannelSidebar() {
               className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
                 view?.kind === 'channel' && view.channelId === c.id
                   ? 'bg-secondary-container text-on-secondary-container'
-                  : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
+                  : `text-on-surface-variant hover:bg-surface-container hover:text-on-surface ${
+                      scopeMuted(useStore.getState(), {
+                        kind: 'channel',
+                        id: c.id,
+                        server: detail.name,
+                      })
+                        ? 'opacity-60'
+                        : ''
+                    }`
               }`}
             >
               <Hash size={16} className="shrink-0" />
               <span className="truncate">{c.name}</span>
+              <MutedIcon scope={{ kind: 'channel', id: c.id, server: detail.name }} />
               {pingsOf(`c${c.id}`) > 0 ? (
                 <PingBadge count={pingsOf(`c${c.id}`)} className="ml-auto" />
               ) : (

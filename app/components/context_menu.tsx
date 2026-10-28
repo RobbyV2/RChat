@@ -4,17 +4,20 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from 'react'
 import type {
+  ReactNode,
   DragEvent as ReactDragEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
   TouchEvent as ReactTouchEvent,
 } from 'react'
-import { useStore } from '../lib/store'
+import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useStore, type ContextMenuItem, type ContextMenuState } from '../lib/store'
 import {
   HOLD_MS,
   PRESSED_DELAY_MS,
@@ -252,61 +255,280 @@ export function useMedia(query: string) {
 
 const useCoarse = () => useMedia(COARSE_QUERY)
 
-export function ContextMenu() {
-  const menu = useStore(s => s.contextMenu)
-  const close = useStore(s => s.closeContextMenu)
-  const coarse = useCoarse()
-  const ref = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState({ x: 0, y: 0 })
+type MenuItem = ContextMenuItem
 
+// The submenus open below the root menu: on desktop each is a flyout beside the row that opened
+// it, on touch the sheet shows only the deepest one with a Back row.
+interface Level {
+  items: MenuItem[]
+  label: string
+  from: number
+  place: Place
+}
+
+type Place = { x: number; y: number } | { beside: DOMRect }
+
+const menuIds = new WeakMap<object, number>()
+let menuSeq = 0
+const menuId = (menu: object) => {
+  let id = menuIds.get(menu)
+  if (id === undefined) {
+    menuSeq += 1
+    id = menuSeq
+    menuIds.set(menu, id)
+  }
+  return id
+}
+
+const ITEM = '[data-menu-item]'
+
+const itemsOf = (root: HTMLElement | null, level: number) =>
+  Array.from(root?.querySelectorAll<HTMLElement>(`[data-menu-level="${level}"] ${ITEM}`) ?? [])
+
+const roleOf = (it: MenuItem) =>
+  it.checked === undefined ? 'menuitem' : it.radio ? 'menuitemradio' : 'menuitemcheckbox'
+
+function Indicator({ it, size }: { it: MenuItem; size: number }) {
+  if (it.submenu) return <ChevronRight size={size} aria-hidden className="shrink-0 opacity-80" />
+  if (it.checked !== undefined && it.radio)
+    return (
+      <span
+        aria-hidden
+        className={`flex shrink-0 items-center justify-center rounded-full border-2 ${
+          it.checked ? 'border-primary' : 'border-on-surface-variant'
+        }`}
+        style={{ width: size, height: size }}
+      >
+        {it.checked && <span className="size-2 rounded-full bg-primary" />}
+      </span>
+    )
+  if (it.checked !== undefined)
+    return (
+      <span
+        aria-hidden
+        className={`flex shrink-0 items-center justify-center rounded-sm border-2 ${
+          it.checked ? 'border-primary bg-primary text-on-primary' : 'border-on-surface-variant'
+        }`}
+        style={{ width: size, height: size }}
+      >
+        {it.checked && <Check size={size - 6} strokeWidth={3} />}
+      </span>
+    )
+  return it.icon ? <it.icon size={size} aria-hidden className="shrink-0 opacity-80" /> : null
+}
+
+function Row({
+  it,
+  level,
+  index,
+  open,
+  coarse,
+  onEnter,
+  onPick,
+}: {
+  it: MenuItem
+  level: number
+  index: number
+  open: boolean
+  coarse: boolean
+  onEnter?: (el: HTMLElement) => void
+  onPick: (el: HTMLElement, keyboard: boolean) => void
+}) {
+  const size = coarse ? 20 : 16
+  return (
+    <button
+      role={roleOf(it)}
+      aria-checked={it.checked}
+      aria-haspopup={it.submenu ? 'menu' : undefined}
+      aria-expanded={it.submenu ? open : undefined}
+      data-menu-item=""
+      data-menu-index={index}
+      onMouseEnter={onEnter ? e => onEnter(e.currentTarget) : undefined}
+      onClick={e => onPick(e.currentTarget, e.detail === 0)}
+      className={`flex w-full items-center gap-3 text-left outline-none focus-visible:bg-surface-container-highest ${
+        coarse
+          ? 'min-h-13 px-6 py-1.5 text-base active:bg-surface-container-highest'
+          : `px-4 py-2 text-sm hover:bg-surface-container-highest ${open ? 'bg-surface-container-highest' : ''}`
+      } ${it.danger ? 'text-error' : 'text-on-surface'}`}
+      data-level={level}
+    >
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate">{it.label}</span>
+        {it.subtitle && (
+          <span className={`truncate text-on-surface-variant ${coarse ? 'text-sm' : 'text-xs'}`}>
+            {it.subtitle}
+          </span>
+        )}
+      </span>
+      <Indicator it={it} size={size} />
+    </button>
+  )
+}
+
+function Panel({
+  place,
+  level,
+  header,
+  children,
+}: {
+  place: Place
+  level: number
+  header?: ReactNode
+  children: ReactNode
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Placed before paint (and before the menu moves focus into it), clamped to the window.
   useLayoutEffect(() => {
-    if (!menu) return
-    if (coarse) {
-      const active = document.activeElement
-      if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) active.blur()
-      return
-    }
     const el = ref.current
     if (!el) return
-    setPos({
-      x: Math.max(4, Math.min(menu.x, window.innerWidth - el.offsetWidth - 8)),
-      y: Math.max(4, Math.min(menu.y, window.innerHeight - el.offsetHeight - 8)),
-    })
-  }, [menu, coarse])
-
-  useEffect(() => {
-    if (!menu) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close()
+    const w = el.offsetWidth
+    const h = el.offsetHeight
+    const maxX = window.innerWidth - w - 8
+    const maxY = window.innerHeight - h - 8
+    if ('beside' in place) {
+      const r = place.beside
+      const right = r.right + 2
+      el.style.left = `${right <= maxX ? right : Math.max(4, r.left - w - 2)}px`
+      el.style.top = `${Math.max(4, Math.min(r.top - 8, maxY))}px`
+    } else {
+      el.style.left = `${Math.max(4, Math.min(place.x, maxX))}px`
+      el.style.top = `${Math.max(4, Math.min(place.y, maxY))}px`
     }
-    window.addEventListener('keydown', onKey)
+  }, [place])
+
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      data-menu-level={level}
+      className="absolute max-h-[calc(100dvh-1rem)] min-w-44 overflow-y-auto rounded-xl bg-surface-container-high py-2 shadow-elevation-2"
+      onMouseDown={e => e.stopPropagation()}
+    >
+      {header && <div className="mb-1 border-b border-outline-variant px-2 pb-2">{header}</div>}
+      {children}
+    </div>
+  )
+}
+
+function OpenMenu({ menu, coarse }: { menu: ContextMenuState; coarse: boolean }) {
+  const close = useStore(s => s.closeContextMenu)
+  const ref = useRef<HTMLDivElement>(null)
+  const [stack, setStack] = useState<Level[]>([])
+  const focusNext = useRef<{ level: number; index: number } | null>(null)
+  const root = useMemo<Place>(() => ({ x: menu.x, y: menu.y }), [menu.x, menu.y])
+
+  const levels: MenuItem[][] = [menu.items, ...stack.map(l => l.items)]
+
+  const openSub = (level: number, index: number, el: HTMLElement | null, focus: boolean) => {
+    const it = levels[level]?.[index]
+    if (!it?.submenu) return
+    const sub = it.submenu
+    if (focus) focusNext.current = { level: level + 1, index: 0 }
+    setStack(st => {
+      const cur = st[level]
+      if (cur && cur.from === index && cur.items === sub && !focus) return st
+      return [
+        ...st.slice(0, level),
+        {
+          items: sub,
+          label: it.label,
+          from: index,
+          place: { beside: el?.getBoundingClientRect() ?? new DOMRect() },
+        },
+      ]
+    })
+  }
+
+  const back = () => {
+    const top = stack[stack.length - 1]
+    if (!top) return
+    focusNext.current = { level: stack.length - 1, index: top.from }
+    setStack(stack.slice(0, -1))
+  }
+
+  useLayoutEffect(() => {
+    const want = focusNext.current
+    if (!want) return
+    focusNext.current = null
+    itemsOf(ref.current, coarse ? 0 : want.level)[want.index]?.focus()
+  })
+
+  // Re-registered every render so the handler sees the current stack.
+  useEffect(() => {
+    const deepest = () => {
+      const active = document.activeElement
+      const box = active instanceof HTMLElement ? active.closest('[data-menu-level]') : null
+      return box && ref.current?.contains(box) ? Number(box.getAttribute('data-menu-level')) : null
+    }
+    const onKey = (e: KeyboardEvent) => {
+      const key = e.key
+      if (
+        !['Escape', 'ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(key)
+      )
+        return
+      e.preventDefault()
+      e.stopPropagation()
+      const depth = stack.length
+      const at = deepest()
+      if (key === 'Escape') {
+        if (depth > 0) back()
+        else close()
+        return
+      }
+      const level = coarse ? 0 : (at ?? depth)
+      const rows = itemsOf(ref.current, level)
+      const current = rows.findIndex(r => r === document.activeElement)
+      if (key === 'ArrowLeft') {
+        if (level > 0 || (coarse && depth > 0)) back()
+        return
+      }
+      if (key === 'ArrowRight') {
+        if (current >= 0) openSub(coarse ? depth : level, current, rows[current] ?? null, true)
+        return
+      }
+      if (!rows.length) return
+      const n = rows.length
+      const next =
+        key === 'Home'
+          ? 0
+          : key === 'End'
+            ? n - 1
+            : current < 0
+              ? key === 'ArrowDown'
+                ? 0
+                : n - 1
+              : (current + (key === 'ArrowDown' ? 1 : -1) + n) % n
+      rows[next]?.focus()
+      if (!coarse && stack.length > level) setStack(st => st.slice(0, level))
+    }
+    window.addEventListener('keydown', onKey, true)
     window.addEventListener('blur', close)
     if (!coarse) window.addEventListener('resize', close)
     return () => {
-      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('blur', close)
       window.removeEventListener('resize', close)
     }
-  }, [menu, close, coarse])
+  })
 
-  if (!menu) return null
-
-  const item = (it: (typeof menu.items)[number], i: number, cls: string, size: number) => (
-    <button
-      key={i}
-      role="menuitem"
-      onClick={() => {
-        close()
-        it.action()
-      }}
-      className={`${cls} ${it.danger ? 'text-error' : 'text-on-surface'}`}
-    >
-      <span className="min-w-0 flex-1 truncate">{it.label}</span>
-      {it.icon && <it.icon size={size} aria-hidden className="shrink-0 opacity-80" />}
-    </button>
-  )
+  // Enter/Space (a click with no pointer) moves focus into the submenu. The sheet always does:
+  // the row that opened it is gone.
+  const pick = (level: number, index: number, el: HTMLElement, keyboard: boolean) => {
+    const it = levels[level]?.[index]
+    if (!it) return
+    if (it.submenu) {
+      openSub(level, index, el, keyboard || coarse)
+      return
+    }
+    close()
+    it.action?.()
+  }
 
   if (coarse) {
+    const depth = stack.length
+    const top = stack[depth - 1]
+    const items = levels[depth]
     return (
       <div
         className="fixed inset-x-0 top-0 z-50 flex h-app flex-col justify-end bg-scrim/40"
@@ -317,7 +539,9 @@ export function ContextMenu() {
         }}
       >
         <div
+          ref={ref}
           role="menu"
+          data-menu-level={0}
           onClick={e => e.stopPropagation()}
           onContextMenu={e => {
             e.preventDefault()
@@ -326,17 +550,34 @@ export function ContextMenu() {
           className="animate-sheet-up max-h-[70dvh] overflow-y-auto overscroll-contain rounded-t-3xl bg-surface-container-high px-safe pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-elevation-3 select-none"
         >
           <div aria-hidden className="mx-auto mb-2 h-1 w-8 rounded-full bg-outline-variant" />
-          {menu.header && (
-            <div className="border-b border-outline-variant px-4 pt-1 pb-3">{menu.header}</div>
-          )}
-          {menu.items.map((it, i) =>
-            item(
-              it,
-              i,
-              'flex min-h-13 w-full items-center gap-3 px-6 text-left text-base active:bg-surface-container-highest',
-              20
+          {top ? (
+            <div className="flex items-center gap-1 border-b border-outline-variant px-2 pb-2">
+              <button
+                title="Back"
+                aria-label="Back"
+                onClick={back}
+                className="rounded-full p-3 text-on-surface-variant active:bg-surface-container-highest"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <span className="truncate text-base font-medium text-on-surface">{top.label}</span>
+            </div>
+          ) : (
+            menu.header && (
+              <div className="border-b border-outline-variant px-4 pt-1 pb-3">{menu.header}</div>
             )
           )}
+          {items.map((it, i) => (
+            <Row
+              key={`${depth}:${i}`}
+              it={it}
+              level={depth}
+              index={i}
+              open={false}
+              coarse
+              onPick={(el, keyboard) => pick(depth, i, el, keyboard)}
+            />
+          ))}
         </div>
       </div>
     )
@@ -344,6 +585,7 @@ export function ContextMenu() {
 
   return (
     <div
+      ref={ref}
       className="fixed inset-0 z-50"
       onMouseDown={close}
       onContextMenu={e => {
@@ -351,25 +593,44 @@ export function ContextMenu() {
         close()
       }}
     >
-      <div
-        ref={ref}
-        role="menu"
-        style={{ left: pos.x, top: pos.y }}
-        className="absolute min-w-44 rounded-xl bg-surface-container-high py-2 shadow-elevation-2"
-        onMouseDown={e => e.stopPropagation()}
-      >
-        {menu.header && (
-          <div className="mb-1 border-b border-outline-variant px-2 pb-2">{menu.header}</div>
-        )}
-        {menu.items.map((it, i) =>
-          item(
-            it,
-            i,
-            'flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-surface-container-highest',
-            16
-          )
-        )}
-      </div>
+      {levels.map((items, level) => (
+        <Panel
+          key={level === 0 ? 'root' : `${level}:${stack[level - 1]?.from}`}
+          level={level}
+          place={level === 0 ? root : (stack[level - 1]?.place ?? root)}
+          header={level === 0 ? menu.header : undefined}
+        >
+          {items.map((it, i) => (
+            <Row
+              key={i}
+              it={it}
+              level={level}
+              index={i}
+              open={stack[level]?.from === i}
+              coarse={false}
+              onEnter={el => {
+                if (it.submenu) openSub(level, i, el, false)
+                else if (stack.length > level) setStack(st => st.slice(0, level))
+              }}
+              onPick={(el, keyboard) => pick(level, i, el, keyboard)}
+            />
+          ))}
+        </Panel>
+      ))}
     </div>
   )
+}
+
+export function ContextMenu() {
+  const menu = useStore(s => s.contextMenu)
+  const coarse = useCoarse()
+
+  useLayoutEffect(() => {
+    if (!menu || !coarse) return
+    const active = document.activeElement
+    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) active.blur()
+  }, [menu, coarse])
+
+  if (!menu) return null
+  return <OpenMenu key={menuId(menu)} menu={menu} coarse={coarse} />
 }

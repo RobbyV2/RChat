@@ -13,12 +13,13 @@ import { ColorField } from './color_field'
 import { InstanceDetails } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { SettingSwitch } from './admin_panel'
+import { NotificationsSection } from './notify_settings'
 import { PassSwitch, WordGrid } from './word_grid'
 import { FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './server_settings'
 
 const bioFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
-type Section = 'settings' | 'information'
+type Section = 'settings' | 'notifications' | 'information'
 
 export default function SettingsMenu() {
   const open = useStore(s => s.activeDialog?.kind === 'settings')
@@ -570,6 +571,7 @@ function Menu() {
 
   const sections: [Section, string][] = [
     ['settings', 'Settings'],
+    ['notifications', 'Notifications'],
     ['information', 'Information'],
   ]
 
@@ -610,7 +612,13 @@ function Menu() {
       </button>
       <div className="min-h-0 flex-1 overflow-y-auto p-6 md:p-10">
         <div className="max-w-lg pb-10">
-          {section === 'settings' ? <SettingsSection /> : <InformationSection />}
+          {section === 'settings' ? (
+            <SettingsSection />
+          ) : section === 'notifications' ? (
+            <NotificationsSection />
+          ) : (
+            <InformationSection />
+          )}
         </div>
       </div>
     </div>
