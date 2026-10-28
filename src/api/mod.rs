@@ -1,6 +1,7 @@
 pub mod access;
 pub mod admin;
 pub mod auth;
+pub mod budget;
 pub mod config_shares;
 pub mod dms;
 pub mod embeds;
@@ -25,12 +26,13 @@ use axum::Router;
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Request, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::middleware::{Next, from_fn_with_state};
+use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
 use rustrict::CensorStr;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use tower_governor::key_extractor::KeyExtractor;
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use utoipa::ToSchema;
 
@@ -626,7 +628,8 @@ pub struct ForwardRef {
     /// renames or password changes do not update it.
     #[schema(example = "#general · Rustaceans")]
     pub origin: Option<String>,
-    /// File name of a peer-to-peer attachment of the original. Those are not forwarded.
+    /// File name of an attachment of the original that was not forwarded: a peer-to-peer
+    /// attachment, or a file that already travels in 50 messages.
     #[schema(example = "notes.pdf")]
     pub dropped: Option<String>,
 }
@@ -1017,18 +1020,30 @@ pub async fn require_guest_ok(db: &Db, user: Option<&User>) -> Result<(), ApiErr
 
 pub(crate) const GRANTS_MAX: usize = 100;
 
-pub(crate) fn header_grants(headers: &HeaderMap) -> Vec<String> {
+/// Grants have the form of `auth::new_token`: 64 lowercase hex characters.
+pub(crate) fn grant_shaped(grant: &str) -> bool {
+    grant.len() == 64
+        && grant
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// A comma-separated grant list: well-formed grants only, without repeats, at most
+/// `GRANTS_MAX`.
+pub(crate) fn parse_grants<'a>(lists: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     let mut seen = HashSet::new();
-    match headers.get("x-guest-grant").and_then(|v| v.to_str().ok()) {
-        Some(v) => v
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty() && seen.insert(*s))
-            .take(GRANTS_MAX)
-            .map(str::to_string)
-            .collect(),
-        None => Vec::new(),
-    }
+    lists
+        .into_iter()
+        .flat_map(|list| list.split(','))
+        .map(str::trim)
+        .filter(|s| grant_shaped(s) && seen.insert(*s))
+        .take(GRANTS_MAX)
+        .map(str::to_string)
+        .collect()
+}
+
+pub(crate) fn header_grants(headers: &HeaderMap) -> Vec<String> {
+    parse_grants(headers.get("x-guest-grant").and_then(|v| v.to_str().ok()))
 }
 
 pub const NAME_MAX: usize = 100;
@@ -1252,7 +1267,7 @@ pub(crate) async fn user_for_token(state: &AppState, token: &str) -> Option<User
     let row = sqlx::query(
         "SELECT u.* FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
     )
-    .bind(token)
+    .bind(crate::db::secret_key(token))
     .fetch_optional(&state.read())
     .await
     .ok()??;
@@ -1350,6 +1365,12 @@ pub fn routes(state: AppState, roles: &Roles, key: ClientIp) -> Router<AppState>
             .route("/auth/words/{username}", get(auth::words))
             .route("/me/password", post(auth::change_password))
             .route("/servers/{name}/guest_access", post(servers::guest_access))
+            .route("/servers", post(servers::create_server))
+            .route("/servers/{name}", patch(servers::update_server))
+            .route(
+                "/servers/{name}/passwords",
+                post(passwords::create_password),
+            )
             .route("/servers/{name}/available", get(servers::server_available))
             .route(
                 "/config_shares",
@@ -1381,7 +1402,12 @@ pub fn routes(state: AppState, roles: &Roles, key: ClientIp) -> Router<AppState>
             .route("/search", get(messages::search))
             .route("/server_search", get(servers::search_servers));
     }
-    router
+    router.layer(from_fn(move |req: Request, next: Next| {
+        let ip = key
+            .extract(&req)
+            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+        budget::with_client(ip, req, next)
+    }))
 }
 
 fn api_routes(
@@ -1394,12 +1420,9 @@ fn api_routes(
         .route("/auth/logout", post(auth::logout))
         .route("/me/servers", get(servers::list_my_servers))
         .route("/users/{username}/profile", get(users::profile))
-        .route("/servers", post(servers::create_server))
         .route(
             "/servers/{name}",
-            get(servers::get_server)
-                .patch(servers::update_server)
-                .delete(servers::delete_server),
+            get(servers::get_server).delete(servers::delete_server),
         )
         .route("/servers/{name}/members", get(servers::list_members))
         .route("/servers/{name}/interacted", get(servers::list_interacted))
@@ -1409,10 +1432,7 @@ fn api_routes(
             "/channels/{id}",
             patch(servers::update_channel).delete(servers::delete_channel),
         )
-        .route(
-            "/servers/{name}/passwords",
-            get(passwords::list_passwords).post(passwords::create_password),
-        )
+        .route("/servers/{name}/passwords", get(passwords::list_passwords))
         .route(
             "/servers/{name}/passwords/{id}",
             delete(passwords::revoke_password),
@@ -1541,6 +1561,12 @@ pub(crate) mod test_util {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
+    }
+
+    /// A grant-shaped value (64 hex characters) derived from `name`, for tests.
+    pub(crate) fn test_grant(name: &str) -> String {
+        use sha2::Digest;
+        hex::encode(sha2::Sha256::digest(name.as_bytes()))
     }
 
     pub(crate) fn mem_user(username: &str, site_admin: bool) -> User {
@@ -2270,5 +2296,86 @@ mod tests {
         assert_eq!(limited["/auth/words/nobody"], 0, "{limited:?}");
         assert_eq!(limited["/settings"], 0, "{limited:?}");
         done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn server_names_and_passwords_change_in_the_strict_bucket() {
+        let (state, path) = temp_state("strict_servers").await;
+        let trusted = ProxyTrust::from_config(false, Some("127.0.0.1")).expect("trust");
+        let app = routes(state.clone(), &Roles::ALL, ClientIp(trusted)).with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+        });
+        let client = reqwest::Client::new();
+        let mut limited = HashMap::new();
+        for (n, (method, path)) in [
+            ("PATCH", "/servers/club"),
+            ("POST", "/servers"),
+            ("POST", "/servers/club/passwords"),
+            ("GET", "/servers/club"),
+            ("GET", "/servers/club/passwords"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut count = 0;
+            for _ in 0..40 {
+                let res = client
+                    .request(
+                        method.parse().expect("method"),
+                        format!("http://{addr}{path}"),
+                    )
+                    .header("X-Forwarded-For", format!("203.0.113.{n}"))
+                    .send()
+                    .await
+                    .expect("request");
+                if res.status() == StatusCode::TOO_MANY_REQUESTS {
+                    count += 1;
+                }
+            }
+            limited.insert(format!("{method} {path}"), count);
+        }
+        server.abort();
+        assert!(limited["PATCH /servers/club"] >= 5, "{limited:?}");
+        assert!(limited["POST /servers"] >= 5, "{limited:?}");
+        assert!(limited["POST /servers/club/passwords"] >= 5, "{limited:?}");
+        assert_eq!(limited["GET /servers/club"], 0, "{limited:?}");
+        assert_eq!(limited["GET /servers/club/passwords"], 0, "{limited:?}");
+        done(state, path).await;
+    }
+
+    #[test]
+    fn grant_lists_are_shaped_deduped_and_capped() {
+        let one = "a".repeat(64);
+        let list = format!("{one},{one}, bogus,{},{}", "A".repeat(64), "b".repeat(65));
+        assert_eq!(parse_grants([list.as_str()]), vec![one.clone()]);
+        let many: Vec<String> = (0..500).map(|n| format!("{n:064x}")).collect();
+        let joined = many.join(",");
+        let parsed = parse_grants([joined.as_str(), one.as_str()]);
+        assert_eq!(parsed.len(), GRANTS_MAX);
+        assert_eq!(parsed[..], many[..GRANTS_MAX]);
+    }
+
+    #[test]
+    fn media_removed_events_carry_no_file_name() {
+        let ev = crate::ws::WsEvent::MediaRemoved {
+            server: Some("rchat".to_string()),
+            channel_id: Some(1),
+            dm_id: None,
+            dm_users: None,
+            message_id: 2,
+            removed_by_author: false,
+        };
+        let json = serde_json::to_value(&ev).expect("json");
+        assert!(json.get("filename").is_none(), "{json}");
+        assert_eq!(json["message_id"], 2);
     }
 }

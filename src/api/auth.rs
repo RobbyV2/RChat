@@ -22,7 +22,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, ProfanityTarget,
     ServerSummary, UserRef, check_len, check_profanity, request_token, valid_color,
 };
-use crate::db::{AvatarKind, Db, User, get_user, now};
+use crate::db::{AvatarKind, Db, User, get_user, now, secret_key};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -154,24 +154,103 @@ fn word_set(username: &str) -> Vec<String> {
         .collect()
 }
 
-static HASHING: LazyLock<Semaphore> = LazyLock::new(|| {
-    Semaphore::new(
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4),
-    )
-});
+/// Argon2 work runs under one budget. `Account` work (login, registration, password changes)
+/// may use every permit, `Server` work (server passwords) only the shared ones, so that a flood
+/// of server password attempts can not stop people from signing in. `Server` work waits in a
+/// bounded queue and is refused when the queue is full.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Work {
+    Account,
+    Server,
+}
+
+fn cores() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+}
+
+pub(crate) fn reserved_permits(cores: usize) -> usize {
+    (cores / 4).max(1)
+}
+
+static SHARED: LazyLock<Semaphore> =
+    LazyLock::new(|| Semaphore::new(cores().saturating_sub(reserved_permits(cores())).max(1)));
+static RESERVED: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(reserved_permits(cores())));
+static SERVER_WAITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub(crate) const SERVER_QUEUE_MAX: usize = 64;
+
+/// Places in the server work queue (waiting or running) per client address (an IPv6 /64) and
+/// per wider network (IPv4 /24, IPv6 /48), so that many addresses of one network can not fill it.
+static SERVER_ADDRESS: LazyLock<crate::api::budget::Slots> =
+    LazyLock::new(|| crate::api::budget::Slots::new(SERVER_ADDRESS_MAX));
+static SERVER_NETWORK: LazyLock<crate::api::budget::Slots> =
+    LazyLock::new(|| crate::api::budget::Slots::new(SERVER_NETWORK_MAX));
+
+pub(crate) const SERVER_ADDRESS_MAX: usize = 16;
+pub(crate) const SERVER_NETWORK_MAX: usize = 32;
+
+/// The per-address and per-network places of the current client, if it has an address.
+fn client_slots() -> Result<Vec<crate::api::budget::Slot>, ApiError> {
+    use crate::api::budget::{client, group, slow_down, wide};
+    let Some(ip) = client() else {
+        return Ok(Vec::new());
+    };
+    let address = SERVER_ADDRESS.enter(group(ip).to_string());
+    let network = SERVER_NETWORK.enter(wide(ip).to_string());
+    match (address, network) {
+        (Some(a), Some(n)) => Ok(vec![a, n]),
+        (_, _) => Err(slow_down()),
+    }
+}
+
+/// A place in a bounded wait queue; dropping it leaves the queue.
+struct Waiting(&'static std::sync::atomic::AtomicUsize);
+
+impl Waiting {
+    fn enter(queue: &'static std::sync::atomic::AtomicUsize, max: usize) -> Option<Waiting> {
+        use std::sync::atomic::Ordering;
+        match queue.fetch_add(1, Ordering::SeqCst) < max {
+            true => Some(Waiting(queue)),
+            false => {
+                queue.fetch_sub(1, Ordering::SeqCst);
+                None
+            }
+        }
+    }
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn internal(e: impl std::fmt::Display) -> ApiError {
+    ApiError::from(anyhow::anyhow!("{e}"))
+}
 
 async fn off_runtime<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
+    work: Work,
+    job: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ApiError> {
-    let _permit = HASHING
-        .acquire()
-        .await
-        .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
-    tokio::task::spawn_blocking(work)
-        .await
-        .map_err(|e| ApiError::from(anyhow::anyhow!(e)))
+    let _held = match work {
+        Work::Account => tokio::select! {
+            p = SHARED.acquire() => (p.map_err(internal)?, Vec::new()),
+            p = RESERVED.acquire() => (p.map_err(internal)?, Vec::new()),
+        },
+        Work::Server => {
+            let slots = client_slots()?;
+            let Some(waiting) = Waiting::enter(&SERVER_WAITING, SERVER_QUEUE_MAX) else {
+                return Err(crate::api::budget::slow_down());
+            };
+            let permit = SHARED.acquire().await.map_err(internal)?;
+            drop(waiting);
+            (permit, slots)
+        }
+    };
+    tokio::task::spawn_blocking(job).await.map_err(internal)
 }
 
 fn hash_now(secret: &str) -> Result<String, ApiError> {
@@ -191,8 +270,12 @@ fn verify_now(secret: &str, hash: &str) -> bool {
 }
 
 pub(crate) async fn hash_password(secret: &str) -> Result<String, ApiError> {
+    hash_in(Work::Account, secret).await
+}
+
+pub(crate) async fn hash_in(work: Work, secret: &str) -> Result<String, ApiError> {
     let secret = secret.to_string();
-    off_runtime(move || hash_now(&secret)).await?
+    off_runtime(work, move || hash_now(&secret)).await?
 }
 
 #[cfg(test)]
@@ -206,12 +289,16 @@ pub(crate) fn verify_runs() -> u64 {
 }
 
 pub(crate) async fn verify_password(secret: &str, hash: &str) -> bool {
+    verify_in(Work::Account, secret, hash)
+        .await
+        .unwrap_or(false)
+}
+
+pub(crate) async fn verify_in(work: Work, secret: &str, hash: &str) -> Result<bool, ApiError> {
     #[cfg(test)]
     VERIFY_RUNS.with(|c| c.set(c.get() + 1));
     let (secret, hash) = (secret.to_string(), hash.to_string());
-    off_runtime(move || verify_now(&secret, &hash))
-        .await
-        .unwrap_or(false)
+    off_runtime(work, move || verify_now(&secret, &hash)).await
 }
 
 #[cfg(test)]
@@ -230,7 +317,7 @@ pub(crate) async fn derive_key(secret: &str, salt: [u8; 16]) -> Result<String, A
     #[cfg(test)]
     DERIVE_RUNS.with(|c| c.set(c.get() + 1));
     let secret = secret.to_string();
-    off_runtime(move || {
+    off_runtime(Work::Server, move || {
         let mut out = [0u8; 32];
         Argon2::default()
             .hash_password_into(secret.as_bytes(), &salt, &mut out)
@@ -421,7 +508,7 @@ pub(crate) async fn register(
         .await?;
     let token = new_token();
     sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, $3)")
-        .bind(&token)
+        .bind(secret_key(&token))
         .bind(&key)
         .bind(t)
         .execute(&mut *tx)
@@ -541,7 +628,7 @@ async fn issue_token(db: &Db, user: &User, t: i64) -> Result<String, ApiError> {
         return Err(invalid_credentials());
     }
     sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, $3)")
-        .bind(&token)
+        .bind(secret_key(&token))
         .bind(&user.username)
         .bind(t)
         .execute(&mut *tx)
@@ -660,7 +747,7 @@ async fn change_password_at(
     }
     sqlx::query("DELETE FROM tokens WHERE username = $1 AND token <> $2")
         .bind(&user.username)
-        .bind(&token)
+        .bind(secret_key(&token))
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -682,7 +769,7 @@ pub(crate) async fn logout(
 ) -> Result<Json<OkResp>, ApiError> {
     let token = request_token(&headers).unwrap_or_default();
     let revoked = sqlx::query("DELETE FROM tokens WHERE token = $1 AND username = $2")
-        .bind(&token)
+        .bind(secret_key(&token))
         .bind(&user.username)
         .execute(&state.db)
         .await?
@@ -874,6 +961,92 @@ mod tests {
     use super::*;
     use crate::api::test_util::{done, temp_state};
     use crate::state::AppState;
+
+    #[tokio::test]
+    async fn one_network_can_not_fill_the_server_queue() {
+        use crate::api::budget::as_client;
+        let ip = |s: &str| -> std::net::IpAddr { s.parse().expect("ip") };
+        let mut held = Vec::new();
+        for _ in 0..SERVER_ADDRESS_MAX {
+            held.push(
+                as_client(ip("2001:db8:5555:1::1"), async { client_slots() })
+                    .await
+                    .expect("place"),
+            );
+        }
+        assert!(
+            as_client(ip("2001:db8:5555:1::2"), async { client_slots() })
+                .await
+                .is_err(),
+            "one /64 holds at most its share"
+        );
+        for n in 2..20 {
+            let other = ip(&format!("2001:db8:5555:{n}::1"));
+            match as_client(other, async { client_slots() }).await {
+                Ok(slots) => held.push(slots),
+                Err(_) => break,
+            }
+        }
+        assert_eq!(
+            held.len(),
+            SERVER_NETWORK_MAX,
+            "one /48 holds at most its share"
+        );
+        assert!(
+            as_client(ip("2001:db8:6666::1"), async { client_slots() })
+                .await
+                .is_ok(),
+            "other networks still get places"
+        );
+        held.clear();
+        assert!(
+            as_client(ip("2001:db8:5555:1::1"), async { client_slots() })
+                .await
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn server_argon2_work_waits_in_a_bounded_queue_and_logins_keep_a_share() {
+        static QUEUE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let held: Vec<Waiting> = (0..3).filter_map(|_| Waiting::enter(&QUEUE, 3)).collect();
+        assert_eq!(held.len(), 3);
+        assert!(Waiting::enter(&QUEUE, 3).is_none(), "a full queue refuses");
+        drop(held);
+        assert!(
+            Waiting::enter(&QUEUE, 3).is_some(),
+            "leaving frees the places"
+        );
+        assert_eq!(QUEUE.load(std::sync::atomic::Ordering::SeqCst), 0);
+        for cores in [1, 2, 4, 8, 64] {
+            let reserved = reserved_permits(cores);
+            assert!(reserved >= 1 && reserved < cores.max(2), "{cores}");
+        }
+    }
+
+    #[tokio::test]
+    async fn session_tokens_are_stored_hashed() {
+        let (state, path) = temp_state("token_hash").await;
+        let Json(resp) = register_text(&state, "hana").await.expect("register");
+        let stored: String = sqlx::query("SELECT token FROM tokens WHERE username = 'hana'")
+            .fetch_one(&state.db)
+            .await
+            .expect("token")
+            .try_get(0)
+            .expect("value");
+        assert_ne!(stored, resp.token);
+        assert_eq!(stored, secret_key(&resp.token));
+        assert!(
+            crate::api::user_for_token(&state, &resp.token)
+                .await
+                .is_some()
+        );
+        assert!(
+            crate::api::user_for_token(&state, &stored).await.is_none(),
+            "the stored value is not a token"
+        );
+        done(state, path).await;
+    }
 
     #[test]
     fn word_set_deterministic() {
@@ -1169,7 +1342,7 @@ mod tests {
 
     async fn add_token(state: &AppState, name: &str, token: &str) {
         sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, 0)")
-            .bind(token)
+            .bind(secret_key(token))
             .bind(name)
             .execute(&state.db)
             .await
@@ -1199,8 +1372,8 @@ mod tests {
         assert_eq!(user.password_kind, "words");
         assert!(verify_password(&seven.join(" "), &user.password_hash).await);
         assert!(!verify_password("a", &user.password_hash).await);
-        assert_eq!(tokens_of(&state, "tina").await, vec![mine.clone()]);
-        assert_eq!(tokens_of(&state, "bob").await, vec![other]);
+        assert_eq!(tokens_of(&state, "tina").await, vec![secret_key(&mine)]);
+        assert_eq!(tokens_of(&state, "bob").await, vec![secret_key(&other)]);
         assert!(matches!(
             rx.try_recv(),
             Ok(WsEvent::TokensRevoked { username }) if username == "tina"
@@ -1231,7 +1404,7 @@ mod tests {
             .expect("tina");
         assert_eq!(user.password_kind, "text");
         assert!(verify_password("new pass", &user.password_hash).await);
-        assert_eq!(tokens_of(&state, "tina").await, vec![second]);
+        assert_eq!(tokens_of(&state, "tina").await, vec![secret_key(&second)]);
         rewind(&state).await;
         let ok = login(
             State(state.clone()),
@@ -1336,7 +1509,7 @@ mod tests {
         assert_eq!(failures(&state, "other").await, 0);
         let owner = change_at(&state, "other", text("a"), text("b"), CLOCK).await;
         assert!(owner.is_ok());
-        assert_eq!(tokens_of(&state, "uma").await, vec!["other".to_string()]);
+        assert_eq!(tokens_of(&state, "uma").await, vec![secret_key("other")]);
         done(state, path).await;
     }
 
@@ -1368,7 +1541,7 @@ mod tests {
             true => (mine.clone(), "p1"),
             false => ("thief".to_string(), "p2"),
         };
-        assert_eq!(left, vec![winner.0]);
+        assert_eq!(left, vec![secret_key(&winner.0)]);
         assert!(verify_password(winner.1, &user.password_hash).await);
         sqlx::query("DELETE FROM tokens WHERE username = 'vic'")
             .execute(&state.db)
@@ -1386,7 +1559,7 @@ mod tests {
         assert!(
             matches!(&late, Err(ApiError(StatusCode::UNAUTHORIZED, m)) if m == "Wrong password")
         );
-        assert_eq!(tokens_of(&state, "vic").await, vec!["first".to_string()]);
+        assert_eq!(tokens_of(&state, "vic").await, vec![secret_key("first")]);
         let user = get_user(&state.db, "vic")
             .await
             .expect("load")
@@ -1414,7 +1587,7 @@ mod tests {
         assert!(
             matches!(&late, Err(ApiError(StatusCode::UNAUTHORIZED, m)) if m == "Invalid credentials")
         );
-        assert_eq!(tokens_of(&state, "lou").await, vec![mine]);
+        assert_eq!(tokens_of(&state, "lou").await, vec![secret_key(&mine)]);
         let fresh = get_user(&state.db, "lou")
             .await
             .expect("load")
@@ -1422,7 +1595,7 @@ mod tests {
         let token = issue_token(&state.db, &fresh, now())
             .await
             .expect("fresh hash issues");
-        assert!(tokens_of(&state, "lou").await.contains(&token));
+        assert!(tokens_of(&state, "lou").await.contains(&secret_key(&token)));
         done(state, path).await;
     }
 
@@ -1480,7 +1653,7 @@ mod tests {
         let _ = change(&state, "ann", &mine, text("a"), text("b"))
             .await
             .expect("change despite login lockout");
-        assert_eq!(tokens_of(&state, "ann").await, vec![mine]);
+        assert_eq!(tokens_of(&state, "ann").await, vec![secret_key(&mine)]);
         done(state, path).await;
     }
 
@@ -1521,7 +1694,7 @@ mod tests {
         let _ = logout(State(state.clone()), Authed(user), headers)
             .await
             .expect("logout");
-        assert_eq!(tokens_of(&state, "lea").await, vec!["phone".to_string()]);
+        assert_eq!(tokens_of(&state, "lea").await, vec![secret_key("phone")]);
         assert!(crate::api::user_for_token(&state, &mine).await.is_none());
         assert!(crate::api::user_for_token(&state, "phone").await.is_some());
         assert!(matches!(

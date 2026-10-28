@@ -283,7 +283,7 @@ async fn unping_author(state: &AppState, message_id: i64, actor: &str, emoji: &s
 /// to clients that can see the message. If the message is from someone else and the author can
 /// still see it, the author gets one `ping` (kind `reaction`) per reactor and emoji. Removing and
 /// adding the reaction again does not ping again. General rate-limit bucket.
-#[utoipa::path(put, path = "/api/messages/{id}/reactions/{emoji}", tag = "Messages", params(("id" = i64, Path, description = "Message id"), ("emoji" = String, Path, description = "The emoji, percent-encoded: one emoji of the Unicode emoji list with optional skin tone, a ZWJ sequence, a keycap or a flag, at most 64 bytes")), responses((status = 200, description = "Reacted (or already reacted); body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "`Not an emoji`, `Cannot react to this message` (a call log), or `Too many reactions` (the message already has 20 other emojis). A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(put, path = "/api/messages/{id}/reactions/{emoji}", tag = "Messages", params(("id" = i64, Path, description = "Message id"), ("emoji" = String, Path, description = "The emoji, percent-encoded: one emoji of the Unicode emoji list with optional skin tone, a ZWJ sequence, a keycap or a flag, at most 64 bytes")), responses((status = 200, description = "Reacted (or already reacted); body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "`Not an emoji`, `Cannot react to this message` (a call log), or `Too many reactions` (the message already has 20 other emojis). A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket (plain text), or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn add_reaction(
     State(state): State<AppState>,
     Path((id, emoji)): Path<(i64, String)>,
@@ -1111,15 +1111,24 @@ mod tests {
             "a seen ping stays and is not repeated"
         );
         crate::db::sweep_stale(db).await.expect("sweep");
+        unreact(&state, "bob", id, "👀")
+            .await
+            .expect("unreact after the sweep");
+        react(&state, "bob", id, "👀")
+            .await
+            .expect("react after the sweep");
         assert_eq!(
             reaction_pings(db, "alice").await,
-            vec![(id, "bob".to_string(), "👍".to_string(), RETRACTED)],
-            "seen pings are swept, retracted ones stay until they age out"
+            vec![
+                (id, "bob".to_string(), "👍".to_string(), RETRACTED),
+                (id, "bob".to_string(), "👀".to_string(), 1)
+            ],
+            "seen and retracted reaction pings stay until they age out, so the sweep does not allow a new ping"
         );
         react(&state, "alice", id, "🎉").await.expect("own message");
         assert_eq!(
             reaction_pings(db, "alice").await.len(),
-            1,
+            2,
             "no ping for yourself"
         );
 
@@ -1134,7 +1143,7 @@ mod tests {
             .expect("bob still sees it");
         assert_eq!(
             reaction_pings(db, "alice").await.len(),
-            1,
+            2,
             "alice cannot see that channel any more"
         );
 

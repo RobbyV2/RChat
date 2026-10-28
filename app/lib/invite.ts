@@ -36,7 +36,12 @@ export const invitePath = (server: string) => `/invite/${strictEncode(server)}/`
 export const inviteUrl = (server: string, password?: string | null, origin?: string) => {
   const pw = password?.trim()
   const base = origin ?? window.location.origin
-  return `${base}${invitePath(server)}${pw ? `?password=${queryEncode(pw)}` : ''}`
+  return `${base}${invitePath(server)}${pw ? `#password=${queryEncode(pw)}` : ''}`
+}
+
+const linkPassword = (url: URL) => {
+  const fragment = new URLSearchParams(url.hash.replace(/^#/, '')).get('password')?.trim()
+  return fragment || url.searchParams.get('password')?.trim() || null
 }
 
 export interface RemoteInvite extends InviteLink {
@@ -62,8 +67,7 @@ export const parseInviteAt = (href: string, base: string): RemoteInvite | null =
     return null
   }
   if (!server) return null
-  const password = url.searchParams.get('password')?.trim()
-  return { origin: url.origin, server, password: password || null, url: url.href }
+  return { origin: url.origin, server, password: linkPassword(url), url: url.href }
 }
 
 export const parseInvite = (href: string, origin: string): InviteTarget | null => {

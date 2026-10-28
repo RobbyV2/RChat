@@ -1,21 +1,24 @@
 use std::collections::HashMap;
+use std::sync::LazyLock;
+use std::time::Duration;
 
 use axum::http::{HeaderMap, StatusCode};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use sqlx::{AnyConnection, Row};
 
-use crate::api::auth::{derive_key, dummy_hash, verify_password};
+use crate::api::auth::{Work, derive_key, dummy_hash, verify_in};
+use crate::api::budget::{self, Backoff, Budget, slow_down};
 use crate::api::{ApiError, ServerSummaryLite, header_grants};
 use crate::db::{
     ChannelAccess, ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, Perm, PermRow, Restrict, User,
-    can_grant, can_moderate, fold_access, now, perm_row, perm_subjects,
+    can_grant, can_moderate, fold_access, now, perm_row, perm_subjects, pool_key,
 };
 
 mod rules;
 
 use rules::{
-    channel_access, channel_viewable, channel_viewers, effective_perms, grant_live, is_banned,
+    channel_access, channel_viewable, channel_viewers, effective_perms, grants_open, is_banned,
     live_grant_servers, member_perms,
 };
 
@@ -112,7 +115,7 @@ pub(crate) fn verify_counts() -> (u64, u64) {
     VERIFIES.with(|c| c.get())
 }
 
-async fn check_password(given: &str, hash: Option<&str>) -> bool {
+async fn check_password(given: &str, hash: Option<&str>) -> Result<bool, ApiError> {
     #[cfg(test)]
     VERIFIES.with(|c| {
         let (real, dummy) = c.get();
@@ -122,10 +125,10 @@ async fn check_password(given: &str, hash: Option<&str>) -> bool {
         });
     });
     match hash {
-        Some(hash) => verify_password(given, hash).await,
+        Some(hash) => verify_in(Work::Server, given, hash).await,
         None => {
-            verify_password(given, dummy_hash().await).await;
-            false
+            verify_in(Work::Server, given, dummy_hash().await).await?;
+            Ok(false)
         }
     }
 }
@@ -216,7 +219,8 @@ async fn check_passwords(
         check_password(given, real_hash(permanent)),
         password_lookup(db, key, given),
     );
-    let extra = extra_password(db, key, &lookup?).await?;
+    let (permanent_ok, lookup) = (permanent_ok?, lookup?);
+    let extra = extra_password(db, key, &lookup).await?;
     let ticket = extra.and_then(|extra| extra.ticket(now()));
     Ok((permanent_ok, ticket))
 }
@@ -252,8 +256,111 @@ async fn exists(db: &Db, sql: &'static str, server: &str, username: &str) -> sql
         .is_some())
 }
 
+/// Password attempts per client address (an IPv6 /64 counts as one address), across joins,
+/// invites and guest access.
+static PASSWORD_TRIES: LazyLock<Budget> =
+    LazyLock::new(|| Budget::new(30, Duration::from_secs(600), 100_000));
+
+/// Password attempts per wider network (IPv4 /24, IPv6 /48) across all names. Attempts with the
+/// right password are given back.
+static NETWORK_TRIES: LazyLock<Budget> =
+    LazyLock::new(|| Budget::new(NETWORK_TRIES_MAX, Duration::from_secs(600), 100_000));
+
+pub(crate) const NETWORK_TRIES_MAX: u32 = 150;
+
+/// Failed attempts per client address and server name: 5 free, then a doubling wait up to an
+/// hour. On a hot name (see `PASSWORD_FAILURES`) each address gets 3 an hour, never fewer, so
+/// someone with the right password from another address still gets in.
+static NAME_TRIES: LazyLock<Backoff> =
+    LazyLock::new(|| Backoff::new(5, 3, Duration::from_secs(3600), 100_000));
+
+/// Failed password attempts per server name, from all addresses. Past the limit the name is
+/// hot. Names that do not exist count the same way, so nothing shows whether a server exists.
+static PASSWORD_FAILURES: LazyLock<Budget> =
+    LazyLock::new(|| Budget::new(PASSWORD_FAILURES_MAX, Duration::from_secs(3600), 100_000));
+
+pub(crate) const PASSWORD_FAILURES_MAX: u32 = 50;
+
+fn budget_key(db: &Db, part: &str) -> String {
+    format!("{}\n{part}", pool_key(db))
+}
+
+/// A password attempt with its budgets reserved before the password is checked. It counts as
+/// failed unless `passed` or `refund` gives it back. Every refusal is the same 429 for every name.
+struct Attempt {
+    network: Option<(String, std::time::Instant)>,
+    name: String,
+    server: String,
+}
+
+impl Attempt {
+    fn start(db: &Db, server: &str) -> Result<Attempt, ApiError> {
+        let ip = budget::client();
+        let address = match ip {
+            Some(ip) => budget::group(ip).to_string(),
+            None => "-".to_string(),
+        };
+        let network = match ip {
+            Some(ip) => {
+                let key = budget_key(db, &budget::wide(ip).to_string());
+                match NETWORK_TRIES.reserve(&key) {
+                    Some(at) => Some((key, at)),
+                    None => return Err(slow_down()),
+                }
+            }
+            None => None,
+        };
+        let attempt = Attempt {
+            network,
+            name: budget_key(db, &format!("{address}\n{server}")),
+            server: budget_key(db, server),
+        };
+        if ip.is_some() && !PASSWORD_TRIES.take(&budget_key(db, &address)) {
+            attempt.give_back_network();
+            return Err(slow_down());
+        }
+        let hot = PASSWORD_FAILURES.spent(&attempt.server);
+        match NAME_TRIES.reserve(&attempt.name, hot) {
+            true => Ok(attempt),
+            false => {
+                attempt.give_back_network();
+                Err(slow_down())
+            }
+        }
+    }
+
+    fn give_back_network(&self) {
+        if let Some((key, at)) = &self.network {
+            NETWORK_TRIES.refund(key, *at);
+        }
+    }
+
+    /// The attempt did not fail (right password, or nothing was checked).
+    fn refund(self) {
+        self.give_back_network();
+        NAME_TRIES.refund(&self.name);
+    }
+
+    fn failed(self) -> ApiError {
+        NAME_TRIES.failed(&self.name);
+        PASSWORD_FAILURES.note(&self.server);
+        denied()
+    }
+}
+
+fn attempt_failed(attempt: Option<Attempt>) -> ApiError {
+    match attempt {
+        Some(attempt) => attempt.failed(),
+        None => denied(),
+    }
+}
+
 async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Gate, ApiError> {
     let key = name.to_lowercase();
+    let mut attempt = match proof.password {
+        Slot::Open(Some(_)) => Some(Attempt::start(db, &key)?),
+        Slot::Open(None) | Slot::Closed => None,
+    };
     let row = sqlx::query(
         "SELECT name, display_name, creator, password_hash, banner_color, name_color FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
     )
@@ -286,26 +393,30 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
         ),
         None => (false, false, false),
     };
-    let mut granted = false;
-    if who.username.is_none() {
-        for grant in &proof.grants {
-            if grant_live(db, grant, &key).await? {
-                granted = true;
-                break;
-            }
-        }
-    }
+    let granted = match who.username {
+        None => grants_open(db, &proof.grants, &key).await?,
+        Some(_) => false,
+    };
     let hash: Option<String> = match &row {
         Some(row) => row.try_get(3)?,
         None => None,
     };
     let checked = match proof.password {
-        Slot::Open(Some(given)) => Some(check_passwords(db, &key, given, hash.as_deref()).await?),
+        Slot::Open(Some(given)) => match check_passwords(db, &key, given, hash.as_deref()).await {
+            Ok(checked) => Some(checked),
+            Err(e) => {
+                if let Some(attempt) = attempt.take() {
+                    attempt.refund();
+                }
+                return Err(e);
+            }
+        },
         Slot::Open(None) | Slot::Closed => None,
     };
     let Some(row) = row else {
         return Err(match proof.password {
-            Slot::Open(Some(_)) | Slot::Closed => denied(),
+            Slot::Open(Some(_)) => attempt_failed(attempt.take()),
+            Slot::Closed => denied(),
             Slot::Open(None) => password_required(),
         });
     };
@@ -329,13 +440,16 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
                 ticket = Some(t);
                 Via::Password
             }
-            (false, _, Slot::Open(Some(_)), _) => return Err(denied()),
+            (false, _, Slot::Open(Some(_)), _) => return Err(attempt_failed(attempt.take())),
             (false, _, Slot::Open(None), _) if banned && history => return Err(self::banned()),
             (false, _, Slot::Open(None), _) => return Err(password_required()),
             (false, _, Slot::Closed, _) if banned && history => return Err(self::banned()),
             (false, _, Slot::Closed, _) => return Err(denied()),
         },
     };
+    if let Some(attempt) = attempt.take() {
+        attempt.refund();
+    }
     Ok(Gate {
         lite,
         via,
@@ -447,7 +561,7 @@ impl ServerAccess {
     /// Whether `password` is the permanent password (extra passwords must differ from it).
     pub async fn is_permanent_password(&self, db: &Db, password: &str) -> Result<bool, ApiError> {
         match real_hash(self.permanent_hash(db).await?.as_deref()) {
-            Some(hash) => Ok(verify_password(password, hash).await),
+            Some(hash) => verify_in(Work::Server, password, hash).await,
             None => Ok(false),
         }
     }
@@ -700,6 +814,31 @@ impl ResolvedChannel {
         Ok(channel_viewers(db, self.server.name(), self.id, usernames, readable).await?)
     }
 
+    /// The channel rights that membership alone gives. A site admin acting inside a server
+    /// gets no more than these, so nothing they do there shows that they are a site admin.
+    pub async fn member_rights(&self, db: &Db) -> Result<ChannelAccess, ApiError> {
+        match &self.server.user {
+            Some(user) if user.is_site_admin => {
+                let plain = User {
+                    is_site_admin: false,
+                    ..user.clone()
+                };
+                Ok(channel_access(db, self.server.name(), self.id, Some(&plain)).await?)
+            }
+            Some(_) | None => Ok(self.rights),
+        }
+    }
+
+    /// The server permissions that membership alone gives (see `member_rights`).
+    pub async fn member_bits(&self, db: &Db) -> Result<i64, ApiError> {
+        match &self.server.user {
+            Some(user) if user.is_site_admin => {
+                Ok(member_perms(db, self.server.name(), &user.username).await?)
+            }
+            Some(_) | None => self.server.perms(db).await,
+        }
+    }
+
     pub async fn send_gate(&self, db: &Db) -> Result<(), ApiError> {
         let Some(user) = &self.server.user else {
             return Err(forbidden("Not a member"));
@@ -711,13 +850,13 @@ impl ResolvedChannel {
                 "Voice channels cannot receive messages".to_string(),
             ));
         }
-        if !self.rights.send {
+        if !self.member_rights(db).await?.send {
             return Err(forbidden("No permission to send in this channel"));
         }
         if self.slowmode <= 0 {
             return Ok(());
         }
-        let exempt = self.server.perms(db).await?
+        let exempt = self.member_bits(db).await?
             & (Perm::ManageChannels as i64 | Perm::DeleteMessages as i64)
             != 0;
         if exempt {
@@ -739,6 +878,19 @@ impl ResolvedChannel {
             )),
             _ => Ok(()),
         }
+    }
+}
+
+/// Reactions, pins and edits per user. Each of them sends an event to everyone in the scope.
+static ACTIONS: LazyLock<Budget> =
+    LazyLock::new(|| Budget::new(ACTIONS_MAX, Duration::from_secs(10), 100_000));
+
+pub(crate) const ACTIONS_MAX: u32 = 30;
+
+fn pace(db: &Db, user: Option<&User>) -> Result<(), ApiError> {
+    match user {
+        Some(user) if !ACTIONS.take(&budget_key(db, &user.username)) => Err(slow_down()),
+        Some(_) | None => Ok(()),
     }
 }
 
@@ -899,7 +1051,8 @@ impl ResolvedMessage {
                     return Err(forbidden("Not a member"));
                 }
                 channel.server.require_member()?;
-                match channel.rights.send {
+                pace(db, channel.server.user.as_ref())?;
+                match channel.member_rights(db).await?.send {
                     true => Ok(()),
                     false => Err(forbidden("No permission to react in this channel")),
                 }
@@ -911,7 +1064,7 @@ impl ResolvedMessage {
                         .as_ref()
                         .is_some_and(|u| users.contains(&u.username)) =>
                 {
-                    Ok(())
+                    pace(db, self.user.as_ref())
                 }
                 _ => Err(not_found()),
             },
@@ -928,9 +1081,12 @@ impl ResolvedMessage {
                     return Err(forbidden("Not a member"));
                 }
                 channel.server.require_member()?;
-                match channel.server.has_perm(db, Perm::DeleteMessages).await {
-                    true => Ok(()),
-                    false => Err(forbidden("No permission to manage messages")),
+                pace(db, channel.server.user.as_ref())?;
+                let manage = channel.member_bits(db).await? & Perm::DeleteMessages as i64 != 0;
+                match (manage, channel.member_rights(db).await?.send) {
+                    (true, true) => Ok(()),
+                    (false, _) => Err(forbidden("No permission to manage messages")),
+                    (true, false) => Err(forbidden("No permission to send in this channel")),
                 }
             }
             (None, Some(did)) => match dm_pair(db, did, true).await? {
@@ -940,7 +1096,7 @@ impl ResolvedMessage {
                         .as_ref()
                         .is_some_and(|u| users.contains(&u.username)) =>
                 {
-                    Ok(())
+                    pace(db, self.user.as_ref())
                 }
                 _ => Err(not_found()),
             },
@@ -961,13 +1117,14 @@ impl ResolvedMessage {
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
                 channel.server.require_member()?;
-                match channel.rights.send {
+                pace(db, self.user.as_ref())?;
+                match channel.member_rights(db).await?.send {
                     true => Ok(()),
                     false => Err(forbidden("No permission to send in this channel")),
                 }
             }
             (None, Some(did)) => match dm_pair(db, did, true).await? {
-                Some(_) => Ok(()),
+                Some(_) => pace(db, self.user.as_ref()),
                 None => Err(not_found()),
             },
             (None, None) => Err(not_found()),
@@ -1097,13 +1254,20 @@ pub(crate) async fn ws_channel_read_since(
 }
 
 /// Same as `ws_channel_view`, with any error meaning "not viewable".
+#[cfg(test)]
 pub(crate) async fn ws_channel_viewable(
     db: &Db,
     server: &str,
     cid: i64,
     username: Option<&str>,
 ) -> bool {
-    channel_viewable(db, server, cid, username).await
+    channel_viewable(db, server, cid, username, false).await
+}
+
+/// Voice: whether `username` can view the channel through membership alone. A site admin gets
+/// no more than a plain member here, so nobody sees them in a voice channel hidden from them.
+pub(crate) async fn ws_voice_viewable(db: &Db, server: &str, cid: i64, username: &str) -> bool {
+    channel_viewable(db, server, cid, Some(username), true).await
 }
 
 /// WS ban fan-out and `look`: whether `username` is banned from `server`. Only used to drop
@@ -1155,7 +1319,7 @@ pub(crate) async fn ws_grant_deadline(
     Ok(sqlx::query(
         "SELECT p.expires_at FROM guest_grants g JOIN server_passwords p ON p.id = g.password_id WHERE g.\"grant\" = $1 AND g.server = $2",
     )
-    .bind(grant)
+    .bind(crate::db::secret_key(grant))
     .bind(server)
     .fetch_optional(db)
     .await?
@@ -1326,7 +1490,8 @@ mod tests {
                 .execute(db)
                 .await
                 .expect("user");
-            sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $1, 0)")
+            sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, 0)")
+                .bind(crate::db::secret_key(name))
                 .bind(name)
                 .execute(db)
                 .await
@@ -2082,7 +2247,8 @@ mod tests {
         exec(
             db,
             &format!(
-                "INSERT INTO tokens(token, username, created_at) VALUES('{name}', '{name}', 0)"
+                "INSERT INTO tokens(token, username, created_at) VALUES('{}', '{name}', 0)",
+                crate::db::secret_key(name)
             ),
         )
         .await;
@@ -2609,10 +2775,10 @@ mod tests {
         );
         assert_eq!(
             create("alice", "vault", r#"{"password":"pw"}"#.into()).await,
-            err("That password is already in use")
+            err("Use at least 8 characters, or leave it blank for a generated one")
         );
         assert_eq!(
-            create("alice", "vault", r#"{"password":"used-pw"}"#.into()).await,
+            create("alice", "vault", r#"{"password":"expired-pw"}"#.into()).await,
             err("That password was already used here. Pick another one")
         );
         assert_eq!(
@@ -2662,13 +2828,21 @@ mod tests {
             }
         };
         let clash = err("That password is already in use for this server");
-        let live = extra(db, "vault", "live-pw", None, None, 0, None).await;
-        assert_eq!(patch(r#"{"password":"live-pw"}"#).await, clash);
-        assert_eq!(patch(r#"{"password":"  live-pw "}"#).await, clash);
+        let live = extra(db, "vault", "live-password", None, None, 0, None).await;
+        assert_eq!(patch(r#"{"password":"live-password"}"#).await, clash);
+        assert_eq!(patch(r#"{"password":"  live-password "}"#).await, clash);
         let dead = patch(r#"{"password":"expired-pw"}"#).await;
         assert_eq!(dead.0, 200, "{}", dead.1);
-        let back = patch(r#"{"password":"pw"}"#).await;
+        assert_eq!(
+            patch(r#"{"password":"short"}"#).await,
+            err("Use at least 8 characters, or leave it blank for a generated one")
+        );
+        let back = patch(r#"{"password":"pw-permanent"}"#).await;
         assert_eq!(back.0, 200, "{}", back.1);
+        assert_eq!(
+            create("alice", "vault", r#"{"password":"pw-permanent"}"#.into()).await,
+            err("That password is already in use")
+        );
         exec(
             db,
             &format!("DELETE FROM server_passwords WHERE id = {live}"),
@@ -2841,6 +3015,387 @@ mod tests {
         );
         assert_eq!(list["closed"], true, "revoked passwords never come back");
         server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn password_attempts_have_address_and_server_budgets() {
+        let (state, path) = temp_state("access_budgets").await;
+        fixture(&state).await;
+        let db = &state.db;
+        let ip = |s: &str| -> std::net::IpAddr { s.parse().expect("ip") };
+        let attempt = |from: std::net::IpAddr, name: &'static str, password: &'static str| {
+            budget::as_client(from, async move {
+                match resolve_server(db, name, None, &Proof::password(Some(password))).await {
+                    Ok(_) => (200, String::new()),
+                    Err(ApiError(status, body)) => (status.as_u16(), body),
+                }
+            })
+        };
+        let denied = (404, DENIED.to_string());
+        let refused = (429, budget::SLOW_DOWN.to_string());
+        let ok = (200, String::new());
+        let attacker = ip("203.0.113.5");
+        let mut seen = Vec::new();
+        for name in ["vault", "ghost"] {
+            let mut replies = Vec::new();
+            for _ in 0..7 {
+                replies.push(attempt(attacker, name, "wrong").await);
+            }
+            replies.push(attempt(attacker, name, "pw").await);
+            assert_eq!(
+                replies[..5],
+                vec![denied.clone(); 5],
+                "{name}: 5 free tries"
+            );
+            assert_eq!(
+                replies[5..],
+                vec![refused.clone(); 3],
+                "{name}: then a wait, also for the right password, so a refusal tells nothing"
+            );
+            seen.push(replies);
+        }
+        assert_eq!(
+            seen[0], seen[1],
+            "a missing name answers like a protected one"
+        );
+        assert_eq!(
+            attempt(ip("198.51.100.9"), "vault", "pw").await,
+            ok,
+            "an attacker's wait does not block another address"
+        );
+        for name in ["vault", "ghost"] {
+            for _ in 0..PASSWORD_FAILURES_MAX {
+                PASSWORD_FAILURES.note(&budget_key(db, name));
+            }
+        }
+        assert_eq!(
+            attempt(ip("198.51.100.10"), "vault", "pw").await,
+            ok,
+            "a hot name still lets a new address in on the first try"
+        );
+        let mut hot = Vec::new();
+        for name in ["vault", "ghost"] {
+            let from = ip("198.51.100.11");
+            let mut replies = Vec::new();
+            for _ in 0..4 {
+                replies.push(attempt(from, name, "wrong").await);
+            }
+            assert_eq!(
+                replies[..3],
+                vec![denied.clone(); 3],
+                "{name}: hot names allow 3"
+            );
+            assert_eq!(replies[3], refused, "{name}");
+            hot.push(replies);
+        }
+        assert_eq!(
+            hot[0], hot[1],
+            "hot missing and protected names answer alike"
+        );
+        assert_eq!(
+            attempt(ip("198.51.100.12"), "VAULT", "wrong").await,
+            attempt(ip("198.51.100.13"), "Ghost", "wrong").await
+        );
+        let busy = ip("192.0.2.200");
+        for n in 0..30 {
+            let name: &'static str = Box::leak(format!("name{n}").into_boxed_str());
+            assert_eq!(attempt(busy, name, "wrong").await, denied);
+        }
+        assert_eq!(
+            attempt(busy, "other", "wrong").await,
+            refused,
+            "30 tries per address across names"
+        );
+        let members = resolve_server(db, "vault", Some(&mem_user("alice", false)), &Proof::none())
+            .await
+            .map(|a| a.via());
+        assert_eq!(
+            members.ok(),
+            Some(Via::Member),
+            "members never send a password"
+        );
+        let v6 = ip("2001:db8::1");
+        for _ in 1..30 {
+            PASSWORD_TRIES.take(&budget_key(db, &budget::group(v6).to_string()));
+        }
+        assert_eq!(attempt(ip("2001:db8::2"), "third", "wrong").await, denied);
+        assert_eq!(
+            attempt(ip("2001:db8::3"), "fourth", "wrong").await,
+            refused,
+            "the /64 shares one budget"
+        );
+        let network = budget_key(db, &budget::wide(ip("100.64.7.1")).to_string());
+        for _ in 1..NETWORK_TRIES_MAX {
+            NETWORK_TRIES.take(&network);
+        }
+        assert_eq!(attempt(ip("100.64.7.2"), "vault", "pw").await, ok);
+        assert_eq!(
+            attempt(ip("100.64.7.3"), "vault", "pw").await,
+            ok,
+            "the right password gives the network try back"
+        );
+        assert_eq!(attempt(ip("100.64.7.4"), "fifth", "wrong").await, denied);
+        assert_eq!(
+            attempt(ip("100.64.7.5"), "sixth", "wrong").await,
+            refused,
+            "a /24 shares one budget across its addresses"
+        );
+        assert_eq!(
+            attempt(ip("100.64.8.5"), "sixth", "wrong").await,
+            denied,
+            "other networks are not affected"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_refused_network_does_not_touch_address_budgets() {
+        let (state, path) = temp_state("access_network_first").await;
+        fixture(&state).await;
+        let db = &state.db;
+        let attempt = |from: std::net::IpAddr| {
+            budget::as_client(from, async move {
+                resolve_server(db, "vault", None, &Proof::password(Some("wrong")))
+                    .await
+                    .map(|_| ())
+                    .map_err(|ApiError(status, _)| status.as_u16())
+            })
+        };
+        let in_network = |n: u16| {
+            std::net::IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0x77, n, 0, 0, 0, 1))
+        };
+        let network = budget_key(db, &budget::wide(in_network(0)).to_string());
+        for _ in 0..NETWORK_TRIES_MAX {
+            NETWORK_TRIES.take(&network);
+        }
+        for n in 0..20 {
+            assert_eq!(attempt(in_network(n)).await, Err(429));
+            let address = budget_key(db, &budget::group(in_network(n)).to_string());
+            assert_eq!(
+                PASSWORD_TRIES.used(&address),
+                None,
+                "no address entry for a refused network"
+            );
+        }
+        let spent =
+            std::net::IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0x78, 1, 0, 0, 0, 1));
+        let address = budget_key(db, &budget::group(spent).to_string());
+        for _ in 0..30 {
+            PASSWORD_TRIES.take(&address);
+        }
+        let wide = budget_key(db, &budget::wide(spent).to_string());
+        NETWORK_TRIES.take(&wide);
+        assert_eq!(attempt(spent).await, Err(429));
+        assert_eq!(
+            NETWORK_TRIES.used(&wide),
+            Some(1),
+            "a refused address gives the network try back"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn password_budgets_are_reserved_before_the_check() {
+        let (state, path) = temp_state("access_budget_race").await;
+        fixture(&state).await;
+        let db = &state.db;
+        let from: std::net::IpAddr = "203.0.113.77".parse().expect("ip");
+        let attempt = |name: &'static str| {
+            budget::as_client(from, async move {
+                resolve_server(db, name, None, &Proof::password(Some("wrong")))
+                    .await
+                    .map(|_| ())
+                    .map_err(|ApiError(status, _)| status.as_u16())
+            })
+        };
+        let before = argon2_runs();
+        assert_eq!(attempt("ghost").await, Err(404));
+        let (verify, derive) = diff(argon2_runs(), before);
+        let before = argon2_runs();
+        let results = futures_util::future::join_all((0..20).map(|_| attempt("vault"))).await;
+        let after = diff(argon2_runs(), before);
+        let denied = results.iter().filter(|r| **r == Err(404)).count();
+        let refused = results.iter().filter(|r| **r == Err(429)).count();
+        assert_eq!(
+            (denied, refused),
+            (5, 15),
+            "concurrent attempts can not pass the check together"
+        );
+        assert_eq!(
+            after,
+            (5 * verify, 5 * derive),
+            "refused attempts run no argon2"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn site_admins_inside_a_server_act_as_members() {
+        let (state, path) = temp_state("access_staff_traces").await;
+        let f = fixture(&state).await;
+        let db = &state.db;
+        let (client, server) = serve(&state).await;
+        let made = client
+            .call(
+                "POST",
+                "/servers/vault/passwords",
+                Some("root"),
+                Some("{}"),
+                &[],
+            )
+            .await;
+        assert_eq!(made.0, 200);
+        assert_eq!(json(&made)["created_by"], serde_json::Value::Null);
+        let made = client
+            .call(
+                "POST",
+                "/servers/vault/passwords",
+                Some("alice"),
+                Some("{}"),
+                &[],
+            )
+            .await;
+        assert_eq!(json(&made)["created_by"], "alice");
+        add_member(db, "rchat", "root", 0, 0, 0).await;
+        let root = mem_user("root", true);
+        let announce = id_of(db, "INSERT INTO channels(server, name, created_at, restrict_send, slowmode_seconds) VALUES('rchat', 'news', 0, 1, 0) RETURNING id").await;
+        let channel = resolve_channel(db, announce, Some(&root), &Proof::none())
+            .await
+            .expect("site admins still see it");
+        assert_eq!(
+            channel.send_gate(db).await.map_err(|e| e.0.as_u16()),
+            Err(403),
+            "no send right from the site admin flag"
+        );
+        let slow = id_of(db, "INSERT INTO channels(server, name, created_at, slowmode_seconds) VALUES('rchat', 'slow', 0, 600) RETURNING id").await;
+        exec(db, &format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({slow}, 'root', 'hi', {})", now())).await;
+        let channel = resolve_channel(db, slow, Some(&root), &Proof::none())
+            .await
+            .expect("slow");
+        assert_eq!(
+            channel.send_gate(db).await.map_err(|e| e.0.as_u16()),
+            Err(429),
+            "slow mode applies"
+        );
+        let general: i64 = id_of(
+            db,
+            "SELECT id FROM channels WHERE server = 'rchat' AND name = 'general'",
+        )
+        .await;
+        let msg = id_of(db, &format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({general}, 'alice', 'pin me', 1) RETURNING id")).await;
+        let resolved = resolve_message(db, msg, Some(&root), &Proof::none())
+            .await
+            .expect("message");
+        assert_eq!(
+            resolved.pin_gate(db).await.map_err(|e| e.0.as_u16()),
+            Err(403),
+            "pinning needs Manage messages as a member"
+        );
+        let _ = f;
+        server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn pins_need_the_send_right_and_actions_are_paced() {
+        let (state, path) = temp_state("access_pin_send").await;
+        fixture(&state).await;
+        let db = &state.db;
+        add_member(db, "rchat", "carl", 1, Perm::DeleteMessages as i64, 0).await;
+        let carl = mem_user("carl", false);
+        let news = id_of(db, "INSERT INTO channels(server, name, created_at, restrict_send) VALUES('rchat', 'news', 0, 1) RETURNING id").await;
+        let msg = id_of(db, &format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({news}, 'alice', 'x', 1) RETURNING id")).await;
+        let resolved = resolve_message(db, msg, Some(&carl), &Proof::none())
+            .await
+            .expect("message");
+        assert_eq!(
+            resolved.pin_gate(db).await.map_err(|e| e.1),
+            Err("No permission to send in this channel".to_string())
+        );
+        let general: i64 = id_of(
+            db,
+            "SELECT id FROM channels WHERE server = 'rchat' AND name = 'general'",
+        )
+        .await;
+        let msg = id_of(db, &format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({general}, 'alice', 'y', 1) RETURNING id")).await;
+        let resolved = resolve_message(db, msg, Some(&carl), &Proof::none())
+            .await
+            .expect("message");
+        for _ in 1..ACTIONS_MAX {
+            resolved.react_gate(db).await.expect("within the pace");
+        }
+        assert_eq!(
+            resolved.react_gate(db).await.map_err(|e| e.0.as_u16()),
+            Err(429)
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_password_caps_hold_under_concurrency() {
+        let (state, path) = temp_state("access_password_caps").await;
+        fixture(&state).await;
+        let db = &state.db;
+        let live_now = scalar(db, "SELECT COUNT(*) FROM server_passwords WHERE server = 'vault' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > 4000000000) AND (max_uses IS NULL OR uses < max_uses)").await.unwrap_or(0);
+        let free = 5;
+        for n in 0..(crate::api::passwords::ACTIVE_MAX - live_now - free) {
+            exec(db, &format!("INSERT INTO server_passwords(server, hash, lookup, created_at) VALUES('vault', '!lookup', 'fake{n}', 0)")).await;
+        }
+        let create = || {
+            let state = state.clone();
+            async move {
+                crate::api::passwords::create_password(
+                    axum::extract::State(state),
+                    crate::api::Authed(mem_user("alice", false)),
+                    axum::extract::Path("vault".to_string()),
+                    axum::Json(serde_json::from_str("{}").expect("body")),
+                )
+                .await
+                .map(|axum::Json(made)| made)
+            }
+        };
+        let results = futures_util::future::join_all((0..10).map(|_| create())).await;
+        let made: Vec<_> = results.into_iter().filter_map(Result::ok).collect();
+        assert_eq!(
+            made.len(),
+            free as usize,
+            "the 50 cap is checked inside the insert"
+        );
+        assert_eq!(
+            scalar(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM server_passwords WHERE id = {} AND hash = '{}'",
+                    made[0].info.id,
+                    crate::db::NO_EXTRA_HASH
+                )
+            )
+            .await,
+            Some(1),
+            "no second verifier is stored"
+        );
+        exec(
+            db,
+            "UPDATE server_passwords SET revoked_at = 1 WHERE server = 'vault'",
+        )
+        .await;
+        let stored = scalar(
+            db,
+            "SELECT COUNT(*) FROM server_passwords WHERE server = 'vault'",
+        )
+        .await
+        .unwrap_or(0);
+        for n in stored..crate::api::passwords::ROWS_MAX {
+            exec(db, &format!("INSERT INTO server_passwords(server, hash, lookup, created_at, revoked_at) VALUES('vault', '!lookup', 'dead{n}', 0, 1)")).await;
+        }
+        assert_eq!(
+            create().await.map(|_| ()).map_err(|e| e.1),
+            Err(
+                "Too many old passwords. They are removed 30 days after they stop working"
+                    .to_string()
+            )
+        );
         done(state, path).await;
     }
 }

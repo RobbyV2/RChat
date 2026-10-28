@@ -11,7 +11,7 @@ use sqlx::Row;
 
 use crate::api::access::{MsgScope, Proof, resolve_message};
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, MediaRef, Settings, header_grants, placeholders, request_token,
+    ApiError, ApiErrorBody, Authed, MediaRef, Settings, parse_grants, placeholders, request_token,
     require_guest_ok, user_for_token,
 };
 use crate::db::{Db, MediaKind, User, now};
@@ -185,7 +185,7 @@ pub(crate) async fn delete_media(
         kind: _,
         author: _,
         media_id,
-        media_filename,
+        media_filename: _,
         media_kind,
         server,
         dm_users,
@@ -234,7 +234,6 @@ pub(crate) async fn delete_media(
         dm_id,
         dm_users,
         message_id: id,
-        filename: media_filename.unwrap_or_default(),
         removed_by_author: true,
     });
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -252,6 +251,53 @@ fn media_hidden() -> ApiError {
     ApiError(StatusCode::NOT_FOUND, "Media not found".to_string())
 }
 
+/// Most messages that may carry one uploaded file. Forwards past this carry the file name
+/// only, so checking access to a file and sweeping it stay bounded.
+pub const MEDIA_REFS_MAX: i64 = 50;
+
+/// How many live messages carry the uploaded file `media_id`, counting at most
+/// `MEDIA_REFS_MAX`.
+#[cfg(test)]
+pub(crate) async fn references(db: &Db, media_id: &str) -> sqlx::Result<i64> {
+    sqlx::query("SELECT COUNT(*) FROM (SELECT 1 FROM messages WHERE media_id = $1 AND media_kind = 'server' AND media_removed = 0 LIMIT $2) t")
+        .bind(media_id)
+        .bind(MEDIA_REFS_MAX)
+        .fetch_one(db)
+        .await?
+        .try_get(0)
+}
+
+/// Most messages from one sender that may carry one uploaded file, so that one sender can not
+/// use up `MEDIA_REFS_MAX` for everyone.
+pub const MEDIA_REFS_PER_SENDER: i64 = 5;
+
+/// Whether one more message from `sender` may carry the uploaded file `media_id` (under
+/// `MEDIA_REFS_MAX` in total and `MEDIA_REFS_PER_SENDER` from `sender`). Call it inside the
+/// transaction that stores the message: on Postgres it locks the media row, so concurrent
+/// forwards of one file are counted one after another.
+pub(crate) async fn may_carry(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    is_sqlite: bool,
+    media_id: &str,
+    sender: &str,
+) -> sqlx::Result<bool> {
+    if !is_sqlite {
+        sqlx::query("SELECT 1 FROM media WHERE id = $1 FOR UPDATE")
+            .bind(media_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    let row = sqlx::query("SELECT (SELECT COUNT(*) FROM (SELECT 1 FROM messages WHERE media_id = $1 AND media_kind = 'server' AND media_removed = 0 LIMIT $2) t), (SELECT COUNT(*) FROM (SELECT 1 FROM messages WHERE media_id = $1 AND media_kind = 'server' AND media_removed = 0 AND author = $3 LIMIT $4) s)")
+        .bind(media_id)
+        .bind(MEDIA_REFS_MAX)
+        .bind(sender)
+        .bind(MEDIA_REFS_PER_SENDER)
+        .fetch_one(&mut **tx)
+        .await?;
+    let (total, mine): (i64, i64) = (row.try_get(0)?, row.try_get(1)?);
+    Ok(total < MEDIA_REFS_MAX && mine < MEDIA_REFS_PER_SENDER)
+}
+
 pub(crate) async fn media_view_ok(
     db: &Db,
     headers: &axum::http::HeaderMap,
@@ -260,8 +306,9 @@ pub(crate) async fn media_view_ok(
     query_grant: Option<&str>,
 ) -> Result<(), ApiError> {
     let rows =
-        sqlx::query("SELECT m.id FROM messages m WHERE m.media_id = $1 AND m.media_kind = 'server' AND m.media_removed = 0")
+        sqlx::query("SELECT m.id FROM messages m WHERE m.media_id = $1 AND m.media_kind = 'server' AND m.media_removed = 0 ORDER BY m.id LIMIT $2")
             .bind(media_id)
+            .bind(MEDIA_REFS_MAX)
             .fetch_all(db)
             .await?;
     if rows.is_empty() {
@@ -275,20 +322,11 @@ pub(crate) async fn media_view_ok(
         };
         return match (user, uploader) {
             (Some(u), Some(owner)) if u.username == owner => Ok(()),
-            (Some(_), None) => Ok(()),
             (_, _) => Err(media_hidden()),
         };
     }
-    let mut grants = header_grants(headers);
-    if let Some(g) = query_grant {
-        grants.extend(
-            g.split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string),
-        );
-    }
-    let proof = Proof::grants(grants);
+    let header = headers.get("x-guest-grant").and_then(|v| v.to_str().ok());
+    let proof = Proof::grants(parse_grants(header.into_iter().chain(query_grant)));
     for r in &rows {
         match resolve_message(db, r.try_get(0)?, user, &proof).await {
             Ok(_) => return Ok(()),
@@ -522,7 +560,6 @@ async fn sweep_batch(db: &Db, cutoff: i64) -> sqlx::Result<(Vec<String>, Vec<WsE
             dm_id: r.try_get(2)?,
             dm_users,
             message_id: r.try_get(0)?,
-            filename: r.try_get::<Option<String>, _>(3)?.unwrap_or_default(),
             removed_by_author: false,
         });
     }

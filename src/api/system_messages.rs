@@ -13,6 +13,8 @@ use crate::ws::WsEvent;
 
 /// A member gets at most one join and one leave message per server in this many seconds.
 pub const THROTTLE_SECS: i64 = 600;
+/// Most join and leave messages per system channel in one minute.
+pub const SERVER_NOTICES_MAX: i64 = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SystemKind {
@@ -43,16 +45,25 @@ const FALLBACK: &str =
 
 /// Posts a `join` or `leave` system message for `username` in the server's system channel (the
 /// configured text channel, else the first text channel) unless that kind is turned off or the
-/// member got the same kind in this server within `THROTTLE_SECS`. Returns the new message id.
+/// member got the same kind in this server within `THROTTLE_SECS`, or the channel got
+/// `SERVER_NOTICES_MAX` join and leave messages in the last minute. On Postgres the server row
+/// is locked first, so concurrent joins and leaves can not both pass the checks. Returns the
+/// new message id.
 pub(crate) async fn post_system(
     conn: &mut sqlx::AnyConnection,
     server: &str,
     username: &str,
     kind: SystemKind,
 ) -> sqlx::Result<Option<i64>> {
+    if conn.backend_name() == "PostgreSQL" {
+        sqlx::query("SELECT 1 FROM servers WHERE name = $1 FOR UPDATE")
+            .bind(server)
+            .fetch_optional(&mut *conn)
+            .await?;
+    }
     let t = now();
     let sql = format!(
-        "INSERT INTO messages(channel_id, author, content, kind, created_at) SELECT x.ch, $2, '', '{kind}', $3 FROM (SELECT COALESCE({CONFIGURED}, {FALLBACK}) AS ch FROM servers s WHERE s.name = $1 AND s.{toggle} <> 0) x WHERE x.ch IS NOT NULL AND NOT EXISTS(SELECT 1 FROM messages m JOIN channels c ON c.id = m.channel_id WHERE m.author = $2 AND m.kind = '{kind}' AND m.created_at > $4 AND c.server = $1) RETURNING id",
+        "INSERT INTO messages(channel_id, author, content, kind, created_at) SELECT x.ch, $2, '', '{kind}', $3 FROM (SELECT COALESCE({CONFIGURED}, {FALLBACK}) AS ch FROM servers s WHERE s.name = $1 AND s.{toggle} <> 0) x WHERE x.ch IS NOT NULL AND NOT EXISTS(SELECT 1 FROM messages m JOIN channels c ON c.id = m.channel_id WHERE m.author = $2 AND m.kind = '{kind}' AND m.created_at > $4 AND c.server = $1) AND (SELECT COUNT(*) FROM (SELECT 1 FROM messages n WHERE n.channel_id = x.ch AND n.kind IN ('join','leave') AND n.created_at > $5 LIMIT $6) recent) < $6 RETURNING id",
         kind = kind.kind(),
         toggle = kind.toggle(),
     );
@@ -61,6 +72,8 @@ pub(crate) async fn post_system(
         .bind(username)
         .bind(t)
         .bind(t - THROTTLE_SECS)
+        .bind(t - 60)
+        .bind(SERVER_NOTICES_MAX)
         .fetch_optional(&mut *conn)
         .await?
         .map(|r| r.try_get(0))
@@ -787,6 +800,43 @@ mod tests {
         )
         .await
         .expect("a join message does not start slow mode");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_join_wave_posts_at_most_ten_notices_a_minute() {
+        let World {
+            state,
+            path,
+            voice: _,
+            general,
+            random: _,
+        } = world("system_wave").await;
+        let db = &state.db;
+        for n in 0..SERVER_NOTICES_MAX + 5 {
+            let name = format!("wave{n}");
+            sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $1, '', 'text', 'identicon', 1)")
+                .bind(&name)
+                .execute(db)
+                .await
+                .expect("user");
+            join(&state, &name, "club").await.expect("join");
+        }
+        assert_eq!(
+            id_of(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM messages WHERE channel_id = {general} AND kind = 'join'"
+                )
+            )
+            .await,
+            SERVER_NOTICES_MAX
+        );
+        assert_eq!(
+            id_of(db, "SELECT COUNT(*) FROM members WHERE server = 'club'").await,
+            SERVER_NOTICES_MAX + 7,
+            "everyone joined"
+        );
         done(state, path).await;
     }
 }

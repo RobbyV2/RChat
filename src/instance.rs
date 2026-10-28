@@ -166,8 +166,14 @@ impl Instance {
         Ok(Arc::new(Instance {
             stun: crate::relay::pick_stun(&crate::relay::bundled_stun(), &id, ice.public_stun),
             ice: ice.clone(),
-            relay_secret: setting(db, "relay_secret").await?,
-            p2p_secret: setting(db, "p2p_secret").await?,
+            relay_secret: match crate::db::env_secret("RELAY_SECRET") {
+                Some(secret) => secret,
+                None => setting(db, "relay_secret").await?,
+            },
+            p2p_secret: match crate::db::env_secret("P2P_SECRET") {
+                Some(secret) => secret,
+                None => setting(db, "p2p_secret").await?,
+            },
             id,
             name: name
                 .as_deref()

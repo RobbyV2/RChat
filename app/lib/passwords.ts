@@ -18,6 +18,13 @@ export const USES_MAX = 10_000
 export const EXPIRY_MIN = 60
 export const EXPIRY_MAX = 365 * 86400
 export const ACTIVE_MAX = 50
+export const SECRET_MIN = 8
+export const SHORT_PASSWORD = 'Use at least 8 characters'
+
+export const tooShort = (password: string) => {
+  const trimmed = password.trim()
+  return trimmed !== '' && Array.from(trimmed).length < SECRET_MIN
+}
 
 export const STATUS_LABEL: Record<PasswordStatus, string> = {
   live: 'Live',

@@ -87,7 +87,6 @@ describe('hosted P2P files follow their message', () => {
     dispatch({
       type: 'media_removed',
       message_id: 13,
-      filename: 'a.txt',
       removed_by_author: false,
       ...scoped,
     })
@@ -119,7 +118,6 @@ describe('removals reach files and copies of messages not loaded here', () => {
     dispatch({
       type: 'media_removed',
       message_id: 99,
-      filename: 'a.txt',
       removed_by_author: true,
       ...scoped,
     })

@@ -7,15 +7,20 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::ToSchema;
 
-use crate::api::access::{Proof, ServerAccess, password_lookup, resolve_server};
-use crate::api::auth::hash_password;
+use crate::api::access::{Proof, ServerAccess, Via, password_lookup, resolve_server};
 use crate::api::servers::{OkResp, bad, guard_rchat, ok};
 use crate::api::{ApiError, ApiErrorBody, Authed, JoinedVia, check_len, placeholders};
-use crate::db::{Db, Perm, User, now};
+use crate::db::{Db, NO_EXTRA_HASH, Perm, User, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
 pub const ACTIVE_MAX: i64 = 50;
+/// Most stored extra passwords per server, dead ones included. Dead ones are purged 30 days
+/// after they stop working.
+pub const ROWS_MAX: i64 = 500;
+/// Shortest password an admin may choose. Generated passwords are always longer.
+pub const SECRET_MIN: usize = 8;
+const FULL: &str = "A server can have at most 50 active passwords";
 pub const EXPIRY_MAX: i64 = 365 * 86400;
 pub const EXPIRY_MIN: i64 = 60;
 pub const USES_MAX: i64 = 10_000;
@@ -56,7 +61,8 @@ pub struct ServerPassword {
     pub id: i64,
     /// Label set by the admin who created it; `null` when it has none.
     pub label: Option<String>,
-    /// Username of the admin who created it; `null` when that account is gone.
+    /// Username of the admin who created it; `null` when that account is gone or the
+    /// creator is not someone the server's members can see.
     pub created_by: Option<String>,
     /// When it was created, Unix seconds.
     pub created_at: i64,
@@ -122,6 +128,16 @@ static WORD_LIST: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         .filter(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase()))
         .collect()
 });
+
+/// Admin-chosen passwords (permanent and extra) need at least `SECRET_MIN` characters.
+pub fn check_strength(password: &str) -> Result<(), ApiError> {
+    match password.trim().chars().count() < SECRET_MIN {
+        true => Err(bad(
+            "Use at least 8 characters, or leave it blank for a generated one",
+        )),
+        false => Ok(()),
+    }
+}
 
 pub fn generate() -> String {
     let words = &*WORD_LIST;
@@ -246,8 +262,10 @@ fn expiry(
 /// It can expire (`expires_in` or `expires_at`, a temporary password) and can be limited to a
 /// number of uses (`max_uses`, a ticket): every join and every guest grant through it uses one,
 /// invite previews do not. A blank `password` generates four random words. The response is the
-/// only time the password is returned. A server has at most 50 live extra passwords. Requires
-/// the Delete server permission. Not available on the rchat server. General rate-limit bucket.
+/// only time the password is returned. A chosen password needs at least 8 characters. A server
+/// has at most 50 live extra passwords and keeps at most 500 in all (dead ones are purged 30
+/// days after they stop working). Requires the Delete server permission. Not available on the
+/// rchat server. Strict and general rate-limit buckets.
 #[utoipa::path(
     post,
     path = "/api/servers/{name}/passwords",
@@ -256,12 +274,12 @@ fn expiry(
     request_body = NewPassword,
     responses(
         (status = 200, description = "The new password, with the password itself", body = CreatedPassword),
-        (status = 400, description = "The server is public, already has 50 live extra passwords, an invalid label, password, expiry or use limit, or a password the server already uses or used. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "The server is public, already has 50 live extra passwords or 500 stored ones, an invalid label, password (shorter than 8 characters or longer than 200), expiry or use limit, or a password the server already uses or used. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Delete server permission, or the rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the strict or the general bucket (plain text), or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
     ),
     security(("bearer" = []))
 )]
@@ -292,6 +310,7 @@ pub(crate) async fn create_password(
     let secret = match password.as_deref().map(str::trim) {
         Some(p) if !p.is_empty() => {
             check_len(p, SECRET_MAX, "Password")?;
+            check_strength(p)?;
             p.to_string()
         }
         _ => generate(),
@@ -304,7 +323,7 @@ pub(crate) async fn create_password(
         return Err(bad("Uses must be between 1 and 10000"));
     }
     if live_count(db, access.name(), t).await? >= ACTIVE_MAX {
-        return Err(bad("A server can have at most 50 active passwords"));
+        return Err(bad(FULL));
     }
     if access.is_permanent_password(db, &secret).await? {
         return Err(bad("That password is already in use"));
@@ -319,20 +338,35 @@ pub(crate) async fn create_password(
     if taken {
         return Err(bad("That password was already used here. Pick another one"));
     }
-    let hash = hash_password(&secret).await?;
+    let created_by = match access.via() == Via::Staff
+        || (user.is_site_admin
+            && access.member_perms(db, &user.username).await? & Perm::DeleteServer as i64 == 0)
+    {
+        true => None,
+        false => Some(user.username.clone()),
+    };
+    let mut tx = db.begin().await?;
+    if !crate::db::is_sqlite(db) {
+        sqlx::query("SELECT 1 FROM servers WHERE name = $1 FOR UPDATE")
+            .bind(access.name())
+            .execute(&mut *tx)
+            .await?;
+    }
     let sql = format!(
-        "INSERT INTO server_passwords(server, label, hash, lookup, created_by, created_at, expires_at, max_uses) VALUES($1, $2, $3, $4, $5, $6, $7, $8) RETURNING {COLUMNS}"
+        "INSERT INTO server_passwords(server, label, hash, lookup, created_by, created_at, expires_at, max_uses) SELECT $1, $2, $3, $4, $5, $6, $7, $8 WHERE (SELECT COUNT(*) FROM server_passwords WHERE server = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $6) AND (max_uses IS NULL OR uses < max_uses)) < $9 AND (SELECT COUNT(*) FROM server_passwords WHERE server = $1) < $10 RETURNING {COLUMNS}"
     );
     let row = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(access.name())
         .bind(&label)
-        .bind(&hash)
+        .bind(NO_EXTRA_HASH)
         .bind(&lookup)
-        .bind(&user.username)
+        .bind(&created_by)
         .bind(t)
         .bind(expires_at)
         .bind(max_uses)
-        .fetch_one(db)
+        .bind(ACTIVE_MAX)
+        .bind(ROWS_MAX)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| match &e {
             sqlx::Error::Database(d) if d.is_unique_violation() => {
@@ -340,6 +374,18 @@ pub(crate) async fn create_password(
             }
             _ => ApiError::from(e),
         })?;
+    let Some(row) = row else {
+        drop(tx);
+        return Err(
+            match live_count(db, access.name(), t).await? >= ACTIVE_MAX {
+                true => bad(FULL),
+                false => {
+                    bad("Too many old passwords. They are removed 30 days after they stop working")
+                }
+            },
+        );
+    };
+    tx.commit().await?;
     Ok(Json(CreatedPassword {
         info: password_row(&row, t)?,
         password: secret,

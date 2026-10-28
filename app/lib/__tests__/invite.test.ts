@@ -48,19 +48,19 @@ describe('inviteUrl', () => {
 
   test('adds a trimmed, encoded password and skips blank ones', () => {
     expect(inviteUrl('club', ' s3cret ', ORIGIN)).toBe(
-      'https://chat.example.com/invite/club/?password=s3cret'
+      'https://chat.example.com/invite/club/#password=s3cret'
     )
     expect(inviteUrl('club', '   ', ORIGIN)).toBe('https://chat.example.com/invite/club/')
     expect(inviteUrl('club', 'a&b=c d', ORIGIN)).toBe(
-      'https://chat.example.com/invite/club/?password=a%26b%3Dc%20d'
+      'https://chat.example.com/invite/club/#password=a%26b%3Dc%20d'
     )
   })
 
   test('encodes punctuation that chat text would trim', () => {
     expect(invitePath("it's (fun)!")).toBe('/invite/it%27s%20%28fun%29%21/')
-    expect(inviteUrl('x', 'pw)', ORIGIN)).toBe('https://chat.example.com/invite/x/?password=pw%29')
+    expect(inviteUrl('x', 'pw)', ORIGIN)).toBe('https://chat.example.com/invite/x/#password=pw%29')
     expect(inviteUrl('x', 'a.b_c-d~', ORIGIN)).toBe(
-      'https://chat.example.com/invite/x/?password=a%2Eb%5Fc%2Dd%7E'
+      'https://chat.example.com/invite/x/#password=a%2Eb%5Fc%2Dd%7E'
     )
   })
 
@@ -111,6 +111,26 @@ describe('parseInvite', () => {
     expect(
       parseInvite('https://chat.example.com/invite/club/?x=1&password=pw#top', ORIGIN)
     ).toEqual({ server: 'club', password: 'pw' })
+  })
+
+  test('reads the password from the fragment and still accepts old query links', () => {
+    expect(parseInvite('/invite/club/#password=pw', ORIGIN)).toEqual({
+      server: 'club',
+      password: 'pw',
+    })
+    expect(parseInvite('/invite/club/?password=old', ORIGIN)).toEqual({
+      server: 'club',
+      password: 'old',
+    })
+    expect(parseInvite('/invite/club/?password=old#password=new', ORIGIN)).toEqual({
+      server: 'club',
+      password: 'new',
+    })
+    expect(parseInvite('/invite/club/?password=old#password=', ORIGIN)).toEqual({
+      server: 'club',
+      password: 'old',
+    })
+    expect(inviteUrl('club', 'pw', ORIGIN).includes('?')).toBe(false)
   })
 
   test('ignores other origins, schemes and paths', () => {
@@ -307,7 +327,7 @@ describe('remote invites', () => {
     expect(found.map(remoteKey)).toEqual(['http://127.0.0.1:3831\nc', 'https://b.example\nc'])
     expect(found[0].password).toBe('x')
     expect(found[0].url).toBe('http://127.0.0.1:3831/invite/c/?password=x')
-    expect(remoteInviteUrl(found[0])).toBe('http://127.0.0.1:3831/invite/c/?password=x')
+    expect(remoteInviteUrl(found[0])).toBe('http://127.0.0.1:3831/invite/c/#password=x')
     expect(findRemoteInvites('no links here', LOCAL, any)).toEqual([])
     const many = Array.from({ length: 5 }, (_, i) => `https://h${i}.example/invite/s/`).join(' ')
     expect(findRemoteInvites(many, LOCAL, any)).toHaveLength(3)

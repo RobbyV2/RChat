@@ -88,10 +88,10 @@ pub struct SendReq {
     #[schema(default = true)]
     mention_reply: bool,
     /// Optional id of a message to forward here. The server makes the new message as a copy: its
-    /// text, its server-hosted attachment (unless removed, expired, or uploads are off; P2P
-    /// attachments are not forwarded) and its link previews. `forward` names the original author and
-    /// time. `content`, the attachment fields and `reply_to` are then ignored. It must be a `user`
-    /// message you can read. All else, also unknown ids, gives the same
+    /// text, its server-hosted attachment (unless removed, expired, uploads are off, or 50
+    /// messages already carry that file; P2P attachments are not forwarded) and its link
+    /// previews. `forward` names the original author and time. `content`, the attachment fields
+    /// and `reply_to` are then ignored. It must be a `user` message you can read. All else, also unknown ids, gives the same
     /// `400 Cannot forward that message`. Forwards never ping anyone.
     #[schema(example = 42)]
     #[serde(default)]
@@ -818,14 +818,12 @@ async fn claim_media(
     username: &str,
     spoiler: bool,
 ) -> Result<MediaRef, ApiError> {
-    let claimed = sqlx::query(
-        "UPDATE media SET uploader = $1 WHERE id = $2 AND (uploader IS NULL OR uploader = $1)",
-    )
-    .bind(username)
-    .bind(id)
-    .execute(&mut **tx)
-    .await?
-    .rows_affected();
+    let claimed = sqlx::query("UPDATE media SET uploader = $1 WHERE id = $2 AND uploader = $1")
+        .bind(username)
+        .bind(id)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected();
     let row = sqlx::query("SELECT filename, uploaded_at FROM media WHERE id = $1")
         .bind(id)
         .fetch_optional(&mut **tx)
@@ -1280,6 +1278,20 @@ async fn insert_forward(
     }
     let t = now();
     let mut tx = db.begin().await?;
+    let (media, dropped) = match media {
+        Some(media)
+            if !crate::api::media::may_carry(
+                &mut tx,
+                crate::db::is_sqlite(db),
+                &media.id,
+                &user.username,
+            )
+            .await? =>
+        {
+            (None, Some(media.filename))
+        }
+        media => (media, dropped),
+    };
     let id: i64 = sqlx::query(
         "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, fwd_author, fwd_created_at, fwd_source_id, fwd_origin, fwd_dropped, created_at) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, 'server', NULL, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id",
     )
@@ -1781,7 +1793,7 @@ pub struct EditReq {
 /// read the message again through the message list (`around=id`), which applies the
 /// read-history rules. In DMs, both participants get `message_updated` with the full message, and
 /// new previews as `embeds_resolved`. General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), request_body = EditReq, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Blocked by the profanity filter, text over 4000 characters, blank text on a message without attachment (`Message is empty`), or not a user message (`Cannot edit this message`). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not your message (`You can only edit your own messages`), no longer a member of the server, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), request_body = EditReq, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Blocked by the profanity filter, text over 4000 characters, blank text on a message without attachment (`Message is empty`), or not a user message (`Cannot edit this message`). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not your message (`You can only edit your own messages`), no longer a member of the server, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket (plain text), or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn edit_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2722,13 +2734,13 @@ mod tests {
         assert!(matches!(reuse, Err(ApiError(StatusCode::BAD_REQUEST, _))));
         let legacy = "bb".repeat(16);
         add_media(&state.db, &legacy, None).await;
-        let _ = send_with(&state, cid, "bob", String::new(), Some(&legacy))
-            .await
-            .expect("legacy upload attachable once");
-        let other = send_with(&state, cid, "alice", String::new(), Some(&legacy)).await;
-        assert!(matches!(other, Err(ApiError(StatusCode::FORBIDDEN, _))));
-        let again = send_with(&state, cid, "bob", String::new(), Some(&legacy)).await;
-        assert!(matches!(again, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        for who in ["bob", "alice"] {
+            let claimed = send_with(&state, cid, who, String::new(), Some(&legacy)).await;
+            assert!(
+                matches!(claimed, Err(ApiError(StatusCode::FORBIDDEN, _))),
+                "uploads without an uploader belong to nobody"
+            );
+        }
         let unknown = send_with(&state, cid, "bob", String::new(), Some(&"cc".repeat(16))).await;
         assert!(matches!(unknown, Err(ApiError(StatusCode::BAD_REQUEST, _))));
         let count: i64 = sqlx::query("SELECT COUNT(*) FROM messages WHERE media_id IS NOT NULL")
@@ -2737,7 +2749,7 @@ mod tests {
             .expect("count")
             .try_get(0)
             .expect("count value");
-        assert_eq!(count, 2);
+        assert_eq!(count, 1);
         done(state, path).await;
     }
 
@@ -3788,8 +3800,9 @@ mod tests {
             .expect("history perm");
         crate::api::test_util::restrict_ruled(db).await;
         sqlx::query(
-            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('g1', 'locked', 0, 4000000000)",
+            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, 'locked', 0, 4000000000)",
         )
+        .bind(crate::db::secret_key(&crate::api::test_util::test_grant("g1")))
         .execute(db)
         .await
         .expect("grant");
@@ -3813,7 +3826,12 @@ mod tests {
             .expect("dm message");
         let grant = |value: &str| {
             let mut h = HeaderMap::new();
-            h.insert("x-guest-grant", value.parse().expect("header"));
+            h.insert(
+                "x-guest-grant",
+                crate::api::test_util::test_grant(value)
+                    .parse()
+                    .expect("header"),
+            );
             h
         };
         let expect = |names: &[&str]| {
@@ -6676,6 +6694,106 @@ mod tests {
         let dm_where = locate(&state, Some("alice"), dm_msg.id).await.expect("dm");
         assert_eq!((dm_where.server, dm_where.dm_id), (None, Some(dm)));
         assert!(locate(&state, Some("carol"), dm_msg.id).await.is_err());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn one_file_is_carried_by_a_bounded_number_of_messages() {
+        let (state, path) = temp_state("media_refs").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        let file = "ef".repeat(16);
+        add_media(db, &file, Some("alice")).await;
+        let source = send_with(&state, cid, "alice", String::new(), Some(&file))
+            .await
+            .expect("attach")
+            .0
+            .id;
+        for _ in 1..crate::api::media::MEDIA_REFS_MAX {
+            sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, created_at) VALUES($1, 'alice', '', $2, 'a.txt', 1)")
+                .bind(cid)
+                .bind(&file)
+                .execute(db)
+                .await
+                .expect("copy");
+        }
+        assert_eq!(
+            crate::api::media::references(db, &file)
+                .await
+                .expect("count"),
+            crate::api::media::MEDIA_REFS_MAX
+        );
+        let copy = forward(&state, (Some(cid), None, None), "alice", source)
+            .await
+            .expect("forward");
+        assert!(copy.media.is_none(), "past the cap only the name travels");
+        assert_eq!(
+            copy.forward.and_then(|f| f.dropped).as_deref(),
+            Some("a.txt")
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn one_sender_and_concurrent_forwards_stay_within_the_file_caps() {
+        use crate::api::media::{MEDIA_REFS_MAX, MEDIA_REFS_PER_SENDER, references};
+        let (state, path) = temp_state("media_refs_sender").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        let senders: Vec<String> = (0..12).map(|n| format!("user{n}")).collect();
+        for name in ["alice", "bob"]
+            .into_iter()
+            .chain(senders.iter().map(String::as_str))
+        {
+            add_member(db, "rchat", name, 0, 0, 0).await;
+        }
+        let file = "ab".repeat(16);
+        add_media(db, &file, Some("alice")).await;
+        let source = send_with(&state, cid, "alice", String::new(), Some(&file))
+            .await
+            .expect("attach")
+            .0
+            .id;
+        let carried = |m: &Message| m.media.is_some();
+        for n in 1..MEDIA_REFS_PER_SENDER {
+            let copy = forward(&state, (Some(cid), None, None), "alice", source)
+                .await
+                .expect("forward");
+            assert!(carried(&copy), "forward {n} carries the file");
+        }
+        let past = forward(&state, (Some(cid), None, None), "alice", source)
+            .await
+            .expect("forward");
+        assert!(
+            !carried(&past),
+            "one sender carries the file at most 5 times"
+        );
+        let other = forward(&state, (Some(cid), None, None), "bob", source)
+            .await
+            .expect("forward");
+        assert!(carried(&other), "others still can");
+        let used = references(db, &file).await.expect("count");
+        for _ in used..MEDIA_REFS_MAX - 3 {
+            sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, created_at) VALUES($1, 'carol', '', $2, 'a.txt', 1)")
+                .bind(cid)
+                .bind(&file)
+                .execute(db)
+                .await
+                .expect("copy");
+        }
+        let results = futures_util::future::join_all(
+            senders
+                .iter()
+                .map(|name| forward(&state, (Some(cid), None, None), name, source)),
+        )
+        .await;
+        let with_file = results
+            .iter()
+            .filter(|r| r.as_ref().is_ok_and(carried))
+            .count();
+        assert_eq!(with_file, 3, "the cap is counted inside the insert");
+        assert_eq!(references(db, &file).await.expect("count"), MEDIA_REFS_MAX);
         done(state, path).await;
     }
 }

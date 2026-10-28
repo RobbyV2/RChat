@@ -28,6 +28,8 @@ import {
   withSecret,
   EXPIRY_MAX,
   type SecretBook,
+  SHORT_PASSWORD,
+  tooShort,
 } from '../lib/passwords'
 import type {
   CreatedPassword,
@@ -244,6 +246,7 @@ function PermanentPassword({
           const next = password.trim()
           setError(null)
           setDone(null)
+          if (tooShort(next)) return setError(SHORT_PASSWORD)
           const prompt = passwordPrompt(has, next, canRemove, siteAdmin, true)
           const changed = has && next !== ''
           askConfirm({
@@ -349,6 +352,7 @@ function NewPasswordDialog({
     if (label.trim()) body.label = label.trim()
     if (custom) {
       if (!secret.trim()) return setError('Type a password or pick Generate')
+      if (tooShort(secret)) return setError(SHORT_PASSWORD)
       body.password = secret.trim()
     }
     if (expiry === 'custom') {
@@ -448,7 +452,7 @@ function NewPasswordDialog({
                 maxLength={200}
                 autoComplete="off"
                 aria-label="Custom password"
-                placeholder="Type a password"
+                placeholder="At least 8 characters"
                 className={`${fieldCls} mt-2 w-full`}
               />
             ) : (

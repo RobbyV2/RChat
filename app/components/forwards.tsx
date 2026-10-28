@@ -137,7 +137,7 @@ export function ForwardCard({
         <MarkdownMessage message={m} canDelete={canDelete} />
         {fwd.dropped && (
           <p className="mt-1 text-xs text-on-surface-variant italic">
-            Peer-to-peer file not forwarded: {fwd.dropped}
+            File not forwarded: {fwd.dropped}
           </p>
         )}
         <button

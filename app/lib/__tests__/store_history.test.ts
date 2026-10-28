@@ -168,7 +168,6 @@ describe('jumping to a message', () => {
     dispatch({
       type: 'media_removed',
       message_id: 201,
-      filename: 'f.png',
       removed_by_author: true,
       ...scoped,
     })

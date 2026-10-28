@@ -7,6 +7,7 @@ import { errorText, useStore } from '../lib/store'
 import type { ServerMatch } from '../lib/types'
 import { enterKey } from '../lib/keys'
 import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
+import { SHORT_PASSWORD, tooShort } from '../lib/passwords'
 import { FieldError, useBackdrop, useEscape } from './server_settings'
 
 function Dialog({ title, children }: { title: string; children: React.ReactNode }) {
@@ -100,6 +101,11 @@ function AddServerDialog({ join, locked }: { join?: string; locked?: boolean }) 
     setBusy(true)
     setError(null)
     if (creating) {
+      if (tooShort(password)) {
+        setError(SHORT_PASSWORD)
+        setBusy(false)
+        return
+      }
       try {
         await createServer(trimmed, password.trim() || undefined)
         closeDialog()

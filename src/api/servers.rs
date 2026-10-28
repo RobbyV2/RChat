@@ -12,7 +12,7 @@ use crate::api::access::{
     resolve_server,
 };
 use crate::api::admin::{fuzzy_match, is_fuzzy, like_pattern};
-use crate::api::auth::{hash_password, new_token};
+use crate::api::auth::{Work, hash_in, new_token};
 use crate::api::messages::recent_channel_messages;
 use crate::api::pings::forget_server_pings;
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
@@ -41,6 +41,10 @@ pub struct CreateChannelReq {
     name: String,
     /// Channel kind, `text` or `voice`. Optional; omitted or `null` creates a text channel.
     kind: Option<ChannelKind>,
+    /// Create the channel with `restrict_view` on, so only people who manage channels see it
+    /// until rules are added. Optional; omitted means off.
+    #[serde(default)]
+    restrict_view: bool,
 }
 
 /// Request body for creating a server.
@@ -402,7 +406,9 @@ pub struct MemberListQuery {
     admins: Option<bool>,
     /// `1` or `true` with a non-blank `q` (mention autocomplete): at most 10 members whose
     /// username or display name starts with `q` (case-insensitive), username matches first,
-    /// each group alphabetical, unpaged. Ignored without `q` and when `usernames` is given.
+    /// each group alphabetical, unpaged. Only for signed-in members, or anyone signed in on a
+    /// server without a password; others get an empty list. Ignored without `q` and when
+    /// `usernames` is given.
     suggest: Option<bool>,
 }
 
@@ -419,7 +425,10 @@ impl MemberListQuery {
         let mut suggest = None;
         for (key, value) in url::form_urlencoded::parse(raw.as_bytes()) {
             match key.as_ref() {
-                "q" if !value.trim().is_empty() => q = Some(value.trim().to_lowercase()),
+                "q" if !value.trim().is_empty() => {
+                    check_len(value.trim(), NAME_MAX, "Search text")?;
+                    q = Some(value.trim().to_lowercase())
+                }
                 "admins" => admins = Some(matches!(value.as_ref(), "1" | "true")),
                 "suggest" => suggest = Some(matches!(value.as_ref(), "1" | "true")),
                 _ => {}
@@ -439,30 +448,29 @@ impl MemberListQuery {
 
 pub const SUGGEST_MAX: usize = 10;
 
-fn prefix_like(prefix: &str) -> String {
-    let mut p = String::with_capacity(prefix.len() + 1);
-    for c in prefix.chars() {
-        if matches!(c, '%' | '_' | '\\') {
-            p.push('\\');
-        }
-        p.push(c);
-    }
-    p.push('%');
-    p
-}
-
 async fn suggested_members(db: &Db, server: &str, q: &str) -> Result<Vec<MemberRow>, ApiError> {
     let (mut rows, _) =
         filtered_members(db, server, Some(q), false, Some(SUGGEST_MAX as i64), None).await?;
     if rows.len() < SUGGEST_MAX {
-        let by_name = sqlx::query(
-            "SELECT m.username, m.is_admin, m.perms FROM members m JOIN users u ON u.username = m.username WHERE m.server = $1 AND lower(u.display_name) LIKE $2 ESCAPE '\\' ORDER BY m.username LIMIT $3",
-        )
-        .bind(server)
-        .bind(prefix_like(q))
-        .bind(2 * SUGGEST_MAX as i64)
-        .fetch_all(db)
-        .await?;
+        let col = match crate::db::is_sqlite(db) {
+            true => "lower(u.display_name)",
+            false => "(lower(u.display_name) COLLATE \"C\")",
+        };
+        let end = match prefix_end(q) {
+            Some(_) => format!(" AND {col} < $4"),
+            None => String::new(),
+        };
+        let sql = format!(
+            "SELECT m.username, m.is_admin, m.perms FROM users u JOIN members m ON m.username = u.username AND m.server = $1 WHERE {col} >= $2{end} ORDER BY {col}, m.username LIMIT $3"
+        );
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(server)
+            .bind(q)
+            .bind(2 * SUGGEST_MAX as i64);
+        if let Some(end) = prefix_end(q) {
+            query = query.bind(end);
+        }
+        let by_name = query.fetch_all(db).await?;
         for row in member_rows(&by_name)? {
             if rows.len() == SUGGEST_MAX {
                 break;
@@ -1149,10 +1157,13 @@ pub(crate) async fn list_members(
             .await?,
             None,
         ),
-        None if suggest == Some(true) && q.is_some() => (
-            suggested_members(db, &key, q.as_deref().unwrap_or_default()).await?,
-            None,
-        ),
+        None if suggest == Some(true) && q.is_some() => match (&viewer, access.via()) {
+            (Some(_), Via::Member | Via::Public) => (
+                suggested_members(db, &key, q.as_deref().unwrap_or_default()).await?,
+                None,
+            ),
+            (_, _) => (Vec::new(), None),
+        },
         None if q.is_some() || admins == Some(true) => {
             filtered_members(
                 db,
@@ -1308,7 +1319,7 @@ pub(crate) async fn list_interacted(
 ///
 /// Creates a server owned by the caller: they become its creator and an admin with all
 /// permissions, and it starts with one text channel named `general`. Requires a bearer token.
-/// Emits `server_created` to the creator. General rate-limit bucket.
+/// Emits `server_created` to the creator. Strict and general rate-limit buckets.
 #[utoipa::path(
     post,
     path = "/api/servers",
@@ -1316,11 +1327,11 @@ pub(crate) async fn list_interacted(
     request_body = CreateServerReq,
     responses(
         (status = 200, description = "The created server, with the caller as admin and a default `general` text channel", body = ServerDetail),
-        (status = 400, description = "Invalid name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter) or the name is taken. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Invalid name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or a password shorter than 8 characters. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 409, description = "That name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the strict or the general bucket", content_type = "text/plain", body = String)
     ),
     security(("bearer" = []))
 )]
@@ -1339,7 +1350,10 @@ pub(crate) async fn create_server(
         .map(str::trim)
         .filter(|p| !p.is_empty())
     {
-        Some(password) => Some(hash_password(password).await?),
+        Some(password) => {
+            crate::api::passwords::check_strength(password)?;
+            Some(hash_in(Work::Server, password).await?)
+        }
         None => None,
     };
     let t = now();
@@ -1435,7 +1449,7 @@ pub(crate) async fn get_server(
         (status = 200, description = "Whether the name is free; `false` for every taken name, protected or not, and for names of deleted servers still being purged", body = ServerAvailable),
         (status = 400, description = "Invalid name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter)", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the strict or the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the strict or the general bucket (plain text). Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
     ),
     security(("bearer" = []))
 )]
@@ -1517,7 +1531,10 @@ pub(crate) async fn search_servers(
 /// Checks the password of a password-protected server and returns a guest grant. Guests send the
 /// grant in the `X-Guest-Grant` header to view the server without an account; it expires after
 /// `GUEST_GRANT_DAYS` days without use (30 by default) and is revoked when the password changes
-/// (unless the change kept guests). The API drives the password step: without `password` every
+/// (unless the change kept guests). Each password has at most 2000 live grants (the permanent
+/// password counts as one), and at most 50 of them per network (an IPv4 /24 or IPv6 /48); past
+/// that no new grant is given until older ones expire. The API drives the
+/// password step: without `password` every
 /// name that is not a server without a password gets the same `401 Password required`, and a
 /// wrong password or a name that does not exist gets the same `404 Server not found or wrong
 /// password` (the password is always hashed, also for names that do not exist). Anyone may call
@@ -1534,7 +1551,7 @@ pub(crate) async fn search_servers(
         (status = 401, description = "`Password required`: no `password` was given and the name is not a server without a password (password-protected and nonexistent names answer identically). Also `Guest access is disabled` for guests without a valid token when guest access is off", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: the same body for a wrong password and for a name that does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the strict or the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the strict or the general bucket (plain text). Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords. `Too many guests use this password. Try again later` (JSON) when the password already has 2000 live guest grants, or 50 for your network. Grants made per address (20 an hour) and per network (60 an hour, across servers) are limited too, with `Too many attempts. Try again later`", content((ApiErrorBody = "application/json"), (String = "text/plain")))
     ),
     security((), ("bearer" = []))
 )]
@@ -1555,19 +1572,100 @@ pub(crate) async fn guest_access(
     if access.via() == Via::Public {
         return Ok(Json(GuestGrant { grant: None }));
     }
+    let network = grant_network(&state.db).await?;
     let grant = new_token();
+    let t = now();
+    let cutoff = t - crate::db::guest_grant_ttl();
+    let password_id = access.password_id().unwrap_or(0);
     let mut tx = state.db.begin().await?;
-    access.spend_ticket(&mut tx).await?;
-    sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at, password_id) VALUES($1, $2, $3, $3, $4)")
-        .bind(&grant)
+    if !crate::db::is_sqlite(&state.db) {
+        sqlx::query("SELECT 1 FROM servers WHERE name = $1 FOR UPDATE")
+            .bind(access.name())
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query("DELETE FROM guest_grants WHERE server = $1 AND COALESCE(password_id, 0) = $2 AND last_used_at < $3 AND (last_used_at > 0 OR created_at < $3)")
         .bind(access.name())
-        .bind(now())
-        .bind(access.password_id())
+        .bind(password_id)
+        .bind(cutoff)
         .execute(&mut *tx)
         .await?;
+    let made = sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at, password_id, network) SELECT $1, $2, $3, $3, $4, $7 WHERE (SELECT COUNT(*) FROM guest_grants WHERE server = $2 AND COALESCE(password_id, 0) = $5) < $6 AND (SELECT COUNT(*) FROM guest_grants WHERE server = $2 AND network = $7 AND COALESCE(password_id, 0) = $5) < $8")
+        .bind(crate::db::secret_key(&grant))
+        .bind(access.name())
+        .bind(t)
+        .bind(access.password_id())
+        .bind(password_id)
+        .bind(GRANTS_PER_PASSWORD)
+        .bind(&network)
+        .bind(GRANTS_PER_NETWORK)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if made == 0 {
+        return Err(ApiError(
+            StatusCode::TOO_MANY_REQUESTS,
+            TOO_MANY_GUESTS.to_string(),
+        ));
+    }
+    access.spend_ticket(&mut tx).await?;
     tx.commit().await?;
     Ok(Json(GuestGrant { grant: Some(grant) }))
 }
+
+/// Guest grants minted per client address (an IPv6 /64 counts as one address).
+static GRANT_MINTS: std::sync::LazyLock<crate::api::budget::Budget> =
+    std::sync::LazyLock::new(|| {
+        crate::api::budget::Budget::new(20, std::time::Duration::from_secs(3600), 100_000)
+    });
+
+/// Guest grants minted per wider network (IPv4 /24, IPv6 /48), across all servers.
+static GRANT_NETWORK_MINTS: std::sync::LazyLock<crate::api::budget::Budget> =
+    std::sync::LazyLock::new(|| {
+        crate::api::budget::Budget::new(
+            GRANT_NETWORK_MINTS_MAX,
+            std::time::Duration::from_secs(3600),
+            100_000,
+        )
+    });
+
+pub(crate) const GRANT_NETWORK_MINTS_MAX: u32 = 60;
+
+/// Most live guest grants per wider network and server password, so one network can not use up
+/// a password's share for everyone else.
+pub const GRANTS_PER_NETWORK: i64 = 50;
+
+/// Takes the mint budgets of the client's network, then of its address, and returns the stored
+/// network marker: an HMAC of the IPv4 /24 or IPv6 /48 under the instance pepper.
+async fn grant_network(db: &Db) -> Result<String, ApiError> {
+    use hmac::{Hmac, KeyInit, Mac};
+    let ip = crate::api::budget::client();
+    let wide = match ip {
+        Some(ip) => crate::api::budget::wide(ip).to_string(),
+        None => "-".to_string(),
+    };
+    if let Some(ip) = ip {
+        let pool = crate::db::pool_key(db);
+        let group = crate::api::budget::group(ip);
+        if !GRANT_NETWORK_MINTS.take(&format!("{pool}\n{wide}"))
+            || !GRANT_MINTS.take(&format!("{pool}\n{group}"))
+        {
+            return Err(crate::api::budget::slow_down());
+        }
+    }
+    let pepper = crate::db::pepper(db).await?;
+    let mut mac = <Hmac<sha2::Sha256> as KeyInit>::new_from_slice(&pepper)
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "pepper".to_string()))?;
+    mac.update(b"guest network\n");
+    mac.update(wide.as_bytes());
+    Ok(format!("n:{}", hex::encode(mac.finalize().into_bytes())))
+}
+
+/// Most live guest grants per server password (the permanent password counts as one). Past it,
+/// no new grants are given until older ones expire; live grants of others never end for it.
+pub const GRANTS_PER_PASSWORD: i64 = 2000;
+
+pub const TOO_MANY_GUESTS: &str = "Too many guests use this password. Try again later";
 
 const INVITE_PREVIEW: i64 = 3;
 
@@ -1582,20 +1680,35 @@ fn invite_password(headers: &HeaderMap) -> Option<String> {
     }
 }
 
-async fn invite_preview(db: &Db, server: &str) -> Result<(Option<String>, Vec<Message>), ApiError> {
+/// The preview channel and its latest messages, as the viewer may read them: messages from
+/// before the viewer's read-history floor are left out.
+async fn invite_preview(
+    db: &Db,
+    access: ServerAccess,
+) -> Result<(Option<String>, Vec<Message>), ApiError> {
     let row = sqlx::query(
         "SELECT c.id, c.name FROM channels c WHERE c.server = $1 AND c.kind = 'text' AND c.restrict_view = 0 AND NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.can_view = 0) ORDER BY c.id LIMIT 1",
     )
-    .bind(server)
+    .bind(access.name())
     .fetch_optional(db)
     .await?;
-    match row {
-        Some(r) => Ok((
-            Some(r.try_get(1)?),
-            recent_channel_messages(db, r.try_get(0)?, INVITE_PREVIEW).await?,
-        )),
-        None => Ok((None, Vec::new())),
+    let Some(r) = row else {
+        return Ok((None, Vec::new()));
+    };
+    let (id, name): (i64, String) = (r.try_get(0)?, r.try_get(1)?);
+    let channel = match access.channel(db, id).await {
+        Ok(channel) => channel,
+        Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e)) => {
+            return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e));
+        }
+        Err(_) => return Ok((None, Vec::new())),
+    };
+    let floor = channel.read_since(db).await?;
+    let mut msgs = recent_channel_messages(db, id, INVITE_PREVIEW).await?;
+    if let Some(floor) = floor {
+        msgs.retain(|m| m.created_at >= floor);
     }
+    Ok((Some(name), msgs))
 }
 
 /// Preview an invite
@@ -1626,7 +1739,7 @@ async fn invite_preview(db: &Db, server: &str) -> Result<(Option<String>, Vec<Me
         (status = 401, description = "`Password required`: identical for password-protected servers you have not unlocked and for names that do not exist. Also `Guest access is disabled` when guest access is off and no valid token was sent", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`, only after access was proven (correct password, or you took part in the server before)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: identical for a wrong `X-Invite-Password` and for a name that does not exist", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the invite or the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the invite or the general bucket (plain text). Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
     ),
     security((), ("bearer" = []))
 )]
@@ -1657,8 +1770,9 @@ pub(crate) async fn get_invite(
                 true => InviteStatus::Member,
                 false => InviteStatus::Joinable,
             };
-            let preview = invite_preview(db, access.name()).await?;
-            (access.lite().clone(), status, preview, access.ticket())
+            let (lite, ticket) = (access.lite().clone(), access.ticket());
+            let preview = invite_preview(db, *access).await?;
+            (lite, status, preview, ticket)
         }
     };
     Ok(Json(Invite {
@@ -1740,7 +1854,7 @@ async fn insert_member(
         (status = 403, description = "`You are banned from this server`, only after access was proven", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: identical for a wrong password and for a name that does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the join or the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the join or the general bucket (plain text). Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
     ),
     security(("bearer" = []))
 )]
@@ -1870,7 +1984,8 @@ pub(crate) async fn leave_server(
 ///
 /// Emits `server_renamed` (with `old_name`) to the server when the name or display name changed,
 /// otherwise `server_updated` with the new state (password flag and colors), and
-/// `members_purged` to the server and the removed members. General rate-limit bucket.
+/// `members_purged` to the server and the removed members. Voice users who can no longer open
+/// the server leave their call. Strict and general rate-limit buckets.
 #[utoipa::path(
     patch,
     path = "/api/servers/{name}",
@@ -1879,13 +1994,13 @@ pub(crate) async fn leave_server(
     request_body = ServerPatch,
     responses(
         (status = 200, description = "The updated server, with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated),
-        (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color, or a new password that is already a live extra password of the server. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color, a new password shorter than 8 characters, or a new password that is already a live extra password of the server. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Delete server permission, missing Kick for `members: remove`, or a rename or password change on the protected rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 409, description = "The new name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the strict or the general bucket (plain text), or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
     ),
     security(("bearer" = []))
 )]
@@ -1935,10 +2050,11 @@ pub(crate) async fn update_server(
         (Some(""), Some(true)) => Some(Some(NO_PERMANENT_HASH.to_string())),
         (Some(""), _) | (None, Some(false)) => Some(None),
         (Some(p), _) => {
+            crate::api::passwords::check_strength(p)?;
             if new_key == key && access.is_live_extra_password(&state.db, p).await? {
                 return Err(bad("That password is already in use for this server"));
             }
-            Some(Some(hash_password(p).await?))
+            Some(Some(hash_in(Work::Server, p).await?))
         }
         (None, Some(true)) if !lite.has_password => Some(Some(NO_PERMANENT_HASH.to_string())),
         (None, _) => None,
@@ -1992,6 +2108,9 @@ pub(crate) async fn update_server(
         },
     });
     crate::ws::announce_purge(&state.hub, &server.name, &removed);
+    if password_hash.is_some() {
+        evict_unviewable(&state, &server.name, None).await;
+    }
     Ok(Json(ServerUpdated {
         server,
         removed: removed.len() as i64,
@@ -2253,12 +2372,13 @@ pub(crate) async fn create_channel(
         )));
     }
     let id: i64 = sqlx::query(
-        "INSERT INTO channels(server, name, kind, created_at) VALUES($1, $2, $3, $4) RETURNING id",
+        "INSERT INTO channels(server, name, kind, created_at, restrict_view) VALUES($1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(&key)
     .bind(&channel_name)
     .bind(kind.as_str())
     .bind(now())
+    .bind(i64::from(req.restrict_view))
     .fetch_one(&state.db)
     .await?
     .try_get(0)?;
@@ -2267,7 +2387,7 @@ pub(crate) async fn create_channel(
         name: channel_name,
         kind,
         slowmode_seconds: 0,
-        restrict_view: false,
+        restrict_view: req.restrict_view,
         restrict_send: false,
     };
     state.hub.broadcast(WsEvent::ChannelCreated {
@@ -2780,6 +2900,7 @@ async fn set_admin(
                 is_admin,
                 perms: 0,
             });
+            evict_unviewable(state, server, None).await;
             Ok(ok())
         }
     }
@@ -2946,12 +3067,13 @@ pub(crate) async fn transfer_admin(
     });
     if revoked > 0 {
         state.hub.broadcast(WsEvent::AdminChanged {
-            server: key,
+            server: key.clone(),
             username: user.username,
             is_admin: false,
             perms: 0,
         });
     }
+    evict_unviewable(&state, &key, None).await;
     Ok(ok())
 }
 
@@ -3015,11 +3137,12 @@ pub(crate) async fn set_admin_perms(
         .await?;
     tx.commit().await?;
     state.hub.broadcast(WsEvent::AdminChanged {
-        server: key,
+        server: key.clone(),
         username: target,
         is_admin: true,
         perms,
     });
+    evict_unviewable(&state, &key, None).await;
     Ok(ok())
 }
 
@@ -3434,12 +3557,13 @@ pub(crate) async fn delete_role(
 
 /// Assign a role
 ///
-/// Gives the role to the member `username`, who can be anyone in the server, including yourself;
-/// assigning a role they already hold succeeds without changes. The role's permissions must be a
-/// subset of yours (equal is fine). Without Manage channels, the channel permission rules that
-/// name the role must not give anything you don't have in that channel (see
-/// `role_limits.channel_grants` in the server detail). Requires the Manage admins server
-/// permission. Emits `roles_changed` to the server. General rate-limit bucket.
+/// Gives the role to the member `username`, yourself or a member whose server permissions are a
+/// strict subset of yours (the kick and ban rule); assigning a role they already hold succeeds
+/// without changes. The role's permissions must be a subset of yours (equal is fine). Without
+/// Manage channels, the channel permission rules that name the role must not give anything you
+/// don't have in that channel (see `role_limits.channel_grants` in the server detail). Requires
+/// the Manage admins server permission. Emits `roles_changed` to the server and removes users
+/// from voice channels they can no longer view. General rate-limit bucket.
 #[utoipa::path(
     post,
     path = "/api/servers/{name}/roles/{id}/assign",
@@ -3450,7 +3574,7 @@ pub(crate) async fn delete_role(
         (status = 200, description = "Role assigned to the member", body = OkResp),
         (status = 400, description = "A non-integer `id`, malformed JSON or a missing `Content-Type` (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Manage admins permission, the role has permissions you don't have (`You can't grant permissions you don't have`), or its channel rules give access you don't have (`This role gives channel access you don't have`)", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage admins permission, the member does not have fewer permissions than you (`You can't moderate this member`), the role has permissions you don't have (`You can't grant permissions you don't have`), or its channel rules give access you don't have (`This role gives channel access you don't have`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it, or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
@@ -3476,6 +3600,9 @@ pub(crate) async fn assign_role(
     if !member {
         return Err(not_found("Not a member"));
     }
+    if target != user.username {
+        access.require_moderate(&state.db, &target).await?;
+    }
     access.require_grant(&state.db, role_perms).await?;
     let mine = access.perms(&state.db).await?;
     if !channel_limits(&state.db, &access, mine, Some(id))
@@ -3493,7 +3620,10 @@ pub(crate) async fn assign_role(
     .bind(id)
     .execute(&state.db)
     .await?;
-    state.hub.broadcast(WsEvent::RolesChanged { server: key });
+    state.hub.broadcast(WsEvent::RolesChanged {
+        server: key.clone(),
+    });
+    evict_unviewable(&state, &key, None).await;
     Ok(ok())
 }
 
@@ -3720,7 +3850,7 @@ pub(crate) async fn set_channel_perm(
         )));
     }
     sqlx::query(
-        "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, $3, $4, $5) ON CONFLICT(channel_id, subject) DO UPDATE SET can_view = excluded.can_view, can_send = excluded.can_send, can_read_history = excluded.can_read_history",
+        "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history, restrict_set) VALUES($1, $2, $3, $4, $5, 1) ON CONFLICT(channel_id, subject) DO UPDATE SET can_view = excluded.can_view, can_send = excluded.can_send, can_read_history = excluded.can_read_history, restrict_set = 1",
     )
     .bind(id)
     .bind(&subject)
@@ -4000,6 +4130,7 @@ mod tests {
                     Json(CreateChannelReq {
                         name,
                         kind: Some(kind),
+                        restrict_view: false,
                     }),
                 )
                 .await
@@ -4802,7 +4933,7 @@ mod tests {
     async fn insert_grant(db: &Db, server: &str) -> String {
         let grant = new_token();
         sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, $2, 0, 4000000000)")
-            .bind(&grant)
+            .bind(crate::db::secret_key(&grant))
             .bind(server)
             .execute(db)
             .await
@@ -4962,7 +5093,7 @@ mod tests {
             .await
             .expect("open");
         assert_eq!(counts(&open), (2, 0));
-        set_password(&state, "secret").await;
+        set_password(&state, "secret-pw").await;
         let grant = insert_grant(db, "club").await;
         type Case<'a> = (
             Option<User>,
@@ -4978,7 +5109,7 @@ mod tests {
                 None,
                 Some(StatusCode::NOT_FOUND),
             ),
-            (user("dave"), Some("secret"), None, None),
+            (user("dave"), Some("secret-pw"), None, None),
             (user("bob"), None, None, None),
             (
                 Some(mem_user("root", true)),
@@ -4989,7 +5120,7 @@ mod tests {
             (None, None, None, Some(StatusCode::UNAUTHORIZED)),
             (None, None, Some("bogus"), Some(StatusCode::UNAUTHORIZED)),
             (None, None, Some(&grant), None),
-            (None, Some("secret"), None, None),
+            (None, Some("secret-pw"), None, None),
         ];
         for (n, (viewer, password, grant, refused)) in cases.into_iter().enumerate() {
             match (
@@ -5028,7 +5159,7 @@ mod tests {
         let (state, path) = temp_state("invite_preview").await;
         let db = &state.db;
         let general = make_server(&state, "club").await.expect("club").0.channels[0].id;
-        set_password(&state, "secret").await;
+        set_password(&state, "secret-pw").await;
         for n in 1..=5 {
             post(db, general, &format!("m{n}"), None).await;
         }
@@ -5043,7 +5174,7 @@ mod tests {
             invite_as(&state, dave(), "club", Some("nope"), None).await,
             Err(ApiError(StatusCode::NOT_FOUND, m)) if m == DENIED
         ));
-        let unlocked = invite_as(&state, dave(), "club", Some("secret"), None)
+        let unlocked = invite_as(&state, dave(), "club", Some("secret-pw"), None)
             .await
             .expect("unlocked");
         assert_eq!(unlocked.preview_channel.as_deref(), Some("general"));
@@ -5077,7 +5208,7 @@ mod tests {
         .try_get(0)
         .expect("lobby id");
         post(db, lobby, "hello lobby", None).await;
-        let public = invite_as(&state, dave(), "club", Some("secret"), None)
+        let public = invite_as(&state, dave(), "club", Some("secret-pw"), None)
             .await
             .expect("public channel");
         assert_eq!(public.preview_channel.as_deref(), Some("lobby"));
@@ -5094,7 +5225,7 @@ mod tests {
             &state,
             Some(mem_user("carol", false)),
             "club",
-            Some("secret"),
+            Some("secret-pw"),
             None,
         )
         .await
@@ -5116,14 +5247,14 @@ mod tests {
             .await
             .expect("open server");
         assert_eq!(contents(&open), vec!["hello lobby"]);
-        set_password(&state, "secret").await;
+        set_password(&state, "secret-pw").await;
         sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:alice', 1, 1, 1)")
             .bind(lobby)
             .execute(db)
             .await
             .expect("make lobby private");
         crate::api::test_util::restrict_ruled(db).await;
-        let hidden = invite_as(&state, dave(), "club", Some("secret"), None)
+        let hidden = invite_as(&state, dave(), "club", Some("secret-pw"), None)
             .await
             .expect("no public channel");
         assert_eq!(hidden.status, InviteStatus::Joinable);
@@ -5134,7 +5265,7 @@ mod tests {
             .execute(db)
             .await
             .expect("open lobby with an allow rule");
-        let allowed = invite_as(&state, dave(), "club", Some("secret"), None)
+        let allowed = invite_as(&state, dave(), "club", Some("secret-pw"), None)
             .await
             .expect("allow rules keep a channel public");
         assert_eq!(allowed.preview_channel.as_deref(), Some("lobby"));
@@ -5144,7 +5275,7 @@ mod tests {
             .execute(db)
             .await
             .expect("deny rule");
-        let denied = invite_as(&state, dave(), "club", Some("secret"), None)
+        let denied = invite_as(&state, dave(), "club", Some("secret-pw"), None)
             .await
             .expect("a view deny makes it non-public");
         assert_eq!(denied.preview_channel, None);
@@ -5383,7 +5514,7 @@ mod tests {
         give_role(db, "club", "carol", Perm::Kick as i64).await;
         set_admin_row(db, "dave", 0).await;
         set_admin_row(db, "erin", Perm::Kick as i64 | Perm::DeleteMessages as i64).await;
-        set_password(&state, "old").await;
+        set_password(&state, "old-password").await;
         let grant = insert_grant(db, "club").await;
         let alice = || mem_user("alice", false);
         let mut rx = state.hub.subscribe();
@@ -5392,7 +5523,7 @@ mod tests {
             alice(),
             "club",
             None,
-            Some("new"),
+            Some("new-password"),
             PasswordMembers::Keep,
         )
         .await
@@ -5410,7 +5541,7 @@ mod tests {
             alice(),
             "club",
             None,
-            Some("new2"),
+            Some("new2-password"),
             PasswordMembers::Keep,
             true,
         )
@@ -5439,7 +5570,7 @@ mod tests {
             alice(),
             "club",
             None,
-            Some("newer"),
+            Some("newer-password"),
             PasswordMembers::Remove,
             true,
         )
@@ -5465,7 +5596,7 @@ mod tests {
             status(join(&state, "bob", "club").await),
             Some(StatusCode::UNAUTHORIZED)
         );
-        join_with(&state, "bob", "club", "newer").await;
+        join_with(&state, "bob", "club", "newer-password").await;
         let cleared = change_password(
             &state,
             alice(),
@@ -5496,7 +5627,7 @@ mod tests {
             alice(),
             "den",
             Some("Lair"),
-            Some("x"),
+            Some("x-password"),
             PasswordMembers::Remove,
         )
         .await
@@ -5548,7 +5679,7 @@ mod tests {
                     mem_user("bob", false),
                     "club",
                     None,
-                    Some("pw"),
+                    Some("password"),
                     PasswordMembers::Remove
                 )
                 .await
@@ -5564,7 +5695,7 @@ mod tests {
                     mem_user("erin", false),
                     "club",
                     None,
-                    Some("pw"),
+                    Some("password"),
                     PasswordMembers::Keep
                 )
                 .await
@@ -5576,7 +5707,7 @@ mod tests {
             mem_user("bob", false),
             "club",
             None,
-            Some("pw"),
+            Some("password"),
             PasswordMembers::Keep,
         )
         .await
@@ -5589,7 +5720,7 @@ mod tests {
             mem_user("carol", false),
             "club",
             None,
-            Some("pw2"),
+            Some("pw2-password"),
             PasswordMembers::Remove,
         )
         .await
@@ -5605,21 +5736,21 @@ mod tests {
             mem_user("alice", false),
             "club",
             None,
-            Some("pw3"),
+            Some("pw3-password"),
             PasswordMembers::Remove,
         )
         .await
         .expect("full admin removes");
         assert_eq!((full.removed, full.kept), (3, 0));
         assert_eq!(member_names(db, "club").await, ["alice"]);
-        join_with(&state, "frank", "club", "pw3").await;
+        join_with(&state, "frank", "club", "pw3-password").await;
         set_admin_row(db, "frank", 0).await;
         let site = change_password(
             &state,
             mem_user("root", true),
             "club",
             None,
-            Some("pw4"),
+            Some("pw4-password"),
             PasswordMembers::Remove,
         )
         .await
@@ -5654,7 +5785,7 @@ mod tests {
                     mem_user("root", true),
                     "rchat",
                     None,
-                    Some("pw"),
+                    Some("password"),
                     PasswordMembers::Remove
                 )
                 .await
@@ -5668,7 +5799,7 @@ mod tests {
                     mem_user("root", true),
                     "rchat",
                     None,
-                    Some("pw"),
+                    Some("password"),
                     PasswordMembers::Keep
                 )
                 .await
@@ -5879,31 +6010,35 @@ mod tests {
             }
         };
         assert_eq!(
-            fetch(None, "rchat", "q=AL&suggest=1").await.expect("al"),
+            fetch(Some("dan"), "rchat", "q=AL&suggest=1")
+                .await
+                .expect("al"),
             vec!["al_x", "albert", "alice", "alzz", "bob", "carol"]
         );
         assert_eq!(
-            fetch(None, "rchat", "q=al_&suggest=1")
+            fetch(Some("dan"), "rchat", "q=al_&suggest=1")
                 .await
                 .expect("escaped"),
             vec!["al_x"]
         );
         assert_eq!(
-            fetch(None, "rchat", "q=zed&suggest=true")
+            fetch(Some("dan"), "rchat", "q=zed&suggest=true")
                 .await
                 .expect("zed")
                 .len(),
             10
         );
         assert_eq!(
-            fetch(None, "rchat", "q=zz&suggest=1")
+            fetch(Some("dan"), "rchat", "q=zz&suggest=1")
                 .await
                 .expect("zz")
                 .len(),
             10
         );
         assert_eq!(
-            fetch(None, "rchat", "q=ber&suggest=1").await.expect("ber"),
+            fetch(Some("dan"), "rchat", "q=ber&suggest=1")
+                .await
+                .expect("ber"),
             vec!["albert"]
         );
         assert_eq!(
@@ -5914,6 +6049,28 @@ mod tests {
             12,
             "plain q keeps its paged username listing"
         );
+        assert_eq!(
+            fetch(None, "rchat", "q=al&suggest=1").await.expect("guest"),
+            Vec::<String>::new(),
+            "guests get no suggestions"
+        );
+        assert_eq!(
+            fetch(Some("alfred"), "rchat", "q=ber&suggest=1")
+                .await
+                .expect("public server"),
+            vec!["albert"],
+            "anyone signed in may search a public server"
+        );
+        let long = format!("q={}&suggest=1", "a".repeat(NAME_MAX + 1));
+        let long = list_members(
+            State(state.clone()),
+            MaybeAuthed(Some(mem_user("dan", false))),
+            HeaderMap::new(),
+            Path("rchat".to_string()),
+            RawQuery(Some(long)),
+        )
+        .await;
+        assert!(matches!(long, Err(ApiError(StatusCode::BAD_REQUEST, _))));
         let _ = make_server(&state, "club").await.expect("club");
         sqlx::query("UPDATE servers SET password_hash = '!none' WHERE name = 'club'")
             .execute(db)
@@ -6038,6 +6195,7 @@ mod tests {
             Json(CreateChannelReq {
                 name: "extra".to_string(),
                 kind: None,
+                restrict_view: false,
             }),
         )
         .await;
@@ -6410,27 +6568,41 @@ mod tests {
         let equal = new_role(db, "equal", MA | KICK).await;
         let low = new_role(db, "low", KICK).await;
         let plain = new_role(db, "plain", 0).await;
+        let peer = Err((
+            StatusCode::FORBIDDEN,
+            "You can't moderate this member".to_string(),
+        ));
         for role in [high, foreign] {
-            for target in ["carol", "bob", "erin"] {
+            for target in ["carol", "bob"] {
                 assert_eq!(assign(&state, bob(), role, target).await, no_grant());
                 assert!(!holds(db, target, role).await);
             }
+            assert_eq!(assign(&state, bob(), role, "erin").await, peer);
+            assert!(!holds(db, "erin", role).await);
         }
-        assign(&state, bob(), equal, "carol")
-            .await
-            .expect("equal role");
         assign(&state, bob(), low, "carol")
             .await
             .expect("lower role");
+        assign(&state, bob(), equal, "carol")
+            .await
+            .expect("equal role");
         assign(&state, bob(), plain, "bob")
             .await
             .expect("plain role on yourself");
-        assign(&state, bob(), low, "erin")
-            .await
-            .expect("granting to a peer");
-        assign(&state, bob(), low, "alice")
-            .await
-            .expect("granting to a stronger admin");
+        assert_eq!(
+            assign(&state, bob(), plain, "carol").await,
+            peer,
+            "carol now has as much as bob"
+        );
+        assert_eq!(assign(&state, bob(), low, "erin").await, peer, "a peer");
+        assert_eq!(
+            assign(&state, bob(), low, "alice").await,
+            peer,
+            "a stronger admin"
+        );
+        assert!(!holds(db, "erin", low).await && !holds(db, "alice", low).await);
+        hold(db, "erin", low).await;
+        hold(db, "alice", low).await;
         let alice = || mem_user("alice", false);
         assign(&state, alice(), high, "carol")
             .await
@@ -6438,10 +6610,6 @@ mod tests {
         assign(&state, alice(), high, "alice")
             .await
             .expect("a full admin assigns it to themselves");
-        let peer = Err((
-            StatusCode::FORBIDDEN,
-            "You can't moderate this member".to_string(),
-        ));
         for (role, target) in [(low, "erin"), (high, "carol"), (low, "alice")] {
             assert_eq!(unassign(&state, bob(), role, target).await, peer);
             assert!(holds(db, target, role).await);
@@ -7312,6 +7480,341 @@ mod tests {
                 "{name} keeps only other pings"
             );
         }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn voice_is_rechecked_when_a_server_closes_or_roles_narrow() {
+        let (state, path) = temp_state("voice_recheck").await;
+        let db = &state.db;
+        club_with(&state, &["carol"]).await;
+        add_user(db, "zed", "zed").await;
+        let cid: i64 = sqlx::query("INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'talk', 'voice', 0) RETURNING id")
+            .fetch_one(db)
+            .await
+            .expect("voice")
+            .try_get(0)
+            .expect("id");
+        let _ = state.hub.voice_join("zed", 1, "club", cid).await;
+        let _ = state.hub.voice_join("carol", 2, "club", cid).await;
+        let inside = |state: &AppState| {
+            let mut users: Vec<String> = state
+                .hub
+                .rooms_in("club", None)
+                .into_iter()
+                .flat_map(|(_, users)| users)
+                .collect();
+            users.sort();
+            users
+        };
+        assert_eq!(inside(&state), ["carol", "zed"]);
+        change_password(
+            &state,
+            mem_user("alice", false),
+            "club",
+            None,
+            Some("club-password"),
+            PasswordMembers::Keep,
+        )
+        .await
+        .expect("protect");
+        assert_eq!(
+            inside(&state),
+            ["carol"],
+            "the outsider left with the password"
+        );
+        let muted = new_role(db, "muted", 0).await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, 0, 0, 0)")
+            .bind(cid)
+            .bind(format!("r:{muted}"))
+            .execute(db)
+            .await
+            .expect("deny rule");
+        assign(&state, mem_user("alice", false), muted, "carol")
+            .await
+            .expect("assign");
+        assert!(inside(&state).is_empty(), "a narrowing role ends the call");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn rules_written_here_are_marked_for_the_restrict_check() {
+        let (state, path) = temp_state("rule_marks").await;
+        club_with(&state, &["bob"]).await;
+        let cid: i64 =
+            sqlx::query("SELECT id FROM channels WHERE server = 'club' ORDER BY id LIMIT 1")
+                .fetch_one(&state.db)
+                .await
+                .expect("channel")
+                .try_get(0)
+                .expect("id");
+        for can_view in [false, true] {
+            let _ = set_channel_perm(
+                State(state.clone()),
+                Authed(mem_user("alice", false)),
+                Path(cid),
+                Json(
+                    serde_json::from_value(serde_json::json!({
+                        "subject": "u:bob",
+                        "can_view": can_view,
+                        "can_send": true,
+                        "can_read_history": true,
+                    }))
+                    .expect("rule"),
+                ),
+            )
+            .await
+            .expect("set rule");
+        }
+        assert_eq!(
+            count(
+                &state.db,
+                "SELECT COUNT(*) FROM channel_perms WHERE restrict_set = 1"
+            )
+            .await,
+            1,
+            "inserted and updated rules are marked, so the next start leaves the channel open"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn invite_previews_follow_the_read_history_floor() {
+        let (state, path) = temp_state("invite_floor").await;
+        let db = &state.db;
+        let _ = make_server(&state, "club").await.expect("club");
+        add_user(db, "dave", "dave").await;
+        let cid: i64 =
+            sqlx::query("SELECT id FROM channels WHERE server = 'club' ORDER BY id LIMIT 1")
+                .fetch_one(db)
+                .await
+                .expect("channel")
+                .try_get(0)
+                .expect("id");
+        sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'alice', 'old news', 1)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("message");
+        let before = invite_as(&state, Some(mem_user("dave", false)), "club", None, None)
+            .await
+            .expect("invite");
+        assert_eq!(before.preview.len(), 1);
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:dave', 1, 1, 0)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("history rule");
+        let after = invite_as(&state, Some(mem_user("dave", false)), "club", None, None)
+            .await
+            .expect("invite");
+        assert!(after.preview.is_empty(), "no history means no old messages");
+        let other = invite_as(&state, Some(mem_user("alice", false)), "club", None, None)
+            .await
+            .expect("invite");
+        assert_eq!(other.preview.len(), 1);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn channels_can_start_restricted() {
+        let (state, path) = temp_state("channel_restricted").await;
+        let _ = make_server(&state, "club").await.expect("club");
+        let Json(channel) = create_channel(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path("club".to_string()),
+            Json(CreateChannelReq {
+                name: "staff".to_string(),
+                kind: None,
+                restrict_view: true,
+            }),
+        )
+        .await
+        .expect("create");
+        assert!(channel.restrict_view);
+        assert_eq!(
+            count(
+                &state.db,
+                &format!(
+                    "SELECT COUNT(*) FROM channels WHERE id = {} AND restrict_view = 1",
+                    channel.id
+                )
+            )
+            .await,
+            1
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn one_network_can_not_use_up_the_guest_grants_of_a_password() {
+        let (state, path) = temp_state("grant_network").await;
+        let db = &state.db;
+        let _ = make_server(&state, "club").await.expect("club");
+        set_password(&state, "club-password").await;
+        let _ = make_server(&state, "den").await.expect("den");
+        let _ = update_server(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path("den".to_string()),
+            Json(ServerPatch {
+                name: None,
+                password: Some("den-password".to_string()),
+                protected: None,
+                members: PasswordMembers::Keep,
+                keep_guests: false,
+                banner_color: None,
+                name_color: None,
+            }),
+        )
+        .await
+        .expect("den password");
+        let mint = |server: &'static str, from: std::net::IpAddr| {
+            let state = state.clone();
+            crate::api::budget::as_client(from, async move {
+                guest_access(
+                    State(state),
+                    MaybeAuthed(None),
+                    Path(server.to_string()),
+                    Json(GuestAccessReq {
+                        password: Some(format!("{server}-password")),
+                    }),
+                )
+                .await
+                .map(|Json(made)| made.grant.is_some())
+                .map_err(|ApiError(status, body)| (status.as_u16(), body))
+            })
+        };
+        let in_network = |n: u16| {
+            std::net::IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0x15d, n, 0, 0, 0, 1))
+        };
+        let mut made = 0;
+        for n in 0..55 {
+            match mint("club", in_network(n)).await {
+                Ok(true) => made += 1,
+                Ok(false) => panic!("no grant"),
+                Err(e) => assert_eq!(e, (429, TOO_MANY_GUESTS.to_string())),
+            }
+        }
+        assert_eq!(made, GRANTS_PER_NETWORK, "one /48 gets only its share");
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM guest_grants WHERE server = 'club'"
+            )
+            .await,
+            GRANTS_PER_NETWORK
+        );
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(DISTINCT network) FROM guest_grants WHERE server = 'club' AND network LIKE 'n:%'"
+            )
+            .await,
+            1,
+            "the network is stored as a marker, not the address"
+        );
+        let other =
+            std::net::IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0x15e, 0, 0, 0, 0, 1));
+        assert_eq!(
+            mint("club", other).await,
+            Ok(true),
+            "a guest from another network still gets a grant"
+        );
+        let v4 = std::net::IpAddr::from([198, 51, 15, 9]);
+        assert_eq!(mint("club", v4).await, Ok(true));
+        let mut den = Vec::new();
+        for n in 100..120 {
+            den.push(mint("den", in_network(n)).await);
+        }
+        let spare = (GRANT_NETWORK_MINTS_MAX as usize) - 55;
+        assert!(den[..spare].iter().all(|r| *r == Ok(true)));
+        assert!(
+            den[spare..]
+                .iter()
+                .all(|r| *r == Err((429, crate::api::budget::SLOW_DOWN.to_string()))),
+            "the network mint budget spans all servers"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn guest_grants_per_password_are_capped() {
+        let (state, path) = temp_state("grant_cap").await;
+        let db = &state.db;
+        let _ = make_server(&state, "club").await.expect("club");
+        set_password(&state, "club-password").await;
+        let t = now();
+        for n in 0..GRANTS_PER_PASSWORD {
+            sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, 'club', $2, $2)")
+                .bind(format!("h:live{n}"))
+                .bind(t - n)
+                .execute(db)
+                .await
+                .expect("grant");
+        }
+        let mint = |n: u32| {
+            let state = state.clone();
+            let from = std::net::IpAddr::from([198, 18, (n / 250) as u8, (n % 250) as u8]);
+            crate::api::budget::as_client(from, async move {
+                guest_access(
+                    State(state),
+                    MaybeAuthed(None),
+                    Path("club".to_string()),
+                    Json(GuestAccessReq {
+                        password: Some("club-password".to_string()),
+                    }),
+                )
+                .await
+                .map(|Json(made)| made.grant.expect("grant"))
+                .map_err(|ApiError(status, body)| (status.as_u16(), body))
+            })
+        };
+        let live = "SELECT COUNT(*) FROM guest_grants WHERE server = 'club'";
+        assert_eq!(
+            mint(1).await,
+            Err((429, TOO_MANY_GUESTS.to_string())),
+            "a full password gives no new grant"
+        );
+        assert_eq!(
+            count(db, live).await,
+            GRANTS_PER_PASSWORD,
+            "live grants of others never end for a new one"
+        );
+        sqlx::query("UPDATE guest_grants SET last_used_at = 1, created_at = 1 WHERE \"grant\" IN ('h:live0', 'h:live1', 'h:live2')")
+            .execute(db)
+            .await
+            .expect("expire three");
+        let results = futures_util::future::join_all((10..20).map(mint)).await;
+        let made: Vec<String> = results.into_iter().filter_map(Result::ok).collect();
+        assert_eq!(
+            made.len(),
+            3,
+            "only expired grants make room, also under concurrency"
+        );
+        assert_eq!(count(db, live).await, GRANTS_PER_PASSWORD);
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM guest_grants WHERE \"grant\" LIKE 'h:live%'"
+            )
+            .await,
+            GRANTS_PER_PASSWORD - 3
+        );
+        assert_ne!(
+            count(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM guest_grants WHERE \"grant\" = '{}'",
+                    made[0]
+                )
+            )
+            .await,
+            1,
+            "only the hash is stored"
+        );
+        assert!(grant_valid(&state, "club", &made[0]).await);
         done(state, path).await;
     }
 }

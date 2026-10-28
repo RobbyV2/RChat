@@ -468,7 +468,7 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO tokens(token, username, created_at) VALUES('legacy', 'old@name', 0)",
+            "INSERT INTO tokens(token, username, created_at) VALUES('h:c49fea7425fa7f8699897a97c159c6690267d9003bb78c53fafa8fc15c325d84', 'old@name', 0)",
         )
         .execute(&state.db)
         .await

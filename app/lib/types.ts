@@ -482,7 +482,6 @@ export type WsEvent =
   | ({
       type: 'media_removed'
       message_id: number
-      filename: string
       removed_by_author: boolean
     } & Scoped)
   | ({ type: 'embeds_resolved'; message_id: number; embeds: Embed[] } & Scoped)

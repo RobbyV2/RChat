@@ -13,6 +13,7 @@ import {
   statusAt,
   tickMs,
   toLocalInput,
+  tooShort,
   usesLeftText,
   usesText,
   withSecret,
@@ -158,5 +159,17 @@ describe('secret book', () => {
     expect(secretFor(book, 'club', 9)).toBe('two')
     book = keepSecrets(book, 'den', [])
     expect(book.servers.den).toBeUndefined()
+  })
+})
+
+describe('tooShort', () => {
+  test('admin-chosen passwords need 8 characters, blank means none', () => {
+    expect(tooShort('')).toBe(false)
+    expect(tooShort('   ')).toBe(false)
+    expect(tooShort('party')).toBe(true)
+    expect(tooShort(' 1234567 ')).toBe(true)
+    expect(tooShort('12345678')).toBe(false)
+    expect(tooShort('ééééééé')).toBe(true)
+    expect(tooShort('😀😀😀😀😀😀😀😀')).toBe(false)
   })
 })

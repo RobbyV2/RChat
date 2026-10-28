@@ -177,7 +177,9 @@ impl KeyExtractor for ClientIp {
             .map(|c| c.0.ip())
             .or_else(|| req.extensions().get::<SocketAddr>().map(|a| a.ip()))
             .ok_or(GovernorError::UnableToExtractKey)?;
-        Ok(self.0.client(peer, req.headers()))
+        Ok(crate::api::budget::group(
+            self.0.client(peer, req.headers()),
+        ))
     }
 }
 

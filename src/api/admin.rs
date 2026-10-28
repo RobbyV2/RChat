@@ -527,6 +527,7 @@ async fn hide_user_rows(
         "DELETE FROM user_roles WHERE username = $1",
         "DELETE FROM interactions WHERE username = $1",
         "DELETE FROM server_bans WHERE username = $1",
+        "UPDATE server_passwords SET created_by = NULL WHERE created_by = $1",
     ] {
         sqlx::query(sql).bind(key).execute(&mut *tx).await?;
     }
@@ -779,6 +780,9 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         "DELETE FROM pings WHERE username = $1",
         "DELETE FROM pings WHERE actor = $1",
         "DELETE FROM reactions WHERE username = $1",
+        "UPDATE server_passwords SET created_by = NULL WHERE created_by = $1",
+        "UPDATE messages SET pinned_by = NULL WHERE pinned_by = $1",
+        "DELETE FROM read_state WHERE username = $1",
         "DELETE FROM users WHERE username = $1",
     ] {
         sqlx::query(sql).bind(key).execute(&mut **tx).await?;
@@ -1009,6 +1013,13 @@ mod tests {
             .execute(db)
             .await
             .expect("dm message");
+        for sql in [
+            "INSERT INTO server_passwords(server, hash, lookup, created_by, created_at) VALUES('rchat', '!lookup', 'l', 'bob', 1)",
+            "INSERT INTO read_state(username, scope, last_read) VALUES('bob', 'c1', 1)",
+            "INSERT INTO messages(channel_id, author, content, pinned_at, pinned_by, created_at) VALUES((SELECT id FROM channels WHERE server = 'rchat'), 'alice', 'pinned', 1, 'bob', 1)",
+        ] {
+            sqlx::query(sql).execute(db).await.expect(sql);
+        }
         let alice = get_user(db, "alice")
             .await
             .expect("query alice")
@@ -1071,6 +1082,21 @@ mod tests {
             )
             .await,
             0
+        );
+        for sql in [
+            "SELECT COUNT(*) FROM server_passwords WHERE created_by = 'bob'",
+            "SELECT COUNT(*) FROM read_state WHERE username = 'bob'",
+            "SELECT COUNT(*) FROM messages WHERE pinned_by = 'bob'",
+        ] {
+            assert_eq!(count(db, sql).await, 0, "{sql}");
+        }
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM server_passwords WHERE lookup = 'l' AND created_by IS NULL"
+            )
+            .await,
+            1
         );
         assert_eq!(
             count(db, "SELECT COUNT(*) FROM messages WHERE author = 'bob'").await,

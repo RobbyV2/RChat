@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -7,6 +8,7 @@ use sqlx::Row;
 use utoipa::ToSchema;
 
 use crate::api::access::ResolvedChannel;
+use crate::api::budget::Budget;
 use crate::api::{ApiError, Message, NAME_MAX, UserRef, placeholders};
 use crate::db::{Db, User, now};
 use crate::state::AppState;
@@ -268,6 +270,7 @@ pub async fn insert_pings(
         emoji,
     } = spec;
     let t = now();
+    let pool = crate::db::pool_key(db);
     let mut out = Vec::with_capacity(recipients.len());
     let mut tx = db.begin().await?;
     for username in recipients {
@@ -286,13 +289,7 @@ pub async fn insert_pings(
         .fetch_one(&mut *tx)
         .await?
         .try_get(0)?;
-        sqlx::query(
-            "DELETE FROM pings WHERE username = $1 AND seen = 0 AND id <= (SELECT p.id FROM pings p WHERE p.username = $1 AND p.seen = 0 ORDER BY p.id DESC LIMIT 1 OFFSET $2)",
-        )
-        .bind(username)
-        .bind(PINGS_MAX)
-        .execute(&mut *tx)
-        .await?;
+        trim_unseen(&mut tx, &pool, username).await?;
         out.push((
             username.clone(),
             Ping {
@@ -313,13 +310,132 @@ pub async fn insert_pings(
     Ok(out)
 }
 
+/// How many more unseen pings each recipient can get before `trim_unseen` has to count, per
+/// process. Each insert here lowers it; seeing or removing pings only adds real room, so the
+/// value stays on the safe side. It is counted again after `HEADROOM_SECS`, which covers
+/// pings that other processes insert.
+static HEADROOM: LazyLock<std::sync::Mutex<HashMap<String, (std::time::Instant, i64)>>> =
+    LazyLock::new(Default::default);
+const HEADROOM_SECS: u64 = 60;
+const HEADROOM_KEYS: usize = 100_000;
+/// Most extra pings one trim removes (after other processes went past the cap).
+const TRIM_MAX: i64 = 200;
+
+#[cfg(test)]
+thread_local! {
+    static COUNTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+fn headroom_left(key: &str) -> bool {
+    let mut map = match HEADROOM.lock() {
+        Ok(map) => map,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    match map.get_mut(key) {
+        Some((at, n)) if at.elapsed() < Duration::from_secs(HEADROOM_SECS) && *n > 0 => {
+            *n -= 1;
+            true
+        }
+        Some(_) | None => false,
+    }
+}
+
+fn set_headroom(key: String, n: i64) {
+    let mut map = match HEADROOM.lock() {
+        Ok(map) => map,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if map.len() >= HEADROOM_KEYS && !map.contains_key(&key) {
+        map.clear();
+    }
+    map.insert(key, (std::time::Instant::now(), n));
+}
+
+/// Keeps `username` at `PINGS_MAX` unseen pings. Past it, the oldest unseen pings of the actor
+/// who sent the most of them go first, so one sender can not push out the pings of others.
+/// While the cached headroom lasts, nothing is counted.
+async fn trim_unseen(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    pool: &str,
+    username: &str,
+) -> Result<(), ApiError> {
+    let key = format!("{pool}\n{username}");
+    if headroom_left(&key) {
+        return Ok(());
+    }
+    #[cfg(test)]
+    COUNTS.with(|c| c.set(c.get() + 1));
+    let unseen: i64 = sqlx::query(
+        "SELECT COUNT(*) FROM (SELECT 1 FROM pings WHERE username = $1 AND seen = 0 LIMIT $2) t",
+    )
+    .bind(username)
+    .bind(PINGS_MAX + TRIM_MAX)
+    .fetch_one(&mut **tx)
+    .await?
+    .try_get(0)?;
+    let mut over = unseen - PINGS_MAX;
+    while over > 0 {
+        let top: String = sqlx::query(
+            "SELECT actor FROM pings WHERE username = $1 AND seen = 0 GROUP BY actor ORDER BY COUNT(*) DESC, MIN(id) LIMIT 1",
+        )
+        .bind(username)
+        .fetch_one(&mut **tx)
+        .await?
+        .try_get(0)?;
+        let gone = sqlx::query(
+            "DELETE FROM pings WHERE id IN (SELECT id FROM pings WHERE username = $1 AND seen = 0 AND actor = $2 ORDER BY id LIMIT $3)",
+        )
+        .bind(username)
+        .bind(&top)
+        .bind(over)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected() as i64;
+        if gone == 0 {
+            break;
+        }
+        over -= gone;
+    }
+    set_headroom(key, (PINGS_MAX - unseen).max(0));
+    Ok(())
+}
+
+/// Pings from one actor to one recipient.
+static PAIR_PACE: LazyLock<Budget> =
+    LazyLock::new(|| Budget::new(PAIR_MAX, Duration::from_secs(60), 100_000));
+/// Pings from one actor to everyone.
+static ACTOR_PACE: LazyLock<Budget> =
+    LazyLock::new(|| Budget::new(ACTOR_MAX, Duration::from_secs(60), 100_000));
+
+pub const PAIR_MAX: u32 = 20;
+pub const ACTOR_MAX: u32 = 100;
+
+/// The recipients an actor may still ping in this minute. The message is stored either way.
+fn paced(db: &Db, actor: &str, recipients: &[String]) -> Vec<String> {
+    let pool = crate::db::pool_key(db);
+    recipients
+        .iter()
+        .filter(|r| {
+            !ACTOR_PACE.spent(&format!("{pool}\n{actor}"))
+                && PAIR_PACE.take(&format!("{pool}\n{actor}\n{r}"))
+                && ACTOR_PACE.take(&format!("{pool}\n{actor}"))
+        })
+        .cloned()
+        .collect()
+}
+
 /// Stores the pings (see `insert_pings`) and sends each recipient's connections a `ping` event.
+/// Each actor is paced per recipient and in total; pings past the pace are dropped.
 pub async fn create_pings(
     state: &AppState,
     spec: &PingSpec<'_>,
     recipients: &[String],
 ) -> Result<Vec<Ping>, ApiError> {
-    let stored = insert_pings(&state.db, spec, recipients).await?;
+    let recipients = paced(&state.db, &spec.actor.username, recipients);
+    if recipients.is_empty() {
+        return Ok(Vec::new());
+    }
+    let stored = insert_pings(&state.db, spec, &recipients).await?;
     let mut out = Vec::with_capacity(stored.len());
     for (username, ping) in stored {
         state.hub.broadcast(WsEvent::Ping {
@@ -730,6 +846,145 @@ mod tests {
             .await
             .expect("delete");
         assert_eq!(count("SELECT COUNT(*) FROM pings").await, 0);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_unseen_cap_counts_only_when_the_headroom_is_used_up() {
+        let (state, path) = temp_state("ping_headroom").await;
+        let db = &state.db;
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
+            .fetch_one(db)
+            .await
+            .expect("general")
+            .try_get(0)
+            .expect("id");
+        let mid: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'alice', 'hi', 1) RETURNING id")
+            .bind(cid)
+            .fetch_one(db)
+            .await
+            .expect("message")
+            .try_get(0)
+            .expect("id");
+        let message =
+            crate::api::messages::load_message(db, mid, crate::api::messages::Quotes::Skip)
+                .await
+                .expect("load")
+                .expect("message");
+        let alice = mem_user("alice", false);
+        let spec = PingSpec {
+            kind: PingKind::Mention,
+            scope: format!("c{cid}"),
+            server: Some("rchat".to_string()),
+            message: &message,
+            actor: &alice,
+            emoji: None,
+        };
+        let counts = || COUNTS.with(|c| c.get());
+        let before = counts();
+        for _ in 0..50 {
+            insert_pings(db, &spec, &["bob".to_string()])
+                .await
+                .expect("insert");
+        }
+        assert_eq!(counts() - before, 1, "one count, then the cached headroom");
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1100) INSERT INTO pings(username, kind, scope, message_id, actor, created_at) SELECT 'dave', 'mention', 'c1', $1, 'other', 1 FROM n")
+            .bind(mid)
+            .execute(db)
+            .await
+            .expect("pings from another process");
+        insert_pings(db, &spec, &["dave".to_string()])
+            .await
+            .expect("insert");
+        let unseen: i64 =
+            sqlx::query("SELECT COUNT(*) FROM pings WHERE username = 'dave' AND seen = 0")
+                .fetch_one(db)
+                .await
+                .expect("count")
+                .try_get(0)
+                .expect("n");
+        assert_eq!(
+            unseen, PINGS_MAX,
+            "one trim removes everything past the cap"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_flooding_actor_is_paced_and_trims_only_its_own_pings() {
+        let (state, path) = temp_state("ping_pace").await;
+        let db = &state.db;
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
+            .fetch_one(db)
+            .await
+            .expect("general")
+            .try_get(0)
+            .expect("id");
+        let mid: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'spam', 'hi @bob', 1) RETURNING id")
+            .bind(cid)
+            .fetch_one(db)
+            .await
+            .expect("message")
+            .try_get(0)
+            .expect("id");
+        let message =
+            crate::api::messages::load_message(db, mid, crate::api::messages::Quotes::Skip)
+                .await
+                .expect("load")
+                .expect("message");
+        let spec_of = |actor: &'static User| PingSpec {
+            kind: PingKind::Mention,
+            scope: format!("c{cid}"),
+            server: Some("rchat".to_string()),
+            message: &message,
+            actor,
+            emoji: None,
+        };
+        let friend: &'static User = Box::leak(Box::new(mem_user("friend", false)));
+        let spam: &'static User = Box::leak(Box::new(mem_user("spam", false)));
+        insert_pings(db, &spec_of(friend), &["bob".to_string()])
+            .await
+            .expect("friend");
+        for _ in 0..PINGS_MAX + 3 {
+            insert_pings(db, &spec_of(spam), &["bob".to_string()])
+                .await
+                .expect("spam");
+        }
+        let count = |sql: &'static str| async move {
+            sqlx::query(sql)
+                .fetch_one(db)
+                .await
+                .expect(sql)
+                .try_get::<i64, _>(0)
+                .expect("n")
+        };
+        assert_eq!(
+            count("SELECT COUNT(*) FROM pings WHERE username = 'bob' AND seen = 0").await,
+            PINGS_MAX
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM pings WHERE username = 'bob' AND actor = 'friend'").await,
+            1,
+            "the flood pushed out only its own pings"
+        );
+        let mut paced = 0;
+        for _ in 0..PAIR_MAX + 5 {
+            paced += create_pings(&state, &spec_of(spam), &["carol".to_string()])
+                .await
+                .expect("create")
+                .len();
+        }
+        assert_eq!(paced, PAIR_MAX as usize, "one recipient per minute");
+        let others: Vec<String> = (0..ACTOR_MAX).map(|n| format!("u{n}")).collect();
+        let reached = create_pings(&state, &spec_of(spam), &others)
+            .await
+            .expect("create")
+            .len();
+        assert_eq!(
+            reached,
+            (ACTOR_MAX - PAIR_MAX) as usize,
+            "everyone per minute"
+        );
         done(state, path).await;
     }
 }

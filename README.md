@@ -177,3 +177,5 @@ Put settings in `.env.local`. Refer to `.env.local.example` for all settings. Th
 The relay uses UDP ports 49160 to 49415. Open them in the firewall. Reserve them so no other program uses them (`sysctl -w net.ipv4.ip_local_reserved_ports=49160-49415`).
 
 Data is not encrypted at rest. Anyone with the database file can read all messages and files.
+
+Rate limits and server password budgets count per client address, and password attempts also per network (IPv4 /24, IPv6 /48). People behind one shared address, like carrier NAT or a school, share them. Behind a proxy, set `TRUSTED_PROXIES`. See `.env.local.example`.

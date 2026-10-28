@@ -100,7 +100,6 @@ describe('media / embeds patching via patchMessage', () => {
       type: 'media_removed',
       ...scoped,
       message_id: 70,
-      filename: 'f.png',
       removed_by_author: true,
     })
     for (const key of ['c1', 't70']) {

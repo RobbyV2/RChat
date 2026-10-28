@@ -102,7 +102,6 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             dm_id: _,
             dm_users,
             message_id: _,
-            filename: _,
             removed_by_author: _,
         }
         | WsEvent::EmbedsResolved {

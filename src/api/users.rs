@@ -181,7 +181,12 @@ mod tests {
     ) -> Result<Profile, ApiError> {
         let mut headers = HeaderMap::new();
         if let Some(grant) = grant {
-            headers.insert("x-guest-grant", grant.parse().expect("grant header"));
+            headers.insert(
+                "x-guest-grant",
+                crate::api::test_util::test_grant(grant)
+                    .parse()
+                    .expect("grant header"),
+            );
         }
         profile(
             State(state.clone()),
@@ -233,8 +238,9 @@ mod tests {
             .await
             .expect("assign");
         sqlx::query(
-            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('g1', 'vault', 0, 4000000000)",
+            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, 'vault', 0, 4000000000)",
         )
+        .bind(crate::db::secret_key(&crate::api::test_util::test_grant("g1")))
         .execute(db)
         .await
         .expect("grant");

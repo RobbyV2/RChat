@@ -17,7 +17,7 @@ use tracing::{debug, warn};
 
 use crate::api::access::{
     servers_with_expired_passwords, ws_banned, ws_channel_read_since, ws_channel_view,
-    ws_channel_viewable, ws_grant_deadline, ws_server_open, ws_voice_channel,
+    ws_grant_deadline, ws_server_open, ws_voice_channel, ws_voice_viewable,
 };
 use crate::api::messages::{Quotes, load_broadcast, load_message};
 use crate::api::pings::{Ping, ThreadPings};
@@ -322,7 +322,6 @@ pub enum WsEvent {
         dm_id: Option<i64>,
         dm_users: Option<Vec<String>>,
         message_id: i64,
-        filename: String,
         removed_by_author: bool,
     },
     EmbedsResolved {
@@ -635,7 +634,10 @@ pub(crate) async fn evict_unviewable(state: &AppState, server: &str, channel_id:
             continue;
         }
         for user in users {
-            if !ws_channel_viewable(&state.read(), server, cid, Some(&user)).await {
+            let open = ws_server_open(&state.read(), server, Some(&user), false, None)
+                .await
+                .unwrap_or(false);
+            if !open || !ws_voice_viewable(&state.read(), server, cid, &user).await {
                 state.hub.evict_voice(&user, cid);
             }
         }
@@ -1186,7 +1188,7 @@ pub(crate) async fn repost(state: &AppState, op: Op) {
         Op::EvictVoice { user, channel_id } => {
             let allowed = match channel_now(&state.read(), channel_id).await {
                 Ok(Some((server, _))) => {
-                    ws_channel_viewable(&state.read(), &server, channel_id, Some(&user)).await
+                    ws_voice_viewable(&state.read(), &server, channel_id, &user).await
                 }
                 Ok(None) | Err(_) => false,
             };
@@ -1265,6 +1267,14 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             }
             if channel.server().via() == crate::api::access::Via::Staff {
                 return Err("Join this server to use voice".to_string());
+            }
+            if !channel
+                .member_rights(&state.read())
+                .await
+                .map_err(|e| e.1)?
+                .view
+            {
+                return Err("Channel not found".to_string());
             }
             let server = channel.server().name().to_string();
             let ends = state
@@ -1831,7 +1841,7 @@ async fn member_servers_of(db: &Db, user: &str) -> sqlx::Result<HashSet<String>>
 async fn token_live(db: &Db, token: Option<&str>) -> sqlx::Result<bool> {
     match token {
         Some(token) => Ok(sqlx::query("SELECT 1 FROM tokens WHERE token = $1")
-            .bind(token)
+            .bind(crate::db::secret_key(token))
             .fetch_optional(db)
             .await?
             .is_some()),
@@ -1843,7 +1853,7 @@ async fn session_of(db: &Db, token: &str) -> sqlx::Result<Option<bool>> {
     match sqlx::query(
         "SELECT u.appear_offline FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
     )
-    .bind(token)
+    .bind(crate::db::secret_key(token))
     .fetch_optional(db)
     .await?
     {
@@ -2720,7 +2730,7 @@ async fn run(state: AppState, mut socket: WebSocket) {
             let row = sqlx::query(
                 "SELECT u.username, u.is_site_admin, u.appear_offline FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
             )
-            .bind(token)
+            .bind(crate::db::secret_key(token))
             .fetch_optional(&state.read())
             .await;
             match row {
@@ -3178,7 +3188,6 @@ fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
             dm_id: _,
             dm_users: _,
             message_id: _,
-            filename: _,
             removed_by_author: _,
         } => scoped(server, channel_id),
         WsEvent::EmbedsResolved {
@@ -3303,7 +3312,6 @@ fn wants(
             dm_id: _,
             dm_users,
             message_id: _,
-            filename: _,
             removed_by_author: _,
         } => scoped(server, dm_users),
         WsEvent::EmbedsResolved {
@@ -4390,7 +4398,7 @@ mod tests {
         }
         exec(
             db,
-            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('g2', 'kept', 0, 4000000000)",
+            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('h:4d2f4b668cfc48e6059d36e91326bf87de39ba819f35450477bc1ce614a63bbd', 'kept', 0, 4000000000)",
         )
         .await;
         let mut guest = Access::new(None, false, HashSet::new());
@@ -4421,14 +4429,14 @@ mod tests {
             .unwrap()
             .try_get(0)
             .unwrap();
-        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at, password_id) VALUES('g1', 'tmp', 0, 4000000000, $1)")
+        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at, password_id) VALUES('h:711430f6164e93803d93428bc1fab80f41e213bb197689307de8606d437c3038', 'tmp', 0, 4000000000, $1)")
             .bind(id)
             .execute(db)
             .await
             .unwrap();
         exec(
             db,
-            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('g2', 'kept', 0, 4000000000)",
+            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('h:4d2f4b668cfc48e6059d36e91326bf87de39ba819f35450477bc1ce614a63bbd', 'kept', 0, 4000000000)",
         )
         .await;
         let mut guest = Access::new(None, false, HashSet::new());
@@ -4547,6 +4555,46 @@ mod tests {
         .await;
         state.hub.voice_leave("alice").await;
         assert_eq!(join("alice").await, Err("Channel not found".to_string()));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn site_admins_get_member_view_in_voice() {
+        let (state, path) = crate::api::test_util::temp_state("admin_voice_view").await;
+        let db = &state.db;
+        for name in ["alice", "root"] {
+            add_user_row(db, name).await;
+            sqlx::query("INSERT INTO members(server, username, is_admin, joined_at) VALUES('rchat', $1, 0, 0)")
+                .bind(name)
+                .execute(db)
+                .await
+                .expect("member");
+        }
+        exec(
+            db,
+            "UPDATE users SET is_site_admin = 1 WHERE username = 'root'",
+        )
+        .await;
+        let cid = insert_id(db, "INSERT INTO channels(server, name, kind, created_at, restrict_view) VALUES('rchat', 'staff', 'voice', 0, 1) RETURNING id").await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:alice', 1, 1, 1)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("rule");
+        let join = |user| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id: cid });
+        assert_eq!(
+            join("root").await,
+            Err("Channel not found".to_string()),
+            "a site admin who is a plain member can not join a hidden voice channel"
+        );
+        join("alice").await.expect("alice joins");
+        let _ = state.hub.voice_join("root", 2, "rchat", cid).await;
+        evict_unviewable(&state, "rchat", Some(cid)).await;
+        assert_eq!(
+            state.hub.rooms_in("rchat", None),
+            vec![(cid, vec!["alice".to_string()])],
+            "the recheck uses member rights too"
+        );
         crate::api::test_util::done(state, path).await;
     }
 
@@ -5623,13 +5671,13 @@ mod tests {
         add_user(db, "tia").await;
         exec(
             db,
-            "INSERT INTO tokens(token, username, created_at) VALUES('t1', 'tia', 0)",
+            "INSERT INTO tokens(token, username, created_at) VALUES('h:628b49d96dcde97a430dd4f597705899e09a968f793491e4b704cae33a40dc02', 'tia', 0)",
         )
         .await;
         assert!(token_live(db, Some("t1")).await.unwrap());
         assert!(!token_live(db, Some("t2")).await.unwrap());
         assert!(!token_live(db, None).await.unwrap());
-        exec(db, "DELETE FROM tokens WHERE token = 't1'").await;
+        exec(db, "DELETE FROM tokens WHERE token = 'h:628b49d96dcde97a430dd4f597705899e09a968f793491e4b704cae33a40dc02'").await;
         assert!(!token_live(db, Some("t1")).await.unwrap());
         crate::db::close(&state.db).await;
         assert!(token_live(db, Some("t1")).await.is_err());
@@ -5643,7 +5691,7 @@ mod tests {
         add_user(db, "tia").await;
         exec(
             db,
-            "INSERT INTO tokens(token, username, created_at) VALUES('t1', 'tia', 0), ('t2', 'tia', 0)",
+            "INSERT INTO tokens(token, username, created_at) VALUES('h:628b49d96dcde97a430dd4f597705899e09a968f793491e4b704cae33a40dc02', 'tia', 0), ('h:c44474038d459e40e4714afefa7bf8dae9f9834b22f5e8ec1dd434ecb62b512e', 'tia', 0)",
         )
         .await;
         let session = |token: &str| {
@@ -5653,7 +5701,7 @@ mod tests {
             access
         };
         let (mut tia, mut gone) = (session("t1"), session("t2"));
-        exec(db, "DELETE FROM tokens WHERE token = 't2'").await;
+        exec(db, "DELETE FROM tokens WHERE token = 'h:c44474038d459e40e4714afefa7bf8dae9f9834b22f5e8ec1dd434ecb62b512e'").await;
         assert!(tia.check_token(db).await && !tia.retry.pending());
         assert!(!gone.check_token(db).await);
         let dm = WsEvent::Message {
@@ -5862,7 +5910,7 @@ mod tests {
         add_user(db, "tia").await;
         exec(
             db,
-            "INSERT INTO tokens(token, username, created_at) VALUES('t1', 'tia', 0), ('t2', 'tia', 0)",
+            "INSERT INTO tokens(token, username, created_at) VALUES('h:628b49d96dcde97a430dd4f597705899e09a968f793491e4b704cae33a40dc02', 'tia', 0), ('h:c44474038d459e40e4714afefa7bf8dae9f9834b22f5e8ec1dd434ecb62b512e', 'tia', 0)",
         )
         .await;
         let session = |token: &str| {
@@ -5871,7 +5919,7 @@ mod tests {
             access
         };
         let (mut kept, mut gone) = (session("t1"), session("t2"));
-        exec(db, "DELETE FROM tokens WHERE token = 't2'").await;
+        exec(db, "DELETE FROM tokens WHERE token = 'h:c44474038d459e40e4714afefa7bf8dae9f9834b22f5e8ec1dd434ecb62b512e'").await;
         assert!(kept.refresh(&state, 1).await);
         assert!(!gone.refresh(&state, 2).await);
         assert!(!wants(
@@ -5927,7 +5975,6 @@ mod tests {
                 dm_id: None,
                 dm_users: dm_users.clone(),
                 message_id: 1,
-                filename: s("f"),
                 removed_by_author: false,
             });
             evs.push(WsEvent::EmbedsResolved {

@@ -2,7 +2,7 @@ use sqlx::Row;
 
 use crate::db::{
     ALL_PERMS, ChannelAccess, Db, GRANT_TOUCH_SECS, Perm, Restrict, User, fold_access, get_user,
-    guest_grant_ttl, now, perm_bits, perm_row, perm_subjects, queue_grant_touches,
+    guest_grant_ttl, now, perm_bits, perm_row, perm_subjects, queue_grant_touches, secret_key,
 };
 
 pub(super) async fn effective_perms(db: &Db, server: &str, user: &User) -> sqlx::Result<i64> {
@@ -185,15 +185,22 @@ pub(super) async fn channel_viewers(
         .collect())
 }
 
+/// Whether `username` can view the channel. With `as_member`, a site admin counts as a plain
+/// member.
 pub(super) async fn channel_viewable(
     db: &Db,
     server: &str,
     channel_id: i64,
     username: Option<&str>,
+    as_member: bool,
 ) -> bool {
     let user = match username {
         Some(name) => match get_user(db, name).await {
-            Ok(u) => u,
+            Ok(Some(user)) => Some(User {
+                is_site_admin: user.is_site_admin && !as_member,
+                ..user
+            }),
+            Ok(None) => None,
             Err(_) => return false,
         },
         None => None,
@@ -220,25 +227,31 @@ fn password_live(at: &str) -> String {
     )
 }
 
-pub(super) async fn grant_live(db: &Db, grant: &str, server: &str) -> sqlx::Result<bool> {
+/// Whether any of `grants` (raw values, as the client holds them) opens `server`. One query
+/// for the whole list.
+pub(super) async fn grants_open(db: &Db, grants: &[String], server: &str) -> sqlx::Result<bool> {
+    if grants.is_empty() {
+        return Ok(false);
+    }
     let t = now();
     let sql = format!(
-        "SELECT last_used_at FROM guest_grants WHERE \"grant\" = $1 AND server = $2 AND (last_used_at >= $3 OR (last_used_at = 0 AND created_at >= $3)) AND {}",
-        password_live("$4")
+        "SELECT \"grant\", last_used_at FROM guest_grants WHERE \"grant\" IN ({}) AND server = $1 AND (last_used_at >= $2 OR (last_used_at = 0 AND created_at >= $2)) AND {} LIMIT 1",
+        crate::api::placeholders(4, grants.len()),
+        password_live("$3")
     );
-    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(grant)
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(server)
         .bind(t - guest_grant_ttl())
-        .bind(t)
-        .fetch_optional(db)
-        .await?;
-    let Some(row) = row else {
+        .bind(t);
+    for grant in grants {
+        query = query.bind(secret_key(grant));
+    }
+    let Some(row) = query.fetch_optional(db).await? else {
         return Ok(false);
     };
-    let used: i64 = row.try_get(0)?;
+    let (key, used): (String, i64) = (row.try_get(0)?, row.try_get(1)?);
     if t - used >= GRANT_TOUCH_SECS {
-        queue_grant_touches(db, [grant.to_string()]);
+        queue_grant_touches(db, [key]);
     }
     Ok(true)
 }
@@ -257,7 +270,7 @@ pub(super) async fn live_grant_servers(db: &Db, grants: &[String]) -> sqlx::Resu
         .bind(t - guest_grant_ttl())
         .bind(t);
     for grant in grants {
-        query = query.bind(grant);
+        query = query.bind(secret_key(grant));
     }
     let rows = query.fetch_all(db).await?;
     let mut servers = Vec::with_capacity(rows.len());
@@ -582,7 +595,7 @@ mod tests {
             ("gone", t - ttl - 60),
         ] {
             sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, 'rchat', 0, $2)")
-                .bind(grant)
+                .bind(secret_key(grant))
                 .bind(used)
                 .execute(db)
                 .await
@@ -604,7 +617,7 @@ mod tests {
         );
         let used = |grant: &'static str| async move {
             sqlx::query("SELECT last_used_at FROM guest_grants WHERE \"grant\" = $1")
-                .bind(grant)
+                .bind(secret_key(grant))
                 .fetch_one(db)
                 .await
                 .expect("row")
@@ -624,6 +637,10 @@ mod tests {
         done(state, path).await;
     }
 
+    async fn grant_live(db: &Db, grant: &str, server: &str) -> sqlx::Result<bool> {
+        grants_open(db, &[grant.to_string()], server).await
+    }
+
     #[tokio::test]
     async fn legacy_grants_count_from_creation_and_failed_touches_requeue() {
         let (state, path) = temp_state("grant_legacy").await;
@@ -634,7 +651,7 @@ mod tests {
             sqlx::query(
                 "INSERT INTO guest_grants(\"grant\", server, created_at) VALUES($1, 'rchat', $2)",
             )
-            .bind(grant)
+            .bind(secret_key(grant))
             .bind(created)
             .execute(db)
             .await
@@ -644,9 +661,10 @@ mod tests {
         assert!(!grant_live(db, "old", "rchat").await.expect("old"));
         assert_eq!(sweep_stale(db).await.expect("sweep").guest_grants, 1);
         assert!(grant_live(db, "new", "rchat").await.expect("kept"));
-        queue_grant_touches(db, ["expired".to_string()]);
-        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('expired', 'rchat', 1, $1)")
+        queue_grant_touches(db, [secret_key("expired")]);
+        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($2, 'rchat', 1, $1)")
             .bind(t - ttl - 60)
+            .bind(secret_key("expired"))
             .execute(db)
             .await
             .expect("expired grant");
@@ -654,7 +672,10 @@ mod tests {
         assert!(
             count(
                 db,
-                "SELECT last_used_at FROM guest_grants WHERE \"grant\" = 'new'"
+                &format!(
+                    "SELECT last_used_at FROM guest_grants WHERE \"grant\" = '{}'",
+                    secret_key("new")
+                )
             )
             .await
                 >= t
@@ -662,15 +683,18 @@ mod tests {
         assert!(
             count(
                 db,
-                "SELECT last_used_at FROM guest_grants WHERE \"grant\" = 'expired'"
+                &format!(
+                    "SELECT last_used_at FROM guest_grants WHERE \"grant\" = '{}'",
+                    secret_key("expired")
+                )
             )
             .await
                 < t - ttl
         );
-        queue_grant_touches(db, ["new".to_string()]);
+        queue_grant_touches(db, [secret_key("new")]);
         close(db).await;
         assert!(flush_grant_touches(db).await.is_err());
-        assert!(grant_touch_queued(db, "new"));
+        assert!(grant_touch_queued(db, &secret_key("new")));
         done(state, path).await;
     }
 }

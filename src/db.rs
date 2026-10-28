@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, server
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, perms INTEGER NOT NULL DEFAULT 0, joined_at INTEGER NOT NULL, joined_via INTEGER, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
-CREATE TABLE IF NOT EXISTS channel_perms(channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view INTEGER NOT NULL DEFAULT 1, can_send INTEGER NOT NULL DEFAULT 1, can_read_history INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(channel_id, subject));
+CREATE TABLE IF NOT EXISTS channel_perms(channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view INTEGER NOT NULL DEFAULT 1, can_send INTEGER NOT NULL DEFAULT 1, can_read_history INTEGER NOT NULL DEFAULT 1, restrict_set INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(channel_id, subject));
 CREATE TABLE IF NOT EXISTS dms(id INTEGER PRIMARY KEY AUTOINCREMENT, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id INTEGER NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
 CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER REFERENCES channels(id) ON DELETE CASCADE, dm_id INTEGER REFERENCES dms(id) ON DELETE CASCADE, thread_root_id INTEGER REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed INTEGER NOT NULL DEFAULT 0, media_spoiler INTEGER NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at INTEGER, media_size INTEGER, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at INTEGER, call_ended_at INTEGER, call_outcome TEXT, reply_to INTEGER, reply_mention INTEGER NOT NULL DEFAULT 0, edited_at INTEGER, fwd_author TEXT, fwd_created_at INTEGER, fwd_source_id INTEGER, fwd_origin TEXT, fwd_dropped TEXT, pinned_at INTEGER, pinned_by TEXT, pin_message_id INTEGER, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB, uploader TEXT, uploaded_at INTEGER NOT NULL);
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS embeds(url TEXT PRIMARY KEY, site_name TEXT, title TEXT, description TEXT, image_url TEXT, fetched_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS message_embeds(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, ord INTEGER NOT NULL, url TEXT NOT NULL, banner_removed INTEGER NOT NULL DEFAULT 0, removed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(message_id, ord));
 CREATE TABLE IF NOT EXISTS interactions(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, last_at INTEGER NOT NULL, PRIMARY KEY(server, username));
-CREATE TABLE IF NOT EXISTS guest_grants(\"grant\" TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL DEFAULT 0, password_id INTEGER);
+CREATE TABLE IF NOT EXISTS guest_grants(\"grant\" TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL DEFAULT 0, password_id INTEGER, network TEXT);
 CREATE TABLE IF NOT EXISTS server_passwords(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, label TEXT, hash TEXT NOT NULL, lookup TEXT NOT NULL, created_by TEXT, created_at INTEGER NOT NULL, expires_at INTEGER, max_uses INTEGER, uses INTEGER NOT NULL DEFAULT 0, revoked_at INTEGER, used_up_at INTEGER, UNIQUE(server, lookup));
 CREATE TABLE IF NOT EXISTS read_state(username TEXT NOT NULL, scope TEXT NOT NULL, last_read INTEGER NOT NULL, PRIMARY KEY(username, scope));
 CREATE TABLE IF NOT EXISTS server_bans(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, banned_by TEXT, created_at INTEGER NOT NULL, PRIMARY KEY(server, username));
@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS channels(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMA
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin BIGINT NOT NULL DEFAULT 0, perms BIGINT NOT NULL DEFAULT 0, joined_at BIGINT NOT NULL, joined_via BIGINT, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms BIGINT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
-CREATE TABLE IF NOT EXISTS channel_perms(channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view BIGINT NOT NULL DEFAULT 1, can_send BIGINT NOT NULL DEFAULT 1, can_read_history BIGINT NOT NULL DEFAULT 1, PRIMARY KEY(channel_id, subject));
+CREATE TABLE IF NOT EXISTS channel_perms(channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view BIGINT NOT NULL DEFAULT 1, can_send BIGINT NOT NULL DEFAULT 1, can_read_history BIGINT NOT NULL DEFAULT 1, restrict_set BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(channel_id, subject));
 CREATE TABLE IF NOT EXISTS dms(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id BIGINT NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
 CREATE TABLE IF NOT EXISTS messages(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, channel_id BIGINT REFERENCES channels(id) ON DELETE CASCADE, dm_id BIGINT REFERENCES dms(id) ON DELETE CASCADE, thread_root_id BIGINT REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed BIGINT NOT NULL DEFAULT 0, media_spoiler BIGINT NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at BIGINT, media_size BIGINT, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at BIGINT, call_ended_at BIGINT, call_outcome TEXT, reply_to BIGINT, reply_mention BIGINT NOT NULL DEFAULT 0, edited_at BIGINT, fwd_author TEXT, fwd_created_at BIGINT, fwd_source_id BIGINT, fwd_origin TEXT, fwd_dropped TEXT, pinned_at BIGINT, pinned_by TEXT, pin_message_id BIGINT, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size BIGINT NOT NULL, data BYTEA, uploader TEXT, uploaded_at BIGINT NOT NULL);
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS embeds(url TEXT PRIMARY KEY, site_name TEXT, title TEXT, description TEXT, image_url TEXT, fetched_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS message_embeds(message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, ord BIGINT NOT NULL, url TEXT NOT NULL, banner_removed BIGINT NOT NULL DEFAULT 0, removed BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(message_id, ord));
 CREATE TABLE IF NOT EXISTS interactions(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, last_at BIGINT NOT NULL, PRIMARY KEY(server, username));
-CREATE TABLE IF NOT EXISTS guest_grants(\"grant\" TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, created_at BIGINT NOT NULL, last_used_at BIGINT NOT NULL DEFAULT 0, password_id BIGINT);
+CREATE TABLE IF NOT EXISTS guest_grants(\"grant\" TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, created_at BIGINT NOT NULL, last_used_at BIGINT NOT NULL DEFAULT 0, password_id BIGINT, network TEXT);
 CREATE TABLE IF NOT EXISTS server_passwords(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, label TEXT, hash TEXT NOT NULL, lookup TEXT NOT NULL, created_by TEXT, created_at BIGINT NOT NULL, expires_at BIGINT, max_uses BIGINT, uses BIGINT NOT NULL DEFAULT 0, revoked_at BIGINT, used_up_at BIGINT, UNIQUE(server, lookup));
 CREATE TABLE IF NOT EXISTS read_state(username TEXT NOT NULL, scope TEXT NOT NULL, last_read BIGINT NOT NULL, PRIMARY KEY(username, scope));
 CREATE TABLE IF NOT EXISTS server_bans(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, banned_by TEXT, created_at BIGINT NOT NULL, PRIMARY KEY(server, username));
@@ -211,20 +211,51 @@ static FTS_READY: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::defa
 static READERS: LazyLock<Mutex<HashMap<String, Db>>> = LazyLock::new(Default::default);
 static PEPPERS: LazyLock<Mutex<HashMap<String, Vec<u8>>>> = LazyLock::new(Default::default);
 
+/// A secret from the environment: `NAME`, or the contents of the file named by `NAME_FILE`.
+/// Blank values count as unset.
+pub fn env_secret(name: &str) -> Option<String> {
+    let direct = std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+    let file = std::env::var(format!("{name}_FILE"))
+        .ok()
+        .filter(|p| !p.trim().is_empty())
+        .and_then(|p| match std::fs::read_to_string(p.trim()) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::error!("{name}_FILE can not be read: {e}");
+                None
+            }
+        });
+    direct
+        .or(file)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// The pepper of server password lookups: `PASSWORD_PEPPER` when it is set, else the value
+/// stored in the database at first start.
 pub async fn pepper(db: &Db) -> sqlx::Result<Vec<u8>> {
     let key = pool_key(db);
     if let Some(pepper) = PEPPERS.lock().ok().and_then(|m| m.get(&key).cloned()) {
         return Ok(pepper);
     }
-    let value: String = sqlx::query("SELECT value FROM settings WHERE key = 'password_pepper'")
-        .fetch_one(db)
-        .await?
-        .try_get(0)?;
+    let value: String = match env_secret("PASSWORD_PEPPER") {
+        Some(value) => value,
+        None => sqlx::query("SELECT value FROM settings WHERE key = 'password_pepper'")
+            .fetch_one(db)
+            .await?
+            .try_get(0)?,
+    };
     let pepper = value.into_bytes();
     if let Ok(mut peppers) = PEPPERS.lock() {
         peppers.insert(key, pepper.clone());
     }
     Ok(pepper)
+}
+
+/// Stored form of a bearer secret (session token or guest grant): `h:` and the hex SHA-256.
+/// The database never holds the secret itself.
+pub fn secret_key(raw: &str) -> String {
+    format!("h:{}", hex::encode(Sha256::digest(raw.as_bytes())))
 }
 
 pub fn reader(db: &Db) -> Db {
@@ -376,6 +407,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("channels", "restrict_view {INT} NOT NULL DEFAULT 0"),
     ("channels", "restrict_send {INT} NOT NULL DEFAULT 0"),
     ("messages", "media_sha256 TEXT"),
+    ("channel_perms", "restrict_set {INT} NOT NULL DEFAULT 0"),
+    ("guest_grants", "network TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -394,9 +427,99 @@ const BACKFILLS: &[(&str, &str, &str)] = &[
         "last_used_at",
         "UPDATE guest_grants SET last_used_at = $1",
     ),
+    (
+        "channel_perms",
+        "restrict_set",
+        "UPDATE channel_perms SET restrict_set = 1 WHERE EXISTS(SELECT 1 FROM settings WHERE key = 'restrict_backfill_v1')",
+    ),
 ];
 
 const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
+
+/// The newest schema this binary knows. Raise it with every schema change (new tables, columns,
+/// indexes or data conversions), or older binaries of this line keep starting on a database they
+/// do not understand. A database marked with a newer version was upgraded by a newer binary,
+/// and this one refuses to start on it.
+/// 1: hashed secrets and the 0.3.0 indexes. 2: `channel_perms.restrict_set` and
+/// `guest_grants.network`.
+pub const SCHEMA_VERSION: i64 = 2;
+
+/// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
+const SQLITE_LATE: &[&str] = &[
+    "CREATE INDEX IF NOT EXISTS idx_server_passwords_revoked ON server_passwords(revoked_at) WHERE revoked_at IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_server_passwords_expires ON server_passwords(expires_at) WHERE expires_at IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_server_passwords_used_up ON server_passwords(used_up_at) WHERE used_up_at IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_users_display_lower ON users(lower(display_name))",
+    "CREATE INDEX IF NOT EXISTS idx_reactions_agg ON reactions(message_id, emoji, created_at, username)",
+    "CREATE INDEX IF NOT EXISTS idx_pings_kept ON pings(username, id) WHERE seen <> 0",
+    "CREATE INDEX IF NOT EXISTS idx_messages_system_channel ON messages(channel_id, created_at) WHERE kind IN ('join','leave')",
+    "CREATE INDEX IF NOT EXISTS idx_messages_pin_notice ON messages(pin_message_id, created_at) WHERE kind = 'pin'",
+    "CREATE INDEX IF NOT EXISTS idx_guest_grants_network ON guest_grants(server, network) WHERE network IS NOT NULL",
+];
+
+const POSTGRES_LATE: &[&str] = &[
+    "CREATE INDEX IF NOT EXISTS idx_server_passwords_revoked ON server_passwords(revoked_at) WHERE revoked_at IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_server_passwords_expires ON server_passwords(expires_at) WHERE expires_at IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_server_passwords_used_up ON server_passwords(used_up_at) WHERE used_up_at IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_users_display_lower ON users((lower(display_name) COLLATE \"C\"))",
+    "CREATE INDEX IF NOT EXISTS idx_reactions_agg ON reactions(message_id, emoji, created_at, username)",
+    "CREATE INDEX IF NOT EXISTS idx_pings_kept ON pings(username, id) WHERE seen <> 0",
+    "CREATE INDEX IF NOT EXISTS idx_messages_system_channel ON messages(channel_id, created_at) WHERE kind IN ('join','leave')",
+    "CREATE INDEX IF NOT EXISTS idx_messages_pin_notice ON messages(pin_message_id, created_at) WHERE kind = 'pin'",
+    "CREATE INDEX IF NOT EXISTS idx_guest_grants_network ON guest_grants(server, network) WHERE network IS NOT NULL",
+];
+
+/// Placeholder for `server_passwords.hash`: extra passwords are checked through `lookup`
+/// only, so no second verifier is kept.
+pub const NO_EXTRA_HASH: &str = "!lookup";
+
+async fn schema_version(conn: &mut AnyConnection) -> anyhow::Result<i64> {
+    let have: Option<String> =
+        sqlx::query("SELECT value FROM settings WHERE key = 'schema_version'")
+            .fetch_optional(&mut *conn)
+            .await?
+            .map(|r| r.try_get(0))
+            .transpose()?;
+    Ok(have.and_then(|v| v.trim().parse().ok()).unwrap_or(0))
+}
+
+const HASH_BATCH: i64 = 500;
+
+/// Replaces stored session tokens and guest grants that are still raw with their
+/// `secret_key`. Keyed on the stored form, so rows that an older binary writes are converted
+/// on the next start. The clients keep their raw values, which still match.
+async fn hash_stored_secrets(conn: &mut AnyConnection) -> anyhow::Result<()> {
+    for (table, col) in [("tokens", "token"), ("guest_grants", "\"grant\"")] {
+        let mut total = 0;
+        loop {
+            let sql = format!(
+                "SELECT {col} FROM {table} WHERE substr({col}, 1, 2) <> 'h:' LIMIT {HASH_BATCH}"
+            );
+            let raw: Vec<String> = sqlx::query(sqlx::AssertSqlSafe(sql))
+                .fetch_all(&mut *conn)
+                .await?
+                .iter()
+                .map(|r| r.try_get(0))
+                .collect::<Result<_, _>>()?;
+            if raw.is_empty() {
+                break;
+            }
+            let update = format!("UPDATE {table} SET {col} = $1 WHERE {col} = $2");
+            for value in &raw {
+                sqlx::query(sqlx::AssertSqlSafe(update.clone()))
+                    .bind(secret_key(value))
+                    .bind(value)
+                    .execute(&mut *conn)
+                    .await?;
+            }
+            total += raw.len();
+        }
+        if total > 0 {
+            tracing::info!("hashed {total} stored {table} rows");
+        }
+    }
+    Ok(())
+}
 
 async fn reconcile_columns(
     conn: &mut AnyConnection,
@@ -620,6 +743,7 @@ pub fn can_grant(actor: i64, actor_site_admin: bool, perms: i64) -> bool {
     actor_site_admin || (perms & ALL_PERMS & !actor) == 0
 }
 
+#[derive(Clone, Copy)]
 pub struct ChannelAccess {
     pub view: bool,
     pub send: bool,
@@ -859,6 +983,15 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .partition(|s| s.starts_with("CREATE TABLE"));
+    sqlx::query("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        .execute(&mut *conn)
+        .await?;
+    let version = schema_version(conn).await?;
+    if version > SCHEMA_VERSION {
+        anyhow::bail!(
+            "the database has schema version {version}, but this build only knows version {SCHEMA_VERSION}. A newer release upgraded it. Run that release or a newer one"
+        );
+    }
     for stmt in tables {
         sqlx::query(stmt).execute(&mut *conn).await?;
     }
@@ -866,6 +999,18 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
     for stmt in rest {
         sqlx::query(stmt).execute(&mut *conn).await?;
     }
+    let late = match is_sqlite {
+        true => SQLITE_LATE,
+        false => POSTGRES_LATE,
+    };
+    for stmt in late {
+        sqlx::query(*stmt).execute(&mut *conn).await?;
+    }
+    hash_stored_secrets(conn).await?;
+    sqlx::query("UPDATE server_passwords SET hash = $1 WHERE hash <> $1")
+        .bind(NO_EXTRA_HASH)
+        .execute(&mut *conn)
+        .await?;
     match is_sqlite {
         true => {
             for stmt in SQLITE_TRIGGERS {
@@ -901,6 +1046,7 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
             .await?;
         tracing::info!("backfilled channels.restrict_view on {n} channels with rules");
     }
+    restrict_old_rules(conn).await?;
     let t = now();
     sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
         .bind(t)
@@ -939,6 +1085,28 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
             .bind(value)
             .execute(&mut *conn)
             .await?;
+    }
+    sqlx::query("INSERT INTO settings(key, value) VALUES('schema_version', $1) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .bind(SCHEMA_VERSION.to_string())
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Rules that a binary without `restrict_view` wrote (`restrict_set` = 0) made their channel
+/// private there, so the channel needs the view restriction here too. Runs at every start, so
+/// rules that an older binary adds after the first upgrade are covered as well. Rules this
+/// binary writes are marked, so a channel an admin opened stays open.
+async fn restrict_old_rules(conn: &mut AnyConnection) -> sqlx::Result<()> {
+    let n = sqlx::query("UPDATE channels SET restrict_view = 1 WHERE restrict_view = 0 AND EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = channels.id AND cp.restrict_set = 0)")
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+    sqlx::query("UPDATE channel_perms SET restrict_set = 1 WHERE restrict_set = 0")
+        .execute(&mut *conn)
+        .await?;
+    if n > 0 {
+        tracing::info!("restricted {n} channels with rules from an older binary");
     }
     Ok(())
 }
@@ -1186,6 +1354,10 @@ pub const SERVER_PASSWORD_KEEP: i64 = 30 * 86400;
 
 pub const PING_KEEP: i64 = 30 * 86400;
 
+/// Most seen and retracted pings kept per recipient. Seen reaction pings stay until they age
+/// out so that taking a reaction back and adding it again does not ping again; this caps them.
+pub const PINGS_KEPT: i64 = 2000;
+
 pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
     let t = now();
     let stale_grants = delete_batched(
@@ -1228,10 +1400,11 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
         .await?,
         pings: delete_batched(
             db,
-            "DELETE FROM pings WHERE id IN (SELECT id FROM pings WHERE (seen <> 0 AND seen <> 2) OR created_at < $1 LIMIT $2)",
+            "DELETE FROM pings WHERE id IN (SELECT id FROM pings WHERE (seen <> 0 AND seen <> 2 AND kind <> 'reaction') OR created_at < $1 LIMIT $2)",
             t - PING_KEEP,
         )
-        .await?,
+        .await?
+            + trim_kept_pings(db).await?,
         config_shares: delete_batched(
             db,
             "DELETE FROM config_shares WHERE id IN (SELECT id FROM config_shares WHERE expires_at <= $1 LIMIT $2)",
@@ -1242,6 +1415,47 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
 }
 
 pub const PURGE_BATCH: i64 = 500;
+
+/// Recipients with more than `PINGS_KEPT` seen pings handled per sweep.
+const KEPT_USERS_MAX: i64 = 1000;
+
+/// Keeps the newest `PINGS_KEPT` seen and retracted pings of each recipient. One pass over the
+/// seen-ping index finds the recipients above the cap; only their pings are looked at.
+async fn trim_kept_pings(db: &Db) -> sqlx::Result<u64> {
+    let users = sqlx::query("SELECT username FROM pings WHERE seen <> 0 GROUP BY username HAVING COUNT(*) > $1 LIMIT $2")
+        .bind(PINGS_KEPT)
+        .bind(KEPT_USERS_MAX)
+        .fetch_all(db)
+        .await?;
+    let mut total = 0;
+    for row in &users {
+        let username: String = row.try_get(0)?;
+        let Some(cut) = sqlx::query("SELECT id FROM pings WHERE username = $1 AND seen <> 0 ORDER BY id DESC LIMIT 1 OFFSET $2")
+            .bind(&username)
+            .bind(PINGS_KEPT)
+            .fetch_optional(db)
+            .await?
+        else {
+            continue;
+        };
+        let cut: i64 = cut.try_get(0)?;
+        loop {
+            let n = sqlx::query("DELETE FROM pings WHERE id IN (SELECT id FROM pings WHERE username = $1 AND seen <> 0 AND id <= $2 LIMIT $3)")
+                .bind(&username)
+                .bind(cut)
+                .bind(PURGE_BATCH)
+                .execute(db)
+                .await?
+                .rows_affected();
+            total += n;
+            if n < PURGE_BATCH as u64 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+    Ok(total)
+}
 
 pub async fn purge_messages(db: &Db, cond: &'static str, key: &str) -> sqlx::Result<u64> {
     let sql = format!(
@@ -1596,6 +1810,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn guest_grant_networks_migrate_onto_an_old_database() {
+        let path = std::env::temp_dir().join(format!(
+            "rchat_grant_network_upgrade_{}.db",
+            std::process::id()
+        ));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_guest_grants_network",
+            "ALTER TABLE guest_grants DROP COLUMN network",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 1)",
+            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at, password_id) VALUES('h:old', 'club', 1, 7, 3)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM guest_grants WHERE \"grant\" = 'h:old' AND server = 'club' AND created_at = 1 AND last_used_at = 7 AND password_id = 3 AND network IS NULL").await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_guest_grants_network'").await,
+                1
+            );
+            close(&db).await;
+        }
+        wipe();
+    }
+
+    #[tokio::test]
     async fn server_passwords_migrate_onto_an_old_database() {
         let path = std::env::temp_dir().join(format!("rchat_pw_upgrade_{}.db", std::process::id()));
         let wipe = || {
@@ -1631,7 +1882,7 @@ mod tests {
                 1
             );
             assert_eq!(
-                count(&db, "SELECT COUNT(*) FROM guest_grants WHERE \"grant\" = 'g' AND password_id IS NULL AND last_used_at = 1").await,
+                count(&db, &format!("SELECT COUNT(*) FROM guest_grants WHERE \"grant\" = '{}' AND password_id IS NULL AND last_used_at = 1", secret_key("g"))).await,
                 1
             );
             assert_eq!(
@@ -1726,7 +1977,14 @@ mod tests {
                 1
             );
             assert_eq!(
-                count(&db, "SELECT COUNT(*) FROM tokens WHERE token = 'tok'").await,
+                count(
+                    &db,
+                    &format!(
+                        "SELECT COUNT(*) FROM tokens WHERE token = '{}' AND username = 'alice'",
+                        secret_key("tok")
+                    )
+                )
+                .await,
                 1
             );
             assert_eq!(
@@ -1805,7 +2063,7 @@ mod tests {
             );
             assert_eq!(
                 count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_pings_%'").await,
-                5
+                6
             );
             sqlx::query("INSERT INTO pings(username, kind, scope, server, message_id, actor, created_at) SELECT 'bob', 'mention', 'c' || channel_id, 'rchat', id, 'alice', 8 FROM messages WHERE author = 'alice'")
                 .execute(&db)
@@ -2024,6 +2282,7 @@ mod tests {
         for stmt in [
             "DROP INDEX idx_messages_channel_pins",
             "DROP INDEX idx_messages_dm_pins",
+            "DROP INDEX idx_messages_pin_notice",
             "ALTER TABLE messages DROP COLUMN pinned_at",
             "ALTER TABLE messages DROP COLUMN pinned_by",
             "ALTER TABLE messages DROP COLUMN pin_message_id",
@@ -2382,6 +2641,165 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_sweep_keeps_the_newest_seen_pings_of_recipients_above_the_cap() {
+        let path = std::env::temp_dir().join(format!("rchat_pings_kept_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        let t = now();
+        let mid = count(&db, "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', 'hi', 1 FROM channels WHERE server = 'rchat' RETURNING id").await;
+        for (user, n) in [("bob", PINGS_KEPT + 600), ("carol", 5)] {
+            sqlx::query(sqlx::AssertSqlSafe(format!("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {n}) INSERT INTO pings(username, kind, scope, message_id, actor, emoji, created_at, seen) SELECT '{user}', 'reaction', 'c1', $2, 'alice', 'x', $1, 1 FROM n")))
+                .bind(t)
+                .bind(mid)
+                .execute(&db)
+                .await
+                .expect("seen pings");
+        }
+        let newest = count(&db, "SELECT MAX(id) FROM pings WHERE username = 'bob'").await;
+        let swept = sweep_stale(&db).await.expect("sweep");
+        assert_eq!(swept.pings, 600);
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM pings WHERE username = 'bob'").await,
+            PINGS_KEPT
+        );
+        assert_eq!(
+            count(&db, "SELECT MAX(id) FROM pings WHERE username = 'bob'").await,
+            newest,
+            "the newest are kept"
+        );
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM pings WHERE username = 'carol'").await,
+            5
+        );
+        assert_eq!(sweep_stale(&db).await.expect("again").pings, 0);
+        close(&db).await;
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn rules_from_an_older_binary_restrict_their_channel_on_the_next_start() {
+        let path =
+            std::env::temp_dir().join(format!("rchat_restrict_set_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let view = |name: &str| format!("SELECT restrict_view FROM channels WHERE name = '{name}'");
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 3)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'opened', 'text', 3)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'legacy', 'text', 3)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'later', 'voice', 3)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'plain', 'text', 3)",
+            "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history, restrict_set) VALUES((SELECT id FROM channels WHERE name = 'opened'), 'u:bob', 0, 0, 0, 1)",
+            "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES((SELECT id FROM channels WHERE name = 'legacy'), 'u:bob', 1, 1, 1)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        let db = open(path.to_str()).await.expect("after the old binary");
+        assert_eq!(
+            count(&db, &view("legacy")).await,
+            1,
+            "a rule an older binary wrote after the first backfill restricts its channel"
+        );
+        assert_eq!(
+            count(&db, &view("opened")).await,
+            0,
+            "a channel with only marked rules stays open"
+        );
+        assert_eq!(count(&db, &view("plain")).await, 0);
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM channel_perms WHERE restrict_set = 0"
+            )
+            .await,
+            0
+        );
+        for stmt in [
+            "UPDATE channels SET restrict_view = 0 WHERE name = 'legacy'",
+            "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES((SELECT id FROM channels WHERE name = 'later'), 'u:bob', 1, 1, 1)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("later boot");
+            assert_eq!(
+                count(&db, &view("legacy")).await,
+                0,
+                "an admin who opens it after the upgrade keeps it open"
+            );
+            assert_eq!(count(&db, &view("later")).await, 1, "voice channels too");
+            assert_eq!(count(&db, &view("opened")).await, 0);
+            close(&db).await;
+        }
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn restrict_marks_are_added_to_a_database_that_was_already_upgraded() {
+        let path =
+            std::env::temp_dir().join(format!("rchat_restrict_mark_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "ALTER TABLE channel_perms DROP COLUMN restrict_set",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 3)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'opened', 'text', 3)",
+            "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES((SELECT id FROM channels WHERE name = 'opened'), 'u:bob', 0, 1, 1)",
+            "UPDATE settings SET value = '1' WHERE key = 'schema_version'",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT restrict_view FROM channels WHERE name = 'opened'"
+                )
+                .await,
+                0,
+                "rules from a binary that knew restrict_view keep an opened channel open"
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM channel_perms WHERE restrict_set = 1"
+                )
+                .await,
+                1
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            close(&db).await;
+        }
+        wipe();
+    }
+
+    #[tokio::test]
     async fn reply_columns_are_added_to_an_old_database() {
         let path =
             std::env::temp_dir().join(format!("rchat_reply_upgrade_{}.db", std::process::id()));
@@ -2503,7 +2921,7 @@ mod tests {
             );
             assert_eq!(
                 count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_reactions_%'").await,
-                2
+                3
             );
             assert_eq!(
                 count(&db, "SELECT COUNT(*) FROM reactions").await,
@@ -2785,5 +3203,112 @@ mod tests {
             .expect("other user");
         assert_eq!(count(db, "SELECT COUNT(*) FROM interactions").await, 2);
         done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn secrets_are_hashed_in_place_and_newer_databases_are_refused() {
+        let path =
+            std::env::temp_dir().join(format!("rchat_secret_upgrade_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in SQLITE_LATE {
+            let name = stmt
+                .split_whitespace()
+                .nth(5)
+                .expect("index name")
+                .to_string();
+            sqlx::query(sqlx::AssertSqlSafe(format!("DROP INDEX {name}")))
+                .execute(&db)
+                .await
+                .expect("drop index");
+        }
+        for stmt in [
+            "DELETE FROM settings WHERE key = 'schema_version'",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'h', 'text', 'identicon', 5)",
+            "INSERT INTO tokens(token, username, created_at) VALUES('raw-token', 'alice', 5)",
+            "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('club', 'Club', 'alice', 'hash', 1)",
+            "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('raw-grant', 'club', 1, 1)",
+            "INSERT INTO server_passwords(server, hash, lookup, created_by, created_at) VALUES('club', '$argon2id$v=19$old', 'lookup', 'alice', 1)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            let user = sqlx::query("SELECT u.username FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1")
+                .bind(secret_key("raw-token"))
+                .fetch_optional(&db)
+                .await
+                .expect("lookup");
+            assert!(user.is_some(), "the old login still works");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM tokens WHERE token = 'raw-token'").await,
+                0
+            );
+            assert_eq!(
+                count(&db, &format!("SELECT COUNT(*) FROM guest_grants WHERE \"grant\" = '{}' AND server = 'club' AND last_used_at = 1", secret_key("raw-grant"))).await,
+                1
+            );
+            assert_eq!(
+                count(&db, &format!("SELECT COUNT(*) FROM server_passwords WHERE hash = '{NO_EXTRA_HASH}' AND lookup = 'lookup'")).await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_server_passwords_revoked', 'idx_server_passwords_expires', 'idx_server_passwords_used_up', 'idx_users_display_lower', 'idx_reactions_agg', 'idx_pings_kept', 'idx_messages_pin_notice', 'idx_messages_system_channel')").await,
+                8
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            close(&db).await;
+        }
+        let db = open(path.to_str()).await.expect("open");
+        sqlx::query("UPDATE settings SET value = $1 WHERE key = 'schema_version'")
+            .bind((SCHEMA_VERSION + 1).to_string())
+            .execute(&db)
+            .await
+            .expect("newer");
+        close(&db).await;
+        let refused = open(path.to_str())
+            .await
+            .map(|_| ())
+            .expect_err("older build");
+        assert!(refused.to_string().contains("schema version"), "{refused}");
+        wipe();
+    }
+
+    #[test]
+    fn env_secrets_come_from_the_variable_or_a_file() {
+        let name = format!("RCHAT_TEST_SECRET_{}", std::process::id());
+        assert_eq!(env_secret(&name), None);
+        let file = std::env::temp_dir().join(format!("rchat_secret_{}", std::process::id()));
+        std::fs::write(&file, "from-file\n").expect("write");
+        unsafe {
+            std::env::set_var(format!("{name}_FILE"), &file);
+        }
+        assert_eq!(env_secret(&name).as_deref(), Some("from-file"));
+        unsafe {
+            std::env::set_var(&name, "  direct ");
+        }
+        assert_eq!(env_secret(&name).as_deref(), Some("direct"));
+        unsafe {
+            std::env::set_var(&name, " ");
+            std::env::remove_var(format!("{name}_FILE"));
+        }
+        assert_eq!(env_secret(&name), None, "blank counts as unset");
+        unsafe {
+            std::env::remove_var(&name);
+        }
+        let _ = std::fs::remove_file(file);
     }
 }
