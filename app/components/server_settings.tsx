@@ -42,6 +42,7 @@ import { UserAvatar } from './user_avatar'
 import { ServerAccessSection, passwordName } from './server_access'
 import { ColorField } from './color_field'
 import { ServerHeader } from './server_header'
+import { ServerSystemMessages } from './system_messages'
 import {
   BANNER_PRESETS,
   NAME_PRESETS,
@@ -1338,6 +1339,7 @@ function Settings({ server }: { server: string }) {
           </form>
           <FieldError message={renameError} />
           <ServerAppearance server={server} />
+          <ServerSystemMessages server={server} />
           <ServerAccessSection
             server={server}
             hasPassword={detail.has_password}
@@ -1369,7 +1371,10 @@ function Settings({ server }: { server: string }) {
         </>
       )}
       {server === 'rchat' && hasPerm(perms, Perm.DeleteServer) && (
-        <ServerAppearance server={server} />
+        <>
+          <ServerAppearance server={server} />
+          <ServerSystemMessages server={server} />
+        </>
       )}
       {hasPerm(perms, Perm.ManageAdmins) && (
         <>

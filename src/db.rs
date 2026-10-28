@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NO
 CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NOT NULL, failures INTEGER NOT NULL, last_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at INTEGER NOT NULL, claimed_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
-CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count INTEGER NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count INTEGER NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id INTEGER, join_messages INTEGER NOT NULL DEFAULT 1, leave_messages INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, UNIQUE(server, name));
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, perms INTEGER NOT NULL DEFAULT 0, joined_at INTEGER NOT NULL, joined_via INTEGER, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms INTEGER NOT NULL DEFAULT 0);
@@ -85,6 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_reactions_username ON reactions(username);
 CREATE INDEX IF NOT EXISTS idx_messages_fwd_author ON messages(fwd_author) WHERE fwd_author IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_channel_pins ON messages(channel_id, pinned_at) WHERE pinned_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_dm_pins ON messages(dm_id, pinned_at) WHERE pinned_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_messages_system ON messages(author, kind, created_at) WHERE kind IN ('join','leave');
 CREATE INDEX IF NOT EXISTS idx_config_shares_owner ON config_shares(owner, expires_at);
 CREATE INDEX IF NOT EXISTS idx_config_shares_expires ON config_shares(expires_at);
 ";
@@ -100,7 +101,7 @@ CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NO
 CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NOT NULL, failures BIGINT NOT NULL, last_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at BIGINT NOT NULL, claimed_at BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
-CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count BIGINT NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, created_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count BIGINT NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id BIGINT, join_messages BIGINT NOT NULL DEFAULT 1, leave_messages BIGINT NOT NULL DEFAULT 1, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS channels(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, UNIQUE(server, name));
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin BIGINT NOT NULL DEFAULT 0, perms BIGINT NOT NULL DEFAULT 0, joined_at BIGINT NOT NULL, joined_via BIGINT, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms BIGINT NOT NULL DEFAULT 0);
@@ -164,6 +165,7 @@ CREATE INDEX IF NOT EXISTS idx_reactions_username ON reactions(username);
 CREATE INDEX IF NOT EXISTS idx_messages_fwd_author ON messages(fwd_author) WHERE fwd_author IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_channel_pins ON messages(channel_id, pinned_at) WHERE pinned_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_dm_pins ON messages(dm_id, pinned_at) WHERE pinned_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_messages_system ON messages(author, kind, created_at) WHERE kind IN ('join','leave');
 CREATE INDEX IF NOT EXISTS idx_config_shares_owner ON config_shares(owner, expires_at);
 CREATE INDEX IF NOT EXISTS idx_config_shares_expires ON config_shares(expires_at);
 ";
@@ -368,6 +370,9 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("messages", "pinned_at {INT}"),
     ("messages", "pinned_by TEXT"),
     ("messages", "pin_message_id {INT}"),
+    ("servers", "system_channel_id {INT}"),
+    ("servers", "join_messages {INT} NOT NULL DEFAULT 1"),
+    ("servers", "leave_messages {INT} NOT NULL DEFAULT 1"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -1990,6 +1995,76 @@ mod tests {
                     .expect("load")
                     .expect("notice");
             assert_eq!(notice.pin_message_id, Some(old));
+            close(&db).await;
+        }
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn system_message_columns_are_added_to_an_old_database() {
+        let path =
+            std::env::temp_dir().join(format!("rchat_system_upgrade_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let cols = "('system_channel_id', 'join_messages', 'leave_messages')";
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_messages_system",
+            "ALTER TABLE servers DROP COLUMN system_channel_id",
+            "ALTER TABLE servers DROP COLUMN join_messages",
+            "ALTER TABLE servers DROP COLUMN leave_messages",
+            "INSERT INTO servers(name, display_name, creator, banner_color, created_at) VALUES('old', 'Old', 'alice', '#123456', 3)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('old', 'talk', 'voice', 3)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('old', 'chat', 'text', 3)",
+            "INSERT INTO members(server, username, is_admin, joined_at) VALUES('old', 'alice', 1, 3)",
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES((SELECT id FROM channels WHERE name = 'chat'), 'alice', 'old message', 7)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        let present =
+            format!("SELECT COUNT(*) FROM pragma_table_info('servers') WHERE name IN {cols}");
+        let indexed = "SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_messages_system'";
+        assert_eq!(count(&db, &present).await, 0);
+        assert_eq!(count(&db, indexed).await, 0);
+        close(&db).await;
+        for round in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(count(&db, &present).await, 3);
+            assert_eq!(count(&db, indexed).await, 1);
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers WHERE system_channel_id IS NULL AND join_messages = 1 AND leave_messages = 1").await,
+                2,
+                "existing servers default to on, in the default channel"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'old' AND display_name = 'Old' AND creator = 'alice' AND banner_color = '#123456' AND created_at = 3").await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM messages WHERE content = 'old message' AND kind = 'user' AND created_at = 7").await,
+                1
+            );
+            if round == 0 {
+                let mut conn = db.acquire().await.expect("conn");
+                let posted = crate::api::system_messages::post_system(
+                    &mut conn,
+                    "old",
+                    "bob",
+                    crate::api::system_messages::SystemKind::Join,
+                )
+                .await
+                .expect("post");
+                assert!(posted.is_some());
+            }
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM messages m JOIN channels c ON c.id = m.channel_id WHERE c.name = 'chat' AND m.kind = 'join' AND m.author = 'bob' AND m.content = ''").await,
+                1,
+                "the join goes to the first text channel and survives a restart"
+            );
             close(&db).await;
         }
         wipe();

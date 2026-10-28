@@ -58,6 +58,8 @@ impl Modify for Bearer {
         super::passwords::list_passwords,
         super::passwords::create_password,
         super::passwords::revoke_password,
+        super::system_messages::get_system_messages,
+        super::system_messages::update_system_messages,
         super::servers::create_channel,
         super::servers::update_channel,
         super::servers::delete_channel,

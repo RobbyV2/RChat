@@ -678,7 +678,7 @@ impl ResolvedChannel {
             return Ok(());
         }
         let last: Option<i64> = sqlx::query(
-            "SELECT created_at FROM messages WHERE channel_id = $1 AND author = $2 ORDER BY id DESC LIMIT 1",
+            "SELECT created_at FROM messages WHERE channel_id = $1 AND author = $2 AND kind = 'user' ORDER BY id DESC LIMIT 1",
         )
         .bind(self.id)
         .bind(&user.username)
@@ -1136,7 +1136,7 @@ mod tests {
         (after.0 - before.0, after.1 - before.1)
     }
 
-    const HANDLERS: [(&str, &str); 17] = [
+    const HANDLERS: [(&str, &str); 18] = [
         ("servers.rs", include_str!("servers.rs")),
         ("passwords.rs", include_str!("passwords.rs")),
         ("messages.rs", include_str!("messages.rs")),
@@ -1154,6 +1154,7 @@ mod tests {
         ("pings.rs", include_str!("pings.rs")),
         ("reactions.rs", include_str!("reactions.rs")),
         ("pins.rs", include_str!("pins.rs")),
+        ("system_messages.rs", include_str!("system_messages.rs")),
     ];
 
     fn calls(code: &str, token: &str) -> bool {

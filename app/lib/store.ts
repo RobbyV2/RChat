@@ -84,6 +84,7 @@ import {
 } from './replies'
 import { applySed, lastEditable, type Sed } from './sed'
 import { unlinkPin, withPinnedAt, withoutPin } from './pins'
+import { isSystem, systemText } from './system_messages'
 import {
   canForward,
   clipOf,
@@ -4909,7 +4910,11 @@ export const useStore = create<RChatState>()((set, get) => {
           alertUser(
             m.author.display_name,
             channel ? `in #${channel}` : '',
-            m.kind === 'pin' ? 'Pinned a message' : m.content || m.media?.filename || 'Attachment',
+            m.kind === 'pin'
+              ? 'Pinned a message'
+              : isSystem(m)
+                ? systemText(m)
+                : m.content || m.media?.filename || 'Attachment',
             () => {
               if (dm_id !== null) void get().openDm(dm_id)
               else if (ev.server !== null && channel_id !== null)

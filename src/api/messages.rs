@@ -783,7 +783,7 @@ pub(crate) async fn recent_channel_messages(
 ) -> Result<Vec<Message>, ApiError> {
     page(
         db,
-        "m.channel_id = $1 AND m.thread_root_id IS NULL",
+        "m.channel_id = $1 AND m.thread_root_id IS NULL AND m.kind = 'user'",
         channel_id,
         &PageQuery {
             before: None,

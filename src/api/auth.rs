@@ -17,6 +17,7 @@ use utoipa::ToSchema;
 use crate::api::dms::dm_page;
 use crate::api::servers::{OkResp, ok};
 use crate::api::servers::{Page, my_servers_page};
+use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, ProfanityTarget,
     ServerSummary, UserRef, check_len, check_profanity, request_token, valid_color,
@@ -345,7 +346,8 @@ pub(crate) async fn words(Path(username): Path<String>) -> Json<WordsResp> {
 ///
 /// Registers a user with either a text password or 7 words from their word set, signs them in
 /// and returns a session token. The new user joins the default `rchat` server (emitting
-/// `member_joined` to its members and to the user) and gets their self DM. No authentication.
+/// `member_joined` to its members and to the user, plus its join message as `message` when join
+/// messages are on) and gets their self DM. No authentication.
 /// Strict and general rate-limit buckets.
 #[utoipa::path(post, path = "/api/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), `@`-containing, banned, taken or profanity-filtered username; empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; or a missing/invalid avatar color for `color` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn register(
@@ -411,6 +413,7 @@ pub(crate) async fn register(
     .bind(t)
     .execute(&mut *tx)
     .await?;
+    let notice = post_system(&mut tx, "rchat", &key, SystemKind::Join).await?;
     sqlx::query("INSERT INTO dms(user_a, user_b) VALUES($1, $2)")
         .bind(&key)
         .bind(&key)
@@ -441,6 +444,7 @@ pub(crate) async fn register(
             joined_via: None,
         },
     });
+    announce_system(&state, "rchat", notice).await;
     state.hub.broadcast(WsEvent::UserRegistered {
         user: UserRef::from_user(&user),
     });

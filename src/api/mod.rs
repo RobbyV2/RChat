@@ -14,6 +14,7 @@ pub mod pings;
 pub mod pins;
 pub mod reactions;
 pub mod servers;
+pub mod system_messages;
 pub mod users;
 
 use std::collections::{HashMap, HashSet};
@@ -556,8 +557,9 @@ pub struct Message {
     /// Link previews; empty until they are fetched, then delivered by the `embeds_resolved`
     /// WebSocket event and included in later reads.
     pub embeds: Vec<Embed>,
-    /// `user` for a normal message, `call` for a direct-message call log, or `pin` when someone
-    /// pinned a message (`pin_message_id`; empty `content`).
+    /// `user` for a normal message, `call` for a direct-message call log, `pin` when someone
+    /// pinned a message (`pin_message_id`; empty `content`), or `join` / `leave` when the
+    /// author joined or left the server (empty `content`; leaving includes kicks and bans).
     #[schema(example = "user")]
     pub kind: String,
     /// Call details when `kind` is `call`; `null` otherwise.
@@ -1369,6 +1371,11 @@ fn api_routes(
         .route(
             "/servers/{name}/passwords/{id}",
             delete(passwords::revoke_password),
+        )
+        .route(
+            "/servers/{name}/system_messages",
+            get(system_messages::get_system_messages)
+                .patch(system_messages::update_system_messages),
         )
         .route("/servers/{name}/kick", post(servers::kick_member))
         .route(

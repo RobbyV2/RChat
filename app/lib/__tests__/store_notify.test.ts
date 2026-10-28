@@ -183,6 +183,20 @@ describe('levels', () => {
     expect(toasts()).toEqual(['Alice|in #general|hello'])
   })
 
+  test('join and leave rows: unread, a toast with their line under All messages, no ping', () => {
+    const system = (id: number, kind: 'join' | 'leave'): WsEvent => {
+      const ev = inChannel(id, '')
+      return ev.type === 'message' ? { ...ev, message: { ...ev.message, kind } } : ev
+    }
+    dispatch(system(12, 'join'))
+    expect(st().notices).toEqual([])
+    expect(scopeUnread(st(), 'c1')).toBe(true)
+    expect(scopePingCount(st(), 'c1')).toBe(0)
+    st().setNotifyLevel(chan, 'all')
+    dispatch(system(13, 'leave'))
+    expect(toasts()).toEqual(['Alice|in #general|Alice left the server.'])
+  })
+
   test('a mention under All messages toasts once, as the ping', () => {
     st().setNotifyLevel(server, 'all')
     dispatch(inChannel(10, 'hi @bob'))

@@ -189,7 +189,7 @@ export interface Embed {
   banner_removed: boolean
 }
 
-export type MessageKind = 'user' | 'call' | 'pin'
+export type MessageKind = 'user' | 'call' | 'pin' | 'join' | 'leave'
 
 export type CallOutcome = 'missed' | 'declined' | 'completed'
 
@@ -221,6 +221,13 @@ export interface Message {
   pinned_at?: number | null
   // kind 'pin': the pinned message, null once it is deleted or older than your history
   pin_message_id?: number | null
+}
+
+export interface SystemMessages {
+  // null: the default channel (the server's first text channel)
+  channel_id: number | null
+  join_messages: boolean
+  leave_messages: boolean
 }
 
 export interface ForwardRef {

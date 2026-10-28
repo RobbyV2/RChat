@@ -15,6 +15,7 @@ use crate::api::admin::{fuzzy_match, is_fuzzy, like_pattern};
 use crate::api::auth::{hash_password, new_token};
 use crate::api::messages::recent_channel_messages;
 use crate::api::pings::forget_server_pings;
+use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message,
     NAME_MAX, OFFSET_MAX, Paged, ProfanityTarget, Role, RoleLimits, SLOWMODE_MAX, ServerDetail,
@@ -1716,7 +1717,16 @@ pub(crate) async fn get_invite(
     }))
 }
 
-async fn insert_member(db: &Db, access: &ServerAccess, username: &str) -> Result<bool, ApiError> {
+/// A membership `insert_member` created, with its join message when one was posted.
+struct NewMember {
+    notice: Option<i64>,
+}
+
+async fn insert_member(
+    db: &Db,
+    access: &ServerAccess,
+    username: &str,
+) -> Result<Option<NewMember>, ApiError> {
     let server = access.name();
     let mut tx = db.begin().await?;
     let inserted = sqlx::query(
@@ -1731,8 +1741,9 @@ async fn insert_member(db: &Db, access: &ServerAccess, username: &str) -> Result
     .rows_affected();
     if inserted > 0 {
         access.spend_ticket(&mut tx).await?;
+        let notice = post_system(&mut tx, server, username, SystemKind::Join).await?;
         tx.commit().await?;
-        return Ok(true);
+        return Ok(Some(NewMember { notice }));
     }
     let member = sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
         .bind(server)
@@ -1742,7 +1753,7 @@ async fn insert_member(db: &Db, access: &ServerAccess, username: &str) -> Result
         .is_some();
     tx.commit().await?;
     match member {
-        true => Ok(false),
+        true => Ok(None),
         false => Err(forbidden(BANNED)),
     }
 }
@@ -1758,8 +1769,10 @@ async fn insert_member(db: &Db, access: &ServerAccess, username: &str) -> Result
 /// hashed, also for names that do not exist). The body may be omitted (send no `Content-Type`).
 /// Requires a bearer token. A ban is only revealed (403) once access was proven: on servers
 /// without a password, with the correct password, or when you took part in the server before.
-/// Emits `member_joined` to the server and the joining user when a new membership was created.
-/// Join and general rate-limit buckets.
+/// Emits `member_joined` to the server and the joining user when a new membership was created,
+/// then a `join` system message (`message` event) in the server's system channel unless join
+/// messages are off or the same user got one in this server in the last 10 minutes. Join and
+/// general rate-limit buckets.
 #[utoipa::path(
     post,
     path = "/api/servers/{name}/join",
@@ -1799,22 +1812,29 @@ pub(crate) async fn join_server(
         0,
     )
     .await?;
-    if inserted {
+    if let Some(NewMember { notice }) = inserted {
         state.hub.broadcast(WsEvent::MemberJoined {
-            server: key,
+            server: key.clone(),
             member,
         });
+        announce_system(&state, &key, notice).await;
     }
     Ok(Json(detail))
 }
 
+/// A membership `end_membership` removed, with its leave message when one was posted.
+struct Ended {
+    notice: Option<i64>,
+}
+
 /// Ends `username`'s membership of `server` (leave, kick, ban): drops the member row, their
-/// roles there and their pings in the server. Returns how many member rows were removed.
+/// roles there and their pings in the server, and posts a leave message. Returns `None` when
+/// they were not a member.
 async fn end_membership(
     conn: &mut sqlx::AnyConnection,
     server: &str,
     username: &str,
-) -> sqlx::Result<u64> {
+) -> sqlx::Result<Option<Ended>> {
     let removed = sqlx::query("DELETE FROM members WHERE server = $1 AND username = $2")
         .bind(server)
         .bind(username)
@@ -1827,14 +1847,20 @@ async fn end_membership(
         .execute(&mut *conn)
         .await?;
     forget_server_pings(conn, server, username).await?;
-    Ok(removed)
+    if removed == 0 {
+        return Ok(None);
+    }
+    let notice = post_system(conn, server, username, SystemKind::Leave).await?;
+    Ok(Some(Ended { notice }))
 }
 
 /// Leave a server
 ///
 /// Removes the caller from the server and drops their role assignments. Anyone may leave,
-/// including the creator and admins. Requires a bearer token. Emits `member_left` to the server
-/// and the caller, and the caller goes offline in the server. General rate-limit bucket.
+/// including the creator and admins. Requires a bearer token. Posts a `leave` system message
+/// (`message` event) in the server's system channel unless leave messages are off or the same
+/// user got one in this server in the last 10 minutes. Emits `member_left` to the server and the
+/// caller, and the caller goes offline in the server. General rate-limit bucket.
 #[utoipa::path(
     post,
     path = "/api/servers/{name}/leave",
@@ -1857,11 +1883,12 @@ pub(crate) async fn leave_server(
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
     let key = access.name().to_string();
     let mut tx = state.db.begin().await?;
-    let removed = end_membership(&mut tx, &key, &user.username).await?;
+    let ended = end_membership(&mut tx, &key, &user.username).await?;
     tx.commit().await?;
-    match removed {
-        0 => Err(bad("Not a member")),
-        _ => {
+    match ended {
+        None => Err(bad("Not a member")),
+        Some(Ended { notice }) => {
+            announce_system(&state, &key, notice).await;
             state.hub.broadcast(WsEvent::MemberLeft {
                 server: key.clone(),
                 username: user.username.clone(),
@@ -2413,6 +2440,7 @@ pub(crate) async fn update_channel(
 /// Delete a channel
 ///
 /// Deletes a channel. A server always keeps at least one channel and at least one text channel.
+/// When it was the channel for join and leave messages, they go to the default channel again.
 /// Requires the Manage channels permission in the channel's server. Emits `channel_deleted` to the
 /// server. General rate-limit bucket.
 #[utoipa::path(
@@ -2460,10 +2488,16 @@ pub(crate) async fn delete_channel(
             return Err(bad("Cannot delete the only text channel"));
         }
     }
+    let mut tx = state.db.begin().await?;
+    sqlx::query("UPDATE servers SET system_channel_id = NULL WHERE system_channel_id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM channels WHERE id = $1")
         .bind(id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     state.hub.broadcast(WsEvent::ChannelDeleted {
         server,
         channel_id: id,
@@ -2475,9 +2509,10 @@ pub(crate) async fn delete_channel(
 ///
 /// Removes `username` from the server and drops their role assignments. Requires the Kick server
 /// permission, and the target's server permissions must be a strict subset of yours (so you can't
-/// kick yourself or someone with the same permissions). Kicked users may rejoin. Emits
-/// `member_kicked` (with `banned: false`) to the server and the kicked user, who goes offline in
-/// the server. General rate-limit bucket.
+/// kick yourself or someone with the same permissions). Kicked users may rejoin. Posts a `leave`
+/// system message like leaving does (no reason shown). Emits `member_kicked` (with
+/// `banned: false`) to the server and the kicked user, who goes offline in the server. General
+/// rate-limit bucket.
 #[utoipa::path(
     post,
     path = "/api/servers/{name}/kick",
@@ -2507,11 +2542,12 @@ pub(crate) async fn kick_member(
     access.require_moderate(&state.db, &target).await?;
     let key = access.name().to_string();
     let mut tx = state.db.begin().await?;
-    let removed = end_membership(&mut tx, &key, &target).await?;
+    let ended = end_membership(&mut tx, &key, &target).await?;
     tx.commit().await?;
-    match removed {
-        0 => Err(not_found("Not a member")),
-        _ => {
+    match ended {
+        None => Err(not_found("Not a member")),
+        Some(Ended { notice }) => {
+            announce_system(&state, &key, notice).await;
             announce_kick(&state.hub, &key, &target, false);
             Ok(ok())
         }
@@ -2523,7 +2559,8 @@ pub(crate) async fn kick_member(
 /// Bans `username` from the server: they are removed with their roles dropped, taken out of the
 /// server's voice channels, and blocked from rejoining until unbanned. Works on non-members too,
 /// and banning someone already banned succeeds without changes. Requires the Kick server
-/// permission, and the target's server permissions must be a strict subset of yours. Emits
+/// permission, and the target's server permissions must be a strict subset of yours. Banning a
+/// member posts a `leave` system message like leaving does (no reason shown). Emits
 /// `member_kicked` (with `banned: true`) to the server and the user when they were a member,
 /// otherwise `server_banned` to the user. General rate-limit bucket.
 #[utoipa::path(
@@ -2570,14 +2607,17 @@ pub(crate) async fn ban_member(
     .bind(now())
     .execute(&mut *tx)
     .await?;
-    let removed = end_membership(&mut tx, &key, &target).await?;
+    let ended = end_membership(&mut tx, &key, &target).await?;
     tx.commit().await?;
-    match removed {
-        0 => state.hub.broadcast(WsEvent::ServerBanned {
+    match ended {
+        None => state.hub.broadcast(WsEvent::ServerBanned {
             server: key.clone(),
             username: target.clone(),
         }),
-        _ => announce_kick(&state.hub, &key, &target, true),
+        Some(Ended { notice }) => {
+            announce_system(&state, &key, notice).await;
+            announce_kick(&state.hub, &key, &target, true);
+        }
     }
     for (cid, users) in state.hub.rooms_in(&key, None) {
         if users.contains(&target) {
@@ -4544,15 +4584,22 @@ mod tests {
             0
         );
         assert!(
-            !insert_member(db, &club, "alice")
+            insert_member(db, &club, "alice")
                 .await
                 .expect("already a member")
+                .is_none()
         );
-        assert!(insert_member(db, &club, "carol").await.expect("new member"));
         assert!(
-            !insert_member(db, &club, "carol")
+            insert_member(db, &club, "carol")
+                .await
+                .expect("new member")
+                .is_some()
+        );
+        assert!(
+            insert_member(db, &club, "carol")
                 .await
                 .expect("repeat join")
+                .is_none()
         );
         done(state, path).await;
     }

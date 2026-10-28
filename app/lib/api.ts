@@ -16,6 +16,7 @@ import type {
   CreatedPassword,
   NewPassword,
   ServerPasswords,
+  SystemMessages,
   Profile,
   Role,
   SearchResult,
@@ -314,6 +315,10 @@ export const endpoints = (c: ApiClient) => ({
     c.req<CreatedPassword>('POST', `/servers/${seg(name)}/passwords`, body),
   revokePassword: (name: string, id: number) =>
     c.req<unknown>('DELETE', `/servers/${seg(name)}/passwords/${id}`),
+  systemMessages: (name: string) =>
+    c.req<SystemMessages>('GET', `/servers/${seg(name)}/system_messages`),
+  updateSystemMessages: (name: string, patch: Partial<SystemMessages>) =>
+    c.req<SystemMessages>('PATCH', `/servers/${seg(name)}/system_messages`, patch),
   createChannel: (server: string, name: string, kind: ChannelKind = 'text') =>
     c.req<Channel>('POST', `/servers/${seg(server)}/channels`, { name, kind }),
   updateChannel: (id: number, patch: { name?: string; slowmode_seconds?: number }) =>

@@ -86,7 +86,9 @@ import { canEdit as ownEditable } from '../lib/sed'
 import { canForward } from '../lib/forward'
 import { ForwardCard, forwardAction, forwardMenuItem } from './forwards'
 import { PinNotice, PinsButton, PinsWindow, pinMenuItem, useCanPin } from './pins'
+import { SystemNotice } from './system_messages'
 import { canPin } from '../lib/pins'
+import { isSystem } from '../lib/system_messages'
 
 const EMPTY: Message[] = []
 
@@ -338,6 +340,7 @@ const MessageRow = memo(function MessageRow({
     </div>
   )
   if (m.kind === 'pin') return <PinNotice m={m} server={server} divider={mark} onMenu={onMenu} />
+  if (isSystem(m)) return <SystemNotice m={m} server={server} divider={mark} onMenu={onMenu} />
   if (m.kind === 'call')
     return (
       <div data-row data-mid={m.id}>
@@ -621,7 +624,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       openContextMenu(x, y, messageCopyItems(msg))
       return
     }
-    if (msg.kind === 'pin') {
+    if (msg.kind === 'pin' || isSystem(msg)) {
       openContextMenu(x, y, [
         ...(canDelete(msg)
           ? [
