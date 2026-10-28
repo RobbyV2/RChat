@@ -935,6 +935,7 @@ mod tests {
         );
         let hidden = id_of(db, "INSERT INTO channels(server, name, created_at) VALUES('rchat', 'hidden', 1) RETURNING id").await;
         exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({hidden}, 'r:0', 0, 1, 1), ({hidden}, 'u:alice', 1, 1, 1)")).await;
+        crate::api::test_util::restrict_ruled(db).await;
         let secret = post(db, Some(hidden), None, None, "alice").await;
         assert_eq!(
             status(react(&state, "bob", secret, "👍").await),
@@ -952,6 +953,7 @@ mod tests {
             .expect("alice sees it");
         let quiet = id_of(db, "INSERT INTO channels(server, name, created_at) VALUES('rchat', 'quiet', 1) RETURNING id").await;
         exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({quiet}, 'u:bob', 1, 0, 1), ({quiet}, 'u:carol', 1, 1, 1)")).await;
+        crate::api::test_util::restrict_ruled(db).await;
         let announcement = post(db, Some(quiet), None, None, "alice").await;
         assert_eq!(
             status(react(&state, "bob", announcement, "👍").await),
@@ -1124,8 +1126,10 @@ mod tests {
 
         let hidden = id_of(db, "INSERT INTO channels(server, name, created_at) VALUES('rchat', 'hidden', 1) RETURNING id").await;
         exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({hidden}, 'u:bob', 1, 1, 1)")).await;
+        crate::api::test_util::restrict_ruled(db).await;
         let old = post(db, Some(hidden), None, None, "alice").await;
         exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({hidden}, 'u:alice', 0, 1, 1)")).await;
+        crate::api::test_util::restrict_ruled(db).await;
         react(&state, "bob", old, "👀")
             .await
             .expect("bob still sees it");

@@ -87,7 +87,7 @@ export const serverDetail = (name: string, over: Partial<ServerDetail> = {}): Se
   name_color: null,
   channels: [],
   roles: [],
-  role_limits: { held_above: [], channel_grants: [], sole_rules: [] },
+  role_limits: { held_above: [], channel_grants: [], channel_denies: [] },
   member_count: 0,
   online_count: 0,
   ...over,

@@ -289,6 +289,14 @@ pub struct Channel {
     /// Minimum seconds between two messages from the same member, 0 (off) to 21600; members
     /// with Manage channels or Manage messages are exempt.
     pub slowmode_seconds: i64,
+    /// Only the channel's allowed roles and members (rules with `can_view`) and people who manage
+    /// channels can see it.
+    #[serde(default)]
+    pub restrict_view: bool,
+    /// Only the channel's allowed roles and members (rules with `can_send`) and people who manage
+    /// channels can send in it.
+    #[serde(default)]
+    pub restrict_send: bool,
 }
 
 /// A server role.
@@ -319,15 +327,19 @@ pub struct RoleLimits {
     /// Roles whose channel permission rules give access you don't have in that channel. You
     /// can't assign them. Always empty when you have Manage channels.
     pub channel_grants: Vec<i64>,
-    /// Roles that are the only permission rule on some channel. Deleting one would open that
-    /// channel to everyone, so it needs Manage channels. Always empty when you have Manage
-    /// channels.
-    pub sole_rules: Vec<i64>,
+    /// Roles with a channel permission rule that allows less than a member matching no rule gets
+    /// in that channel (under its `restrict_view` / `restrict_send`). Deleting one or taking it
+    /// away from anyone, yourself included, would widen access, so it needs Manage channels.
+    /// Always empty when you have Manage channels.
+    pub channel_denies: Vec<i64>,
 }
 
-/// One permission rule on a channel. A channel with no rules is open to everyone who can see
-/// the server. Once it has rules, only members matching a rule with `can_view` (plus members
-/// with Manage channels) can see it, and the flags of every matching rule are combined.
+/// One permission rule on a channel. Members with Manage channels pass every rule. A member
+/// matching one or more rules gets what any of them allows (the flags are combined). A member
+/// matching none can view and send unless the channel's `restrict_view` / `restrict_send` is on,
+/// and reads history. A role rule that denies something only holds while the member keeps the
+/// role: leaving the server drops every role, so a member can lose a deny by leaving and
+/// rejoining. Turn on the matching restriction and allow the others explicitly for strict control.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelPerm {
     /// Who the rule applies to: `u:<username>` for a user or `r:<role id>` for a role.
@@ -1530,6 +1542,15 @@ pub(crate) mod test_util {
             .execute(db)
             .await
             .expect("insert member");
+    }
+
+    /// Requires roles to view on every channel with rules, as the upgrade backfill does for
+    /// channels that were private before restrictions existed.
+    pub(crate) async fn restrict_ruled(db: &Db) {
+        sqlx::query("UPDATE channels SET restrict_view = 1 WHERE EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = channels.id)")
+            .execute(db)
+            .await
+            .expect("restrict ruled channels");
     }
 }
 

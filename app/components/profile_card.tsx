@@ -176,6 +176,9 @@ function Card({ target }: { target: ProfileTarget }) {
   const channelLocked = useStore(s =>
     server ? s.servers[server]?.role_limits?.channel_grants : undefined
   )
+  const channelDenies = useStore(s =>
+    server ? s.servers[server]?.role_limits?.channel_denies : undefined
+  )
   const serverName = useStore(s =>
     server
       ? (s.servers[server]?.display_name ??
@@ -336,6 +339,7 @@ function Card({ target }: { target: ProfileTarget }) {
     member: member && { is_admin: member.is_admin, perms: member.perms },
     targetPerms: memberPerms(member, serverRoles ?? fetched?.roles ?? []),
     channelLocked,
+    channelDenies,
     targetRolePerms: rolePerms(member, serverRoles ?? fetched?.roles ?? []),
     myRolePerms: mine,
   }

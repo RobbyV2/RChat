@@ -6,6 +6,7 @@ import {
   canRevoke,
   canSetAdminPerms,
   roleDeleteBlock,
+  roleDenyEscapes,
   roleEditBlock,
   canDeleteChannel,
   canGrant,
@@ -116,8 +117,11 @@ describe('granting perms', () => {
     expect(canChangeRole(ma, true, ALL_PERMS, false, false, ALL_PERMS)).toBe(true)
     expect(canChangeRole(ma, true, ALL_PERMS, true, false, ALL_PERMS)).toBe(true)
     expect(canChangeRole(ma | kick, false, 0, false, false, 0, true)).toBe(false)
-    expect(canChangeRole(ma | kick, false, 0, true, false, 0, true)).toBe(true)
+    expect(canChangeRole(ma | kick, false, 0, true, false, 0, true)).toBe(false)
+    expect(canChangeRole(ma | kick, false, 0, true, true, ALL_PERMS, true)).toBe(false)
+    expect(canChangeRole(ma | kick, false, 0, true, true, ALL_PERMS)).toBe(true)
     expect(canChangeRole(ma, true, 0, false, false, 0, true)).toBe(true)
+    expect(canChangeRole(ma, true, 0, true, true, 0, true)).toBe(true)
   })
 
   test('revoking admin or giving it up never raises anyone above the actor', () => {
@@ -133,7 +137,7 @@ describe('granting perms', () => {
   })
 
   test('editing or deleting a role needs its perms and every holder below you', () => {
-    const limits = { held_above: [2], channel_grants: [3], sole_rules: [4] }
+    const limits = { held_above: [2], channel_grants: [3], channel_denies: [4] }
     const role = (id: number, perms: number = kick) => ({ id, perms })
     expect(roleEditBlock(ma | kick, false, role(1), limits)).toBeNull()
     expect(roleEditBlock(ma | kick, false, role(1, Perm.DeleteServer), limits)).toContain(
@@ -142,7 +146,9 @@ describe('granting perms', () => {
     expect(roleEditBlock(ma | kick, false, role(2), limits)).toContain("can't moderate")
     expect(roleEditBlock(ma | kick, false, role(3), limits)).toBeNull()
     expect(roleEditBlock(ma | kick, false, role(4), limits)).toBeNull()
-    expect(roleDeleteBlock(ma | kick, false, role(4), limits)).toContain('only rule on a channel')
+    expect(roleDeleteBlock(ma | kick, false, role(4), limits)).toBe(
+      'This role limits access to a channel. Deleting it would widen that access, so it needs Manage channels.'
+    )
     expect(roleDeleteBlock(ma | kick, false, role(2), limits)).toContain("can't moderate")
     expect(roleDeleteBlock(ma | kick, false, role(1), limits)).toBeNull()
     expect(roleEditBlock(ma | kick, false, role(2))).toBeNull()
@@ -159,6 +165,36 @@ describe('granting perms', () => {
     expect(canSetAdminPerms(ma | kick, false, kick, 0)).toBe(false)
     expect(canSetAdminPerms(ma | kick, false, kick, ma | kick)).toBe(true)
     expect(canSetAdminPerms(ma, true, kick, 0)).toBe(true)
+  })
+})
+
+describe('roleDenyEscapes', () => {
+  const rule = (subject: string, view: boolean, send: boolean, history = true) => ({
+    subject,
+    can_view: view,
+    can_send: send,
+    can_read_history: history,
+  })
+  const text = { kind: 'text' as const }
+  const voice = { kind: 'voice' as const }
+  test('a role deny without the matching restriction can be escaped by rejoining', () => {
+    expect(roleDenyEscapes(text, [])).toBe(false)
+    expect(roleDenyEscapes(text, [rule('r:1', true, true)])).toBe(false)
+    expect(roleDenyEscapes(text, [rule('r:1', false, false)])).toBe(true)
+    expect(roleDenyEscapes(text, [rule('r:1', true, false)])).toBe(true)
+    expect(roleDenyEscapes(text, [rule('r:1', true, true, false)])).toBe(true)
+    expect(roleDenyEscapes(text, [rule('u:bob', false, false)])).toBe(false)
+    expect(roleDenyEscapes({ ...text, restrict_send: true }, [rule('r:1', true, false)])).toBe(
+      false
+    )
+    expect(roleDenyEscapes({ ...text, restrict_send: true }, [rule('r:1', false, false)])).toBe(
+      true
+    )
+    expect(roleDenyEscapes({ ...text, restrict_view: true }, [rule('r:1', false, false)])).toBe(
+      false
+    )
+    expect(roleDenyEscapes(voice, [rule('r:1', true, false, false)])).toBe(false)
+    expect(roleDenyEscapes(voice, [rule('r:1', false, false)])).toBe(true)
   })
 })
 

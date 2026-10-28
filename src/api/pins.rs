@@ -499,6 +499,7 @@ mod tests {
             vec![third, old, newer]
         );
         exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({cid}, 'u:dora', 1, 1, 0), ({cid}, 'u:bob', 1, 1, 1), ({cid}, 'u:alice', 1, 1, 1)")).await;
+        crate::api::test_util::restrict_ruled(db).await;
         assert_eq!(
             pins_of(&state, Some("dora"), cid)
                 .await
@@ -560,6 +561,7 @@ mod tests {
 
         let hidden = id_of(db, "INSERT INTO channels(server, name, created_at) VALUES('rchat', 'staff', 1) RETURNING id").await;
         exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({hidden}, 'r:0', 0, 1, 1), ({hidden}, 'u:alice', 1, 1, 1)")).await;
+        crate::api::test_util::restrict_ruled(db).await;
         let secret = post(db, Some(hidden), None, "alice", 170).await;
         pin(&state, "alice", secret).await.expect("pin hidden");
         assert_eq!(

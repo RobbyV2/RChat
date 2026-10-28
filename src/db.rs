@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NO
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at INTEGER NOT NULL, claimed_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
 CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count INTEGER NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id INTEGER, join_messages INTEGER NOT NULL DEFAULT 1, leave_messages INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, UNIQUE(server, name));
+CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, restrict_view INTEGER NOT NULL DEFAULT 0, restrict_send INTEGER NOT NULL DEFAULT 0, UNIQUE(server, name));
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, perms INTEGER NOT NULL DEFAULT 0, joined_at INTEGER NOT NULL, joined_via INTEGER, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NO
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at BIGINT NOT NULL, claimed_at BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
 CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count BIGINT NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id BIGINT, join_messages BIGINT NOT NULL DEFAULT 1, leave_messages BIGINT NOT NULL DEFAULT 1, created_at BIGINT NOT NULL);
-CREATE TABLE IF NOT EXISTS channels(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, UNIQUE(server, name));
+CREATE TABLE IF NOT EXISTS channels(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, restrict_view BIGINT NOT NULL DEFAULT 0, restrict_send BIGINT NOT NULL DEFAULT 0, UNIQUE(server, name));
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin BIGINT NOT NULL DEFAULT 0, perms BIGINT NOT NULL DEFAULT 0, joined_at BIGINT NOT NULL, joined_via BIGINT, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms BIGINT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
@@ -373,6 +373,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "system_channel_id {INT}"),
     ("servers", "join_messages {INT} NOT NULL DEFAULT 1"),
     ("servers", "leave_messages {INT} NOT NULL DEFAULT 1"),
+    ("channels", "restrict_view {INT} NOT NULL DEFAULT 0"),
+    ("channels", "restrict_send {INT} NOT NULL DEFAULT 0"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -392,6 +394,8 @@ const BACKFILLS: &[(&str, &str, &str)] = &[
         "UPDATE guest_grants SET last_used_at = $1",
     ),
 ];
+
+const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 
 async fn reconcile_columns(
     conn: &mut AnyConnection,
@@ -675,14 +679,36 @@ pub fn perm_row(r: &AnyRow, at: usize) -> sqlx::Result<PermRow> {
     })
 }
 
+/// Which actions of a channel need an explicit allow from one of its rules (`restrict_view`,
+/// `restrict_send`).
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct Restrict {
+    pub view: bool,
+    pub send: bool,
+}
+
+impl Restrict {
+    pub fn read(r: &AnyRow, at: usize) -> sqlx::Result<Restrict> {
+        Ok(Restrict {
+            view: r.try_get::<i64, _>(at)? != 0,
+            send: r.try_get::<i64, _>(at + 1)? != 0,
+        })
+    }
+}
+
+/// The channel rule: managers pass. Otherwise each action is allowed by any rule matching one of
+/// `subjects` that allows it; without a matching rule, actions are allowed unless the channel
+/// restricts them (history only follows view). No view means nothing.
 pub fn fold_access<'a>(
     rows: impl IntoIterator<Item = &'a PermRow>,
     subjects: &[String],
     manages: bool,
+    restrict: Restrict,
 ) -> ChannelAccess {
     if manages {
         return ChannelAccess::all(true);
     }
+    let mut matched = false;
     let mut acc = ChannelAccess::all(false);
     for row in rows {
         let PermRow {
@@ -692,15 +718,42 @@ pub fn fold_access<'a>(
             history,
         } = row;
         if subjects.contains(subject) {
+            matched = true;
             acc.view |= *view;
             acc.send |= *send;
             acc.history |= *history;
         }
     }
+    let Restrict {
+        view: restrict_view,
+        send: restrict_send,
+    } = restrict;
+    let acc = match matched {
+        true => acc,
+        false => ChannelAccess {
+            view: !restrict_view,
+            send: !restrict_send,
+            history: true,
+        },
+    };
     match acc.view {
         true => acc,
         false => ChannelAccess::all(false),
     }
+}
+
+/// Whether taking `rule` away from a member can widen their access: for a member it was the only
+/// match for, it allows less than a member matching no rule gets in that channel. Deleting or
+/// unassigning a role with such a rule needs Manage channels.
+pub fn rule_narrows(rule: &PermRow, restrict: Restrict) -> bool {
+    let subject = [rule.subject.clone()];
+    let ChannelAccess {
+        view,
+        send,
+        history,
+    } = fold_access([rule], &subject, false, restrict);
+    let open = fold_access([], &subject, false, restrict);
+    (open.view && !view) || (open.send && !send) || (open.history && !history)
 }
 
 pub async fn setting_on<'e, E>(ex: E, key: &str) -> sqlx::Result<bool>
@@ -830,6 +883,22 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
             query.execute(&mut *conn).await?;
             tracing::info!("backfilled {table}.{col}");
         }
+    }
+    let restricted = sqlx::query("SELECT 1 FROM settings WHERE key = $1")
+        .bind(RESTRICT_BACKFILL)
+        .fetch_optional(&mut *conn)
+        .await?
+        .is_some();
+    if !restricted {
+        let n = sqlx::query("UPDATE channels SET restrict_view = 1 WHERE restrict_view = 0 AND EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = channels.id)")
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+        sqlx::query("INSERT INTO settings(key, value) VALUES($1, '1') ON CONFLICT(key) DO NOTHING")
+            .bind(RESTRICT_BACKFILL)
+            .execute(&mut *conn)
+            .await?;
+        tracing::info!("backfilled channels.restrict_view on {n} channels with rules");
     }
     let t = now();
     sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
@@ -2065,6 +2134,157 @@ mod tests {
                 1,
                 "the join goes to the first text channel and survives a restart"
             );
+            close(&db).await;
+        }
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn channel_restrictions_are_added_to_an_old_database() {
+        let path =
+            std::env::temp_dir().join(format!("rchat_restrict_upgrade_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let cols = "('restrict_view', 'restrict_send')";
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "ALTER TABLE channels DROP COLUMN restrict_view",
+            "ALTER TABLE channels DROP COLUMN restrict_send",
+            "DELETE FROM settings WHERE key = 'restrict_backfill_v1'",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('old', 'Old', 'alice', 3)",
+            "INSERT INTO channels(server, name, kind, slowmode_seconds, created_at) VALUES('old', 'open', 'text', 30, 3)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('old', 'private', 'text', 3)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('old', 'talk', 'voice', 3)",
+            "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES((SELECT id FROM channels WHERE name = 'private'), 'u:bob', 1, 0, 1)",
+            "INSERT INTO members(server, username, is_admin, joined_at) VALUES('old', 'alice', 1, 3)",
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES((SELECT id FROM channels WHERE name = 'private'), 'alice', 'old secret', 7)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        let present =
+            format!("SELECT COUNT(*) FROM pragma_table_info('channels') WHERE name IN {cols}");
+        assert_eq!(count(&db, &present).await, 0);
+        close(&db).await;
+        for round in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(count(&db, &present).await, 2);
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM channels WHERE restrict_send = 0").await,
+                4
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM channels WHERE restrict_view = 0 AND name IN ('general', 'open', 'talk')").await,
+                3,
+                "channels without rules stay open"
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM channels WHERE name = 'private' AND restrict_view = 1"
+                )
+                .await,
+                1 - round,
+                "channels that had rules stay private; the backfill runs once"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM channels WHERE name = 'open' AND slowmode_seconds = 30 AND created_at = 3").await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM channel_perms WHERE subject = 'u:bob' AND can_view = 1 AND can_send = 0").await,
+                1
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM messages WHERE content = 'old secret' AND created_at = 7"
+                )
+                .await,
+                1
+            );
+            if round == 0 {
+                let cid = count(&db, "SELECT id FROM channels WHERE name = 'private'").await;
+                let rows = sqlx::query("SELECT subject, can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1")
+                    .bind(cid)
+                    .fetch_all(&db)
+                    .await
+                    .expect("rules");
+                let rows = rows
+                    .iter()
+                    .map(|r| perm_row(r, 0))
+                    .collect::<sqlx::Result<Vec<_>>>()
+                    .expect("rows");
+                let restrict = Restrict {
+                    view: true,
+                    send: false,
+                };
+                let carol = fold_access(&rows, &["u:carol".to_string()], false, restrict);
+                let bob = fold_access(&rows, &["u:bob".to_string()], false, restrict);
+                assert!(!carol.view, "the old private channel is still hidden");
+                assert!(bob.view && !bob.send && bob.history);
+                sqlx::query("UPDATE channels SET restrict_view = 0 WHERE name = 'private'")
+                    .execute(&db)
+                    .await
+                    .expect("admin opens it");
+            }
+            close(&db).await;
+        }
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn restrict_backfill_survives_an_interrupted_upgrade() {
+        let path =
+            std::env::temp_dir().join(format!("rchat_restrict_marker_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let marker = "SELECT COUNT(*) FROM settings WHERE key = 'restrict_backfill_v1'";
+        let private = "SELECT restrict_view FROM channels WHERE name = 'private'";
+        let db = open(path.to_str()).await.expect("open");
+        assert_eq!(count(&db, marker).await, 1, "a fresh database is marked");
+        for stmt in [
+            "DELETE FROM settings WHERE key = 'restrict_backfill_v1'",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('old', 'Old', 'alice', 3)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('old', 'open', 'text', 3)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('old', 'private', 'text', 3)",
+            "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES((SELECT id FROM channels WHERE name = 'private'), 'u:bob', 1, 0, 1)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        assert_eq!(count(&db, private).await, 0, "column added, backfill lost");
+        close(&db).await;
+        let db = open(path.to_str()).await.expect("reboot");
+        assert_eq!(
+            count(&db, private).await,
+            1,
+            "the missing marker runs the backfill"
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT restrict_view FROM channels WHERE name = 'open'"
+            )
+            .await,
+            0
+        );
+        assert_eq!(count(&db, marker).await, 1);
+        sqlx::query("UPDATE channels SET restrict_view = 0 WHERE name = 'private'")
+            .execute(&db)
+            .await
+            .expect("admin opens it");
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("later boot");
+            assert_eq!(count(&db, private).await, 0, "the admin's opening survives");
+            assert_eq!(count(&db, marker).await, 1);
             close(&db).await;
         }
         wipe();

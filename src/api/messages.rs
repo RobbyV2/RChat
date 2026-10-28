@@ -2082,21 +2082,17 @@ async fn search_sql(
                     true => String::new(),
                     false => format!("c.server IN ({}) OR ", managed.join(", ")),
                 };
+                let mine = ph.join(", ");
                 conds.push(format!(
-                    "({bypass}NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.can_view != 0 AND cp.subject IN ({})))",
-                    ph.join(", ")
+                    "({bypass}(c.restrict_view = 0 AND NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.subject IN ({mine}))) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.can_view != 0 AND cp.subject IN ({mine})))"
                 ));
                 conds.push(format!(
-                    "({bypass}NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.can_read_history != 0 AND cp.subject IN ({})) OR m.created_at >= (SELECT joined_at FROM members mm WHERE mm.server = c.server AND mm.username = $1))",
-                    ph.join(", ")
+                    "({bypass}NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.subject IN ({mine})) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.can_read_history != 0 AND cp.subject IN ({mine})) OR m.created_at >= (SELECT joined_at FROM members mm WHERE mm.server = c.server AND mm.username = $1))"
                 ));
             }
         }
         None => {
-            conds.push(
-                "NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id)"
-                    .to_string(),
-            );
+            conds.push("c.restrict_view = 0".to_string());
             let granted = granted_servers(db, &Proof::headers(headers)).await?;
             match granted.is_empty() {
                 true => conds.push(
@@ -2452,6 +2448,7 @@ mod tests {
             .execute(db)
             .await
             .expect("restrict");
+        crate::api::test_util::restrict_ruled(db).await;
         let dm: i64 =
             sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
                 .fetch_one(db)
@@ -2684,12 +2681,74 @@ mod tests {
         let second = send(&state, cid, "alice").await;
         match second {
             Err(ApiError(StatusCode::TOO_MANY_REQUESTS, msg)) => {
-                assert!(msg.starts_with("Slow mode"))
+                assert!(
+                    msg == "Slow mode: wait 60s" || msg == "Slow mode: wait 59s",
+                    "{msg}"
+                )
             }
             _ => panic!("expected slow mode rejection"),
         }
         let _ = send(&state, cid, "boss").await.expect("admin send 1");
         let _ = send(&state, cid, "boss").await.expect("admin send 2");
+        let db = &state.db;
+        for (holder, perms) in [
+            ("chanmod", Perm::ManageChannels as i64),
+            ("msgmod", Perm::DeleteMessages as i64),
+            ("kicker", Perm::Kick as i64),
+            ("writer", 0),
+        ] {
+            add_member(db, "rchat", holder, 0, 0, now()).await;
+            let role: i64 = sqlx::query("INSERT INTO roles(server, name, color, perms) VALUES('rchat', $1, '#ffffff', $2) RETURNING id")
+                .bind(holder)
+                .bind(perms)
+                .fetch_one(db)
+                .await
+                .expect("role")
+                .try_get(0)
+                .expect("role id");
+            sqlx::query(
+                "INSERT INTO user_roles(server, username, role_id) VALUES('rchat', $1, $2)",
+            )
+            .bind(holder)
+            .bind(role)
+            .execute(db)
+            .await
+            .expect("assign");
+            if holder == "writer" {
+                sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, 1, 1, 1)")
+                    .bind(cid)
+                    .bind(format!("r:{role}"))
+                    .execute(db)
+                    .await
+                    .expect("send rule");
+            }
+        }
+        for who in ["chanmod", "msgmod"] {
+            let _ = send(&state, cid, who).await.expect("exempt 1");
+            let _ = send(&state, cid, who).await.expect("exempt 2");
+        }
+        let _ = send(&state, cid, "kicker").await.expect("kicker 1");
+        assert!(matches!(
+            send(&state, cid, "kicker").await,
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+        ));
+        sqlx::query("UPDATE channels SET restrict_send = 1 WHERE id = $1")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("restrict send");
+        let _ = send(&state, cid, "chanmod").await.expect("managers bypass");
+        for who in ["msgmod", "kicker", "alice"] {
+            assert!(matches!(
+                send(&state, cid, who).await,
+                Err(ApiError(StatusCode::FORBIDDEN, _))
+            ));
+        }
+        let _ = send(&state, cid, "writer").await.expect("allowed sender");
+        assert!(matches!(
+            send(&state, cid, "writer").await,
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+        ));
         done(state, path).await;
     }
 
@@ -2717,6 +2776,7 @@ mod tests {
         .execute(&state.db)
         .await
         .expect("insert perm");
+        crate::api::test_util::restrict_ruled(&state.db).await;
         let visible = list(&state, cid, Some("alice")).await.expect("alice list");
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].content, "after");
@@ -2803,6 +2863,7 @@ mod tests {
             .execute(db)
             .await
             .expect("insert perm");
+        crate::api::test_util::restrict_ruled(db).await;
     }
 
     #[tokio::test]
@@ -2845,31 +2906,69 @@ mod tests {
         perm(db, private, "u:alice", 0).await;
         perm(db, private, "u:bob", 1).await;
         let needle = post(db, private, "eve", "secret needle", t - 200).await;
-        for (name, want) in [
-            ("alice", false),
-            ("bob", true),
-            ("mod", true),
-            ("kicker", false),
-            ("roler", true),
-            ("plainrole", false),
-        ] {
-            let user = mem_user(name, false);
-            let direct = channel_access(db, "rchat", private, Some(&user))
+        let bare = add_channel(db, "bare", "text").await;
+        let hay = post(db, bare, "eve", "secret hay", t - 200).await;
+        let cases = [
+            (
+                private,
+                needle,
+                "needle",
+                1,
+                [false, true, true, false, true, false],
+            ),
+            (
+                private,
+                needle,
+                "needle",
+                0,
+                [false, true, true, true, true, true],
+            ),
+            (
+                bare,
+                hay,
+                "hay",
+                1,
+                [false, false, true, false, true, false],
+            ),
+            (bare, hay, "hay", 0, [true; 6]),
+        ];
+        for (cid, msg, word, restrict, wants) in cases {
+            sqlx::query("UPDATE channels SET restrict_view = $1 WHERE id = $2")
+                .bind(restrict)
+                .bind(cid)
+                .execute(db)
                 .await
-                .expect("access")
-                .view;
-            let unread = member_channel_rights(db, &user).await.expect("restricted")[&private].view;
-            let rchat = resolve_server(db, "rchat", Some(&user), &Proof::none())
-                .await
-                .expect("rchat");
-            let listed = crate::api::servers::visible_restricted(db, &rchat, &[private])
-                .await
-                .expect("visible")
-                .contains(&private);
-            let searched = found(&state, Some(user), HeaderMap::new(), query(Some("needle")))
-                .await
-                .contains(&needle);
-            assert_eq!([direct, unread, listed, searched], [want; 4], "{name}");
+                .expect("restrict");
+            let names = ["alice", "bob", "mod", "kicker", "roler", "plainrole"];
+            for (name, want) in names.into_iter().zip(wants) {
+                let user = mem_user(name, false);
+                let direct = channel_access(db, "rchat", cid, Some(&user))
+                    .await
+                    .expect("access")
+                    .view;
+                let unread = member_channel_rights(db, &user)
+                    .await
+                    .expect("restricted")
+                    .get(&cid)
+                    .is_none_or(|a| a.view);
+                let rchat = resolve_server(db, "rchat", Some(&user), &Proof::none())
+                    .await
+                    .expect("rchat");
+                let listed = rchat
+                    .channel_rights(db)
+                    .await
+                    .expect("visible")
+                    .get(&cid)
+                    .is_none_or(|a| a.view);
+                let searched = found(&state, Some(user), HeaderMap::new(), query(Some(word)))
+                    .await
+                    .contains(&msg);
+                assert_eq!(
+                    [direct, unread, listed, searched],
+                    [want; 4],
+                    "{name} in {cid} restrict {restrict}"
+                );
+            }
         }
         done(state, path).await;
     }
@@ -3060,6 +3159,7 @@ mod tests {
             .execute(db)
             .await
             .expect("no history perm");
+        crate::api::test_util::restrict_ruled(db).await;
         let at = |when: i64| {
             sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'eve', 'x', $2) RETURNING id")
                 .bind(nohist)
@@ -3368,6 +3468,7 @@ mod tests {
             .execute(db)
             .await
             .expect("history perm");
+        crate::api::test_util::restrict_ruled(db).await;
         sqlx::query(
             "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('g1', 'locked', 0, 4000000000)",
         )
@@ -3825,6 +3926,7 @@ mod tests {
             .execute(db)
             .await
             .expect("no history perm");
+        crate::api::test_util::restrict_ruled(db).await;
         let gated = channel_messages(
             State(state.clone()),
             MaybeAuthed(Some(mem_user("late", false))),
@@ -4414,6 +4516,7 @@ mod tests {
             .execute(db)
             .await
             .expect("no history");
+        crate::api::test_util::restrict_ruled(db).await;
         perm(db, cid, "u:bob", 1).await;
         let listed = list(&state, cid, Some("dave")).await.expect("list");
         let quote = listed
@@ -4468,6 +4571,7 @@ mod tests {
             .execute(db)
             .await
             .expect("no history");
+        crate::api::test_util::restrict_ruled(db).await;
         perm(db, cid, "u:bob", 1).await;
         let mut rx = state.hub.subscribe();
         let reply = say_to(
@@ -5152,6 +5256,48 @@ mod tests {
                 .expect("none")
                 .is_empty()
         );
+        let bare = add_channel(db, "bare", "text").await;
+        for (view, send) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+            sqlx::query(
+                "UPDATE channels SET restrict_view = $1, restrict_send = $2 WHERE id IN ($3, $4)",
+            )
+            .bind(view)
+            .bind(send)
+            .bind(private)
+            .bind(bare)
+            .execute(db)
+            .await
+            .expect("restrict");
+            for cid in [private, bare] {
+                let channel =
+                    resolve_channel(db, cid, Some(&mem_user("admin", false)), &Proof::none())
+                        .await
+                        .expect("channel");
+                let got = channel
+                    .viewers_among(db, &wanted, None)
+                    .await
+                    .expect("viewers");
+                let mut expected = Vec::new();
+                for name in &wanted {
+                    let Some(user) = crate::db::get_user(db, name).await.expect("user") else {
+                        continue;
+                    };
+                    if name != "outside"
+                        && name != "gone"
+                        && channel_access(db, "rchat", cid, Some(&user))
+                            .await
+                            .expect("access")
+                            .view
+                    {
+                        expected.push(name.clone());
+                    }
+                }
+                assert_eq!(got, expected, "channel {cid} view {view} send {send}");
+                if cid == bare && view == 1 {
+                    assert_eq!(got, vec!["site", "manager", "admin"]);
+                }
+            }
+        }
         done(state, path).await;
     }
 
@@ -5194,6 +5340,7 @@ mod tests {
                 .execute(db)
                 .await
                 .expect("perm");
+            crate::api::test_util::restrict_ruled(db).await;
         }
         let mut roots = Vec::new();
         for cid in [general, quiet] {
@@ -5393,6 +5540,7 @@ mod tests {
             .execute(db)
             .await
             .expect("no send");
+        crate::api::test_util::restrict_ruled(db).await;
         assert_eq!(
             status(edit(&state, note.id, "alice", "muted").await),
             Some(StatusCode::FORBIDDEN),
@@ -5614,6 +5762,7 @@ mod tests {
             .execute(db)
             .await
             .expect("no history");
+        crate::api::test_util::restrict_ruled(db).await;
         perm(db, cid, "u:alice", 1).await;
         perm(db, cid, "u:bob", 1).await;
         let late = say(&state, (Some(cid), None, None), "bob", "after dave").await;

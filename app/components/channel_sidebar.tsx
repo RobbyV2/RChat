@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useState } from 'react'
-import { HeadphoneOff, Hash, MicOff, Pin, Plus, Volume2 } from 'lucide-react'
+import { HeadphoneOff, Hash, Lock, MicOff, Pin, Plus, Volume2 } from 'lucide-react'
 import {
   badgePings,
   myPerms,
@@ -104,6 +104,14 @@ function DmRow({
   )
 }
 
+function PrivateIcon() {
+  return (
+    <span title="Private channel" aria-label="Private channel" role="img" className="flex shrink-0">
+      <Lock size={12} />
+    </span>
+  )
+}
+
 function VoiceChannelRow({
   channel,
   active,
@@ -135,6 +143,7 @@ function VoiceChannelRow({
     >
       <Volume2 size={16} className={`shrink-0 ${connected ? 'text-status-green' : ''}`} />
       <span className="truncate">{channel.name}</span>
+      {channel.restrict_view && <PrivateIcon />}
       {count > 0 && (
         <span
           title={`${count} in voice`}
@@ -490,6 +499,7 @@ export function ChannelSidebar() {
             >
               <Hash size={16} className="shrink-0" />
               <span className="truncate">{c.name}</span>
+              {c.restrict_view && <PrivateIcon />}
               <MutedIcon scope={{ kind: 'channel', id: c.id, server: detail.name }} />
               {pingsOf(`c${c.id}`) > 0 ? (
                 <PingBadge count={pingsOf(`c${c.id}`)} className="ml-auto" />

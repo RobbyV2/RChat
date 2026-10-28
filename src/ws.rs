@@ -771,7 +771,7 @@ pub fn spawn_aftermath(state: &AppState) {
 
 async fn channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(String, Channel)>> {
     let row =
-        sqlx::query("SELECT server, name, kind, slowmode_seconds FROM channels WHERE id = $1")
+        sqlx::query("SELECT server, name, kind, slowmode_seconds, restrict_view, restrict_send FROM channels WHERE id = $1")
             .bind(id)
             .fetch_optional(db)
             .await?;
@@ -783,6 +783,8 @@ async fn channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(String, Channel)>
                 name: r.try_get(1)?,
                 kind: ChannelKind::parse(&r.try_get::<String, _>(2)?)?,
                 slowmode_seconds: r.try_get(3)?,
+                restrict_view: r.try_get::<i64, _>(4)? != 0,
+                restrict_send: r.try_get::<i64, _>(5)? != 0,
             },
         ))),
         None => Ok(None),
@@ -2156,7 +2158,7 @@ async fn channel_public(db: &Db, cid: i64) -> sqlx::Result<Option<(String, bool)
     let Some((owner, _)) = channel_now(db, cid).await? else {
         return Ok(None);
     };
-    let restricted = sqlx::query("SELECT 1 FROM channel_perms WHERE channel_id = $1 LIMIT 1")
+    let restricted = sqlx::query("SELECT 1 FROM channels c WHERE c.id = $1 AND (c.restrict_view <> 0 OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.can_view = 0))")
         .bind(cid)
         .fetch_optional(db)
         .await?
@@ -3474,6 +3476,7 @@ mod tests {
             .execute(db)
             .await
             .unwrap();
+        crate::api::test_util::restrict_ruled(db).await;
         let kept = post_message(db, text, "kept").await;
         let gone = post_message(db, text, "gone").await;
         sqlx::query("DELETE FROM messages WHERE id = $1")
@@ -3944,6 +3947,7 @@ mod tests {
             .execute(db)
             .await
             .unwrap();
+        crate::api::test_util::restrict_ruled(db).await;
         let mut bob = Access::new(Some(s("bob")), false, set(&["b"]));
         let mut guest = Access::new(None, false, HashSet::new());
         assert_eq!(channel_gate(&state, &mut bob, "a", text).await, Some(false));
@@ -5244,6 +5248,8 @@ mod tests {
             name: s("c"),
             kind: ChannelKind::Text,
             slowmode_seconds: 0,
+            restrict_view: false,
+            restrict_send: false,
         };
         let mut evs = Vec::new();
         for server in [Some(s("a")), Some(s("b")), None] {
@@ -5690,6 +5696,7 @@ mod tests {
             .execute(db)
             .await
             .unwrap();
+        crate::api::test_util::restrict_ruled(db).await;
         let mut late = Access::new(Some(s("bob")), false, set(&["rchat"]));
         assert_eq!(
             channel_gate(&state, &mut late, "rchat", text).await,
@@ -5718,6 +5725,36 @@ mod tests {
         assert_eq!(bob.viewable.len(), 1);
         track(&WsEvent::RolesChanged { server: s("rchat") }, &mut bob);
         assert!(bob.viewable.is_empty());
+        exec(db, "DELETE FROM channel_perms").await;
+        for (sql, open) in [
+            (
+                "UPDATE channels SET restrict_view = 0, restrict_send = 1",
+                true,
+            ),
+            (
+                "UPDATE channels SET restrict_view = 1, restrict_send = 0",
+                false,
+            ),
+            (
+                "UPDATE channels SET restrict_view = 0, restrict_send = 0",
+                true,
+            ),
+        ] {
+            exec(db, sql).await;
+            state.hub.broadcast(changed.clone());
+            track(&changed, &mut bob);
+            track(&changed, &mut guest);
+            assert_eq!(
+                channel_gate(&state, &mut bob, "rchat", text).await,
+                Some(open),
+                "{sql}"
+            );
+            assert_eq!(
+                channel_gate(&state, &mut guest, "rchat", text).await,
+                Some(open),
+                "{sql}"
+            );
+        }
         crate::api::test_util::done(state, path).await;
     }
 
@@ -5762,6 +5799,7 @@ mod tests {
             .execute(db)
             .await
             .unwrap();
+        crate::api::test_util::restrict_ruled(db).await;
         (state, path, general, secret)
     }
 

@@ -8,7 +8,7 @@ use sqlx::{AnyConnection, Row};
 use crate::api::auth::{derive_key, dummy_hash, verify_password};
 use crate::api::{ApiError, ServerSummaryLite, header_grants};
 use crate::db::{
-    ChannelAccess, ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, Perm, PermRow, User,
+    ChannelAccess, ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, Perm, PermRow, Restrict, User,
     can_grant, can_moderate, fold_access, now, perm_row, perm_subjects,
 };
 
@@ -515,6 +515,52 @@ impl ServerAccess {
         self.user.as_ref().is_some_and(|u| u.is_site_admin)
     }
 
+    /// The viewer's rights in each channel of this server that has rules or restrictions;
+    /// channels that are not listed are open to everyone who can open the server.
+    pub async fn channel_rights(&self, db: &Db) -> Result<HashMap<i64, ChannelAccess>, ApiError> {
+        let channels = sqlx::query(
+            "SELECT c.id, c.restrict_view, c.restrict_send FROM channels c WHERE c.server = $1 AND (c.restrict_view <> 0 OR c.restrict_send <> 0 OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id))",
+        )
+        .bind(self.name())
+        .fetch_all(db)
+        .await?;
+        if channels.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let (manage, subjects) = match &self.user {
+            Some(user) => (
+                self.manages_channels(db).await?,
+                perm_subjects(db, Some(self.name()), &user.username).await?,
+            ),
+            None => (false, Vec::new()),
+        };
+        let mut rules: HashMap<i64, Vec<PermRow>> = HashMap::new();
+        if !manage {
+            let rows = sqlx::query(
+                "SELECT cp.channel_id, cp.subject, cp.can_view, cp.can_send, cp.can_read_history FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1",
+            )
+            .bind(self.name())
+            .fetch_all(db)
+            .await?;
+            for r in &rows {
+                rules
+                    .entry(r.try_get(0)?)
+                    .or_default()
+                    .push(perm_row(r, 1)?);
+            }
+        }
+        let mut out = HashMap::with_capacity(channels.len());
+        for r in &channels {
+            let id: i64 = r.try_get(0)?;
+            let list = rules.get(&id).map(Vec::as_slice).unwrap_or_default();
+            out.insert(
+                id,
+                fold_access(list, &subjects, manage, Restrict::read(r, 1)?),
+            );
+        }
+        Ok(out)
+    }
+
     pub async fn require_moderate(&self, db: &Db, target: &str) -> Result<(), ApiError> {
         let mine = self.perms(db).await?;
         let theirs = self.member_perms(db, target).await?;
@@ -601,16 +647,16 @@ impl ResolvedChannel {
         &self.name
     }
 
-    /// Whether the channel has permission overrides, so not everyone in its server may see it
-    /// (its name stays inside that audience, e.g. in forward origins).
+    /// Whether not everyone in its server may see the channel: it requires roles to view or has
+    /// any permission rule (its name stays inside that audience, e.g. in forward origins).
     pub async fn restricted(&self, db: &Db) -> Result<bool, ApiError> {
-        Ok(
-            sqlx::query("SELECT 1 FROM channel_perms WHERE channel_id = $1 LIMIT 1")
-                .bind(self.id)
-                .fetch_optional(db)
-                .await?
-                .is_some(),
+        Ok(sqlx::query(
+            "SELECT 1 FROM channels c WHERE c.id = $1 AND (c.restrict_view <> 0 OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id))",
         )
+        .bind(self.id)
+        .fetch_optional(db)
+        .await?
+        .is_some())
     }
 
     pub async fn read_since(&self, db: &Db) -> Result<Option<i64>, ApiError> {
@@ -946,33 +992,40 @@ impl ResolvedMessage {
 }
 
 /// Restricted text-channel rights of `user` across the servers it is a member of (unread
-/// counts). Membership is the proof: rows of servers the user has not joined never load.
+/// counts): channels with rules or restrictions. Membership is the proof: rows of servers the
+/// user has not joined never load.
 pub(crate) async fn member_channel_rights(
     db: &Db,
     user: &User,
 ) -> Result<HashMap<i64, ChannelAccess>, ApiError> {
-    let rows = sqlx::query(
-        "SELECT cp.channel_id, c.server, cp.subject, cp.can_view, cp.can_send, cp.can_read_history FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text'",
+    let channels = sqlx::query(
+        "SELECT c.id, c.server, c.restrict_view, c.restrict_send FROM channels c JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text' AND (c.restrict_view <> 0 OR c.restrict_send <> 0 OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id))",
     )
     .bind(&user.username)
     .fetch_all(db)
     .await?;
-    if rows.is_empty() {
+    if channels.is_empty() {
         return Ok(HashMap::new());
     }
+    let rows = sqlx::query(
+        "SELECT cp.channel_id, cp.subject, cp.can_view, cp.can_send, cp.can_read_history FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text'",
+    )
+    .bind(&user.username)
+    .fetch_all(db)
+    .await?;
     let subjects = perm_subjects(db, None, &user.username).await?;
-    let mut restricted: HashMap<i64, (String, Vec<PermRow>)> = HashMap::new();
+    let mut rules: HashMap<i64, Vec<PermRow>> = HashMap::new();
     for r in &rows {
-        let (id, server): (i64, String) = (r.try_get(0)?, r.try_get(1)?);
-        restricted
-            .entry(id)
-            .or_insert_with(|| (server, Vec::new()))
-            .1
-            .push(perm_row(r, 2)?);
+        rules
+            .entry(r.try_get(0)?)
+            .or_default()
+            .push(perm_row(r, 1)?);
     }
     let mut manages: HashMap<String, bool> = HashMap::new();
-    let mut out = HashMap::with_capacity(restricted.len());
-    for (id, (server, perms)) in restricted {
+    let mut out = HashMap::with_capacity(channels.len());
+    for r in &channels {
+        let (id, server): (i64, String) = (r.try_get(0)?, r.try_get(1)?);
+        let restrict = Restrict::read(r, 2)?;
         let manage = match manages.get(&server) {
             Some(m) => *m,
             None => {
@@ -982,7 +1035,8 @@ pub(crate) async fn member_channel_rights(
                 m
             }
         };
-        out.insert(id, fold_access(&perms, &subjects, manage));
+        let list = rules.get(&id).map(Vec::as_slice).unwrap_or_default();
+        out.insert(id, fold_access(list, &subjects, manage, restrict));
     }
     Ok(out)
 }
@@ -1269,6 +1323,7 @@ mod tests {
         )
         .await;
         exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({hidden_channel}, 'u:alice', 1, 1, 1)")).await;
+        crate::api::test_util::restrict_ruled(db).await;
         let hidden_message = id_of(db, &format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({hidden_channel}, 'alice', 'hush', 1) RETURNING id")).await;
         exec(
             db,

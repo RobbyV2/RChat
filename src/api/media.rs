@@ -912,6 +912,7 @@ mod tests {
             .execute(db)
             .await
             .expect("restrict");
+        crate::api::test_util::restrict_ruled(db).await;
         let headers = axum::http::HeaderMap::new();
         let see = |who: Option<&'static str>, id: String| {
             let (state, headers) = (state.clone(), headers.clone());

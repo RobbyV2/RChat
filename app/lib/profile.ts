@@ -129,6 +129,7 @@ export interface ActionInput {
   member: { is_admin: boolean; perms: number } | null
   targetPerms: number
   channelLocked?: number[]
+  channelDenies?: number[]
   targetRolePerms?: number
   myRolePerms?: number
 }
@@ -165,7 +166,7 @@ export const canEditRoles = ({ signedIn, inServer, perms, member }: ActionInput)
   signedIn && inServer && member !== null && hasPerm(perms, Perm.ManageAdmins)
 
 export const roleEditable = (
-  { self, siteAdmin, perms, targetPerms, channelLocked }: ActionInput,
+  { self, siteAdmin, perms, targetPerms, channelLocked, channelDenies }: ActionInput,
   role: Pick<Role, 'perms'> & { id?: number },
   held: boolean
 ) =>
@@ -176,5 +177,5 @@ export const roleEditable = (
     held,
     self,
     targetPerms,
-    role.id !== undefined && (channelLocked?.includes(role.id) ?? false)
+    role.id !== undefined && ((held ? channelDenies : channelLocked)?.includes(role.id) ?? false)
   )

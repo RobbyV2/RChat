@@ -1,6 +1,7 @@
 import {
   ALL_PERMS,
   type Channel,
+  type ChannelPerm,
   type ConfirmChoice,
   type Member,
   type PasswordMembers,
@@ -119,8 +120,9 @@ export const canUnassignRole = (
   perms: number,
   siteAdmin: boolean,
   self: boolean,
-  targetPerms: number
-) => self || canModerate(perms, siteAdmin, targetPerms)
+  targetPerms: number,
+  channelLocked = false
+) => (self || canModerate(perms, siteAdmin, targetPerms)) && (siteAdmin || !channelLocked)
 
 export const canChangeRole = (
   perms: number,
@@ -132,10 +134,14 @@ export const canChangeRole = (
   channelLocked = false
 ) =>
   held
-    ? canUnassignRole(perms, siteAdmin, self, targetPerms)
+    ? canUnassignRole(perms, siteAdmin, self, targetPerms, channelLocked)
     : canAssignRole(perms, siteAdmin, rolePerms, channelLocked)
 
-export const NO_ROLE_LIMITS: RoleLimits = { held_above: [], channel_grants: [], sole_rules: [] }
+export const NO_ROLE_LIMITS: RoleLimits = {
+  held_above: [],
+  channel_grants: [],
+  channel_denies: [],
+}
 
 export const roleEditBlock = (
   perms: number,
@@ -158,9 +164,25 @@ export const roleDeleteBlock = (
   limits: RoleLimits = NO_ROLE_LIMITS
 ) =>
   roleEditBlock(perms, siteAdmin, role, limits) ??
-  (!siteAdmin && limits.sole_rules.includes(role.id)
-    ? 'This role is the only rule on a channel. Deleting it would open the channel to everyone, so it needs Manage channels.'
+  (!siteAdmin && limits.channel_denies.includes(role.id)
+    ? 'This role limits access to a channel. Deleting it would widen that access, so it needs Manage channels.'
     : null)
+
+export const ROLE_DENY_HINT =
+  'Members can lose a role by leaving and rejoining. Use Require roles for strict control.'
+
+export const roleDenyEscapes = (
+  channel: Pick<Channel, 'kind' | 'restrict_view' | 'restrict_send'>,
+  rules: ChannelPerm[]
+) =>
+  !channel.restrict_view &&
+  rules.some(
+    r =>
+      r.subject.startsWith('r:') &&
+      (!r.can_view ||
+        (channel.kind === 'text' &&
+          ((!r.can_send && !channel.restrict_send) || !r.can_read_history)))
+  )
 
 export type PasswordVerb = 'Set' | 'Change' | 'Clear'
 

@@ -1,7 +1,7 @@
 use sqlx::Row;
 
 use crate::db::{
-    ALL_PERMS, ChannelAccess, Db, GRANT_TOUCH_SECS, Perm, User, fold_access, get_user,
+    ALL_PERMS, ChannelAccess, Db, GRANT_TOUCH_SECS, Perm, Restrict, User, fold_access, get_user,
     guest_grant_ttl, now, perm_bits, perm_row, perm_subjects, queue_grant_touches,
 };
 
@@ -59,33 +59,45 @@ pub(super) async fn channel_manager_servers(db: &Db, user: &User) -> sqlx::Resul
     Ok(out)
 }
 
+pub(super) async fn channel_restrict(db: &Db, channel_id: i64) -> sqlx::Result<Restrict> {
+    match sqlx::query("SELECT restrict_view, restrict_send FROM channels WHERE id = $1")
+        .bind(channel_id)
+        .fetch_optional(db)
+        .await?
+    {
+        Some(r) => Restrict::read(&r, 0),
+        None => Ok(Restrict::default()),
+    }
+}
+
 pub(super) async fn channel_access(
     db: &Db,
     server: &str,
     channel_id: i64,
     user: Option<&User>,
 ) -> sqlx::Result<ChannelAccess> {
+    let restrict = channel_restrict(db, channel_id).await?;
     let rows = sqlx::query(
         "SELECT subject, can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1",
     )
     .bind(channel_id)
     .fetch_all(db)
     .await?;
-    if rows.is_empty() {
+    if rows.is_empty() && restrict == Restrict::default() {
         return Ok(ChannelAccess::all(true));
     }
+    let rows = rows
+        .iter()
+        .map(|r| perm_row(r, 0))
+        .collect::<sqlx::Result<Vec<_>>>()?;
     let Some(user) = user else {
-        return Ok(ChannelAccess::all(false));
+        return Ok(fold_access(&rows, &[], false, restrict));
     };
     if manages_channels(db, server, user).await? {
         return Ok(ChannelAccess::all(true));
     }
     let subjects = perm_subjects(db, Some(server), &user.username).await?;
-    let rows = rows
-        .iter()
-        .map(|r| perm_row(r, 0))
-        .collect::<sqlx::Result<Vec<_>>>()?;
-    Ok(fold_access(&rows, &subjects, false))
+    Ok(fold_access(&rows, &subjects, false, restrict))
 }
 
 /// Which of `usernames` are live members of `server` who can view the channel: the rules of
@@ -133,8 +145,9 @@ pub(super) async fn channel_viewers(
     .iter()
     .map(|r| perm_row(r, 0))
     .collect::<sqlx::Result<Vec<_>>>()?;
+    let restrict = channel_restrict(db, channel_id).await?;
     let listed = usernames.iter().filter(|n| members.contains_key(*n));
-    if overrides.is_empty() {
+    if overrides.is_empty() && restrict == Restrict::default() {
         return Ok(listed.cloned().collect());
     }
     let names: Vec<&String> = members.keys().collect();
@@ -165,7 +178,7 @@ pub(super) async fn channel_viewers(
             let manages = effective & Perm::ManageChannels as i64 != 0;
             let mut subjects = vec![format!("u:{name}")];
             subjects.extend(role_subjects);
-            let access = fold_access(&overrides, &subjects, manages);
+            let access = fold_access(&overrides, &subjects, manages, restrict);
             access.view && (access.history || readable.is_none_or(|at| at >= joined_at))
         })
         .cloned()
@@ -370,6 +383,7 @@ mod tests {
         .execute(db)
         .await
         .expect("insert perm");
+        crate::api::test_util::restrict_ruled(db).await;
         add_member(db, "rchat", "carol", 1, 0, now()).await;
         let alice = channel_access(db, "rchat", cid, Some(&mem_user("alice", false)))
             .await
@@ -385,6 +399,174 @@ mod tests {
             .await
             .expect("carol");
         assert!(carol.view && carol.send && carol.history);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn restrictions_need_an_explicit_allow() {
+        let (state, path) = temp_state("chan_restrict").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        let t = now();
+        for (name, admin, perms) in [
+            ("owner", 1, 0),
+            ("kicker", 1, Perm::Kick as i64),
+            ("listed", 0, 0),
+            ("muted", 0, 0),
+            ("roled", 0, 0),
+            ("manager", 0, 0),
+            ("plain", 0, 0),
+        ] {
+            add_member(db, "rchat", name, admin, perms, t).await;
+        }
+        for (holder, perms) in [("roled", 0), ("manager", Perm::ManageChannels as i64)] {
+            let role: i64 = sqlx::query(
+                "INSERT INTO roles(server, name, color, perms) VALUES('rchat', $1, '#ffffff', $2) RETURNING id",
+            )
+            .bind(holder)
+            .bind(perms)
+            .fetch_one(db)
+            .await
+            .expect("role")
+            .try_get(0)
+            .expect("role id");
+            sqlx::query(
+                "INSERT INTO user_roles(server, username, role_id) VALUES('rchat', $1, $2)",
+            )
+            .bind(holder)
+            .bind(role)
+            .execute(db)
+            .await
+            .expect("assign");
+            if holder == "roled" {
+                sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, 1, 1, 1)")
+                    .bind(cid)
+                    .bind(format!("r:{role}"))
+                    .execute(db)
+                    .await
+                    .expect("role rule");
+            }
+        }
+        let names = [
+            "owner", "kicker", "listed", "muted", "roled", "manager", "plain", "site",
+        ];
+        let check = |label: &'static str, want: [(bool, bool, bool); 9]| async move {
+            for (i, (view, send, history)) in want.into_iter().enumerate() {
+                let user = names.get(i).map(|n| mem_user(n, *n == "site"));
+                let got = channel_access(db, "rchat", cid, user.as_ref())
+                    .await
+                    .expect("access");
+                let who = names.get(i).copied().unwrap_or("guest");
+                assert_eq!(
+                    (got.view, got.send, got.history),
+                    (view, send, history),
+                    "{label}: {who}"
+                );
+            }
+        };
+        let set = |view: i64, send: i64| async move {
+            sqlx::query("UPDATE channels SET restrict_view = $1, restrict_send = $2 WHERE id = $3")
+                .bind(view)
+                .bind(send)
+                .bind(cid)
+                .execute(db)
+                .await
+                .expect("restrict");
+        };
+        let all = (true, true, true);
+        let none = (false, false, false);
+        let looks = (true, false, true);
+        set(1, 0).await;
+        check(
+            "view, only a role rule",
+            [all, none, none, none, all, all, none, all, none],
+        )
+        .await;
+        set(0, 1).await;
+        check(
+            "send, only a role rule",
+            [all, looks, looks, looks, all, all, looks, all, looks],
+        )
+        .await;
+        sqlx::query("DELETE FROM channel_perms WHERE channel_id = $1")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("empty list");
+        set(1, 1).await;
+        check(
+            "both, empty list: managers only",
+            [all, none, none, none, none, all, none, all, none],
+        )
+        .await;
+        set(0, 1).await;
+        check(
+            "send, empty list",
+            [all, looks, looks, looks, looks, all, looks, all, looks],
+        )
+        .await;
+        for (subject, view, send, history) in [
+            ("u:listed", 1, 1, 0),
+            ("u:muted", 1, 0, 1),
+            ("u:plain", 0, 1, 1),
+        ] {
+            sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, $3, $4, $5)")
+                .bind(cid)
+                .bind(subject)
+                .bind(view)
+                .bind(send)
+                .bind(history)
+                .execute(db)
+                .await
+                .expect("user rule");
+        }
+        check(
+            "send, user rules",
+            [
+                all,
+                looks,
+                (true, true, false),
+                looks,
+                looks,
+                all,
+                none,
+                all,
+                looks,
+            ],
+        )
+        .await;
+        set(1, 0).await;
+        check(
+            "view, user rules",
+            [
+                all,
+                none,
+                (true, true, false),
+                looks,
+                none,
+                all,
+                none,
+                all,
+                none,
+            ],
+        )
+        .await;
+        set(0, 0).await;
+        check(
+            "off: rules only deny their subjects",
+            [
+                all,
+                all,
+                (true, true, false),
+                looks,
+                all,
+                all,
+                none,
+                all,
+                all,
+            ],
+        )
+        .await;
         done(state, path).await;
     }
 

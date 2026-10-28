@@ -241,6 +241,11 @@ describe('roles and actions', () => {
     expect(roleEditable(locked, { id: 7, perms: 0 }, false)).toBe(false)
     expect(roleEditable(locked, { id: 8, perms: 0 }, false)).toBe(true)
     expect(roleEditable(locked, { id: 7, perms: 0 }, true)).toBe(true)
+    const denies = { ...ma, self: true, channelDenies: [7] }
+    expect(roleEditable(denies, { id: 7, perms: 0 }, true)).toBe(false)
+    expect(roleEditable(denies, { id: 8, perms: 0 }, true)).toBe(true)
+    expect(roleEditable(denies, { id: 7, perms: 0 }, false)).toBe(true)
+    expect(roleEditable({ ...denies, siteAdmin: true }, { id: 7, perms: 0 }, true)).toBe(true)
   })
 
   test('site ban only for site admins, and outside servers only that', () => {

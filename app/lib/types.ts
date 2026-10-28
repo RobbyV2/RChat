@@ -58,6 +58,8 @@ export interface Channel {
   name: string
   kind: ChannelKind
   slowmode_seconds: number
+  restrict_view?: boolean
+  restrict_send?: boolean
 }
 
 export interface Role {
@@ -142,7 +144,7 @@ export interface ServerDetail {
 export interface RoleLimits {
   held_above: number[]
   channel_grants: number[]
-  sole_rules: number[]
+  channel_denies: number[]
 }
 
 export type InviteStatus = 'member' | 'banned' | 'joinable'

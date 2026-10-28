@@ -182,6 +182,7 @@ import {
 import { clearProfiles, forgetProfiles } from './profile'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from './voice_layout'
 import { retrySeconds, tooManyText } from './rate_limit'
+import { slowExempt, slowWait } from './slowmode'
 import { deniedAccess, runJoinStep } from './join_flow'
 import { secretsKey } from './passwords'
 import {
@@ -529,6 +530,7 @@ interface RChatState {
   stale: Record<string, boolean>
   focus: Record<string, Focus>
   outbox: Record<string, Outgoing[]>
+  slowUntil: Record<number, number>
   reads: Record<string, ReadMark>
   pings: Pings
   unreadAnchor: Record<string, number>
@@ -680,6 +682,10 @@ interface RChatState {
   createChannel: (server: string, name: string, kind?: ChannelKind) => Promise<void>
   renameChannel: (id: number, name: string) => Promise<void>
   setSlowmode: (id: number, seconds: number) => Promise<void>
+  setChannelRestrict: (
+    id: number,
+    patch: { restrict_view?: boolean; restrict_send?: boolean }
+  ) => Promise<void>
   deleteChannel: (id: number) => Promise<void>
   kickMember: (server: string, username: string) => Promise<void>
   banMember: (server: string, username: string) => Promise<void>
@@ -975,7 +981,9 @@ export const changeableRoles = (s: RChatState, server: string, username: string)
   const target = memberPerms(memberOf(s, server, username), roles)
   const self = s.me?.username === username
   const held = memberOf(s, server, username)?.role_ids ?? []
-  const locked = s.servers[server]?.role_limits?.channel_grants ?? []
+  const limits = s.servers[server]?.role_limits
+  const grants = limits?.channel_grants ?? []
+  const denies = limits?.channel_denies ?? []
   return roles.filter(r =>
     canChangeRole(
       perms,
@@ -984,7 +992,7 @@ export const changeableRoles = (s: RChatState, server: string, username: string)
       held.includes(r.id),
       self,
       target,
-      locked.includes(r.id)
+      (held.includes(r.id) ? denies : grants).includes(r.id)
     )
   )
 }
@@ -3236,6 +3244,8 @@ export const useStore = create<RChatState>()((set, get) => {
         } catch (e) {
           patchOutgoing(key, head.tempId, 'failed')
           settleSent(head.tempId, null)
+          const wait = e instanceof ApiError && e.status === 429 ? slowWait(e.message) : null
+          if (wait !== null) noteSlow(head.msg.channel_id, wait)
           fail(e)
           break
         }
@@ -3243,11 +3253,22 @@ export const useStore = create<RChatState>()((set, get) => {
         const next = holding(key) ? {} : (appendLive(key, [real], true) ?? holdLive(key, [real]))
         set(s => ({ outbox: dropOutgoing(s.outbox, key, head.tempId), ...next }))
         settleSent(head.tempId, real)
+        noteSlow(real.channel_id, null)
         if (key[0] !== 't') get().markRead(key, real.id)
       }
     } finally {
       draining.delete(key)
     }
+  }
+
+  const noteSlow = (channelId: number | null, wait: number | null) => {
+    if (channelId === null) return
+    const s = get()
+    const detail = Object.values(s.servers).find(d => d.channels.some(c => c.id === channelId))
+    const seconds = detail?.channels.find(c => c.id === channelId)?.slowmode_seconds ?? 0
+    if (wait === null && (!detail || seconds <= 0 || slowExempt(myPerms(s, detail.name)))) return
+    const until = Date.now() + (wait ?? seconds) * 1000
+    set(st => ({ slowUntil: { ...st.slowUntil, [channelId]: until } }))
   }
 
   const enqueue = (o: Outgoing) => {
@@ -3292,6 +3313,7 @@ export const useStore = create<RChatState>()((set, get) => {
     stale: {},
     focus: {},
     outbox: {},
+    slowUntil: {},
     reads: {},
     pings: NO_PINGS,
     unreadAnchor: {},
@@ -3577,6 +3599,7 @@ export const useStore = create<RChatState>()((set, get) => {
         stale: {},
         focus: {},
         outbox: {},
+        slowUntil: {},
         reads: {},
         pings: NO_PINGS,
         unreadAnchor: {},
@@ -4488,6 +4511,7 @@ export const useStore = create<RChatState>()((set, get) => {
     renameChannel: (id, name) => act(async () => void (await api.updateChannel(id, { name }))),
     setSlowmode: (id, seconds) =>
       act(async () => void (await api.updateChannel(id, { slowmode_seconds: seconds }))),
+    setChannelRestrict: (id, patch) => act(async () => void (await api.updateChannel(id, patch))),
     deleteChannel: id => act(async () => void (await api.deleteChannel(id))),
     kickMember: (server, username) =>
       act(async () => void (await api.kickMember(server, username))),

@@ -4,8 +4,10 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import {
   AtSign,
   ChevronDown,
+  Clock,
   Copy,
   Hash,
+  Lock,
   Menu,
   MessageCircle,
   MessageSquareText,
@@ -36,6 +38,7 @@ import { lastOwn, newSince, unreadMark } from '../lib/lists'
 import { escapeMarksRead } from '../lib/follow'
 import { mentionLookups, mentionsUser } from '../lib/mentions'
 import { readOnly } from '../lib/reactions'
+import { slowTitle } from '../lib/slowmode'
 import { canQuote, repliesToMe } from '../lib/replies'
 import {
   banMenuItem,
@@ -816,6 +819,26 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
               <Hash size={18} className="shrink-0 text-on-surface-variant" />
             )}
             <span className="truncate">{channelName}</span>
+            {channel?.restrict_view && (
+              <span
+                title="Private channel"
+                aria-label="Private channel"
+                role="img"
+                className="flex shrink-0 text-on-surface-variant"
+              >
+                <Lock size={14} />
+              </span>
+            )}
+            {!isVoice && channel && channel.slowmode_seconds > 0 && (
+              <span
+                title={slowTitle(channel.slowmode_seconds)}
+                aria-label={slowTitle(channel.slowmode_seconds)}
+                role="img"
+                className="flex shrink-0 text-on-surface-variant"
+              >
+                <Clock size={16} />
+              </span>
+            )}
           </span>
         )}
         {dm && (

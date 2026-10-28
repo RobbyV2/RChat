@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { Hash, Trash2, TriangleAlert, Volume2, X } from 'lucide-react'
+import { Hash, Lock, Trash2, TriangleAlert, Volume2, X } from 'lucide-react'
 import type { Page } from '../lib/lists'
 import { api } from '../lib/instances'
 import {
@@ -23,11 +23,14 @@ import {
   canRevoke,
   passwordDone,
   passwordPrompt,
+  ROLE_DENY_HINT,
   roleDeleteBlock,
+  roleDenyEscapes,
   roleEditBlock,
   rolePerms,
 } from '../lib/rules'
 import { inviteUrl } from '../lib/invite'
+import { CUSTOM, SLOWMODE_PRESETS, customSeconds, isPreset, slowLabel } from '../lib/slowmode'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
 import type {
   Channel,
@@ -575,18 +578,36 @@ function RoleCreate({ server, refresh }: { server: string; refresh?: () => void 
   )
 }
 
+const RESTRICTIONS = [
+  {
+    key: 'restrict_view',
+    label: 'Require roles to view',
+    detail: 'Only the roles and members below can see this channel. Leave empty for admins only.',
+  },
+  {
+    key: 'restrict_send',
+    label: 'Require roles to send',
+    detail: 'Only the roles and members below can send. Leave empty for admins only.',
+  },
+] as const
+
 export function ChannelPermsEditor({
-  channelId,
+  channel,
   server,
   roles,
+  refresh,
 }: {
-  channelId: number
+  channel: Channel
   server: string
   roles: Role[]
+  refresh?: () => void
 }) {
+  const channelId = channel.id
   const setChannelPerm = useStore(s => s.setChannelPerm)
   const clearChannelPerm = useStore(s => s.clearChannelPerm)
+  const setChannelRestrict = useStore(s => s.setChannelRestrict)
   const setError = useStore(s => s.setError)
+  const me = useStore(s => s.me?.username ?? null)
   const [rows, setRows] = useState<ChannelPerm[]>([])
   const [subject, setSubject] = useState('')
 
@@ -609,8 +630,12 @@ export function ChannelPermsEditor({
   }, [reload])
 
   const save = (perm: ChannelPerm) => void setChannelPerm(channelId, perm).then(reload)
+  const allow = (subj: string) =>
+    save({ subject: subj, can_view: true, can_send: true, can_read_history: true })
+  const listed = (subj: string) => rows.some(r => r.subject === subj)
   const label = (subj: string) =>
     subj.startsWith('u:') ? subj.slice(2) : (roles.find(r => `r:${r.id}` === subj)?.name ?? subj)
+  const restricted = !!channel.restrict_view || !!channel.restrict_send
   const flag = (
     perm: ChannelPerm,
     key: 'can_view' | 'can_send' | 'can_read_history',
@@ -628,28 +653,56 @@ export function ChannelPermsEditor({
   )
 
   return (
-    <div className="mt-1.5 space-y-1.5 rounded-xl bg-surface-container-low p-2">
+    <div className="mt-1.5 space-y-2 rounded-xl bg-surface-container-low p-2">
+      {RESTRICTIONS.filter(r => r.key === 'restrict_view' || channel.kind === 'text').map(r => (
+        <label key={r.key} className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={!!channel[r.key]}
+            onChange={() =>
+              void setChannelRestrict(channelId, { [r.key]: !channel[r.key] }).then(() =>
+                refresh?.()
+              )
+            }
+            className="mt-0.5 accent-primary"
+          />
+          <span className="min-w-0">
+            <span className="block">{r.label}</span>
+            <span className="block text-xs text-on-surface-variant">{r.detail}</span>
+          </span>
+        </label>
+      ))}
+      <p className="pt-1 text-xs font-medium text-on-surface-variant">
+        {restricted ? 'Allowed roles and members' : 'Role and member overrides'}
+      </p>
       {rows.length === 0 && (
         <p className="text-xs text-on-surface-variant">
-          No overrides. The channel is visible to everyone.
+          {channel.restrict_view
+            ? 'Nobody added. Only admins can see this channel.'
+            : channel.restrict_send
+              ? 'Nobody added. Only admins can send.'
+              : 'No overrides. The channel is open to everyone.'}
         </p>
       )}
       {rows.map(perm => (
         <div key={perm.subject} className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="streamer min-w-0 flex-1 truncate text-sm">{label(perm.subject)}</span>
           {flag(perm, 'can_view', 'View')}
-          {flag(perm, 'can_send', 'Send')}
-          {flag(perm, 'can_read_history', 'History')}
+          {channel.kind === 'text' && flag(perm, 'can_send', 'Send')}
+          {channel.kind === 'text' && flag(perm, 'can_read_history', 'History')}
           <button
             onClick={() => void clearChannelPerm(channelId, perm.subject).then(reload)}
-            aria-label={`Clear ${label(perm.subject)}`}
-            title="Clear override"
+            aria-label={`Remove ${label(perm.subject)}`}
+            title="Remove"
             className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest hover:text-error"
           >
             <X size={14} />
           </button>
         </div>
       ))}
+      {roleDenyEscapes(channel, rows) && (
+        <p className="text-xs text-on-surface-variant">{ROLE_DENY_HINT}</p>
+      )}
       {roles.length > 0 && (
         <div className="flex gap-2">
           <select
@@ -659,16 +712,18 @@ export function ChannelPermsEditor({
             className={fieldCls}
           >
             <option value="">Add role…</option>
-            {roles.map(r => (
-              <option key={r.id} value={`r:${r.id}`}>
-                {r.name}
-              </option>
-            ))}
+            {roles
+              .filter(r => !listed(`r:${r.id}`))
+              .map(r => (
+                <option key={r.id} value={`r:${r.id}`}>
+                  {r.name}
+                </option>
+              ))}
           </select>
           <button
             onClick={() => {
-              if (!subject || rows.some(r => r.subject === subject)) return
-              save({ subject, can_view: true, can_send: true, can_read_history: true })
+              if (!subject || listed(subject)) return
+              allow(subject)
               setSubject('')
             }}
             className={textBtn}
@@ -677,18 +732,84 @@ export function ChannelPermsEditor({
           </button>
         </div>
       )}
-      <MemberPicker
-        server={server}
-        exclude={m => rows.some(r => r.subject === `u:${m.username}`)}
-        onPick={m =>
-          save({
-            subject: `u:${m.username}`,
-            can_view: true,
-            can_send: true,
-            can_read_history: true,
-          })
-        }
-      />
+      <div className="flex items-start gap-2">
+        <MemberPicker
+          server={server}
+          exclude={m => listed(`u:${m.username}`)}
+          onPick={m => allow(`u:${m.username}`)}
+        />
+        {me && !listed(`u:${me}`) && (
+          <button onClick={() => allow(`u:${me}`)} className={`${textBtn} shrink-0`}>
+            Add me
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SlowmodeField({ channel, refresh }: { channel: Channel; refresh?: () => void }) {
+  const setSlowmode = useStore(s => s.setSlowmode)
+  const current = channel.slowmode_seconds
+  const [custom, setCustom] = useState(!isPreset(current))
+  const [text, setText] = useState(isPreset(current) ? '' : String(current))
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    setCustom(!isPreset(current))
+    setText(isPreset(current) ? '' : String(current))
+  }, [current])
+  const apply = (n: number) => {
+    setError(null)
+    if (n !== current) void setSlowmode(channel.id, n).then(() => refresh?.())
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <label className="flex items-center gap-1.5 text-xs text-on-surface-variant">
+        Slow mode
+        <select
+          value={custom ? CUSTOM : String(current)}
+          onChange={e => {
+            if (e.target.value === CUSTOM) {
+              setCustom(true)
+              setText(current > 0 ? String(current) : '')
+              return
+            }
+            setCustom(false)
+            apply(Number(e.target.value))
+          }}
+          className="rounded-lg border border-outline bg-surface-container-high px-2 py-1 text-base text-on-surface outline-none focus:border-primary md:text-sm"
+        >
+          {SLOWMODE_PRESETS.map(n => (
+            <option key={n} value={n}>
+              {slowLabel(n)}
+            </option>
+          ))}
+          <option value={CUSTOM}>Custom</option>
+        </select>
+      </label>
+      {custom && (
+        <form
+          onSubmit={e => {
+            e.preventDefault()
+            const n = customSeconds(text)
+            if (n === null) setError(`Enter 1 to ${SLOWMODE_MAX} seconds`)
+            else apply(n)
+          }}
+          className="flex items-center gap-1.5"
+        >
+          <input
+            value={text}
+            onChange={e => setText(e.target.value)}
+            inputMode="numeric"
+            placeholder="Seconds"
+            aria-label="Slow mode seconds"
+            title={`1 to ${SLOWMODE_MAX} seconds`}
+            className="w-20 rounded-lg border border-outline bg-transparent px-2 py-1 text-base text-on-surface outline-none focus:border-primary md:text-sm"
+          />
+          <button className={textBtn}>Set</button>
+        </form>
+      )}
+      {error && <p className="basis-full text-xs text-error">{error}</p>}
     </div>
   )
 }
@@ -706,10 +827,7 @@ export function ChannelControls({
   refresh?: () => void
   lead?: ReactNode
 }) {
-  const setSlowmode = useStore(s => s.setSlowmode)
-  const [slow, setSlow] = useState(String(channel.slowmode_seconds))
   const [open, setOpen] = useState(false)
-  useEffect(() => setSlow(String(channel.slowmode_seconds)), [channel.slowmode_seconds])
   return (
     <div className="rounded-xl px-2 py-1.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -721,38 +839,26 @@ export function ChannelControls({
               <Hash size={14} className="shrink-0 text-on-surface-variant" />
             )}
             <span className="truncate">{channel.name}</span>
+            {channel.restrict_view && (
+              <span
+                title="Private channel"
+                aria-label="Private channel"
+                role="img"
+                className="flex shrink-0 text-on-surface-variant"
+              >
+                <Lock size={12} />
+              </span>
+            )}
           </span>
         )}
-        {channel.kind === 'text' && (
-          <form
-            onSubmit={e => {
-              e.preventDefault()
-              const n = Number(slow)
-              if (Number.isInteger(n) && n !== channel.slowmode_seconds)
-                void setSlowmode(channel.id, n).then(() => refresh?.())
-            }}
-            className="flex items-center gap-1.5"
-          >
-            <label
-              title={`0 to ${SLOWMODE_MAX} seconds`}
-              className="flex items-center gap-1.5 text-xs text-on-surface-variant"
-            >
-              Slow mode (s)
-              <input
-                value={slow}
-                onChange={e => setSlow(e.target.value)}
-                inputMode="numeric"
-                className="w-16 rounded-lg border border-outline bg-transparent px-2 py-1 text-base text-on-surface outline-none focus:border-primary md:text-sm"
-              />
-            </label>
-            <button className={textBtn}>Set</button>
-          </form>
-        )}
+        {channel.kind === 'text' && <SlowmodeField channel={channel} refresh={refresh} />}
         <button onClick={() => setOpen(!open)} className={textBtn}>
-          {open ? 'Hide perms' : 'Perms'}
+          {open ? 'Hide permissions' : 'Permissions'}
         </button>
       </div>
-      {open && <ChannelPermsEditor channelId={channel.id} server={server} roles={roles} />}
+      {open && (
+        <ChannelPermsEditor channel={channel} server={server} roles={roles} refresh={refresh} />
+      )}
     </div>
   )
 }

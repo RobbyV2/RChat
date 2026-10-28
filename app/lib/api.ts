@@ -321,8 +321,15 @@ export const endpoints = (c: ApiClient) => ({
     c.req<SystemMessages>('PATCH', `/servers/${seg(name)}/system_messages`, patch),
   createChannel: (server: string, name: string, kind: ChannelKind = 'text') =>
     c.req<Channel>('POST', `/servers/${seg(server)}/channels`, { name, kind }),
-  updateChannel: (id: number, patch: { name?: string; slowmode_seconds?: number }) =>
-    c.req<Channel>('PATCH', `/channels/${id}`, patch),
+  updateChannel: (
+    id: number,
+    patch: {
+      name?: string
+      slowmode_seconds?: number
+      restrict_view?: boolean
+      restrict_send?: boolean
+    }
+  ) => c.req<Channel>('PATCH', `/channels/${id}`, patch),
   deleteChannel: (id: number) => c.req<unknown>('DELETE', `/channels/${id}`),
   kickMember: (server: string, username: string) =>
     c.req<unknown>('POST', `/servers/${seg(server)}/kick`, { username }),

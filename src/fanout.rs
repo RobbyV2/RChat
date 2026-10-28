@@ -776,6 +776,8 @@ mod tests {
             name: s("general"),
             kind: crate::db::ChannelKind::Text,
             slowmode_seconds: 5,
+            restrict_view: false,
+            restrict_send: false,
         };
         router.deliver(WsEvent::ServerUpdated {
             server: crate::api::ServerSummaryLite {

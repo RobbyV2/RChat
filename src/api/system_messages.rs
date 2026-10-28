@@ -607,6 +607,7 @@ mod tests {
         let other = id_of(db, "SELECT id FROM channels WHERE server = 'rchat'").await;
         let hidden = id_of(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'staff', 'text', 1) RETURNING id").await;
         exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({hidden}, 'u:dora', 0, 0, 0)")).await;
+        crate::api::test_util::restrict_ruled(db).await;
         for id in [voice, other, random, 999_999, hidden] {
             match patch(&state, "dora", json!({ "channel_id": id })).await {
                 Err(ApiError(code, msg)) => {
@@ -682,6 +683,7 @@ mod tests {
         let db = &state.db;
         add_member(db, "club", "carol", 0, 0, 1).await;
         exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({random}, 'u:bob', 1, 1, 1)")).await;
+        crate::api::test_util::restrict_ruled(db).await;
         patch(&state, "alice", json!({ "channel_id": random }))
             .await
             .expect("restricted channel is still a valid choice");

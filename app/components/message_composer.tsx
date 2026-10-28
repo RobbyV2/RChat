@@ -3,9 +3,11 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
+  Clock,
   Eye,
   EyeOff,
   File as FileIcon,
+  Lock,
   Plus,
   SendHorizontal,
   Server,
@@ -21,6 +23,7 @@ import { spliceText } from '../lib/autocomplete'
 import { loadEmojiData } from '../lib/emoji'
 import { parseSed } from '../lib/sed'
 import { readOnly } from '../lib/reactions'
+import { clock } from '../lib/slowmode'
 import { Dialog, FieldError, fieldCls, filledBtn } from './server_settings'
 import { EmojiPicker, SHEET_QUERY } from './emoji_picker'
 import { useMedia } from './context_menu'
@@ -100,6 +103,24 @@ function ExpiryDialog({
       </div>
     </Dialog>
   )
+}
+
+const NO_SEND = 'You do not have permission to send messages in this channel.'
+
+const useSlowLeft = (channelId: number | null): number => {
+  const until = useStore(s => (channelId === null ? 0 : (s.slowUntil[channelId] ?? 0)))
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    setNow(Date.now())
+    if (until <= Date.now()) return
+    const timer = setInterval(() => {
+      const t = Date.now()
+      setNow(t)
+      if (t >= until) clearInterval(timer)
+    }, 250)
+    return () => clearInterval(timer)
+  }, [until])
+  return Math.max(0, until - now)
 }
 
 function JoinBar({ server }: { server: string }) {
@@ -200,6 +221,8 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const sel = useRef({ start: 0, end: 0 })
   const pickerOpen = pickerFor !== null && pickerFor === draftKey
   const focusSeen = useRef(focusAsk?.n ?? 0)
+  const channelId = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
+  const slowLeft = useSlowLeft(channelId)
 
   useEffect(() => {
     if (!focusAsk || focusAsk.n === focusSeen.current) return
@@ -267,6 +290,18 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     )
   }
 
+  if (view?.kind === 'channel' && readOnly(servers[view.server], channelId)) {
+    return (
+      <div
+        data-no-send
+        className="mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] flex shrink-0 items-center gap-2 rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant keyboard:mb-3"
+      >
+        <Lock size={16} className="shrink-0" />
+        <span>{NO_SEND}</span>
+      </div>
+    )
+  }
+
   const placeholder = thread
     ? 'Message thread'
     : view?.kind === 'channel'
@@ -286,14 +321,11 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const count = charCount(text)
   const tooLong = count > MESSAGE_MAX
 
-  const sendable =
-    view?.kind !== 'channel' ||
-    !readOnly(servers[view.server], thread ? threadChannel : view.channelId)
   const closeBar = replying && draftKey ? () => cancelReply(draftKey) : null
   const bar =
     closeBar && draftKey ? (
       <ReplyBar draftKey={draftKey} onClose={closeBar} />
-    ) : forwarding && sendable && draftKey ? (
+    ) : forwarding && draftKey ? (
       <ForwardBar draftKey={draftKey} />
     ) : null
 
@@ -312,6 +344,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       })
       return
     }
+    if (slowLeft > 0) return
     if (pending?.mode === 'p2p') setExpiryOpen(true)
     else doSend()
   }
@@ -376,6 +409,15 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       )}
       {pickerOpen && (
         <EmojiPicker anchor={emojiRef.current} onPick={insertEmoji} onClose={closePicker} />
+      )}
+      {slowLeft > 0 && (
+        <p
+          role="status"
+          className="mb-1 flex items-center justify-end gap-1 px-3 text-xs text-on-surface-variant tabular-nums"
+        >
+          <Clock size={12} className="shrink-0" />
+          Slow mode: {clock(slowLeft)}
+        </p>
       )}
       {bar}
       <div
@@ -471,9 +513,16 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           <Smile size={20} />
         </button>
         <button
-          title={tooLong ? 'Message is too long' : 'Send'}
+          title={
+            tooLong
+              ? 'Message is too long'
+              : slowLeft > 0
+                ? `Slow mode: ${clock(slowLeft)}`
+                : 'Send'
+          }
+          aria-label="Send"
           onClick={send}
-          disabled={tooLong}
+          disabled={tooLong || slowLeft > 0}
           className="shrink-0 rounded-full bg-primary p-2 text-on-primary hover:opacity-90 disabled:opacity-40"
         >
           <SendHorizontal size={16} />
