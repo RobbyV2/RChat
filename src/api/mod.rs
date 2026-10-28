@@ -1,3 +1,4 @@
+pub mod access;
 pub mod admin;
 pub mod auth;
 pub mod dms;
@@ -884,73 +885,6 @@ pub(crate) fn header_grants(headers: &HeaderMap) -> Vec<String> {
     }
 }
 
-pub(crate) async fn grant_matches(db: &Db, grant: &str, server: &str) -> sqlx::Result<bool> {
-    crate::db::grant_live(db, grant, server).await
-}
-
-pub(crate) async fn require_guest_view(
-    db: &Db,
-    headers: &HeaderMap,
-    server: &str,
-) -> Result<(), ApiError> {
-    let grants = header_grants(headers);
-    if grants.is_empty() {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            "Server is password protected".to_string(),
-        ));
-    }
-    for grant in &grants {
-        if grant_matches(db, grant, server).await? {
-            return Ok(());
-        }
-    }
-    Err(ApiError(
-        StatusCode::UNAUTHORIZED,
-        "Invalid grant".to_string(),
-    ))
-}
-
-pub(crate) async fn require_server_view(
-    db: &Db,
-    headers: &HeaderMap,
-    server: &ServerSummaryLite,
-    viewer: Option<&User>,
-) -> Result<(), ApiError> {
-    if let Some(u) = viewer
-        && crate::db::is_banned(db, &server.name, &u.username).await?
-    {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            "You are banned from this server".to_string(),
-        ));
-    }
-    if !server.has_password {
-        return Ok(());
-    }
-    match viewer {
-        None => require_guest_view(db, headers, &server.name).await,
-        Some(u) => {
-            if u.is_site_admin {
-                return Ok(());
-            }
-            let member = sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
-                .bind(&server.name)
-                .bind(&u.username)
-                .fetch_optional(db)
-                .await?
-                .is_some();
-            match member {
-                true => Ok(()),
-                false => Err(ApiError(
-                    StatusCode::FORBIDDEN,
-                    "Server is password protected".to_string(),
-                )),
-            }
-        }
-    }
-}
-
 pub const NAME_MAX: usize = 100;
 pub const MESSAGE_MAX: usize = 4000;
 pub const SLOWMODE_MAX: i64 = 21600;
@@ -1251,6 +1185,11 @@ pub fn routes(state: AppState, roles: &Roles, key: ClientIp) -> Router<AppState>
     let strict = limiter();
     let mut router = Router::new();
     if roles.api {
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            rt.spawn(async {
+                auth::dummy_hash().await;
+            });
+        }
         let invite_routes = Router::new()
             .route("/invites/{name}", get(servers::get_invite))
             .route_layer(limiter())
@@ -1265,6 +1204,7 @@ pub fn routes(state: AppState, roles: &Roles, key: ClientIp) -> Router<AppState>
             .route("/auth/words/{username}", get(auth::words))
             .route("/me/password", post(auth::change_password))
             .route("/servers/{name}/guest_access", post(servers::guest_access))
+            .route("/servers/{name}/available", get(servers::server_available))
             .route_layer(strict.clone());
         router = router.merge(api_routes(state, strict_routes, invite_routes));
     }
@@ -1307,7 +1247,6 @@ fn api_routes(
                 .patch(servers::update_server)
                 .delete(servers::delete_server),
         )
-        .route("/servers/{name}/exists", get(servers::server_exists))
         .route("/servers/{name}/members", get(servers::list_members))
         .route("/servers/{name}/interacted", get(servers::list_interacted))
         .route("/servers/{name}/leave", post(servers::leave_server))

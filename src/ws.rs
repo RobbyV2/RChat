@@ -15,15 +15,12 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tracing::{debug, warn};
 
+use crate::api::access::{
+    ws_banned, ws_channel_view, ws_channel_viewable, ws_server_open, ws_voice_channel,
+};
 use crate::api::messages::{load_message, load_message_with_embeds};
-use crate::api::servers::server_lite;
-use crate::api::{
-    Channel, Embed, Member, Message, ServerSummaryLite, Settings, UserRef, grant_matches,
-};
-use crate::db::{
-    ChannelKind, Db, channel_access, channel_viewable, get_user, is_banned, now, setting_on,
-    touch_interaction,
-};
+use crate::api::{Channel, Embed, Member, Message, ServerSummaryLite, Settings, UserRef};
+use crate::db::{ChannelKind, Db, get_user, now, setting_on, touch_interaction};
 use crate::fanout::Topic;
 pub use crate::hub::Hub;
 use crate::hub::{Aftermath, CallEnd, Epoch, Op, P2pDrop, Purge};
@@ -494,7 +491,7 @@ pub(crate) async fn evict_unviewable(state: &AppState, server: &str, channel_id:
             continue;
         }
         for user in users {
-            if !channel_viewable(&state.read(), server, cid, Some(&user)).await {
+            if !ws_channel_viewable(&state.read(), server, cid, Some(&user)).await {
                 state.hub.evict_voice(&user, cid);
             }
         }
@@ -749,20 +746,20 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             (owner == server).then_some(WsEvent::ChannelUpdated { server, channel })
         }
         WsEvent::ServerCreated { server } => {
-            let server = server_lite(db, &server.name).await.ok().flatten()?;
+            let server = refresh_lite(db, &server.name).await.ok().flatten()?;
             Some(WsEvent::ServerCreated { server })
         }
         WsEvent::ServerRenamed { old_name, server } => {
             let reused =
-                old_name != server.name && !matches!(server_lite(db, &old_name).await, Ok(None));
-            let server = server_lite(db, &server.name).await.ok().flatten()?;
+                old_name != server.name && !matches!(refresh_lite(db, &old_name).await, Ok(None));
+            let server = refresh_lite(db, &server.name).await.ok().flatten()?;
             (!reused).then_some(WsEvent::ServerRenamed { old_name, server })
         }
         WsEvent::ServerUpdated { server } => {
-            let server = server_lite(db, &server.name).await.ok().flatten()?;
+            let server = refresh_lite(db, &server.name).await.ok().flatten()?;
             Some(WsEvent::ServerUpdated { server })
         }
-        WsEvent::ServerDeleted { name } => match server_lite(db, &name).await {
+        WsEvent::ServerDeleted { name } => match refresh_lite(db, &name).await {
             Ok(Some(_)) => None,
             Ok(None) | Err(_) => Some(WsEvent::ServerDeleted { name }),
         },
@@ -811,7 +808,7 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 usernames: gone,
             })
         }
-        WsEvent::ServerBanned { server, username } => match is_banned(db, &server, &username).await
+        WsEvent::ServerBanned { server, username } => match ws_banned(db, &server, &username).await
         {
             Ok(true) => Some(WsEvent::ServerBanned { server, username }),
             Ok(false) | Err(_) => None,
@@ -928,7 +925,7 @@ pub(crate) async fn repost(state: &AppState, op: Op) {
         Op::EvictVoice { user, channel_id } => {
             let allowed = match channel_now(&state.read(), channel_id).await {
                 Ok(Some((server, _))) => {
-                    channel_viewable(&state.read(), &server, channel_id, Some(&user)).await
+                    ws_channel_viewable(&state.read(), &server, channel_id, Some(&user)).await
                 }
                 Ok(None) | Err(_) => false,
             };
@@ -998,45 +995,14 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
     let db_err = |e: sqlx::Error| e.to_string();
     match msg {
         ClientMsg::VoiceJoin { channel_id } => {
-            let row = sqlx::query("SELECT server, kind FROM channels WHERE id = $1")
-                .bind(channel_id)
-                .fetch_optional(&state.read())
-                .await
-                .map_err(db_err)?
-                .ok_or_else(|| "Channel not found".to_string())?;
-            let server: String = row.try_get(0).map_err(db_err)?;
-            let kind = ChannelKind::parse(&row.try_get::<String, _>(1).map_err(db_err)?)
-                .map_err(db_err)?;
-            if kind != ChannelKind::Voice {
+            let channel = ws_voice_channel(&state.read(), user, channel_id).await?;
+            if channel.kind() != ChannelKind::Voice {
                 return Err("Not a voice channel".to_string());
             }
-            if is_banned(&state.read(), &server, user)
-                .await
-                .map_err(db_err)?
-            {
-                return Err("You are banned from this server".to_string());
+            if channel.server().via() == crate::api::access::Via::Staff {
+                return Err("Join this server to use voice".to_string());
             }
-            match server_password_hash(&state.read(), &server)
-                .await
-                .map_err(db_err)?
-            {
-                None => return Err("Channel not found".to_string()),
-                Some(Some(hash)) if hash == crate::db::PURGING_HASH => {
-                    return Err("Channel not found".to_string());
-                }
-                Some(Some(_)) => {
-                    if !is_member(&state.read(), &server, user)
-                        .await
-                        .map_err(db_err)?
-                    {
-                        return Err("Join this server to use voice".to_string());
-                    }
-                }
-                Some(None) => {}
-            }
-            if !channel_viewable(&state.read(), &server, channel_id, Some(user)).await {
-                return Err("Not allowed".to_string());
-            }
+            let server = channel.server().name().to_string();
             let ends = state
                 .hub
                 .voice_join_capped(user, conn, &server, channel_id, voice_room_max())
@@ -1370,7 +1336,7 @@ async fn lookup_p2p_ids(
                     (Some(view), _) => *view,
                     (None, Some((owner, view))) => *view && *owner == server,
                     (None, None) => {
-                        let view = channel_viewable(db, &server, cid, Some(me)).await;
+                        let view = ws_channel_viewable(db, &server, cid, Some(me)).await;
                         channels.insert(cid, view);
                         view
                     }
@@ -1410,6 +1376,26 @@ fn p2p_offline(hoster: String, scope_servers: Vec<String>, scope_users: Vec<Stri
     }
 }
 
+async fn refresh_lite(db: &Db, name: &str) -> sqlx::Result<Option<ServerSummaryLite>> {
+    let row = sqlx::query(
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
+    )
+    .bind(name)
+    .fetch_optional(db)
+    .await?;
+    match row {
+        Some(r) => Ok(Some(ServerSummaryLite {
+            name: r.try_get(0)?,
+            display_name: r.try_get(1)?,
+            creator: r.try_get(2)?,
+            has_password: r.try_get::<Option<String>, _>(3)?.is_some(),
+            banner_color: r.try_get(4)?,
+            name_color: r.try_get(5)?,
+        })),
+        None => Ok(None),
+    }
+}
+
 async fn server_password_hash(db: &Db, server: &str) -> sqlx::Result<Option<Option<String>>> {
     Ok(
         sqlx::query("SELECT password_hash FROM servers WHERE name = $1")
@@ -1432,23 +1418,11 @@ async fn is_member(db: &Db, server: &str, user: &str) -> sqlx::Result<bool> {
 }
 
 async fn guest_sub_ok(db: &Db, server: &str, grant: Option<&str>) -> sqlx::Result<bool> {
-    match (server_password_hash(db, server).await?, grant) {
-        (None, _) => Ok(false),
-        (Some(None), _) => Ok(true),
-        (Some(Some(_)), Some(grant)) => grant_matches(db, grant, server).await,
-        (Some(Some(_)), None) => Ok(false),
-    }
+    ws_server_open(db, server, None, false, grant).await
 }
 
 async fn authed_sub_ok(db: &Db, server: &str, user: &str, site_admin: bool) -> sqlx::Result<bool> {
-    if is_banned(db, server, user).await? {
-        return Ok(false);
-    }
-    match server_password_hash(db, server).await? {
-        None => Ok(false),
-        Some(None) => Ok(true),
-        Some(Some(_)) => Ok(site_admin || is_member(db, server, user).await?),
-    }
+    ws_server_open(db, server, Some(user), site_admin, None).await
 }
 
 async fn member_servers_of(db: &Db, user: &str) -> sqlx::Result<HashSet<String>> {
@@ -1898,23 +1872,17 @@ async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::Result<bool
 }
 
 async fn still_held(db: &Db, access: &Access, name: &str) -> sqlx::Result<bool> {
-    let Some(hash) = server_password_hash(db, name).await? else {
+    if server_password_hash(db, name).await?.is_none() {
         return Ok(true);
-    };
+    }
     match &access.user {
         Some(user) => {
-            if is_banned(db, name, user).await? {
+            if access.member_servers.contains(name) && !is_member(db, name, user).await? {
                 return Ok(false);
             }
-            let member = access.member_servers.contains(name);
-            let check = member || (hash.is_some() && !access.site_admin);
-            Ok(!check || is_member(db, name, user).await?)
+            authed_sub_ok(db, name, user, access.site_admin).await
         }
-        None => match (hash, access.grants.get(name)) {
-            (None, _) => Ok(true),
-            (Some(_), Some(grant)) => grant_matches(db, grant, name).await,
-            (Some(_), None) => Ok(false),
-        },
+        None => guest_sub_ok(db, name, access.grants.get(name).map(String::as_str)).await,
     }
 }
 
@@ -1950,11 +1918,7 @@ async fn channel_view(
     let Some((owner, _)) = channel_now(db, cid).await? else {
         return Ok(None);
     };
-    let user = match username {
-        Some(name) => get_user(db, name).await?,
-        None => None,
-    };
-    let view = channel_access(db, &owner, cid, user.as_ref()).await?.view;
+    let view = ws_channel_view(db, &owner, cid, username).await?;
     Ok(Some((owner, view)))
 }
 
@@ -2499,7 +2463,7 @@ async fn look(
     let server = server.map(|s| s.to_lowercase());
     access.looking = server.clone().filter(|_| access.user.is_some());
     let (target, peek, seen) = match (access.user.clone(), server) {
-        (Some(user), Some(s)) if !is_banned(&state.read(), &s, &user).await.unwrap_or(true) => {
+        (Some(user), Some(s)) if !ws_banned(&state.read(), &s, &user).await.unwrap_or(true) => {
             state
                 .hub
                 .listen(conn, &[Topic::View(s.clone()), Topic::Server(s.clone())]);
@@ -3789,13 +3753,13 @@ mod tests {
     #[tokio::test]
     async fn banned_user_cannot_join_voice() {
         let (state, path) = crate::api::test_util::temp_state("ban_voice").await;
+        for name in ["bob", "carol"] {
+            add_user_row(&state.db, name).await;
+        }
         let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
         exec(&state.db, "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('rchat', 'bob', 'alice', 0)").await;
         let join = |user| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id: cid });
-        assert_eq!(
-            join("bob").await,
-            Err("You are banned from this server".to_string())
-        );
+        assert_eq!(join("bob").await, Err("Channel not found".to_string()));
         join("carol").await.expect("carol joins");
         assert_eq!(
             state.hub.rooms_in("rchat", None),
@@ -3848,12 +3812,12 @@ mod tests {
             "DELETE FROM members WHERE server = 'vault' AND username = 'bob'",
         )
         .await;
-        for outsider in ["bob", "eve", "root"] {
-            assert_eq!(
-                join(outsider).await,
-                Err("Join this server to use voice".to_string()),
-                "{outsider}"
-            );
+        for (outsider, want) in [
+            ("bob", "Channel not found"),
+            ("eve", "Channel not found"),
+            ("root", "Join this server to use voice"),
+        ] {
+            assert_eq!(join(outsider).await, Err(want.to_string()), "{outsider}");
         }
         join("alice").await.expect("alice joins");
         assert_eq!(

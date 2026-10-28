@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
-use crate::api::messages::{MsgScope, message_scope};
+use crate::api::access::{MsgScope, staff_message};
 use crate::api::{
     ApiError, Authed, Paged, ProfanitySwitch, ServerSummaryLite, Settings, UserRef, decode_cursor,
     encode_cursor,
@@ -868,7 +868,7 @@ pub(crate) async fn delete_message(
     Path(id): Path<i64>,
 ) -> Result<Json<OkResp>, ApiError> {
     require_site_admin(&user)?;
-    let scope = message_scope(&state.db, id).await?;
+    let scope = staff_message(&state.db, &user, id).await?;
     sqlx::query("DELETE FROM messages WHERE id = $1")
         .bind(id)
         .execute(&state.db)
@@ -1112,12 +1112,16 @@ mod tests {
             .await
             .expect("note");
         tx.commit().await.expect("commit");
-        assert!(
-            crate::api::servers::server_lite(db, "club")
-                .await
-                .expect("lite")
-                .is_none()
-        );
+        assert!(matches!(
+            crate::api::access::resolve_server(
+                db,
+                "club",
+                Some(&crate::api::test_util::mem_user("root", true)),
+                &crate::api::access::Proof::none()
+            )
+            .await,
+            Err(ApiError(StatusCode::NOT_FOUND, _))
+        ));
         assert_eq!(
             count(db, "SELECT COUNT(*) FROM messages WHERE channel_id IN (SELECT id FROM channels WHERE server = 'club')").await,
             600
@@ -1142,12 +1146,16 @@ mod tests {
             rx.try_recv(),
             Ok(WsEvent::ServerDeleted { name }) if name == "club2"
         ));
-        assert!(
-            crate::api::servers::server_lite(db, "club2")
-                .await
-                .expect("lite")
-                .is_none()
-        );
+        assert!(matches!(
+            crate::api::access::resolve_server(
+                db,
+                "club2",
+                Some(&crate::api::test_util::mem_user("root", true)),
+                &crate::api::access::Proof::none()
+            )
+            .await,
+            Err(ApiError(StatusCode::NOT_FOUND, _))
+        ));
         assert!(!remove_server(&state, "club2").await.expect("gone"));
         assert!(!remove_server(&state, "nope").await.expect("missing"));
         assert!(rx.try_recv().is_err());
@@ -1307,7 +1315,12 @@ mod tests {
                 .is_some()
         );
         assert!(matches!(
-            crate::api::messages::message_scope(db, bob_msg).await,
+            crate::api::access::staff_message(
+                db,
+                &crate::api::test_util::mem_user("root", true),
+                bob_msg
+            )
+            .await,
             Err(ApiError(StatusCode::NOT_FOUND, _))
         ));
         let carol = get_user(db, "carol").await.expect("q").expect("carol");

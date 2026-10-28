@@ -37,6 +37,7 @@ import {
   remoteInvite,
   requestPreview,
 } from '../lib/remote_invite'
+import { deniedAccess, needsPassword } from '../lib/join_flow'
 import { serverInitial } from '../lib/rules'
 import type { InstanceInfo, Invite, InviteStatus, Message } from '../lib/types'
 import { ServerGlyph } from './server_rail'
@@ -214,11 +215,13 @@ function PasswordDialog({
   initialError,
   onSubmit,
   onClose,
+  unlock = false,
 }: {
   name: string
   initialError: string | null
   onSubmit: (password: string) => Promise<string | null>
   onClose: () => void
+  unlock?: boolean
 }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState(initialError)
@@ -239,8 +242,18 @@ function PasswordDialog({
           }}
         >
           <p className="text-sm text-on-surface-variant">
-            <span className="streamer font-medium text-on-surface">{name}</span> is password
-            protected. Enter its password to join.
+            {unlock ? (
+              <>
+                Enter the password for{' '}
+                <span className="streamer font-medium text-on-surface">{name}</span> to view this
+                invite.
+              </>
+            ) : (
+              <>
+                <span className="streamer font-medium text-on-surface">{name}</span> is password
+                protected. Enter its password to join.
+              </>
+            )}
           </p>
           <input
             autoFocus
@@ -257,7 +270,7 @@ function PasswordDialog({
               Cancel
             </button>
             <button disabled={busy || !password.trim()} className={filledBtn}>
-              {busy ? 'Joining…' : 'Join'}
+              {unlock ? (busy ? 'Checking…' : 'Continue') : busy ? 'Joining…' : 'Join'}
             </button>
           </div>
         </form>
@@ -304,10 +317,6 @@ function ServerTile({
 
 function Counts({ invite, center }: { invite: Invite; center: boolean }) {
   const { online_count, member_count } = invite
-  if (online_count === null || member_count === null)
-    return invite.status === 'password_required' ? (
-      <p className="text-xs text-on-surface-variant">Enter the password to see who&apos;s here.</p>
-    ) : null
   return (
     <div
       className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-on-surface-variant ${
@@ -522,10 +531,13 @@ export function InviteCard({
   )
   const root = useRef<HTMLDivElement>(null)
   const big = variant === 'page'
-  const { data, error, reload } = useInvite(server, password, root, big)
+  const [unlocked, setUnlocked] = useState<string | null>(null)
+  const given = unlocked ?? password
+  const { data, error, reload } = useInvite(server, given, root, big)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const [asking, setAsking] = useState<{ guest: boolean; error: string | null } | null>(null)
+  const [unlocking, setUnlocking] = useState<string | null | false>(false)
   const seen = useRef(joined)
   const nav: Nav = big ? 'replace' : 'push'
   const authed = me !== null || guest
@@ -541,19 +553,18 @@ export function InviteCard({
   const attempt = async (pw: string | null, asGuest: boolean): Promise<Outcome> => {
     if (!data) return { ok: true }
     const { name, has_password } = data.server
-    const given = has_password && !(asGuest && hasGrant) ? (pw ?? undefined) : undefined
+    const sent = has_password && !(asGuest && hasGrant) ? (pw ?? undefined) : undefined
     setBusy(true)
     setNote(null)
     try {
       const s = useStore.getState()
-      if (asGuest) await s.guestJoinServer(name, given, nav)
-      else await s.joinServer(name, given, nav)
+      if (asGuest) await s.guestJoinServer(name, sent, nav)
+      else await s.joinServer(name, sent, nav)
       return { ok: true }
     } catch (e) {
-      const code = e instanceof ApiError ? e.status : 0
-      const retry = code === 401 || (asGuest && code === 403)
-      const banned = !asGuest && code === 403
-      const message = retry && code === 403 ? 'Enter the server password' : errorText(e)
+      const retry = needsPassword(e) || deniedAccess(e)
+      const banned = !asGuest && e instanceof ApiError && e.status === 403
+      const message = needsPassword(e) ? 'Enter the server password' : errorText(e)
       return { ok: false, password: retry, banned, message }
     } finally {
       setBusy(false)
@@ -563,11 +574,7 @@ export function InviteCard({
 
   const join = async (asGuest: boolean) => {
     consume()
-    if (status === 'password_required') {
-      setAsking({ guest: asGuest, error: null })
-      return
-    }
-    const out = await attempt(password, asGuest)
+    const out = await attempt(given, asGuest)
     if (out.ok) return
     if (out.password) setAsking({ guest: asGuest, error: out.message })
     else if (!out.banned) setNote(out.message)
@@ -603,6 +610,17 @@ export function InviteCard({
     await join(true)
   }
 
+  const unlock = async (pw: string) => {
+    try {
+      await api.getInvite(server, pw)
+      setUnlocking(false)
+      setUnlocked(pw)
+      return null
+    } catch (e) {
+      return needsPassword(e) ? 'Enter the server password' : errorText(e)
+    }
+  }
+
   useEffect(() => {
     if (!autoJoin || !authed || !status || busy) return
     if (status === 'member') go()
@@ -613,10 +631,40 @@ export function InviteCard({
   const btn = big ? 'w-full py-2.5' : 'shrink-0'
   const fit = big ? 'break-words' : 'truncate'
   const errorCode = error instanceof ApiError ? error.status : null
-  const invalid = errorCode === 404
-  const locked = !authed && errorCode === 401
+  const hidden = needsPassword(error) || deniedAccess(error)
+  const invalid = errorCode === 404 && !hidden
+  const locked = !authed && errorCode === 401 && !hidden
 
   const body = (): Body | null => {
+    if (hidden)
+      return {
+        icon: (
+          <Tile big={big} tone="bg-primary-container text-on-primary-container">
+            <span className="streamer">{serverInitial(server)}</span>
+          </Tile>
+        ),
+        title: <span className={`streamer min-w-0 ${fit}`}>{server}</span>,
+        sub: (
+          <p className="text-xs text-on-surface-variant">Enter the password to view this invite</p>
+        ),
+        actions: (
+          <>
+            <button onClick={() => setUnlocking(null)} className={`${filledBtn} ${btn}`}>
+              Enter password
+            </button>
+            {!authed && (
+              <button onClick={logIn} className={`${textBtn} ${btn}`}>
+                Log in
+              </button>
+            )}
+          </>
+        ),
+        extra: deniedAccess(error) && given && (
+          <p role="alert" className="mt-3 text-xs text-error">
+            {errorText(error)}
+          </p>
+        ),
+      }
     if (invalid)
       return {
         icon: (
@@ -723,11 +771,6 @@ export function InviteCard({
               You are banned from this server
             </p>
           )}
-          {status === 'password_required' && big && (
-            <p className="mt-3 text-xs text-on-surface-variant">
-              This server is password protected.
-            </p>
-          )}
           {note && (
             <p role="alert" className="mt-3 text-xs text-error">
               {note}
@@ -751,6 +794,15 @@ export function InviteCard({
           initialError={asking.error}
           onSubmit={submitPassword}
           onClose={() => setAsking(null)}
+        />
+      )}
+      {unlocking !== false && (
+        <PasswordDialog
+          unlock
+          name={server}
+          initialError={unlocking}
+          onSubmit={unlock}
+          onClose={() => setUnlocking(false)}
         />
       )}
     </>
@@ -848,7 +900,8 @@ export function RemoteInviteCard({
       <ExternalLink size={14} className="shrink-0" />
     </button>
   )
-  const invalid = error instanceof ApiError && error.status === 404
+  const hidden = needsPassword(error) || deniedAccess(error)
+  const invalid = error instanceof ApiError && error.status === 404 && !hidden
   const heading = (
     <>
       Invite on <span className="streamer normal-case">{host}</span>
@@ -879,6 +932,24 @@ export function RemoteInviteCard({
         ),
       }
     if (!ready) return null
+    if (hidden)
+      return {
+        icon: (
+          <Tile big={false} tone="bg-primary-container text-on-primary-container">
+            <span className="streamer">{serverInitial(invite.server)}</span>
+          </Tile>
+        ),
+        title: <span className="streamer min-w-0 truncate">{invite.server}</span>,
+        sub: (
+          <div className="flex flex-col items-start gap-1">
+            {where}
+            <p className="text-xs text-on-surface-variant">
+              Enter the password to view this invite
+            </p>
+          </div>
+        ),
+        actions: openBtn,
+      }
     if (invalid || (error !== null && !data))
       return {
         icon: (

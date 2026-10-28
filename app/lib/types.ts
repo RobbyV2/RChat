@@ -106,12 +106,12 @@ export interface RoleLimits {
   sole_rules: number[]
 }
 
-export type InviteStatus = 'member' | 'banned' | 'joinable' | 'password_required'
+export type InviteStatus = 'member' | 'banned' | 'joinable'
 
 export interface Invite {
   server: ServerSummaryLite
-  member_count: number | null
-  online_count: number | null
+  member_count: number
+  online_count: number
   status: InviteStatus
   preview_channel: string | null
   preview: Message[]

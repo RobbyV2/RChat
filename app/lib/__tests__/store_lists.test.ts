@@ -513,8 +513,10 @@ describe('resync after the socket lagged', () => {
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = new URL(String(input))
       requests.push(url.pathname + url.search)
-      if (url.pathname.endsWith('/servers/gone/exists'))
-        return new Response(JSON.stringify({ error: 'Server not found' }), { status: 404 })
+      if (url.pathname.endsWith('/servers/gone'))
+        return new Response(JSON.stringify({ error: 'Server not found or wrong password' }), {
+          status: 404,
+        })
       const body = url.pathname.endsWith('/me/servers')
         ? url.searchParams
             .getAll('names')

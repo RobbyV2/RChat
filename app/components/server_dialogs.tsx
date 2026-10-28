@@ -1,11 +1,12 @@
 'use client'
 
 import { useEffect, useId, useState } from 'react'
-import { Lock, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { api } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import type { ServerMatch } from '../lib/types'
 import { enterKey } from '../lib/keys'
+import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
 import { FieldError, useBackdrop, useEscape } from './server_settings'
 
 function Dialog({ title, children }: { title: string; children: React.ReactNode }) {
@@ -44,7 +45,6 @@ function Dialog({ title, children }: { title: string; children: React.ReactNode 
 
 function AddServerDialog({ join }: { join?: string }) {
   const guest = useStore(s => s.guest)
-  const guestGrants = useStore(s => s.guestGrants)
   const createServer = useStore(s => s.createServer)
   const joinServer = useStore(s => s.joinServer)
   const guestJoinServer = useStore(s => s.guestJoinServer)
@@ -54,24 +54,20 @@ function AddServerDialog({ join }: { join?: string }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [protectedServer, setProtectedServer] = useState(false)
+  const [step, setStep] = useState<JoinStep>('name')
+  const [taken, setTaken] = useState<{ id: string; taken: boolean } | null>(null)
   const [suggestions, setSuggestions] = useState<ServerMatch[]>([])
   const creating = tab === 'create' && !guest
   const joining = !creating
   const id = name.trim().toLowerCase()
-  const hasGrant = guest && Boolean(guestGrants[id])
+  const nameTaken = creating && taken?.id === id && taken.taken
 
   useEffect(() => {
     if (!joining || !id) {
-      setProtectedServer(false)
       setSuggestions([])
       return
     }
     const t = setTimeout(() => {
-      api
-        .serverExists(id)
-        .then(r => setProtectedServer(r.has_password))
-        .catch(() => setProtectedServer(false))
       api
         .searchServers(id)
         .then(setSuggestions)
@@ -80,21 +76,52 @@ function AddServerDialog({ join }: { join?: string }) {
     return () => clearTimeout(t)
   }, [id, joining])
 
+  useEffect(() => {
+    if (!creating || !id) return
+    const t = setTimeout(() => {
+      api
+        .serverAvailable(id)
+        .then(r => setTaken({ id, taken: !r.available }))
+        .catch(() => setTaken(null))
+    }, 400)
+    return () => clearTimeout(t)
+  }, [id, creating])
+
+  const rename = (value: string) => {
+    setName(value)
+    setStep('name')
+    setPassword('')
+    setError(null)
+  }
+
   const submit = async () => {
     const trimmed = name.trim()
     if (!trimmed || busy) return
-    const pw = password.trim() || undefined
     setBusy(true)
     setError(null)
-    try {
-      if (guest) await guestJoinServer(trimmed, pw)
-      else if (tab === 'create') await createServer(trimmed, pw)
-      else await joinServer(trimmed, pw)
-      closeDialog()
-    } catch (e) {
-      setError(errorText(e))
-      setBusy(false)
+    if (creating) {
+      try {
+        await createServer(trimmed, password.trim() || undefined)
+        closeDialog()
+      } catch (e) {
+        setError(errorText(e))
+        setBusy(false)
+      }
+      return
     }
+    const out = await runJoinStep(
+      step,
+      password,
+      pw => (guest ? guestJoinServer(trimmed, pw) : joinServer(trimmed, pw)),
+      errorText
+    )
+    if (out.done) {
+      closeDialog()
+      return
+    }
+    setStep(out.step)
+    setError(out.error)
+    setBusy(false)
   }
 
   return (
@@ -106,6 +133,7 @@ function AddServerDialog({ join }: { join?: string }) {
               key={t}
               onClick={() => {
                 setTab(t)
+                setStep('name')
                 setError(null)
               }}
               className={`flex-1 rounded-full py-1.5 text-sm capitalize ${
@@ -125,16 +153,19 @@ function AddServerDialog({ join }: { join?: string }) {
           : 'Enter a server name to join it. The name is the invite code.'}
       </p>
       <input
-        autoFocus
+        autoFocus={step === 'name'}
         value={name}
-        onChange={e => setName(e.target.value)}
+        onChange={e => rename(e.target.value)}
         onKeyDown={e => {
           if (enterKey(e)) void submit()
         }}
         placeholder="server name"
-        className="w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
+        aria-label="Server name"
+        aria-invalid={nameTaken}
+        className="streamer w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
       />
-      {joining && suggestions.some(s => s.name !== id) && (
+      {nameTaken && <p className="mt-1 text-xs text-error">That name is taken</p>}
+      {joining && step === 'name' && suggestions.some(s => s.name !== id) && (
         <div className="mt-2 flex flex-col gap-1">
           {suggestions
             .filter(s => s.name !== id)
@@ -142,20 +173,17 @@ function AddServerDialog({ join }: { join?: string }) {
             .map(s => (
               <button
                 key={s.name}
-                onClick={() => {
-                  setName(s.name)
-                  setProtectedServer(s.has_password)
-                }}
+                onClick={() => rename(s.name)}
                 className="streamer flex items-center gap-1.5 rounded-lg px-2 py-1 text-left text-sm text-on-surface-variant hover:bg-surface-container"
               >
                 <span className="truncate">{s.display_name}</span>
-                {s.has_password && <Lock size={12} className="shrink-0" />}
               </button>
             ))}
         </div>
       )}
-      {(creating || (protectedServer && !hasGrant)) && (
+      {(creating || step === 'password') && (
         <input
+          autoFocus={step === 'password'}
           type="password"
           value={password}
           onChange={e => setPassword(e.target.value)}
@@ -163,11 +191,21 @@ function AddServerDialog({ join }: { join?: string }) {
             if (enterKey(e)) void submit()
           }}
           placeholder={creating ? 'password (optional)' : 'password'}
+          aria-label={creating ? 'Password (optional)' : 'Server password'}
           className="mt-3 w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
         />
       )}
+      {joining && <p className="mt-3 text-xs text-on-surface-variant">{JOIN_NOTE}</p>}
       <FieldError message={error} />
       <div className="mt-5 flex justify-end gap-2">
+        {joining && step === 'password' && (
+          <button
+            onClick={() => rename(name)}
+            className="mr-auto rounded-full px-4 py-2 text-sm text-primary hover:bg-surface-container"
+          >
+            Back
+          </button>
+        )}
         <button
           onClick={closeDialog}
           className="rounded-full px-4 py-2 text-sm text-primary hover:bg-surface-container"
@@ -176,7 +214,7 @@ function AddServerDialog({ join }: { join?: string }) {
         </button>
         <button
           onClick={() => void submit()}
-          disabled={busy || !name.trim()}
+          disabled={busy || !name.trim() || (step === 'password' && !password.trim())}
           className="rounded-full bg-primary px-4 py-2 text-sm text-on-primary hover:opacity-90 disabled:opacity-40"
         >
           {creating ? 'Create' : 'Join'}

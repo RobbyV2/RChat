@@ -98,6 +98,7 @@ import {
 import { clearProfiles, forgetProfiles } from './profile'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from './voice_layout'
 import { retrySeconds, tooManyText } from './rate_limit'
+import { deniedAccess } from './join_flow'
 import {
   freshPresence,
   knownPresence,
@@ -1013,7 +1014,10 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   const lockedOut = (e: unknown) =>
-    get().guest && get().settings.guests_enabled && e instanceof ApiError && e.status === 401
+    get().guest &&
+    get().settings.guests_enabled &&
+    e instanceof ApiError &&
+    (e.status === 401 || deniedAccess(e))
 
   const guestLocked = (name: string) => {
     if (!get().guestServers.includes(name)) return
@@ -1168,7 +1172,7 @@ export const useStore = create<RChatState>()((set, get) => {
     const lost = lostServers(names, joined, dropped)
     const exists = await Promise.all(
       lost.map(name =>
-        api.serverExists(name).then(
+        api.getServer(name).then(
           () => true,
           (e: unknown) => !(e instanceof ApiError && e.status === 404)
         )
@@ -1358,7 +1362,8 @@ export const useStore = create<RChatState>()((set, get) => {
       if (get().guest) rememberGuestName(detail.name, detail.display_name)
       return detail
     } catch (e) {
-      if (get().guest && e instanceof ApiError && e.status === 401) dropGrant(name)
+      if (get().guest && e instanceof ApiError && (e.status === 401 || deniedAccess(e)))
+        dropGrant(name)
       throw banCheck(e, name)
     }
   }
@@ -1465,14 +1470,8 @@ export const useStore = create<RChatState>()((set, get) => {
         return
       }
       await fallback()
-      const locked =
-        e instanceof ApiError &&
-        (e.status === 403 || (e.status === 401 && get().settings.guests_enabled))
-      const missing = e instanceof ApiError && e.status === 404
-      if (locked) {
-        fail(new Error('That server is password protected. Enter its password to join.'))
-        get().openDialog({ kind: 'add_server', join: target.server })
-      } else fail(missing ? new Error('That server does not exist') : e)
+      if (deniedAccess(e)) get().openDialog({ kind: 'add_server', join: target.server })
+      else fail(e)
       return
     }
     const { guest, guestServers } = get()
@@ -2691,11 +2690,21 @@ export const useStore = create<RChatState>()((set, get) => {
 
     guestJoinServer: async (name, password, nav) => {
       const id = name.trim().toLowerCase()
-      if (password) {
-        const { grant } = await api.guestAccess(id, password)
-        persistGrants({ ...get().guestGrants, [id]: grant })
+      const viaGrant = async () => {
+        if (password || get().guestGrants[id] === undefined) return false
+        try {
+          await fetchServer(id)
+          return true
+        } catch (e) {
+          if (deniedAccess(e)) return false
+          throw e
+        }
       }
-      await fetchServer(id)
+      if (!(await viaGrant())) {
+        const { grant } = await api.guestAccess(id, password)
+        if (grant) persistGrants({ ...get().guestGrants, [id]: grant })
+        await fetchServer(id)
+      }
       const list = get().guestServers
       persistGuestServers(list.includes(id) ? list : [...list, id])
       home.ws.subscribe([id])

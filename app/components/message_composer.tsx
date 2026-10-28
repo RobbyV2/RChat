@@ -15,6 +15,7 @@ import {
 import { errorText, useStore, viewKey } from '../lib/store'
 import { MESSAGE_MAX, charCount } from '../lib/rules'
 import { sendKey } from '../lib/keys'
+import { runJoinStep, type JoinStep } from '../lib/join_flow'
 import { Dialog, FieldError, fieldCls, filledBtn } from './server_settings'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
@@ -97,19 +98,19 @@ function JoinBar({ server }: { server: string }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const locked = detail?.has_password ?? false
+  const [step, setStep] = useState<JoinStep>('name')
+  const locked = step === 'password'
   const ready = !busy && (!locked || password.trim() !== '')
 
   const join = async () => {
     if (!ready) return
     setBusy(true)
     setError(null)
-    try {
-      await joinServer(server, locked ? password.trim() : undefined)
-    } catch (e) {
-      setError(errorText(e))
-      setBusy(false)
-    }
+    const out = await runJoinStep(step, password, pw => joinServer(server, pw), errorText)
+    if (out.done) return
+    setStep(out.step)
+    setError(out.error)
+    setBusy(false)
   }
 
   return (

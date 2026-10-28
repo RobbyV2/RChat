@@ -8,17 +8,20 @@ use sqlx::Row;
 use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::access::{
+    Proof, channel_manager_servers, granted_servers, member_channel_rights, resolve_channel,
+    resolve_dm, resolve_message,
+};
 use crate::api::admin::like_pattern;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, CallLog, Embed, LIST_MAX, LIST_PAGE, MESSAGE_MAX, MaybeAuthed,
     MediaRef, Message, Paged, ProfanityTarget, Settings, UserRef, check_len, check_profanity,
-    cursor_int, decode_cursor, embeds, encode_cursor, header_grants, media::MEDIA_TTL_SECS,
-    require_guest_ok, require_server_view, unique_capped, user_from, user_refs,
+    cursor_int, decode_cursor, embeds, encode_cursor, media::MEDIA_TTL_SECS, require_guest_ok,
+    unique_capped, user_from, user_refs,
 };
 use crate::db::{
-    ChannelAccess, ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, Perm, PermRow, User,
-    channel_access, channel_manager_servers, effective_perms, fold_access, has_fts, has_perm,
-    is_sqlite, manages_channels, now, perm_row, perm_subjects, touch_interaction,
+    ChannelAccess, Db, LIVE_AUTHOR, MediaKind, User, has_fts, is_sqlite, now, perm_subjects,
+    touch_interaction,
 };
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -595,171 +598,18 @@ async fn insert_message(
     })
 }
 
-async fn channel_server(db: &Db, id: i64) -> Result<String, ApiError> {
-    let row = sqlx::query("SELECT server FROM channels WHERE id = $1")
-        .bind(id)
-        .fetch_optional(db)
-        .await?;
-    match row {
-        Some(r) => Ok(r.try_get(0)?),
-        None => Err(ApiError(
-            StatusCode::NOT_FOUND,
-            "Channel not found".to_string(),
-        )),
-    }
-}
-
-async fn dm_users(db: &Db, id: i64) -> Result<Vec<String>, ApiError> {
-    dm_pair(db, id, "SELECT user_a, user_b FROM dms WHERE id = $1").await
-}
-
-async fn live_dm_users(db: &Db, id: i64) -> Result<Vec<String>, ApiError> {
-    let sql = format!("SELECT user_a, user_b FROM dms WHERE id = $1 AND {LIVE_DM}");
-    dm_pair(db, id, &sql).await
-}
-
-async fn dm_pair(db: &Db, id: i64, sql: &str) -> Result<Vec<String>, ApiError> {
-    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(id)
-        .fetch_optional(db)
-        .await?;
-    match row {
-        Some(r) => Ok(vec![r.try_get(0)?, r.try_get(1)?]),
-        None => Err(ApiError(StatusCode::NOT_FOUND, "DM not found".to_string())),
-    }
-}
-
-async fn thread_root_channel(db: &Db, id: i64) -> Result<i64, ApiError> {
-    let row = sqlx::query("SELECT channel_id, thread_root_id FROM messages WHERE id = $1")
-        .bind(id)
-        .fetch_optional(db)
-        .await?;
-    let (channel_id, root): (Option<i64>, Option<i64>) = match &row {
-        Some(r) => (r.try_get(0)?, r.try_get(1)?),
-        None => {
-            return Err(ApiError(
-                StatusCode::NOT_FOUND,
-                "Message not found".to_string(),
-            ));
-        }
-    };
-    match (channel_id, root) {
-        (Some(cid), None) => Ok(cid),
-        (_, _) => Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Threads only start on channel messages".to_string(),
-        )),
-    }
-}
-
-async fn read_gate(
-    db: &Db,
-    headers: &HeaderMap,
-    channel_id: i64,
-    user: Option<&User>,
-) -> Result<Option<i64>, ApiError> {
-    let server = channel_server(db, channel_id).await?;
-    let lite = crate::api::servers::require_server(db, &server).await?;
-    require_server_view(db, headers, &lite, user).await?;
-    let ChannelAccess {
-        view,
-        send: _,
-        history,
-    } = channel_access(db, &server, channel_id, user).await?;
-    if !view {
-        return Err(ApiError(StatusCode::FORBIDDEN, "Not allowed".to_string()));
-    }
-    match history {
-        true => Ok(None),
-        false => {
-            let user = match user {
-                Some(u) => u,
-                None => return Ok(Some(now())),
-            };
-            let row =
-                sqlx::query("SELECT joined_at FROM members WHERE server = $1 AND username = $2")
-                    .bind(&server)
-                    .bind(&user.username)
-                    .fetch_optional(db)
-                    .await?;
-            match &row {
-                Some(r) => Ok(Some(r.try_get(0)?)),
-                None => Ok(Some(now())),
-            }
-        }
-    }
-}
-
-async fn send_gate(db: &Db, channel_id: i64, user: &User) -> Result<String, ApiError> {
-    let row = sqlx::query(
-        "SELECT c.server, c.kind, c.slowmode_seconds, (SELECT COUNT(*) FROM members m WHERE m.server = c.server AND m.username = $2) FROM channels c WHERE c.id = $1",
-    )
-    .bind(channel_id)
-    .bind(&user.username)
-    .fetch_optional(db)
-    .await?
-    .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "Channel not found".to_string()))?;
-    let server: String = row.try_get(0)?;
-    if row.try_get::<i64, _>(3)? == 0 {
-        return Err(ApiError(StatusCode::FORBIDDEN, "Not a member".to_string()));
-    }
-    let server = server.as_str();
-    if ChannelKind::parse(&row.try_get::<String, _>(1)?)? == ChannelKind::Voice {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Voice channels cannot receive messages".to_string(),
-        ));
-    }
-    let ChannelAccess {
-        view: _,
-        send,
-        history: _,
-    } = channel_access(db, server, channel_id, Some(user)).await?;
-    if !send {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            "No permission to send in this channel".to_string(),
-        ));
-    }
-    let slow: i64 = row.try_get(2)?;
-    if slow <= 0 {
-        return Ok(server.to_string());
-    }
-    let exempt = effective_perms(db, server, user).await?
-        & (Perm::ManageChannels as i64 | Perm::DeleteMessages as i64)
-        != 0;
-    if exempt {
-        return Ok(server.to_string());
-    }
-    let last: Option<i64> = sqlx::query(
-        "SELECT created_at FROM messages WHERE channel_id = $1 AND author = $2 ORDER BY id DESC LIMIT 1",
-    )
-    .bind(channel_id)
-    .bind(&user.username)
-    .fetch_optional(db)
-    .await?
-    .map(|r| r.try_get(0))
-    .transpose()?;
-    match last {
-        Some(t) if now() - t < slow => Err(ApiError(
-            StatusCode::TOO_MANY_REQUESTS,
-            format!("Slow mode: wait {}s", slow - (now() - t)),
-        )),
-        _ => Ok(server.to_string()),
-    }
-}
-
 /// List channel messages
 ///
 /// Returns top-level messages of a text channel (thread replies are excluded; see
 /// `reply_count`), oldest first, with link previews attached. Paging is by message id with
 /// `before`, `after` or `around` (no cursor header). Works with a bearer token, or for guests
 /// when guest access is on. Password-protected servers need membership, or for guests a valid
-/// `X-Guest-Grant`. Banned users are refused. Channels with permission overrides need the view
+/// `X-Guest-Grant`. Banned users are refused. Every refusal is the same `404 Not found` as for a
+/// channel that does not exist. Channels with permission overrides need the view
 /// permission (guests can never see them). Without read-history access only messages posted
 /// since you joined the server are returned (none if you are not a member). General rate-limit
 /// bucket.
-#[utoipa::path(get, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) top-level messages, oldest first: the newest ones before `before` (or the latest), or with `after` the oldest ones after that id, or with `around` a window of `limit / 2` messages before that id followed by the message itself and newer ones (`around` wins over `after`, which wins over `before`); without read-history access only messages since joining are returned", body = Vec<Message>), (status = 400, description = "Non-numeric id or paging parameter (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`), or a guest whose `X-Guest-Grant` grants are all invalid for a password-protected server (`Invalid grant`)", body = ApiErrorBody), (status = 403, description = "Banned from the server, the server is password protected and you are not a member (or a guest sent no grant), or no permission to view the channel", body = ApiErrorBody), (status = 404, description = "Channel not found", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) top-level messages, oldest first: the newest ones before `before` (or the latest), or with `after` the oldest ones after that id, or with `around` a window of `limit / 2` messages before that id followed by the message itself and newer ones (`around` wins over `after`, which wins over `before`); without read-history access only messages since joining are returned", body = Vec<Message>), (status = 400, description = "Non-numeric id or paging parameter (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn channel_messages(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -769,7 +619,8 @@ pub(crate) async fn channel_messages(
 ) -> Result<Json<Vec<Message>>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, user.as_ref()).await?;
-    let min_ts = read_gate(db, &headers, id, user.as_ref()).await?;
+    let channel = resolve_channel(db, id, user.as_ref(), &Proof::headers(&headers)).await?;
+    let min_ts = channel.read_since(db).await?;
     Ok(Json(
         page(
             db,
@@ -789,7 +640,7 @@ pub(crate) async fn channel_messages(
 /// Voice channels take no messages. Emits `message` to clients in the server that can see the
 /// channel; when the text has links, `embeds_resolved` follows once previews are fetched.
 /// General rate-limit bucket.
-#[utoipa::path(post, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or attachment file name), voice channel, text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "Channel not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or attachment file name), voice channel, text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_channel_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -797,7 +648,9 @@ pub(crate) async fn send_channel_message(
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
     check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
-    let server = send_gate(&state.db, id, &user).await?;
+    let channel = resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
+    channel.send_gate(&state.db).await?;
+    let server = channel.server().name().to_string();
     let message = insert_message(&state.db, Some(id), None, None, &user, req).await?;
     touch_interaction(&state.db, &server, &user.username).await?;
     embeds::spawn_unfurl(
@@ -825,7 +678,7 @@ pub(crate) async fn send_channel_message(
 /// Access is checked on the root's channel exactly as for `GET /api/channels/{id}/messages`
 /// (guests allowed when guest access is on, password-protected servers, bans, channel view
 /// and read-history permissions). General rate-limit bucket.
-#[utoipa::path(get, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) thread replies, oldest first, paged with `before`, `after` or `around` like channel messages; without read-history access only replies since joining are returned", body = Vec<Message>), (status = 400, description = "The message is a DM message or itself a thread reply (`Threads only start on channel messages`). A non-numeric id or paging parameter gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`), or a guest whose `X-Guest-Grant` grants are all invalid for a password-protected server (`Invalid grant`)", body = ApiErrorBody), (status = 403, description = "Banned from the server, the server is password protected and you are not a member (or a guest sent no grant), or no permission to view the channel", body = ApiErrorBody), (status = 404, description = "Message or its channel not found", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) thread replies, oldest first, paged with `before`, `after` or `around` like channel messages; without read-history access only replies since joining are returned", body = Vec<Message>), (status = 400, description = "The message is a DM message or itself a thread reply (`Threads only start on channel messages`). A non-numeric id or paging parameter gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn thread_messages(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -835,8 +688,8 @@ pub(crate) async fn thread_messages(
 ) -> Result<Json<Vec<Message>>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, user.as_ref()).await?;
-    let channel_id = thread_root_channel(db, id).await?;
-    let min_ts = read_gate(db, &headers, channel_id, user.as_ref()).await?;
+    let root = resolve_message(db, id, user.as_ref(), &Proof::headers(&headers)).await?;
+    let min_ts = root.thread_channel()?.read_since(db).await?;
     Ok(Json(
         page(db, "m.thread_root_id = $1", id, &q, min_ts).await?,
     ))
@@ -849,16 +702,18 @@ pub(crate) async fn thread_messages(
 /// Message text is checked against the profanity filter when it is on. In server channels this needs membership and the send permission for the channel. If the channel has slow mode, members without the Manage channels or Delete messages permission must wait `slowmode_seconds` between messages in the channel (thread replies count). Emits `message` to clients in the server that can see the channel; when the
 /// text has links, `embeds_resolved` follows once previews are fetched. General rate-limit
 /// bucket.
-#[utoipa::path(post, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or attachment file name), text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "Root message or its channel not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or attachment file name), text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_thread_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Authed(user): Authed,
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
-    let channel_id = thread_root_channel(&state.db, id).await?;
+    let root = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
+    let channel = root.thread_channel()?;
     check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
-    let server = send_gate(&state.db, channel_id, &user).await?;
+    channel.send_gate(&state.db).await?;
+    let (channel_id, server) = (channel.id(), channel.server().name().to_string());
     let message = insert_message(&state.db, Some(channel_id), None, Some(id), &user, req).await?;
     touch_interaction(&state.db, &server, &user.username).await?;
     embeds::spawn_unfurl(
@@ -884,7 +739,7 @@ pub(crate) async fn send_thread_message(
 ///
 /// Returns messages of a direct-message conversation, oldest first, with link previews.
 /// Requires a bearer token and being one of the two participants. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) DM messages, oldest first, paged with `before`, `after` or `around` like channel messages", body = Vec<Message>), (status = 400, description = "Non-numeric id or paging parameter (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a participant", body = ApiErrorBody), (status = 404, description = "DM not found, or a participant's account is being deleted", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) DM messages, oldest first, paged with `before`, `after` or `around` like channel messages", body = Vec<Message>), (status = 400, description = "Non-numeric id or paging parameter (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn dm_messages(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -892,13 +747,7 @@ pub(crate) async fn dm_messages(
     Query(q): Query<PageQuery>,
 ) -> Result<Json<Vec<Message>>, ApiError> {
     let db = &state.read();
-    let users = live_dm_users(db, id).await?;
-    if !users.contains(&user.username) {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            "Not a participant".to_string(),
-        ));
-    }
+    resolve_dm(db, id, &user).await?;
     Ok(Json(page(db, "m.dm_id = $1", id, &q, None).await?))
 }
 
@@ -909,20 +758,14 @@ pub(crate) async fn dm_messages(
 /// DM text and attachment names are not checked by the profanity filter and there is no slow
 /// mode. Emits `message` to both participants; when the text has links, `embeds_resolved`
 /// follows once previews are fetched. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a participant, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "DM not found, or a participant's account is being deleted", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn send_dm_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Authed(user): Authed,
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
-    let users = live_dm_users(&state.db, id).await?;
-    if !users.contains(&user.username) {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            "Not a participant".to_string(),
-        ));
-    }
+    let users = resolve_dm(&state.db, id, &user).await?;
     let message = insert_message(&state.db, None, Some(id), None, &user, req).await?;
     embeds::spawn_unfurl(
         &state,
@@ -943,76 +786,6 @@ pub(crate) async fn send_dm_message(
     Ok(Json(message))
 }
 
-pub(crate) struct MsgScope {
-    pub channel_id: Option<i64>,
-    pub dm_id: Option<i64>,
-    pub thread_root_id: Option<i64>,
-    pub author: String,
-    pub media_id: Option<String>,
-    pub media_filename: Option<String>,
-    pub media_kind: MediaKind,
-    pub server: Option<String>,
-    pub dm_users: Option<Vec<String>>,
-}
-
-pub(crate) async fn message_scope(db: &Db, id: i64) -> Result<MsgScope, ApiError> {
-    let sql = format!(
-        "SELECT m.channel_id, m.dm_id, m.thread_root_id, m.author, m.media_id, m.media_filename, m.media_kind FROM messages m WHERE m.id = $1 AND {LIVE_AUTHOR}"
-    );
-    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(id)
-        .fetch_optional(db)
-        .await?;
-    let r = match &row {
-        Some(r) => r,
-        None => {
-            return Err(ApiError(
-                StatusCode::NOT_FOUND,
-                "Message not found".to_string(),
-            ));
-        }
-    };
-    let channel_id: Option<i64> = r.try_get(0)?;
-    let dm_id: Option<i64> = r.try_get(1)?;
-    let thread_root_id: Option<i64> = r.try_get(2)?;
-    let author: String = r.try_get(3)?;
-    let media_id: Option<String> = r.try_get(4)?;
-    let media_filename: Option<String> = r.try_get(5)?;
-    let media_kind = MediaKind::parse(&r.try_get::<String, _>(6)?)?;
-    let (server, dm_users) = match (channel_id, dm_id) {
-        (Some(cid), _) => (Some(channel_server(db, cid).await?), None),
-        (None, Some(did)) => (None, Some(dm_users(db, did).await?)),
-        (None, None) => (None, None),
-    };
-    Ok(MsgScope {
-        channel_id,
-        dm_id,
-        thread_root_id,
-        author,
-        media_id,
-        media_filename,
-        media_kind,
-        server,
-        dm_users,
-    })
-}
-
-pub(crate) async fn require_can_delete(
-    db: &Db,
-    user: &User,
-    scope: &MsgScope,
-) -> Result<(), ApiError> {
-    let allowed = scope.author == user.username
-        || match &scope.server {
-            Some(server) => has_perm(db, server, user, Perm::DeleteMessages).await,
-            None => false,
-        };
-    match allowed {
-        true => Ok(()),
-        false => Err(ApiError(StatusCode::FORBIDDEN, "Not allowed".to_string())),
-    }
-}
-
 /// Delete a message
 ///
 /// Permanently deletes a channel, thread or DM message; deleting a thread root also deletes
@@ -1020,19 +793,20 @@ pub(crate) async fn require_can_delete(
 /// servers, members with the Delete messages permission may delete anyone's. Emits
 /// `message_deleted` (with `thread_root_id` for replies) to clients in the server that can see
 /// the channel, or to both DM participants. General rate-limit bucket.
-#[utoipa::path(delete, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Deleted; body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Delete messages permission in the server (in DMs only the author may delete)", body = ApiErrorBody), (status = 404, description = "Message not found, or its author's account is being deleted", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Deleted; body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Delete messages permission in the server (in DMs only the author may delete)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn delete_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Authed(user): Authed,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let scope = message_scope(&state.db, id).await?;
-    require_can_delete(&state.db, &user, &scope).await?;
+    let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
+    message.require_can_delete(&state.db).await?;
+    let scope = message.into_scope();
     sqlx::query("DELETE FROM messages WHERE id = $1")
         .bind(id)
         .execute(&state.db)
         .await?;
-    let MsgScope {
+    let crate::api::access::MsgScope {
         channel_id,
         dm_id,
         thread_root_id,
@@ -1343,7 +1117,7 @@ async fn search_sql(
                 "NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id)"
                     .to_string(),
             );
-            let granted = crate::db::live_grant_servers(db, &header_grants(headers)).await?;
+            let granted = granted_servers(db, &Proof::headers(headers)).await?;
             match granted.is_empty() {
                 true => conds.push(
                     "c.server IN (SELECT name FROM servers WHERE password_hash IS NULL)"
@@ -1451,42 +1225,6 @@ async fn search_sql(
     Ok(Some((sql, binds)))
 }
 
-async fn restricted_access(db: &Db, user: &User) -> Result<HashMap<i64, ChannelAccess>, ApiError> {
-    let rows = sqlx::query(
-        "SELECT cp.channel_id, c.server, cp.subject, cp.can_view, cp.can_send, cp.can_read_history FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text'",
-    )
-    .bind(&user.username)
-    .fetch_all(db)
-    .await?;
-    if rows.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let subjects = perm_subjects(db, None, &user.username).await?;
-    let mut restricted: HashMap<i64, (String, Vec<PermRow>)> = HashMap::new();
-    for r in &rows {
-        let (id, server): (i64, String) = (r.try_get(0)?, r.try_get(1)?);
-        restricted
-            .entry(id)
-            .or_insert_with(|| (server, Vec::new()))
-            .1
-            .push(perm_row(r, 2)?);
-    }
-    let mut manages: HashMap<String, bool> = HashMap::new();
-    let mut out = HashMap::with_capacity(restricted.len());
-    for (id, (server, perms)) in restricted {
-        let manage = match manages.get(&server) {
-            Some(m) => *m,
-            None => {
-                let m = manages_channels(db, &server, user).await?;
-                manages.insert(server, m);
-                m
-            }
-        };
-        out.insert(id, fold_access(&perms, &subjects, manage));
-    }
-    Ok(out)
-}
-
 const UNREADS_MAX: usize = 500;
 
 /// Options for the unread list.
@@ -1512,7 +1250,7 @@ pub(crate) async fn unreads(
 ) -> Result<Json<Unreads>, ApiError> {
     let all = q.all.unwrap_or(false);
     let db = &state.read();
-    let restricted = restricted_access(db, &user).await?;
+    let restricted = member_channel_rights(db, &user).await?;
     let channel_sql = format!(
         "SELECT x.id, x.server, x.latest, (SELECT lm.created_at FROM messages lm WHERE lm.id = x.latest), x.last_read, x.joined_at FROM (SELECT c.id, c.server, (SELECT m.id FROM messages m WHERE m.channel_id = c.id AND m.thread_root_id IS NULL AND m.author <> $1 AND {LIVE_AUTHOR} ORDER BY m.id DESC LIMIT 1) AS latest, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'c' || c.id), 0) AS last_read, mem.joined_at FROM channels c JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE c.kind = 'text') x"
     );
@@ -1588,7 +1326,7 @@ pub(crate) async fn unreads(
 /// its participants; otherwise nothing is stored. Requires a bearer token. When the requested
 /// position is the one stored, emits `read_updated` to the caller's own connections (other
 /// devices). General rate-limit bucket.
-#[utoipa::path(post, path = "/api/read", tag = "Messages", request_body = ReadReq, responses((status = 200, description = "The stored read position, which never moves backwards", body = ReadState), (status = 400, description = "`scope` is not `c` or `d` followed by digits (`Invalid scope`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Banned from the channel's server, the server is password protected and you are not a member, no permission to view the channel, or not a participant of the DM", body = ApiErrorBody), (status = 404, description = "Channel or DM not found, or a DM participant's account is being deleted", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/read", tag = "Messages", request_body = ReadReq, responses((status = 200, description = "The stored read position, which never moves backwards", body = ReadState), (status = 400, description = "`scope` is not `c` or `d` followed by digits (`Invalid scope`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the channel or DM does not exist or you cannot read it (hidden channel, a server you have no access to or are banned from, a DM you are not in, or a participant's account is being deleted); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn mark_read(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1607,15 +1345,10 @@ pub(crate) async fn mark_read(
     };
     match scope.as_bytes()[0] {
         b'c' => {
-            read_gate(&state.db, &HeaderMap::new(), id, Some(&user)).await?;
+            resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
         }
         _ => {
-            if !live_dm_users(&state.db, id).await?.contains(&user.username) {
-                return Err(ApiError(
-                    StatusCode::FORBIDDEN,
-                    "Not a participant".to_string(),
-                ));
-            }
+            resolve_dm(&state.db, id, &user).await?;
         }
     }
     let stored: i64 = sqlx::query(
@@ -1643,7 +1376,10 @@ pub(crate) async fn mark_read(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::access::reference_channel_access as channel_access;
+    use crate::api::access::resolve_server;
     use crate::api::test_util::{add_member, done, mem_user, temp_state};
+    use crate::db::Perm;
 
     async fn general_id(db: &Db) -> i64 {
         sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
@@ -1701,15 +1437,15 @@ mod tests {
         };
         assert_eq!(
             mark("carol", format!("c{hidden}")).await,
-            Err(StatusCode::FORBIDDEN)
+            Err(StatusCode::NOT_FOUND)
         );
         assert_eq!(
             mark("eve", format!("c{cid}")).await,
-            Err(StatusCode::FORBIDDEN)
+            Err(StatusCode::NOT_FOUND)
         );
         assert_eq!(
             mark("carol", format!("d{dm}")).await,
-            Err(StatusCode::FORBIDDEN)
+            Err(StatusCode::NOT_FOUND)
         );
         assert_eq!(
             mark("carol", "c999999".to_string()).await,
@@ -1929,9 +1665,9 @@ mod tests {
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].content, "after");
         let bob = list(&state, cid, Some("bob")).await;
-        assert!(matches!(bob, Err(ApiError(StatusCode::FORBIDDEN, _))));
+        assert!(matches!(bob, Err(ApiError(StatusCode::NOT_FOUND, _))));
         let guest = list(&state, cid, None).await;
-        assert!(matches!(guest, Err(ApiError(StatusCode::FORBIDDEN, _))));
+        assert!(matches!(guest, Err(ApiError(StatusCode::NOT_FOUND, _))));
         let found = search_with(
             &state,
             Some(&mem_user("alice", false)),
@@ -2066,12 +1802,14 @@ mod tests {
                 .await
                 .expect("access")
                 .view;
-            let unread = restricted_access(db, &user).await.expect("restricted")[&private].view;
-            let listed =
-                crate::api::servers::visible_restricted(db, "rchat", Some(&user), &[private])
-                    .await
-                    .expect("visible")
-                    .contains(&private);
+            let unread = member_channel_rights(db, &user).await.expect("restricted")[&private].view;
+            let rchat = resolve_server(db, "rchat", Some(&user), &Proof::none())
+                .await
+                .expect("rchat");
+            let listed = crate::api::servers::visible_restricted(db, &rchat, &[private])
+                .await
+                .expect("visible")
+                .contains(&private);
             let searched = found(&state, Some(user), HeaderMap::new(), query(Some("needle")))
                 .await
                 .contains(&needle);
@@ -2335,7 +2073,7 @@ mod tests {
         );
         for name in ["alice", "bob", "mod", "kicker"] {
             let user = mem_user(name, false);
-            let restricted = restricted_access(db, &user).await.expect("restricted");
+            let restricted = member_channel_rights(db, &user).await.expect("restricted");
             let open = ChannelAccess::all(true);
             for cid in [general, private, roled, empty, nohist] {
                 let want = channel_access(db, "rchat", cid, Some(&user))

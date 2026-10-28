@@ -7,21 +7,23 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::access::{
+    BANNED, InviteView, Proof, ResolvedChannel, ServerAccess, Via, resolve_channel, resolve_invite,
+    resolve_server,
+};
 use crate::api::admin::{fuzzy_match, is_fuzzy, like_pattern};
-use crate::api::auth::{hash_password, new_token, verify_password, verify_password_cached};
+use crate::api::auth::{hash_password, new_token};
 use crate::api::messages::recent_channel_messages;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message,
     NAME_MAX, OFFSET_MAX, Paged, ProfanityTarget, Role, RoleLimits, SLOWMODE_MAX, ServerDetail,
     ServerSummary, ServerSummaryLite, UserRef, check_len, check_profanity, cursor_int,
-    decode_cursor, encode_cursor, grant_matches, header_grants, page_bounds, placeholders,
-    require_guest_ok, require_server_view, unique_capped, user_from, user_ref, user_refs,
-    valid_color,
+    decode_cursor, encode_cursor, header_grants, page_bounds, placeholders, require_guest_ok,
+    unique_capped, user_from, user_ref, user_refs, valid_color,
 };
 use crate::db::{
-    ALL_PERMS, ChannelKind, Db, Perm, PermRow, User, can_grant, can_moderate, effective_perms,
-    fold_access, get_user, has_perm, is_banned, member_perms, now, perm_bits, perm_row,
-    perm_subjects,
+    ALL_PERMS, ChannelKind, Db, Perm, PermRow, User, can_grant, can_moderate, fold_access,
+    get_user, now, perm_bits, perm_row, perm_subjects,
 };
 use crate::state::AppState;
 use crate::ws::{Hub, WsEvent, evict_unviewable};
@@ -55,8 +57,9 @@ pub struct CreateServerReq {
 /// Optional request body for joining a server.
 #[derive(Deserialize, ToSchema)]
 pub struct JoinReq {
-    /// The server password. Needed only when the server is password-protected and the caller
-    /// is not already a member; ignored otherwise.
+    /// The server password. Ignored for servers without a password and for servers you are
+    /// already a member of. Omitted or blank asks the API whether a password is needed: the
+    /// answer is `401 Password required` for every name that is not a public server.
     password: Option<String>,
 }
 
@@ -177,8 +180,10 @@ pub struct RolePatch {
 /// Request body for getting guest access to a password-protected server.
 #[derive(Deserialize, ToSchema)]
 pub struct GuestAccessReq {
-    /// The server password.
-    password: String,
+    /// The server password. Omitted or blank answers `401 Password required` for every name
+    /// that is not a public server.
+    #[serde(default)]
+    password: Option<String>,
 }
 
 /// A guest grant for a password-protected server.
@@ -187,15 +192,16 @@ pub struct GuestGrant {
     /// Opaque grant token. Guests send it in the `X-Guest-Grant` header (comma-separated with
     /// other grants) to view this server. It expires after `GUEST_GRANT_DAYS` days without use
     /// (an instance setting, 30 by default) and is revoked when the server password changes, unless
-    /// the change kept guests.
-    grant: String,
+    /// the change kept guests. `null` for a server without a password: guests view it without a
+    /// grant.
+    grant: Option<String>,
 }
 
-/// Whether a server exists, and whether it has a password.
+/// Whether a server name is free to create.
 #[derive(Serialize, ToSchema)]
-pub struct ServerExists {
-    /// `true` when joining the server needs a password.
-    has_password: bool,
+pub struct ServerAvailable {
+    /// `true` when no server (public or password-protected) uses this name.
+    available: bool,
 }
 
 /// Query parameters for server search.
@@ -240,15 +246,14 @@ pub struct ServerBan {
 }
 
 /// The viewer's relation to an invited server: `member` (already a member), `banned` (banned
-/// from the server), `joinable` (may join now: no password, or the invite password or a guest
-/// grant was accepted) or `password_required`. Guests never get `member` or `banned`.
+/// from the server) or `joinable` (may join now: no password, or the invite password or a guest
+/// grant was accepted). Guests never get `member` or `banned`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InviteStatus {
     Member,
     Banned,
     Joinable,
-    PasswordRequired,
 }
 
 /// An invite card for a server.
@@ -256,19 +261,17 @@ pub enum InviteStatus {
 pub struct Invite {
     /// The invited server.
     pub server: ServerSummaryLite,
-    /// Number of members. `null` when the server has a password and the viewer is not a
-    /// member and gave no valid invite password or guest grant.
-    pub member_count: Option<i64>,
-    /// Number of members online now. `null` in the same cases as `member_count`.
-    pub online_count: Option<i64>,
+    /// Number of members.
+    pub member_count: i64,
+    /// Number of members online now.
+    pub online_count: i64,
     /// The viewer's relation to the server.
     pub status: InviteStatus,
     /// Name of the channel the preview comes from: the first text channel without any
-    /// permission rules. `null` when the preview is locked or no such channel exists.
+    /// permission rules. `null` when the viewer is banned or no such channel exists.
     pub preview_channel: Option<String>,
-    /// The last 3 top-level messages of `preview_channel`. Empty when the viewer is banned,
-    /// when the server has a password that the viewer has not unlocked (membership, invite
-    /// password or guest grant), or when there is no preview channel.
+    /// The last 3 top-level messages of `preview_channel`. Empty when the viewer is banned or
+    /// there is no preview channel.
     pub preview: Vec<Message>,
 }
 
@@ -528,64 +531,6 @@ fn guard_rchat(key: &str) -> Result<(), ApiError> {
     }
 }
 
-pub(crate) async fn server_lite(
-    db: &Db,
-    name: &str,
-) -> Result<Option<ServerSummaryLite>, ApiError> {
-    let row = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
-    )
-    .bind(name)
-    .fetch_optional(db)
-    .await?;
-    match row {
-        Some(r) => Ok(Some(ServerSummaryLite {
-            name: r.try_get(0)?,
-            display_name: r.try_get(1)?,
-            creator: r.try_get(2)?,
-            has_password: r.try_get::<Option<String>, _>(3)?.is_some(),
-            banner_color: r.try_get(4)?,
-            name_color: r.try_get(5)?,
-        })),
-        None => Ok(None),
-    }
-}
-
-pub(crate) async fn require_server(db: &Db, name: &str) -> Result<ServerSummaryLite, ApiError> {
-    server_lite(db, name)
-        .await?
-        .ok_or_else(|| not_found("Server not found"))
-}
-
-async fn require_perm(db: &Db, server: &str, user: &User, perm: Perm) -> Result<(), ApiError> {
-    match has_perm(db, server, user, perm).await {
-        true => Ok(()),
-        false => Err(forbidden("Missing permission")),
-    }
-}
-
-async fn require_moderate(
-    db: &Db,
-    server: &str,
-    actor: &User,
-    target: &str,
-) -> Result<(), ApiError> {
-    let mine = effective_perms(db, server, actor).await?;
-    let theirs = member_perms(db, server, target).await?;
-    match can_moderate(mine, actor.is_site_admin, theirs) {
-        true => Ok(()),
-        false => Err(forbidden("You can't moderate this member")),
-    }
-}
-
-async fn require_grant(db: &Db, server: &str, actor: &User, perms: i64) -> Result<(), ApiError> {
-    let mine = effective_perms(db, server, actor).await?;
-    match can_grant(mine, actor.is_site_admin, perms) {
-        true => Ok(()),
-        false => Err(forbidden("You can't grant permissions you don't have")),
-    }
-}
-
 fn announce_kick(hub: &Hub, server: &str, username: &str, banned: bool) {
     hub.broadcast(WsEvent::MemberKicked {
         server: server.to_string(),
@@ -775,17 +720,6 @@ pub(crate) async fn list_my_servers(
     }
 }
 
-async fn channel_server(db: &Db, id: i64) -> Result<String, ApiError> {
-    let row = sqlx::query("SELECT server FROM channels WHERE id = $1")
-        .bind(id)
-        .fetch_optional(db)
-        .await?;
-    match row {
-        Some(r) => Ok(r.try_get(0)?),
-        None => Err(not_found("Channel not found")),
-    }
-}
-
 async fn build_member(
     db: &Db,
     hub: &Hub,
@@ -825,19 +759,19 @@ pub(crate) async fn server_roles(db: &Db, server: &str) -> Result<Vec<Role>, Api
 
 pub(crate) async fn visible_restricted(
     db: &Db,
-    server: &str,
-    viewer: Option<&User>,
+    access: &ServerAccess,
     restricted: &[i64],
 ) -> Result<HashSet<i64>, ApiError> {
-    let Some(user) = viewer else {
+    let Some(user) = access.viewer() else {
         return Ok(HashSet::new());
     };
     if restricted.is_empty() {
         return Ok(HashSet::new());
     }
-    if crate::db::manages_channels(db, server, user).await? {
+    if access.manages_channels(db).await? {
         return Ok(restricted.iter().copied().collect());
     }
+    let server = access.name();
     let subjects = crate::db::perm_subjects(db, Some(server), &user.username).await?;
     let sql = format!(
         "SELECT DISTINCT cp.channel_id FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1 AND cp.can_view != 0 AND cp.subject IN ({})",
@@ -869,8 +803,7 @@ pub(crate) async fn member_count(db: &Db, server: &str) -> Result<i64, ApiError>
 async fn server_detail(
     db: &Db,
     hub: &Hub,
-    name: &str,
-    viewer: Option<&User>,
+    access: &ServerAccess,
 ) -> Result<ServerDetail, ApiError> {
     let ServerSummaryLite {
         name,
@@ -879,7 +812,7 @@ async fn server_detail(
         has_password,
         banner_color,
         name_color,
-    } = require_server(db, name).await?;
+    } = access.lite().clone();
     let rows = sqlx::query(
         "SELECT id, name, kind, slowmode_seconds FROM channels WHERE server = $1 ORDER BY id",
     )
@@ -896,7 +829,7 @@ async fn server_detail(
     for r in &restricted_rows {
         restricted.push(r.try_get::<i64, _>(0)?);
     }
-    let visible = visible_restricted(db, &name, viewer, &restricted).await?;
+    let visible = visible_restricted(db, access, &restricted).await?;
     let mut channels = Vec::new();
     for r in &rows {
         let id: i64 = r.try_get(0)?;
@@ -921,7 +854,7 @@ async fn server_detail(
         name_color,
         channels,
         roles: server_roles(db, &name).await?,
-        role_limits: role_limits(db, &name, viewer).await?,
+        role_limits: role_limits(db, access).await?,
         member_count,
         online_count,
     })
@@ -1109,7 +1042,8 @@ async fn members_page(
 ///
 /// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
 /// password-protected server signed-in callers must be members and guests need a valid
-/// `X-Guest-Grant`. General rate-limit bucket.
+/// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist.
+/// General rate-limit bucket.
 #[utoipa::path(
     get,
     path = "/api/servers/{name}/members",
@@ -1118,9 +1052,9 @@ async fn members_page(
     responses(
         (status = 200, description = "A page of members, or just the requested `usernames`", body = Vec<Member>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
         (status = 400, description = "Invalid cursor (including a cursor from a different kind of listing), or a non-integer `offset` or `limit`", body = ApiErrorBody),
-        (status = 401, description = "Guest access is disabled (no or unknown token), or a guest on a password-protected server sent only invalid or expired grants", body = ApiErrorBody),
-        (status = 403, description = "You are banned from this server, or it is password-protected and you are not a member (signed in) or sent no guest grant (guest)", body = ApiErrorBody),
-        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
+        (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security((), ("bearer" = []))
@@ -1142,10 +1076,9 @@ pub(crate) async fn list_members(
     } = MemberListQuery::parse(raw.as_deref().unwrap_or(""))?;
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
-    let key = name.to_lowercase();
-    let lite = require_server(db, &key).await?;
-    require_server_view(db, &headers, &lite, viewer.as_ref()).await?;
-    let creator = lite.creator;
+    let access = resolve_server(db, &name, viewer.as_ref(), &Proof::headers(&headers)).await?;
+    let key = access.name().to_string();
+    let creator = access.lite().creator.clone();
     let (rows, next) = match usernames {
         Some(names) => (
             members_by_names(
@@ -1251,7 +1184,8 @@ async fn recent_pairs(
 ///
 /// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
 /// password-protected server signed-in callers must be members and guests need a valid
-/// `X-Guest-Grant`. General rate-limit bucket.
+/// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist.
+/// General rate-limit bucket.
 #[utoipa::path(
     get,
     path = "/api/servers/{name}/interacted",
@@ -1260,9 +1194,9 @@ async fn recent_pairs(
     responses(
         (status = 200, description = "A page of users who interacted with the server and are not members, most recent first", body = Vec<UserRef>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
         (status = 400, description = "Invalid cursor (JSON), or a non-integer `offset` or `limit` (plain-text framework error)", body = ApiErrorBody),
-        (status = 401, description = "Guest access is disabled (no or unknown token), or a guest on a password-protected server sent only invalid or expired grants", body = ApiErrorBody),
-        (status = 403, description = "You are banned from this server, or it is password-protected and you are not a member (signed in) or sent no guest grant (guest)", body = ApiErrorBody),
-        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
+        (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security((), ("bearer" = []))
@@ -1276,9 +1210,8 @@ pub(crate) async fn list_interacted(
 ) -> Result<Paged<UserRef>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
-    let key = name.to_lowercase();
-    let lite = require_server(db, &key).await?;
-    require_server_view(db, &headers, &lite, viewer.as_ref()).await?;
+    let access = resolve_server(db, &name, viewer.as_ref(), &Proof::headers(&headers)).await?;
+    let key = access.name();
     let MembersQuery {
         offset,
         limit,
@@ -1288,7 +1221,7 @@ pub(crate) async fn list_interacted(
         db,
         "SELECT i.username, i.last_at FROM interactions i WHERE i.server = $1 AND NOT EXISTS(SELECT 1 FROM members m WHERE m.server = i.server AND m.username = i.username) ORDER BY i.last_at DESC, i.username DESC LIMIT $2 OFFSET $3",
         "SELECT i.username, i.last_at FROM interactions i WHERE i.server = $1 AND (i.last_at, i.username) < ($2, $3) AND NOT EXISTS(SELECT 1 FROM members m WHERE m.server = i.server AND m.username = i.username) ORDER BY i.last_at DESC, i.username DESC LIMIT $4",
-        &key,
+        key,
         pair_cursor(cursor.as_deref())?,
         offset.unwrap_or(0).max(0),
         limit.unwrap_or(50).clamp(1, 50),
@@ -1364,7 +1297,8 @@ pub(crate) async fn create_server(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    let detail = server_detail(&state.db, &state.hub, &key, Some(&user)).await?;
+    let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
+    let detail = server_detail(&state.db, &state.hub, &access).await?;
     state.hub.broadcast(WsEvent::ServerCreated {
         server: ServerSummaryLite {
             name: key,
@@ -1387,7 +1321,8 @@ pub(crate) async fn create_server(
 ///
 /// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
 /// password-protected server signed-in callers must be members and guests need a valid
-/// `X-Guest-Grant`. General rate-limit bucket.
+/// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist.
+/// General rate-limit bucket.
 #[utoipa::path(
     get,
     path = "/api/servers/{name}",
@@ -1395,9 +1330,9 @@ pub(crate) async fn create_server(
     params(("name" = String, Path, description = "Server name, case-insensitive"), ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
     responses(
         (status = 200, description = "Server details: channels visible to the viewer, roles, and member and online counts", body = ServerDetail),
-        (status = 401, description = "Guest access is disabled (no or unknown token), or a guest on a password-protected server sent only invalid or expired grants", body = ApiErrorBody),
-        (status = 403, description = "You are banned from this server, or it is password-protected and you are not a member (signed in) or sent no guest grant (guest)", body = ApiErrorBody),
-        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
+        (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security((), ("bearer" = []))
@@ -1410,63 +1345,61 @@ pub(crate) async fn get_server(
 ) -> Result<Json<ServerDetail>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
-    let key = name.to_lowercase();
-    let lite = require_server(db, &key).await?;
-    require_server_view(db, &headers, &lite, viewer.as_ref()).await?;
-    Ok(Json(
-        server_detail(db, &state.hub, &key, viewer.as_ref()).await?,
-    ))
+    let access = resolve_server(db, &name, viewer.as_ref(), &Proof::headers(&headers)).await?;
+    Ok(Json(server_detail(db, &state.hub, &access).await?))
 }
 
-/// Check that a server exists
+/// Check that a server name is free
 ///
-/// Reports whether the server exists and needs a password. Does not check bans or membership.
-/// Signed-in users may call it, and guests when guest access is on. General rate-limit bucket.
+/// Reports whether a server could be created with this name right now. This is the one
+/// deliberate existence oracle in the API: it answers `false` for password-protected servers
+/// too, because creating a server with a taken name would reveal the same. It never says whether
+/// a taken name is password-protected. The name goes through the same checks as when creating a
+/// server, so invalid names get 400. Requires a bearer token. Strict and general rate-limit
+/// buckets.
 #[utoipa::path(
     get,
-    path = "/api/servers/{name}/exists",
+    path = "/api/servers/{name}/available",
     tag = "Servers",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     responses(
-        (status = 200, description = "The server exists; reports whether it is password-protected", body = ServerExists),
-        (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody),
-        (status = 404, description = "Server not found", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 200, description = "Whether the name is free; `false` for every taken name, protected or not, and for names of deleted servers still being purged", body = ServerAvailable),
+        (status = 400, description = "Invalid name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter)", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the strict or the general bucket", content_type = "text/plain", body = String)
     ),
-    security((), ("bearer" = []))
+    security(("bearer" = []))
 )]
-pub(crate) async fn server_exists(
+pub(crate) async fn server_available(
     State(state): State<AppState>,
-    MaybeAuthed(viewer): MaybeAuthed,
+    Authed(_user): Authed,
     Path(name): Path<String>,
-) -> Result<Json<ServerExists>, ApiError> {
-    let db = &state.read();
-    require_guest_ok(db, viewer.as_ref()).await?;
-    let ServerSummaryLite {
-        name: _,
-        display_name: _,
-        creator: _,
-        has_password,
-        banner_color: _,
-        name_color: _,
-    } = require_server(db, &name.to_lowercase()).await?;
-    Ok(Json(ServerExists { has_password }))
+) -> Result<Json<ServerAvailable>, ApiError> {
+    let display = name.trim().to_string();
+    check_server_name(&state.db, &display).await?;
+    let available = match name_free(&state.read(), &display.to_lowercase()).await {
+        Ok(()) => true,
+        Err(ApiError(StatusCode::BAD_REQUEST | StatusCode::CONFLICT, _)) => false,
+        Err(e) => return Err(e),
+    };
+    Ok(Json(ServerAvailable { available }))
 }
 
 /// Search servers
 ///
 /// Finds up to 10 servers, ordered by name, whose name or display name matches `q`. Queries of up
 /// to 8 characters match fuzzily (the characters in order, not necessarily adjacent); longer ones
-/// match as a substring. Password-protected servers are included and flagged. A blank `q` returns
-/// an empty list. Signed-in users may call it, and guests when guest access is on. General
-/// rate-limit bucket.
+/// match as a substring. Only servers without a password and servers the caller is a member of
+/// are searched; other password-protected servers never appear. A blank `q` returns an empty
+/// list. Signed-in users may call it, and guests when guest access is on (guests only find
+/// servers without a password). General rate-limit bucket.
 #[utoipa::path(
     get,
     path = "/api/server_search",
     tag = "Search",
     params(ServerSearchQuery),
     responses(
-        (status = 200, description = "Up to 10 servers whose name or display name matches the query", body = Vec<ServerMatch>),
+        (status = 200, description = "Up to 10 servers without a password or that you are a member of, whose name or display name matches the query", body = Vec<ServerMatch>),
         (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -1485,9 +1418,10 @@ pub(crate) async fn search_servers(
     }
     let fuzzy = is_fuzzy(&q);
     let rows = sqlx::query(
-        "SELECT name, display_name, password_hash FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging' ORDER BY name LIMIT 50",
+        "SELECT name, display_name, password_hash FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging' AND (password_hash IS NULL OR name IN (SELECT server FROM members WHERE username = $2)) ORDER BY name LIMIT 50",
     )
     .bind(like_pattern(&q, fuzzy))
+    .bind(viewer.as_ref().map(|u| u.username.clone()))
     .fetch_all(db)
     .await?;
     let mut out = Vec::new();
@@ -1514,8 +1448,11 @@ pub(crate) async fn search_servers(
 /// Checks the password of a password-protected server and returns a guest grant. Guests send the
 /// grant in the `X-Guest-Grant` header to view the server without an account; it expires after
 /// `GUEST_GRANT_DAYS` days without use (30 by default) and is revoked when the password changes
-/// (unless the change kept guests). Anyone may call it, guests only when guest access is on.
-/// Strict and general rate-limit buckets.
+/// (unless the change kept guests). The API drives the password step: without `password` every
+/// name that is not a server without a password gets the same `401 Password required`, and a
+/// wrong password or a name that does not exist gets the same `404 Server not found or wrong
+/// password` (the password is always hashed, also for names that do not exist). Anyone may call
+/// it, guests only when guest access is on. Strict and general rate-limit buckets.
 #[utoipa::path(
     post,
     path = "/api/servers/{name}/guest_access",
@@ -1523,10 +1460,10 @@ pub(crate) async fn search_servers(
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = GuestAccessReq,
     responses(
-        (status = 200, description = "Password accepted; returns a guest grant for viewing the server without an account", body = GuestGrant),
-        (status = 400, description = "The server has no password. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
-        (status = 401, description = "Wrong password, or guest access is disabled and no valid token was sent", body = ApiErrorBody),
-        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 200, description = "Password accepted; returns a guest grant for viewing the server without an account. For a server without a password `grant` is `null` and any `password` is ignored", body = GuestGrant),
+        (status = 400, description = "Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", content_type = "text/plain", body = String),
+        (status = 401, description = "`Password required`: no `password` was given and the name is not a server without a password (password-protected and nonexistent names answer identically). Also `Guest access is disabled` for guests without a valid token when guest access is off", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: the same body for a wrong password and for a name that does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the strict or the general bucket", content_type = "text/plain", body = String)
     ),
@@ -1539,45 +1476,27 @@ pub(crate) async fn guest_access(
     Json(req): Json<GuestAccessReq>,
 ) -> Result<Json<GuestGrant>, ApiError> {
     require_guest_ok(&state.db, viewer.as_ref()).await?;
-    let key = name.to_lowercase();
-    require_server(&state.db, &key).await?;
-    let hash: Option<String> = sqlx::query("SELECT password_hash FROM servers WHERE name = $1")
-        .bind(&key)
-        .fetch_one(&state.db)
-        .await?
-        .try_get(0)?;
-    let hash = match hash {
-        Some(hash) => hash,
-        None => return Err(bad("Server has no password")),
-    };
-    if !verify_password(&req.password, &hash).await {
-        return Err(ApiError(
-            StatusCode::UNAUTHORIZED,
-            "Wrong password".to_string(),
-        ));
+    let access = resolve_server(
+        &state.db,
+        &name,
+        None,
+        &Proof::password(req.password.as_deref()),
+    )
+    .await?;
+    if access.via() == Via::Public {
+        return Ok(Json(GuestGrant { grant: None }));
     }
     let grant = new_token();
     sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, $2, $3, $3)")
         .bind(&grant)
-        .bind(&key)
+        .bind(access.name())
         .bind(now())
         .execute(&state.db)
         .await?;
-    Ok(Json(GuestGrant { grant }))
+    Ok(Json(GuestGrant { grant: Some(grant) }))
 }
 
 const INVITE_PREVIEW: i64 = 3;
-
-async fn is_member(db: &Db, server: &str, username: &str) -> Result<bool, ApiError> {
-    Ok(
-        sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
-            .bind(server)
-            .bind(username)
-            .fetch_optional(db)
-            .await?
-            .is_some(),
-    )
-}
 
 fn invite_password(headers: &HeaderMap) -> Option<String> {
     let raw = headers.get("x-invite-password")?.to_str().ok()?;
@@ -1588,34 +1507,6 @@ fn invite_password(headers: &HeaderMap) -> Option<String> {
         "" => None,
         password => Some(password.to_string()),
     }
-}
-
-async fn invite_unlocked(
-    db: &Db,
-    headers: &HeaderMap,
-    server: &str,
-    viewer: Option<&User>,
-) -> Result<bool, ApiError> {
-    if viewer.is_none() {
-        for grant in header_grants(headers) {
-            if grant_matches(db, &grant, server).await? {
-                return Ok(true);
-            }
-        }
-    }
-    let given = match invite_password(headers) {
-        Some(password) => password,
-        None => return Ok(false),
-    };
-    let hash: Option<String> = sqlx::query("SELECT password_hash FROM servers WHERE name = $1")
-        .bind(server)
-        .fetch_one(db)
-        .await?
-        .try_get(0)?;
-    Ok(match hash {
-        Some(hash) => verify_password_cached(&given, &hash).await,
-        None => false,
-    })
 }
 
 async fn invite_preview(db: &Db, server: &str) -> Result<(Option<String>, Vec<Message>), ApiError> {
@@ -1637,11 +1528,14 @@ async fn invite_preview(db: &Db, server: &str) -> Result<(Option<String>, Vec<Me
 /// Preview an invite
 ///
 /// Returns an invite card for the server: the server, the viewer's `status`, member and online
-/// counts and a short preview of recent messages. Counts are `null` and the preview is empty while
-/// the server is locked: it has a password, the viewer is not a member, and neither a valid
-/// `X-Invite-Password` nor (for guests) a valid `X-Guest-Grant` was sent. Banned viewers get counts
-/// when unlocked but never a preview. The preview holds the last 3 top-level messages of the first
-/// text channel without permission rules.
+/// counts and a short preview of recent messages. The API drives the password step exactly like
+/// `POST /api/servers/{name}/join`: a server without a password, one you are a member of, or (for
+/// guests) one a valid `X-Guest-Grant` unlocks returns the card. Every other name returns the same
+/// minimal `401 Password required` without an `X-Invite-Password`, whether the server is
+/// password-protected or does not exist; with a wrong password, or for a name that does not exist,
+/// the same `404 Server not found or wrong password`. Banned viewers get the card (with counts)
+/// only once they proved access, and never a preview. The preview holds the last 3 top-level
+/// messages of the first text channel without permission rules.
 ///
 /// Signed-in users may call it, and guests when guest access is on. Invite and general rate-limit
 /// buckets.
@@ -1651,13 +1545,14 @@ async fn invite_preview(db: &Db, server: &str) -> Result<(Option<String>, Vec<Me
     tag = "Invites",
     params(
         ("name" = String, Path, description = "Server name, case-insensitive"),
-        ("X-Invite-Password" = Option<String>, Header, description = "Percent-encoded server password from the invite link; blank counts as absent"),
+        ("X-Invite-Password" = Option<String>, Header, description = "Percent-encoded server password from the invite link or typed by the viewer; blank counts as absent"),
         ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests; a valid grant unlocks the card")
     ),
     responses(
         (status = 200, description = "Invite card for the server", body = Invite),
-        (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody),
-        (status = 404, description = "Invalid invite: the server does not exist", body = ApiErrorBody),
+        (status = 401, description = "`Password required`: identical for password-protected servers you have not unlocked and for names that do not exist. Also `Guest access is disabled` when guest access is off and no valid token was sent", body = ApiErrorBody),
+        (status = 403, description = "`You are banned from this server`, only after access was proven (correct password, or you took part in the server before)", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: identical for a wrong `X-Invite-Password` and for a name that does not exist", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the invite or the general bucket", content_type = "text/plain", body = String)
     ),
     security((), ("bearer" = []))
@@ -1670,41 +1565,33 @@ pub(crate) async fn get_invite(
 ) -> Result<Json<Invite>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
-    let key = name.to_lowercase();
-    let server = require_server(db, &key).await?;
-    let member = match &viewer {
-        Some(user) => is_member(db, &key, &user.username).await?,
-        None => false,
+    let given = invite_password(&headers);
+    let grants = match viewer {
+        Some(_) => Vec::new(),
+        None => header_grants(&headers),
     };
-    let banned = match &viewer {
-        Some(user) if !member => is_banned(db, &key, &user.username).await?,
-        _ => false,
-    };
-    let open = !server.has_password
-        || member
-        || invite_unlocked(db, &headers, &key, viewer.as_ref()).await?;
-    let unlocked = !banned && open;
-    let status = match (member, banned, unlocked) {
-        (true, _, _) => InviteStatus::Member,
-        (false, true, _) => InviteStatus::Banned,
-        (false, false, true) => InviteStatus::Joinable,
-        (false, false, false) => InviteStatus::PasswordRequired,
-    };
-    let (preview_channel, preview) = match unlocked {
-        true => invite_preview(db, &key).await?,
-        false => (None, Vec::new()),
-    };
-    let (member_count, online_count) = match open {
-        true => {
-            let members = member_count(db, &key).await?;
-            (Some(members), Some(state.hub.online_count(&key)))
+    let view = resolve_invite(
+        db,
+        &name,
+        viewer.as_ref(),
+        &Proof::password(given.as_deref()).and_grants(grants),
+    )
+    .await?;
+    let (server, status, (preview_channel, preview)) = match view {
+        InviteView::Banned(lite) => (lite, InviteStatus::Banned, (None, Vec::new())),
+        InviteView::Open(access) => {
+            let status = match access.is_member() {
+                true => InviteStatus::Member,
+                false => InviteStatus::Joinable,
+            };
+            let preview = invite_preview(db, access.name()).await?;
+            (access.lite().clone(), status, preview)
         }
-        false => (None, None),
     };
     Ok(Json(Invite {
-        online_count,
+        online_count: state.hub.online_count(&server.name),
+        member_count: member_count(db, &server.name).await?,
         server,
-        member_count,
         status,
         preview_channel,
         preview,
@@ -1730,32 +1617,37 @@ async fn insert_member(db: &Db, server: &str, username: &str) -> Result<bool, Ap
         .fetch_optional(db)
         .await?
         .is_some();
-    match !member && is_banned(db, server, username).await? {
-        true => Err(forbidden("You are banned from this server")),
-        false => Ok(false),
+    match member {
+        true => Ok(false),
+        false => Err(forbidden(BANNED)),
     }
 }
 
 /// Join a server
 ///
-/// Adds the caller as a member (not an admin) and returns the server details. A password-protected
-/// server needs `password` in the body unless the caller is already a member; the body may be
-/// omitted otherwise (send no `Content-Type`). Joining a server you are already in succeeds
-/// without changes. Requires a bearer token; banned users get 403. Emits `member_joined` to the
-/// server and the joining user when a new membership was created. Join and general rate-limit
-/// buckets.
+/// Adds the caller as a member (not an admin) and returns the server details. The API drives the
+/// password step: a server without a password is joined at once (any `password` is ignored), and
+/// so is a server you are already a member of. For every other name a call without `password`
+/// gets the same `401 Password required`, whether the server is password-protected or does not
+/// exist; call again with `password` to join, or get the same `404 Server not found or wrong
+/// password` for a wrong password and for a name that does not exist (the password is always
+/// hashed, also for names that do not exist). The body may be omitted (send no `Content-Type`).
+/// Requires a bearer token. A ban is only revealed (403) once access was proven: on servers
+/// without a password, with the correct password, or when you took part in the server before.
+/// Emits `member_joined` to the server and the joining user when a new membership was created.
+/// Join and general rate-limit buckets.
 #[utoipa::path(
     post,
     path = "/api/servers/{name}/join",
     tag = "Servers",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
-    request_body(content = Option<JoinReq>, description = "Optional; only needed for a password-protected server you are not a member of"),
+    request_body(content = Option<JoinReq>, description = "Optional; `password` is only read for password-protected servers you are not a member of"),
     responses(
         (status = 200, description = "Joined, or already a member; returns the server details", body = ServerDetail),
         (status = 400, description = "Malformed JSON body (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 401, description = "Missing or unknown bearer token, or wrong or missing password", body = ApiErrorBody),
-        (status = 403, description = "You are banned from this server", body = ApiErrorBody),
-        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 401, description = "`Password required`: no `password` and the name is not a server without a password (identical for password-protected and nonexistent names). Also `Unauthorized` for a missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`You are banned from this server`, only after access was proven", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: identical for a wrong password and for a name that does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the join or the general bucket", content_type = "text/plain", body = String)
     ),
@@ -1767,45 +1659,17 @@ pub(crate) async fn join_server(
     Path(name): Path<String>,
     body: Option<Json<JoinReq>>,
 ) -> Result<Json<ServerDetail>, ApiError> {
-    let key = name.to_lowercase();
-    let lite = require_server(&state.db, &key).await?;
-    if is_banned(&state.db, &key, &user.username).await? {
-        return Err(forbidden("You are banned from this server"));
-    }
-    if lite.has_password {
-        let already = sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
-            .bind(&key)
-            .bind(&user.username)
-            .fetch_optional(&state.db)
-            .await?
-            .is_some();
-        if !already {
-            let hash: Option<String> =
-                sqlx::query("SELECT password_hash FROM servers WHERE name = $1")
-                    .bind(&key)
-                    .fetch_one(&state.db)
-                    .await?
-                    .try_get(0)?;
-            let given = body.as_ref().and_then(|Json(j)| j.password.as_deref());
-            let ok = match (&hash, given) {
-                (Some(hash), Some(password)) => verify_password(password, hash).await,
-                (_, _) => false,
-            };
-            if !ok {
-                return Err(ApiError(
-                    StatusCode::UNAUTHORIZED,
-                    "Wrong password".to_string(),
-                ));
-            }
-        }
-    }
+    let given = body.as_ref().and_then(|Json(j)| j.password.as_deref());
+    let access = resolve_server(&state.db, &name, Some(&user), &Proof::password(given)).await?;
+    let key = access.name().to_string();
     let inserted = insert_member(&state.db, &key, &user.username).await?;
-    let detail = server_detail(&state.db, &state.hub, &key, Some(&user)).await?;
+    let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
+    let detail = server_detail(&state.db, &state.hub, &access).await?;
     let member = build_member(
         &state.db,
         &state.hub,
         &key,
-        lite.creator.as_deref(),
+        access.lite().creator.as_deref(),
         &user.username,
         false,
         0,
@@ -1834,7 +1698,7 @@ pub(crate) async fn join_server(
         (status = 200, description = "Left the server and dropped its roles", body = OkResp),
         (status = 400, description = "Not a member", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security(("bearer" = []))
@@ -1844,8 +1708,8 @@ pub(crate) async fn leave_server(
     Authed(user): Authed,
     Path(name): Path<String>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let key = name.to_lowercase();
-    require_server(&state.db, &key).await?;
+    let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
+    let key = access.name().to_string();
     let removed = sqlx::query("DELETE FROM members WHERE server = $1 AND username = $2")
         .bind(&key)
         .bind(&user.username)
@@ -1896,7 +1760,7 @@ pub(crate) async fn leave_server(
         (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Delete server permission, missing Kick for `members: remove`, or a rename or password change on the protected rchat server", body = ApiErrorBody),
-        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 409, description = "The new name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
@@ -1921,15 +1785,17 @@ pub(crate) async fn update_server(
     if name.is_some() || password.is_some() {
         guard_rchat(&key)?;
     }
-    let lite = require_server(&state.db, &key).await?;
-    require_perm(&state.db, &key, &user, Perm::DeleteServer).await?;
+    let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
+    access.require_perm(&state.db, Perm::DeleteServer).await?;
+    let key = access.name().to_string();
+    let lite = access.lite().clone();
     let banner_color = server_color(banner_color, "banner")?;
     let name_color = server_color(name_color, "name")?;
     let purge = password.is_some() && members == PasswordMembers::Remove;
     if purge {
-        require_perm(&state.db, &key, &user, Perm::Kick).await?;
+        access.require_perm(&state.db, Perm::Kick).await?;
     }
-    let mine = effective_perms(&state.db, &key, &user).await?;
+    let mine = access.perms(&state.db).await?;
     let (new_key, display) = match &name {
         Some(n) => {
             let display = n.trim().to_string();
@@ -2170,7 +2036,7 @@ async fn purge_members(
         (status = 200, description = "Server deleted along with its channels, members, and roles", body = OkResp),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Delete server permission, or the server is the protected rchat server", body = ApiErrorBody),
-        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security(("bearer" = []))
@@ -2182,11 +2048,11 @@ pub(crate) async fn delete_server(
 ) -> Result<Json<OkResp>, ApiError> {
     let key = name.to_lowercase();
     guard_rchat(&key)?;
-    require_server(&state.db, &key).await?;
-    require_perm(&state.db, &key, &user, Perm::DeleteServer).await?;
-    match crate::api::admin::remove_server(&state, &key).await? {
+    let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
+    access.require_perm(&state.db, Perm::DeleteServer).await?;
+    match crate::api::admin::remove_server(&state, access.name()).await? {
         true => Ok(ok()),
-        false => Err(not_found("Server not found")),
+        false => Err(crate::api::access::denied()),
     }
 }
 
@@ -2206,7 +2072,7 @@ pub(crate) async fn delete_server(
         (status = 400, description = "Invalid channel name (blank, longer than 100 characters or blocked by the profanity filter), the name is taken in this server, or the server already has 500 channels. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
-        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -2228,8 +2094,9 @@ pub(crate) async fn create_channel(
         &channel_name,
     )
     .await?;
-    require_server(&state.db, &key).await?;
-    require_perm(&state.db, &key, &user, Perm::ManageChannels).await?;
+    let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
+    access.require_perm(&state.db, Perm::ManageChannels).await?;
+    let key = access.name().to_string();
     let taken = sqlx::query("SELECT 1 FROM channels WHERE server = $1 AND name = $2")
         .bind(&key)
         .bind(&channel_name)
@@ -2292,7 +2159,7 @@ pub(crate) async fn create_channel(
         (status = 400, description = "Slow mode out of range or set on a voice channel, an invalid channel name (blank, longer than 100 characters or blocked by the profanity filter), or the name is taken in this server. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
-        (status = 404, description = "Channel not found", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -2308,19 +2175,16 @@ pub(crate) async fn update_channel(
         name,
         slowmode_seconds,
     } = req;
-    let row = sqlx::query("SELECT server, kind, name FROM channels WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
+    let channel = resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
+    channel
+        .server()
+        .require_perm(&state.db, Perm::ManageChannels)
         .await?;
-    let (server, kind, old_name): (String, ChannelKind, String) = match &row {
-        Some(r) => (
-            r.try_get(0)?,
-            ChannelKind::parse(&r.try_get::<String, _>(1)?)?,
-            r.try_get(2)?,
-        ),
-        None => return Err(not_found("Channel not found")),
-    };
-    require_perm(&state.db, &server, &user, Perm::ManageChannels).await?;
+    let (server, kind, old_name) = (
+        channel.server().name().to_string(),
+        channel.kind(),
+        channel.name().to_string(),
+    );
     if let Some(secs) = slowmode_seconds {
         if !(0..=SLOWMODE_MAX).contains(&secs) {
             return Err(bad(&format!(
@@ -2408,7 +2272,7 @@ pub(crate) async fn update_channel(
         (status = 400, description = "It is the server's only channel or only text channel. A non-integer `id` gives a plain-text 400", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
-        (status = 404, description = "Channel not found", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security(("bearer" = []))
@@ -2418,18 +2282,12 @@ pub(crate) async fn delete_channel(
     Authed(user): Authed,
     Path(id): Path<i64>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let row = sqlx::query("SELECT server, kind FROM channels WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
+    let channel = resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
+    channel
+        .server()
+        .require_perm(&state.db, Perm::ManageChannels)
         .await?;
-    let (server, kind): (String, ChannelKind) = match &row {
-        Some(r) => (
-            r.try_get(0)?,
-            ChannelKind::parse(&r.try_get::<String, _>(1)?)?,
-        ),
-        None => return Err(not_found("Channel not found")),
-    };
-    require_perm(&state.db, &server, &user, Perm::ManageChannels).await?;
+    let (server, kind) = (channel.server().name().to_string(), channel.kind());
     let count: i64 = sqlx::query("SELECT COUNT(*) FROM channels WHERE server = $1")
         .bind(&server)
         .fetch_one(&state.db)
@@ -2478,7 +2336,7 @@ pub(crate) async fn delete_channel(
         (status = 400, description = "Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415 (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Kick permission, or the member's server permissions are not a strict subset of yours", body = ApiErrorBody),
-        (status = 404, description = "Server not found, or the user is not a member", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -2490,11 +2348,11 @@ pub(crate) async fn kick_member(
     Path(name): Path<String>,
     Json(req): Json<UsernameReq>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let key = name.to_lowercase();
     let target = req.username.to_lowercase();
-    require_server(&state.db, &key).await?;
-    require_perm(&state.db, &key, &user, Perm::Kick).await?;
-    require_moderate(&state.db, &key, &user, &target).await?;
+    let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
+    access.require_perm(&state.db, Perm::Kick).await?;
+    access.require_moderate(&state.db, &target).await?;
+    let key = access.name().to_string();
     let removed = sqlx::query("DELETE FROM members WHERE server = $1 AND username = $2")
         .bind(&key)
         .bind(&target)
@@ -2534,7 +2392,7 @@ pub(crate) async fn kick_member(
         (status = 400, description = "You can't ban yourself. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Kick permission, or the user's server permissions are not a strict subset of yours", body = ApiErrorBody),
-        (status = 404, description = "Server or user not found", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -2546,17 +2404,17 @@ pub(crate) async fn ban_member(
     Path(name): Path<String>,
     Json(req): Json<UsernameReq>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let key = name.to_lowercase();
     let target = req.username.to_lowercase();
-    require_server(&state.db, &key).await?;
-    require_perm(&state.db, &key, &user, Perm::Kick).await?;
+    let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
+    access.require_perm(&state.db, Perm::Kick).await?;
+    let key = access.name().to_string();
     if target == user.username {
         return Err(bad("You can't ban yourself"));
     }
     if get_user(&state.db, &target).await?.is_none() {
         return Err(not_found("User not found"));
     }
-    require_moderate(&state.db, &key, &user, &target).await?;
+    access.require_moderate(&state.db, &target).await?;
     let mut tx = state.db.begin().await?;
     sqlx::query(
         "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES($1, $2, $3, $4) ON CONFLICT(server, username) DO NOTHING",
@@ -2607,7 +2465,7 @@ pub(crate) async fn ban_member(
         (status = 200, description = "Ban lifted; the user may join again", body = OkResp),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Kick permission", body = ApiErrorBody),
-        (status = 404, description = "Server not found, or the user is not banned", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not banned", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security(("bearer" = []))
@@ -2617,11 +2475,10 @@ pub(crate) async fn unban_member(
     Authed(user): Authed,
     Path((name, target)): Path<(String, String)>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let key = name.to_lowercase();
-    require_server(&state.db, &key).await?;
-    require_perm(&state.db, &key, &user, Perm::Kick).await?;
+    let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
+    access.require_perm(&state.db, Perm::Kick).await?;
     let removed = sqlx::query("DELETE FROM server_bans WHERE server = $1 AND username = $2")
-        .bind(&key)
+        .bind(access.name())
         .bind(target.to_lowercase())
         .execute(&state.db)
         .await?
@@ -2647,7 +2504,7 @@ pub(crate) async fn unban_member(
         (status = 400, description = "Invalid cursor (JSON), or a non-integer `offset` or `limit` (plain-text framework error)", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Kick permission", body = ApiErrorBody),
-        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security(("bearer" = []))
@@ -2658,10 +2515,10 @@ pub(crate) async fn list_bans(
     Path(name): Path<String>,
     Query(q): Query<MembersQuery>,
 ) -> Result<Paged<ServerBan>, ApiError> {
-    let key = name.to_lowercase();
     let db = &state.read();
-    require_server(db, &key).await?;
-    require_perm(db, &key, &user, Perm::Kick).await?;
+    let access = resolve_server(db, &name, Some(&user), &Proof::none()).await?;
+    access.require_perm(db, Perm::Kick).await?;
+    let key = access.name();
     let MembersQuery {
         offset,
         limit,
@@ -2671,7 +2528,7 @@ pub(crate) async fn list_bans(
         db,
         "SELECT username, created_at FROM server_bans WHERE server = $1 ORDER BY created_at DESC, username DESC LIMIT $2 OFFSET $3",
         "SELECT username, created_at FROM server_bans WHERE server = $1 AND (created_at, username) < ($2, $3) ORDER BY created_at DESC, username DESC LIMIT $4",
-        &key,
+        key,
         pair_cursor(cursor.as_deref())?,
         offset.unwrap_or(0).max(0),
         limit.unwrap_or(50).clamp(1, 50),
@@ -2715,10 +2572,11 @@ async fn set_admin(
     target: &str,
     is_admin: bool,
 ) -> Result<Json<OkResp>, ApiError> {
-    require_server(&state.db, server).await?;
-    require_perm(&state.db, server, actor, Perm::ManageAdmins).await?;
+    let access = resolve_server(&state.db, server, Some(actor), &Proof::none()).await?;
+    access.require_perm(&state.db, Perm::ManageAdmins).await?;
+    let server = access.name();
     if is_admin {
-        require_grant(&state.db, server, actor, ALL_PERMS).await?;
+        access.require_grant(&state.db, ALL_PERMS).await?;
     } else if !actor.is_site_admin {
         let row = sqlx::query(
             "SELECT perms FROM members WHERE server = $1 AND username = $2 AND is_admin <> 0",
@@ -2730,7 +2588,7 @@ async fn set_admin(
         if let Some(r) = row {
             let old = perm_bits(true, r.try_get(0)?, 0);
             let roles = role_perms(&state.db, server, target).await?;
-            let mine = effective_perms(&state.db, server, actor).await?;
+            let mine = access.perms(&state.db).await?;
             if roles & !old != 0 && !can_grant(mine, false, roles) {
                 return Err(forbidden(REVOKE_RAISES));
             }
@@ -2777,7 +2635,7 @@ async fn set_admin(
         (status = 400, description = "Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415 (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage admins permission, or you don't hold every permission (`You can't grant permissions you don't have`)", body = ApiErrorBody),
-        (status = 404, description = "Server not found, or the user is not a member", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -2817,7 +2675,7 @@ pub(crate) async fn grant_admin(
         (status = 200, description = "Admin status and permissions revoked", body = OkResp),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage admins permission, or the admin's roles have permissions that neither their admin permissions nor yours include (`They hold roles with permissions you don't have, so revoking their admin would give them those`)", body = ApiErrorBody),
-        (status = 404, description = "Server not found, or the user is not a member", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not a member", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security(("bearer" = []))
@@ -2858,7 +2716,7 @@ pub(crate) async fn revoke_admin(
         (status = 400, description = "Cannot transfer to yourself. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage admins permission; the target would get permissions you don't have (`You can't grant permissions you don't have`); or your own roles have permissions your admin permissions don't include, which you would gain by giving up admin", body = ApiErrorBody),
-        (status = 404, description = "Server not found, or the user is not a member", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -2875,9 +2733,10 @@ pub(crate) async fn transfer_admin(
     if target == user.username {
         return Err(bad("Cannot transfer to yourself"));
     }
-    require_server(&state.db, &key).await?;
-    require_perm(&state.db, &key, &user, Perm::ManageAdmins).await?;
-    let mine = effective_perms(&state.db, &key, &user).await?;
+    let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
+    access.require_perm(&state.db, Perm::ManageAdmins).await?;
+    let key = access.name().to_string();
+    let mine = access.perms(&state.db).await?;
     let mut tx = state.db.begin().await?;
     let stored: i64 = match sqlx::query(
         "UPDATE members SET is_admin = 1 WHERE server = $1 AND username = $2 RETURNING perms",
@@ -2946,7 +2805,7 @@ pub(crate) async fn transfer_admin(
         (status = 400, description = "Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415 (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage admins permission, or the change adds permissions and the new permissions include some you don't have (`You can't grant permissions you don't have`)", body = ApiErrorBody),
-        (status = 404, description = "Server not found, or the user is not an admin of it", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not an admin of it", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -2958,12 +2817,12 @@ pub(crate) async fn set_admin_perms(
     Path((name, target)): Path<(String, String)>,
     Json(req): Json<PermsReq>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let key = name.to_lowercase();
     let target = target.to_lowercase();
-    require_server(&state.db, &key).await?;
-    require_perm(&state.db, &key, &user, Perm::ManageAdmins).await?;
+    let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
+    access.require_perm(&state.db, Perm::ManageAdmins).await?;
+    let key = access.name().to_string();
     let perms = req.perms & ALL_PERMS;
-    let mine = effective_perms(&state.db, &key, &user).await?;
+    let mine = access.perms(&state.db).await?;
     let mut tx = state.db.begin().await?;
     let stored: i64 = match sqlx::query(
         "SELECT perms FROM members WHERE server = $1 AND username = $2 AND is_admin != 0",
@@ -3008,11 +2867,10 @@ async fn require_role(db: &Db, server: &str, id: i64) -> Result<i64, ApiError> {
     }
 }
 
-async fn role_guard(state: &AppState, name: &str, user: &User) -> Result<String, ApiError> {
-    let key = name.to_lowercase();
-    require_server(&state.db, &key).await?;
-    require_perm(&state.db, &key, user, Perm::ManageAdmins).await?;
-    Ok(key)
+async fn role_guard(state: &AppState, name: &str, user: &User) -> Result<ServerAccess, ApiError> {
+    let access = resolve_server(&state.db, name, Some(user), &Proof::none()).await?;
+    access.require_perm(&state.db, Perm::ManageAdmins).await?;
+    Ok(access)
 }
 
 fn held_above_sql(one: bool) -> String {
@@ -3036,17 +2894,16 @@ fn held_above_sql(one: bool) -> String {
 
 async fn held_above(
     db: &Db,
-    server: &str,
-    actor: &User,
+    access: &ServerAccess,
     mine: i64,
     role: Option<i64>,
 ) -> Result<HashSet<i64>, ApiError> {
     let mut out = HashSet::new();
-    if actor.is_site_admin {
+    let Some(actor) = access.viewer().filter(|u| !u.is_site_admin) else {
         return Ok(out);
-    }
+    };
     let mut query = sqlx::query(sqlx::AssertSqlSafe(held_above_sql(role.is_some())))
-        .bind(server)
+        .bind(access.name())
         .bind(&actor.username)
         .bind(mine);
     if let Some(id) = role {
@@ -3066,15 +2923,18 @@ struct ChannelLimits {
 
 async fn channel_limits(
     db: &Db,
-    server: &str,
-    actor: &User,
+    access: &ServerAccess,
     mine: i64,
     role: Option<i64>,
 ) -> Result<ChannelLimits, ApiError> {
     let mut out = ChannelLimits::default();
+    let Some(actor) = access.viewer() else {
+        return Ok(out);
+    };
     if actor.is_site_admin || mine & Perm::ManageChannels as i64 != 0 {
         return Ok(out);
     }
+    let server = access.name();
     let filter = match role {
         Some(_) => "cp.subject = $2",
         None => "cp.subject LIKE 'r:%'",
@@ -3125,11 +2985,11 @@ async fn channel_limits(
     Ok(out)
 }
 
-async fn role_limits(db: &Db, server: &str, viewer: Option<&User>) -> Result<RoleLimits, ApiError> {
-    let Some(user) = viewer.filter(|u| !u.is_site_admin) else {
+async fn role_limits(db: &Db, access: &ServerAccess) -> Result<RoleLimits, ApiError> {
+    if access.viewer().is_none_or(|u| u.is_site_admin) {
         return Ok(RoleLimits::default());
-    };
-    let mine = effective_perms(db, server, user).await?;
+    }
+    let mine = access.perms(db).await?;
     if mine & Perm::ManageAdmins as i64 == 0 {
         return Ok(RoleLimits::default());
     }
@@ -3138,9 +2998,9 @@ async fn role_limits(db: &Db, server: &str, viewer: Option<&User>) -> Result<Rol
         ids.sort_unstable();
         ids
     };
-    let ChannelLimits { grants, sole } = channel_limits(db, server, user, mine, None).await?;
+    let ChannelLimits { grants, sole } = channel_limits(db, access, mine, None).await?;
     Ok(RoleLimits {
-        held_above: sorted(held_above(db, server, user, mine, None).await?),
+        held_above: sorted(held_above(db, access, mine, None).await?),
         channel_grants: sorted(grants),
         sole_rules: sorted(sole),
     })
@@ -3148,21 +3008,17 @@ async fn role_limits(db: &Db, server: &str, viewer: Option<&User>) -> Result<Rol
 
 async fn require_role_change(
     db: &Db,
-    server: &str,
-    actor: &User,
+    access: &ServerAccess,
     id: i64,
     role_perms: i64,
 ) -> Result<i64, ApiError> {
-    let mine = effective_perms(db, server, actor).await?;
-    if !can_grant(mine, actor.is_site_admin, role_perms) {
+    let mine = access.perms(db).await?;
+    if !can_grant(mine, access.site_admin(), role_perms) {
         return Err(forbidden(
             "You can't change a role that has permissions you don't have",
         ));
     }
-    if !held_above(db, server, actor, mine, Some(id))
-        .await?
-        .is_empty()
-    {
+    if !held_above(db, access, mine, Some(id)).await?.is_empty() {
         return Err(forbidden(
             "You can't change a role held by a member you can't moderate",
         ));
@@ -3193,7 +3049,7 @@ fn check_color(color: &str) -> Result<(), ApiError> {
         (status = 400, description = "Invalid role name (blank, longer than 100 characters or blocked by the profanity filter), an invalid color, or the server already has 250 roles. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage admins permission, or the role's permissions include some you don't have (`You can't grant permissions you don't have`)", body = ApiErrorBody),
-        (status = 404, description = "Server not found", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -3205,7 +3061,8 @@ pub(crate) async fn create_role(
     Path(name): Path<String>,
     Json(req): Json<RoleReq>,
 ) -> Result<Json<Role>, ApiError> {
-    let key = role_guard(&state, &name, &user).await?;
+    let access = role_guard(&state, &name, &user).await?;
+    let key = access.name().to_string();
     let role_name = req.name.trim().to_string();
     check_name(
         &state.db,
@@ -3216,7 +3073,7 @@ pub(crate) async fn create_role(
     .await?;
     check_color(&req.color)?;
     let perms = req.perms & ALL_PERMS;
-    require_grant(&state.db, &key, &user, perms).await?;
+    access.require_grant(&state.db, perms).await?;
     if count_rows(
         &state.db,
         "SELECT COUNT(*) FROM roles WHERE server = $1",
@@ -3268,7 +3125,7 @@ pub(crate) async fn create_role(
         (status = 400, description = "Invalid role name (blank, longer than 100 characters or blocked by the profanity filter) or color; nothing is saved. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Nothing is saved. Missing the Manage admins permission; the role has permissions you don't have (`You can't change a role that has permissions you don't have`); another holder of the role does not have fewer permissions than you (`You can't change a role held by a member you can't moderate`); or the new permissions include some you don't have (`You can't grant permissions you don't have`)", body = ApiErrorBody),
-        (status = 404, description = "Server or role not found", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -3280,9 +3137,10 @@ pub(crate) async fn update_role(
     Path((name, id)): Path<(String, i64)>,
     Json(req): Json<RolePatch>,
 ) -> Result<Json<Role>, ApiError> {
-    let key = role_guard(&state, &name, &user).await?;
+    let access = role_guard(&state, &name, &user).await?;
+    let key = access.name().to_string();
     let current = require_role(&state.db, &key, id).await?;
-    require_role_change(&state.db, &key, &user, id, current).await?;
+    require_role_change(&state.db, &access, id, current).await?;
     let RolePatch { name, color, perms } = req;
     let role_name = match &name {
         Some(role_name) => {
@@ -3303,7 +3161,7 @@ pub(crate) async fn update_role(
     }
     let perms = perms.map(|p| p & ALL_PERMS);
     if let Some(perms) = perms {
-        require_grant(&state.db, &key, &user, perms).await?;
+        access.require_grant(&state.db, perms).await?;
     }
     let mut tx = state.db.begin().await?;
     if let Some(role_name) = &role_name {
@@ -3364,7 +3222,7 @@ pub(crate) async fn update_role(
         (status = 400, description = "Non-integer `id` (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage admins permission; the role has permissions you don't have (`You can't change a role that has permissions you don't have`); another holder of the role does not have fewer permissions than you (`You can't change a role held by a member you can't moderate`); or the role is the only rule on a channel and you lack Manage channels", body = ApiErrorBody),
-        (status = 404, description = "Server or role not found", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security(("bearer" = []))
@@ -3374,10 +3232,11 @@ pub(crate) async fn delete_role(
     Authed(user): Authed,
     Path((name, id)): Path<(String, i64)>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let key = role_guard(&state, &name, &user).await?;
+    let access = role_guard(&state, &name, &user).await?;
+    let key = access.name().to_string();
     let current = require_role(&state.db, &key, id).await?;
-    let mine = require_role_change(&state.db, &key, &user, id, current).await?;
-    if !channel_limits(&state.db, &key, &user, mine, Some(id))
+    let mine = require_role_change(&state.db, &access, id, current).await?;
+    if !channel_limits(&state.db, &access, mine, Some(id))
         .await?
         .sole
         .is_empty()
@@ -3420,7 +3279,7 @@ pub(crate) async fn delete_role(
         (status = 400, description = "A non-integer `id`, malformed JSON or a missing `Content-Type` (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage admins permission, the role has permissions you don't have (`You can't grant permissions you don't have`), or its channel rules give access you don't have (`This role gives channel access you don't have`)", body = ApiErrorBody),
-        (status = 404, description = "Server or role not found, or the user is not a member", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it, or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -3432,7 +3291,8 @@ pub(crate) async fn assign_role(
     Path((name, id)): Path<(String, i64)>,
     Json(req): Json<UsernameReq>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let key = role_guard(&state, &name, &user).await?;
+    let access = role_guard(&state, &name, &user).await?;
+    let key = access.name().to_string();
     let role_perms = require_role(&state.db, &key, id).await?;
     let target = req.username.to_lowercase();
     let member = sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
@@ -3444,9 +3304,9 @@ pub(crate) async fn assign_role(
     if !member {
         return Err(not_found("Not a member"));
     }
-    require_grant(&state.db, &key, &user, role_perms).await?;
-    let mine = effective_perms(&state.db, &key, &user).await?;
-    if !channel_limits(&state.db, &key, &user, mine, Some(id))
+    access.require_grant(&state.db, role_perms).await?;
+    let mine = access.perms(&state.db).await?;
+    if !channel_limits(&state.db, &access, mine, Some(id))
         .await?
         .grants
         .is_empty()
@@ -3482,7 +3342,7 @@ pub(crate) async fn assign_role(
         (status = 400, description = "Non-integer `id` (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage admins permission, or the member does not have fewer permissions than you (`You can't moderate this member`)", body = ApiErrorBody),
-        (status = 404, description = "Server or role not found, or the user does not hold the role", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it, or the user does not hold the role", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security(("bearer" = []))
@@ -3492,11 +3352,12 @@ pub(crate) async fn unassign_role(
     Authed(user): Authed,
     Path((name, id, target)): Path<(String, i64, String)>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let key = role_guard(&state, &name, &user).await?;
+    let access = role_guard(&state, &name, &user).await?;
+    let key = access.name().to_string();
     require_role(&state.db, &key, id).await?;
     let target = target.to_lowercase();
     if target != user.username {
-        require_moderate(&state.db, &key, &user, &target).await?;
+        access.require_moderate(&state.db, &target).await?;
     }
     let removed =
         sqlx::query("DELETE FROM user_roles WHERE server = $1 AND username = $2 AND role_id = $3")
@@ -3518,10 +3379,17 @@ pub(crate) async fn unassign_role(
     }
 }
 
-async fn channel_perm_guard(state: &AppState, id: i64, user: &User) -> Result<String, ApiError> {
-    let server = channel_server(&state.db, id).await?;
-    require_perm(&state.db, &server, user, Perm::ManageChannels).await?;
-    Ok(server)
+async fn channel_perm_guard(
+    state: &AppState,
+    id: i64,
+    user: &User,
+) -> Result<ResolvedChannel, ApiError> {
+    let channel = resolve_channel(&state.db, id, Some(user), &Proof::none()).await?;
+    channel
+        .server()
+        .require_perm(&state.db, Perm::ManageChannels)
+        .await?;
+    Ok(channel)
 }
 
 async fn check_subject(db: &Db, server: &str, subject: &str) -> Result<(), ApiError> {
@@ -3563,7 +3431,7 @@ pub struct ChannelPermsQuery {
         (status = 400, description = "Invalid cursor (JSON), or a non-integer `id` or `limit` (plain-text framework error)", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
-        (status = 404, description = "Channel not found", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security(("bearer" = []))
@@ -3625,7 +3493,7 @@ pub(crate) async fn list_channel_perms(
         (status = 400, description = "Invalid subject, or the channel already has 500 rules. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
-        (status = 404, description = "Channel not found, or the subject's user or role does not exist", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses); or the subject's user or role does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -3637,7 +3505,11 @@ pub(crate) async fn set_channel_perm(
     Path(id): Path<i64>,
     Json(req): Json<ChannelPerm>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let server = channel_perm_guard(&state, id, &user).await?;
+    let server = channel_perm_guard(&state, id, &user)
+        .await?
+        .server()
+        .name()
+        .to_string();
     let ChannelPerm {
         subject,
         can_view,
@@ -3698,7 +3570,7 @@ pub(crate) async fn set_channel_perm(
         (status = 400, description = "Non-integer `id` (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
-        (status = 404, description = "Channel not found, or no rule for that subject", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses); or no rule for that subject", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security(("bearer" = []))
@@ -3708,7 +3580,11 @@ pub(crate) async fn clear_channel_perm(
     Authed(user): Authed,
     Path((id, subject)): Path<(i64, String)>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let server = channel_perm_guard(&state, id, &user).await?;
+    let server = channel_perm_guard(&state, id, &user)
+        .await?
+        .server()
+        .name()
+        .to_string();
     let removed = sqlx::query("DELETE FROM channel_perms WHERE channel_id = $1 AND subject = $2")
         .bind(id)
         .bind(subject.to_lowercase())
@@ -3731,7 +3607,28 @@ pub(crate) async fn clear_channel_perm(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::access::{DENIED, PASSWORD_REQUIRED};
     use crate::api::test_util::{add_member, done, mem_user, temp_state};
+
+    async fn lite_opt(db: &Db, name: &str) -> Option<ServerSummaryLite> {
+        resolve_server(db, name, Some(&mem_user("root", true)), &Proof::none())
+            .await
+            .ok()
+            .map(|a| a.lite().clone())
+    }
+
+    async fn lite_of(db: &Db, name: &str) -> ServerSummaryLite {
+        lite_opt(db, name).await.expect("lite")
+    }
+
+    async fn detail_as(
+        state: &AppState,
+        name: &str,
+        viewer: Option<&User>,
+    ) -> Result<ServerDetail, ApiError> {
+        let access = resolve_server(&state.db, name, viewer, &Proof::none()).await?;
+        server_detail(&state.db, &state.hub, &access).await
+    }
 
     #[tokio::test]
     async fn sole_channel_guard() {
@@ -3898,12 +3795,7 @@ mod tests {
             .await
             .expect("live rename");
         tx.commit().await.expect("commit");
-        assert!(
-            server_lite(&state.db, "lively")
-                .await
-                .expect("lite")
-                .is_some()
-        );
+        assert!(lite_opt(&state.db, "lively").await.is_some());
         done(state, path).await;
     }
 
@@ -4650,7 +4542,7 @@ mod tests {
             .expect("lock server");
         assert!(matches!(
             fetch("usernames=bob").await,
-            Err(ApiError(StatusCode::FORBIDDEN, _))
+            Err(ApiError(StatusCode::NOT_FOUND, m)) if m == DENIED
         ));
         done(state, path).await;
     }
@@ -4765,12 +4657,11 @@ mod tests {
             .try_get(0)
             .expect("id");
         let carol = mem_user("carol", false);
-        let lite = require_server(db, "club").await.expect("lite");
         assert!(matches!(
-            require_server_view(db, &HeaderMap::new(), &lite, Some(&carol)).await,
-            Err(ApiError(StatusCode::FORBIDDEN, _))
+            resolve_channel(db, cid, Some(&carol), &Proof::none()).await,
+            Err(ApiError(StatusCode::NOT_FOUND, m)) if m == "Not found"
         ));
-        assert!(crate::db::channel_viewable(db, "club", cid, Some("dave")).await);
+        assert!(crate::api::access::ws_channel_viewable(db, "club", cid, Some("dave")).await);
         done(state, path).await;
     }
 
@@ -4792,7 +4683,7 @@ mod tests {
         assert_eq!(open.server.display_name, "Club");
         assert_eq!(open.server.name, "club");
         assert!(!open.server.has_password);
-        assert_eq!(open.member_count, Some(2));
+        assert_eq!(open.member_count, 2);
         assert_eq!(open.status, InviteStatus::Joinable);
         assert_eq!(open.preview_channel.as_deref(), Some("general"));
         assert_eq!(
@@ -4813,37 +4704,41 @@ mod tests {
             InviteStatus::Joinable
         );
         set_password(&state, "pässwörd #1").await;
+        let outcome =
+            |viewer: Option<User>, server: &'static str, password: Option<&'static str>| {
+                let state = state.clone();
+                async move {
+                    invite_as(&state, viewer, server, password, None)
+                        .await
+                        .map(|i| i.status)
+                        .map_err(|ApiError(code, m)| (code, m))
+                }
+            };
+        let required = Err((StatusCode::UNAUTHORIZED, PASSWORD_REQUIRED.to_string()));
+        let denied = Err((StatusCode::NOT_FOUND, DENIED.to_string()));
+        assert_eq!(outcome(user("dave"), "club", None).await, required);
+        assert_eq!(outcome(user("dave"), "club", Some("wrong")).await, denied);
         assert_eq!(
-            status_of(&state, user("dave"), None).await,
-            InviteStatus::PasswordRequired
+            outcome(user("dave"), "club", Some("pässwörd #1")).await,
+            Ok(InviteStatus::Joinable)
         );
         assert_eq!(
-            status_of(&state, user("dave"), Some("wrong")).await,
-            InviteStatus::PasswordRequired
+            outcome(Some(mem_user("root", true)), "club", None).await,
+            required
         );
         assert_eq!(
-            status_of(&state, user("dave"), Some("pässwörd #1")).await,
-            InviteStatus::Joinable
+            outcome(user("bob"), "club", None).await,
+            Ok(InviteStatus::Member)
         );
+        assert_eq!(outcome(user("carol"), "club", None).await, required);
         assert_eq!(
-            status_of(&state, Some(mem_user("root", true)), None).await,
-            InviteStatus::PasswordRequired
+            outcome(user("carol"), "club", Some("pässwörd #1")).await,
+            Ok(InviteStatus::Banned)
         );
+        assert_eq!(outcome(None, "club", None).await, required);
         assert_eq!(
-            status_of(&state, user("bob"), None).await,
-            InviteStatus::Member
-        );
-        assert_eq!(
-            status_of(&state, user("carol"), Some("pässwörd #1")).await,
-            InviteStatus::Banned
-        );
-        assert_eq!(
-            status_of(&state, None, None).await,
-            InviteStatus::PasswordRequired
-        );
-        assert_eq!(
-            status_of(&state, None, Some("pässwörd #1")).await,
-            InviteStatus::Joinable
+            outcome(None, "club", Some("pässwörd #1")).await,
+            Ok(InviteStatus::Joinable)
         );
         let grant = insert_grant(db, "club").await;
         let guest = invite_as(&state, None, "club", None, Some(&format!("bogus, {grant}")))
@@ -4852,17 +4747,17 @@ mod tests {
         assert_eq!(guest.status, InviteStatus::Joinable);
         let ignored = invite_as(&state, user("dave"), "club", None, Some(&grant))
             .await
-            .expect("grants are for guests");
-        assert_eq!(ignored.status, InviteStatus::PasswordRequired);
-        assert_eq!(
-            status(invite_as(&state, user("dave"), "nowhere", None, None).await),
-            Some(StatusCode::NOT_FOUND)
-        );
+            .map_err(|ApiError(code, m)| (code, m))
+            .map(|i| i.status);
+        assert_eq!(ignored, required);
+        assert_eq!(outcome(user("dave"), "nowhere", None).await, required);
+        assert_eq!(outcome(user("dave"), "nowhere", Some("x")).await, denied);
+        assert_eq!(outcome(None, "nowhere", None).await, required);
         done(state, path).await;
     }
 
     #[tokio::test]
-    async fn invite_counts_hidden_when_locked() {
+    async fn invite_counts_only_when_unlocked() {
         let (state, path) = temp_state("invite_counts").await;
         let db = &state.db;
         let _ = make_server(&state, "Club").await.expect("club");
@@ -4873,31 +4768,48 @@ mod tests {
         let open = invite_as(&state, user("dave"), "club", None, None)
             .await
             .expect("open");
-        assert_eq!(counts(&open), (Some(2), Some(0)));
+        assert_eq!(counts(&open), (2, 0));
         set_password(&state, "secret").await;
         let grant = insert_grant(db, "club").await;
-        type Case<'a> = (Option<User>, Option<&'a str>, Option<&'a str>, bool);
+        type Case<'a> = (
+            Option<User>,
+            Option<&'a str>,
+            Option<&'a str>,
+            Option<StatusCode>,
+        );
         let cases: Vec<Case> = vec![
-            (user("dave"), None, None, false),
-            (user("dave"), Some("nope"), None, false),
-            (user("dave"), Some("secret"), None, true),
-            (user("bob"), None, None, true),
-            (Some(mem_user("root", true)), None, None, false),
-            (None, None, None, false),
-            (None, None, Some("bogus"), false),
-            (None, None, Some(&grant), true),
-            (None, Some("secret"), None, true),
+            (user("dave"), None, None, Some(StatusCode::UNAUTHORIZED)),
+            (
+                user("dave"),
+                Some("nope"),
+                None,
+                Some(StatusCode::NOT_FOUND),
+            ),
+            (user("dave"), Some("secret"), None, None),
+            (user("bob"), None, None, None),
+            (
+                Some(mem_user("root", true)),
+                None,
+                None,
+                Some(StatusCode::UNAUTHORIZED),
+            ),
+            (None, None, None, Some(StatusCode::UNAUTHORIZED)),
+            (None, None, Some("bogus"), Some(StatusCode::UNAUTHORIZED)),
+            (None, None, Some(&grant), None),
+            (None, Some("secret"), None, None),
         ];
-        for (n, (viewer, password, grant, shown)) in cases.into_iter().enumerate() {
-            let invite = invite_as(&state, viewer, "club", password, grant)
-                .await
-                .expect("invite");
-            assert_eq!(invite.server.display_name, "Club", "case {n}");
-            let want = match shown {
-                true => (Some(2), Some(0)),
-                false => (None, None),
-            };
-            assert_eq!(counts(&invite), want, "case {n}");
+        for (n, (viewer, password, grant, refused)) in cases.into_iter().enumerate() {
+            match (
+                invite_as(&state, viewer, "club", password, grant).await,
+                refused,
+            ) {
+                (Ok(invite), None) => {
+                    assert_eq!(invite.server.display_name, "Club", "case {n}");
+                    assert_eq!(counts(&invite), (2, 0), "case {n}");
+                }
+                (Err(ApiError(code, _)), Some(want)) => assert_eq!(code, want, "case {n}"),
+                (_, _) => panic!("case {n}"),
+            }
         }
         done(state, path).await;
     }
@@ -4930,15 +4842,14 @@ mod tests {
         let last = post(db, general, "m6", None).await;
         post(db, general, "reply", Some(last)).await;
         let dave = || Some(mem_user("dave", false));
-        let locked = invite_as(&state, dave(), "club", None, None)
-            .await
-            .expect("locked");
-        assert!(locked.preview.is_empty());
-        assert_eq!(locked.preview_channel, None);
-        let wrong = invite_as(&state, dave(), "club", Some("nope"), None)
-            .await
-            .expect("wrong password");
-        assert!(wrong.preview.is_empty());
+        assert!(matches!(
+            invite_as(&state, dave(), "club", None, None).await,
+            Err(ApiError(StatusCode::UNAUTHORIZED, m)) if m == PASSWORD_REQUIRED
+        ));
+        assert!(matches!(
+            invite_as(&state, dave(), "club", Some("nope"), None).await,
+            Err(ApiError(StatusCode::NOT_FOUND, m)) if m == DENIED
+        ));
         let unlocked = invite_as(&state, dave(), "club", Some("secret"), None)
             .await
             .expect("unlocked");
@@ -4985,20 +4896,22 @@ mod tests {
         ban(&state, mem_user("alice", false), "club", "carol")
             .await
             .expect("ban carol");
-        for password in [Some("secret"), None] {
-            let banned = invite_as(
-                &state,
-                Some(mem_user("carol", false)),
-                "club",
-                password,
-                None,
-            )
-            .await
-            .expect("banned");
-            assert_eq!(banned.status, InviteStatus::Banned);
-            assert_eq!(banned.preview_channel, None);
-            assert!(banned.preview.is_empty());
-        }
+        let banned = invite_as(
+            &state,
+            Some(mem_user("carol", false)),
+            "club",
+            Some("secret"),
+            None,
+        )
+        .await
+        .expect("banned");
+        assert_eq!(banned.status, InviteStatus::Banned);
+        assert_eq!(banned.preview_channel, None);
+        assert!(banned.preview.is_empty());
+        assert!(matches!(
+            invite_as(&state, Some(mem_user("carol", false)), "club", None, None).await,
+            Err(ApiError(StatusCode::UNAUTHORIZED, m)) if m == PASSWORD_REQUIRED
+        ));
         set_password(&state, "").await;
         let banned = invite_as(&state, Some(mem_user("carol", false)), "club", None, None)
             .await
@@ -5075,9 +4988,7 @@ mod tests {
     async fn grant_valid(state: &AppState, server: &str, grant: &str) -> bool {
         invite_as(state, None, server, None, Some(grant))
             .await
-            .expect("guest invite")
-            .status
-            == InviteStatus::Joinable
+            .is_ok_and(|i| i.status == InviteStatus::Joinable)
     }
 
     async fn join_with(state: &AppState, who: &str, server: &str, password: &str) {
@@ -5169,9 +5080,7 @@ mod tests {
                 Some("#ffffff".to_string())
             )]
         );
-        let detail = server_detail(db, &state.hub, "club", None)
-            .await
-            .expect("detail");
+        let detail = detail_as(&state, "club", None).await.expect("detail");
         assert_eq!(detail.banner_color.as_deref(), Some("#ff0066"));
         assert_eq!(detail.name_color.as_deref(), Some("#ffffff"));
         let mine = my_servers_by_names(db, "bob", &["club".to_string()])
@@ -5188,7 +5097,7 @@ mod tests {
             .expect("clear name color");
         assert_eq!(cleared.server.banner_color.as_deref(), Some("#ff0066"));
         assert_eq!(cleared.server.name_color, None);
-        let lite = require_server(db, "club").await.expect("lite");
+        let lite = lite_of(db, "club").await;
         assert_eq!(
             (lite.banner_color.as_deref(), lite.name_color),
             (Some("#ff0066"), None)
@@ -5215,7 +5124,7 @@ mod tests {
         .err()
         .expect("bob is not allowed");
         assert_eq!(err.0, StatusCode::FORBIDDEN);
-        let lite = require_server(db, "club").await.expect("lite");
+        let lite = lite_of(db, "club").await;
         assert_eq!(lite.banner_color.as_deref(), Some("#ff0066"));
         let rchat = patch_colors(
             &state,
@@ -5241,7 +5150,7 @@ mod tests {
             .err()
             .expect("members can't color rchat");
         assert_eq!(err.0, StatusCode::FORBIDDEN);
-        let lite = require_server(db, "rchat").await.expect("rchat");
+        let lite = lite_of(db, "rchat").await;
         assert_eq!(lite.banner_color.as_deref(), Some("#000000"));
         done(state, path).await;
     }
@@ -5431,7 +5340,7 @@ mod tests {
             Some(StatusCode::FORBIDDEN)
         );
         assert_eq!(member_names(db, "club").await, everyone);
-        assert!(!require_server(db, "club").await.expect("club").has_password);
+        assert!(!lite_of(db, "club").await.has_password);
         assert_eq!(
             status(
                 change_password(
@@ -6287,7 +6196,7 @@ mod tests {
             held_above,
             channel_grants,
             sole_rules,
-        } = server_detail(&state.db, &state.hub, "club", Some(&who))
+        } = detail_as(state, "club", Some(&who))
             .await
             .expect("detail")
             .role_limits;

@@ -9,12 +9,12 @@ use rand::Rng;
 use s3::Bucket;
 use sqlx::Row;
 
-use crate::api::messages::{MsgScope, message_scope, require_can_delete};
+use crate::api::access::{MsgScope, Proof, resolve_message};
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, MediaRef, Settings, grant_matches, header_grants, placeholders,
-    request_token, require_guest_ok, user_for_token,
+    ApiError, ApiErrorBody, Authed, MediaRef, Settings, header_grants, placeholders, request_token,
+    require_guest_ok, user_for_token,
 };
-use crate::db::{ChannelAccess, Db, MediaKind, User, channel_access, now};
+use crate::db::{Db, MediaKind, User, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -166,14 +166,14 @@ pub(crate) async fn upload_media(
 /// attachment its metadata is cleared. The message's author can always do this; in a server
 /// channel, members with the Delete messages permission can too. Emits `media_removed` to
 /// whoever can see the message. Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(delete, path = "/api/messages/{id}/media", tag = "Media", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Removed; the body is `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "Not the author and no Delete messages permission in the server", body = ApiErrorBody), (status = 404, description = "Message not found, or it has no attachment", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/messages/{id}/media", tag = "Media", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Removed; the body is `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "Not the author and no Delete messages permission in the server", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses; or it has no attachment (`No attachment`)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn delete_media(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Authed(user): Authed,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let scope = message_scope(&state.db, id).await?;
-    require_can_delete(&state.db, &user, &scope).await?;
+    let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
+    message.require_can_delete(&state.db).await?;
     let MsgScope {
         channel_id,
         dm_id,
@@ -184,7 +184,7 @@ pub(crate) async fn delete_media(
         media_kind,
         server,
         dm_users,
-    } = scope;
+    } = message.into_scope();
     let media_id = match media_id {
         Some(media_id) => media_id,
         None => {
@@ -243,6 +243,10 @@ pub struct MediaQuery {
     grant: Option<String>,
 }
 
+fn media_hidden() -> ApiError {
+    ApiError(StatusCode::NOT_FOUND, "Media not found".to_string())
+}
+
 async fn media_view_ok(
     db: &Db,
     headers: &axum::http::HeaderMap,
@@ -250,12 +254,11 @@ async fn media_view_ok(
     user: Option<&User>,
     query_grant: Option<&str>,
 ) -> Result<(), ApiError> {
-    let rows = sqlx::query(
-        "SELECT s.name, s.password_hash, d.user_a, d.user_b, m.channel_id, m.created_at FROM messages m LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN dms d ON d.id = m.dm_id LEFT JOIN servers s ON s.name = c.server WHERE m.media_id = $1 AND m.media_removed = 0",
-    )
-    .bind(media_id)
-    .fetch_all(db)
-    .await?;
+    let rows =
+        sqlx::query("SELECT m.id FROM messages m WHERE m.media_id = $1 AND m.media_removed = 0")
+            .bind(media_id)
+            .fetch_all(db)
+            .await?;
     if rows.is_empty() {
         let uploader: Option<String> = match sqlx::query("SELECT uploader FROM media WHERE id = $1")
             .bind(media_id)
@@ -268,7 +271,7 @@ async fn media_view_ok(
         return match (user, uploader) {
             (Some(u), Some(owner)) if u.username == owner => Ok(()),
             (Some(_), None) => Ok(()),
-            (_, _) => Err(ApiError(StatusCode::FORBIDDEN, "Not allowed".to_string())),
+            (_, _) => Err(media_hidden()),
         };
     }
     let mut grants = header_grants(headers);
@@ -280,88 +283,17 @@ async fn media_view_ok(
                 .map(str::to_string),
         );
     }
+    let proof = Proof::grants(grants);
     for r in &rows {
-        let (server, hash, user_a, user_b): (
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        ) = (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?, r.try_get(3)?);
-        let (channel_id, created_at): (Option<i64>, i64) = (r.try_get(4)?, r.try_get(5)?);
-        let banned = match (&server, user) {
-            (Some(sv), Some(u)) => crate::db::is_banned(db, sv, &u.username).await?,
-            (_, _) => false,
-        };
-        let ok = match (&server, &hash) {
-            (Some(_), _) if banned => false,
-            (Some(_), None) => true,
-            (Some(sv), Some(_)) => match user {
-                Some(u) => {
-                    u.is_site_admin
-                        || sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
-                            .bind(sv)
-                            .bind(&u.username)
-                            .fetch_optional(db)
-                            .await?
-                            .is_some()
-                }
-                None => {
-                    let mut matched = false;
-                    for grant in &grants {
-                        if grant_matches(db, grant, sv).await? {
-                            matched = true;
-                            break;
-                        }
-                    }
-                    matched
-                }
-            },
-            (None, _) => match (user, &user_a, &user_b) {
-                (Some(u), Some(a), Some(b)) => u.username == *a || u.username == *b,
-                (_, _, _) => false,
-            },
-        };
-        let ok = match (ok, &server, channel_id) {
-            (true, Some(sv), Some(cid)) => channel_readable(db, sv, cid, user, created_at).await?,
-            (ok, _, _) => ok,
-        };
-        if ok {
-            return Ok(());
+        match resolve_message(db, r.try_get(0)?, user, &proof).await {
+            Ok(_) => return Ok(()),
+            Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e)) => {
+                return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e));
+            }
+            Err(_) => {}
         }
     }
-    Err(ApiError(StatusCode::FORBIDDEN, "Not allowed".to_string()))
-}
-
-async fn channel_readable(
-    db: &Db,
-    server: &str,
-    channel_id: i64,
-    user: Option<&User>,
-    created_at: i64,
-) -> Result<bool, ApiError> {
-    let ChannelAccess {
-        view,
-        send: _,
-        history,
-    } = channel_access(db, server, channel_id, user).await?;
-    if !view {
-        return Ok(false);
-    }
-    if history {
-        return Ok(true);
-    }
-    let Some(user) = user else {
-        return Ok(false);
-    };
-    let joined: Option<i64> =
-        sqlx::query("SELECT joined_at FROM members WHERE server = $1 AND username = $2")
-            .bind(server)
-            .bind(&user.username)
-            .fetch_optional(db)
-            .await?
-            .map(|r| r.try_get(0))
-            .transpose()?;
-    Ok(joined.is_some_and(|t| created_at >= t))
+    Err(media_hidden())
 }
 
 fn chunk_stream(
@@ -411,7 +343,7 @@ fn chunk_stream(
 /// joined count; in a direct message its two participants. Before it is attached only the
 /// uploader can fetch it. Access is checked before `If-None-Match`, so a 304 is only sent to
 /// callers allowed to see the file. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/media/{id}", tag = "Media", params(("id" = String, Path, description = "Media id, 32 hex characters, from `MediaRef.id`"), MediaQuery), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag` and `Cache-Control: private, max-age=86400, immutable`"), (status = 304, description = "`If-None-Match` matched the media's ETag and you may see the file"), (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody), (status = 403, description = "Not allowed to read any message carrying this file (banned, locked out of a password-protected server, no view permission or no read-history access in its channel, or not a DM participant)", body = ApiErrorBody), (status = 404, description = "Media not found: unknown id, or the file expired or was deleted", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/media/{id}", tag = "Media", params(("id" = String, Path, description = "Media id, 32 hex characters, from `MediaRef.id`"), MediaQuery), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag` and `Cache-Control: private, max-age=86400, immutable`"), (status = 304, description = "`If-None-Match` matched the media's ETag and you may see the file"), (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody), (status = 404, description = "`Media not found`: unknown id, the file expired or was deleted, or you may not read any message carrying it (banned, no access to its password-protected server, no view permission or no read-history access in its channel, or not a DM participant) or see the unattached upload; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn download_media(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -439,12 +371,7 @@ pub(crate) async fn download_media(
             r.try_get(3)?,
             r.try_get(4)?,
         ),
-        None => {
-            return Err(ApiError(
-                StatusCode::NOT_FOUND,
-                "Media not found".to_string(),
-            ));
-        }
+        None => return Err(media_hidden()),
     };
     let etag = format!("\"{id}\"");
     let cache = "private, max-age=86400, immutable";
@@ -634,8 +561,8 @@ mod tests {
         MediaQuery, SWEEP_BATCH, content_disposition, delete_media, download_media, media_view_ok,
         store_media, sweep,
     };
-    use crate::api::Authed;
     use crate::api::test_util::{done, mem_user, temp_state};
+    use crate::api::{ApiError, Authed};
     use crate::db::{now, open};
     use axum::extract::{Path, State};
     use sqlx::Row;
@@ -1017,8 +944,11 @@ mod tests {
         )
         .await;
         assert_eq!(
-            cached.err().map(|e| e.0),
-            Some(axum::http::StatusCode::FORBIDDEN)
+            cached.err().map(|ApiError(c, m)| (c, m)),
+            Some((
+                axum::http::StatusCode::NOT_FOUND,
+                "Media not found".to_string()
+            ))
         );
         done(state, path).await;
     }

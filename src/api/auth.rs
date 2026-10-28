@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::LazyLock;
 
 use argon2::Argon2;
 use argon2::password_hash::phc::PasswordHash;
@@ -163,13 +161,6 @@ static HASHING: LazyLock<Semaphore> = LazyLock::new(|| {
     )
 });
 
-const VERIFIED_TTL: Duration = Duration::from_secs(60);
-const VERIFIED_MAX: usize = 4096;
-
-type Verified = HashMap<[u8; 32], (Instant, bool)>;
-
-static VERIFIED: LazyLock<Mutex<Verified>> = LazyLock::new(Default::default);
-
 async fn off_runtime<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ApiError> {
@@ -203,38 +194,39 @@ pub(crate) async fn hash_password(secret: &str) -> Result<String, ApiError> {
     off_runtime(move || hash_now(&secret)).await?
 }
 
+#[cfg(test)]
+thread_local! {
+    static VERIFY_RUNS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn verify_runs() -> u64 {
+    VERIFY_RUNS.with(|c| c.get())
+}
+
 pub(crate) async fn verify_password(secret: &str, hash: &str) -> bool {
+    #[cfg(test)]
+    VERIFY_RUNS.with(|c| c.set(c.get() + 1));
     let (secret, hash) = (secret.to_string(), hash.to_string());
     off_runtime(move || verify_now(&secret, &hash))
         .await
         .unwrap_or(false)
 }
 
-pub(crate) async fn verify_password_cached(secret: &str, hash: &str) -> bool {
-    let mut digest = Sha256::new();
-    digest.update(hash.as_bytes());
-    digest.update([0u8]);
-    digest.update(secret.as_bytes());
-    let key: [u8; 32] = digest.finalize().into();
-    let hit = VERIFIED.lock().ok().and_then(|cache| {
-        cache
-            .get(&key)
-            .filter(|(at, _)| at.elapsed() < VERIFIED_TTL)
-            .map(|(_, ok)| *ok)
-    });
-    if let Some(ok) = hit {
-        return ok;
+static DUMMY_HASH: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
+
+pub(crate) async fn dummy_hash() -> &'static str {
+    match DUMMY_HASH
+        .get_or_try_init(|| hash_password_owned(new_token()))
+        .await
+    {
+        Ok(hash) => hash.as_str(),
+        Err(_) => "",
     }
-    let ok = verify_password(secret, hash).await;
-    if let Ok(mut cache) = VERIFIED.lock() {
-        if cache.len() >= VERIFIED_MAX {
-            cache.retain(|_, (at, _)| at.elapsed() < VERIFIED_TTL);
-        }
-        if cache.len() < VERIFIED_MAX {
-            cache.insert(key, (Instant::now(), ok));
-        }
-    }
-    ok
+}
+
+async fn hash_password_owned(secret: String) -> Result<String, ApiError> {
+    hash_password(&secret).await
 }
 
 pub(crate) fn new_token() -> String {
@@ -1805,16 +1797,5 @@ mod tests {
         }
         server.abort();
         done(state, path).await;
-    }
-
-    #[tokio::test]
-    async fn cached_verification_tracks_the_hash() {
-        let hash = hash_password("pw").await.expect("hash");
-        assert!(verify_password_cached("pw", &hash).await);
-        assert!(!verify_password_cached("nope", &hash).await);
-        assert!(verify_password_cached("pw", &hash).await);
-        let other = hash_password("pw2").await.expect("hash");
-        assert!(!verify_password_cached("pw", &other).await);
-        assert!(verify_password_cached("pw2", &other).await);
     }
 }

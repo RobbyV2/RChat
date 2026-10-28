@@ -41,7 +41,7 @@ impl Modify for Bearer {
         super::servers::list_my_servers,
         super::servers::create_server,
         super::servers::get_server,
-        super::servers::server_exists,
+        super::servers::server_available,
         super::servers::get_invite,
         super::servers::search_servers,
         super::servers::guest_access,
@@ -111,9 +111,11 @@ impl Modify for Bearer {
 
 **Pagination.** List endpoints return a JSON array. When more items follow, the `X-Next-Cursor` response header holds an opaque cursor; pass it back as the `cursor` query parameter for the next page. The header is absent on the last page. Each endpoint lists its page size and limits.
 
-**Rate limits.** Every `/api` route except `/api/health` and `/api/ready` shares a general per-client-IP bucket (`RATE_LIMIT_PER_SECOND`, default 10 per second, burst `RATE_LIMIT_BURST`, default 60). The `/.well-known` routes have their own general bucket of the same size, separate from the `/api` one. Register, login, word hints, password change, guest access and media upload also share a strict per-IP bucket (2 per second, burst 30). Invite previews and joining a server each have their own bucket of the same size. Exceeding a bucket answers 429 with a plain-text body.
+**Rate limits.** Every `/api` route except `/api/health` and `/api/ready` shares a general per-client-IP bucket (`RATE_LIMIT_PER_SECOND`, default 10 per second, burst `RATE_LIMIT_BURST`, default 60). The `/.well-known` routes have their own general bucket of the same size, separate from the `/api` one. Register, login, word hints, password change, guest access, server name checks and media upload also share a strict per-IP bucket (2 per second, burst 30). Invite previews and joining a server each have their own bucket of the same size. Exceeding a bucket answers 429 with a plain-text body.
 
 **Errors.** Errors raised by the API come as JSON `{\"error\": \"...\"}` (`ApiErrorBody`). Malformed JSON bodies are rejected by the framework with a plain-text 400, 415 or 422.
+
+**Private servers stay hidden.** A password-protected server is indistinguishable from one that does not exist to anyone without access (membership, a valid guest grant, or the password where an endpoint takes one). Every endpoint that takes a server name answers both with the same `404 {\"error\": \"Server not found or wrong password\"}`; endpoints that take a password (`join`, `guest_access`, invites) answer a missing password with the same `401 {\"error\": \"Password required\"}` and a wrong one with that 404, and always hash the password, also for names that do not exist. Endpoints that take a channel or message id answer `404 {\"error\": \"Not found\"}` for ids that do not exist, that you cannot see (hidden channels, messages before your join without read history) or that belong to a server you cannot access. Bans are only reported (403) once access was proven. `GET /api/servers/{name}/available` is the one deliberate existence check, because creating a server reveals the same.
 
 **Realtime.** `GET /api/ws` upgrades to a WebSocket. Clients send JSON frames tagged by `type` (`auth` first, with the token or without one for a guest, then `viewing`, `subscribe`, voice, call and `rtc_signal` frames) and receive JSON events tagged by `type` in snake_case (`message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`, `read_updated`, `voice_state`, `call_state` and more; see `WsEvent` in `src/ws.rs`). The REST operations below name the events they emit."
     ),

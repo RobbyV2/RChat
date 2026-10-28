@@ -242,8 +242,8 @@ export const endpoints = (c: ApiClient) => ({
   createServer: (name: string, password?: string) =>
     c.req<ServerDetail>('POST', '/servers', { name, password }),
   getServer: (name: string) => c.req<ServerDetail>('GET', `/servers/${seg(name)}`),
-  serverExists: (name: string) =>
-    c.req<{ has_password: boolean }>('GET', `/servers/${seg(name)}/exists`),
+  serverAvailable: (name: string) =>
+    c.req<{ available: boolean }>('GET', `/servers/${seg(name)}/available`),
   getInvite: (name: string, password?: string | null) =>
     c.req<Invite>(
       'GET',
@@ -252,8 +252,8 @@ export const endpoints = (c: ApiClient) => ({
       password ? { 'X-Invite-Password': seg(password) } : {}
     ),
   searchServers: (q: string) => c.req<ServerMatch[]>('GET', `/server_search?q=${seg(q)}`),
-  guestAccess: (name: string, password: string) =>
-    c.req<{ grant: string }>('POST', `/servers/${seg(name)}/guest_access`, { password }),
+  guestAccess: (name: string, password?: string) =>
+    c.req<{ grant: string | null }>('POST', `/servers/${seg(name)}/guest_access`, { password }),
   listMembers: (name: string, cursor: string | null, filter: MemberFilter = {}) =>
     c.page<Member>(
       withCursor(

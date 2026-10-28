@@ -522,39 +522,6 @@ pub enum Perm {
 
 pub const ALL_PERMS: i64 = 31;
 
-pub async fn effective_perms(db: &Db, server: &str, user: &User) -> sqlx::Result<i64> {
-    match user.is_site_admin {
-        true => Ok(ALL_PERMS),
-        false => member_perms(db, server, &user.username).await,
-    }
-}
-
-pub async fn member_perms(db: &Db, server: &str, username: &str) -> sqlx::Result<i64> {
-    let row =
-        sqlx::query("SELECT is_admin, perms FROM members WHERE server = $1 AND username = $2")
-            .bind(server)
-            .bind(username)
-            .fetch_optional(db)
-            .await?;
-    let Some(r) = row else {
-        return Ok(0);
-    };
-    let (is_admin, perms): (i64, i64) = (r.try_get(0)?, r.try_get(1)?);
-    if is_admin != 0 {
-        return Ok(perm_bits(true, perms, 0));
-    }
-    let rows = sqlx::query("SELECT r.perms FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2")
-        .bind(server)
-        .bind(username)
-        .fetch_all(db)
-        .await?;
-    let mut acc = 0i64;
-    for r in &rows {
-        acc |= r.try_get::<i64, _>(0)?;
-    }
-    Ok(perm_bits(false, perms, acc))
-}
-
 pub fn perm_bits(is_admin: bool, perms: i64, roles: i64) -> i64 {
     match (is_admin, perms) {
         (true, 0) => ALL_PERMS,
@@ -569,12 +536,6 @@ pub fn can_moderate(actor: i64, actor_site_admin: bool, target: i64) -> bool {
 
 pub fn can_grant(actor: i64, actor_site_admin: bool, perms: i64) -> bool {
     actor_site_admin || (perms & ALL_PERMS & !actor) == 0
-}
-
-pub async fn has_perm(db: &Db, server: &str, user: &User, perm: Perm) -> bool {
-    effective_perms(db, server, user)
-        .await
-        .is_ok_and(|p| p & perm as i64 != 0)
 }
 
 pub struct ChannelAccess {
@@ -665,74 +626,6 @@ pub fn fold_access<'a>(
     }
 }
 
-pub async fn manages_channels(db: &Db, server: &str, user: &User) -> sqlx::Result<bool> {
-    Ok(effective_perms(db, server, user).await? & Perm::ManageChannels as i64 != 0)
-}
-
-pub async fn channel_manager_servers(db: &Db, user: &User) -> sqlx::Result<Vec<String>> {
-    let rows = sqlx::query(
-        "SELECT server FROM members WHERE username = $1 AND is_admin <> 0 UNION SELECT ur.server FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.username = $1 AND r.perms <> 0",
-    )
-    .bind(&user.username)
-    .fetch_all(db)
-    .await?;
-    let mut out = Vec::new();
-    for r in &rows {
-        let server: String = r.try_get(0)?;
-        if manages_channels(db, &server, user).await? {
-            out.push(server);
-        }
-    }
-    Ok(out)
-}
-
-pub async fn channel_access(
-    db: &Db,
-    server: &str,
-    channel_id: i64,
-    user: Option<&User>,
-) -> sqlx::Result<ChannelAccess> {
-    let rows = sqlx::query(
-        "SELECT subject, can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1",
-    )
-    .bind(channel_id)
-    .fetch_all(db)
-    .await?;
-    if rows.is_empty() {
-        return Ok(ChannelAccess::all(true));
-    }
-    let Some(user) = user else {
-        return Ok(ChannelAccess::all(false));
-    };
-    if manages_channels(db, server, user).await? {
-        return Ok(ChannelAccess::all(true));
-    }
-    let subjects = perm_subjects(db, Some(server), &user.username).await?;
-    let rows = rows
-        .iter()
-        .map(|r| perm_row(r, 0))
-        .collect::<sqlx::Result<Vec<_>>>()?;
-    Ok(fold_access(&rows, &subjects, false))
-}
-
-pub async fn channel_viewable(
-    db: &Db,
-    server: &str,
-    channel_id: i64,
-    username: Option<&str>,
-) -> bool {
-    let user = match username {
-        Some(name) => match get_user(db, name).await {
-            Ok(u) => u,
-            Err(_) => return false,
-        },
-        None => None,
-    };
-    channel_access(db, server, channel_id, user.as_ref())
-        .await
-        .is_ok_and(|a| a.view)
-}
-
 pub async fn setting_on<'e, E>(ex: E, key: &str) -> sqlx::Result<bool>
 where
     E: sqlx::Executor<'e, Database = sqlx::Any>,
@@ -785,17 +678,6 @@ pub async fn touch_interaction(db: &Db, server: &str, username: &str) -> sqlx::R
     .execute(db)
     .await
     .map(|_| ())
-}
-
-pub async fn is_banned(db: &Db, server: &str, username: &str) -> sqlx::Result<bool> {
-    Ok(
-        sqlx::query("SELECT 1 FROM server_bans WHERE server = $1 AND username = $2")
-            .bind(server)
-            .bind(username)
-            .fetch_optional(db)
-            .await?
-            .is_some(),
-    )
 }
 
 pub fn now() -> i64 {
@@ -1085,57 +967,16 @@ pub const GRANT_TOUCH_SECS: i64 = 86400;
 static GRANT_TOUCHES: LazyLock<Mutex<HashMap<String, HashSet<String>>>> =
     LazyLock::new(Default::default);
 
-pub async fn grant_live(db: &Db, grant: &str, server: &str) -> sqlx::Result<bool> {
-    let t = now();
-    let row = sqlx::query(
-        "SELECT last_used_at FROM guest_grants WHERE \"grant\" = $1 AND server = $2 AND (last_used_at >= $3 OR (last_used_at = 0 AND created_at >= $3))",
-    )
-    .bind(grant)
-    .bind(server)
-    .bind(t - guest_grant_ttl())
-    .fetch_optional(db)
-    .await?;
-    let Some(row) = row else {
-        return Ok(false);
-    };
-    let used: i64 = row.try_get(0)?;
-    if t - used >= GRANT_TOUCH_SECS {
-        queue_grant_touches(db, [grant.to_string()]);
-    }
-    Ok(true)
-}
-
-pub async fn live_grant_servers(db: &Db, grants: &[String]) -> sqlx::Result<Vec<String>> {
-    if grants.is_empty() {
-        return Ok(Vec::new());
-    }
-    let t = now();
-    let sql = format!(
-        "SELECT \"grant\", server, last_used_at FROM guest_grants WHERE \"grant\" IN ({}) AND (last_used_at >= $1 OR (last_used_at = 0 AND created_at >= $1))",
-        crate::api::placeholders(2, grants.len())
-    );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(t - guest_grant_ttl());
-    for grant in grants {
-        query = query.bind(grant);
-    }
-    let rows = query.fetch_all(db).await?;
-    let mut servers = Vec::with_capacity(rows.len());
-    let mut touch = Vec::new();
-    for r in &rows {
-        let (grant, server, used): (String, String, i64) =
-            (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
-        if t - used >= GRANT_TOUCH_SECS {
-            touch.push(grant);
-        }
-        servers.push(server);
-    }
-    queue_grant_touches(db, touch);
-    servers.sort();
-    servers.dedup();
-    Ok(servers)
-}
-
 pub const GRANT_TOUCHES_MAX: usize = 10_000;
+
+#[cfg(test)]
+pub(crate) fn grant_touch_queued(db: &Db, grant: &str) -> bool {
+    GRANT_TOUCHES
+        .lock()
+        .ok()
+        .and_then(|touches| touches.get(&pool_key(db)).map(|set| set.contains(grant)))
+        .unwrap_or(false)
+}
 
 pub fn queue_grant_touches(db: &Db, grants: impl IntoIterator<Item = String>) {
     if let Ok(mut touches) = GRANT_TOUCHES.lock() {
@@ -1239,7 +1080,7 @@ pub async fn purge_messages(db: &Db, cond: &'static str, key: &str) -> sqlx::Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::test_util::{add_member, done, mem_user, temp_state};
+    use crate::api::test_util::{add_member, done, temp_state};
 
     async fn general_id(db: &Db) -> i64 {
         sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
@@ -1248,54 +1089,6 @@ mod tests {
             .expect("general channel")
             .try_get(0)
             .expect("channel id")
-    }
-
-    #[tokio::test]
-    async fn effective_perms_matrix() {
-        let (state, path) = temp_state("perm_matrix").await;
-        let db = &state.db;
-        let t = now();
-        add_member(db, "rchat", "full", 1, 0, t).await;
-        add_member(db, "rchat", "narrow", 1, Perm::Kick as i64, t).await;
-        add_member(db, "rchat", "roled", 0, 0, t).await;
-        add_member(db, "rchat", "plain", 0, 0, t).await;
-        for perms in [Perm::ManageChannels as i64, Perm::Kick as i64] {
-            let role_id: i64 = sqlx::query(
-                "INSERT INTO roles(server, name, color, perms) VALUES('rchat', $1, '#ffffff', $2) RETURNING id",
-            )
-            .bind(format!("role{perms}"))
-            .bind(perms)
-            .fetch_one(db)
-            .await
-            .expect("insert role")
-            .try_get(0)
-            .expect("role id");
-            sqlx::query(
-                "INSERT INTO user_roles(server, username, role_id) VALUES('rchat', 'roled', $1)",
-            )
-            .bind(role_id)
-            .execute(db)
-            .await
-            .expect("assign role");
-        }
-        let cases: [(&str, bool, i64); 5] = [
-            ("site", true, ALL_PERMS),
-            ("full", false, ALL_PERMS),
-            ("narrow", false, Perm::Kick as i64),
-            (
-                "roled",
-                false,
-                Perm::ManageChannels as i64 | Perm::Kick as i64,
-            ),
-            ("plain", false, 0),
-        ];
-        for (name, site_admin, expected) in cases {
-            let got = effective_perms(db, "rchat", &mem_user(name, site_admin))
-                .await
-                .expect("effective_perms");
-            assert_eq!(got, expected, "user {name}");
-        }
-        done(state, path).await;
     }
 
     #[test]
@@ -1320,59 +1113,6 @@ mod tests {
                 "actor {actor} site admin {site_admin} target {target}"
             );
         }
-    }
-
-    #[tokio::test]
-    async fn member_perms_ignore_site_admin_and_non_members() {
-        let (state, path) = temp_state("member_perms").await;
-        let db = &state.db;
-        add_member(db, "rchat", "root", 0, 0, now()).await;
-        add_member(db, "rchat", "narrow", 1, Perm::Kick as i64, now()).await;
-        assert_eq!(member_perms(db, "rchat", "root").await.expect("root"), 0);
-        assert_eq!(
-            effective_perms(db, "rchat", &mem_user("root", true))
-                .await
-                .expect("root effective"),
-            ALL_PERMS
-        );
-        assert_eq!(
-            member_perms(db, "rchat", "narrow").await.expect("narrow"),
-            Perm::Kick as i64
-        );
-        assert_eq!(member_perms(db, "rchat", "ghost").await.expect("ghost"), 0);
-        done(state, path).await;
-    }
-
-    #[tokio::test]
-    async fn channel_access_private() {
-        let (state, path) = temp_state("chan_access").await;
-        let db = &state.db;
-        let cid = general_id(db).await;
-        let open = channel_access(db, "rchat", cid, None).await.expect("open");
-        assert!(open.view && open.send && open.history);
-        sqlx::query(
-            "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:alice', 1, 1, 0)",
-        )
-        .bind(cid)
-        .execute(db)
-        .await
-        .expect("insert perm");
-        add_member(db, "rchat", "carol", 1, 0, now()).await;
-        let alice = channel_access(db, "rchat", cid, Some(&mem_user("alice", false)))
-            .await
-            .expect("alice");
-        assert!(alice.view && alice.send && !alice.history);
-        let bob = channel_access(db, "rchat", cid, Some(&mem_user("bob", false)))
-            .await
-            .expect("bob");
-        assert!(!bob.view && !bob.send && !bob.history);
-        let guest = channel_access(db, "rchat", cid, None).await.expect("guest");
-        assert!(!guest.view && !guest.send && !guest.history);
-        let carol = channel_access(db, "rchat", cid, Some(&mem_user("carol", false)))
-            .await
-            .expect("carol");
-        assert!(carol.view && carol.send && carol.history);
-        done(state, path).await;
     }
 
     async fn count(db: &Db, sql: &str) -> i64 {
@@ -1800,115 +1540,6 @@ mod tests {
         );
         assert_eq!(count(db, "SELECT COUNT(*) FROM guest_grants").await, 2);
         assert_eq!(count(db, "SELECT COUNT(*) FROM embeds").await, 1);
-        done(state, path).await;
-    }
-
-    #[tokio::test]
-    async fn guest_grants_slide_and_touch_at_most_daily() {
-        let (state, path) = temp_state("grant_slide").await;
-        let db = &state.db;
-        let t = now();
-        let ttl = guest_grant_ttl();
-        for (grant, used) in [
-            ("fresh", t - 60),
-            ("stale", t - 2 * 86400),
-            ("gone", t - ttl - 60),
-        ] {
-            sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, 'rchat', 0, $2)")
-                .bind(grant)
-                .bind(used)
-                .execute(db)
-                .await
-                .expect("grant");
-        }
-        let read = reader(db);
-        assert!(grant_live(&read, "fresh", "rchat").await.expect("fresh"));
-        assert!(grant_live(&read, "stale", "rchat").await.expect("stale"));
-        assert!(
-            grant_live(&read, "stale", "rchat")
-                .await
-                .expect("stale again")
-        );
-        assert!(!grant_live(&read, "gone", "rchat").await.expect("gone"));
-        assert!(
-            !grant_live(&read, "fresh", "other")
-                .await
-                .expect("other server")
-        );
-        let used = |grant: &'static str| async move {
-            sqlx::query("SELECT last_used_at FROM guest_grants WHERE \"grant\" = $1")
-                .bind(grant)
-                .fetch_one(db)
-                .await
-                .expect("row")
-                .try_get::<i64, _>(0)
-                .expect("used")
-        };
-        assert_eq!(used("stale").await, t - 2 * 86400);
-        assert_eq!(flush_grant_touches(db).await.expect("flush"), 1);
-        assert!(used("stale").await >= t);
-        assert_eq!(used("fresh").await, t - 60);
-        assert!(
-            grant_live(&read, "stale", "rchat")
-                .await
-                .expect("refreshed")
-        );
-        assert_eq!(flush_grant_touches(db).await.expect("nothing queued"), 0);
-        done(state, path).await;
-    }
-
-    #[tokio::test]
-    async fn legacy_grants_count_from_creation_and_failed_touches_requeue() {
-        let (state, path) = temp_state("grant_legacy").await;
-        let db = &state.db;
-        let t = now();
-        let ttl = guest_grant_ttl();
-        for (grant, created) in [("new", t - 60), ("old", t - ttl - 60)] {
-            sqlx::query(
-                "INSERT INTO guest_grants(\"grant\", server, created_at) VALUES($1, 'rchat', $2)",
-            )
-            .bind(grant)
-            .bind(created)
-            .execute(db)
-            .await
-            .expect("grant");
-        }
-        assert!(grant_live(db, "new", "rchat").await.expect("new"));
-        assert!(!grant_live(db, "old", "rchat").await.expect("old"));
-        assert_eq!(sweep_stale(db).await.expect("sweep").guest_grants, 1);
-        assert!(grant_live(db, "new", "rchat").await.expect("kept"));
-        queue_grant_touches(db, ["expired".to_string()]);
-        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('expired', 'rchat', 1, $1)")
-            .bind(t - ttl - 60)
-            .execute(db)
-            .await
-            .expect("expired grant");
-        assert_eq!(flush_grant_touches(db).await.expect("flush"), 1);
-        assert!(
-            count(
-                db,
-                "SELECT last_used_at FROM guest_grants WHERE \"grant\" = 'new'"
-            )
-            .await
-                >= t
-        );
-        assert!(
-            count(
-                db,
-                "SELECT last_used_at FROM guest_grants WHERE \"grant\" = 'expired'"
-            )
-            .await
-                < t - ttl
-        );
-        queue_grant_touches(db, ["new".to_string()]);
-        close(db).await;
-        assert!(flush_grant_touches(db).await.is_err());
-        let queued = GRANT_TOUCHES
-            .lock()
-            .unwrap()
-            .get(&pool_key(db))
-            .is_some_and(|set| set.contains("new"));
-        assert!(queued);
         done(state, path).await;
     }
 
