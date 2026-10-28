@@ -8,7 +8,7 @@ use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::{Proof, ResolvedMessage, resolve_message};
-use crate::api::messages::load_message;
+use crate::api::messages::{Quotes, load_message};
 use crate::api::pings::{PingKind, PingScope, PingSpec, RETRACTED, announce_counts, create_pings};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, UserRef, placeholders, require_guest_ok,
@@ -119,7 +119,7 @@ async fn react_target(
     if adding {
         resolved.react_gate(&state.db).await?;
     }
-    let message = load_message(&state.db, id)
+    let message = load_message(&state.db, id, Quotes::Skip)
         .await?
         .ok_or_else(crate::api::access::not_found)?;
     Ok(Target { resolved, message })
@@ -513,7 +513,7 @@ mod tests {
 
     async fn summary(state: &AppState, who: Option<&str>, id: i64) -> Vec<(String, i64, bool)> {
         let mut msgs = vec![
-            load_message(&state.db, id)
+            load_message(&state.db, id, Quotes::Skip)
                 .await
                 .expect("load")
                 .expect("message"),
@@ -755,7 +755,12 @@ mod tests {
         let id = post(db, Some(cid), None, None, "alice").await;
         let mut rx = state.hub.subscribe();
         react(&state, "bob", id, "😭").await.expect("bob cries");
-        let mut fresh = vec![load_message(db, id).await.expect("load").expect("message")];
+        let mut fresh = vec![
+            load_message(db, id, Quotes::Skip)
+                .await
+                .expect("load")
+                .expect("message"),
+        ];
         attach_reactions(db, &mut fresh, None)
             .await
             .expect("attach");

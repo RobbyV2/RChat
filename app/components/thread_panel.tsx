@@ -28,11 +28,13 @@ import {
   messageCopyItems,
   nameTriggerCls,
   reactHeader,
+  replyAction,
+  replyMenuItem,
   useAuthorMembers,
   useMemberLookup,
   usePeopleKey,
 } from './message_pane'
-import { longPress } from './context_menu'
+import { longPress, useMedia } from './context_menu'
 import { profileTrigger } from './profile_card'
 import {
   EdgeSentinel,
@@ -43,6 +45,8 @@ import {
   useScrollAnchor,
 } from './viewport_height'
 import { useEscape } from './server_settings'
+import { ReplyPreview } from './replies'
+import { canQuote } from '../lib/replies'
 
 const EMPTY: Message[] = []
 
@@ -79,6 +83,9 @@ export default function ThreadPanel() {
   const loadNewerThread = useStore(s => s.loadNewerThread)
   const jumpToPresent = useStore(s => s.jumpToPresent)
   const openContextMenu = useStore(s => s.openContextMenu)
+  const startReply = useStore(s => s.startReply)
+  const jumpTo = useStore(s => s.jumpTo)
+  const wide = useMedia('(min-width: 768px)')
   const listRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const detached = newer?.more === true
@@ -87,7 +94,9 @@ export default function ThreadPanel() {
     replies[0]?.id,
     older?.loading === true || newer?.loading === true
   )
-  useEscape(closePanel, 'panel')
+  useEscape(e => {
+    if (!e.defaultPrevented) closePanel()
+  }, 'panel')
 
   const scroll = useChatScroll({
     list: listRef,
@@ -143,8 +152,18 @@ export default function ThreadPanel() {
     void loadOlderThread()
   }
 
+  const canReply = (m: Message) => canReact && canQuote(m)
+  const replyTo = (m: Message) => startReply(key, m)
+  const jump = (id: number) => void jumpTo(key, id)
+  const jumpMain = (id: number) => {
+    if (root.channel_id === null) return
+    if (!wide) closePanel()
+    void jumpTo(`c${root.channel_id}`, id)
+  }
+
   const rowMenu = (m: Message) => (x: number, y: number) => {
     const items: ContextMenuItem[] = []
+    if (canReply(m)) items.push(replyMenuItem(() => replyTo(m)))
     if (m.id !== root.id && canDelete(m))
       items.push({
         label: 'Delete Message',
@@ -158,18 +177,16 @@ export default function ThreadPanel() {
 
   const row = (m: Message) => {
     const mentioned = mentionsMe(m, me?.username)
-    const actions: ToolbarAction[] =
-      m.id !== root.id && canDelete(m)
-        ? [
-            {
-              key: 'delete',
-              label: 'Delete reply (hold Shift to skip confirmation)',
-              icon: Trash2,
-              danger: true,
-              onClick: e => confirmDeleteMessage(m.id, e.shiftKey),
-            },
-          ]
-        : []
+    const actions: ToolbarAction[] = canReply(m) ? [replyAction(() => replyTo(m))] : []
+    if (m.id !== root.id && canDelete(m))
+      actions.push({
+        key: 'delete',
+        label: 'Delete reply (hold Shift to skip confirmation)',
+        icon: Trash2,
+        danger: true,
+        onClick: e => confirmDeleteMessage(m.id, e.shiftKey),
+      })
+    const quote = m.reply_to
     return (
       <div
         key={m.id}
@@ -178,39 +195,53 @@ export default function ThreadPanel() {
         data-flash={flash === m.id ? '' : undefined}
         data-mentioned={mentioned ? '' : undefined}
         {...longPress(rowMenu(m))}
-        className={`group relative flex gap-3 px-4 py-1.5 ${mentioned ? mentionRowCls : 'hover:bg-surface-container'}`}
+        className={`group relative px-4 py-1.5 ${mentioned ? mentionRowCls : 'hover:bg-surface-container'}`}
       >
-        <div className="shrink-0 pt-0.5">
-          <span
-            {...profileTrigger(m.author, server, false)}
-            title="View profile"
-            className={avatarTriggerCls}
-          >
-            <UserAvatar
-              username={m.author.username}
-              avatarKind={m.author.avatar_kind}
-              avatarColor={m.author.avatar_color}
-              size={30}
-            />
-          </span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-baseline gap-2">
+        {quote && (
+          <ReplyPreview
+            quote={quote}
+            avatar={30}
+            color={
+              quote.author
+                ? roleColor(roles, memberFor(quote.author.username)?.role_ids ?? [])
+                : undefined
+            }
+            onJump={m.id === root.id ? jumpMain : jump}
+          />
+        )}
+        <div className="flex gap-3">
+          <div className="shrink-0 pt-0.5">
             <span
-              {...profileTrigger(m.author, server)}
-              style={{
-                color: roleColor(roles, memberFor(m.author.username)?.role_ids ?? []),
-              }}
-              className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
+              {...profileTrigger(m.author, server, false)}
+              title="View profile"
+              className={avatarTriggerCls}
             >
-              {m.author.display_name}
-            </span>
-            <span className="shrink-0 text-xs text-on-surface-variant">
-              {fmtTime(m.created_at)}
+              <UserAvatar
+                username={m.author.username}
+                avatarKind={m.author.avatar_kind}
+                avatarColor={m.author.avatar_color}
+                size={30}
+              />
             </span>
           </div>
-          <MarkdownMessage message={m} canDelete={canDelete(m)} />
-          <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-baseline gap-2">
+              <span
+                {...profileTrigger(m.author, server)}
+                style={{
+                  color: roleColor(roles, memberFor(m.author.username)?.role_ids ?? []),
+                }}
+                className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
+              >
+                {m.author.display_name}
+              </span>
+              <span className="shrink-0 text-xs text-on-surface-variant">
+                {fmtTime(m.created_at)}
+              </span>
+            </div>
+            <MarkdownMessage message={m} canDelete={canDelete(m)} />
+            <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
+          </div>
         </div>
         <MessageToolbar
           m={m}

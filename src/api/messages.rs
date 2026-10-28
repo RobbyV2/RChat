@@ -14,15 +14,15 @@ use crate::api::access::{
 };
 use crate::api::admin::like_pattern;
 use crate::api::pings::{
-    PingScope, ScopePings, SeenScope, ThreadPings, announce_counts, mark_seen, ping_mentions,
+    PingScope, ScopePings, SeenScope, ThreadPings, announce_counts, mark_seen, ping_message,
     pinged_by, unseen_counts,
 };
 use crate::api::reactions::attach_reactions;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, CallLog, Embed, LIST_MAX, LIST_PAGE, MESSAGE_MAX, MaybeAuthed,
-    MediaRef, Message, Paged, ProfanityTarget, Settings, UserRef, check_len, check_profanity,
-    cursor_int, decode_cursor, embeds, encode_cursor, media::MEDIA_TTL_SECS, require_guest_ok,
-    unique_capped, user_from, user_refs,
+    MediaRef, Message, Paged, ProfanityTarget, ReplyRef, Settings, UserRef, check_len,
+    check_profanity, cursor_int, decode_cursor, embeds, encode_cursor, media::MEDIA_TTL_SECS,
+    placeholders, require_guest_ok, unique_capped, user_from, user_refs,
 };
 use crate::db::{
     ChannelAccess, Db, LIVE_AUTHOR, MediaKind, User, has_fts, is_sqlite, now, perm_subjects,
@@ -31,7 +31,8 @@ use crate::db::{
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
-const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome";
+const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention";
+const SNIPPET_MAX: usize = 200;
 
 /// Message-id paging for message lists. Give at most one of `before`, `after` and `around`;
 /// if several are given, `around` wins over `after`, which wins over `before`.
@@ -74,6 +75,22 @@ pub struct SendReq {
     /// Optional peer-to-peer attachment hosted by the sender's client instead of the server.
     /// Omit for no P2P file.
     p2p: Option<P2pAttachment>,
+    /// Optional id of a message to reply to inline (quoted above the new message). It must be a
+    /// `user` message you can read in the same place: the same channel outside threads, the
+    /// same thread (or its root) for thread replies, or the same DM. Anything else, including
+    /// ids that do not exist, gives the same `400 Cannot reply to that message`.
+    #[schema(example = 42)]
+    #[serde(default)]
+    reply_to: Option<i64>,
+    /// With `reply_to`: ping the quoted message's author (a `reply` ping, if they can see the
+    /// message and are not you). Defaults to `true`; ignored without `reply_to`.
+    #[serde(default = "yes")]
+    #[schema(default = true)]
+    mention_reply: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// A file offered peer to peer by the sender, who becomes its `hoster`. The server stores only
@@ -303,32 +320,279 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
         kind,
         call,
         reactions: Vec::new(),
+        reply_to: match r.try_get::<Option<i64>, _>(21)? {
+            Some(id) => Some(ReplyRef {
+                id,
+                author: None,
+                content: String::new(),
+                has_media: false,
+                deleted: true,
+                mention: r.try_get::<i64, _>(22)? != 0,
+                partial: false,
+            }),
+            None => None,
+        },
     })
 }
 
-async fn rows_messages(db: &Db, rows: &[AnyRow]) -> Result<Vec<Message>, ApiError> {
+/// Which quoted messages to fill in: none (search results, internal lookups), only the
+/// reference (`Partial`, for WebSocket events, which reach viewers with different read-history
+/// limits), or those the viewer may read (`Since(floor)`: sent at or after `floor`).
+#[derive(Clone, Copy)]
+pub(crate) enum Quotes {
+    Skip,
+    Partial,
+    Since(Option<i64>),
+}
+
+/// `message` as WebSocket events carry it: the quote keeps only its id and `mention`.
+pub(crate) fn partial_quote(mut message: Message) -> Message {
+    message.reply_to = message.reply_to.map(
+        |ReplyRef {
+             id,
+             author: _,
+             content: _,
+             has_media: _,
+             deleted: _,
+             mention,
+             partial: _,
+         }| ReplyRef {
+            id,
+            author: None,
+            content: String::new(),
+            has_media: false,
+            deleted: false,
+            mention,
+            partial: true,
+        },
+    );
+    message
+}
+
+async fn rows_messages(db: &Db, rows: &[AnyRow], quotes: Quotes) -> Result<Vec<Message>, ApiError> {
     let mut authors = Vec::with_capacity(rows.len());
     for r in rows {
         authors.push(r.try_get::<String, _>(4)?);
     }
     let refs = user_refs(db, &authors).await;
-    rows.iter().map(|r| row_message(r, &refs)).collect()
+    let mut msgs = rows
+        .iter()
+        .map(|r| row_message(r, &refs))
+        .collect::<Result<Vec<_>, _>>()?;
+    match quotes {
+        Quotes::Skip => msgs.iter_mut().for_each(|m| m.reply_to = None),
+        Quotes::Partial => return Ok(msgs.into_iter().map(partial_quote).collect()),
+        Quotes::Since(floor) => attach_quotes(db, &mut msgs, floor).await?,
+    }
+    Ok(msgs)
 }
 
-pub(crate) async fn load_message(db: &Db, id: i64) -> Result<Option<Message>, ApiError> {
+/// The first line of `content` with text left, as plain text: code fences, quote, heading and
+/// subtext markers, emphasis, strikethrough, inline code and link targets are removed;
+/// `||spoilers||` stay so clients can hide them. At most 200 characters.
+pub fn reply_snippet(content: &str) -> String {
+    let line = content
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with("```") && !l.starts_with("~~~"))
+        .map(|mut l| {
+            loop {
+                let next = l
+                    .strip_prefix("-# ")
+                    .or_else(|| l.strip_prefix('>'))
+                    .or_else(|| {
+                        let hashes = l.len() - l.trim_start_matches('#').len();
+                        match (1..=6).contains(&hashes) {
+                            true => l[hashes..].strip_prefix(' '),
+                            false => None,
+                        }
+                    });
+                match next {
+                    Some(rest) => l = rest.trim_start(),
+                    None => return l,
+                }
+            }
+        })
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        match c {
+            '\\' if next.is_some_and(|n| n.is_ascii_punctuation()) => {
+                out.push(next.unwrap_or(c));
+                i += 2;
+                continue;
+            }
+            '*' | '`' => {}
+            '~' if next == Some('~') => i += 1,
+            '_' => {
+                let prev = i.checked_sub(1).map(|p| chars[p]);
+                let inner = prev.is_some_and(char::is_alphanumeric)
+                    && next.is_some_and(char::is_alphanumeric);
+                if inner {
+                    out.push(c);
+                }
+            }
+            '[' => {
+                let close = chars[i + 1..]
+                    .iter()
+                    .position(|&x| x == ']')
+                    .map(|p| p + i + 1);
+                let target = close.filter(|&e| chars.get(e + 1) == Some(&'('));
+                let end = target.and_then(|e| {
+                    chars[e + 2..]
+                        .iter()
+                        .position(|&x| x == ')')
+                        .map(|p| (e, p + e + 2))
+                });
+                match end {
+                    Some((label_end, link_end)) => {
+                        let label: String = chars[i + 1..label_end].iter().collect();
+                        out.push_str(&reply_snippet(&label));
+                        i = link_end + 1;
+                        continue;
+                    }
+                    None => out.push(c),
+                }
+            }
+            '<' => {
+                let close = chars[i + 1..]
+                    .iter()
+                    .position(|&x| x == '>')
+                    .map(|p| p + i + 1);
+                let inner: Option<String> = close.map(|e| chars[i + 1..e].iter().collect());
+                match (close, inner) {
+                    (Some(e), Some(url))
+                        if url.starts_with("http://") || url.starts_with("https://") =>
+                    {
+                        out.push_str(&url);
+                        i = e + 1;
+                        continue;
+                    }
+                    _ => out.push(c),
+                }
+            }
+            c if c.is_whitespace() => {
+                if !out.ends_with(' ') {
+                    out.push(' ');
+                }
+            }
+            c if hidden_char(c) => {}
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    out.trim()
+        .chars()
+        .take(SNIPPET_MAX)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
+}
+
+/// Control characters and bidirectional formatting marks, which a one-line preview drops.
+fn hidden_char(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+struct Original {
+    channel_id: Option<i64>,
+    dm_id: Option<i64>,
+    author: String,
+    content: String,
+    has_media: bool,
+    created_at: i64,
+}
+
+/// Fills in `reply_to` of `msgs` from the quoted messages in one query. A quoted message that
+/// is gone, by an account being deleted, outside the reply's channel or DM, or sent before
+/// `floor` stays `deleted`.
+async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Result<(), ApiError> {
+    let mut ids: Vec<i64> = msgs
+        .iter()
+        .filter_map(|m| m.reply_to.as_ref().map(|q| q.id))
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let sql = format!(
+        "SELECT m.id, m.channel_id, m.dm_id, m.author, m.content, m.media_id, m.created_at FROM messages m WHERE m.id IN ({}) AND {LIVE_AUTHOR}",
+        placeholders(1, ids.len())
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+    for id in &ids {
+        query = query.bind(*id);
+    }
+    let rows = query.fetch_all(db).await?;
+    let mut found: HashMap<i64, Original> = HashMap::with_capacity(rows.len());
+    for r in &rows {
+        found.insert(
+            r.try_get(0)?,
+            Original {
+                channel_id: r.try_get(1)?,
+                dm_id: r.try_get(2)?,
+                author: r.try_get(3)?,
+                content: r.try_get(4)?,
+                has_media: r.try_get::<Option<String>, _>(5)?.is_some(),
+                created_at: r.try_get(6)?,
+            },
+        );
+    }
+    let authors: Vec<String> = found.values().map(|f| f.author.clone()).collect();
+    let refs = user_refs(db, &authors).await;
+    for m in msgs.iter_mut() {
+        let (channel_id, dm_id) = (m.channel_id, m.dm_id);
+        let Some(quote) = m.reply_to.as_mut() else {
+            continue;
+        };
+        let Some(Original {
+            channel_id: qc,
+            dm_id: qd,
+            author,
+            content,
+            has_media,
+            created_at,
+        }) = found.get(&quote.id)
+        else {
+            continue;
+        };
+        let same = *qc == channel_id && *qd == dm_id;
+        if !same || floor.is_some_and(|f| *created_at < f) {
+            continue;
+        }
+        quote.author = Some(user_from(&refs, author));
+        quote.content = reply_snippet(content);
+        quote.has_media = *has_media;
+        quote.deleted = false;
+    }
+    Ok(())
+}
+
+/// One message, with no access check. `quotes` decides how much of a quoted message is
+/// included: `Partial` for anything broadcast, `Since` only with the viewer's floor.
+pub(crate) async fn load_message(
+    db: &Db,
+    id: i64,
+    quotes: Quotes,
+) -> Result<Option<Message>, ApiError> {
     let sql = format!("SELECT {COLS} FROM messages m WHERE m.id = $1 AND {LIVE_AUTHOR}");
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .fetch_all(db)
         .await?;
-    Ok(rows_messages(db, &rows).await?.pop())
+    Ok(rows_messages(db, &rows, quotes).await?.pop())
 }
 
-pub(crate) async fn load_message_with_embeds(
-    db: &Db,
-    id: i64,
-) -> Result<Option<Message>, ApiError> {
-    let Some(message) = load_message(db, id).await? else {
+/// A message for a WebSocket event: link previews attached, quote reduced to its reference.
+pub(crate) async fn load_broadcast(db: &Db, id: i64) -> Result<Option<Message>, ApiError> {
+    let Some(message) = load_message(db, id, Quotes::Partial).await? else {
         return Ok(None);
     };
     let mut msgs = [message];
@@ -395,7 +659,7 @@ async fn slice(
         .bind(limit)
         .fetch_all(db)
         .await?;
-    let mut msgs = rows_messages(db, &rows).await?;
+    let mut msgs = rows_messages(db, &rows, Quotes::Since(min_ts)).await?;
     if let Span::Before = span {
         msgs.reverse();
     }
@@ -436,6 +700,8 @@ async fn page(
     Ok(msgs)
 }
 
+/// The latest top-level messages for an invite preview, without quotes (no read-history floor
+/// applies to the viewer).
 pub(crate) async fn recent_channel_messages(
     db: &Db,
     channel_id: i64,
@@ -454,6 +720,14 @@ pub(crate) async fn recent_channel_messages(
         None,
     )
     .await
+    .map(|msgs| {
+        msgs.into_iter()
+            .map(|m| Message {
+                reply_to: None,
+                ..m
+            })
+            .collect()
+    })
 }
 
 async fn claim_media(
@@ -509,6 +783,83 @@ async fn claim_media(
     ))
 }
 
+/// Where a new message goes, for checking what it may reply to.
+#[derive(Clone, Copy)]
+enum Place {
+    Channel(i64),
+    Thread(i64),
+    Dm(i64),
+}
+
+/// The message a reply quotes, checked.
+struct Quoted {
+    id: i64,
+    author: String,
+    mention: bool,
+}
+
+fn cannot_reply() -> ApiError {
+    ApiError(
+        StatusCode::BAD_REQUEST,
+        "Cannot reply to that message".to_string(),
+    )
+}
+
+/// Checks `reply_to` of a new message going to `place`: the sender must be able to read it
+/// (through the access gate) and it must be a `user` message in the same channel (outside
+/// threads), the same thread or its root, or the same DM. Every refusal is the same 400, so it
+/// tells nothing about messages the sender cannot read.
+async fn quoted(
+    db: &Db,
+    user: &User,
+    place: Place,
+    reply_to: Option<i64>,
+    mention: bool,
+) -> Result<Option<Quoted>, ApiError> {
+    let Some(id) = reply_to else {
+        return Ok(None);
+    };
+    let target = match resolve_message(db, id, Some(user), &Proof::none()).await {
+        Ok(target) => target,
+        Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e)) => {
+            return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e));
+        }
+        Err(_) => return Err(cannot_reply()),
+    };
+    let scope = target.scope();
+    let here = match place {
+        Place::Channel(cid) => scope.channel_id == Some(cid) && scope.thread_root_id.is_none(),
+        Place::Thread(root) => {
+            scope.channel_id.is_some() && (id == root || scope.thread_root_id == Some(root))
+        }
+        Place::Dm(did) => scope.dm_id == Some(did),
+    };
+    if !here {
+        return Err(cannot_reply());
+    }
+    let kind: Option<String> = sqlx::query("SELECT kind FROM messages WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await?
+        .map(|r| r.try_get(0))
+        .transpose()?;
+    if kind.as_deref() != Some("user") {
+        return Err(cannot_reply());
+    }
+    Ok(Some(Quoted {
+        id,
+        mention: mention && scope.author != user.username,
+        author: scope.author.clone(),
+    }))
+}
+
+fn replied(quote: &Option<Quoted>) -> Option<&str> {
+    quote
+        .as_ref()
+        .filter(|q| q.mention)
+        .map(|q| q.author.as_str())
+}
+
 async fn insert_message(
     db: &Db,
     channel_id: Option<i64>,
@@ -516,12 +867,15 @@ async fn insert_message(
     thread_root_id: Option<i64>,
     user: &User,
     req: SendReq,
+    quote: Option<&Quoted>,
 ) -> Result<Message, ApiError> {
     let SendReq {
         content,
         media_id,
         media_spoiler,
         p2p,
+        reply_to: _,
+        mention_reply: _,
     } = req;
     check_len(&content, MESSAGE_MAX, "Message")?;
     let spoiler = media_spoiler.unwrap_or(false);
@@ -585,7 +939,7 @@ async fn insert_message(
     }
     let t = now();
     let id: i64 = sqlx::query(
-        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, created_at) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14) RETURNING id",
+        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, reply_to, reply_mention, created_at) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id",
     )
     .bind(channel_id)
     .bind(dm_id)
@@ -600,12 +954,14 @@ async fn insert_message(
     .bind(media.as_ref().and_then(|m| m.expires_at))
     .bind(media.as_ref().and_then(|m| m.size))
     .bind(media.as_ref().and_then(|m| m.mime.clone()))
+    .bind(quote.map(|q| q.id))
+    .bind(quote.is_some_and(|q| q.mention) as i64)
     .bind(t)
     .fetch_one(&mut *tx)
     .await?
     .try_get(0)?;
     tx.commit().await?;
-    Ok(Message {
+    let mut msgs = [Message {
         id,
         channel_id,
         dm_id,
@@ -619,7 +975,19 @@ async fn insert_message(
         kind: "user".to_string(),
         call: None,
         reactions: Vec::new(),
-    })
+        reply_to: quote.map(|q| ReplyRef {
+            id: q.id,
+            author: None,
+            content: String::new(),
+            has_media: false,
+            deleted: true,
+            mention: q.mention,
+            partial: false,
+        }),
+    }];
+    attach_quotes(db, &mut msgs, None).await?;
+    let [message] = msgs;
+    Ok(message)
 }
 
 /// List channel messages
@@ -665,8 +1033,10 @@ pub(crate) async fn channel_messages(
 /// channel; when the text has links, `embeds_resolved` follows once previews are fetched. Each
 /// `@username` in the text (outside code; at most 20 users, not yourself) pings that user if
 /// they are a member who can see the channel: stored for `GET /api/unreads` and sent to them as
-/// a `ping` event. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or attachment file name), voice channel, text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+/// a `ping` event. With `reply_to` the message quotes a top-level message of the channel, and
+/// with `mention_reply` (default) its author gets a `reply` ping instead (one ping, not two).
+/// General rate-limit bucket.
+#[utoipa::path(post, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or attachment file name), voice channel, text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, or a `reply_to` you cannot reply to (`Cannot reply to that message`, the same for ids that do not exist). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_channel_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -676,8 +1046,17 @@ pub(crate) async fn send_channel_message(
     check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
     let channel = resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
     channel.send_gate(&state.db).await?;
+    let quote = quoted(
+        &state.db,
+        &user,
+        Place::Channel(id),
+        req.reply_to,
+        req.mention_reply,
+    )
+    .await?;
     let server = channel.server().name().to_string();
-    let message = insert_message(&state.db, Some(id), None, None, &user, req).await?;
+    let message =
+        insert_message(&state.db, Some(id), None, None, &user, req, quote.as_ref()).await?;
     touch_interaction(&state.db, &server, &user.username).await?;
     embeds::spawn_unfurl(
         &state,
@@ -693,9 +1072,16 @@ pub(crate) async fn send_channel_message(
         channel_id: Some(id),
         dm_id: None,
         dm_users: None,
-        message: Box::new(message.clone()),
+        message: Box::new(partial_quote(message.clone())),
     });
-    ping_mentions(&state, PingScope::Channel(&channel), &message, &user).await;
+    ping_message(
+        &state,
+        PingScope::Channel(&channel),
+        &message,
+        &user,
+        replied(&quote),
+    )
+    .await;
     Ok(Json(message))
 }
 
@@ -730,8 +1116,10 @@ pub(crate) async fn thread_messages(
 /// text has links, `embeds_resolved` follows once previews are fetched. Each `@username` in
 /// the text (outside code; at most 20 users, not yourself) pings that user if they are a member
 /// who can see the channel: stored for `GET /api/unreads` and sent to them as a `ping` event.
-/// General rate-limit bucket.
-#[utoipa::path(post, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or attachment file name), text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+/// `reply_to` may quote the root or another reply of the same thread; with `mention_reply`
+/// (default) its author gets a `reply` ping instead of a mention ping. General rate-limit
+/// bucket.
+#[utoipa::path(post, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or attachment file name), text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, or a `reply_to` you cannot reply to (`Cannot reply to that message`, the same for ids that do not exist). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_thread_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -742,8 +1130,25 @@ pub(crate) async fn send_thread_message(
     let channel = root.thread_channel()?;
     check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
     channel.send_gate(&state.db).await?;
+    let quote = quoted(
+        &state.db,
+        &user,
+        Place::Thread(id),
+        req.reply_to,
+        req.mention_reply,
+    )
+    .await?;
     let (channel_id, server) = (channel.id(), channel.server().name().to_string());
-    let message = insert_message(&state.db, Some(channel_id), None, Some(id), &user, req).await?;
+    let message = insert_message(
+        &state.db,
+        Some(channel_id),
+        None,
+        Some(id),
+        &user,
+        req,
+        quote.as_ref(),
+    )
+    .await?;
     touch_interaction(&state.db, &server, &user.username).await?;
     embeds::spawn_unfurl(
         &state,
@@ -759,9 +1164,16 @@ pub(crate) async fn send_thread_message(
         channel_id: Some(channel_id),
         dm_id: None,
         dm_users: None,
-        message: Box::new(message.clone()),
+        message: Box::new(partial_quote(message.clone())),
     });
-    ping_mentions(&state, PingScope::Channel(channel), &message, &user).await;
+    ping_message(
+        &state,
+        PingScope::Channel(channel),
+        &message,
+        &user,
+        replied(&quote),
+    )
+    .await;
     Ok(Json(message))
 }
 
@@ -790,8 +1202,9 @@ pub(crate) async fn dm_messages(
 /// DM text and attachment names are not checked by the profanity filter and there is no slow
 /// mode. Emits `message` to both participants; when the text has links, `embeds_resolved`
 /// follows once previews are fetched. `@username` of the other participant pings them (`ping`
-/// event). General rate-limit bucket.
-#[utoipa::path(post, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, or an invalid `p2p` attachment. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// event). `reply_to` may quote a message of the same conversation; with `mention_reply`
+/// (default) its author gets a `reply` ping instead. General rate-limit bucket.
+#[utoipa::path(post, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, or a `reply_to` you cannot reply to (`Cannot reply to that message`, the same for ids that do not exist). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn send_dm_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -799,7 +1212,16 @@ pub(crate) async fn send_dm_message(
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
     let users = resolve_dm(&state.db, id, &user).await?;
-    let message = insert_message(&state.db, None, Some(id), None, &user, req).await?;
+    let quote = quoted(
+        &state.db,
+        &user,
+        Place::Dm(id),
+        req.reply_to,
+        req.mention_reply,
+    )
+    .await?;
+    let message =
+        insert_message(&state.db, None, Some(id), None, &user, req, quote.as_ref()).await?;
     embeds::spawn_unfurl(
         &state,
         None,
@@ -814,9 +1236,16 @@ pub(crate) async fn send_dm_message(
         channel_id: None,
         dm_id: Some(id),
         dm_users: Some(users.clone()),
-        message: Box::new(message.clone()),
+        message: Box::new(partial_quote(message.clone())),
     });
-    ping_mentions(&state, PingScope::Dm { id, users: &users }, &message, &user).await;
+    ping_message(
+        &state,
+        PingScope::Dm { id, users: &users },
+        &message,
+        &user,
+        replied(&quote),
+    )
+    .await;
     Ok(Json(message))
 }
 
@@ -1045,10 +1474,10 @@ async fn search_once(
     let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), &binds)
         .fetch_all(db)
         .await?;
-    let mut msgs = rows_messages(db, &rows).await?;
+    let mut msgs = rows_messages(db, &rows, Quotes::Skip).await?;
     let mut ctx: Vec<(String, String)> = Vec::with_capacity(rows.len());
     for r in &rows {
-        ctx.push((r.try_get(21)?, r.try_get(22)?));
+        ctx.push((r.try_get(23)?, r.try_get(24)?));
     }
     attach_embeds(db, &mut msgs).await?;
     Ok(msgs
@@ -1587,6 +2016,8 @@ mod tests {
                 media_id: None,
                 media_spoiler: None,
                 p2p: None,
+                reply_to: None,
+                mention_reply: true,
             }),
         )
         .await
@@ -1629,6 +2060,8 @@ mod tests {
                 media_id: media_id.map(str::to_string),
                 media_spoiler: None,
                 p2p: None,
+                reply_to: None,
+                mention_reply: true,
             }),
         )
         .await
@@ -1673,6 +2106,8 @@ mod tests {
                 media_id: None,
                 media_spoiler: None,
                 p2p: None,
+                reply_to: None,
+                mention_reply: true,
             }),
         )
         .await;
@@ -2038,12 +2473,17 @@ mod tests {
             .map(|m| m.author.display_name.as_str())
             .collect();
         assert_eq!(authors, ["Bob B", "ghost"]);
-        let loaded = load_message(db, ids[1])
+        let loaded = load_message(db, ids[1], Quotes::Since(None))
             .await
             .expect("load")
             .expect("exists");
         assert_eq!(loaded.author.display_name, "Bob B");
-        assert!(load_message(db, i64::MAX).await.expect("load").is_none());
+        assert!(
+            load_message(db, i64::MAX, Quotes::Skip)
+                .await
+                .expect("load")
+                .is_none()
+        );
         done(state, path).await;
     }
 
@@ -3057,6 +3497,8 @@ mod tests {
                         media_id: None,
                         media_spoiler: None,
                         p2p: None,
+                        reply_to: None,
+                        mention_reply: true,
                     }),
                 )
                 .await
@@ -3095,11 +3537,26 @@ mod tests {
         author: &str,
         content: &str,
     ) -> Message {
+        say_to(state, to, author, content, None, true)
+            .await
+            .expect("send")
+    }
+
+    async fn say_to(
+        state: &AppState,
+        to: (Option<i64>, Option<i64>, Option<i64>),
+        author: &str,
+        content: &str,
+        reply_to: Option<i64>,
+        mention_reply: bool,
+    ) -> Result<Message, ApiError> {
         let req = SendReq {
             content: content.to_string(),
             media_id: None,
             media_spoiler: None,
             p2p: None,
+            reply_to,
+            mention_reply,
         };
         let user = Authed(mem_user(author, false));
         let sent = match to {
@@ -3114,7 +3571,415 @@ mod tests {
             }
             (None, None, None) => panic!("no target"),
         };
-        sent.expect("send").0
+        sent.map(|r| r.0)
+    }
+
+    fn reply_pings(
+        rx: &mut tokio::sync::broadcast::Receiver<WsEvent>,
+    ) -> Vec<(String, String, i64)> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|ev| match ev {
+                WsEvent::Ping { username, ping } => {
+                    Some((username, ping.kind.as_str().to_string(), ping.message_id))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reply_snippets_are_one_plain_line() {
+        assert_eq!(reply_snippet("hello\nworld"), "hello");
+        assert_eq!(reply_snippet("\n\n```rust\nlet x = 1;\n```"), "let x = 1;");
+        assert_eq!(
+            reply_snippet("> **bold** _it_ ~~gone~~ `code` snake_case"),
+            "bold it gone code snake_case"
+        );
+        assert_eq!(reply_snippet("## Title"), "Title");
+        assert_eq!(reply_snippet("-# small print"), "small print");
+        assert_eq!(
+            reply_snippet("see [the docs](https://x.y/z) or <https://a.b>"),
+            "see the docs or https://a.b"
+        );
+        assert_eq!(reply_snippet("a ||secret|| b"), "a ||secret|| b");
+        assert_eq!(reply_snippet("2 \\* 3   =  6"), "2 * 3 = 6");
+        assert_eq!(reply_snippet(""), "");
+        assert_eq!(reply_snippet(&"é".repeat(300)).chars().count(), 200);
+        assert_eq!(
+            reply_snippet("a\u{202E}b\u{200F}c\u{2066}d\u{2069}\u{200E}e\u{0007}f\u{202A}g"),
+            "abcdefg"
+        );
+        assert_eq!(reply_snippet("x\ty\u{000B}z\u{001B}[0m"), "x y z[0m");
+    }
+
+    #[tokio::test]
+    async fn replies_quote_messages_from_the_same_place() {
+        let (state, path) = temp_state("replies").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob", "carol"] {
+            add_user(db, name, &name.to_uppercase()).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let other = add_channel(db, "other", "text").await;
+        let secret = add_channel(db, "secret", "text").await;
+        perm(db, secret, "u:carol", 1).await;
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        let general = (Some(cid), None, None);
+        let top = say(
+            &state,
+            general,
+            "alice",
+            "**Lunch** at _noon_?\nsecond line",
+        )
+        .await;
+        let elsewhere = say(&state, (Some(other), None, None), "alice", "elsewhere").await;
+        let hidden = say(&state, (Some(secret), None, None), "carol", "hidden").await;
+        let in_thread = say(&state, (None, None, Some(top.id)), "carol", "thread talk").await;
+        let side = say(&state, general, "carol", "side").await;
+        let side_reply = say(&state, (None, None, Some(side.id)), "carol", "side talk").await;
+        let direct = say(&state, (None, Some(dm), None), "alice", "dm hello").await;
+        let mut rx = state.hub.subscribe();
+
+        let reply = say_to(&state, general, "bob", "yes", Some(top.id), true)
+            .await
+            .expect("reply");
+        let quote = reply.reply_to.clone().expect("quote");
+        assert_eq!(quote.id, top.id);
+        assert_eq!(
+            quote.author.as_ref().map(|a| a.username.as_str()),
+            Some("alice")
+        );
+        assert_eq!(quote.content, "Lunch at noon?");
+        assert!(!quote.has_media && !quote.deleted && quote.mention);
+        assert_eq!(
+            reply_pings(&mut rx),
+            vec![("alice".to_string(), "reply".to_string(), reply.id)]
+        );
+        let listed = list(&state, cid, Some("carol")).await.expect("list");
+        let shown = listed.iter().find(|m| m.id == reply.id).expect("listed");
+        assert_eq!(
+            serde_json::to_value(&shown.reply_to).expect("json"),
+            serde_json::to_value(&reply.reply_to).expect("json")
+        );
+
+        let quiet = say_to(&state, general, "bob", "quiet", Some(top.id), false)
+            .await
+            .expect("quiet reply");
+        assert!(!quiet.reply_to.as_ref().expect("quote").mention);
+        assert!(reply_pings(&mut rx).is_empty());
+
+        let both = say_to(
+            &state,
+            general,
+            "bob",
+            "@alice and @carol",
+            Some(top.id),
+            true,
+        )
+        .await
+        .expect("reply with mentions");
+        assert_eq!(
+            reply_pings(&mut rx),
+            vec![
+                ("alice".to_string(), "reply".to_string(), both.id),
+                ("carol".to_string(), "mention".to_string(), both.id)
+            ]
+        );
+        let named = say_to(&state, general, "bob", "@alice anyway", Some(top.id), false)
+            .await
+            .expect("quiet reply with a mention");
+        assert_eq!(
+            reply_pings(&mut rx),
+            vec![("alice".to_string(), "mention".to_string(), named.id)]
+        );
+        let own = say_to(&state, general, "alice", "me again", Some(top.id), true)
+            .await
+            .expect("reply to yourself");
+        assert!(!own.reply_to.as_ref().expect("quote").mention);
+        assert!(reply_pings(&mut rx).is_empty());
+
+        let in_reply = say_to(
+            &state,
+            (None, None, Some(top.id)),
+            "bob",
+            "a",
+            Some(in_thread.id),
+            true,
+        )
+        .await
+        .expect("reply inside the thread");
+        assert_eq!(in_reply.thread_root_id, Some(top.id));
+        assert_eq!(
+            reply_pings(&mut rx),
+            vec![("carol".to_string(), "reply".to_string(), in_reply.id)]
+        );
+        say_to(
+            &state,
+            (None, None, Some(top.id)),
+            "bob",
+            "b",
+            Some(top.id),
+            false,
+        )
+        .await
+        .expect("reply to the root inside its thread");
+        say_to(
+            &state,
+            (None, Some(dm), None),
+            "bob",
+            "c",
+            Some(direct.id),
+            true,
+        )
+        .await
+        .expect("reply in the DM");
+        let _ = reply_pings(&mut rx);
+
+        let refused = [
+            (general, elsewhere.id),
+            (general, hidden.id),
+            (general, in_thread.id),
+            (general, direct.id),
+            (general, i64::MAX),
+            ((None, None, Some(top.id)), side.id),
+            ((None, None, Some(top.id)), side_reply.id),
+            ((None, None, Some(top.id)), elsewhere.id),
+            ((None, Some(dm), None), top.id),
+            ((None, Some(dm), None), i64::MAX),
+        ];
+        for (to, target) in refused {
+            match say_to(&state, to, "bob", "nope", Some(target), true).await {
+                Err(ApiError(StatusCode::BAD_REQUEST, msg)) => {
+                    assert_eq!(msg, "Cannot reply to that message", "{target}")
+                }
+                _ => panic!("reply to {target} was not refused"),
+            }
+        }
+        assert!(reply_pings(&mut rx).is_empty());
+        sqlx::query("UPDATE messages SET kind = 'call' WHERE id = $1")
+            .bind(direct.id)
+            .execute(db)
+            .await
+            .expect("call log");
+        assert!(matches!(
+            say_to(
+                &state,
+                (None, Some(dm), None),
+                "bob",
+                "d",
+                Some(direct.id),
+                true
+            )
+            .await,
+            Err(ApiError(StatusCode::BAD_REQUEST, _))
+        ));
+
+        let gone = say(&state, general, "carol", "to be deleted").await;
+        let late = say_to(&state, general, "bob", "too late", Some(gone.id), true)
+            .await
+            .expect("reply");
+        let _ = reply_pings(&mut rx);
+        let _ = delete_message(
+            State(state.clone()),
+            Path(gone.id),
+            Authed(mem_user("carol", false)),
+        )
+        .await
+        .expect("delete")
+        .0;
+        let listed = list(&state, cid, Some("bob")).await.expect("list");
+        let quote = listed
+            .iter()
+            .find(|m| m.id == late.id)
+            .and_then(|m| m.reply_to.clone())
+            .expect("quote of a deleted message");
+        assert_eq!(quote.id, gone.id);
+        assert!(quote.deleted && quote.author.is_none() && quote.content.is_empty());
+        assert!(quote.mention);
+        assert!(matches!(
+            say_to(&state, general, "bob", "x", Some(gone.id), true).await,
+            Err(ApiError(StatusCode::BAD_REQUEST, _))
+        ));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn reply_pings_need_the_author_to_see_the_reply() {
+        let (state, path) = temp_state("reply_pings").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob", "carol"] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let secret = add_channel(db, "secret", "text").await;
+        perm(db, secret, "u:bob", 1).await;
+        perm(db, secret, "u:carol", 1).await;
+        let top = say(&state, (Some(secret), None, None), "carol", "mine").await;
+        sqlx::query("UPDATE channel_perms SET can_view = 0 WHERE subject = 'u:carol'")
+            .execute(db)
+            .await
+            .expect("hide");
+        let mut rx = state.hub.subscribe();
+        say_to(
+            &state,
+            (Some(secret), None, None),
+            "bob",
+            "@carol hi",
+            Some(top.id),
+            true,
+        )
+        .await
+        .expect("reply");
+        assert!(reply_pings(&mut rx).is_empty());
+        assert!(ping_rows(db, "carol").await.is_empty());
+
+        let joined = now() - 1000;
+        let early = say(&state, (Some(cid), None, None), "alice", "early").await;
+        sqlx::query("UPDATE messages SET created_at = $1 WHERE id = $2")
+            .bind(joined - 500)
+            .bind(early.id)
+            .execute(db)
+            .await
+            .expect("backdate");
+        let reply = say_to(
+            &state,
+            (Some(cid), None, None),
+            "bob",
+            "late",
+            Some(early.id),
+            true,
+        )
+        .await
+        .expect("reply");
+        add_user(db, "dave", "dave").await;
+        add_member(db, "rchat", "dave", 0, 0, joined).await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:dave', 1, 1, 0)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("no history");
+        perm(db, cid, "u:bob", 1).await;
+        let listed = list(&state, cid, Some("dave")).await.expect("list");
+        let quote = listed
+            .iter()
+            .find(|m| m.id == reply.id)
+            .and_then(|m| m.reply_to.clone())
+            .expect("quote");
+        assert!(quote.deleted && quote.content.is_empty() && quote.author.is_none());
+        assert!(matches!(
+            say_to(
+                &state,
+                (Some(cid), None, None),
+                "dave",
+                "x",
+                Some(early.id),
+                true
+            )
+            .await,
+            Err(ApiError(StatusCode::BAD_REQUEST, _))
+        ));
+        let full = list(&state, cid, Some("bob")).await.expect("list");
+        let quote = full
+            .iter()
+            .find(|m| m.id == reply.id)
+            .and_then(|m| m.reply_to.clone())
+            .expect("quote");
+        assert_eq!(quote.content, "early");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn broadcast_replies_carry_only_the_quote_reference() {
+        let (state, path) = temp_state("reply_broadcast").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob"] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let joined = now() - 1000;
+        let early = say(&state, (Some(cid), None, None), "alice", "early secret").await;
+        sqlx::query("UPDATE messages SET created_at = $1 WHERE id = $2")
+            .bind(joined - 500)
+            .bind(early.id)
+            .execute(db)
+            .await
+            .expect("backdate");
+        add_user(db, "dave", "dave").await;
+        add_member(db, "rchat", "dave", 0, 0, joined).await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:dave', 1, 1, 0)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("no history");
+        perm(db, cid, "u:bob", 1).await;
+        let mut rx = state.hub.subscribe();
+        let reply = say_to(
+            &state,
+            (Some(cid), None, None),
+            "bob",
+            "late",
+            Some(early.id),
+            true,
+        )
+        .await
+        .expect("reply");
+        let sent = reply.reply_to.clone().expect("sender quote");
+        assert_eq!(sent.content, "early secret");
+        assert!(!sent.partial);
+        let event = std::iter::from_fn(|| rx.try_recv().ok())
+            .find(|ev| matches!(ev, WsEvent::Message { message, .. } if message.id == reply.id))
+            .expect("message event");
+        let reposted = crate::ws::current(&state, event.clone())
+            .await
+            .expect("repost");
+        for ev in [event, reposted] {
+            let WsEvent::Message { message, .. } = &ev else {
+                panic!("not a message event");
+            };
+            let quote = message.reply_to.clone().expect("quote ref");
+            assert_eq!(quote.id, early.id);
+            assert!(quote.partial && quote.mention && !quote.deleted && !quote.has_media);
+            assert!(quote.author.is_none() && quote.content.is_empty());
+            let json = serde_json::to_string(&ev).expect("json");
+            assert!(!json.contains("early secret"), "{json}");
+            assert!(!json.contains("\"alice\""), "{json}");
+        }
+        let around = |user: &'static str| {
+            channel_messages(
+                State(state.clone()),
+                MaybeAuthed(Some(mem_user(user, false))),
+                HeaderMap::new(),
+                Path(cid),
+                Query(PageQuery {
+                    before: None,
+                    after: None,
+                    around: Some(reply.id),
+                    limit: Some(1),
+                }),
+            )
+        };
+        let hidden = around("dave").await.expect("dave").0;
+        assert_eq!(hidden.len(), 1);
+        let quote = hidden[0].reply_to.clone().expect("quote");
+        assert_eq!(hidden[0].id, reply.id);
+        assert!(quote.deleted && !quote.partial && quote.author.is_none());
+        assert!(quote.content.is_empty());
+        let shown = around("bob").await.expect("bob").0;
+        let quote = shown[0].reply_to.clone().expect("quote");
+        assert_eq!(shown[0].id, reply.id);
+        assert!(!quote.deleted && !quote.partial);
+        assert_eq!(quote.content, "early secret");
+        assert_eq!(quote.author.map(|a| a.username), Some("alice".to_string()));
+        done(state, path).await;
     }
 
     async fn ping_rows(db: &Db, who: &str) -> Vec<(String, String, i64, String, i64)> {

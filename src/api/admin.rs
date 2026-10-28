@@ -1306,13 +1306,13 @@ mod tests {
             0
         );
         assert!(
-            crate::api::messages::load_message(db, bob_msg)
+            crate::api::messages::load_message(db, bob_msg, crate::api::messages::Quotes::Skip)
                 .await
                 .expect("load")
                 .is_none()
         );
         assert!(
-            crate::api::messages::load_message(db, alice_msg)
+            crate::api::messages::load_message(db, alice_msg, crate::api::messages::Quotes::Skip)
                 .await
                 .expect("load")
                 .is_some()

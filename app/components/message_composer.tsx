@@ -41,6 +41,7 @@ import { AutocompletePopup, useAutocomplete } from './autocomplete'
 import { EmojiPicker, SHEET_QUERY, useEmojiData } from './emoji_picker'
 import { useMedia } from './context_menu'
 import { UserAvatar } from './user_avatar'
+import { ReplyBar } from './replies'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
   { label: '1 hour', seconds: 3600 },
@@ -259,6 +260,9 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const text = useStore(s => (draftKey ? (s.drafts[draftKey] ?? '') : ''))
   const prefs = useStore(s => s.emoji)
   const noteEmoji = useStore(s => s.noteEmoji)
+  const replying = useStore(s => (draftKey ? s.replying[draftKey] !== undefined : false))
+  const cancelReply = useStore(s => s.cancelReply)
+  const focusAsk = useStore(s => s.composerFocus)
   const [expiryOpen, setExpiryOpen] = useState(false)
   const [pickerFor, setPickerFor] = useState<string | null>(null)
   const [caret, setCaret] = useState<number | null>(null)
@@ -271,6 +275,13 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const acId = useId()
   const peopleId = useId()
   const pickerOpen = pickerFor !== null && pickerFor === draftKey
+  const focusSeen = useRef(focusAsk?.n ?? 0)
+
+  useEffect(() => {
+    if (!focusAsk || focusAsk.n === focusSeen.current) return
+    focusSeen.current = focusAsk.n
+    if (focusAsk.key === draftKey) inputRef.current?.focus()
+  }, [focusAsk, draftKey])
 
   useLayoutEffect(() => {
     const el = inputRef.current
@@ -415,6 +426,9 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const count = charCount(text)
   const tooLong = count > MESSAGE_MAX
 
+  const closeBar = replying && draftKey ? () => cancelReply(draftKey) : null
+  const bar = closeBar && draftKey ? <ReplyBar draftKey={draftKey} onClose={closeBar} /> : null
+
   const doSend = (p2pExpiresIn?: number | null) => {
     void (thread ? sendThreadMessage(text, p2pExpiresIn) : sendMessage(text, p2pExpiresIn))
     setText('')
@@ -487,7 +501,10 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       {pickerOpen && (
         <EmojiPicker anchor={emojiRef.current} onPick={insertEmoji} onClose={closePicker} />
       )}
-      <div className="relative flex items-end gap-2 rounded-3xl bg-surface-container-high px-3 py-2">
+      {bar}
+      <div
+        className={`relative flex items-end gap-2 bg-surface-container-high px-3 py-2 ${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}
+      >
         <AutocompletePopup
           id={acId}
           title={`Emoji matching :${trigger?.query ?? ''}`}
@@ -561,6 +578,11 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           aria-activedescendant={popup.open ? `${popupId}-${popup.active}` : undefined}
           onKeyDown={e => {
             if (ac.onKeyDown(e) || people.onKeyDown(e)) return
+            if (e.key === 'Escape' && !e.nativeEvent.isComposing && closeBar) {
+              e.preventDefault()
+              closeBar()
+              return
+            }
             if (sendKey(e)) {
               e.preventDefault()
               send()

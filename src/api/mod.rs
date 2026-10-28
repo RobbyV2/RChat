@@ -501,6 +501,31 @@ pub struct CallLog {
     pub outcome: Option<String>,
 }
 
+/// The message a reply quotes, as shown above the reply.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct ReplyRef {
+    /// Id of the quoted message.
+    pub id: i64,
+    /// Who wrote it; `null` when `deleted`.
+    pub author: Option<UserRef>,
+    /// First line of its text as plain text (formatting removed, `||spoilers||` kept), at most
+    /// 200 characters; empty when it has only an attachment or is `deleted`.
+    #[schema(example = "See you at 8")]
+    pub content: String,
+    /// It has an attachment.
+    pub has_media: bool,
+    /// The quoted message was deleted or cannot be shown to you (sent before you joined and you
+    /// cannot read the channel's history). Only `id` and `mention` are set then.
+    pub deleted: bool,
+    /// The reply pinged the quoted message's author (`mention_reply`).
+    pub mention: bool,
+    /// Only `id` and `mention` are set: WebSocket events never carry the quoted message.
+    /// Clients fill it from a loaded copy of the original or by reading the reply through the
+    /// message list (`around` = the reply's id).
+    #[serde(default)]
+    pub partial: bool,
+}
+
 /// A message in a channel, a direct-message conversation or a thread.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct Message {
@@ -536,6 +561,9 @@ pub struct Message {
     /// `reaction_removed`).
     #[serde(default)]
     pub reactions: Vec<reactions::Reaction>,
+    /// For an inline reply, the message it quotes; `null` otherwise and in search results.
+    #[serde(default)]
+    pub reply_to: Option<ReplyRef>,
 }
 
 /// A text field the profanity filter can check.

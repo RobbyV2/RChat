@@ -331,20 +331,47 @@ pub async fn create_pings(
     Ok(out)
 }
 
-/// Pings the users `message` mentions with `@username` who can see `scope`. Never fails the
-/// send: errors are logged.
-pub async fn ping_mentions(
+/// Pings for a new message: a `reply` ping to `replied` (the quoted message's author, when the
+/// reply asked to mention them) and a `mention` ping to each user the text mentions with
+/// `@username`, all only if they can see `scope`. Someone who gets the reply ping is not pinged
+/// again for mentioning them. Never fails the send: errors are logged.
+pub async fn ping_message(
     state: &AppState,
     scope: PingScope<'_>,
     message: &Message,
     actor: &User,
+    replied: Option<&str>,
 ) {
     let run = async {
+        let replied: Vec<String> = replied
+            .filter(|name| *name != actor.username)
+            .map(str::to_string)
+            .into_iter()
+            .collect();
+        let replied = match replied.is_empty() {
+            true => replied,
+            false => scope.recipients(&state.db, &replied, message).await?,
+        };
+        if !replied.is_empty() {
+            let spec = PingSpec {
+                kind: PingKind::Reply,
+                scope: scope.key(),
+                server: scope.server(),
+                message,
+                actor,
+                emoji: None,
+            };
+            create_pings(state, &spec, &replied).await?;
+        }
         let candidates = mention_candidates(&message.content);
         if candidates.is_empty() {
             return Ok(());
         }
-        let named = mentioned_users(&state.db, &candidates, &actor.username).await?;
+        let named: Vec<String> = mentioned_users(&state.db, &candidates, &actor.username)
+            .await?
+            .into_iter()
+            .filter(|name| !replied.contains(name))
+            .collect();
         let recipients = scope.recipients(&state.db, &named, message).await?;
         if recipients.is_empty() {
             return Ok(());
@@ -361,7 +388,7 @@ pub async fn ping_mentions(
     };
     let res: Result<(), ApiError> = run.await;
     if let Err(ApiError(_, e)) = res {
-        tracing::warn!("mention pings for message {} failed: {e}", message.id);
+        tracing::warn!("pings for message {} failed: {e}", message.id);
     }
 }
 
@@ -612,10 +639,11 @@ mod tests {
             .expect("message")
             .try_get(0)
             .expect("id");
-        let message = crate::api::messages::load_message(db, mid)
-            .await
-            .expect("load")
-            .expect("message");
+        let message =
+            crate::api::messages::load_message(db, mid, crate::api::messages::Quotes::Skip)
+                .await
+                .expect("load")
+                .expect("message");
         sqlx::query("INSERT INTO pings(username, kind, scope, message_id, actor, created_at, seen) VALUES('bob', 'mention', 'c1', $1, 'alice', 1, 1)")
             .bind(mid)
             .execute(db)

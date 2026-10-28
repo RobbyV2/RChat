@@ -39,6 +39,18 @@ import {
 } from './pings'
 import { EMPTY_PREFS, emojiKey, noteUse, parseEmojiPrefs, setTone, type EmojiPrefs } from './emoji'
 import { canAddEmoji, emojiBase, reacted, reactorKey, withReaction } from './reactions'
+import {
+  fetchedQuote,
+  fillQuote,
+  parseReplyMention,
+  quoteDeleted,
+  quoteOf,
+  replyMentionKey,
+  replyMentionValue,
+  repliesToMe,
+  sendReply,
+  type Replying,
+} from './replies'
 import { catchUpDelay, due } from './backoff'
 import { createReadQueue, mergeReads } from './reads'
 import {
@@ -147,6 +159,7 @@ import type {
   Message,
   P2pAvailability,
   Ping,
+  ReplyRef,
   Role,
   SearchResult,
   ServerBan,
@@ -451,6 +464,8 @@ interface RChatState {
   pending: Record<string, PendingUpload>
   notices: Notice[]
   drafts: Record<string, string>
+  replying: Record<string, Replying>
+  composerFocus: { key: string; n: number } | null
   search: SearchState
   error: string | null
   adminOverview: AdminOverview | null
@@ -508,6 +523,9 @@ interface RChatState {
   setSkinTone: (tone: number) => void
   reloadEmoji: () => void
   setDraft: (key: string, text: string) => void
+  startReply: (key: string, m: Message) => void
+  cancelReply: (key: string) => void
+  toggleReplyMention: (key: string) => void
   sendMessage: (content: string, p2pExpiresIn?: number | null) => void
   markRead: (scope: string, messageId: number) => void
   seeThread: (rootId: number) => void
@@ -1778,6 +1796,48 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const forgetReactors = (key: string) => void reactorCache.delete(key)
 
+  const quotes = new Map<number, ReplyRef>()
+  const quoteReads = new Set<number>()
+  let quoteGen = 0
+
+  const held = (id: number) =>
+    findMessage(id) ?? [...tails.values()].map(list => findById(list, id)).find(Boolean)
+
+  const readQuote = (m: Message) => {
+    const ref = m.reply_to
+    if (!ref?.partial || quoteReads.has(m.id) || !held(m.id)) return
+    quoteReads.add(m.id)
+    const gen = quoteGen
+    const page = { around: m.id, limit: 1 }
+    const read =
+      m.thread_root_id !== null
+        ? api.threadMessages(m.thread_root_id, page)
+        : m.channel_id !== null
+          ? api.channelMessages(m.channel_id, page)
+          : m.dm_id !== null
+            ? api.dmMessages(m.dm_id, page)
+            : null
+    if (!read) return
+    read
+      .then(list => {
+        if (gen !== quoteGen) return
+        const quote = fetchedQuote(list, m.id, ref)
+        quotes.set(m.id, quote)
+        patchReactions(m.id, x => (x.reply_to?.partial ? { ...x, reply_to: quote } : x))
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (gen === quoteGen) quoteReads.delete(m.id)
+      })
+  }
+
+  const withQuote = (m: Message): Message => {
+    if (!m.reply_to?.partial) return m
+    const own = findMessage(m.id)?.reply_to
+    const known = own && !own.partial ? own : quotes.get(m.id)
+    return fillQuote(m, known, findMessage(m.reply_to.id)) ?? m
+  }
+
   const liveKey = (key: string) => {
     const { view, panel } = get()
     return (
@@ -2153,7 +2213,8 @@ export const useStore = create<RChatState>()((set, get) => {
     me: Me,
     content: string,
     pending: PendingUpload | null,
-    p2pExpiresIn: number | null
+    p2pExpiresIn: number | null,
+    reply: Replying | null = null
   ) => {
     home.ws.ensureConnected()
     const tempId = OPT_BASE + ++optSeq
@@ -2176,11 +2237,12 @@ export const useStore = create<RChatState>()((set, get) => {
         embeds: [],
         kind: 'user',
         call: null,
+        reply_to: reply ? quoteOf(reply, me.username) : null,
       },
       send: opts =>
         view.kind === 'channel'
-          ? api.sendChannelMessage(view.channelId, content, opts)
-          : api.sendDmMessage(view.dmId, content, opts),
+          ? api.sendChannelMessage(view.channelId, content, { ...opts, ...sendReply(reply) })
+          : api.sendDmMessage(view.dmId, content, { ...opts, ...sendReply(reply) }),
     })
   }
 
@@ -2588,6 +2650,8 @@ export const useStore = create<RChatState>()((set, get) => {
     pending: {},
     notices: [],
     drafts: {},
+    replying: {},
+    composerFocus: null,
     search: emptySearch(),
     error: null,
     adminOverview: null,
@@ -2804,6 +2868,9 @@ export const useStore = create<RChatState>()((set, get) => {
       bannedHere.clear()
       seenPings.clear()
       reactorCache.clear()
+      quotes.clear()
+      quoteReads.clear()
+      quoteGen += 1
       clearProfiles()
       dropStashedInvite()
       set({
@@ -2853,6 +2920,8 @@ export const useStore = create<RChatState>()((set, get) => {
         pending: {},
         notices: [],
         drafts: {},
+        replying: {},
+        composerFocus: null,
         bootError: null,
         search: emptySearch(),
         adminOverview: null,
@@ -3117,10 +3186,37 @@ export const useStore = create<RChatState>()((set, get) => {
       const key = viewKey(view)
       const pending = get().pending[key] ?? null
       if (!content.trim() && !pending) return
-      set(s => ({ pending: keyed(s.pending, key, null) }))
+      const reply = get().replying[key] ?? null
+      set(s => ({ pending: keyed(s.pending, key, null), replying: keyed(s.replying, key, null) }))
       clearAnchor(key)
       if (detached(key)) void get().jumpToPresent(key)
-      queueMessage(view, me, content, pending, p2pExpiresIn ?? null)
+      queueMessage(view, me, content, pending, p2pExpiresIn ?? null, reply)
+    },
+
+    startReply: (key, m) => {
+      const username = get().me?.username
+      if (!username) return
+      let mention = true
+      try {
+        mention = parseReplyMention(localStorage.getItem(home.scoped(replyMentionKey(username))))
+      } catch {
+        mention = true
+      }
+      set(s => ({
+        replying: { ...s.replying, [key]: { message: m, mention } },
+        composerFocus: { key, n: (s.composerFocus?.n ?? 0) + 1 },
+      }))
+    },
+
+    cancelReply: key => set(s => ({ replying: keyed(s.replying, key, null) })),
+
+    toggleReplyMention: key => {
+      const cur = get().replying[key]
+      const username = get().me?.username
+      if (!cur || !username) return
+      const mention = !cur.mention
+      set(s => ({ replying: { ...s.replying, [key]: { ...cur, mention } } }))
+      writeLocal(home.scoped(replyMentionKey(username)), replyMentionValue(mention))
     },
 
     markRead: (scope, messageId) => {
@@ -3174,7 +3270,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
     jumpTo: (key, id, flash = true) =>
       act(async () => {
-        if ((get().messages[key] ?? []).some(m => m.id === id)) {
+        if (key === threadKey(id) || (get().messages[key] ?? []).some(m => m.id === id)) {
           set(s => ({ focus: { ...s.focus, [key]: { id, flash } } }))
           return
         }
@@ -3293,7 +3389,8 @@ export const useStore = create<RChatState>()((set, get) => {
       const pending = get().pending[key] ?? null
       if (!content.trim() && !pending) return
       const tempId = OPT_BASE + ++optSeq
-      set(s => ({ pending: keyed(s.pending, key, null) }))
+      const reply = get().replying[key] ?? null
+      set(s => ({ pending: keyed(s.pending, key, null), replying: keyed(s.replying, key, null) }))
       if (detached(key)) void get().jumpToPresent(key)
       enqueue({
         tempId,
@@ -3314,8 +3411,9 @@ export const useStore = create<RChatState>()((set, get) => {
           embeds: [],
           kind: 'user',
           call: null,
+          reply_to: reply ? quoteOf(reply, me.username) : null,
         },
-        send: opts => api.sendThreadMessage(rootId, content, opts),
+        send: opts => api.sendThreadMessage(rootId, content, { ...opts, ...sendReply(reply) }),
       })
     },
 
@@ -3752,7 +3850,7 @@ export const useStore = create<RChatState>()((set, get) => {
     applyWsEvent: ev => {
       switch (ev.type) {
         case 'message': {
-          const m = ev.message
+          const m = withQuote(ev.message)
           const rootId = m.thread_root_id
           if (rootId !== null) {
             const tkey = threadKey(rootId)
@@ -3788,6 +3886,7 @@ export const useStore = create<RChatState>()((set, get) => {
             }
           }
           askP2p([m])
+          readQuote(m)
           if (ev.dm_id !== null && get().me) bumpDm(ev.dm_id)
           if (m.kind === 'call') return
           if (rootId === null) {
@@ -3822,7 +3921,9 @@ export const useStore = create<RChatState>()((set, get) => {
           const { dm_id } = ev
           if (dm_id !== null) {
             if (view?.kind === 'dm' && view.dmId === dm_id) return
-            if (mentionsUser(m.content, me.username)) return
+            const toMe =
+              repliesToMe(m, me.username) || (m.reply_to?.partial === true && m.reply_to.mention)
+            if (mentionsUser(m.content, me.username) || toMe) return
             notify(
               m.author.display_name,
               '',
@@ -3835,7 +3936,9 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'message_updated': {
-          patchMessage(ev.message.id, m => ({ ...ev.message, reactions: m.reactions }))
+          const next = withQuote(ev.message)
+          patchMessage(next.id, m => ({ ...next, reactions: m.reactions }))
+          readQuote(next)
           return
         }
         case 'reaction_added':
@@ -3859,7 +3962,10 @@ export const useStore = create<RChatState>()((set, get) => {
           const rootOf = ev.thread_root_id
           const drop = (list: Message[]) => {
             const i = indexOfId(list, ev.id)
-            const cut = i === -1 ? list : [...list.slice(0, i), ...list.slice(i + 1)]
+            const cut = quoteDeleted(
+              i === -1 ? list : [...list.slice(0, i), ...list.slice(i + 1)],
+              ev.id
+            )
             return rootOf === null
               ? cut
               : patchById(cut, rootOf, m => ({
@@ -3887,7 +3993,21 @@ export const useStore = create<RChatState>()((set, get) => {
                       },
                     }
                   : s.panel
-            return { messages, panel }
+            const replying = Object.fromEntries(
+              Object.entries(s.replying).filter(
+                ([key, r]) => r.message.id !== ev.id && key !== threadKey(ev.id)
+              )
+            )
+            return {
+              messages,
+              panel:
+                panel?.kind === 'thread' && panel.root.reply_to?.id === ev.id
+                  ? { ...panel, root: quoteDeleted([panel.root], ev.id)[0] }
+                  : panel,
+              ...(Object.keys(replying).length === Object.keys(s.replying).length
+                ? {}
+                : { replying }),
+            }
           })
           return
         }

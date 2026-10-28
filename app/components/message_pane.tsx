@@ -16,6 +16,7 @@ import {
   PhoneMissed,
   PhoneOff,
   PhoneOutgoing,
+  Reply,
   Search,
   Trash2,
   Users,
@@ -35,6 +36,7 @@ import { lastOwn, newSince, unreadMark } from '../lib/lists'
 import { escapeMarksRead } from '../lib/follow'
 import { mentionLookups, mentionsUser } from '../lib/mentions'
 import { readOnly } from '../lib/reactions'
+import { canQuote, repliesToMe } from '../lib/replies'
 import {
   banMenuItem,
   byUsername,
@@ -78,6 +80,7 @@ import { useEscape } from './server_settings'
 import { PingBadge, pingLabel } from './ping_badge'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { QuickReactions, ReactionBar, rowAt } from './reactions'
+import { ReplyPreview } from './replies'
 
 const EMPTY: Message[] = []
 
@@ -208,7 +211,10 @@ export const authorKey = (messages: Message[], extra: string[] = []) =>
   [...new Set([...messages.map(m => m.author.username), ...extra])].sort().join('\n')
 
 const mentionedNames = (messages: Message[]) =>
-  messages.flatMap(m => (m.content.includes('@') ? mentionLookups(m.content) : []))
+  messages.flatMap(m => [
+    ...(m.content.includes('@') ? mentionLookups(m.content) : []),
+    ...(m.reply_to?.author ? [m.reply_to.author.username] : []),
+  ])
 
 // Authors plus everyone the messages may mention, so mention pills can show display names.
 export const usePeopleKey = (messages: Message[], extra: string[] = []) => {
@@ -220,7 +226,22 @@ export const mentionRowCls =
   'bg-primary/8 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-primary hover:bg-primary/12'
 
 export const mentionsMe = (m: Message, me: string | undefined) =>
-  me !== undefined && m.author.username !== me && mentionsUser(m.content, me)
+  me !== undefined &&
+  m.author.username !== me &&
+  (mentionsUser(m.content, me) || repliesToMe(m, me))
+
+export const replyAction = (onClick: () => void): ToolbarAction => ({
+  key: 'reply',
+  label: 'Reply',
+  icon: Reply,
+  onClick,
+})
+
+export const replyMenuItem = (action: () => void): ContextMenuItem => ({
+  label: 'Reply',
+  icon: Reply,
+  action,
+})
 
 export function useAuthorMembers(server: string | null, key: string) {
   const ensureMembers = useStore(s => s.ensureMembers)
@@ -253,7 +274,10 @@ interface RowProps {
   channel: boolean
   server: string | null
   color: string | undefined
+  quoteColor: string | undefined
   onMenu: (m: Message, x: number, y: number) => void
+  onReply: (m: Message) => void
+  onJump: (id: number) => void
 }
 
 const MessageRow = memo(function MessageRow({
@@ -267,10 +291,14 @@ const MessageRow = memo(function MessageRow({
   channel,
   server,
   color,
+  quoteColor,
   onMenu,
+  onReply,
+  onJump,
 }: RowProps) {
   const openThread = useStore(s => s.openThread)
   const actions: ToolbarAction[] = []
+  if (canReact && canQuote(m)) actions.push(replyAction(() => onReply(m)))
   if (channel)
     actions.push({
       key: 'thread',
@@ -305,47 +333,52 @@ const MessageRow = memo(function MessageRow({
         {...longPress((x, y) => onMenu(m, x, y))}
         data-flash={flash ? '' : undefined}
         data-mentioned={mentioned ? '' : undefined}
-        className={`group relative flex gap-3 px-4 py-1.5 ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
+        className={`group relative px-4 py-1.5 ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
       >
-        <div className="shrink-0 pt-0.5">
-          <span
-            {...profileTrigger(m.author, server, false)}
-            title="View profile"
-            className={avatarTriggerCls}
-          >
-            <UserAvatar
-              username={m.author.username}
-              avatarKind={m.author.avatar_kind}
-              avatarColor={m.author.avatar_color}
-              size={36}
-            />
-          </span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-baseline gap-2">
+        {m.reply_to && (
+          <ReplyPreview quote={m.reply_to} avatar={36} color={quoteColor} onJump={onJump} />
+        )}
+        <div className="flex gap-3">
+          <div className="shrink-0 pt-0.5">
             <span
-              {...profileTrigger(m.author, server)}
-              style={{ color }}
-              className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
+              {...profileTrigger(m.author, server, false)}
+              title="View profile"
+              className={avatarTriggerCls}
             >
-              {m.author.display_name}
-            </span>
-            <span className="shrink-0 text-xs text-on-surface-variant">
-              {fmtTime(m.created_at)}
+              <UserAvatar
+                username={m.author.username}
+                avatarKind={m.author.avatar_kind}
+                avatarColor={m.author.avatar_color}
+                size={36}
+              />
             </span>
           </div>
-          <MarkdownMessage message={m} canDelete={canDelete} />
-          <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
-          {channel && m.reply_count > 0 && (
-            <button
-              title="Open thread"
-              onClick={() => void openThread(m)}
-              className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
-            >
-              <MessageSquareText size={12} />
-              {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
-            </button>
-          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-baseline gap-2">
+              <span
+                {...profileTrigger(m.author, server)}
+                style={{ color }}
+                className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
+              >
+                {m.author.display_name}
+              </span>
+              <span className="shrink-0 text-xs text-on-surface-variant">
+                {fmtTime(m.created_at)}
+              </span>
+            </div>
+            <MarkdownMessage message={m} canDelete={canDelete} />
+            <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
+            {channel && m.reply_count > 0 && (
+              <button
+                title="Open thread"
+                onClick={() => void openThread(m)}
+                className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
+              >
+                <MessageSquareText size={12} />
+                {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
+              </button>
+            )}
+          </div>
         </div>
         <MessageToolbar
           m={m}
@@ -374,58 +407,63 @@ export function OutboxRows({ msgKey, size = 36 }: { msgKey: string; size?: numbe
   const outgoing = useStore(s => s.outbox[msgKey]) ?? EMPTY_OUT
   const retryOutgoing = useStore(s => s.retryOutgoing)
   const cancelOutgoing = useStore(s => s.cancelOutgoing)
+  const jumpTo = useStore(s => s.jumpTo)
+  const jump = (id: number) => void jumpTo(msgKey, id)
   if (!me || !outgoing.length) return null
   return (
     <>
       {outgoing.map(o => {
         const failed = o.status === 'failed'
         return (
-          <div
-            key={o.tempId}
-            className={`relative flex gap-3 px-4 py-1.5 ${failed ? '' : 'opacity-50'}`}
-          >
-            <div className="shrink-0 pt-0.5">
-              <span
-                {...profileTrigger(me, server, false)}
-                title="View profile"
-                className={avatarTriggerCls}
-              >
-                <UserAvatar
-                  username={me.username}
-                  avatarKind={me.avatar_kind}
-                  avatarColor={me.avatar_color}
-                  size={size}
-                />
-              </span>
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 items-baseline gap-2">
+          <div key={o.tempId} className={`relative px-4 py-1.5 ${failed ? '' : 'opacity-50'}`}>
+            {o.msg.reply_to && <ReplyPreview quote={o.msg.reply_to} avatar={size} onJump={jump} />}
+            <div className="flex gap-3">
+              <div className="shrink-0 pt-0.5">
                 <span
-                  {...profileTrigger(me, server)}
-                  className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
+                  {...profileTrigger(me, server, false)}
+                  title="View profile"
+                  className={avatarTriggerCls}
                 >
-                  {me.display_name}
-                </span>
-                <span
-                  className={`shrink-0 text-xs ${failed ? 'text-error' : 'text-on-surface-variant'}`}
-                >
-                  {failed ? 'Failed to send' : o.status === 'sending' ? 'Sending' : 'Queued'}
+                  <UserAvatar
+                    username={me.username}
+                    avatarKind={me.avatar_kind}
+                    avatarColor={me.avatar_color}
+                    size={size}
+                  />
                 </span>
               </div>
-              <MarkdownMessage message={o.msg} canDelete={false} />
-              {o.pending && (
-                <span className="text-xs text-on-surface-variant">{o.pending.file.name}</span>
-              )}
-              {failed && (
-                <div className="mt-1 flex items-center gap-3 text-xs font-medium">
-                  <button onClick={() => retryOutgoing(msgKey, o.tempId)} className="text-primary">
-                    Retry
-                  </button>
-                  <button onClick={() => cancelOutgoing(msgKey, o.tempId)} className="text-error">
-                    Delete
-                  </button>
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-baseline gap-2">
+                  <span
+                    {...profileTrigger(me, server)}
+                    className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
+                  >
+                    {me.display_name}
+                  </span>
+                  <span
+                    className={`shrink-0 text-xs ${failed ? 'text-error' : 'text-on-surface-variant'}`}
+                  >
+                    {failed ? 'Failed to send' : o.status === 'sending' ? 'Sending' : 'Queued'}
+                  </span>
                 </div>
-              )}
+                <MarkdownMessage message={o.msg} canDelete={false} />
+                {o.pending && (
+                  <span className="text-xs text-on-surface-variant">{o.pending.file.name}</span>
+                )}
+                {failed && (
+                  <div className="mt-1 flex items-center gap-3 text-xs font-medium">
+                    <button
+                      onClick={() => retryOutgoing(msgKey, o.tempId)}
+                      className="text-primary"
+                    >
+                      Retry
+                    </button>
+                    <button onClick={() => cancelOutgoing(msgKey, o.tempId)} className="text-error">
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )
@@ -460,6 +498,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const loadNewer = useStore(s => s.loadNewer)
   const jumpToUnread = useStore(s => s.jumpToUnread)
   const jumpToPresent = useStore(s => s.jumpToPresent)
+  const jumpTo = useStore(s => s.jumpTo)
+  const startReply = useStore(s => s.startReply)
   const dismissUnread = useStore(s => s.dismissUnread)
   const startDm = useStore(s => s.startDm)
   const grantAdmin = useStore(s => s.grantAdmin)
@@ -557,6 +597,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         action: () => void openThread(msg),
       })
     }
+    if (canReact && canQuote(msg)) items.unshift(replyMenuItem(() => replyTo(msg)))
     if (view?.kind === 'channel' && !self) {
       const target = memberOf(useStore.getState(), view.server, author.username)
       if (
@@ -639,13 +680,26 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     (m.author.username === me.username ||
       (view?.kind === 'channel' && hasPerm(perms, Perm.DeleteMessages)))
 
+  const replyTo = (msg: Message) => {
+    if (scope) startReply(scope, msg)
+  }
+
   const menuRef = useRef(messageMenu)
+  const replyRef = useRef(replyTo)
   useEffect(() => {
     menuRef.current = messageMenu
+    replyRef.current = replyTo
   })
   const rowMenu = useCallback(
     (msg: Message, x: number, y: number) => menuRef.current(msg, x, y),
     []
+  )
+  const rowReply = useCallback((msg: Message) => replyRef.current(msg), [])
+  const rowJump = useCallback(
+    (id: number) => {
+      if (scope) void jumpTo(scope, id)
+    },
+    [scope, jumpTo]
   )
 
   return (
@@ -865,7 +919,17 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     channel={view?.kind === 'channel'}
                     server={memberServer}
                     color={roleColor(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])}
+                    quoteColor={
+                      m.reply_to?.author
+                        ? roleColor(
+                            detail?.roles,
+                            memberFor(m.reply_to.author.username)?.role_ids ?? []
+                          )
+                        : undefined
+                    }
                     onMenu={rowMenu}
+                    onReply={rowReply}
+                    onJump={rowJump}
                   />
                 ))}
                 {positioned && detached && messages.length > 0 && (

@@ -214,6 +214,17 @@ export interface Message {
   kind: MessageKind
   call: CallLog | null
   reactions?: Reaction[]
+  reply_to?: ReplyRef | null
+}
+
+export interface ReplyRef {
+  id: number
+  author: UserRef | null
+  content: string
+  has_media: boolean
+  deleted: boolean
+  mention: boolean
+  partial?: boolean
 }
 
 export interface Reaction {

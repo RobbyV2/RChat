@@ -189,6 +189,8 @@ export interface SendOpts {
   media_id?: string
   media_spoiler?: boolean
   p2p?: P2pAttachment
+  reply_to?: number
+  mention_reply?: boolean
 }
 
 export interface PageOpts {

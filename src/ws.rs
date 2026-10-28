@@ -19,7 +19,7 @@ use crate::api::access::{
     servers_with_expired_passwords, ws_banned, ws_channel_view, ws_channel_viewable,
     ws_grant_deadline, ws_server_open, ws_voice_channel,
 };
-use crate::api::messages::{load_message, load_message_with_embeds};
+use crate::api::messages::{Quotes, load_broadcast, load_message};
 use crate::api::pings::{Ping, ThreadPings};
 use crate::api::{Channel, Embed, Member, Message, ServerSummaryLite, Settings, UserRef};
 use crate::db::{ChannelKind, Db, get_user, now, setting_on, touch_interaction};
@@ -547,7 +547,7 @@ async fn insert_call_log(state: &AppState, dm_id: i64, caller: &str) -> Result<i
 }
 
 async fn broadcast_call_log(state: &AppState, dm_id: i64, dm_users: Vec<String>, log_id: i64) {
-    if let Ok(Some(message)) = crate::api::messages::load_message(&state.read(), log_id).await {
+    if let Ok(Some(message)) = load_broadcast(&state.read(), log_id).await {
         state.hub.broadcast(WsEvent::Message {
             server: None,
             channel_id: None,
@@ -559,7 +559,7 @@ async fn broadcast_call_log(state: &AppState, dm_id: i64, dm_users: Vec<String>,
 }
 
 async fn broadcast_call_update(state: &AppState, dm_users: Vec<String>, log_id: i64) {
-    if let Ok(Some(message)) = crate::api::messages::load_message(&state.read(), log_id).await {
+    if let Ok(Some(message)) = load_broadcast(&state.read(), log_id).await {
         state.hub.broadcast(WsEvent::MessageUpdated {
             message: Box::new(message),
             dm_users,
@@ -742,10 +742,7 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             dm_users,
             message,
         } => {
-            let message = load_message_with_embeds(db, message.id)
-                .await
-                .ok()
-                .flatten()?;
+            let message = load_broadcast(db, message.id).await.ok().flatten()?;
             Some(WsEvent::Message {
                 server,
                 channel_id,
@@ -755,10 +752,7 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             })
         }
         WsEvent::MessageUpdated { message, dm_users } => {
-            let message = load_message_with_embeds(db, message.id)
-                .await
-                .ok()
-                .flatten()?;
+            let message = load_broadcast(db, message.id).await.ok().flatten()?;
             Some(WsEvent::MessageUpdated {
                 message: Box::new(message),
                 dm_users,
@@ -772,10 +766,7 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             message_id,
             embeds: _,
         } => {
-            let message = load_message_with_embeds(db, message_id)
-                .await
-                .ok()
-                .flatten()?;
+            let message = load_broadcast(db, message_id).await.ok().flatten()?;
             Some(WsEvent::EmbedsResolved {
                 server,
                 channel_id,
@@ -1009,7 +1000,10 @@ async fn repost_event(state: &AppState, event: WsEvent) {
             thread_root_id: message.thread_root_id,
         };
         if state.hub.broadcast_confirmed(ev).await {
-            if matches!(load_message(&state.read(), id).await, Ok(None)) {
+            if matches!(
+                load_message(&state.read(), id, Quotes::Skip).await,
+                Ok(None)
+            ) {
                 state.hub.broadcast(deleted);
             }
             return;
@@ -3105,6 +3099,7 @@ mod tests {
             kind: "user".to_string(),
             call: None,
             reactions: Vec::new(),
+            reply_to: None,
         }
     }
 
@@ -3233,7 +3228,11 @@ mod tests {
             .unwrap()
             .try_get(0)
             .unwrap();
-        load_message(db, id).await.ok().flatten().unwrap()
+        load_message(db, id, Quotes::Since(None))
+            .await
+            .ok()
+            .flatten()
+            .unwrap()
     }
 
     async fn general(db: &Db) -> i64 {

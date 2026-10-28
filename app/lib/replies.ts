@@ -1,0 +1,136 @@
+import type { Message, ReplyRef } from './types'
+
+export interface Replying {
+  message: Message
+  mention: boolean
+}
+
+export const replyMentionKey = (username: string) => `rchat_reply_mention:${username}`
+
+export function parseReplyMention(raw: string | null): boolean {
+  let data: unknown
+  try {
+    data = raw ? JSON.parse(raw) : null
+  } catch {
+    return true
+  }
+  if (typeof data !== 'object' || data === null) return true
+  const { v, mention } = data as Record<string, unknown>
+  return v === 1 && typeof mention === 'boolean' ? mention : true
+}
+
+export const replyMentionValue = (mention: boolean) => JSON.stringify({ v: 1, mention })
+
+const SNIPPET_MAX = 200
+const FENCE = /^(```|~~~)/
+const PREFIX = /^(?:-# |>\s*|#{1,6} )/
+// eslint-disable-next-line no-control-regex
+const HIDDEN = /[\u0000-\u0008\u000E-\u001F\u007F-\u009F\u200E\u200F\u202A-\u202E\u2066-\u2069]/g
+
+// Close to the server's `reply_snippet`, for replies still being sent: the first line with
+// text, without block markers, emphasis or code marks.
+export function plainLine(content: string): string {
+  for (const raw of content.split('\n')) {
+    let line = raw.trim()
+    if (!line || FENCE.test(line)) continue
+    while (PREFIX.test(line)) line = line.replace(PREFIX, '').trimStart()
+    const text = line
+      .replace(/\[([^\]\n]*)\]\([^)\n]*\)/g, '$1')
+      .replace(/<(https?:\/\/[^>\s]+)>/g, '$1')
+      .replace(/[*`]|~~/g, '')
+      .replace(/(^|[^\p{L}\p{N}_])_+|_+(?![\p{L}\p{N}])/gu, (_, pre?: string) => pre ?? '')
+      .replace(/\s+/g, ' ')
+      .replace(HIDDEN, '')
+      .trim()
+    if (text) return [...text].slice(0, SNIPPET_MAX).join('').trimEnd()
+  }
+  return ''
+}
+
+export const quoteOf = ({ message: m, mention }: Replying, me: string): ReplyRef =>
+  quoteFrom(m, mention && m.author.username !== me)
+
+export const canQuote = (m: Message) => m.kind === 'user'
+
+export const deletedQuote = (id: number, mention: boolean): ReplyRef => ({
+  id,
+  author: null,
+  content: '',
+  has_media: false,
+  deleted: true,
+  mention,
+})
+
+// The quote of `ref` built from a loaded copy of the original. Loaded lists only hold what the
+// viewer may read, so this shows nothing REST would hide.
+export const quoteFrom = (original: Message, mention: boolean): ReplyRef => ({
+  id: original.id,
+  author: original.author,
+  content: plainLine(original.content),
+  has_media: original.media !== null,
+  deleted: false,
+  mention,
+})
+
+// Fills a partial quote (WebSocket events carry only the id): from `known`, a quote already
+// resolved for this reply, else from the original if it is loaded and in the same place.
+// `null` means it has to be read from the server.
+export function fillQuote(
+  m: Message,
+  known: ReplyRef | undefined,
+  original: Message | undefined
+): Message | null {
+  const ref = m.reply_to
+  if (!ref?.partial) return m
+  if (known && !known.partial && known.id === ref.id)
+    return { ...m, reply_to: { ...known, mention: ref.mention } }
+  if (
+    original &&
+    original.id === ref.id &&
+    original.channel_id === m.channel_id &&
+    original.dm_id === m.dm_id
+  )
+    return { ...m, reply_to: quoteFrom(original, ref.mention) }
+  return null
+}
+
+// The quote a list read returned for reply `id`, or the placeholder if the reply was not in it.
+export const fetchedQuote = (list: Message[], id: number, ref: ReplyRef): ReplyRef => {
+  const got = list.find(x => x.id === id)?.reply_to
+  return got && !got.partial && got.id === ref.id ? got : deletedQuote(ref.id, ref.mention)
+}
+
+// The reply pinged `me`: a reply with mention on to a message `me` wrote, by someone else.
+export const repliesToMe = (m: Message, me: string | undefined) =>
+  me !== undefined &&
+  m.author.username !== me &&
+  m.reply_to?.mention === true &&
+  m.reply_to.deleted === false &&
+  m.reply_to.partial !== true &&
+  m.reply_to.author?.username === me
+
+export const sendReply = (r: Replying | null | undefined) =>
+  r ? { reply_to: r.message.id, mention_reply: r.mention } : {}
+
+export function quoteDeleted(list: Message[], id: number): Message[] {
+  if (!list.some(m => m.reply_to?.id === id && !m.reply_to.deleted)) return list
+  return list.map(m =>
+    m.reply_to?.id === id && !m.reply_to.deleted
+      ? { ...m, reply_to: deletedQuote(id, m.reply_to.mention) }
+      : m
+  )
+}
+
+export interface SnippetPart {
+  text: string
+  spoiler: boolean
+}
+
+// Splits on `||`; every second part is a spoiler, including an unclosed one at the end (the
+// snippet may be cut inside a spoiler).
+export function snippetParts(text: string): SnippetPart[] {
+  return text
+    .split('||')
+    .map((part, i) => ({ text: part, spoiler: i % 2 === 1 }))
+    .filter(p => p.text !== '')
+}
