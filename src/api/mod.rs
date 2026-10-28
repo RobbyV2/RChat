@@ -10,6 +10,7 @@ pub mod messages;
 pub mod openapi;
 pub mod passwords;
 pub mod pings;
+pub mod pins;
 pub mod reactions;
 pub mod servers;
 pub mod users;
@@ -24,7 +25,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use rustrict::CensorStr;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -284,7 +285,7 @@ pub struct Channel {
     /// Text or voice.
     pub kind: ChannelKind,
     /// Minimum seconds between two messages from the same member, 0 (off) to 21600; members
-    /// with Manage channels or Delete messages are exempt.
+    /// with Manage channels or Manage messages are exempt.
     pub slowmode_seconds: i64,
 }
 
@@ -299,7 +300,7 @@ pub struct Role {
     /// Name color as `#rrggbb`.
     #[schema(example = "#e91e63")]
     pub color: String,
-    /// Permission bits the role grants: 1 Manage channels, 2 Delete messages, 4 Kick (also
+    /// Permission bits the role grants: 1 Manage channels, 2 Manage messages (delete and pin others' messages), 4 Kick (also
     /// bans), 8 Delete server (also edits the server), 16 Manage admins.
     #[schema(example = 6)]
     pub perms: i64,
@@ -554,7 +555,8 @@ pub struct Message {
     /// Link previews; empty until they are fetched, then delivered by the `embeds_resolved`
     /// WebSocket event and included in later reads.
     pub embeds: Vec<Embed>,
-    /// `user` for a normal message or `call` for a direct-message call log.
+    /// `user` for a normal message, `call` for a direct-message call log, or `pin` when someone
+    /// pinned a message (`pin_message_id`; empty `content`).
     #[schema(example = "user")]
     pub kind: String,
     /// Call details when `kind` is `call`; `null` otherwise.
@@ -574,6 +576,14 @@ pub struct Message {
     /// attachment and link previews above are a copy made when it was forwarded.
     #[serde(default)]
     pub forward: Option<ForwardRef>,
+    /// Unix seconds when the message was pinned; `null` if it is not pinned.
+    #[serde(default)]
+    pub pinned_at: Option<i64>,
+    /// For a `pin` message (someone pinned a message), the id of the pinned message; `null`
+    /// once that message is deleted, when it was sent before you could read the channel's
+    /// history, and for other kinds.
+    #[serde(default)]
+    pub pin_message_id: Option<i64>,
 }
 
 /// The original of a forwarded message. The copy never changes when the original is edited or
@@ -1398,17 +1408,23 @@ fn api_routes(
             "/channels/{id}/messages",
             get(messages::channel_messages).post(messages::send_channel_message),
         )
+        .route("/channels/{id}/pins", get(pins::channel_pins))
         .route("/dms", get(dms::list_dms).post(dms::open_dm))
         .route(
             "/dms/{id}/messages",
             get(messages::dm_messages).post(messages::send_dm_message),
         )
+        .route("/dms/{id}/pins", get(pins::dm_pins))
         .route(
             "/messages/{id}",
             delete(messages::delete_message).patch(messages::edit_message),
         )
         .route("/messages/{id}/media", delete(media::delete_media))
         .route("/messages/{id}/location", get(messages::message_location))
+        .route(
+            "/messages/{id}/pin",
+            put(pins::pin_message).delete(pins::unpin_message),
+        )
         .route(
             "/messages/{id}/reactions/{emoji}",
             get(reactions::list_reactors)

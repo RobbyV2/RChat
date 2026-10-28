@@ -85,6 +85,8 @@ import { MessageEditor, editAction, editMenuItem } from './message_editor'
 import { canEdit as ownEditable } from '../lib/sed'
 import { canForward } from '../lib/forward'
 import { ForwardCard, forwardAction, forwardMenuItem } from './forwards'
+import { PinNotice, PinsButton, PinsWindow, pinMenuItem, useCanPin } from './pins'
+import { canPin } from '../lib/pins'
 
 const EMPTY: Message[] = []
 
@@ -335,6 +337,7 @@ const MessageRow = memo(function MessageRow({
       <div className="h-0.5 rounded-full bg-error" />
     </div>
   )
+  if (m.kind === 'pin') return <PinNotice m={m} server={server} divider={mark} onMenu={onMenu} />
   if (m.kind === 'call')
     return (
       <div data-row data-mid={m.id}>
@@ -618,6 +621,22 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       openContextMenu(x, y, messageCopyItems(msg))
       return
     }
+    if (msg.kind === 'pin') {
+      openContextMenu(x, y, [
+        ...(canDelete(msg)
+          ? [
+              {
+                label: 'Delete Message',
+                danger: true,
+                icon: Trash2,
+                action: () => confirmDeleteMessage(msg.id),
+              },
+            ]
+          : []),
+        { label: 'Copy Message ID', icon: Hash, action: () => copy(String(msg.id)) },
+      ])
+      return
+    }
     const { author } = msg
     const self = author.username === me.username
     const items: ContextMenuItem[] = [
@@ -633,6 +652,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     if (forwardable(msg)) items.unshift(forwardMenuItem(() => copyForward(msg)))
     if (canReact && canQuote(msg)) items.unshift(replyMenuItem(() => replyTo(msg)))
     if (canEdit(msg)) items.unshift(editMenuItem(() => editMsg(msg)))
+    if (pinRights && canPin(msg)) items.push(pinMenuItem(msg))
     if (view?.kind === 'channel' && !self) {
       const target = memberOf(useStore.getState(), view.server, author.username)
       if (
@@ -703,6 +723,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   }
 
   const canUnreact = me !== null && !guest
+  const pinRights = useCanPin()
   const canReact =
     canUnreact &&
     (view?.kind === 'dm' ||
@@ -879,6 +900,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
             </div>
           )}
           <StatusClock />
+          {scope && <PinsButton />}
           {view?.kind === 'channel' && !isVoice && (
             <button
               title="Search"
@@ -997,6 +1019,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           <MessageComposer />
         </>
       )}
+      {scope && <PinsWindow />}
       {dragging && (
         <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-surface/80 font-medium text-primary">
           Drop file to attach

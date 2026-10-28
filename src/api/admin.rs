@@ -881,6 +881,7 @@ pub(crate) async fn delete_message(
         channel_id,
         dm_id,
         thread_root_id,
+        kind: _,
         author: _,
         media_id: _,
         media_filename: _,

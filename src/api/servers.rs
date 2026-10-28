@@ -148,7 +148,7 @@ pub struct UsernameReq {
 /// Request body for setting a server admin's permissions.
 #[derive(Deserialize, ToSchema)]
 pub struct PermsReq {
-    /// Permission bitmask: 1 Manage channels, 2 Delete messages, 4 Kick, 8 Delete server,
+    /// Permission bitmask: 1 Manage channels, 2 Manage messages (delete and pin others' messages), 4 Kick, 8 Delete server,
     /// 16 Manage admins. Bits outside 31 are dropped. For an admin, 0 means all permissions.
     #[schema(example = 7)]
     perms: i64,
@@ -164,8 +164,8 @@ pub struct RoleReq {
     /// Role color as `#rrggbb`, stored as sent.
     #[schema(example = "#22c55e")]
     color: String,
-    /// Permission bitmask granted to members holding the role: 1 Manage channels, 2 Delete
-    /// messages, 4 Kick, 8 Delete server, 16 Manage admins. Bits outside 31 are dropped. Roles
+    /// Permission bitmask granted to members holding the role: 1 Manage channels, 2 Manage
+    /// messages (delete and pin others' messages), 4 Kick, 8 Delete server, 16 Manage admins. Bits outside 31 are dropped. Roles
     /// only add permissions to members who are not admins; admins use their own admin
     /// permissions.
     #[schema(example = 6)]

@@ -31,7 +31,7 @@ use crate::db::{
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 
-const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped";
+const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id)";
 const SNIPPET_MAX: usize = 200;
 
 /// Message-id paging for message lists. Give at most one of `before`, `after` and `around`;
@@ -357,6 +357,11 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
             }),
             (_, _, _) => None,
         },
+        pinned_at: r.try_get(29)?,
+        pin_message_id: match r.try_get::<Option<i64>, _>(31)? {
+            Some(_) => r.try_get(30)?,
+            None => None,
+        },
     })
 }
 
@@ -409,6 +414,13 @@ async fn rows_messages(db: &Db, rows: &[AnyRow], quotes: Quotes) -> Result<Vec<M
         .iter()
         .map(|r| row_message(r, &refs))
         .collect::<Result<Vec<_>, _>>()?;
+    if let Quotes::Since(Some(floor)) = quotes {
+        for (m, r) in msgs.iter_mut().zip(rows) {
+            if r.try_get::<Option<i64>, _>(31)?.is_some_and(|t| t < floor) {
+                m.pin_message_id = None;
+            }
+        }
+    }
     match quotes {
         Quotes::Skip => msgs.iter_mut().for_each(|m| m.reply_to = None),
         Quotes::Partial => return Ok(msgs.into_iter().map(partial_quote).collect()),
@@ -734,6 +746,34 @@ async fn page(
     Ok(msgs)
 }
 
+/// Pinned messages of a channel (`m.channel_id`) or DM (`m.dm_id`), newest pin first, sent at or
+/// after `floor`, with link previews and quotes the viewer may read.
+pub(crate) async fn pinned_messages(
+    db: &Db,
+    channel_id: Option<i64>,
+    dm_id: Option<i64>,
+    floor: Option<i64>,
+    limit: i64,
+) -> Result<Vec<Message>, ApiError> {
+    let (col, key) = match (channel_id, dm_id) {
+        (Some(id), _) => ("m.channel_id", id),
+        (None, Some(id)) => ("m.dm_id", id),
+        (None, None) => return Ok(Vec::new()),
+    };
+    let sql = format!(
+        "SELECT {COLS} FROM messages m WHERE {col} = $1 AND m.pinned_at IS NOT NULL AND m.thread_root_id IS NULL AND m.created_at >= $2 AND {LIVE_AUTHOR} ORDER BY m.pinned_at DESC, m.id DESC LIMIT $3"
+    );
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(key)
+        .bind(floor.unwrap_or(i64::MIN))
+        .bind(limit)
+        .fetch_all(db)
+        .await?;
+    let mut msgs = rows_messages(db, &rows, Quotes::Since(floor)).await?;
+    attach_embeds(db, &mut msgs).await?;
+    Ok(msgs)
+}
+
 /// The latest top-level messages for an invite preview, without quotes (no read-history floor
 /// applies to the viewer).
 pub(crate) async fn recent_channel_messages(
@@ -1022,6 +1062,8 @@ async fn insert_message(
         }),
         edited_at: None,
         forward: None,
+        pinned_at: None,
+        pin_message_id: None,
     }];
     attach_quotes(db, &mut msgs, None).await?;
     let [message] = msgs;
@@ -1220,6 +1262,8 @@ async fn insert_forward(
             origin,
             dropped,
         }),
+        pinned_at: None,
+        pin_message_id: None,
     }];
     attach_embeds(db, &mut msgs).await?;
     let [message] = msgs;
@@ -1262,6 +1306,7 @@ pub(crate) async fn message_location(
         channel_id,
         dm_id,
         thread_root_id,
+        kind: _,
         author: _,
         media_id: _,
         media_filename: _,
@@ -1318,7 +1363,7 @@ pub(crate) async fn channel_messages(
 /// Post a channel message
 ///
 /// Posts a top-level message, optionally with one attachment (an uploaded file via `media_id`
-/// or a peer-to-peer file via `p2p`). Requires a bearer token. Message text is checked against the profanity filter when it is on. In server channels this needs membership and the send permission for the channel. If the channel has slow mode, members without the Manage channels or Delete messages permission must wait `slowmode_seconds` between messages in the channel (thread replies count).
+/// or a peer-to-peer file via `p2p`). Requires a bearer token. Message text is checked against the profanity filter when it is on. In server channels this needs membership and the send permission for the channel. If the channel has slow mode, members without the Manage channels or Manage messages permission must wait `slowmode_seconds` between messages in the channel (thread replies count).
 /// Voice channels take no messages. Emits `message` to clients in the server that can see the
 /// channel; when the text has links, `embeds_resolved` follows once previews are fetched. Each
 /// `@username` in the text (outside code; at most 20 users, not yourself) pings that user if
@@ -1420,7 +1465,7 @@ pub(crate) async fn thread_messages(
 ///
 /// Posts a reply to a top-level channel message, starting the thread if needed. The reply
 /// lives in the root's channel and has `thread_root_id` set. Requires a bearer token.
-/// Message text is checked against the profanity filter when it is on. In server channels this needs membership and the send permission for the channel. If the channel has slow mode, members without the Manage channels or Delete messages permission must wait `slowmode_seconds` between messages in the channel (thread replies count). Emits `message` to clients in the server that can see the channel; when the
+/// Message text is checked against the profanity filter when it is on. In server channels this needs membership and the send permission for the channel. If the channel has slow mode, members without the Manage channels or Manage messages permission must wait `slowmode_seconds` between messages in the channel (thread replies count). Emits `message` to clients in the server that can see the channel; when the
 /// text has links, `embeds_resolved` follows once previews are fetched. Each `@username` in
 /// the text (outside code; at most 20 users, not yourself) pings that user if they are a member
 /// who can see the channel: stored for `GET /api/unreads` and sent to them as a `ping` event.
@@ -1596,11 +1641,11 @@ pub(crate) async fn send_dm_message(
 /// Permanently deletes a channel, thread or DM message; deleting a thread root also deletes
 /// its replies. Pings on the deleted messages are removed; each affected user gets
 /// `ping_count` with the scope's new unseen count. Requires a bearer token. The author may
-/// always delete their own message; in servers, members with the Delete messages permission
+/// always delete their own message; in servers, members with the Manage messages permission
 /// may delete anyone's. Emits `message_deleted` (with `thread_root_id` for replies) to clients
 /// in the server that can see the channel, or to both DM participants. General rate-limit
 /// bucket.
-#[utoipa::path(delete, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Deleted; body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Delete messages permission in the server (in DMs only the author may delete)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Deleted; body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Manage messages permission in the server (in DMs only the author may delete)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn delete_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1619,6 +1664,7 @@ pub(crate) async fn delete_message(
         channel_id,
         dm_id,
         thread_root_id,
+        kind: _,
         author: _,
         media_id: _,
         media_filename: _,
@@ -1720,6 +1766,7 @@ pub(crate) async fn edit_message(
             channel_id,
             dm_id,
             thread_root_id: _,
+            kind: _,
             author: _,
             media_id: _,
             media_filename: _,
@@ -1943,7 +1990,7 @@ async fn search_once(
     let mut msgs = rows_messages(db, &rows, Quotes::Skip).await?;
     let mut ctx: Vec<(String, String)> = Vec::with_capacity(rows.len());
     for r in &rows {
-        ctx.push((r.try_get(29)?, r.try_get(30)?));
+        ctx.push((r.try_get(32)?, r.try_get(33)?));
     }
     attach_embeds(db, &mut msgs).await?;
     Ok(msgs
@@ -2011,7 +2058,7 @@ async fn search_sql(
         None => (i64::MIN, before.unwrap_or(i64::MAX)),
     };
     check_nul([&q, &server, &from, &has], &servers)?;
-    let mut conds: Vec<String> = vec![LIVE_AUTHOR.to_string()];
+    let mut conds: Vec<String> = vec![LIVE_AUTHOR.to_string(), "m.kind = 'user'".to_string()];
     let mut binds: Vec<Bind> = Vec::new();
     match user {
         Some(u) => {
@@ -3167,6 +3214,36 @@ mod tests {
             .execute(db)
             .await
             .expect("seed messages");
+    }
+
+    #[tokio::test]
+    async fn search_skips_pin_notices_and_call_logs() {
+        let (state, path) = temp_state("search_kinds").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        let t = now();
+        let real = post(db, cid, "alice", "needle", t).await;
+        for kind in ["pin", "call"] {
+            sqlx::query("INSERT INTO messages(channel_id, author, content, kind, created_at) VALUES($1, 'alice', '', $2, $3)")
+                .bind(cid)
+                .bind(kind)
+                .bind(t)
+                .execute(db)
+                .await
+                .expect("system row");
+        }
+        for q in [Some("needle"), None] {
+            let got = found(
+                &state,
+                Some(mem_user("alice", false)),
+                HeaderMap::new(),
+                query(q),
+            )
+            .await;
+            assert_eq!(got, vec![real], "q={q:?}");
+        }
+        done(state, path).await;
     }
 
     #[tokio::test]

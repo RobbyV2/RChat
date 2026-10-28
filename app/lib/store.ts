@@ -54,6 +54,7 @@ import {
   type Replying,
 } from './replies'
 import { applySed, lastEditable, type Sed } from './sed'
+import { unlinkPin, withPinnedAt, withoutPin } from './pins'
 import {
   canForward,
   clipOf,
@@ -321,6 +322,13 @@ export interface Toast {
   name?: string
 }
 
+// The pinned-messages window of one scope; `list` is null until it loads.
+export interface PinsView {
+  key: string
+  list: Message[] | null
+  failed: boolean
+}
+
 export interface SearchState {
   results: SearchResult[]
   hasMore: boolean
@@ -496,6 +504,7 @@ interface RChatState {
   replying: Record<string, Replying>
   forwardClip: ForwardClip | null
   toast: Toast | null
+  pins: PinsView | null
   composerFocus: { key: string; n: number } | null
   editing: Editing | null
   search: SearchState
@@ -560,6 +569,11 @@ interface RChatState {
   toggleReplyMention: (key: string) => void
   copyForward: (m: Message) => void
   clearForward: () => void
+  openPins: () => void
+  closePins: () => void
+  pinMessage: (id: number) => Promise<void>
+  openPinned: (key: string, id: number) => Promise<void>
+  unpinMessage: (id: number) => Promise<void>
   reloadForward: () => void
   sendForward: (key: string) => void
   openForward: (m: Message) => Promise<void>
@@ -1415,6 +1429,8 @@ export const useStore = create<RChatState>()((set, get) => {
         else if (get().token) void recoverMe()
         const { view } = get()
         if (view) askP2p(get().messages[viewKey(view)] ?? [])
+        const { pins } = get()
+        if (pins) loadPins(pins.key)
         catchUp()
       },
       250 + Math.random() * RESYNC_JITTER
@@ -1878,6 +1894,40 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const forgetReactors = (key: string) => void reactorCache.delete(key)
 
+  // The pins window reads through the gated list, so it only shows what the viewer may read.
+  let pinsGen = 0
+  const loadPins = (key: string) => {
+    pinsGen += 1
+    const gen = pinsGen
+    const id = Number(key.slice(1))
+    const current = () => gen === pinsGen && get().pins?.key === key
+    ;(key[0] === 'd' ? api.dmPins(id) : api.channelPins(id)).then(
+      list => {
+        if (!current()) return
+        askP2p(list)
+        set({ pins: { key, list, failed: false } })
+      },
+      () => {
+        if (current()) set(s => (s.pins ? { pins: { ...s.pins, failed: true } } : {}))
+      }
+    )
+  }
+
+  const setPinned = (id: number, at: number | null) => {
+    patchReactions(id, m => withPinnedAt(m, at))
+    if (at === null)
+      set(s =>
+        s.pins?.list && s.pins.list.some(m => m.id === id)
+          ? { pins: { ...s.pins, list: withoutPin(s.pins.list, id) } }
+          : {}
+      )
+  }
+
+  const refreshPins = (id: number) => {
+    const pins = get().pins
+    if (pins?.list?.some(m => m.id === id)) loadPins(pins.key)
+  }
+
   const quotes = new Map<number, ReplyRef>()
   const quoteReads = new Set<number>()
   let quoteGen = 0
@@ -2299,7 +2349,7 @@ export const useStore = create<RChatState>()((set, get) => {
   // Leaves the current view for none (home); a previewed server is forgotten on the way out.
   const clearView = () => {
     leaveServerView(null)
-    set({ view: null })
+    set({ view: null, pins: null })
     syncUrl(null, 'replace')
     get().setViewing(null)
   }
@@ -2696,6 +2746,7 @@ export const useStore = create<RChatState>()((set, get) => {
       atBottom: { ...s.atBottom, [key]: true },
       focus: keyed(s.focus, key, null),
       unreadAnchor: left && left !== key ? keyed(s.unreadAnchor, left, null) : s.unreadAnchor,
+      pins: s.pins && s.pins.key !== key ? null : s.pins,
     }))
     placeAnchor(key)
   }
@@ -2894,6 +2945,7 @@ export const useStore = create<RChatState>()((set, get) => {
     replying: {},
     forwardClip: null,
     toast: null,
+    pins: null,
     composerFocus: null,
     editing: null,
     search: emptySearch(),
@@ -3169,6 +3221,7 @@ export const useStore = create<RChatState>()((set, get) => {
         replying: {},
         forwardClip: null,
         toast: null,
+        pins: null,
         composerFocus: null,
         editing: null,
         bootError: null,
@@ -3467,6 +3520,40 @@ export const useStore = create<RChatState>()((set, get) => {
     },
 
     clearForward: () => saveForward(null),
+
+    openPins: () => {
+      const { view } = get()
+      if (!view) return
+      const key = viewKey(view)
+      set({ pins: { key, list: null, failed: false }, contextMenu: null })
+      loadPins(key)
+    },
+
+    closePins: () => set(s => (s.pins ? { pins: null } : {})),
+
+    pinMessage: id =>
+      act(async () => {
+        await api.pinMessage(id)
+        patchReactions(id, m => (m.pinned_at ? m : withPinnedAt(m, Math.floor(Date.now() / 1000))))
+      }),
+
+    openPinned: (key, id) =>
+      act(async () => {
+        if (!(get().messages[key] ?? []).some(m => m.id === id)) {
+          const probe = await fetchPage(key, { around: id, limit: 1 })
+          if (probe[0]?.id !== id) {
+            toast("You can't open this message")
+            return
+          }
+        }
+        await get().jumpTo(key, id)
+      }),
+
+    unpinMessage: id =>
+      act(async () => {
+        await api.unpinMessage(id)
+        setPinned(id, null)
+      }),
 
     reloadForward: () => {
       const username = get().me?.username
@@ -3912,9 +3999,10 @@ export const useStore = create<RChatState>()((set, get) => {
     deleteMessage: id =>
       act(async () => {
         await api.deleteMessage(id)
+        setPinned(id, null)
         const drop = (list: Message[]) => {
           const i = indexOfId(list, id)
-          return i === -1 ? list : [...list.slice(0, i), ...list.slice(i + 1)]
+          return unlinkPin(i === -1 ? list : [...list.slice(0, i), ...list.slice(i + 1)], id)
         }
         mapTails(drop)
         set(s => ({
@@ -4399,7 +4487,9 @@ export const useStore = create<RChatState>()((set, get) => {
             notify(
               m.author.display_name,
               '',
-              m.content || m.media?.filename || 'Attachment',
+              m.kind === 'pin'
+                ? 'Pinned a message'
+                : m.content || m.media?.filename || 'Attachment',
               () => {
                 void get().openDm(dm_id)
               }
@@ -4410,6 +4500,17 @@ export const useStore = create<RChatState>()((set, get) => {
         case 'message_updated': {
           if (ev.stub) rereadEdited(ev)
           else applyUpdated(ev.message)
+          refreshPins(ev.stub ? ev.id : ev.message.id)
+          return
+        }
+        case 'message_pinned': {
+          setPinned(ev.message_id, ev.pinned_at)
+          const key = messageKey(ev.channel_id, ev.dm_id)
+          if (key && get().pins?.key === key) loadPins(key)
+          return
+        }
+        case 'message_unpinned': {
+          setPinned(ev.message_id, null)
           return
         }
         case 'reaction_added':
@@ -4431,10 +4532,11 @@ export const useStore = create<RChatState>()((set, get) => {
         case 'message_deleted': {
           if (ev.server !== null) staleInvites(ev.server)
           const rootOf = ev.thread_root_id
+          setPinned(ev.id, null)
           const drop = (list: Message[]) => {
             const i = indexOfId(list, ev.id)
-            const cut = quoteDeleted(
-              i === -1 ? list : [...list.slice(0, i), ...list.slice(i + 1)],
+            const cut = unlinkPin(
+              quoteDeleted(i === -1 ? list : [...list.slice(0, i), ...list.slice(i + 1)], ev.id),
               ev.id
             )
             return rootOf === null

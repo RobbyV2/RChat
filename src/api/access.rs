@@ -700,6 +700,7 @@ pub struct MsgScope {
     pub channel_id: Option<i64>,
     pub dm_id: Option<i64>,
     pub thread_root_id: Option<i64>,
+    pub kind: String,
     pub author: String,
     pub media_id: Option<String>,
     pub media_filename: Option<String>,
@@ -738,7 +739,7 @@ pub async fn resolve_dm(db: &Db, id: i64, user: &User) -> Result<Vec<String>, Ap
 
 async fn message_row(db: &Db, id: i64) -> Result<(MsgScope, i64), ApiError> {
     let sql = format!(
-        "SELECT m.channel_id, m.dm_id, m.thread_root_id, m.author, m.media_id, m.media_filename, m.media_kind, m.created_at FROM messages m WHERE m.id = $1 AND {LIVE_AUTHOR}"
+        "SELECT m.channel_id, m.dm_id, m.thread_root_id, m.author, m.media_id, m.media_filename, m.media_kind, m.created_at, m.kind FROM messages m WHERE m.id = $1 AND {LIVE_AUTHOR}"
     );
     let r = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(id)
@@ -750,6 +751,7 @@ async fn message_row(db: &Db, id: i64) -> Result<(MsgScope, i64), ApiError> {
             channel_id: r.try_get(0)?,
             dm_id: r.try_get(1)?,
             thread_root_id: r.try_get(2)?,
+            kind: r.try_get(8)?,
             author: r.try_get(3)?,
             media_id: r.try_get(4)?,
             media_filename: r.try_get(5)?,
@@ -834,7 +836,7 @@ impl ResolvedMessage {
 
     pub fn thread_channel(&self) -> Result<&ResolvedChannel, ApiError> {
         match (&self.channel, self.scope.thread_root_id) {
-            (Some(channel), None) => Ok(channel),
+            (Some(channel), None) if self.scope.kind == "user" => Ok(channel),
             (_, _) => Err(ApiError(
                 StatusCode::BAD_REQUEST,
                 "Threads only start on channel messages".to_string(),
@@ -854,6 +856,35 @@ impl ResolvedMessage {
                 match channel.rights.send {
                     true => Ok(()),
                     false => Err(forbidden("No permission to react in this channel")),
+                }
+            }
+            (None, Some(did)) => match dm_pair(db, did, true).await? {
+                Some(users)
+                    if self
+                        .user
+                        .as_ref()
+                        .is_some_and(|u| users.contains(&u.username)) =>
+                {
+                    Ok(())
+                }
+                _ => Err(not_found()),
+            },
+            (None, None) => Err(not_found()),
+        }
+    }
+
+    /// Pinning or unpinning: in a channel a signed-in member with the Manage messages
+    /// (`DeleteMessages`) permission, in a DM either participant while both accounts are live.
+    pub async fn pin_gate(&self, db: &Db) -> Result<(), ApiError> {
+        match (&self.channel, self.scope.dm_id) {
+            (Some(channel), _) => {
+                if channel.server.user.is_none() {
+                    return Err(forbidden("Not a member"));
+                }
+                channel.server.require_member()?;
+                match channel.server.has_perm(db, Perm::DeleteMessages).await {
+                    true => Ok(()),
+                    false => Err(forbidden("No permission to manage messages")),
                 }
             }
             (None, Some(did)) => match dm_pair(db, did, true).await? {
@@ -1105,7 +1136,7 @@ mod tests {
         (after.0 - before.0, after.1 - before.1)
     }
 
-    const HANDLERS: [(&str, &str); 16] = [
+    const HANDLERS: [(&str, &str); 17] = [
         ("servers.rs", include_str!("servers.rs")),
         ("passwords.rs", include_str!("passwords.rs")),
         ("messages.rs", include_str!("messages.rs")),
@@ -1122,6 +1153,7 @@ mod tests {
         ("db.rs", include_str!("../db.rs")),
         ("pings.rs", include_str!("pings.rs")),
         ("reactions.rs", include_str!("reactions.rs")),
+        ("pins.rs", include_str!("pins.rs")),
     ];
 
     fn calls(code: &str, token: &str) -> bool {

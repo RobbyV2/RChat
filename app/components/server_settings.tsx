@@ -347,9 +347,13 @@ export function Dialog({
   )
 }
 
-const PERM_ITEMS: { label: string; bit: number }[] = [
+const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
   { label: 'Manage channels', bit: Perm.ManageChannels },
-  { label: 'Delete messages', bit: Perm.DeleteMessages },
+  {
+    label: 'Manage messages',
+    bit: Perm.DeleteMessages,
+    hint: "Delete and pin others' messages",
+  },
   { label: 'Kick', bit: Perm.Kick },
   { label: 'Delete server', bit: Perm.DeleteServer },
   { label: 'Manage admins', bit: Perm.ManageAdmins },
@@ -370,12 +374,12 @@ function PermChecks({
 }) {
   return (
     <div className="flex flex-wrap gap-x-3 gap-y-1">
-      {PERM_ITEMS.map(({ label, bit }) => {
+      {PERM_ITEMS.map(({ label, bit, hint }) => {
         const off = !!locked || (allowed !== undefined && !allowed(value ^ bit))
         return (
           <label
             key={bit}
-            title={off ? (locked ?? GRANT_NOTE) : undefined}
+            title={off ? (locked ?? GRANT_NOTE) : hint}
             className={`flex items-center gap-1.5 text-sm ${off ? 'opacity-60' : ''}`}
           >
             <input

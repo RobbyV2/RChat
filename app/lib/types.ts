@@ -189,7 +189,7 @@ export interface Embed {
   banner_removed: boolean
 }
 
-export type MessageKind = 'user' | 'call'
+export type MessageKind = 'user' | 'call' | 'pin'
 
 export type CallOutcome = 'missed' | 'declined' | 'completed'
 
@@ -217,6 +217,10 @@ export interface Message {
   reply_to?: ReplyRef | null
   edited_at?: number | null
   forward?: ForwardRef | null
+  // unix seconds; null when not pinned
+  pinned_at?: number | null
+  // kind 'pin': the pinned message, null once it is deleted or older than your history
+  pin_message_id?: number | null
 }
 
 export interface ForwardRef {
@@ -438,6 +442,13 @@ export type WsEvent =
       count?: number
     } & Scoped)
   | ({ type: 'message_deleted'; id: number; thread_root_id: number | null } & Scoped)
+  | ({
+      type: 'message_pinned'
+      message_id: number
+      pinned_at: number
+      pinned_by: string
+    } & Scoped)
+  | ({ type: 'message_unpinned'; message_id: number } & Scoped)
   | ({
       type: 'media_removed'
       message_id: number

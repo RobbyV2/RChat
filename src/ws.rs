@@ -364,6 +364,22 @@ pub enum WsEvent {
         username: String,
         count: i64,
     },
+    MessagePinned {
+        server: Option<String>,
+        channel_id: Option<i64>,
+        dm_id: Option<i64>,
+        dm_users: Option<Vec<String>>,
+        message_id: i64,
+        pinned_at: i64,
+        pinned_by: String,
+    },
+    MessageUnpinned {
+        server: Option<String>,
+        channel_id: Option<i64>,
+        dm_id: Option<i64>,
+        dm_users: Option<Vec<String>>,
+        message_id: i64,
+    },
     ChannelCreated {
         server: String,
         channel: Channel,
@@ -897,6 +913,42 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 count,
             })
         }
+        WsEvent::MessagePinned {
+            server,
+            channel_id,
+            dm_id,
+            dm_users,
+            message_id,
+            pinned_at: _,
+            pinned_by,
+        } => {
+            let pinned_at = crate::api::pins::pinned_at(db, message_id).await.ok()??;
+            Some(WsEvent::MessagePinned {
+                server,
+                channel_id,
+                dm_id,
+                dm_users,
+                message_id,
+                pinned_at,
+                pinned_by,
+            })
+        }
+        WsEvent::MessageUnpinned {
+            server,
+            channel_id,
+            dm_id,
+            dm_users,
+            message_id,
+        } => match crate::api::pins::pinned_at(db, message_id).await.ok()? {
+            Some(_) => None,
+            None => Some(WsEvent::MessageUnpinned {
+                server,
+                channel_id,
+                dm_id,
+                dm_users,
+                message_id,
+            }),
+        },
         WsEvent::ChannelCreated { server, channel } => {
             let (owner, channel) = channel_now(db, channel.id).await.ok().flatten()?;
             (owner == server).then_some(WsEvent::ChannelCreated { server, channel })
@@ -2912,6 +2964,22 @@ fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
             username: _,
             count: _,
         } => scoped(server, channel_id),
+        WsEvent::MessagePinned {
+            server,
+            channel_id,
+            dm_id: _,
+            dm_users: _,
+            message_id: _,
+            pinned_at: _,
+            pinned_by: _,
+        }
+        | WsEvent::MessageUnpinned {
+            server,
+            channel_id,
+            dm_id: _,
+            dm_users: _,
+            message_id: _,
+        } => scoped(server, channel_id),
         WsEvent::ChannelRenamed { server, channel }
         | WsEvent::ChannelUpdated { server, channel } => Some((server.as_str(), channel.id)),
         WsEvent::VoiceState {
@@ -3020,6 +3088,22 @@ fn wants(
             emoji: _,
             username: _,
             count: _,
+        } => scoped(server, dm_users),
+        WsEvent::MessagePinned {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            message_id: _,
+            pinned_at: _,
+            pinned_by: _,
+        }
+        | WsEvent::MessageUnpinned {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            message_id: _,
         } => scoped(server, dm_users),
         WsEvent::ChannelCreated { server, channel: _ }
         | WsEvent::ChannelRenamed { server, channel: _ }
@@ -3183,6 +3267,8 @@ mod tests {
             reply_to: None,
             edited_at: None,
             forward: None,
+            pinned_at: None,
+            pin_message_id: None,
         }
     }
 

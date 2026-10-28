@@ -144,6 +144,22 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             username: _,
             count: _,
         }
+        | WsEvent::MessagePinned {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            message_id: _,
+            pinned_at: _,
+            pinned_by: _,
+        }
+        | WsEvent::MessageUnpinned {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            message_id: _,
+        }
         | WsEvent::VoiceEnded {
             server,
             channel_id: _,
