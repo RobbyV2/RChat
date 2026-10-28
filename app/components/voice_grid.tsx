@@ -665,7 +665,7 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
         ...base,
         stream: joined ? p2p.remote : null,
         hasVideo: joined && p2p.remoteCamOn,
-        muted: false,
+        muted: joined && p2p.remoteMuted,
         deafened: false,
         speaking: joined && p2p.remoteSpeaking,
         mirror: false,

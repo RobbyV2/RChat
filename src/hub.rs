@@ -1232,6 +1232,16 @@ impl Replica {
         })
     }
 
+    fn p2p_call_peer(&self, me: &str, hoster: &str) -> Option<(String, Vec<String>)> {
+        let hosts = self.p2p.get(hoster)?;
+        self.calls
+            .values()
+            .filter(|c| c.kind == CallKind::P2p && c.dm_users.iter().any(|u| u == me))
+            .flat_map(|c| c.occupants.iter())
+            .find_map(|(u, conn)| (u == hoster).then(|| hosts.get(conn)).flatten())
+            .map(|h| (h.peer_id.clone(), h.ids.clone()))
+    }
+
     fn voice_snapshot(&self) -> Vec<WsEvent> {
         let mut evs: Vec<WsEvent> = self
             .rooms
@@ -2035,6 +2045,16 @@ impl Hub {
             peer_id,
             ids,
         });
+    }
+
+    // The hoster's tab that is in a P2P call with `me`, when they have several tabs open.
+    pub fn p2p_call_peer(&self, me: &str, hoster: &str) -> Option<(String, Vec<String>)> {
+        self.inner
+            .store
+            .lock()
+            .unwrap()
+            .replica
+            .p2p_call_peer(me, hoster)
     }
 
     pub fn p2p_of(&self, user: &str) -> Option<(String, Vec<String>)> {

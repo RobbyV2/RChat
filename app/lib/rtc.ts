@@ -1,4 +1,5 @@
 import { home } from './instances'
+import { iceConfig } from './ice'
 import { SpeakingDetector } from './vad'
 import { mediaError } from './rules'
 import { linkQuality, type LinkQuality } from './voice_layout'
@@ -399,7 +400,7 @@ export class RtcManager {
   }
 
   private connect(user: string, target: RtcTarget): Peer {
-    const pc = new RTCPeerConnection({ iceServers: [] })
+    const pc = new RTCPeerConnection(iceConfig())
     const peer: Peer = {
       pc,
       target,

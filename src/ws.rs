@@ -22,7 +22,7 @@ use crate::api::access::{
 use crate::api::messages::{Quotes, load_broadcast, load_message};
 use crate::api::pings::{Ping, ThreadPings};
 use crate::api::{Channel, Embed, Member, Message, ServerSummaryLite, Settings, UserRef};
-use crate::db::{ChannelKind, Db, get_user, now, setting_on, touch_interaction};
+use crate::db::{ChannelKind, Db, MediaKind, get_user, now, setting_on, touch_interaction};
 use crate::fanout::Topic;
 pub use crate::hub::Hub;
 use crate::hub::{Aftermath, CallEnd, Epoch, Op, P2pDrop, Purge};
@@ -1366,6 +1366,17 @@ impl Who {
         }
     }
 
+    fn soon(&mut self, hoster: &str, now: Instant) {
+        self.ask(vec![hoster.to_string()]);
+        if self.pace.due.is_none() {
+            self.pace.due = Some(
+                self.pace
+                    .last
+                    .map_or(now, |last| (last + self.pace.every).max(now)),
+            );
+        }
+    }
+
     fn forget(&mut self) {
         self.peers.clear();
         self.media.clear();
@@ -1422,7 +1433,10 @@ async fn p2p_visible(
     me: &str,
     hoster: &str,
 ) -> Option<(String, Vec<String>)> {
-    let (peer_id, ids) = state.hub.p2p_of(hoster)?;
+    let (peer_id, ids) = match state.hub.p2p_call_peer(me, hoster) {
+        Some(found) => found,
+        None => state.hub.p2p_of(hoster)?,
+    };
     if me == hoster {
         return Some((peer_id, ids));
     }
@@ -2260,7 +2274,48 @@ async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent
     if deliver && let Some((server, cid)) = event_channel(ev) {
         deliver = channel_gate(state, access, server, cid).await?;
     }
+    if deliver {
+        deliver = !hosting_via_who(access, ev);
+    }
     Some(deliver)
+}
+
+// Hosted ids are read capabilities and a hoster's broadcast goes to everyone who shares a server
+// with them, so others learn about hosting only through p2p_who: filtered to the ids they can
+// read, and naming the hoster's tab that is in a P2P call with them.
+fn hosting_via_who(access: &mut Access, ev: &WsEvent) -> bool {
+    let me = access.user.as_deref();
+    match ev {
+        WsEvent::P2pAvailability {
+            hoster,
+            peer_id: _,
+            ids: _,
+            online: true,
+            scope_servers: _,
+            scope_users: _,
+        } if me != Some(hoster.as_str()) => {
+            access.who.soon(hoster, Instant::now());
+            true
+        }
+        WsEvent::Message {
+            server: _,
+            channel_id: _,
+            dm_id: _,
+            dm_users: _,
+            message,
+        } => {
+            if let Some(media) = &message.media
+                && media.kind == MediaKind::P2p
+                && let Some(hoster) = &media.hoster
+                && me != Some(hoster.as_str())
+            {
+                access.who.media.remove(&(hoster.clone(), media.id.clone()));
+                access.who.soon(hoster, Instant::now());
+            }
+            false
+        }
+        _ => false,
+    }
 }
 
 enum Sent {
@@ -4381,6 +4436,113 @@ mod tests {
         crate::api::test_util::done(state, path).await;
     }
 
+    #[tokio::test]
+    async fn hosting_broadcasts_reach_others_only_through_p2p_who() {
+        let (state, path) = crate::api::test_util::temp_state("p2p_broadcast_ids").await;
+        let db = &state.db;
+        for name in ["alice", "bob", "carol"] {
+            add_user_row(db, name).await;
+        }
+        for user in ["alice", "carol"] {
+            sqlx::query(
+                "INSERT INTO members(server, username, is_admin, joined_at) VALUES('rchat', $1, 0, 0)",
+            )
+            .bind(user)
+            .execute(db)
+            .await
+            .expect("member");
+        }
+        let general = insert_id(db, "SELECT id FROM channels WHERE server = 'rchat'").await;
+        let dm = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
+        )
+        .await;
+        for (id, channel, dm_id) in [("pub", Some(general), None), ("dm", None, Some(dm))] {
+            sqlx::query("INSERT INTO messages(channel_id, dm_id, author, content, media_id, media_kind, media_hoster, created_at) VALUES($1, $2, 'alice', '', $3, 'p2p', 'alice', 0)")
+                .bind(channel)
+                .bind(dm_id)
+                .bind(id)
+                .execute(db)
+                .await
+                .expect("p2p message");
+        }
+        let ids = vec![s("pub"), s("dm")];
+        state.hub.set_p2p("alice", 1, s("peer-a"), ids.clone());
+        let hosting = WsEvent::P2pAvailability {
+            hoster: s("alice"),
+            peer_id: Some(s("peer-a")),
+            ids,
+            online: true,
+            scope_servers: vec![s("rchat")],
+            scope_users: vec![s("bob")],
+        };
+        let conn = state.hub.next_conn();
+        let mut carol = Access::new(Some(s("carol")), false, set(&["rchat"]));
+        assert!(carol.wants(&hosting));
+        assert_eq!(
+            on_event(&state, conn, &mut carol, &hosting).await,
+            Some(false)
+        );
+        assert_eq!(carol.who.pending, [s("alice")]);
+        assert!(carol.who.pace.due.is_some());
+        assert_eq!(
+            p2p_visible(&state, &mut carol, "carol", "alice").await,
+            Some((s("peer-a"), vec![s("pub")])),
+            "the DM attachment's id never reaches a server co-member"
+        );
+        let mut alice = Access::new(Some(s("alice")), false, set(&["rchat"]));
+        assert_eq!(
+            on_event(&state, conn, &mut alice, &hosting).await,
+            Some(true)
+        );
+        assert!(alice.who.pending.is_empty());
+        let offline = p2p_offline(s("alice"), vec![s("rchat")], Vec::new());
+        assert_eq!(
+            on_event(&state, conn, &mut carol, &offline).await,
+            Some(true)
+        );
+
+        let mut bob = Access::new(Some(s("bob")), false, HashSet::new());
+        assert_eq!(
+            p2p_visible(&state, &mut bob, "bob", "alice").await,
+            Some((s("peer-a"), vec![s("pub"), s("dm")]))
+        );
+        bob.who.pace.fire(Instant::now());
+        bob.who
+            .media
+            .insert((s("alice"), s("new")), (Instant::now(), false));
+        let mut posted = message();
+        posted.media = Some(crate::api::MediaRef {
+            id: s("new"),
+            filename: s("a.txt"),
+            kind: MediaKind::P2p,
+            hoster: Some(s("alice")),
+            expires_at: None,
+            size: Some(1),
+            mime: None,
+            removed: false,
+            removed_by_author: false,
+            spoiler: false,
+        });
+        let created = WsEvent::Message {
+            server: None,
+            channel_id: None,
+            dm_id: Some(dm),
+            dm_users: Some(vec![s("alice"), s("bob")]),
+            message: Box::new(posted),
+        };
+        assert_eq!(on_event(&state, conn, &mut bob, &created).await, Some(true));
+        assert!(!bob.who.media.contains_key(&(s("alice"), s("new"))));
+        assert_eq!(bob.who.pending, [s("alice")]);
+        assert_eq!(
+            bob.who.pace.due,
+            bob.who.pace.last.map(|last| last + P2P_WHO_EVERY),
+            "a hoster's new attachment is re-asked about on the next paced p2p_who"
+        );
+        crate::api::test_util::done(state, path).await;
+    }
+
     #[test]
     fn p2p_who_is_paced_and_merged_per_connection() {
         let mut who = Who::new();
@@ -4438,6 +4600,18 @@ mod tests {
             .await
             .expect("p2p call");
         assert_eq!(ask("carol").await, Some(("peer-a".to_string(), Vec::new())));
+        state
+            .hub
+            .set_p2p("alice", 2, "peer-a2".to_string(), Vec::new());
+        assert_eq!(
+            state.hub.p2p_of("alice").map(|(peer, _)| peer).as_deref(),
+            Some("peer-a2")
+        );
+        assert_eq!(
+            ask("carol").await,
+            Some(("peer-a".to_string(), Vec::new())),
+            "the partner dials the tab that is in the call, not the newest tab"
+        );
         assert_eq!(ask("eve").await, None);
         state.hub.call_end("alice", dm).await.expect("end");
         assert_eq!(ask("carol").await, None);

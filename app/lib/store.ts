@@ -2274,6 +2274,12 @@ export const useStore = create<RChatState>()((set, get) => {
   const held = (id: number) =>
     findMessage(id) ?? [...tails.values()].map(list => findById(list, id)).find(Boolean)
 
+  const unhost = (id: number) => {
+    const media = held(id)?.media
+    const me = get().me?.username
+    if (media?.kind === 'p2p' && me !== undefined && media.hoster === me) p2p.removeFile(media.id)
+  }
+
   const readQuote = (m: Message) => {
     const ref = m.reply_to
     if (!ref?.partial || quoteReads.has(m.id) || !held(m.id)) return
@@ -4432,6 +4438,7 @@ export const useStore = create<RChatState>()((set, get) => {
     deleteMessage: id =>
       act(async () => {
         await api.deleteMessage(id)
+        unhost(id)
         setPinned(id, null)
         const drop = (list: Message[]) => {
           const i = indexOfId(list, id)
@@ -4447,18 +4454,7 @@ export const useStore = create<RChatState>()((set, get) => {
     deleteMedia: messageId =>
       act(async () => {
         await api.deleteMedia(messageId)
-        const { me, messages } = get()
-        for (const list of Object.values(messages)) {
-          const m = findById(list, messageId)
-          if (
-            m?.media?.kind === 'p2p' &&
-            m.media.hoster !== null &&
-            m.media.hoster === me?.username
-          ) {
-            p2p.removeFile(m.media.id)
-            break
-          }
-        }
+        unhost(messageId)
         patchMessage(messageId, m =>
           m.media ? { ...m, media: { ...m.media, removed: true, removed_by_author: true } } : m
         )
@@ -4984,6 +4980,7 @@ export const useStore = create<RChatState>()((set, get) => {
         case 'message_deleted': {
           if (ev.server !== null) staleInvites(ev.server)
           const rootOf = ev.thread_root_id
+          unhost(ev.id)
           setPinned(ev.id, null)
           const drop = (list: Message[]) => {
             const i = indexOfId(list, ev.id)
@@ -5040,6 +5037,7 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'media_removed': {
+          unhost(ev.message_id)
           patchMessage(ev.message_id, m =>
             m.media
               ? {
@@ -5539,12 +5537,8 @@ export const useStore = create<RChatState>()((set, get) => {
           if (ev.from !== me.username) return
           const other = ev.dm_users.find(u => u !== me.username)
           if (!other) return
-          const avail = get().p2pAvailability[other]
-          if (avail?.online && avail.peer_id !== null) p2p.dial(avail.peer_id)
-          else {
-            pendingDial = other
-            home.ws.sendVoice({ type: 'p2p_who', hosters: [other] })
-          }
+          pendingDial = other
+          home.ws.sendVoice({ type: 'p2p_who', hosters: [other] })
           return
         }
         case 'p2p_availability': {

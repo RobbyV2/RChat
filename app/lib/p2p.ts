@@ -1,6 +1,8 @@
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs'
 import { backoffDelay } from './backoff'
 import { home, writeLocal } from './instances'
+import { iceConfig } from './ice'
+import { blobs } from './platform'
 import { SpeakingDetector } from './vad'
 import { mediaError } from './rules'
 import { slotLayout, videoPlan, type Slot } from './negotiation'
@@ -10,18 +12,26 @@ export interface StoredFile {
   name: string
   mime: string
   size: number
-  data: string
+  // Base64 bytes of a file kept by 0.2.x; newer files live in the blob store.
+  data?: string
   expires_at: number | null
 }
 
 type WireMsg =
-  | { type: 'get'; id: string }
+  | { type: 'get'; id: string; chunked?: boolean }
   | { type: 'file'; id: string; name: string; mime: string; data: string }
+  | { type: 'meta'; id: string; mime: string; size: number }
+  | { type: 'chunk'; id: string; data: ArrayBuffer | Uint8Array }
+  | { type: 'end'; id: string }
   | { type: 'missing'; id: string }
-  | { type: 'cam'; on: boolean; share: boolean; screen?: boolean }
+  | { type: 'cam'; on: boolean; share: boolean; screen?: boolean; muted?: boolean }
 
 const LS_ID = 'rchat_peer_id'
 const LS_FILES = 'rchat_p2p_files'
+export const CHUNK_BYTES = 256 * 1024
+const P2P_MAX_BYTES = 25 * 1024 * 1024
+const IDLE_MS = 30_000
+const BUFFERED_MAX = 16
 
 const randomHex = (bytes: number) => {
   const buf = new Uint8Array(bytes)
@@ -31,13 +41,13 @@ const randomHex = (bytes: number) => {
 
 export const newP2pId = () => randomHex(16)
 
-export const fileToBase64 = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve((reader.result as string).split(',')[1] ?? '')
-    reader.onerror = () => reject(new Error('Could not read file'))
-    reader.readAsDataURL(file)
-  })
+export const blobToBase64 = async (blob: Blob) => {
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  let bin = ''
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(bin)
+}
 
 export const base64ToBlob = (data: string, mime: string) => {
   const bin = atob(data)
@@ -46,8 +56,22 @@ export const base64ToBlob = (data: string, mime: string) => {
   return new Blob([bytes], { type: mime })
 }
 
+// Milliseconds until a file expires, or null when it never does or already has.
+export const expiryDelay = (expiresAt: number | null, nowMs: number) => {
+  if (expiresAt === null) return null
+  const wait = expiresAt * 1000 - nowMs
+  return wait > 0 ? Math.min(wait, 2 ** 31 - 1) : null
+}
+
+export const unexpired = (expiresAt: number | null, now: number) =>
+  expiresAt === null || expiresAt > now
+
 export const servable = (file: StoredFile | null, now: number) =>
-  file && (file.expires_at === null || file.expires_at > now) ? file : null
+  file && unexpired(file.expires_at, now) ? file : null
+
+const pause = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+const buffered = (conn: DataConnection) => (conn as { bufferSize?: number }).bufferSize ?? 0
 
 export class P2pManager {
   private peer: Peer | null = null
@@ -81,6 +105,7 @@ export class P2pManager {
   shareOn = false
   remoteCamOn = false
   remoteScreenOn = false
+  remoteMuted = false
   remoteShareId: string | null = null
   localSpeaking = false
   remoteSpeaking = false
@@ -124,29 +149,50 @@ export class P2pManager {
     this.cached = files
   }
 
-  private drop(files: Record<string, StoredFile>) {
+  private drop(files: Record<string, StoredFile>, gone: string[]) {
     writeLocal(LS_FILES, JSON.stringify(files))
     this.cached = files
+    for (const id of gone)
+      void blobs()
+        .remove(id)
+        .catch(() => {})
   }
 
   file(id: string): StoredFile | null {
     return this.files()[id] ?? null
   }
 
+  async blob(id: string): Promise<Blob | null> {
+    const f = this.file(id)
+    if (!f) return null
+    if (f.data !== undefined) return base64ToBlob(f.data, f.mime)
+    const b = await blobs()
+      .get(id)
+      .catch(() => null)
+    return b && b.type !== f.mime ? new Blob([b], { type: f.mime }) : b
+  }
+
   async storeFile(id: string, file: File, expiresAt: number | null) {
-    const data = await fileToBase64(file)
+    const full = new Error('Browser storage is full; P2P file could not be kept')
+    try {
+      await blobs().put(id, file)
+    } catch {
+      throw full
+    }
     const files = { ...this.files() }
     files[id] = {
       name: file.name,
       mime: file.type || 'application/octet-stream',
       size: file.size,
-      data,
       expires_at: expiresAt,
     }
     try {
       this.write(files)
     } catch {
-      throw new Error('Browser storage is full; P2P file could not be kept')
+      void blobs()
+        .remove(id)
+        .catch(() => {})
+      throw full
     }
     this.announce()
   }
@@ -155,28 +201,47 @@ export class P2pManager {
     const files = { ...this.files() }
     if (!(id in files)) return
     delete files[id]
-    this.drop(files)
+    this.drop(files, [id])
     this.announce()
   }
 
   purgeExpired() {
     const files = { ...this.files() }
     const now = Math.floor(Date.now() / 1000)
-    let changed = false
+    const gone: string[] = []
     for (const [id, f] of Object.entries(files)) {
       if (f.expires_at !== null && f.expires_at <= now) {
         delete files[id]
-        changed = true
+        gone.push(id)
       }
     }
-    if (changed) {
-      this.drop(files)
+    if (gone.length) {
+      this.drop(files, gone)
       this.announce()
+    }
+  }
+
+  // Moves files kept as base64 in localStorage by older versions into the blob store.
+  private async migrate() {
+    for (const [id, f] of Object.entries(this.files())) {
+      if (f.data === undefined) continue
+      try {
+        await blobs().put(id, base64ToBlob(f.data, f.mime))
+      } catch {
+        return
+      }
+      const files = { ...this.files() }
+      const cur = files[id]
+      if (!cur) continue
+      files[id] = { name: cur.name, mime: cur.mime, size: cur.size, expires_at: cur.expires_at }
+      writeLocal(LS_FILES, JSON.stringify(files))
+      this.cached = files
     }
   }
 
   ensurePurge() {
     this.purgeExpired()
+    void this.migrate()
     if (!this.purgeTimer) this.purgeTimer = setInterval(() => this.purgeExpired(), 60_000)
   }
 
@@ -210,7 +275,7 @@ export class P2pManager {
       cur.reconnect()
       return cur
     }
-    const peer = new Peer(this.peerId(), home.peer())
+    const peer = new Peer(this.peerId(), { ...home.peer(), config: iceConfig() })
     peer.on('open', () => {
       this.attempt = 0
     })
@@ -222,17 +287,20 @@ export class P2pManager {
       if (this.peer === peer) this.retryLater()
     })
     peer.on('error', err => {
-      if (err.type === 'unavailable-id') {
-        writeLocal(LS_ID, randomHex(16))
-        peer.destroy()
-        this.peer = null
-        this.announce()
-      } else {
-        console.error('peer', err)
-      }
+      if (err.type === 'unavailable-id') this.taken(peer)
+      else console.error('peer', err)
     })
     this.peer = peer
     return peer
+  }
+
+  // Another tab holds the stored id: use a fresh one for this tab only, so the
+  // other tab keeps its id and this one doesn't retry the taken id forever.
+  private taken(peer: Peer) {
+    this.id = randomHex(16)
+    peer.destroy()
+    if (this.peer === peer) this.peer = null
+    this.announce()
   }
 
   private serve(conn: DataConnection) {
@@ -241,33 +309,86 @@ export class P2pManager {
       const msg = d as WireMsg
       if (answered || msg?.type !== 'get' || typeof msg.id !== 'string') return
       answered = true
-      const f = servable(this.file(msg.id), Math.floor(Date.now() / 1000))
-      void conn.send(
-        f
-          ? { type: 'file', id: msg.id, name: f.name, mime: f.mime, data: f.data }
-          : { type: 'missing', id: msg.id }
-      )
+      void this.send(conn, msg.id, msg.chunked === true).catch(() => conn.close())
     })
   }
 
-  download(peerId: string, id: string): Promise<Blob> {
+  // Chunked for current peers, so a large file streams and only a stall times out; a single
+  // base64 message for 0.2.x peers, which ask without chunked.
+  private async send(conn: DataConnection, id: string, chunked: boolean) {
+    const f = servable(this.file(id), Math.floor(Date.now() / 1000))
+    const blob = f ? await this.blob(id) : null
+    if (!f || !blob) {
+      await conn.send({ type: 'missing', id })
+      return
+    }
+    if (!chunked) {
+      const data = f.data ?? (await blobToBase64(blob))
+      await conn.send({ type: 'file', id, name: f.name, mime: f.mime, data })
+      return
+    }
+    await conn.send({ type: 'meta', id, mime: f.mime, size: blob.size })
+    for (let at = 0; at < blob.size; at += CHUNK_BYTES) {
+      while (conn.open && buffered(conn) > BUFFERED_MAX) await pause(20)
+      if (!conn.open) return
+      const data = await blob.slice(at, at + CHUNK_BYTES).arrayBuffer()
+      await conn.send({ type: 'chunk', id, data })
+    }
+    await conn.send({ type: 'end', id })
+  }
+
+  download(peerId: string, id: string, limit = P2P_MAX_BYTES): Promise<Blob> {
     return new Promise((resolve, reject) => {
       const conn = this.ensurePeer(true).connect(peerId, { reliable: true })
-      const timer = setTimeout(() => {
+      let timer: ReturnType<typeof setTimeout> | null = null
+      let meta: { mime: string; size: number } | null = null
+      const parts: Uint8Array[] = []
+      let got = 0
+      const finish = (err: Error | null, blob?: Blob) => {
+        if (timer) clearTimeout(timer)
+        timer = null
         conn.close()
-        reject(new Error('P2P download timed out'))
-      }, 30_000)
-      conn.on('open', () => void conn.send({ type: 'get', id }))
+        if (err) reject(err)
+        else if (blob) resolve(blob)
+      }
+      const idle = () => {
+        if (timer) clearTimeout(timer)
+        timer = setTimeout(() => finish(new Error('P2P download timed out')), IDLE_MS)
+      }
+      idle()
+      conn.on('open', () => void conn.send({ type: 'get', id, chunked: true }))
       conn.on('data', d => {
-        clearTimeout(timer)
-        conn.close()
+        if (!timer) return
         const msg = d as WireMsg
-        if (msg.type === 'file') resolve(base64ToBlob(msg.data, msg.mime))
-        else reject(new Error('File not available'))
+        idle()
+        if (msg?.type === 'file') {
+          if (typeof msg.data !== 'string' || msg.data.length > Math.ceil(limit / 3) * 4)
+            finish(new Error('P2P download failed: file too large'))
+          else finish(null, base64ToBlob(msg.data, msg.mime))
+        } else if (msg?.type === 'meta') {
+          if (!Number.isSafeInteger(msg.size) || msg.size < 0 || msg.size > limit)
+            finish(new Error('P2P download failed: file too large'))
+          else meta = { mime: msg.mime, size: msg.size }
+        } else if (msg?.type === 'chunk' && meta) {
+          const data: unknown = msg.data
+          if (!(data instanceof ArrayBuffer || data instanceof Uint8Array))
+            finish(new Error('P2P download failed: bad data'))
+          else if (got + data.byteLength > meta.size)
+            finish(new Error('P2P download failed: too much data'))
+          else {
+            parts.push(data instanceof Uint8Array ? data : new Uint8Array(data))
+            got += data.byteLength
+          }
+        } else if (msg?.type === 'end' && meta) {
+          if (got === meta.size) finish(null, new Blob(parts as BlobPart[], { type: meta.mime }))
+          else finish(new Error('P2P download failed: incomplete file'))
+        } else finish(new Error('File not available'))
+      })
+      conn.on('close', () => {
+        if (timer) finish(new Error('P2P download interrupted'))
       })
       conn.on('error', err => {
-        clearTimeout(timer)
-        reject(new Error(`P2P download failed: ${err.type}`))
+        if (timer) finish(new Error(`P2P download failed: ${err.type}`))
       })
     })
   }
@@ -434,6 +555,7 @@ export class P2pManager {
         on: this.camOn || (this.remoteLegacy && this.shareOn),
         share: this.shareOn,
         screen: this.shareOn,
+        muted: this.muted,
       })
   }
 
@@ -458,6 +580,7 @@ export class P2pManager {
       if (!screen) this.remoteShareId = null
       this.remoteCamOn = msg.on
       this.remoteScreenOn = screen
+      this.remoteMuted = msg.muted === true
       this.onChange()
     })
     conn.on('close', () => {
@@ -465,6 +588,7 @@ export class P2pManager {
         this.control = null
         this.remoteCamOn = false
         this.remoteScreenOn = false
+        this.remoteMuted = false
         this.remoteShareId = null
         this.onChange()
       }
@@ -522,6 +646,7 @@ export class P2pManager {
     this.muted = muted
     const track = this.local?.getAudioTracks()[0]
     if (track) track.enabled = !muted
+    this.sendCam()
     this.onChange()
   }
 
@@ -535,6 +660,7 @@ export class P2pManager {
     this.control = null
     this.remoteCamOn = false
     this.remoteScreenOn = false
+    this.remoteMuted = false
     this.remoteShareId = null
     this.localSpeaking = false
     this.remoteSpeaking = false

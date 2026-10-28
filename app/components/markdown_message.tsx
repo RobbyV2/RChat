@@ -15,7 +15,7 @@ import remarkGfm from 'remark-gfm'
 import { Clock, Download, EllipsisVertical, EyeOff, FileText, Share2, X } from 'lucide-react'
 import { api, home, localOrigins, remoteAllowed } from '../lib/instances'
 import { mentionCandidates, splitKnownMentions } from '../lib/mentions'
-import { base64ToBlob, p2p } from '../lib/p2p'
+import { expiryDelay, p2p, unexpired } from '../lib/p2p'
 import {
   findInvites,
   findRemoteInvites,
@@ -270,14 +270,23 @@ function P2pFile({ media }: { media: MessageMedia }) {
   const me = useStore(s => s.me)
   const previews = useStore(s => s.settings.asset_previews)
   const avail = useStore(s => (media.hoster !== null ? s.p2pAvailability[media.hoster] : undefined))
-  const { id, filename, hoster, expires_at, spoiler } = media
+  const { id, filename, hoster, expires_at, spoiler, size } = media
   const [url, setUrl] = useState(() => cachedUrl(id))
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
   const [revealed, setRevealed] = useState(false)
 
-  const localFile = me !== null && hoster === me.username ? p2p.file(id) : null
-  const peerId = avail?.online === true && avail.ids.includes(id) ? avail.peer_id : null
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const wait = expiryDelay(expires_at, Date.now())
+    if (wait === null) return
+    const t = setTimeout(() => tick(n => n + 1), wait)
+    return () => clearTimeout(t)
+  }, [expires_at])
+
+  const live = unexpired(expires_at, Math.floor(Date.now() / 1000))
+  const localFile = live && me !== null && hoster === me.username ? p2p.file(id) : null
+  const peerId = live && avail?.online === true && avail.ids.includes(id) ? avail.peer_id : null
   const online = localFile !== null || peerId !== null
   const hosterName =
     hoster !== null ? userRefFor(useStore.getState(), hoster).display_name : 'the sender'
@@ -288,11 +297,12 @@ function P2pFile({ media }: { media: MessageMedia }) {
     const cached = cachedUrl(id)
     if (cached) return cached
     const blob = localFile
-      ? base64ToBlob(localFile.data, localFile.mime)
+      ? await p2p.blob(id)
       : await (() => {
           if (peerId === null) throw new Error('File not available')
-          return p2p.download(peerId, id)
+          return p2p.download(peerId, id, size ?? undefined)
         })()
+    if (!blob) throw new Error('File not available')
     const u = URL.createObjectURL(blob)
     keepUrl(id, u)
     return u

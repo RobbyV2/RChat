@@ -58,7 +58,8 @@ type Handler = (arg?: unknown) => void
 
 function control() {
   const on = new Map<string, Handler>()
-  const sent: { type: string; on: boolean; share: boolean; screen?: boolean }[] = []
+  const sent: { type: string; on: boolean; share: boolean; screen?: boolean; muted?: boolean }[] =
+    []
   return {
     open: true,
     sent,
@@ -152,6 +153,23 @@ function call() {
 
 const settle = () => new Promise(r => setTimeout(r, 0))
 
+describe('p2p mute state', () => {
+  test("muting is announced to the peer, and the peer's mute is shown until the call ends", () => {
+    const { m, conn } = call()
+    m.setMuted(true)
+    expect(conn.sent.at(-1)?.muted).toBe(true)
+    m.setMuted(false)
+    expect(conn.sent.at(-1)?.muted).toBe(false)
+    conn.emit('data', { type: 'cam', on: false, share: false, screen: false, muted: true })
+    expect(m.remoteMuted).toBe(true)
+    conn.emit('data', { type: 'cam', on: false, share: false, screen: false })
+    expect(m.remoteMuted).toBe(false)
+    conn.emit('data', { type: 'cam', on: false, share: false, screen: false, muted: true })
+    conn.emit('close')
+    expect(m.remoteMuted).toBe(false)
+  })
+})
+
 describe('p2p screen share', () => {
   test('a share goes out on the screen slots and is announced apart from the camera', async () => {
     const { m, x, conn, sending } = call()
@@ -161,7 +179,13 @@ describe('p2p screen share', () => {
     expect(sending().screen).toBe(x.screen?.video ?? null)
     expect(sending().screenAudio).toBe(x.screen?.audio ?? null)
     expect(sending().cam).toBe(x.placeholder)
-    expect(conn.sent.at(-1)).toEqual({ type: 'cam', on: false, share: true, screen: true })
+    expect(conn.sent.at(-1)).toEqual({
+      type: 'cam',
+      on: false,
+      share: true,
+      screen: true,
+      muted: false,
+    })
     await m.toggleShare()
     await settle()
     expect(sending().screen).toBe(x.screenPlaceholder)
