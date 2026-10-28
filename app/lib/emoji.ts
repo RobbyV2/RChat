@@ -283,6 +283,14 @@ const isUse = (x: unknown): x is EmojiUse => {
   )
 }
 
+const EMOJI_UNIT = '\\p{Extended_Pictographic}(?:\\uFE0F|\\p{Emoji_Modifier})?'
+const EMOJI_SHAPE = new RegExp(
+  `^(?:\\p{Regional_Indicator}{2}|[#*0-9]\\uFE0F?\\u20E3|${EMOJI_UNIT}(?:\\u200D${EMOJI_UNIT})*(?:[\\u{E0020}-\\u{E007E}]+\\u{E007F})?)$`,
+  'u'
+)
+
+export const looksLikeEmoji = (s: string) => s.length <= 32 && EMOJI_SHAPE.test(s)
+
 export function parseEmojiPrefs(raw: string | null): EmojiPrefs {
   let data: unknown
   try {

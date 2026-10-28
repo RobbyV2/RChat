@@ -173,6 +173,17 @@ export interface MeUpdated extends UserRef {
   appear_offline: boolean
 }
 
+export interface ConfigShare {
+  id: string
+  created_at: number
+  expires_at: number
+}
+
+export interface SharedConfig {
+  blob: string
+  expires_at: number
+}
+
 export interface MemberFilter {
   q?: string
   admins?: boolean
@@ -239,6 +250,11 @@ export const endpoints = (c: ApiClient) => ({
   setBio: (bio: string | null) => c.req<MeUpdated>('PATCH', '/me', { bio }),
   setAppearOffline: (appear_offline: boolean) =>
     c.req<MeUpdated>('PATCH', '/me', { appear_offline }),
+  createConfigShare: (blob: string, expires_in: number) =>
+    c.req<ConfigShare>('POST', '/config_shares', { blob, expires_in }),
+  configShares: () => c.req<ConfigShare[]>('GET', '/config_shares'),
+  configShare: (id: string) => c.req<SharedConfig>('GET', `/config_shares/${seg(id)}`),
+  deleteConfigShare: (id: string) => c.req<{ ok: boolean }>('DELETE', `/config_shares/${seg(id)}`),
   changePassword: (current: Secret, next: Secret) =>
     c.req<{ ok: boolean }>('POST', '/me/password', { current, new: next }),
   userProfile: (username: string, server?: string | null) =>

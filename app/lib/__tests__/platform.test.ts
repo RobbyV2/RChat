@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { notifications, setNotifier } from '../platform'
+import { notifications, setNotifier, setSharing, sharing } from '../platform'
+import { webSharing } from '../platform/web_sharing'
 import { permissionOf } from '../platform/notifications'
 import { webNotifier } from '../platform/web_notifications'
 import { fakeNotifier } from './fake_notifier'
@@ -128,5 +129,40 @@ describe('web adapter', () => {
     webNotifier.setBadge(0)
     expect((g.document as { title: string }).title).toBe('RChat')
     expect(calls).toEqual(['set 3', 'clear'])
+  })
+})
+
+describe('sharing', () => {
+  const nav = (over: Record<string, unknown>) =>
+    Object.defineProperty(globalThis, 'navigator', { value: over, configurable: true })
+
+  test('registry defaults to the web adapter and accepts another', () => {
+    expect(sharing()).toBe(webSharing)
+    const fake = { ...webSharing, canShare: () => true }
+    setSharing(fake)
+    expect(sharing()).toBe(fake)
+    setSharing(webSharing)
+  })
+
+  test('web clipboard and share report what happened', async () => {
+    const copied: string[] = []
+    nav({ clipboard: { writeText: async (t: string) => void copied.push(t) } })
+    expect(await webSharing.copyText('rc1.abc')).toBe(true)
+    expect(copied).toEqual(['rc1.abc'])
+    nav({})
+    expect(await webSharing.copyText('x')).toBe(false)
+    expect(webSharing.canShare()).toBe(false)
+    expect(await webSharing.share({ url: 'http://x/config/a/' })).toBe('failed')
+    nav({ clipboard: { writeText: async () => Promise.reject(new Error('denied')) } })
+    expect(await webSharing.copyText('x')).toBe(false)
+    const shared: unknown[] = []
+    nav({ share: async (d: unknown) => void shared.push(d) })
+    expect(webSharing.canShare()).toBe(true)
+    expect(await webSharing.share({ url: 'http://x/config/a/' })).toBe('shared')
+    expect(shared).toEqual([{ url: 'http://x/config/a/' }])
+    nav({
+      share: async () => Promise.reject(new DOMException('no', 'AbortError')),
+    })
+    expect(await webSharing.share({ url: 'u' })).toBe('cancelled')
   })
 })

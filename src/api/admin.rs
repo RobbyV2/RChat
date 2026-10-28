@@ -498,6 +498,7 @@ async fn hide_user_rows(
     let servers = member_servers(&mut tx, key).await?;
     for sql in [
         "DELETE FROM tokens WHERE username = $1",
+        "DELETE FROM config_shares WHERE owner = $1",
         "DELETE FROM members WHERE username = $1",
         "DELETE FROM user_roles WHERE username = $1",
         "DELETE FROM interactions WHERE username = $1",
@@ -750,6 +751,7 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         "DELETE FROM interactions WHERE username = $1",
         "DELETE FROM server_bans WHERE username = $1",
         "DELETE FROM tokens WHERE username = $1",
+        "DELETE FROM config_shares WHERE owner = $1",
         "DELETE FROM pings WHERE username = $1",
         "DELETE FROM pings WHERE actor = $1",
         "DELETE FROM reactions WHERE username = $1",

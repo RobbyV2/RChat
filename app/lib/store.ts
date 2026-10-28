@@ -169,6 +169,15 @@ import {
   type InviteEntry,
   type OpenInvite,
 } from './invite'
+import {
+  parseConfigPath,
+  sectionOf,
+  stashConfig,
+  takeStashedConfig,
+  type ConfigDoc,
+  type ConfigSource,
+  type SectionKey,
+} from './config_transfer'
 import { clearProfiles, forgetProfiles } from './profile'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from './voice_layout'
 import { retrySeconds, tooManyText } from './rate_limit'
@@ -512,6 +521,7 @@ interface RChatState {
   selfAudio: SelfAudio
   view: View | null
   invite: OpenInvite | null
+  configLink: string | null
   messages: Record<string, Message[]>
   older: Record<string, OlderState>
   newer: Record<string, OlderState>
@@ -577,6 +587,10 @@ interface RChatState {
   openInvite: (server: string, password?: string | null) => void
   closeInvite: () => void
   syncInvite: () => boolean
+  syncConfigLink: () => boolean
+  closeConfigLink: () => void
+  applyConfig: (doc: ConfigDoc, keys: SectionKey[]) => Promise<string | null>
+  showToast: (text: string) => void
   consumeInviteJoin: () => void
   startDm: (username: string) => Promise<void>
   messageUser: (username: string, content: string) => Promise<void>
@@ -785,6 +799,15 @@ export const isUnread = (s: RChatState, scope: string): boolean => {
 
 export const serverNames = (s: RChatState) =>
   s.me ? s.me.servers.map(x => x.name) : s.guestServers
+
+export const configSourceOf = (s: RChatState): ConfigSource => ({
+  theme: s.theme,
+  streamer: s.streamer,
+  appearOffline: s.me ? s.me.appear_offline : null,
+  layout: s.me || s.guest ? s.layout : null,
+  notify: s.me || s.guest ? s.notifyPrefs : null,
+  emoji: s.me ? s.emoji : null,
+})
 
 export const railOrder = (s: RChatState) => railNames(serverNames(s), s.layout.servers)
 
@@ -1190,15 +1213,16 @@ export const useStore = create<RChatState>()((set, get) => {
 
   // Drops rules for servers, channels and DMs the account is no longer in. Servers and DMs with
   // rules are fetched first (the lists are paged); a channel whose server is unknown is kept.
+  const channelServer = (s: RChatState, id: number) => {
+    for (const [name, d] of Object.entries(s.servers))
+      if (d.channels.some(c => c.id === id)) return name
+    return s.reads[`c${id}`]?.server ?? null
+  }
+
   const pruneScopes = async () => {
     if (!notifySynced) return
     const owner = notifyOwner()
     const start = get()
-    const channelServer = (s: RChatState, id: number) => {
-      for (const [name, d] of Object.entries(s.servers))
-        if (d.channels.some(c => c.id === id)) return name
-      return s.reads[`c${id}`]?.server ?? null
-    }
     const prefs = start.notifyPrefs
     const asked = [
       ...Object.keys(prefs.servers),
@@ -1276,6 +1300,98 @@ export const useStore = create<RChatState>()((set, get) => {
     if (get().me) saveLayout(autoPinSelf(get().layout, selfDmId()))
   }
 
+  // Applies the chosen sections of an imported config. Device sections (theme, streamer mode)
+  // apply at once; logged out, the rest is stashed for the next login. Servers and DMs this
+  // account doesn't have are dropped. Returns an error text, or null.
+  const applyConfigDoc = async (doc: ConfigDoc, keys: SectionKey[]): Promise<string | null> => {
+    const want = new Set(keys.filter(k => doc[k] !== undefined))
+    if (want.has('theme') && doc.theme) get().setTheme(doc.theme)
+    if (want.has('streamer') && doc.streamer !== undefined) get().setStreamer(doc.streamer)
+    const { me, guest } = get()
+    if (!me && !guest) {
+      const rest = [...want].filter(k => !sectionOf(k).device)
+      if (rest.length) stashConfig(doc, rest)
+      return null
+    }
+    const username = me?.username ?? null
+    const still = () => (get().me?.username ?? null) === username && (!!get().me || get().guest)
+    const failed: string[] = []
+    if (want.has('appearOffline') && me && doc.appearOffline !== undefined) {
+      try {
+        if (doc.appearOffline !== me.appear_offline) {
+          await api.setAppearOffline(doc.appearOffline)
+          set(s =>
+            s.me?.username === me.username
+              ? { me: { ...s.me, appear_offline: doc.appearOffline as boolean } }
+              : {}
+          )
+        }
+      } catch {
+        failed.push(sectionOf('appearOffline').label)
+      }
+    }
+    if (!still()) return 'You switched accounts'
+    if (want.has('layout') && doc.layout) {
+      const l = doc.layout
+      try {
+        await get().ensureServers(layoutServers(l.servers))
+        await get().ensureDms([...l.dmPinned, ...l.dmOrder])
+        if (!still()) return 'You switched accounts'
+        const s = get()
+        saveLayout(
+          pruneLayout(
+            {
+              ...s.layout,
+              servers: l.servers,
+              dmOrder: l.dmOrder,
+              dmPinned: l.dmPinned,
+              selfPin: l.selfPin,
+            },
+            serverNames(s),
+            s.dms.map(d => d.id)
+          )
+        )
+        pinSelf()
+      } catch {
+        failed.push(sectionOf('layout').label)
+      }
+    }
+    if (!still()) return 'You switched accounts'
+    if (want.has('notify') && doc.notify) {
+      const n = doc.notify
+      try {
+        await get().ensureServers(Object.keys(n.servers))
+        await get().ensureDms(Object.keys(n.dms).map(Number))
+        if (!still()) return 'You switched accounts'
+        const s = get()
+        const members = new Set(serverNames(s))
+        const dms = new Set(s.dms.map(d => d.id))
+        saveNotify(
+          keepScopes(n, {
+            server: name => members.has(name),
+            channel: id => {
+              const server = channelServer(s, id)
+              return server === null || members.has(server)
+            },
+            dm: id => dms.has(id),
+          })
+        )
+      } catch {
+        failed.push(sectionOf('notify').label)
+      }
+    }
+    if (want.has('emoji') && doc.emoji && me) saveEmoji(doc.emoji)
+    return failed.length ? `Couldn't apply: ${failed.join(', ')}` : null
+  }
+
+  const applyStashedConfig = async () => {
+    const stashed = takeStashedConfig()
+    if (!stashed || !stashed.keys.length) return
+    const error = await applyConfigDoc(stashed.doc, stashed.keys)
+    if (error) fail(new Error(error))
+    else toast('Config applied')
+  }
+
   const syncLayout = async (username: string) => {
     const { servers } = get().layout
     const asked = bootDms(get().layout, PAGE)
@@ -1296,6 +1412,7 @@ export const useStore = create<RChatState>()((set, get) => {
     pinSelf()
     notifySynced = true
     await pruneScopes()
+    await applyStashedConfig()
   }
 
   const loadGuestLayout = () => {
@@ -1303,7 +1420,7 @@ export const useStore = create<RChatState>()((set, get) => {
     useNotify(readNotify(null))
     saveLayout(pruneLayout(get().layout, get().guestServers, null))
     notifySynced = true
-    void pruneScopes()
+    void pruneScopes().then(applyStashedConfig)
   }
 
   const applyMe = (fresh: Me, keep: boolean) => {
@@ -1840,6 +1957,13 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const leaveInvite = () => {
     if (get().invite) set({ invite: null })
+    if (get().configLink) set({ configLink: null })
+  }
+
+  const readConfigLink = () => {
+    const id = parseConfigPath(window.location.pathname)
+    if (get().configLink !== id) set({ configLink: id })
+    return id !== null
   }
 
   const rememberInvite = (entry: InviteEntry) =>
@@ -1875,7 +1999,7 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   const resolveUrl = async (nav: 'replace' | 'none') => {
-    if (readInvite() || (!get().me && !get().guest)) return
+    if (readInvite() || readConfigLink() || (!get().me && !get().guest)) return
     const target = parsePath(window.location.pathname)
     const fallback = async () => {
       await unreadsReady
@@ -3160,6 +3284,7 @@ export const useStore = create<RChatState>()((set, get) => {
     selfAudio: SELF_AUDIO_IDLE,
     view: null,
     invite: null,
+    configLink: null,
     messages: {},
     older: {},
     newer: {},
@@ -3444,6 +3569,7 @@ export const useStore = create<RChatState>()((set, get) => {
         notifyPrefs: EMPTY_NOTIFY,
         view: null,
         invite: null,
+        configLink: null,
         messages: {},
         older: {},
         newer: {},
@@ -3586,6 +3712,20 @@ export const useStore = create<RChatState>()((set, get) => {
     },
 
     syncInvite: readInvite,
+
+    syncConfigLink: readConfigLink,
+
+    closeConfigLink: () => {
+      const { view, me, guest } = get()
+      set({ configLink: null })
+      if (!me && !guest) return
+      if (view) syncUrl(view, 'replace')
+      else void leaveForSafety('replace')
+    },
+
+    applyConfig: applyConfigDoc,
+
+    showToast: text => toast(text),
 
     consumeInviteJoin: () =>
       set(s => (s.invite?.join ? { invite: { ...s.invite, join: false } } : {})),

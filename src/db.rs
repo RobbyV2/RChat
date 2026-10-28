@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS read_state(username TEXT NOT NULL, scope TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS server_bans(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, banned_by TEXT, created_at INTEGER NOT NULL, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS pings(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('mention','reply','reaction')), scope TEXT NOT NULL, server TEXT REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, thread_root_id INTEGER, actor TEXT NOT NULL, emoji TEXT, created_at INTEGER NOT NULL, seen INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS reactions(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, username TEXT NOT NULL, emoji TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(message_id, username, emoji));
+CREATE TABLE IF NOT EXISTS config_shares(id TEXT PRIMARY KEY, owner TEXT NOT NULL, blob TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -84,6 +85,8 @@ CREATE INDEX IF NOT EXISTS idx_reactions_username ON reactions(username);
 CREATE INDEX IF NOT EXISTS idx_messages_fwd_author ON messages(fwd_author) WHERE fwd_author IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_channel_pins ON messages(channel_id, pinned_at) WHERE pinned_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_dm_pins ON messages(dm_id, pinned_at) WHERE pinned_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_config_shares_owner ON config_shares(owner, expires_at);
+CREATE INDEX IF NOT EXISTS idx_config_shares_expires ON config_shares(expires_at);
 ";
 
 const POSTGRES_SCHEMA: &str = "
@@ -117,6 +120,7 @@ CREATE TABLE IF NOT EXISTS read_state(username TEXT NOT NULL, scope TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS server_bans(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, banned_by TEXT, created_at BIGINT NOT NULL, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS pings(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, username TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('mention','reply','reaction')), scope TEXT NOT NULL, server TEXT REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, thread_root_id BIGINT, actor TEXT NOT NULL, emoji TEXT, created_at BIGINT NOT NULL, seen BIGINT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS reactions(message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, username TEXT NOT NULL, emoji TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(message_id, username, emoji));
+CREATE TABLE IF NOT EXISTS config_shares(id TEXT PRIMARY KEY, owner TEXT NOT NULL, blob TEXT NOT NULL, created_at BIGINT NOT NULL, expires_at BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -160,6 +164,8 @@ CREATE INDEX IF NOT EXISTS idx_reactions_username ON reactions(username);
 CREATE INDEX IF NOT EXISTS idx_messages_fwd_author ON messages(fwd_author) WHERE fwd_author IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_channel_pins ON messages(channel_id, pinned_at) WHERE pinned_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_dm_pins ON messages(dm_id, pinned_at) WHERE pinned_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_config_shares_owner ON config_shares(owner, expires_at);
+CREATE INDEX IF NOT EXISTS idx_config_shares_expires ON config_shares(expires_at);
 ";
 
 const SQLITE_SEARCH: &[&str] = &[
@@ -1005,6 +1011,7 @@ pub struct Swept {
     pub password_attempts: u64,
     pub embeds: u64,
     pub pings: u64,
+    pub config_shares: u64,
 }
 
 async fn delete_batched(db: &Db, sql: &'static str, cutoff: i64) -> sqlx::Result<u64> {
@@ -1144,6 +1151,12 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
             db,
             "DELETE FROM pings WHERE id IN (SELECT id FROM pings WHERE (seen <> 0 AND seen <> 2) OR created_at < $1 LIMIT $2)",
             t - PING_KEEP,
+        )
+        .await?,
+        config_shares: delete_batched(
+            db,
+            "DELETE FROM config_shares WHERE id IN (SELECT id FROM config_shares WHERE expires_at <= $1 LIMIT $2)",
+            t,
         )
         .await?,
     })
@@ -1570,6 +1583,74 @@ mod tests {
             close(&db).await;
         }
         assert_eq!(peppers[0], peppers[1], "the pepper is inserted once");
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn config_shares_table_is_added_to_an_old_database() {
+        let path =
+            std::env::temp_dir().join(format!("rchat_share_upgrade_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_config_shares_owner",
+            "DROP INDEX idx_config_shares_expires",
+            "DROP TABLE config_shares",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, appear_offline, created_at) VALUES('alice', 'Alice', 'h', 'text', 'identicon', 1, 5)",
+            "INSERT INTO tokens(token, username, created_at) VALUES('tok', 'alice', 5)",
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES((SELECT id FROM channels WHERE server = 'rchat'), 'alice', 'old', 7)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'config_shares'"
+            )
+            .await,
+            0
+        );
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM users WHERE username = 'alice' AND appear_offline = 1 AND created_at = 5").await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM tokens WHERE token = 'tok'").await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM messages WHERE author = 'alice' AND content = 'old' AND created_at = 7").await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_config_shares_%'").await,
+                2
+            );
+            sqlx::query("INSERT INTO config_shares(id, owner, blob, created_at, expires_at) VALUES('abcdefghijkl', 'alice', 'rc1.x', 1, 2)")
+                .execute(&db)
+                .await
+                .expect("new table");
+            assert!(
+                sqlx::query("INSERT INTO config_shares(id, owner, blob, created_at, expires_at) VALUES('abcdefghijkl', 'bob', 'rc1.y', 1, 2)")
+                    .execute(&db)
+                    .await
+                    .is_err(),
+                "id is the primary key"
+            );
+            sqlx::query("DELETE FROM config_shares")
+                .execute(&db)
+                .await
+                .expect("clear");
+            close(&db).await;
+        }
         wipe();
     }
 
@@ -2225,6 +2306,18 @@ mod tests {
                 "INSERT INTO embeds(url, fetched_at) VALUES('https://kept.example/', $1)",
                 old,
             ),
+            (
+                "INSERT INTO config_shares(id, owner, blob, created_at, expires_at) VALUES('oldlinkaaaaa', 'a', 'rc1.x', 0, $1)",
+                old,
+            ),
+            (
+                "INSERT INTO config_shares(id, owner, blob, created_at, expires_at) VALUES('nowlinkaaaaa', 'a', 'rc1.x', 0, $1)",
+                t - 1,
+            ),
+            (
+                "INSERT INTO config_shares(id, owner, blob, created_at, expires_at) VALUES('livelinkaaaa', 'a', 'rc1.x', 0, $1 + 600)",
+                t,
+            ),
         ] {
             sqlx::query(sql).bind(at).execute(db).await.expect(sql);
         }
@@ -2260,7 +2353,16 @@ mod tests {
                 password_attempts: 1,
                 embeds: 1,
                 pings: 2,
+                config_shares: 2,
             }
+        );
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM config_shares WHERE id = 'livelinkaaaa'"
+            )
+            .await,
+            count(db, "SELECT COUNT(*) FROM config_shares").await
         );
         assert_eq!(
             count(db, "SELECT COUNT(*) FROM tokens WHERE token = 'ancient'").await,

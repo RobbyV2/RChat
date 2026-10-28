@@ -21,6 +21,7 @@ import ThreadPanel from '../components/thread_panel'
 import SearchPanel from '../components/search_panel'
 import { CallBanner } from '../components/voice_grid'
 import { InvitePage } from '../components/invite_card'
+import { ConfigLinkPage } from '../components/config_sync'
 
 export default function AppShell() {
   const router = useRouter()
@@ -28,6 +29,7 @@ export default function AppShell() {
   const guest = useStore(s => s.guest)
   const view = useStore(s => s.view)
   const invite = useStore(s => s.invite)
+  const configLink = useStore(s => s.configLink)
   const dialog = useStore(s => s.activeDialog)
   const confirming = useStore(s => s.confirm !== null)
   const panel = useStore(s => s.panel)
@@ -50,7 +52,8 @@ export default function AppShell() {
       localStorage.getItem(home.scoped('rchat_token')) ||
       localStorage.getItem(home.scoped('rchat_guest'))
     if (!authed) {
-      if (useStore.getState().syncInvite()) void useStore.getState().loadSettings()
+      const { syncInvite, syncConfigLink, loadSettings } = useStore.getState()
+      if (syncInvite() || syncConfigLink()) void loadSettings()
       else router.replace('/login')
       return
     }
@@ -116,13 +119,14 @@ export default function AppShell() {
   if (!me && !guest) {
     return (
       <>
-        {!invite && (
+        {!invite && !configLink && (
           <div className="flex h-app flex-col items-center justify-center gap-1 px-6 text-center text-on-surface-variant">
             <span>Loading RChat</span>
             {bootError && <span className="text-sm">{bootError}. Retrying…</span>}
           </div>
         )}
         <InvitePage />
+        <ConfigLinkPage />
       </>
     )
   }
@@ -230,6 +234,7 @@ export default function AppShell() {
         </div>
       </div>
       <InvitePage />
+      <ConfigLinkPage />
     </>
   )
 }

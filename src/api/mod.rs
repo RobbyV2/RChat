@@ -1,6 +1,7 @@
 pub mod access;
 pub mod admin;
 pub mod auth;
+pub mod config_shares;
 pub mod dms;
 pub mod embeds;
 pub mod health;
@@ -1303,6 +1304,14 @@ pub fn routes(state: AppState, roles: &Roles, key: ClientIp) -> Router<AppState>
             .route("/me/password", post(auth::change_password))
             .route("/servers/{name}/guest_access", post(servers::guest_access))
             .route("/servers/{name}/available", get(servers::server_available))
+            .route(
+                "/config_shares",
+                get(config_shares::list_shares).post(config_shares::create_share),
+            )
+            .route(
+                "/config_shares/{id}",
+                get(config_shares::get_share).delete(config_shares::delete_share),
+            )
             .route_layer(strict.clone());
         router = router.merge(api_routes(state, strict_routes, invite_routes));
     }
@@ -2161,6 +2170,7 @@ mod tests {
             (false, "/invites/rchat", 40),
             (false, "/auth/words/nobody", 20),
             (false, "/settings", 40),
+            (true, "/config_shares", 40),
         ] {
             let mut count = 0;
             for n in 0..tries {
@@ -2194,6 +2204,7 @@ mod tests {
         server.abort();
         assert_eq!(other.status(), StatusCode::OK);
         assert!(limited["/invites/rchat"] >= 5, "{limited:?}");
+        assert!(limited["/config_shares"] >= 5, "{limited:?}");
         assert_eq!(limited["/auth/words/nobody"], 0, "{limited:?}");
         assert_eq!(limited["/settings"], 0, "{limited:?}");
         done(state, path).await;

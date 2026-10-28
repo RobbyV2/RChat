@@ -14,12 +14,13 @@ import { InstanceDetails } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { SettingSwitch } from './admin_panel'
 import { NotificationsSection } from './notify_settings'
+import { ConfigSyncSection } from './config_sync'
 import { PassSwitch, WordGrid } from './word_grid'
 import { FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './server_settings'
 
 const bioFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
-type Section = 'settings' | 'notifications' | 'information'
+type Section = 'settings' | 'notifications' | 'sync' | 'information'
 
 export default function SettingsMenu() {
   const open = useStore(s => s.activeDialog?.kind === 'settings')
@@ -572,6 +573,7 @@ function Menu() {
   const sections: [Section, string][] = [
     ['settings', 'Settings'],
     ['notifications', 'Notifications'],
+    ['sync', 'Sync config'],
     ['information', 'Information'],
   ]
 
@@ -582,40 +584,44 @@ function Menu() {
       aria-labelledby={titleId}
       className="fixed inset-x-0 top-0 z-50 flex h-app flex-col bg-surface px-safe md:flex-row"
     >
-      <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-outline-variant bg-surface-container-low p-3 pr-16 md:w-56 md:flex-col md:overflow-y-auto md:border-r md:border-b-0 md:p-4">
-        <p
-          id={titleId}
-          className="hidden px-3 pb-2 text-xs font-medium tracking-wide text-on-surface-variant uppercase md:block"
-        >
-          Settings
-        </p>
-        {sections.map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setSection(key)}
-            className={`shrink-0 rounded-full px-3 py-1.5 text-left text-sm md:rounded-xl md:py-2 ${
-              section === key
-                ? 'bg-secondary-container text-on-secondary-container'
-                : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
-            }`}
+      <div className="flex shrink-0 items-center border-b border-outline-variant bg-surface-container-low pr-3 md:contents">
+        <nav className="flex min-w-0 flex-1 gap-1 overflow-x-auto p-3 md:w-56 md:flex-none md:flex-col md:overflow-y-auto md:border-r md:border-outline-variant md:bg-surface-container-low md:p-4">
+          <p
+            id={titleId}
+            className="hidden px-3 pb-2 text-xs font-medium tracking-wide text-on-surface-variant uppercase md:block"
           >
-            {label}
-          </button>
-        ))}
-      </nav>
-      <button
-        title="Close settings"
-        onClick={closeDialog}
-        className="absolute top-[max(0.75rem,env(safe-area-inset-top))] right-[max(1rem,env(safe-area-inset-right))] z-10 rounded-full border border-outline-variant bg-surface p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface md:top-4"
-      >
-        <X size={18} />
-      </button>
+            Settings
+          </p>
+          {sections.map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setSection(key)}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-left text-sm md:rounded-xl md:py-2 ${
+                section === key
+                  ? 'bg-secondary-container text-on-secondary-container'
+                  : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+        <button
+          title="Close settings"
+          onClick={closeDialog}
+          className="shrink-0 rounded-full md:absolute md:top-4 md:right-[max(1rem,env(safe-area-inset-right))] md:z-10 border border-outline-variant bg-surface p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+        >
+          <X size={18} />
+        </button>
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-6 md:p-10">
         <div className="max-w-lg pb-10">
           {section === 'settings' ? (
             <SettingsSection />
           ) : section === 'notifications' ? (
             <NotificationsSection />
+          ) : section === 'sync' ? (
+            <ConfigSyncSection />
           ) : (
             <InformationSection />
           )}
