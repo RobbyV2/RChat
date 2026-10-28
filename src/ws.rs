@@ -16,8 +16,8 @@ use tokio::time::Instant;
 use tracing::{debug, warn};
 
 use crate::api::access::{
-    servers_with_expired_passwords, ws_banned, ws_channel_view, ws_channel_viewable,
-    ws_grant_deadline, ws_server_open, ws_voice_channel,
+    servers_with_expired_passwords, ws_banned, ws_channel_read_since, ws_channel_view,
+    ws_channel_viewable, ws_grant_deadline, ws_server_open, ws_voice_channel,
 };
 use crate::api::messages::{Quotes, load_broadcast, load_message};
 use crate::api::pings::{Ping, ThreadPings};
@@ -535,6 +535,12 @@ pub enum WsEvent {
     },
     TokensRevoked {
         username: String,
+    },
+    /// Answer to `p2p_hosting`, to that connection only: which of the `checked` ids are still
+    /// live P2P attachments of the sender, so its app stops serving removed ones.
+    P2pHosted {
+        live: Vec<String>,
+        checked: Vec<String>,
     },
     Resync,
 }
@@ -1199,6 +1205,7 @@ pub async fn depart(state: &AppState) {
 /// peer-to-peer files. Guests are read-only: no presence, voice or calls. The server sends the
 /// events listed in `WsEvent` in `src/ws.rs`, e.g. `message`, `message_updated`,
 /// `message_deleted`, `member_joined`, `presence_changed`, `voice_state`, `call_state`,
+/// `p2p_hosted` (to a `p2p_hosting` sender: which of its files are still live attachments),
 /// `error` and `resync` (refetch state after missed events). Frames are at most 64 KiB. Not
 /// part of the bearer security scheme: the token goes in the `auth` frame. General
 /// rate-limit bucket for the upgrade request.
@@ -1473,10 +1480,11 @@ async fn p2p_visible(
     if !shared {
         return None;
     }
-    Some((
-        peer_id,
-        readable_p2p_ids(&db, access, me, hoster, ids).await,
-    ))
+    let ids = match Settings::cached(&db).await.p2p_attachments {
+        true => readable_p2p_ids(&db, access, me, hoster, ids).await,
+        false => Vec::new(),
+    };
+    Some((peer_id, ids))
 }
 
 async fn readable_p2p_ids(
@@ -1528,7 +1536,7 @@ async fn lookup_p2p_ids(
     ids: &[String],
 ) -> Vec<String> {
     let sql = format!(
-        "SELECT m.media_id, m.channel_id, c.server, d.user_a, d.user_b FROM messages m LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN dms d ON d.id = m.dm_id WHERE m.media_kind = 'p2p' AND m.media_removed = 0 AND m.media_hoster = $1 AND m.media_id IN ({})",
+        "SELECT m.media_id, m.channel_id, c.server, d.user_a, d.user_b, m.created_at FROM messages m LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN dms d ON d.id = m.dm_id WHERE m.media_kind = 'p2p' AND m.media_removed = 0 AND m.media_hoster = $1 AND m.media_id IN ({})",
         (2..ids.len() + 2)
             .map(|n| format!("${n}"))
             .collect::<Vec<_>>()
@@ -1542,7 +1550,7 @@ async fn lookup_p2p_ids(
         return Vec::new();
     };
     let mut servers: HashMap<String, bool> = HashMap::new();
-    let mut channels: HashMap<i64, bool> = HashMap::new();
+    let mut channels: HashMap<i64, Option<Option<i64>>> = HashMap::new();
     let mut out: Vec<String> = Vec::new();
     for r in &rows {
         let Ok(id) = r.try_get::<String, _>(0) else {
@@ -1567,16 +1575,23 @@ async fn lookup_p2p_ids(
                         open
                     }
                 };
-                let view = match (channels.get(&cid), access.viewable.get(&cid)) {
-                    (Some(view), _) => *view,
-                    (None, Some((owner, view))) => *view && *owner == server,
-                    (None, None) => {
-                        let view = ws_channel_viewable(db, &server, cid, Some(me)).await;
-                        channels.insert(cid, view);
-                        view
+                let hidden = access
+                    .viewable
+                    .get(&cid)
+                    .is_some_and(|(owner, view)| !*view || *owner != server);
+                let since = match (hidden, channels.get(&cid)) {
+                    (true, _) => None,
+                    (false, Some(since)) => *since,
+                    (false, None) => {
+                        let since = ws_channel_read_since(db, &server, cid, me).await;
+                        channels.insert(cid, since);
+                        since
                     }
                 };
-                open && view
+                let created_at: Option<i64> = r.try_get(5).ok();
+                open && since.is_some_and(|floor| {
+                    floor.is_none_or(|floor| created_at.is_some_and(|at| at >= floor))
+                })
             }
             (_, _, (Some(a), Some(b))) => a == me || b == me,
             (_, _, _) => false,
@@ -2509,6 +2524,30 @@ impl Drop for Listening {
     }
 }
 
+/// Which of `ids` are live P2P attachments hosted by `user`: not removed, not expired. `None`
+/// when the database can't say, so nothing is dropped by mistake.
+async fn live_hosted(db: &Db, user: &str, ids: &[String]) -> Option<Vec<String>> {
+    if ids.is_empty() {
+        return Some(Vec::new());
+    }
+    let sql = format!(
+        "SELECT DISTINCT media_id FROM messages WHERE media_kind = 'p2p' AND media_removed = 0 AND media_hoster = $1 AND (media_expires_at IS NULL OR media_expires_at > $2) AND media_id IN ({})",
+        crate::api::placeholders(3, ids.len())
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(user)
+        .bind(crate::db::now());
+    for id in ids {
+        query = query.bind(id);
+    }
+    let rows = query.fetch_all(db).await.ok()?;
+    Some(
+        rows.iter()
+            .filter_map(|r| r.try_get::<String, _>(0).ok())
+            .collect(),
+    )
+}
+
 fn hosting_ids(ids: Vec<String>) -> Vec<String> {
     ids.into_iter()
         .filter(|id| id.len() <= P2P_ID_MAX)
@@ -2674,8 +2713,16 @@ async fn run(state: AppState, mut socket: WebSocket) {
                             }
                         }
                         Ok(ClientMsg::P2pHosting { peer_id, ids }) => {
-                            if access.user.is_some() && peer_id.len() <= P2P_ID_MAX {
-                                access.host(&state, conn, (peer_id, hosting_ids(ids))).await;
+                            if let Some(user) = access.user.clone() && peer_id.len() <= P2P_ID_MAX {
+                                let ids = hosting_ids(ids);
+                                let live = live_hosted(&state.read(), &user, &ids).await;
+                                let checked = ids.clone();
+                                access.host(&state, conn, (peer_id, ids)).await;
+                                if let Some(live) = live
+                                    && !sent(&mut access, out.event(&WsEvent::P2pHosted { live, checked }))
+                                {
+                                    break;
+                                }
                             }
                         }
                         Ok(ClientMsg::P2pWho { hosters: _ }) if access.retry.pending() => {}
@@ -3289,6 +3336,10 @@ fn wants(
         } => scoped(server, dm_users),
         WsEvent::Error { message: _ }
         | WsEvent::TokensRevoked { username: _ }
+        | WsEvent::P2pHosted {
+            live: _,
+            checked: _,
+        }
         | WsEvent::Resync => false,
     }
 }
@@ -4437,6 +4488,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn p2p_who_keeps_the_read_history_floor_and_the_p2p_switch() {
+        let (state, path) = crate::api::test_util::temp_state("p2p_who_floor").await;
+        let db = &state.db;
+        for name in ["alice", "bob", "dave"] {
+            add_user_row(db, name).await;
+        }
+        let general = insert_id(db, "SELECT id FROM channels WHERE server = 'rchat'").await;
+        for (user, joined) in [("alice", 0), ("bob", 50), ("dave", 50)] {
+            sqlx::query("INSERT INTO members(server, username, is_admin, joined_at) VALUES('rchat', $1, 0, $2)")
+                .bind(user)
+                .bind(joined)
+                .execute(db)
+                .await
+                .expect("member");
+        }
+        exec(db, "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) SELECT id, 'u:bob', 1, 1, 0 FROM channels WHERE server = 'rchat'").await;
+        for (id, at) in [("old", 10), ("new", 60)] {
+            sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_kind, media_hoster, created_at) VALUES($1, 'alice', '', $2, 'p2p', 'alice', $3)")
+                .bind(general)
+                .bind(id)
+                .bind(at)
+                .execute(db)
+                .await
+                .expect("p2p message");
+        }
+        let ids = vec![s("old"), s("new")];
+        state.hub.set_p2p("alice", 1, s("peer-a"), ids.clone());
+        let ask = |me: &'static str| {
+            let mut access = Access::new(Some(s(me)), false, set(&["rchat"]));
+            let state = state.clone();
+            async move { p2p_visible(&state, &mut access, me, "alice").await }
+        };
+        assert_eq!(
+            ask("bob").await,
+            Some((s("peer-a"), vec![s("new")])),
+            "no read history: only files posted since joining"
+        );
+        let mut dave = ask("dave").await.expect("dave").1;
+        dave.sort();
+        assert_eq!(dave, [s("new"), s("old")]);
+        exec(
+            db,
+            "INSERT INTO settings(key, value) VALUES('p2p_attachments', '0') ON CONFLICT(key) DO UPDATE SET value = '0'",
+        )
+        .await;
+        crate::api::Settings::forget(db);
+        assert_eq!(
+            ask("dave").await,
+            Some((s("peer-a"), Vec::new())),
+            "with P2P attachments off no file is offered; the peer stays for calls"
+        );
+        let mut live = live_hosted(db, "alice", &[s("old"), s("gone"), s("new")])
+            .await
+            .expect("live");
+        live.sort();
+        assert_eq!(live, [s("new"), s("old")]);
+        assert_eq!(
+            live_hosted(db, "bob", &ids).await,
+            Some(Vec::new()),
+            "only the hoster's own messages count, so a shared browser adopts no one else's file"
+        );
+        exec(
+            db,
+            "UPDATE messages SET media_removed = 2 WHERE media_id = 'old'",
+        )
+        .await;
+        exec(
+            db,
+            "UPDATE messages SET media_expires_at = 1 WHERE media_id = 'new'",
+        )
+        .await;
+        assert_eq!(live_hosted(db, "alice", &ids).await, Some(Vec::new()));
+        assert_eq!(live_hosted(db, "bob", &[]).await, Some(Vec::new()));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn hosting_broadcasts_reach_others_only_through_p2p_who() {
         let (state, path) = crate::api::test_util::temp_state("p2p_broadcast_ids").await;
         let db = &state.db;
@@ -4521,6 +4649,7 @@ mod tests {
             expires_at: None,
             size: Some(1),
             mime: None,
+            sha256: None,
             removed: false,
             removed_by_author: false,
             spoiler: false,
@@ -5622,10 +5751,15 @@ mod tests {
                     profanity_targets: crate::api::ProfanityTargets::ALL,
                     asset_previews: false,
                     asset_uploads: false,
+                    p2p_attachments: false,
                     guests_enabled: false,
                 },
             },
             WsEvent::Error { message: s("e") },
+            WsEvent::P2pHosted {
+                live: Vec::new(),
+                checked: Vec::new(),
+            },
             WsEvent::Resync,
         ]);
         evs

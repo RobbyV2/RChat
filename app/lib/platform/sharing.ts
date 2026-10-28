@@ -17,6 +17,9 @@ export interface Sharing {
   share: (data: ShareData) => Promise<ShareResult>
   // Offers `text` as a file download / save dialog; false when the platform can't.
   saveFile: (name: string, text: string, mime: string) => boolean
+  // Offers a received file for download / save under `name`, never opening it; false when the
+  // platform can't.
+  saveBlob: (name: string, blob: Blob) => boolean
   // Lets the user pick a text file; null when cancelled, unreadable or over `maxBytes`.
   openFile: (accept: string, maxBytes: number) => Promise<string | null>
 }

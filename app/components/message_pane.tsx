@@ -550,6 +550,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const openThread = useStore(s => s.openThread)
   const openSearch = useStore(s => s.openSearch)
   const uploadFile = useStore(s => s.uploadFile)
+  const canAttach = useStore(s => s.settings.asset_uploads || s.settings.p2p_attachments)
   const startCall = useStore(s => s.startCall)
   const startP2pCall = useStore(s => s.startP2pCall)
   const call = useStore(s => s.call)
@@ -780,7 +781,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       className="relative flex h-full min-w-0 flex-1 flex-col bg-surface"
       onDragEnter={e => {
         e.preventDefault()
-        if (guest || !view || isVoice || !e.dataTransfer.types.includes('Files')) return
+        if (guest || !view || isVoice || !canAttach || !e.dataTransfer.types.includes('Files'))
+          return
         dragDepth.current += 1
         setDragging(true)
       }}
@@ -793,7 +795,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         e.preventDefault()
         dragDepth.current = 0
         setDragging(false)
-        if (guest || !view || isVoice) return
+        if (guest || !view || isVoice || !canAttach) return
         const file = e.dataTransfer.files.item(0)
         if (file) uploadFile(viewKey(view), file)
       }}

@@ -176,6 +176,8 @@ export interface MessageMedia {
   expires_at: number | null
   size: number | null
   mime: string | null
+  // SHA-256 of a P2P file, from the sender; absent or null from older senders and servers.
+  sha256?: string | null
   removed: boolean
   removed_by_author: boolean
   spoiler: boolean
@@ -333,6 +335,8 @@ export interface SiteSettings {
   profanity_targets: ProfanityTargets
   asset_previews: boolean
   asset_uploads: boolean
+  // Absent on servers before 0.3.0, where P2P attachments are always on.
+  p2p_attachments: boolean
   guests_enabled: boolean
 }
 
@@ -533,6 +537,7 @@ export type WsEvent =
   | { type: 'dm_created'; dm_id: number; dm_users: string[] }
   | { type: 'banned'; username: string }
   | { type: 'settings_changed'; settings: SiteSettings }
+  | { type: 'p2p_hosted'; live: string[]; checked: string[] }
   | { type: 'resync' }
 
 export type WsStatus = 'green' | 'yellow' | 'red'
@@ -542,6 +547,8 @@ export type Theme = 'dark' | 'light'
 export interface InstanceFeatures {
   guests: boolean
   uploads: boolean
+  // Absent before 0.3.0.
+  p2p_attachments?: boolean
   previews: boolean
   identity_assertions: boolean
 }

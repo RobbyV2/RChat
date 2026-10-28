@@ -454,8 +454,14 @@ pub struct MediaRef {
     pub expires_at: Option<i64>,
     /// Size in bytes, known for `p2p` media; `null` for `server` media.
     pub size: Option<i64>,
-    /// MIME type, known for `p2p` media; `null` for `server` media.
+    /// MIME type, known for `p2p` media; `null` for `server` media. Declared by the sender and
+    /// not verified: clients decide how to show a file from its bytes.
     pub mime: Option<String>,
+    /// SHA-256 of a `p2p` file (64 lowercase hex characters), computed by the sender when
+    /// attaching it, so recipients can check what the hoster serves. `null` for `server` media
+    /// and for files sent by clients that predate it (unverified).
+    #[serde(default)]
+    pub sha256: Option<String>,
     /// The attachment is gone: it expired, or its author or a moderator removed it.
     pub removed: bool,
     /// The attachment was removed on purpose rather than expiring.
@@ -474,6 +480,7 @@ impl MediaRef {
             expires_at: Some(expires_at),
             size: None,
             mime: None,
+            sha256: None,
             removed: false,
             removed_by_author: false,
             spoiler,
@@ -855,6 +862,16 @@ impl ProfanityTargets {
     }
 }
 
+/// Seed value of an on/off setting from its environment variable: on unless it says off.
+pub fn switch_seed(value: Option<&str>) -> bool {
+    !value.is_some_and(|v| {
+        matches!(
+            v.trim().to_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        )
+    })
+}
+
 pub fn profanity_seed(filter: Option<&str>, targets: Option<&str>) -> Vec<(&'static str, bool)> {
     let filter = !filter.is_some_and(|v| {
         matches!(
@@ -889,8 +906,17 @@ pub struct Settings {
     pub asset_previews: bool,
     /// File uploads through `POST /api/media`.
     pub asset_uploads: bool,
+    /// Peer-to-peer attachments: files hosted by the sender's browser, without a size limit.
+    /// With this and `asset_uploads` off the instance is text only: messages carrying any
+    /// attachment are rejected and existing ones are no longer offered.
+    #[serde(default = "yes")]
+    pub p2p_attachments: bool,
     /// Guest access: reading servers without an account.
     pub guests_enabled: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 const SETTINGS_TTL: Duration = Duration::from_secs(5);
@@ -904,12 +930,13 @@ impl Settings {
         profanity_targets: ProfanityTargets::ALL,
         asset_previews: false,
         asset_uploads: false,
+        p2p_attachments: false,
         guests_enabled: false,
     };
 
     pub async fn load(db: &Db) -> Settings {
         let rows = match sqlx::query(
-            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'guests_enabled') OR key LIKE 'profanity\\_%' ESCAPE '\\'",
+            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'p2p_attachments', 'guests_enabled') OR key LIKE 'profanity\\_%' ESCAPE '\\'",
         )
             .fetch_all(db)
             .await
@@ -941,6 +968,7 @@ impl Settings {
             profanity_targets: ProfanityTargets::from_fn(|t| on(t.key())),
             asset_previews: on("asset_previews"),
             asset_uploads: on("asset_uploads"),
+            p2p_attachments: on("p2p_attachments"),
             guests_enabled: on("guests_enabled"),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
@@ -960,6 +988,11 @@ impl Settings {
             Some(settings) => settings,
             None => Settings::load(db).await,
         }
+    }
+
+    /// Neither uploads nor P2P attachments: messages are text and emoji only.
+    pub fn text_only(&self) -> bool {
+        !self.asset_uploads && !self.p2p_attachments
     }
 
     pub fn forget(db: &Db) {

@@ -15,7 +15,7 @@ import {
   Smile,
   X,
 } from 'lucide-react'
-import { errorText, useStore, viewKey } from '../lib/store'
+import { errorText, MAX_UPLOAD, useStore, viewKey, type UploadMode } from '../lib/store'
 import { MESSAGE_MAX, charCount } from '../lib/rules'
 import { composing, sendKey } from '../lib/keys'
 import { runJoinStep, type JoinStep } from '../lib/join_flow'
@@ -183,6 +183,14 @@ function JoinBar({ server }: { server: string }) {
   )
 }
 
+const modeTitle = (mode: UploadMode, switchable: boolean) => {
+  const what =
+    mode === 'p2p'
+      ? 'P2P: hosted from your browser while you are online, no size limit'
+      : 'Server: uploaded to the server, removed after 1 day'
+  return switchable ? `${what}. Click for ${mode === 'p2p' ? 'server upload' : 'P2P'}` : what
+}
+
 export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const guest = useStore(s => s.guest)
   const logout = useStore(s => s.logout)
@@ -197,7 +205,9 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   })
   const draftKey = thread ? (rootId !== null ? `t${rootId}` : null) : view ? viewKey(view) : null
   const pending = useStore(s => (draftKey ? s.pending[draftKey] : undefined)) ?? null
-  const assetUploads = useStore(s => s.settings.asset_uploads)
+  const uploadsOn = useStore(s => s.settings.asset_uploads)
+  const p2pOn = useStore(s => s.settings.p2p_attachments)
+  const canAttach = uploadsOn || p2pOn
   const uploadFile = useStore(s => s.uploadFile)
   const toggleSpoiler = useStore(s => s.toggleSpoiler)
   const toggleUploadMode = useStore(s => s.toggleUploadMode)
@@ -314,6 +324,8 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     if (draftKey) setDraft(draftKey, value)
   }
 
+  const switchable = pending !== null && uploadsOn && p2pOn && pending.file.size <= MAX_UPLOAD
+
   const attach = (file: File | null) => {
     if (draftKey) uploadFile(draftKey, file)
   }
@@ -373,13 +385,10 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             <FileIcon size={20} className="text-primary" />
             <div className="flex items-center gap-1">
               <button
-                title={
-                  pending.mode === 'p2p'
-                    ? 'P2P: hosted from your browser while you are online. Click for server upload'
-                    : 'Server: uploaded to the server, removed after 1 day. Click for P2P'
-                }
+                title={modeTitle(pending.mode, switchable)}
                 onClick={() => draftKey && toggleUploadMode(draftKey)}
-                className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
+                disabled={!switchable}
+                className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium disabled:cursor-default ${
                   pending.mode === 'p2p'
                     ? 'bg-tertiary-container text-on-tertiary-container'
                     : 'bg-surface-container-highest text-on-surface-variant'
@@ -424,10 +433,11 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         className={`relative flex items-end gap-2 bg-surface-container-high px-3 py-2 ${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}
       >
         {assist.popups}
-        {assetUploads && (
+        {canAttach && (
           <>
             <button
               title="Attach a file"
+              aria-label="Attach a file"
               onClick={() => fileRef.current?.click()}
               className="shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
             >
@@ -476,7 +486,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             }
           }}
           onPaste={e => {
-            if (!assetUploads) return
+            if (!canAttach) return
             const file = Array.from(e.clipboardData.items)
               .find(i => i.kind === 'file' && i.type.startsWith('image/'))
               ?.getAsFile()

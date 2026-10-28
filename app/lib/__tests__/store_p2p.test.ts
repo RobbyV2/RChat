@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { home } from '../instances'
-import { useStore } from '../store'
+import { attachModes, MAX_UPLOAD, siteSettings, startMode, useStore } from '../store'
 import { p2p } from '../p2p'
-import type { MessageMedia, VoiceMsg, WsEvent } from '../types'
+import type { MessageMedia, SiteSettings, VoiceMsg, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 
 const st = () => useStore.getState()
@@ -92,6 +92,202 @@ describe('hosted P2P files follow their message', () => {
       ...scoped,
     })
     expect(removed).toEqual(['f13'])
+  })
+})
+
+describe('removals reach files and copies of messages not loaded here', () => {
+  const realForget = p2p.forgetMessage.bind(p2p)
+  const realReconcile = p2p.reconcile.bind(p2p)
+  let forgot: number[] = []
+  let checked: [string[], string[]][] = []
+  beforeEach(() => {
+    forgot = []
+    checked = []
+    p2p.forgetMessage = (id: number) => {
+      forgot.push(id)
+    }
+    p2p.reconcile = async (live: string[], ids: string[]) => {
+      checked.push([live, ids])
+    }
+  })
+  afterEach(() => {
+    p2p.forgetMessage = realForget
+    p2p.reconcile = realReconcile
+  })
+
+  test('removal and deletion events always tell the P2P store', () => {
+    dispatch({
+      type: 'media_removed',
+      message_id: 99,
+      filename: 'a.txt',
+      removed_by_author: true,
+      ...scoped,
+    })
+    dispatch({ type: 'message_deleted', id: 98, thread_root_id: null, ...scoped })
+    expect(forgot).toEqual([99, 98])
+    expect(removed).toEqual([])
+  })
+
+  test('turning P2P attachments back on asks for hosted files again', () => {
+    const ws = home.ws as unknown as { sendVoice: (m: VoiceMsg) => boolean }
+    const realSend = ws.sendVoice
+    const sent: VoiceMsg[] = []
+    ws.sendVoice = m => {
+      sent.push(m)
+      return true
+    }
+    const settings = { ...st().settings, p2p_attachments: false }
+    useStore.setState({
+      settings,
+      p2pAvailability: { alice: { peer_id: 'p', ids: [], online: true } },
+    })
+    dispatch({ type: 'settings_changed', settings: { ...settings, p2p_attachments: true } })
+    ws.sendVoice = realSend
+    expect(st().p2pAvailability).toEqual({})
+    expect(sent).toEqual([{ type: 'p2p_who', hosters: ['bob', 'alice'] }])
+  })
+
+  test("the server's hosting answer is reconciled", () => {
+    dispatch({ type: 'p2p_hosted', live: ['a'], checked: ['a', 'b'] })
+    expect(checked).toEqual([[['a'], ['a', 'b']]])
+  })
+})
+
+describe('P2P sends', () => {
+  const realStage = p2p.stage.bind(p2p)
+  const realPosted = p2p.posted.bind(p2p)
+  const realAnnounce = p2p.announce.bind(p2p)
+  afterEach(() => {
+    p2p.stage = realStage
+    p2p.posted = realPosted
+    p2p.announce = realAnnounce
+  })
+
+  const sendP2p = async (answers: number[]) => {
+    const log: string[] = []
+    const bodies: string[] = []
+    p2p.stage = async (id: string) => {
+      log.push(`stage ${id}`)
+    }
+    p2p.posted = (id: string, messageId: number) => log.push(`posted ${id} ${messageId}`)
+    p2p.announce = () => log.push('announce')
+    p2p.removeFile = (id: string) => log.push(`remove ${id}`)
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { p2p?: { p2p_id: string } }
+      const id = body.p2p?.p2p_id ?? ''
+      bodies.push(id)
+      log.push(`post ${id}`)
+      const status = answers.shift() ?? 200
+      return status === 200
+        ? new Response(JSON.stringify(msg(77, { author: user('bob') })), { status })
+        : new Response(JSON.stringify({ error: 'Invalid p2p_id' }), { status })
+    }) as unknown as typeof fetch
+    const file = new File(['hello'], 'a.txt')
+    // A channel no other test sends in: the store drains each conversation once at a time.
+    useStore.setState({
+      view: { kind: 'channel', server: 's', channelId: 4242 },
+      pending: { c4242: { file, spoiler: false, mode: 'p2p', scope: 'c4242' } },
+      outbox: {},
+    })
+    st().sendMessage('')
+    const settled = () => {
+      const head = st().outbox.c4242?.[0]
+      return !head || head.status === 'failed'
+    }
+    for (let i = 0; i < 500 && !settled(); i += 1) await tick()
+    return { log, bodies }
+  }
+
+  test('a P2P file is announced only after its message is posted', async () => {
+    const { log, bodies } = await sendP2p([200])
+    const id = bodies[0]
+    expect(/^[0-9a-f]{32}$/.test(id)).toBe(true)
+    expect(log).toEqual([`stage ${id}`, `post ${id}`, `posted ${id} 77`])
+    expect(st().error).toBeNull()
+  })
+
+  test('an id someone posted first is replaced once with a fresh one', async () => {
+    const { log, bodies } = await sendP2p([400])
+    const [first, second] = bodies
+    expect(/^[0-9a-f]{32}$/.test(second)).toBe(true)
+    expect(second === first).toBe(false)
+    expect(log).toEqual([
+      `stage ${first}`,
+      `post ${first}`,
+      `remove ${first}`,
+      `stage ${second}`,
+      `post ${second}`,
+      `posted ${second} 77`,
+    ])
+    expect(st().outbox.c4242).toBeUndefined()
+  })
+
+  test('a second refusal fails the send and drops the staged file', async () => {
+    const { log, bodies } = await sendP2p([400, 400])
+    expect(bodies.length).toBe(2)
+    expect(log.slice(-2)).toEqual([`post ${bodies[1]}`, `remove ${bodies[1]}`])
+    expect(st().outbox.c4242[0].status).toBe('failed')
+    expect(st().error === null).toBe(false)
+  })
+})
+
+describe('attachment settings', () => {
+  const base: SiteSettings = {
+    profanity_filter: false,
+    profanity_targets: {
+      messages: true,
+      links: true,
+      usernames: true,
+      server_names: true,
+      channel_names: true,
+      role_names: true,
+      file_names: true,
+      bios: true,
+    },
+    asset_previews: true,
+    asset_uploads: true,
+    p2p_attachments: true,
+    guests_enabled: true,
+  }
+  const big = MAX_UPLOAD + 1
+
+  test('older servers without the switch keep P2P on', () => {
+    const old = { ...base } as Partial<SiteSettings>
+    delete old.p2p_attachments
+    expect(siteSettings(old as SiteSettings).p2p_attachments).toBe(true)
+    expect(siteSettings({ ...base, p2p_attachments: false }).p2p_attachments).toBe(false)
+  })
+
+  test('P2P does not depend on uploads and has no size cap; both off is text only', () => {
+    expect(startMode(base, 10)).toBe('server')
+    expect(startMode(base, big)).toBe('p2p')
+    expect(startMode({ ...base, asset_uploads: false }, 10)).toBe('p2p')
+    expect(startMode({ ...base, asset_uploads: false }, 2 ** 40)).toBe('p2p')
+    expect(startMode({ ...base, p2p_attachments: false }, big)).toBe('server')
+    const textOnly = { ...base, asset_uploads: false, p2p_attachments: false }
+    expect(startMode(textOnly, 1)).toBeNull()
+    expect(attachModes(textOnly)).toEqual([])
+  })
+
+  test('picking or dropping a file follows the switches', () => {
+    const file = (size: number) =>
+      ({ name: 'f.bin', size, type: '', slice: () => new Blob([]) }) as unknown as File
+    useStore.setState({ settings: { ...base, asset_uploads: false }, pending: {}, error: null })
+    st().uploadFile('c1', file(big))
+    expect(st().pending.c1?.mode).toBe('p2p')
+    st().toggleUploadMode('c1')
+    expect(st().pending.c1?.mode).toBe('p2p')
+    useStore.setState({
+      settings: { ...base, asset_uploads: false, p2p_attachments: false },
+      pending: {},
+    })
+    st().uploadFile('c1', file(1))
+    expect(st().pending.c1).toBeUndefined()
+    expect(st().error).toBeNull()
+    useStore.setState({ settings: { ...base, p2p_attachments: false }, pending: {} })
+    st().uploadFile('c1', file(big))
+    expect(st().pending.c1).toBeUndefined()
+    expect(st().error === null).toBe(false)
   })
 })
 

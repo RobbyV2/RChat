@@ -195,6 +195,7 @@ export interface P2pAttachment {
   filename: string
   size: number
   mime: string
+  sha256?: string
   p2p_id: string
   expires_in_seconds?: number
 }

@@ -24,9 +24,13 @@ const share = async (data: ShareData): Promise<ShareResult> => {
   }
 }
 
-const saveFile = (name: string, text: string, mime: string) => {
+const saveFile = (name: string, text: string, mime: string) =>
+  saveBlob(name, new Blob([text], { type: mime }))
+
+// The anchor has `download`, so the browser saves the file instead of navigating to it.
+const saveBlob = (name: string, blob: Blob) => {
   if (typeof document === 'undefined') return false
-  const url = URL.createObjectURL(new Blob([text], { type: mime }))
+  const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
   a.download = name
@@ -34,7 +38,7 @@ const saveFile = (name: string, text: string, mime: string) => {
   document.body.appendChild(a)
   a.click()
   a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
   return true
 }
 
@@ -53,4 +57,4 @@ const openFile = (accept: string, maxBytes: number) =>
     input.click()
   })
 
-export const webSharing: Sharing = { copyText, canShare, share, saveFile, openFile }
+export const webSharing: Sharing = { copyText, canShare, share, saveFile, saveBlob, openFile }

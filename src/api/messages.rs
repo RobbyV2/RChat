@@ -31,7 +31,7 @@ use crate::db::{
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 
-const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id)";
+const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256";
 const SNIPPET_MAX: usize = 200;
 
 /// Message-id paging for message lists. Give at most one of `before`, `after` and `around`;
@@ -88,8 +88,8 @@ pub struct SendReq {
     #[schema(default = true)]
     mention_reply: bool,
     /// Optional id of a message to forward here. The new message is a copy of it, made by the
-    /// server: its text, its server-hosted attachment (unless removed or expired; peer-to-peer
-    /// attachments are not forwarded) and its link previews, with `forward` naming the original
+    /// server: its text, its server-hosted attachment (unless removed or expired, or uploads are
+    /// turned off; peer-to-peer attachments are not forwarded) and its link previews, with `forward` naming the original
     /// author and time. `content`, the attachment fields and `reply_to` are ignored then. It
     /// must be a `user` message you can read; anything else, including ids that do not exist,
     /// gives the same `400 Cannot forward that message`. Forwards never ping anyone.
@@ -110,12 +110,19 @@ pub struct P2pAttachment {
     /// when that is enabled for file names.
     #[schema(example = "notes.pdf")]
     filename: String,
-    /// File size in bytes; must not be negative.
+    /// File size in bytes, from 0 to 2^53 - 1. There is no other size limit: the bytes never
+    /// reach the server.
     #[schema(example = 48213)]
     size: i64,
-    /// MIME type as reported by the sender, not verified.
+    /// MIME type as reported by the sender, not verified; at most 255 characters.
     #[schema(example = "application/pdf")]
     mime: String,
+    /// SHA-256 of the file's bytes as 64 hexadecimal characters (stored lowercase), computed
+    /// when attaching it. Recipients check downloads against it. Optional for older clients;
+    /// files without it are shown as unverified.
+    #[schema(example = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")]
+    #[serde(default)]
+    sha256: Option<String>,
     /// Transfer id chosen by the sender: exactly 32 hexadecimal characters.
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     p2p_id: String,
@@ -298,6 +305,7 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
                 expires_at: r.try_get(14)?,
                 size: r.try_get(15)?,
                 mime: r.try_get(16)?,
+                sha256: r.try_get(32)?,
                 removed: removed != 0,
                 removed_by_author: removed == 2,
                 spoiler: r.try_get::<i64, _>(9)? != 0,
@@ -857,6 +865,101 @@ async fn claim_media(
     ))
 }
 
+/// Largest P2P file size a client can describe exactly (2^53 - 1, JavaScript's safe integers).
+const P2P_SIZE_MAX: i64 = (1 << 53) - 1;
+const P2P_MIME_MAX: usize = 255;
+
+fn attachments_off(what: &str) -> ApiError {
+    ApiError(
+        StatusCode::FORBIDDEN,
+        format!("{what} are turned off on this server"),
+    )
+}
+
+/// Whether the instance takes this kind of attachment: server files need uploads on, P2P files
+/// need P2P attachments on; with both off nothing but text is accepted.
+fn attachments_allowed(settings: &Settings, server: bool, p2p: bool) -> Result<(), ApiError> {
+    match (server || p2p, settings.text_only()) {
+        (true, true) => Err(attachments_off("Attachments")),
+        (_, _) if server && !settings.asset_uploads => Err(attachments_off("File uploads")),
+        (_, _) if p2p && !settings.p2p_attachments => Err(attachments_off("P2P attachments")),
+        (_, _) => Ok(()),
+    }
+}
+
+fn valid_sha256(hash: &str) -> bool {
+    hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Checks a P2P attachment. Its id must not name a stored server file, so a P2P message can
+/// never stand in as a reference to someone else's upload, nor a P2P file another user hosts,
+/// so nobody can post their own bytes under someone else's attachment id.
+async fn p2p_media(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    p2p: P2pAttachment,
+    user: &User,
+    spoiler: bool,
+) -> Result<MediaRef, ApiError> {
+    let P2pAttachment {
+        filename,
+        size,
+        mime,
+        sha256,
+        p2p_id,
+        expires_in_seconds,
+    } = p2p;
+    let valid_id = p2p_id.len() == 32 && p2p_id.chars().all(|c| c.is_ascii_hexdigit());
+    let p2p_id = p2p_id.to_ascii_lowercase();
+    if !valid_id {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Invalid p2p_id".to_string(),
+        ));
+    }
+    let valid = (0..=P2P_SIZE_MAX).contains(&size)
+        && mime.chars().count() <= P2P_MIME_MAX
+        && !mime.chars().any(char::is_control)
+        && sha256.as_deref().is_none_or(valid_sha256)
+        && expires_in_seconds.is_none_or(|s| s > 0);
+    if !valid {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Invalid P2P attachment".to_string(),
+        ));
+    }
+    let taken = sqlx::query("SELECT 1 FROM media WHERE id = $1")
+        .bind(&p2p_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .is_some();
+    let foreign = sqlx::query("SELECT 1 FROM messages WHERE media_kind = 'p2p' AND (media_id = $1 OR media_id = $2) AND media_hoster <> $3 LIMIT 1")
+        .bind(&p2p_id)
+        .bind(p2p_id.to_ascii_uppercase())
+        .bind(&user.username)
+        .fetch_optional(&mut **tx)
+        .await?
+        .is_some();
+    if taken || foreign {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Invalid p2p_id".to_string(),
+        ));
+    }
+    Ok(MediaRef {
+        id: p2p_id,
+        filename,
+        kind: MediaKind::P2p,
+        hoster: Some(user.username.clone()),
+        expires_at: expires_in_seconds.map(|s| now().saturating_add(s)),
+        size: Some(size),
+        mime: Some(mime),
+        sha256: sha256.map(|h| h.to_ascii_lowercase()),
+        removed: false,
+        removed_by_author: false,
+        spoiler,
+    })
+}
+
 /// Where a new message goes, for checking what it may reply to.
 #[derive(Clone, Copy)]
 enum Place {
@@ -954,10 +1057,8 @@ async fn insert_message(
     } = req;
     check_len(&content, MESSAGE_MAX, "Message")?;
     let spoiler = media_spoiler.unwrap_or(false);
-    let settings = match channel_id {
-        Some(_) => Some(Settings::cached(db).await),
-        None => None,
-    };
+    let settings = Settings::cached(db).await;
+    attachments_allowed(&settings, media_id.is_some(), p2p.is_some())?;
     let mut tx = db.begin().await?;
     let media = match (&media_id, p2p) {
         (Some(_), Some(_)) => {
@@ -967,43 +1068,10 @@ async fn insert_message(
             ));
         }
         (Some(id), None) => Some(claim_media(&mut tx, id, &user.username, spoiler).await?),
-        (None, Some(p2p)) => {
-            let P2pAttachment {
-                filename,
-                size,
-                mime,
-                p2p_id,
-                expires_in_seconds,
-            } = p2p;
-            let valid_id = p2p_id.len() == 32 && p2p_id.chars().all(|c| c.is_ascii_hexdigit());
-            if !valid_id {
-                return Err(ApiError(
-                    StatusCode::BAD_REQUEST,
-                    "Invalid p2p_id".to_string(),
-                ));
-            }
-            if size < 0 || expires_in_seconds.is_some_and(|s| s <= 0) {
-                return Err(ApiError(
-                    StatusCode::BAD_REQUEST,
-                    "Invalid P2P attachment".to_string(),
-                ));
-            }
-            Some(MediaRef {
-                id: p2p_id,
-                filename,
-                kind: MediaKind::P2p,
-                hoster: Some(user.username.clone()),
-                expires_at: expires_in_seconds.map(|s| now() + s),
-                size: Some(size),
-                mime: Some(mime),
-                removed: false,
-                removed_by_author: false,
-                spoiler,
-            })
-        }
+        (None, Some(p2p)) => Some(p2p_media(&mut tx, p2p, user, spoiler).await?),
         (None, None) => None,
     };
-    if let (Some(settings), Some(media)) = (&settings, &media) {
+    if let (Some(_), Some(media)) = (channel_id, &media) {
         settings.check_profanity(ProfanityTarget::FileNames, &media.filename)?;
     }
     if content.trim().is_empty() && media.is_none() {
@@ -1014,7 +1082,7 @@ async fn insert_message(
     }
     let t = now();
     let id: i64 = sqlx::query(
-        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, reply_to, reply_mention, created_at) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id",
+        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, media_sha256, reply_to, reply_mention, created_at) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id",
     )
     .bind(channel_id)
     .bind(dm_id)
@@ -1029,6 +1097,7 @@ async fn insert_message(
     .bind(media.as_ref().and_then(|m| m.expires_at))
     .bind(media.as_ref().and_then(|m| m.size))
     .bind(media.as_ref().and_then(|m| m.mime.clone()))
+    .bind(media.as_ref().and_then(|m| m.sha256.clone()))
     .bind(quote.map(|q| q.id))
     .bind(quote.is_some_and(|q| q.mention) as i64)
     .bind(t)
@@ -1134,11 +1203,13 @@ async fn forwarded(
     }
     let content: String = row.try_get(0)?;
     let filename = row.try_get::<Option<String>, _>(3)?.unwrap_or_default();
+    let uploads = Settings::cached(db).await.asset_uploads;
     let (media, dropped) = match (
         row.try_get::<Option<String>, _>(2)?,
         row.try_get::<i64, _>(4)?,
         MediaKind::parse(&row.try_get::<String, _>(6)?)?,
     ) {
+        (Some(_), 0, MediaKind::Server) if !uploads => (None, Some(filename)),
         (Some(media_id), 0, MediaKind::Server) => {
             let stored = sqlx::query("SELECT 1 FROM media WHERE id = $1")
                 .bind(&media_id)
@@ -1153,6 +1224,7 @@ async fn forwarded(
                 expires_at: row.try_get(8)?,
                 size: row.try_get(9)?,
                 mime: row.try_get(10)?,
+                sha256: None,
                 removed: false,
                 removed_by_author: false,
                 spoiler: row.try_get::<i64, _>(5)? != 0,
@@ -1372,7 +1444,7 @@ pub(crate) async fn channel_messages(
 /// with `mention_reply` (default) its author gets a `reply` ping instead (one ping, not two).
 /// With `forward_of` the message is a copy of a message you can read (see `SendReq`); forwards
 /// never ping anyone. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or attachment file name), voice channel, text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or attachment file name), voice channel, text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_channel_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1473,7 +1545,7 @@ pub(crate) async fn thread_messages(
 /// (default) its author gets a `reply` ping instead of a mention ping. With `forward_of` the
 /// reply is a copy of a message you can read (see `SendReq`) and pings nobody. General
 /// rate-limit bucket.
-#[utoipa::path(post, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or attachment file name), text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or attachment file name), text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_thread_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1576,7 +1648,7 @@ pub(crate) async fn dm_messages(
 /// event). `reply_to` may quote a message of the same conversation; with `mention_reply`
 /// (default) its author gets a `reply` ping instead. With `forward_of` the message is a copy
 /// of a message you can read (see `SendReq`) and pings nobody. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`media_id` was uploaded by someone else", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn send_dm_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1990,7 +2062,7 @@ async fn search_once(
     let mut msgs = rows_messages(db, &rows, Quotes::Skip).await?;
     let mut ctx: Vec<(String, String)> = Vec::with_capacity(rows.len());
     for r in &rows {
-        ctx.push((r.try_get(32)?, r.try_get(33)?));
+        ctx.push((r.try_get(33)?, r.try_get(34)?));
     }
     attach_embeds(db, &mut msgs).await?;
     Ok(msgs
@@ -2663,6 +2735,249 @@ mod tests {
             .try_get(0)
             .expect("count value");
         assert_eq!(count, 2);
+        done(state, path).await;
+    }
+
+    async fn set_switch(db: &Db, key: &str, on: bool) {
+        sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+            .bind(key)
+            .bind(if on { "1" } else { "0" })
+            .execute(db)
+            .await
+            .expect("setting");
+        Settings::forget(db);
+    }
+
+    fn p2p_req(id: &str, size: i64, sha256: Option<&str>) -> SendReq {
+        SendReq {
+            content: String::new(),
+            media_id: None,
+            media_spoiler: None,
+            p2p: Some(P2pAttachment {
+                filename: "big.bin".to_string(),
+                size,
+                mime: "application/octet-stream".to_string(),
+                sha256: sha256.map(str::to_string),
+                p2p_id: id.to_string(),
+                expires_in_seconds: None,
+            }),
+            reply_to: None,
+            mention_reply: true,
+            forward_of: None,
+        }
+    }
+
+    async fn send_req(state: &AppState, cid: i64, req: SendReq) -> Result<Message, ApiError> {
+        send_channel_message(
+            State(state.clone()),
+            Path(cid),
+            Authed(mem_user("alice", false)),
+            Json(req),
+        )
+        .await
+        .map(|j| j.0)
+    }
+
+    fn refused(res: Result<Message, ApiError>, text: &str) -> bool {
+        matches!(res, Err(ApiError(StatusCode::FORBIDDEN, ref m)) if m == text)
+    }
+
+    #[tokio::test]
+    async fn p2p_ids_of_another_hoster_cannot_be_reused() {
+        let (state, path) = temp_state("p2p_reuse").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, now()).await;
+        add_member(db, "rchat", "mallory", 0, 0, now()).await;
+        let id = "c3".repeat(16);
+        let first = send_req(&state, cid, p2p_req(&id, 10, Some(&"aa".repeat(32))))
+            .await
+            .expect("alice hosts the file")
+            .media
+            .expect("media");
+        assert_eq!(first.hoster.as_deref(), Some("alice"));
+        let as_mallory = |id: String| {
+            send_channel_message(
+                State(state.clone()),
+                Path(cid),
+                Authed(mem_user("mallory", false)),
+                Json(p2p_req(&id, 10, Some(&"bb".repeat(32)))),
+            )
+        };
+        let mixed = "aBcD".repeat(8);
+        let stored = send_req(&state, cid, p2p_req(&mixed, 10, None))
+            .await
+            .expect("ids in any letter case are accepted")
+            .media
+            .expect("media");
+        assert_eq!(stored.id, mixed.to_ascii_lowercase(), "and kept lowercase");
+        let kept: String =
+            sqlx::query("SELECT media_id FROM messages WHERE id = (SELECT MAX(id) FROM messages)")
+                .fetch_one(db)
+                .await
+                .expect("row")
+                .try_get(0)
+                .expect("id");
+        assert_eq!(kept, mixed.to_ascii_lowercase());
+        for reuse in [
+            id.clone(),
+            id.to_ascii_uppercase(),
+            mixed.clone(),
+            mixed.to_ascii_lowercase(),
+        ] {
+            assert!(
+                matches!(
+                    as_mallory(reuse).await,
+                    Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == "Invalid p2p_id"
+                ),
+                "another hoster's id is refused"
+            );
+        }
+        assert!(
+            as_mallory("d4".repeat(16)).await.is_ok(),
+            "fresh ids still work"
+        );
+        send_req(&state, cid, p2p_req(&id, 10, Some(&"aa".repeat(32))))
+            .await
+            .expect("the hoster may post its own id again");
+        let rows: i64 = sqlx::query("SELECT COUNT(*) FROM messages WHERE media_id = $1")
+            .bind(&id)
+            .fetch_one(db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("count value");
+        assert_eq!(rows, 2);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn p2p_attachments_follow_their_own_switch_and_carry_a_hash() {
+        let (state, path) = temp_state("p2p_switch").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, now()).await;
+        let hash = "AB".repeat(32);
+        set_switch(db, "asset_uploads", false).await;
+        let big = send_req(&state, cid, p2p_req(&"1a".repeat(16), 5 << 30, Some(&hash)))
+            .await
+            .expect("P2P works with uploads off and has no size cap")
+            .media
+            .expect("media");
+        assert_eq!(big.size, Some(5 << 30));
+        assert_eq!(big.sha256, Some("ab".repeat(32)), "stored lowercase");
+        let listed = list(&state, cid, Some("alice")).await.expect("list");
+        let row = listed.iter().find_map(|m| m.media.clone()).expect("row");
+        assert_eq!(row.sha256, Some("ab".repeat(32)));
+        let old = send_req(&state, cid, p2p_req(&"2b".repeat(16), 10, None))
+            .await
+            .expect("older clients send no hash")
+            .media
+            .expect("media");
+        assert_eq!(old.sha256, None);
+        for (id, size, sha) in [
+            ("3c".repeat(16), 1i64 << 53, Some(hash.clone())),
+            ("3d".repeat(16), -1, Some(hash.clone())),
+            ("3e".repeat(16), 10, Some("ab".repeat(31))),
+            ("3f".repeat(16), 10, Some("zz".repeat(32))),
+        ] {
+            assert!(
+                matches!(
+                    send_req(&state, cid, p2p_req(&id, size, sha.as_deref())).await,
+                    Err(ApiError(StatusCode::BAD_REQUEST, _))
+                ),
+                "{size} {sha:?}"
+            );
+        }
+        let mut bad_mime = p2p_req(&"40".repeat(16), 1, None);
+        if let Some(p2p) = &mut bad_mime.p2p {
+            p2p.mime = "text/html\r\nx".to_string();
+        }
+        assert!(send_req(&state, cid, bad_mime).await.is_err());
+        add_media(db, &"5a".repeat(16), Some("bob")).await;
+        assert!(
+            matches!(
+                send_req(&state, cid, p2p_req(&"5A".repeat(16), 1, None)).await,
+                Err(ApiError(StatusCode::BAD_REQUEST, _))
+            ),
+            "a P2P id can't name a stored server file"
+        );
+        add_media(db, &"6b".repeat(16), Some("alice")).await;
+        assert!(refused(
+            send_with(&state, cid, "alice", String::new(), Some(&"6b".repeat(16)))
+                .await
+                .map(|j| j.0),
+            "File uploads are turned off on this server"
+        ));
+        set_switch(db, "asset_uploads", true).await;
+        set_switch(db, "p2p_attachments", false).await;
+        assert!(refused(
+            send_req(&state, cid, p2p_req(&"7c".repeat(16), 1, None)).await,
+            "P2P attachments are turned off on this server"
+        ));
+        assert!(
+            send_with(&state, cid, "alice", String::new(), Some(&"6b".repeat(16)))
+                .await
+                .is_ok()
+        );
+        set_switch(db, "asset_uploads", false).await;
+        assert!(Settings::cached(db).await.text_only());
+        add_media(db, &"8d".repeat(16), Some("alice")).await;
+        assert!(refused(
+            send_with(&state, cid, "alice", String::new(), Some(&"8d".repeat(16)))
+                .await
+                .map(|j| j.0),
+            "Attachments are turned off on this server"
+        ));
+        assert!(refused(
+            send_req(&state, cid, p2p_req(&"9e".repeat(16), 1, None)).await,
+            "Attachments are turned off on this server"
+        ));
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("dm id");
+        let in_dm = send_dm_message(
+            State(state.clone()),
+            Path(dm),
+            Authed(mem_user("alice", false)),
+            Json(p2p_req(&"af".repeat(16), 1, None)),
+        )
+        .await;
+        assert!(
+            matches!(in_dm, Err(ApiError(StatusCode::FORBIDDEN, _))),
+            "DMs too"
+        );
+        let text = send_with(&state, cid, "alice", "just text 😀".to_string(), None).await;
+        assert!(text.is_ok(), "text and emoji still work");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn forwards_drop_server_files_while_uploads_are_off() {
+        let (state, path) = temp_state("fwd_uploads_off").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, now()).await;
+        let id = "c0".repeat(16);
+        add_media(db, &id, Some("alice")).await;
+        let src = send_with(&state, cid, "alice", "look".to_string(), Some(&id))
+            .await
+            .expect("source")
+            .0;
+        set_switch(db, "asset_uploads", false).await;
+        let mut req = p2p_req(&"c1".repeat(16), 1, None);
+        req.p2p = None;
+        req.forward_of = Some(src.id);
+        let copy = send_req(&state, cid, req).await.expect("forward");
+        assert!(copy.media.is_none());
+        assert_eq!(
+            copy.forward.and_then(|f| f.dropped),
+            Some("a.txt".to_string())
+        );
         done(state, path).await;
     }
 

@@ -307,7 +307,12 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
         WsEvent::UserUpdated { user: _, scope: _ }
         | WsEvent::Banned { username: _ }
         | WsEvent::SettingsChanged { settings: _ } => Route::Everyone,
-        WsEvent::Error { message: _ } | WsEvent::Resync => to(Vec::new()),
+        WsEvent::Error { message: _ }
+        | WsEvent::P2pHosted {
+            live: _,
+            checked: _,
+        }
+        | WsEvent::Resync => to(Vec::new()),
     }
 }
 

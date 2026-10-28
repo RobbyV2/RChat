@@ -163,7 +163,10 @@ pub(crate) async fn upload_media(
 ///
 /// Marks the attachment of a message as removed by its author (the message text stays) and,
 /// for a stored file no other live message uses, deletes the file. For a peer-to-peer
-/// attachment its metadata is cleared. The message's author can always do this; in a server
+/// attachment its metadata (including its hash) is cleared: `p2p_who` stops offering it, the
+/// hoster's app stops serving it (also on its next `p2p_hosting`, answered by `p2p_hosted`),
+/// and recipients drop copies they kept. A modified client that already holds the file can
+/// keep sharing it with people who know its id; the server can't prevent that. The message's author can always do this; in a server
 /// channel, members with the Manage messages permission can too. Emits `media_removed` to
 /// whoever can see the message. Forwarded copies of the message elsewhere keep their own
 /// reference to the file (and so the file itself); moderators of the destination remove it there
@@ -196,7 +199,7 @@ pub(crate) async fn delete_media(
     };
     match media_kind {
         MediaKind::P2p => {
-            sqlx::query("UPDATE messages SET media_removed = 2, media_hoster = NULL, media_expires_at = NULL, media_size = NULL, media_mime = NULL WHERE id = $1")
+            sqlx::query("UPDATE messages SET media_removed = 2, media_hoster = NULL, media_expires_at = NULL, media_size = NULL, media_mime = NULL, media_sha256 = NULL WHERE id = $1")
                 .bind(id)
                 .execute(&state.db)
                 .await?;
@@ -258,7 +261,7 @@ pub(crate) async fn media_view_ok(
     query_grant: Option<&str>,
 ) -> Result<(), ApiError> {
     let rows =
-        sqlx::query("SELECT m.id FROM messages m WHERE m.media_id = $1 AND m.media_removed = 0")
+        sqlx::query("SELECT m.id FROM messages m WHERE m.media_id = $1 AND m.media_kind = 'server' AND m.media_removed = 0")
             .bind(media_id)
             .fetch_all(db)
             .await?;
@@ -346,7 +349,7 @@ fn chunk_stream(
 /// joined count; in a direct message its two participants. Before it is attached only the
 /// uploader can fetch it. Access is checked before `If-None-Match`, so a 304 is only sent to
 /// callers allowed to see the file. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/media/{id}", tag = "Media", params(("id" = String, Path, description = "Media id, 32 hex characters, from `MediaRef.id`"), MediaQuery), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag` and `Cache-Control: private, max-age=86400, immutable`"), (status = 304, description = "`If-None-Match` matched the media's ETag and you may see the file"), (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody), (status = 404, description = "`Media not found`: unknown id, the file expired or was deleted, or you may not read any message carrying it (banned, no access to its password-protected server, no view permission or no read-history access in its channel, or not a DM participant) or see the unattached upload; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/media/{id}", tag = "Media", params(("id" = String, Path, description = "Media id, 32 hex characters, from `MediaRef.id`"), MediaQuery), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag` and `Cache-Control: private, max-age=86400, immutable`"), (status = 304, description = "`If-None-Match` matched the media's ETag and you may see the file"), (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody), (status = 403, description = "`Attachments are turned off on this server`: uploads and P2P attachments are both off (text only); only sent to callers who may see the file", body = ApiErrorBody), (status = 404, description = "`Media not found`: unknown id, the file expired or was deleted, or you may not read any message carrying it (banned, no access to its password-protected server, no view permission or no read-history access in its channel, or not a DM participant) or see the unattached upload; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn download_media(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -360,6 +363,12 @@ pub(crate) async fn download_media(
     };
     require_guest_ok(&db, user.as_ref()).await?;
     media_view_ok(&db, &headers, &id, user.as_ref(), q.grant.as_deref()).await?;
+    if Settings::cached(&db).await.text_only() {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "Attachments are turned off on this server".to_string(),
+        ));
+    }
     let row = sqlx::query(
         "SELECT filename, mime, size, CAST(CASE WHEN data IS NULL THEN 0 ELSE 1 END AS BIGINT), (SELECT COUNT(*) FROM media_chunks mc WHERE mc.media_id = media.id) FROM media WHERE id = $1",
     )
@@ -722,6 +731,132 @@ mod tests {
             .await
             .expect("body");
         assert!(body.is_empty());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn p2p_messages_never_open_server_media() {
+        let (state, path) = temp_state("media_p2p_ref").await;
+        let db = &state.db;
+        let id = "c4".repeat(16);
+        store_media(
+            db,
+            &id,
+            "a.txt",
+            "text/plain",
+            1,
+            Some(&[1]),
+            "alice",
+            now(),
+        )
+        .await
+        .expect("store media");
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'carol') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("dm id");
+        sqlx::query("INSERT INTO messages(dm_id, author, content, media_id, media_filename, created_at) VALUES($1, 'alice', '', $2, 'a.txt', 1)")
+            .bind(dm)
+            .bind(&id)
+            .execute(db)
+            .await
+            .expect("attach in a private DM");
+        let cid = general(db).await;
+        let p2p: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, media_kind, media_hoster, media_size, media_mime, media_sha256, created_at) VALUES($1, 'bob', '', $2, 'a.txt', 'p2p', 'bob', 1, 'text/plain', $3, 2) RETURNING id")
+            .bind(cid)
+            .bind(&id)
+            .bind("ab".repeat(32))
+            .fetch_one(db)
+            .await
+            .expect("bob's P2P message reusing the id")
+            .try_get(0)
+            .expect("id");
+        let headers = axum::http::HeaderMap::new();
+        let view = |who: &'static str| {
+            let headers = headers.clone();
+            let id = id.clone();
+            let state = state.clone();
+            async move {
+                media_view_ok(&state.db, &headers, &id, Some(&mem_user(who, false)), None)
+                    .await
+                    .is_ok()
+            }
+        };
+        assert!(view("carol").await);
+        assert!(!view("bob").await, "a readable P2P row is not a reference");
+        let _ = delete_media(
+            State(state.clone()),
+            Path(p2p),
+            Authed(mem_user("bob", false)),
+        )
+        .await
+        .expect("remove");
+        let row = sqlx::query("SELECT media_sha256, media_removed FROM messages WHERE id = $1")
+            .bind(p2p)
+            .fetch_one(db)
+            .await
+            .expect("row");
+        assert_eq!(row.try_get::<Option<String>, _>(0).expect("hash"), None);
+        assert_eq!(row.try_get::<i64, _>(1).expect("removed"), 2);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn text_only_instances_serve_no_files() {
+        let (state, path) = temp_state("media_text_only").await;
+        let db = &state.db;
+        let id = "c5".repeat(16);
+        store_media(
+            db,
+            &id,
+            "a.txt",
+            "text/plain",
+            1,
+            Some(&[1]),
+            "alice",
+            now(),
+        )
+        .await
+        .expect("store media");
+        let cid = general(db).await;
+        sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, created_at) VALUES($1, 'alice', '', $2, 'a.txt', 1)")
+            .bind(cid)
+            .bind(&id)
+            .execute(db)
+            .await
+            .expect("attach");
+        let get = || {
+            download_media(
+                State(state.clone()),
+                axum::http::HeaderMap::new(),
+                Path(id.clone()),
+                axum::extract::Query(MediaQuery { grant: None }),
+            )
+        };
+        for (key, on, ok) in [
+            ("asset_uploads", false, true),
+            ("p2p_attachments", false, false),
+            ("asset_uploads", true, true),
+        ] {
+            sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+                .bind(key)
+                .bind(if on { "1" } else { "0" })
+                .execute(db)
+                .await
+                .expect("setting");
+            crate::api::Settings::forget(db);
+            match get().await {
+                Ok(res) => assert!(ok && res.status() == axum::http::StatusCode::OK),
+                Err(ApiError(status, msg)) => {
+                    assert!(!ok);
+                    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+                    assert_eq!(msg, "Attachments are turned off on this server");
+                }
+            }
+        }
         done(state, path).await;
     }
 

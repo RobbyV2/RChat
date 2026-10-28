@@ -212,6 +212,7 @@ pub struct SettingsPatch {
     profanity_targets: ProfanityTargetsPatch,
     asset_previews: Option<bool>,
     asset_uploads: Option<bool>,
+    p2p_attachments: Option<bool>,
     guests_enabled: Option<bool>,
 }
 
@@ -225,10 +226,10 @@ fn require_site_admin(user: &User) -> Result<(), ApiError> {
 /// Get the instance settings
 ///
 /// The instance-wide feature switches clients need to adapt their UI: profanity filter and
-/// its targets, link previews, uploads and guest access. No authentication. Values may lag
-/// a change by up to 5 seconds per server process; live changes also arrive as the
-/// `settings_changed` WebSocket event. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/settings", tag = "Instance", responses((status = 200, description = "Site-wide feature toggles: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, and guest access", body = Settings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
+/// its targets, link previews, uploads, P2P attachments and guest access. No authentication.
+/// Values may lag a change by up to 5 seconds per server process; live changes also arrive as
+/// the `settings_changed` WebSocket event. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/settings", tag = "Instance", responses((status = 200, description = "Site-wide feature toggles: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, P2P attachments, and guest access", body = Settings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
     Json(Settings::cached(&state.db).await)
 }
@@ -244,12 +245,14 @@ pub(crate) async fn patch_settings(
         profanity_targets,
         asset_previews,
         asset_uploads,
+        p2p_attachments,
         guests_enabled,
     } = req;
     let pairs = [
         ("profanity_filter", profanity_filter),
         ("asset_previews", asset_previews),
         ("asset_uploads", asset_uploads),
+        ("p2p_attachments", p2p_attachments),
         ("guests_enabled", guests_enabled),
     ]
     .into_iter()

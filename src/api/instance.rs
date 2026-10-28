@@ -55,6 +55,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         guests_enabled,
         asset_uploads,
         asset_previews,
+        p2p_attachments,
         profanity_filter: _,
         profanity_targets: _,
     } = Settings::cached(&state.read()).await;
@@ -63,6 +64,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         Features {
             guests: guests_enabled,
             uploads: asset_uploads,
+            p2p_attachments,
             previews: asset_previews,
             identity_assertions: true,
         },
@@ -342,6 +344,7 @@ mod tests {
         assert_eq!(info["ws_url"], format!("ws://{addr}/api/ws"));
         assert_eq!(info["jwks_uri"], format!("{base}/.well-known/jwks.json"));
         assert_eq!(info["features"]["guests"], true);
+        assert_eq!(info["features"]["p2p_attachments"], true);
         assert_eq!(info["limits"]["page_size"], 50);
         let res = client
             .get(format!("{base}/.well-known/rchat"))
@@ -604,6 +607,7 @@ mod tests {
             Features {
                 guests: true,
                 uploads: true,
+                p2p_attachments: true,
                 previews: true,
                 identity_assertions: true,
             },

@@ -402,6 +402,8 @@ pub struct Features {
     pub guests: bool,
     /// File uploads through `POST /api/media` are on.
     pub uploads: bool,
+    /// Peer-to-peer attachments are on. With `uploads` also off, messages are text only.
+    pub p2p_attachments: bool,
     /// Link previews are on.
     pub previews: bool,
     /// `POST /api/identity/assertion` is available.

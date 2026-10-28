@@ -7,15 +7,47 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Clock, Download, EllipsisVertical, EyeOff, FileText, Share2, X } from 'lucide-react'
+import {
+  Ban,
+  Clock,
+  Download,
+  EllipsisVertical,
+  EyeOff,
+  FileText,
+  Play,
+  Share2,
+  ShieldAlert,
+  X,
+} from 'lucide-react'
 import { api, home, localOrigins, remoteAllowed } from '../lib/instances'
 import { mentionCandidates, splitKnownMentions } from '../lib/mentions'
-import { expiryDelay, p2p, unexpired } from '../lib/p2p'
+import {
+  CANCELED,
+  expiryDelay,
+  headOf,
+  keepPreview,
+  p2p,
+  previewUrl,
+  unexpired,
+  type Download as Fetched,
+  type Preview,
+} from '../lib/p2p'
+import { sharing } from '../lib/platform'
+import {
+  audioHint,
+  downloadName,
+  guessKind,
+  kindOf,
+  NEUTRAL_TYPE,
+  PREVIEW_MAX,
+  safeType,
+} from '../lib/sniff'
 import {
   findInvites,
   findRemoteInvites,
@@ -242,39 +274,31 @@ const components: Components = {
   td: ({ node, ...props }) => <td {...props} className="border border-outline-variant px-2 py-1" />,
 }
 
-const objectUrls = new Map<string, string>()
-const OBJECT_URLS_MAX = 32
-
-const cachedUrl = (id: string) => {
-  const u = objectUrls.get(id)
-  if (u === undefined) return null
-  objectUrls.delete(id)
-  objectUrls.set(id, u)
-  return u
-}
-
-const keepUrl = (id: string, u: string) => {
-  objectUrls.delete(id)
-  objectUrls.set(id, u)
-  for (const [old, stale] of objectUrls) {
-    if (objectUrls.size <= OBJECT_URLS_MAX) break
-    objectUrls.delete(old)
-    URL.revokeObjectURL(stale)
-  }
-}
-
 const fmtExpiry = (ts: number | null) =>
   ts === null ? 'Indefinite' : expiryText(ts - Math.floor(Date.now() / 1000))
 
-function P2pFile({ media }: { media: MessageMedia }) {
+const fmtSize = (n: number) =>
+  n < 1024
+    ? `${n} B`
+    : n < 1024 * 1024
+      ? `${(n / 1024).toFixed(0)} KB`
+      : n < 1024 ** 3
+        ? `${(n / 1024 ** 2).toFixed(1)} MB`
+        : `${(n / 1024 ** 3).toFixed(2)} GB`
+
+const UNVERIFIED = 'Unverified: sent from an older app'
+
+function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number }) {
   const me = useStore(s => s.me)
   const previews = useStore(s => s.settings.asset_previews)
   const avail = useStore(s => (media.hoster !== null ? s.p2pAvailability[media.hoster] : undefined))
-  const { id, filename, hoster, expires_at, spoiler, size } = media
-  const [url, setUrl] = useState(() => cachedUrl(id))
-  const [busy, setBusy] = useState(false)
-  const [failed, setFailed] = useState(false)
+  const { id, filename, hoster, expires_at, spoiler, size, mime } = media
+  const sha256 = media.sha256 ?? null
+  const [shown, setShown] = useState<Preview | null>(() => previewUrl(messageId))
+  const [progress, setProgress] = useState<{ got: number; total: number } | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
   const [revealed, setRevealed] = useState(false)
+  const ctl = useRef<{ stop: AbortController; save: boolean } | null>(null)
 
   const [, tick] = useState(0)
   useEffect(() => {
@@ -284,61 +308,92 @@ function P2pFile({ media }: { media: MessageMedia }) {
     return () => clearTimeout(t)
   }, [expires_at])
 
+  useEffect(
+    () => () => {
+      if (ctl.current && !ctl.current.save) ctl.current.stop.abort()
+    },
+    []
+  )
+
   const live = unexpired(expires_at, Math.floor(Date.now() / 1000))
-  const localFile = live && me !== null && hoster === me.username ? p2p.file(id) : null
+  const own = me !== null && hoster === me.username
+  const localFile = live && own ? p2p.file(id) : null
   const peerId = live && avail?.online === true && avail.ids.includes(id) ? avail.peer_id : null
   const online = localFile !== null || peerId !== null
   const hosterName =
     hoster !== null ? userRefFor(useStore.getState(), hoster).display_name : 'the sender'
-  const isImage = IMAGE_EXT.test(filename)
+  const guess = guessKind(filename)
+  const audio = audioHint(filename, mime)
+  const unverified = sha256 === null && !own
+  const canPreview =
+    previews && guess !== null && !unverified && size !== null && size <= PREVIEW_MAX
   const hidden = spoiler && !revealed
+  const busy = progress !== null
 
-  const getUrl = async () => {
-    const cached = cachedUrl(id)
-    if (cached) return cached
-    const blob = localFile
-      ? await p2p.blob(id)
-      : await (() => {
-          if (peerId === null) throw new Error('File not available')
-          return p2p.download(peerId, id, size ?? undefined)
-        })()
-    if (!blob) throw new Error('File not available')
-    const u = URL.createObjectURL(blob)
-    keepUrl(id, u)
-    return u
+  const fetchFile = async (signal: AbortSignal): Promise<Fetched> => {
+    const kept = hoster !== null ? await p2p.receivedFile(id, hoster, sha256) : null
+    if (kept) return kept
+    if (localFile) {
+      const blob = await p2p.blob(id)
+      if (!blob) throw new Error('File not available')
+      const type = safeType(await headOf(blob), audio)
+      return { blob: new Blob([blob], { type }), type, verified: true }
+    }
+    if (peerId === null || hoster === null) throw new Error('File not available')
+    return p2p.download(peerId, id, {
+      size,
+      sha256,
+      hoster,
+      messageId,
+      audio,
+      signal,
+      onProgress: (got, total) => setProgress({ got, total }),
+    })
+  }
+
+  const run = (save: boolean) => {
+    if (ctl.current) return
+    const c = new AbortController()
+    const job = { stop: c, save }
+    ctl.current = job
+    setFailed(null)
+    setProgress({ got: 0, total: size ?? 0 })
+    fetchFile(c.signal)
+      .then(got => {
+        const kind = kindOf(got.type)
+        if (canPreview && got.verified && kind !== null && got.blob.size <= PREVIEW_MAX) {
+          const preview = { url: URL.createObjectURL(got.blob), kind }
+          keepPreview(messageId, preview)
+          setShown(preview)
+        }
+        if (save)
+          sharing().saveBlob(downloadName(filename), new Blob([got.blob], { type: NEUTRAL_TYPE }))
+      })
+      .catch((e: unknown) => {
+        const text = e instanceof Error ? e.message : String(e)
+        if (text === CANCELED) return
+        setFailed(text)
+        if (save) p2p.onError(text)
+        else console.error('p2p fetch', e)
+      })
+      .finally(() => {
+        if (ctl.current === job) ctl.current = null
+        setProgress(null)
+      })
   }
 
   useEffect(() => {
-    if (!isImage || !previews || url !== null || !online || busy || failed || hidden) return
-    setBusy(true)
-    getUrl()
-      .then(setUrl)
-      .catch((e: unknown) => {
-        setFailed(true)
-        console.error('p2p fetch', e)
-      })
-      .finally(() => setBusy(false))
-  }, [isImage, previews, url, online, busy, failed, hidden])
+    if (!canPreview || guess !== 'image' || shown !== null || !online || hidden) return
+    if (ctl.current || failed !== null) return
+    run(false)
+  }, [canPreview, guess, shown, online, hidden, failed])
 
   useEffect(() => {
-    setFailed(false)
+    setFailed(null)
   }, [avail])
 
-  const save = () => {
-    setBusy(true)
-    getUrl()
-      .then(u => {
-        const a = document.createElement('a')
-        a.href = u
-        a.download = filename
-        a.click()
-      })
-      .catch((e: unknown) => p2p.onError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setBusy(false))
-  }
-
   const meta = (
-    <span className="mt-1.5 flex items-center gap-2 text-xs text-on-surface-variant">
+    <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-on-surface-variant">
       <span
         title="Hosted peer-to-peer from the sender's browser"
         className="flex items-center gap-1 rounded bg-tertiary-container px-1.5 py-0.5 font-medium text-on-tertiary-container"
@@ -349,6 +404,15 @@ function P2pFile({ media }: { media: MessageMedia }) {
       <span className="streamer truncate">{hosterName}</span>
       <span>·</span>
       <span>{fmtExpiry(expires_at)}</span>
+      {unverified && (
+        <span
+          title="This file has no checksum, so its contents can't be verified"
+          className="flex items-center gap-1 text-error"
+        >
+          <ShieldAlert size={12} />
+          {UNVERIFIED}
+        </span>
+      )}
     </span>
   )
 
@@ -365,7 +429,38 @@ function P2pFile({ media }: { media: MessageMedia }) {
     )
   }
 
-  if (!online && url === null) {
+  const saveButton = (
+    <button
+      title={`Download from ${hosterName}'s browser`}
+      aria-label="Download"
+      onClick={() => run(true)}
+      disabled={busy || !online}
+      className="shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary disabled:opacity-40"
+    >
+      <Download size={14} />
+    </button>
+  )
+
+  if (shown !== null) {
+    return (
+      <div className="mt-1 w-fit max-w-full">
+        {shown.kind === 'image' ? (
+          <img src={shown.url} alt={filename} className="max-h-80 max-w-full rounded-xl" />
+        ) : shown.kind === 'video' ? (
+          <video src={shown.url} controls className="max-h-80 max-w-full rounded-xl" />
+        ) : (
+          <audio src={shown.url} controls className="max-w-full" />
+        )}
+        <span className="mt-1 flex items-center gap-2">
+          <span className="max-w-60 truncate text-xs text-on-surface-variant">{filename}</span>
+          {saveButton}
+        </span>
+        {meta}
+      </div>
+    )
+  }
+
+  if (!online) {
     const notice = `File not available. Ask ${hosterName} to send it again.`
     return (
       <div
@@ -382,31 +477,56 @@ function P2pFile({ media }: { media: MessageMedia }) {
     )
   }
 
-  if (isImage && previews && url !== null) {
-    return (
-      <div className="mt-1 w-fit">
-        <a href={url} target="_blank" rel="noreferrer" className="block w-fit">
-          <img src={url} alt={filename} className="max-h-80 max-w-full rounded-xl" />
-        </a>
-        {meta}
-      </div>
-    )
-  }
-
+  const pct =
+    progress && progress.total > 0 ? Math.min(100, (progress.got / progress.total) * 100) : 0
   return (
-    <div className="mt-1 w-fit rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
+    <div className="mt-1 w-fit max-w-full rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
       <div className="flex items-center gap-2">
         <FileText size={18} className="shrink-0 text-tertiary" />
         <span className="max-w-60 truncate text-sm">{filename}</span>
-        <button
-          title={`Download from ${hosterName}'s browser`}
-          onClick={save}
-          disabled={busy}
-          className="shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary disabled:opacity-40"
-        >
-          <Download size={14} />
-        </button>
+        {size !== null && (
+          <span className="shrink-0 text-xs text-on-surface-variant tabular-nums">
+            {fmtSize(size)}
+          </span>
+        )}
+        {busy ? (
+          <button
+            title="Cancel download"
+            aria-label="Cancel download"
+            onClick={() => ctl.current?.stop.abort()}
+            className="shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-error"
+          >
+            <X size={14} />
+          </button>
+        ) : (
+          <>
+            {canPreview && guess !== 'image' && (
+              <button
+                title={guess === 'video' ? 'Play video' : 'Play audio'}
+                aria-label={guess === 'video' ? 'Play video' : 'Play audio'}
+                onClick={() => run(false)}
+                className="shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary"
+              >
+                <Play size={14} />
+              </button>
+            )}
+            {saveButton}
+          </>
+        )}
       </div>
+      {busy && (
+        <div
+          role="progressbar"
+          aria-label={`Downloading ${filename}`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(pct)}
+          className="mt-2 h-1 w-full min-w-40 overflow-hidden rounded-full bg-surface-container-highest"
+        >
+          <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+        </div>
+      )}
+      {failed !== null && <p className="mt-1 text-xs text-error">{failed}</p>}
       {meta}
     </div>
   )
@@ -569,6 +689,14 @@ export const MarkdownMessage = memo(function MarkdownMessage({
 }) {
   const deleteMedia = useStore(s => s.deleteMedia)
   const previews = useStore(s => s.settings.asset_previews)
+  const uploads = useStore(s => s.settings.asset_uploads)
+  const p2pOn = useStore(s => s.settings.p2p_attachments)
+  const attachmentsOff = (m: MessageMedia) =>
+    !uploads && !p2pOn
+      ? 'Attachments are turned off on this server'
+      : m.kind === 'p2p' && !p2pOn
+        ? 'P2P attachments are turned off on this server'
+        : null
   const { content, media, embeds, edited_at: edited } = message
   const candidates = useMemo(
     () => (content.includes('@') ? mentionCandidates(content) : []),
@@ -624,8 +752,13 @@ export const MarkdownMessage = memo(function MarkdownMessage({
         ))}
       {media !== null && (
         <div className="group/att relative w-fit">
-          {media.kind === 'p2p' && !media.removed ? (
-            <P2pFile media={media} />
+          {!media.removed && attachmentsOff(media) ? (
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-on-surface-variant italic">
+              <Ban size={12} className="shrink-0" />
+              {attachmentsOff(media)}
+            </p>
+          ) : media.kind === 'p2p' && !media.removed ? (
+            <P2pFile media={media} messageId={message.id} />
           ) : (
             <MediaAttachment media={media} />
           )}

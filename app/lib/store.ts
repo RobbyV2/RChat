@@ -20,6 +20,7 @@ import {
 import { JoinAborted, rtc } from './rtc'
 import { JoinTracker } from './negotiation'
 import { newP2pId, p2p } from './p2p'
+import { hashBlob } from './sha256'
 import { helpersValue, ice, iceKey, parseHelpers } from './ice'
 import { mentionsUser } from './mentions'
 import {
@@ -399,6 +400,29 @@ export interface CallSession {
 const emptySearch = (): SearchState => ({ results: [], hasMore: false, loading: false })
 
 export const MAX_UPLOAD = 25 * 1024 * 1024
+
+// Servers before 0.3.0 send no p2p_attachments: P2P was always on there.
+export const siteSettings = (s: SiteSettings): SiteSettings => ({
+  ...s,
+  p2p_attachments: s.p2p_attachments !== false,
+})
+
+// Which attachment modes the server takes now; none means text only.
+// The server refuses a P2P id that is already another user's attachment (or a server file).
+export const p2pIdTaken = (e: unknown) =>
+  e instanceof ApiError && e.status === 400 && e.message === 'Invalid p2p_id'
+
+export const attachModes = (s: SiteSettings): UploadMode[] => [
+  ...(s.asset_uploads ? (['server'] as const) : []),
+  ...(s.p2p_attachments ? (['p2p'] as const) : []),
+]
+
+// The mode a new attachment starts in: a server upload when allowed and small enough, else P2P.
+export const startMode = (s: SiteSettings, size: number): UploadMode | null => {
+  const modes = attachModes(s)
+  if (modes.includes('server') && (size <= MAX_UPLOAD || !modes.includes('p2p'))) return 'server'
+  return modes.includes('p2p') ? 'p2p' : null
+}
 export const PAGE = 50
 export const LIST_MAX = 100
 
@@ -1477,6 +1501,7 @@ export const useStore = create<RChatState>()((set, get) => {
       notifySynced = false
       armExpiry()
       armIce(fresh.username, true)
+      p2p.setAccount(fresh.username)
     }
     pinSelf()
     if (resume.servers) void get().loadMoreServers()
@@ -2285,10 +2310,13 @@ export const useStore = create<RChatState>()((set, get) => {
   const held = (id: number) =>
     findMessage(id) ?? [...tails.values()].map(list => findById(list, id)).find(Boolean)
 
+  // A message or its attachment went away: stop serving our file and drop downloaded copies,
+  // whether or not the message is loaded here.
   const unhost = (id: number) => {
     const media = held(id)?.media
     const me = get().me?.username
     if (media?.kind === 'p2p' && me !== undefined && media.hoster === me) p2p.removeFile(media.id)
+    p2p.forgetMessage(id)
   }
 
   const readQuote = (m: Message) => {
@@ -3181,17 +3209,19 @@ export const useStore = create<RChatState>()((set, get) => {
   p2p.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
   p2p.onError = message => fail(new Error(message))
 
-  const uploadOk = (file: File) => {
-    if (!get().settings.asset_uploads) {
-      fail(new Error('File uploads are disabled'))
-      return false
+  // Hashes of files being attached, started when the file is picked (see buildSendOpts).
+  const attachHashes = new WeakMap<File, Promise<string>>()
+  const hashOf = (file: File) => {
+    let hash = attachHashes.get(file)
+    if (!hash) {
+      hash = hashBlob(file)
+      attachHashes.set(file, hash)
     }
-    if (file.size > MAX_UPLOAD) {
-      fail(new Error('File exceeds 25MB limit'))
-      return false
-    }
-    return true
+    return hash
   }
+
+  const p2pExpiry = (expiresIn: number | null | undefined) =>
+    expiresIn == null ? null : Math.floor(Date.now() / 1000) + expiresIn
 
   const buildSendOpts = async (
     pending: PendingUpload | null,
@@ -3201,15 +3231,16 @@ export const useStore = create<RChatState>()((set, get) => {
     const { file, spoiler, mode } = pending
     if (mode === 'p2p') {
       const id = newP2pId()
-      const expiresAt = p2pExpiresIn == null ? null : Math.floor(Date.now() / 1000) + p2pExpiresIn
-      await p2p.storeFile(id, file, expiresAt)
+      const sha256 = await hashOf(file)
+      await p2p.stage(id, file, p2pExpiry(p2pExpiresIn), sha256)
       return {
         opts: {
           media_spoiler: spoiler,
           p2p: {
             filename: file.name,
             size: file.size,
-            mime: file.type || 'application/octet-stream',
+            mime: (file.type || 'application/octet-stream').slice(0, 255),
+            sha256,
             p2p_id: id,
             expires_in_seconds: p2pExpiresIn ?? undefined,
           },
@@ -3217,6 +3248,7 @@ export const useStore = create<RChatState>()((set, get) => {
         p2pId: id,
       }
     }
+    if (file.size > MAX_UPLOAD) throw new Error('File exceeds 25MB limit')
     const uploaded = await api.uploadMedia(file)
     return { opts: { media_id: uploaded.id, media_spoiler: spoiler }, p2pId: null }
   }
@@ -3251,13 +3283,26 @@ export const useStore = create<RChatState>()((set, get) => {
         patchOutgoing(key, head.tempId, 'sending')
         let real: Message
         try {
-          const { opts, p2pId } = await buildSendOpts(head.pending, head.p2pExpiresIn)
+          const built = await buildSendOpts(head.pending, head.p2pExpiresIn)
+          const { opts } = built
+          let { p2pId } = built
           try {
-            real = await head.send(opts)
+            try {
+              real = await head.send(opts)
+            } catch (e) {
+              if (p2pId === null || !p2pIdTaken(e) || !head.pending || !opts.p2p) throw e
+              // Someone posted our P2P id first: keep the file under a fresh one and try once more.
+              p2p.removeFile(p2pId)
+              const id: string = newP2pId()
+              p2pId = id
+              await p2p.stage(id, head.pending.file, p2pExpiry(head.p2pExpiresIn), opts.p2p.sha256)
+              real = await head.send({ ...opts, p2p: { ...opts.p2p, p2p_id: id } })
+            }
           } catch (e) {
             if (p2pId !== null) p2p.removeFile(p2pId)
             throw e
           }
+          if (p2pId !== null) p2p.posted(p2pId, real.id)
         } catch (e) {
           patchOutgoing(key, head.tempId, 'failed')
           settleSent(head.tempId, null)
@@ -3374,6 +3419,7 @@ export const useStore = create<RChatState>()((set, get) => {
       },
       asset_previews: true,
       asset_uploads: true,
+      p2p_attachments: true,
       guests_enabled: true,
     },
 
@@ -3414,7 +3460,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
     loadSettings: async () => {
       try {
-        set({ settings: await api.getSettings() })
+        set({ settings: siteSettings(await api.getSettings()) })
       } catch (e) {
         fail(e)
       }
@@ -3565,7 +3611,7 @@ export const useStore = create<RChatState>()((set, get) => {
       home.ws.stop()
       rtc.leave()
       joins.reset()
-      p2p.endMedia()
+      p2p.signOut()
       pendingDial = null
       writeLocal(LS.token, null)
       setTokenCookie(null)
@@ -4336,13 +4382,18 @@ export const useStore = create<RChatState>()((set, get) => {
       }),
 
     uploadFile: (key, file) => {
-      if (file && !uploadOk(file)) return
+      const mode = file ? startMode(get().settings, file.size) : null
+      if (file && mode === null) return
+      if (file && mode === 'server' && file.size > MAX_UPLOAD) {
+        fail(new Error('File exceeds 25MB limit'))
+        return
+      }
+      if (file && get().settings.p2p_attachments) void hashOf(file).catch(() => {})
       const { panel } = get()
       const root = panel?.kind === 'thread' && threadKey(panel.root.id) === key ? panel.root : null
       const scope = root && root.channel_id !== null ? `c${root.channel_id}` : key
-      const pending: PendingUpload | null = file
-        ? { file, spoiler: false, mode: 'server', scope }
-        : null
+      const pending: PendingUpload | null =
+        file && mode ? { file, spoiler: false, mode, scope } : null
       set(s => ({ pending: keyed(s.pending, key, pending) }))
     },
 
@@ -4357,6 +4408,9 @@ export const useStore = create<RChatState>()((set, get) => {
         const cur = s.pending[key]
         if (!cur) return {}
         const mode: UploadMode = cur.mode === 'server' ? 'p2p' : 'server'
+        if (!attachModes(s.settings).includes(mode)) return {}
+        if (mode === 'server' && cur.file.size > MAX_UPLOAD) return {}
+        if (mode === 'p2p') void hashOf(cur.file).catch(() => {})
         return { pending: { ...s.pending, [key]: { ...cur, mode } } }
       }),
 
@@ -5685,8 +5739,16 @@ export const useStore = create<RChatState>()((set, get) => {
           }))
           return
         }
+        case 'p2p_hosted': {
+          void p2p.reconcile(ev.live, ev.checked)
+          return
+        }
         case 'settings_changed': {
-          set({ settings: ev.settings })
+          const settings = siteSettings(ev.settings)
+          const p2pFlip = settings.p2p_attachments !== get().settings.p2p_attachments
+          set({ settings, ...(p2pFlip ? { p2pAvailability: {} } : {}) })
+          const { view } = get()
+          if (p2pFlip && view) askP2p(get().messages[viewKey(view)] ?? [])
           return
         }
         case 'resync': {

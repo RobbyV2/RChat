@@ -1066,6 +1066,36 @@ pub(crate) async fn ws_channel_view(
     Ok(channel_access(db, server, cid, user.as_ref()).await?.view)
 }
 
+/// `p2p_who`: from when `username` may read channel `cid` of `server`, under the same rule as
+/// `ResolvedChannel::read_since`. `None` when they can't view it (or on any error),
+/// `Some(None)` with read history, otherwise `Some(Some(joined_at))` (now for non-members).
+/// Never answers a client with target data.
+pub(crate) async fn ws_channel_read_since(
+    db: &Db,
+    server: &str,
+    cid: i64,
+    username: &str,
+) -> Option<Option<i64>> {
+    let user = crate::db::get_user(db, username).await.ok()??;
+    let access = channel_access(db, server, cid, Some(&user)).await.ok()?;
+    if !access.view {
+        return None;
+    }
+    if access.history {
+        return Some(None);
+    }
+    let row = sqlx::query("SELECT joined_at FROM members WHERE server = $1 AND username = $2")
+        .bind(server)
+        .bind(username)
+        .fetch_optional(db)
+        .await
+        .ok()?;
+    match row {
+        Some(r) => Some(Some(r.try_get(0).ok()?)),
+        None => Some(Some(now())),
+    }
+}
+
 /// Same as `ws_channel_view`, with any error meaning "not viewable".
 pub(crate) async fn ws_channel_viewable(
     db: &Db,

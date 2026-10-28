@@ -174,6 +174,16 @@ export function SiteSwitches() {
         onChange={v => void updateSettings({ asset_uploads: v })}
       />
       <SettingSwitch
+        label="P2P attachments"
+        value={settings.p2p_attachments}
+        onChange={v => void updateSettings({ p2p_attachments: v })}
+      />
+      <p className="px-2 pb-1 text-xs text-on-surface-variant">
+        {settings.asset_uploads || settings.p2p_attachments
+          ? "P2P files stay in the sender's browser and have no size limit. Turn off both file uploads and P2P attachments for text only."
+          : 'Text only: messages can have text and emoji, no attachments.'}
+      </p>
+      <SettingSwitch
         label="Enable guests"
         value={settings.guests_enabled}
         onChange={v => void updateSettings({ guests_enabled: v })}

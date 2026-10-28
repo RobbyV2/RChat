@@ -5,7 +5,7 @@ import { webNotifier } from './web_notifications'
 import type { Sharing } from './sharing'
 import { webSharing } from './web_sharing'
 
-export type { BlobStore } from './blobs'
+export type { BlobStore, BlobWriter } from './blobs'
 export type { NoticeHandle, NoticeOptions, Notifier, Permission } from './notifications'
 export type { ShareData, ShareResult, Sharing } from './sharing'
 
