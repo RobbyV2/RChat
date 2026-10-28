@@ -340,9 +340,18 @@ export type SiteSettingsPatch = Partial<Omit<SiteSettings, 'profanity_targets'>>
   profanity_targets?: Partial<ProfanityTargets>
 }
 
+export interface RelayStatus {
+  enabled: boolean
+  turn: boolean
+  port: number | null
+  // Null when the relay runs in another process.
+  allocations: number | null
+}
+
 export interface AdminOverview {
   server_count: number
   user_count: number
+  relay?: RelayStatus
 }
 
 export interface ThreadPings {
@@ -559,6 +568,25 @@ export interface InstanceInfo {
   peerjs_url: string
   instance_url: string
   jwks_uri: string
+  ice?: InstanceIce
   features: InstanceFeatures
   limits: InstanceLimits
+}
+
+// ICE servers the instance offers for P2P connections; absent on instances before API 1.1.
+export interface InstanceIce {
+  stun: string[]
+  turn: boolean
+  relay: boolean
+}
+
+export interface IceServerEntry {
+  urls: string[]
+  username?: string
+  credential?: string
+}
+
+export interface IceServers {
+  ice_servers: IceServerEntry[]
+  expires_at: number
 }

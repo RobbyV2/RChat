@@ -60,6 +60,11 @@ ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
 base64 = "0.22"
 regex = "1"
 emojis = "0.9.1"
+turn = "0.17.2"
+sha1 = "0.11"
+async-trait = "0.1"
+stun = "0.17.2"
+webrtc-util = { version = "0.17.2", default-features = false, features = ["conn"] }
 
 [profile.release]
 opt-level = "z"

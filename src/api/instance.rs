@@ -13,6 +13,7 @@ use super::{ApiError, ApiErrorBody, Authed, Settings};
 use crate::db::now;
 use crate::identity::{ASSERTION_TTL_SECS, Claims, random_id};
 use crate::instance::{Features, InstanceInfo};
+use crate::relay::IceServer;
 use crate::state::AppState;
 
 const AUD_MAX: usize = 512;
@@ -184,6 +185,40 @@ pub(crate) async fn assertion(
         sub,
         expires_at: claims.exp,
     }))
+}
+
+/// ICE servers with short-lived TURN credentials.
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct IceServers {
+    /// Pass these as `iceServers` of an `RTCPeerConnection`. STUN entries come first, then
+    /// the built-in relay's TURN entry with credentials, then the operator's TURN servers.
+    pub ice_servers: Vec<IceServer>,
+    /// Unix seconds when the built-in relay's TURN credentials expire, one hour after issue.
+    /// Fetch new ones before then.
+    pub expires_at: i64,
+}
+
+/// Get ICE servers for peer-to-peer connections
+///
+/// The STUN servers from `ice` in `GET /api/instance` plus TURN relays with credentials.
+/// Credentials for the built-in relay follow the TURN REST convention: username
+/// `{expiry}:{opaque}`, where `opaque` is a hash of the account (never the username), and
+/// a one-hour lifetime. Without TURN on the instance this returns only the STUN entries
+/// (possibly none). Requires a bearer token; guests can't call it. No side effects. General
+/// rate-limit bucket.
+#[utoipa::path(get, path = "/api/p2p/ice", tag = "Instance", responses((status = 200, description = "ICE servers with TURN credentials and their expiry", body = IceServers), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+pub(crate) async fn ice(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Peer(peer): Peer,
+    headers: HeaderMap,
+) -> Json<IceServers> {
+    let origin = state.instance.origin(peer, &headers);
+    let (ice_servers, expires_at) = state.instance.ice_servers(&origin, &user.username, now());
+    Json(IceServers {
+        ice_servers,
+        expires_at,
+    })
 }
 
 pub fn well_known_routes() -> Router<AppState> {
@@ -620,6 +655,209 @@ mod tests {
             }
         }
         server.abort();
+        done(state, path).await;
+    }
+
+    fn turn_relay(host: Option<&str>, turn: bool) -> crate::relay::RelayAdvert {
+        crate::relay::RelayAdvert {
+            host: host.map(str::to_string),
+            port: 3478,
+            turn,
+        }
+    }
+
+    #[test]
+    fn discovery_ice_follows_the_config() {
+        use crate::relay::{IceConfig, IceServer, bundled_stun};
+        let origin = "https://chat.example.com";
+        let ice = |config: IceConfig| {
+            let instance = Instance::with_ice(config);
+            let info = instance.ice_info(origin);
+            serde_json::to_value(info).unwrap()
+        };
+        assert_eq!(
+            ice(IceConfig::default()),
+            serde_json::json!({"stun": [], "turn": false, "relay": false})
+        );
+        let public = ice(IceConfig {
+            public_stun: 3,
+            ..Default::default()
+        });
+        let list = bundled_stun();
+        let urls: Vec<String> = serde_json::from_value(public["stun"].clone()).unwrap();
+        assert_eq!(urls.len(), 3);
+        assert!(urls.iter().all(|u| list.contains(u)));
+        assert_eq!(public["turn"], false);
+        assert_eq!(
+            ice(IceConfig {
+                relay: Some(turn_relay(None, true)),
+                ..Default::default()
+            }),
+            serde_json::json!({"stun": ["stun:chat.example.com:3478"], "turn": true, "relay": true})
+        );
+        assert_eq!(
+            ice(IceConfig {
+                relay: Some(turn_relay(Some("relay.example.net"), false)),
+                ..Default::default()
+            }),
+            serde_json::json!({"stun": ["stun:relay.example.net:3478"], "turn": false, "relay": true})
+        );
+        assert_eq!(
+            ice(IceConfig {
+                relay: Some(turn_relay(Some("2001:db8::7"), false)),
+                ..Default::default()
+            })["stun"],
+            serde_json::json!(["stun:[2001:db8::7]:3478"])
+        );
+        let extra = crate::relay::parse_ice_servers(
+            r#"[{"urls":"stun:stun.example.org:3478"},{"urls":["turn:turn.example.org:3478?transport=udp","turns:turn.example.org:5349"],"username":"u","credential":"p"}]"#,
+        )
+        .unwrap();
+        let both = ice(IceConfig {
+            public_stun: 2,
+            relay: None,
+            extra: extra.clone(),
+        });
+        let urls: Vec<String> = serde_json::from_value(both["stun"].clone()).unwrap();
+        assert_eq!(urls.len(), 3);
+        assert_eq!(urls[2], "stun:stun.example.org:3478");
+        assert_eq!(both["turn"], true);
+        assert_eq!(both["relay"], false);
+        let instance = Instance::with_ice(IceConfig {
+            public_stun: 0,
+            relay: Some(turn_relay(None, true)),
+            extra,
+        });
+        let (servers, expires_at) = instance.ice_servers(origin, "Alice", 1000);
+        assert_eq!(expires_at, 1000 + crate::relay::CREDENTIAL_TTL_SECS);
+        assert_eq!(
+            servers[0],
+            IceServer {
+                urls: vec![
+                    "stun:chat.example.com:3478".to_string(),
+                    "stun:stun.example.org:3478".to_string()
+                ],
+                username: None,
+                credential: None,
+            }
+        );
+        assert_eq!(
+            servers[1].urls,
+            vec!["turn:chat.example.com:3478?transport=udp"]
+        );
+        assert_eq!(servers[2].username.as_deref(), Some("u"));
+        assert_eq!(servers.len(), 3);
+        for bad in [
+            "{}",
+            "[{\"urls\":\"http://x\"}]",
+            "[{\"urls\":[]}]",
+            "[{\"url\":\"stun:x\"}]",
+        ] {
+            assert!(crate::relay::parse_ice_servers(bad).is_err(), "{bad}");
+        }
+        assert!(crate::relay::parse_ice_servers(" ").unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn p2p_ice_gives_turn_credentials_to_signed_in_users_only() {
+        let (mut state, path) = temp_state("instance_ice").await;
+        let config = InstanceConfig {
+            ice: crate::relay::IceConfig {
+                public_stun: 0,
+                relay: Some(turn_relay(Some("relay.example.net"), true)),
+                extra: Vec::new(),
+            },
+            ..Default::default()
+        };
+        state.instance = Instance::load(&state.db, &config).await.expect("load");
+        let secret = state.instance.relay_secret.clone();
+        assert_eq!(secret.len(), 64);
+        let (addr, server) = serve(state.clone()).await;
+        let base = format!("http://{addr}");
+        let client = reqwest::Client::new();
+        let info = json(
+            client
+                .get(format!("{base}/api/instance"))
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(info["api_version"], "1.1");
+        assert_eq!(
+            info["ice"],
+            serde_json::json!({"stun": ["stun:relay.example.net:3478"], "turn": true, "relay": true})
+        );
+        let anonymous = client
+            .get(format!("{base}/api/p2p/ice"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+        let guest = client
+            .get(format!("{base}/api/p2p/ice"))
+            .header("x-guest-grant", "anything")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(guest.status(), StatusCode::UNAUTHORIZED);
+        let token = register(&client, &base, "Alice").await;
+        let before = now();
+        let body = json(
+            client
+                .get(format!("{base}/api/p2p/ice"))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+        let expires_at = body["expires_at"].as_i64().unwrap();
+        assert!((before + 3600..=now() + 3600).contains(&expires_at));
+        assert_eq!(
+            body["ice_servers"][0],
+            serde_json::json!({"urls": ["stun:relay.example.net:3478"]})
+        );
+        let turn = &body["ice_servers"][1];
+        assert_eq!(
+            turn["urls"],
+            serde_json::json!(["turn:relay.example.net:3478?transport=udp"])
+        );
+        let username = turn["username"].as_str().unwrap();
+        assert_eq!(
+            username,
+            format!("{expires_at}:{}", crate::relay::opaque(&secret, "alice"))
+        );
+        assert!(!username.contains("alice"));
+        assert_eq!(
+            turn["credential"].as_str().unwrap(),
+            crate::relay::password(&secret, username)
+        );
+
+        let stun_only = InstanceConfig {
+            ice: crate::relay::IceConfig {
+                public_stun: 0,
+                relay: Some(turn_relay(Some("relay.example.net"), false)),
+                extra: Vec::new(),
+            },
+            ..Default::default()
+        };
+        let reloaded = Instance::load(&state.db, &stun_only).await.expect("reload");
+        assert_eq!(reloaded.relay_secret, secret, "the secret row is kept");
+        let (servers, _) = reloaded.ice_servers(&base, "alice", now());
+        assert_eq!(servers.len(), 1);
+        assert!(servers[0].username.is_none() && servers[0].credential.is_none());
+        let none = Instance::load(&state.db, &InstanceConfig::default())
+            .await
+            .expect("reload");
+        assert!(none.ice_servers(&base, "alice", now()).0.is_empty());
+        server.abort();
+        let reopened = crate::db::open(path.to_str()).await.expect("reopen");
+        let again = Instance::load(&reopened, &InstanceConfig::default())
+            .await
+            .expect("load");
+        assert_eq!(again.relay_secret, secret, "the secret survives a restart");
+        crate::db::close(&reopened).await;
         done(state, path).await;
     }
 }

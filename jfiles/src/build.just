@@ -89,3 +89,7 @@ docker-down:
 clean:
   cd {{ROOT}} && cargo clean
   cd {{ROOT}} && rm -rf .next out node_modules/.cache public/wasm
+
+# Refresh the bundled public STUN list (assets/stun_servers.json) from always-online-stun
+refresh-stun:
+  cd {{ROOT}} && bun assets/refresh_stun.ts

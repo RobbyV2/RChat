@@ -111,6 +111,7 @@ impl Modify for Bearer {
         super::instance::well_known,
         super::instance::jwks,
         super::instance::assertion,
+        super::instance::ice,
         crate::ws::handler,
     ),
     components(schemas(
@@ -157,7 +158,7 @@ impl Modify for Bearer {
         (name = "Search", description = "Message and server search."),
         (name = "Invites", description = "Invite link previews."),
         (name = "Realtime", description = "The WebSocket gateway for live events, presence, voice and calls."),
-        (name = "Instance", description = "Instance discovery, public settings and identity assertions for federation."),
+        (name = "Instance", description = "Instance discovery, public settings, identity assertions for federation and ICE servers for peer-to-peer connections."),
         (name = "Health", description = "Liveness and readiness probes for load balancers and orchestrators."),
     )
 )]

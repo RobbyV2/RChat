@@ -18,24 +18,27 @@ pub struct Cidr {
 }
 
 impl Cidr {
-    fn parse(spec: &str) -> Option<Cidr> {
+    pub fn parse(spec: &str) -> Option<Cidr> {
         let (addr, len) = match spec.split_once('/') {
             Some((addr, len)) => (addr, Some(len)),
             None => (spec, None),
         };
-        let net = addr.trim().parse::<IpAddr>().ok()?.to_canonical();
-        let max = match net {
-            IpAddr::V4(_) => 32,
-            IpAddr::V6(_) => 128,
+        let written = addr.trim().parse::<IpAddr>().ok()?;
+        let net = written.to_canonical();
+        let (max, offset) = match (written, net) {
+            (IpAddr::V4(_), _) => (32, 0),
+            (IpAddr::V6(_), IpAddr::V4(_)) => (128, 96),
+            (IpAddr::V6(_), IpAddr::V6(_)) => (128, 0),
         };
         let len = match len {
             Some(len) => len.trim().parse::<u8>().ok().filter(|l| *l <= max)?,
             None => max,
         };
+        let len = len.checked_sub(offset)?;
         Some(Cidr { net, len })
     }
 
-    fn contains(&self, ip: IpAddr) -> bool {
+    pub fn contains(&self, ip: IpAddr) -> bool {
         let (net, addr, width) = match (self.net, ip.to_canonical()) {
             (IpAddr::V4(n), IpAddr::V4(a)) => (u32::from(n) as u128, u32::from(a) as u128, 32),
             (IpAddr::V6(n), IpAddr::V6(a)) => (u128::from(n), u128::from(a), 128),

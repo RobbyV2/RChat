@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { X } from 'lucide-react'
 import { api } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
+import { iceOffer } from '../lib/ice'
 import { defaultBanner } from '../lib/profile'
 import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
 import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio } from '../lib/rules'
@@ -453,6 +454,30 @@ function StatusSection() {
   )
 }
 
+function ConnectionSection() {
+  const on = useStore(s => s.iceHelpers)
+  const setOn = useStore(s => s.setIceHelpers)
+  const info = useStore(s => s.instance?.ice)
+  const offer = iceOffer(info)
+  return (
+    <section>
+      <p className={sectionCls}>Voice and P2P</p>
+      <SettingSwitch label="Use connection helpers" value={on} onChange={setOn} />
+      <p className="mt-2 px-2 text-xs text-on-surface-variant">
+        {offer.length
+          ? `Offered here: ${offer.join(', ')}.`
+          : 'None: direct connections only, same network.'}
+      </p>
+      {offer.length > 0 && (
+        <p className="mt-1 px-2 text-xs text-on-surface-variant">
+          Helpers let calls and P2P files connect across networks. They see your IP address, not
+          what you send.
+        </p>
+      )}
+    </section>
+  )
+}
+
 function SettingsSection() {
   const theme = useStore(s => s.theme)
   const setTheme = useStore(s => s.setTheme)
@@ -467,6 +492,7 @@ function SettingsSection() {
       <AccountSection />
       <PasswordSection />
       <StatusSection />
+      <ConnectionSection />
       <section>
         <p className={sectionCls}>Appearance</p>
         <SettingSwitch
@@ -537,9 +563,11 @@ function InformationSection() {
       </Info>
       <Info title="Voice and video">
         <p>
-          Voice channels and calls are WebRTC connections directly between browsers, with no relay
-          or external services; media never passes through the server. P2P calls likewise connect
-          peer to peer.
+          Voice channels and calls are WebRTC connections directly between browsers. By default
+          there is no relay and no external service, so media never passes through the server. If
+          the instance offers connection helpers (public STUN servers or its own relay), they help
+          peers on different networks find each other, and a relay may forward the encrypted media.
+          Turn them off under Voice and P2P to connect only directly.
         </p>
       </Info>
       <Info title="Servers and identity">

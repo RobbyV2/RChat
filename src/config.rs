@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use s3::creds::Credentials;
@@ -7,6 +8,7 @@ use serde::Deserialize;
 
 use crate::bus::DEFAULT_HUB_MAXLEN;
 use crate::instance::InstanceConfig;
+use crate::relay::{Capacity, Cidr, IceConfig, Limits, RelayAdvert, RelaySettings};
 use crate::server::client_ip::ProxyTrust;
 
 const MIN_HUB_MAXLEN: u64 = 1_000;
@@ -27,6 +29,7 @@ pub struct Roles {
     pub embeds: bool,
     pub jobs: bool,
     pub web: bool,
+    pub relay: bool,
 }
 
 impl Default for Roles {
@@ -44,6 +47,7 @@ impl Roles {
         embeds: true,
         jobs: true,
         web: true,
+        relay: true,
     };
 
     pub const NONE: Roles = Roles {
@@ -54,6 +58,7 @@ impl Roles {
         embeds: false,
         jobs: false,
         web: false,
+        relay: false,
     };
 
     pub fn parse(spec: &str) -> anyhow::Result<Roles> {
@@ -68,8 +73,9 @@ impl Roles {
                 "embeds" => roles.embeds = true,
                 "jobs" => roles.jobs = true,
                 "web" => roles.web = true,
+                "relay" => roles.relay = true,
                 other => anyhow::bail!(
-                    "unknown role {other} (expected all, api, gateway, media, search, embeds, jobs, web)"
+                    "unknown role {other} (expected all, api, gateway, media, search, embeds, jobs, web, relay)"
                 ),
             }
         }
@@ -88,6 +94,7 @@ impl Roles {
             embeds,
             jobs,
             web: _,
+            relay: _,
         } = *self;
         let backend = [api, gateway, media, search, embeds, jobs];
         backend.contains(&true) && backend.contains(&false)
@@ -102,6 +109,7 @@ impl Roles {
             embeds,
             jobs,
             web,
+            relay,
         } = *self;
         [
             (api, "api"),
@@ -111,6 +119,7 @@ impl Roles {
             (embeds, "embeds"),
             (jobs, "jobs"),
             (web, "web"),
+            (relay, "relay"),
         ]
         .into_iter()
         .filter_map(|(on, name)| on.then_some(name))
@@ -157,6 +166,22 @@ pub struct AppConfig {
     pub instance_signing_key: Option<Secret>,
     pub allowed_hosts: Option<String>,
     pub peerjs_port: Option<u16>,
+    pub public_stun: bool,
+    pub public_stun_count: u8,
+    pub relay_enabled: bool,
+    pub relay_turn: bool,
+    pub relay_host: Option<String>,
+    pub relay_port: u16,
+    pub relay_public_ip: Option<String>,
+    pub relay_min_port: u16,
+    pub relay_max_port: u16,
+    pub relay_allow_private: bool,
+    pub relay_denied_peers: Option<String>,
+    pub relay_user_allocations: u32,
+    pub relay_max_allocations: Option<u32>,
+    pub relay_user_kib_per_sec: u64,
+    pub relay_max_kib_per_sec: u64,
+    pub ice_servers: Option<String>,
     #[serde(skip)]
     pub roles: Roles,
     #[serde(skip)]
@@ -179,6 +204,26 @@ impl AppConfig {
             .set_default("redis_prefix", "rchat")?
             .set_default("redis_hub_maxlen", DEFAULT_HUB_MAXLEN as i64)?
             .set_default("trust_proxy", false)?
+            .set_default("public_stun", false)?
+            .set_default("public_stun_count", 3_i64)?
+            .set_default("relay_enabled", false)?
+            .set_default("relay_turn", true)?
+            .set_default("relay_port", i64::from(crate::relay::DEFAULT_PORT))?
+            .set_default("relay_min_port", i64::from(crate::relay::DEFAULT_MIN_PORT))?
+            .set_default("relay_max_port", i64::from(crate::relay::DEFAULT_MAX_PORT))?
+            .set_default("relay_allow_private", false)?
+            .set_default(
+                "relay_user_allocations",
+                crate::relay::DEFAULT_USER_ALLOCATIONS as i64,
+            )?
+            .set_default(
+                "relay_user_kib_per_sec",
+                crate::relay::DEFAULT_USER_KIB_PER_SEC as i64,
+            )?
+            .set_default(
+                "relay_max_kib_per_sec",
+                crate::relay::DEFAULT_TOTAL_KIB_PER_SEC as i64,
+            )?
             .add_source(config::Environment::default().source(env));
 
         if let Some(ref host) = cli.host {
@@ -209,7 +254,136 @@ impl AppConfig {
                 .map_err(|e| anyhow::anyhow!("INSTANCE_SIGNING_KEY: {e}"))?;
         }
         crate::instance::parse_allowed_hosts(config.allowed_hosts.as_deref().unwrap_or_default())?;
+        config.ice()?;
+        config.relay()?;
         Ok(config)
+    }
+
+    fn relay_host(&self) -> anyhow::Result<Option<String>> {
+        let Some(raw) = self
+            .relay_host
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            return Ok(None);
+        };
+        let bare = raw.trim_start_matches('[').trim_end_matches(']');
+        let valid = bare.parse::<IpAddr>().is_ok()
+            || url::Host::parse(bare).is_ok_and(|h| matches!(h, url::Host::Domain(_)))
+                && !bare.contains(['/', ':', '@', '?', '#']);
+        match valid {
+            true => Ok(Some(bare.to_string())),
+            false => anyhow::bail!("RELAY_HOST must be a host name or IP address, without a port"),
+        }
+    }
+
+    /// The ICE servers this instance advertises.
+    pub fn ice(&self) -> anyhow::Result<IceConfig> {
+        let public_stun = match (self.public_stun, self.public_stun_count) {
+            (false, _) => 0,
+            (true, n @ 1..=4) => usize::from(n),
+            (true, _) => anyhow::bail!("PUBLIC_STUN_COUNT must be 1 to 4"),
+        };
+        let relay = match self.relay_enabled {
+            true => Some(RelayAdvert {
+                host: self.relay_host()?,
+                port: self.relay_port,
+                turn: self.relay_turn,
+            }),
+            false => None,
+        };
+        Ok(IceConfig {
+            public_stun,
+            relay,
+            extra: crate::relay::parse_ice_servers(
+                self.ice_servers.as_deref().unwrap_or_default(),
+            )?,
+        })
+    }
+
+    /// The built-in relay to run in this process, when `RELAY_ENABLED` is on and this process
+    /// has the `relay` role.
+    pub fn relay(&self) -> anyhow::Result<Option<RelaySettings>> {
+        if !self.relay_enabled {
+            return Ok(None);
+        }
+        let public_ip = match self.relay_public_ip.as_deref().map(str::trim) {
+            Some(raw) if !raw.is_empty() => Some(
+                raw.parse::<IpAddr>()
+                    .map_err(|_| anyhow::anyhow!("RELAY_PUBLIC_IP must be an IP address"))?,
+            ),
+            Some(_) | None => None,
+        };
+        if self.relay_turn && public_ip.is_none() {
+            anyhow::bail!(
+                "RELAY_TURN needs RELAY_PUBLIC_IP, the address clients reach the relay on; set it or set RELAY_TURN=false for STUN only"
+            );
+        }
+        if self.relay_port == 0
+            || self.relay_min_port == 0
+            || self.relay_min_port > self.relay_max_port
+        {
+            anyhow::bail!("RELAY_PORT must be set and RELAY_MIN_PORT..RELAY_MAX_PORT a port range");
+        }
+        if (self.relay_min_port..=self.relay_max_port).contains(&self.relay_port) {
+            anyhow::bail!("RELAY_PORT must be outside RELAY_MIN_PORT..RELAY_MAX_PORT");
+        }
+        let ports = u32::from(self.relay_max_port - self.relay_min_port) + 1;
+        let total = self.relay_max_allocations.unwrap_or(ports);
+        if total == 0 || total > ports {
+            anyhow::bail!(
+                "RELAY_MAX_ALLOCATIONS must be 1 to the size of RELAY_MIN_PORT..RELAY_MAX_PORT ({ports}); each allocation takes one port"
+            );
+        }
+        if self.relay_user_allocations == 0 || self.relay_user_allocations > total {
+            anyhow::bail!("RELAY_USER_ALLOCATIONS must be 1 to RELAY_MAX_ALLOCATIONS ({total})");
+        }
+        if self.relay_user_kib_per_sec == 0
+            || self.relay_max_kib_per_sec < self.relay_user_kib_per_sec
+        {
+            anyhow::bail!(
+                "RELAY_USER_KIB_PER_SEC must be at least 1 and RELAY_MAX_KIB_PER_SEC at least RELAY_USER_KIB_PER_SEC"
+            );
+        }
+        let denied = self
+            .relay_denied_peers
+            .as_deref()
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|spec| {
+                Cidr::parse(spec).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "RELAY_DENIED_PEERS entry {spec:?} is not an IP address or CIDR range (for example 198.51.100.0/24)"
+                    )
+                })
+            })
+            .collect::<anyhow::Result<Vec<Cidr>>>()?;
+        if !self.roles.relay {
+            return Ok(None);
+        }
+        let any: IpAddr = match public_ip {
+            Some(IpAddr::V6(_)) => std::net::Ipv6Addr::UNSPECIFIED.into(),
+            Some(IpAddr::V4(_)) | None => std::net::Ipv4Addr::UNSPECIFIED.into(),
+        };
+        Ok(Some(RelaySettings {
+            bind: SocketAddr::new(any, self.relay_port),
+            turn: self.relay_turn,
+            public_ip,
+            min_port: self.relay_min_port,
+            max_port: self.relay_max_port,
+            allow_private: self.relay_allow_private,
+            denied,
+            capacity: Capacity {
+                user_allocations: self.relay_user_allocations as usize,
+                total_allocations: total as usize,
+                user_bytes_per_sec: self.relay_user_kib_per_sec as f64 * 1024.0,
+                total_bytes_per_sec: self.relay_max_kib_per_sec as f64 * 1024.0,
+            },
+            limits: Limits::default(),
+        }))
     }
 
     fn check_shared_state(&self) -> anyhow::Result<()> {
@@ -222,15 +396,27 @@ impl AppConfig {
                 anyhow::bail!("{name} is set but empty: give it a value or unset it");
             }
         }
-        if !self.roles.splits_backend() {
-            return Ok(());
-        }
-        let roles = self.roles.names().join(",");
         let postgres = self
             .database_url
             .as_deref()
             .map(str::trim)
             .is_some_and(|u| u.starts_with("postgres://") || u.starts_with("postgresql://"));
+        if self.relay_enabled && self.roles.relay && !self.roles.api && !postgres {
+            anyhow::bail!(
+                "RCHAT_ROLES={} runs the relay without the api role, so it must share the relay secret with the api processes through one Postgres (DATABASE_URL=postgres://...)",
+                self.roles.names().join(",")
+            );
+        }
+        if self.relay_enabled && self.roles.relay && !self.roles.api && self.redis_url.is_none() {
+            anyhow::bail!(
+                "RCHAT_ROLES={} runs the relay without the api role, so it learns about site bans and account deletions only through the shared Redis bus; set REDIS_URL to the one the api processes use",
+                self.roles.names().join(",")
+            );
+        }
+        if !self.roles.splits_backend() {
+            return Ok(());
+        }
+        let roles = self.roles.names().join(",");
         match (postgres, &self.redis_url) {
             (true, Some(_)) => Ok(()),
             (_, _) => anyhow::bail!(
@@ -266,6 +452,7 @@ impl AppConfig {
             allowed_hosts: self.allowed_hosts.clone(),
             peerjs_port: self.peerjs_port,
             proxy_trust: self.proxy_trust.clone(),
+            ice: self.ice().unwrap_or_default(),
         }
     }
 
@@ -336,7 +523,7 @@ pub struct CliOverrides {
 
     #[arg(
         long,
-        help = "Service roles: all, or a comma list of api, gateway, media, search, embeds, jobs, web"
+        help = "Service roles: all, or a comma list of api, gateway, media, search, embeds, jobs, web, relay"
     )]
     pub roles: Option<String>,
 }
@@ -474,5 +661,173 @@ mod tests {
         assert_eq!(config.redis_hub_maxlen, 250_000);
         let low = env(&[("REDIS_HUB_MAXLEN", "10")]);
         assert!(AppConfig::load_from(&cli(None, None), low).is_err());
+    }
+
+    #[test]
+    fn relays_are_off_by_default_and_validated() {
+        let load = |pairs: &[(&str, &str)]| AppConfig::load_from(&cli(None, None), env(pairs));
+        let config = load(&[]).unwrap();
+        assert_eq!(config.ice().unwrap(), IceConfig::default());
+        assert_eq!(config.relay().unwrap(), None);
+        let public = load(&[("PUBLIC_STUN", "true")]).unwrap();
+        assert_eq!(public.ice().unwrap().public_stun, 3);
+        for bad in ["0", "5"] {
+            assert!(load(&[("PUBLIC_STUN", "true"), ("PUBLIC_STUN_COUNT", bad)]).is_err());
+        }
+        assert_eq!(
+            load(&[("PUBLIC_STUN_COUNT", "9")])
+                .unwrap()
+                .ice()
+                .unwrap()
+                .public_stun,
+            0
+        );
+        let err = load(&[("RELAY_ENABLED", "true")]).unwrap_err().to_string();
+        assert!(err.contains("RELAY_PUBLIC_IP"), "{err}");
+        let stun_only = load(&[("RELAY_ENABLED", "true"), ("RELAY_TURN", "false")]).unwrap();
+        let settings = stun_only.relay().unwrap().expect("relay runs");
+        assert!(!settings.turn && settings.public_ip.is_none());
+        assert_eq!(settings.bind.port(), crate::relay::DEFAULT_PORT);
+        let relay = load(&[
+            ("RELAY_ENABLED", "true"),
+            ("RELAY_PUBLIC_IP", "203.0.113.7"),
+            ("RELAY_HOST", "relay.example.com"),
+        ])
+        .unwrap();
+        let settings = relay.relay().unwrap().expect("relay runs");
+        assert_eq!(settings.public_ip, Some("203.0.113.7".parse().unwrap()));
+        assert_eq!((settings.min_port, settings.max_port), (49160, 49415));
+        assert_eq!(
+            (
+                settings.capacity.user_allocations,
+                settings.capacity.total_allocations
+            ),
+            (16, 256)
+        );
+        assert!(settings.denied.is_empty());
+        assert!(!settings.allow_private);
+        let advert = relay.ice().unwrap().relay.expect("advertised");
+        assert_eq!(advert.host.as_deref(), Some("relay.example.com"));
+        assert!(advert.turn);
+        for (key, value) in [
+            ("RELAY_PUBLIC_IP", "relay.example.com"),
+            ("RELAY_HOST", "https://relay.example.com"),
+            ("RELAY_HOST", "relay.example.com:3478"),
+            ("RELAY_MIN_PORT", "50000"),
+            ("RELAY_PORT", "49170"),
+            ("ICE_SERVERS", "not json"),
+            ("ICE_SERVERS", r#"[{"urls":"https://x"}]"#),
+            ("RELAY_DENIED_PEERS", "203.0.113.0/40"),
+            ("RELAY_DENIED_PEERS", "::ffff:0:0/95"),
+            ("RELAY_DENIED_PEERS", "node.example.com"),
+            ("RELAY_MAX_ALLOCATIONS", "0"),
+            ("RELAY_MAX_ALLOCATIONS", "257"),
+            ("RELAY_USER_ALLOCATIONS", "0"),
+            ("RELAY_USER_ALLOCATIONS", "300"),
+            ("RELAY_USER_KIB_PER_SEC", "0"),
+            ("RELAY_MAX_KIB_PER_SEC", "10"),
+        ] {
+            let mut pairs = vec![
+                ("RELAY_ENABLED", "true"),
+                ("RELAY_PUBLIC_IP", "203.0.113.7"),
+            ];
+            pairs.retain(|(k, _)| *k != key);
+            pairs.push((key, value));
+            assert!(load(&pairs).is_err(), "{key}={value}");
+        }
+        let sized = load(&[
+            ("RELAY_ENABLED", "true"),
+            ("RELAY_PUBLIC_IP", "203.0.113.7"),
+            ("RELAY_MIN_PORT", "50000"),
+            ("RELAY_MAX_PORT", "50999"),
+            ("RELAY_MAX_ALLOCATIONS", "600"),
+            ("RELAY_USER_ALLOCATIONS", "24"),
+            ("RELAY_USER_KIB_PER_SEC", "512"),
+            ("RELAY_MAX_KIB_PER_SEC", "4096"),
+            (
+                "RELAY_DENIED_PEERS",
+                " 198.51.100.0/24, 2001:db8::/32 ,203.0.113.99",
+            ),
+        ])
+        .unwrap()
+        .relay()
+        .unwrap()
+        .expect("relay runs");
+        assert_eq!(
+            sized.capacity,
+            crate::relay::Capacity {
+                user_allocations: 24,
+                total_allocations: 600,
+                user_bytes_per_sec: 512.0 * 1024.0,
+                total_bytes_per_sec: 4096.0 * 1024.0,
+            }
+        );
+        assert_eq!(sized.denied.len(), 3);
+        let mapped = load(&[
+            ("RELAY_ENABLED", "true"),
+            ("RELAY_PUBLIC_IP", "203.0.113.7"),
+            (
+                "RELAY_DENIED_PEERS",
+                "::ffff:198.51.100.0/120,::FFFF:203.0.113.5",
+            ),
+        ])
+        .unwrap()
+        .relay()
+        .unwrap()
+        .expect("relay runs");
+        assert_eq!(
+            mapped.denied,
+            vec![
+                Cidr::parse("198.51.100.0/24").unwrap(),
+                Cidr::parse("203.0.113.5/32").unwrap()
+            ],
+            "IPv4-mapped entries become IPv4 ranges"
+        );
+        assert!(mapped.denied[0].contains("198.51.100.200".parse().unwrap()));
+        assert!(mapped.denied[0].contains("::ffff:198.51.100.200".parse().unwrap()));
+        assert!(!mapped.denied[0].contains("198.51.101.1".parse().unwrap()));
+        assert!(sized.denied[2].contains("203.0.113.99".parse().unwrap()));
+        assert!(!sized.denied[2].contains("203.0.113.98".parse().unwrap()));
+        let extra = load(&[("ICE_SERVERS", r#"[{"urls":"stun:stun.example.org"}]"#)]).unwrap();
+        assert_eq!(extra.ice().unwrap().extra.len(), 1);
+    }
+
+    #[test]
+    fn relay_role_runs_the_relay() {
+        let load = |roles: &str, pairs: &[(&str, &str)]| {
+            let mut set = env(pairs).unwrap();
+            set.insert("RCHAT_ROLES".to_string(), roles.to_string());
+            set.insert("RELAY_ENABLED".to_string(), "true".to_string());
+            set.insert("RELAY_TURN".to_string(), "false".to_string());
+            AppConfig::load_from(&cli(None, None), Some(set))
+        };
+        assert!(Roles::parse("relay").unwrap().relay);
+        assert!(Roles::ALL.relay && !Roles::ALL.splits_backend());
+        assert!(
+            !Roles::parse("api,gateway,media,search,embeds,jobs")
+                .unwrap()
+                .splits_backend()
+        );
+        assert!(load("all", &[]).unwrap().relay().unwrap().is_some());
+        let err = load("relay", &[]).unwrap_err().to_string();
+        assert!(err.contains("Postgres"), "{err}");
+        let err = load("relay", &SHARED[..1]).unwrap_err().to_string();
+        assert!(err.contains("REDIS_URL"), "{err}");
+        let alone = load("relay", &SHARED).unwrap();
+        assert!(alone.relay().unwrap().is_some());
+        assert!(
+            load("relay", &SHARED[1..]).is_err(),
+            "still needs the Postgres"
+        );
+        assert!(
+            load("api,gateway,media,search,embeds,jobs,relay", &SHARED[..1]).is_ok(),
+            "with the api role the bans happen in-process"
+        );
+        let without = load("api,gateway,media,search,embeds,jobs,web", &[]).unwrap();
+        assert!(
+            without.relay().unwrap().is_none(),
+            "no relay role, no relay"
+        );
+        assert!(without.ice().unwrap().relay.is_some(), "still advertised");
     }
 }

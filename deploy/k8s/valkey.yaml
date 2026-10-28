@@ -91,6 +91,10 @@ spec:
                   - rchat-search
                   - rchat-embeds
                   - rchat-jobs
+        # The optional hostNetwork rchat-relay pod (relay.yaml) connects from its node's
+        # address; admit that node when you run it:
+        # - ipBlock:
+        #     cidr: REPLACE-with-the-relay-node-internal-IP/32
       ports:
         - protocol: TCP
           port: 6379

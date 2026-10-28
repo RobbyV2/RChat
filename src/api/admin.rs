@@ -19,6 +19,26 @@ use crate::ws::WsEvent;
 pub struct Overview {
     pub server_count: i64,
     pub user_count: i64,
+    pub relay: RelayStatus,
+}
+
+#[derive(Serialize)]
+pub struct RelayStatus {
+    pub enabled: bool,
+    pub turn: bool,
+    pub port: Option<u16>,
+    pub allocations: Option<usize>,
+}
+
+fn relay_status(state: &AppState) -> RelayStatus {
+    let advert = state.instance.ice.relay.as_ref();
+    let local = crate::relay::status();
+    RelayStatus {
+        enabled: advert.is_some(),
+        turn: advert.is_some_and(|r| r.turn),
+        port: advert.map(|r| r.port),
+        allocations: local.map(|s| s.allocations),
+    }
 }
 
 #[derive(Deserialize)]
@@ -275,6 +295,7 @@ pub(crate) async fn overview(
     Ok(Json(Overview {
         server_count,
         user_count,
+        relay: relay_status(&state),
     }))
 }
 

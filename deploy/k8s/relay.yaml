@@ -1,0 +1,86 @@
+# Optional built-in STUN/TURN relay (off by default, not in kustomization.yaml). To run it:
+#   1. In config.yaml set RELAY_ENABLED: "true", RELAY_HOST (the name clients reach the relay
+#      on) and RELAY_PUBLIC_IP (the node's public address). Every role pod then advertises
+#      the relay in /api/instance and issues its short-lived TURN credentials.
+#   2. Add relay.yaml to the resources in kustomization.yaml.
+#   3. The relay learns about bans and account deletions through Valkey, so it needs
+#      REDIS_URL (it refuses to start without it). Its traffic comes from the node's
+#      address, which the rchat-valkey NetworkPolicy does not admit: add the node's
+#      internal IP as an ipBlock there (valkey.yaml has the commented entry).
+# The relay runs as one pod with hostNetwork, because TURN needs the UDP listener (3478) and
+# the relay port range (49160-49415) on a public address, and a Service cannot forward a
+# port range. Pin it to a node with that public IP (nodeSelector) and open those UDP ports
+# in the node's firewall. Reserve the range on that node so nothing else listens there:
+# it lies in the default ephemeral range, so set
+# net.ipv4.ip_local_reserved_ports=49160-49415 on the node (or choose RELAY_MIN_PORT and
+# RELAY_MAX_PORT outside net.ipv4.ip_local_port_range). Leave RELAY_ALLOW_PRIVATE unset.
+# The relay refuses private, loopback, link-local, CGNAT and metadata addresses, and its
+# own RELAY_PUBLIC_IP on every port except the range ports its live allocations hold, so
+# pod, service and node-internal addresses are out of reach. It cannot know the cluster's other public addresses: the other nodes' public IPs
+# (kubelet, NodePorts), any further public addresses of this node, load balancer and
+# ingress IPs. List them in RELAY_DENIED_PEERS (config.yaml) or they stay reachable through
+# the relay. hostNetwork pods are not covered by NetworkPolicy.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rchat-relay
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rchat-relay
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rchat-relay
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      terminationGracePeriodSeconds: 30
+      # nodeSelector:
+      #   kubernetes.io/hostname: REPLACE-with-the-node-that-owns-RELAY_PUBLIC_IP
+      containers:
+        - name: rchat
+          image: ghcr.io/robbyv2/rchat:nightly
+          command:
+            - sh
+            - -c
+            - >-
+              test -n "$DATABASE_URL" && test -n "$REDIS_URL" ||
+              { echo "DATABASE_URL and REDIS_URL in rchat-secrets must not be empty" >&2; exit 1; };
+              exec /app/start.sh
+          env:
+            - name: RCHAT_ROLES
+              value: relay
+            - name: HOST
+              value: 127.0.0.1
+            - name: SERVER_PORT
+              value: "3270"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rchat-secrets
+                  key: REDIS_URL
+          envFrom:
+            - configMapRef:
+                name: rchat-config
+          ports:
+            - name: stun
+              containerPort: 3478
+              protocol: UDP
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3270
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi

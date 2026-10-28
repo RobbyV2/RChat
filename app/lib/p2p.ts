@@ -1,7 +1,7 @@
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs'
 import { backoffDelay } from './backoff'
 import { home, writeLocal } from './instances'
-import { iceConfig } from './ice'
+import { ice, iceConfig } from './ice'
 import { blobs } from './platform'
 import { SpeakingDetector } from './vad'
 import { mediaError } from './rules'
@@ -76,6 +76,7 @@ const buffered = (conn: DataConnection) => (conn as { bufferSize?: number }).buf
 export class P2pManager {
   private peer: Peer | null = null
   private retry: ReturnType<typeof setTimeout> | null = null
+  private iceWatch: (() => void) | null = null
   private attempt = 0
   private media: MediaConnection | null = null
   private control: DataConnection | null = null
@@ -276,6 +277,9 @@ export class P2pManager {
       return cur
     }
     const peer = new Peer(this.peerId(), { ...home.peer(), config: iceConfig() })
+    this.iceWatch ??= ice.onChange(() => {
+      if (this.peer && !this.peer.destroyed) this.peer.options.config = iceConfig()
+    })
     peer.on('open', () => {
       this.attempt = 0
     })

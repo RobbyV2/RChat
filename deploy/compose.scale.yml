@@ -42,6 +42,14 @@ x-env: &env
   INSTANCE_NAME: ${RCHAT_INSTANCE_NAME:-RChat}
   PUBLIC_URL: ${RCHAT_PUBLIC_URL:-}
   ALLOWED_HOSTS: ${RCHAT_ALLOWED_HOSTS:-}
+  # Connection helpers for calls and P2P files, all off by default. RCHAT_PUBLIC_STUN=true
+  # advertises the bundled public STUN list. RCHAT_RELAY_ENABLED=true (with
+  # RCHAT_RELAY_PUBLIC_IP, and RCHAT_RELAY_HOST when clients reach it under another name)
+  # makes every replica advertise the built-in relay; run it with --profile relay.
+  PUBLIC_STUN: ${RCHAT_PUBLIC_STUN:-false}
+  RELAY_ENABLED: ${RCHAT_RELAY_ENABLED:-false}
+  RELAY_HOST: ${RCHAT_RELAY_HOST:-}
+  RELAY_PUBLIC_IP: ${RCHAT_RELAY_PUBLIC_IP:-}
   # Store media blobs in S3/minio instead of Postgres:
   # S3_ENDPOINT: http://minio:9000
   # S3_BUCKET: rchat
@@ -140,6 +148,26 @@ services:
       RCHAT_ROLES: web
     deploy:
       replicas: 2
+
+  # The built-in STUN/TURN relay, one container (allocations live in its memory). Off by
+  # default: start it with --profile relay and RCHAT_RELAY_ENABLED=true. It shares
+  # DATABASE_URL and REDIS_URL with the other roles (it hears about bans over the bus and
+  # refuses to start without them). It publishes UDP 3478 and the relay range 49160-49415
+  # on the host; reserve that range on the host so nothing else listens there (it lies in
+  # the default ephemeral range: sysctl net.ipv4.ip_local_reserved_ports=49160-49415). It
+  # never relays to private, loopback or metadata addresses, or to its own RELAY_PUBLIC_IP
+  # except the range ports its live allocations hold.
+  relay:
+    <<: *rchat
+    profiles: [relay]
+    networks: [backend]
+    environment:
+      <<: *env
+      RCHAT_ROLES: relay
+      RELAY_ENABLED: "true"
+    ports:
+      - "3478:3478/udp"
+      - "49160-49415:49160-49415/udp"
 
   peerjs:
     image: ${RCHAT_IMAGE:-ghcr.io/robbyv2/rchat:nightly}

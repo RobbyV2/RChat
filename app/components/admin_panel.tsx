@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import { api } from '../lib/instances'
-import type { ServerDetail, ServerSummaryLite } from '../lib/types'
+import type { RelayStatus, ServerDetail, ServerSummaryLite } from '../lib/types'
 import { confirmKick, errorText, revokeAdminFor, useStore } from '../lib/store'
 import {
   PROFANITY_TARGETS,
@@ -281,6 +281,32 @@ function UserServers({ username }: { username: string }) {
   )
 }
 
+function RelayStatusRow({ relay }: { relay: RelayStatus }) {
+  const rows: [string, string][] = relay.enabled
+    ? [
+        ['Status', relay.turn ? 'On (STUN and TURN)' : 'On (STUN only)'],
+        ['UDP port', relay.port === null ? 'Unknown' : String(relay.port)],
+        [
+          'Active allocations',
+          relay.allocations === null ? 'Runs in another process' : String(relay.allocations),
+        ],
+      ]
+    : [['Status', 'Off']]
+  return (
+    <>
+      <p className={sectionCls}>Relay</p>
+      <dl className="mb-2 space-y-1 rounded-xl bg-surface-container px-3 py-2 text-sm">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex items-center justify-between gap-3">
+            <dt className="text-on-surface-variant">{label}</dt>
+            <dd className="text-right">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </>
+  )
+}
+
 function Panel() {
   const overview = useStore(s => s.adminOverview)
   const adminUsers = useStore(s => s.adminUsers)
@@ -314,6 +340,7 @@ function Panel() {
     <Dialog full title="Site Administration" onClose={closeDialog}>
       <p className={sectionCls}>Settings</p>
       <SiteSwitches />
+      {overview?.relay && <RelayStatusRow relay={overview.relay} />}
       <p className={sectionCls}>Servers{overview ? ` (${overview.server_count})` : ''}</p>
       <div className="mb-2 flex">
         <input

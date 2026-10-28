@@ -63,7 +63,7 @@ COPY --from=js-builder /peer /app/peer
 COPY --from=rust-builder /app/target/release/server /app/server
 COPY --chmod=755 deploy/start.sh /app/start.sh
 
-EXPOSE 3000 9001
+EXPOSE 3000 9001 3478/udp 49160-49415/udp
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fs "http://localhost:${SERVER_PORT:-3000}/api/health" > /dev/null || exit 1

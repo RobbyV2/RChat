@@ -6,6 +6,7 @@ import type {
   ChannelKind,
   ChannelPerm,
   DmSummary,
+  IceServers,
   InstanceInfo,
   Invite,
   Me,
@@ -437,6 +438,7 @@ export const endpoints = (c: ApiClient) => ({
   instance: () => c.req<InstanceInfo>('GET', '/instance'),
   identityAssertion: (aud: string, nonce?: string) =>
     c.req<Assertion>('POST', '/identity/assertion', { aud, nonce }),
+  p2pIce: () => c.req<IceServers>('GET', '/p2p/ice'),
 })
 
 export type Api = ApiClient & ReturnType<typeof endpoints>

@@ -6,6 +6,7 @@ pub mod fanout;
 pub mod hub;
 pub mod identity;
 pub mod instance;
+pub mod relay;
 pub mod server;
 pub mod state;
 pub mod ws;

@@ -9,10 +9,11 @@ use utoipa::ToSchema;
 
 use crate::db::Db;
 use crate::identity::{JWKS_PATH, Keyring, host_of};
+use crate::relay::{IceConfig, IceServer};
 use crate::server::client_ip::ProxyTrust;
 
 pub const SOFTWARE: &str = "rchat";
-pub const API_VERSION: &str = "1.0";
+pub const API_VERSION: &str = "1.1";
 pub const DEFAULT_NAME: &str = "RChat";
 pub const DEFAULT_PEERJS_PORT: u16 = 9001;
 
@@ -27,6 +28,7 @@ pub struct InstanceConfig {
     pub allowed_hosts: Option<String>,
     pub peerjs_port: Option<u16>,
     pub proxy_trust: ProxyTrust,
+    pub ice: IceConfig,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -95,6 +97,9 @@ pub struct Instance {
     pub allowed_hosts: Vec<AllowedHost>,
     pub peerjs_port: u16,
     pub proxy_trust: ProxyTrust,
+    pub stun: Vec<String>,
+    pub ice: IceConfig,
+    pub relay_secret: String,
 }
 
 pub fn origin_url(raw: &str, what: &str, schemes: &[&str]) -> anyhow::Result<Url> {
@@ -135,6 +140,7 @@ impl Instance {
             allowed_hosts,
             peerjs_port,
             proxy_trust,
+            ice,
         } = config;
         let keys = match signing_key.as_deref().map(str::trim) {
             Some(spec) if !spec.is_empty() => {
@@ -155,8 +161,12 @@ impl Instance {
         {
             anyhow::bail!("PUBLIC_URL must be an origin without a path");
         }
+        let id = setting(db, "instance_id").await?;
         Ok(Arc::new(Instance {
-            id: setting(db, "instance_id").await?,
+            stun: crate::relay::pick_stun(&crate::relay::bundled_stun(), &id, ice.public_stun),
+            ice: ice.clone(),
+            relay_secret: setting(db, "relay_secret").await?,
+            id,
             name: name
                 .as_deref()
                 .map(str::trim)
@@ -187,7 +197,94 @@ impl Instance {
             allowed_hosts: Vec::new(),
             peerjs_port: DEFAULT_PEERJS_PORT,
             proxy_trust: ProxyTrust::default(),
+            stun: Vec::new(),
+            ice: IceConfig::default(),
+            relay_secret: crate::identity::random_id(),
         })
+    }
+
+    #[cfg(test)]
+    pub fn with_ice(ice: IceConfig) -> Arc<Instance> {
+        let base = Instance::ephemeral();
+        let mut instance = Arc::into_inner(base).expect("fresh instance");
+        instance.stun =
+            crate::relay::pick_stun(&crate::relay::bundled_stun(), &instance.id, ice.public_stun);
+        instance.ice = ice;
+        Arc::new(instance)
+    }
+
+    fn relay_host(&self, origin: &str) -> String {
+        Url::parse(origin)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+            .map(|h| h.trim_start_matches('[').trim_end_matches(']').to_string())
+            .unwrap_or_else(|| "localhost".to_string())
+    }
+
+    /// The STUN URLs anyone may use: the chosen public entries, the built-in relay's STUN
+    /// and the STUN entries of `ICE_SERVERS`.
+    pub fn stun_urls(&self, origin: &str) -> Vec<String> {
+        let relay = self
+            .ice
+            .relay
+            .as_ref()
+            .map(|r| format!("stun:{}:{}", r.host_for(&self.relay_host(origin)), r.port));
+        let extra = self
+            .ice
+            .extra
+            .iter()
+            .filter(|s| !s.is_turn() && s.username.is_none())
+            .flat_map(|s| s.urls.iter().cloned());
+        let mut urls: Vec<String> = Vec::new();
+        for url in self.stun.iter().cloned().chain(relay).chain(extra) {
+            if !urls.contains(&url) {
+                urls.push(url);
+            }
+        }
+        urls
+    }
+
+    pub fn ice_info(&self, origin: &str) -> Ice {
+        let relay_turn = self.ice.relay.as_ref().is_some_and(|r| r.turn);
+        Ice {
+            stun: self.stun_urls(origin),
+            turn: relay_turn || self.ice.extra.iter().any(IceServer::is_turn),
+            relay: self.ice.relay.is_some(),
+        }
+    }
+
+    /// ICE servers for a signed-in user: the public STUN entries plus TURN entries, with
+    /// short-lived credentials for the built-in relay. Returns them with their expiry.
+    pub fn ice_servers(&self, origin: &str, user: &str, now: i64) -> (Vec<IceServer>, i64) {
+        let stun = self.stun_urls(origin);
+        let mut servers = Vec::new();
+        if !stun.is_empty() {
+            servers.push(IceServer {
+                urls: stun,
+                username: None,
+                credential: None,
+            });
+        }
+        let cred = crate::relay::issue(&self.relay_secret, user, now);
+        if let Some(relay) = self.ice.relay.as_ref().filter(|r| r.turn) {
+            servers.push(IceServer {
+                urls: vec![format!(
+                    "turn:{}:{}?transport=udp",
+                    relay.host_for(&self.relay_host(origin)),
+                    relay.port
+                )],
+                username: Some(cred.username.clone()),
+                credential: Some(cred.password.clone()),
+            });
+        }
+        servers.extend(
+            self.ice
+                .extra
+                .iter()
+                .filter(|s| s.is_turn() || s.username.is_some())
+                .cloned(),
+        );
+        (servers, cred.expires_at)
     }
 
     pub fn pinned(&self) -> bool {
@@ -291,6 +388,7 @@ impl Instance {
             peerjs_url,
             instance_url: format!("{origin}/api/instance"),
             jwks_uri: format!("{origin}{JWKS_PATH}"),
+            ice: self.ice_info(&origin),
             features,
             limits: Limits::current(),
         }
@@ -367,7 +465,7 @@ pub struct InstanceInfo {
     #[schema(example = "0.2.0")]
     pub version: String,
     /// Version of this API.
-    #[schema(example = "1.0")]
+    #[schema(example = "1.1")]
     pub api_version: String,
     /// Origin of the web app, without a trailing slash.
     #[schema(example = "https://chat.example.com")]
@@ -387,8 +485,26 @@ pub struct InstanceInfo {
     /// URL of the instance's JSON Web Key Set.
     #[schema(example = "https://chat.example.com/.well-known/jwks.json")]
     pub jwks_uri: String,
+    /// ICE servers for peer-to-peer connections. Empty and off unless the operator enables
+    /// them.
+    pub ice: Ice,
     /// Optional features and whether they are on.
     pub features: Features,
     /// Fixed limits.
     pub limits: Limits,
+}
+
+/// ICE servers for peer-to-peer connections (calls, P2P files). The instance never adds
+/// servers on its own: public STUN, the built-in relay and extra servers are all opt-in.
+#[derive(Clone, Serialize, ToSchema)]
+pub struct Ice {
+    /// STUN URLs anyone may use: the chosen public STUN servers, the built-in relay's STUN
+    /// address and STUN entries the operator added.
+    #[schema(example = json!(["stun:stun.example.org:3478", "stun:chat.example.com:3478"]))]
+    pub stun: Vec<String>,
+    /// TURN relaying is available: signed-in users get short-lived credentials from
+    /// `GET /api/p2p/ice`.
+    pub turn: bool,
+    /// The instance runs its own relay (STUN, and TURN when `turn` is on).
+    pub relay: bool,
 }

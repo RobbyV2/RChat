@@ -1469,6 +1469,7 @@ fn api_routes(
         .route("/settings", get(admin::get_settings))
         .route("/instance", get(instance::instance))
         .route("/identity/assertion", post(instance::assertion))
+        .route("/p2p/ice", get(instance::ice))
         .route("/admin/settings", patch(admin::patch_settings))
         .route("/admin/overview", get(admin::overview))
         .route("/admin/users", get(admin::list_users))

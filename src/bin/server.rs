@@ -55,6 +55,35 @@ async fn main() -> anyhow::Result<()> {
             );
         }
     }
+    let relay = match config.relay()? {
+        Some(settings) => {
+            let relay = rust_next::relay::Relay::start(&settings, &instance.relay_secret).await?;
+            rust_next::relay::register(&relay);
+            info!(
+                "Relay: STUN{} on udp {}, relay ports {}-{}{}",
+                match settings.turn {
+                    true => " and TURN",
+                    false => "",
+                },
+                relay.addr,
+                settings.min_port,
+                settings.max_port,
+                match settings.allow_private {
+                    true => " (RELAY_ALLOW_PRIVATE: private and loopback peers allowed)",
+                    false => "",
+                }
+            );
+            if config.redis_url.is_some() {
+                tracing::warn!(
+                    "Relay: REDIS_URL is set, so this may be one of several processes; allocation quotas and bandwidth caps are per relay process, so run the relay role in exactly one"
+                );
+            }
+            let relay = std::sync::Arc::new(relay);
+            rust_next::relay::follow_revocations(&relay, &hub, &db);
+            Some(relay)
+        }
+        None => None,
+    };
     let state = AppState::new(db, hub, config.s3()?, bus, instance);
     rust_next::ws::spawn_aftermath(&state);
     if let Some(bus) = &state.bus {
@@ -228,6 +257,9 @@ async fn main() -> anyhow::Result<()> {
     .await?;
 
     rust_next::ws::depart(&state).await;
+    if let Some(relay) = relay {
+        relay.close().await;
+    }
     info!("Server shutdown complete");
     Ok(())
 }

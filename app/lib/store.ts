@@ -20,6 +20,7 @@ import {
 import { JoinAborted, rtc } from './rtc'
 import { JoinTracker } from './negotiation'
 import { newP2pId, p2p } from './p2p'
+import { helpersValue, ice, iceKey, parseHelpers } from './ice'
 import { mentionsUser } from './mentions'
 import {
   NO_PINGS,
@@ -540,6 +541,7 @@ interface RChatState {
   wsStatus: WsStatus
   theme: Theme
   streamer: boolean
+  iceHelpers: boolean
   contextMenu: ContextMenuState | null
   reactPicker: ReactPicker | null
   profile: ProfileTarget | null
@@ -568,6 +570,7 @@ interface RChatState {
   loadSettings: () => Promise<void>
   setTheme: (theme: Theme) => void
   setStreamer: (streamer: boolean) => void
+  setIceHelpers: (on: boolean) => void
   patchMe: (
     avatar_kind: AvatarKind,
     avatar_color?: string,
@@ -1107,6 +1110,13 @@ export const useStore = create<RChatState>()((set, get) => {
     throw new ApiError(message || `HTTP ${res.status}`, res.status)
   }
 
+  const armIce = (username: string | null, signedIn: boolean) => {
+    const on = parseHelpers(localStorage.getItem(home.scoped(iceKey(username))))
+    ice.setHelpers(on)
+    set({ iceHelpers: on })
+    void ice.setSignedIn(signedIn)
+  }
+
   const expireSession = () => {
     if (get().authExpired) return
     set({ authExpired: true })
@@ -1466,6 +1476,7 @@ export const useStore = create<RChatState>()((set, get) => {
     if (!same) {
       notifySynced = false
       armExpiry()
+      armIce(fresh.username, true)
     }
     pinSelf()
     if (resume.servers) void get().loadMoreServers()
@@ -3329,6 +3340,7 @@ export const useStore = create<RChatState>()((set, get) => {
     wsStatus: 'red',
     theme: 'dark',
     streamer: false,
+    iceHelpers: true,
     contextMenu: null,
     reactPicker: null,
     profile: null,
@@ -3375,6 +3387,7 @@ export const useStore = create<RChatState>()((set, get) => {
         if (!fitsHome(info)) throw new Error('instance endpoints moved to another site')
         noteHomeInfo(info)
         set({ instance: info, instanceHost: home.host })
+        void ice.refresh()
         return true
       } catch {
         set({ instanceHost: home.host })
@@ -3391,6 +3404,7 @@ export const useStore = create<RChatState>()((set, get) => {
           selectHome(origin, info)
         } else noteHomeInfo(info)
         set({ instance: info, instanceHost: home.host, error: null })
+        void ice.refresh()
         await get().loadSettings()
         return null
       } catch (e) {
@@ -3419,6 +3433,12 @@ export const useStore = create<RChatState>()((set, get) => {
       writeLocal(LS.streamer, streamer ? '1' : '0')
       document.body.classList.toggle('streamer-mode', streamer)
       set({ streamer })
+    },
+
+    setIceHelpers: on => {
+      writeLocal(home.scoped(iceKey(get().me?.username ?? null)), helpersValue(on))
+      ice.setHelpers(on)
+      set({ iceHelpers: on })
     },
 
     patchMe: (avatar_kind, avatar_color, banner_color) =>
@@ -3514,6 +3534,7 @@ export const useStore = create<RChatState>()((set, get) => {
           guestNames: readJson<Record<string, string>>(LS.guestNames, {}),
         })
         loadGuestLayout()
+        armIce(null, false)
         startWs()
         await resolveUrl('replace')
       }
@@ -3552,6 +3573,7 @@ export const useStore = create<RChatState>()((set, get) => {
       api.setToken(null)
       api.setGrants({})
       home.ws.setGrants({})
+      armIce(null, false)
       dmPager.reset(null)
       serverPager.reset(null)
       historyGen.clear()
@@ -3641,6 +3663,7 @@ export const useStore = create<RChatState>()((set, get) => {
         persistGuestNames({})
         set({ guest: true, guestServers: ['rchat'] })
         loadGuestLayout()
+        armIce(null, false)
         startWs()
       }),
 

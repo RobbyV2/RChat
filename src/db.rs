@@ -928,6 +928,7 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
         ("instance_id", crate::identity::random_id()),
         ("instance_signing_key", crate::identity::new_seed()),
         ("password_pepper", crate::api::auth::new_token()),
+        ("relay_secret", crate::api::auth::new_token()),
     ] {
         sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO NOTHING")
             .bind(key)
@@ -1607,6 +1608,7 @@ mod tests {
             "ALTER TABLE members DROP COLUMN joined_via",
             "ALTER TABLE guest_grants DROP COLUMN password_id",
             "DELETE FROM settings WHERE key = 'password_pepper'",
+            "DELETE FROM settings WHERE key = 'relay_secret'",
             "UPDATE settings SET value = 'old-instance' WHERE key = 'instance_id'",
             "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('club', 'Club', 'alice', 'hash', 1)",
             "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('club', 'alice', 1, 0, 5)",
@@ -1616,6 +1618,7 @@ mod tests {
         }
         close(&db).await;
         let mut peppers = Vec::new();
+        let mut relays = Vec::new();
         for _ in 0..2 {
             let db = open(path.to_str()).await.expect("upgrade");
             assert_eq!(
@@ -1654,9 +1657,19 @@ mod tests {
             let p = pepper(&db).await.expect("pepper");
             assert_eq!(p.len(), 64);
             peppers.push(p);
+            let relay: String =
+                sqlx::query("SELECT value FROM settings WHERE key = 'relay_secret'")
+                    .fetch_one(&db)
+                    .await
+                    .expect("relay secret")
+                    .try_get(0)
+                    .expect("value");
+            assert_eq!(relay.len(), 64);
+            relays.push(relay);
             close(&db).await;
         }
         assert_eq!(peppers[0], peppers[1], "the pepper is inserted once");
+        assert_eq!(relays[0], relays[1], "the relay secret is inserted once");
         wipe();
     }
 

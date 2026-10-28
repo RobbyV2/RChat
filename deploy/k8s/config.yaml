@@ -28,3 +28,16 @@ data:
   # to start until you do, since unset they would announce localhost as their issuer.
   PUBLIC_URL: "REPLACE-with-your-public-origin"
   # ALLOWED_HOSTS: "chat.example.com"
+  # Connection helpers for calls and P2P files, all off by default (see the README):
+  # PUBLIC_STUN: "true" advertises 3 servers from the bundled public STUN list.
+  # PUBLIC_STUN: "false"
+  # The built-in relay runs only in the rchat-relay pod (relay.yaml); every pod needs these
+  # to advertise it and issue TURN credentials.
+  # RELAY_ENABLED: "false"
+  # RELAY_HOST: "relay.example.com"
+  # RELAY_PUBLIC_IP: "203.0.113.10"
+  # Public addresses of the cluster's nodes, load balancers and other servers, which the
+  # relay must never reach (see relay.yaml):
+  # RELAY_DENIED_PEERS: "203.0.113.0/24"
+  # RELAY_USER_ALLOCATIONS: "16"
+  # ICE_SERVERS: '[{"urls":"turn:turn.example.com:3478","username":"u","credential":"p"}]'

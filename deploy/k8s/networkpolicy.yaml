@@ -3,7 +3,8 @@
 # policy in valkey.yaml), so no pod-to-pod traffic is admitted; rchat-embeds and
 # rchat-jobs have no Ingress route and serve only their probes. Kubelet probes come from
 # the node, which common enforcing CNIs (Calico, Cilium) allow regardless. Takes effect
-# only with a CNI that implements NetworkPolicy.
+# only with a CNI that implements NetworkPolicy. The optional rchat-relay pod
+# (relay.yaml) uses hostNetwork, which NetworkPolicy does not cover.
 #
 # REPLACE the two selectors below if your controller is not a standard ingress-nginx
 # install (namespace ingress-nginx, controller pods labelled
