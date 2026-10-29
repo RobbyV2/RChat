@@ -172,6 +172,7 @@ import {
   type Layout,
 } from './nav_layout'
 import { MESSAGE_MAX, charCount, cleanBio } from './rules'
+import { cleanTopic } from './topic'
 import {
   dropStashedInvite,
   entryState,
@@ -3022,6 +3023,7 @@ export const useStore = create<RChatState>()((set, get) => {
         role_names: true,
         file_names: true,
         bios: true,
+        channel_topics: true,
       },
       asset_previews: true,
       asset_uploads: true,
@@ -4250,6 +4252,18 @@ export const useStore = create<RChatState>()((set, get) => {
     setSlowmode: (id, seconds) =>
       act(async () => void (await api.updateChannel(id, { slowmode_seconds: seconds }))),
     setChannelRestrict: (id, patch) => act(async () => void (await api.updateChannel(id, patch))),
+    setChannelTopic: async (server, id, topic) => {
+      try {
+        const channel = await api.updateChannel(id, { topic: cleanTopic(topic) || null })
+        patchServer(server, d => ({
+          ...d,
+          channels: d.channels.map(c => (c.id === channel.id ? channel : c)),
+        }))
+        return null
+      } catch (e) {
+        return errorText(e)
+      }
+    },
     deleteChannel: id => act(async () => void (await api.deleteChannel(id))),
     kickMember: (server, username) =>
       act(async () => void (await api.kickMember(server, username))),

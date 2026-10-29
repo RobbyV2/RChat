@@ -842,7 +842,7 @@ pub fn spawn_aftermath(state: &AppState) {
 
 async fn channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(String, Channel)>> {
     let row =
-        sqlx::query("SELECT server, name, kind, slowmode_seconds, restrict_view, restrict_send FROM channels WHERE id = $1")
+        sqlx::query("SELECT server, name, kind, slowmode_seconds, restrict_view, restrict_send, topic FROM channels WHERE id = $1")
             .bind(id)
             .fetch_optional(db)
             .await?;
@@ -856,6 +856,7 @@ async fn channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(String, Channel)>
                 slowmode_seconds: r.try_get(3)?,
                 restrict_view: r.try_get::<i64, _>(4)? != 0,
                 restrict_send: r.try_get::<i64, _>(5)? != 0,
+                topic: r.try_get(6)?,
             },
         ))),
         None => Ok(None),
@@ -6510,6 +6511,7 @@ mod tests {
             slowmode_seconds: 0,
             restrict_view: false,
             restrict_send: false,
+            topic: None,
         };
         let mut evs = Vec::new();
         for server in [Some(s("a")), Some(s("b")), None] {

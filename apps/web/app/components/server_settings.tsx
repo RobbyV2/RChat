@@ -46,6 +46,7 @@ import { ServerAccessSection, passwordName } from './server_access'
 import { ColorField } from './color_field'
 import { ServerHeader } from './server_header'
 import { ServerSystemMessages } from './system_messages'
+import { TopicEditor } from './channel_topic'
 import {
   BANNER_PRESETS,
   NAME_PRESETS,
@@ -698,6 +699,7 @@ export function ChannelControls({
   lead?: ReactNode
 }) {
   const [open, setOpen] = useState(false)
+  const [topicOpen, setTopicOpen] = useState(false)
   return (
     <div className="rounded-xl px-2 py-1.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -722,10 +724,18 @@ export function ChannelControls({
           </span>
         )}
         {channel.kind === 'text' && <SlowmodeField channel={channel} refresh={refresh} />}
+        <button
+          onClick={() => setTopicOpen(!topicOpen)}
+          aria-expanded={topicOpen}
+          className={textBtn}
+        >
+          {topicOpen ? 'Hide topic' : 'Topic'}
+        </button>
         <button onClick={() => setOpen(!open)} className={textBtn}>
           {open ? 'Hide permissions' : 'Permissions'}
         </button>
       </div>
+      {topicOpen && <TopicEditor server={server} channel={channel} refresh={refresh} />}
       {open && (
         <ChannelPermsEditor channel={channel} server={server} roles={roles} refresh={refresh} />
       )}

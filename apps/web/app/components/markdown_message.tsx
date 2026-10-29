@@ -250,7 +250,7 @@ function Mention({ username }: { username: string }) {
   )
 }
 
-function MessageLink({ href, children, ...props }: React.ComponentProps<'a'>) {
+export function MessageLink({ href, children, ...props }: React.ComponentProps<'a'>) {
   const invite = href ? parseInvite(href, shareOrigin()) : null
   const target = href && !invite ? parseMessageLink(href, localOrigins()) : null
   const body = <InLink.Provider value>{children}</InLink.Provider>

@@ -331,6 +331,10 @@ pub struct Channel {
     /// channels can send in it.
     #[serde(default)]
     pub restrict_send: bool,
+    /// Channel topic: plain text, links are shown as links. At most 1024 characters, no
+    /// control characters other than newlines; `null` when the channel has none.
+    #[serde(default)]
+    pub topic: Option<String>,
 }
 
 /// A server role.
@@ -774,10 +778,11 @@ pub enum ProfanityTarget {
     RoleNames,
     FileNames,
     Bios,
+    ChannelTopics,
 }
 
 impl ProfanityTarget {
-    pub const ALL: [ProfanityTarget; 7] = [
+    pub const ALL: [ProfanityTarget; 8] = [
         ProfanityTarget::Messages,
         ProfanityTarget::Usernames,
         ProfanityTarget::ServerNames,
@@ -785,6 +790,7 @@ impl ProfanityTarget {
         ProfanityTarget::RoleNames,
         ProfanityTarget::FileNames,
         ProfanityTarget::Bios,
+        ProfanityTarget::ChannelTopics,
     ];
 
     pub fn switch(self) -> ProfanitySwitch {
@@ -796,6 +802,7 @@ impl ProfanityTarget {
             ProfanityTarget::RoleNames => ProfanitySwitch::RoleNames,
             ProfanityTarget::FileNames => ProfanitySwitch::FileNames,
             ProfanityTarget::Bios => ProfanitySwitch::Bios,
+            ProfanityTarget::ChannelTopics => ProfanitySwitch::ChannelTopics,
         }
     }
 }
@@ -811,10 +818,11 @@ pub enum ProfanitySwitch {
     RoleNames,
     FileNames,
     Bios,
+    ChannelTopics,
 }
 
 impl ProfanitySwitch {
-    pub const ALL: [ProfanitySwitch; 8] = [
+    pub const ALL: [ProfanitySwitch; 9] = [
         ProfanitySwitch::Messages,
         ProfanitySwitch::Links,
         ProfanitySwitch::Usernames,
@@ -823,6 +831,7 @@ impl ProfanitySwitch {
         ProfanitySwitch::RoleNames,
         ProfanitySwitch::FileNames,
         ProfanitySwitch::Bios,
+        ProfanitySwitch::ChannelTopics,
     ];
 
     pub fn name(self) -> &'static str {
@@ -835,6 +844,7 @@ impl ProfanitySwitch {
             ProfanitySwitch::RoleNames => "role_names",
             ProfanitySwitch::FileNames => "file_names",
             ProfanitySwitch::Bios => "bios",
+            ProfanitySwitch::ChannelTopics => "channel_topics",
         }
     }
 
@@ -848,6 +858,7 @@ impl ProfanitySwitch {
             ProfanitySwitch::RoleNames => "profanity_role_names",
             ProfanitySwitch::FileNames => "profanity_file_names",
             ProfanitySwitch::Bios => "profanity_bios",
+            ProfanitySwitch::ChannelTopics => "profanity_channel_topics",
         }
     }
 
@@ -892,6 +903,9 @@ pub struct ProfanityTargets {
     /// Profile descriptions.
     #[serde(default = "target_default")]
     pub bios: bool,
+    /// Channel topics.
+    #[serde(default = "target_default")]
+    pub channel_topics: bool,
 }
 
 fn target_default() -> bool {
@@ -914,6 +928,7 @@ impl ProfanityTargets {
         role_names: true,
         file_names: true,
         bios: true,
+        channel_topics: true,
     };
 
     pub fn from_fn(mut on: impl FnMut(ProfanitySwitch) -> bool) -> ProfanityTargets {
@@ -926,6 +941,7 @@ impl ProfanityTargets {
             role_names: on(ProfanitySwitch::RoleNames),
             file_names: on(ProfanitySwitch::FileNames),
             bios: on(ProfanitySwitch::Bios),
+            channel_topics: on(ProfanitySwitch::ChannelTopics),
         }
     }
 
@@ -939,6 +955,7 @@ impl ProfanityTargets {
             role_names,
             file_names,
             bios,
+            channel_topics,
         } = *self;
         match switch {
             ProfanitySwitch::Messages => messages,
@@ -949,6 +966,7 @@ impl ProfanityTargets {
             ProfanitySwitch::RoleNames => role_names,
             ProfanitySwitch::FileNames => file_names,
             ProfanitySwitch::Bios => bios,
+            ProfanitySwitch::ChannelTopics => channel_topics,
         }
     }
 
@@ -1179,6 +1197,7 @@ pub(crate) fn header_grants(headers: &HeaderMap) -> Vec<String> {
 pub const NAME_MAX: usize = 100;
 pub const MESSAGE_MAX: usize = 4000;
 pub const SLOWMODE_MAX: i64 = 21600;
+pub const TOPIC_MAX: usize = 1024;
 
 pub fn check_len(text: &str, max: usize, what: &str) -> Result<(), ApiError> {
     match text.chars().count() > max {
@@ -1370,7 +1389,8 @@ impl Settings {
             | ProfanityTarget::ChannelNames
             | ProfanityTarget::RoleNames
             | ProfanityTarget::FileNames
-            | ProfanityTarget::Bios => true,
+            | ProfanityTarget::Bios
+            | ProfanityTarget::ChannelTopics => true,
         };
         self.profanity_filter && targets.get(target.switch()) && is_profane(text, links)
     }
@@ -1945,6 +1965,11 @@ mod tests {
             assert_eq!(on(&bios, switch.key()), Some(want), "{switch:?}");
         }
         assert_eq!(on(&bios, "profanity_bios"), Some(true));
+        let topics = seed(None, Some("channel_topics"));
+        for switch in ProfanitySwitch::ALL {
+            let want = switch == ProfanitySwitch::ChannelTopics;
+            assert_eq!(on(&topics, switch.key()), Some(want), "{switch:?}");
+        }
     }
 
     #[tokio::test]
@@ -2006,6 +2031,7 @@ mod tests {
         }))
         .expect("stale display_names field");
         assert!(stale.profanity_targets.bios);
+        assert!(stale.profanity_targets.channel_topics);
         assert!(!stale.profanity_targets.messages && stale.profanity_targets.usernames);
     }
 

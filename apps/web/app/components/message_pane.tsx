@@ -74,6 +74,7 @@ import StatusClock from './status_clock'
 import { longPress } from './context_menu'
 import { profileTrigger } from './profile_card'
 import { useCallShare, VoiceGrid } from './voice_grid'
+import { ChannelTopic } from './channel_topic'
 import { CallButtons, CallDuration, DirectBadge } from './call_buttons'
 import {
   EdgeSentinel,
@@ -838,34 +839,45 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           />
         </button>
         {view?.kind === 'channel' && (
-          <span className="flex min-w-0 items-center gap-1.5 font-medium">
-            {isVoice ? (
-              <Volume2 size={18} className="shrink-0 text-on-surface-variant" />
-            ) : (
-              <Hash size={18} className="shrink-0 text-on-surface-variant" />
-            )}
-            <span className="truncate">{channelName}</span>
-            {channel?.restrict_view && (
-              <span
-                title="Private channel"
-                aria-label="Private channel"
-                role="img"
-                className="flex shrink-0 text-on-surface-variant"
-              >
-                <Lock size={14} />
+          <div className="flex min-w-0 flex-1 flex-col md:flex-row md:items-center md:gap-3">
+            <span
+              className={`flex min-w-0 shrink-0 items-center gap-1.5 font-medium ${
+                !isVoice && channel?.topic?.trim() ? 'md:max-w-[50%]' : ''
+              }`}
+            >
+              {isVoice ? (
+                <Volume2 size={18} className="shrink-0 text-on-surface-variant" />
+              ) : (
+                <Hash size={18} className="shrink-0 text-on-surface-variant" />
+              )}
+              <span className="truncate">{channelName}</span>
+              {channel?.restrict_view && (
+                <span
+                  title="Private channel"
+                  aria-label="Private channel"
+                  role="img"
+                  className="flex shrink-0 text-on-surface-variant"
+                >
+                  <Lock size={14} />
+                </span>
+              )}
+              {!isVoice && channel && channel.slowmode_seconds > 0 && (
+                <span
+                  title={slowTitle(channel.slowmode_seconds)}
+                  aria-label={slowTitle(channel.slowmode_seconds)}
+                  role="img"
+                  className="flex shrink-0 text-on-surface-variant"
+                >
+                  <Clock size={16} />
+                </span>
+              )}
+            </span>
+            {channel && !isVoice && (
+              <span className="flex min-w-0 md:flex-1 md:border-l md:border-outline-variant md:pl-3">
+                <ChannelTopic channel={channel} />
               </span>
             )}
-            {!isVoice && channel && channel.slowmode_seconds > 0 && (
-              <span
-                title={slowTitle(channel.slowmode_seconds)}
-                aria-label={slowTitle(channel.slowmode_seconds)}
-                role="img"
-                className="flex shrink-0 text-on-surface-variant"
-              >
-                <Clock size={16} />
-              </span>
-            )}
-          </span>
+          </div>
         )}
         {dm && (
           <span className="flex min-w-20 items-center gap-2 font-medium">

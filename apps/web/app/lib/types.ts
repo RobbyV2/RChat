@@ -60,6 +60,7 @@ export interface Channel {
   slowmode_seconds: number
   restrict_view?: boolean
   restrict_send?: boolean
+  topic?: string | null
 }
 
 export interface Role {
@@ -340,6 +341,7 @@ export interface ProfanityTargets {
   role_names: boolean
   file_names: boolean
   bios: boolean
+  channel_topics: boolean
 }
 
 export type ProfanityTarget = keyof ProfanityTargets

@@ -380,6 +380,7 @@ export const endpoints = (c: ApiClient) => ({
       slowmode_seconds?: number
       restrict_view?: boolean
       restrict_send?: boolean
+      topic?: string | null
     }
   ) => c.req<Channel>('PATCH', `/channels/${id}`, patch),
   deleteChannel: (id: number) => c.req<unknown>('DELETE', `/channels/${id}`),

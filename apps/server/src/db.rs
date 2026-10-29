@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NO
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at INTEGER NOT NULL, claimed_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
 CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count INTEGER NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id INTEGER, join_messages INTEGER NOT NULL DEFAULT 1, leave_messages INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, restrict_view INTEGER NOT NULL DEFAULT 0, restrict_send INTEGER NOT NULL DEFAULT 0, UNIQUE(server, name));
+CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, restrict_view INTEGER NOT NULL DEFAULT 0, restrict_send INTEGER NOT NULL DEFAULT 0, topic TEXT, UNIQUE(server, name));
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, perms INTEGER NOT NULL DEFAULT 0, joined_at INTEGER NOT NULL, joined_via INTEGER, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NO
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at BIGINT NOT NULL, claimed_at BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
 CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count BIGINT NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id BIGINT, join_messages BIGINT NOT NULL DEFAULT 1, leave_messages BIGINT NOT NULL DEFAULT 1, created_at BIGINT NOT NULL);
-CREATE TABLE IF NOT EXISTS channels(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, restrict_view BIGINT NOT NULL DEFAULT 0, restrict_send BIGINT NOT NULL DEFAULT 0, UNIQUE(server, name));
+CREATE TABLE IF NOT EXISTS channels(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, restrict_view BIGINT NOT NULL DEFAULT 0, restrict_send BIGINT NOT NULL DEFAULT 0, topic TEXT, UNIQUE(server, name));
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin BIGINT NOT NULL DEFAULT 0, perms BIGINT NOT NULL DEFAULT 0, joined_at BIGINT NOT NULL, joined_via BIGINT, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms BIGINT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
@@ -408,6 +408,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("guest_grants", "network TEXT"),
     ("messages", "call_kind TEXT"),
     ("messages", "call_video {INT}"),
+    ("channels", "topic TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -1656,6 +1657,76 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
+    }
+
+    #[tokio::test]
+    async fn existing_channels_get_an_empty_topic_column() {
+        let path = std::env::temp_dir().join(format!("rchat_topic_col_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "ALTER TABLE channels DROP COLUMN topic",
+            "DELETE FROM settings WHERE key = 'profanity_channel_topics'",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('old', 'Old', 'alice', 3)",
+            "INSERT INTO channels(server, name, kind, slowmode_seconds, created_at, restrict_send) VALUES('old', 'chat', 'text', 30, 3, 1)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('old', 'talk', 'voice', 3)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        assert!(
+            sqlx::query("SELECT topic FROM channels")
+                .fetch_all(&db)
+                .await
+                .is_err()
+        );
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            let rows = sqlx::query("SELECT name, kind, slowmode_seconds, restrict_send, topic FROM channels WHERE server = 'old' ORDER BY id")
+                .fetch_all(&db)
+                .await
+                .expect("rows");
+            let got: Vec<(String, String, i64, i64, Option<String>)> = rows
+                .iter()
+                .map(|r| {
+                    (
+                        r.try_get(0).expect("name"),
+                        r.try_get(1).expect("kind"),
+                        r.try_get(2).expect("slowmode"),
+                        r.try_get(3).expect("restrict_send"),
+                        r.try_get(4).expect("topic"),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                got,
+                [
+                    ("chat".into(), "text".into(), 30, 1, None),
+                    ("talk".into(), "voice".into(), 0, 0, None),
+                ]
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM settings WHERE key = 'profanity_channel_topics' AND value = '1'").await,
+                1
+            );
+            close(&db).await;
+        }
+        let db = open(path.to_str()).await.expect("reopen");
+        sqlx::query("UPDATE channels SET topic = 'hi' WHERE name = 'talk'")
+            .execute(&db)
+            .await
+            .expect("write topic");
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM channels WHERE topic = 'hi'").await,
+            1
+        );
+        close(&db).await;
+        wipe();
     }
 
     #[tokio::test]

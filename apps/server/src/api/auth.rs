@@ -827,6 +827,10 @@ pub struct MeUpdated {
 pub const BIO_MAX: usize = 190;
 
 pub fn clean_bio(text: &str) -> Result<Option<String>, ApiError> {
+    clean_multiline(text, BIO_MAX, "Description")
+}
+
+pub fn clean_multiline(text: &str, max: usize, what: &str) -> Result<Option<String>, ApiError> {
     let kept: String = text
         .chars()
         .filter(|c| *c == '\n' || !c.is_control())
@@ -844,9 +848,7 @@ pub fn clean_bio(text: &str) -> Result<Option<String>, ApiError> {
     }
     match out.chars().count() {
         0 => Ok(None),
-        n if n > BIO_MAX => Err(bad(&format!(
-            "Description must be at most {BIO_MAX} characters"
-        ))),
+        n if n > max => Err(bad(&format!("{what} must be at most {max} characters"))),
         _ => Ok(Some(out)),
     }
 }

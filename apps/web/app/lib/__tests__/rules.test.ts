@@ -329,6 +329,7 @@ describe('profanity targets', () => {
     role_names: true,
     file_names: true,
     bios: true,
+    channel_topics: true,
   }
 
   test('lists every target once', () => {

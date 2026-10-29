@@ -578,6 +578,7 @@ mod tests {
             "role_names",
             "file_names",
             "bios",
+            "channel_topics",
         ] {
             assert!(
                 schemas["ProfanityTargets"]["properties"][key].is_object(),

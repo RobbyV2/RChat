@@ -395,6 +395,7 @@ export interface RChatState {
   createChannel: (server: string, name: string, kind?: ChannelKind) => Promise<void>
   renameChannel: (id: number, name: string) => Promise<void>
   setSlowmode: (id: number, seconds: number) => Promise<void>
+  setChannelTopic: (server: string, id: number, topic: string) => Promise<string | null>
   setChannelRestrict: (
     id: number,
     patch: { restrict_view?: boolean; restrict_send?: boolean }

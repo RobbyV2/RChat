@@ -44,6 +44,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 | Pins                   | Pin important messages. Open all pins from the channel header.                                                        |
 | Join and leave notices | Show a notice when a member joins or leaves. Server admins choose the channel or turn notices off.                    |
 | Restricted channels    | Let only some roles or members see a channel or send in it.                                                           |
+| Channel topics         | Add a topic to a text or voice channel. It shows at the top of the channel.                                           |
 | Slow mode              | Set a wait time between messages in a channel.                                                                        |
 | Server passwords       | Use a permanent password, temporary passwords or tickets with a use limit. Close the server to new members.           |
 | Private servers        | A server with a password stays hidden from people who are not members.                                                |
@@ -59,7 +60,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 | Guests                 | Read public servers without an account. Guests cannot send messages.                                                  |
 | Accounts               | Sign in with a text password or with 7 words in order. No email and no phone number.                                  |
 | Themes                 | Use the dark or the light theme. Install the app as a PWA.                                                            |
-| Profanity filter       | The site admin turns the filter on or off for messages, names, file names and bios.                                   |
+| Profanity filter       | The site admin turns the filter on or off for messages, names, file names, bios and topics.                           |
 | Multiple instances     | Each instance has its own name and identity. The login page lets you pick a different instance.                       |
 
 <p align="center">

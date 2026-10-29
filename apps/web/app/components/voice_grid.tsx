@@ -43,6 +43,7 @@ import { profileTrigger } from './profile_card'
 import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, useMedia } from './context_menu'
 import { useEscape } from './ui'
+import { ChannelTopic } from './channel_topic'
 
 const useAudioGate = create<{ blocked: boolean }>(() => ({ blocked: false }))
 const useSeenShares = create<{ seen: ReadonlySet<string> }>(() => ({ seen: new Set() }))
@@ -634,6 +635,11 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
   const view = useStore(s => s.view)
   const joinVoice = useStore(s => s.joinVoice)
   const server = channelId !== undefined && view?.kind === 'channel' ? view.server : null
+  const channel = useStore(s =>
+    server !== null && channelId !== undefined
+      ? s.servers[server]?.channels.find(c => c.id === channelId)
+      : undefined
+  )
   const coarse = useMedia(COARSE_QUERY)
 
   const forDm = dmId !== undefined && call?.dmId === dmId ? call : null
@@ -838,6 +844,11 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
               <CallDuration from={forDm.since} />
             </span>
           )}
+        </div>
+      )}
+      {channel?.topic && (
+        <div className="flex shrink-0 px-4 pt-3">
+          <ChannelTopic channel={channel} variant="voice" />
         </div>
       )}
       {joined && <SharePill />}

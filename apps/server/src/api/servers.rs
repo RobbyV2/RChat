@@ -12,14 +12,14 @@ use crate::api::access::{
     resolve_server,
 };
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
-use crate::api::auth::{Work, hash_in, new_token};
+use crate::api::auth::{Work, clean_multiline, hash_in, new_token, present};
 use crate::api::messages::recent_channel_messages;
 use crate::api::pings::forget_server_pings;
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message,
     NAME_MAX, OFFSET_MAX, OkResp, Paged, ProfanityTarget, Role, RoleLimits, SLOWMODE_MAX,
-    ServerDetail, ServerSummary, ServerSummaryLite, UserRef, allowed, bad, check_len,
+    ServerDetail, ServerSummary, ServerSummaryLite, TOPIC_MAX, UserRef, allowed, bad, check_len,
     check_profanity, cursor_int, decode_cursor, encode_cursor, header_grants, ok, page_bounds,
     placeholders, require_guest_ok, unique_capped, user_from, user_ref, user_refs, valid_color,
 };
@@ -148,6 +148,13 @@ pub struct ChannelPatch {
     /// manage channels) can send. With no rules, only they can. Voice channels only accept
     /// `false`.
     restrict_send: Option<bool>,
+    /// Channel topic, plain text where links show as links. At most 1024 characters (code
+    /// points) after cleanup: trimmed, control characters other than newlines dropped, runs of
+    /// 3 or more newlines cut to 2. Checked by the profanity filter (`channel_topics` target).
+    /// Empty or `null` clears it. Omit to keep it.
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<String>)]
+    topic: Option<Option<String>>,
 }
 
 /// Request body naming a user.
@@ -848,6 +855,7 @@ fn channel_row(r: &sqlx::any::AnyRow) -> Result<Channel, ApiError> {
         slowmode_seconds: r.try_get(3)?,
         restrict_view,
         restrict_send,
+        topic: r.try_get(6)?,
     })
 }
 
@@ -877,7 +885,7 @@ async fn server_detail(
         name_color,
     } = access.lite().clone();
     let rows = sqlx::query(
-        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send FROM channels WHERE server = $1 ORDER BY id",
+        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic FROM channels WHERE server = $1 ORDER BY id",
     )
     .bind(&name)
     .fetch_all(db)
@@ -2366,6 +2374,7 @@ pub(crate) async fn create_channel(
         slowmode_seconds: 0,
         restrict_view: req.restrict_view,
         restrict_send: false,
+        topic: None,
     };
     state.hub.broadcast(WsEvent::ChannelCreated {
         server: key,
@@ -2376,8 +2385,8 @@ pub(crate) async fn create_channel(
 
 /// Update a channel
 ///
-/// Renames a channel, sets its slow mode and/or its restrictions; omitted fields are left
-/// unchanged. Slow mode is 0 to 21600 seconds and only text channels may have it. With
+/// Renames a channel, sets its slow mode, its topic and/or its restrictions; omitted fields
+/// are left unchanged. Text and voice channels can both have a topic. Slow mode is 0 to 21600 seconds and only text channels may have it. With
 /// `restrict_view` or `restrict_send` on, only roles and members with a matching channel rule
 /// (`can_view` / `can_send`) can see or send; people who manage channels always can, so with no
 /// rules only they can. Requires the Manage channels permission in the channel's server. When a
@@ -2392,7 +2401,7 @@ pub(crate) async fn create_channel(
     request_body = ChannelPatch,
     responses(
         (status = 200, description = "The updated channel", body = Channel),
-        (status = 400, description = "Slow mode out of range or set on a voice channel, `restrict_send` turned on for a voice channel, an invalid channel name (blank, longer than 100 characters or blocked by the profanity filter), or the name is taken in this server. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Slow mode out of range or set on a voice channel, `restrict_send` turned on for a voice channel, an invalid channel name (blank, longer than 100 characters or blocked by the profanity filter), a topic over 1024 characters or blocked by the profanity filter, or the name is taken in this server. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses)", body = ApiErrorBody),
@@ -2412,6 +2421,7 @@ pub(crate) async fn update_channel(
         slowmode_seconds,
         restrict_view,
         restrict_send,
+        topic,
     } = req;
     let channel = resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
     channel
@@ -2450,6 +2460,16 @@ pub(crate) async fn update_channel(
         }
         None => None,
     };
+    let topic = match topic {
+        Some(text) => {
+            let text = clean_multiline(text.as_deref().unwrap_or(""), TOPIC_MAX, "Topic")?;
+            if let Some(text) = &text {
+                check_profanity(&state.db, ProfanityTarget::ChannelTopics, text).await?;
+            }
+            Some(text)
+        }
+        None => None,
+    };
     if let Some(channel_name) = &channel_name {
         let taken =
             sqlx::query("SELECT 1 FROM channels WHERE server = $1 AND name = $2 AND id != $3")
@@ -2464,6 +2484,13 @@ pub(crate) async fn update_channel(
         }
         sqlx::query("UPDATE channels SET name = $1 WHERE id = $2")
             .bind(channel_name)
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+    }
+    if let Some(text) = &topic {
+        sqlx::query("UPDATE channels SET topic = $1 WHERE id = $2")
+            .bind(text)
             .bind(id)
             .execute(&state.db)
             .await?;
@@ -2495,7 +2522,7 @@ pub(crate) async fn update_channel(
         }
     }
     let row = sqlx::query(
-        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send FROM channels WHERE id = $1",
+        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic FROM channels WHERE id = $1",
     )
     .bind(id)
     .fetch_one(&state.db)
@@ -7138,6 +7165,161 @@ mod tests {
                 "channel_renamed talk".to_string(),
             ]
         );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn channel_topics_are_cleaned_filtered_and_live() {
+        let (state, path) = temp_state("channel_topics").await;
+        let db = &state.db;
+        club_with(&state, &["bob"]).await;
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'club'")
+            .fetch_one(db)
+            .await
+            .expect("channel")
+            .try_get(0)
+            .expect("id");
+        let voice: i64 = sqlx::query("INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'talk', 'voice', 0) RETURNING id")
+            .fetch_one(db)
+            .await
+            .expect("voice")
+            .try_get(0)
+            .expect("voice id");
+        let patch = |who: &str, id: i64, body: String| {
+            let state = state.clone();
+            let who = mem_user(who, false);
+            async move {
+                update_channel(
+                    State(state),
+                    Authed(who),
+                    Path(id),
+                    Json(serde_json::from_str(&body).expect("body")),
+                )
+                .await
+                .map(|Json(c)| c.topic)
+                .map_err(|ApiError(code, msg)| (code, msg))
+            }
+        };
+        let body = |topic: serde_json::Value| serde_json::json!({ "topic": topic }).to_string();
+        let mut rx = state.hub.subscribe();
+        assert_eq!(
+            patch("bob", cid, body("hi".into())).await.map_err(|e| e.0),
+            Err(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            patch(
+                "alice",
+                cid,
+                body("  Rules: https://example.com\r\n\n\n\nbe\u{0007} nice \t".into())
+            )
+            .await
+            .expect("set"),
+            Some("Rules: https://example.com\n\nbe nice".to_string())
+        );
+        match rx.try_recv() {
+            Ok(WsEvent::ChannelUpdated { server, channel }) => {
+                assert_eq!(server, "club");
+                assert_eq!(
+                    channel.topic.as_deref(),
+                    Some("Rules: https://example.com\n\nbe nice")
+                );
+            }
+            _ => panic!("expected channel_updated"),
+        }
+        let max = "\u{1F600}".repeat(TOPIC_MAX);
+        assert_eq!(
+            patch("alice", cid, body(max.clone().into()))
+                .await
+                .expect("max"),
+            Some(max.clone())
+        );
+        let over = patch("alice", cid, body(format!("{max}a").into())).await;
+        assert!(
+            matches!(&over, Err((StatusCode::BAD_REQUEST, m)) if m == "Topic must be at most 1024 characters")
+        );
+        assert_eq!(
+            patch("alice", cid, r#"{"slowmode_seconds":5}"#.to_string())
+                .await
+                .expect("topic kept"),
+            Some(max)
+        );
+        let rude = patch("alice", cid, body("what the fuck".into())).await;
+        assert!(matches!(&rude, Err((StatusCode::BAD_REQUEST, m)) if m.contains("profanity")));
+        sqlx::query("UPDATE settings SET value = '0' WHERE key = 'profanity_channel_topics'")
+            .execute(db)
+            .await
+            .expect("topics off");
+        crate::api::Settings::forget(db);
+        assert_eq!(
+            patch("alice", voice, body("what the fuck".into()))
+                .await
+                .expect("target off, voice ok"),
+            Some("what the fuck".to_string())
+        );
+        assert!(
+            check_profanity(db, ProfanityTarget::ChannelNames, "fuck")
+                .await
+                .is_err()
+        );
+        sqlx::query("UPDATE settings SET value = '1' WHERE key = 'profanity_channel_topics'")
+            .execute(db)
+            .await
+            .expect("topics on");
+        crate::api::Settings::forget(db);
+        assert_eq!(
+            patch("alice", voice, body(" \n ".into()))
+                .await
+                .expect("blank"),
+            None
+        );
+        assert_eq!(
+            patch("alice", cid, body(serde_json::Value::Null))
+                .await
+                .expect("null"),
+            None
+        );
+        let stored: Option<String> = sqlx::query("SELECT topic FROM channels WHERE id = $1")
+            .bind(cid)
+            .fetch_one(db)
+            .await
+            .expect("row")
+            .try_get(0)
+            .expect("topic");
+        assert_eq!(stored, None);
+        patch("alice", cid, body("secret plans".into()))
+            .await
+            .expect("again");
+        let bob = mem_user("bob", false);
+        let detail = detail_as(&state, "club", Some(&bob)).await.expect("bob");
+        assert!(
+            detail
+                .channels
+                .iter()
+                .any(|c| c.id == cid && c.topic.as_deref() == Some("secret plans"))
+        );
+        patch("alice", cid, r#"{"restrict_view":true}"#.to_string())
+            .await
+            .expect("hide");
+        let detail = detail_as(&state, "club", Some(&bob)).await.expect("bob");
+        assert!(detail.channels.iter().all(|c| c.id != cid));
+        let stale = WsEvent::ChannelUpdated {
+            server: "club".to_string(),
+            channel: Channel {
+                id: cid,
+                name: "general".to_string(),
+                kind: ChannelKind::Text,
+                slowmode_seconds: 0,
+                restrict_view: false,
+                restrict_send: false,
+                topic: None,
+            },
+        };
+        match crate::ws::current(&state, stale).await {
+            Some(WsEvent::ChannelUpdated { server: _, channel }) => {
+                assert_eq!(channel.topic.as_deref(), Some("secret plans"))
+            }
+            _ => panic!("expected the stored topic"),
+        }
         done(state, path).await;
     }
 

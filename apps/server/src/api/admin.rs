@@ -179,6 +179,7 @@ pub struct ProfanityTargetsPatch {
     role_names: Option<bool>,
     file_names: Option<bool>,
     bios: Option<bool>,
+    channel_topics: Option<bool>,
 }
 
 impl ProfanityTargetsPatch {
@@ -192,6 +193,7 @@ impl ProfanityTargetsPatch {
             role_names,
             file_names,
             bios,
+            channel_topics,
         } = *self;
         match switch {
             ProfanitySwitch::Messages => messages,
@@ -202,6 +204,7 @@ impl ProfanityTargetsPatch {
             ProfanitySwitch::RoleNames => role_names,
             ProfanitySwitch::FileNames => file_names,
             ProfanitySwitch::Bios => bios,
+            ProfanitySwitch::ChannelTopics => channel_topics,
         }
     }
 }

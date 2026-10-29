@@ -806,6 +806,7 @@ mod tests {
             slowmode_seconds: 5,
             restrict_view: false,
             restrict_send: false,
+            topic: None,
         };
         router.deliver(WsEvent::ServerUpdated {
             server: crate::api::ServerSummaryLite {
