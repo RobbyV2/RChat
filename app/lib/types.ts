@@ -202,6 +202,9 @@ export interface CallLog {
   answered_at: number | null
   ended_at: number | null
   outcome: CallOutcome | null
+  // Null or missing for calls logged before these were recorded.
+  p2p?: boolean | null
+  video?: boolean | null
 }
 
 export interface Message {
@@ -434,7 +437,7 @@ export interface Ping {
 export type VoiceMsg =
   | { type: 'voice_join'; channel_id: number }
   | { type: 'voice_leave' }
-  | { type: 'call_start'; dm_id: number; p2p?: boolean; peer_id?: string }
+  | { type: 'call_start'; dm_id: number; p2p?: boolean; video?: boolean; peer_id?: string }
   | { type: 'call_accept'; dm_id: number; peer_id?: string }
   | { type: 'call_decline' | 'call_leave'; dm_id: number }
   | { type: 'p2p_hosting'; peer_id: string; ids: string[] }
@@ -529,6 +532,10 @@ export type WsEvent =
       state: CallPhase
       from: string
       kind: CallKind
+      // Older servers leave it out.
+      video?: boolean
+      // Active calls only; older servers leave it out.
+      answered_at?: number
       // Active P2P calls only.
       call_id?: string
       peers?: CallPeer[]

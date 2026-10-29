@@ -3,7 +3,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   AtSign,
-  ChevronDown,
   Clock,
   Copy,
   Hash,
@@ -23,6 +22,7 @@ import {
   Trash2,
   Users,
   Video,
+  VideoOff,
   Volume2,
   type LucideIcon,
 } from 'lucide-react'
@@ -62,7 +62,8 @@ import {
   type Outgoing,
 } from '../lib/store'
 import { Perm, hasPerm, type Member, type Message, type UserRef } from '../lib/types'
-import { callTone, fmtDuration, spokenDuration, type CallTone } from '../lib/voice_layout'
+import { callTone, type CallTone } from '../lib/voice_layout'
+import { callLogInfo } from '../lib/call_choice'
 import { UserAvatar } from './user_avatar'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
@@ -70,6 +71,7 @@ import StatusClock from './status_clock'
 import { longPress } from './context_menu'
 import { profileTrigger } from './profile_card'
 import { useCallShare, VoiceGrid } from './voice_grid'
+import { CallButtons, CallDuration, DirectBadge } from './call_buttons'
 import {
   EdgeSentinel,
   OlderLoading,
@@ -101,21 +103,20 @@ export const fmtTime = (ts: number) => {
   return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString()} ${time}`
 }
 
-function CallDuration({ from }: { from: number }) {
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
-  useEffect(() => {
-    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000)
-    return () => clearInterval(id)
-  }, [])
-  return <>{fmtDuration(Math.max(0, now - from))}</>
-}
-
-const CALL_ICON: Record<CallTone, { Icon: LucideIcon; cls: string }> = {
-  ringing: { Icon: PhoneIncoming, cls: 'text-status-green' },
-  active: { Icon: PhoneCall, cls: 'text-status-green' },
-  ended: { Icon: Phone, cls: 'text-on-surface-variant' },
-  declined: { Icon: PhoneOff, cls: 'text-on-surface-variant' },
-  missed: { Icon: PhoneMissed, cls: 'text-error' },
+const callIcon = (tone: CallTone, video: boolean, incoming: boolean): LucideIcon => {
+  if (video) return tone === 'missed' || tone === 'declined' ? VideoOff : Video
+  switch (tone) {
+    case 'ringing':
+      return incoming ? PhoneIncoming : PhoneOutgoing
+    case 'active':
+      return PhoneCall
+    case 'missed':
+      return PhoneMissed
+    case 'declined':
+      return PhoneOff
+    case 'ended':
+      return incoming ? PhoneIncoming : PhoneOutgoing
+  }
 }
 
 function CallLogRow({ message }: { message: Message }) {
@@ -128,53 +129,49 @@ function CallLogRow({ message }: { message: Message }) {
   if (!call) return null
   const tone = callTone(call)
   const incoming = me !== null && me.username !== call.from
+  const info = callLogInfo(call, me?.username ?? null)
   const caller = userRefFor(useStore.getState(), call.from)
   const other = dms.find(d => d.id === message.dm_id)?.other
   const name = (u: UserRef | undefined) => (
     <span className="streamer font-medium text-on-surface">{u?.display_name ?? 'Someone'}</span>
   )
-  let text: ReactNode
-  switch (tone) {
-    case 'ringing':
-      text = incoming ? <>{name(caller)} is calling you</> : <>Calling {name(other)}…</>
-      break
-    case 'active':
-      text = <>{name(caller)} started a call</>
-      break
-    case 'ended': {
-      const lasted = Math.max(0, (call.ended_at ?? 0) - (call.answered_at ?? 0))
-      text = (
-        <>
-          {name(caller)} started a call that lasted{' '}
-          <span title={fmtDuration(lasted)}>{spokenDuration(lasted)}</span>
-        </>
-      )
-      break
-    }
-    case 'declined':
-      text = incoming ? (
-        <>You declined a call from {name(caller)}</>
+  const Icon = callIcon(tone, info.video, incoming)
+  const live = tone === 'ringing' || tone === 'active'
+  const iconCls = live ? 'text-status-green' : info.alert ? 'text-error' : 'text-on-surface-variant'
+  const direction = `${incoming ? 'Incoming' : 'Outgoing'} ${info.label.toLowerCase()}`
+  const status: ReactNode =
+    tone === 'ringing' ? (
+      incoming ? (
+        <>{name(caller)} is calling you</>
       ) : (
-        <>{name(other)} declined your call</>
+        <>Calling {name(other)}…</>
       )
-      break
-    case 'missed':
-      text = incoming ? (
-        <>You missed a call from {name(caller)}</>
-      ) : (
-        <>{name(other)} missed your call</>
-      )
-      break
-  }
-  const { Icon, cls } = CALL_ICON[tone]
-  const Lead = tone === 'ringing' && !incoming ? PhoneOutgoing : Icon
+    ) : tone === 'active' ? (
+      <>In progress</>
+    ) : (
+      <span className={info.alert ? 'font-medium text-error' : ''}>{info.outcome}</span>
+    )
   return (
     <div className="flex items-center gap-3 px-4 py-1 hover:bg-surface-container-low">
-      <span className={`flex w-9 shrink-0 justify-center ${cls}`}>
-        <Lead size={18} className={tone === 'ringing' ? 'motion-safe:animate-pulse' : ''} />
+      <span
+        role="img"
+        title={direction}
+        aria-label={direction}
+        className={`flex w-9 shrink-0 justify-center ${iconCls}`}
+      >
+        <Icon size={18} className={tone === 'ringing' ? 'motion-safe:animate-pulse' : ''} />
       </span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-on-surface-variant">
-        <span className="min-w-0">{text}</span>
+        <span className="font-medium text-on-surface">{info.label}</span>
+        {info.direct && <DirectBadge />}
+        <span aria-hidden>·</span>
+        <span className="min-w-0">{status}</span>
+        {info.duration !== null && (
+          <>
+            <span aria-hidden>·</span>
+            <span className="tabular-nums">{info.duration}</span>
+          </>
+        )}
         {tone === 'active' && call.answered_at !== null && (
           <span className="flex items-center gap-1 rounded-full bg-status-green/15 px-2 py-0.5 text-xs font-medium text-status-green tabular-nums">
             <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-status-green" />
@@ -186,6 +183,7 @@ function CallLogRow({ message }: { message: Message }) {
           <span className="flex items-center gap-1.5">
             <button
               title="Accept"
+              aria-label="Accept"
               onClick={() => {
                 if (message.dm_id !== null) void openDm(message.dm_id)
                 void acceptCall()
@@ -197,6 +195,7 @@ function CallLogRow({ message }: { message: Message }) {
             </button>
             <button
               title="Decline"
+              aria-label="Decline"
               onClick={declineCall}
               className="flex items-center gap-1 rounded-full bg-danger px-2.5 py-1 text-xs font-medium text-on-danger outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary"
             >
@@ -551,8 +550,6 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const openSearch = useStore(s => s.openSearch)
   const uploadFile = useStore(s => s.uploadFile)
   const canAttach = useStore(s => s.settings.asset_uploads || s.settings.p2p_attachments)
-  const startCall = useStore(s => s.startCall)
-  const startP2pCall = useStore(s => s.startP2pCall)
   const call = useStore(s => s.call)
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
@@ -865,68 +862,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           </span>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          {dm && !dm.is_self && !guest && (
-            <button
-              title="Call options"
-              aria-haspopup="menu"
-              disabled={call !== null}
-              onClick={e => {
-                const r = e.currentTarget.getBoundingClientRect()
-                openContextMenu(r.left, r.bottom, [
-                  { label: 'Call', action: () => void startCall(dm.id, false) },
-                  { label: 'Video call', action: () => void startCall(dm.id, true) },
-                  { label: 'P2P call', action: () => void startP2pCall(dm.id, false) },
-                  { label: 'P2P video call', action: () => void startP2pCall(dm.id, true) },
-                ])
-              }}
-              className="flex items-center rounded-full p-1.5 hover:bg-surface-container-high disabled:opacity-40 sm:hidden"
-            >
-              <Phone size={20} />
-              <ChevronDown size={14} />
-            </button>
-          )}
-          {dm && !dm.is_self && !guest && (
-            <div className="hidden items-center gap-2 sm:flex">
-              <button
-                title="Call"
-                disabled={call !== null}
-                onClick={() => void startCall(dm.id, false)}
-                className="rounded-full p-1.5 hover:bg-surface-container-high disabled:opacity-40"
-              >
-                <Phone size={20} />
-              </button>
-              <button
-                title="Video call"
-                disabled={call !== null}
-                onClick={() => void startCall(dm.id, true)}
-                className="rounded-full p-1.5 hover:bg-surface-container-high disabled:opacity-40"
-              >
-                <Video size={20} />
-              </button>
-              <button
-                title="P2P call"
-                disabled={call !== null}
-                onClick={() => void startP2pCall(dm.id, false)}
-                className="relative rounded-full p-1.5 hover:bg-surface-container-high disabled:opacity-40"
-              >
-                <Phone size={20} />
-                <span className="absolute -right-1 -bottom-0.5 rounded bg-tertiary-container px-0.5 text-[8px] font-bold text-on-tertiary-container">
-                  P2P
-                </span>
-              </button>
-              <button
-                title="P2P video call"
-                disabled={call !== null}
-                onClick={() => void startP2pCall(dm.id, true)}
-                className="relative rounded-full p-1.5 hover:bg-surface-container-high disabled:opacity-40"
-              >
-                <Video size={20} />
-                <span className="absolute -right-1 -bottom-0.5 rounded bg-tertiary-container px-0.5 text-[8px] font-bold text-on-tertiary-container">
-                  P2P
-                </span>
-              </button>
-            </div>
-          )}
+          {dm && !dm.is_self && !guest && <CallButtons dm={dm} />}
           <StatusClock />
           {scope && <PinsButton />}
           {view?.kind === 'channel' && !isVoice && (

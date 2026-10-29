@@ -523,6 +523,14 @@ pub struct CallLog {
     /// `completed`, `declined` or `missed` once ended; `null` before that.
     #[schema(example = "completed")]
     pub outcome: Option<String>,
+    /// `true` for a direct (P2P) call, `false` through the server; `null` for calls logged
+    /// before this was recorded.
+    #[serde(default)]
+    pub p2p: Option<bool>,
+    /// `true` when the call started with video; `null` for calls logged before this was
+    /// recorded.
+    #[serde(default)]
+    pub video: Option<bool>,
 }
 
 /// The message a reply quotes, as shown above the reply.

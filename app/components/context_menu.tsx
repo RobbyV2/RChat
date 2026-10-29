@@ -355,7 +355,11 @@ function Row({
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate">{it.label}</span>
         {it.subtitle && (
-          <span className={`truncate text-on-surface-variant ${coarse ? 'text-sm' : 'text-xs'}`}>
+          <span
+            className={`text-on-surface-variant ${
+              it.wrap ? `text-pretty ${coarse ? '' : 'max-w-64'}` : 'truncate'
+            } ${coarse ? 'text-sm' : 'text-xs'}`}
+          >
             {it.subtitle}
           </span>
         )}

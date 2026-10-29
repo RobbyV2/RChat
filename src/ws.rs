@@ -494,9 +494,15 @@ pub enum WsEvent {
         state: CallPhase,
         from: String,
         kind: CallKind,
+        /// The caller started with video on.
+        #[serde(default)]
+        video: bool,
         /// Active P2P calls only: the call's id, which the caller puts in the PeerJS metadata.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         call_id: Option<String>,
+        /// Active calls only: when the call was answered, in unix seconds.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answered_at: Option<i64>,
         /// Active P2P calls only: the peer id of the caller's tab and of the tab that accepted.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         peers: Vec<CallPeer>,
@@ -594,6 +600,8 @@ enum ClientMsg {
         #[serde(default)]
         p2p: bool,
         #[serde(default)]
+        video: bool,
+        #[serde(default)]
         peer_id: Option<String>,
     },
     P2pHosting {
@@ -644,12 +652,23 @@ pub(crate) async fn evict_unviewable(state: &AppState, server: &str, channel_id:
     }
 }
 
-async fn insert_call_log(state: &AppState, dm_id: i64, caller: &str) -> Result<i64, sqlx::Error> {
+async fn insert_call_log(
+    state: &AppState,
+    dm_id: i64,
+    caller: &str,
+    (kind, video): (CallKind, bool),
+) -> Result<i64, sqlx::Error> {
+    let kind = match kind {
+        CallKind::Rtc => "rtc",
+        CallKind::P2p => "p2p",
+    };
     sqlx::query(
-        "INSERT INTO messages(dm_id, author, content, kind, created_at) VALUES($1, $2, '', 'call', $3) RETURNING id",
+        "INSERT INTO messages(dm_id, author, content, kind, call_kind, call_video, created_at) VALUES($1, $2, '', 'call', $3, $4, $5) RETURNING id",
     )
     .bind(dm_id)
     .bind(caller)
+    .bind(kind)
+    .bind(i64::from(video))
     .bind(now())
     .fetch_one(&state.db)
     .await?
@@ -1236,14 +1255,15 @@ pub async fn depart(state: &AppState) {
 ///
 /// Then the client sends `viewing` (the open server, for presence), `subscribe` (servers to
 /// follow, with guest grants for password-protected ones), `voice_join` / `voice_leave`,
-/// `call_start` / `call_accept` / `call_decline` / `call_leave` for DM calls, `rtc_signal` for
+/// `call_start` (with `p2p` and `video` flags) / `call_accept` / `call_decline` / `call_leave`
+/// for DM calls, `rtc_signal` for
 /// WebRTC signalling, and `p2p_hosting` / `p2p_who` / `p2p_peer` for P2P files (`p2p_peer`
 /// gives a reader of one message the hoster's peer id and a short-lived download token; `p2p_who`
 /// never carries peer ids). Guests are read-only: no
 /// presence, voice or calls. The server sends the events in `WsEvent` (`src/ws.rs`), for example
 /// `message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`,
-/// `voice_state`, `call_state` (an active P2P call also carries its id and the peer id of both
-/// tabs), `p2p_hosted` (tells a `p2p_hosting` sender which of its files are still live
+/// `voice_state`, `call_state` (with `kind` and `video`; an active P2P call also carries its id
+/// and the peer id of both tabs), `p2p_hosted` (tells a `p2p_hosting` sender which of its files are still live
 /// attachments, and the key it checks download tokens with), `p2p_peer`, `error` and `resync` (fetch state again after missed events). Frames
 /// are at most 64 KiB. The token goes in the `auth` frame, not in the bearer security scheme.
 /// General rate-limit bucket for the upgrade request.
@@ -1295,6 +1315,7 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
         ClientMsg::CallStart {
             dm_id,
             p2p,
+            video,
             peer_id,
         } => {
             let peer_id = call_peer_id(peer_id)?;
@@ -1319,10 +1340,21 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
                 false => CallKind::Rtc,
             };
             let dm_users = vec![a, b];
-            let log_id = insert_call_log(state, dm_id, user).await.map_err(db_err)?;
+            let log_id = insert_call_log(state, dm_id, user, (kind, video))
+                .await
+                .map_err(db_err)?;
             match state
                 .hub
-                .call_start(user, conn, dm_id, dm_users.clone(), kind, log_id, peer_id)
+                .call_start(
+                    user,
+                    conn,
+                    dm_id,
+                    dm_users.clone(),
+                    kind,
+                    video,
+                    log_id,
+                    peer_id,
+                )
                 .await
             {
                 Ok(()) => {
@@ -3467,7 +3499,9 @@ fn wants(
             state: _,
             from: _,
             kind: _,
+            video: _,
             call_id: _,
+            answered_at: _,
             peers: _,
         } => me.is_some_and(|user| dm_users.iter().any(|u| u == user)),
         WsEvent::P2pAvailability {
@@ -5110,7 +5144,7 @@ mod tests {
         let pair = vec![s("alice"), s("carol")];
         state
             .hub
-            .call_start("alice", 1, dm, pair.clone(), CallKind::Rtc, 1, None)
+            .call_start("alice", 1, dm, pair.clone(), CallKind::Rtc, false, 1, None)
             .await
             .expect("voice call");
         assert_eq!(
@@ -5121,7 +5155,7 @@ mod tests {
         state.hub.call_end("alice", dm).await.expect("end");
         state
             .hub
-            .call_start("alice", 1, dm, pair, CallKind::P2p, 2, None)
+            .call_start("alice", 1, dm, pair, CallKind::P2p, false, 2, None)
             .await
             .expect("p2p call");
         assert_eq!(
@@ -5132,6 +5166,149 @@ mod tests {
         assert_eq!(ask("eve").await, None);
         state.hub.call_end("alice", dm).await.expect("end");
         assert_eq!(ask("carol").await, None);
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn active_call_state_carries_the_answer_time() {
+        let (state, path) = crate::api::test_util::temp_state("call_answered_at").await;
+        let db = &state.db;
+        for name in ["alice", "bob"] {
+            add_user_row(db, name).await;
+        }
+        let dm = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
+        )
+        .await;
+        let mut rx = state.hub.subscribe();
+        let start = ClientMsg::CallStart {
+            dm_id: dm,
+            p2p: false,
+            video: false,
+            peer_id: None,
+        };
+        voice_msg(&state, "alice", 1, start).await.expect("start");
+        let accept = ClientMsg::CallAccept {
+            dm_id: dm,
+            peer_id: None,
+        };
+        voice_msg(&state, "bob", 2, accept).await.expect("accept");
+        let mut seen = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let WsEvent::CallState {
+                dm_id: _,
+                dm_users: _,
+                state,
+                from: _,
+                kind: _,
+                video: _,
+                call_id: _,
+                answered_at,
+                peers: _,
+            } = ev
+            {
+                seen.push((state, answered_at));
+            }
+        }
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0], (CallPhase::Ringing, None));
+        assert_eq!(seen[1].0, CallPhase::Active);
+        assert!(seen[1].1.is_some_and(|at| at > 0));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn call_logs_record_video_and_the_connection() {
+        let (state, path) = crate::api::test_util::temp_state("call_log_kind").await;
+        let db = &state.db;
+        for name in ["alice", "bob"] {
+            add_user_row(db, name).await;
+        }
+        let dm = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
+        )
+        .await;
+        let mut logs = Vec::new();
+        for (p2p, video) in [(false, false), (true, true), (false, true)] {
+            let start = ClientMsg::CallStart {
+                dm_id: dm,
+                p2p,
+                video,
+                peer_id: p2p.then(|| s("peer-a")),
+            };
+            let mut rx = state.hub.subscribe();
+            voice_msg(&state, "alice", 1, start).await.expect("start");
+            let mut rung = None;
+            while let Ok(ev) = rx.try_recv() {
+                if let WsEvent::CallState {
+                    dm_id: _,
+                    dm_users: _,
+                    state: _,
+                    from: _,
+                    kind,
+                    video,
+                    call_id: _,
+                    answered_at: _,
+                    peers: _,
+                } = ev
+                {
+                    rung = Some((kind, video));
+                }
+            }
+            let kind = match p2p {
+                true => CallKind::P2p,
+                false => CallKind::Rtc,
+            };
+            assert_eq!(
+                rung,
+                Some((kind, video)),
+                "the ringing state names the call type"
+            );
+            state.hub.call_end("alice", dm).await.expect("end");
+            let id: i64 = sqlx::query("SELECT MAX(id) FROM messages WHERE kind = 'call'")
+                .fetch_one(db)
+                .await
+                .expect("log")
+                .get(0);
+            let call = load_message(db, id, Quotes::Skip)
+                .await
+                .expect("load")
+                .expect("row")
+                .call
+                .expect("call log");
+            logs.push((call.p2p, call.video));
+        }
+        assert_eq!(
+            logs,
+            [
+                (Some(false), Some(false)),
+                (Some(true), Some(true)),
+                (Some(false), Some(true)),
+            ]
+        );
+        exec(
+            db,
+            "INSERT INTO messages(dm_id, author, content, kind, created_at) VALUES(1, 'alice', '', 'call', 1)",
+        )
+        .await;
+        let old: i64 = sqlx::query("SELECT MAX(id) FROM messages")
+            .fetch_one(db)
+            .await
+            .expect("old")
+            .get(0);
+        let call = load_message(db, old, Quotes::Skip)
+            .await
+            .expect("load")
+            .expect("row")
+            .call
+            .expect("call log");
+        assert_eq!(
+            (call.p2p, call.video),
+            (None, None),
+            "older logs stay unknown"
+        );
         crate::api::test_util::done(state, path).await;
     }
 
@@ -6120,7 +6297,9 @@ mod tests {
                 state: CallPhase::Ringing,
                 from: s("alice"),
                 kind: CallKind::Rtc,
+                video: false,
                 call_id: None,
+                answered_at: None,
                 peers: Vec::new(),
             },
             WsEvent::CallState {
@@ -6129,7 +6308,9 @@ mod tests {
                 state: CallPhase::Active,
                 from: s("alice"),
                 kind: CallKind::P2p,
+                video: false,
                 call_id: Some(s("c")),
+                answered_at: Some(5),
                 peers: vec![CallPeer {
                     user: s("alice"),
                     peer_id: s("pa"),

@@ -83,12 +83,16 @@ struct Call {
     occupants: Vec<(String, u64)>,
     active: bool,
     kind: CallKind,
+    #[serde(default)]
+    video: bool,
     log_id: i64,
     lone_since: i64,
     // A P2P call is bound to this id and to the peer ids of the caller's tab and of the tab
     // that accepted. Only the two sides of the call learn them.
     #[serde(default)]
     call_id: String,
+    #[serde(default)]
+    answered_at: i64,
     #[serde(default)]
     peers: Vec<(String, String)>,
 }
@@ -241,6 +245,8 @@ pub enum Op {
         dm_id: i64,
         dm_users: Vec<String>,
         kind: CallKind,
+        #[serde(default)]
+        video: bool,
         log_id: i64,
         #[serde(default)]
         call_id: String,
@@ -324,6 +330,7 @@ impl Op {
                 dm_id: _,
                 dm_users: _,
                 kind: _,
+                video: _,
                 log_id: _,
                 call_id: _,
                 peer_id: _,
@@ -444,7 +451,10 @@ fn call_state(dm_id: i64, call: &Call, state: CallPhase) -> WsEvent {
         state,
         from: call.from.clone(),
         kind: call.kind,
+        video: call.video,
         call_id: bound.then(|| call.call_id.clone()),
+        answered_at: (state == CallPhase::Active && call.answered_at > 0)
+            .then_some(call.answered_at),
         peers: match bound {
             true => call
                 .peers
@@ -1059,6 +1069,7 @@ impl Replica {
                 dm_id,
                 dm_users,
                 kind,
+                video,
                 log_id,
                 call_id,
                 peer_id,
@@ -1087,9 +1098,11 @@ impl Replica {
                     occupants: vec![(user, conn)],
                     active: false,
                     kind,
+                    video,
                     log_id,
                     lone_since: t,
                     call_id,
+                    answered_at: 0,
                     peers,
                 };
                 evs.push(call_state(dm_id, &call, CallPhase::Ringing));
@@ -1116,6 +1129,7 @@ impl Replica {
                     break 'accept Err("No incoming call".to_string());
                 };
                 call.active = true;
+                call.answered_at = t;
                 if let Some(peer) = peer {
                     call.peers.retain(|(u, _)| *u != user);
                     call.peers.push((user.clone(), peer));
@@ -2013,6 +2027,7 @@ impl Hub {
         dm_id: i64,
         dm_users: Vec<String>,
         kind: CallKind,
+        video: bool,
         log_id: i64,
         peer_id: Option<String>,
     ) -> Result<(), String> {
@@ -2022,6 +2037,7 @@ impl Hub {
             dm_id,
             dm_users,
             kind,
+            video,
             log_id,
             call_id: crate::identity::random_id(),
             peer_id,
@@ -2413,7 +2429,9 @@ pub(crate) mod tests {
                     state,
                     from: _,
                     kind: _,
+                    video: _,
                     call_id: _,
+                    answered_at: _,
                     peers: _,
                 } => Some((*dm_id, *state)),
                 _ => None,
@@ -2497,6 +2515,7 @@ pub(crate) mod tests {
                     dm_id: 9,
                     dm_users: dm_users(),
                     kind: CallKind::Rtc,
+                    video: false,
                     log_id: 70,
                     call_id: String::new(),
                     peer_id: None,
@@ -2686,11 +2705,20 @@ pub(crate) mod tests {
             voice_of(&drain(&mut rx_a)),
             vec![(5, vec!["alice".to_string()]), (5, both[0].1.clone())]
         );
-        a.call_start("alice", alice, 9, dm_users(), CallKind::Rtc, 70, None)
-            .await
-            .unwrap();
+        a.call_start(
+            "alice",
+            alice,
+            9,
+            dm_users(),
+            CallKind::Rtc,
+            false,
+            70,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(
-            b.call_start("bob", bob, 9, dm_users(), CallKind::Rtc, 71, None)
+            b.call_start("bob", bob, 9, dm_users(), CallKind::Rtc, false, 71, None)
                 .await,
             Err("You are already in a call".to_string())
         );
@@ -2752,7 +2780,9 @@ pub(crate) mod tests {
                         state,
                         from: _,
                         kind: _,
+                        video: _,
                         call_id,
+                        answered_at: _,
                         peers,
                     } => Some((
                         state,
@@ -2773,6 +2803,7 @@ pub(crate) mod tests {
             9,
             dm_users(),
             CallKind::P2p,
+            false,
             70,
             Some(s("pa")),
         )
@@ -2794,9 +2825,18 @@ pub(crate) mod tests {
         );
         assert_eq!(first[2], (CallPhase::Ended, None, Vec::new()));
 
-        hub.call_start("alice", alice, 9, dm_users(), CallKind::P2p, 71, None)
-            .await
-            .unwrap();
+        hub.call_start(
+            "alice",
+            alice,
+            9,
+            dm_users(),
+            CallKind::P2p,
+            false,
+            71,
+            None,
+        )
+        .await
+        .unwrap();
         hub.call_accept("bob", bob, 9, None).await.unwrap();
         let old = bound(drain(&mut rx));
         assert_eq!(
@@ -2813,6 +2853,7 @@ pub(crate) mod tests {
             9,
             dm_users(),
             CallKind::Rtc,
+            false,
             72,
             Some(s("pa")),
         )
@@ -2836,9 +2877,18 @@ pub(crate) mod tests {
         a.set_viewing("alice", alice, None, Some("rchat"));
         b.set_viewing("bob", bob, None, Some("rchat"));
         a.set_p2p("alice", alice, "peer-a".to_string(), vec!["f".to_string()]);
-        a.call_start("alice", alice, 9, dm_users(), CallKind::P2p, 70, None)
-            .await
-            .unwrap();
+        a.call_start(
+            "alice",
+            alice,
+            9,
+            dm_users(),
+            CallKind::P2p,
+            false,
+            70,
+            None,
+        )
+        .await
+        .unwrap();
         b.call_accept("bob", bob, 9, None).await.unwrap();
         assert!(
             b.voice_join("carol", b.next_conn(), "rchat", 5)
@@ -3069,6 +3119,7 @@ pub(crate) mod tests {
                 dm_id: 4,
                 dm_users: vec![s("frank"), s("gina")],
                 kind: CallKind::Rtc,
+                video: false,
                 log_id: 9,
                 call_id: String::new(),
                 peer_id: None,
@@ -3244,6 +3295,7 @@ pub(crate) mod tests {
             dm_id: 9,
             dm_users: dm_users(),
             kind: CallKind::Rtc,
+            video: false,
             log_id: 70,
             call_id: String::new(),
             peer_id: None,
@@ -3302,9 +3354,18 @@ pub(crate) mod tests {
         assert!(signals_of(&drain(&mut rx_a)).is_empty());
         assert!(signals_of(&drain(&mut rx_b)).is_empty());
 
-        a.call_start("alice", alice, 9, dm_users(), CallKind::Rtc, 70, None)
-            .await
-            .unwrap();
+        a.call_start(
+            "alice",
+            alice,
+            9,
+            dm_users(),
+            CallKind::Rtc,
+            false,
+            70,
+            None,
+        )
+        .await
+        .unwrap();
         b.broadcast(signal("bob", "alice", None, Some(9)));
         b.flush().await;
         a.flush().await;
@@ -3388,6 +3449,7 @@ pub(crate) mod tests {
             9,
             vec![s("carol"), s("dave")],
             CallKind::Rtc,
+            false,
             1,
             None,
         )

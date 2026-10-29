@@ -1152,6 +1152,7 @@ mod tests {
                     9,
                     dm_users,
                     crate::ws::CallKind::Rtc,
+                    false,
                     70,
                     None,
                 )
@@ -1255,6 +1256,7 @@ mod tests {
                     3,
                     vec!["alice".into(), "bob".into()],
                     crate::ws::CallKind::Rtc,
+                    false,
                     70,
                     None,
                 )

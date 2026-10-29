@@ -79,6 +79,13 @@ import {
   type Notice,
 } from './notices'
 import { EMPTY_PREFS, emojiKey, noteUse, parseEmojiPrefs, setTone, type EmojiPrefs } from './emoji'
+import {
+  DEFAULT_ROUTE,
+  callRouteKey,
+  callRouteValue,
+  parseCallRoute,
+  type CallRoute,
+} from './call_choice'
 import { canAddEmoji, emojiBase, reacted, reactorKey, withReaction } from './reactions'
 import {
   editedQuote,
@@ -279,6 +286,8 @@ export const parsePath = (pathname: string): PathTarget | null => {
 export interface ContextMenuItem {
   label: string
   subtitle?: string
+  // Lets a long subtitle wrap instead of being cut off.
+  wrap?: boolean
   danger?: boolean
   icon?: LucideIcon
   checked?: boolean
@@ -396,6 +405,9 @@ export interface CallSession {
   state: 'ringing' | 'active'
   from: string
   kind: CallKind
+  video: boolean
+  // Unix seconds when the call was answered, from the server (this tab's first sight of it on older servers).
+  since: number | null
 }
 
 const emptySearch = (): SearchState => ({ results: [], hasMore: false, loading: false })
@@ -543,6 +555,9 @@ interface RChatState {
   notifyPrefs: NotifyPrefs
   voice: VoiceSession | null
   call: CallSession | null
+  callRoute: CallRoute
+  // DMs where a P2P call could not connect because the other side can't do P2P, with the time (ms).
+  p2pCallFailed: Record<number, number>
   voiceUsers: Record<number, string[]>
   p2pAvailability: Record<string, P2pAvailability>
   rtcTick: number
@@ -757,6 +772,7 @@ interface RChatState {
   toggleShare: () => Promise<void>
   startCall: (dmId: number, video: boolean) => Promise<void>
   startP2pCall: (dmId: number, video: boolean) => Promise<void>
+  setCallRoute: (route: CallRoute) => void
   acceptCall: () => Promise<void>
   declineCall: () => void
   hangupCall: () => void
@@ -846,6 +862,7 @@ export const configSourceOf = (s: RChatState): ConfigSource => ({
   layout: s.me || s.guest ? s.layout : null,
   notify: s.me || s.guest ? s.notifyPrefs : null,
   emoji: s.me ? s.emoji : null,
+  calls: s.me ? s.callRoute : null,
 })
 
 export const railOrder = (s: RChatState) => railNames(serverNames(s), s.layout.servers)
@@ -1205,6 +1222,21 @@ export const useStore = create<RChatState>()((set, get) => {
     }
   }
 
+  const readCallRoute = (username: string) => {
+    try {
+      return parseCallRoute(localStorage.getItem(home.scoped(callRouteKey(username))))
+    } catch {
+      return DEFAULT_ROUTE
+    }
+  }
+
+  const saveCallRoute = (route: CallRoute) => {
+    const username = get().me?.username
+    if (!username || route === get().callRoute) return
+    set({ callRoute: route })
+    writeLocal(home.scoped(callRouteKey(username)), callRouteValue(route))
+  }
+
   const readForward = (username: string) => {
     try {
       return parseForward(localStorage.getItem(home.scoped(forwardKey(username))))
@@ -1430,6 +1462,7 @@ export const useStore = create<RChatState>()((set, get) => {
       }
     }
     if (want.has('emoji') && doc.emoji && me) saveEmoji(doc.emoji)
+    if (want.has('calls') && doc.calls && me) saveCallRoute(doc.calls)
     return failed.length ? `Couldn't apply: ${failed.join(', ')}` : null
   }
 
@@ -1499,6 +1532,8 @@ export const useStore = create<RChatState>()((set, get) => {
         : {
             layout: readLayout(fresh.username),
             emoji: readEmoji(fresh.username),
+            callRoute: readCallRoute(fresh.username),
+            p2pCallFailed: {},
             forwardClip: readForward(fresh.username),
             notifyPrefs: readNotify(fresh.username),
           }),
@@ -1658,9 +1693,15 @@ export const useStore = create<RChatState>()((set, get) => {
     if (!p2p.mediaActive() || !mine || mine.peer_id !== p2p.peerId()) return
     const other = ev.peers?.find(p => p.user !== me)
     if (!other || !ev.call_id) {
+      set(s => ({ p2pCallFailed: { ...s.p2pCallFailed, [ev.dm_id]: Date.now() } }))
       fail(new Error('This P2P call cannot connect: the other side uses an older app'))
       return
     }
+    if (get().p2pCallFailed[ev.dm_id] !== undefined)
+      set(s => {
+        const { [ev.dm_id]: _gone, ...rest } = s.p2pCallFailed
+        return { p2pCallFailed: rest }
+      })
     const dial = ev.from === me
     if (p2p.bind({ callId: ev.call_id, peer: other.peer_id, dial }) && dial) p2p.dial()
   }
@@ -3382,6 +3423,8 @@ export const useStore = create<RChatState>()((set, get) => {
     notifyPrefs: EMPTY_NOTIFY,
     voice: null,
     call: null,
+    callRoute: DEFAULT_ROUTE,
+    p2pCallFailed: {},
     voiceUsers: {},
     p2pAvailability: {},
     rtcTick: 0,
@@ -3699,6 +3742,8 @@ export const useStore = create<RChatState>()((set, get) => {
         serversMore: false,
         layout: emptyLayout,
         emoji: EMPTY_PREFS,
+        callRoute: DEFAULT_ROUTE,
+        p2pCallFailed: {},
         notifyPrefs: EMPTY_NOTIFY,
         view: null,
         invite: null,
@@ -4840,7 +4885,7 @@ export const useStore = create<RChatState>()((set, get) => {
           abandonMedia()
           throw e
         }
-        if (!home.ws.sendVoice({ type: 'call_start', dm_id: dmId })) {
+        if (!home.ws.sendVoice({ type: 'call_start', dm_id: dmId, video })) {
           abandonMedia()
           throw new Error('Not connected')
         }
@@ -4861,13 +4906,21 @@ export const useStore = create<RChatState>()((set, get) => {
           abandonMedia()
           throw e
         }
-        const start = { type: 'call_start', dm_id: dmId, p2p: true, peer_id: p2p.peerId() } as const
+        const start = {
+          type: 'call_start',
+          dm_id: dmId,
+          p2p: true,
+          video,
+          peer_id: p2p.peerId(),
+        } as const
         if (!home.ws.sendVoice(start)) {
           abandonMedia()
           throw new Error('Not connected')
         }
         set({ voice: null })
       }),
+
+    setCallRoute: saveCallRoute,
 
     acceptCall: () =>
       act(async () => {
@@ -5658,6 +5711,15 @@ export const useStore = create<RChatState>()((set, get) => {
             void get()
               .ensureDms([ev.dm_id])
               .catch(() => {})
+          const prev = get().call
+          const since =
+            ev.state !== 'active'
+              ? null
+              : typeof ev.answered_at === 'number'
+                ? ev.answered_at
+                : prev?.dmId === ev.dm_id && prev.since !== null
+                  ? prev.since
+                  : Math.floor(Date.now() / 1000)
           set({
             call: {
               dmId: ev.dm_id,
@@ -5665,6 +5727,8 @@ export const useStore = create<RChatState>()((set, get) => {
               state: ev.state,
               from: ev.from,
               kind: ev.kind,
+              video: ev.video === true,
+              since,
             },
           })
           if (ev.state !== 'active') return

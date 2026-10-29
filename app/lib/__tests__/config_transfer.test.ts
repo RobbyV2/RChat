@@ -47,6 +47,7 @@ const source = (over: Partial<ConfigSource> = {}): ConfigSource => {
     },
     notify,
     emoji,
+    calls: 'p2p',
     ...over,
   }
 }
@@ -301,7 +302,7 @@ describe('building', () => {
     const doc = { ...buildConfig(source(), ALL), identity: 'x' } as ConfigDoc
     const link = linkDoc(doc)
     expect(Object.keys(link).sort()).toEqual(
-      ['appearOffline', 'emoji', 'layout', 'notify', 'streamer', 'theme', 'v'].sort()
+      ['appearOffline', 'calls', 'emoji', 'layout', 'notify', 'streamer', 'theme', 'v'].sort()
     )
   })
 })
@@ -323,6 +324,7 @@ describe('preview', () => {
       'layout',
       'notify',
       'emoji',
+      'calls',
     ])
     expect([by.theme.now, by.theme.next, by.theme.same]).toEqual(['Dark', 'Light', false])
     expect([by.streamer.now, by.streamer.next, by.streamer.same]).toEqual(['On', 'On', true])
@@ -330,6 +332,7 @@ describe('preview', () => {
     expect(by.layout.now).toBe('Default order, 0 pinned DMs')
     expect(by.notify.next).toBe('3 custom settings')
     expect(by.emoji.next).toBe('2 frequent emoji, skin tone 3')
+    expect([by.calls.next, by.calls.same]).toEqual(['Direct (P2P)', true])
     expect(by.notify.same).toBe(true)
   })
 

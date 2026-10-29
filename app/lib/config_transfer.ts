@@ -1,7 +1,7 @@
 // Moves local config between devices and accounts: an export document, its string form
 // (`rc1.` + base64url of deflate-raw JSON) and share links (`/config/{id}/`).
 //
-// Document: `{ v: 1, theme?, streamer?, appearOffline?, layout?, notify?, emoji? }`. All
+// Document: `{ v: 1, theme?, streamer?, appearOffline?, layout?, notify?, emoji?, calls? }`. All
 // sections are optional and decoded separately. Unknown sections and fields are dropped, so older
 // readers skip new sections. `v` changes only for an incompatible change. Only listed store
 // fields are copied, so tokens, grants, drafts, passwords and P2P state never get in.
@@ -22,6 +22,7 @@ import {
   parseEmojiPrefs,
   type EmojiPrefs,
 } from './emoji'
+import { ROUTE_LABEL, isRoute, type CallRoute } from './call_choice'
 
 export const CONFIG_VERSION = 1
 export const PREFIX = 'rc1.'
@@ -50,9 +51,11 @@ export interface ConfigDoc {
   layout?: ConfigLayout
   notify?: NotifyPrefs
   emoji?: EmojiPrefs
+  calls?: CallRoute
 }
 
-export type SectionKey = 'theme' | 'streamer' | 'appearOffline' | 'layout' | 'notify' | 'emoji'
+export type SectionKey =
+  'theme' | 'streamer' | 'appearOffline' | 'layout' | 'notify' | 'emoji' | 'calls'
 
 export interface Section {
   key: SectionKey
@@ -72,6 +75,7 @@ export const SECTIONS: Section[] = [
   { key: 'layout', label: 'Servers, folders and DMs', account: false, device: false, link: true },
   { key: 'notify', label: 'Notification settings', account: false, device: false, link: true },
   { key: 'emoji', label: 'Frequent emoji and skin tone', account: true, device: false, link: true },
+  { key: 'calls', label: 'Call connection', account: true, device: false, link: true },
 ]
 
 export const sectionOf = (key: SectionKey) => SECTIONS.find(s => s.key === key) as Section
@@ -89,6 +93,7 @@ export interface ConfigSource {
   } | null
   notify: NotifyPrefs | null
   emoji: EmojiPrefs | null
+  calls: CallRoute | null
 }
 
 const copyEntry = (e: RailEntry): RailEntry =>
@@ -120,6 +125,7 @@ export const buildConfig = (src: ConfigSource, include: ReadonlySet<SectionKey>)
   if (on('layout') && src.layout) doc.layout = pickLayout(src.layout)
   if (on('notify') && src.notify) doc.notify = pickNotify(src.notify)
   if (on('emoji') && src.emoji) doc.emoji = pickEmoji(src.emoji)
+  if (on('calls') && src.calls) doc.calls = src.calls
   return doc
 }
 
@@ -199,7 +205,7 @@ export const NOT_CONFIG = 'Not a config string'
 // Validates and clamps every field; unknown sections and fields are dropped.
 export const sanitizeConfig = (data: unknown, now = Date.now()): Decoded => {
   if (!isObject(data)) return { ok: false, error: DAMAGED }
-  const { v, theme, streamer, appearOffline, layout, notify, emoji } = data
+  const { v, theme, streamer, appearOffline, layout, notify, emoji, calls } = data
   if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) return { ok: false, error: DAMAGED }
   if (v > CONFIG_VERSION) return { ok: false, error: NEWER }
   const doc: ConfigDoc = { v: 1 }
@@ -212,6 +218,7 @@ export const sanitizeConfig = (data: unknown, now = Date.now()): Decoded => {
   if (n) doc.notify = n
   const e = cleanEmoji(emoji, now)
   if (e) doc.emoji = e
+  if (isRoute(calls)) doc.calls = calls
   return { ok: true, doc }
 }
 
@@ -380,6 +387,8 @@ export const describeChanges = (doc: ConfigDoc, src: ConfigSource): Change[] => 
         return d.notify ? notifyText(d.notify) : 'Not set'
       case 'emoji':
         return d.emoji ? emojiText(d.emoji) : 'Needs an account'
+      case 'calls':
+        return d.calls ? ROUTE_LABEL[d.calls] : 'Needs an account'
     }
   }
   return presentSections(doc).map(key => ({

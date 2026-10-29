@@ -5,6 +5,7 @@ import { create } from 'zustand'
 import {
   HeadphoneOff,
   Headphones,
+  MessageCircle,
   Mic,
   MicOff,
   Monitor,
@@ -12,6 +13,7 @@ import {
   PhoneOff,
   ScreenShare,
   ScreenShareOff,
+  User,
   Signal,
   SignalLow,
   SignalMedium,
@@ -38,6 +40,7 @@ import { canShareScreen } from '../lib/screen'
 import type { UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
+import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, useMedia } from './context_menu'
 import { useEscape } from './server_settings'
 
@@ -239,6 +242,17 @@ function StateIcons({
   )
 }
 
+function AvatarHidden({ size }: { size: number }) {
+  return (
+    <span
+      style={{ width: size, height: size }}
+      className="flex shrink-0 items-center justify-center rounded-full bg-surface-container-highest text-on-surface-variant"
+    >
+      <User size={Math.round(size * 0.55)} aria-hidden />
+    </span>
+  )
+}
+
 function Tile({
   tile,
   server,
@@ -257,6 +271,7 @@ function Tile({
   onToggle: () => void
 }) {
   const { user, stream, hasVideo, muted, deafened, speaking, mirror, pending, tint, screen } = tile
+  const streamer = useStore(s => s.streamer)
   const box = height ?? (compact ? 72 : 240)
   const avatar = compact ? 32 : Math.round(Math.max(40, Math.min(96, box * 0.3)))
   const label = screen ? `${user.display_name}'s screen` : user.display_name
@@ -307,12 +322,16 @@ function Tile({
               }`}
             />
           )}
-          <UserAvatar
-            username={user.username}
-            avatarKind={user.avatar_kind}
-            avatarColor={user.avatar_color}
-            size={avatar}
-          />
+          {streamer ? (
+            <AvatarHidden size={avatar} />
+          ) : (
+            <UserAvatar
+              username={user.username}
+              avatarKind={user.avatar_kind}
+              avatarColor={user.avatar_color}
+              size={avatar}
+            />
+          )}
         </span>
       )}
       {speaking && !screen && (
@@ -812,12 +831,15 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
               {forDm.state === 'ringing' && '…'}
             </span>
           </span>
-          {p2pKind && (
+          <span aria-hidden>·</span>
+          <span className="shrink-0">{forDm.video ? 'Video call' : 'Voice call'}</span>
+          {p2pKind && <DirectBadge />}
+          {forDm.state === 'active' && forDm.since !== null && (
             <span
-              title="P2P call"
-              className="shrink-0 rounded bg-tertiary-container px-1 py-0.5 text-[10px] font-bold text-on-tertiary-container"
+              title="Call length"
+              className="ml-auto shrink-0 font-medium text-on-surface tabular-nums"
             >
-              P2P
+              <CallDuration from={forDm.since} />
             </span>
           )}
         </div>
@@ -884,6 +906,7 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
 
 export function CallBanner() {
   const call = useStore(s => s.call)
+  const streamer = useStore(s => s.streamer)
   const me = useStore(s => s.me)
   const view = useStore(s => s.view)
   const acceptCall = useStore(s => s.acceptCall)
@@ -898,14 +921,8 @@ export function CallBanner() {
     if (!ringing || (!incoming && watching)) return null
     const state = useStore.getState()
     const other = userRefFor(state, call.dmUsers.find(u => u !== me.username) ?? me.username)
-    const p2pBadge = call.kind === 'p2p' && (
-      <span
-        title="P2P call"
-        className="shrink-0 rounded bg-tertiary-container px-1 py-0.5 text-[10px] font-bold text-on-tertiary-container"
-      >
-        P2P
-      </span>
-    )
+    const p2pCall = call.kind === 'p2p'
+    const dm = state.dms.find(d => d.id === call.dmId)
     const avatar = (size: number) => (
       <span className="relative flex shrink-0 rounded-full">
         <span
@@ -917,12 +934,16 @@ export function CallBanner() {
           className="absolute inset-0 rounded-full bg-status-green/30 [animation-delay:700ms] motion-safe:animate-ring"
         />
         <span className="relative flex rounded-full ring-2 ring-status-green">
-          <UserAvatar
-            username={other.username}
-            avatarKind={other.avatar_kind}
-            avatarColor={other.avatar_color}
-            size={size}
-          />
+          {streamer ? (
+            <AvatarHidden size={size} />
+          ) : (
+            <UserAvatar
+              username={other.username}
+              avatarKind={other.avatar_kind}
+              avatarColor={other.avatar_color}
+              size={size}
+            />
+          )}
         </span>
       </span>
     )
@@ -938,14 +959,17 @@ export function CallBanner() {
             className="flex min-w-0 items-center gap-3 rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary"
           >
             {avatar(28)}
-            <span className="flex min-w-0 items-center gap-1 text-sm">
-              Calling
-              <span className="streamer truncate font-medium">{other.display_name}</span>…
+            <span className="flex min-w-0 flex-col text-left">
+              <span className="flex min-w-0 items-center gap-1 text-sm">
+                Calling
+                <span className="streamer truncate font-medium">{other.display_name}</span>…
+              </span>
+              <CallType video={call.video} p2p={p2pCall} />
             </span>
           </button>
-          {p2pBadge}
           <button
             title="Cancel call"
+            aria-label="Cancel call"
             onClick={hangupCall}
             className={`${ctlBase} h-9 w-9 bg-danger text-on-danger hover:brightness-110`}
           >
@@ -961,14 +985,22 @@ export function CallBanner() {
       >
         <span className="max-sm:hidden">{avatar(72)}</span>
         <span className="sm:hidden">{avatar(40)}</span>
-        <div className="flex min-w-0 flex-col items-center max-sm:flex-1 max-sm:items-start">
+        <div className="flex min-w-0 flex-col items-center gap-0.5 max-sm:flex-1 max-sm:items-start">
           <span className="streamer w-full truncate text-base font-semibold">
             {other.display_name}
           </span>
-          <span className="flex items-center gap-1.5 text-sm text-on-surface-variant">
-            Incoming call
-            {p2pBadge}
-          </span>
+          <CallType video={call.video} p2p={p2pCall} incoming />
+          <button
+            title="Go to DM"
+            onClick={() => void openDm(call.dmId)}
+            className="flex max-w-full min-w-0 items-center gap-1 rounded-sm text-xs text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            <MessageCircle size={12} aria-hidden className="shrink-0" />
+            <span className="shrink-0">DM with</span>
+            <span className="streamer truncate">
+              {dm?.other.display_name ?? other.display_name}
+            </span>
+          </button>
         </div>
         <div className="flex shrink-0 items-center gap-4 max-sm:gap-2 sm:mt-1">
           <button

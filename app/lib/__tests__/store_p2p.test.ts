@@ -372,5 +372,13 @@ describe('P2P call binding', () => {
     active('bob', [peers[0]])
     expect([bound, dialed]).toEqual([[], 0])
     expect(st().error).toContain('older app')
+    expect(typeof st().p2pCallFailed[5]).toBe('number')
+  })
+
+  test('a later call that binds clears the failed mark', () => {
+    active('bob')
+    expect(typeof st().p2pCallFailed[5]).toBe('number')
+    active('bob', peers, 'c2')
+    expect(st().p2pCallFailed[5]).toBeUndefined()
   })
 })

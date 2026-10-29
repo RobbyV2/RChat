@@ -152,7 +152,7 @@ describe('export never carries secrets', () => {
       expect(json.toLowerCase().includes(word.toLowerCase())).toBe(false)
     const decoded = await decodeConfig(text)
     expect(decoded.ok && Object.keys(decoded.doc).sort()).toEqual(
-      ['appearOffline', 'emoji', 'layout', 'notify', 'streamer', 'theme', 'v'].sort()
+      ['appearOffline', 'calls', 'emoji', 'layout', 'notify', 'streamer', 'theme', 'v'].sort()
     )
   })
 

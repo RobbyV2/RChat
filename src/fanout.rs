@@ -185,7 +185,9 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             state: _,
             from: _,
             kind: _,
+            video: _,
             call_id: _,
+            answered_at: _,
             peers: _,
         } => to(users(dm_users)),
         WsEvent::ChannelCreated { server, channel: _ }

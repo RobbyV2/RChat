@@ -81,7 +81,15 @@ afterEach(() => {
 
 const ringFromBob = () =>
   useStore.setState({
-    call: { dmId: 7, dmUsers: ['alice', 'bob'], state: 'ringing', from: 'bob', kind: 'rtc' },
+    call: {
+      dmId: 7,
+      dmUsers: ['alice', 'bob'],
+      state: 'ringing',
+      from: 'bob',
+      kind: 'rtc',
+      video: false,
+      since: null,
+    },
   })
 
 describe('self audio transitions', () => {
@@ -178,7 +186,15 @@ describe('voice and call mic state', () => {
     await st().startCall(7, false)
     st().toggleDeafen()
     useStore.setState({
-      call: { dmId: 7, dmUsers: ['alice', 'bob'], state: 'active', from: 'alice', kind: 'rtc' },
+      call: {
+        dmId: 7,
+        dmUsers: ['alice', 'bob'],
+        state: 'active',
+        from: 'alice',
+        kind: 'rtc',
+        video: false,
+        since: 1,
+      },
     })
     st().hangupCall()
     expect(rtc.active()).toBe(false)
