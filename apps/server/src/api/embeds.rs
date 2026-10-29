@@ -16,6 +16,7 @@ use utoipa::IntoParams;
 use crate::api::access::{Proof, resolve_message};
 use crate::api::{ApiError, ApiErrorBody, Authed, Embed, OkResp, ok};
 use crate::db::{Db, now};
+use crate::instance::Instance;
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 
@@ -261,6 +262,27 @@ fn is_invite(url: &Url) -> bool {
         (parts.next(), parts.next(), parts.next(), parts.next()),
         (Some("invite"), Some(name), None | Some(""), None) if !name.is_empty()
     )
+}
+
+fn own_message_link(instance: &Instance, url: &str) -> bool {
+    Url::parse(url).is_ok_and(|u| is_message_link(&u) && instance.serves(&u))
+}
+
+fn is_message_link(url: &Url) -> bool {
+    let parts: Vec<&str> = url.path().split('/').skip(1).collect();
+    let parts = match parts.split_last() {
+        Some((&"", rest)) => rest,
+        _ => &parts[..],
+    };
+    let id = |s: &&str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    match parts {
+        ["s", server, channel, message] => !server.is_empty() && id(channel) && id(message),
+        ["s", server, channel, "t", root, message] => {
+            !server.is_empty() && id(channel) && id(root) && id(message)
+        }
+        ["dm", dm, message] => id(dm) && id(message),
+        _ => false,
+    }
 }
 
 fn scrub(mut url: Url) -> Url {
@@ -548,6 +570,9 @@ pub async fn unfurl(state: &AppState, job: UnfurlJob) {
     }
     let mut embeds: Vec<Embed> = Vec::new();
     for url in &urls {
+        if own_message_link(&state.instance, url) {
+            continue;
+        }
         match resolve(&state.db, url).await {
             Ok(Some(mut embed)) => {
                 embed.ord = embeds.len() as i64;
@@ -681,6 +706,39 @@ mod tests {
         assert_eq!(
             extract_urls("https://s3.example/o?X-Amz-Signature=s&X-Amz-Credential=c&v=1"),
             ["https://s3.example/o?v=1"]
+        );
+    }
+
+    #[test]
+    fn only_own_message_links_are_skipped() {
+        let mut pinned = std::sync::Arc::into_inner(Instance::ephemeral()).expect("instance");
+        pinned.public_url = Some(Url::parse("https://c.example").expect("url"));
+        let mut hosted = std::sync::Arc::into_inner(Instance::ephemeral()).expect("instance");
+        hosted.allowed_hosts =
+            crate::instance::parse_allowed_hosts("chat.example:8443").expect("hosts");
+        for (instance, url, skipped) in [
+            (&pinned, "https://c.example/s/rust/4/90", true),
+            (&pinned, "https://c.example:443/s/rust/4/t/88/90/", true),
+            (&pinned, "https://c.example/dm/3/91", true),
+            (&pinned, "https://c.example/s/rust/4/", false),
+            (&pinned, "https://c.example/s/rust/x/90", false),
+            (&pinned, "https://c.example/dm/3/91/x", false),
+            (&pinned, "https://other.example/s/rust/4/90", false),
+            (&pinned, "https://c.example:8443/s/rust/4/90", false),
+            (&pinned, "http://localhost/s/rust/4/90", false),
+            (&hosted, "https://chat.example:8443/s/rust/4/90", true),
+            (&hosted, "https://chat.example/s/rust/4/90", false),
+            (&hosted, "http://localhost:3000/dm/3/91", true),
+            (&hosted, "https://c.example/s/rust/4/90", false),
+        ] {
+            assert_eq!(own_message_link(instance, url), skipped, "{url}");
+        }
+        assert_eq!(
+            extract_urls("https://c.example/s/rust/4/90 https://other.example/dm/3/91"),
+            [
+                "https://c.example/s/rust/4/90",
+                "https://other.example/dm/3/91"
+            ]
         );
     }
 

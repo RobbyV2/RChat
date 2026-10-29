@@ -6,6 +6,7 @@ import {
   Clock,
   Copy,
   Hash,
+  Link,
   Lock,
   Menu,
   MessageCircle,
@@ -48,6 +49,7 @@ import {
   confirmKick,
   confirmTransfer,
   memberOf,
+  messageServer,
   myPerms,
   revokeAdminFor,
   roleColor,
@@ -94,6 +96,8 @@ import { PinNotice, PinsButton, PinsWindow, pinMenuItem, useCanPin } from './pin
 import { SystemNotice } from './system_messages'
 import { canPin } from '../lib/pins'
 import { isSystem } from '../lib/system_messages'
+import { messageLinkUrl } from '../lib/message_links'
+import { sharing } from '../lib/platform'
 
 const EMPTY: Message[] = []
 
@@ -454,11 +458,19 @@ const MessageRow = memo(function MessageRow({
   )
 })
 
-export const messageCopyItems = (m: Message): ContextMenuItem[] => [
-  ...(m.content.trim() ? [{ label: 'Copy Text', icon: Copy, action: () => copy(m.content) }] : []),
-  { label: 'Copy Message ID', icon: Hash, action: () => copy(String(m.id)) },
-  { label: 'Copy User ID', icon: AtSign, action: () => copy(m.author.username) },
-]
+export const messageCopyItems = (m: Message): ContextMenuItem[] => {
+  const link = messageLinkUrl(m, messageServer(useStore.getState(), m))
+  return [
+    ...(m.content.trim()
+      ? [{ label: 'Copy Text', icon: Copy, action: () => copy(m.content) }]
+      : []),
+    ...(link
+      ? [{ label: 'Copy Message Link', icon: Link, action: () => void sharing().copyText(link) }]
+      : []),
+    { label: 'Copy Message ID', icon: Hash, action: () => copy(String(m.id)) },
+    { label: 'Copy User ID', icon: AtSign, action: () => copy(m.author.username) },
+  ]
+}
 
 export const reactHeader = (m: Message, x: number, y: number): ContextMenuOptions => ({
   header: <QuickReactions m={m} anchor={rowAt(x, y)} />,

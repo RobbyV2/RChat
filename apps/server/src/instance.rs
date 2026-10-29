@@ -296,6 +296,18 @@ impl Instance {
         (servers, cred.expires_at)
     }
 
+    /// The URL points at this instance: the `PUBLIC_URL` host and port when it is set, otherwise
+    /// a host this instance answers as (loopback or `ALLOWED_HOSTS`), like `origin`.
+    pub fn serves(&self, url: &Url) -> bool {
+        match &self.public_url {
+            Some(own) => {
+                own.host() == url.host()
+                    && own.port_or_known_default() == url.port_or_known_default()
+            }
+            None => loopback(url) || self.allowed_hosts.iter().any(|a| a.matches(url)),
+        }
+    }
+
     pub fn pinned(&self) -> bool {
         self.public_url.is_some()
     }

@@ -251,10 +251,17 @@ export interface ForwardRef {
 }
 
 export interface MessageLocation {
+  id: number
   server: string | null
   channel_id: number | null
   dm_id: number | null
   thread_root_id: number | null
+  author: UserRef
+  created_at: number
+  content: string
+  has_media: boolean
+  kind: string
+  forwarded: boolean
 }
 
 export interface ReplyRef {

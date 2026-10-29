@@ -30,6 +30,7 @@ import type {
   Me,
   Member,
   Message,
+  MessageLocation,
   P2pAvailability,
   Ping,
   SearchResult,
@@ -241,6 +242,8 @@ export interface RChatState {
   drafts: Record<string, string>
   replying: Record<string, Replying>
   forwardClip: ForwardClip | null
+  // Message link cards by message id; null when the viewer can't read the message.
+  linkCards: Record<number, MessageLocation | null>
   toast: Toast | null
   pins: PinsView | null
   composerFocus: { key: string; n: number } | null
@@ -329,6 +332,8 @@ export interface RChatState {
   pruneNotify: () => void
   sendForward: (key: string) => void
   openForward: (m: Message) => Promise<void>
+  openMessage: (id: number, nav?: Nav) => Promise<void>
+  resolveLinkCard: (id: number) => void
   startEdit: (key: string, m: Message) => void
   setEditText: (text: string) => void
   cancelEdit: (refocus?: boolean) => void

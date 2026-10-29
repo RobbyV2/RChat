@@ -225,7 +225,7 @@ export const dmPingCount = (s: RChatState) => dmPings(badgePings(s))
 
 export const allPings = (s: RChatState) => totalPings(badgePings(s))
 
-const messageServer = (s: RChatState, m: Message): string | null => {
+export const messageServer = (s: RChatState, m: Message): string | null => {
   if (m.channel_id === null) return null
   const v = s.view
   if (v?.kind === 'channel' && s.servers[v.server]?.channels.some(c => c.id === m.channel_id))

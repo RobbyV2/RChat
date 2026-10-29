@@ -88,6 +88,7 @@ impl Modify for Bearer {
         super::messages::delete_message,
         super::messages::edit_message,
         super::messages::message_location,
+        super::messages::message_locations,
         super::messages::search,
         super::messages::unreads,
         super::messages::mark_read,

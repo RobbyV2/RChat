@@ -119,12 +119,12 @@ const visibleText = (text: string) =>
     .replace(CODE_SPAN, (_, lead: string) => `${lead} `)
     .replace(SPOILER, ' ')
 
-const inviteLinks = (text: string) =>
+export const visibleLinks = (text: string) =>
   [...visibleText(text).matchAll(URL_RE)].map(match => match[0].replace(TRAIL, ''))
 
 export const findInvites = (text: string, origin: string, max = 3): InviteLink[] => {
   const out: InviteLink[] = []
-  for (const url of inviteLinks(text)) {
+  for (const url of visibleLinks(text)) {
     const target = parseInvite(url, origin)
     if (!target || out.some(o => o.server === target.server)) continue
     out.push({ ...target, url })
@@ -140,7 +140,7 @@ export const findRemoteInvites = (
   max = 3
 ): RemoteInvite[] => {
   const out: RemoteInvite[] = []
-  for (const url of inviteLinks(text)) {
+  for (const url of visibleLinks(text)) {
     const found = parseInviteAt(url, 'http://invalid')
     if (!found || local.includes(found.origin) || !allowed(found.origin)) continue
     if (out.some(o => o.origin === found.origin && o.server === found.server)) continue

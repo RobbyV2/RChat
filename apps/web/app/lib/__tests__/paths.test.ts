@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { parsePath, viewPath, type View } from '../store'
+import { messagePath, parsePath, viewPath, type View } from '../store'
 
 describe('viewPath / parsePath round-trips', () => {
   const cases: View[] = [
@@ -49,5 +49,39 @@ describe('viewPath / parsePath round-trips', () => {
     ]) {
       expect(parsePath(bad)).toBeNull()
     }
+  })
+})
+
+describe('message paths', () => {
+  test('channel, thread and DM messages round-trip', () => {
+    const cases = [
+      {
+        place: { kind: 'channel' as const, server: 'café & co', channelId: 4 },
+        thread: null,
+        id: 90,
+      },
+      { place: { kind: 'channel' as const, server: 'rchat', channelId: 4 }, thread: 88, id: 90 },
+      { place: { kind: 'dm' as const, dmId: 3 }, thread: null, id: 91 },
+    ]
+    for (const c of cases) expect(parsePath(messagePath(c))).toEqual({ kind: 'message', ...c })
+    expect(messagePath(cases[1])).toBe('/s/rchat/4/t/88/90/')
+    expect(messagePath(cases[2])).toBe('/dm/3/91/')
+  })
+
+  test('missing trailing slash parses; malformed ones do not', () => {
+    expect(parsePath('/dm/3/91')).toEqual({
+      kind: 'message',
+      place: { kind: 'dm', dmId: 3 },
+      thread: null,
+      id: 91,
+    })
+    for (const bad of [
+      '/dm/3/x',
+      '/s/rchat/4/t/90/',
+      '/s/rchat/4/t/x/90/',
+      '/s/%/4/90/',
+      '/dm/3/4/5',
+    ])
+      expect(parsePath(bad)).toBeNull()
   })
 })

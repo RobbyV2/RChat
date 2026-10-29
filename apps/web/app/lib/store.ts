@@ -1283,6 +1283,7 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   const persistGrants = (grants: Record<string, string>) => {
+    dropLinkCards()
     writeLocal(LS.guestGrants, JSON.stringify(grants))
     api.setGrants(grants)
     home.ws.setGrants(grants)
@@ -1408,6 +1409,16 @@ export const useStore = create<RChatState>()((set, get) => {
       await unreadsReady
       return leaveForSafety()
     }
+    if (target?.kind === 'message') {
+      await unreadsReady
+      const opened = await openMessageAt(target.id, 'replace').catch((e: unknown) => {
+        fail(e)
+        return true
+      })
+      if (!opened) toast("You can't open this message")
+      const now = get().view
+      return now ? syncUrl(now, 'replace') : fallback()
+    }
     const cur = get().view
     if (target && target.kind !== 'server' && cur && viewPath(target) === viewPath(cur)) return
     if (!target) return fallback()
@@ -1453,6 +1464,7 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   const enter = (res: AuthResponse) => {
+    dropLinkCards()
     writeLocal(LS.token, res.token)
     setTokenCookie(res.token)
     writeLocal(LS.guest, null)
@@ -1471,6 +1483,7 @@ export const useStore = create<RChatState>()((set, get) => {
     if (get().voice?.server === name) get().leaveVoice()
     serverGen += 1
     droppedAt.set(name, serverGen)
+    dropLinkCards()
     const reload = serverPager.removed()
     const scopes = new Set((get().servers[name]?.channels ?? []).map(c => `c${c.id}`))
     for (const scope of scopes) tails.delete(scope)
@@ -2490,17 +2503,140 @@ export const useStore = create<RChatState>()((set, get) => {
     server: string,
     channelId: number,
     threadRootId: number | null,
-    id: number
+    id: number,
+    nav: Nav = 'push'
   ) => {
     const s = get()
     const here = s.view?.kind === 'channel' && s.view.channelId === channelId
     const at = threadRootId ?? id
     set({ panel: null })
     if (here) await get().jumpTo(viewKey({ kind: 'channel', server, channelId }), at)
-    else await get().openServer(server, channelId, 'push', at)
+    else await get().openServer(server, channelId, nav, at)
     if (threadRootId === null) return
     const root = (get().messages[`c${channelId}`] ?? []).find(m => m.id === threadRootId)
     if (root) await get().openThread(root, id)
+  }
+
+  const LINK_CARDS_MAX = 500
+  const LINK_BATCH_MAX = 50
+  const LINK_BATCH_DELAY = 50
+  const LINK_BATCH_FLIGHTS = 2
+  const linkOrder = new Set<number>()
+  const linkQueue = new Set<number>()
+  const linkLoads = new Set<number>()
+  let linkTimer: ReturnType<typeof setTimeout> | null = null
+  let linkFlights = 0
+  let linkGen = 0
+
+  const keepLinkCards = (cards: [number, MessageLocation | null][]) => {
+    if (!cards.length) return
+    set(s => {
+      const next = { ...s.linkCards }
+      for (const [id, card] of cards) {
+        linkOrder.delete(id)
+        linkOrder.add(id)
+        next[id] = card
+      }
+      for (const old of linkOrder) {
+        if (linkOrder.size <= LINK_CARDS_MAX) break
+        linkOrder.delete(old)
+        delete next[old]
+      }
+      return { linkCards: next }
+    })
+  }
+
+  const keepLinkCard = (id: number, card: MessageLocation | null) => keepLinkCards([[id, card]])
+
+  const reauthorLinkCards = (u: UserRef) =>
+    set(s => {
+      const hit = Object.entries(s.linkCards).filter(
+        ([, card]) => card?.author.username === u.username
+      )
+      if (!hit.length) return {}
+      const next = { ...s.linkCards }
+      for (const [id, card] of hit) if (card) next[Number(id)] = { ...card, author: u }
+      return { linkCards: next }
+    })
+
+  const dropLinkCards = (id?: number) => {
+    linkGen += 1
+    if (id === undefined) linkOrder.clear()
+    else linkOrder.delete(id)
+    set(s => {
+      if (id === undefined) return Object.keys(s.linkCards).length ? { linkCards: {} } : {}
+      if (!(id in s.linkCards)) return {}
+      const { [id]: _, ...rest } = s.linkCards
+      return { linkCards: rest }
+    })
+  }
+
+  const queueLinkCards = () => {
+    if (linkTimer === null && linkQueue.size && linkFlights < LINK_BATCH_FLIGHTS)
+      linkTimer = setTimeout(flushLinkCards, LINK_BATCH_DELAY)
+  }
+
+  // Visible message links resolve in batches of up to 50, at most two batches at a time.
+  const flushLinkCards = () => {
+    linkTimer = null
+    while (linkQueue.size && linkFlights < LINK_BATCH_FLIGHTS) {
+      const ids = [...linkQueue].slice(0, LINK_BATCH_MAX)
+      for (const id of ids) linkQueue.delete(id)
+      linkFlights += 1
+      const gen = linkGen
+      void api
+        .messageLocations(ids)
+        .then(
+          found => found,
+          e => (refused(e) ? [] : undefined)
+        )
+        .then(found => {
+          linkFlights -= 1
+          for (const id of ids) linkLoads.delete(id)
+          if (gen !== linkGen) for (const id of ids) get().resolveLinkCard(id)
+          else if (found) {
+            const byId = new Map(found.map(card => [card.id, card]))
+            keepLinkCards(ids.map(id => [id, byId.get(id) ?? null]))
+          }
+          queueLinkCards()
+        })
+    }
+  }
+
+  const refused = (e: unknown) =>
+    e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 429
+
+  // Where a message is, through the same gate as reading it; null for every refusal.
+  const locateMessage = async (id: number) => {
+    try {
+      const loc = await api.messageLocation(id)
+      keepLinkCard(id, loc)
+      return loc
+    } catch (e) {
+      if (!refused(e)) throw e
+      keepLinkCard(id, null)
+      return null
+    }
+  }
+
+  const openMessageAt = async (id: number, nav: Nav) => {
+    const loc = await locateMessage(id)
+    if (!loc) return false
+    if (loc.dm_id !== null) {
+      const v = get().view
+      if (v?.kind === 'dm' && v.dmId === loc.dm_id) await get().jumpTo(`d${loc.dm_id}`, id)
+      else await get().openDm(loc.dm_id, nav, id)
+      return true
+    }
+    const { server, channel_id } = loc
+    if (server === null || channel_id === null) return false
+    const { guest, guestServers } = get()
+    if (guest && !guestServers.includes(server)) {
+      persistGuestServers([...guestServers, server])
+      home.ws.subscribe([server])
+    }
+    await openChannelAt(server, channel_id, loc.thread_root_id, id, nav)
+    return true
   }
 
   let noticeId = 0
@@ -2692,6 +2828,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
   // Drops the timers, queues and caches of the signed-in session.
   const forgetSession = () => {
+    dropLinkCards()
     if (noticeTimer !== null) clearTimeout(noticeTimer)
     noticeTimer = null
     if (meRetry) clearTimeout(meRetry)
@@ -2720,6 +2857,8 @@ export const useStore = create<RChatState>()((set, get) => {
     rereads.clear()
     for (const id of [...sentWaiters.keys()]) settleSent(id, null)
     quoteGen += 1
+    linkLoads.clear()
+    linkGen += 1
   }
   forgetStoreSession = forgetSession
 
@@ -2792,6 +2931,7 @@ export const useStore = create<RChatState>()((set, get) => {
     drafts: {},
     replying: {},
     forwardClip: null,
+    linkCards: {},
     toast: null,
     pins: null,
     composerFocus: null,
@@ -3075,6 +3215,7 @@ export const useStore = create<RChatState>()((set, get) => {
         drafts: {},
         replying: {},
         forwardClip: null,
+        linkCards: {},
         toast: null,
         pins: null,
         composerFocus: null,
@@ -3521,36 +3662,22 @@ export const useStore = create<RChatState>()((set, get) => {
       })
     },
 
-    openForward: m =>
+    openForward: m => {
+      const fwd = m.forward
+      return fwd ? get().openMessage(fwd.source_id) : Promise.resolve()
+    },
+
+    openMessage: (id, nav = 'push') =>
       act(async () => {
-        const fwd = m.forward
-        if (!fwd) return
-        const id = fwd.source_id
-        let loc: MessageLocation
-        try {
-          loc = await api.messageLocation(id)
-        } catch (e) {
-          if (e instanceof ApiError && e.status >= 400 && e.status < 500) {
-            toast("You can't open this message")
-            return
-          }
-          throw e
-        }
-        if (loc.dm_id !== null) {
-          const v = get().view
-          if (v?.kind === 'dm' && v.dmId === loc.dm_id) await get().jumpTo(`d${loc.dm_id}`, id)
-          else await get().openDm(loc.dm_id, 'push', id)
-          return
-        }
-        const { server, channel_id } = loc
-        if (server === null || channel_id === null) return toast("You can't open this message")
-        const { guest, guestServers } = get()
-        if (guest && !guestServers.includes(server)) {
-          persistGuestServers([...guestServers, server])
-          home.ws.subscribe([server])
-        }
-        await openChannelAt(server, channel_id, loc.thread_root_id, id)
+        if (!(await openMessageAt(id, nav))) toast("You can't open this message")
       }),
+
+    resolveLinkCard: id => {
+      if (id in get().linkCards || linkLoads.has(id)) return
+      linkLoads.add(id)
+      linkQueue.add(id)
+      queueLinkCards()
+    },
 
     startEdit: (key, m) => {
       const { me, guest } = get()
@@ -4455,6 +4582,7 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'message_updated': {
+          dropLinkCards(ev.stub ? ev.id : ev.message.id)
           if (ev.stub) rereadEdited(ev)
           else applyUpdated(ev.message)
           refreshPins(ev.stub ? ev.id : ev.message.id)
@@ -4487,6 +4615,7 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'message_deleted': {
+          dropLinkCards(ev.id)
           if (ev.server !== null) staleInvites(ev.server)
           const rootOf = ev.thread_root_id
           unhost(ev.id)
@@ -4588,6 +4717,7 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'channel_deleted': {
+          dropLinkCards()
           saveNotify(
             resetScope(get().notifyPrefs, { kind: 'channel', id: ev.channel_id, server: null })
           )
@@ -4823,6 +4953,7 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'roles_changed': {
+          dropLinkCards()
           if (!get().servers[ev.server]) return
           refetchServer(ev.server)
           void get().loadMembers(ev.server, true)
@@ -4830,6 +4961,7 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'channel_perms_changed': {
+          dropLinkCards()
           refetchServer(ev.server)
           return
         }
@@ -4878,6 +5010,7 @@ export const useStore = create<RChatState>()((set, get) => {
                 : s.profile,
           }))
           mapMemberInfo((username, m) => (username === u.username ? { ...m, ...u } : m))
+          reauthorLinkCards(u)
           return
         }
         case 'presence_changed': {
@@ -5180,6 +5313,7 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'resync': {
+          dropLinkCards()
           resync()
           return
         }

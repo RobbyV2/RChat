@@ -397,6 +397,8 @@ export const endpoints = (c: ApiClient) => ({
     c.req<Message>('PATCH', `/messages/${id}`, { content }),
   deleteMedia: (id: number) => c.req<unknown>('DELETE', `/messages/${id}/media`),
   messageLocation: (id: number) => c.req<MessageLocation>('GET', `/messages/${id}/location`),
+  messageLocations: (ids: number[]) =>
+    c.req<MessageLocation[]>('POST', '/messages/locations', { ids }),
   pinMessage: (id: number) => c.req<unknown>('PUT', `/messages/${id}/pin`),
   unpinMessage: (id: number) => c.req<unknown>('DELETE', `/messages/${id}/pin`),
   channelPins: (id: number) => c.req<Message[]>('GET', `/channels/${id}/pins`),

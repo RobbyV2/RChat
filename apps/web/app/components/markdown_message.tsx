@@ -58,12 +58,14 @@ import {
   remoteKey,
 } from '../lib/invite'
 import { postedUrl } from '../lib/embed_links'
+import { findMessageLinks, parseMessageLink } from '../lib/message_links'
 import { saveGuestMedia, useMediaSrc } from '../lib/media_src'
 import { expiryText, sameOriginImage } from '../lib/rules'
 import { knownMentions, userRefFor, useStore, type ContextMenuItem } from '../lib/store'
 import type { Embed, Message, MessageMedia } from '../lib/types'
 import { longPress } from './context_menu'
 import { InviteCard, RemoteInviteCard } from './invite_card'
+import { MessageLinkCard } from './message_link_card'
 import { profileTrigger } from './profile_card'
 import { EditedMark } from './message_editor'
 
@@ -207,7 +209,23 @@ function Mention({ username }: { username: string }) {
 
 function MessageLink({ href, children, ...props }: React.ComponentProps<'a'>) {
   const invite = href ? parseInvite(href, shareOrigin()) : null
+  const target = href && !invite ? parseMessageLink(href, localOrigins()) : null
   const body = <InLink.Provider value>{children}</InLink.Provider>
+  if (target)
+    return (
+      <a
+        {...props}
+        href={href}
+        onClick={e => {
+          if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+          e.preventDefault()
+          void useStore.getState().openMessage(target.id)
+        }}
+        className="text-primary underline"
+      >
+        {body}
+      </a>
+    )
   if (!invite)
     return (
       <a {...props} href={href} target="_blank" rel="noreferrer" className="text-primary underline">
@@ -760,6 +778,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     const found = local.flatMap(origin => findInvites(content, origin))
     return found.filter((i, at) => found.findIndex(o => o.server === i.server) === at).slice(0, 3)
   }, [content, local])
+  const messageLinks = useMemo(() => findMessageLinks(content, local), [content, local])
   const remotes = useMemo(
     () => findRemoteInvites(content, local, origin => remoteAllowed(origin, home.origin)),
     [content, local]
@@ -773,6 +792,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     () =>
       embeds.filter(e => {
         if (local.some(origin => parseInvite(e.url, origin) !== null)) return false
+        if (parseMessageLink(e.url, local)) return false
         const remote = parseInviteAt(e.url, 'http://invalid')
         return !(remote && remoteOk[remoteKey(remote)])
       }),
@@ -815,6 +835,9 @@ export const MarkdownMessage = memo(function MarkdownMessage({
           )}
         </div>
       )}
+      {messageLinks.map(l => (
+        <MessageLinkCard key={l.id} link={l} />
+      ))}
       {invites.map(i => (
         <InviteCard key={i.server} variant="embed" server={i.server} password={i.password} />
       ))}

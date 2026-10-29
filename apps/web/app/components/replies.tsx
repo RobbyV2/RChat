@@ -20,7 +20,7 @@ export function ForwardedTag() {
   )
 }
 
-function Snippet({ quote }: { quote: ReplyRef }) {
+export function Snippet({ quote }: { quote: Pick<ReplyRef, 'content' | 'has_media'> }) {
   if (!quote.content)
     return (
       <span className="flex min-w-0 items-center gap-1 italic">

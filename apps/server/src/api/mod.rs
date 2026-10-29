@@ -1629,6 +1629,7 @@ fn api_routes(
         )
         .route("/messages/{id}/media", delete(media::delete_media))
         .route("/messages/{id}/location", get(messages::message_location))
+        .route("/messages/locations", post(messages::message_locations))
         .route(
             "/messages/{id}/pin",
             put(pins::pin_message).delete(pins::unpin_message),

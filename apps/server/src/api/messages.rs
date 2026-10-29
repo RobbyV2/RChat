@@ -1396,6 +1396,8 @@ async fn deliver(
 /// Where a message is, as far as the caller can read it.
 #[derive(Serialize, ToSchema)]
 pub struct MessageLocation {
+    /// The message id.
+    pub id: i64,
     /// Lowercase name of the message's server; `null` for a DM message.
     #[schema(example = "rust")]
     pub server: Option<String>,
@@ -1405,12 +1407,73 @@ pub struct MessageLocation {
     pub dm_id: Option<i64>,
     /// For a thread reply, the thread's root message; `null` otherwise.
     pub thread_root_id: Option<i64>,
+    /// Who wrote it (for a pin notice, who pinned; for a call log, who called).
+    pub author: UserRef,
+    /// Unix seconds.
+    pub created_at: i64,
+    /// First line of its text as plain text, like a reply quote (see `ReplyRef.content`).
+    #[schema(example = "See you at 8")]
+    pub content: String,
+    /// It has an attachment.
+    pub has_media: bool,
+    /// `user` for a normal message, `call` for a call log, `pin` for a pin notice.
+    #[schema(example = "user")]
+    pub kind: String,
+    /// It is a forwarded copy of another message.
+    pub forwarded: bool,
+}
+
+async fn locate_message(
+    db: &Db,
+    id: i64,
+    user: Option<&User>,
+    proof: &Proof<'_>,
+) -> Result<MessageLocation, ApiError> {
+    let message = resolve_message(db, id, user, proof).await?;
+    let crate::api::access::MsgScope {
+        channel_id,
+        dm_id,
+        thread_root_id,
+        kind,
+        author,
+        media_id,
+        media_filename: _,
+        media_kind: _,
+        server,
+        dm_users: _,
+    } = message.into_scope();
+    if channel_id.is_none() && dm_id.is_none() {
+        return Err(crate::api::access::not_found());
+    }
+    let row = sqlx::query(
+        "SELECT content, created_at, fwd_created_at, fwd_source_id FROM messages WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(crate::api::access::not_found)?;
+    let content: String = row.try_get(0)?;
+    let refs = user_refs(db, std::slice::from_ref(&author)).await;
+    Ok(MessageLocation {
+        id,
+        server,
+        channel_id,
+        dm_id,
+        thread_root_id,
+        author: user_from(&refs, &author),
+        created_at: row.try_get(1)?,
+        content: reply_snippet(&content),
+        has_media: media_id.is_some(),
+        kind,
+        forwarded: row.try_get::<Option<i64>, _>(2)?.is_some()
+            && row.try_get::<Option<i64>, _>(3)?.is_some(),
+    })
 }
 
 /// Locate a message
 ///
-/// Tells where a message is (server and channel, thread, or DM), for opening it from a
-/// forwarded copy. Access is checked exactly like reading the message: guests are allowed when
+/// Tells where a message is (server and channel, thread, or DM) with a short preview (author,
+/// time, first line), for opening it from a forwarded copy or a message link. Access is checked exactly like reading the message: guests are allowed when
 /// guest access is on (with `X-Guest-Grant` for password-protected servers), signed-in callers
 /// need to be able to read it (a server without a password can be read without joining).
 /// Every refusal is the same `404 Not found` as for an id that does not exist. General
@@ -1424,28 +1487,72 @@ pub(crate) async fn message_location(
 ) -> Result<Json<MessageLocation>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, user.as_ref()).await?;
-    let message = resolve_message(db, id, user.as_ref(), &Proof::headers(&headers)).await?;
-    let crate::api::access::MsgScope {
-        channel_id,
-        dm_id,
-        thread_root_id,
-        kind: _,
-        author: _,
-        media_id: _,
-        media_filename: _,
-        media_kind: _,
-        server,
-        dm_users: _,
-    } = message.into_scope();
-    if channel_id.is_none() && dm_id.is_none() {
-        return Err(crate::api::access::not_found());
+    let found = locate_message(db, id, user.as_ref(), &Proof::headers(&headers)).await?;
+    Ok(Json(found))
+}
+
+pub(crate) const LOCATE_BATCH_MAX: usize = 50;
+pub(crate) const LOCATE_BATCHES_PER_MINUTE: u32 = 60;
+
+static LOCATE_BATCHES: std::sync::LazyLock<Budget> = std::sync::LazyLock::new(|| {
+    Budget::new(
+        LOCATE_BATCHES_PER_MINUTE,
+        std::time::Duration::from_secs(60),
+        100_000,
+    )
+});
+
+/// Messages to locate.
+#[derive(Deserialize, ToSchema)]
+pub struct LocateBatchReq {
+    /// Up to 50 message ids. Repeated ids count once.
+    #[schema(example = json!([918, 920]))]
+    ids: Vec<i64>,
+}
+
+/// Locate several messages
+///
+/// `GET /api/messages/{id}/location` for up to 50 messages at once, for showing message link
+/// cards. Each id is checked exactly like the single lookup. Ids the caller cannot read, and
+/// ids that do not exist, are left out without any sign, so the response is the same for
+/// every id that is not returned. Guests are allowed when guest access is on (with
+/// `X-Guest-Grant` for password-protected servers). General rate-limit bucket, and at most 60
+/// batches per minute per account (per client address for guests).
+#[utoipa::path(post, path = "/api/messages/locations", tag = "Messages", request_body = LocateBatchReq, responses((status = 200, description = "The readable messages among the ids, in request order, each once; others are left out", body = Vec<MessageLocation>), (status = 400, description = "More than 50 ids (`Too many messages`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket (plain text), or more than 60 batches in a minute (`Too many attempts. Try again later`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security((), ("bearer" = [])))]
+pub(crate) async fn message_locations(
+    State(state): State<AppState>,
+    MaybeAuthed(user): MaybeAuthed,
+    headers: HeaderMap,
+    Json(req): Json<LocateBatchReq>,
+) -> Result<Json<Vec<MessageLocation>>, ApiError> {
+    let LocateBatchReq { ids } = req;
+    if ids.len() > LOCATE_BATCH_MAX {
+        return Err(bad("Too many messages"));
     }
-    Ok(Json(MessageLocation {
-        server,
-        channel_id,
-        dm_id,
-        thread_root_id,
-    }))
+    let db = &state.read();
+    require_guest_ok(db, user.as_ref()).await?;
+    let caller = match (&user, crate::api::budget::client()) {
+        (Some(user), _) => format!("u:{}", user.username),
+        (None, Some(ip)) => format!("g:{}", crate::api::budget::group(ip)),
+        (None, None) => "g:".to_string(),
+    };
+    if !LOCATE_BATCHES.take(&format!("{}\n{caller}", pool_key(&state.db))) {
+        return Err(slow_down());
+    }
+    let proof = Proof::headers(&headers);
+    let mut seen = std::collections::HashSet::with_capacity(ids.len());
+    let mut found = Vec::with_capacity(ids.len());
+    for id in ids {
+        if !seen.insert(id) {
+            continue;
+        }
+        match locate_message(db, id, user.as_ref(), &proof).await {
+            Ok(location) => found.push(location),
+            Err(ApiError(code, _)) if code.is_client_error() => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(Json(found))
 }
 
 /// List channel messages
@@ -5593,6 +5700,307 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn message_links_resolve_only_above_the_read_history_floor() {
+        let (state, path) = temp_state("link_floor").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "Alice").await;
+        add_user(db, "bob", "bob").await;
+        let joined = now();
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        add_member(db, "rchat", "bob", 0, 0, joined).await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:bob', 1, 1, 0)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("no history");
+        let at = |created: i64, content: &'static str| async move {
+            sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'alice', $2, $3) RETURNING id")
+                .bind(cid)
+                .bind(content)
+                .bind(created)
+                .fetch_one(db)
+                .await
+                .expect("message")
+                .try_get::<i64, _>(0)
+                .expect("id")
+        };
+        let old = at(joined - 100, "old news").await;
+        let new = at(joined + 1, "## Fresh **news**\nsecond line").await;
+        let hidden = locate(&state, Some("bob"), old)
+            .await
+            .err()
+            .map(|ApiError(c, m)| (c, m));
+        let missing = locate(&state, Some("bob"), 999_999)
+            .await
+            .err()
+            .map(|ApiError(c, m)| (c, m));
+        assert_eq!(
+            hidden,
+            Some((StatusCode::NOT_FOUND, "Not found".to_string()))
+        );
+        assert_eq!(hidden, missing);
+        let card = locate(&state, Some("bob"), new).await.expect("readable");
+        assert_eq!(
+            (
+                card.channel_id,
+                card.author.display_name.as_str(),
+                card.content.as_str(),
+                card.created_at,
+                card.has_media
+            ),
+            (Some(cid), "Alice", "Fresh news", joined + 1, false)
+        );
+        let full = locate(&state, Some("alice"), old).await.expect("history");
+        assert_eq!(full.content, "old news");
+        done(state, path).await;
+    }
+
+    async fn locate_batch(
+        state: &AppState,
+        user: Option<&str>,
+        ids: &[i64],
+    ) -> Result<Vec<MessageLocation>, ApiError> {
+        message_locations(
+            State(state.clone()),
+            MaybeAuthed(user.map(|name| mem_user(name, false))),
+            HeaderMap::new(),
+            Json(LocateBatchReq { ids: ids.to_vec() }),
+        )
+        .await
+        .map(|r| r.0)
+    }
+
+    fn located(found: &[MessageLocation]) -> Vec<i64> {
+        found.iter().map(|l| l.id).collect()
+    }
+
+    #[tokio::test]
+    async fn batch_locations_skip_every_refusal_alike() {
+        let (state, path) = temp_state("locate_batch").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "Alice").await;
+        add_user(db, "bob", "bob").await;
+        add_user(db, "carol", "carol").await;
+        let joined = now();
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        add_member(db, "rchat", "bob", 0, 0, joined).await;
+        let secret = add_channel(db, "secret", "text").await;
+        perm(db, secret, "u:alice", 1).await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:bob', 1, 1, 0)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("no history");
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'carol') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        let insert = |sql: &'static str, place: i64, created: i64| async move {
+            sqlx::query(sql)
+                .bind(place)
+                .bind(created)
+                .fetch_one(db)
+                .await
+                .expect("message")
+                .try_get::<i64, _>(0)
+                .expect("id")
+        };
+        let channel_msg = "INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'alice', 'hi there', $2) RETURNING id";
+        let old = insert(channel_msg, cid, joined - 100).await;
+        let new = insert(channel_msg, cid, joined + 1).await;
+        let hidden = insert(channel_msg, secret, joined + 1).await;
+        let private = insert(
+            "INSERT INTO messages(dm_id, author, content, created_at) VALUES($1, 'alice', 'psst', $2) RETURNING id",
+            dm,
+            joined + 1,
+        )
+        .await;
+        let missing = 999_999;
+
+        let mine = locate_batch(&state, Some("alice"), &[old, new, hidden, private, missing])
+            .await
+            .expect("alice");
+        assert_eq!(located(&mine), [old, new, hidden, private]);
+        let dm_loc = &mine[3];
+        assert_eq!((dm_loc.dm_id, dm_loc.channel_id), (Some(dm), None));
+
+        let theirs = locate_batch(
+            &state,
+            Some("bob"),
+            &[old, new, new, hidden, private, missing],
+        )
+        .await
+        .expect("bob");
+        assert_eq!(located(&theirs), [new]);
+        assert_eq!(theirs[0].content, "hi there");
+        for refused in [old, hidden, private, missing] {
+            let alone = locate_batch(&state, Some("bob"), &[refused])
+                .await
+                .expect("bob");
+            assert!(alone.is_empty(), "{refused}");
+            assert_eq!(
+                locate(&state, Some("bob"), refused)
+                    .await
+                    .err()
+                    .map(|ApiError(c, m)| (c, m)),
+                Some((StatusCode::NOT_FOUND, "Not found".to_string())),
+                "{refused}"
+            );
+        }
+
+        let too_many: Vec<i64> = (0..=LOCATE_BATCH_MAX as i64)
+            .map(|i| 1_000_000 + i)
+            .collect();
+        assert_eq!(
+            locate_batch(&state, Some("bob"), &too_many)
+                .await
+                .err()
+                .map(|ApiError(c, _)| c),
+            Some(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(
+            locate_batch(&state, Some("bob"), &too_many[..LOCATE_BATCH_MAX])
+                .await
+                .map(|f| f.len())
+                .ok(),
+            Some(0)
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn batch_locations_are_capped_per_account() {
+        let (state, path) = temp_state("locate_batch_cap").await;
+        for _ in 0..LOCATE_BATCHES_PER_MINUTE {
+            assert!(locate_batch(&state, Some("erin"), &[1]).await.is_ok());
+        }
+        assert_eq!(
+            locate_batch(&state, Some("erin"), &[1])
+                .await
+                .err()
+                .map(|ApiError(c, m)| (c, m)),
+            Some((
+                StatusCode::TOO_MANY_REQUESTS,
+                crate::api::budget::SLOW_DOWN.to_string()
+            ))
+        );
+        assert!(locate_batch(&state, Some("frank"), &[1]).await.is_ok());
+        assert!(
+            locate(&state, Some("erin"), 1)
+                .await
+                .is_err_and(|ApiError(c, _)| c == StatusCode::NOT_FOUND)
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn locations_describe_forwards_pins_calls_and_gone_authors() {
+        let (state, path) = temp_state("locate_kinds").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "Alice").await;
+        add_user(db, "bob", "Bob").await;
+        add_user(db, "gone", "Gone").await;
+        for name in ["alice", "bob"] {
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let id_of = |sql: String| async move {
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .fetch_one(db)
+                .await
+                .expect("message")
+                .try_get::<i64, _>(0)
+                .expect("id")
+        };
+        let source = id_of(format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({cid}, 'alice', 'original', 5) RETURNING id")).await;
+        let forward = id_of(format!("INSERT INTO messages(channel_id, author, content, fwd_author, fwd_created_at, fwd_source_id, created_at) VALUES({cid}, 'bob', 'original', 'alice', 5, {source}, 6) RETURNING id")).await;
+        let pin = id_of(format!("INSERT INTO messages(channel_id, author, content, kind, pin_message_id, created_at) VALUES({cid}, 'bob', '', 'pin', {source}, 7) RETURNING id")).await;
+        let call = id_of(format!("INSERT INTO messages(channel_id, author, content, kind, created_at) VALUES({cid}, 'alice', '', 'call', 8) RETURNING id")).await;
+        let orphan = id_of(format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({cid}, 'nobody', 'left behind', 9) RETURNING id")).await;
+        let purging = id_of(format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({cid}, 'gone', 'bye', 10) RETURNING id")).await;
+        sqlx::query("UPDATE users SET password_hash = '!purging' WHERE username = 'gone'")
+            .execute(db)
+            .await
+            .expect("purging");
+
+        let shape = |l: &MessageLocation| {
+            (
+                l.id,
+                l.kind.clone(),
+                l.forwarded,
+                l.author.username.clone(),
+                l.content.clone(),
+            )
+        };
+        let expected = vec![
+            (
+                source,
+                "user".to_string(),
+                false,
+                "alice".to_string(),
+                "original".to_string(),
+            ),
+            (
+                forward,
+                "user".to_string(),
+                true,
+                "bob".to_string(),
+                "original".to_string(),
+            ),
+            (
+                pin,
+                "pin".to_string(),
+                false,
+                "bob".to_string(),
+                String::new(),
+            ),
+            (
+                call,
+                "call".to_string(),
+                false,
+                "alice".to_string(),
+                String::new(),
+            ),
+            (
+                orphan,
+                "user".to_string(),
+                false,
+                "nobody".to_string(),
+                "left behind".to_string(),
+            ),
+        ];
+        let batch = locate_batch(
+            &state,
+            Some("bob"),
+            &[source, forward, pin, call, orphan, purging],
+        )
+        .await
+        .expect("batch");
+        assert_eq!(batch.iter().map(shape).collect::<Vec<_>>(), expected);
+        assert_eq!(batch[4].author.display_name, "nobody");
+        let mut single = Vec::new();
+        for id in [source, forward, pin, call, orphan] {
+            single.push(shape(
+                &locate(&state, Some("bob"), id).await.expect("single"),
+            ));
+        }
+        assert_eq!(single, expected);
+        assert_eq!(
+            locate(&state, Some("bob"), purging)
+                .await
+                .err()
+                .map(|ApiError(c, m)| (c, m)),
+            Some((StatusCode::NOT_FOUND, "Not found".to_string()))
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn batch_reads_are_bounded() {
         let (state, path) = temp_state("read_batch_bounds").await;
         let db = &state.db;
@@ -7047,6 +7455,8 @@ mod tests {
         assert_eq!(thread_where.thread_root_id, Some(open_msg.id));
         let dm_where = locate(&state, Some("alice"), dm_msg.id).await.expect("dm");
         assert_eq!((dm_where.server, dm_where.dm_id), (None, Some(dm)));
+        assert_eq!(dm_where.author.username, dm_msg.author.username);
+        assert_eq!(dm_where.created_at, dm_msg.created_at);
         assert!(locate(&state, Some("carol"), dm_msg.id).await.is_err());
         done(state, path).await;
     }

@@ -12,6 +12,7 @@ import { desktopNotifier } from '../platform/desktop_notifications'
 import { CHUNK_BYTES, SAVE_FAILED, desktopSharing, saveTo } from '../platform/desktop_sharing'
 import { confirmGate, deepLinkTarget, openDeepLink, type LinkEnv } from '../deep_links'
 import { home, shareOrigin } from '../instances'
+import { parsePath } from '../view'
 
 type Call = { cmd: string; args?: unknown; headers?: Record<string, string> }
 
@@ -230,6 +231,14 @@ describe('deep links', () => {
       path: '/s/main/4/',
     })
     expect(deepLinkTarget('rchat://chat.example.com', home)).toEqual({ kind: 'home', path: '/' })
+  })
+
+  test('message links open the message path in place', () => {
+    for (const path of ['/s/main/4/90/', '/s/main/4/t/88/90/', '/dm/3/91/']) {
+      const target = deepLinkTarget(`rchat://chat.example.com${path}`, home)
+      expect(target).toEqual({ kind: 'home', path })
+      expect(target?.kind === 'home' && parsePath(target.path)?.kind).toBe('message')
+    }
   })
 
   test('other hosts are other instances; loopback ones use http', () => {
