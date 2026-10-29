@@ -325,6 +325,7 @@ function NewPasswordDialog({
   onCreated: (created: CreatedPassword) => void
 }) {
   const ids = useId()
+  const streamer = useStore(s => s.streamer)
   const [label, setLabel] = useState('')
   const [custom, setCustom] = useState(false)
   const [secret, setSecret] = useState('')
@@ -447,13 +448,14 @@ function NewPasswordDialog({
             </div>
             {custom ? (
               <input
+                type={streamer ? 'password' : 'text'}
                 value={secret}
                 onChange={e => setSecret(e.target.value)}
                 maxLength={200}
-                autoComplete="off"
+                autoComplete={streamer ? 'new-password' : 'off'}
                 aria-label="Custom password"
                 placeholder="At least 8 characters"
-                className={`${fieldCls} mt-2 w-full`}
+                className={`${fieldCls} streamer mt-2 w-full`}
               />
             ) : (
               <p className="pt-1 text-xs text-on-surface-variant">

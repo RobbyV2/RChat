@@ -20,6 +20,7 @@ import SettingsMenu from '../components/settings_menu'
 import ThreadPanel from '../components/thread_panel'
 import SearchPanel from '../components/search_panel'
 import { CallBanner } from '../components/voice_grid'
+import { NoticeStack } from '../components/notice_stack'
 import { InvitePage } from '../components/invite_card'
 import { ConfigLinkPage } from '../components/config_sync'
 
@@ -33,9 +34,7 @@ export default function AppShell() {
   const dialog = useStore(s => s.activeDialog)
   const confirming = useStore(s => s.confirm !== null)
   const panel = useStore(s => s.panel)
-  const notices = useStore(s => s.notices)
   const toast = useStore(s => s.toast)
-  const dismissNotice = useStore(s => s.dismissNotice)
   const error = useStore(s => s.error)
   const bootError = useStore(s => s.bootError)
   const bootstrap = useStore(s => s.bootstrap)
@@ -210,27 +209,7 @@ export default function AppShell() {
               )}
             </div>
           )}
-          {notices.length > 0 && (
-            <div className="pointer-events-auto flex w-full flex-col gap-2 sm:fixed sm:top-16 sm:right-[max(1rem,env(safe-area-inset-right))] sm:z-50 sm:w-80 sm:max-w-[calc(100vw-2rem)]">
-              {notices.map(n => (
-                <button
-                  key={n.id}
-                  onClick={() => {
-                    dismissNotice(n.id)
-                    n.go()
-                  }}
-                  className="rounded-xl bg-surface-container-high p-3 text-left shadow-elevation-2 hover:bg-surface-container-highest"
-                >
-                  <p className="truncate text-sm font-medium">
-                    {n.lead && `${n.lead} `}
-                    <span className="streamer">{n.name}</span>
-                    {n.title && ` ${n.title}`}
-                  </p>
-                  {n.body && <p className="truncate text-xs text-on-surface-variant">{n.body}</p>}
-                </button>
-              ))}
-            </div>
-          )}
+          <NoticeStack />
         </div>
       </div>
       <InvitePage />

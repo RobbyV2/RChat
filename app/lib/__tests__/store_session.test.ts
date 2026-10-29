@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { api, home } from '../instances'
 import { secretsKey } from '../passwords'
+import { forwardKey } from '../forward'
 import { useStore } from '../store'
 import { me, serverDetail } from './fixtures'
 
@@ -74,6 +75,30 @@ describe('session', () => {
     useStore.setState({ token: null, me: me('bob'), authExpired: true })
     st().logout()
     expect(storage.has(key)).toBe(false)
+    expect(storage.has(other)).toBe(true)
+    Object.assign(globalThis, { localStorage: real })
+  })
+
+  test('logout forgets guest grants and the forward clipboard on this device', () => {
+    const real = (globalThis as { localStorage?: unknown }).localStorage
+    const storage = new Map<string, string>()
+    Object.assign(globalThis, {
+      localStorage: {
+        getItem: (k: string) => storage.get(k) ?? null,
+        setItem: (k: string, v: string) => void storage.set(k, v),
+        removeItem: (k: string) => void storage.delete(k),
+      },
+    })
+    const grants = home.scoped('rchat_guest_grants')
+    const clip = home.scoped(forwardKey('bob'))
+    const other = home.scoped(forwardKey('carol'))
+    storage.set(grants, '{"vault":"g"}')
+    storage.set(clip, '{"v":1}')
+    storage.set(other, '{"v":1}')
+    useStore.setState({ token: null, me: me('bob'), authExpired: true })
+    st().logout()
+    expect(storage.has(grants)).toBe(false)
+    expect(storage.has(clip)).toBe(false)
     expect(storage.has(other)).toBe(true)
     Object.assign(globalThis, { localStorage: real })
   })

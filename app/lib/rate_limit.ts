@@ -11,5 +11,5 @@ export const retrySeconds = (header: string | null, text = '', now = Date.now())
 
 export const tooManyText = (seconds: number | null) =>
   seconds === null
-    ? 'Too many attempts — try again in a few seconds'
-    : `Too many attempts — try again in ${seconds} s`
+    ? 'Too many attempts, try again in a few seconds'
+    : `Too many attempts, try again in ${seconds} s`

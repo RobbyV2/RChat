@@ -16,7 +16,7 @@ describe('retry hints', () => {
   })
 
   test('message names the wait when known', () => {
-    expect(tooManyText(5)).toBe('Too many attempts — try again in 5 s')
-    expect(tooManyText(null)).toBe('Too many attempts — try again in a few seconds')
+    expect(tooManyText(5)).toBe('Too many attempts, try again in 5 s')
+    expect(tooManyText(null)).toBe('Too many attempts, try again in a few seconds')
   })
 })

@@ -3,7 +3,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { EyeOff, FileText, Pin, PinOff, X } from 'lucide-react'
-import { api } from '../lib/instances'
+import { useMediaSrc } from '../lib/media_src'
 import { PINS_TITLE, noPinsText, pinPlace } from '../lib/pins'
 import { myPerms, useStore, viewKey, type ContextMenuItem } from '../lib/store'
 import { Perm, hasPerm, type Message } from '../lib/types'
@@ -133,6 +133,8 @@ function PinMedia({ m }: { m: Message }) {
   const previews = useStore(s => s.settings.asset_previews)
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
   const media = m.media
+  const image = media?.kind === 'server' && previews && IMAGE_EXT.test(media.filename)
+  const src = useMediaSrc(media?.id ?? '', server, image && !media?.removed && !media?.spoiler)
   if (!media) return null
   if (media.removed)
     return <p className="mt-1 text-xs text-on-surface-variant italic">Attachment removed</p>
@@ -143,10 +145,10 @@ function PinMedia({ m }: { m: Message }) {
         Spoiler
       </span>
     )
-  if (media.kind === 'server' && previews && IMAGE_EXT.test(media.filename))
+  if (image && src)
     return (
       <img
-        src={api.mediaUrl(media.id, server)}
+        src={src}
         alt={media.filename}
         loading="lazy"
         className="mt-1.5 max-h-28 max-w-full rounded-lg"

@@ -148,10 +148,22 @@ export class ApiClient {
     return { items, next: response.headers.get(NEXT_CURSOR) || null }
   }
 
-  mediaUrl(id: string, server?: string) {
-    const grant = this.token || !server ? undefined : this.grants[server]
-    const suffix = grant ? `?grant=${seg(grant)}` : ''
-    return `${this.base}/media/${seg(id)}${suffix}`
+  mediaUrl(id: string) {
+    return `${this.base}/media/${seg(id)}`
+  }
+
+  // Guests can't load media by URL: their grant goes in a header, never in a link that could be
+  // copied or kept in history. See `media_src.ts`.
+  guestMedia(server?: string) {
+    return !this.token && server !== undefined && this.grants[server] !== undefined
+  }
+
+  async mediaBlob(id: string, server: string, signal?: AbortSignal) {
+    const grant = this.grants[server]
+    const headers: Record<string, string> = grant ? { 'X-Guest-Grant': grant } : {}
+    const res = await fetch(this.mediaUrl(id), { headers, signal })
+    if (!res.ok) throw new ApiError('Could not load the file', res.status)
+    return res.blob()
   }
 }
 

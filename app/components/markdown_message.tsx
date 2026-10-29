@@ -58,6 +58,7 @@ import {
   remoteKey,
 } from '../lib/invite'
 import { postedUrl } from '../lib/embed_links'
+import { saveGuestMedia, useMediaSrc } from '../lib/media_src'
 import { expiryText, sameOriginImage } from '../lib/rules'
 import { knownMentions, userRefFor, useStore, type ContextMenuItem } from '../lib/store'
 import type { Embed, Message, MessageMedia } from '../lib/types'
@@ -557,6 +558,9 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
   const [revealed, setRevealed] = useState(false)
   const { id, filename, removed, removed_by_author, spoiler, expires_at } = media
+  const image = previews && IMAGE_EXT.test(filename)
+  const src = useMediaSrc(id, server, image && !removed)
+  const guest = api.guestMedia(server)
   if (removed) {
     return (
       <p className="mt-1 text-xs text-on-surface-variant italic">
@@ -566,7 +570,6 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
       </p>
     )
   }
-  const url = api.mediaUrl(id, server)
   const hidden = spoiler && !revealed
   const expiry =
     expires_at !== null ? (
@@ -575,7 +578,11 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
         {fmtExpiry(expires_at)}
       </span>
     ) : null
-  if (previews && IMAGE_EXT.test(filename)) {
+  if (image && src === undefined)
+    return (
+      <div className="mt-1 h-40 w-60 max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container" />
+    )
+  if (image && src !== null) {
     if (hidden) {
       return (
         <button
@@ -583,7 +590,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
           onClick={() => setRevealed(true)}
           className="relative mt-1 block w-fit cursor-pointer overflow-hidden rounded-xl"
         >
-          <img src={url} alt="Spoiler" className="max-h-80 max-w-full blur-2xl" />
+          <img src={src} alt="Spoiler" className="max-h-80 max-w-full blur-2xl" />
           <span className="absolute inset-0 flex items-center justify-center">
             <span className="rounded-full bg-scrim/70 px-3 py-1 text-xs font-medium tracking-wide text-white uppercase">
               Spoiler
@@ -594,8 +601,8 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
     }
     return (
       <div className="mt-1 w-fit">
-        <a href={url} target="_blank" rel="noreferrer" className="block w-fit">
-          <img src={url} alt={filename} className="max-h-80 max-w-full rounded-xl" />
+        <a href={src} target="_blank" rel="noreferrer" className="block w-fit">
+          <img src={src} alt={filename} className="max-h-80 max-w-full rounded-xl" />
         </a>
         {expiry}
       </div>
@@ -612,18 +619,36 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
       </button>
     )
   }
-  return (
-    <a
-      href={url}
-      download={filename}
-      className="mt-1 block w-fit rounded-xl border border-outline-variant bg-surface-container px-3 py-2 hover:bg-surface-container-high"
-    >
+  const card = (
+    <>
       <span className="flex items-center gap-2">
         <FileText size={18} className="shrink-0 text-primary" />
         <span className="max-w-60 truncate text-sm">{filename}</span>
         <Download size={14} className="shrink-0 text-on-surface-variant" />
       </span>
       {expiry}
+    </>
+  )
+  const box =
+    'mt-1 block w-fit rounded-xl border border-outline-variant bg-surface-container px-3 py-2 text-left hover:bg-surface-container-high'
+  if (guest && server !== undefined) {
+    return (
+      <button
+        title={`Download ${filename}`}
+        onClick={() =>
+          void saveGuestMedia(id, server, filename).catch((err: unknown) =>
+            useStore.getState().setError(err instanceof Error ? err.message : String(err))
+          )
+        }
+        className={`cursor-pointer ${box}`}
+      >
+        {card}
+      </button>
+    )
+  }
+  return (
+    <a href={api.mediaUrl(id)} download={filename} className={box}>
+      {card}
     </a>
   )
 }

@@ -14,8 +14,9 @@ import { setNotifier } from '../platform'
 import { webNotifier } from '../platform/web_notifications'
 import { home } from '../instances'
 import { fakeNotifier } from './fake_notifier'
+import { alertBody, context, headline, type Piece } from '../notices'
 import type { Ping, WsEvent } from '../types'
-import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { me, media, memoryStorage, msg, serverDetail, user } from './fixtures'
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -62,7 +63,9 @@ const inDm = (id: number, content = 'hey'): WsEvent => ({
     author: user('alice', { display_name: 'Alice' }),
   }),
 })
-const toasts = () => st().notices.map(n => `${n.name}|${n.title}|${n.body}`)
+const line = (pieces: Piece[]) => pieces.map(p => p.text).join('')
+const toasts = () =>
+  st().notices.map(n => `${line(headline(n))}|${line(context(n))}|${alertBody(n.body, false)}`)
 
 const chan = { kind: 'channel', id: 1, server: 's' } as const
 const server = { kind: 'server', name: 's' } as const
@@ -171,16 +174,16 @@ describe('levels', () => {
     dispatch(inChannel(10))
     expect(st().notices).toEqual([])
     dispatch(pinged(ping()))
-    expect(toasts()).toEqual(['Alice|mentioned you in #general|hi @bob'])
+    expect(toasts()).toEqual(['Alice mentioned you|s · #general|hi @bob'])
   })
 
   test('All messages on a channel toasts every message, not while watching it', () => {
     st().setNotifyLevel(chan, 'all')
     dispatch(inChannel(10))
-    expect(toasts()).toEqual(['Alice|in #general|hello'])
+    expect(toasts()).toEqual(['Alice|s · #general|hello'])
     st().setNotifyLevel({ kind: 'channel', id: 2, server: 's' }, 'all')
     dispatch(inChannel(11, 'here', 2))
-    expect(toasts()).toEqual(['Alice|in #general|hello'])
+    expect(toasts()).toEqual(['Alice|s · #general|hello'])
   })
 
   test('join and leave rows: unread, a toast with their line under All messages, no ping', () => {
@@ -194,7 +197,7 @@ describe('levels', () => {
     expect(scopePingCount(st(), 'c1')).toBe(0)
     st().setNotifyLevel(chan, 'all')
     dispatch(system(13, 'leave'))
-    expect(toasts()).toEqual(['Alice|in #general|Alice left the server.'])
+    expect(toasts()).toEqual(['Alice|s · #general|Alice left the server.'])
   })
 
   test('a mention under All messages toasts once, as the ping', () => {
@@ -219,12 +222,12 @@ describe('levels', () => {
 
   test('DMs default to all messages; Only @mentions keeps just the pings', () => {
     dispatch(inDm(11))
-    expect(toasts()).toEqual(['Alice||hey'])
+    expect(toasts()).toEqual(['Alice|Direct message|hey'])
     st().setNotifyLevel(dm, 'mentions')
     dispatch(inDm(12, 'again'))
-    expect(toasts()).toEqual(['Alice||hey'])
+    expect(toasts()).toEqual(['Alice|Direct message|hey'])
     dispatch(pinged(ping({ id: 2, scope: 'd4', server: null })))
-    expect(toasts()).toEqual(['Alice||hey', 'Alice|mentioned you|hi @bob'])
+    expect(toasts()).toEqual(['2 new messages from Alice|Direct message|hi @bob'])
   })
 
   test('thread replies toast in DMs, not under a server channel set to All messages', () => {
@@ -236,7 +239,7 @@ describe('levels', () => {
     const dmReply = inDm(12, 'dm thread')
     if (dmReply.type === 'message') dmReply.message.thread_root_id = 6
     dispatch(dmReply)
-    expect(toasts()).toEqual(['Alice||dm thread'])
+    expect(toasts()).toEqual(['Alice|Direct message|dm thread'])
   })
 
   test('DM set to Nothing: silent, no badge', () => {
@@ -257,6 +260,7 @@ describe('desktop notifications', () => {
     fake = fakeNotifier('granted')
     setNotifier(fake)
     g.document = { visibilityState: 'hidden', hasFocus: () => false }
+    useStore.setState({ streamer: false })
     st().setDesktopNotify(true)
   })
   afterEach(() => {
@@ -270,7 +274,7 @@ describe('desktop notifications', () => {
     dispatch(pinged(ping({ id: 2, excerpt: 'again @bob' })))
     expect(fake.shown.map(n => [n.title, n.body, n.tag, n.renotify])).toEqual([
       ['Alice mentioned you in #general', 'hi @bob', 'c1', true],
-      ['Alice mentioned you in #general', 'again @bob', 'c1', true],
+      ['2 new messages from Alice in #general', 'again @bob', 'c1', true],
     ])
   })
 
@@ -283,6 +287,24 @@ describe('desktop notifications', () => {
     expect(fake.shown.length).toBe(1)
   })
 
+  test('spoilers never reach a system notification', () => {
+    dispatch(inDm(11, 'it was ||the butler|| all along'))
+    dispatch(pinged(ping({ id: 3, excerpt: 'hey @bob ||the end is cut' })))
+    expect(fake.shown.map(n => n.body)).toEqual(['it was ████████ all along', 'hey @bob ████████'])
+  })
+
+  test('a spoilered attachment without text is "Attachment", never its filename', () => {
+    const file = (id: number, spoiler: boolean): WsEvent => {
+      const ev = inDm(id, '')
+      if (ev.type === 'message')
+        ev.message.media = media({ id: `m${id}`, filename: `plot${id}.png`, spoiler })
+      return ev
+    }
+    dispatch(file(11, true))
+    dispatch(file(12, false))
+    expect(fake.shown.map(n => n.body)).toEqual(['Attachment', 'plot12.png'])
+  })
+
   test('none while the tab has focus, without permission, or switched off', () => {
     g.document = { visibilityState: 'visible', hasFocus: () => true }
     dispatch(inDm(11))
@@ -293,7 +315,7 @@ describe('desktop notifications', () => {
     st().setDesktopNotify(false)
     dispatch(inDm(13))
     expect(fake.shown).toEqual([])
-    expect(toasts().length).toBe(3)
+    expect(toasts()).toEqual(['3 new messages from Alice|Direct message|hey'])
   })
 })
 
@@ -374,5 +396,32 @@ describe('membership', () => {
       g.document = realDocument
       Object.assign(globalThis, { localStorage: memoryStorage })
     }
+  })
+})
+
+describe('toasts', () => {
+  test('one conversation stacks, clicking opens its newest message', () => {
+    const opened: unknown[][] = []
+    const realOpen = st().openDm
+    useStore.setState({ openDm: (...args: unknown[]) => void opened.push(args) } as never)
+    dispatch(inDm(11, 'one'))
+    dispatch(inDm(12, 'two'))
+    expect(toasts()).toEqual(['2 new messages from Alice|Direct message|two'])
+    st().notices[0].go()
+    expect(opened).toEqual([[4, 'push', 12]])
+    useStore.setState({ openDm: realOpen })
+  })
+
+  test('pausing stops the timers until resumed; dismiss removes one', () => {
+    dispatch(inDm(11))
+    st().pauseNotices(true)
+    expect(st().noticesPaused).toBe(true)
+    expect(st().notices[0].timer.since).toBeNull()
+    dispatch(pinged(ping({ id: 5 })))
+    expect(st().notices.map(n => n.timer.since)).toEqual([null, null])
+    st().pauseNotices(false)
+    expect(st().notices.every(n => n.timer.since !== null)).toBe(true)
+    st().dismissNotice(st().notices[0].id)
+    expect(toasts()).toEqual(['Alice mentioned you|s · #general|hi @bob'])
   })
 })

@@ -60,4 +60,27 @@ describe('mediaUrl', () => {
   test('builds the media path without recursing', () => {
     expect(createApi('/api').mediaUrl('a b')).toBe('/api/media/a%20b')
   })
+
+  test('a guest grant never goes into the URL; guests fetch with the header', async () => {
+    const client = createApi('/api')
+    client.setGrants({ s: 'g1', t: 'g2' })
+    expect(client.mediaUrl('m')).toBe('/api/media/m')
+    expect(client.guestMedia('s')).toBe(true)
+    expect(client.guestMedia('u')).toBe(false)
+    expect(client.guestMedia(undefined)).toBe(false)
+    const real = globalThis.fetch
+    const seen: [string, Record<string, string>][] = []
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      seen.push([String(input), (init?.headers ?? {}) as Record<string, string>])
+      return new Response('x')
+    }) as typeof fetch
+    try {
+      await client.mediaBlob('m', 's')
+    } finally {
+      globalThis.fetch = real
+    }
+    expect(seen).toEqual([['/api/media/m', { 'X-Guest-Grant': 'g1' }]])
+    client.setToken('tok')
+    expect(client.guestMedia('s')).toBe(false)
+  })
 })

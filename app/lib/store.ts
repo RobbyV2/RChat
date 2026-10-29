@@ -68,6 +68,16 @@ import {
   type NotifyScope,
 } from './notify'
 import { notifications } from './platform'
+import { forgetGuestMedia } from './media_src'
+import {
+  addNotice,
+  desktopText,
+  liveNotices,
+  nextNoticeEnd,
+  pauseNotices,
+  type AlertInput,
+  type Notice,
+} from './notices'
 import { EMPTY_PREFS, emojiKey, noteUse, parseEmojiPrefs, setTone, type EmojiPrefs } from './emoji'
 import { canAddEmoji, emojiBase, reacted, reactorKey, withReaction } from './reactions'
 import {
@@ -354,15 +364,6 @@ export interface Outgoing {
   send: (opts: SendOpts) => Promise<Message>
 }
 
-export interface Notice {
-  id: number
-  lead?: string
-  name: string
-  title: string
-  body: string
-  go: () => void
-}
-
 // A short neutral message at the top; `name` is shown after `text` with the streamer blur.
 export interface Toast {
   id: number
@@ -576,6 +577,7 @@ interface RChatState {
   panel: Panel | null
   pending: Record<string, PendingUpload>
   notices: Notice[]
+  noticesPaused: boolean
   drafts: Record<string, string>
   replying: Record<string, Replying>
   forwardClip: ForwardClip | null
@@ -699,6 +701,7 @@ interface RChatState {
   sendThreadMessage: (content: string, p2pExpiresIn?: number | null) => void
   searchRun: (args: SearchArgs, reset: boolean) => Promise<void>
   dismissNotice: (id: number) => void
+  pauseNotices: (paused: boolean) => void
   deleteMessage: (id: number) => Promise<void>
   deleteMedia: (messageId: number) => Promise<void>
   deleteEmbed: (messageId: number, ord: number, banner: boolean) => Promise<void>
@@ -1607,13 +1610,7 @@ export const useStore = create<RChatState>()((set, get) => {
   const guestLocked = (name: string) => {
     if (!get().guestServers.includes(name)) return
     const { servers, guestNames } = get()
-    notify(
-      servers[name]?.display_name ?? guestNames[name] ?? name,
-      '',
-      '',
-      () => {},
-      'You were removed from'
-    )
+    systemNotice('You were removed from', servers[name]?.display_name ?? guestNames[name] ?? name)
     dropServer(name)
   }
 
@@ -2186,7 +2183,7 @@ export const useStore = create<RChatState>()((set, get) => {
       me?.servers.find(x => x.name === server)?.display_name ??
       title ??
       server
-    notify(name, '', '', () => {}, banned ? 'You were banned from' : 'You were removed from')
+    systemNotice(banned ? 'You were banned from' : 'You were removed from', name)
     dropServer(server)
   }
 
@@ -3170,47 +3167,58 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   let noticeId = 0
-  const notify = (name: string, title: string, body: string, go: () => void, lead?: string) => {
-    noticeId += 1
-    const id = noticeId
-    set(s => ({ notices: [...s.notices, { id, lead, name, title, body, go }].slice(-3) }))
-    setTimeout(() => set(s => ({ notices: s.notices.filter(n => n.id !== id) })), 5000)
+  let noticeTimer: ReturnType<typeof setTimeout> | null = null
+  const scheduleNotices = () => {
+    if (noticeTimer !== null) clearTimeout(noticeTimer)
+    noticeTimer = null
+    const wait = nextNoticeEnd(get().notices, Date.now())
+    if (wait === null) return
+    noticeTimer = setTimeout(() => {
+      noticeTimer = null
+      set(s => ({ notices: liveNotices(s.notices, Date.now()) }))
+      scheduleNotices()
+    }, wait + 20)
   }
 
+  const notify = (alert: AlertInput) => {
+    noticeId += 1
+    const id = noticeId
+    set(s => ({ notices: addNotice(s.notices, alert, id, Date.now(), s.noticesPaused) }))
+    scheduleNotices()
+    return get().notices.find(n => n.key === alert.key && (alert.lead === undefined || n.id === id))
+  }
+
+  const systemNotice = (lead: string, name: string) =>
+    void notify({
+      key: '!',
+      actor: null,
+      action: '',
+      body: '',
+      server: null,
+      channel: null,
+      dm: false,
+      message: false,
+      lead,
+      name,
+      generic: '',
+      go: () => {},
+    })
+
   // A system notification for the same events that toast, only while the tab is in the
-  // background. Streamer mode leaves out names and message text.
-  const desktopAlert = (
-    name: string,
-    title: string,
-    body: string,
-    go: () => void,
-    tag: string,
-    generic: string
-  ) => {
+  // background. It shows what the toast shows (see `desktopText`), so streamer mode leaves out
+  // names and message text.
+  const desktopAlert = (notice: Notice) => {
     const system = notifications()
     if (!get().notifyPrefs.desktop || system.permission() !== 'granted') return
     if (typeof document === 'undefined') return
     if (document.visibilityState === 'visible' && document.hasFocus()) return
-    const hidden = get().streamer
-    system.show({
-      title: hidden ? generic : `${name}${title ? ` ${title}` : ''}`,
-      body: hidden ? '' : body,
-      tag,
-      renotify: true,
-      onClick: go,
-    })
+    const { title, body } = desktopText(notice, get().streamer)
+    system.show({ title, body, tag: notice.key, renotify: true, onClick: notice.go })
   }
 
-  const alertUser = (
-    name: string,
-    title: string,
-    body: string,
-    go: () => void,
-    tag: string,
-    generic: string
-  ) => {
-    notify(name, title, body, go)
-    desktopAlert(name, title, body, go, tag, generic)
+  const alertUser = (alert: AlertInput) => {
+    const notice = notify(alert)
+    if (notice) desktopAlert(notice)
   }
 
   let endedVoice: number | null = null
@@ -3408,6 +3416,7 @@ export const useStore = create<RChatState>()((set, get) => {
     panel: null,
     pending: {},
     notices: [],
+    noticesPaused: false,
     drafts: {},
     replying: {},
     forwardClip: null,
@@ -3615,7 +3624,12 @@ export const useStore = create<RChatState>()((set, get) => {
     logout: () => {
       const token = get().authExpired ? null : get().token
       const username = get().me?.username
-      if (username) writeLocal(home.scoped(secretsKey(username)), null)
+      if (username) {
+        writeLocal(home.scoped(secretsKey(username)), null)
+        writeLocal(home.scoped(forwardKey(username)), null)
+      }
+      if (noticeTimer !== null) clearTimeout(noticeTimer)
+      noticeTimer = null
       if (meRetry) clearTimeout(meRetry)
       meRetry = null
       if (expiryTimer !== null) clearTimeout(expiryTimer)
@@ -3636,6 +3650,8 @@ export const useStore = create<RChatState>()((set, get) => {
       writeLocal(LS.token, null)
       setTokenCookie(null)
       writeLocal(LS.guest, null)
+      writeLocal(LS.guestGrants, null)
+      forgetGuestMedia()
       api.setToken(null)
       api.setGrants({})
       home.ws.setGrants({})
@@ -3708,6 +3724,7 @@ export const useStore = create<RChatState>()((set, get) => {
         panel: null,
         pending: {},
         notices: [],
+        noticesPaused: false,
         drafts: {},
         replying: {},
         forwardClip: null,
@@ -4530,7 +4547,16 @@ export const useStore = create<RChatState>()((set, get) => {
         }
       }),
 
-    dismissNotice: id => set(s => ({ notices: s.notices.filter(n => n.id !== id) })),
+    dismissNotice: id => {
+      set(s => ({ notices: s.notices.filter(n => n.id !== id) }))
+      scheduleNotices()
+    },
+
+    pauseNotices: paused => {
+      if (get().noticesPaused === paused) return
+      set(s => ({ noticesPaused: paused, notices: pauseNotices(s.notices, paused, Date.now()) }))
+      scheduleNotices()
+    },
 
     deleteMessage: id =>
       act(async () => {
@@ -5026,26 +5052,33 @@ export const useStore = create<RChatState>()((set, get) => {
             pageVisible()
           if (!messageAlert(scopeRule(get(), target), watched)) return
           const { dm_id, channel_id } = ev
+          const host = ev.server !== null ? get().servers[ev.server] : undefined
           const channel =
-            ev.server !== null && channel_id !== null
-              ? (get().servers[ev.server]?.channels.find(c => c.id === channel_id)?.name ?? null)
+            channel_id !== null
+              ? (host?.channels.find(c => c.id === channel_id)?.name ?? null)
               : null
-          alertUser(
-            m.author.display_name,
-            channel ? `in #${channel}` : '',
-            m.kind === 'pin'
-              ? 'Pinned a message'
-              : isSystem(m)
-                ? systemText(m)
-                : m.content || m.media?.filename || 'Attachment',
-            () => {
-              if (dm_id !== null) void get().openDm(dm_id)
+          alertUser({
+            key: scope,
+            actor: m.author,
+            action: '',
+            body:
+              m.kind === 'pin'
+                ? 'Pinned a message'
+                : isSystem(m)
+                  ? systemText(m)
+                  : m.content || (m.media?.spoiler ? '' : m.media?.filename) || 'Attachment',
+            server: dm_id === null ? (host?.display_name ?? null) : null,
+            channel,
+            dm: dm_id !== null,
+            message: true,
+            name: m.author.display_name,
+            generic: 'New message',
+            go: () => {
+              if (dm_id !== null) void get().openDm(dm_id, 'push', m.id)
               else if (ev.server !== null && channel_id !== null)
                 void get().openChannel(ev.server, channel_id, 'push', m.id)
             },
-            scope,
-            'New message'
-          )
+          })
           return
         }
         case 'message_updated': {
@@ -5558,19 +5591,21 @@ export const useStore = create<RChatState>()((set, get) => {
             if (get().token) void api.postRead(key, lastRead, false, ping.id).catch(() => {})
           }
           if (!alert.toast) return
-          const channel =
-            ping.server !== null
-              ? (s.servers[ping.server]?.channels.find(c => `c${c.id}` === ping.scope)?.name ??
-                null)
-              : null
-          alertUser(
-            ping.actor.display_name,
-            pingAction(ping, channel),
-            ping.excerpt,
-            () => void get().openPing(ping),
-            ping.scope,
-            'New notification'
-          )
+          const host = ping.server !== null ? s.servers[ping.server] : undefined
+          const channel = host?.channels.find(c => `c${c.id}` === ping.scope)?.name ?? null
+          alertUser({
+            key: pingKey(ping),
+            actor: ping.actor,
+            action: pingAction(ping, null),
+            body: ping.excerpt,
+            server: ping.server !== null ? (host?.display_name ?? null) : null,
+            channel,
+            dm: ping.scope[0] === 'd',
+            message: ping.kind !== 'reaction',
+            name: ping.actor.display_name,
+            generic: 'New notification',
+            go: () => void get().openPing(ping),
+          })
           return
         }
         case 'ping_count': {

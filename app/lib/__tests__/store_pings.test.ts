@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { allPings, dmPingCount, knownMentions, serverPingCount, useStore } from '../store'
 import { mentionCandidates } from '../mentions'
 import { scopePings } from '../pings'
+import { headline, type Piece } from '../notices'
 import type { Ping, WsEvent } from '../types'
 import { me, member, msg, serverDetail, user } from './fixtures'
 
 const st = () => useStore.getState()
+const line = (pieces: Piece[]) => pieces.map(p => p.text).join('')
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
 const realFetch = globalThis.fetch
 const realWindow = (globalThis as { window?: unknown }).window
@@ -89,9 +91,8 @@ describe('incoming pings', () => {
     })
     expect(serverPingCount(st(), 's')).toBe(2)
     expect(allPings(st())).toBe(2)
-    expect(st().notices.map(n => `${n.name} ${n.title}|${n.body}`)).toEqual([
-      'Alice mentioned you in #general|hi @bob',
-      'Alice mentioned you in #general|hi @bob',
+    expect(st().notices.map(n => `${line(headline(n))}|${n.body}`)).toEqual([
+      '2 new messages from Alice|hi @bob',
     ])
   })
 
@@ -141,7 +142,7 @@ describe('incoming pings', () => {
     expect(st().notices).toEqual([])
     dispatch(pinged(ping({ scope: 'd4', server: null, message_id: 11 })))
     expect(dmPingCount(st())).toBe(1)
-    expect(st().notices.map(n => n.title)).toEqual(['mentioned you'])
+    expect(st().notices.map(n => n.action)).toEqual(['mentioned you'])
   })
 })
 

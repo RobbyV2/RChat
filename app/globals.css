@@ -51,6 +51,7 @@
   --animate-sheet-up: sheet-up 160ms ease-out;
   --animate-speak: speak 1.6s ease-in-out infinite;
   --animate-ring: ring 1.4s ease-out infinite;
+  --animate-notice-time: notice-time 5s linear forwards;
 
   @keyframes sheet-up {
     from {
@@ -69,6 +70,15 @@
       box-shadow:
         inset 0 0 0 3px var(--color-status-green),
         0 0 0 4px color-mix(in srgb, var(--color-status-green) 25%, transparent);
+    }
+  }
+
+  @keyframes notice-time {
+    from {
+      transform: scaleX(var(--notice-from, 1));
+    }
+    to {
+      transform: scaleX(0);
     }
   }
 
