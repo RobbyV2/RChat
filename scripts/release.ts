@@ -201,6 +201,10 @@ export const packagingValues = (
     PKGVER: version.replaceAll('-', '_'),
     TAG: tag,
     REPO: repo,
+    LICENSE_SHA256: createHash('sha256')
+      .update(readFileSync(join(root, 'LICENSE')))
+      .digest('hex'),
+    LICENSE_URL: `https://raw.githubusercontent.com/${repo}/${tag}/LICENSE`,
   }
   for (const [key, match] of Object.entries(ASSETS)) {
     const name = names.find(match)

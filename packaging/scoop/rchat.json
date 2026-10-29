@@ -2,7 +2,7 @@
   "version": "{{VERSION}}",
   "description": "Anonymous Material chat",
   "homepage": "https://github.com/{{REPO}}",
-  "license": "Unknown",
+  "license": "MIT",
   "architecture": {
     "64bit": {
       "url": "{{NSIS_URL}}#/dl.7z",

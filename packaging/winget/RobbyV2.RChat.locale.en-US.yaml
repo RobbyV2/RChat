@@ -6,7 +6,8 @@ Publisher: RobbyV2
 PublisherUrl: https://github.com/RobbyV2
 PackageName: RChat
 PackageUrl: https://github.com/{{REPO}}
-License: Unknown
+License: MIT
+LicenseUrl: https://github.com/{{REPO}}/blob/main/LICENSE
 ShortDescription: Anonymous Material chat
 Description: Desktop client for RChat instances.
 ReleaseNotesUrl: https://github.com/{{REPO}}/releases/tag/{{TAG}}

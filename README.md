@@ -5,6 +5,7 @@
 <p align="center">
   <a href="https://github.com/RobbyV2/RChat/actions/workflows/ci.yml"><img src="https://github.com/RobbyV2/RChat/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/RobbyV2/RChat/pkgs/container/rchat"><img src="https://img.shields.io/badge/ghcr-weekly-4f46e5" alt="Weekly image"></a>
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license">
   <img src="https://img.shields.io/badge/Rust-axum-b7410e" alt="Rust">
   <img src="https://img.shields.io/badge/Next.js-16-black" alt="Next.js">
   <img src="https://img.shields.io/badge/storage-sqlite%20%7C%20postgres-336791" alt="Storage">
@@ -325,3 +326,7 @@ The relay uses UDP ports 49160 to 49415. Open them in the firewall. Reserve them
 Data is not encrypted at rest. Anyone with the database file can read all messages and files.
 
 Rate limits and server password budgets count per client address, and password attempts also per network (IPv4 /24, IPv6 /48). People behind one shared address, like carrier NAT or a school, share them. Behind a proxy, set `TRUSTED_PROXIES`. See `.env.local.example`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

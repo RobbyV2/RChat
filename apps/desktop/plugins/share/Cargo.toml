@@ -2,6 +2,7 @@
 name = "tauri-plugin-rchat-share"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 description = "System share sheet for the RChat mobile app"
 publish = false
 links = "tauri-plugin-rchat-share"

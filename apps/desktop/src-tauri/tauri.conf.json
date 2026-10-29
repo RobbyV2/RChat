@@ -66,6 +66,8 @@
     "shortDescription": "Anonymous Material chat",
     "longDescription": "Desktop client for RChat instances.",
     "homepage": "https://github.com/RobbyV2/RChat",
+    "license": "MIT",
+    "licenseFile": "../../../LICENSE",
     "icon": [
       "icons/32x32.png",
       "icons/64x64.png",

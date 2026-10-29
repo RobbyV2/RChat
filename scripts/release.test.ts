@@ -178,6 +178,7 @@ describe('packaging', () => {
     )
     expect(values.DMG_SHA256).toBe('hash-RChat_0.3.0_universal.dmg')
     expect(values.PKGVER).toBe('0.3.0')
+    expect(values.LICENSE_URL).toBe('https://raw.githubusercontent.com/RobbyV2/RChat/0.3.0/LICENSE')
   })
 
   test('weekly versions are valid pkgver values', () => {
