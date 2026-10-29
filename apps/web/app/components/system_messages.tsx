@@ -8,7 +8,8 @@ import { choiceId, systemChoices, systemParts } from '../lib/system_messages'
 import type { Message, SystemMessages } from '../lib/types'
 import { SettingSwitch } from './admin_panel'
 import { longPress } from './context_menu'
-import { fmtTime, nameTriggerCls } from './message_pane'
+import { nameTriggerCls } from './message_pane'
+import { MessageTime } from './timestamp'
 import { profileTrigger } from './profile_card'
 import { FieldError, fieldCls, sectionCls, textBtn } from './ui'
 
@@ -49,7 +50,7 @@ export function SystemNotice({
             {m.author.display_name}
           </span>
           {after}
-          <span className="ml-2 text-xs opacity-70">{fmtTime(m.created_at)}</span>
+          <MessageTime ts={m.created_at} className="ml-2 text-xs opacity-70" />
         </p>
       </div>
     </div>

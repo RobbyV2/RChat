@@ -98,14 +98,10 @@ import { canPin } from '../lib/pins'
 import { isSystem } from '../lib/system_messages'
 import { messageLinkUrl } from '../lib/message_links'
 import { sharing } from '../lib/platform'
+import { messageStampToken } from '../lib/timestamps'
+import { MessageTime } from './timestamp'
 
 const EMPTY: Message[] = []
-
-export const fmtTime = (ts: number) => {
-  const d = new Date(ts * 1000)
-  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
-  return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString()} ${time}`
-}
 
 const callIcon = (tone: CallTone, video: boolean, incoming: boolean): LucideIcon => {
   if (video) return tone === 'missed' || tone === 'declined' ? VideoOff : Video
@@ -182,7 +178,7 @@ function CallLogRow({ message }: { message: Message }) {
             <CallDuration from={call.answered_at} />
           </span>
         )}
-        <span className="text-xs opacity-70">{fmtTime(message.created_at)}</span>
+        <MessageTime ts={message.created_at} className="text-xs opacity-70" />
         {tone === 'ringing' && incoming && (
           <span className="flex items-center gap-1.5">
             <button
@@ -271,7 +267,7 @@ export function AuthorRow({
 }
 
 export const timeMeta = (ts: number) => (
-  <span className="shrink-0 text-xs text-on-surface-variant">{fmtTime(ts)}</span>
+  <MessageTime ts={ts} className="shrink-0 text-xs text-on-surface-variant" />
 )
 
 const authorKey = (messages: Message[], extra: string[] = []) =>
@@ -467,6 +463,11 @@ export const messageCopyItems = (m: Message): ContextMenuItem[] => {
     ...(link
       ? [{ label: 'Copy Message Link', icon: Link, action: () => void sharing().copyText(link) }]
       : []),
+    {
+      label: 'Copy Timestamp',
+      icon: Clock,
+      action: () => void sharing().copyText(messageStampToken(m.created_at)),
+    },
     { label: 'Copy Message ID', icon: Hash, action: () => copy(String(m.id)) },
     { label: 'Copy User ID', icon: AtSign, action: () => copy(m.author.username) },
   ]

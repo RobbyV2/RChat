@@ -1,4 +1,5 @@
 import { previewText } from './invite'
+import { plainStamps } from './timestamps'
 import type { UserRef } from './types'
 
 // In-app toasts. Alerts from one conversation (`key`) stack into one toast that counts them and
@@ -145,7 +146,7 @@ const BLOCKS = (inner: string) => '█'.repeat(Math.min(8, Math.max(3, inner.tri
 // spoiler cut open by a short excerpt. Streamer mode shows no text at all.
 export const alertBody = (body: string, streamer: boolean) => {
   if (streamer) return ''
-  return previewText(body)
+  return previewText(plainStamps(body))
     .replace(/\|\|([\s\S]*)$/, (_, inner: string) => (inner.trim() ? BLOCKS(inner) : ''))
     .trim()
 }

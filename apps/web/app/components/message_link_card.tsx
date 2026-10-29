@@ -6,8 +6,7 @@ import { useStore } from '../lib/store'
 import { cardLabel } from '../lib/message_links'
 import type { MessageLocation } from '../lib/types'
 import type { MessageTarget } from '../lib/view'
-import { editedTitle } from './message_editor'
-import { fmtTime } from './message_pane'
+import { MessageTime } from './timestamp'
 import { Snippet } from './replies'
 import { UserAvatar } from './user_avatar'
 
@@ -49,12 +48,7 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
           <span className="streamer min-w-0 truncate text-sm font-medium">
             {author.display_name}
           </span>
-          <span
-            title={editedTitle(created_at)}
-            className="shrink-0 text-xs text-on-surface-variant"
-          >
-            {fmtTime(created_at)}
-          </span>
+          <MessageTime ts={created_at} className="shrink-0 text-xs text-on-surface-variant" />
         </div>
         <div className="mt-0.5 flex min-w-0 items-center gap-1 text-sm text-on-surface-variant">
           <CardText card={card} />

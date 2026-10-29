@@ -26,6 +26,13 @@ import { boostFor, findShortcode, matchShortcodes, withTone, type CodeMatch } fr
 import { AutocompletePopup, useAutocomplete } from './autocomplete'
 import { useEmojiData } from './emoji_picker'
 import { UserAvatar } from './user_avatar'
+import {
+  STYLE_LABELS,
+  acceptStamp,
+  findStampTrigger,
+  stampChoices,
+  type StampChoice,
+} from '../lib/timestamps'
 
 const NO_MESSAGES: Message[] = []
 const NO_PEOPLE: UserRef[] = []
@@ -90,9 +97,9 @@ function useMentionSearch(listKey: string | null, query: string | null) {
   )
 }
 
-// `:shortcode` and `@mention` autocomplete for a message box, and auto-grow up to `maxHeight`.
-// `listKey` is the message list of the box. `getText` reads the text when the user accepts an
-// item.
+// `:shortcode`, `@mention` and `<t:` timestamp autocomplete for a message box, and auto-grow up
+// to `maxHeight`. `listKey` is the message list of the box. `getText` reads the text when the
+// user accepts an item.
 export function useTextAssist({
   listKey,
   text,
@@ -118,6 +125,7 @@ export function useTextAssist({
   const placeCaret = useRef<number | null>(null)
   const acId = useId()
   const peopleId = useId()
+  const stampId = useId()
 
   useLayoutEffect(() => {
     const el = inputRef.current
@@ -132,15 +140,24 @@ export function useTextAssist({
     }
   }, [text, listKey, inputRef, maxHeight])
 
-  const trigger = caret !== null && !paused ? findTrigger(text, caret, ':', 2) : null
+  const stampTrigger = caret !== null && !paused ? findStampTrigger(text, caret) : null
+  const trigger =
+    caret !== null && !paused && !stampTrigger ? findTrigger(text, caret, ':', 2) : null
   const atTrigger =
-    caret !== null && !paused && !trigger ? findTrigger(text, caret, '@', 0, MENTION_QUERY) : null
+    caret !== null && !paused && !trigger && !stampTrigger
+      ? findTrigger(text, caret, '@', 0, MENTION_QUERY)
+      : null
   const searchPeople = useMentionSearch(listKey, atTrigger?.query ?? null)
   const { data: emoji } = useEmojiData(trigger !== null)
   const searchCodes = useCallback(
     (q: string) => (emoji ? matchShortcodes(emoji, q, 10, boostFor(prefs, Date.now())) : []),
     [emoji, prefs]
   )
+
+  const searchStamps = useCallback((q: string) => {
+    const now = Date.now()
+    return stampChoices(q ? Number(q) : Math.floor(now / 1000), now)
+  }, [])
 
   const ac = useAutocomplete<CodeMatch>({
     scope: trigger ? `${listKey}:${trigger.start}` : null,
@@ -172,8 +189,20 @@ export function useTextAssist({
       inputRef.current?.focus()
     },
   })
-  const popup = people.open ? people : ac
-  const popupId = people.open ? peopleId : acId
+  const stamps = useAutocomplete<StampChoice>({
+    scope: stampTrigger ? `${listKey}<${stampTrigger.start}` : null,
+    query: String(stampTrigger?.seconds ?? ''),
+    search: searchStamps,
+    onAccept: c => {
+      if (!stampTrigger) return
+      const next = acceptStamp(getText(), stampTrigger, c.token)
+      placeCaret.current = next.caret
+      setText(next.text)
+      inputRef.current?.focus()
+    },
+  })
+  const popup = stamps.open ? stamps : people.open ? people : ac
+  const popupId = stamps.open ? stampId : people.open ? peopleId : acId
 
   const onType = (value: string, at: number | null) => {
     if (emoji && at !== null && value[at - 1] === ':' && value.length === text.length + 1) {
@@ -207,6 +236,19 @@ export function useTextAssist({
               {withTone(m.emoji, prefs.tone)}
             </span>
             <span className="min-w-0 truncate">:{m.code}:</span>
+          </>
+        )}
+      />
+      <AutocompletePopup
+        id={stampId}
+        title="Timestamp"
+        ac={stamps}
+        below={below}
+        keyOf={c => c.style}
+        render={c => (
+          <>
+            <span className="min-w-0 flex-1 truncate font-medium">{c.preview}</span>
+            <span className="shrink-0 text-xs opacity-70">{STYLE_LABELS[c.style]}</span>
           </>
         )}
       />
@@ -254,6 +296,7 @@ export function useTextAssist({
       'aria-controls': popup.open ? popupId : undefined,
       'aria-activedescendant': popup.open ? `${popupId}-${popup.active}` : undefined,
     },
-    popupKey: (e: KeyboardEvent<HTMLTextAreaElement>) => ac.onKeyDown(e) || people.onKeyDown(e),
+    popupKey: (e: KeyboardEvent<HTMLTextAreaElement>) =>
+      stamps.onKeyDown(e) || ac.onKeyDown(e) || people.onKeyDown(e),
   }
 }

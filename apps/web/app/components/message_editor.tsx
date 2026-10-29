@@ -8,6 +8,7 @@ import { sendKey } from '../lib/keys'
 import type { ToolbarAction } from './message_toolbar'
 import { useMedia } from './context_menu'
 import { useTextAssist } from './text_assist'
+import { fullTimeOf } from '../lib/timestamps'
 
 export const editAction = (onClick: () => void): ToolbarAction => ({
   key: 'edit',
@@ -22,11 +23,8 @@ export const editMenuItem = (action: () => void): ContextMenuItem => ({
   action,
 })
 
-export const editedTitle = (ts: number) =>
-  new Date(ts * 1000).toLocaleString([], { dateStyle: 'full', timeStyle: 'short' })
-
 export function EditedMark({ at }: { at: number }) {
-  const when = editedTitle(at)
+  const when = fullTimeOf(at)
   return (
     <span
       data-edited

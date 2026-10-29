@@ -68,6 +68,8 @@ import { InviteCard, RemoteInviteCard } from './invite_card'
 import { MessageLinkCard } from './message_link_card'
 import { profileTrigger } from './profile_card'
 import { EditedMark } from './message_editor'
+import { Stamp } from './timestamp'
+import { splitStamps, type StampStyle } from '../lib/timestamps'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -155,6 +157,32 @@ const remarkEdited = (at: number) => () => (tree: unknown) => {
   if (last?.type === 'paragraph') last.children = [...(last.children ?? []), mark]
   else root.children = [...(root.children ?? []), { type: 'paragraph', children: [mark] }]
 }
+
+const markStamps = (node: MdNode) => {
+  const { children } = node
+  if (!children) return
+  node.children = children.flatMap(child => {
+    if (child.type !== 'text' || child.value === undefined) {
+      markStamps(child)
+      return [child]
+    }
+    if (!child.value.includes('<t:')) return [child]
+    return splitStamps(child.value).map(({ text, stamp }) =>
+      stamp
+        ? {
+            type: 'emphasis',
+            data: {
+              hName: 'span',
+              hProperties: { 'data-stamp': String(stamp.ms), 'data-style': stamp.style },
+            },
+            children: [{ type: 'text', value: text }],
+          }
+        : { type: 'text', value: text }
+    )
+  })
+}
+
+const remarkStamps = () => (tree: unknown) => markStamps(tree as MdNode)
 
 const InLink = createContext(false)
 
@@ -254,6 +282,12 @@ const components: Components = {
       <SpoilerText>{props.children}</SpoilerText>
     ) : 'data-edited' in props ? (
       <EditedMark at={Number((props as Record<string, unknown>)['data-edited'])} />
+    ) : 'data-stamp' in props ? (
+      <Stamp
+        ms={Number((props as Record<string, unknown>)['data-stamp'])}
+        style={(props as Record<string, unknown>)['data-style'] as StampStyle}
+        token={String(props.children)}
+      />
     ) : 'data-mention' in props ? (
       <Mention username={String((props as Record<string, unknown>)['data-mention'])} />
     ) : (
@@ -767,6 +801,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     () => [
       remarkGfm,
       remarkSpoiler,
+      remarkStamps,
       remarkMention(new Set(known ? known.split('\n') : [])),
       ...(edited ? [remarkEdited(edited)] : []),
     ],

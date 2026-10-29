@@ -39,6 +39,7 @@ import {
 } from '../lib/remote_invite'
 import { deniedAccess, needsPassword } from '../lib/join_flow'
 import { absoluteTime, countdown, tickMs, useNow, usesLeftText } from '../lib/passwords'
+import { plainStamps } from '../lib/timestamps'
 import { serverInitial } from '../lib/rules'
 import type { InstanceInfo, Invite, InviteStatus, Message } from '../lib/types'
 import { ServerGlyph } from './server_rail'
@@ -352,7 +353,7 @@ function TicketNote({ invite, now, center }: { invite: Invite; now: number; cent
 function PreviewLine({ message, big, host }: { message: Message; big: boolean; host?: string }) {
   const streamer = useStore(s => s.streamer)
   const { author, content, media } = message
-  const text = previewText(content)
+  const text = previewText(plainStamps(content))
   return (
     <div className="flex min-w-0 items-start gap-2">
       <UserAvatar

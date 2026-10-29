@@ -9,8 +9,8 @@ import { ComposerBar } from './replies'
 import { MarkdownMessage } from './markdown_message'
 import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
-import { editedTitle } from './message_editor'
-import { fmtTime } from './message_pane'
+import { MessageTime } from './timestamp'
+import { fullTimeOf, messageTime, plainStamps } from '../lib/timestamps'
 
 const DELETED_USER = 'Deleted user'
 
@@ -66,7 +66,7 @@ export function ForwardBar({ draftKey }: { draftKey: string }) {
           &apos;s message
         </span>
         <span className="flex min-w-0 items-center gap-1 text-xs">
-          <span className="truncate">{clip.snippet}</span>
+          <span className="truncate">{plainStamps(clip.snippet)}</span>
           {clip.has_media && <ImageIcon size={12} className="shrink-0" aria-label="Attachment" />}
         </span>
       </span>
@@ -90,7 +90,7 @@ export function ForwardCard({
   if (!fwd) return null
   const { author } = fwd
   const origin = forwardOrigin(fwd)
-  const when = editedTitle(fwd.created_at)
+  const when = fullTimeOf(fwd.created_at)
   return (
     <div data-forward={fwd.source_id} className="min-w-0">
       <div className="flex items-center gap-1 text-xs text-on-surface-variant italic">
@@ -131,9 +131,7 @@ export function ForwardCard({
               </span>
             </>
           )}
-          <span title={when} className="shrink-0 text-xs text-on-surface-variant">
-            {fmtTime(fwd.created_at)}
-          </span>
+          <MessageTime ts={fwd.created_at} className="shrink-0 text-xs text-on-surface-variant" />
         </div>
         <MarkdownMessage message={m} canDelete={canDelete} />
         {fwd.dropped && (
@@ -159,7 +157,9 @@ export function ForwardCard({
               <span aria-hidden>·</span>
             </>
           )}
-          <span className="shrink-0">Originally sent {fmtTime(fwd.created_at)}</span>
+          <span className="shrink-0">
+            Originally sent {messageTime(fwd.created_at * 1000, Date.now())}
+          </span>
         </button>
       </div>
     </div>

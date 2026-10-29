@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { Forward, Image as ImageIcon, X } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { snippetParts } from '../lib/replies'
+import { plainStamps } from '../lib/timestamps'
 import type { ReplyRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 
@@ -33,7 +34,7 @@ export function Snippet({ quote }: { quote: Pick<ReplyRef, 'content' | 'has_medi
   return (
     <span className="flex min-w-0 items-center gap-1">
       <span className="truncate">
-        {snippetParts(quote.content).map((p, i) =>
+        {snippetParts(plainStamps(quote.content)).map((p, i) =>
           p.spoiler ? (
             <span
               key={i}

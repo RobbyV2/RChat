@@ -13,7 +13,8 @@ import { IMAGE_EXT, MarkdownMessage } from './markdown_message'
 import { profileTrigger } from './profile_card'
 import { UserAvatar } from './user_avatar'
 import { CloseButton, SheetGrip } from './ui'
-import { fmtTime, nameTriggerCls } from './message_pane'
+import { nameTriggerCls } from './message_pane'
+import { MessageTime } from './timestamp'
 
 // Pinning and unpinning: either DM participant, or a member with Manage messages.
 export function useCanPin() {
@@ -121,7 +122,7 @@ export function PinNotice({
           <button type="button" onClick={openPins} className={linkCls}>
             pinned messages
           </button>
-          .<span className="ml-2 text-xs opacity-70">{fmtTime(m.created_at)}</span>
+          .<MessageTime ts={m.created_at} className="ml-2 text-xs opacity-70" />
         </p>
       </div>
     </div>
@@ -195,7 +196,7 @@ function PinEntry({
         >
           {m.author.display_name}
         </span>
-        <span className="shrink-0 text-xs text-on-surface-variant">{fmtTime(m.created_at)}</span>
+        <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
       </div>
       {m.forward && <p className="mt-1 text-xs text-on-surface-variant italic">Forwarded</p>}
       <div className="mt-1 max-h-36 overflow-hidden">

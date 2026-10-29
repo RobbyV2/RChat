@@ -6,7 +6,9 @@ import { useStore } from '../lib/store'
 import { dayEndTs, dayStartTs, type SearchArgs } from '../lib/search'
 import { UserAvatar } from './user_avatar'
 import { PanelHeader, Sentinel, fieldCls, useEscape } from './ui'
-import { avatarTriggerCls, fmtTime, nameTriggerCls } from './message_pane'
+import { avatarTriggerCls, nameTriggerCls } from './message_pane'
+import { MessageTime } from './timestamp'
+import { plainStamps } from '../lib/timestamps'
 import { profileTrigger } from './profile_card'
 import { ForwardedTag } from './replies'
 
@@ -160,9 +162,10 @@ export default function SearchPanel() {
               >
                 {r.message.author.display_name}
               </span>
-              <span className="shrink-0 text-xs text-on-surface-variant">
-                {fmtTime(r.message.created_at)}
-              </span>
+              <MessageTime
+                ts={r.message.created_at}
+                className="shrink-0 text-xs text-on-surface-variant"
+              />
               {r.message.forward && (
                 <span className="text-xs">
                   <ForwardedTag />
@@ -170,7 +173,7 @@ export default function SearchPanel() {
               )}
             </div>
             <p className="mt-0.5 line-clamp-2 text-sm break-words text-on-surface">
-              {r.message.content || r.message.media?.filename}
+              {plainStamps(r.message.content) || r.message.media?.filename}
             </p>
             {r.message.media && (
               <p className="mt-0.5 flex items-center gap-1 text-xs text-on-surface-variant">
