@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   allPings,
   dmPingCount,
@@ -8,6 +8,7 @@ import {
   serverPingCount,
   serverUnread,
   useStore,
+  resetSessionCaches,
 } from '../store'
 import { EMPTY_NOTIFY, muteEnd, notifyValue, setLevel, setMute } from '../notify'
 import { setNotifier } from '../platform'
@@ -17,6 +18,8 @@ import { fakeNotifier } from './fake_notifier'
 import { alertBody, context, headline, type Piece } from '../notices'
 import type { Ping, WsEvent } from '../types'
 import { me, media, memoryStorage, msg, serverDetail, user } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)

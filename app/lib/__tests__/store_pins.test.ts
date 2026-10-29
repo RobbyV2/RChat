@@ -1,7 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { useStore } from '../store'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { useStore, resetSessionCaches } from '../store'
 import type { Message, WsEvent } from '../types'
 import { me, msg, serverDetail, user } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -51,6 +53,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  useStore.setState({ pins: null })
   globalThis.fetch = realFetch
   ;(globalThis as { window?: unknown }).window = realWindow
 })

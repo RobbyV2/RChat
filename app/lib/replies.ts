@@ -52,7 +52,7 @@ export const quoteOf = ({ message: m, mention }: Replying, me: string): ReplyRef
 
 export const canQuote = (m: Message) => m.kind === 'user'
 
-export const deletedQuote = (id: number, mention: boolean): ReplyRef => ({
+const deletedQuote = (id: number, mention: boolean): ReplyRef => ({
   id,
   author: null,
   content: '',
@@ -63,7 +63,7 @@ export const deletedQuote = (id: number, mention: boolean): ReplyRef => ({
 
 // The quote of `ref` built from a loaded copy of the original. Loaded lists only hold what the
 // viewer may read, so this shows nothing REST would hide.
-export const quoteFrom = (original: Message, mention: boolean): ReplyRef => ({
+const quoteFrom = (original: Message, mention: boolean): ReplyRef => ({
   id: original.id,
   author: original.author,
   content: plainLine(original.content),

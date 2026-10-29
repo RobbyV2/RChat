@@ -11,7 +11,7 @@ import {
 import { hostOf, parseQualified, privateHost } from './qualified'
 
 export const ASSERTION_MAX_TTL = 300
-export const JWKS_PATH = '/.well-known/jwks.json'
+const JWKS_PATH = '/.well-known/jwks.json'
 const KEYS_TTL_MS = 10 * 60 * 1000
 const REFETCH_MS = 30 * 1000
 const LEEWAY = 30
@@ -71,11 +71,7 @@ export function jwksUrl(iss: string, allowLocal = false): URL {
 
 const sets = new Map<string, JWTVerifyGetKey>()
 
-export function issuerKeys(
-  iss: string,
-  cacheMaxAge = KEYS_TTL_MS,
-  allowLocal = false
-): JWTVerifyGetKey {
+function issuerKeys(iss: string, cacheMaxAge = KEYS_TTL_MS, allowLocal = false): JWTVerifyGetKey {
   const url = jwksUrl(iss, allowLocal).href
   const hit = sets.get(url)
   if (hit) return hit

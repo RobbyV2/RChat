@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   PRESENCE_LOG_MAX,
   byCodePoint,
@@ -11,9 +11,11 @@ import {
   presenceDelta,
   type PresenceLog,
 } from '../presence'
-import { useStore } from '../store'
+import { useStore, resetSessionCaches } from '../store'
 import type { Member, WsEvent } from '../types'
 import { member, paged, serverDetail } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)

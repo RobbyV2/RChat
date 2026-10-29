@@ -1,6 +1,4 @@
 import { create } from 'zustand'
-import type { ReactNode } from 'react'
-import type { LucideIcon } from 'lucide-react'
 import {
   ApiError,
   type LoginRequest,
@@ -27,45 +25,32 @@ import {
   NO_PINGS,
   addPing,
   clearPings,
-  dmPings,
   forgetPings,
   mergePings,
   pingAction,
   pingAlert,
   pingKey,
   pingUntil,
-  serverPings,
-  scopePings,
   setScopePings,
-  shownPings,
-  totalPings,
-  type Pings,
 } from './pings'
 import {
   EMPTY_NOTIFY,
   extendMute,
   keepScopes,
   messageAlert,
-  mutedOf,
   nextExpiry,
   notifyKey,
   notifyValue,
   parseNotify,
-  pingShown,
   pruneNotify,
   renameServerRule,
   resetAll as resetAllNotify,
   resetScope,
-  resolve as resolveNotify,
   scopeOfKey,
   setDesktop,
   setLevel,
   setMute,
-  unreadShown,
-  type Level,
-  type MuteUntil,
   type NotifyPrefs,
-  type NotifyScope,
 } from './notify'
 import { notifications } from './platform'
 import { forgetGuestMedia } from './media_src'
@@ -127,7 +112,6 @@ import {
   trimWindow,
 } from './window'
 import {
-  anyDmUnread,
   appendUnique,
   bumpFront,
   createPager,
@@ -136,23 +120,20 @@ import {
   mergeHead,
   insertSorted,
   refreshTail,
+  renameKey,
   samePrefix,
-  unreadServers,
   windowEdges,
   type Key,
   type OlderState,
   type Page,
   type ReadMark,
 } from './lists'
-import { SEARCH_PAGE, SEARCH_TRIES, addSearchPage, searchParams, type SearchArgs } from './search'
+import { SEARCH_PAGE, SEARCH_TRIES, addSearchPage, searchParams } from './search'
 import {
   addToFolder as addIn,
   autoPinSelf,
   bootDms,
-  dmSections,
   emptyLayout,
-  folderChildren,
-  folderTitle,
   forgetServer,
   knownDms,
   layoutKey,
@@ -167,17 +148,14 @@ import {
   pinDm as pinIn,
   placeDm as placeIn,
   pruneLayout,
-  railNames,
   renameFolder as renameFolderIn,
   renameServer,
   toggleFolder as toggleIn,
   ungroupFolder as ungroupIn,
   unpinDm as unpinIn,
-  type DmZone,
-  type Folder,
   type Layout,
 } from './nav_layout'
-import { MESSAGE_MAX, canChangeRole, charCount, cleanBio, memberPerms, rolePerms } from './rules'
+import { MESSAGE_MAX, charCount, cleanBio } from './rules'
 import {
   dropStashedInvite,
   entryState,
@@ -195,7 +173,6 @@ import {
   stashConfig,
   takeStashedConfig,
   type ConfigDoc,
-  type ConfigSource,
   type SectionKey,
 } from './config_transfer'
 import { clearProfiles, forgetProfiles } from './profile'
@@ -214,16 +191,39 @@ import {
   type PresenceLog,
   type PresenceSnap,
 } from './presence'
-import type { PassKind, Secret } from './password'
-import { ALL_PERMS, Perm, hasPerm } from './types'
+import { Perm, hasPerm } from './types'
+import {
+  MAX_UPLOAD,
+  attachModes,
+  p2pIdTaken,
+  siteSettings,
+  startMode,
+  type PendingUpload,
+  type UploadMode,
+} from './attachments'
+import {
+  changeableRoles,
+  dmView,
+  memberOf,
+  myPerms,
+  previewServer,
+  scopeRule,
+  serverNames,
+} from './selectors'
 import type {
-  AdminOverview,
+  ContextMenuItem,
+  Focus,
+  Outgoing,
+  OutgoingStatus,
+  Paged,
+  RChatState,
+  SearchState,
+} from './store_types'
+import { parsePath, threadKey, viewKey, viewPath, type Nav, type View } from './view'
+
+import type {
   AuthResponse,
-  AvatarKind,
   CallKind,
-  ChannelKind,
-  ChannelPerm,
-  ConfirmChoice,
   DmSummary,
   EditStub,
   Embed,
@@ -231,225 +231,33 @@ import type {
   Member,
   Message,
   MessageLocation,
-  P2pAvailability,
-  Ping,
   ReplyRef,
-  Role,
   SearchResult,
   ServerBan,
   ServerDetail,
   ServerSummary,
   ServerSummaryLite,
-  SiteSettings,
-  SiteSettingsPatch,
-  InstanceInfo,
   Theme,
   Unread,
   UserRef,
+  VoiceMsg,
   WsEvent,
-  WsStatus,
 } from './types'
 
-export type View =
-  { kind: 'channel'; server: string; channelId: number } | { kind: 'dm'; dmId: number }
-
-export type Nav = 'push' | 'replace' | 'none'
-
-export type PathTarget = View | { kind: 'server'; server: string }
-
-export const viewPath = (view: View | null) => {
-  if (view === null) return '/'
-  return view.kind === 'channel'
-    ? `/s/${encodeURIComponent(view.server)}/${view.channelId}/`
-    : `/dm/${view.dmId}/`
-}
-
-export const parsePath = (pathname: string): PathTarget | null => {
-  const channel = pathname.match(/^\/s\/([^/]+)(?:\/(\d+))?\/?$/)
-  if (channel) {
-    const [, raw, id] = channel
-    try {
-      const server = decodeURIComponent(raw)
-      return id === undefined
-        ? { kind: 'server', server }
-        : { kind: 'channel', server, channelId: Number(id) }
-    } catch {
-      return null
-    }
-  }
-  const dm = pathname.match(/^\/dm\/(\d+)\/?$/)
-  return dm ? { kind: 'dm', dmId: Number(dm[1]) } : null
-}
-
-// A menu row. `submenu` opens a nested menu (a flyout on desktop, a sheet with Back on touch)
-// instead of running `action`. `checked` makes it a radio (`radio: true`) or check item.
-export interface ContextMenuItem {
-  label: string
-  subtitle?: string
-  // Lets a long subtitle wrap instead of being cut off.
-  wrap?: boolean
-  danger?: boolean
-  icon?: LucideIcon
-  checked?: boolean
-  radio?: boolean
-  submenu?: ContextMenuItem[]
-  action?: () => void
-}
-
-export interface ContextMenuOptions {
-  header?: ReactNode
-}
-
-export interface ContextMenuState extends ContextMenuOptions {
-  x: number
-  y: number
-  items: ContextMenuItem[]
-}
-
-export interface ReactPicker {
-  message: Message
-  anchor: HTMLElement | null
-}
-
-export interface ConfirmRequest {
-  title: string
-  body: string
-  confirm: string
-  action: (choice: string) => void
-  choices?: ConfirmChoice[]
-}
-
-export type ActiveDialog =
-  | { kind: 'add_server'; join?: string; locked?: boolean }
-  | { kind: 'server_settings'; server: string }
-  | { kind: 'admin_panel' }
-  | { kind: 'ban_confirm'; username: string }
-  | { kind: 'delete_user_confirm'; username: string }
-  | { kind: 'settings'; focus?: 'bio' }
-  | { kind: 'rename_folder'; id: string }
-
-export type Panel = { kind: 'thread'; root: Message } | { kind: 'search' }
-
-// The message being edited inline: the list it was started from and the text so far.
-export interface Editing {
-  key: string
-  id: number
-  text: string
-  focus?: number
-}
-
-export interface Focus {
-  id: number | null
-  flash: boolean
-}
-
-export interface ProfileTarget {
-  user: UserRef
-  server: string | null
-  x: number
-  y: number
-  instance?: string | null
-  rev?: number
-}
-
-export type UploadMode = 'server' | 'p2p'
-
-export interface PendingUpload {
-  file: File
-  spoiler: boolean
-  mode: UploadMode
-  scope: string
-}
-
-export type OutgoingStatus = 'queued' | 'sending' | 'failed'
-
-export interface Outgoing {
-  tempId: number
-  key: string
-  status: OutgoingStatus
-  msg: Message
-  pending: PendingUpload | null
-  p2pExpiresIn: number | null
-  send: (opts: SendOpts) => Promise<Message>
-}
-
-// A short neutral message at the top; `name` is shown after `text` with the streamer blur.
-export interface Toast {
-  id: number
-  text: string
-  name?: string
-}
-
-// The pinned-messages window of one scope; `list` is null until it loads.
-export interface PinsView {
-  key: string
-  list: Message[] | null
-  failed: boolean
-}
-
-export interface SearchState {
-  results: SearchResult[]
-  hasMore: boolean
-  loading: boolean
-  cursor?: string | null
-}
-
-export interface VoiceSession {
-  server: string
-  channelId: number
-}
-
-export interface CallSession {
-  dmId: number
-  dmUsers: string[]
-  state: 'ringing' | 'active'
-  from: string
-  kind: CallKind
-  video: boolean
-  // Unix seconds when the call was answered, from the server (this tab's first sight of it on older servers).
-  since: number | null
-}
+export * from './attachments'
+export * from './selectors'
+export * from './store_types'
+export * from './view'
 
 const emptySearch = (): SearchState => ({ results: [], hasMore: false, loading: false })
 
-export const MAX_UPLOAD = 25 * 1024 * 1024
-
-// Servers before 0.3.0 send no p2p_attachments: P2P was always on there.
-export const siteSettings = (s: SiteSettings): SiteSettings => ({
-  ...s,
-  p2p_attachments: s.p2p_attachments !== false,
-})
-
-// Which attachment modes the server takes now; none means text only.
-// The server refuses a P2P id that is already another user's attachment (or a server file).
-export const p2pIdTaken = (e: unknown) =>
-  e instanceof ApiError && e.status === 400 && e.message === 'Invalid p2p_id'
-
-export const attachModes = (s: SiteSettings): UploadMode[] => [
-  ...(s.asset_uploads ? (['server'] as const) : []),
-  ...(s.p2p_attachments ? (['p2p'] as const) : []),
-]
-
-// The mode a new attachment starts in: a server upload when allowed and small enough, else P2P.
-export const startMode = (s: SiteSettings, size: number): UploadMode | null => {
-  const modes = attachModes(s)
-  if (modes.includes('server') && (size <= MAX_UPLOAD || !modes.includes('p2p'))) return 'server'
-  return modes.includes('p2p') ? 'p2p' : null
-}
-export const PAGE = 50
-export const LIST_MAX = 100
+const PAGE = 50
+const LIST_MAX = 100
 
 const BANNED = 'You are banned from this server'
+const SWITCHED = 'You switched accounts'
 
 class Banned extends Error {}
-
-export interface Paged<T> {
-  list: T[]
-  hasMore: boolean
-  loading: boolean
-  q: string
-  cursor?: string | null
-}
 
 const emptyPage = <T>(): Paged<T> => ({ list: [], hasMore: true, loading: false, q: '' })
 
@@ -476,14 +284,18 @@ const LS = {
   },
 }
 
-export const THEME_COLORS: Record<Theme, string> = { dark: '#141218', light: '#fef7ff' }
+const THEME_COLORS: Record<Theme, string> = { dark: '#141218', light: '#fef7ff' }
 
 export const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
-export const viewKey = (view: View) =>
-  view.kind === 'channel' ? `c${view.channelId}` : `d${view.dmId}`
-
-export const threadKey = (rootId: number) => `t${rootId}`
+// Reads a per-account value; storage that throws (no window, privacy mode) gives the fallback.
+const readScoped = <T>(key: string, parse: (raw: string | null) => T, fallback: T): T => {
+  try {
+    return parse(localStorage.getItem(home.scoped(key)))
+  } catch {
+    return fallback
+  }
+}
 
 const readJson = <T>(key: string, fallback: T): T => {
   try {
@@ -501,8 +313,10 @@ const serverKey = (x: ServerSummary) => x.name
 
 const merge = mergeSorted<Message>
 
+// Ids of optimistic messages, far above any real id.
 const OPT_BASE = 1e15
 let optSeq = 0
+const nextTempId = () => OPT_BASE + ++optSeq
 const draining = new Set<string>()
 
 const pendingEmbeds = new Map<number, Embed[]>()
@@ -530,521 +344,6 @@ const applyEmbeds = (list: Message[]) =>
       })
 
 const pageVisible = () => typeof document === 'undefined' || document.visibilityState === 'visible'
-
-interface RChatState {
-  token: string | null
-  me: Me | null
-  guest: boolean
-  guestServers: string[]
-  guestGrants: Record<string, string>
-  guestNames: Record<string, string>
-  servers: Record<string, ServerDetail>
-  members: Record<string, Paged<Member>>
-  memberInfo: Record<string, Record<string, Member | null>>
-  memberInfoTrim: Record<string, number>
-  adminChanges: Record<string, number>
-  interacted: Record<string, Paged<UserRef>>
-  bans: Record<string, Paged<ServerBan>>
-  adminUsers: Paged<UserRef>
-  adminServers: Paged<ServerSummaryLite>
-  dms: DmSummary[]
-  dmsMore: boolean
-  serversMore: boolean
-  layout: Layout
-  emoji: EmojiPrefs
-  notifyPrefs: NotifyPrefs
-  voice: VoiceSession | null
-  call: CallSession | null
-  callRoute: CallRoute
-  // DMs where a P2P call could not connect because the other side can't do P2P, with the time (ms).
-  p2pCallFailed: Record<number, number>
-  voiceUsers: Record<number, string[]>
-  p2pAvailability: Record<string, P2pAvailability>
-  rtcTick: number
-  selfAudio: SelfAudio
-  view: View | null
-  invite: OpenInvite | null
-  configLink: string | null
-  messages: Record<string, Message[]>
-  older: Record<string, OlderState>
-  newer: Record<string, OlderState>
-  stale: Record<string, boolean>
-  focus: Record<string, Focus>
-  outbox: Record<string, Outgoing[]>
-  slowUntil: Record<number, number>
-  reads: Record<string, ReadMark>
-  pings: Pings
-  unreadAnchor: Record<string, number>
-  atBottom: Record<string, boolean>
-  authExpired: boolean
-  bootError: string | null
-  wsStatus: WsStatus
-  theme: Theme
-  streamer: boolean
-  iceHelpers: boolean
-  iceRelay: boolean
-  contextMenu: ContextMenuState | null
-  reactPicker: ReactPicker | null
-  profile: ProfileTarget | null
-  activeDialog: ActiveDialog | null
-  confirm: ConfirmRequest | null
-  confirmSeq: number
-  panel: Panel | null
-  pending: Record<string, PendingUpload>
-  notices: Notice[]
-  noticesPaused: boolean
-  drafts: Record<string, string>
-  replying: Record<string, Replying>
-  forwardClip: ForwardClip | null
-  toast: Toast | null
-  pins: PinsView | null
-  composerFocus: { key: string; n: number } | null
-  editing: Editing | null
-  search: SearchState
-  error: string | null
-  adminOverview: AdminOverview | null
-  settings: SiteSettings
-  instance: InstanceInfo | null
-  instanceHost: string
-  loadInstance: () => Promise<boolean>
-  switchInstance: (address: string) => Promise<string | null>
-  bootstrap: () => Promise<void>
-  loadSettings: () => Promise<void>
-  setTheme: (theme: Theme) => void
-  setStreamer: (streamer: boolean) => void
-  setIceHelpers: (on: boolean) => void
-  setIceRelay: (on: boolean) => void
-  patchMe: (
-    avatar_kind: AvatarKind,
-    avatar_color?: string,
-    banner_color?: string | null
-  ) => Promise<void>
-  setAppearOffline: (appearOffline: boolean) => Promise<void>
-  setBio: (bio: string) => Promise<string | null>
-  changePassword: (current: Secret, next: Secret, kind: PassKind) => Promise<string | null>
-  refreshAccount: () => Promise<void>
-  syncFromUrl: (nav: 'replace' | 'none') => Promise<void>
-  register: (body: RegisterRequest) => Promise<void>
-  login: (body: LoginRequest) => Promise<void>
-  logout: () => void
-  enterGuest: () => Promise<void>
-  guestJoinServer: (name: string, password?: string, nav?: Nav) => Promise<void>
-  openServer: (name: string, channelId?: number, nav?: Nav, at?: number) => Promise<void>
-  openChannel: (server: string, channelId: number, nav?: Nav, at?: number) => Promise<void>
-  openDm: (dmId: number, nav?: Nav, at?: number) => Promise<void>
-  openLastDm: () => void
-  openInvite: (server: string, password?: string | null) => void
-  closeInvite: () => void
-  syncInvite: () => boolean
-  syncConfigLink: () => boolean
-  closeConfigLink: () => void
-  applyConfig: (doc: ConfigDoc, keys: SectionKey[]) => Promise<string | null>
-  showToast: (text: string) => void
-  consumeInviteJoin: () => void
-  startDm: (username: string) => Promise<void>
-  messageUser: (username: string, content: string) => Promise<void>
-  loadMoreDms: () => Promise<void>
-  loadMoreServers: () => Promise<void>
-  ensureDms: (ids: number[]) => Promise<void>
-  ensureServers: (names: string[]) => Promise<void>
-  moveServer: (name: string, index: number) => void
-  moveFolder: (id: string, index: number) => void
-  moveIntoFolder: (name: string, id: string, index: number) => void
-  addToFolder: (name: string, id: string) => void
-  mergeServers: (name: string, target: string) => void
-  toggleFolder: (id: string) => void
-  renameFolder: (id: string, name: string) => void
-  ungroupFolder: (id: string) => void
-  placeDm: (id: number, zone: DmZone, index: number) => void
-  pinDm: (id: number) => void
-  unpinDm: (id: number) => void
-  reloadLayout: () => void
-  noteEmoji: (base: string, picked: string) => void
-  setSkinTone: (tone: number) => void
-  reloadEmoji: () => void
-  setDraft: (key: string, text: string) => void
-  startReply: (key: string, m: Message) => void
-  cancelReply: (key: string) => void
-  toggleReplyMention: (key: string) => void
-  copyForward: (m: Message) => void
-  clearForward: () => void
-  openPins: () => void
-  closePins: () => void
-  pinMessage: (id: number) => Promise<void>
-  openPinned: (key: string, id: number) => Promise<void>
-  unpinMessage: (id: number) => Promise<void>
-  reloadForward: () => void
-  setNotifyLevel: (scope: NotifyScope, level: Level | null) => void
-  muteScope: (scope: NotifyScope, until: MuteUntil | null) => void
-  muteServers: (names: string[], until: MuteUntil | null) => void
-  resetNotify: (scope: NotifyScope) => void
-  resetAllNotify: () => void
-  setDesktopNotify: (on: boolean) => void
-  reloadNotify: () => void
-  pruneNotify: () => void
-  sendForward: (key: string) => void
-  openForward: (m: Message) => Promise<void>
-  startEdit: (key: string, m: Message) => void
-  setEditText: (text: string) => void
-  cancelEdit: (refocus?: boolean) => void
-  saveEdit: (refocus?: boolean) => void
-  editLast: (key: string) => boolean
-  sedEdit: (key: string, sed: Sed) => Promise<boolean>
-  sendMessage: (content: string, p2pExpiresIn?: number | null) => void
-  markRead: (scope: string, messageId: number) => void
-  seeThread: (rootId: number) => void
-  setAtBottom: (key: string, v: boolean) => void
-  retryOutgoing: (key: string, tempId: number) => void
-  cancelOutgoing: (key: string, tempId: number) => void
-  loadOlder: () => Promise<void>
-  loadNewer: () => Promise<void>
-  jumpTo: (key: string, id: number, flash?: boolean) => Promise<void>
-  jumpToUnread: () => Promise<void>
-  jumpToPresent: (key: string) => Promise<void>
-  dismissUnread: (key: string) => void
-  clearFocus: (key: string) => void
-  openResult: (result: SearchResult) => Promise<void>
-  openPing: (ping: Ping) => Promise<void>
-  uploadFile: (key: string, file: File | null) => void
-  toggleSpoiler: (key: string) => void
-  toggleUploadMode: (key: string) => void
-  openThread: (root: Message, at?: number) => Promise<void>
-  openSearch: () => void
-  closePanel: () => void
-  loadOlderThread: () => Promise<void>
-  loadNewerThread: () => Promise<void>
-  sendThreadMessage: (content: string, p2pExpiresIn?: number | null) => void
-  searchRun: (args: SearchArgs, reset: boolean) => Promise<void>
-  dismissNotice: (id: number) => void
-  pauseNotices: (paused: boolean) => void
-  deleteMessage: (id: number) => Promise<void>
-  deleteMedia: (messageId: number) => Promise<void>
-  deleteEmbed: (messageId: number, ord: number, banner: boolean) => Promise<void>
-  createServer: (name: string, password?: string) => Promise<void>
-  joinServer: (name: string, password?: string, nav?: Nav) => Promise<void>
-  joinPreview: (name: string) => Promise<void>
-  leaveServer: (name: string) => Promise<void>
-  renameServer: (name: string, newName: string) => Promise<void>
-  deleteServer: (name: string) => Promise<void>
-  createChannel: (server: string, name: string, kind?: ChannelKind) => Promise<void>
-  renameChannel: (id: number, name: string) => Promise<void>
-  setSlowmode: (id: number, seconds: number) => Promise<void>
-  setChannelRestrict: (
-    id: number,
-    patch: { restrict_view?: boolean; restrict_send?: boolean }
-  ) => Promise<void>
-  deleteChannel: (id: number) => Promise<void>
-  kickMember: (server: string, username: string) => Promise<void>
-  banMember: (server: string, username: string) => Promise<void>
-  unbanMember: (server: string, username: string) => Promise<void>
-  loadBans: (server: string, reset?: boolean) => Promise<void>
-  grantAdmin: (server: string, username: string) => Promise<void>
-  revokeAdmin: (server: string, username: string) => Promise<void>
-  transferAdmin: (server: string, username: string) => Promise<void>
-  setAdminPerms: (server: string, username: string, perms: number) => Promise<void>
-  createRole: (
-    server: string,
-    body: { name: string; color: string; perms: number }
-  ) => Promise<void>
-  updateRole: (
-    server: string,
-    id: number,
-    patch: { name?: string; color?: string; perms?: number }
-  ) => Promise<void>
-  deleteRole: (server: string, id: number) => Promise<void>
-  assignRole: (server: string, id: number, username: string) => Promise<void>
-  unassignRole: (server: string, id: number, username: string) => Promise<void>
-  setChannelPerm: (id: number, perm: ChannelPerm) => Promise<void>
-  clearChannelPerm: (id: number, subject: string) => Promise<void>
-  adminDeleteUser: (username: string) => Promise<void>
-  adminDeleteMessage: (id: number) => Promise<void>
-  loadMembers: (server: string, reset?: boolean) => Promise<void>
-  loadInteracted: (server: string, reset?: boolean) => Promise<void>
-  ensureMembers: (server: string, usernames: string[]) => Promise<void>
-  rememberMember: (server: string, username: string, member: Member | null) => void
-  notePresence: (server: string, username: string, online: boolean) => void
-  refreshMember: (server: string, username: string) => Promise<void>
-  joinVoice: (server: string, channelId: number) => Promise<void>
-  leaveVoice: () => void
-  toggleMute: () => void
-  toggleDeafen: () => void
-  toggleCamera: () => Promise<void>
-  toggleShare: () => Promise<void>
-  startCall: (dmId: number, video: boolean) => Promise<void>
-  startP2pCall: (dmId: number, video: boolean) => Promise<void>
-  setCallRoute: (route: CallRoute) => void
-  acceptCall: () => Promise<void>
-  declineCall: () => void
-  hangupCall: () => void
-  loadAdminOverview: () => Promise<void>
-  loadAdminUsers: (q: string, reset?: boolean) => Promise<void>
-  loadAdminServers: (q: string, reset?: boolean) => Promise<void>
-  adminDeleteServer: (name: string) => Promise<void>
-  banUser: (username: string) => Promise<void>
-  updateSettings: (patch: SiteSettingsPatch) => Promise<void>
-  setViewing: (server: string | null) => void
-  applyWsEvent: (ev: WsEvent) => void
-  openContextMenu: (
-    x: number,
-    y: number,
-    items: ContextMenuItem[],
-    opts?: ContextMenuOptions
-  ) => void
-  closeContextMenu: () => void
-  toggleReaction: (m: Message, emoji: string, note?: boolean) => void
-  loadReactors: (messageId: number, emoji: string) => Promise<UserRef[]>
-  openReactPicker: (m: Message, anchor: HTMLElement | null) => void
-  closeReactPicker: () => void
-  openProfile: (user: UserRef, server: string | null, x: number, y: number) => void
-  closeProfile: () => void
-  openDialog: (dialog: ActiveDialog) => void
-  closeDialog: () => void
-  askConfirm: (req: ConfirmRequest) => void
-  closeConfirm: () => void
-  setError: (message: string | null) => void
-}
-
-const nameIndex = new WeakMap<readonly UserRef[], Map<string, UserRef>>()
-
-export const byUsername = <T extends UserRef>(list: readonly T[]): Map<string, T> => {
-  let index = nameIndex.get(list)
-  if (!index) {
-    index = new Map(list.map(m => [m.username, m]))
-    nameIndex.set(list, index)
-  }
-  return index as Map<string, T>
-}
-
-export const memberState = (
-  s: Pick<RChatState, 'members' | 'memberInfo'>,
-  server: string,
-  username: string
-): Member | null | undefined => {
-  const list = s.members[server]?.list
-  const listed = list ? byUsername(list).get(username) : undefined
-  if (listed) return listed
-  const known = s.memberInfo[server]
-  return known && Object.hasOwn(known, username) ? known[username] : undefined
-}
-
-export const memberOf = (s: RChatState, server: string, username: string): Member | undefined =>
-  memberState(s, server, username) ?? undefined
-
-export const serverAdminPerms = (s: RChatState, server: string): number => {
-  const { me } = s
-  if (!me) return 0
-  const row = memberOf(s, server, me.username)
-  if (row) return memberPerms(row, s.servers[server]?.roles ?? [])
-  return (me.servers.find(x => x.name === server)?.is_admin ?? false) ? ALL_PERMS : 0
-}
-
-export const myRolePerms = (s: RChatState, server: string): number =>
-  rolePerms(s.me ? memberOf(s, server, s.me.username) : undefined, s.servers[server]?.roles ?? [])
-
-export const myPerms = (s: RChatState, server: string): number =>
-  s.me?.is_site_admin ? ALL_PERMS : serverAdminPerms(s, server)
-
-export const roleColor = (roles: Role[] | undefined, roleIds: number[]): string | undefined =>
-  roles?.find(r => roleIds.includes(r.id))?.color
-
-export const isUnread = (s: RChatState, scope: string): boolean => {
-  const r = s.reads[scope]
-  return !!r && r.latest > r.lastRead
-}
-
-export const serverNames = (s: RChatState) =>
-  s.me ? s.me.servers.map(x => x.name) : s.guestServers
-
-export const configSourceOf = (s: RChatState): ConfigSource => ({
-  theme: s.theme,
-  streamer: s.streamer,
-  appearOffline: s.me ? s.me.appear_offline : null,
-  layout: s.me || s.guest ? s.layout : null,
-  notify: s.me || s.guest ? s.notifyPrefs : null,
-  emoji: s.me ? s.emoji : null,
-  calls: s.me ? s.callRoute : null,
-})
-
-export const railOrder = (s: RChatState) => railNames(serverNames(s), s.layout.servers)
-
-export interface RailServer {
-  name: string
-  display_name: string
-  creator: string | null
-}
-
-type RailSource = Pick<RChatState, 'me' | 'guestServers' | 'guestNames' | 'servers'>
-
-// The server a signed-in user previews: open without membership (only public servers; the
-// server enforces it). It has a temporary rail icon and a join bar. It is forgotten when the view
-// moves away.
-export const previewServer = (s: RChatState): string | null => {
-  const v = s.view
-  if (!s.me || s.guest || v?.kind !== 'channel') return null
-  return s.me.servers.some(x => x.name === v.server) ? null : v.server
-}
-
-export const railServers = (s: RailSource): RailServer[] =>
-  s.me
-    ? s.me.servers.map(({ name, display_name, creator }) => ({ name, display_name, creator }))
-    : s.guestServers.map(name => ({
-        name,
-        display_name: s.servers[name]?.display_name ?? s.guestNames[name] ?? name,
-        creator: s.servers[name]?.creator ?? null,
-      }))
-
-export const folderLabel = (s: RailSource, folder: Folder, name = folder.name) =>
-  folderTitle(
-    name,
-    folderChildren(folder, new Map(railServers(s).map(x => [x.name, x.display_name])))
-  )
-
-export const dmView = (s: RChatState) => dmSections(s.dms, s.layout)
-
-// Mutes are pruned by a timer when they end, so `notifyPrefs` changes whenever the answer does.
-export const scopeMuted = (s: RChatState, scope: NotifyScope) =>
-  mutedOf(s.notifyPrefs, scope, Date.now())
-
-export const scopeRule = (s: RChatState, scope: NotifyScope) =>
-  resolveNotify(s.notifyPrefs, scope, Date.now())
-
-// Unread dots: a muted channel, DM or server shows none.
-export const scopeUnread = (s: RChatState, scope: string): boolean =>
-  isUnread(s, scope) &&
-  unreadShown(s.notifyPrefs, scope, s.reads[scope]?.server ?? null, Date.now())
-
-let unreadMemo: {
-  reads: RChatState['reads']
-  prefs: NotifyPrefs
-  servers: Set<string>
-} | null = null
-
-export const serverUnread = (s: RChatState, name: string): boolean => {
-  const now = Date.now()
-  const prefs = s.notifyPrefs
-  if (mutedOf(prefs, { kind: 'server', name }, now)) return false
-  const detail = s.servers[name]
-  if (detail)
-    return detail.channels.some(
-      c => c.kind === 'text' && isUnread(s, `c${c.id}`) && unreadShown(prefs, `c${c.id}`, name, now)
-    )
-  if (unreadMemo?.reads !== s.reads || unreadMemo.prefs !== prefs)
-    unreadMemo = {
-      reads: s.reads,
-      prefs,
-      servers: unreadServers(s.reads, (scope, r) =>
-        unreadShown(prefs, scope, r.server ?? null, now)
-      ),
-    }
-  return unreadMemo.servers.has(name)
-}
-
-let dmUnreadMemo: { reads: RChatState['reads']; prefs: NotifyPrefs; unread: boolean } | null = null
-
-export const dmsUnread = (s: RChatState): boolean => {
-  const prefs = s.notifyPrefs
-  if (dmUnreadMemo?.reads !== s.reads || dmUnreadMemo.prefs !== prefs) {
-    const now = Date.now()
-    dmUnreadMemo = {
-      reads: s.reads,
-      prefs,
-      unread: anyDmUnread(s.reads, scope => unreadShown(prefs, scope, null, now)),
-    }
-  }
-  return dmUnreadMemo.unread
-}
-
-let pingMemo: { pings: Pings; prefs: NotifyPrefs; shown: Pings } | null = null
-
-// The pings that badge: all of them except in scopes set to "Nothing".
-export const badgePings = (s: RChatState): Pings => {
-  if (pingMemo?.pings !== s.pings || pingMemo.prefs !== s.notifyPrefs) {
-    const prefs = s.notifyPrefs
-    pingMemo = {
-      pings: s.pings,
-      prefs,
-      shown: shownPings(s.pings, (scope, server) => pingShown(prefs, scope, server)),
-    }
-  }
-  return pingMemo.shown
-}
-
-export const scopePingCount = (s: RChatState, scope: string) => scopePings(badgePings(s), scope)
-
-export const serverPingCount = (s: RChatState, name: string) => serverPings(badgePings(s), name)
-
-export const dmPingCount = (s: RChatState) => dmPings(badgePings(s))
-
-export const allPings = (s: RChatState) => totalPings(badgePings(s))
-
-const messageServer = (s: RChatState, m: Message): string | null => {
-  if (m.channel_id === null) return null
-  const v = s.view
-  if (v?.kind === 'channel' && s.servers[v.server]?.channels.some(c => c.id === m.channel_id))
-    return v.server
-  for (const [name, detail] of Object.entries(s.servers))
-    if (detail.channels.some(c => c.id === m.channel_id)) return name
-  return null
-}
-
-const knowsUser = (s: RChatState, m: Message, server: string | null, name: string) => {
-  if (s.me?.username === name || m.author.username === name) return true
-  if (m.dm_id !== null) return s.dms.some(d => d.id === m.dm_id && d.other.username === name)
-  if (server === null) return false
-  const list = s.members[server]?.list
-  if (list && byUsername(list).has(name)) return true
-  return !!s.memberInfo[server]?.[name]
-}
-
-// Usernames this message mentions that are known members (or DM participants), newline-joined
-// so the selector result is a stable string.
-export const knownMentions = (s: RChatState, m: Message, candidates: string[]) => {
-  if (!candidates.length) return ''
-  const server = messageServer(s, m)
-  return candidates.filter(n => knowsUser(s, m, server, n)).join('\n')
-}
-
-export const userRefFor = (s: RChatState, username: string): UserRef => {
-  if (s.me?.username === username) return s.me
-  const dm = s.dms.find(d => d.other.username === username)
-  if (dm) return dm.other
-  for (const cache of Object.values(s.members)) {
-    const m = byUsername(cache.list).get(username)
-    if (m) return m
-  }
-  for (const known of Object.values(s.memberInfo)) {
-    const m = Object.hasOwn(known, username) ? known[username] : null
-    if (m) return m
-  }
-  for (const cache of Object.values(s.interacted)) {
-    const u = byUsername(cache.list).get(username)
-    if (u) return u
-  }
-  return { username, display_name: username, avatar_kind: 'identicon', avatar_color: null }
-}
-
-export const changeableRoles = (s: RChatState, server: string, username: string): Role[] => {
-  const roles = s.servers[server]?.roles ?? []
-  const perms = myPerms(s, server)
-  const siteAdmin = s.me?.is_site_admin ?? false
-  const target = memberPerms(memberOf(s, server, username), roles)
-  const self = s.me?.username === username
-  const held = memberOf(s, server, username)?.role_ids ?? []
-  const limits = s.servers[server]?.role_limits
-  const grants = limits?.channel_grants ?? []
-  const denies = limits?.channel_denies ?? []
-  return roles.filter(r =>
-    canChangeRole(
-      perms,
-      siteAdmin,
-      r.perms,
-      held.includes(r.id),
-      self,
-      target,
-      (held.includes(r.id) ? denies : grants).includes(r.id)
-    )
-  )
-}
 
 export const roleMenuItems = (server: string, username: string): ContextMenuItem[] => {
   const s = useStore.getState()
@@ -1120,6 +419,12 @@ export const confirmDeleteMessage = (id: number, now = false) => {
     action: () => void useStore.getState().deleteMessage(id),
   })
 }
+
+let forgetStoreSession = () => {}
+
+// Test files share one store; each one calls this when it ends so no queued read or cached
+// window reaches the next file.
+export const resetSessionCaches = () => forgetStoreSession()
 
 export const useStore = create<RChatState>()((set, get) => {
   const epochs: Record<string, number> = {}
@@ -1206,29 +511,14 @@ export const useStore = create<RChatState>()((set, get) => {
   let historySeq = 0
   const newHistory = (key: string) => historyGen.set(key, ++historySeq)
 
-  const readLayout = (username: string | null) => {
-    try {
-      return parseLayout(localStorage.getItem(home.scoped(layoutKey(username))))
-    } catch {
-      return emptyLayout
-    }
-  }
+  const readLayout = (username: string | null) =>
+    readScoped(layoutKey(username), parseLayout, emptyLayout)
 
-  const readEmoji = (username: string) => {
-    try {
-      return parseEmojiPrefs(localStorage.getItem(home.scoped(emojiKey(username))))
-    } catch {
-      return EMPTY_PREFS
-    }
-  }
+  const readEmoji = (username: string) =>
+    readScoped(emojiKey(username), parseEmojiPrefs, EMPTY_PREFS)
 
-  const readCallRoute = (username: string) => {
-    try {
-      return parseCallRoute(localStorage.getItem(home.scoped(callRouteKey(username))))
-    } catch {
-      return DEFAULT_ROUTE
-    }
-  }
+  const readCallRoute = (username: string) =>
+    readScoped(callRouteKey(username), parseCallRoute, DEFAULT_ROUTE)
 
   const saveCallRoute = (route: CallRoute) => {
     const username = get().me?.username
@@ -1237,26 +527,15 @@ export const useStore = create<RChatState>()((set, get) => {
     writeLocal(home.scoped(callRouteKey(username)), callRouteValue(route))
   }
 
-  const readForward = (username: string) => {
-    try {
-      return parseForward(localStorage.getItem(home.scoped(forwardKey(username))))
-    } catch {
-      return null
-    }
-  }
+  const readForward = (username: string) => readScoped(forwardKey(username), parseForward, null)
 
   const notifyOwner = () => {
     const { me, guest } = get()
     return me ? me.username : guest ? null : undefined
   }
 
-  const readNotify = (username: string | null) => {
-    try {
-      return parseNotify(localStorage.getItem(home.scoped(notifyKey(username))))
-    } catch {
-      return EMPTY_NOTIFY
-    }
-  }
+  const readNotify = (username: string | null) =>
+    readScoped(notifyKey(username), parseNotify, EMPTY_NOTIFY)
 
   let expiryTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -1411,13 +690,13 @@ export const useStore = create<RChatState>()((set, get) => {
         failed.push(sectionOf('appearOffline').label)
       }
     }
-    if (!still()) return 'You switched accounts'
+    if (!still()) return SWITCHED
     if (want.has('layout') && doc.layout) {
       const l = doc.layout
       try {
         await get().ensureServers(layoutServers(l.servers))
         await get().ensureDms([...l.dmPinned, ...l.dmOrder])
-        if (!still()) return 'You switched accounts'
+        if (!still()) return SWITCHED
         const s = get()
         saveLayout(
           pruneLayout(
@@ -1437,13 +716,13 @@ export const useStore = create<RChatState>()((set, get) => {
         failed.push(sectionOf('layout').label)
       }
     }
-    if (!still()) return 'You switched accounts'
+    if (!still()) return SWITCHED
     if (want.has('notify') && doc.notify) {
       const n = doc.notify
       try {
         await get().ensureServers(Object.keys(n.servers))
         await get().ensureDms(Object.keys(n.dms).map(Number))
-        if (!still()) return 'You switched accounts'
+        if (!still()) return SWITCHED
         const s = get()
         const members = new Set(serverNames(s))
         const dms = new Set(s.dms.map(d => d.id))
@@ -1585,6 +864,12 @@ export const useStore = create<RChatState>()((set, get) => {
     } finally {
       recovering = false
     }
+  }
+
+  // Refetches the account, or retries the boot when a token is saved but the account never loaded.
+  const refreshMe = () => {
+    if (get().me) void refetchMe()
+    else if (get().token) void recoverMe()
   }
 
   const refreshView = async () => {
@@ -1750,6 +1035,29 @@ export const useStore = create<RChatState>()((set, get) => {
     set({ voice: null, selfAudio: SELF_AUDIO_IDLE, ...(ours ? { call: null } : {}) })
   }
 
+  // Sends a voice or call message once the media is up; when the socket is down it drops it again.
+  const sendOrAbandon = (msg: VoiceMsg) => {
+    if (home.ws.sendVoice(msg)) return
+    abandonMedia()
+    throw new Error('Not connected')
+  }
+
+  const caller = () => {
+    const { me, guest, call } = get()
+    if (guest || !me) throw new Error('Create an account to start calls')
+    if (call) throw new Error('Already in a call')
+    return me
+  }
+
+  const endCall = (type: 'call_decline' | 'call_leave') => {
+    const { call } = get()
+    if (call) {
+      home.ws.sendVoice({ type, dm_id: call.dmId })
+      endCallMedia(call.kind)
+    }
+    set({ call: null })
+  }
+
   let unreadsReady: Promise<void> = Promise.resolve()
 
   let unreadsMore = false
@@ -1820,8 +1128,8 @@ export const useStore = create<RChatState>()((set, get) => {
     })
   }
 
-  const catchUp = () => {
-    void refreshView()
+  // Reloads the unread counts, drops servers we were removed from, and reloads the open member list.
+  const catchUpLists = () => {
     if (get().me) void loadUnreads()
     void pruneServers()
       .catch(() => {})
@@ -1830,6 +1138,11 @@ export const useStore = create<RChatState>()((set, get) => {
         if (view?.kind === 'channel' && members[view.server])
           void get().loadMembers(view.server, true)
       })
+  }
+
+  const catchUp = () => {
+    void refreshView()
+    catchUpLists()
   }
 
   let resyncTimer: ReturnType<typeof setTimeout> | null = null
@@ -1841,8 +1154,7 @@ export const useStore = create<RChatState>()((set, get) => {
         resyncTimer = null
         set({ p2pAvailability: {}, voiceUsers: {} })
         home.ws.resubscribe()
-        if (get().me) void refetchMe()
-        else if (get().token) void recoverMe()
+        refreshMe()
         const { view } = get()
         if (view) askP2p(get().messages[viewKey(view)] ?? [])
         const { pins } = get()
@@ -1877,16 +1189,8 @@ export const useStore = create<RChatState>()((set, get) => {
     )
     catchUpTimer = setTimeout(() => {
       catchUpTimer = null
-      if (get().me) void refetchMe()
-      else if (get().token) void recoverMe()
-      if (get().me) void loadUnreads()
-      void pruneServers()
-        .catch(() => {})
-        .then(() => {
-          const { view, members } = get()
-          if (view?.kind === 'channel' && members[view.server])
-            void get().loadMembers(view.server, true)
-        })
+      refreshMe()
+      catchUpLists()
     }, catchUpDelay(outage))
   }
 
@@ -1945,8 +1249,7 @@ export const useStore = create<RChatState>()((set, get) => {
       const now = Date.now()
       if (due(polledMe, now, POLL_EVERY)) {
         polledMe = now
-        if (get().me) void refetchMe()
-        else if (get().token) void recoverMe()
+        refreshMe()
       }
       if (due(polledSettings, now, POLL_EVERY)) {
         polledSettings = now
@@ -2174,20 +1477,12 @@ export const useStore = create<RChatState>()((set, get) => {
     presenceSnaps.delete(name)
     saveLayout(forgetServer(get().layout, name))
     forgetServerRules(name)
-    set(s => {
-      const servers = { ...s.servers }
-      delete servers[name]
-      const members = { ...s.members }
-      delete members[name]
-      const interacted = { ...s.interacted }
-      delete interacted[name]
-      return {
-        servers,
-        members,
-        interacted,
-        me: s.me ? { ...s.me, servers: s.me.servers.filter(x => x.name !== name) } : s.me,
-      }
-    })
+    set(s => ({
+      servers: keyed(s.servers, name, null),
+      members: keyed(s.members, name, null),
+      interacted: keyed(s.interacted, name, null),
+      me: s.me ? { ...s.me, servers: s.me.servers.filter(x => x.name !== name) } : s.me,
+    }))
     if (reload) void get().loadMoreServers()
     if (get().guest) {
       persistGuestServers(get().guestServers.filter(n => n !== name))
@@ -2770,14 +2065,10 @@ export const useStore = create<RChatState>()((set, get) => {
     const { activeDialog } = get()
     if (activeDialog?.kind === 'server_settings' && activeDialog.server === prev) return
     for (const id of [`m:${prev}`, `i:${prev}`]) epochs[id] = (epochs[id] ?? 0) + 1
-    set(s => {
-      if (!s.members[prev] && !s.interacted[prev]) return {}
-      const members = { ...s.members }
-      delete members[prev]
-      const interacted = { ...s.interacted }
-      delete interacted[prev]
-      return { members, interacted }
-    })
+    set(s => ({
+      members: keyed(s.members, prev, null),
+      interacted: keyed(s.interacted, prev, null),
+    }))
   }
 
   // Leaves the current view for none (home); a previewed server is forgotten on the way out.
@@ -2940,7 +2231,7 @@ export const useStore = create<RChatState>()((set, get) => {
     reply: Replying | null = null
   ) => {
     home.ws.ensureConnected()
-    const tempId = OPT_BASE + ++optSeq
+    const tempId = nextTempId()
     enqueue({
       tempId,
       key: viewKey(view),
@@ -3394,6 +2685,39 @@ export const useStore = create<RChatState>()((set, get) => {
     set(st => ({ slowUntil: { ...st.slowUntil, [channelId]: until } }))
   }
 
+  // Drops the timers, queues and caches of the signed-in session.
+  const forgetSession = () => {
+    if (noticeTimer !== null) clearTimeout(noticeTimer)
+    noticeTimer = null
+    if (meRetry) clearTimeout(meRetry)
+    meRetry = null
+    if (expiryTimer !== null) clearTimeout(expiryTimer)
+    expiryTimer = null
+    notifySynced = false
+    readQueue.clear()
+    unreadsMore = false
+    stopCatchUp()
+    joins.reset()
+    dmPager.reset(null)
+    serverPager.reset(null)
+    historyGen.clear()
+    tails.clear()
+    lateAnchor.clear()
+    views.clear()
+    presence.length = 0
+    presenceLogs.clear()
+    presenceSnaps.clear()
+    bannedHere.clear()
+    seenPings.clear()
+    reactorCache.clear()
+    quotes.clear()
+    quoteReads.clear()
+    rereads.clear()
+    for (const id of [...sentWaiters.keys()]) settleSent(id, null)
+    quoteGen += 1
+  }
+  forgetStoreSession = forgetSession
+
   const enqueue = (o: Outgoing) => {
     set(s => ({ outbox: { ...s.outbox, [o.key]: [...(s.outbox[o.key] ?? []), o] } }))
     void drain(o.key)
@@ -3671,24 +2995,14 @@ export const useStore = create<RChatState>()((set, get) => {
         writeLocal(home.scoped(secretsKey(username)), null)
         writeLocal(home.scoped(forwardKey(username)), null)
       }
-      if (noticeTimer !== null) clearTimeout(noticeTimer)
-      noticeTimer = null
-      if (meRetry) clearTimeout(meRetry)
-      meRetry = null
-      if (expiryTimer !== null) clearTimeout(expiryTimer)
-      expiryTimer = null
-      notifySynced = false
       const flushed = readQueue.flush()
-      readQueue.clear()
+      forgetSession()
       if (token)
         void Promise.race([flushed, new Promise(r => setTimeout(r, 3000))])
           .then(() => api.logout(token))
           .catch(() => {})
-      unreadsMore = false
-      stopCatchUp()
       home.ws.stop()
       rtc.leave()
-      joins.reset()
       p2p.signOut()
       writeLocal(LS.token, null)
       setTokenCookie(null)
@@ -3699,23 +3013,6 @@ export const useStore = create<RChatState>()((set, get) => {
       api.setGrants({})
       home.ws.setGrants({})
       armIce(null, false)
-      dmPager.reset(null)
-      serverPager.reset(null)
-      historyGen.clear()
-      tails.clear()
-      lateAnchor.clear()
-      views.clear()
-      presence.length = 0
-      presenceLogs.clear()
-      presenceSnaps.clear()
-      bannedHere.clear()
-      seenPings.clear()
-      reactorCache.clear()
-      quotes.clear()
-      quoteReads.clear()
-      rereads.clear()
-      for (const id of [...sentWaiters.keys()]) settleSent(id, null)
-      quoteGen += 1
       clearProfiles()
       dropStashedInvite()
       set({
@@ -4175,7 +3472,7 @@ export const useStore = create<RChatState>()((set, get) => {
       home.ws.ensureConnected()
       if (kind !== 't') clearAnchor(key)
       if (detached(key)) void get().jumpToPresent(key)
-      const tempId = OPT_BASE + ++optSeq
+      const tempId = nextTempId()
       const opts = { forward_of: clip.id }
       enqueue({
         tempId,
@@ -4532,7 +3829,7 @@ export const useStore = create<RChatState>()((set, get) => {
       const key = threadKey(rootId)
       const pending = get().pending[key] ?? null
       if (!content.trim() && !pending) return
-      const tempId = OPT_BASE + ++optSeq
+      const tempId = nextTempId()
       const reply = get().replying[key] ?? null
       set(s => ({ pending: keyed(s.pending, key, null), replying: keyed(s.replying, key, null) }))
       if (detached(key)) void get().jumpToPresent(key)
@@ -4840,10 +4137,7 @@ export const useStore = create<RChatState>()((set, get) => {
           abandonMedia()
           throw e
         }
-        if (!home.ws.sendVoice({ type: 'voice_join', channel_id: channelId })) {
-          abandonMedia()
-          throw new Error('Not connected')
-        }
+        sendOrAbandon({ type: 'voice_join', channel_id: channelId })
         joins.joined(channelId, (get().voiceUsers[channelId] ?? []).includes(me.username))
         voiceListed = false
         set({ voice: { server, channelId }, call: null })
@@ -4872,9 +4166,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
     startCall: (dmId, video) =>
       act(async () => {
-        const { me, guest, call } = get()
-        if (guest || !me) throw new Error('Create an account to start calls')
-        if (call) throw new Error('Already in a call')
+        const me = caller()
         try {
           p2p.endMedia()
           await rtc.join(me.username, { dmId }, get().selfAudio.muted)
@@ -4885,18 +4177,13 @@ export const useStore = create<RChatState>()((set, get) => {
           abandonMedia()
           throw e
         }
-        if (!home.ws.sendVoice({ type: 'call_start', dm_id: dmId, video })) {
-          abandonMedia()
-          throw new Error('Not connected')
-        }
+        sendOrAbandon({ type: 'call_start', dm_id: dmId, video })
         set({ voice: null })
       }),
 
     startP2pCall: (dmId, video) =>
       act(async () => {
-        const { me, guest, call } = get()
-        if (guest || !me) throw new Error('Create an account to start calls')
-        if (call) throw new Error('Already in a call')
+        caller()
         try {
           rtc.leave()
           await p2p.startMedia(get().selfAudio.muted)
@@ -4906,17 +4193,7 @@ export const useStore = create<RChatState>()((set, get) => {
           abandonMedia()
           throw e
         }
-        const start = {
-          type: 'call_start',
-          dm_id: dmId,
-          p2p: true,
-          video,
-          peer_id: p2p.peerId(),
-        } as const
-        if (!home.ws.sendVoice(start)) {
-          abandonMedia()
-          throw new Error('Not connected')
-        }
+        sendOrAbandon({ type: 'call_start', dm_id: dmId, p2p: true, video, peer_id: p2p.peerId() })
         set({ voice: null })
       }),
 
@@ -4946,34 +4223,17 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         if (call.kind === 'p2p') p2p.expectCall()
-        const accept =
+        sendOrAbandon(
           call.kind === 'p2p'
-            ? { type: 'call_accept' as const, dm_id: call.dmId, peer_id: p2p.peerId() }
-            : { type: 'call_accept' as const, dm_id: call.dmId }
-        if (!home.ws.sendVoice(accept)) {
-          abandonMedia()
-          throw new Error('Not connected')
-        }
+            ? { type: 'call_accept', dm_id: call.dmId, peer_id: p2p.peerId() }
+            : { type: 'call_accept', dm_id: call.dmId }
+        )
         set({ voice: null })
       }),
 
-    declineCall: () => {
-      const { call } = get()
-      if (call) {
-        home.ws.sendVoice({ type: 'call_decline', dm_id: call.dmId })
-        endCallMedia(call.kind)
-      }
-      set({ call: null })
-    },
+    declineCall: () => endCall('call_decline'),
 
-    hangupCall: () => {
-      const { call } = get()
-      if (call) {
-        home.ws.sendVoice({ type: 'call_leave', dm_id: call.dmId })
-        endCallMedia(call.kind)
-      }
-      set({ call: null })
-    },
+    hangupCall: () => endCall('call_leave'),
 
     loadAdminOverview: () =>
       act(async () => {
@@ -5336,24 +4596,9 @@ export const useStore = create<RChatState>()((set, get) => {
                 name_color: server.name_color ?? null,
               }
             }
-            const members = { ...s.members }
-            const cache = members[old_name]
-            if (cache) {
-              delete members[old_name]
-              members[server.name] = cache
-            }
-            const interacted = { ...s.interacted }
-            const icache = interacted[old_name]
-            if (icache) {
-              delete interacted[old_name]
-              interacted[server.name] = icache
-            }
-            const memberInfo = { ...s.memberInfo }
-            const known = memberInfo[old_name]
-            if (known) {
-              delete memberInfo[old_name]
-              memberInfo[server.name] = known
-            }
+            const members = renameKey(s.members, old_name, server.name)
+            const interacted = renameKey(s.interacted, old_name, server.name)
+            const memberInfo = renameKey(s.memberInfo, old_name, server.name)
             const reads = Object.fromEntries(
               Object.entries(s.reads).map(([scope, mark]) => [
                 scope,

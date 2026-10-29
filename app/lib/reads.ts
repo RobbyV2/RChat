@@ -13,9 +13,9 @@ export interface ReadQueue {
   pending: (scope: string) => number
 }
 
-export const READ_DELAY = 2_000
-export const READ_MAX_WAIT = 5_000
-export const READ_RETRY_CAP = 60_000
+const READ_DELAY = 2_000
+const READ_MAX_WAIT = 5_000
+const READ_RETRY_CAP = 60_000
 
 const permanent = (err: unknown) => {
   const status = (err as { status?: unknown } | null)?.status

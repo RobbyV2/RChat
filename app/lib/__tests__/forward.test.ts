@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { useStore } from '../store'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { useStore, resetSessionCaches } from '../store'
 import {
   canForward,
   clipOf,
@@ -9,6 +9,8 @@ import {
   parseForward,
 } from '../forward'
 import { me, media, memoryStorage, msg, user } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const storage = new Map<string, string>()

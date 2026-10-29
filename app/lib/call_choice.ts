@@ -68,7 +68,7 @@ export interface CallLogInfo {
   alert: boolean
 }
 
-export const callKindLabel = (video: boolean | null | undefined) =>
+const callKindLabel = (video: boolean | null | undefined) =>
   video === true ? 'Video call' : video === false ? 'Voice call' : 'Call'
 
 export const callLogInfo = (call: CallLog, me: string | null): CallLogInfo => {
@@ -94,7 +94,7 @@ export const callLogInfo = (call: CallLog, me: string | null): CallLogInfo => {
   }
 }
 
-export const P2P_FAIL_TTL = 10 * 60 * 1000
+const P2P_FAIL_TTL = 10 * 60 * 1000
 
 export const recentlyFailed = (at: number | undefined, now = Date.now()) =>
   at !== undefined && now - at < P2P_FAIL_TTL

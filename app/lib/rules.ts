@@ -40,7 +40,7 @@ export const charCount = (text: string) => Array.from(text).length
 
 export const BIO_MAX = 190
 
-export const BIO_WARN = 20
+const BIO_WARN = 20
 
 export const cleanBio = (text: string) =>
   text
@@ -109,14 +109,14 @@ export const canTransferTo = (
 export const canSetAdminPerms = (perms: number, siteAdmin: boolean, stored: number, next: number) =>
   (adminMask(next) & ~adminMask(stored)) === 0 || canGrant(perms, siteAdmin, adminMask(next))
 
-export const canAssignRole = (
+const canAssignRole = (
   perms: number,
   siteAdmin: boolean,
   rolePerms: number,
   channelLocked = false
 ) => canGrant(perms, siteAdmin, rolePerms) && (siteAdmin || !channelLocked)
 
-export const canUnassignRole = (
+const canUnassignRole = (
   perms: number,
   siteAdmin: boolean,
   self: boolean,
@@ -137,7 +137,7 @@ export const canChangeRole = (
     ? canUnassignRole(perms, siteAdmin, self, targetPerms, channelLocked)
     : canAssignRole(perms, siteAdmin, rolePerms, channelLocked)
 
-export const NO_ROLE_LIMITS: RoleLimits = {
+const NO_ROLE_LIMITS: RoleLimits = {
   held_above: [],
   channel_grants: [],
   channel_denies: [],

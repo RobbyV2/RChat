@@ -1,10 +1,19 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { allPings, dmPingCount, knownMentions, serverPingCount, useStore } from '../store'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import {
+  allPings,
+  dmPingCount,
+  knownMentions,
+  serverPingCount,
+  useStore,
+  resetSessionCaches,
+} from '../store'
 import { mentionCandidates } from '../mentions'
 import { scopePings } from '../pings'
 import { headline, type Piece } from '../notices'
 import type { Ping, WsEvent } from '../types'
 import { me, member, msg, serverDetail, user } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const line = (pieces: Piece[]) => pieces.map(p => p.text).join('')

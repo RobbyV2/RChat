@@ -1,10 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { home } from '../instances'
 import { rtc } from '../rtc'
-import { useStore } from '../store'
+import { useStore, resetSessionCaches } from '../store'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from '../voice_layout'
 import type { VoiceMsg } from '../types'
 import { me } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 

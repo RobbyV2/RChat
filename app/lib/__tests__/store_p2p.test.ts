@@ -1,9 +1,18 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { home } from '../instances'
-import { attachModes, MAX_UPLOAD, siteSettings, startMode, useStore } from '../store'
+import {
+  attachModes,
+  MAX_UPLOAD,
+  siteSettings,
+  startMode,
+  useStore,
+  resetSessionCaches,
+} from '../store'
 import { p2p, type CallBinding } from '../p2p'
 import type { MessageMedia, SiteSettings, VoiceMsg, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
@@ -11,6 +20,7 @@ const realFetch = globalThis.fetch
 const realWindow = (globalThis as { window?: unknown }).window
 const realRemove = p2p.removeFile.bind(p2p)
 let removed: string[] = []
+let realSettings = useStore.getState().settings
 const tick = async () => {
   for (let i = 0; i < 10; i += 1) await Promise.resolve()
   await new Promise(r => setTimeout(r, 0))
@@ -32,6 +42,7 @@ const hosted = (id: string, hoster: string): MessageMedia => ({
 const scoped = { server: 's', channel_id: 1, dm_id: null, dm_users: null }
 
 beforeEach(() => {
+  realSettings = useStore.getState().settings
   Object.assign(globalThis, { localStorage: memoryStorage })
   ;(globalThis as { window?: unknown }).window = {
     location: { pathname: '/', href: 'http://x/', origin: 'http://x', protocol: 'http:' },
@@ -64,6 +75,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  useStore.setState({ settings: realSettings })
   globalThis.fetch = realFetch
   ;(globalThis as { window?: unknown }).window = realWindow
   p2p.removeFile = realRemove

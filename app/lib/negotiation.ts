@@ -1,5 +1,7 @@
 // Pure pieces of the WebRTC "perfect negotiation" used by rtc.ts.
 
+import { randomHex } from './bytes'
+
 export interface SignalScope {
   channelId?: number | null
   dmId?: number | null
@@ -60,11 +62,7 @@ export const RESTART_DEBOUNCE_MS = 2000
 // Every join or call gets a fresh random session id per side. Signals carry
 // the sender's id (sid) and, once known, the id of the session they are for
 // (rsid).
-export function newSid(): string {
-  const bytes = new Uint8Array(8)
-  crypto.getRandomValues(bytes)
-  return [...bytes].map(b => b.toString(16).padStart(2, '0')).join('')
-}
+export const newSid = () => randomHex(8)
 
 // What we know about the remote session of a peer: undefined until it has
 // signalled, null for a legacy client that sends no session id.

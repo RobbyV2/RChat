@@ -1,7 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { useStore } from '../store'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { useStore, resetSessionCaches } from '../store'
 import type { Message, Unread, WsEvent } from '../types'
 import { me, msg, user } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)

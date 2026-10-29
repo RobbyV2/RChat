@@ -1,8 +1,8 @@
 import { shortcodeOf, type Emoji, type EmojiPrefs } from './emoji'
 import type { Message, Reaction, ServerDetail } from './types'
 
-export const REACTIONS_MAX = 20
-export const NAMES_SHOWN = 3
+const REACTIONS_MAX = 20
+const NAMES_SHOWN = 3
 
 const EMPTY: Reaction[] = []
 
@@ -80,7 +80,7 @@ export const FULL_TITLE = `This message has ${REACTIONS_MAX} reactions already`
 
 export const reactorKey = (messageId: number, emoji: string) => `${messageId}:${emojiKey(emoji)}`
 
-export const othersText = (n: number) => `${n} ${n === 1 ? 'other' : 'others'}`
+const othersText = (n: number) => `${n} ${n === 1 ? 'other' : 'others'}`
 
 export const peopleText = (n: number) => `${n} ${n === 1 ? 'person' : 'people'}`
 

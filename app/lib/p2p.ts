@@ -1,5 +1,6 @@
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs'
 import { backoffDelay } from './backoff'
+import { fromBase64, fromBase64Url, randomHex, toBase64 } from './bytes'
 import { home, writeLocal } from './instances'
 import { ice, iceConfig } from './ice'
 import { blobs, type BlobWriter } from './platform'
@@ -86,7 +87,7 @@ const IDLE_MS = 30_000
 const BUFFERED_MAX = 16
 // The hoster gives up on a downloader whose buffer hasn't drained for this long, and on any
 // transfer slower than SERVE_RATE bytes a second overall, so stalled peers can't hold a slot.
-export const STALL_MS = 20_000
+const STALL_MS = 20_000
 const SERVE_BASE_MS = 120_000
 const SERVE_RATE = 64 * 1024
 export const serveDeadline = (size: number) => SERVE_BASE_MS + (size / SERVE_RATE) * 1000
@@ -127,31 +128,12 @@ export const NO_ROOM = 'Not enough browser storage for this file'
 export const CANCELED = 'Download canceled'
 export const SLOW_STORE = 'P2P download failed: storage is too slow'
 
-const randomHex = (bytes: number) => {
-  const buf = new Uint8Array(bytes)
-  crypto.getRandomValues(buf)
-  return [...buf].map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
 export const newP2pId = () => randomHex(16)
 
-export const blobToBase64 = async (blob: Blob) => {
-  const bytes = new Uint8Array(await blob.arrayBuffer())
-  let bin = ''
-  for (let i = 0; i < bytes.length; i += 0x8000)
-    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-  return btoa(bin)
-}
-
-const base64Bytes = (data: string) => {
-  const bin = atob(data)
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
-  return bytes
-}
+const blobToBase64 = async (blob: Blob) => toBase64(new Uint8Array(await blob.arrayBuffer()))
 
 export const base64ToBlob = (data: string, mime: string) =>
-  new Blob([base64Bytes(data)], { type: mime })
+  new Blob([fromBase64(data)], { type: mime })
 
 // Milliseconds until a file expires, or null when it never does or already has.
 export const expiryDelay = (expiresAt: number | null, nowMs: number) => {
@@ -217,7 +199,7 @@ export const keepPreview = (messageId: number, p: Preview) => {
   }
 }
 
-export const dropPreview = (messageId: number) => {
+const dropPreview = (messageId: number) => {
   const p = previews.get(messageId)
   if (p === undefined) return
   previews.delete(messageId)
@@ -271,13 +253,10 @@ interface Grant {
   exp: number
 }
 
-const fromBase64Url = (text: string): Uint8Array<ArrayBuffer> | null => {
+const readBase64Url = (text: string): Uint8Array<ArrayBuffer> | null => {
   if (!/^[A-Za-z0-9_-]*$/.test(text)) return null
   try {
-    const bin = atob(text.replace(/-/g, '+').replace(/_/g, '/'))
-    const out = new Uint8Array(new ArrayBuffer(bin.length))
-    for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i)
-    return out
+    return fromBase64Url(text)
   } catch {
     return null
   }
@@ -686,7 +665,7 @@ export class P2pManager {
     if (k.peer !== this.id) return null
     const dot = token.indexOf('.')
     const payload = token.slice(0, dot)
-    const sig = dot > 0 ? fromBase64Url(token.slice(dot + 1)) : null
+    const sig = dot > 0 ? readBase64Url(token.slice(dot + 1)) : null
     if (sig === null) return null
     try {
       k.key ??= crypto.subtle.importKey('raw', k.raw, { name: 'HMAC', hash: 'SHA-256' }, false, [
@@ -698,7 +677,7 @@ export class P2pManager {
         sig,
         new TextEncoder().encode(payload)
       )
-      const bytes = good ? fromBase64Url(payload) : null
+      const bytes = good ? readBase64Url(payload) : null
       if (bytes === null) return null
       const g: unknown = JSON.parse(new TextDecoder().decode(bytes))
       if (!validGrant(g)) return null
@@ -1144,7 +1123,7 @@ export class P2pManager {
           }
           let bytes: Uint8Array
           try {
-            bytes = base64Bytes(msg.data)
+            bytes = fromBase64(msg.data)
           } catch {
             finish(new Error('P2P download failed: bad data'))
             return

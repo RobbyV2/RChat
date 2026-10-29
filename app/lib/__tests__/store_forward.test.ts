@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { previewServer, useStore } from '../store'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { previewServer, useStore, resetSessionCaches } from '../store'
 import { clipOf, forwardKey } from '../forward'
 import type { Message } from '../types'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch

@@ -6,7 +6,7 @@ export { privateHost }
 import { WsClient, wsUrlFrom, type WsEndpoints } from './ws'
 import type { InstanceInfo } from './types'
 
-export const CLIENT_API_MAJOR = 1
+const CLIENT_API_MAJOR = 1
 export const DEFAULT_INSTANCE_NAME = 'RChat'
 
 export interface PeerTarget {
@@ -128,7 +128,7 @@ export function endpointsFrom(origin: string, info: InstanceInfo | null): Endpoi
 const bakedApi = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, '') || undefined
 const bakedWs = process.env.NEXT_PUBLIC_WS_URL?.replace(/\/+$/, '') || undefined
 
-export function defaultEndpoints(): Endpoints {
+function defaultEndpoints(): Endpoints {
   const hasWindow = typeof window !== 'undefined'
   const api = resolveApiBase(bakedApi, hasWindow, process.env.HOST, process.env.SERVER_PORT)
   const origin = new URL(api, hasWindow ? window.location.href : undefined).origin

@@ -1,7 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { useStore } from '../store'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { useStore, resetSessionCaches } from '../store'
 import { EMPTY_PREFS, parseEmojiPrefs, topEmojis } from '../emoji'
 import { me, memoryStorage } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const storage = new Map<string, string>()

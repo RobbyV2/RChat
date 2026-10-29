@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, test } from 'bun:test'
-import { myPerms, roleColor, serverAdminPerms, useStore } from '../store'
+import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
+import { myPerms, roleColor, serverAdminPerms, useStore, resetSessionCaches } from '../store'
 import { ALL_PERMS, Perm } from '../types'
 import { me, member, paged, role, serverDetail } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 beforeEach(() => {
   useStore.setState({ me: null, members: {}, servers: {} })

@@ -22,7 +22,7 @@ const realTimers: Timers = {
   clear: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
 }
 
-export const REFRESH_SHARE = 0.8
+const REFRESH_SHARE = 0.8
 export const RETRY_MS = 60_000
 const SCHEMES = /^(stun|stuns|turn|turns):[^\s]+$/
 

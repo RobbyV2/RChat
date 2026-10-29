@@ -1,9 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { api, home } from '../instances'
 import { secretsKey } from '../passwords'
 import { forwardKey } from '../forward'
-import { useStore } from '../store'
+import { useStore, resetSessionCaches } from '../store'
 import { me, serverDetail } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch

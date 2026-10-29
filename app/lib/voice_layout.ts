@@ -1,6 +1,6 @@
 import type { CallLog } from './types'
 
-export const TILE_ASPECT = 16 / 9
+const TILE_ASPECT = 16 / 9
 const SPREAD = 0.85
 
 export interface GridFit {

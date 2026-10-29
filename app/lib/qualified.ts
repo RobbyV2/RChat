@@ -6,7 +6,7 @@ export interface Qualified {
 const PORT = /:(\d+)$/
 const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 
-export const parseHost = (raw: string): string | null => {
+const parseHost = (raw: string): string | null => {
   const text = raw.trim().replace(/\.(?=:\d+$|$)/, '')
   if (!text || /[\s/?#@\\%]/.test(text)) return null
   const port = text.startsWith('[') ? text.match(/\]:(\d+)$/)?.[1] : text.match(PORT)?.[1]

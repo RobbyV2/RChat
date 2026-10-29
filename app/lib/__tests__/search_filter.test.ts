@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   SEARCH_PAGE,
   addSearchPage,
@@ -7,8 +7,10 @@ import {
   searchParams,
   type SearchArgs,
 } from '../search'
-import { useStore } from '../store'
+import { useStore, resetSessionCaches } from '../store'
 import { result } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const page = (top: number, count: number) =>
   Array.from({ length: count }, (_, i) => result(top - i, top - i))

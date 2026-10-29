@@ -67,9 +67,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json()
 }
 
-export const NEXT_CURSOR = 'X-Next-Cursor'
+const NEXT_CURSOR = 'X-Next-Cursor'
 
-export const withCursor = (path: string, cursor: string | null) =>
+const withCursor = (path: string, cursor: string | null) =>
   cursor ? `${path}${path.includes('?') ? '&' : '?'}cursor=${seg(cursor)}` : path
 
 const seg = encodeURIComponent
@@ -468,7 +468,7 @@ export interface Assertion {
   expires_at: number
 }
 
-export function pageQuery(page: PageOpts) {
+function pageQuery(page: PageOpts) {
   const parts = Object.entries(page)
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => `${k}=${v}`)

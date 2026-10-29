@@ -4,6 +4,7 @@ import {
   appendUnique,
   bumpFront,
   keyed,
+  renameKey,
   lastOwn,
   lostServers,
   newSince,
@@ -275,6 +276,16 @@ describe('keyed', () => {
     expect(keyed(map, 'a', null)).toEqual({ b: 2 })
     expect(keyed(map, 'z', undefined)).toBe(map)
     expect(keyed(map, 'a', 1)).toBe(map)
+    expect(map).toEqual({ a: 1, b: 2 })
+  })
+})
+
+describe('renameKey', () => {
+  test('moves an entry to its new key and leaves the map alone when there is none', () => {
+    const map = { a: 1, b: 2 }
+    expect(renameKey(map, 'a', 'c')).toEqual({ b: 2, c: 1 })
+    expect(renameKey(map, 'b', 'b')).toEqual(map)
+    expect(renameKey(map, 'z', 'c')).toBe(map)
     expect(map).toEqual({ a: 1, b: 2 })
   })
 })

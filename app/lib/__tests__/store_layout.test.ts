@@ -1,9 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { dmView, folderLabel, railOrder, railServers, useStore } from '../store'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { dmView, folderLabel, railOrder, railServers, useStore, resetSessionCaches } from '../store'
 import { emptyLayout, type Folder, type Layout } from '../nav_layout'
 import { home } from '../instances'
 import type { DmSummary, ServerSummary, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)

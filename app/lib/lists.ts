@@ -88,6 +88,20 @@ export const keyed = <T>(
   return map[key] === value ? map : { ...map, [key]: value }
 }
 
+// Moves the entry under `from` to `to`; the map is unchanged when there is none.
+export const renameKey = <T>(
+  map: Record<string, T>,
+  from: string,
+  to: string
+): Record<string, T> => {
+  const value = map[from]
+  if (!value) return map
+  const next = { ...map }
+  delete next[from]
+  next[to] = value
+  return next
+}
+
 export const windowEdges = (
   ids: number[],
   at: number,

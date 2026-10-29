@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { configSourceOf, useStore } from '../store'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { configSourceOf, useStore, resetSessionCaches } from '../store'
 import { home } from '../instances'
 import { emptyLayout, layoutKey } from '../nav_layout'
 import { EMPTY_NOTIFY, notifyKey, setLevel, setMute } from '../notify'
@@ -16,6 +16,8 @@ import {
 } from '../config_transfer'
 import type { DmSummary, ServerSummary } from '../types'
 import { me, user } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const ALL = new Set<SectionKey>(SECTIONS.map(s => s.key))

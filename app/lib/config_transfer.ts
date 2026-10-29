@@ -5,6 +5,7 @@
 // sections are optional and decoded separately. Unknown sections and fields are dropped, so older
 // readers skip new sections. `v` changes only for an incompatible change. Only listed store
 // fields are copied, so tokens, grants, drafts, passwords and P2P state never get in.
+import { fromBase64Url, isRecord, toBase64Url } from './bytes'
 import type { Theme } from './types'
 import {
   cleanFolderName,
@@ -24,15 +25,15 @@ import {
 } from './emoji'
 import { ROUTE_LABEL, isRoute, type CallRoute } from './call_choice'
 
-export const CONFIG_VERSION = 1
+const CONFIG_VERSION = 1
 export const PREFIX = 'rc1.'
 // Share links hold at most this many bytes. String and file exports have no limit.
 export const LINK_MAX = 16 * 1024
 // Sanity caps for pasted strings and what they inflate to.
 export const TEXT_MAX = 2 * 1024 * 1024
 export const JSON_MAX = 4 * 1024 * 1024
-export const SERVERS_MAX = 1000
-export const DMS_MAX = 1000
+const SERVERS_MAX = 1000
+const DMS_MAX = 1000
 const NAME_MAX = 64
 const FOLDER_ID_MAX = 32
 
@@ -140,13 +141,10 @@ export const linkDoc = (doc: ConfigDoc): ConfigDoc => {
 export const presentSections = (doc: ConfigDoc): SectionKey[] =>
   SECTIONS.filter(s => doc[s.key] !== undefined).map(s => s.key)
 
-const isObject = (x: unknown): x is Record<string, unknown> =>
-  typeof x === 'object' && x !== null && !Array.isArray(x)
-
 const validName = (n: string) => n.length > 0 && n.length <= NAME_MAX
 
 const cleanLayout = (x: unknown): ConfigLayout | undefined => {
-  if (!isObject(x)) return undefined
+  if (!isRecord(x)) return undefined
   const { servers, dmOrder, dmPinned, selfPin } = x
   const parsed = parseLayout(JSON.stringify({ v: 2, servers, dmOrder, dmPinned, selfPin }))
   let budget = SERVERS_MAX
@@ -179,10 +177,10 @@ const cleanLayout = (x: unknown): ConfigLayout | undefined => {
 }
 
 const cleanNotify = (x: unknown, now: number): NotifyPrefs | undefined =>
-  isObject(x) ? parseNotify(JSON.stringify({ ...x, v: 1 }), now) : undefined
+  isRecord(x) ? parseNotify(JSON.stringify({ ...x, v: 1 }), now) : undefined
 
 const cleanEmoji = (x: unknown, now: number): EmojiPrefs | undefined => {
-  if (!isObject(x)) return undefined
+  if (!isRecord(x)) return undefined
   const parsed = parseEmojiPrefs(JSON.stringify({ ...x, v: 1 }))
   const kept = Object.entries(parsed.used)
     .filter(([k, u]) => looksLikeEmoji(k) && looksLikeEmoji(u.last))
@@ -204,7 +202,7 @@ export const NOT_CONFIG = 'Not a config string'
 
 // Validates and clamps every field; unknown sections and fields are dropped.
 export const sanitizeConfig = (data: unknown, now = Date.now()): Decoded => {
-  if (!isObject(data)) return { ok: false, error: DAMAGED }
+  if (!isRecord(data)) return { ok: false, error: DAMAGED }
   const { v, theme, streamer, appearOffline, layout, notify, emoji, calls } = data
   if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) return { ok: false, error: DAMAGED }
   if (v > CONFIG_VERSION) return { ok: false, error: NEWER }
@@ -222,20 +220,10 @@ export const sanitizeConfig = (data: unknown, now = Date.now()): Decoded => {
   return { ok: true, doc }
 }
 
-const toBase64Url = (bytes: Uint8Array) => {
-  let bin = ''
-  for (let i = 0; i < bytes.length; i += 0x8000)
-    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
-const fromBase64Url = (text: string): Uint8Array | null => {
+const readBase64Url = (text: string): Uint8Array | null => {
   if (!/^[A-Za-z0-9_-]+$/.test(text) || text.length % 4 === 1) return null
   try {
-    const bin = atob(text.replace(/-/g, '+').replace(/_/g, '/'))
-    const out = new Uint8Array(bin.length)
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-    return out
+    return fromBase64Url(text)
   } catch {
     return null
   }
@@ -280,13 +268,11 @@ export const encodeConfig = async (doc: ConfigDoc): Promise<string> => {
   return PREFIX + toBase64Url(packed)
 }
 
-export const looksLikeConfig = (text: string) => text.trim().startsWith(PREFIX)
-
 export const decodeConfig = async (text: string, now = Date.now()): Promise<Decoded> => {
   const trimmed = text.replace(/\s+/g, '')
   if (!trimmed.startsWith(PREFIX)) return { ok: false, error: NOT_CONFIG }
   if (trimmed.length > TEXT_MAX) return { ok: false, error: DAMAGED }
-  const bytes = fromBase64Url(trimmed.slice(PREFIX.length))
+  const bytes = readBase64Url(trimmed.slice(PREFIX.length))
   if (!bytes) return { ok: false, error: DAMAGED }
   const raw = await inflate(bytes, JSON_MAX)
   if (!raw) return { ok: false, error: DAMAGED }
@@ -368,7 +354,7 @@ const emojiText = (p: EmojiPrefs) =>
 
 const canon = (x: unknown): string =>
   JSON.stringify(x, (_, v: unknown) =>
-    isObject(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1))) : v
+    isRecord(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1))) : v
   )
 
 export const describeChanges = (doc: ConfigDoc, src: ConfigSource): Change[] => {

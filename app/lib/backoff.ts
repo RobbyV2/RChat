@@ -1,7 +1,7 @@
-export const BACKOFF_BASE = 1_000
+const BACKOFF_BASE = 1_000
 export const BACKOFF_CAP = 30_000
 export const BACKOFF_FLOOR = 250
-export const STABLE_AFTER = 30_000
+const STABLE_AFTER = 30_000
 
 export const backoffDelay = (
   attempt: number,

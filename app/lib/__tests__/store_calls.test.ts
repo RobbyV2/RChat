@@ -1,11 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { home } from '../instances'
 import { rtc } from '../rtc'
 import { p2p } from '../p2p'
-import { useStore } from '../store'
+import { useStore, resetSessionCaches } from '../store'
 import { SELF_AUDIO_IDLE } from '../voice_layout'
 import type { VoiceMsg, WsEvent } from '../types'
 import { me, memoryStorage } from './fixtures'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)

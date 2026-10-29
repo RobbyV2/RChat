@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { dmsUnread, serverUnread, useStore } from '../store'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { dmsUnread, serverUnread, useStore, resetSessionCaches } from '../store'
 import type { DmSummary, Message, ServerSummary, WsEvent } from '../types'
 import { me, member, msg, paged, serverDetail, user } from './fixtures'
 import { emptyLayout, layoutServers } from '../nav_layout'
+
+afterAll(resetSessionCaches)
 
 const dispatch = (ev: WsEvent) => useStore.getState().applyWsEvent(ev)
 const st = () => useStore.getState()

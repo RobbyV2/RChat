@@ -5,7 +5,7 @@ export const ON_LIGHT = '#000000'
 export const MIN_CONTRAST = 4.5
 export const MIN_HALO = 1.3
 export const MIN_GEAR = 6
-export const HALO_SHIFT = 0.14
+const HALO_SHIFT = 0.14
 export const THEME_SURFACES = { dark: '#1d1b20', light: '#f7f2fa' } as const
 export const THEME_ON_SURFACE = { dark: '#e6e0e9', light: '#1d1b20' } as const
 export const THEME_GEAR = { dark: '#cac4d0', light: '#49454f' } as const
@@ -30,7 +30,7 @@ export const NAME_PRESETS = [
   { color: '#ffb3c1', label: 'Blush' },
 ]
 
-export const hexRgb = (hex: string): [number, number, number] => [
+const hexRgb = (hex: string): [number, number, number] => [
   parseInt(hex.slice(1, 3), 16),
   parseInt(hex.slice(3, 5), 16),
   parseInt(hex.slice(5, 7), 16),

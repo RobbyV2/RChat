@@ -454,7 +454,8 @@ describe('first negotiation', () => {
   test('candidates that arrive before the offer are held, then added', async () => {
     const { alice, bob } = await room()
     bob.sync(['alice', 'bob'])
-    await sleep(5)
+    // wait for both, since a loaded machine can delay the chained timers past any fixed sleep
+    for (let i = 0; i < 500 && !wire.some(w => w.payload.candidate); i += 1) await sleep(1)
     // swap bob's offer and candidate on the wire
     const offer = wire.findIndex(w => w.payload.description)
     const cand = wire.findIndex(w => w.payload.candidate)

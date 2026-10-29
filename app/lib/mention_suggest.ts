@@ -1,6 +1,6 @@
 import type { UserRef } from './types'
 
-export const SUGGEST_MAX = 10
+const SUGGEST_MAX = 10
 export const SUGGEST_DEBOUNCE = 150
 
 // Characters an `@` query may contain: anything up to whitespace or another `@`.

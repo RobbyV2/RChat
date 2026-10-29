@@ -378,11 +378,15 @@ export class RtcManager {
     }
   }
 
-  private close(peer: Peer) {
+  private stopTimers(peer: Peer) {
     if (peer.watchdog) clearTimeout(peer.watchdog)
     if (peer.grace) clearTimeout(peer.grace)
     peer.watchdog = null
     peer.grace = null
+  }
+
+  private close(peer: Peer) {
+    this.stopTimers(peer)
     peer.pc.close()
   }
 
@@ -509,12 +513,8 @@ export class RtcManager {
 
   private watch(user: string, peer: Peer) {
     const state = peer.pc.connectionState
-    if (state === 'connected' || state === 'closed') {
-      if (peer.watchdog) clearTimeout(peer.watchdog)
-      if (peer.grace) clearTimeout(peer.grace)
-      peer.watchdog = null
-      peer.grace = null
-    } else if ((state === 'failed' || state === 'disconnected') && !peer.grace) {
+    if (state === 'connected' || state === 'closed') this.stopTimers(peer)
+    else if ((state === 'failed' || state === 'disconnected') && !peer.grace) {
       peer.grace = setTimeout(() => {
         peer.grace = null
         this.recover(user, peer)

@@ -10,8 +10,8 @@ const WORD_RE = new RegExp(`^${WORD}$`, 'u')
 const isWord = (c: string | undefined) => c !== undefined && WORD_RE.test(c)
 
 export const NAME_MAX = 100
-export const MENTION_MAX = 20
-export const CANDIDATES_MAX = 400
+const MENTION_MAX = 20
+const CANDIDATES_MAX = 400
 
 const FENCE = /^\s*(```|~~~)/
 

@@ -56,8 +56,8 @@ export interface Size {
 export type Side = 'top' | 'bottom'
 export type Align = 'start' | 'end'
 
-export const POPOVER_GAP = 8
-export const VIEWPORT_MARGIN = 8
+const POPOVER_GAP = 8
+const VIEWPORT_MARGIN = 8
 
 export function placePopover(
   anchor: Rect,

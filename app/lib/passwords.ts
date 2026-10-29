@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { isRecord } from './bytes'
 import { expiryText } from './rules'
 import type { PasswordStatus, ServerPassword, ServerPasswords } from './types'
 
@@ -14,11 +15,11 @@ export const EXPIRY_PRESETS: { label: string; seconds: number }[] = [
 
 export const USE_PRESETS = [1, 2, 5, 10, 25, 100]
 
-export const USES_MAX = 10_000
-export const EXPIRY_MIN = 60
+const USES_MAX = 10_000
+const EXPIRY_MIN = 60
 export const EXPIRY_MAX = 365 * 86400
 export const ACTIVE_MAX = 50
-export const SECRET_MIN = 8
+const SECRET_MIN = 8
 export const SHORT_PASSWORD = 'Use at least 8 characters'
 
 export const tooShort = (password: string) => {
@@ -88,9 +89,6 @@ export interface SecretBook {
 export const emptySecrets = (): SecretBook => ({ v: 1, servers: {} })
 
 export const secretsKey = (username: string) => `rchat_server_passwords:${username}`
-
-const isRecord = (x: unknown): x is Record<string, unknown> =>
-  typeof x === 'object' && x !== null && !Array.isArray(x)
 
 export const parseSecrets = (raw: string | null): SecretBook => {
   let data: unknown

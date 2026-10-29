@@ -36,7 +36,7 @@ export const scrolled = (s: Follow, m: Metrics, user: boolean, detached: boolean
   return following === s.following && m.scrollTop === s.top ? s : { following, top: m.scrollTop }
 }
 
-export const UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home'])
+const UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home'])
 
 export const upKey = (key: string, shift: boolean) => UP_KEYS.has(key) || (key === ' ' && shift)
 

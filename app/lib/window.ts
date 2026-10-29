@@ -70,7 +70,7 @@ export const dropWhere = <T>(list: T[], hit: (m: T) => boolean): T[] =>
   list.some(hit) ? list.filter(m => !hit(m)) : list
 
 export const WINDOW_MAX = 200
-export const WINDOW_SLACK = 50
+const WINDOW_SLACK = 50
 
 export type Keep = 'newest' | 'oldest'
 

@@ -42,7 +42,7 @@ const cancelled = (e: unknown) =>
 // Asks the browser to leave this page's own playback, the other people in
 // the call, out of a tab or system audio capture, so listeners never hear
 // themselves back. Members a browser doesn't know are ignored.
-export const SCREEN_AUDIO = { restrictOwnAudio: true, suppressLocalAudioPlayback: false }
+const SCREEN_AUDIO = { restrictOwnAudio: true, suppressLocalAudioPlayback: false }
 
 type Settings = MediaTrackSettings & { restrictOwnAudio?: boolean; displaySurface?: string }
 const settings = (t: MediaStreamTrack): Settings =>

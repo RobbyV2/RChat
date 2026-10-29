@@ -45,10 +45,7 @@ export const EMPTY_NOTIFY: NotifyPrefs = {
   desktop: false,
 }
 
-export const DEFAULT_LEVEL = { server: 'mentions', dm: 'all' } as const satisfies Record<
-  string,
-  Level
->
+const DEFAULT_LEVEL = { server: 'mentions', dm: 'all' } as const satisfies Record<string, Level>
 
 export const LEVELS: { level: Level; label: string }[] = [
   { level: 'all', label: 'All messages' },
@@ -79,7 +76,7 @@ const isLevel = (x: unknown): x is Level => x === 'all' || x === 'mentions' || x
 const isUntil = (x: unknown): x is MuteUntil =>
   x === 'forever' || (typeof x === 'number' && Number.isFinite(x) && x > 0)
 
-export const muteActive = (until: MuteUntil | undefined, now: number) =>
+const muteActive = (until: MuteUntil | undefined, now: number) =>
   until === 'forever' || (typeof until === 'number' && until > now)
 
 const ruleOfJson = (x: unknown, now: number): Rule | null => {
@@ -283,9 +280,6 @@ export const nextExpiry = (p: NotifyPrefs, now: number): number | null => {
         next = muteUntil
   return next
 }
-
-export const hasOverrides = (p: NotifyPrefs) =>
-  Object.keys(p.servers).length + Object.keys(p.channels).length + Object.keys(p.dms).length > 0
 
 const sameDay = (a: Date, b: Date) =>
   a.getFullYear() === b.getFullYear() &&

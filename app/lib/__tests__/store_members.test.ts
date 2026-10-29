@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { memberOf, serverAdminPerms, useStore } from '../store'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { memberOf, serverAdminPerms, useStore, resetSessionCaches } from '../store'
 import { Perm, type Member, type WsEvent } from '../types'
 import { me, member, paged, role, serverDetail } from './fixtures'
 import { home } from '../instances'
+
+afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)

@@ -65,7 +65,7 @@ export const clearPings = (pings: Pings, key: string, until = Infinity): Pings =
 }
 
 // The keys and counts a scope summary (an /api/unreads item or a ping_count event) describes.
-export const summaryPings = (
+const summaryPings = (
   scope: string,
   server: string | null,
   sum: PingSummary
