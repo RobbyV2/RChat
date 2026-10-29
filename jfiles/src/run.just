@@ -8,7 +8,7 @@ dev:
   set -euo pipefail
   cd "{{ROOT}}"
   echo "Building WASM (dev)..."
-  wasm-pack build wasm --target web --out-dir ../public/wasm --dev
+  wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --dev
   trap 'kill 0' SIGINT
   {{DOTENVX}} bash -c 'FRONTEND_HOST=${FRONTEND_HOST:-127.0.0.1} exec bun run dev' 2>&1 | sed 's/^/[WEB] /' &
   {{DOTENVX}} bash -c 'bunx peer --port "${PEERJS_PORT:-9001}" --path /peerjs 2>&1 | { case "${RUST_LOG:-info}" in *debug*|*trace*) cat ;; *) grep --line-buffered -vE "Client (dis)?connected:" ;; esac; }' | sed 's/^/[PEER] /' &
@@ -22,16 +22,16 @@ prod:
   set -euo pipefail
   cd "{{ROOT}}"
   echo "Building WASM..."
-  wasm-pack build wasm --target web --out-dir ../public/wasm --release
+  wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --release
   echo "Building frontend..."
   {{DOTENVX}} bun run build
-  cp -r public .next/standalone/ 2>/dev/null || true
-  cp -r .next/static .next/standalone/.next/ 2>/dev/null || true
+  cp -r apps/web/public apps/web/.next/standalone/apps/web/ 2>/dev/null || true
+  cp -r apps/web/.next/static apps/web/.next/standalone/apps/web/.next/ 2>/dev/null || true
   echo "Building backend..."
   cargo build --release --bin server
   echo "Starting servers..."
   trap 'kill 0' SIGINT
-  {{DOTENVX}} bash -c 'HOSTNAME=${FRONTEND_HOST:-127.0.0.1} exec bun ./.next/standalone/server.js' 2>&1 | sed 's/^/[WEB] /' &
+  {{DOTENVX}} bash -c 'HOSTNAME=${FRONTEND_HOST:-127.0.0.1} exec bun ./apps/web/.next/standalone/apps/web/server.js' 2>&1 | sed 's/^/[WEB] /' &
   {{DOTENVX}} bash -c 'bunx peer --port "${PEERJS_PORT:-9001}" --path /peerjs 2>&1 | { case "${RUST_LOG:-info}" in *debug*|*trace*) cat ;; *) grep --line-buffered -vE "Client (dis)?connected:" ;; esac; }' | sed 's/^/[PEER] /' &
   sleep 2
   {{DOTENVX}} ./target/release/server 2>&1 | sed 's/^/[RUST] /' &
@@ -66,16 +66,16 @@ static api_url:
   set -euo pipefail
   cd "{{ROOT}}"
   STATIC_EXPORT=true NEXT_PUBLIC_API_URL={{api_url}} bun run build
-  cp out/index.html out/404.html
-  echo "Serving out/ at http://localhost:{{env_var_or_default('PORT', '3001')}} (API: {{api_url}})"
-  bunx serve out -l {{env_var_or_default('PORT', '3001')}} -s
+  cp apps/web/out/index.html apps/web/out/404.html
+  echo "Serving apps/web/out/ at http://localhost:{{env_var_or_default('PORT', '3001')}} (API: {{api_url}})"
+  bunx serve apps/web/out -l {{env_var_or_default('PORT', '3001')}} -s
 
 # Run production (assumes already built)
 start-prod:
   #!/usr/bin/env bash
   cd "{{ROOT}}"
   trap 'kill 0' SIGINT
-  {{DOTENVX}} bash -c 'HOSTNAME=${FRONTEND_HOST:-127.0.0.1} exec bun ./.next/standalone/server.js' 2>&1 | sed 's/^/[WEB] /' &
+  {{DOTENVX}} bash -c 'HOSTNAME=${FRONTEND_HOST:-127.0.0.1} exec bun ./apps/web/.next/standalone/apps/web/server.js' 2>&1 | sed 's/^/[WEB] /' &
   sleep 2
   {{DOTENVX}} ./target/release/server 2>&1 | sed 's/^/[RUST] /' &
   wait

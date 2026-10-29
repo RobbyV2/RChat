@@ -6,15 +6,15 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     ignores: [
-      '.next/**',
-      'node_modules/**',
+      '**/.next/**',
+      '**/node_modules/**',
       'target/**',
-      'public/wasm/**',
-      'out/**',
+      'apps/web/public/wasm/**',
+      '**/out/**',
       '.remember/**',
       '.venv/**',
-      '*.config.js',
-      '*.config.mjs',
+      '**/*.config.js',
+      '**/*.config.mjs',
     ],
   },
   {
@@ -23,7 +23,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['public/sw.js'],
+    files: ['apps/web/public/sw.js'],
     languageOptions: {
       globals: {
         self: 'readonly',

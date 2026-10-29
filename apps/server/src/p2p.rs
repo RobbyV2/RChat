@@ -130,7 +130,7 @@ mod tests {
         );
     }
 
-    // The same vector is checked by the app in app/lib/__tests__/p2p_serve.test.ts.
+    // The same vector is checked by the app in apps/web/app/lib/__tests__/p2p_serve.test.ts.
     #[test]
     fn tokens_match_the_vector_the_app_checks() {
         let grant = Grant {

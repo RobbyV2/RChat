@@ -102,7 +102,7 @@ describe('server-side mention rules', () => {
     expect(maskCode('~~~\n@y')).toBe('   \n  ')
   })
 
-  test('candidates match src/api/pings.rs', () => {
+  test('candidates match apps/server/src/api/pings.rs', () => {
     expect(mentionCandidates('hey @bob')).toEqual(['bob'])
     expect(mentionCandidates('@BOB, look')).toEqual(['bob', 'bob,', 'bob, look'])
     expect(mentionCandidates('(@bob)')).toEqual(['bob', 'bob)'])

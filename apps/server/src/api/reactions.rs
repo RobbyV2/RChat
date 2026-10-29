@@ -709,7 +709,7 @@ mod tests {
     fn every_emoji_the_picker_offers_is_accepted_as_is() {
         let file = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/node_modules/emojibase-data/en/data.json"
+            "/../../node_modules/emojibase-data/en/data.json"
         );
         let Ok(raw) = std::fs::read_to_string(file) else {
             return;

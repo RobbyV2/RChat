@@ -17,17 +17,18 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY . .
 RUN cargo build --release --bin server
-RUN wasm-pack build wasm --target web --out-dir ../public/wasm --release
+RUN wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --release
 
 # Stage 4: Build Next.js
 FROM oven/bun:latest AS js-builder
 WORKDIR /app
 
-COPY package.json bun.lock ./
+COPY package.json bun.lock bunfig.toml ./
+COPY apps/web/package.json ./apps/web/
 RUN bun install --frozen-lockfile
 
 COPY . ./
-COPY --from=rust-builder /app/public/wasm ./public/wasm
+COPY --from=rust-builder /app/apps/web/public/wasm ./apps/web/public/wasm
 
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_WS_URL
@@ -56,9 +57,10 @@ ENV DATABASE_URL=/data/rchat.db
 RUN mkdir -p /data
 VOLUME /data
 
-COPY --from=js-builder /app/.next/standalone ./
-COPY --from=js-builder /app/.next/static ./.next/static
-COPY --from=js-builder /app/public ./public
+COPY --from=js-builder /app/apps/web/.next/standalone/node_modules ./node_modules
+COPY --from=js-builder /app/apps/web/.next/standalone/apps/web ./
+COPY --from=js-builder /app/apps/web/.next/static ./.next/static
+COPY --from=js-builder /app/apps/web/public ./public
 COPY --from=js-builder /peer /app/peer
 COPY --from=rust-builder /app/target/release/server /app/server
 COPY --chmod=755 deploy/start.sh /app/start.sh

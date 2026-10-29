@@ -48,7 +48,7 @@ const NONCE_TTL: Duration = Duration::from_secs(3600);
 const PRUNE_EVERY: Duration = Duration::from_secs(30);
 const RECONCILE_EVERY: Duration = Duration::from_secs(300);
 const INBOUND_MTU: usize = 1500;
-const STUN_LIST: &str = include_str!("../assets/stun_servers.json");
+const STUN_LIST: &str = include_str!("../../../assets/stun_servers.json");
 const ALLOCATE_RETRIES: usize = 10;
 
 #[derive(Deserialize)]

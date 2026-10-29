@@ -705,7 +705,11 @@ mod tests {
                 "https://site.example/a?q=%2F&x=",
             ),
         ] {
-            assert_eq!(extract_urls(posted), [stored], "app/lib/embed_links.ts");
+            assert_eq!(
+                extract_urls(posted),
+                [stored],
+                "apps/web/app/lib/embed_links.ts"
+            );
         }
     }
 

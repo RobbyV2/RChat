@@ -6,11 +6,11 @@ build:
 
 # Build WASM module (release)
 build-wasm:
-  cd {{ROOT}} && wasm-pack build wasm --target web --out-dir ../public/wasm --release
+  cd {{ROOT}} && wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --release
 
 # Build WASM module (dev, faster)
 build-wasm-dev:
-  cd {{ROOT}} && wasm-pack build wasm --target web --out-dir ../public/wasm --dev
+  cd {{ROOT}} && wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --dev
 
 # Build the API server binary
 build-api:
@@ -20,23 +20,23 @@ build-api:
 build-frontend:
   cd {{ROOT}} && bun run build
   @echo "Copying static assets for standalone build..."
-  cd {{ROOT}} && cp -r .next/static .next/standalone/.next/static
-  cd {{ROOT}} && cp -r public .next/standalone/public
+  cd {{WEB}} && cp -r .next/static .next/standalone/apps/web/.next/static
+  cd {{WEB}} && cp -r public .next/standalone/apps/web/public
 
 # Build static frontend baked with a remote API URL (connects to an api-only server)
 # Usage: just src build-static https://api.example.com
 build-static api_url:
   cd {{ROOT}} && STATIC_EXPORT=true NEXT_PUBLIC_API_URL={{api_url}} bun run build
-  cd {{ROOT}} && cp out/index.html out/404.html
-  @echo "Static site in {{ROOT}}/out (API: {{api_url}}); serve it on any static host."
+  cd {{WEB}} && cp out/index.html out/404.html
+  @echo "Static site in {{WEB}}/out (API: {{api_url}}); serve it on any static host."
 
 # Build everything for production (full mode)
 build-all: build-wasm build-api build-frontend
   @echo ""
   @echo "Production build complete!"
   @echo "  API binary:  {{ROOT}}/target/release/server"
-  @echo "  WASM:        {{ROOT}}/public/wasm/"
-  @echo "  Frontend:    {{ROOT}}/.next/standalone/"
+  @echo "  WASM:        {{WEB}}/public/wasm/"
+  @echo "  Frontend:    {{WEB}}/.next/standalone/"
   @echo ""
   @echo "Run with: just src prod"
 
@@ -88,7 +88,8 @@ docker-down:
 # Clean build artifacts
 clean:
   cd {{ROOT}} && cargo clean
-  cd {{ROOT}} && rm -rf .next out node_modules/.cache public/wasm
+  cd {{WEB}} && rm -rf .next out public/wasm
+  cd {{ROOT}} && rm -rf node_modules/.cache
 
 # Refresh the bundled public STUN list (assets/stun_servers.json) from always-online-stun
 refresh-stun:

@@ -4,42 +4,24 @@
   "version": "0.2.2",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
-    "dev": "dotenvx run --convention=nextjs --quiet -- bash -c 'exec next dev -H \"${FRONTEND_HOST:-${HOST:-localhost}}\"'",
-    "build": "dotenvx run --convention=nextjs --quiet -- next build",
-    "start": "dotenvx run --convention=nextjs --quiet -- bash -c 'HOSTNAME=${FRONTEND_HOST:-${HOST:-0.0.0.0}} exec bun .next/standalone/server.js'",
-    "test:ui": "bun test app",
+    "dev": "dotenvx run --convention=nextjs --quiet -- bun run --cwd apps/web dev",
+    "build": "dotenvx run --convention=nextjs --quiet -- bun run --cwd apps/web build",
+    "start": "dotenvx run --convention=nextjs --quiet -- bun run --cwd apps/web start",
+    "test:ui": "bun run --cwd apps/web test:ui",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,mjs}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,mjs}\""
   },
-  "dependencies": {
-    "@typescript/native": "npm:typescript@^7.0.2",
-    "emojibase-data": "^18.0.0",
-    "jose": "^6.2.13",
-    "lucide-react": "^1.61.0",
-    "minidenticons": "^4.2.1",
-    "next": "^16.4.3",
-    "peerjs": "^1.5.5",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "uqr": "^0.1.3",
-    "zustand": "^5.0.16"
-  },
   "devDependencies": {
     "@dotenvx/dotenvx": "^2.38.2",
     "@eslint/js": "^10.0.1",
-    "@tailwindcss/postcss": "^4.3.3",
-    "@types/node": "^26.6.5",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
     "eslint": "^10.13.0",
     "peer": "^1.0.2",
     "prettier": "^3.9.10",
-    "tailwindcss": "^4.3.3",
     "typescript-eslint": "^8.72.0"
   }
 }

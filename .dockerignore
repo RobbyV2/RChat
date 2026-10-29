@@ -1,12 +1,12 @@
 .git
-.next
-out
+**/.next
+**/out
 target
-node_modules
+**/node_modules
 *.pem
 .env
 .env.local
 .env*.local
 .DS_Store
 i.txt
-public/wasm
+apps/web/public/wasm

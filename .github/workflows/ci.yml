@@ -60,7 +60,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - run: wasm-pack build wasm --target web --out-dir ../public/wasm --release
+      - run: wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --release
       - run: bun run build
       - run: cargo build --release --bin server
 

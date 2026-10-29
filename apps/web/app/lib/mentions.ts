@@ -93,9 +93,9 @@ function* scanCandidates(chars: string[]): Generator<Candidate> {
   }
 }
 
-// Usernames `content` may mention, in order (the server's rule in src/api/pings.rs): after an
-// `@` that does not follow a word character, every run up to a character that is not followed
-// by a word character. Code is skipped.
+// Usernames `content` may mention, in order (the server's rule in apps/server/src/api/pings.rs):
+// after an `@` that does not follow a word character, every run up to a character that is not
+// followed by a word character. Code is skipped.
 export const mentionCandidates = (content: string, max = CANDIDATES_MAX): string[] => {
   const seen = new Set<string>()
   for (const { name } of scanCandidates([...maskCode(content)])) {

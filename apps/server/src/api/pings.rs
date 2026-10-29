@@ -133,7 +133,7 @@ fn fence(line: &str) -> bool {
 }
 
 /// Blanks out fenced code blocks and closed inline code spans (same rules as `maskCode` in
-/// `app/lib/mentions.ts`), so `@name` inside code is not a mention.
+/// `apps/web/app/lib/mentions.ts`), so `@name` inside code is not a mention.
 pub fn mask_code(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut fenced = false;
@@ -181,7 +181,8 @@ pub fn mask_code(text: &str) -> String {
 /// Lowercase usernames that `content` may mention, in order of appearance: for every `@` not
 /// preceded by a word character, each run of following characters (no `@`, no line break) that
 /// is not followed by a word character. This is the word-boundary rule of `mentionsUser` in
-/// `app/lib/mentions.ts`, so a username with spaces or dots can be mentioned. Code is skipped.
+/// `apps/web/app/lib/mentions.ts`, so a username with spaces or dots can be mentioned. Code is
+/// skipped.
 pub fn mention_candidates(content: &str) -> Vec<String> {
     let text: Vec<char> = mask_code(&content.to_lowercase()).chars().collect();
     let mut seen = HashSet::new();

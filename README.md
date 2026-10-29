@@ -104,6 +104,19 @@ just src dev
 
 Open http://localhost:3000. The first account you register is the site admin. Nobody else can see this.
 
+## Layout
+
+| Path          | What it is                                             |
+| ------------- | ------------------------------------------------------ |
+| `apps/web`    | The Next.js client (a Bun workspace).                  |
+| `apps/server` | The Rust server (a Cargo workspace member).            |
+| `crates/wasm` | The WASM module for the client.                        |
+| `assets`      | Logos, fonts and the bundled STUN list.                |
+| `deploy`      | Compose, Kubernetes and nginx files.                   |
+| `jfiles`      | The `just` recipes. Run them from the repository root. |
+
+Keep `.env.local` in the repository root. The root scripts and `just` recipes read it from there.
+
 ## Deployment modes
 
 Run everything in one process (the default):
@@ -118,7 +131,7 @@ Run only the API:
 APP_MODE=api-only just src api
 ```
 
-Build the frontend as static files for that API. The files go to `out/`:
+Build the frontend as static files for that API. The files go to `apps/web/out/`:
 
 ```bash
 just src build-static https://api.example.com

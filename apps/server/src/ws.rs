@@ -1246,8 +1246,8 @@ pub async fn depart(state: &AppState) {
 /// WebRTC signalling, and `p2p_hosting` / `p2p_who` / `p2p_peer` for P2P files (`p2p_peer`
 /// gives a reader of one message the hoster's peer id and a short-lived download token; `p2p_who`
 /// never carries peer ids). Guests are read-only: no
-/// presence, voice or calls. The server sends the events in `WsEvent` (`src/ws.rs`), for example
-/// `message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`,
+/// presence, voice or calls. The server sends the events in `WsEvent` (`apps/server/src/ws.rs`),
+/// for example `message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`,
 /// `voice_state`, `call_state` (with `kind` and `video`; an active P2P call also carries its id
 /// and the peer id of both tabs), `p2p_hosted` (tells a `p2p_hosting` sender which of its files are still live
 /// attachments, and the key it checks download tokens with), `p2p_peer`, `error` and `resync` (fetch state again after missed events). Frames

@@ -1,5 +1,5 @@
 # dependencies
-/node_modules
+node_modules/
 /.pnp
 .pnp.js
 
@@ -7,8 +7,8 @@
 /coverage
 
 # next.js
-/.next/
-/out/
+.next/
+/apps/web/out/
 
 # production
 /build
@@ -56,7 +56,7 @@ temp/
 deploy/k8s/secrets.env
 
 # WASM build output
-/public/wasm/
+/apps/web/public/wasm/
 
 # database
 rchat.db*
