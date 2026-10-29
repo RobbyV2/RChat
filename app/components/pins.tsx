@@ -9,12 +9,11 @@ import { myPerms, useStore, viewKey, type ContextMenuItem } from '../lib/store'
 import { Perm, hasPerm, type Message } from '../lib/types'
 import { longPress, useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
-import { MarkdownMessage } from './markdown_message'
+import { IMAGE_EXT, MarkdownMessage } from './markdown_message'
 import { profileTrigger } from './profile_card'
 import { UserAvatar } from './user_avatar'
+import { CloseButton, SheetGrip } from './ui'
 import { fmtTime, nameTriggerCls } from './message_pane'
-
-const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
 // Pinning and unpinning: either DM participant, or a member with Manage messages.
 export function useCanPin() {
@@ -288,17 +287,7 @@ export function PinsWindow() {
         <h2 id={titleId} className="flex-1 text-base font-medium text-on-surface">
           {PINS_TITLE}
         </h2>
-        {!sheet && (
-          <button
-            type="button"
-            title="Close"
-            aria-label="Close"
-            onClick={closePins}
-            className="rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest"
-          >
-            <X size={18} />
-          </button>
-        )}
+        {!sheet && <CloseButton onClick={closePins} />}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-outline-variant px-3 pt-3 pb-3">
         {list === null && !pins.failed && (
@@ -356,10 +345,7 @@ export function PinsWindow() {
           aria-labelledby={titleId}
           className="flex max-h-[80%] min-h-64 animate-sheet-up flex-col overflow-hidden rounded-t-3xl bg-surface-container-high px-safe pt-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-elevation-3"
         >
-          <div
-            aria-hidden
-            className="mx-auto mb-2 h-1 w-8 shrink-0 rounded-full bg-outline-variant"
-          />
+          <SheetGrip />
           {body}
         </div>
       </div>,

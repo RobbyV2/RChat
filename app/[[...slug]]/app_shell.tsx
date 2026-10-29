@@ -24,6 +24,9 @@ import { NoticeStack } from '../components/notice_stack'
 import { InvitePage } from '../components/invite_card'
 import { ConfigLinkPage } from '../components/config_sync'
 
+const bannerCls =
+  'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:fixed sm:top-[calc(env(safe-area-inset-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2'
+
 export default function AppShell() {
   const router = useRouter()
   const me = useStore(s => s.me)
@@ -188,17 +191,14 @@ export default function AppShell() {
         <CallBanner />
         <div className="pointer-events-none fixed inset-x-4 top-[calc(env(safe-area-inset-top)+4rem)] z-60 flex flex-col gap-2 sm:contents">
           {error && (
-            <div
-              role="alert"
-              className="pointer-events-auto max-w-full self-center rounded-xl sm:fixed sm:top-[calc(env(safe-area-inset-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2 bg-error-container px-4 py-2 text-center text-sm text-on-error-container shadow-elevation-2"
-            >
+            <div role="alert" className={`${bannerCls} bg-error-container text-on-error-container`}>
               {error}
             </div>
           )}
           {toast && !error && (
             <div
               role="status"
-              className="pointer-events-auto max-w-full self-center rounded-xl bg-inverse-surface px-4 py-2 text-center text-sm text-inverse-on-surface shadow-elevation-2 sm:fixed sm:top-[calc(env(safe-area-inset-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2"
+              className={`${bannerCls} bg-inverse-surface text-inverse-on-surface`}
             >
               {toast.text}
               {toast.name && (

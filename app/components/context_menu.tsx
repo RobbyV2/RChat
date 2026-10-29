@@ -27,6 +27,7 @@ import {
   type PressInput,
 } from '../lib/long_press'
 import { dnd, type DragSpec } from './drag'
+import { SheetGrip } from './ui'
 
 let press = idlePress
 let owner: HTMLElement | null = null
@@ -161,7 +162,7 @@ const claim = (e: { nativeEvent: Event }) => {
   return true
 }
 
-export interface LongPressProps {
+interface LongPressProps {
   'data-long-press': ''
   'data-drag-key'?: string
   onTouchStart: (e: ReactTouchEvent<HTMLElement>) => void
@@ -553,7 +554,7 @@ function OpenMenu({ menu, coarse }: { menu: ContextMenuState; coarse: boolean })
           }}
           className="animate-sheet-up max-h-[70dvh] overflow-y-auto overscroll-contain rounded-t-3xl bg-surface-container-high px-safe pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-elevation-3 select-none"
         >
-          <div aria-hidden className="mx-auto mb-2 h-1 w-8 rounded-full bg-outline-variant" />
+          <SheetGrip />
           {top ? (
             <div className="flex items-center gap-1 border-b border-outline-variant px-2 pb-2">
               <button

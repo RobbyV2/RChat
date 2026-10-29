@@ -50,6 +50,7 @@ import {
 } from '../lib/emoji'
 import { placePopover, type Align, type Side } from '../lib/autocomplete'
 import { useMedia } from './context_menu'
+import { textBtn } from './ui'
 
 export const SHEET_QUERY = '(pointer: coarse), (max-width: 639px)'
 
@@ -117,11 +118,11 @@ export function useTopEmojis(n: number) {
   return useMemo(() => topEmojis(n, prefs), [n, prefs])
 }
 
-export interface PickOptions {
+interface PickOptions {
   keepOpen: boolean
 }
 
-export interface EmojiPickerProps {
+interface EmojiPickerProps {
   anchor: HTMLElement | null
   onPick: (emoji: string, opts: PickOptions) => void
   onClose: () => void
@@ -564,11 +565,7 @@ const PickerBody = memo(function PickerBody({
     content = (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-on-surface-variant">
         <p>Emoji could not load.</p>
-        <button
-          type="button"
-          onClick={retry}
-          className="rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-highest"
-        >
+        <button type="button" onClick={retry} className={textBtn}>
           Try again
         </button>
       </div>

@@ -67,7 +67,7 @@ import { InviteCard, RemoteInviteCard } from './invite_card'
 import { profileTrigger } from './profile_card'
 import { EditedMark } from './message_editor'
 
-const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
+export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
 interface MdNode {
   type: string
@@ -289,6 +289,20 @@ const fmtSize = (n: number) =>
         ? `${(n / 1024 ** 2).toFixed(1)} MB`
         : `${(n / 1024 ** 3).toFixed(2)} GB`
 
+// The cover of a hidden spoiler attachment.
+function SpoilerCover({ title, onReveal }: { title?: string; onReveal: () => void }) {
+  return (
+    <button
+      title={title}
+      onClick={onReveal}
+      className="mt-1 flex w-fit cursor-pointer items-center gap-2 rounded-xl border border-outline-variant bg-surface-container px-3 py-2 hover:bg-surface-container-high"
+    >
+      <EyeOff size={18} className="shrink-0 text-on-surface-variant" />
+      <span className="text-sm text-on-surface-variant">Spoiler · click to reveal</span>
+    </button>
+  )
+}
+
 const UNVERIFIED = 'Unverified: sent from an older app'
 
 function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number }) {
@@ -428,16 +442,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   )
 
   if (hidden) {
-    return (
-      <button
-        title="Click to reveal"
-        onClick={() => setRevealed(true)}
-        className="mt-1 flex w-fit cursor-pointer items-center gap-2 rounded-xl border border-outline-variant bg-surface-container px-3 py-2 hover:bg-surface-container-high"
-      >
-        <EyeOff size={18} className="shrink-0 text-on-surface-variant" />
-        <span className="text-sm text-on-surface-variant">Spoiler · click to reveal</span>
-      </button>
-    )
+    return <SpoilerCover title="Click to reveal" onReveal={() => setRevealed(true)} />
   }
 
   const saveButton = (
@@ -609,15 +614,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
     )
   }
   if (hidden) {
-    return (
-      <button
-        onClick={() => setRevealed(true)}
-        className="mt-1 flex w-fit cursor-pointer items-center gap-2 rounded-xl border border-outline-variant bg-surface-container px-3 py-2 hover:bg-surface-container-high"
-      >
-        <EyeOff size={18} className="shrink-0 text-on-surface-variant" />
-        <span className="text-sm text-on-surface-variant">Spoiler · click to reveal</span>
-      </button>
-    )
+    return <SpoilerCover onReveal={() => setRevealed(true)} />
   }
   const card = (
     <>

@@ -17,7 +17,7 @@ import { SettingSwitch } from './admin_panel'
 import { NotificationsSection } from './notify_settings'
 import { ConfigSyncSection } from './config_sync'
 import { PassSwitch, WordGrid } from './word_grid'
-import { FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './server_settings'
+import { FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './ui'
 
 const bioFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 

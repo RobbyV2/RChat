@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { SmilePlus, X } from 'lucide-react'
+import { SmilePlus } from 'lucide-react'
 import { useStore } from '../lib/store'
 import type { Message, Reaction, UserRef } from '../lib/types'
 import {
@@ -18,6 +18,7 @@ import {
 import { EmojiPicker, useEmojiData, useTopEmojis } from './emoji_picker'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { UserAvatar } from './user_avatar'
+import { CloseButton, SheetGrip } from './ui'
 
 const EMPTY: Reaction[] = []
 
@@ -36,12 +37,12 @@ const shield = {
 
 const chipCls =
   'flex h-7 items-center gap-1.5 rounded-lg border px-2 text-sm font-medium tabular-nums outline-offset-2 select-none focus-visible:outline-2 focus-visible:outline-primary'
-export const blockedCls = 'cursor-not-allowed opacity-40'
-export const chipMineCls = 'border-primary bg-primary/15 text-primary hover:bg-primary/25'
-export const chipOtherCls =
+const blockedCls = 'cursor-not-allowed opacity-40'
+const chipMineCls = 'border-primary bg-primary/15 text-primary hover:bg-primary/25'
+const chipOtherCls =
   'border-transparent bg-surface-container-high text-on-surface-variant hover:border-outline-variant hover:text-on-surface'
 
-export function useReactors(messageId: number, emoji: string, count: number, enabled: boolean) {
+function useReactors(messageId: number, emoji: string, count: number, enabled: boolean) {
   const load = useStore(s => s.loadReactors)
   const key = `${messageId}:${emoji}:${count}`
   const [got, setGot] = useState<{ key: string; list: UserRef[] } | null>(null)
@@ -252,15 +253,7 @@ export function ReactionBar({
   )
 }
 
-export function ReactorsSheet({
-  m,
-  start,
-  onClose,
-}: {
-  m: Message
-  start: string
-  onClose: () => void
-}) {
+function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClose: () => void }) {
   const coarse = useMedia(COARSE_QUERY)
   const list = m.reactions ?? EMPTY
   const [picked, setPicked] = useState(start)
@@ -315,27 +308,12 @@ export function ReactorsSheet({
             : 'max-h-[min(70vh,100%)] w-full max-w-md rounded-2xl py-4'
         }`}
       >
-        {coarse && (
-          <div
-            aria-hidden
-            className="mx-auto mb-2 h-1 w-8 shrink-0 rounded-full bg-outline-variant"
-          />
-        )}
+        {coarse && <SheetGrip />}
         <div className="flex shrink-0 items-center justify-between px-4 pb-2">
           <h2 id={titleId} className="text-base font-medium text-on-surface">
             Reactions
           </h2>
-          {!coarse && (
-            <button
-              type="button"
-              title="Close"
-              aria-label="Close"
-              onClick={onClose}
-              className="rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest"
-            >
-              <X size={18} />
-            </button>
-          )}
+          {!coarse && <CloseButton onClick={onClose} />}
         </div>
         <div
           role="tablist"

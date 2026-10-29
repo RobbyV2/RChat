@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { folderLabel, useStore } from '../lib/store'
 import { FOLDER_NAME_MAX, type Folder } from '../lib/nav_layout'
 import { enterKey } from '../lib/keys'
-import { Dialog, fieldCls, filledBtn, textBtn } from './server_settings'
+import { Dialog, fieldCls, filledBtn, textBtn } from './ui'
 
 function RenameFolder({ folder }: { folder: Folder }) {
   const closeDialog = useStore(s => s.closeDialog)

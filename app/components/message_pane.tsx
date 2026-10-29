@@ -81,7 +81,7 @@ import {
   useFocusMessage,
   useScrollAnchor,
 } from './viewport_height'
-import { useEscape } from './server_settings'
+import { useEscape } from './ui'
 import { PingBadge, pingLabel } from './ping_badge'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { QuickReactions, ReactionBar, rowAt } from './reactions'
@@ -217,7 +217,60 @@ export const avatarTriggerCls =
   'block cursor-pointer rounded-full outline-offset-2 hover:opacity-85 focus-visible:outline-2 focus-visible:outline-primary'
 export const nameTriggerCls =
   'cursor-pointer rounded-sm outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'
-export const authorKey = (messages: Message[], extra: string[] = []) =>
+// Avatar on the left; name and `meta` (the time) above `children` on the right.
+export function AuthorRow({
+  author,
+  server,
+  size,
+  color,
+  meta,
+  children,
+}: {
+  author: UserRef
+  server: string | null
+  size: number
+  color?: string
+  meta: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <div className="flex gap-3">
+      <div className="shrink-0 pt-0.5">
+        <span
+          {...profileTrigger(author, server, false)}
+          title="View profile"
+          className={avatarTriggerCls}
+        >
+          <UserAvatar
+            username={author.username}
+            avatarKind={author.avatar_kind}
+            avatarColor={author.avatar_color}
+            size={size}
+          />
+        </span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span
+            {...profileTrigger(author, server)}
+            style={{ color }}
+            className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
+          >
+            {author.display_name}
+          </span>
+          {meta}
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+export const timeMeta = (ts: number) => (
+  <span className="shrink-0 text-xs text-on-surface-variant">{fmtTime(ts)}</span>
+)
+
+const authorKey = (messages: Message[], extra: string[] = []) =>
   [...new Set([...messages.map(m => m.author.username), ...extra])].sort().join('\n')
 
 const mentionedNames = (messages: Message[]) =>
@@ -362,56 +415,34 @@ const MessageRow = memo(function MessageRow({
         {m.reply_to && (
           <ReplyPreview quote={m.reply_to} avatar={36} color={quoteColor} onJump={onJump} />
         )}
-        <div className="flex gap-3">
-          <div className="shrink-0 pt-0.5">
-            <span
-              {...profileTrigger(m.author, server, false)}
-              title="View profile"
-              className={avatarTriggerCls}
+        <AuthorRow
+          author={m.author}
+          server={server}
+          size={36}
+          color={color}
+          meta={timeMeta(m.created_at)}
+        >
+          {m.forward ? (
+            <ForwardCard m={m} canDelete={canDelete} />
+          ) : (
+            <MarkdownMessage
+              message={m}
+              canDelete={canDelete}
+              editor={editing ? <MessageEditor /> : undefined}
+            />
+          )}
+          <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
+          {channel && m.reply_count > 0 && (
+            <button
+              title="Open thread"
+              onClick={() => void openThread(m)}
+              className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
             >
-              <UserAvatar
-                username={m.author.username}
-                avatarKind={m.author.avatar_kind}
-                avatarColor={m.author.avatar_color}
-                size={36}
-              />
-            </span>
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-baseline gap-2">
-              <span
-                {...profileTrigger(m.author, server)}
-                style={{ color }}
-                className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
-              >
-                {m.author.display_name}
-              </span>
-              <span className="shrink-0 text-xs text-on-surface-variant">
-                {fmtTime(m.created_at)}
-              </span>
-            </div>
-            {m.forward ? (
-              <ForwardCard m={m} canDelete={canDelete} />
-            ) : (
-              <MarkdownMessage
-                message={m}
-                canDelete={canDelete}
-                editor={editing ? <MessageEditor /> : undefined}
-              />
-            )}
-            <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
-            {channel && m.reply_count > 0 && (
-              <button
-                title="Open thread"
-                onClick={() => void openThread(m)}
-                className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
-              >
-                <MessageSquareText size={12} />
-                {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
-              </button>
-            )}
-          </div>
-        </div>
+              <MessageSquareText size={12} />
+              {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
+            </button>
+          )}
+        </AuthorRow>
         <MessageToolbar
           m={m}
           react={canReact}
@@ -449,58 +480,37 @@ export function OutboxRows({ msgKey, size = 36 }: { msgKey: string; size?: numbe
         return (
           <div key={o.tempId} className={`relative px-4 py-1.5 ${failed ? '' : 'opacity-50'}`}>
             {o.msg.reply_to && <ReplyPreview quote={o.msg.reply_to} avatar={size} onJump={jump} />}
-            <div className="flex gap-3">
-              <div className="shrink-0 pt-0.5">
+            <AuthorRow
+              author={me}
+              server={server}
+              size={size}
+              meta={
                 <span
-                  {...profileTrigger(me, server, false)}
-                  title="View profile"
-                  className={avatarTriggerCls}
+                  className={`shrink-0 text-xs ${failed ? 'text-error' : 'text-on-surface-variant'}`}
                 >
-                  <UserAvatar
-                    username={me.username}
-                    avatarKind={me.avatar_kind}
-                    avatarColor={me.avatar_color}
-                    size={size}
-                  />
+                  {failed ? 'Failed to send' : o.status === 'sending' ? 'Sending' : 'Queued'}
                 </span>
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-baseline gap-2">
-                  <span
-                    {...profileTrigger(me, server)}
-                    className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
-                  >
-                    {me.display_name}
-                  </span>
-                  <span
-                    className={`shrink-0 text-xs ${failed ? 'text-error' : 'text-on-surface-variant'}`}
-                  >
-                    {failed ? 'Failed to send' : o.status === 'sending' ? 'Sending' : 'Queued'}
-                  </span>
+              }
+            >
+              {o.msg.forward ? (
+                <ForwardCard m={o.msg} canDelete={false} sending />
+              ) : (
+                <MarkdownMessage message={o.msg} canDelete={false} />
+              )}
+              {o.pending && (
+                <span className="text-xs text-on-surface-variant">{o.pending.file.name}</span>
+              )}
+              {failed && (
+                <div className="mt-1 flex items-center gap-3 text-xs font-medium">
+                  <button onClick={() => retryOutgoing(msgKey, o.tempId)} className="text-primary">
+                    Retry
+                  </button>
+                  <button onClick={() => cancelOutgoing(msgKey, o.tempId)} className="text-error">
+                    Delete
+                  </button>
                 </div>
-                {o.msg.forward ? (
-                  <ForwardCard m={o.msg} canDelete={false} sending />
-                ) : (
-                  <MarkdownMessage message={o.msg} canDelete={false} />
-                )}
-                {o.pending && (
-                  <span className="text-xs text-on-surface-variant">{o.pending.file.name}</span>
-                )}
-                {failed && (
-                  <div className="mt-1 flex items-center gap-3 text-xs font-medium">
-                    <button
-                      onClick={() => retryOutgoing(msgKey, o.tempId)}
-                      className="text-primary"
-                    >
-                      Retry
-                    </button>
-                    <button onClick={() => cancelOutgoing(msgKey, o.tempId)} className="text-error">
-                      Delete
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
+              )}
+            </AuthorRow>
           </div>
         )
       })}

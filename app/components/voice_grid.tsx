@@ -42,7 +42,7 @@ import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
 import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, useMedia } from './context_menu'
-import { useEscape } from './server_settings'
+import { useEscape } from './ui'
 
 const useAudioGate = create<{ blocked: boolean }>(() => ({ blocked: false }))
 const useSeenShares = create<{ seen: ReadonlySet<string> }>(() => ({ seen: new Set() }))
@@ -452,10 +452,6 @@ const smallTone = (state: 'idle' | 'on' | 'off') =>
       ? 'bg-mute text-on-mute hover:bg-mute-hover'
       : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest'
 
-export function VoiceControls() {
-  return <CallControls size="sm" />
-}
-
 const QUALITY: Record<LinkQuality, { label: string; cls: string; Icon: typeof Signal }> = {
   good: { label: 'Voice Connected', cls: 'text-status-green', Icon: Signal },
   connecting: { label: 'Connecting…', cls: 'text-status-yellow', Icon: SignalMedium },
@@ -520,7 +516,7 @@ export function VoiceDock() {
         </button>
       </div>
       <div className="mt-2">
-        <VoiceControls />
+        <CallControls size="sm" />
       </div>
     </div>
   )

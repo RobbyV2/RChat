@@ -32,8 +32,8 @@ import { longPress } from './context_menu'
 import { dragScope } from './drag'
 import { InstallButton } from './pwa_register'
 import { RailInstance } from './instance_badge'
-import { Sentinel } from './server_settings'
 import { ThemeToggle } from './status_clock'
+import { Sentinel, iconBtn } from './ui'
 import { RailPingBadge, pingLabel } from './ping_badge'
 import { MutedIcon, folderNotifyItems, notifyMenuItems } from './notify_menu'
 
@@ -390,7 +390,7 @@ export function ServerRail() {
         <button
           title="Settings"
           onClick={() => openDialog({ kind: 'settings' })}
-          className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+          className={iconBtn}
         >
           <Settings size={20} />
         </button>
@@ -398,7 +398,7 @@ export function ServerRail() {
           <button
             title="Site administration"
             onClick={() => openDialog({ kind: 'admin_panel' })}
-            className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+            className={iconBtn}
           >
             <Shield size={20} />
           </button>

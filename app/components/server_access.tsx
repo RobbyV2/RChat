@@ -38,17 +38,17 @@ import type {
   ServerPassword,
   ServerPasswords,
 } from '../lib/types'
+import { WITH_OPTION, keepGuestsChoices } from './server_settings'
 import {
   Dialog,
   FieldError,
-  WITH_OPTION,
   dangerBtn,
   fieldCls,
   filledBtn,
-  keepGuestsChoices,
   sectionCls,
   textBtn,
-} from './server_settings'
+  useCopied,
+} from './ui'
 
 const UNTITLED = 'Untitled password'
 
@@ -97,12 +97,7 @@ function CopyButton({
   disabled?: boolean
   why?: string
 }) {
-  const [copied, setCopied] = useState(false)
-  useEffect(() => {
-    if (!copied) return
-    const id = window.setTimeout(() => setCopied(false), 1500)
-    return () => window.clearTimeout(id)
-  }, [copied])
+  const [copied, flashCopied] = useCopied()
   const off = disabled || text === null
   return (
     <span title={off ? why : copied ? 'Copied' : label}>
@@ -111,7 +106,7 @@ function CopyButton({
         aria-label={label}
         disabled={off}
         onClick={() => {
-          if (text) void navigator.clipboard.writeText(text).then(() => setCopied(true))
+          if (text) void navigator.clipboard.writeText(text).then(flashCopied)
         }}
         className="rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest disabled:pointer-events-none disabled:opacity-40"
       >

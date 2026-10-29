@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef } from 'react'
-import { MessageSquareText, Trash2, X } from 'lucide-react'
+import { MessageSquareText, Trash2 } from 'lucide-react'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { ReactionBar } from './reactions'
 import { readOnly } from '../lib/reactions'
@@ -16,26 +16,23 @@ import {
 import { Perm, hasPerm, type Message } from '../lib/types'
 import { findById } from '../lib/window'
 import { newSince } from '../lib/lists'
-import { UserAvatar } from './user_avatar'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
 import {
+  AuthorRow,
   OutboxRows,
-  avatarTriggerCls,
-  fmtTime,
   mentionRowCls,
   mentionsMe,
   messageCopyItems,
-  nameTriggerCls,
   reactHeader,
   replyAction,
   replyMenuItem,
+  timeMeta,
   useAuthorMembers,
   useMemberLookup,
   usePeopleKey,
 } from './message_pane'
 import { longPress, useMedia } from './context_menu'
-import { profileTrigger } from './profile_card'
 import {
   EdgeSentinel,
   OlderLoading,
@@ -44,7 +41,7 @@ import {
   useFocusMessage,
   useScrollAnchor,
 } from './viewport_height'
-import { useEscape } from './server_settings'
+import { PanelHeader, useEscape } from './ui'
 import { ReplyPreview } from './replies'
 import { canQuote } from '../lib/replies'
 import { canForward } from '../lib/forward'
@@ -229,48 +226,24 @@ export default function ThreadPanel() {
             onJump={m.id === root.id ? jumpMain : jump}
           />
         )}
-        <div className="flex gap-3">
-          <div className="shrink-0 pt-0.5">
-            <span
-              {...profileTrigger(m.author, server, false)}
-              title="View profile"
-              className={avatarTriggerCls}
-            >
-              <UserAvatar
-                username={m.author.username}
-                avatarKind={m.author.avatar_kind}
-                avatarColor={m.author.avatar_color}
-                size={30}
-              />
-            </span>
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-baseline gap-2">
-              <span
-                {...profileTrigger(m.author, server)}
-                style={{
-                  color: roleColor(roles, memberFor(m.author.username)?.role_ids ?? []),
-                }}
-                className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
-              >
-                {m.author.display_name}
-              </span>
-              <span className="shrink-0 text-xs text-on-surface-variant">
-                {fmtTime(m.created_at)}
-              </span>
-            </div>
-            {m.forward ? (
-              <ForwardCard m={m} canDelete={canDelete(m)} />
-            ) : (
-              <MarkdownMessage
-                message={m}
-                canDelete={canDelete(m)}
-                editor={editing ? <MessageEditor /> : undefined}
-              />
-            )}
-            <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
-          </div>
-        </div>
+        <AuthorRow
+          author={m.author}
+          server={server}
+          size={30}
+          color={roleColor(roles, memberFor(m.author.username)?.role_ids ?? [])}
+          meta={timeMeta(m.created_at)}
+        >
+          {m.forward ? (
+            <ForwardCard m={m} canDelete={canDelete(m)} />
+          ) : (
+            <MarkdownMessage
+              message={m}
+              canDelete={canDelete(m)}
+              editor={editing ? <MessageEditor /> : undefined}
+            />
+          )}
+          <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
+        </AuthorRow>
         <MessageToolbar
           m={m}
           react={canReact}
@@ -283,17 +256,12 @@ export default function ThreadPanel() {
 
   return (
     <div className="flex h-full w-full flex-col bg-surface-container-low">
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-4">
-        <MessageSquareText size={18} className="text-on-surface-variant" />
-        <span className="font-medium">Thread</span>
-        <button
-          title="Close thread"
-          onClick={closePanel}
-          className="ml-auto rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-high"
-        >
-          <X size={18} />
-        </button>
-      </header>
+      <PanelHeader
+        icon={MessageSquareText}
+        title="Thread"
+        closeTitle="Close thread"
+        onClose={closePanel}
+      />
       <div className="relative flex min-h-0 flex-1 flex-col">
         {older?.loading && <OlderLoading />}
         {newer?.loading && <OlderLoading newer />}

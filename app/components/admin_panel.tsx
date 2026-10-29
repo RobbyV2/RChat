@@ -16,18 +16,13 @@ import {
   AdminPermsEditor,
   BanList,
   ChannelControls,
-  Dialog,
   MemberSearchField,
   RolesEditor,
-  Sentinel,
   ServerAppearance,
   ServerPasswordField,
-  dangerBtn,
   useMemberSearch,
-  fieldCls,
-  sectionCls,
-  textBtn,
 } from './server_settings'
+import { Dialog, Sentinel, dangerBtn, fieldCls, filledDangerBtn, sectionCls, textBtn } from './ui'
 
 export default function AdminPanel() {
   const dialog = useStore(s => s.activeDialog)
@@ -155,7 +150,7 @@ function ProfanityTargetChecks() {
   )
 }
 
-export function SiteSwitches() {
+function SiteSwitches() {
   const settings = useStore(s => s.settings)
   const updateSettings = useStore(s => s.updateSettings)
   return (
@@ -666,51 +661,50 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
   )
 }
 
-function DeleteUserConfirm({ username }: { username: string }) {
-  const adminDeleteUser = useStore(s => s.adminDeleteUser)
+function UserConfirm({
+  title,
+  confirm,
+  run,
+  children,
+}: {
+  title: string
+  confirm: string
+  run: () => Promise<unknown>
+  children: React.ReactNode
+}) {
   const closeDialog = useStore(s => s.closeDialog)
   return (
-    <Dialog title="Delete User" onClose={closeDialog}>
-      <p className="text-sm text-on-surface-variant">
-        Delete the account of <span className="streamer">{username}</span>? Every message they sent
-        and their DMs are deleted. Servers they created are kept. The username becomes free to
-        register again; use Ban site-wide to also block the name.
-      </p>
+    <Dialog title={title} onClose={closeDialog}>
+      <p className="text-sm text-on-surface-variant">{children}</p>
       <div className="mt-6 flex justify-end gap-2">
         <button onClick={closeDialog} className={textBtn}>
           Cancel
         </button>
-        <button
-          onClick={() => void adminDeleteUser(username).then(closeDialog)}
-          className="rounded-full bg-error px-4 py-2 text-sm font-medium text-on-error hover:opacity-90"
-        >
-          Delete
+        <button onClick={() => void run().then(closeDialog)} className={filledDangerBtn}>
+          {confirm}
         </button>
       </div>
     </Dialog>
   )
 }
 
+function DeleteUserConfirm({ username }: { username: string }) {
+  const adminDeleteUser = useStore(s => s.adminDeleteUser)
+  return (
+    <UserConfirm title="Delete User" confirm="Delete" run={() => adminDeleteUser(username)}>
+      Delete the account of <span className="streamer">{username}</span>? Every message they sent
+      and their DMs are deleted. Servers they created are kept. The username becomes free to
+      register again; use Ban site-wide to also block the name.
+    </UserConfirm>
+  )
+}
+
 function BanConfirm({ username }: { username: string }) {
   const banUser = useStore(s => s.banUser)
-  const closeDialog = useStore(s => s.closeDialog)
   return (
-    <Dialog title="Ban Site-wide" onClose={closeDialog}>
-      <p className="text-sm text-on-surface-variant">
-        Ban <span className="streamer">{username}</span> site-wide? This deletes their account and
-        every message they have sent, and permanently blocks the username.
-      </p>
-      <div className="mt-6 flex justify-end gap-2">
-        <button onClick={closeDialog} className={textBtn}>
-          Cancel
-        </button>
-        <button
-          onClick={() => void banUser(username).then(closeDialog)}
-          className="rounded-full bg-error px-4 py-2 text-sm font-medium text-on-error hover:opacity-90"
-        >
-          Ban
-        </button>
-      </div>
-    </Dialog>
+    <UserConfirm title="Ban Site-wide" confirm="Ban" run={() => banUser(username)}>
+      Ban <span className="streamer">{username}</span> site-wide? This deletes their account and
+      every message they have sent, and permanently blocks the username.
+    </UserConfirm>
   )
 }

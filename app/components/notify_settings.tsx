@@ -5,7 +5,7 @@ import { useStore } from '../lib/store'
 import { notifications, type Permission } from '../lib/platform'
 import { ruleSummary, type NotifyScope, type Rule } from '../lib/notify'
 import { SettingSwitch } from './admin_panel'
-import { sectionCls, textBtn } from './server_settings'
+import { sectionCls, textBtn } from './ui'
 
 interface Override {
   key: string

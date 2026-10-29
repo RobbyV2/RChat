@@ -28,7 +28,7 @@ import {
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
 import { Badge, profileTrigger } from './profile_card'
-import { Sentinel } from './server_settings'
+import { Sentinel } from './ui'
 
 const byName = (a: Member, b: Member) => a.display_name.localeCompare(b.display_name)
 

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { keepDismissal, scrollToShow } from '../lib/autocomplete'
 import { composing } from '../lib/keys'
 
-export interface Autocomplete<T> {
+interface Autocomplete<T> {
   open: boolean
   items: T[]
   active: number

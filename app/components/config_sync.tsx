@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useShallow } from 'zustand/react/shallow'
-import { Check, Copy, QrCode as QrIcon, Share2, Trash2, X } from 'lucide-react'
+import { Check, Copy, QrCode as QrIcon, Share2, Trash2 } from 'lucide-react'
 import { encode } from 'uqr'
 import { api } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
@@ -29,8 +29,7 @@ import {
   type ConfigSource,
   type SectionKey,
 } from '../lib/config_transfer'
-import { ThemeToggle } from './status_clock'
-import { FieldError, fieldCls, filledBtn, sectionCls, textBtn } from './server_settings'
+import { FieldError, LinkPage, fieldCls, filledBtn, sectionCls, textBtn, useCopied } from './ui'
 
 const iconBtn =
   'rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface disabled:pointer-events-none disabled:opacity-40'
@@ -38,7 +37,7 @@ const iconBtn =
 const areaCls = `${fieldCls} w-full resize-none font-mono text-xs break-all md:text-xs`
 
 // Dark modules on white with a 4-module quiet zone in both themes, so all scanners can read it.
-export function QrCode({ text, label }: { text: string; label: string }) {
+function QrCode({ text, label }: { text: string; label: string }) {
   const qr = useMemo(() => encode(text, { ecc: 'M', border: 4 }), [text])
   const path = useMemo(() => {
     let d = ''
@@ -65,18 +64,17 @@ export function QrCode({ text, label }: { text: string; label: string }) {
 }
 
 function CopyButton({ text, label }: { text: string; label: string }) {
-  const [copied, setCopied] = useState(false)
-  useEffect(() => {
-    if (!copied) return
-    const id = window.setTimeout(() => setCopied(false), 1500)
-    return () => window.clearTimeout(id)
-  }, [copied])
+  const [copied, flashCopied] = useCopied()
   return (
     <button
       type="button"
       title={copied ? 'Copied' : label}
       aria-label={label}
-      onClick={() => void sharing().copyText(text).then(setCopied)}
+      onClick={() =>
+        void sharing()
+          .copyText(text)
+          .then(ok => ok && flashCopied())
+      }
       className={iconBtn}
     >
       {copied ? <Check size={16} /> : <Copy size={16} />}
@@ -108,7 +106,7 @@ const useAvailable = () => {
 }
 
 // One checkbox row per section in `doc`, showing what changes, and Apply.
-export function ImportPreview({
+function ImportPreview({
   doc,
   onDone,
   loggedOut = false,
@@ -653,30 +651,11 @@ function LinkCard({ id }: { id: string }) {
 
 export function ConfigLinkPage() {
   const id = useStore(s => s.configLink)
-  const authed = useStore(s => s.me !== null || s.guest)
   const closeConfigLink = useStore(s => s.closeConfigLink)
   if (!id) return null
   return (
-    <div className="invite-backdrop fixed inset-x-0 top-0 z-40 flex h-app flex-col overflow-y-auto px-safe-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-      <header className="flex shrink-0 items-center justify-between pt-[max(0.75rem,env(safe-area-inset-top))] pb-2">
-        <img src="/rchat_logo.png" alt="RChat" className="h-9 w-auto" />
-        <div className="flex items-center gap-1">
-          <ThemeToggle />
-          {authed && (
-            <button
-              title="Close"
-              aria-label="Close"
-              onClick={closeConfigLink}
-              className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-            >
-              <X size={20} />
-            </button>
-          )}
-        </div>
-      </header>
-      <main className="my-auto flex w-full justify-center py-6">
-        <LinkCard key={id} id={id} />
-      </main>
-    </div>
+    <LinkPage closeTitle="Close" onClose={closeConfigLink}>
+      <LinkCard key={id} id={id} />
+    </LinkPage>
   )
 }

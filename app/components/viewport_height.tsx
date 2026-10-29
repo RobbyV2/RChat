@@ -268,7 +268,7 @@ export function OlderLoading({ newer = false }: { newer?: boolean }) {
   )
 }
 
-export const EDGE_MARGIN = 200
+const EDGE_MARGIN = 200
 
 export function EdgeSentinel({
   root,
@@ -301,7 +301,7 @@ export function EdgeSentinel({
   return <div ref={ref} aria-hidden className="h-px" />
 }
 
-export const scrollToMessage = (list: HTMLElement, id: number | null) => {
+const scrollToMessage = (list: HTMLElement, id: number | null) => {
   if (id === null) {
     list.scrollTop = list.scrollHeight
     return true

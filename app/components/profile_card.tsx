@@ -57,6 +57,7 @@ import { MESSAGE_MAX, memberPerms, rolePerms } from '../lib/rules'
 import { sendKey } from '../lib/keys'
 import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
+import { useCopied } from './ui'
 import { COARSE_QUERY, useMedia } from './context_menu'
 
 export function Badge({ tone, children }: { tone: 'primary' | 'tertiary'; children: string }) {
@@ -83,7 +84,7 @@ const openFrom = (el: Element, user: UserRef, server: string | null, x: number, 
   s.openProfile(user, server, x, y)
 }
 
-export interface ProfileTriggerProps {
+interface ProfileTriggerProps {
   role: 'button'
   tabIndex: number
   onClick: (e: ReactMouseEvent<HTMLElement>) => void
@@ -200,7 +201,7 @@ function Card({ target }: { target: ProfileTarget }) {
   const [failed, setFailed] = useState(false)
   const [text, setText] = useState('')
   const [adding, setAdding] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [copied, flashCopied] = useCopied()
   const opened = useRef({ view, dialog })
   const inside = useRef(false)
 
@@ -393,10 +394,7 @@ function Card({ target }: { target: ProfileTarget }) {
   }
 
   const copyId = () => {
-    void navigator.clipboard.writeText(username).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
+    void navigator.clipboard.writeText(username).then(flashCopied)
   }
 
   const send = () => {

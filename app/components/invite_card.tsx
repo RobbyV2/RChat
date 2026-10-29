@@ -13,7 +13,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { ExternalLink, Globe, Hash, Link2Off, Lock, Paperclip, X } from 'lucide-react'
+import { ExternalLink, Globe, Hash, Link2Off, Lock, Paperclip } from 'lucide-react'
 import { ApiError } from '../lib/api'
 import { InstanceError, api } from '../lib/instances'
 import { errorText, useStore, type Nav } from '../lib/store'
@@ -42,13 +42,12 @@ import { absoluteTime, countdown, tickMs, useNow, usesLeftText } from '../lib/pa
 import { serverInitial } from '../lib/rules'
 import type { InstanceInfo, Invite, InviteStatus, Message } from '../lib/types'
 import { ServerGlyph } from './server_rail'
-import { Dialog, FieldError, fieldCls, filledBtn, textBtn } from './server_settings'
-import { ThemeToggle } from './status_clock'
+import { Dialog, FieldError, LinkPage, fieldCls, filledBtn, textBtn } from './ui'
 import { InstanceChip } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
 
-export type InviteVariant = 'embed' | 'page'
+type InviteVariant = 'embed' | 'page'
 
 const TTL = 30_000
 const FRESH = 1_000
@@ -1056,35 +1055,17 @@ export function RemoteInviteCard({
 
 export function InvitePage() {
   const invite = useStore(s => s.invite)
-  const authed = useStore(s => s.me !== null || s.guest)
   const closeInvite = useStore(s => s.closeInvite)
   if (!invite) return null
   return (
-    <div className="invite-backdrop fixed inset-x-0 top-0 z-40 flex h-app flex-col overflow-y-auto px-safe-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-      <header className="flex shrink-0 items-center justify-between pt-[max(0.75rem,env(safe-area-inset-top))] pb-2">
-        <img src="/rchat_logo.png" alt="RChat" className="h-9 w-auto" />
-        <div className="flex items-center gap-1">
-          <ThemeToggle />
-          {authed && (
-            <button
-              title="Close invite"
-              onClick={closeInvite}
-              className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-            >
-              <X size={20} />
-            </button>
-          )}
-        </div>
-      </header>
-      <main className="my-auto flex w-full justify-center py-6">
-        <InviteCard
-          key={`${invite.server}\n${invite.password ?? ''}`}
-          variant="page"
-          server={invite.server}
-          password={invite.password}
-          autoJoin={invite.join}
-        />
-      </main>
-    </div>
+    <LinkPage closeTitle="Close invite" onClose={closeInvite}>
+      <InviteCard
+        key={`${invite.server}\n${invite.password ?? ''}`}
+        variant="page"
+        server={invite.server}
+        password={invite.password}
+        autoJoin={invite.join}
+      />
+    </LinkPage>
   )
 }

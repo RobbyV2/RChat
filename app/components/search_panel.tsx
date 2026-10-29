@@ -1,11 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { FileText, Hash, Search, X } from 'lucide-react'
+import { FileText, Hash, Search } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { dayEndTs, dayStartTs, type SearchArgs } from '../lib/search'
 import { UserAvatar } from './user_avatar'
-import { Sentinel, fieldCls, useEscape } from './server_settings'
+import { PanelHeader, Sentinel, fieldCls, useEscape } from './ui'
 import { avatarTriggerCls, fmtTime, nameTriggerCls } from './message_pane'
 import { profileTrigger } from './profile_card'
 import { ForwardedTag } from './replies'
@@ -79,17 +79,7 @@ export default function SearchPanel() {
 
   return (
     <div className="flex h-full w-full flex-col bg-surface-container-low">
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-4">
-        <Search size={18} className="text-on-surface-variant" />
-        <span className="font-medium">Search</span>
-        <button
-          title="Close search"
-          onClick={closePanel}
-          className="ml-auto rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-high"
-        >
-          <X size={18} />
-        </button>
-      </header>
+      <PanelHeader icon={Search} title="Search" closeTitle="Close search" onClose={closePanel} />
       <div className="flex shrink-0 flex-col gap-2 border-b border-outline-variant p-3">
         <input
           value={q}

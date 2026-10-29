@@ -15,7 +15,7 @@ import { fmtDuration } from '../lib/voice_layout'
 import { useStore, type ContextMenuItem } from '../lib/store'
 import type { DmSummary } from '../lib/types'
 
-export const useP2pCallable = (dm: DmSummary) =>
+const useP2pCallable = (dm: DmSummary) =>
   useStore(s =>
     p2pCallable({
       guest: s.guest,

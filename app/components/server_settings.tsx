@@ -54,91 +54,17 @@ import {
   contrastWarning,
   headerColors,
 } from '../lib/server_colors'
-
-export const fieldCls =
-  'min-w-0 flex-1 rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm'
-export const filledBtn =
-  'rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary hover:opacity-90 disabled:opacity-40'
-export const textBtn =
-  'rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-highest'
-export const dangerBtn =
-  'rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest disabled:opacity-40'
-export const sectionCls =
-  'pb-2 pt-5 text-xs font-medium uppercase tracking-wide text-on-surface-variant first:pt-0'
-
-export function FieldError({ message, id }: { message: string | null; id?: string }) {
-  if (!message) return null
-  return (
-    <p id={id} role="alert" className="pt-1.5 text-xs text-error">
-      {message}
-    </p>
-  )
-}
-
-export type EscapeLayer = 'stage' | 'panel' | 'dialog' | 'confirm'
-
-// Each handler sees the store as it was at keydown. So a handler that runs after another closed
-// its layer still knows that the layer was covered.
-const pressed = new WeakMap<Event, ReturnType<typeof useStore.getState>>()
-
-const covered = (layer: EscapeLayer, e: Event) => {
-  const s = pressed.get(e) ?? useStore.getState()
-  pressed.set(e, s)
-  if (s.contextMenu) return true
-  if (layer === 'confirm') return false
-  if (s.confirm) return true
-  if (layer === 'dialog') return false
-  if (
-    s.activeDialog !== null ||
-    s.profile !== null ||
-    s.invite !== null ||
-    document.querySelector('[aria-modal="true"]') !== null
-  )
-    return true
-  return layer === 'stage' && s.panel !== null
-}
-
-export function useEscape(onEscape: (e: KeyboardEvent) => void, layer: EscapeLayer = 'dialog') {
-  const ref = useRef(onEscape)
-  useEffect(() => {
-    ref.current = onEscape
-  })
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.isComposing && !covered(layer, e)) ref.current(e)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [layer])
-}
-
-export function useBackdrop(onClose: () => void) {
-  const pressed = useRef(false)
-  return {
-    onMouseDown: (e: React.MouseEvent) => {
-      pressed.current = e.target === e.currentTarget
-    },
-    onClick: (e: React.MouseEvent) => {
-      const hit = pressed.current && e.target === e.currentTarget
-      pressed.current = false
-      if (hit) onClose()
-    },
-  }
-}
-
-export function Sentinel({ onVisible }: { onVisible: () => void }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const observer = new IntersectionObserver(entries => {
-      if (entries.some(e => e.isIntersecting)) onVisible()
-    })
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [onVisible])
-  return <div ref={ref} className="h-px" />
-}
+import {
+  Dialog,
+  FieldError,
+  Sentinel,
+  dangerBtn,
+  fieldCls,
+  filledBtn,
+  filledDangerBtn,
+  sectionCls,
+  textBtn,
+} from './ui'
 
 const SEARCH_DEBOUNCE = 250
 const PICKER_HITS = 8
@@ -232,7 +158,7 @@ export function MemberSearchField({
   )
 }
 
-export function MemberPicker({
+function MemberPicker({
   server,
   onPick,
   exclude,
@@ -291,62 +217,6 @@ export function MemberPicker({
           )}
         </div>
       )}
-    </div>
-  )
-}
-
-export function Dialog({
-  title,
-  onClose,
-  children,
-  full = false,
-  layer = 'dialog',
-}: {
-  title: string
-  onClose: () => void
-  children: ReactNode
-  full?: boolean
-  layer?: EscapeLayer
-}) {
-  const titleId = useId()
-  const backdrop = useBackdrop(onClose)
-  useEscape(onClose, layer)
-  return (
-    <div
-      className={`fixed inset-x-0 top-0 ${layer === 'confirm' ? 'z-50' : 'z-40'} flex h-app items-center justify-center bg-scrim/60 ${full ? 'px-safe sm:px-safe-4 sm:py-4' : 'px-safe-4 py-4'}`}
-      {...backdrop}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className={`w-full overflow-y-auto bg-surface-container-high p-6 shadow-elevation-3 ${
-          full
-            ? 'h-full max-h-none sm:h-auto sm:max-h-[min(85vh,100%)] sm:max-w-lg sm:rounded-2xl'
-            : 'max-h-[min(85vh,100%)] max-w-lg rounded-2xl'
-        }`}
-      >
-        <div
-          className={`flex items-center justify-between ${
-            full
-              ? 'sticky -top-6 z-10 -mx-6 -mt-6 mb-4 bg-surface-container-high px-6 py-4'
-              : 'mb-4'
-          }`}
-        >
-          <h2 id={titleId} className="text-lg font-medium text-on-surface">
-            {title}
-          </h2>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            title="Close"
-            className="rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        {children}
-      </div>
     </div>
   )
 }
@@ -591,7 +461,7 @@ const RESTRICTIONS = [
   },
 ] as const
 
-export function ChannelPermsEditor({
+function ChannelPermsEditor({
   channel,
   server,
   roles,
@@ -863,7 +733,7 @@ export function ChannelControls({
   )
 }
 
-export interface OptionChoice extends ConfirmChoice {
+interface OptionChoice extends ConfirmChoice {
   option?: { label: string; detail: string }
 }
 
@@ -1113,7 +983,7 @@ export function ServerAppearance({
   )
 }
 
-export function InviteLinkField({ server, hasPassword }: { server: string; hasPassword: boolean }) {
+function InviteLinkField({ server, hasPassword }: { server: string; hasPassword: boolean }) {
   const [password, setPassword] = useState('')
   const [copied, setCopied] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -1318,11 +1188,7 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
             onClose()
             action(optionOn && picked?.option ? `${choice}${WITH_OPTION}` : choice)
           }}
-          className={
-            danger
-              ? 'rounded-full bg-error px-4 py-2 text-sm font-medium text-on-error hover:opacity-90'
-              : filledBtn
-          }
+          className={danger ? filledDangerBtn : filledBtn}
         >
           {confirm}
         </button>

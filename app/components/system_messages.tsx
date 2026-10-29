@@ -10,7 +10,7 @@ import { SettingSwitch } from './admin_panel'
 import { longPress } from './context_menu'
 import { fmtTime, nameTriggerCls } from './message_pane'
 import { profileTrigger } from './profile_card'
-import { FieldError, fieldCls, sectionCls } from './server_settings'
+import { FieldError, fieldCls, sectionCls, textBtn } from './ui'
 
 // "alice joined the party." with a green arrow, "alice left the server." with a red one.
 export function SystemNotice({
@@ -152,7 +152,7 @@ export function ServerSystemMessages({ server }: { server: string }) {
               setFailed(false)
               setTick(t => t + 1)
             }}
-            className="rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-highest"
+            className={textBtn}
           >
             Retry
           </button>

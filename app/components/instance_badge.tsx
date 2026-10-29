@@ -1,21 +1,13 @@
 'use client'
 
-import { useEffect } from 'react'
 import { Globe } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { DEFAULT_INSTANCE_NAME, home } from '../lib/instances'
 
-export function useInstance() {
+function useInstance() {
   const info = useStore(s => s.instance)
   const host = useStore(s => s.instanceHost)
   return { info, host, name: info?.name || DEFAULT_INSTANCE_NAME }
-}
-
-export function useInstanceSync() {
-  const loadInstance = useStore(s => s.loadInstance)
-  useEffect(() => {
-    void loadInstance()
-  }, [loadInstance])
 }
 
 export function InstanceChip({ host, className = '' }: { host: string; className?: string }) {

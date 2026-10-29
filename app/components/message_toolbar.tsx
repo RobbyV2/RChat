@@ -13,7 +13,7 @@ import type { Message } from '../lib/types'
 import { FULL_TITLE, canAddEmoji, reacted, reactionsFull } from '../lib/reactions'
 import { EmojiPicker, useTopEmojis } from './emoji_picker'
 
-export const messageToolbarCls =
+const messageToolbarCls =
   'pointer-events-none absolute -top-3 right-3 z-10 flex items-center gap-0.5 rounded-lg border border-outline-variant bg-surface-container p-0.5 opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 data-open:pointer-events-auto data-open:opacity-100 pointer-fine:group-focus-within:pointer-events-auto pointer-fine:group-focus-within:opacity-100'
 
 const GAP = 4
@@ -63,7 +63,7 @@ function useClampedToolbar(ref: RefObject<HTMLDivElement | null>) {
     }
   }, [ref])
 }
-export const messageToolCls =
+const messageToolCls =
   'flex h-8 w-8 items-center justify-center rounded-md text-on-surface-variant hover:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-primary'
 
 export interface ToolbarAction {

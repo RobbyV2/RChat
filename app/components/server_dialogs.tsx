@@ -1,48 +1,13 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
-import { X } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { api } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import type { ServerMatch } from '../lib/types'
 import { enterKey } from '../lib/keys'
 import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
 import { SHORT_PASSWORD, tooShort } from '../lib/passwords'
-import { FieldError, useBackdrop, useEscape } from './server_settings'
-
-function Dialog({ title, children }: { title: string; children: React.ReactNode }) {
-  const closeDialog = useStore(s => s.closeDialog)
-  const titleId = useId()
-  const backdrop = useBackdrop(closeDialog)
-  useEscape(closeDialog)
-  return (
-    <div
-      className="fixed inset-x-0 top-0 z-50 flex h-app items-center justify-center bg-scrim/60 px-safe-4 py-4"
-      {...backdrop}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="max-h-full w-full max-w-sm overflow-y-auto rounded-3xl bg-surface-container-high p-6 shadow-elevation-3"
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 id={titleId} className="text-lg font-medium">
-            {title}
-          </h2>
-          <button
-            title="Close"
-            onClick={closeDialog}
-            className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
-}
+import { Dialog, FieldError } from './ui'
 
 function AddServerDialog({ join, locked }: { join?: string; locked?: boolean }) {
   const guest = useStore(s => s.guest)
@@ -131,7 +96,7 @@ function AddServerDialog({ join, locked }: { join?: string; locked?: boolean }) 
   }
 
   return (
-    <Dialog title={guest ? 'Join a server' : 'Add a server'}>
+    <Dialog compact title={guest ? 'Join a server' : 'Add a server'} onClose={closeDialog}>
       {!guest && (
         <div className="mb-4 flex rounded-full bg-surface-container p-1">
           {(['create', 'join'] as const).map(t => (
