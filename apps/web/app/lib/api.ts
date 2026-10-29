@@ -430,6 +430,7 @@ export const endpoints = (c: ApiClient) => ({
       {},
       keepalive
     ),
+  postReadBatch: (scopes: string[]) => c.req<{ ok: boolean }>('POST', '/read/batch', { scopes }),
   uploadMedia: (file: File) => {
     const form = new FormData()
     form.append('file', file, file.name)

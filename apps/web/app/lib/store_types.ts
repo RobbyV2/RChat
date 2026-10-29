@@ -54,6 +54,8 @@ export interface ContextMenuItem {
   // Lets a long subtitle wrap instead of being cut off.
   wrap?: boolean
   danger?: boolean
+  // Shown dimmed; it stays focusable for keyboard moves but does nothing.
+  disabled?: boolean
   icon?: LucideIcon
   checked?: boolean
   radio?: boolean
@@ -335,6 +337,16 @@ export interface RChatState {
   sedEdit: (key: string, sed: Sed) => Promise<boolean>
   sendMessage: (content: string, p2pExpiresIn?: number | null) => void
   markRead: (scope: string, messageId: number) => void
+  // "Mark as read": clears unread dots and pings of the given channel, DM or thread keys (and the
+  // threads with pings under a channel) here and, through POST /api/read/batch, on every device.
+  markScopesRead: (scopes: string[]) => Promise<void>
+  markServerRead: (name: string) => Promise<void>
+  markServersRead: (names: string[]) => Promise<void>
+  markDmsRead: () => Promise<void>
+  // Every server channel and DM, muted ones included.
+  markAllRead: () => Promise<void>
+  // Asks first (a short confirm), then `markAllRead`. Does nothing when everything is read.
+  askMarkAllRead: () => void
   seeThread: (rootId: number) => void
   setAtBottom: (key: string, v: boolean) => void
   retryOutgoing: (key: string, tempId: number) => void

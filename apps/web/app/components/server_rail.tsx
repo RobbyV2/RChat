@@ -20,6 +20,7 @@ import {
   scopeMuted,
   serverPingCount,
   serverUnread,
+  serversMarkTargets,
   useStore,
   type RailServer,
 } from '../lib/store'
@@ -36,6 +37,7 @@ import { ThemeToggle } from './status_clock'
 import { Sentinel, iconBtn } from './ui'
 import { RailPingBadge, pingLabel } from './ping_badge'
 import { MutedIcon, folderNotifyItems, notifyMenuItems } from './notify_menu'
+import { markAllReadItem, markReadItem } from './mark_read'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 const idle =
@@ -100,6 +102,7 @@ function ServerTile({
   const leaveServer = useStore(s => s.leaveServer)
   const askConfirm = useStore(s => s.askConfirm)
   const moveServer = useStore(s => s.moveServer)
+  const markServerRead = useStore(s => s.markServerRead)
   const muted = useStore(s => scopeMuted(s, { kind: 'server', name }))
   const mine = me !== null && creator === me.username
   const parent = folder === null ? null : folderKey(folder)
@@ -110,6 +113,14 @@ function ServerTile({
       {...longPress(
         (x, y) =>
           openContextMenu(x, y, [
+            ...(me
+              ? [
+                  markReadItem(
+                    serversMarkTargets(useStore.getState(), [name]),
+                    () => void markServerRead(name)
+                  ),
+                ]
+              : []),
             ...notifyMenuItems({ kind: 'server', name }, 'Server'),
             {
               label: 'Copy invite link',
@@ -246,6 +257,7 @@ function FolderEntry({
   const ungroupFolder = useStore(s => s.ungroupFolder)
   const openDialog = useStore(s => s.openDialog)
   const openContextMenu = useStore(s => s.openContextMenu)
+  const markServersRead = useStore(s => s.markServersRead)
   const unread = useStore(s => !folder.open && servers.some(x => serverUnread(s, x.name)))
   const pings = useStore(s =>
     folder.open ? 0 : servers.reduce((n, x) => n + serverPingCount(s, x.name), 0)
@@ -260,6 +272,17 @@ function FolderEntry({
     ...longPress(
       (x, y) =>
         openContextMenu(x, y, [
+          ...(useStore.getState().me
+            ? [
+                markReadItem(
+                  serversMarkTargets(
+                    useStore.getState(),
+                    servers.map(x => x.name)
+                  ),
+                  () => void markServersRead(servers.map(x => x.name))
+                ),
+              ]
+            : []),
           ...folderNotifyItems(servers.map(x => x.name)),
           {
             label: 'Rename folder',
@@ -327,6 +350,7 @@ export function ServerRail() {
   const dmUnread = useStore(dmsUnread)
   const dmPings = useStore(dmPingCount)
   const openLastDm = useStore(s => s.openLastDm)
+  const openContextMenu = useStore(s => s.openContextMenu)
   const serversMore = useStore(s => s.serversMore)
   const loadMoreServers = useStore(s => s.loadMoreServers)
   const openDialog = useStore(s => s.openDialog)
@@ -354,6 +378,7 @@ export function ServerRail() {
             title={dmPings ? `Direct messages, ${pingLabel(dmPings)}` : 'Direct messages'}
             aria-label="Direct messages"
             onClick={openLastDm}
+            {...longPress((x, y) => openContextMenu(x, y, [markAllReadItem()]))}
             className={`${tile} relative ${view?.kind === 'dm' ? 'bg-primary text-on-primary' : idle}`}
           >
             <MessageCircle size={22} />

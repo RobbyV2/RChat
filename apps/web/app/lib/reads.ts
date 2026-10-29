@@ -1,5 +1,6 @@
 import { backoffDelay } from './backoff'
 import type { ReadMark } from './lists'
+import { clearPings, pingCount, type Pings } from './pings'
 import type { Unread } from './types'
 
 type Timer = ReturnType<typeof setTimeout>
@@ -153,4 +154,55 @@ export const mergeReads = (
     }
   }
   return out
+}
+
+// Most scopes one POST /api/read/batch takes.
+export const READ_BATCH_MAX = 200
+
+export const chunked = <T>(list: readonly T[], size = READ_BATCH_MAX): T[][] => {
+  const out: T[][] = []
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size))
+  return out
+}
+
+// The keys "Mark as read" sends for the channel and DM scopes `pick` accepts: unread scopes,
+// scopes with pings, and the threads (`t<root id>`) with pings in them. Mutes do not matter.
+export const markTargets = (
+  reads: Record<string, ReadMark>,
+  pings: Pings,
+  pick: (scope: string, server: string | null) => boolean
+): string[] => {
+  const out = new Set<string>()
+  for (const [scope, r] of Object.entries(reads))
+    if (r.latest > r.lastRead && scope[0] !== 't' && pick(scope, r.server ?? null)) out.add(scope)
+  for (const [key, p] of Object.entries(pings))
+    if (pingCount(p) > 0 && pick(p.scope, p.server)) out.add(key)
+  return [...out]
+}
+
+// Adds the thread keys with pings under the given channel scopes.
+export const withThreads = (keys: readonly string[], pings: Pings): string[] => {
+  const out = new Set(keys)
+  for (const [key, p] of Object.entries(pings)) if (out.has(p.scope)) out.add(key)
+  return [...out]
+}
+
+// Local state once `keys` are read: positions move to the newest known message and every ping
+// under the keys is gone.
+export const markedRead = (
+  reads: Record<string, ReadMark>,
+  pings: Pings,
+  keys: readonly string[]
+): { reads: Record<string, ReadMark>; pings: Pings } => {
+  let nextReads = reads
+  let nextPings = pings
+  for (const key of keys) {
+    nextPings = clearPings(nextPings, key)
+    const r = nextReads[key]
+    if (key[0] !== 't' && r && r.latest > r.lastRead) {
+      if (nextReads === reads) nextReads = { ...reads }
+      nextReads[key] = { ...r, lastRead: r.latest }
+    }
+  }
+  return { reads: nextReads, pings: nextPings }
 }

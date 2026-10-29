@@ -13,6 +13,7 @@ use crate::api::access::{
     resolve_dm, resolve_message,
 };
 use crate::api::admin::like_pattern;
+use crate::api::budget::{Budget, slow_down};
 use crate::api::pings::{
     PingScope, ScopePings, SeenScope, ThreadPings, announce_counts, mark_seen, ping_message,
     pinged_by, unseen_counts,
@@ -27,7 +28,7 @@ use crate::api::{
 };
 use crate::db::{
     ChannelAccess, Db, LIVE_AUTHOR, MediaKind, User, has_fts, is_sqlite, now, perm_subjects,
-    touch_interaction,
+    pool_key, touch_interaction,
 };
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
@@ -2322,72 +2323,268 @@ pub(crate) async fn mark_read(
         last_read,
         pings_until,
     } = req;
-    let id = match valid_scope(&scope) {
-        true => scope[1..].parse::<i64>().ok(),
-        false => None,
-    };
-    let Some(id) = id else {
-        return Err(bad("Invalid scope"));
-    };
-    if scope.as_bytes()[0] == b't' {
-        let root = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
-        let channel = format!("c{}", root.thread_channel()?.id());
-        let seen = mark_seen(
-            &state.db,
-            &user.username,
-            SeenScope::Thread {
-                scope: &channel,
-                root: id,
-            },
+    let target = ReadTarget::parse(&scope).ok_or_else(|| bad("Invalid scope"))?;
+    let last_read = read_scope(
+        &state,
+        &user,
+        &scope,
+        target,
+        ReadUpTo::Given {
+            last_read,
             pings_until,
-        )
-        .await?;
-        if let Some(pings_until) = seen {
-            state.hub.broadcast(WsEvent::ReadUpdated {
-                username: user.username,
-                scope: scope.clone(),
-                last_read,
-                pings_until,
-            });
-        }
-        return Ok(Json(ReadState { scope, last_read }));
-    }
-    match scope.as_bytes()[0] {
-        b'c' => {
-            resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
-        }
-        _ => {
-            resolve_dm(&state.db, id, &user).await?;
-        }
-    }
-    let stored: i64 = sqlx::query(
-        "INSERT INTO read_state(username, scope, last_read) VALUES($1, $2, $3) ON CONFLICT(username, scope) DO UPDATE SET last_read = CASE WHEN excluded.last_read > read_state.last_read THEN excluded.last_read ELSE read_state.last_read END RETURNING last_read",
+        },
     )
-    .bind(&user.username)
-    .bind(&scope)
-    .bind(last_read)
-    .fetch_one(&state.db)
-    .await?
-    .try_get(0)?;
+    .await?;
+    Ok(Json(ReadState { scope, last_read }))
+}
+
+#[derive(Clone, Copy)]
+enum ReadTarget {
+    Channel(i64),
+    Dm(i64),
+    Thread(i64),
+}
+
+impl ReadTarget {
+    fn parse(scope: &str) -> Option<ReadTarget> {
+        if !valid_scope(scope) {
+            return None;
+        }
+        let id = scope[1..].parse::<i64>().ok()?;
+        match scope.as_bytes()[0] {
+            b'c' => Some(ReadTarget::Channel(id)),
+            b'd' => Some(ReadTarget::Dm(id)),
+            _ => Some(ReadTarget::Thread(id)),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ReadUpTo {
+    Given {
+        last_read: i64,
+        pings_until: Option<i64>,
+    },
+    Latest,
+}
+
+/// Newest top-level message of a channel the reader may read (respecting the read-history
+/// floor `since`), or of a DM.
+async fn latest_readable(
+    db: &Db,
+    target: ReadTarget,
+    since: Option<i64>,
+) -> Result<Option<i64>, ApiError> {
+    let row = match target {
+        ReadTarget::Channel(id) => sqlx::query(
+            "SELECT MAX(id) FROM messages WHERE channel_id = $1 AND thread_root_id IS NULL AND created_at >= $2",
+        )
+        .bind(id)
+        .bind(since.unwrap_or(i64::MIN))
+        .fetch_one(db)
+        .await?,
+        ReadTarget::Dm(id) => sqlx::query("SELECT MAX(id) FROM messages WHERE dm_id = $1")
+            .bind(id)
+            .fetch_one(db)
+            .await?,
+        ReadTarget::Thread(_) => return Ok(None),
+    };
+    Ok(row.try_get::<Option<i64>, _>(0)?)
+}
+
+/// Checks access like the message lists, stores the read position and marks pings seen, then
+/// echoes `read_updated` to the reader's connections when something changed. Returns the stored
+/// position (for a thread, the given `last_read`, or 0).
+async fn read_scope(
+    state: &AppState,
+    user: &User,
+    scope: &str,
+    target: ReadTarget,
+    up_to: ReadUpTo,
+) -> Result<i64, ApiError> {
+    let (given, pings_until) = match up_to {
+        ReadUpTo::Given {
+            last_read,
+            pings_until,
+        } => (Some(last_read), pings_until),
+        ReadUpTo::Latest => (None, None),
+    };
+    let since = match target {
+        ReadTarget::Thread(id) => {
+            let root = resolve_message(&state.db, id, Some(user), &Proof::none()).await?;
+            let channel = format!("c{}", root.thread_channel()?.id());
+            let seen = mark_seen(
+                &state.db,
+                &user.username,
+                SeenScope::Thread {
+                    scope: &channel,
+                    root: id,
+                },
+                pings_until,
+            )
+            .await?;
+            let last_read = given.unwrap_or(0);
+            if let Some(pings_until) = seen {
+                state.hub.broadcast(WsEvent::ReadUpdated {
+                    username: user.username.clone(),
+                    scope: scope.to_string(),
+                    last_read,
+                    pings_until,
+                });
+            }
+            return Ok(last_read);
+        }
+        ReadTarget::Channel(id) => {
+            let channel = resolve_channel(&state.db, id, Some(user), &Proof::none()).await?;
+            match given {
+                Some(_) => None,
+                None => channel.read_since(&state.db).await?,
+            }
+        }
+        ReadTarget::Dm(id) => {
+            resolve_dm(&state.db, id, user).await?;
+            None
+        }
+    };
+    let current = || async {
+        Ok::<i64, ApiError>(
+            sqlx::query("SELECT last_read FROM read_state WHERE username = $1 AND scope = $2")
+                .bind(&user.username)
+                .bind(scope)
+                .fetch_optional(&state.db)
+                .await?
+                .map(|r| r.try_get(0))
+                .transpose()?
+                .unwrap_or(0),
+        )
+    };
+    let wanted = match given {
+        Some(last_read) => Some(last_read),
+        None => {
+            let latest = latest_readable(&state.db, target, since).await?;
+            let stored = current().await?;
+            latest.filter(|latest| *latest > stored)
+        }
+    };
+    let stored = match wanted {
+        Some(last_read) => sqlx::query(
+            "INSERT INTO read_state(username, scope, last_read) VALUES($1, $2, $3) ON CONFLICT(username, scope) DO UPDATE SET last_read = CASE WHEN excluded.last_read > read_state.last_read THEN excluded.last_read ELSE read_state.last_read END RETURNING last_read",
+        )
+        .bind(&user.username)
+        .bind(scope)
+        .bind(last_read)
+        .fetch_one(&state.db)
+        .await?
+        .try_get(0)?,
+        None => current().await?,
+    };
     let seen = mark_seen(
         &state.db,
         &user.username,
-        SeenScope::Scope(&scope),
+        SeenScope::Scope(scope),
         pings_until,
     )
     .await?;
-    if stored == last_read || seen.is_some() {
+    if wanted == Some(stored) || seen.is_some() {
         state.hub.broadcast(WsEvent::ReadUpdated {
-            username: user.username,
-            scope: scope.clone(),
+            username: user.username.clone(),
+            scope: scope.to_string(),
             last_read: stored,
             pings_until: seen.unwrap_or(0),
         });
     }
-    Ok(Json(ReadState {
-        scope,
-        last_read: stored,
-    }))
+    if given.is_none() && matches!(target, ReadTarget::Channel(_)) {
+        let threads = sqlx::query(
+            "SELECT thread_root_id, MAX(id) FROM pings WHERE username = $1 AND scope = $2 AND seen = 0 AND thread_root_id IS NOT NULL GROUP BY thread_root_id",
+        )
+        .bind(&user.username)
+        .bind(scope)
+        .fetch_all(&state.db)
+        .await?;
+        for row in threads {
+            let root: i64 = row.try_get(0)?;
+            let until: i64 = row.try_get(1)?;
+            let changed = sqlx::query(
+                "UPDATE pings SET seen = 1 WHERE username = $1 AND scope = $2 AND seen = 0 AND thread_root_id = $3 AND id <= $4",
+            )
+            .bind(&user.username)
+            .bind(scope)
+            .bind(root)
+            .bind(until)
+            .execute(&state.db)
+            .await?
+            .rows_affected();
+            if changed > 0 {
+                state.hub.broadcast(WsEvent::ReadUpdated {
+                    username: user.username.clone(),
+                    scope: format!("t{root}"),
+                    last_read: 0,
+                    pings_until: until,
+                });
+            }
+        }
+    }
+    Ok(stored)
+}
+
+pub(crate) const READ_BATCH_MAX: usize = 200;
+pub(crate) const READ_BATCHES_PER_MINUTE: u32 = 30;
+
+static READ_BATCHES: std::sync::LazyLock<Budget> = std::sync::LazyLock::new(|| {
+    Budget::new(
+        READ_BATCHES_PER_MINUTE,
+        std::time::Duration::from_secs(60),
+        100_000,
+    )
+});
+
+/// Mark several channels, DMs and threads read.
+#[derive(Deserialize, ToSchema)]
+pub struct ReadBatchReq {
+    /// Up to 200 scopes: `c<channel id>`, `d<dm id>` or `t<thread root id>`. Repeated scopes
+    /// count once.
+    #[schema(example = json!(["c12", "d4", "t918"]))]
+    scopes: Vec<String>,
+}
+
+/// Mark channels, DMs and threads read
+///
+/// For each scope the caller can read, with the same checks as `POST /api/read`: stores the
+/// newest top-level message the caller may read (respecting read-history limits) as the read
+/// position and marks every unseen ping of the caller in the scope as seen (for a thread scope,
+/// the pings on its replies). Scopes the caller cannot read are skipped without any sign, so the
+/// response is the same for every list of valid scope names. Emits one `read_updated` per scope
+/// that changed to the caller's connections. Requires a bearer token. General rate-limit bucket,
+/// and at most 30 batches per minute per account.
+#[utoipa::path(post, path = "/api/read/batch", tag = "Messages", request_body = ReadBatchReq, responses((status = 200, description = "Readable scopes were marked read; others were skipped", body = OkResp), (status = 400, description = "A scope is not `c`, `d` or `t` followed by digits (`Invalid scope`), or more than 200 scopes were sent (`Too many scopes`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket (plain text), or more than 30 batches in a minute (`Too many attempts. Try again later`)", body = ApiErrorBody)), security(("bearer" = [])))]
+pub(crate) async fn mark_read_batch(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Json(req): Json<ReadBatchReq>,
+) -> Result<Json<OkResp>, ApiError> {
+    let ReadBatchReq { scopes } = req;
+    if scopes.len() > READ_BATCH_MAX {
+        return Err(bad("Too many scopes"));
+    }
+    let mut targets = Vec::with_capacity(scopes.len());
+    let mut seen = std::collections::HashSet::with_capacity(scopes.len());
+    for scope in scopes {
+        let target = ReadTarget::parse(&scope).ok_or_else(|| bad("Invalid scope"))?;
+        if seen.insert(scope.clone()) {
+            targets.push((scope, target));
+        }
+    }
+    if !READ_BATCHES.take(&format!("{}\n{}", pool_key(&state.db), user.username)) {
+        return Err(slow_down());
+    }
+    for (scope, target) in targets {
+        match read_scope(&state, &user, &scope, target, ReadUpTo::Latest).await {
+            Ok(_) => {}
+            Err(ApiError(code, _)) if code.is_client_error() => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(ok())
 }
 
 #[cfg(test)]
@@ -5193,6 +5390,240 @@ mod tests {
         )
         .await
         .map(|Json(r)| r.last_read)
+    }
+
+    async fn read_batch(
+        state: &AppState,
+        who: &str,
+        scopes: &[String],
+    ) -> Result<StatusCode, StatusCode> {
+        mark_read_batch(
+            State(state.clone()),
+            Authed(mem_user(who, false)),
+            Json(ReadBatchReq {
+                scopes: scopes.to_vec(),
+            }),
+        )
+        .await
+        .map(|_| StatusCode::OK)
+        .map_err(|ApiError(code, _)| code)
+    }
+
+    async fn stored_read(db: &Db, who: &str, scope: &str) -> Option<i64> {
+        sqlx::query("SELECT last_read FROM read_state WHERE username = $1 AND scope = $2")
+            .bind(who)
+            .bind(scope)
+            .fetch_optional(db)
+            .await
+            .expect("read state")
+            .map(|r| r.try_get(0).expect("last_read"))
+    }
+
+    #[tokio::test]
+    async fn batch_reads_mark_readable_scopes_and_skip_the_rest() {
+        let (state, path) = temp_state("read_batch").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob", "carol"] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let c = format!("c{cid}");
+        let root = say(&state, (Some(cid), None, None), "bob", "root").await;
+        say(&state, (None, None, Some(root.id)), "alice", "@bob thread").await;
+        say(&state, (Some(cid), None, None), "alice", "@bob one").await;
+        let last = say(&state, (Some(cid), None, None), "carol", "two").await;
+        let hidden = add_channel(db, "hidden", "text").await;
+        perm(db, hidden, "u:alice", 1).await;
+        crate::api::test_util::restrict_ruled(db).await;
+        insert(db, Some(hidden), None, None, "alice").await;
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("dm id");
+        let other: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'carol') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("dm id");
+        let direct = say(&state, (None, Some(dm), None), "alice", "@bob hi").await;
+        insert(db, None, Some(other), None, "alice").await;
+        assert!(
+            unread_pings(&state, "bob", false)
+                .await
+                .get(&c)
+                .is_some_and(|(p, _)| *p == 2)
+        );
+
+        let mut rx = state.hub.subscribe();
+        let scopes = [
+            c.clone(),
+            format!("c{hidden}"),
+            format!("d{dm}"),
+            format!("d{other}"),
+            "c999999".to_string(),
+            "d999999".to_string(),
+            format!("t{}", root.id),
+            format!("t{}", direct.id),
+            "t999999".to_string(),
+            c.clone(),
+        ];
+        assert_eq!(read_batch(&state, "bob", &scopes).await, Ok(StatusCode::OK));
+        assert_eq!(stored_read(db, "bob", &c).await, Some(last.id));
+        assert_eq!(
+            stored_read(db, "bob", &format!("d{dm}")).await,
+            Some(direct.id)
+        );
+        assert_eq!(stored_read(db, "bob", &format!("c{hidden}")).await, None);
+        assert_eq!(stored_read(db, "bob", &format!("d{other}")).await, None);
+        assert!(ping_rows(db, "bob").await.iter().all(|row| row.4 == 1));
+        assert!(unread_pings(&state, "bob", false).await.is_empty());
+        let events: Vec<(String, i64, i64)> = std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|ev| match ev {
+                WsEvent::ReadUpdated {
+                    username,
+                    scope,
+                    last_read,
+                    pings_until,
+                } if username == "bob" => Some((scope, last_read, pings_until)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(events.len(), 3, "{events:?}");
+        assert!(
+            events
+                .iter()
+                .any(|(s, read, until)| *s == c && *read == last.id && *until > 0)
+        );
+        assert!(
+            events
+                .iter()
+                .any(|(s, _, until)| *s == format!("t{}", root.id) && *until > 0)
+        );
+        assert!(
+            events
+                .iter()
+                .any(|(s, read, until)| *s == format!("d{dm}") && *read == direct.id && *until > 0)
+        );
+
+        let mut rx = state.hub.subscribe();
+        assert_eq!(read_batch(&state, "bob", &scopes).await, Ok(StatusCode::OK));
+        assert!(
+            std::iter::from_fn(|| rx.try_recv().ok())
+                .all(|ev| !matches!(ev, WsEvent::ReadUpdated { .. })),
+            "nothing changed, nothing echoed"
+        );
+        assert_eq!(
+            read_batch(&state, "carol", &[format!("d{dm}"), format!("c{hidden}")]).await,
+            Ok(StatusCode::OK),
+            "a list of scopes you cannot read answers the same"
+        );
+        assert_eq!(stored_read(db, "carol", &format!("d{dm}")).await, None);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn batch_channel_read_clears_unknown_thread_pings() {
+        let (state, path) = temp_state("read_batch_threads").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob"] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let root = say(&state, (Some(cid), None, None), "bob", "root").await;
+        say(&state, (None, None, Some(root.id)), "alice", "@bob thread").await;
+        let c = format!("c{cid}");
+        assert!(ping_rows(db, "bob").await.iter().any(|row| row.4 == 0));
+        let mut rx = state.hub.subscribe();
+        assert_eq!(read_batch(&state, "bob", &[c]).await, Ok(StatusCode::OK));
+        assert!(ping_rows(db, "bob").await.iter().all(|row| row.4 == 1));
+        let thread = format!("t{}", root.id);
+        assert!(std::iter::from_fn(|| rx.try_recv().ok()).any(|ev| matches!(
+            ev,
+            WsEvent::ReadUpdated { username, scope, pings_until, .. }
+                if username == "bob" && scope == thread && pings_until > 0
+        )));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn batch_reads_stop_at_the_read_history_floor() {
+        let (state, path) = temp_state("read_batch_floor").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "bob", "bob").await;
+        let joined = now();
+        add_member(db, "rchat", "bob", 0, 0, joined).await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:bob', 1, 1, 0)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("no history");
+        let c = format!("c{cid}");
+        let at = |created: i64| async move {
+            sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'alice', 'x', $2) RETURNING id")
+                .bind(cid)
+                .bind(created)
+                .fetch_one(db)
+                .await
+                .expect("message")
+                .try_get::<i64, _>(0)
+                .expect("id")
+        };
+        at(joined - 100).await;
+        assert_eq!(
+            read_batch(&state, "bob", std::slice::from_ref(&c)).await,
+            Ok(StatusCode::OK)
+        );
+        assert_eq!(stored_read(db, "bob", &c).await, None);
+        let after = at(joined + 1).await;
+        at(joined - 50).await;
+        assert_eq!(
+            read_batch(&state, "bob", std::slice::from_ref(&c)).await,
+            Ok(StatusCode::OK)
+        );
+        assert_eq!(stored_read(db, "bob", &c).await, Some(after));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn batch_reads_are_bounded() {
+        let (state, path) = temp_state("read_batch_bounds").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "dora", "dora").await;
+        add_member(db, "rchat", "dora", 0, 0, 1).await;
+        let c = format!("c{cid}");
+        let many: Vec<String> = (0..=READ_BATCH_MAX).map(|i| format!("c{i}")).collect();
+        assert_eq!(
+            read_batch(&state, "dora", &many).await,
+            Err(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(
+            read_batch(&state, "dora", &[c.clone(), "x1".to_string()]).await,
+            Err(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(
+            read_batch(&state, "dora", &many[..READ_BATCH_MAX]).await,
+            Ok(StatusCode::OK)
+        );
+        for _ in 1..READ_BATCHES_PER_MINUTE {
+            assert_eq!(
+                read_batch(&state, "dora", std::slice::from_ref(&c)).await,
+                Ok(StatusCode::OK)
+            );
+        }
+        assert_eq!(
+            read_batch(&state, "dora", std::slice::from_ref(&c)).await,
+            Err(StatusCode::TOO_MANY_REQUESTS)
+        );
+        done(state, path).await;
     }
 
     async fn unread_item(state: &AppState, name: &str, scope: &str) -> Option<Unread> {

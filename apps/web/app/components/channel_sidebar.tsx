@@ -5,6 +5,7 @@ import { HeadphoneOff, Hash, Lock, MicOff, Pin, Plus, Volume2 } from 'lucide-rea
 import {
   badgePings,
   myPerms,
+  scopeMarkTargets,
   scopeMuted,
   scopeUnread,
   serverAdminPerms,
@@ -27,10 +28,13 @@ import { useAuthorMembers } from './message_pane'
 import { PingBadge } from './ping_badge'
 import { scopePings } from '../lib/pings'
 import { MutedIcon, notifyMenuItems } from './notify_menu'
+import { markReadItem } from './mark_read'
 
 type Editing = { mode: 'create'; kind: ChannelKind } | { mode: 'rename'; id: number }
 
 const base = 'flex h-full w-60 shrink-0 flex-col bg-surface-container-low'
+
+const joined = (server: string) => !!useStore.getState().me?.servers.some(x => x.name === server)
 
 function DmRow({
   dm,
@@ -50,6 +54,7 @@ function DmRow({
   const pinDm = useStore(s => s.pinDm)
   const unpinDm = useStore(s => s.unpinDm)
   const placeDm = useStore(s => s.placeDm)
+  const markScopesRead = useStore(s => s.markScopesRead)
   const { id, other, is_self } = dm
   const muted = useStore(s => scopeMuted(s, { kind: 'dm', id }))
   return (
@@ -58,6 +63,10 @@ function DmRow({
       {...longPress(
         (x, y) =>
           openContextMenu(x, y, [
+            markReadItem(
+              scopeMarkTargets(useStore.getState(), `d${id}`),
+              () => void markScopesRead([`d${id}`])
+            ),
             ...notifyMenuItems({ kind: 'dm', id }, 'DM'),
             pinned
               ? { label: 'Unpin DM', action: () => unpinDm(id) }
@@ -234,6 +243,7 @@ export function ChannelSidebar() {
   const renameChannel = useStore(s => s.renameChannel)
   const deleteChannel = useStore(s => s.deleteChannel)
   const askConfirm = useStore(s => s.askConfirm)
+  const markScopesRead = useStore(s => s.markScopesRead)
   const joinVoice = useStore(s => s.joinVoice)
   const voiceUsers = useStore(s => s.voiceUsers)
   const voice = useStore(s => s.voice)
@@ -391,6 +401,14 @@ export function ChannelSidebar() {
 
   const channelMenu = (c: Channel) => (x: number, y: number) => {
     openContextMenu(x, y, [
+      ...(c.kind === 'text' && joined(detail.name)
+        ? [
+            markReadItem(
+              scopeMarkTargets(useStore.getState(), `c${c.id}`),
+              () => void markScopesRead([`c${c.id}`])
+            ),
+          ]
+        : []),
       ...(c.kind === 'text'
         ? notifyMenuItems({ kind: 'channel', id: c.id, server: detail.name }, 'Channel')
         : []),

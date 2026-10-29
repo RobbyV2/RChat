@@ -552,6 +552,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     s.editing && s.view && s.editing.key === viewKey(s.view) ? s.editing.id : null
   )
   const dismissUnread = useStore(s => s.dismissUnread)
+  const askMarkAllRead = useStore(s => s.askMarkAllRead)
   const startDm = useStore(s => s.startDm)
   const grantAdmin = useStore(s => s.grantAdmin)
   const openDialog = useStore(s => s.openDialog)
@@ -606,7 +607,9 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
 
   const flash = useFocusMessage(listRef, scope, focus, messages, scroll.settle)
   useEscape(e => {
-    if (scope && !guest && escapeMarksRead(e)) dismissUnread(scope)
+    if (guest || !escapeMarksRead(e)) return
+    if (e.shiftKey) askMarkAllRead()
+    else if (scope) dismissUnread(scope)
   }, 'stage')
 
   const dmCall =

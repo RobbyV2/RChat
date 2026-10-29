@@ -11,6 +11,7 @@ import {
   type NotifyScope,
 } from './notify'
 import { dmPings, scopePings, serverPings, shownPings, totalPings, type Pings } from './pings'
+import { markTargets } from './reads'
 import { canChangeRole, memberPerms, rolePerms } from './rules'
 import type { ConfigSource } from './config_transfer'
 import type { RChatState } from './store_types'
@@ -165,6 +166,40 @@ export const dmsUnread = (s: RChatState): boolean => {
     }
   }
   return dmUnreadMemo.unread
+}
+
+// What "Mark as read" would send (see `markTargets`); empty means there is nothing to mark.
+export const scopeMarkTargets = (s: RChatState, scope: string) =>
+  markTargets(s.reads, s.pings, x => x === scope)
+
+export const serversMarkTargets = (s: RChatState, names: readonly string[]) => {
+  const wanted = new Set(names)
+  const channels = new Set<string>()
+  for (const name of names)
+    for (const c of s.servers[name]?.channels ?? []) if (c.kind === 'text') channels.add(`c${c.id}`)
+  return markTargets(
+    s.reads,
+    s.pings,
+    (scope, server) =>
+      scope[0] === 'c' && ((server !== null && wanted.has(server)) || channels.has(scope))
+  )
+}
+
+export const dmsMarkTargets = (s: RChatState) => markTargets(s.reads, s.pings, x => x[0] === 'd')
+
+// Every DM and every channel of a server the account is in (not a previewed one).
+export const allMarkTargets = (s: RChatState) => {
+  const mine = new Set(serverNames(s))
+  const channels = new Set<string>()
+  for (const name of mine)
+    for (const c of s.servers[name]?.channels ?? []) if (c.kind === 'text') channels.add(`c${c.id}`)
+  return markTargets(
+    s.reads,
+    s.pings,
+    (scope, server) =>
+      scope[0] === 'd' ||
+      (scope[0] === 'c' && (server !== null ? mine.has(server) : channels.has(scope)))
+  )
 }
 
 let pingMemo: { pings: Pings; prefs: NotifyPrefs; shown: Pings } | null = null

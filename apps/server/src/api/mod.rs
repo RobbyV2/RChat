@@ -1646,6 +1646,7 @@ fn api_routes(
         )
         .route("/unreads", get(messages::unreads))
         .route("/read", post(messages::mark_read))
+        .route("/read/batch", post(messages::mark_read_batch))
         .route("/settings", get(admin::get_settings))
         .route("/instance", get(instance::instance))
         .route("/identity/assertion", post(instance::assertion))

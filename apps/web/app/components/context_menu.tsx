@@ -342,15 +342,16 @@ function Row({
       aria-checked={it.checked}
       aria-haspopup={it.submenu ? 'menu' : undefined}
       aria-expanded={it.submenu ? open : undefined}
+      aria-disabled={it.disabled || undefined}
       data-menu-item=""
       data-menu-index={index}
       onMouseEnter={onEnter ? e => onEnter(e.currentTarget) : undefined}
       onClick={e => onPick(e.currentTarget, e.detail === 0)}
       className={`flex w-full items-center gap-3 text-left outline-none focus-visible:bg-surface-container-highest ${
         coarse
-          ? 'min-h-13 px-6 py-1.5 text-base active:bg-surface-container-highest'
-          : `px-4 py-2 text-sm hover:bg-surface-container-highest ${open ? 'bg-surface-container-highest' : ''}`
-      } ${it.danger ? 'text-error' : 'text-on-surface'}`}
+          ? `min-h-13 px-6 py-1.5 text-base ${it.disabled ? '' : 'active:bg-surface-container-highest'}`
+          : `px-4 py-2 text-sm ${it.disabled ? '' : 'hover:bg-surface-container-highest'} ${open ? 'bg-surface-container-highest' : ''}`
+      } ${it.danger ? 'text-error' : 'text-on-surface'} ${it.disabled ? 'cursor-default opacity-40' : ''}`}
       data-level={level}
     >
       <span className="flex min-w-0 flex-1 flex-col">
@@ -521,7 +522,7 @@ function OpenMenu({ menu, coarse }: { menu: ContextMenuState; coarse: boolean })
   // row is gone.
   const pick = (level: number, index: number, el: HTMLElement, keyboard: boolean) => {
     const it = levels[level]?.[index]
-    if (!it) return
+    if (!it || it.disabled) return
     if (it.submenu) {
       openSub(level, index, el, keyboard || coarse)
       return

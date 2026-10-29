@@ -101,7 +101,7 @@ import {
   type ForwardClip,
 } from './forward'
 import { catchUpDelay, due } from './backoff'
-import { createReadQueue, mergeReads } from './reads'
+import { chunked, createReadQueue, markedRead, mergeReads, withThreads } from './reads'
 import {
   WINDOW_MAX,
   createLru,
@@ -204,13 +204,16 @@ import {
   type UploadMode,
 } from './attachments'
 import {
+  allMarkTargets,
   changeableRoles,
   dmView,
+  dmsMarkTargets,
   memberOf,
   myPerms,
   previewServer,
   scopeRule,
   serverNames,
+  serversMarkTargets,
 } from './selectors'
 import type {
   ContextMenuItem,
@@ -3676,6 +3679,61 @@ export const useStore = create<RChatState>()((set, get) => {
     },
 
     seeThread: rootId => seePings(`t${rootId}`),
+
+    markScopesRead: async scopes => {
+      const s = get()
+      if (!s.me) return
+      const keys = withThreads(scopes, s.pings)
+      if (!keys.length) return
+      for (const key of keys) noteSeen(key, pingUntil(s.pings[key]))
+      set(st => markedRead(st.reads, st.pings, keys))
+      const reads = get().reads
+      for (const key of keys) if (key[0] !== 't' && get().unreadAnchor[key]) clearAnchor(key)
+      if (!get().token) return
+      for (const chunk of chunked(keys)) {
+        const failed = await api.postReadBatch(chunk).then(
+          () => false,
+          () => true
+        )
+        for (const key of chunk) {
+          const at = reads[key]?.lastRead ?? 0
+          if (key[0] === 't') {
+            if (failed) void api.postRead(key, 0, false, seenPings.get(key) ?? 0).catch(() => {})
+          } else if (at > 0) {
+            if (failed) readQueue.mark(key, at)
+            else readQueue.seen(key, at)
+          }
+        }
+      }
+    },
+
+    markServerRead: name => get().markServersRead([name]),
+
+    markServersRead: names => get().markScopesRead(serversMarkTargets(get(), names)),
+
+    markDmsRead: () => get().markScopesRead(dmsMarkTargets(get())),
+
+    // The unread list is capped, so when it was cut, marking reloads it and goes on (bounded).
+    markAllRead: async () => {
+      await get().markScopesRead(allMarkTargets(get()))
+      for (let round = 0; unreadsMore && round < 5; round += 1) {
+        await loadUnreads()
+        const more = allMarkTargets(get())
+        if (!more.length) return
+        await get().markScopesRead(more)
+      }
+    },
+
+    askMarkAllRead: () => {
+      const s = get()
+      if (!s.me || !allMarkTargets(s).length) return
+      s.askConfirm({
+        title: 'Mark all as read',
+        body: 'Mark every channel and DM as read?',
+        confirm: 'Mark as read',
+        action: () => void get().markAllRead(),
+      })
+    },
 
     setAtBottom: (key, v) =>
       set(s => (s.atBottom[key] === v ? {} : { atBottom: { ...s.atBottom, [key]: v } })),
