@@ -605,6 +605,12 @@ export interface CallPeer {
   peer_id: string
 }
 
+// Relay hosts one side of a P2P call declared.
+export interface CallRelays {
+  user: string
+  hosts: string[]
+}
+
 export interface RtcPayload {
   description?: RTCSessionDescriptionInit
   candidate?: RTCIceCandidateInit
@@ -687,10 +693,17 @@ export interface InboxPage {
 export type VoiceMsg =
   | { type: 'voice_join'; channel_id: number }
   | { type: 'voice_leave' }
-  | { type: 'call_start'; dm_id: number; p2p?: boolean; video?: boolean; peer_id?: string }
-  | { type: 'call_accept'; dm_id: number; peer_id?: string }
+  | {
+      type: 'call_start'
+      dm_id: number
+      p2p?: boolean
+      video?: boolean
+      peer_id?: string
+      relays?: string[]
+    }
+  | { type: 'call_accept'; dm_id: number; peer_id?: string; relays?: string[] }
   | { type: 'call_decline' | 'call_leave'; dm_id: number }
-  | { type: 'p2p_hosting'; peer_id: string; ids: string[] }
+  | { type: 'p2p_hosting'; peer_id: string; ids: string[]; relays?: Record<string, string[]> }
   | { type: 'p2p_who'; hosters: string[] }
   | { type: 'p2p_peer'; message_id: number; peer_id: string }
   | {
@@ -819,6 +832,8 @@ export type WsEvent =
       // Active P2P calls only.
       call_id?: string
       peers?: CallPeer[]
+      // P2P calls only: the caller's while ringing, both sides once active.
+      relays?: CallRelays[]
     }
   | ({ type: 'p2p_availability'; hoster: string; peer_id: string | null } & P2pAvailability)
   | {
@@ -860,6 +875,8 @@ export type WsEvent =
       token: string | null
       expires_at: number | null
       error: string | null
+      // Relay hosts the hoster declared for this file; older servers leave it out.
+      relays?: string[]
     }
   | { type: 'resync' }
 

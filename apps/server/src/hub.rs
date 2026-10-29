@@ -10,7 +10,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tracing::warn;
 
 use crate::fanout::{Channels, Inbox, Router, Topic};
-use crate::ws::{CallKind, CallPeer, CallPhase, WsEvent};
+use crate::ws::{CallKind, CallPeer, CallPhase, CallRelays, WsEvent};
 
 pub const DEAD_AFTER_MS: i64 = 30_000;
 pub const PRESENCE_GRACE_MS: i64 = 10_000;
@@ -109,6 +109,9 @@ struct Call {
     answered_at: i64,
     #[serde(default)]
     peers: Vec<(String, String)>,
+    // The relay hosts each side of a P2P call declared; see `p2p::relay_hosts`.
+    #[serde(default)]
+    relays: Vec<(String, Vec<String>)>,
 }
 
 impl Call {
@@ -141,6 +144,9 @@ impl CallEnd {
 struct P2pHost {
     peer_id: String,
     ids: Vec<String>,
+    // Relay hosts declared per file id; only the downloader of that file learns them.
+    #[serde(default)]
+    relays: BTreeMap<String, Vec<String>>,
 }
 
 pub enum P2pDrop {
@@ -384,6 +390,8 @@ pub enum Op {
         call_id: String,
         #[serde(default)]
         peer_id: Option<String>,
+        #[serde(default)]
+        relays: Vec<String>,
     },
     CallAccept {
         user: String,
@@ -391,6 +399,8 @@ pub enum Op {
         dm_id: i64,
         #[serde(default)]
         peer_id: Option<String>,
+        #[serde(default)]
+        relays: Vec<String>,
     },
     CallEnd {
         user: String,
@@ -408,6 +418,8 @@ pub enum Op {
         conn: u64,
         peer_id: String,
         ids: Vec<String>,
+        #[serde(default)]
+        relays: BTreeMap<String, Vec<String>>,
     },
     EvictVoice {
         user: String,
@@ -483,6 +495,7 @@ impl Op {
                 conn: _,
                 peer_id: _,
                 ids: _,
+                relays: _,
             }
             | Op::Heartbeat
             | Op::VoiceJoin {
@@ -503,12 +516,14 @@ impl Op {
                 log_id: _,
                 call_id: _,
                 peer_id: _,
+                relays: _,
             }
             | Op::CallAccept {
                 user: _,
                 conn: _,
                 dm_id: _,
                 peer_id: _,
+                relays: _,
             }
             | Op::CallEnd { user: _, dm_id: _ }
             | Op::DropConn { user: _, conn: _ }
@@ -635,6 +650,18 @@ fn call_state(dm_id: i64, call: &Call, state: CallPhase) -> WsEvent {
                 })
                 .collect(),
             false => Vec::new(),
+        },
+        relays: match call.kind {
+            CallKind::P2p => call
+                .relays
+                .iter()
+                .filter(|(user, hosts)| !hosts.is_empty() && (call.active || *user == call.from))
+                .map(|(user, hosts)| CallRelays {
+                    user: user.clone(),
+                    hosts: hosts.clone(),
+                })
+                .collect(),
+            CallKind::Rtc => Vec::new(),
         },
     }
 }
@@ -1112,7 +1139,11 @@ impl Replica {
         });
         match left {
             None => P2pDrop::Kept,
-            Some(Some(P2pHost { peer_id, ids })) => P2pDrop::Remaining(peer_id, ids),
+            Some(Some(P2pHost {
+                peer_id,
+                ids,
+                relays: _,
+            })) => P2pDrop::Remaining(peer_id, ids),
             Some(None) => {
                 self.p2p.remove(user);
                 P2pDrop::Offline
@@ -1530,6 +1561,7 @@ impl Replica {
                 log_id,
                 call_id,
                 peer_id,
+                relays,
             } => Outcome::Started('start: {
                 if self.in_call(&user) {
                     break 'start Err("You are already in a call".to_string());
@@ -1544,6 +1576,7 @@ impl Replica {
                 }
                 let rooms = self.rooms_of(&user);
                 self.leave_rooms(rooms, |_, u, _| u == user, t, &mut evs);
+                let user_name = user.clone();
                 let peers = self
                     .call_peer(&user, conn, peer_id)
                     .map(|p| (user.clone(), p))
@@ -1561,6 +1594,7 @@ impl Replica {
                     call_id,
                     answered_at: 0,
                     peers,
+                    relays: vec![(user_name, relays)],
                 };
                 evs.push(call_state(dm_id, &call, CallPhase::Ringing));
                 self.add_call(dm_id, call);
@@ -1571,6 +1605,7 @@ impl Replica {
                 conn,
                 dm_id,
                 peer_id,
+                relays,
             } => Outcome::Accepted('accept: {
                 let valid = self
                     .calls
@@ -1591,6 +1626,8 @@ impl Replica {
                     call.peers.retain(|(u, _)| *u != user);
                     call.peers.push((user.clone(), peer));
                 }
+                call.relays.retain(|(u, _)| *u != user);
+                call.relays.push((user.clone(), relays));
                 call.occupants.push((user.clone(), conn));
                 evs.push(call_state(dm_id, call, CallPhase::Active));
                 let res = Ok((call.log_id, call.dm_users.clone()));
@@ -1677,11 +1714,16 @@ impl Replica {
                 conn,
                 peer_id,
                 ids,
+                relays,
             } => {
-                self.p2p
-                    .entry(user)
-                    .or_default()
-                    .insert(conn, P2pHost { peer_id, ids });
+                self.p2p.entry(user).or_default().insert(
+                    conn,
+                    P2pHost {
+                        peer_id,
+                        ids,
+                        relays,
+                    },
+                );
                 Outcome::Done
             }
             Op::EvictVoice { user, channel_id } => {
@@ -2880,6 +2922,23 @@ impl Hub {
         log_id: i64,
         peer_id: Option<String>,
     ) -> Result<(), String> {
+        let side = (peer_id, Vec::new());
+        self.call_start_from(user, conn, dm_id, dm_users, (kind, video), log_id, side)
+            .await
+    }
+
+    // `side` is the caller's tab peer id and the relay hosts it declared.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn call_start_from(
+        &self,
+        user: &str,
+        conn: u64,
+        dm_id: i64,
+        dm_users: Vec<String>,
+        (kind, video): (CallKind, bool),
+        log_id: i64,
+        (peer_id, relays): (Option<String>, Vec<String>),
+    ) -> Result<(), String> {
         let op = Op::CallStart {
             user: user.to_string(),
             conn,
@@ -2890,6 +2949,7 @@ impl Hub {
             log_id,
             call_id: crate::identity::random_id(),
             peer_id,
+            relays,
         };
         match self.ask(op).await {
             Outcome::Started(res) => res,
@@ -2904,11 +2964,23 @@ impl Hub {
         dm_id: i64,
         peer_id: Option<String>,
     ) -> Result<(i64, Vec<String>), String> {
+        self.call_accept_from(user, conn, dm_id, (peer_id, Vec::new()))
+            .await
+    }
+
+    pub async fn call_accept_from(
+        &self,
+        user: &str,
+        conn: u64,
+        dm_id: i64,
+        (peer_id, relays): (Option<String>, Vec<String>),
+    ) -> Result<(i64, Vec<String>), String> {
         let op = Op::CallAccept {
             user: user.to_string(),
             conn,
             dm_id,
             peer_id,
+            relays,
         };
         match self.ask(op).await {
             Outcome::Accepted(res) => res,
@@ -2969,11 +3041,23 @@ impl Hub {
     }
 
     pub fn set_p2p(&self, user: &str, conn: u64, peer_id: String, ids: Vec<String>) {
+        self.set_p2p_relayed(user, conn, peer_id, ids, BTreeMap::new());
+    }
+
+    pub fn set_p2p_relayed(
+        &self,
+        user: &str,
+        conn: u64,
+        peer_id: String,
+        ids: Vec<String>,
+        relays: BTreeMap<String, Vec<String>>,
+    ) {
         self.post(Op::SetP2p {
             user: user.to_string(),
             conn,
             peer_id,
             ids,
+            relays,
         });
     }
 
@@ -2990,15 +3074,21 @@ impl Hub {
         })
     }
 
-    // The peer id of the newest tab of `user` that hosts the file `id`.
-    pub fn p2p_host_of(&self, user: &str, id: &str) -> Option<String> {
+    // The peer id of the newest tab of `user` that hosts the file `id`, and the relay hosts
+    // that tab declared for it.
+    pub fn p2p_host_of(&self, user: &str, id: &str) -> Option<(String, Vec<String>)> {
         self.replica(|r| {
             r.p2p
                 .get(user)?
                 .values()
                 .rev()
                 .find(|h| h.ids.iter().any(|x| x == id))
-                .map(|h| h.peer_id.clone())
+                .map(|h| {
+                    (
+                        h.peer_id.clone(),
+                        h.relays.get(id).cloned().unwrap_or_default(),
+                    )
+                })
         })
     }
 
@@ -3407,6 +3497,7 @@ pub(crate) mod tests {
                     call_id: _,
                     answered_at: _,
                     peers: _,
+                    relays: _,
                 } => Some((*dm_id, *state)),
                 _ => None,
             })
@@ -3493,6 +3584,7 @@ pub(crate) mod tests {
                     log_id: 70,
                     call_id: String::new(),
                     peer_id: None,
+                    relays: Vec::new(),
                 },
                 T0 + 30,
             ),
@@ -3503,6 +3595,7 @@ pub(crate) mod tests {
                     conn: 2 << 32,
                     peer_id: s("peer"),
                     ids: vec![s("f1")],
+                    relays: BTreeMap::new(),
                 },
                 T0 + 40,
             ),
@@ -4459,6 +4552,7 @@ pub(crate) mod tests {
                         call_id,
                         answered_at: _,
                         peers,
+                        relays: _,
                     } => Some((
                         state,
                         call_id,
@@ -4540,6 +4634,131 @@ pub(crate) mod tests {
             Some(&(CallPhase::Active, None, Vec::new())),
             "instance calls carry no peer ids"
         );
+    }
+
+    #[tokio::test]
+    async fn p2p_calls_carry_the_relays_each_side_declared() {
+        let s = |v: &str| v.to_string();
+        let hub = Hub::new();
+        let mut rx = hub.subscribe();
+        type Declared = Vec<(String, Vec<String>)>;
+        let relays_of = |evs: Vec<WsEvent>| -> Vec<(CallPhase, Declared)> {
+            evs.into_iter()
+                .filter_map(|ev| match ev {
+                    WsEvent::CallState {
+                        dm_id: _,
+                        dm_users: _,
+                        state,
+                        from: _,
+                        kind: _,
+                        video: _,
+                        call_id: _,
+                        answered_at: _,
+                        peers: _,
+                        relays,
+                    } => Some((
+                        state,
+                        relays.into_iter().map(|r| (r.user, r.hosts)).collect(),
+                    )),
+                    _ => None,
+                })
+                .collect()
+        };
+        let (alice, bob) = (hub.next_conn(), hub.next_conn());
+        let p2p = (CallKind::P2p, false);
+        hub.call_start_from(
+            "alice",
+            alice,
+            9,
+            dm_users(),
+            p2p,
+            70,
+            (Some(s("pa")), vec![s("turn.a.example")]),
+        )
+        .await
+        .unwrap();
+        hub.call_accept_from("bob", bob, 9, (Some(s("pb")), vec![s("turn.b.example")]))
+            .await
+            .unwrap();
+        let evs = relays_of(drain(&mut rx));
+        assert_eq!(
+            evs[0],
+            (
+                CallPhase::Ringing,
+                vec![(s("alice"), vec![s("turn.a.example")])]
+            ),
+            "the callee sees the caller's relay before it accepts"
+        );
+        assert_eq!(
+            evs[1],
+            (
+                CallPhase::Active,
+                vec![
+                    (s("alice"), vec![s("turn.a.example")]),
+                    (s("bob"), vec![s("turn.b.example")])
+                ]
+            )
+        );
+        hub.call_end("alice", 9).await.unwrap();
+        drain(&mut rx);
+
+        hub.call_start_from(
+            "alice",
+            alice,
+            9,
+            dm_users(),
+            p2p,
+            71,
+            (Some(s("pa")), Vec::new()),
+        )
+        .await
+        .unwrap();
+        hub.call_accept("bob", bob, 9, Some(s("pb"))).await.unwrap();
+        assert!(
+            relays_of(drain(&mut rx)).iter().all(|(_, r)| r.is_empty()),
+            "no relays declared, none sent"
+        );
+        hub.call_end("alice", 9).await.unwrap();
+
+        hub.call_start_from(
+            "alice",
+            alice,
+            9,
+            dm_users(),
+            (CallKind::Rtc, false),
+            72,
+            (None, vec![s("turn.a.example")]),
+        )
+        .await
+        .unwrap();
+        assert!(
+            relays_of(drain(&mut rx)).iter().all(|(_, r)| r.is_empty()),
+            "instance calls carry no relays"
+        );
+    }
+
+    #[tokio::test]
+    async fn p2p_hosts_keep_relays_per_file() {
+        let s = |v: &str| v.to_string();
+        let hub = Hub::new();
+        let conn = hub.next_conn();
+        hub.set_p2p_relayed(
+            "alice",
+            conn,
+            s("peer-a"),
+            vec![s("f1"), s("f2")],
+            BTreeMap::from([(s("f1"), vec![s("turn.a.example")])]),
+        );
+        hub.flush().await;
+        assert_eq!(
+            hub.p2p_host_of("alice", "f1"),
+            Some((s("peer-a"), vec![s("turn.a.example")]))
+        );
+        assert_eq!(
+            hub.p2p_host_of("alice", "f2"),
+            Some((s("peer-a"), Vec::new()))
+        );
+        assert_eq!(hub.p2p_host_of("alice", "f3"), None);
     }
 
     #[tokio::test]
@@ -4854,12 +5073,14 @@ pub(crate) mod tests {
                 log_id: 9,
                 call_id: String::new(),
                 peer_id: None,
+                relays: Vec::new(),
             },
             Op::CallAccept {
                 user: s("gina"),
                 conn: (3 << 32) | 3,
                 dm_id: 4,
                 peer_id: None,
+                relays: Vec::new(),
             },
             Op::VoiceJoin {
                 user: s("gina"),
@@ -5036,6 +5257,7 @@ pub(crate) mod tests {
             log_id: 70,
             call_id: String::new(),
             peer_id: None,
+            relays: Vec::new(),
         };
         assert!(matches!(
             replica.apply(1, start, T0).outcome,
@@ -5047,6 +5269,7 @@ pub(crate) mod tests {
             conn: 2,
             dm_id: 9,
             peer_id: None,
+            relays: Vec::new(),
         };
         assert!(matches!(
             replica.apply(2, accept, T0).outcome,

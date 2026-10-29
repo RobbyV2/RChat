@@ -2,7 +2,17 @@ import Peer, { type DataConnection, type MediaConnection } from 'peerjs'
 import { backoffDelay } from './backoff'
 import { fromBase64, fromBase64Url, randomHex, toBase64 } from './bytes'
 import { home, writeLocal } from './instances'
-import { ice, iceConfig } from './ice'
+import { ice } from './ice'
+import {
+  AUTO,
+  DENIED_DOWNLOAD,
+  failedText,
+  hidesIp,
+  relayBook,
+  type RelayChoice,
+  type Resolved,
+  unknownHosts,
+} from './relays'
 import { blobs, type BlobWriter } from './platform'
 import { Sha256, validSha256 } from './sha256'
 import { kindOf, NEUTRAL_TYPE, safeType, SNIFF_BYTES, type PreviewKind } from './sniff'
@@ -27,6 +37,8 @@ export interface StoredFile {
   // Attached to a message whose send hasn't gone through yet: neither announced nor served, so
   // nobody can learn the id and post it first.
   pending?: boolean
+  // Served through this relay of ours only (its URL); absent for auto.
+  relay?: string
 }
 
 // A P2P file this account downloaded and kept, in the blob store under `gotKey`. It is only
@@ -62,6 +74,8 @@ export interface DownloadOpts {
   messageId?: number | null
   // Only picks the audio player over the video one for a WebM file.
   audio?: boolean
+  // Relay hosts the hoster declared; unknown ones need the user's consent first.
+  relays?: string[]
   onProgress?: (got: number, total: number) => void
   signal?: AbortSignal
 }
@@ -222,6 +236,7 @@ const validReceived = (r: Received) =>
 export interface PeerGrant {
   peerId: string
   token: string
+  relays: string[]
 }
 
 // The call the server set up: its id and the peer id of the other side's tab. The caller dials
@@ -280,6 +295,96 @@ const validGrant = (g: unknown): g is Grant => {
   )
 }
 
+const NO_PATH: RTCConfiguration = { iceServers: [], iceTransportPolicy: 'relay' }
+
+// What an incoming connection's offer asks for, read once from its PeerJS type, label and
+// metadata; the ICE config, the routing and the serving all go by this. `call` is only for the
+// call's media and its `call` control channel; `f` names a file, with the relay hosts (`r`) and
+// download token (`t`) of the downloader. Anything mixed or malformed is `bad` and never answered
+// with a usable config.
+export type Intent =
+  | { kind: 'call' }
+  | { kind: 'file'; id: string; relays: unknown; token: unknown }
+  | { kind: 'auto' }
+  | { kind: 'bad' }
+
+export const intentOf = (type: unknown, label: unknown, meta: unknown): Intent => {
+  const m: Record<string, unknown> =
+    typeof meta === 'object' && meta !== null && !Array.isArray(meta)
+      ? (meta as Record<string, unknown>)
+      : {}
+  if (meta !== undefined && meta !== null && m !== meta) return { kind: 'bad' }
+  const call = m.call !== undefined
+  const f = m.f
+  if (type === 'media') return call && f === undefined ? { kind: 'call' } : { kind: 'bad' }
+  if (type !== 'data') return { kind: 'bad' }
+  if (label === 'call' || call)
+    return label === 'call' && call && f === undefined ? { kind: 'call' } : { kind: 'bad' }
+  if (f === undefined) return { kind: 'auto' }
+  return typeof f === 'string' && f.length > 0 && f.length <= 64
+    ? { kind: 'file', id: f, relays: m.r, token: m.t }
+    : { kind: 'bad' }
+}
+
+// An offer as it was answered: what it asked for, and the file whose relay plan its config was.
+interface Offer {
+  intent: Intent
+  pinned: string | null
+}
+
+// The hoster's answer to an offer it won't take, sent back through the broker in place of an
+// answer so the downloader can stop at once: `relay` when its user denied the downloader's relay.
+export const REFUSED = 'rchat-refused'
+export const REFUSED_RELAY = 'Download canceled: the sender did not allow your relay'
+// Offers waiting for a prompt or a token check at once; more are refused.
+export const HELD_OFFERS_MAX = 8
+// How long a download that declared relays waits to connect, while the hoster may be asked.
+const CONSENT_WAIT_MS = 90_000
+
+type BrokerMsg = {
+  type?: unknown
+  src?: unknown
+  payload?: {
+    type?: unknown
+    label?: unknown
+    metadata?: unknown
+    connectionId?: unknown
+    reason?: unknown
+  }
+}
+
+type Hooked = Peer & {
+  _handleMessage?: (msg: unknown) => void
+  socket?: { send?: (msg: unknown) => void }
+}
+
+// Whether PeerJS has the method the per-offer config hook wraps (see hookOffers).
+export const canHookOffers = (peer: unknown) =>
+  typeof (peer as Hooked | null)?._handleMessage === 'function'
+
+// PeerJS reads the Peer's config when it builds a connection's peer connection, which happens
+// inside `connect`, `call`, `answer` and (for incoming data connections) when the offer arrives.
+const withConfig = <T>(peer: Peer, config: RTCConfiguration, fn: () => T): T => {
+  const options = (peer as { options?: { config?: RTCConfiguration } }).options
+  if (!options) return fn()
+  const prev = options.config
+  options.config = config
+  try {
+    return fn()
+  } finally {
+    options.config = prev
+  }
+}
+
+// Tells the downloader its offer won't be answered, through the broker (PeerJS forwards an OFFER
+// as is); a stock PeerJS client drops it as a malformed type. The messages PeerJS kept for the
+// connection are dropped too.
+const refuseOffer = (peer: Peer, to: string, connectionId: string, reason: string) => {
+  const p = peer as Hooked & { _getMessages?: (id: string) => unknown }
+  p._getMessages?.(connectionId)
+  p.socket?.send?.({ type: 'OFFER', dst: to, payload: { type: REFUSED, connectionId, reason } })
+}
+
 const dropPreviews = () => {
   for (const p of previews.values()) URL.revokeObjectURL(p.url)
   previews.clear()
@@ -309,6 +414,14 @@ export class P2pManager {
     }
   >()
   private binding: CallBinding | null = null
+  // The ICE plan of the current P2P call (the relay choice of this side).
+  private callIce: (Resolved & { ok: true }) | null = null
+  private relayWatch: (() => void) | null = null
+  // Incoming offers being answered, by connection id, so the connection knows its config.
+  private offers = new Map<string, Offer>()
+  private holding = 0
+  // Downloads waiting to connect, by `{hoster peer}:{connection id}`, failed by a refusal.
+  private refusals = new Map<string, (reason: unknown) => void>()
   private awaiting: ReturnType<typeof setTimeout> | null = null
   private heldMedia: MediaConnection[] = []
   private heldControl: DataConnection[] = []
@@ -475,8 +588,14 @@ export class P2pManager {
 
   // Keeps a file for a message that is about to be sent. It is announced and served only once
   // `posted` says the send went through, so its id stays private until the message exists.
-  stage(id: string, file: File, expiresAt: number | null, sha256?: string) {
-    return this.keep(id, file, expiresAt, sha256, true)
+  stage(
+    id: string,
+    file: File,
+    expiresAt: number | null,
+    sha256?: string,
+    relay: RelayChoice = AUTO
+  ) {
+    return this.keep(id, file, expiresAt, sha256, true, relay)
   }
 
   private async keep(
@@ -484,7 +603,8 @@ export class P2pManager {
     file: File,
     expiresAt: number | null,
     sha256: string | undefined,
-    pending: boolean
+    pending: boolean,
+    relay: RelayChoice = AUTO
   ) {
     const full = new Error('Browser storage is full; P2P file could not be kept')
     if (this.account === null) throw new Error('Sign in to share P2P files')
@@ -500,6 +620,7 @@ export class P2pManager {
       size: file.size,
       expires_at: expiresAt,
       ...(sha256 !== undefined ? { sha256 } : {}),
+      ...(relay !== AUTO ? { relay } : {}),
       added_at: nowS(),
       ...(pending ? { pending: true } : {}),
     }
@@ -643,9 +764,20 @@ export class P2pManager {
       ...Object.keys(this.legacyFiles()),
     ]
     if (ids.length === 0 && !this.announced) return
+    this.watchRelays()
     if (ids.length) this.ensurePeer()
     this.announced = ids.length > 0
-    home.ws.sendVoice({ type: 'p2p_hosting', peer_id: this.peerId(), ids })
+    const relays: Record<string, string[]> = {}
+    for (const id of ids) {
+      const plan = relayBook.resolve(this.file(id)?.relay ?? AUTO)
+      if (plan.ok && plan.declared.length) relays[id] = plan.declared
+    }
+    home.ws.sendVoice({
+      type: 'p2p_hosting',
+      peer_id: this.peerId(),
+      ids,
+      ...(Object.keys(relays).length ? { relays } : {}),
+    })
   }
 
   // The server's key for checking download tokens, sent in answer to an announce.
@@ -726,7 +858,11 @@ export class P2pManager {
     clearTimeout(g.timer)
     this.grants.delete(ev.message_id)
     if (typeof ev.peer_id === 'string' && typeof ev.token === 'string')
-      g.resolve({ peerId: ev.peer_id, token: ev.token })
+      g.resolve({
+        peerId: ev.peer_id,
+        token: ev.token,
+        relays: Array.isArray(ev.relays) ? ev.relays : [],
+      })
     else g.reject(new Error(ev.error ?? 'File not available'))
   }
 
@@ -751,17 +887,31 @@ export class P2pManager {
       cur.reconnect()
       return cur
     }
-    const peer = new Peer(this.peerId(), { ...home.peer(), config: iceConfig() })
+    const peer = new Peer(this.peerId(), { ...home.peer(), config: relayBook.autoConfig() })
+    this.wire(peer)
+    return peer
+  }
+
+  private wire(peer: Peer) {
+    this.hookOffers(peer)
     this.iceWatch ??= ice.onChange(() => {
-      if (this.peer && !this.peer.destroyed) this.peer.options.config = iceConfig()
+      if (this.peer && !this.peer.destroyed) this.peer.options.config = relayBook.autoConfig()
     })
+    this.watchRelays()
     peer.on('open', () => {
       this.attempt = 0
     })
-    peer.on('connection', conn =>
-      conn.label === 'call' ? this.incomingControl(conn) : this.serve(conn)
+    peer.on('connection', conn => {
+      const offer = this.takeOffer(conn)
+      if (offer.intent.kind === 'call') this.incomingControl(conn)
+      else if (offer.intent.kind === 'bad') conn.close()
+      else this.serve(conn, offer)
+    })
+    peer.on('call', call =>
+      intentOf('media', undefined, call.metadata).kind === 'call'
+        ? this.incomingMedia(call)
+        : call.close()
     )
-    peer.on('call', call => this.incomingMedia(call))
     peer.on('disconnected', () => {
       if (this.peer === peer) this.retryLater()
     })
@@ -770,7 +920,110 @@ export class P2pManager {
       else console.error('peer', err)
     })
     this.peer = peer
-    return peer
+  }
+
+  // Relay edits change the broker's default config and what hosted files declare.
+  private watchRelays() {
+    this.relayWatch ??= relayBook.onChange(() => {
+      if (this.peer && !this.peer.destroyed) this.peer.options.config = relayBook.autoConfig()
+      if (this.announced) this.announce()
+    })
+  }
+
+  // PeerJS builds an incoming connection's peer connection from the Peer's config as the offer
+  // arrives (in `_handleMessage`, PeerJS 1.5.5, pinned). The hook gives each offer the config of
+  // what it asks for (see intentOf), and holds a file offer until the downloader's token is good
+  // when the file goes through a chosen relay, or until the user allowed the downloader's
+  // unknown relays. Without the hook every offer gets the auto config, so files pinned to a
+  // relay are never served (see serve).
+  private hookOffers(peer: Peer) {
+    const p = peer as Hooked
+    const handle = p._handleMessage
+    if (typeof handle !== 'function') return
+    p._handleMessage = (msg: unknown) => {
+      const m = msg as BrokerMsg | null
+      if (m?.type !== 'OFFER') return handle.call(peer, msg)
+      const payload = m.payload ?? {}
+      const src = String(m.src)
+      const cid = String(payload.connectionId)
+      if (payload.type === REFUSED) return this.refusals.get(`${src}:${cid}`)?.(payload.reason)
+      const intent = intentOf(payload.type, payload.label, payload.metadata)
+      const admit = () => {
+        if (peer.destroyed) return
+        const plan = this.offerPlan(intent)
+        this.offers.set(cid, { intent, pinned: plan.pinned })
+        try {
+          withConfig(peer, plan.config, () => handle.call(peer, msg))
+        } finally {
+          this.offers.delete(cid)
+        }
+      }
+      const gate = this.offerGate(intent, src)
+      if (gate === null) return admit()
+      if (this.holding >= HELD_OFFERS_MAX) return refuseOffer(peer, src, cid, 'busy')
+      this.holding += 1
+      void gate
+        .catch(() => 'missing' as const)
+        .then(refused => (refused === null ? admit() : refuseOffer(peer, src, cid, refused)))
+        .finally(() => {
+          this.holding -= 1
+        })
+    }
+  }
+
+  // Null when the offer may be answered now; otherwise what to check first, resolving to null
+  // (answer it) or the reason to refuse.
+  private offerGate(intent: Intent, from: string): Promise<'relay' | 'missing' | null> | null {
+    if (intent.kind !== 'file') return null
+    const relay = this.file(intent.id)?.relay
+    const plan = relayBook.resolve(relay ?? AUTO)
+    const ask =
+      !hidesIp(plan) &&
+      relayBook.prefs.ask &&
+      unknownHosts(intent.relays, relayBook.known()).length > 0
+    if (relay === undefined && !ask) return null
+    return this.tokenUser(intent.token, intent.id, from).then(async user => {
+      if (user === null) return 'missing'
+      if (!ask) return null
+      return (await relayBook.consent(intent.relays)) === null ? null : 'relay'
+    })
+  }
+
+  private offerPlan(intent: Intent): { config: RTCConfiguration; pinned: string | null } {
+    switch (intent.kind) {
+      case 'call':
+        return { config: this.callIce?.config ?? relayBook.autoConfig(), pinned: null }
+      case 'bad':
+        return { config: NO_PATH, pinned: null }
+      case 'auto':
+        return { config: relayBook.autoConfig(), pinned: null }
+      case 'file': {
+        const relay = this.file(intent.id)?.relay
+        if (relay === undefined) return { config: relayBook.autoConfig(), pinned: null }
+        const r = relayBook.resolve(relay)
+        return r.ok ? { config: r.config, pinned: intent.id } : { config: NO_PATH, pinned: null }
+      }
+    }
+  }
+
+  // The offer a connection was answered on; one that didn't come through the hook was answered
+  // on the auto config.
+  private takeOffer(conn: DataConnection): Offer {
+    return (
+      this.offers.get(String(conn.connectionId)) ?? {
+        intent: intentOf('data', conn.label, conn.metadata),
+        pinned: null,
+      }
+    )
+  }
+
+  // The plan for this side of the next P2P call, from its relay choice; null clears it.
+  setCallIce(plan: (Resolved & { ok: true }) | null) {
+    this.callIce = plan
+  }
+
+  callPlan() {
+    return this.callIce
   }
 
   // Another tab holds the stored id: use a fresh one for this tab only, so the
@@ -808,7 +1061,7 @@ export class P2pManager {
   // Limits apply per user the token names. A slot is held from the request until the transfer
   // ends or the connection closes, whichever comes first, so a send stuck on a dead peer still
   // gives its slot back.
-  private serve(conn: DataConnection) {
+  private serve(conn: DataConnection, offer: Offer = this.takeOffer(conn)) {
     const from = String(conn.peer)
     let peer = from
     let answered = false
@@ -846,7 +1099,9 @@ export class P2pManager {
           void Promise.resolve(conn.send({ type, id })).catch(() => {})
           setTimeout(() => conn.close(), 1000)
         }
-        if (user === null || !conn.open) return refuse('missing')
+        // A file served through a chosen relay only goes to a connection answered on that plan.
+        const planned = this.file(id)?.relay === undefined || offer.pinned === id
+        if (user === null || !conn.open || !planned) return refuse('missing')
         peer = user
         if (!this.admit(peer)) return refuse('busy')
         held = true
@@ -1011,10 +1266,28 @@ export class P2pManager {
       .catch(() => null)
     if (room !== null && limit > room) throw new Error(NO_ROOM)
     if (signal?.aborted) throw new Error(CANCELED)
+    const plan = relayBook.resolve()
+    if (!plan.ok) throw new Error(plan.error)
+    if (!hidesIp(plan) && (await relayBook.consent(opts.relays ?? [])) !== null)
+      throw new Error(DENIED_DOWNLOAD)
+    if (signal?.aborted || this.account !== account) throw new Error(CANCELED)
     const key = this.gotKey(copy)
     const writer: BlobWriter = await blobs().create(key)
     return new Promise<Download>((resolve, reject) => {
-      const conn = this.ensurePeer(true).connect(peerId, { reliable: true })
+      const peer = this.ensurePeer(true)
+      const metadata = {
+        f: id,
+        ...(plan.declared.length ? { r: plan.declared } : {}),
+        ...(opts.token !== undefined ? { t: opts.token } : {}),
+      }
+      const conn = withConfig(peer, plan.config, () =>
+        peer.connect(peerId, { reliable: true, metadata })
+      )
+      const waiting = `${peerId}:${String(conn.connectionId)}`
+      // A manual relay that never got the connection up is named in the error.
+      let opened = false
+      const lost = (text: string) =>
+        new Error(!opened && plan.manual !== null ? failedText(plan.manual) : text)
       const sha = new Sha256()
       const head = new Uint8Array(SNIFF_BYTES)
       let headLen = 0
@@ -1034,6 +1307,7 @@ export class P2pManager {
         if (timer) clearTimeout(timer)
         timer = null
         signal?.removeEventListener('abort', canceled)
+        this.refusals.delete(waiting)
         conn.close()
         if (err) {
           void (ending ?? chain)
@@ -1048,9 +1322,12 @@ export class P2pManager {
       signal?.addEventListener('abort', canceled)
       const idle = () => {
         if (timer) clearTimeout(timer)
-        timer = setTimeout(() => {
-          if (state === 'open') finish(new Error('P2P download timed out'))
-        }, IDLE_MS)
+        timer = setTimeout(
+          () => {
+            if (state === 'open') finish(lost('P2P download timed out'))
+          },
+          opened || plan.declared.length === 0 ? IDLE_MS : CONSENT_WAIT_MS
+        )
       }
       const take = (bytes: Uint8Array) => {
         sha.update(bytes)
@@ -1106,7 +1383,14 @@ export class P2pManager {
         )
       }
       idle()
+      this.refusals.set(waiting, reason => {
+        if (opened || state !== 'open') return
+        if (reason === 'relay') finish(new Error(REFUSED_RELAY))
+        else if (reason === 'busy') finish(new Error('The sender is busy, try again in a moment'))
+        else finish(new Error('File not available'))
+      })
       conn.on('open', () => {
+        opened = true
         const get: WireMsg = { type: 'get', id, chunked: true, acks: true }
         if (opts.token !== undefined) get.token = opts.token
         void conn.send(get)
@@ -1156,10 +1440,10 @@ export class P2pManager {
         } else finish(new Error('File not available'))
       })
       conn.on('close', () => {
-        if (state === 'open') finish(new Error('P2P download interrupted'))
+        if (state === 'open') finish(lost('P2P download interrupted'))
       })
       conn.on('error', err => {
-        if (state === 'open') finish(new Error(`P2P download failed: ${err.type}`))
+        if (state === 'open') finish(lost(`P2P download failed: ${err.type}`))
       })
     })
   }
@@ -1391,7 +1675,10 @@ export class P2pManager {
     if (!this.local) return call.close()
     if (this.hold(this.heldMedia, call)) return
     if (!this.fromCaller(call) || this.media !== null) return call.close()
-    call.answer(this.callStream())
+    const peer = this.peer
+    const config = this.callIce?.config ?? relayBook.autoConfig()
+    if (peer) withConfig(peer, config, () => call.answer(this.callStream()))
+    else call.answer(this.callStream())
     this.attach(call)
   }
 
@@ -1437,8 +1724,11 @@ export class P2pManager {
     if (!this.local || b === null || !b.dial || this.media !== null) return
     const peer = this.ensurePeer(true)
     const metadata = { call: b.callId }
-    this.attach(peer.call(b.peer, this.callStream(), { metadata }))
-    this.attachControl(peer.connect(b.peer, { label: 'call', reliable: true, metadata }))
+    const config = this.callIce?.config ?? relayBook.autoConfig()
+    withConfig(peer, config, () => {
+      this.attach(peer.call(b.peer, this.callStream(), { metadata }))
+      this.attachControl(peer.connect(b.peer, { label: 'call', reliable: true, metadata }))
+    })
   }
 
   private attach(call: MediaConnection) {
@@ -1458,7 +1748,10 @@ export class P2pManager {
         this.onChange()
       }
     })
-    call.on('error', err => this.onError(`P2P call failed: ${err.type}`))
+    call.on('error', err => {
+      const manual = this.callIce?.manual ?? null
+      this.onError(manual !== null ? failedText(manual) : `P2P call failed: ${err.type}`)
+    })
   }
 
   // The remote side's mic and camera make the stream we show and play; its
@@ -1484,6 +1777,7 @@ export class P2pManager {
   endMedia() {
     this.gen += 1
     this.binding = null
+    this.callIce = null
     if (this.awaiting) clearTimeout(this.awaiting)
     this.awaiting = null
     this.dropHeld()

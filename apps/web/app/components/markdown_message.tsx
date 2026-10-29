@@ -32,6 +32,7 @@ import { fmtSize } from '../lib/bytes'
 import { fileLang, fenceTag } from '../lib/code'
 import type { CodeNode } from '../lib/highlight'
 import { relayOnly } from '../lib/ice'
+import { ownTurn } from '../lib/relays'
 import { api, home, localOrigins, remoteAllowed, shareOrigin } from '../lib/instances'
 import { mentionCandidates, splitKnownMentions } from '../lib/mentions'
 import {
@@ -522,7 +523,9 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   const avail = useStore(s => (media.hoster !== null ? s.p2pAvailability[media.hoster] : undefined))
   // Fetching from the sender shows them our IP address, so images load on their own only when
   // that goes through the relay, or when nothing has to be fetched.
-  const hidesIp = useStore(s => relayOnly(s.instance?.ice, s.iceHelpers, s.iceRelay))
+  const hidesIp = useStore(s =>
+    relayOnly(s.instance?.ice, s.iceHelpers, s.iceRelay, ownTurn(s.relayPrefs))
+  )
   const { id, filename, hoster, expires_at, spoiler, size, mime } = media
   const sha256 = media.sha256 ?? null
   const [shown, setShown] = useState<Preview | null>(() => previewUrl(messageId))
@@ -584,6 +587,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
     if (signal.aborted) throw new Error(CANCELED)
     return p2p.download(grant.peerId, id, {
       token: grant.token,
+      relays: grant.relays,
       size,
       sha256,
       hoster,

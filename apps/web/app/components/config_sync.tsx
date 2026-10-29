@@ -18,6 +18,7 @@ import {
   buildConfig,
   configUrl,
   decodeConfig,
+  decodeLink,
   describeChanges,
   encodeConfig,
   hasStashedConfig,
@@ -116,6 +117,7 @@ const useConfigSource = (): ConfigSource =>
       typing: s.me || s.guest ? s.typingOn : null,
       profanity: s.me || s.guest ? s.profanityOn : null,
       spoilers: s.me || s.guest ? s.showSpoilers : null,
+      relays: s.me ? s.relayPrefs : null,
     }))
   )
 
@@ -486,7 +488,7 @@ function ImportBlock() {
         return
       }
     }
-    const decoded = await decodeConfig(input)
+    const decoded = await (id ? decodeLink(input) : decodeConfig(input))
     if (!decoded.ok) setError(decoded.error)
     else {
       setDoc(decoded.doc)
@@ -613,7 +615,7 @@ function LinkCard({ id }: { id: string }) {
     let live = true
     api.configShare(id).then(
       async res => {
-        const decoded = await decodeConfig(res.blob)
+        const decoded = await decodeLink(res.blob)
         if (!live) return
         setState(
           decoded.ok

@@ -11,6 +11,7 @@ import {
   buildConfig,
   configPath,
   decodeConfig,
+  decodeLink,
   describeChanges,
   encodeConfig,
   linkDoc,
@@ -52,6 +53,7 @@ const source = (over: Partial<ConfigSource> = {}): ConfigSource => {
     typing: false,
     profanity: true,
     spoilers: 'always',
+    relays: null,
     ...over,
   }
 }
@@ -451,6 +453,20 @@ describe('links and stash', () => {
       parseConfigLink('https://evil.example/config/AbC123xyz789/', 'https://chat.example')
     ).toBeNull()
     expect(parseConfigLink('rc1.abc', 'https://chat.example')).toBeNull()
+  })
+
+  test('a crafted link blob imports no section a link may not carry', async () => {
+    const blob = await encodeConfig({
+      v: 1,
+      theme: 'dark',
+      relays: { servers: ['stun' + ':spy.example'], allowed: ['spy.example'], ask: false },
+    })
+    expect((await decodeConfig(blob)).ok).toBe(true)
+    const link = await decodeLink(blob)
+    expect(link.ok && link.doc).toEqual({ v: 1, theme: 'dark' })
+    for (const s of SECTIONS.filter(s => !s.link))
+      expect(link.ok && link.doc[s.key]).toBeUndefined()
+    expect((await decodeLink('junk')).ok).toBe(false)
   })
 
   test('a stash is taken once, sanitized, and expires', () => {

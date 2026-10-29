@@ -8,6 +8,8 @@ export interface PendingUpload {
   spoiler: boolean
   mode: UploadMode
   scope: string
+  // P2P only: 'auto' or the URL of one of the user's TURN relays (see relays.ts).
+  relay?: string
 }
 
 export const MAX_UPLOAD = 25 * 1024 * 1024

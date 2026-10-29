@@ -6,6 +6,7 @@ import type { LoginRequest, PollReq, RegisterRequest, SendOpts } from './api'
 import type { PollTarget } from './polls_store'
 import type { Selection } from './selection'
 import type { PendingUpload } from './attachments'
+import type { Decision, RelayChoice, RelayPrefs } from './relays'
 import type { CallRoute } from './call_choice'
 import type { ConfigDoc, SectionKey } from './config_transfer'
 import type { EmojiPrefs } from './emoji'
@@ -32,6 +33,7 @@ import type {
   Friend,
   FriendRequest,
   CallKind,
+  CallRelays,
   ChannelKind,
   ChannelPerm,
   ConfirmChoice,
@@ -194,6 +196,8 @@ export interface CallSession {
   video: boolean
   // Unix seconds when the call was answered, from the server (this tab's first sight of it on older servers).
   since: number | null
+  // P2P calls: relay hosts each side declared.
+  relays?: CallRelays[]
 }
 
 export interface Paged<T> {
@@ -292,6 +296,9 @@ export interface RChatState {
   streamer: boolean
   iceHelpers: boolean
   iceRelay: boolean
+  relayPrefs: RelayPrefs
+  // The relay host the consent prompt asks about, or null.
+  relayPrompt: string | null
   contextMenu: ContextMenuState | null
   reactPicker: ReactPicker | null
   profile: ProfileTarget | null
@@ -327,6 +334,8 @@ export interface RChatState {
   setStreamer: (streamer: boolean) => void
   setIceHelpers: (on: boolean) => void
   setIceRelay: (on: boolean) => void
+  saveRelays: (next: RelayPrefs) => void
+  answerRelayPrompt: (decision: Decision) => void
   patchMe: (
     avatar_kind: AvatarKind,
     avatar_color?: string,
@@ -464,7 +473,7 @@ export interface RChatState {
   saveEdit: (refocus?: boolean) => void
   editLast: (key: string) => boolean
   sedEdit: (key: string, sed: Sed) => Promise<boolean>
-  sendMessage: (content: string, p2pExpiresIn?: number | null) => void
+  sendMessage: (content: string, p2pExpiresIn?: number | null, p2pRelay?: RelayChoice) => void
   markRead: (scope: string, messageId: number) => void
   // "Mark as read": clears unread dots and pings of the given channel, DM or thread keys (and the
   // threads with pings under a channel) here and, through POST /api/read/batch, on every device.
@@ -499,7 +508,7 @@ export interface RChatState {
   setInboxOpen: (open: boolean) => void
   loadOlderThread: () => Promise<void>
   loadNewerThread: () => Promise<void>
-  sendThreadMessage: (content: string, p2pExpiresIn?: number | null) => void
+  sendThreadMessage: (content: string, p2pExpiresIn?: number | null, p2pRelay?: RelayChoice) => void
   searchRun: (args: SearchArgs, reset: boolean) => Promise<void>
   dismissNotice: (id: number) => void
   pauseNotices: (paused: boolean) => void
@@ -576,7 +585,7 @@ export interface RChatState {
   toggleCamera: () => Promise<void>
   toggleShare: () => Promise<void>
   startCall: (dmId: number, video: boolean) => Promise<void>
-  startP2pCall: (dmId: number, video: boolean) => Promise<void>
+  startP2pCall: (dmId: number, video: boolean, relay?: RelayChoice) => Promise<void>
   setCallRoute: (route: CallRoute) => void
   acceptCall: () => Promise<void>
   declineCall: () => void

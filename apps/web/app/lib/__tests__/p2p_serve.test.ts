@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import Peer from 'peerjs'
 import { home } from '../instances'
 import {
   ACK_WINDOW,
   ASKS_PER_MIN,
   base64ToBlob,
   CANCELED,
+  canHookOffers,
   CHUNK_BYTES,
+  HELD_OFFERS_MAX,
+  intentOf,
   expiryDelay,
   keepPreview,
   LEGACY_MAX,
@@ -15,6 +20,8 @@ import {
   PEER_SERVE_MAX,
   PENDING_MAX,
   previewUrl,
+  REFUSED,
+  REFUSED_RELAY,
   SERVE_MAX,
   serveDeadline,
   servable,
@@ -24,6 +31,7 @@ import {
   unexpired,
 } from '../p2p'
 import { setBlobs, type BlobStore } from '../platform'
+import { DENIED_DOWNLOAD, relayBook, type Decision } from '../relays'
 import { webBlobs } from '../platform/web_blobs'
 import { Sha256 } from '../sha256'
 import { NEUTRAL_TYPE } from '../sniff'
@@ -263,6 +271,7 @@ describe('p2p transfer', () => {
     serve: (conn: unknown) => void
     ensurePeer: () => unknown
     announce: () => void
+    wire: (peer: unknown) => void
   }
   const manager = (name = 'host') => {
     const m = new P2pManager()
@@ -295,11 +304,19 @@ describe('p2p transfer', () => {
     id: string,
     opts: Partial<DownloadOpts> = {},
     sent?: unknown[],
-    peer = 'remote'
+    peer = 'remote',
+    meta?: unknown
   ) => {
     const { client, host: side } = pipe(peer)
     const { m, x } = manager('viewer')
-    x.ensurePeer = () => ({ connect: () => client })
+    const connects: unknown[] = []
+    x.ensurePeer = () => ({
+      connect: (_to: string, o: unknown) => {
+        connects.push(o)
+        return client
+      },
+    })
+    if (meta !== undefined) (side as { metadata?: unknown }).metadata = meta
     if (sent) {
       const send = side.send.bind(side)
       side.send = async (msg: unknown) => {
@@ -319,7 +336,7 @@ describe('p2p transfer', () => {
       setTimeout(() => client.emit('open'), 0)
       return out
     })
-    return { got, m }
+    return { got, m, connects }
   }
 
   beforeEach(() => {
@@ -947,5 +964,319 @@ describe('p2p transfer', () => {
     expect(log).toEqual(['finish', 'finished', 'abort'])
     expect([...kept.keys()].filter(k => k.startsWith('d:'))).toEqual([])
     expect(m.received()).toEqual({})
+  })
+
+  describe('relays', () => {
+    const mine = 'turn' + ':mine.example:3478'
+    // Relay edits make every manager still hosting announce again; keep that off the socket.
+    const ws = home.ws as unknown as { sendVoice: (msg: unknown) => void }
+    const realSend = ws.sendVoice
+    beforeEach(() => {
+      ws.sendVoice = () => {}
+    })
+    afterEach(() => {
+      relayBook.load(null)
+      relayBook.prompt = () => Promise.resolve('deny')
+      ws.sendVoice = realSend
+    })
+
+    type Msg = { type: string; src?: string; dst?: string; payload: Record<string, unknown> }
+    const AUTO_MARK = { iceServers: [], mark: 'peer default' } as RTCConfiguration
+    // A Peer as PeerJS 1.5.5 has it: `_handleMessage` builds an offered connection from
+    // `options.config` and emits it at once; `socket.send` goes to the broker.
+    const fakePeer = (id: string, hook = true) => {
+      const on = new Map<string, (x: unknown) => void>()
+      const sent: Msg[] = []
+      const built: { cid: string; config: unknown }[] = []
+      const sides = new Map<string, ReturnType<typeof pipe>>()
+      const peer: Record<string, unknown> = {
+        id,
+        destroyed: false,
+        disconnected: false,
+        options: { config: AUTO_MARK },
+        socket: { send: (m: Msg) => sent.push(m) },
+        on: (ev: string, fn: (x: unknown) => void) => {
+          on.set(ev, fn)
+          return peer
+        },
+        _getMessages: () => [],
+      }
+      if (hook)
+        peer._handleMessage = function (this: { options: { config: unknown } }, msg: Msg) {
+          if (msg.type !== 'OFFER' || msg.payload.type !== 'data') return
+          const cid = String(msg.payload.connectionId)
+          built.push({ cid, config: this.options.config })
+          const p = sides.get(cid) ?? pipe(String(msg.src))
+          Object.assign(p.host, {
+            connectionId: cid,
+            metadata: msg.payload.metadata,
+            label: msg.payload.label,
+          })
+          on.get('connection')?.(p.host)
+          setTimeout(() => p.client.emit('open'), 0)
+        }
+      const offer = (src: string, cid: string, metadata?: unknown, label?: string) =>
+        (peer._handleMessage as (m: Msg) => void)({
+          type: 'OFFER',
+          src,
+          payload: { type: 'data', connectionId: cid, metadata, label },
+        })
+      return { peer, on, sent, built, sides, offer }
+    }
+    const hosting = async () => {
+      relayBook.save({
+        ...relayBook.prefs,
+        relays: [{ url: mine, username: 'u', credential: 'c' }],
+      })
+      const { m, x } = manager()
+      await m.stage('manual', new File([bytes(5)], 'r.bin'), null, undefined, mine)
+      m.posted('manual', 3)
+      await m.storeFile('auto', new File([bytes(4)], 'a.bin'), null)
+      const net = fakePeer(m.peerId())
+      x.wire(net.peer)
+      return { m, x, net }
+    }
+    const manualConfig = {
+      iceServers: [{ urls: mine, username: 'u', credential: 'c' }],
+      iceTransportPolicy: 'relay',
+    }
+    const until = async (ok: () => boolean) => {
+      for (let i = 0; i < 50 && !ok(); i += 1) await new Promise(r => setTimeout(r, 1))
+    }
+
+    test('PeerJS stays pinned at the version whose offer handling the hook relies on', () => {
+      const pkg = JSON.parse(
+        readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')
+      ) as {
+        dependencies: Record<string, string>
+      }
+      expect(pkg.dependencies.peerjs).toBe('1.5.5')
+      expect(canHookOffers(Peer.prototype)).toBe(true)
+      expect(canHookOffers({})).toBe(false)
+    })
+
+    test('offers are read one way: mixed or malformed metadata is bad', () => {
+      expect(intentOf('data', undefined, undefined)).toEqual({ kind: 'auto' })
+      expect(intentOf('data', undefined, { f: 'x', r: ['a'], t: 'k' })).toEqual({
+        kind: 'file',
+        id: 'x',
+        relays: ['a'],
+        token: 'k',
+      })
+      expect(intentOf('data', 'call', { call: 1 })).toEqual({ kind: 'call' })
+      expect(intentOf('media', undefined, { call: 1 })).toEqual({ kind: 'call' })
+      for (const [type, label, meta] of [
+        ['data', undefined, { call: 1, f: 'x' }],
+        ['data', undefined, { call: 1 }],
+        ['data', 'call', { f: 'x' }],
+        ['data', 'call', { call: 1, f: 'x' }],
+        ['media', undefined, { f: 'x' }],
+        ['media', undefined, { call: 1, f: 'x' }],
+        ['data', undefined, { f: 7 }],
+        ['data', undefined, 'x'],
+        ['other', undefined, undefined],
+      ] as const)
+        expect(intentOf(type, label, meta)).toEqual({ kind: 'bad' })
+    })
+
+    test('an offer gets the config of the file it names, and the Peer default is restored', async () => {
+      const { m, net } = await hosting()
+      const opts = net.peer.options as { config: unknown }
+      const token = await tokenFor(m, 'manual', 'remote')
+      net.offer('remote', 'c1', { f: 'manual', t: token })
+      await until(() => net.built.length === 1)
+      expect(net.built[0].config).toEqual(manualConfig)
+      expect(opts.config).toBe(AUTO_MARK)
+      net.offer('remote', 'c2')
+      net.offer('remote', 'c3', { f: 'auto' })
+      expect(net.built.slice(1).map(b => b.config)).toEqual([
+        relayBook.autoConfig(),
+        relayBook.autoConfig(),
+      ])
+      expect(opts.config).toBe(AUTO_MARK)
+    })
+
+    test('a relay-pinned file is served only on a connection answered on its relay plan', async () => {
+      const { m, x, net } = await hosting()
+      const fetchOn = async (cid: string, id: string, meta: unknown, label?: string) => {
+        const p = pipe('remote')
+        net.sides.set(cid, p)
+        const sent: unknown[] = []
+        const send = p.host.send.bind(p.host)
+        p.host.send = async (msg: unknown) => {
+          sent.push(msg)
+          await send(msg)
+        }
+        net.offer('remote', cid, meta, label)
+        await until(() => net.built.some(b => b.cid === cid))
+        const token = await tokenFor(m, id, 'remote')
+        p.host.emit('data', { type: 'get', id, chunked: true, token })
+        await until(() => sent.length > 0 || !p.host.open)
+        await until(() => sent.some(s => (s as { type: string }).type === 'end') || !p.host.open)
+        return sent.map(s => (s as { type: string }).type)
+      }
+      const token = await tokenFor(m, 'manual', 'remote')
+      expect((await fetchOn('a', 'manual', { f: 'manual', t: token })).at(-1)).toBe('end')
+      // Metadata naming another file, no metadata, or a call id next to the file: refused.
+      expect(await fetchOn('b', 'manual', { f: 'auto' })).toEqual(['missing'])
+      expect(await fetchOn('c', 'manual', undefined)).toEqual(['missing'])
+      expect(await fetchOn('d', 'manual', { call: 1, f: 'manual', t: token })).toEqual([])
+      expect(net.built.find(b => b.cid === 'd')?.config).toEqual({
+        iceServers: [],
+        iceTransportPolicy: 'relay',
+      })
+      expect(await fetchOn('e', 'manual', { call: 1, f: 'manual', t: token }, 'call')).toEqual([])
+      expect((await fetchOn('f', 'auto', { f: 'auto' })).at(-1)).toBe('end')
+      // Without the hook every connection is on the auto config: pinned files are refused.
+      const bare = fakePeer('bare', false)
+      x.wire(bare.peer)
+      const p = pipe('remote')
+      Object.assign(p.host, { connectionId: 'z', metadata: { f: 'manual', t: token } })
+      const sent: unknown[] = []
+      p.host.send = async (msg: unknown) => void sent.push(msg)
+      bare.on.get('connection')?.(p.host)
+      p.client.other = null
+      p.host.emit('data', { type: 'get', id: 'manual', chunked: true, token })
+      await until(() => sent.length > 0)
+      expect(sent).toEqual([{ type: 'missing', id: 'manual' }])
+    })
+
+    test('a pinned file offer with a bad token is refused before any peer connection', async () => {
+      const { net } = await hosting()
+      net.offer('remote', 'c1', { f: 'manual', t: 'nope' })
+      await until(() => net.sent.length > 0)
+      expect(net.built).toEqual([])
+      expect(net.sent).toEqual([
+        {
+          type: 'OFFER',
+          dst: 'remote',
+          payload: { type: REFUSED, connectionId: 'c1', reason: 'missing' },
+        },
+      ])
+    })
+
+    test("the hoster is asked about a downloader's unknown relay before answering", async () => {
+      const { m, net } = await hosting()
+      const asked: string[] = []
+      const answers: Decision[] = ['deny', 'once', 'always']
+      relayBook.prompt = async host => {
+        asked.push(host)
+        return answers.shift() ?? 'deny'
+      }
+      const meta = async () => ({
+        f: 'auto',
+        r: ['their.example'],
+        t: await tokenFor(m, 'auto', 'remote'),
+      })
+      net.offer('remote', 'deny', await meta())
+      await until(() => net.sent.length > 0)
+      expect(net.built).toEqual([])
+      expect(net.sent.at(-1)?.payload).toEqual({
+        type: REFUSED,
+        connectionId: 'deny',
+        reason: 'relay',
+      })
+      net.offer('remote', 'once', await meta())
+      await until(() => net.built.length === 1)
+      expect(relayBook.prefs.allowed).toEqual([])
+      net.offer('remote', 'always', await meta())
+      await until(() => net.built.length === 2)
+      expect(relayBook.prefs.allowed).toEqual(['their.example'])
+      net.offer('remote', 'known', await meta())
+      expect(net.built.map(b => b.cid)).toEqual(['once', 'always', 'known'])
+      expect(asked).toEqual(['their.example', 'their.example', 'their.example'])
+      // A bad token never gets a prompt; a pinned file's relay hides the IP, so no prompt.
+      relayBook.save({ ...relayBook.prefs, allowed: [] })
+      net.offer('remote', 'forged', { f: 'auto', r: ['their.example'], t: 'nope' })
+      const token = await tokenFor(m, 'manual', 'remote')
+      net.offer('remote', 'relayed', { f: 'manual', r: ['their.example'], t: token })
+      await until(() => net.built.length === 4)
+      expect(net.built.at(-1)?.cid).toBe('relayed')
+      expect(net.sent.at(-1)?.payload).toEqual({
+        type: REFUSED,
+        connectionId: 'forged',
+        reason: 'missing',
+      })
+      expect(asked.length).toBe(3)
+    })
+
+    test('offers waiting for an answer are capped', async () => {
+      const { m, net } = await hosting()
+      relayBook.prompt = () => new Promise(() => {})
+      const t = await tokenFor(m, 'auto', 'remote')
+      for (let i = 0; i <= HELD_OFFERS_MAX; i += 1)
+        net.offer('remote', `c${i}`, { f: 'auto', r: ['their.example'], t })
+      expect(net.sent.map(x => x.payload.reason)).toEqual(['busy'])
+    })
+
+    test('a download declares its relays and token, and stops when the hoster refuses', async () => {
+      relayBook.save({ ...relayBook.prefs, relays: [{ url: mine }] })
+      const { m, x } = manager('viewer')
+      const net = fakePeer('viewer')
+      const connects: { metadata: unknown }[] = []
+      const { client } = pipe('host')
+      Object.assign(client, { connectionId: 'c9' })
+      Object.assign(net.peer, {
+        connect: (_to: string, o: { metadata: unknown }) => {
+          connects.push(o)
+          return client
+        },
+      })
+      x.wire(net.peer)
+      x.ensurePeer = () => net.peer
+      const got = m
+        .download('hostpeer', 'f', { size: null, sha256: null, hoster: 'host', token: 'tok' })
+        .catch((e: unknown) => e)
+      await until(() => connects.length > 0)
+      expect(connects[0].metadata).toEqual({ f: 'f', r: ['mine.example'], t: 'tok' })
+      // Only the hoster's refusal for this connection counts.
+      net.offer('someone', 'c9')
+      ;(net.peer._handleMessage as (m: Msg) => void)({
+        type: 'OFFER',
+        src: 'hostpeer',
+        payload: { type: REFUSED, connectionId: 'c9', reason: 'relay' },
+      })
+      const e = await got
+      expect(e instanceof Error ? e.message : null).toBe(REFUSED_RELAY)
+    })
+
+    test('a download asks before using a relay the hoster declared that it does not know', async () => {
+      const { m, x } = manager()
+      await m.storeFile('f', new File([bytes(6)], 'f.bin'), null)
+      const asked: string[] = []
+      const answers: Decision[] = ['deny', 'once', 'always']
+      relayBook.prompt = async host => {
+        asked.push(host)
+        return answers.shift() ?? 'deny'
+      }
+      const relays = ['their.example']
+      const denied = await fetchFrom(x, 'f', { relays }).got.catch((e: unknown) => e)
+      expect(denied instanceof Error ? denied.message : null).toBe(DENIED_DOWNLOAD)
+      expect((await fetchFrom(x, 'f', { relays }).got).blob.size).toBe(6)
+      expect(relayBook.prefs.allowed).toEqual([])
+      expect((await fetchFrom(x, 'f', { relays }).got).blob.size).toBe(6)
+      expect(relayBook.prefs.allowed).toEqual(['their.example'])
+      expect((await fetchFrom(x, 'f', { relays }).got).blob.size).toBe(6)
+      expect(asked).toEqual(['their.example', 'their.example', 'their.example'])
+    })
+
+    test('hosting declares the relay hosts each file may be served through', async () => {
+      relayBook.save({ ...relayBook.prefs, relays: [{ url: mine }] })
+      const { m, x } = manager()
+      const msgs: { ids?: string[]; relays?: Record<string, string[]> }[] = []
+      ws.sendVoice = msg => msgs.push(msg as (typeof msgs)[number])
+      x.ensurePeer = () => ({})
+      x.announce = P2pManager.prototype.announce.bind(m)
+      try {
+        await m.stage('manual', new File([bytes(3)], 'm.bin'), null, undefined, mine)
+        m.posted('manual', 1)
+        expect(msgs.at(-1)?.relays).toEqual({ manual: ['mine.example'] })
+        relayBook.save({ ...relayBook.prefs, relays: [] })
+        expect(msgs.at(-1)?.relays).toBeUndefined()
+        expect(msgs.at(-1)?.ids).toEqual(['manual'])
+      } finally {
+        ws.sendVoice = () => {}
+      }
+    })
   })
 })

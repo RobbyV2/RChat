@@ -2,10 +2,11 @@
 // (`rc1.` + base64url of deflate-raw JSON) and share links (`/config/{id}/`).
 //
 // Document: `{ v: 1, theme?, streamer?, appearOffline?, layout?, notify?, emoji?, calls?,
-// typing?, profanity?, spoilers? }`. All
+// typing?, profanity?, spoilers?, relays? }`. All
 // sections are optional and decoded separately. Unknown sections and fields are dropped, so older
 // readers skip new sections. `v` changes only for an incompatible change. Only listed store
-// fields are copied, so tokens, grants, drafts, passwords and P2P state never get in.
+// fields are copied, so tokens, grants, drafts, passwords, relay credentials and P2P state never
+// get in.
 import { fromBase64Url, isRecord, toBase64Url } from './bytes'
 import type { Theme } from './types'
 import {
@@ -28,6 +29,13 @@ import {
   type EmojiPrefs,
 } from './emoji'
 import { ROUTE_LABEL, isRoute, type CallRoute } from './call_choice'
+import {
+  cleanRelaysSection,
+  exportRelays,
+  relaysText,
+  type RelayPrefs,
+  type RelaysSection,
+} from './relays'
 import { shareOrigin } from './instances'
 import { isShowSpoilers, type ShowSpoilers } from './spoilers'
 
@@ -63,6 +71,7 @@ export interface ConfigDoc {
   typing?: boolean
   profanity?: boolean
   spoilers?: ShowSpoilers
+  relays?: RelaysSection
 }
 
 export type SectionKey =
@@ -76,6 +85,7 @@ export type SectionKey =
   | 'typing'
   | 'profanity'
   | 'spoilers'
+  | 'relays'
 
 export interface Section {
   key: SectionKey
@@ -105,6 +115,8 @@ export const SECTIONS: Section[] = [
   { key: 'typing', label: 'Typing indicators', account: false, device: false, link: true },
   { key: 'profanity', label: 'Filter profanity', account: false, device: false, link: true },
   { key: 'spoilers', label: 'Show spoilers', account: false, device: false, link: true },
+  // Relay URLs and allowed hosts only. Links are stored on the server, so relays stay out.
+  { key: 'relays', label: 'Relays', account: true, device: false, link: false },
 ]
 
 export const sectionOf = (key: SectionKey) => SECTIONS.find(s => s.key === key) as Section
@@ -127,6 +139,7 @@ export interface ConfigSource {
   typing: boolean | null
   profanity: boolean | null
   spoilers: ShowSpoilers | null
+  relays: RelayPrefs | null
 }
 
 const copyEntry = (e: RailEntry): RailEntry =>
@@ -163,6 +176,7 @@ export const buildConfig = (src: ConfigSource, include: ReadonlySet<SectionKey>)
   if (on('typing') && src.typing !== null) doc.typing = src.typing
   if (on('profanity') && src.profanity !== null) doc.profanity = src.profanity
   if (on('spoilers') && src.spoilers !== null) doc.spoilers = src.spoilers
+  if (on('relays') && src.relays) doc.relays = exportRelays(src.relays)
   return doc
 }
 
@@ -260,6 +274,7 @@ export const sanitizeConfig = (data: unknown, now = Date.now()): Decoded => {
     typing,
     profanity,
     spoilers,
+    relays,
   } = data
   if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) return { ok: false, error: DAMAGED }
   if (v > CONFIG_VERSION) return { ok: false, error: NEWER }
@@ -277,6 +292,8 @@ export const sanitizeConfig = (data: unknown, now = Date.now()): Decoded => {
   if (typeof typing === 'boolean') doc.typing = typing
   if (typeof profanity === 'boolean') doc.profanity = profanity
   if (isShowSpoilers(spoilers)) doc.spoilers = spoilers
+  const r = cleanRelaysSection(relays)
+  if (r) doc.relays = r
   return { ok: true, doc }
 }
 
@@ -343,6 +360,12 @@ export const decodeConfig = async (text: string, now = Date.now()): Promise<Deco
     return { ok: false, error: DAMAGED }
   }
   return sanitizeConfig(data, now)
+}
+
+// A config from a share link: only the sections a link may carry, whatever the blob holds.
+export const decodeLink = async (blob: string, now = Date.now()): Promise<Decoded> => {
+  const decoded = await decodeConfig(blob, now)
+  return decoded.ok ? { ok: true, doc: linkDoc(decoded.doc) } : decoded
 }
 
 // Link ids are 12 base62 characters.
@@ -447,6 +470,8 @@ export const describeChanges = (doc: ConfigDoc, src: ConfigSource): Change[] => 
           : d.spoilers === 'always'
             ? 'Always'
             : 'On click'
+      case 'relays':
+        return d.relays ? relaysText(d.relays) : 'Needs an account'
     }
   }
   return presentSections(doc).map(key => ({

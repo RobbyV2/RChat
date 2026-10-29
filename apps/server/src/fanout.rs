@@ -236,6 +236,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             call_id: _,
             answered_at: _,
             peers: _,
+            relays: _,
         } => to(users(dm_users)),
         WsEvent::ChannelCreated { server, channel: _ }
         | WsEvent::ChannelRenamed { server, channel: _ }
@@ -434,6 +435,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             token: _,
             expires_at: _,
             error: _,
+            relays: _,
         }
         | WsEvent::UserShown {
             username: _,

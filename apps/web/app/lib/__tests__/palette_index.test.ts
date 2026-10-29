@@ -166,6 +166,7 @@ describe('following the app', () => {
       ],
     }),
     guest: false,
+    guestServers: [],
     servers: {
       s: serverDetail('s', {
         channels: [

@@ -37,6 +37,8 @@ import { useMyTimeoutEnds, useNow } from './timeout_dialog'
 import { remainingText, timedOutLine } from '../lib/timeouts'
 import { CreatePollDialog } from './poll_dialog'
 import type { PollTarget } from '../lib/polls_store'
+import { RelayPicker } from './relay_settings'
+import type { RelayChoice } from '../lib/relays'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
   { label: '1 hour', seconds: 3600 },
@@ -60,9 +62,11 @@ function ExpiryDialog({
   onPick,
   onClose,
 }: {
-  onPick: (seconds: number | null) => void
+  onPick: (seconds: number | null, relay: RelayChoice) => void
   onClose: () => void
 }) {
+  const prefs = useStore(s => s.relayPrefs)
+  const [relay, setRelay] = useState<RelayChoice>(prefs.choice)
   const [amount, setAmount] = useState('')
   const [mult, setMult] = useState(3600)
   const custom = Number(amount)
@@ -73,11 +77,14 @@ function ExpiryDialog({
         Choose how long the P2P files in this message stay stored in your browser. Others can only
         download them while you are online.
       </p>
+      <div className="mt-3">
+        <RelayPicker value={relay} onChange={setRelay} prefs={prefs} />
+      </div>
       <div className="mt-3 flex flex-wrap gap-2">
         {PRESETS.map(p => (
           <button
             key={p.label}
-            onClick={() => onPick(p.seconds)}
+            onClick={() => onPick(p.seconds, relay)}
             className="rounded-full border border-outline px-3 py-1.5 text-sm hover:bg-surface-container-highest"
           >
             {p.label}
@@ -102,7 +109,7 @@ function ExpiryDialog({
         </select>
         <button
           disabled={!customOk}
-          onClick={() => onPick(Math.round(custom * mult))}
+          onClick={() => onPick(Math.round(custom * mult), relay)}
           className={`${filledBtn} disabled:opacity-40`}
         >
           Send
@@ -399,8 +406,10 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       <ForwardBar draftKey={draftKey} />
     ) : null
 
-  const doSend = (p2pExpiresIn?: number | null) => {
-    void (thread ? sendThreadMessage(text, p2pExpiresIn) : sendMessage(text, p2pExpiresIn))
+  const doSend = (p2pExpiresIn?: number | null, relay?: RelayChoice) => {
+    void (thread
+      ? sendThreadMessage(text, p2pExpiresIn, relay)
+      : sendMessage(text, p2pExpiresIn, relay))
     setText('')
   }
 
@@ -426,9 +435,9 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       )}
       {expiryOpen && (
         <ExpiryDialog
-          onPick={seconds => {
+          onPick={(seconds, relay) => {
             setExpiryOpen(false)
-            doSend(seconds)
+            doSend(seconds, relay)
           }}
           onClose={() => setExpiryOpen(false)}
         />

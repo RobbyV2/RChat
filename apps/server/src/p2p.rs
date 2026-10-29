@@ -22,6 +22,56 @@ fn mac(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
     mac.finalize().into_bytes().into()
 }
 
+// Relay hosts a hoster or caller declares for one file or call, so the other side can ask its
+// user before connecting through a relay it doesn't know. Only the host goes here, never a
+// port, a username or a credential.
+pub const RELAY_HOSTS_MAX: usize = 4;
+const RELAY_HOST_MAX: usize = 253;
+
+// A DNS name in ASCII (IDN names in punycode), an IPv4 address or a bracketed IPv6 address,
+// lowercased. A name whose last label is all digits must be a dotted-quad IPv4 address, as in
+// the client's check.
+pub fn relay_host(host: &str) -> Option<String> {
+    let host = host.to_ascii_lowercase();
+    if host.is_empty() || host.len() > RELAY_HOST_MAX {
+        return None;
+    }
+    if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        return inner.parse::<std::net::Ipv6Addr>().is_ok().then_some(host);
+    }
+    let label = |l: &str| {
+        !l.is_empty()
+            && l.len() <= 63
+            && !l.starts_with('-')
+            && !l.ends_with('-')
+            && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    };
+    if !host.split('.').all(label) {
+        return None;
+    }
+    let numeric = host
+        .rsplit('.')
+        .next()
+        .is_some_and(|l| l.bytes().all(|b| b.is_ascii_digit()));
+    let quad = host.split('.').count() == 4 && host.parse::<std::net::Ipv4Addr>().is_ok();
+    (!numeric || quad).then_some(host)
+}
+
+// Up to RELAY_HOSTS_MAX distinct valid hosts; anything else is refused.
+pub fn relay_hosts(hosts: Vec<String>) -> Result<Vec<String>, String> {
+    if hosts.len() > RELAY_HOSTS_MAX {
+        return Err("Too many relays".to_string());
+    }
+    let mut out: Vec<String> = Vec::new();
+    for host in hosts {
+        let host = relay_host(&host).ok_or_else(|| "Invalid relay host".to_string())?;
+        if !out.contains(&host) {
+            out.push(host);
+        }
+    }
+    Ok(out)
+}
+
 // A PeerJS id as this app makes them: letters, digits, `-` and `_`.
 pub fn valid_peer_id(id: &str) -> bool {
     !id.is_empty()
@@ -86,6 +136,64 @@ pub fn verify(key: &[u8; 32], token: &str, now: i64) -> Option<Grant> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_hosts_are_plain_hosts_only() {
+        for good in [
+            "turn.example.com",
+            "TURN.Example.com",
+            "10.0.0.1",
+            "[2001:db8::1]",
+            "xn--bcher-kva.example",
+            "localhost",
+        ] {
+            assert!(relay_host(good).is_some(), "{good}");
+        }
+        assert_eq!(
+            relay_host("TURN.Example.com").as_deref(),
+            Some("turn.example.com")
+        );
+        for bad in [
+            "",
+            "turn.example.com:3478",
+            "turn:turn.example.com",
+            "user@host",
+            "-bad.example",
+            "bad-.example",
+            "a..b",
+            "<b>x</b>",
+            "b\u{fc}cher.example",
+            "[not-v6]",
+            "[::1",
+            "host/path",
+            "host name",
+            "1.2.3",
+            "999.1.1.1",
+            "1.2.3.4.5",
+            "01.2.3.4",
+            "example.123",
+            &"a".repeat(64),
+            &format!("{}.com", "a.".repeat(130)),
+        ] {
+            assert!(relay_host(bad).is_none(), "{bad}");
+        }
+        assert_eq!(
+            relay_hosts(vec!["a.example".into(), "A.example".into()]).unwrap(),
+            vec!["a.example".to_string()]
+        );
+        assert!(
+            relay_hosts(vec![
+                "a".into(),
+                "b".into(),
+                "c".into(),
+                "d".into(),
+                "e".into()
+            ])
+            .is_err()
+        );
+        assert!(relay_hosts(vec!["ok.example".into(), "bad host".into()]).is_err());
+        assert!(relay_hosts(Vec::new()).unwrap().is_empty());
+    }
 
     fn grant() -> Grant {
         Grant {

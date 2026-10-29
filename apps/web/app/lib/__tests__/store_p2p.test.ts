@@ -9,7 +9,8 @@ import {
   resetSessionCaches,
 } from '../store'
 import { p2p, type CallBinding } from '../p2p'
-import type { MessageMedia, SiteSettings, VoiceMsg, WsEvent } from '../types'
+import { DENIED_CALL, relayBook } from '../relays'
+import type { CallRelays, MessageMedia, SiteSettings, VoiceMsg, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 
 afterAll(resetSessionCaches)
@@ -317,6 +318,9 @@ describe('P2P call binding', () => {
   let bound: CallBinding[] = []
   let tab = 'bob-tab'
   beforeEach(() => {
+    // Before the socket is captured: a relay change makes managers left hosting by other test
+    // files announce again.
+    relayBook.load(null)
     sent = []
     dialed = 0
     bound = []
@@ -342,7 +346,12 @@ describe('P2P call binding', () => {
     Object.assign(p2p, real)
   })
 
-  const active = (from: string, peers?: { user: string; peer_id: string }[], id = 'c1') =>
+  const active = (
+    from: string,
+    peers?: { user: string; peer_id: string }[],
+    id = 'c1',
+    relays?: CallRelays[]
+  ) =>
     dispatch({
       type: 'call_state',
       dm_id: 5,
@@ -351,18 +360,53 @@ describe('P2P call binding', () => {
       from,
       kind: 'p2p',
       ...(peers ? { call_id: id, peers } : {}),
+      ...(relays ? { relays } : {}),
     })
   const peers = [
     { user: 'bob', peer_id: 'bob-tab' },
     { user: 'alice', peer_id: 'alice-tab' },
   ]
 
-  test('the caller dials only the tab the server named, once per call', () => {
+  test('the caller dials only the tab the server named, once per call', async () => {
     active('bob', peers)
     active('bob', peers)
+    await tick()
     expect(bound).toEqual([{ callId: 'c1', peer: 'alice-tab', dial: true }])
     expect(dialed).toBe(1)
     expect(sent).toEqual([])
+  })
+
+  test("the caller asks about the callee's unknown relay first, and Deny hangs up", async () => {
+    active('bob', peers, 'c1', [{ user: 'alice', hosts: ['turn.alice.example'] }])
+    await tick()
+    expect(st().relayPrompt).toBe('turn.alice.example')
+    expect([bound, dialed]).toEqual([[], 0])
+    st().answerRelayPrompt('deny')
+    await tick()
+    expect(st().relayPrompt).toBeNull()
+    expect([bound, dialed]).toEqual([[], 0])
+    expect(st().error).toBe(DENIED_CALL)
+    expect(sent.map(m => m.type)).toEqual(['call_leave'])
+  })
+
+  test('Always allow dials, and the host is not asked about again', async () => {
+    active('bob', peers, 'c1', [{ user: 'alice', hosts: ['turn.alice.example'] }])
+    await tick()
+    st().answerRelayPrompt('always')
+    await tick()
+    expect(dialed).toBe(1)
+    expect(st().relayPrefs.allowed).toEqual(['turn.alice.example'])
+    active('bob', peers, 'c2', [{ user: 'alice', hosts: ['turn.alice.example'] }])
+    await tick()
+    expect(st().relayPrompt).toBeNull()
+    expect(dialed).toBe(2)
+  })
+
+  test("the caller's own relay hosts are never asked about", async () => {
+    active('bob', peers, 'c1', [{ user: 'bob', hosts: ['turn.bob.example'] }])
+    await tick()
+    expect(st().relayPrompt).toBeNull()
+    expect(dialed).toBe(1)
   })
 
   test('the callee binds to the caller and waits for it to dial', () => {

@@ -59,6 +59,9 @@ export class IceCache {
   private signedIn = false
   private helpers = true
   private relay = false
+  // The user has TURN relays of their own (see relays.ts), so relay only can work without one
+  // from the instance.
+  private ownTurn = false
   private timer: unknown = null
   private gen = 0
   private listeners = new Set<() => void>()
@@ -71,6 +74,25 @@ export class IceCache {
 
   servers(): RTCIceServer[] {
     return this.helpers ? this.list.map(copy) : []
+  }
+
+  // The instance's servers whether or not helpers are on.
+  instanceServers(): RTCIceServer[] {
+    return this.list.map(copy)
+  }
+
+  instanceTurn() {
+    return this.src.info()?.turn === true
+  }
+
+  relayWanted() {
+    return this.relay
+  }
+
+  setOwnTurn(on: boolean) {
+    if (this.ownTurn === on) return
+    this.ownTurn = on
+    this.emit()
   }
 
   config(): RTCConfiguration {
@@ -96,11 +118,11 @@ export class IceCache {
     this.emit()
   }
 
-  // Relay only is in force: the user asked for it, helpers are on and the instance has a TURN
-  // relay. Then connections use relayed candidates only, even before the credentials arrive,
-  // so they fail rather than show the user's IP address.
+  // Relay only is in force: the user asked for it, helpers are on and the instance or the user
+  // has a TURN relay. Then connections use relayed candidates only, even before the credentials
+  // arrive, so they fail rather than show the user's IP address.
   relayActive() {
-    return relayOnly(this.src.info(), this.helpers, this.relay)
+    return relayOnly(this.src.info(), this.helpers, this.relay, this.ownTurn)
   }
 
   setSignedIn(on: boolean) {
@@ -164,8 +186,12 @@ export class IceCache {
   }
 }
 
-export const relayOnly = (info: InstanceIce | null | undefined, helpers: boolean, relay: boolean) =>
-  relay && helpers && info?.turn === true
+export const relayOnly = (
+  info: InstanceIce | null | undefined,
+  helpers: boolean,
+  relay: boolean,
+  ownTurn = false
+) => relay && helpers && (info?.turn === true || ownTurn)
 
 // Stored per account: { v: 1, on, relay }. Anything unreadable means helpers on, relay only off.
 export const iceKey = (username: string | null) => `rchat_ice:${username ?? 'guest'}`
@@ -226,4 +252,37 @@ export const iceOffer = (info: InstanceIce | null | undefined): string[] => {
   if (info.relay) out.push('Instance relay')
   else if (info.turn) out.push('Relay servers')
   return out
+}
+
+// Whether a TURN relay hands out relayed candidates with these settings: the check before a
+// manual relay is used for an upload or a call.
+export const probeRelay = (server: RTCIceServer, timeoutMs = 8000): Promise<boolean> => {
+  if (typeof RTCPeerConnection === 'undefined') return Promise.resolve(false)
+  return new Promise(resolve => {
+    let pc: RTCPeerConnection
+    try {
+      pc = new RTCPeerConnection({ iceServers: [server], iceTransportPolicy: 'relay' })
+    } catch {
+      resolve(false)
+      return
+    }
+    let done = false
+    const finish = (ok: boolean) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      pc.close()
+      resolve(ok)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    pc.onicecandidate = e => {
+      if (e.candidate === null) finish(false)
+      else if (e.candidate.type === 'relay' || / typ relay/.test(e.candidate.candidate))
+        finish(true)
+    }
+    pc.createDataChannel('probe')
+    pc.createOffer()
+      .then(offer => pc.setLocalDescription(offer))
+      .catch(() => finish(false))
+  })
 }

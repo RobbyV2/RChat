@@ -103,6 +103,8 @@ const SECRETS = [
   'SERVER-PW-correct-horse',
   'FORWARD-CLIP-body',
   'ACCOUNT-PASSWORD-hunter2',
+  'RELAY-CREDENTIAL-s3cret',
+  'RELAY-USER-name',
 ]
 
 describe('export never carries secrets', () => {
@@ -142,8 +144,17 @@ describe('export never carries secrets', () => {
       },
       notifyPrefs: notify,
       emoji: noteUse(EMPTY_PREFS, '👍', '👍', Date.now()),
+      relayPrefs: {
+        relays: [
+          { url: 'turn' + ':relay.example:3478', username: SECRETS[10], credential: SECRETS[9] },
+        ],
+        allowed: ['other.example'],
+        ask: true,
+        choice: 'auto',
+      },
     })
     const doc = buildConfig(configSourceOf(st()), ALL)
+    expect(doc.relays?.servers).toEqual(['turn' + ':relay.example:3478'])
     const text = await encodeConfig(doc)
     const json = await inflate(text)
     for (const secret of [...SECRETS, ...local.values(), ...session.values()].filter(v =>
@@ -160,6 +171,7 @@ describe('export never carries secrets', () => {
         'emoji',
         'layout',
         'notify',
+        'relays',
         'streamer',
         'theme',
         'typing',

@@ -22,6 +22,7 @@ import { JoinTracker } from './negotiation'
 import { newP2pId, p2p } from './p2p'
 import { hashBlob } from './sha256'
 import { ice, iceKey, iceValue, parseIce } from './ice'
+import { DENIED_CALL, hidesIp, mergeRelays, relayBook, relaysKey, type Decision } from './relays'
 import { mentionsUser } from './mentions'
 import {
   NO_PINGS,
@@ -587,10 +588,28 @@ export const useStore = create<RChatState>()((set, get) => {
     throw new ApiError(message || `HTTP ${res.status}`, res.status)
   }
 
+  // The relay consent prompt: one host at a time, answered by answerRelayPrompt.
+  let relayAnswer: ((d: Decision) => void) | null = null
+  const settleRelayPrompt = (decision: Decision) => {
+    const answer = relayAnswer
+    relayAnswer = null
+    set({ relayPrompt: null })
+    answer?.(decision)
+  }
+  relayBook.prompt = host =>
+    new Promise<Decision>(resolve => {
+      relayAnswer?.('deny')
+      relayAnswer = resolve
+      set({ relayPrompt: host })
+    })
+  relayBook.onChange(() => set({ relayPrefs: relayBook.prefs }))
+
   const armIce = (username: string | null, signedIn: boolean) => {
     const { on, relay } = parseIce(localStorage.getItem(home.scoped(iceKey(username))))
     ice.setHelpers(on)
     ice.setRelay(relay)
+    if (relayAnswer) settleRelayPrompt('deny')
+    relayBook.load(signedIn && username !== null ? home.scoped(relaysKey(username)) : null)
     set({ iceHelpers: on, iceRelay: relay })
     void ice.setSignedIn(signedIn)
   }
@@ -957,6 +976,8 @@ export const useStore = create<RChatState>()((set, get) => {
     if (want.has('typing') && doc.typing !== undefined) saveTypingOn(doc.typing)
     if (want.has('profanity') && doc.profanity !== undefined) saveProfanityOn(doc.profanity)
     if (want.has('spoilers') && doc.spoilers !== undefined) saveShowSpoilers(doc.spoilers)
+    if (want.has('relays') && doc.relays && me)
+      relayBook.save(mergeRelays(relayBook.prefs, doc.relays))
     return failed.length ? `Couldn't apply: ${failed.join(', ')}` : null
   }
 
@@ -1280,6 +1301,9 @@ export const useStore = create<RChatState>()((set, get) => {
     if (hosters.length) home.ws.sendVoice({ type: 'p2p_who', hosters })
   }
 
+  // The P2P call whose relays the caller is asking about, so a repeated state asks once.
+  let dialing: string | null = null
+
   // An active P2P call names its id and the peer id of both tabs. The tab that started or
   // accepted it binds to the other side: the caller dials, the callee answers only that peer.
   const bindP2pCall = (me: string, ev: Extract<WsEvent, { type: 'call_state' }>) => {
@@ -1297,7 +1321,29 @@ export const useStore = create<RChatState>()((set, get) => {
         return { p2pCallFailed: rest }
       })
     const dial = ev.from === me
-    if (p2p.bind({ callId: ev.call_id, peer: other.peer_id, dial }) && dial) p2p.dial()
+    const binding = { callId: ev.call_id, peer: other.peer_id, dial }
+    if (!dial) {
+      p2p.bind(binding)
+      return
+    }
+    // The caller asks about the callee's relays before it connects; the callee asked about the
+    // caller's when it accepted.
+    if (dialing === binding.callId) return
+    dialing = binding.callId
+    const theirs = (ev.relays ?? []).filter(r => r.user !== me).flatMap(r => r.hosts)
+    const plan = p2p.callPlan()
+    const asked = plan && hidesIp(plan) ? Promise.resolve(null) : relayBook.consent(theirs)
+    void asked.then(denied => {
+      dialing = null
+      const call = get().call
+      if (call?.dmId !== ev.dm_id || call.state !== 'active' || !p2p.mediaActive()) return
+      if (denied !== null) {
+        get().hangupCall()
+        fail(new Error(DENIED_CALL))
+        return
+      }
+      if (p2p.bind(binding)) p2p.dial()
+    })
   }
   const joins = new JoinTracker()
 
@@ -3310,9 +3356,11 @@ export const useStore = create<RChatState>()((set, get) => {
     if (!pending) return { opts: {}, p2pId: null }
     const { file, spoiler, mode } = pending
     if (mode === 'p2p') {
+      const relay = pending.relay ?? relayBook.prefs.choice
+      await relayBook.check(relay)
       const id = newP2pId()
       const sha256 = await hashOf(file)
-      await p2p.stage(id, file, p2pExpiry(p2pExpiresIn), sha256)
+      await p2p.stage(id, file, p2pExpiry(p2pExpiresIn), sha256, relay)
       return {
         opts: {
           media_spoiler: spoiler,
@@ -3375,7 +3423,13 @@ export const useStore = create<RChatState>()((set, get) => {
               p2p.removeFile(p2pId)
               const id: string = newP2pId()
               p2pId = id
-              await p2p.stage(id, head.pending.file, p2pExpiry(head.p2pExpiresIn), opts.p2p.sha256)
+              await p2p.stage(
+                id,
+                head.pending.file,
+                p2pExpiry(head.p2pExpiresIn),
+                opts.p2p.sha256,
+                head.pending.relay ?? relayBook.prefs.choice
+              )
               real = await head.send({ ...opts, p2p: { ...opts.p2p, p2p_id: id } })
             }
           } catch (e) {
@@ -3522,6 +3576,8 @@ export const useStore = create<RChatState>()((set, get) => {
     streamer: false,
     iceHelpers: true,
     iceRelay: false,
+    relayPrefs: relayBook.prefs,
+    relayPrompt: null,
     contextMenu: null,
     reactPicker: null,
     profile: null,
@@ -3635,6 +3691,10 @@ export const useStore = create<RChatState>()((set, get) => {
       ice.setRelay(relay)
       set({ iceRelay: relay })
     },
+
+    saveRelays: next => relayBook.save(next),
+
+    answerRelayPrompt: settleRelayPrompt,
 
     patchMe: (avatar_kind, avatar_color, banner_color) =>
       act(async () => {
@@ -4209,11 +4269,12 @@ export const useStore = create<RChatState>()((set, get) => {
       if (username) set({ emoji: readEmoji(username) })
     },
 
-    sendMessage: (content, p2pExpiresIn) => {
+    sendMessage: (content, p2pExpiresIn, p2pRelay) => {
       const { view, me } = get()
       if (!view || !me) return
       const key = viewKey(view)
-      const pending = get().pending[key] ?? null
+      const held = get().pending[key] ?? null
+      const pending = held && p2pRelay !== undefined ? { ...held, relay: p2pRelay } : held
       if (!content.trim() && !pending) return
       const reply = get().replying[key] ?? null
       set(s => ({ pending: keyed(s.pending, key, null), replying: keyed(s.replying, key, null) }))
@@ -4751,12 +4812,13 @@ export const useStore = create<RChatState>()((set, get) => {
         if (panel?.kind === 'thread') await loadNewerFor(threadKey(panel.root.id))
       }),
 
-    sendThreadMessage: (content, p2pExpiresIn) => {
+    sendThreadMessage: (content, p2pExpiresIn, p2pRelay) => {
       const { panel, me } = get()
       if (panel?.kind !== 'thread' || !me) return
       const rootId = panel.root.id
       const key = threadKey(rootId)
-      const pending = get().pending[key] ?? null
+      const held = get().pending[key] ?? null
+      const pending = held && p2pRelay !== undefined ? { ...held, relay: p2pRelay } : held
       if (!content.trim() && !pending) return
       const tempId = nextTempId()
       const reply = get().replying[key] ?? null
@@ -5158,19 +5220,28 @@ export const useStore = create<RChatState>()((set, get) => {
         set({ voice: null })
       }),
 
-    startP2pCall: (dmId, video) =>
+    startP2pCall: (dmId, video, relay) =>
       act(async () => {
         caller()
+        const plan = await relayBook.check(relay ?? relayBook.prefs.choice)
         try {
           rtc.leave()
           await p2p.startMedia(get().selfAudio.muted)
+          p2p.setCallIce(plan)
           applyMic()
           if (video) await p2p.toggleCamera()
         } catch (e) {
           abandonMedia()
           throw e
         }
-        sendOrAbandon({ type: 'call_start', dm_id: dmId, p2p: true, video, peer_id: p2p.peerId() })
+        sendOrAbandon({
+          type: 'call_start',
+          dm_id: dmId,
+          p2p: true,
+          video,
+          peer_id: p2p.peerId(),
+          ...(plan.declared.length ? { relays: plan.declared } : {}),
+        })
         set({ voice: null })
       }),
 
@@ -5180,10 +5251,25 @@ export const useStore = create<RChatState>()((set, get) => {
       act(async () => {
         const { me, call } = get()
         if (!me || !call || call.state !== 'ringing') return
+        let plan: Awaited<ReturnType<typeof relayBook.check>> | null = null
+        if (call.kind === 'p2p') {
+          const theirs = (call.relays ?? [])
+            .filter(r => r.user !== me.username)
+            .flatMap(r => r.hosts)
+          const mine = await relayBook.check(relayBook.prefs.choice)
+          plan = mine
+          if (!hidesIp(mine) && (await relayBook.consent(theirs)) !== null) {
+            if (get().call?.dmId === call.dmId) get().declineCall()
+            throw new Error(DENIED_CALL)
+          }
+          const still = get().call
+          if (still?.dmId !== call.dmId || still.state !== 'ringing') return
+        }
         try {
           if (call.kind === 'p2p') {
             rtc.leave()
             await p2p.startMedia(get().selfAudio.muted)
+            p2p.setCallIce(plan)
           } else {
             p2p.endMedia()
             await rtc.join(me.username, { dmId: call.dmId }, get().selfAudio.muted)
@@ -5202,7 +5288,12 @@ export const useStore = create<RChatState>()((set, get) => {
         if (call.kind === 'p2p') p2p.expectCall()
         sendOrAbandon(
           call.kind === 'p2p'
-            ? { type: 'call_accept', dm_id: call.dmId, peer_id: p2p.peerId() }
+            ? {
+                type: 'call_accept',
+                dm_id: call.dmId,
+                peer_id: p2p.peerId(),
+                ...(plan?.declared.length ? { relays: plan.declared } : {}),
+              }
             : { type: 'call_accept', dm_id: call.dmId }
         )
         set({ voice: null })
@@ -6008,6 +6099,7 @@ export const useStore = create<RChatState>()((set, get) => {
               kind: ev.kind,
               video: ev.video === true,
               since,
+              relays: Array.isArray(ev.relays) ? ev.relays : [],
             },
           })
           if (ev.state !== 'active') return

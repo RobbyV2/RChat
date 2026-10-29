@@ -63,7 +63,10 @@ describe('ICE config', () => {
     ).toBe(true)
     const peers = [...(p2p?.src ?? '').matchAll(/new\s+Peer\s*\(([^;]*?)\)\s*(?:\n|;|$)/g)]
     expect(peers.length > 0).toBe(true)
-    expect(peers.filter(m => !/\bconfig\s*:\s*iceConfig\(\s*\)/.test(m[1]))).toEqual([])
+    // P2P peers get the instance config plus the user's own relays (relays.ts builds it on ice).
+    expect(peers.filter(m => !/\bconfig\s*:\s*relayBook\.autoConfig\(\s*\)/.test(m[1]))).toEqual([])
+    const relays = files.find(({ f }) => f.endsWith('/relays.ts'))
+    expect(/ice\.instanceServers\(\)/.test(relays?.src ?? '')).toBe(true)
   })
 })
 

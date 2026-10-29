@@ -1,5 +1,7 @@
 import type { BlobStore } from './blobs'
 import { webBlobs } from './web_blobs'
+import type { DeviceStore } from './device_store'
+import { webDeviceStore } from './web_device_store'
 import type { Notifier } from './notifications'
 import { webNotifier } from './web_notifications'
 import type { Sharing } from './sharing'
@@ -10,6 +12,7 @@ import { desktopSharing } from './desktop_sharing'
 import { mobileSharing } from './mobile'
 
 export type { BlobStore, BlobWriter } from './blobs'
+export type { DeviceStore } from './device_store'
 export type { NoticeHandle, NoticeOptions, Notifier, Permission } from './notifications'
 export type { ShareData, ShareResult, Sharing } from './sharing'
 export {
@@ -61,4 +64,12 @@ export const blobs = () => blobStore
 
 export const setBlobs = (next: BlobStore) => {
   blobStore = next
+}
+
+let deviceStore: DeviceStore = webDeviceStore
+
+export const device = () => deviceStore
+
+export const setDeviceStore = (next: DeviceStore) => {
+  deviceStore = next
 }

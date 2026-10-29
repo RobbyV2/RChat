@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { ChevronDown, Phone, Video } from 'lucide-react'
 import { relayOnly } from '../lib/ice'
+import { displayHost, hostOf, manualRelays, ownTurn, type RelayChoice } from '../lib/relays'
 import {
   P2P_IP_HINT,
   ROUTE_LABEL,
@@ -78,11 +79,14 @@ export function CallType({
 function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
   const chosen = useStore(s => s.callRoute)
   const busy = useStore(s => s.call !== null)
-  const hidesIp = useStore(s => relayOnly(s.instance?.ice, s.iceHelpers, s.iceRelay))
+  const hidesIp = useStore(s =>
+    relayOnly(s.instance?.ice, s.iceHelpers, s.iceRelay, ownTurn(s.relayPrefs))
+  )
   const startCall = useStore(s => s.startCall)
   const startP2pCall = useStore(s => s.startP2pCall)
   const setCallRoute = useStore(s => s.setCallRoute)
   const openContextMenu = useStore(s => s.openContextMenu)
+  const relays = useStore(s => s.relayPrefs)
   const p2pOk = useP2pCallable(dm)
   const [shown, setShown] = useState<object | null>(null)
   const open = useStore(s => shown !== null && s.contextMenu === shown)
@@ -97,6 +101,13 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
     setCallRoute(r)
     start(r)
   }
+  // A P2P call through a chosen relay, for this call only: the default for files and calls stays
+  // the one in Settings.
+  const pickRelay = (choice: RelayChoice) => {
+    setCallRoute('p2p')
+    void startP2pCall(dm.id, video, choice)
+  }
+  const manual = manualRelays(relays)
   const title = route === 'p2p' ? `${kind}, direct (P2P)` : kind
   const menu = (x: number, y: number) => {
     const items: ContextMenuItem[] = [
@@ -116,6 +127,11 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
               checked: route === 'p2p',
               action: () => pick('p2p'),
             },
+            ...manual.map(r => ({
+              label: `Direct through ${displayHost(hostOf(r.url) ?? r.url)}`,
+              wrap: true,
+              action: () => pickRelay(r.url),
+            })),
           ]
         : []),
     ]

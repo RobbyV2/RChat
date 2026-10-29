@@ -1286,6 +1286,7 @@ mod tests {
             conn: bob,
             dm_id: 3,
             peer_id: None,
+            relays: Vec::new(),
         };
         deliver(env(9, 1, accept));
         assert!(b.rtc_shared("alice", "bob", None, Some(3)));

@@ -5,6 +5,8 @@ import { X } from 'lucide-react'
 import { api } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import { iceOffer } from '../lib/ice'
+import { ownTurn } from '../lib/relays'
+import { RelaySection } from './relay_settings'
 import { defaultBanner } from '../lib/profile'
 import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
 import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio, siteFilterOn } from '../lib/rules'
@@ -529,8 +531,9 @@ function ConnectionSection() {
   const setRelay = useStore(s => s.setIceRelay)
   const signedIn = useStore(s => s.me !== null)
   const info = useStore(s => s.instance?.ice)
+  const own = useStore(s => ownTurn(s.relayPrefs))
   const offer = iceOffer(info)
-  const relayUsable = info?.turn === true && on && signedIn
+  const relayUsable = (info?.turn === true || own) && on && signedIn
   return (
     <section>
       <p className={sectionCls}>Voice and P2P</p>
@@ -560,9 +563,11 @@ function ConnectionSection() {
       </div>
       <p className="mt-2 px-2 text-xs text-on-surface-variant">
         {relayUsable
-          ? 'Others see the relay, not you. Calls may have more delay.'
-          : info?.turn !== true
-            ? 'Not available: this instance has no relay.'
+          ? info?.turn === true
+            ? 'Others see the relay, not you. Calls may have more delay.'
+            : 'Others see your relay, not you. Voice channels and calls through the server need a relay from this instance, so they will not connect.'
+          : info?.turn !== true && !own
+            ? 'Not available: this instance has no relay. You can add your own TURN relay below.'
             : !signedIn
               ? 'Sign in to use the relay.'
               : 'Turn on connection helpers to use the relay.'}
@@ -587,6 +592,7 @@ function SettingsSection() {
       <StatusSection />
       <ChatSection />
       <ConnectionSection />
+      <RelaySection />
       <section>
         <p className={sectionCls}>Appearance</p>
         <SettingSwitch
@@ -716,6 +722,12 @@ function InformationSection() {
           A direct connection shows your IP address to the other person. With relay only on, they
           see the relay instead. Images sent over P2P load when you click them, unless relay only is
           on.
+        </p>
+        <p>
+          You can add your own relays for P2P files and P2P calls. Each side uses its own relays, so
+          people with different relays still connect, relay to relay. Before you connect through
+          someone else&apos;s relay that you don&apos;t know, you are asked first. Relay only is the
+          only real protection, since a peer can always skip relays.
         </p>
       </Info>
       <Info title="Servers and identity">
