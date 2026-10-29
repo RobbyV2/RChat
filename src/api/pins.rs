@@ -7,7 +7,9 @@ use crate::api::access::{
     MsgScope, Proof, ResolvedMessage, not_found, resolve_channel, resolve_dm, resolve_message,
 };
 use crate::api::messages::{Quotes, load_broadcast, load_message, pinned_messages};
-use crate::api::{ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, require_guest_ok};
+use crate::api::{
+    ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, OkResp, bad, now_ms, ok, require_guest_ok,
+};
 use crate::db::{Db, User, is_sqlite, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -17,18 +19,6 @@ pub const PINS_MAX: i64 = 100;
 
 /// A message pinned again within this many seconds of its last pin notice gets no new notice.
 pub const PIN_NOTICE_SECS: i64 = 600;
-
-/// `messages.pinned_at` is in milliseconds so pins within one second keep their order; the API
-/// gives seconds.
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
-}
-
-fn ok() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "ok": true }))
-}
 
 /// When `id` was pinned (Unix seconds); `None` when it is not pinned or does not exist.
 pub(crate) async fn pinned_at(db: &Db, id: i64) -> Result<Option<i64>, ApiError> {
@@ -75,10 +65,7 @@ fn place_of(scope: &MsgScope) -> Result<Place, ApiError> {
 }
 
 fn cannot_pin() -> ApiError {
-    ApiError(
-        StatusCode::BAD_REQUEST,
-        "Cannot pin this message".to_string(),
-    )
+    bad("Cannot pin this message")
 }
 
 /// Pin a message
@@ -95,12 +82,12 @@ fn cannot_pin() -> ApiError {
 /// `message_pinned` (`{server, channel_id, dm_id, dm_users, message_id, pinned_at, pinned_by}`,
 /// ids only) to clients that can see the channel, or to both DM participants. General rate-limit
 /// bucket.
-#[utoipa::path(put, path = "/api/messages/{id}/pin", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Pinned (or already pinned); body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "`Cannot pin this message`: a thread reply, a call log or a pin notice. A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no Manage messages permission, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 409, description = "`This channel has reached the pin limit` or `This conversation has reached the pin limit` (100 pinned messages)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket (plain text), or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(put, path = "/api/messages/{id}/pin", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Pinned (or already pinned); body `{\"ok\": true}`", body = OkResp), (status = 400, description = "`Cannot pin this message`: a thread reply, a call log or a pin notice. A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no Manage messages permission, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 409, description = "`This channel has reached the pin limit` or `This conversation has reached the pin limit` (100 pinned messages)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket (plain text), or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn pin_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Authed(user): Authed,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<OkResp>, ApiError> {
     let resolved = pin_target(&state, id, &user).await?;
     let message = load_message(&state.db, id, Quotes::Skip)
         .await?
@@ -214,12 +201,12 @@ pub(crate) async fn pin_message(
 /// as pinning. Unpinning adds no message. Unpinning a message that is not pinned changes
 /// nothing. Emits `message_unpinned` (`{server, channel_id, dm_id, dm_users, message_id}`) to
 /// clients that can see the channel, or to both DM participants. General rate-limit bucket.
-#[utoipa::path(delete, path = "/api/messages/{id}/pin", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Unpinned (or was not pinned); body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no Manage messages permission, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket (plain text), or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/messages/{id}/pin", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Unpinned (or was not pinned); body `{\"ok\": true}`", body = OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no Manage messages permission, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket (plain text), or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn unpin_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Authed(user): Authed,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<OkResp>, ApiError> {
     let resolved = pin_target(&state, id, &user).await?;
     let unpinned = sqlx::query(
         "UPDATE messages SET pinned_at = NULL, pinned_by = NULL WHERE id = $1 AND pinned_at IS NOT NULL",

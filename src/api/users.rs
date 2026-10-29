@@ -6,7 +6,7 @@ use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::{Proof, resolve_server};
-use crate::api::{ApiError, ApiErrorBody, MaybeAuthed, Role, UserRef, require_guest_ok};
+use crate::api::{ApiError, ApiErrorBody, MaybeAuthed, Role, UserRef, allowed, require_guest_ok};
 use crate::db::{Db, User, get_user};
 use crate::state::AppState;
 
@@ -82,12 +82,10 @@ async fn profile_member(
     server: &str,
     username: &str,
 ) -> Result<Option<ProfileMember>, ApiError> {
-    let access = match resolve_server(&state.db, server, viewer, &Proof::headers(headers)).await {
-        Ok(access) => access,
-        Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e)) => {
-            return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e));
-        }
-        Err(_) => return Ok(None),
+    let Some(access) =
+        allowed(resolve_server(&state.db, server, viewer, &Proof::headers(headers)).await)?
+    else {
+        return Ok(None);
     };
     let lite = access.lite();
     let row = sqlx::query(

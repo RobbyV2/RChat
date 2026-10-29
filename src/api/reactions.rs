@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
@@ -11,8 +11,8 @@ use crate::api::access::{Proof, ResolvedMessage, resolve_message};
 use crate::api::messages::{Quotes, load_message};
 use crate::api::pings::{PingKind, PingScope, PingSpec, RETRACTED, announce_counts, create_pings};
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, UserRef, placeholders, require_guest_ok,
-    user_from, user_refs,
+    ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, OkResp, UserRef, bad, now_ms, ok,
+    placeholders, require_guest_ok, user_from, user_refs,
 };
 use crate::db::{Db, User};
 use crate::state::AppState;
@@ -25,18 +25,11 @@ pub const EMOJI_MAX_BYTES: usize = 64;
 pub const REACTIONS_MAX: i64 = 20;
 const REACTORS_MAX: i64 = 100;
 
-/// `reactions.created_at` is in milliseconds so reactions within one second keep their order.
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
-}
-
 /// One emoji on a message.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Reaction {
-    /// The emoji, as sent by the reactors (skin tones included).
-    #[schema(example = "👍")]
+    /// The emoji, as sent by the reactors (skin tones included), for example U+1F44D (thumbs
+    /// up).
     pub emoji: String,
     /// How many users reacted with it.
     pub count: i64,
@@ -55,8 +48,8 @@ pub struct ReactorsQuery {
 }
 
 /// The stored form of `text` when it is exactly one emoji of the Unicode emoji list (skin
-/// tones, ZWJ sequences, keycaps and flags included): its fully-qualified sequence, so `❤` and
-/// `❤️` are the same reaction.
+/// tones, ZWJ sequences, keycaps and flags included): its fully-qualified sequence, so U+2764 and
+/// U+2764 U+FE0F (red heart) are the same reaction.
 pub fn canonical_emoji(text: &str) -> Option<&'static str> {
     match text.is_empty() || text.len() > EMOJI_MAX_BYTES {
         true => None,
@@ -65,8 +58,7 @@ pub fn canonical_emoji(text: &str) -> Option<&'static str> {
 }
 
 fn check_emoji(emoji: &str) -> Result<&'static str, ApiError> {
-    canonical_emoji(emoji)
-        .ok_or_else(|| ApiError(StatusCode::BAD_REQUEST, "Not an emoji".to_string()))
+    canonical_emoji(emoji).ok_or_else(|| bad("Not an emoji"))
 }
 
 /// Reaction summaries of `msgs` from `viewer`'s point of view (`me`), in one query.
@@ -274,8 +266,8 @@ async fn unping_author(state: &AppState, message_id: i64, actor: &str, emoji: &s
 ///
 /// Reacts to a message with one emoji (percent-encoded in the path). All emoji of the Unicode
 /// emoji list are accepted (skin tones, ZWJ sequences, keycaps, flags). The server stores the
-/// fully qualified form, so `❤` and `❤️` are one reaction. Requires a bearer token. Guests cannot
-/// react. Needs read access to the message. In server channels, also needs membership and the
+/// fully qualified form, so U+2764 and U+2764 U+FE0F (red heart) are one reaction. Requires a bearer token.
+/// Guests cannot react. Needs read access to the message. In server channels, also needs membership and the
 /// send permission. In DMs, needs to be a participant. Only normal messages take reactions (not
 /// call logs). A message has at most 20 different emojis. A repeated reaction changes nothing. A
 /// new reaction emits `reaction_added` (`{server, channel_id, dm_id, dm_users, message_id,
@@ -283,19 +275,16 @@ async fn unping_author(state: &AppState, message_id: i64, actor: &str, emoji: &s
 /// to clients that can see the message. If the message is from someone else and the author can
 /// still see it, the author gets one `ping` (kind `reaction`) per reactor and emoji. Removing and
 /// adding the reaction again does not ping again. General rate-limit bucket.
-#[utoipa::path(put, path = "/api/messages/{id}/reactions/{emoji}", tag = "Messages", params(("id" = i64, Path, description = "Message id"), ("emoji" = String, Path, description = "The emoji, percent-encoded: one emoji of the Unicode emoji list with optional skin tone, a ZWJ sequence, a keycap or a flag, at most 64 bytes")), responses((status = 200, description = "Reacted (or already reacted); body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "`Not an emoji`, `Cannot react to this message` (a call log), or `Too many reactions` (the message already has 20 other emojis). A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket (plain text), or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(put, path = "/api/messages/{id}/reactions/{emoji}", tag = "Messages", params(("id" = i64, Path, description = "Message id"), ("emoji" = String, Path, description = "The emoji, percent-encoded: one emoji of the Unicode emoji list with optional skin tone, a ZWJ sequence, a keycap or a flag, at most 64 bytes")), responses((status = 200, description = "Reacted (or already reacted); body `{\"ok\": true}`", body = OkResp), (status = 400, description = "`Not an emoji`, `Cannot react to this message` (a call log), or `Too many reactions` (the message already has 20 other emojis). A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket (plain text), or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn add_reaction(
     State(state): State<AppState>,
     Path((id, emoji)): Path<(i64, String)>,
     Authed(user): Authed,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<OkResp>, ApiError> {
     let emoji = check_emoji(&emoji)?;
     let target = react_target(&state, id, &user, true).await?;
     if target.message.kind != "user" {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Cannot react to this message".to_string(),
-        ));
+        return Err(bad("Cannot react to this message"));
     }
     let mut tx = state.db.begin().await?;
     lock_message(&state.db, &mut tx, id).await?;
@@ -315,35 +304,32 @@ pub(crate) async fn add_reaction(
     tx.commit().await?;
     if !added {
         return match reaction_exists(&state.db, id, &user.username, emoji).await? {
-            true => Ok(Json(serde_json::json!({ "ok": true }))),
-            false => Err(ApiError(
-                StatusCode::BAD_REQUEST,
-                "Too many reactions".to_string(),
-            )),
+            true => Ok(ok()),
+            false => Err(bad("Too many reactions")),
         };
     }
     state
         .hub
         .broadcast(reaction_event(&target, emoji, &user.username, count, true));
     ping_author(&state, &target, &user, emoji).await;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(ok())
 }
 
 /// Remove a reaction
 ///
 /// Removes the caller's reaction with one emoji (percent-encoded in the path, matched like
-/// adding one, so `❤` removes `❤️`). Requires a bearer token and read access to the message;
-/// unlike adding, no send permission is needed, so reactions can be taken back in read-only
+/// adding one, so U+2764 removes U+2764 U+FE0F). Requires a bearer token and read access to the
+/// message; unlike adding, no send permission is needed, so reactions can be taken back in read-only
 /// channels. Removing a reaction that does not exist changes nothing. A removed reaction emits
 /// `reaction_removed` (same fields as `reaction_added`) and retracts the author's unseen ping
 /// for it; the author then gets `ping_count` with the scope's new unseen count. General
 /// rate-limit bucket.
-#[utoipa::path(delete, path = "/api/messages/{id}/reactions/{emoji}", tag = "Messages", params(("id" = i64, Path, description = "Message id"), ("emoji" = String, Path, description = "The emoji, percent-encoded")), responses((status = 200, description = "Removed (or there was nothing to remove); body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "`Not an emoji`. A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/messages/{id}/reactions/{emoji}", tag = "Messages", params(("id" = i64, Path, description = "Message id"), ("emoji" = String, Path, description = "The emoji, percent-encoded")), responses((status = 200, description = "Removed (or there was nothing to remove); body `{\"ok\": true}`", body = OkResp), (status = 400, description = "`Not an emoji`. A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn remove_reaction(
     State(state): State<AppState>,
     Path((id, emoji)): Path<(i64, String)>,
     Authed(user): Authed,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<OkResp>, ApiError> {
     let emoji = check_emoji(&emoji)?;
     let target = react_target(&state, id, &user, false).await?;
     let mut tx = state.db.begin().await?;
@@ -365,7 +351,7 @@ pub(crate) async fn remove_reaction(
             .broadcast(reaction_event(&target, emoji, &user.username, count, false));
         unping_author(&state, id, &user.username, emoji).await;
     }
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(ok())
 }
 
 /// List reactors
@@ -443,6 +429,8 @@ pub(crate) async fn reaction_state(
 
 #[cfg(test)]
 mod tests {
+    use axum::http::StatusCode;
+
     use super::*;
     use crate::api::test_util::{add_member, done, mem_user, temp_state};
 

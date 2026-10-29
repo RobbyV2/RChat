@@ -51,6 +51,39 @@ pub struct ApiErrorBody {
     pub error: String,
 }
 
+/// Generic success response.
+#[derive(Serialize, ToSchema)]
+pub struct OkResp {
+    /// Always `true`.
+    #[schema(example = true)]
+    ok: bool,
+}
+
+pub(crate) fn ok() -> axum::Json<OkResp> {
+    axum::Json(OkResp { ok: true })
+}
+
+pub(crate) fn bad(msg: &str) -> ApiError {
+    ApiError(StatusCode::BAD_REQUEST, msg.to_string())
+}
+
+/// A gate result with denials as `None`, so callers can answer them their own way. Server
+/// errors stay errors.
+pub(crate) fn allowed<T>(res: Result<T, ApiError>) -> Result<Option<T>, ApiError> {
+    match res {
+        Ok(v) => Ok(Some(v)),
+        Err(e @ ApiError(StatusCode::INTERNAL_SERVER_ERROR, _)) => Err(e),
+        Err(_) => Ok(None),
+    }
+}
+
+/// Unix milliseconds, for timestamps that must keep their order within one second.
+pub(crate) fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let ApiError(status, error) = self;
@@ -197,7 +230,7 @@ pub(crate) fn encode_cursor(parts: &[&str]) -> String {
 }
 
 pub(crate) fn decode_cursor(raw: &str, count: usize) -> Result<Vec<String>, ApiError> {
-    let invalid = || ApiError(StatusCode::BAD_REQUEST, "Invalid cursor".to_string());
+    let invalid = || bad("Invalid cursor");
     let bytes = hex::decode(raw.trim()).map_err(|_| invalid())?;
     let text = String::from_utf8(bytes).map_err(|_| invalid())?;
     let parts: Vec<String> = text.split('\u{1f}').map(str::to_string).collect();
@@ -208,8 +241,7 @@ pub(crate) fn decode_cursor(raw: &str, count: usize) -> Result<Vec<String>, ApiE
 }
 
 pub(crate) fn cursor_int(part: &str) -> Result<i64, ApiError> {
-    part.parse()
-        .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Invalid cursor".to_string()))
+    part.parse().map_err(|_| bad("Invalid cursor"))
 }
 
 pub struct Paged<T>(pub Vec<T>, pub Option<String>);
@@ -630,16 +662,106 @@ pub struct ForwardRef {
     /// Id of the forwarded message. `GET /api/messages/{id}/location` tells where it is, if you
     /// can read it.
     pub source_id: i64,
-    /// Where it came from: `Direct message`, `#channel · Server` when forwarded inside the same
-    /// server, or the server's display name when that server had no password. `null` otherwise
-    /// (a password-protected server's name never leaves it). Fixed at forward time: later
-    /// renames or password changes do not update it.
-    #[schema(example = "#general · Rustaceans")]
+    /// Where it came from, as a label: `Direct message`, `#channel - Server` when forwarded
+    /// inside the same server, or the server's display name when that server had no password.
+    /// `null` otherwise (a password-protected server's name never leaves it). Kept for older
+    /// clients; use `origin_dm`, `origin_channel` and `origin_server`. Fixed at forward time:
+    /// later renames or password changes do not update it.
+    #[schema(example = "#general - Rustaceans")]
     pub origin: Option<String>,
+    /// Whether it came from a direct message.
+    #[serde(default)]
+    pub origin_dm: bool,
+    /// Name of the channel it came from, without `#`, when forwarded inside the same server
+    /// and everyone there may see that channel; `null` otherwise.
+    #[serde(default)]
+    #[schema(example = "general")]
+    pub origin_channel: Option<String>,
+    /// Display name of the server it came from, when forwarded inside the same server or when
+    /// that server had no password; `null` otherwise.
+    #[serde(default)]
+    #[schema(example = "Rustaceans")]
+    pub origin_server: Option<String>,
     /// File name of an attachment of the original that was not forwarded: a peer-to-peer
     /// attachment, or a file that already travels in 50 messages.
     #[schema(example = "notes.pdf")]
     pub dropped: Option<String>,
+}
+
+impl ForwardRef {
+    /// Builds the reference from the stored `fwd_origin`.
+    pub(crate) fn new(
+        author: Option<UserRef>,
+        created_at: i64,
+        source_id: i64,
+        stored_origin: Option<&str>,
+        dropped: Option<String>,
+    ) -> Self {
+        let origin = stored_origin.map(Origin::parse);
+        let label = origin.as_ref().map(Origin::label);
+        let (origin_dm, origin_channel, origin_server) = match origin {
+            Some(Origin::Dm) => (true, None, None),
+            Some(Origin::Server { server }) => (false, None, Some(server)),
+            Some(Origin::Channel { channel, server }) => (false, Some(channel), Some(server)),
+            None => (false, None, None),
+        };
+        ForwardRef {
+            author,
+            created_at,
+            source_id,
+            origin: label,
+            origin_dm,
+            origin_channel,
+            origin_server,
+            dropped,
+        }
+    }
+}
+
+/// Where a forwarded message came from, stored as JSON in `messages.fwd_origin`. Rows forwarded
+/// by older versions hold the display label instead.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum Origin {
+    Dm,
+    Server { server: String },
+    Channel { channel: String, server: String },
+}
+
+impl Origin {
+    pub(crate) fn stored(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Origin::Dm => "Direct message".to_string(),
+            Origin::Server { server } => server.clone(),
+            Origin::Channel { channel, server } => format!("#{channel} - {server}"),
+        }
+    }
+
+    /// Reads the stored value, which is a bare display label in rows forwarded by older versions.
+    fn parse(stored: &str) -> Origin {
+        if let Ok(origin) = serde_json::from_str::<Origin>(stored) {
+            return origin;
+        }
+        match stored {
+            "Direct message" => Origin::Dm,
+            _ => match stored
+                .strip_prefix('#')
+                .and_then(|s| s.split_once(" \u{b7} "))
+            {
+                Some((channel, server)) => Origin::Channel {
+                    channel: channel.to_string(),
+                    server: server.to_string(),
+                },
+                None => Origin::Server {
+                    server: stored.to_string(),
+                },
+            },
+        }
+    }
 }
 
 /// A text field the profanity filter can check.
@@ -926,7 +1048,7 @@ pub struct Settings {
     pub guests_enabled: bool,
 }
 
-fn yes() -> bool {
+pub(crate) fn yes() -> bool {
     true
 }
 
@@ -1255,10 +1377,7 @@ impl Settings {
 
     pub fn check_profanity(&self, target: ProfanityTarget, text: &str) -> Result<(), ApiError> {
         match self.blocks(target, text) {
-            true => Err(ApiError(
-                StatusCode::BAD_REQUEST,
-                "Content blocked by profanity filter".to_string(),
-            )),
+            true => Err(bad("Content blocked by profanity filter")),
             false => Ok(()),
         }
     }
@@ -2385,5 +2504,53 @@ mod tests {
         let json = serde_json::to_value(&ev).expect("json");
         assert!(json.get("filename").is_none(), "{json}");
         assert_eq!(json["message_id"], 2);
+    }
+
+    #[test]
+    fn forward_origins_are_structured_and_old_labels_still_read() {
+        let channel = Origin::Channel {
+            channel: "general".to_string(),
+            server: "Rust \u{b7} Club".to_string(),
+        };
+        let fwd = ForwardRef::new(None, 1, 2, Some(&channel.stored()), None);
+        assert_eq!(
+            (
+                fwd.origin.as_deref(),
+                fwd.origin_dm,
+                fwd.origin_channel.as_deref(),
+                fwd.origin_server.as_deref()
+            ),
+            (
+                Some("#general - Rust \u{b7} Club"),
+                false,
+                Some("general"),
+                Some("Rust \u{b7} Club")
+            )
+        );
+        let dm = ForwardRef::new(None, 1, 2, Some(&Origin::Dm.stored()), None);
+        assert_eq!(
+            (dm.origin.as_deref(), dm.origin_dm, dm.origin_server),
+            (Some("Direct message"), true, None)
+        );
+        let none = ForwardRef::new(None, 1, 2, None, None);
+        assert_eq!((none.origin, none.origin_dm), (None, false));
+        for (old, origin) in [
+            ("Direct message", Origin::Dm),
+            (
+                "#general \u{b7} RChat",
+                Origin::Channel {
+                    channel: "general".to_string(),
+                    server: "RChat".to_string(),
+                },
+            ),
+            (
+                "Pub Hall",
+                Origin::Server {
+                    server: "Pub Hall".to_string(),
+                },
+            ),
+        ] {
+            assert_eq!(Origin::parse(old), origin);
+        }
     }
 }

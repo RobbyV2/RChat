@@ -6,10 +6,10 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
-use crate::api::access::{MsgScope, staff_message};
+use crate::api::access::{MsgScope, not_found, staff_message};
 use crate::api::{
-    ApiError, Authed, Paged, ProfanitySwitch, ServerSummaryLite, Settings, UserRef, decode_cursor,
-    encode_cursor,
+    ApiError, Authed, OkResp, Paged, ProfanitySwitch, ServerSummaryLite, Settings, UserRef, bad,
+    decode_cursor, encode_cursor, ok,
 };
 use crate::db::{AvatarKind, Db, User, now, purge_messages, user_row};
 use crate::state::AppState;
@@ -137,6 +137,12 @@ pub fn fuzzy_match(q: &str, name: &str) -> bool {
         })
 }
 
+/// Whether a row found by a `like_pattern` search matches `q` by name or display name. A fuzzy
+/// pattern only narrows the rows, so those are checked again here.
+pub(crate) fn name_hit(q: &str, fuzzy: bool, name: &str, display_name: &str) -> bool {
+    !fuzzy || fuzzy_match(q, name) || fuzzy_match(q, display_name)
+}
+
 pub(crate) fn is_fuzzy(q: &str) -> bool {
     !q.is_empty() && q.chars().count() <= 8
 }
@@ -161,11 +167,6 @@ pub(crate) fn like_pattern(q: &str, fuzzy: bool) -> String {
 #[derive(Deserialize)]
 pub struct BanReq {
     username: String,
-}
-
-#[derive(Serialize)]
-pub struct OkResp {
-    pub ok: bool,
 }
 
 #[derive(Clone, Copy, Deserialize, Default)]
@@ -219,7 +220,7 @@ pub struct SettingsPatch {
 fn require_site_admin(user: &User) -> Result<(), ApiError> {
     match user.is_site_admin {
         true => Ok(()),
-        false => Err(ApiError(StatusCode::NOT_FOUND, "Not found".to_string())),
+        false => Err(not_found()),
     }
 }
 
@@ -322,7 +323,7 @@ pub(crate) async fn list_users(
     for r in &rows {
         let username: String = r.try_get(0)?;
         let display_name: String = r.try_get(1)?;
-        if fuzzy && !(fuzzy_match(&q, &username) || fuzzy_match(&q, &display_name)) {
+        if !name_hit(&q, fuzzy, &username, &display_name) {
             continue;
         }
         users.push(UserRef {
@@ -355,7 +356,7 @@ pub(crate) async fn list_servers(
     for r in &rows {
         let name: String = r.try_get(0)?;
         let display_name: String = r.try_get(1)?;
-        if fuzzy && !(fuzzy_match(&q, &name) || fuzzy_match(&q, &display_name)) {
+        if !name_hit(&q, fuzzy, &name, &display_name) {
             continue;
         }
         servers.push(ServerSummaryLite {
@@ -378,13 +379,10 @@ pub(crate) async fn delete_server(
     require_site_admin(&user)?;
     let name = name.to_lowercase();
     if name == "rchat" {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "The rchat server cannot be deleted".to_string(),
-        ));
+        return Err(bad("The rchat server cannot be deleted"));
     }
     match remove_server(&state, &name).await? {
-        true => Ok(Json(OkResp { ok: true })),
+        true => Ok(ok()),
         false => Err(ApiError(
             StatusCode::NOT_FOUND,
             "Server not found".to_string(),
@@ -803,13 +801,10 @@ pub(crate) async fn ban_user(
     let BanReq { username } = req;
     let key = username.to_lowercase();
     if key == user.username {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Cannot ban yourself".to_string(),
-        ));
+        return Err(bad("Cannot ban yourself"));
     }
     hide_user(&state, &key, PurgeKind::Ban).await?;
-    Ok(Json(OkResp { ok: true }))
+    Ok(ok())
 }
 
 async fn member_servers(
@@ -820,10 +815,10 @@ async fn member_servers(
         .bind(username)
         .fetch_all(&mut **tx)
         .await?;
-    let mut servers = Vec::with_capacity(rows.len());
-    for r in &rows {
-        servers.push(r.try_get(0)?);
-    }
+    let servers = rows
+        .iter()
+        .map(|r| r.try_get(0))
+        .collect::<sqlx::Result<Vec<_>>>()?;
     Ok(servers)
 }
 
@@ -847,13 +842,10 @@ pub(crate) async fn delete_user(
     require_site_admin(&user)?;
     let key = username.to_lowercase();
     if key == user.username {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Cannot delete yourself".to_string(),
-        ));
+        return Err(bad("Cannot delete yourself"));
     }
     hide_user(&state, &key, PurgeKind::User).await?;
-    Ok(Json(OkResp { ok: true }))
+    Ok(ok())
 }
 
 pub(crate) async fn user_servers(
@@ -927,7 +919,7 @@ pub(crate) async fn delete_message(
         id,
         thread_root_id,
     });
-    Ok(Json(OkResp { ok: true }))
+    Ok(ok())
 }
 
 #[cfg(test)]

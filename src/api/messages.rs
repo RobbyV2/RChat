@@ -20,9 +20,10 @@ use crate::api::pings::{
 use crate::api::reactions::attach_reactions;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, CallLog, Embed, ForwardRef, LIST_MAX, LIST_PAGE, MESSAGE_MAX,
-    MaybeAuthed, MediaRef, Message, Paged, ProfanityTarget, ReplyRef, Settings, UserRef, check_len,
-    check_profanity, cursor_int, decode_cursor, embeds, encode_cursor, media::MEDIA_TTL_SECS,
-    placeholders, require_guest_ok, unique_capped, user_from, user_refs,
+    MaybeAuthed, MediaRef, Message, OkResp, Origin, Paged, ProfanityTarget, ReplyRef, Settings,
+    UserRef, allowed, bad, check_len, check_profanity, cursor_int, decode_cursor, embeds,
+    encode_cursor, media::MEDIA_TTL_SECS, ok, placeholders, require_guest_ok, unique_capped,
+    user_from, user_refs, yes,
 };
 use crate::db::{
     ChannelAccess, Db, LIVE_AUTHOR, MediaKind, User, has_fts, is_sqlite, now, perm_subjects,
@@ -98,10 +99,6 @@ pub struct SendReq {
     forward_of: Option<i64>,
 }
 
-fn yes() -> bool {
-    true
-}
-
 /// A file offered peer to peer by the sender, who becomes its `hoster`. The server stores only
 /// this metadata, never the file.
 #[derive(Deserialize, ToSchema)]
@@ -174,10 +171,7 @@ pub struct SearchQuery {
 
 impl SearchQuery {
     fn parse(raw: &str) -> Result<SearchQuery, ApiError> {
-        let int = |v: &str| {
-            v.parse::<i64>()
-                .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Invalid number".to_string()))
-        };
+        let int = |v: &str| v.parse::<i64>().map_err(|_| bad("Invalid number"));
         let mut sq = SearchQuery::default();
         for (key, value) in url::form_urlencoded::parse(raw.as_bytes()) {
             match key.as_ref() {
@@ -358,13 +352,13 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
             r.try_get::<Option<i64>, _>(25)?,
             r.try_get::<Option<i64>, _>(26)?,
         ) {
-            (author, Some(created_at), Some(source_id)) => Some(ForwardRef {
-                author: author.map(|a| user_from(refs, &a)),
+            (author, Some(created_at), Some(source_id)) => Some(ForwardRef::new(
+                author.map(|a| user_from(refs, &a)),
                 created_at,
                 source_id,
-                origin: r.try_get(27)?,
-                dropped: r.try_get(28)?,
-            }),
+                r.try_get::<Option<String>, _>(27)?.as_deref(),
+                r.try_get(28)?,
+            )),
             (_, _, _) => None,
         },
         pinned_at: r.try_get(29)?,
@@ -833,10 +827,7 @@ async fn claim_media(
     let (filename, uploaded_at): (String, i64) = match &row {
         Some(r) => (r.try_get(0)?, r.try_get(1)?),
         None => {
-            return Err(ApiError(
-                StatusCode::BAD_REQUEST,
-                "Unknown media".to_string(),
-            ));
+            return Err(bad("Unknown media"));
         }
     };
     if claimed == 0 {
@@ -852,10 +843,7 @@ async fn claim_media(
             .await?
             .is_some();
     if attached {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "This file is already attached to a message".to_string(),
-        ));
+        return Err(bad("This file is already attached to a message"));
     }
     Ok(MediaRef::server(
         id.to_string(),
@@ -911,10 +899,7 @@ async fn p2p_media(
     let valid_id = p2p_id.len() == 32 && p2p_id.chars().all(|c| c.is_ascii_hexdigit());
     let p2p_id = p2p_id.to_ascii_lowercase();
     if !valid_id {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Invalid p2p_id".to_string(),
-        ));
+        return Err(bad("Invalid p2p_id"));
     }
     let valid = (0..=P2P_SIZE_MAX).contains(&size)
         && mime.chars().count() <= P2P_MIME_MAX
@@ -922,10 +907,7 @@ async fn p2p_media(
         && sha256.as_deref().is_none_or(valid_sha256)
         && expires_in_seconds.is_none_or(|s| s > 0);
     if !valid {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Invalid P2P attachment".to_string(),
-        ));
+        return Err(bad("Invalid P2P attachment"));
     }
     let taken = sqlx::query("SELECT 1 FROM media WHERE id = $1")
         .bind(&p2p_id)
@@ -940,10 +922,7 @@ async fn p2p_media(
         .await?
         .is_some();
     if taken || foreign {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Invalid p2p_id".to_string(),
-        ));
+        return Err(bad("Invalid p2p_id"));
     }
     Ok(MediaRef {
         id: p2p_id,
@@ -976,10 +955,7 @@ struct Quoted {
 }
 
 fn cannot_reply() -> ApiError {
-    ApiError(
-        StatusCode::BAD_REQUEST,
-        "Cannot reply to that message".to_string(),
-    )
+    bad("Cannot reply to that message")
 }
 
 /// Checks `reply_to` of a new message going to `place`: the sender must be able to read it
@@ -996,13 +972,8 @@ async fn quoted(
     let Some(id) = reply_to else {
         return Ok(None);
     };
-    let target = match resolve_message(db, id, Some(user), &Proof::none()).await {
-        Ok(target) => target,
-        Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e)) => {
-            return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e));
-        }
-        Err(_) => return Err(cannot_reply()),
-    };
+    let target = allowed(resolve_message(db, id, Some(user), &Proof::none()).await)?
+        .ok_or_else(cannot_reply)?;
     let scope = target.scope();
     let here = match place {
         Place::Channel(cid) => scope.channel_id == Some(cid) && scope.thread_root_id.is_none(),
@@ -1062,10 +1033,7 @@ async fn insert_message(
     let mut tx = db.begin().await?;
     let media = match (&media_id, p2p) {
         (Some(_), Some(_)) => {
-            return Err(ApiError(
-                StatusCode::BAD_REQUEST,
-                "Choose server or P2P attachment, not both".to_string(),
-            ));
+            return Err(bad("Choose server or P2P attachment, not both"));
         }
         (Some(id), None) => Some(claim_media(&mut tx, id, &user.username, spoiler).await?),
         (None, Some(p2p)) => Some(p2p_media(&mut tx, p2p, user, spoiler).await?),
@@ -1075,10 +1043,7 @@ async fn insert_message(
         settings.check_profanity(ProfanityTarget::FileNames, &media.filename)?;
     }
     if content.trim().is_empty() && media.is_none() {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Message is empty".to_string(),
-        ));
+        return Err(bad("Message is empty"));
     }
     let t = now();
     let id: i64 = sqlx::query(
@@ -1140,10 +1105,7 @@ async fn insert_message(
 }
 
 fn cannot_forward() -> ApiError {
-    ApiError(
-        StatusCode::BAD_REQUEST,
-        "Cannot forward that message".to_string(),
-    )
+    bad("Cannot forward that message")
 }
 
 /// A message to forward, checked and read. `media` is the server-hosted attachment to share;
@@ -1154,7 +1116,7 @@ struct Forwarded {
     media: Option<MediaRef>,
     author: Option<String>,
     created_at: i64,
-    origin: Option<String>,
+    origin: Option<Origin>,
     dropped: Option<String>,
 }
 
@@ -1170,27 +1132,29 @@ async fn forwarded(
     id: i64,
     dest: Option<&str>,
 ) -> Result<Forwarded, ApiError> {
-    let source = match resolve_message(db, id, Some(user), &Proof::none()).await {
-        Ok(source) => source,
-        Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e)) => {
-            return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e));
-        }
-        Err(_) => return Err(cannot_forward()),
-    };
+    let source = allowed(resolve_message(db, id, Some(user), &Proof::none()).await)?
+        .ok_or_else(cannot_forward)?;
     let origin = match (source.channel(), source.scope().dm_id) {
         (Some(channel), _) => {
             let server = channel.server();
-            let display = server.lite().display_name.clone();
+            let server_name = server.lite().display_name.clone();
             match (dest == Some(server.name()), server.lite().has_password) {
                 (true, _) => match channel.restricted(db).await? {
-                    false => Some(format!("#{} · {display}", channel.name())),
-                    true => Some(display),
+                    false => Some(Origin::Channel {
+                        channel: channel.name().to_string(),
+                        server: server_name,
+                    }),
+                    true => Some(Origin::Server {
+                        server: server_name,
+                    }),
                 },
-                (false, false) => Some(display),
+                (false, false) => Some(Origin::Server {
+                    server: server_name,
+                }),
                 (false, true) => None,
             }
         }
-        (None, Some(_)) => Some("Direct message".to_string()),
+        (None, Some(_)) => Some(Origin::Dm),
         (None, None) => return Err(cannot_forward()),
     };
     let row = sqlx::query("SELECT m.content, m.kind, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.author, m.created_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_dropped FROM messages m WHERE m.id = $1")
@@ -1311,7 +1275,7 @@ async fn insert_forward(
     .bind(&author)
     .bind(created_at)
     .bind(source_id)
-    .bind(&origin)
+    .bind(origin.as_ref().map(Origin::stored))
     .bind(&dropped)
     .bind(t)
     .fetch_one(&mut *tx)
@@ -1341,19 +1305,91 @@ async fn insert_forward(
         reactions: Vec::new(),
         reply_to: None,
         edited_at: None,
-        forward: Some(ForwardRef {
-            author: author.as_ref().map(|a| user_from(&refs, a)),
+        forward: Some(ForwardRef::new(
+            author.as_ref().map(|a| user_from(&refs, a)),
             created_at,
             source_id,
-            origin,
+            origin.as_ref().map(Origin::stored).as_deref(),
             dropped,
-        }),
+        )),
         pinned_at: None,
         pin_message_id: None,
     }];
     attach_embeds(db, &mut msgs).await?;
     let [message] = msgs;
     Ok((message, previews > 0))
+}
+
+/// Stores a message sent to `place` after the access gate allowed it, then announces it:
+/// link previews, the `message` event and pings (forwards ping nobody).
+async fn deliver(
+    state: &AppState,
+    user: &User,
+    req: SendReq,
+    place: Place,
+    scope: PingScope<'_>,
+) -> Result<Json<Message>, ApiError> {
+    let thread_root_id = match place {
+        Place::Thread(root) => Some(root),
+        Place::Channel(_) | Place::Dm(_) => None,
+    };
+    let (server, channel_id, dm_id, dm_users) = match &scope {
+        PingScope::Channel(channel) => (
+            Some(channel.server().name().to_string()),
+            Some(channel.id()),
+            None,
+            None,
+        ),
+        PingScope::Dm { id, users } => (None, None, Some(*id), Some(users.to_vec())),
+    };
+    let db = &state.db;
+    let (message, quote, previews) = match req.forward_of {
+        Some(source) => {
+            let fwd = forwarded(db, user, source, server.as_deref()).await?;
+            let (message, previews) =
+                insert_forward(db, channel_id, dm_id, thread_root_id, user, fwd).await?;
+            (message, None, previews)
+        }
+        None => {
+            let quote = quoted(db, user, place, req.reply_to, req.mention_reply).await?;
+            let message = insert_message(
+                db,
+                channel_id,
+                dm_id,
+                thread_root_id,
+                user,
+                req,
+                quote.as_ref(),
+            )
+            .await?;
+            (message, quote, false)
+        }
+    };
+    if let Some(server) = &server {
+        touch_interaction(db, server, &user.username).await?;
+    }
+    if !previews {
+        embeds::spawn_unfurl(
+            state,
+            server.clone(),
+            channel_id,
+            dm_id,
+            dm_users.clone(),
+            message.id,
+            &message.content,
+        );
+    }
+    state.hub.broadcast(WsEvent::Message {
+        server,
+        channel_id,
+        dm_id,
+        dm_users,
+        message: Box::new(partial_quote(message.clone())),
+    });
+    if message.forward.is_none() {
+        ping_message(state, scope, &message, user, replied(&quote)).await;
+    }
+    Ok(Json(message))
 }
 
 /// Where a message is, as far as the caller can read it.
@@ -1471,58 +1507,14 @@ pub(crate) async fn send_channel_message(
     }
     let channel = resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
     channel.send_gate(&state.db).await?;
-    let server = channel.server().name().to_string();
-    let (message, quote, previews) = match req.forward_of {
-        Some(source) => {
-            let fwd = forwarded(&state.db, &user, source, Some(&server)).await?;
-            let (message, previews) =
-                insert_forward(&state.db, Some(id), None, None, &user, fwd).await?;
-            (message, None, previews)
-        }
-        None => {
-            let quote = quoted(
-                &state.db,
-                &user,
-                Place::Channel(id),
-                req.reply_to,
-                req.mention_reply,
-            )
-            .await?;
-            let message =
-                insert_message(&state.db, Some(id), None, None, &user, req, quote.as_ref()).await?;
-            (message, quote, false)
-        }
-    };
-    touch_interaction(&state.db, &server, &user.username).await?;
-    if !previews {
-        embeds::spawn_unfurl(
-            &state,
-            Some(server.clone()),
-            Some(id),
-            None,
-            None,
-            message.id,
-            &message.content,
-        );
-    }
-    state.hub.broadcast(WsEvent::Message {
-        server: Some(server),
-        channel_id: Some(id),
-        dm_id: None,
-        dm_users: None,
-        message: Box::new(partial_quote(message.clone())),
-    });
-    if message.forward.is_none() {
-        ping_message(
-            &state,
-            PingScope::Channel(&channel),
-            &message,
-            &user,
-            replied(&quote),
-        )
-        .await;
-    }
-    Ok(Json(message))
+    deliver(
+        &state,
+        &user,
+        req,
+        Place::Channel(id),
+        PingScope::Channel(&channel),
+    )
+    .await
 }
 
 /// List thread replies
@@ -1575,66 +1567,14 @@ pub(crate) async fn send_thread_message(
         check_profanity(&state.db, ProfanityTarget::Messages, &req.content).await?;
     }
     channel.send_gate(&state.db).await?;
-    let (channel_id, server) = (channel.id(), channel.server().name().to_string());
-    let (message, quote, previews) = match req.forward_of {
-        Some(source) => {
-            let fwd = forwarded(&state.db, &user, source, Some(&server)).await?;
-            let (message, previews) =
-                insert_forward(&state.db, Some(channel_id), None, Some(id), &user, fwd).await?;
-            (message, None, previews)
-        }
-        None => {
-            let quote = quoted(
-                &state.db,
-                &user,
-                Place::Thread(id),
-                req.reply_to,
-                req.mention_reply,
-            )
-            .await?;
-            let message = insert_message(
-                &state.db,
-                Some(channel_id),
-                None,
-                Some(id),
-                &user,
-                req,
-                quote.as_ref(),
-            )
-            .await?;
-            (message, quote, false)
-        }
-    };
-    touch_interaction(&state.db, &server, &user.username).await?;
-    if !previews {
-        embeds::spawn_unfurl(
-            &state,
-            Some(server.clone()),
-            Some(channel_id),
-            None,
-            None,
-            message.id,
-            &message.content,
-        );
-    }
-    state.hub.broadcast(WsEvent::Message {
-        server: Some(server),
-        channel_id: Some(channel_id),
-        dm_id: None,
-        dm_users: None,
-        message: Box::new(partial_quote(message.clone())),
-    });
-    if message.forward.is_none() {
-        ping_message(
-            &state,
-            PingScope::Channel(channel),
-            &message,
-            &user,
-            replied(&quote),
-        )
-        .await;
-    }
-    Ok(Json(message))
+    deliver(
+        &state,
+        &user,
+        req,
+        Place::Thread(id),
+        PingScope::Channel(channel),
+    )
+    .await
 }
 
 /// List DM messages
@@ -1673,56 +1613,14 @@ pub(crate) async fn send_dm_message(
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
     let users = resolve_dm(&state.db, id, &user).await?;
-    let (message, quote, previews) = match req.forward_of {
-        Some(source) => {
-            let fwd = forwarded(&state.db, &user, source, None).await?;
-            let (message, previews) =
-                insert_forward(&state.db, None, Some(id), None, &user, fwd).await?;
-            (message, None, previews)
-        }
-        None => {
-            let quote = quoted(
-                &state.db,
-                &user,
-                Place::Dm(id),
-                req.reply_to,
-                req.mention_reply,
-            )
-            .await?;
-            let message =
-                insert_message(&state.db, None, Some(id), None, &user, req, quote.as_ref()).await?;
-            (message, quote, false)
-        }
-    };
-    if !previews {
-        embeds::spawn_unfurl(
-            &state,
-            None,
-            None,
-            Some(id),
-            Some(users.clone()),
-            message.id,
-            &message.content,
-        );
-    }
-    state.hub.broadcast(WsEvent::Message {
-        server: None,
-        channel_id: None,
-        dm_id: Some(id),
-        dm_users: Some(users.clone()),
-        message: Box::new(partial_quote(message.clone())),
-    });
-    if message.forward.is_none() {
-        ping_message(
-            &state,
-            PingScope::Dm { id, users: &users },
-            &message,
-            &user,
-            replied(&quote),
-        )
-        .await;
-    }
-    Ok(Json(message))
+    deliver(
+        &state,
+        &user,
+        req,
+        Place::Dm(id),
+        PingScope::Dm { id, users: &users },
+    )
+    .await
 }
 
 /// Delete a message
@@ -1734,12 +1632,12 @@ pub(crate) async fn send_dm_message(
 /// may delete anyone's. Emits `message_deleted` (with `thread_root_id` for replies) to clients
 /// in the server that can see the channel, or to both DM participants. General rate-limit
 /// bucket.
-#[utoipa::path(delete, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Deleted; body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Manage messages permission in the server (in DMs only the author may delete)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Deleted; body `{\"ok\": true}`", body = OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Manage messages permission in the server (in DMs only the author may delete)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn delete_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Authed(user): Authed,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<OkResp>, ApiError> {
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
     message.require_can_delete(&state.db).await?;
     let scope = message.into_scope();
@@ -1769,7 +1667,7 @@ pub(crate) async fn delete_message(
         id,
         thread_root_id,
     });
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(ok())
 }
 
 /// New text for a message.
@@ -1815,18 +1713,12 @@ pub(crate) async fn edit_message(
     let (old, kind, media_removed): (String, String, i64) =
         (row.try_get(0)?, row.try_get(1)?, row.try_get(2)?);
     if kind != "user" || row.try_get::<Option<i64>, _>(3)?.is_some() {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Cannot edit this message".to_string(),
-        ));
+        return Err(bad("Cannot edit this message"));
     }
     check_len(&content, MESSAGE_MAX, "Message")?;
     let attached = message.scope().media_id.is_some() && media_removed == 0;
     if content.trim().is_empty() && !attached {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Message is empty".to_string(),
-        ));
+        return Err(bad("Message is empty"));
     }
     if message.channel().is_some() {
         check_profanity(&state.db, ProfanityTarget::Messages, &content).await?;
@@ -2112,10 +2004,7 @@ fn check_nul(texts: [&Option<String>; 4], servers: &Option<Vec<String>>) -> Resu
         .any(|t| t.as_deref().is_some_and(|v| v.contains('\0')))
         || servers.iter().flatten().any(|v| v.contains('\0'));
     match nul {
-        true => Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Search text cannot contain NUL characters".to_string(),
-        )),
+        true => Err(bad("Search text cannot contain NUL characters")),
         false => Ok(()),
     }
 }
@@ -2438,10 +2327,7 @@ pub(crate) async fn mark_read(
         false => None,
     };
     let Some(id) = id else {
-        return Err(ApiError(
-            StatusCode::BAD_REQUEST,
-            "Invalid scope".to_string(),
-        ));
+        return Err(bad("Invalid scope"));
     };
     if scope.as_bytes()[0] == b't' {
         let root = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
@@ -6433,7 +6319,6 @@ mod tests {
                     &HeaderMap::new(),
                     &media_id,
                     Some(&mem_user(who, false)),
-                    None,
                 )
                 .await
                 .is_ok()
@@ -6486,8 +6371,12 @@ mod tests {
         assert_eq!(fwd.created_at, 5);
         assert_eq!(fwd.source_id, hidden);
         assert_eq!(
-            fwd.origin.as_deref(),
-            Some("RChat"),
+            (
+                fwd.origin.as_deref(),
+                fwd.origin_channel.as_deref(),
+                fwd.origin_server.as_deref()
+            ),
+            (Some("RChat"), None, Some("RChat")),
             "a restricted channel is not named"
         );
         assert_eq!(fwd.dropped, None);
@@ -6566,9 +6455,20 @@ mod tests {
         let same = forward(&state, general, "carol", open_msg.id)
             .await
             .expect("same server");
+        let same_fwd = same.forward.clone().expect("ref");
         assert_eq!(
-            same.forward.as_ref().and_then(|f| f.origin.as_deref()),
-            Some("#general · RChat")
+            (
+                same_fwd.origin.as_deref(),
+                same_fwd.origin_dm,
+                same_fwd.origin_channel.as_deref(),
+                same_fwd.origin_server.as_deref()
+            ),
+            (
+                Some("#general - RChat"),
+                false,
+                Some("general"),
+                Some("RChat")
+            )
         );
         let pub_msg = say(
             &state,
@@ -6580,15 +6480,30 @@ mod tests {
         let from_pub = forward(&state, to_dm, "bob", pub_msg.id)
             .await
             .expect("public, not a member");
+        let pub_fwd = from_pub.forward.clone().expect("ref");
         assert_eq!(
-            from_pub.forward.as_ref().and_then(|f| f.origin.as_deref()),
-            Some("Pub Hall")
+            (
+                pub_fwd.origin.as_deref(),
+                pub_fwd.origin_dm,
+                pub_fwd.origin_channel.as_deref(),
+                pub_fwd.origin_server.as_deref()
+            ),
+            (Some("Pub Hall"), false, None, Some("Pub Hall"))
         );
         let from_vault = forward(&state, to_dm, "alice", vault_msg.id)
             .await
             .expect("member of vault");
         let vault_fwd = from_vault.forward.clone().expect("ref");
-        assert_eq!(vault_fwd.origin, None, "a protected server is never named");
+        assert_eq!(
+            (
+                vault_fwd.origin,
+                vault_fwd.origin_dm,
+                vault_fwd.origin_channel,
+                vault_fwd.origin_server
+            ),
+            (None, false, None, None),
+            "a protected server is never named"
+        );
         assert!(
             !serde_json::to_string(&from_vault)
                 .expect("json")
@@ -6598,9 +6513,15 @@ mod tests {
         let from_dm = forward(&state, general, "alice", dm_msg.id)
             .await
             .expect("dm source");
+        let dm_fwd = from_dm.forward.clone().expect("ref");
         assert_eq!(
-            from_dm.forward.as_ref().and_then(|f| f.origin.as_deref()),
-            Some("Direct message")
+            (
+                dm_fwd.origin.as_deref(),
+                dm_fwd.origin_dm,
+                dm_fwd.origin_channel,
+                dm_fwd.origin_server
+            ),
+            (Some("Direct message"), true, None, None)
         );
         assert_eq!(
             refused(forward(&state, general, "carol", dm_msg.id).await),

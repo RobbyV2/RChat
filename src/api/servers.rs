@@ -11,17 +11,17 @@ use crate::api::access::{
     BANNED, InviteView, Proof, ResolvedChannel, ServerAccess, Via, resolve_channel, resolve_invite,
     resolve_server,
 };
-use crate::api::admin::{fuzzy_match, is_fuzzy, like_pattern};
+use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
 use crate::api::auth::{Work, hash_in, new_token};
 use crate::api::messages::recent_channel_messages;
 use crate::api::pings::forget_server_pings;
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message,
-    NAME_MAX, OFFSET_MAX, Paged, ProfanityTarget, Role, RoleLimits, SLOWMODE_MAX, ServerDetail,
-    ServerSummary, ServerSummaryLite, UserRef, check_len, check_profanity, cursor_int,
-    decode_cursor, encode_cursor, header_grants, page_bounds, placeholders, require_guest_ok,
-    unique_capped, user_from, user_ref, user_refs, valid_color,
+    NAME_MAX, OFFSET_MAX, OkResp, Paged, ProfanityTarget, Role, RoleLimits, SLOWMODE_MAX,
+    ServerDetail, ServerSummary, ServerSummaryLite, UserRef, allowed, bad, check_len,
+    check_profanity, cursor_int, decode_cursor, encode_cursor, header_grants, ok, page_bounds,
+    placeholders, require_guest_ok, unique_capped, user_from, user_ref, user_refs, valid_color,
 };
 use crate::db::{
     ALL_PERMS, ChannelAccess, ChannelKind, Db, NO_PERMANENT_HASH, Perm, PermRow, Restrict, User,
@@ -246,14 +246,6 @@ pub struct ServerMatch {
     pub display_name: String,
     /// `true` when joining the server needs a password.
     pub has_password: bool,
-}
-
-/// Generic success response.
-#[derive(Serialize, ToSchema)]
-pub struct OkResp {
-    /// Always `true`.
-    #[schema(example = true)]
-    ok: bool,
 }
 
 /// A user banned from a server.
@@ -563,14 +555,6 @@ async fn count_rows(db: &Db, sql: &'static str, key: &str) -> Result<i64, ApiErr
     Ok(sqlx::query(sql).bind(key).fetch_one(db).await?.try_get(0)?)
 }
 
-pub(crate) fn ok() -> Json<OkResp> {
-    Json(OkResp { ok: true })
-}
-
-pub(crate) fn bad(msg: &str) -> ApiError {
-    ApiError(StatusCode::BAD_REQUEST, msg.to_string())
-}
-
 fn not_found(msg: &str) -> ApiError {
     ApiError(StatusCode::NOT_FOUND, msg.to_string())
 }
@@ -624,10 +608,10 @@ async fn role_ids(db: &Db, server: &str, username: &str) -> Result<Vec<i64>, Api
     .bind(username)
     .fetch_all(db)
     .await?;
-    let mut ids = Vec::with_capacity(rows.len());
-    for r in &rows {
-        ids.push(r.try_get(0)?);
-    }
+    let ids = rows
+        .iter()
+        .map(|r| r.try_get(0))
+        .collect::<sqlx::Result<Vec<_>>>()?;
     Ok(ids)
 }
 
@@ -1511,7 +1495,7 @@ pub(crate) async fn search_servers(
     for r in &rows {
         let name: String = r.try_get(0)?;
         let display_name: String = r.try_get(1)?;
-        if fuzzy && !(fuzzy_match(&q, &name) || fuzzy_match(&q, &display_name)) {
+        if !name_hit(&q, fuzzy, &name, &display_name) {
             continue;
         }
         out.push(ServerMatch {
@@ -1696,12 +1680,8 @@ async fn invite_preview(
         return Ok((None, Vec::new()));
     };
     let (id, name): (i64, String) = (r.try_get(0)?, r.try_get(1)?);
-    let channel = match access.channel(db, id).await {
-        Ok(channel) => channel,
-        Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e)) => {
-            return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e));
-        }
-        Err(_) => return Ok((None, Vec::new())),
+    let Some(channel) = allowed(access.channel(db, id).await)? else {
+        return Ok((None, Vec::new()));
     };
     let floor = channel.read_since(db).await?;
     let mut msgs = recent_channel_messages(db, id, INVITE_PREVIEW).await?;
@@ -2171,10 +2151,7 @@ async fn rename_live(
     .await?
     .rows_affected();
     if renamed == 0 {
-        return Err(ApiError(
-            StatusCode::NOT_FOUND,
-            "Server not found".to_string(),
-        ));
+        return Err(not_found("Server not found"));
     }
     if let Some(hash) = password_hash {
         sqlx::query(

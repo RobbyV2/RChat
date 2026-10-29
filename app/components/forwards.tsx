@@ -2,7 +2,7 @@
 
 import { Forward, Image as ImageIcon, SendHorizontal } from 'lucide-react'
 import { useStore, type ContextMenuItem } from '../lib/store'
-import { forwardPending } from '../lib/forward'
+import { forwardOrigin, forwardPending } from '../lib/forward'
 import type { Message } from '../lib/types'
 import type { ToolbarAction } from './message_toolbar'
 import { ComposerBar } from './replies'
@@ -88,7 +88,8 @@ export function ForwardCard({
   const openForward = useStore(s => s.openForward)
   const fwd = m.forward
   if (!fwd) return null
-  const { author, origin } = fwd
+  const { author } = fwd
+  const origin = forwardOrigin(fwd)
   const when = editedTitle(fwd.created_at)
   return (
     <div data-forward={fwd.source_id} className="min-w-0">
@@ -152,8 +153,8 @@ export function ForwardCard({
         >
           {origin && (
             <>
-              <span className={`truncate ${origin === 'Direct message' ? '' : 'streamer'}`}>
-                {origin}
+              <span className={`truncate ${origin.isServer ? 'streamer' : ''}`}>
+                {origin.label}
               </span>
               <span aria-hidden>·</span>
             </>

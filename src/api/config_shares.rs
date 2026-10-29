@@ -1,13 +1,12 @@
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::ToSchema;
 
-use crate::api::servers::{OkResp, bad, ok};
-use crate::api::{ApiError, ApiErrorBody, Authed};
+use crate::api::access::not_found;
+use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, bad, ok};
 use crate::db::now;
 use crate::state::AppState;
 
@@ -90,10 +89,6 @@ pub fn check_expiry(expires_in: i64) -> Result<(), ApiError> {
             "Links can expire in 10 minutes, 1 hour, 1 day, 7 days or 30 days",
         )),
     }
-}
-
-fn gone() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, "Not found".to_string())
 }
 
 /// Share config
@@ -217,7 +212,7 @@ pub(crate) async fn get_share(
     Path(id): Path<String>,
 ) -> Result<Json<SharedConfig>, ApiError> {
     if !valid_id(&id) {
-        return Err(gone());
+        return Err(not_found());
     }
     let row =
         sqlx::query("SELECT blob, expires_at FROM config_shares WHERE id = $1 AND expires_at > $2")
@@ -225,7 +220,7 @@ pub(crate) async fn get_share(
             .bind(now())
             .fetch_optional(&state.db)
             .await?
-            .ok_or_else(gone)?;
+            .ok_or_else(not_found)?;
     Ok(Json(SharedConfig {
         blob: row.try_get(0)?,
         expires_at: row.try_get(1)?,
@@ -255,7 +250,7 @@ pub(crate) async fn delete_share(
     Path(id): Path<String>,
 ) -> Result<Json<OkResp>, ApiError> {
     if !valid_id(&id) {
-        return Err(gone());
+        return Err(not_found());
     }
     let deleted = sqlx::query("DELETE FROM config_shares WHERE id = $1 AND owner = $2")
         .bind(&id)
@@ -264,13 +259,15 @@ pub(crate) async fn delete_share(
         .await?
         .rows_affected();
     match deleted {
-        0 => Err(gone()),
+        0 => Err(not_found()),
         _ => Ok(ok()),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use axum::http::StatusCode;
+
     use super::*;
     use crate::api::test_util::{done, mem_user, temp_state};
 

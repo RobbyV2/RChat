@@ -11,8 +11,8 @@ use sqlx::Row;
 
 use crate::api::access::{MsgScope, Proof, resolve_message};
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, MediaRef, Settings, parse_grants, placeholders, request_token,
-    require_guest_ok, user_for_token,
+    ApiError, ApiErrorBody, Authed, MediaRef, OkResp, Settings, allowed, bad, header_grants, ok,
+    placeholders, request_token, require_guest_ok, user_for_token,
 };
 use crate::db::{Db, MediaKind, User, now};
 use crate::state::AppState;
@@ -112,7 +112,7 @@ pub(crate) async fn upload_media(
         .next_field()
         .await
         .map_err(|e| ApiError(StatusCode::BAD_REQUEST, e.to_string()))?
-        .ok_or_else(|| ApiError(StatusCode::BAD_REQUEST, "No file provided".to_string()))?;
+        .ok_or_else(|| bad("No file provided"))?;
     let filename = field.file_name().unwrap_or("file").to_string();
     let mime = field
         .content_type()
@@ -170,12 +170,12 @@ pub(crate) async fn upload_media(
 /// too. Emits `media_removed` to all who can see the message. Forwarded copies keep their own
 /// reference to the file (and so the file). Moderators of the destination use this endpoint on
 /// the copy. Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(delete, path = "/api/messages/{id}/media", tag = "Media", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Removed; the body is `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "Not the author and no Manage messages permission in the server", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses; or it has no attachment (`No attachment`)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/messages/{id}/media", tag = "Media", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Removed; the body is `{\"ok\": true}`", body = OkResp), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "Not the author and no Manage messages permission in the server", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses; or it has no attachment (`No attachment`)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn delete_media(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Authed(user): Authed,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<OkResp>, ApiError> {
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
     message.require_can_delete(&state.db).await?;
     let MsgScope {
@@ -236,15 +236,7 @@ pub(crate) async fn delete_media(
         message_id: id,
         removed_by_author: true,
     });
-    Ok(Json(serde_json::json!({ "ok": true })))
-}
-
-#[derive(serde::Deserialize, utoipa::IntoParams)]
-pub struct MediaQuery {
-    /// Guest grants (comma-separated) for password-protected servers, in addition to the
-    /// `X-Guest-Grant` header; useful for `<img>` and `<video>` sources that can't send
-    /// headers.
-    grant: Option<String>,
+    Ok(ok())
 }
 
 fn media_hidden() -> ApiError {
@@ -303,7 +295,6 @@ pub(crate) async fn media_view_ok(
     headers: &axum::http::HeaderMap,
     media_id: &str,
     user: Option<&User>,
-    query_grant: Option<&str>,
 ) -> Result<(), ApiError> {
     let rows =
         sqlx::query("SELECT m.id FROM messages m WHERE m.media_id = $1 AND m.media_kind = 'server' AND m.media_removed = 0 ORDER BY m.id LIMIT $2")
@@ -325,15 +316,10 @@ pub(crate) async fn media_view_ok(
             (_, _) => Err(media_hidden()),
         };
     }
-    let header = headers.get("x-guest-grant").and_then(|v| v.to_str().ok());
-    let proof = Proof::grants(parse_grants(header.into_iter().chain(query_grant)));
+    let proof = Proof::grants(header_grants(headers));
     for r in &rows {
-        match resolve_message(db, r.try_get(0)?, user, &proof).await {
-            Ok(_) => return Ok(()),
-            Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e)) => {
-                return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e));
-            }
-            Err(_) => {}
+        if allowed(resolve_message(db, r.try_get(0)?, user, &proof).await)?.is_some() {
+            return Ok(());
         }
     }
     Err(media_hidden())
@@ -380,18 +366,17 @@ fn chunk_stream(
 ///
 /// Once attached, the file is visible to anyone who can read one of the messages carrying it,
 /// with the same checks as listing messages: in a server without a password anyone not banned
-/// from it, in a password-protected server its members or guests holding a grant for it (header
-/// or `grant` query); in a channel with permission overrides (thread replies use their channel)
-/// also the view permission, and without read-history access only messages posted since you
+/// from it, in a password-protected server its members or guests holding a grant for it (the
+/// `X-Guest-Grant` header); in a channel with permission overrides (thread replies use their
+/// channel) also the view permission, and without read-history access only messages posted since you
 /// joined count; in a direct message its two participants. Before it is attached only the
 /// uploader can fetch it. Access is checked before `If-None-Match`, so a 304 is only sent to
 /// callers allowed to see the file. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/media/{id}", tag = "Media", params(("id" = String, Path, description = "Media id, 32 hex characters, from `MediaRef.id`"), MediaQuery), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag` and `Cache-Control: private, max-age=86400, immutable`"), (status = 304, description = "`If-None-Match` matched the media's ETag and you may see the file"), (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody), (status = 403, description = "`Attachments are turned off on this server`: uploads and P2P attachments are both off (text only); only sent to callers who may see the file", body = ApiErrorBody), (status = 404, description = "`Media not found`: unknown id, the file expired or was deleted, or you may not read any message carrying it (banned, no access to its password-protected server, no view permission or no read-history access in its channel, or not a DM participant) or see the unattached upload; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/media/{id}", tag = "Media", params(("id" = String, Path, description = "Media id, 32 hex characters, from `MediaRef.id`"), ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")), responses((status = 200, description = "File bytes, streamed. Carries a strong `ETag`, `Cache-Control: private, max-age=86400, immutable` and `Vary: X-Guest-Grant`"), (status = 304, description = "`If-None-Match` matched the media's ETag and you may see the file. Carries the same `ETag`, `Cache-Control` and `Vary`"), (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody), (status = 403, description = "`Attachments are turned off on this server`: uploads and P2P attachments are both off (text only); only sent to callers who may see the file", body = ApiErrorBody), (status = 404, description = "`Media not found`: unknown id, the file expired or was deleted, or you may not read any message carrying it (banned, no access to its password-protected server, no view permission or no read-history access in its channel, or not a DM participant) or see the unattached upload; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn download_media(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     Path(id): Path<String>,
-    axum::extract::Query(q): axum::extract::Query<MediaQuery>,
 ) -> Result<Response, ApiError> {
     let db = state.read();
     let user = match request_token(&headers) {
@@ -399,7 +384,7 @@ pub(crate) async fn download_media(
         None => None,
     };
     require_guest_ok(&db, user.as_ref()).await?;
-    media_view_ok(&db, &headers, &id, user.as_ref(), q.grant.as_deref()).await?;
+    media_view_ok(&db, &headers, &id, user.as_ref()).await?;
     if Settings::cached(&db).await.text_only() {
         return Err(ApiError(
             StatusCode::FORBIDDEN,
@@ -433,6 +418,7 @@ pub(crate) async fn download_media(
             .status(StatusCode::NOT_MODIFIED)
             .header(header::ETAG, &etag)
             .header(header::CACHE_CONTROL, cache)
+            .header(header::VARY, "X-Guest-Grant")
             .body(Body::empty())
             .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
     }
@@ -472,7 +458,8 @@ pub(crate) async fn download_media(
             "default-src 'none'; sandbox",
         )
         .header(header::ETAG, &etag)
-        .header(header::CACHE_CONTROL, cache);
+        .header(header::CACHE_CONTROL, cache)
+        .header(header::VARY, "X-Guest-Grant");
     if chunks > 0 || (inline == 0 && size == 0) {
         res = res.header(header::CONTENT_LENGTH, size);
     }
@@ -524,10 +511,10 @@ async fn sweep_batch(db: &Db, cutoff: i64) -> sqlx::Result<(Vec<String>, Vec<WsE
         .bind(SWEEP_BATCH)
         .fetch_all(&mut *tx)
         .await?;
-    let mut ids = Vec::with_capacity(rows.len());
-    for r in &rows {
-        ids.push(r.try_get::<String, _>(0)?);
-    }
+    let ids = rows
+        .iter()
+        .map(|r| r.try_get::<String, _>(0))
+        .collect::<sqlx::Result<Vec<_>>>()?;
     if ids.is_empty() {
         tx.commit().await?;
         return Ok((ids, Vec::new()));
@@ -606,8 +593,8 @@ pub async fn sweep_expired(state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::{
-        MediaQuery, SWEEP_BATCH, content_disposition, delete_media, download_media, media_view_ok,
-        store_media, sweep,
+        SWEEP_BATCH, content_disposition, delete_media, download_media, media_view_ok, store_media,
+        sweep,
     };
     use crate::api::test_util::{done, mem_user, temp_state};
     use crate::api::{ApiError, Authed};
@@ -753,14 +740,9 @@ mod tests {
             .execute(&state.db)
             .await
             .expect("attach");
-        let res = download_media(
-            State(state.clone()),
-            axum::http::HeaderMap::new(),
-            Path(id),
-            axum::extract::Query(MediaQuery { grant: None }),
-        )
-        .await
-        .expect("download");
+        let res = download_media(State(state.clone()), axum::http::HeaderMap::new(), Path(id))
+            .await
+            .expect("download");
         assert_eq!(res.status(), axum::http::StatusCode::OK);
         assert_eq!(res.headers()[axum::http::header::CONTENT_LENGTH], "0");
         let body = axum::body::to_bytes(res.into_body(), usize::MAX)
@@ -816,7 +798,7 @@ mod tests {
             let id = id.clone();
             let state = state.clone();
             async move {
-                media_view_ok(&state.db, &headers, &id, Some(&mem_user(who, false)), None)
+                media_view_ok(&state.db, &headers, &id, Some(&mem_user(who, false)))
                     .await
                     .is_ok()
             }
@@ -869,7 +851,6 @@ mod tests {
                 State(state.clone()),
                 axum::http::HeaderMap::new(),
                 Path(id.clone()),
-                axum::extract::Query(MediaQuery { grant: None }),
             )
         };
         for (key, on, ok) in [
@@ -923,7 +904,7 @@ mod tests {
         let see = |who: &'static str, admin: bool| {
             let (state, headers, id) = (state.clone(), headers.clone(), id.clone());
             async move {
-                media_view_ok(&state.db, &headers, &id, Some(&mem_user(who, admin)), None)
+                media_view_ok(&state.db, &headers, &id, Some(&mem_user(who, admin)))
                     .await
                     .is_ok()
             }
@@ -936,11 +917,7 @@ mod tests {
         assert!(!see("carol", false).await);
         assert!(!see("root", true).await);
         assert!(see("dave", false).await);
-        assert!(
-            media_view_ok(&state.db, &headers, &id, None, None)
-                .await
-                .is_ok()
-        );
+        assert!(media_view_ok(&state.db, &headers, &id, None).await.is_ok());
         done(state, path).await;
     }
 
@@ -980,14 +957,9 @@ mod tests {
             let state = state.clone();
             let id = id.clone();
             async move {
-                download_media(
-                    State(state),
-                    headers,
-                    Path(id),
-                    axum::extract::Query(MediaQuery { grant: None }),
-                )
-                .await
-                .expect("download")
+                download_media(State(state), headers, Path(id))
+                    .await
+                    .expect("download")
             }
         };
         let res = get(axum::http::HeaderMap::new()).await;
@@ -1003,6 +975,7 @@ mod tests {
                 .expect("cache header")
                 .contains("immutable")
         );
+        assert_eq!(res.headers()[axum::http::header::VARY], "X-Guest-Grant");
         let body = axum::body::to_bytes(res.into_body(), usize::MAX)
             .await
             .expect("body");
@@ -1011,6 +984,7 @@ mod tests {
         headers.insert(axum::http::header::IF_NONE_MATCH, etag);
         let cached = get(headers).await;
         assert_eq!(cached.status(), axum::http::StatusCode::NOT_MODIFIED);
+        assert_eq!(cached.headers()[axum::http::header::VARY], "X-Guest-Grant");
         sqlx::query("DELETE FROM media WHERE id = $1")
             .bind(&id)
             .execute(&state.db)
@@ -1089,7 +1063,7 @@ mod tests {
             let (state, headers) = (state.clone(), headers.clone());
             async move {
                 let user = who.map(|w| mem_user(w, w == "root"));
-                media_view_ok(&state.db, &headers, &id, user.as_ref(), None)
+                media_view_ok(&state.db, &headers, &id, user.as_ref())
                     .await
                     .is_ok()
             }
@@ -1111,15 +1085,63 @@ mod tests {
             axum::http::header::IF_NONE_MATCH,
             format!("\"{fresh}\"").parse().expect("etag"),
         );
-        let cached = download_media(
-            State(state.clone()),
-            headers,
-            Path(fresh.clone()),
-            axum::extract::Query(MediaQuery { grant: None }),
-        )
-        .await;
+        let cached = download_media(State(state.clone()), headers, Path(fresh.clone())).await;
         assert_eq!(
             cached.err().map(|ApiError(c, m)| (c, m)),
+            Some((
+                axum::http::StatusCode::NOT_FOUND,
+                "Media not found".to_string()
+            ))
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn guests_prove_access_to_protected_media_by_header_only() {
+        let (state, path) = temp_state("media_guest_grant").await;
+        let db = &state.db;
+        sqlx::query("INSERT INTO servers(name, display_name, password_hash, created_at) VALUES('locked', 'locked', 'x', 0)")
+            .execute(db)
+            .await
+            .expect("server");
+        let cid: i64 = sqlx::query("INSERT INTO channels(server, name, created_at) VALUES('locked', 'vault', 0) RETURNING id")
+            .fetch_one(db)
+            .await
+            .expect("channel")
+            .try_get(0)
+            .expect("channel id");
+        let id = "ab".repeat(16);
+        store_media(
+            db,
+            &id,
+            "a.txt",
+            "text/plain",
+            1,
+            Some(&[1]),
+            "alice",
+            now(),
+        )
+        .await
+        .expect("store media");
+        sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, created_at) VALUES($1, 'alice', '', $2, 'a.txt', 1)")
+            .bind(cid)
+            .bind(&id)
+            .execute(db)
+            .await
+            .expect("attach");
+        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, 'locked', 0, 4000000000)")
+            .bind(crate::db::secret_key(&crate::api::test_util::test_grant("g1")))
+            .execute(db)
+            .await
+            .expect("grant");
+        let grant = crate::api::test_util::test_grant("g1");
+        let mut with_header = axum::http::HeaderMap::new();
+        with_header.insert("x-guest-grant", grant.parse().expect("header"));
+        assert!(media_view_ok(db, &with_header, &id, None).await.is_ok());
+        let hidden =
+            download_media(State(state.clone()), axum::http::HeaderMap::new(), Path(id)).await;
+        assert_eq!(
+            hidden.err().map(|ApiError(c, m)| (c, m)),
             Some((
                 axum::http::StatusCode::NOT_FOUND,
                 "Media not found".to_string()

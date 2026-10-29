@@ -14,7 +14,7 @@ use url::{Host, Url};
 use utoipa::IntoParams;
 
 use crate::api::access::{Proof, resolve_message};
-use crate::api::{ApiError, ApiErrorBody, Authed, Embed};
+use crate::api::{ApiError, ApiErrorBody, Authed, Embed, OkResp, ok};
 use crate::db::{Db, now};
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
@@ -612,13 +612,13 @@ pub struct BannerQuery {
 /// permission. Repeating a removal succeeds again. Emits `embeds_removed` (with `ord` and
 /// `banner`) to clients in the server that can see the channel, or to both DM participants.
 /// General rate-limit bucket.
-#[utoipa::path(delete, path = "/api/messages/{id}/embeds/{ord}", tag = "Messages", params(("id" = i64, Path, description = "Message id"), ("ord" = i64, Path, description = "Position of the preview in the message's `embeds` (its `ord`, starting at 0)"), BannerQuery), responses((status = 200, description = "Removed; body `{\"ok\": true}`", body = crate::api::servers::OkResp), (status = 400, description = "Non-numeric id, ord or banner (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Manage messages permission in the server (in DMs only the author may remove previews)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses; or no preview with this `ord` (`Embed not found`)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/messages/{id}/embeds/{ord}", tag = "Messages", params(("id" = i64, Path, description = "Message id"), ("ord" = i64, Path, description = "Position of the preview in the message's `embeds` (its `ord`, starting at 0)"), BannerQuery), responses((status = 200, description = "Removed; body `{\"ok\": true}`", body = OkResp), (status = 400, description = "Non-numeric id, ord or banner (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not the author and no Manage messages permission in the server (in DMs only the author may remove previews)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses; or no preview with this `ord` (`Embed not found`)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn delete_embed(
     State(state): State<AppState>,
     Path((id, ord)): Path<(i64, i64)>,
     Query(q): Query<BannerQuery>,
     Authed(user): Authed,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<OkResp>, ApiError> {
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
     message.require_can_delete(&state.db).await?;
     let scope = message.into_scope();
@@ -648,7 +648,7 @@ pub(crate) async fn delete_embed(
         ord,
         banner,
     });
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(ok())
 }
 
 #[cfg(test)]

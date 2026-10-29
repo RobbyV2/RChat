@@ -8,8 +8,10 @@ use sqlx::Row;
 use utoipa::ToSchema;
 
 use crate::api::access::{Proof, ServerAccess, Via, password_lookup, resolve_server};
-use crate::api::servers::{OkResp, bad, guard_rchat, ok};
-use crate::api::{ApiError, ApiErrorBody, Authed, JoinedVia, check_len, placeholders};
+use crate::api::servers::guard_rchat;
+use crate::api::{
+    ApiError, ApiErrorBody, Authed, JoinedVia, OkResp, bad, check_len, ok, placeholders,
+};
 use crate::db::{Db, NO_EXTRA_HASH, Perm, User, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -223,10 +225,10 @@ pub(crate) async fn list_passwords(
         .bind(LIST_MAX)
         .fetch_all(db)
         .await?;
-    let mut passwords = Vec::with_capacity(rows.len());
-    for r in &rows {
-        passwords.push(password_row(r, t)?);
-    }
+    let passwords = rows
+        .iter()
+        .map(|r| password_row(r, t))
+        .collect::<sqlx::Result<Vec<_>>>()?;
     let protected = access.lite().has_password;
     let permanent = access.has_permanent_password(db).await?;
     let live = passwords.iter().any(|p| p.status == PasswordStatus::Live);

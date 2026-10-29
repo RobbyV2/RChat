@@ -2279,7 +2279,9 @@ mod tests {
                     .forward
                     .expect("forward survives a restart");
             assert_eq!((fwd.source_id, fwd.created_at), (old, 7));
-            assert_eq!(fwd.origin.as_deref(), Some("#general · RChat"));
+            assert_eq!(fwd.origin.as_deref(), Some("#general - RChat"));
+            assert_eq!(fwd.origin_channel.as_deref(), Some("general"));
+            assert_eq!(fwd.origin_server.as_deref(), Some("RChat"));
             close(&db).await;
         }
         wipe();

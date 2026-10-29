@@ -242,7 +242,11 @@ export interface ForwardRef {
   author: UserRef | null
   created_at: number
   source_id: number
+  // ASCII fallback label for older servers
   origin: string | null
+  origin_dm?: boolean
+  origin_channel?: string | null
+  origin_server?: string | null
   dropped: string | null
 }
 

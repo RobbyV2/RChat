@@ -437,6 +437,71 @@ mod tests {
         }
     }
 
+    /// Line and text of every non-ASCII character in `text`.
+    fn non_ascii(text: &str) -> Vec<String> {
+        text.lines()
+            .enumerate()
+            .filter(|(_, line)| !line.is_ascii())
+            .map(|(n, line)| format!("{}: {}", n + 1, line.trim()))
+            .collect()
+    }
+
+    #[test]
+    fn the_document_is_plain_ascii() {
+        let json = serde_json::to_string_pretty(&ApiDoc::openapi()).expect("json");
+        let found = non_ascii(&json);
+        assert!(found.is_empty(), "non-ASCII text:\n{}", found.join("\n"));
+    }
+
+    /// Error messages, WS payload text and every other string the server writes come from
+    /// the code outside the test modules, so all of that code is plain ASCII.
+    #[test]
+    fn server_code_is_plain_ascii() {
+        // The legacy forward origin parser input, and the bidi controls the name check rejects.
+        const ESCAPES_ALLOWED: &[&str] = &[
+            ".split_once(\" \\u{b7} \")",
+            "matches!(c, '\\u{200E}' | '\\u{200F}'",
+        ];
+        fn non_ascii_escapes(text: &str) -> Vec<String> {
+            text.lines()
+                .enumerate()
+                .filter(|(_, line)| !ESCAPES_ALLOWED.iter().any(|ok| line.contains(ok)))
+                .filter(|(_, line)| {
+                    line.split("\\u{").skip(1).any(|rest| {
+                        let hex = rest.split('}').next().unwrap_or("");
+                        u32::from_str_radix(&hex.replace('_', ""), 16).is_ok_and(|c| c > 0x7f)
+                    })
+                })
+                .map(|(n, line)| format!("{}: {}", n + 1, line.trim()))
+                .collect()
+        }
+        fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).expect("read src") {
+                let path = entry.expect("entry").path();
+                match path.extension().and_then(|e| e.to_str()) {
+                    _ if path.is_dir() => walk(&path, found),
+                    Some("rs") => {
+                        let src = std::fs::read_to_string(&path).expect("read");
+                        let code = src.split("#[cfg(test)]\nmod tests").next().unwrap_or(&src);
+                        found.extend(
+                            non_ascii(code)
+                                .into_iter()
+                                .chain(non_ascii_escapes(code))
+                                .map(|line| format!("{}:{line}", path.display())),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut found,
+        );
+        assert!(found.is_empty(), "non-ASCII text:\n{}", found.join("\n"));
+    }
+
     #[test]
     fn every_registered_route_is_documented() {
         let registered = registered_routes();

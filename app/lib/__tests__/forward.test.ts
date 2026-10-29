@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { useStore, resetSessionCaches } from '../store'
 import {
   canForward,
+  forwardOrigin,
   clipOf,
   forwardKey,
   forwardPending,
@@ -141,5 +142,31 @@ describe('forward clipboard in the store', () => {
     st().copyForward(msg(3, { kind: 'call' }))
     expect(st().forwardClip).toBeNull()
     expect(storage.size).toBe(0)
+  })
+})
+
+describe('forwardOrigin', () => {
+  const base = { origin: null, origin_dm: false, origin_channel: null, origin_server: null }
+  test('builds the label from the structured fields', () => {
+    expect(forwardOrigin({ ...base, origin_dm: true })).toEqual({
+      label: 'Direct message',
+      isServer: false,
+    })
+    expect(forwardOrigin({ ...base, origin_channel: 'general', origin_server: 'Pub' })).toEqual({
+      label: '#general · Pub',
+      isServer: true,
+    })
+    expect(forwardOrigin({ ...base, origin_server: 'Pub' })).toEqual({
+      label: 'Pub',
+      isServer: true,
+    })
+  })
+  test('falls back to origin, or nothing', () => {
+    expect(forwardOrigin({ origin: '#a - B' })).toEqual({ label: '#a - B', isServer: true })
+    expect(forwardOrigin({ origin: 'Direct message' })).toEqual({
+      label: 'Direct message',
+      isServer: false,
+    })
+    expect(forwardOrigin(base)).toBeNull()
   })
 })

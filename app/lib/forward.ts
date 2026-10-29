@@ -1,5 +1,5 @@
 import { plainLine } from './replies'
-import type { Message, UserRef } from './types'
+import type { ForwardRef, Message, UserRef } from './types'
 
 // The forward clipboard: one copied message per account, kept until it is sent or dismissed.
 export interface ForwardClip {
@@ -79,3 +79,19 @@ export const forwardValue = (clip: ForwardClip | null) =>
 // (one at a time; a failed one is retried or deleted from its row).
 export const forwardPending = (outbox: readonly { msg: Message }[] | undefined, id: number) =>
   !!outbox?.some(o => o.msg.forward?.source_id === id)
+
+// Where a forward came from: "Direct message", "#channel · Server" or "Server". Servers that
+// predate the structured fields only send `origin`.
+export function forwardOrigin(
+  fwd: Pick<ForwardRef, 'origin' | 'origin_dm' | 'origin_channel' | 'origin_server'>
+): { label: string; isServer: boolean } | null {
+  const { origin_dm, origin_channel, origin_server } = fwd
+  if (origin_dm) return { label: 'Direct message', isServer: false }
+  if (origin_server)
+    return {
+      label: origin_channel ? `#${origin_channel} · ${origin_server}` : origin_server,
+      isServer: true,
+    }
+  if (!fwd.origin) return null
+  return { label: fwd.origin, isServer: fwd.origin !== 'Direct message' }
+}

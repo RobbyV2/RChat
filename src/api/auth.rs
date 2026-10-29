@@ -15,12 +15,12 @@ use tokio::sync::Semaphore;
 use utoipa::ToSchema;
 
 use crate::api::dms::dm_page;
-use crate::api::servers::{OkResp, ok};
 use crate::api::servers::{Page, my_servers_page};
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, ProfanityTarget,
-    ServerSummary, UserRef, check_len, check_profanity, request_token, valid_color,
+    ApiError, ApiErrorBody, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, OkResp,
+    ProfanityTarget, ServerSummary, UserRef, bad, check_len, check_profanity, ok, request_token,
+    valid_color,
 };
 use crate::db::{AvatarKind, Db, User, get_user, now, secret_key};
 use crate::state::AppState;
@@ -349,8 +349,11 @@ pub(crate) fn new_token() -> String {
     hex::encode(bytes)
 }
 
-fn bad(msg: &str) -> ApiError {
-    ApiError(StatusCode::BAD_REQUEST, msg.to_string())
+fn wait_between() -> ApiError {
+    ApiError(
+        StatusCode::TOO_MANY_REQUESTS,
+        "Wait 3 seconds between attempts".to_string(),
+    )
 }
 
 fn check_avatar(
@@ -562,10 +565,7 @@ async fn throttle_attempt(db: &Db, key: &str, t: i64) -> Result<(), ApiError> {
             "Account locked for the day".to_string(),
         )),
         (false, true) => Ok(()),
-        (false, false) => Err(ApiError(
-            StatusCode::TOO_MANY_REQUESTS,
-            "Wait 3 seconds between attempts".to_string(),
-        )),
+        (false, false) => Err(wait_between()),
     }
 }
 
@@ -589,10 +589,7 @@ async fn throttle_change(db: &Db, key: &str, t: i64) -> Result<(), ApiError> {
     .fetch_optional(db)
     .await?;
     match admitted {
-        None => Err(ApiError(
-            StatusCode::TOO_MANY_REQUESTS,
-            "Wait 3 seconds between attempts".to_string(),
-        )),
+        None => Err(wait_between()),
         Some(row) if row.try_get::<i64, _>(0)? >= PASSWORD_FAILURES_MAX => Err(ApiError(
             StatusCode::LOCKED,
             "Too many wrong passwords today".to_string(),
