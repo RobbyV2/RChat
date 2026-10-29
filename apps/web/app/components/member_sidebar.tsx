@@ -28,6 +28,7 @@ import {
 } from '../lib/store'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
+import { blockMenuItem } from './blocking'
 import { Badge, profileTrigger } from './profile_card'
 import { Sentinel } from './ui'
 import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
@@ -209,6 +210,8 @@ export default function MemberSidebar() {
           action: () => openContextMenu(x, y, roleMenuItems(detail.name, m.username)),
         })
     }
+    const block = blockMenuItem(m)
+    if (block) items.push(block)
     if (me.is_site_admin && !self)
       items.push({
         label: 'Ban site-wide',
@@ -266,6 +269,7 @@ export default function MemberSidebar() {
                 label: 'Direct Message',
                 action: () => void startDm(u.username),
               },
+              ...[blockMenuItem(u)].filter(i => i !== null),
               {
                 label: 'Copy User ID',
                 action: () => void navigator.clipboard.writeText(u.username),

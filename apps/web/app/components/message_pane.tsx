@@ -106,6 +106,7 @@ import { messageLinkUrl } from '../lib/message_links'
 import { sharing } from '../lib/platform'
 import { messageStampToken } from '../lib/timestamps'
 import { MessageTime } from './timestamp'
+import { BlockedComposer, BlockedList, blockMenuItem } from './blocking'
 
 const EMPTY: Message[] = []
 
@@ -333,6 +334,12 @@ export function useMemberLookup(server: string | null) {
   )
 }
 
+const unreadDivider = (
+  <div data-divider className="px-4 py-1" aria-hidden>
+    <div className="h-0.5 rounded-full bg-error" />
+  </div>
+)
+
 interface RowProps {
   m: Message
   mentioned: boolean
@@ -395,11 +402,7 @@ const MessageRow = memo(function MessageRow({
       danger: true,
       onClick: e => confirmDeleteMessage(m.id, e.shiftKey),
     })
-  const mark = divider && (
-    <div data-divider className="px-4 py-1" aria-hidden>
-      <div className="h-0.5 rounded-full bg-error" />
-    </div>
-  )
+  const mark = divider && unreadDivider
   if (m.kind === 'pin') return <PinNotice m={m} server={server} divider={mark} onMenu={onMenu} />
   if (isSystem(m)) return <SystemNotice m={m} server={server} divider={mark} onMenu={onMenu} />
   if (m.kind === 'call')
@@ -641,6 +644,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     else if (scope) dismissUnread(scope)
   }, 'stage')
 
+  const otherBlocked = useStore(s => (dm ? s.blocked[dm.other.username] === true : false))
   const dmCall =
     dm && call?.dmId === dm.id && (call.state === 'active' || call.from === me?.username)
   const callShare = useCallShare(dm?.id ?? -1)
@@ -758,6 +762,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         label: 'Assign Role',
         action: () => openContextMenu(x, y, roleMenuItems(view.server, author.username)),
       })
+    const block = blockMenuItem(author)
+    if (block) items.push(block)
     if (me.is_site_admin && !self) {
       items.push({
         label: 'Ban site-wide',
@@ -932,7 +938,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           </span>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          {dm && !dm.is_self && !guest && <CallButtons dm={dm} />}
+          {dm && !dm.is_self && !guest && !otherBlocked && <CallButtons dm={dm} />}
           <StatusClock />
           {scope && <PinsButton />}
           {view?.kind === 'channel' && !isVoice && (
@@ -1008,36 +1014,41 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                 {positioned && messages.length > 0 && older?.more !== false && (
                   <EdgeSentinel key={messages[0].id} root={listRef} edge="top" onVisible={onTop} />
                 )}
-                {messages.map((m, i) => (
-                  <MessageRow
-                    key={m.id}
-                    m={m}
-                    mentioned={mentionedIds.has(m.id)}
-                    divider={i === dividerIndex}
-                    flash={flash === m.id}
-                    canDelete={canDelete(m)}
-                    canReact={canReact}
-                    canUnreact={canUnreact}
-                    canEdit={canEdit(m)}
-                    canForward={forwardable(m)}
-                    editing={editingId === m.id}
-                    channel={view?.kind === 'channel'}
-                    server={memberServer}
-                    color={roleColor(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])}
-                    quoteColor={
-                      m.reply_to?.author
-                        ? roleColor(
-                            detail?.roles,
-                            memberFor(m.reply_to.author.username)?.role_ids ?? []
-                          )
-                        : undefined
-                    }
-                    onMenu={rowMenu}
-                    onReply={rowReply}
-                    onEdit={rowEdit}
-                    onJump={rowJump}
-                  />
-                ))}
+                <BlockedList
+                  messages={messages}
+                  focusId={focus?.id ?? null}
+                  dividerAt={dividerIndex}
+                  divider={unreadDivider}
+                  row={(m, i) => (
+                    <MessageRow
+                      m={m}
+                      mentioned={mentionedIds.has(m.id)}
+                      divider={i === dividerIndex}
+                      flash={flash === m.id}
+                      canDelete={canDelete(m)}
+                      canReact={canReact}
+                      canUnreact={canUnreact}
+                      canEdit={canEdit(m)}
+                      canForward={forwardable(m)}
+                      editing={editingId === m.id}
+                      channel={view?.kind === 'channel'}
+                      server={memberServer}
+                      color={roleColor(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])}
+                      quoteColor={
+                        m.reply_to?.author
+                          ? roleColor(
+                              detail?.roles,
+                              memberFor(m.reply_to.author.username)?.role_ids ?? []
+                            )
+                          : undefined
+                      }
+                      onMenu={rowMenu}
+                      onReply={rowReply}
+                      onEdit={rowEdit}
+                      onJump={rowJump}
+                    />
+                  )}
+                />
                 {positioned && detached && messages.length > 0 && (
                   <EdgeSentinel
                     key={`n${messages[messages.length - 1].id}`}
@@ -1052,7 +1063,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           </div>
           <div className="relative shrink-0">
             <TypingIndicator scope={view ? viewKey(view) : null} bg="bg-surface" />
-            <MessageComposer />
+            {dm && otherBlocked ? <BlockedComposer user={dm.other} /> : <MessageComposer />}
           </div>
         </>
       )}

@@ -168,6 +168,11 @@ export interface AuditEntry {
   created_at: number
 }
 
+export interface BlockedUser {
+  user: UserRef
+  blocked_at: number
+}
+
 export interface ServerBan extends UserRef {
   banned_at: number
 }
@@ -653,6 +658,8 @@ export type WsEvent =
   | { type: 'dm_created'; dm_id: number; dm_users: string[] }
   | { type: 'dm_closed'; username: string; dm_id: number }
   | { type: 'dm_reopened'; username: string; dm_id: number }
+  | { type: 'user_blocked'; username: string; blocked: BlockedUser }
+  | { type: 'user_unblocked'; username: string; blocked: string }
   | { type: 'banned'; username: string }
   | { type: 'settings_changed'; settings: SiteSettings }
   | {

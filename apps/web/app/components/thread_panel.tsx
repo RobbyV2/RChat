@@ -43,6 +43,7 @@ import {
   useScrollAnchor,
 } from './viewport_height'
 import { PanelHeader, useEscape } from './ui'
+import { BlockedList, blockMenuItem } from './blocking'
 import { ReplyPreview } from './replies'
 import { canQuote } from '../lib/replies'
 import { canForward } from '../lib/forward'
@@ -188,6 +189,8 @@ export default function ThreadPanel() {
         icon: Trash2,
         action: () => confirmDeleteMessage(m.id),
       })
+    const block = blockMenuItem(m.author)
+    if (block) items.push(block)
     items.push(...messageCopyItems(m))
     openContextMenu(x, y, items, canReact ? reactHeader(m, x, y) : undefined)
   }
@@ -284,7 +287,7 @@ export default function ThreadPanel() {
               {root.reply_count} {root.reply_count === 1 ? 'reply' : 'replies'}
               <span className="h-px flex-1 bg-outline-variant" />
             </div>
-            {replies.map(row)}
+            <BlockedList messages={replies} focusId={focus?.id ?? null} row={row} />
             {positioned && detached && replies.length > 0 && (
               <EdgeSentinel
                 key={`n${replies[replies.length - 1].id}`}

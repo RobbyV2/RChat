@@ -589,6 +589,16 @@ pub enum WsEvent {
         username: String,
         dm_id: i64,
     },
+    /// `username` blocked a user; to that user's connections only.
+    UserBlocked {
+        username: String,
+        blocked: crate::api::blocks::BlockedUser,
+    },
+    /// `username` unblocked `blocked`; to that user's connections only.
+    UserUnblocked {
+        username: String,
+        blocked: String,
+    },
     Banned {
         username: String,
     },
@@ -746,7 +756,7 @@ async fn insert_call_log(
 
 async fn broadcast_call_log(state: &AppState, dm_id: i64, dm_users: Vec<String>, log_id: i64) {
     if let Ok(Some(message)) = load_broadcast(&state.read(), log_id).await {
-        crate::api::dms::reopen_for(state, dm_id, &dm_users).await;
+        crate::api::dms::reopen_for(state, dm_id, &message.author.username, &dm_users).await;
         state.hub.broadcast(WsEvent::Message {
             server: None,
             channel_id: None,
@@ -778,6 +788,14 @@ async fn answer_call_log(state: &AppState, dm_users: Vec<String>, log_id: i64) {
     .await;
     if matches!(res, Ok(r) if r.rows_affected() > 0) {
         broadcast_call_update(state, dm_users, log_id).await;
+    }
+}
+
+/// Ends the call on DM `dm_id`, if there is one, for `user` (a block): a ringing call is logged
+/// as declined.
+pub(crate) async fn end_dm_call(state: &AppState, user: &str, dm_id: i64) {
+    if let Ok(end) = state.hub.call_end(user, dm_id).await {
+        finalize_call_log(state, end, true).await;
     }
 }
 
@@ -1445,6 +1463,13 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             if a == b {
                 return Err("Cannot call yourself".to_string());
             }
+            let other = match a == user {
+                true => &b,
+                false => &a,
+            };
+            crate::api::blocks::check_dm(&state.db, user, other)
+                .await
+                .map_err(|crate::api::ApiError(_, e)| e)?;
             let kind = match p2p {
                 true => CallKind::P2p,
                 false => CallKind::Rtc,
@@ -1482,6 +1507,9 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
         }
         ClientMsg::CallAccept { dm_id, peer_id } => {
             let peer_id = call_peer_id(peer_id)?;
+            crate::api::blocks::check_dm_id(&state.db, user, dm_id)
+                .await
+                .map_err(|crate::api::ApiError(_, e)| e)?;
             let (log_id, dm_users) = state.hub.call_accept(user, conn, dm_id, peer_id).await?;
             answer_call_log(state, dm_users, log_id).await;
             Ok(())
@@ -1516,19 +1544,22 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             {
                 return Err(crate::api::access::TIMED_OUT.to_string());
             }
-            match state.hub.rtc_shared(user, &to, channel_id, dm_id) {
-                true => {
-                    state.hub.broadcast(WsEvent::RtcSignal {
-                        to,
-                        from: user.to_string(),
-                        channel_id,
-                        dm_id,
-                        payload,
-                    });
-                    Ok(())
-                }
-                false => Err("No shared voice session".to_string()),
+            if !state.hub.rtc_shared(user, &to, channel_id, dm_id) {
+                return Err("No shared voice session".to_string());
             }
+            if dm_id.is_some() {
+                crate::api::blocks::check_dm(&state.db, user, &to)
+                    .await
+                    .map_err(|crate::api::ApiError(_, e)| e)?;
+            }
+            state.hub.broadcast(WsEvent::RtcSignal {
+                to,
+                from: user.to_string(),
+                channel_id,
+                dm_id,
+                payload,
+            });
+            Ok(())
         }
         ClientMsg::Auth { token: _ }
         | ClientMsg::Viewing { server: _ }
@@ -4123,7 +4154,15 @@ fn wants(
             thread_pings: _,
         }
         | WsEvent::DmClosed { username, dm_id: _ }
-        | WsEvent::DmReopened { username, dm_id: _ } => Some(username.as_str()) == me,
+        | WsEvent::DmReopened { username, dm_id: _ }
+        | WsEvent::UserBlocked {
+            username,
+            blocked: _,
+        }
+        | WsEvent::UserUnblocked {
+            username,
+            blocked: _,
+        } => Some(username.as_str()) == me,
         WsEvent::ServerCreated { server } => {
             is_site_admin || (me.is_some() && server.creator.as_deref() == me)
         }
@@ -6351,6 +6390,153 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn blocked_users_cannot_call() {
+        let (state, path) = crate::api::test_util::temp_state("call_blocked").await;
+        let db = &state.db;
+        for name in ["alice", "bob"] {
+            add_user_row(db, name).await;
+        }
+        let dm = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
+        )
+        .await;
+        sqlx::query("INSERT INTO blocks(blocker, blocked, created_at) VALUES('alice', 'bob', 1)")
+            .execute(db)
+            .await
+            .expect("block");
+        let start = || ClientMsg::CallStart {
+            dm_id: dm,
+            p2p: false,
+            video: false,
+            peer_id: None,
+        };
+        assert_eq!(
+            voice_msg(&state, "bob", 1, start()).await.err().as_deref(),
+            Some(crate::api::blocks::NOT_ACCEPTING)
+        );
+        assert!(voice_msg(&state, "alice", 2, start()).await.is_err());
+        let logs = insert_id(db, "SELECT COUNT(*) FROM messages WHERE kind = 'call'").await;
+        assert_eq!(logs, 0);
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn blocking_ends_calls_and_stops_answers_and_signals() {
+        let (state, path) = crate::api::test_util::temp_state("call_block_ends").await;
+        let db = &state.db;
+        for name in ["alice", "bob"] {
+            add_user_row(db, name).await;
+        }
+        let dm = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
+        )
+        .await;
+        let start = || ClientMsg::CallStart {
+            dm_id: dm,
+            p2p: false,
+            video: false,
+            peer_id: None,
+        };
+        let accept = || ClientMsg::CallAccept {
+            dm_id: dm,
+            peer_id: None,
+        };
+        let signal = || ClientMsg::RtcSignal {
+            to: s("alice"),
+            channel_id: None,
+            dm_id: Some(dm),
+            payload: serde_json::json!({ "sdp": "x" }),
+        };
+        let block = async |on: bool| match on {
+            true => {
+                let _ = crate::api::blocks::block_user(
+                    State(state.clone()),
+                    crate::api::Authed(crate::api::test_util::mem_user("alice", false)),
+                    axum::Json(
+                        serde_json::from_value(serde_json::json!({ "username": "bob" }))
+                            .expect("req"),
+                    ),
+                )
+                .await
+                .expect("block");
+            }
+            false => {
+                sqlx::query("DELETE FROM blocks")
+                    .execute(&state.db)
+                    .await
+                    .expect("unblock");
+            }
+        };
+        let quiet_block = async || {
+            sqlx::query(
+                "INSERT INTO blocks(blocker, blocked, created_at) VALUES('alice', 'bob', 1)",
+            )
+            .execute(&state.db)
+            .await
+            .expect("row");
+        };
+        let outcome = async || -> (Option<String>, bool) {
+            let r = sqlx::query(
+                "SELECT call_outcome, call_ended_at FROM messages WHERE kind = 'call' ORDER BY id DESC LIMIT 1",
+            )
+            .fetch_one(&state.db)
+            .await
+            .expect("log");
+            (r.get(0), r.get::<Option<i64>, _>(1).is_some())
+        };
+        let ended = |rx: &mut broadcast::Receiver<WsEvent>| {
+            std::iter::from_fn(|| rx.try_recv().ok()).any(|ev| {
+                matches!(ev, WsEvent::CallState { dm_id, state: CallPhase::Ended, .. } if dm_id == dm)
+            })
+        };
+
+        voice_msg(&state, "bob", 1, start()).await.expect("ring");
+        let mut rx = state.hub.subscribe();
+        block(true).await;
+        assert!(ended(&mut rx), "the ringing call ends");
+        assert_eq!(outcome().await, (Some(s("declined")), true));
+        assert!(voice_msg(&state, "alice", 2, accept()).await.is_err());
+        block(false).await;
+
+        voice_msg(&state, "bob", 1, start())
+            .await
+            .expect("ring again");
+        quiet_block().await;
+        assert_eq!(
+            voice_msg(&state, "alice", 2, accept())
+                .await
+                .err()
+                .as_deref(),
+            Some("You blocked this user. Unblock them to send messages.")
+        );
+        state.hub.call_end("bob", dm).await.expect("end");
+        block(false).await;
+
+        voice_msg(&state, "bob", 1, start()).await.expect("ring");
+        voice_msg(&state, "alice", 2, accept())
+            .await
+            .expect("answer");
+        voice_msg(&state, "bob", 1, signal())
+            .await
+            .expect("signals flow");
+        quiet_block().await;
+        assert_eq!(
+            voice_msg(&state, "bob", 1, signal()).await.err().as_deref(),
+            Some(crate::api::blocks::NOT_ACCEPTING)
+        );
+        block(false).await;
+
+        let mut rx = state.hub.subscribe();
+        block(true).await;
+        assert!(ended(&mut rx), "the active call ends");
+        assert_eq!(outcome().await, (Some(s("completed")), true));
+        assert!(voice_msg(&state, "bob", 1, signal()).await.is_err());
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn call_logs_record_video_and_the_connection() {
         let (state, path) = crate::api::test_util::temp_state("call_log_kind").await;
         let db = &state.db;
@@ -7584,6 +7770,17 @@ mod tests {
                     WsEvent::DmReopened {
                         username: s(user),
                         dm_id: 1,
+                    },
+                    WsEvent::UserBlocked {
+                        username: s(user),
+                        blocked: crate::api::blocks::BlockedUser {
+                            user: crate::api::missing_user("x"),
+                            blocked_at: 1,
+                        },
+                    },
+                    WsEvent::UserUnblocked {
+                        username: s(user),
+                        blocked: s("x"),
                     },
                     WsEvent::RtcSignal {
                         to: s(user),

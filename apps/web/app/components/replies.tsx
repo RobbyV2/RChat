@@ -65,6 +65,7 @@ export function ReplyPreview({
   color?: string
   onJump: (id: number) => void
 }) {
+  const blocked = useStore(s => (quote.author ? s.blocked[quote.author.username] === true : false))
   const connector = (
     <span
       aria-hidden
@@ -97,6 +98,17 @@ export function ReplyPreview({
       </div>
     )
   const { author } = quote
+  if (blocked)
+    return (
+      <div
+        data-reply-to={quote.id}
+        className="relative mb-0.5 flex h-5 items-center text-xs text-on-surface-variant"
+        style={indent}
+      >
+        {connector}
+        <span className="truncate italic">Blocked message</span>
+      </div>
+    )
   return (
     <div
       data-reply-to={quote.id}

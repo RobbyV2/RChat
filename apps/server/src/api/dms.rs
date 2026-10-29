@@ -7,13 +7,14 @@ use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::resolve_dm;
+use crate::api::blocks::{check_dm, not_blocking};
 use crate::api::messages::read_dm_latest;
 use crate::api::servers::Page;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, DmSummary, OkResp, Paged, cursor_int, decode_cursor,
     encode_cursor, ok, page_bounds, placeholders, split_list, user_from, user_ref, user_refs,
 };
-use crate::db::{Db, LIVE_DM, get_user};
+use crate::db::{Db, LIVE_DM, User, get_user};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -270,6 +271,7 @@ pub(crate) async fn open_dm(
     let (id, created) = match existing {
         Some(id) => (id, false),
         None => {
+            check_dm(&state.db, &user.username, &target).await?;
             let id: i64 =
                 sqlx::query("INSERT INTO dms(user_a, user_b) VALUES($1, $2) RETURNING id")
                     .bind(&a)
@@ -318,11 +320,19 @@ async fn set_closed(db: &Db, id: i64, username: &str, closed: bool) -> Result<bo
     Ok(changed)
 }
 
-/// Reopens a DM for `recipients` (the participants a new message in it reaches) and tells each
-/// one whose list it was hidden from. A participant left out stays closed.
-pub(crate) async fn reopen_for(state: &AppState, id: i64, recipients: &[String]) {
+/// Reopens a DM for `recipients` (the participants a new message in it from `actor` reaches)
+/// and tells each one whose list it was hidden from. A participant left out, or one who blocked
+/// `actor`, stays closed.
+pub(crate) async fn reopen_for(state: &AppState, id: i64, actor: &str, recipients: &[String]) {
+    let recipients = match not_blocking(&state.db, actor, recipients).await {
+        Ok(users) => users,
+        Err(ApiError(_, e)) => {
+            tracing::warn!("dm {id} not reopened: {e}");
+            return;
+        }
+    };
     let mut done: Vec<&str> = Vec::with_capacity(recipients.len());
-    for user in recipients {
+    for user in &recipients {
         if done.contains(&user.as_str()) {
             continue;
         }
@@ -336,6 +346,36 @@ pub(crate) async fn reopen_for(state: &AppState, id: i64, recipients: &[String])
             Err(ApiError(_, e)) => tracing::warn!("dm {id} not reopened: {e}"),
         }
     }
+}
+
+/// Closes `user`'s side of their DM with `other`, if there is one, like `POST
+/// /api/dms/{id}/close`, and returns its id.
+pub(crate) async fn close_with(
+    state: &AppState,
+    user: &User,
+    other: &str,
+) -> Result<Option<i64>, ApiError> {
+    let (a, b) = match user.username.as_str() <= other {
+        true => (user.username.as_str(), other),
+        false => (other, user.username.as_str()),
+    };
+    let Some(row) = sqlx::query("SELECT id FROM dms WHERE user_a = $1 AND user_b = $2")
+        .bind(a)
+        .bind(b)
+        .fetch_optional(&state.db)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let id: i64 = row.try_get(0)?;
+    if set_closed(&state.db, id, &user.username, true).await? {
+        state.hub.broadcast(WsEvent::DmClosed {
+            username: user.username.clone(),
+            dm_id: id,
+        });
+    }
+    read_dm_latest(state, user, id).await?;
+    Ok(Some(id))
 }
 
 /// Close a DM
@@ -647,7 +687,7 @@ mod tests {
         assert_eq!(reopened, ["alice", "bob"]);
 
         close("alice", dm.id).await.expect("close");
-        reopen_for(&state, dm.id, &["bob".to_string()]).await;
+        reopen_for(&state, dm.id, "alice", &["bob".to_string()]).await;
         assert_eq!(listed("alice").await, [me.id]);
         while rx.try_recv().is_ok() {}
         assert!(!open("alice", "Bob").await.closed);

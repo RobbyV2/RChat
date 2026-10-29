@@ -791,6 +791,8 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         "UPDATE server_passwords SET created_by = NULL WHERE created_by = $1",
         "UPDATE messages SET pinned_by = NULL WHERE pinned_by = $1",
         "DELETE FROM read_state WHERE username = $1",
+        "DELETE FROM blocks WHERE blocker = $1",
+        "DELETE FROM blocks WHERE blocked = $1",
         "DELETE FROM users WHERE username = $1",
     ] {
         sqlx::query(sql).bind(key).execute(&mut **tx).await?;

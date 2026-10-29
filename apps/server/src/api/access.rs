@@ -1202,23 +1202,21 @@ impl ResolvedMessage {
             .is_some_and(|u| u.username == self.scope.author)
     }
 
-    /// A participant of the live DM `did`, paced.
-    async fn dm_participant(&self, db: &Db, did: i64) -> Result<(), ApiError> {
-        match dm_pair(db, did, true).await? {
-            Some(users)
-                if self
-                    .user
-                    .as_ref()
-                    .is_some_and(|u| users.contains(&u.username)) =>
-            {
-                pace(db, self.user.as_ref())
+    /// Writing into the live DM `did` (reactions, pins, edits): a participant that neither
+    /// blocked the other nor was blocked by them, paced.
+    async fn dm_writer(&self, db: &Db, did: i64) -> Result<(), ApiError> {
+        match (dm_pair(db, did, true).await?, &self.user) {
+            (Some(users), Some(user)) if users.contains(&user.username) => {
+                crate::api::blocks::check_dm_write(db, &user.username, &users).await?;
+                pace(db, Some(user))
             }
-            _ => Err(not_found()),
+            (_, _) => Err(not_found()),
         }
     }
 
     /// Adding or removing a reaction: in a channel like sending (a signed-in member with the
-    /// channel's send permission), in a DM being a participant while both accounts are live.
+    /// channel's send permission), in a DM being a participant while both accounts are live and
+    /// neither blocked the other.
     pub async fn react_gate(&self, db: &Db) -> Result<(), ApiError> {
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
@@ -1228,13 +1226,14 @@ impl ResolvedMessage {
                 }
                 channel.timeout_gate(db).await
             }
-            (None, Some(did)) => self.dm_participant(db, did).await,
+            (None, Some(did)) => self.dm_writer(db, did).await,
             (None, None) => Err(not_found()),
         }
     }
 
     /// Pinning or unpinning: in a channel a signed-in member with the Manage messages
-    /// (`DeleteMessages`) permission, in a DM either participant while both accounts are live.
+    /// (`DeleteMessages`) permission, in a DM either participant while both accounts are live and
+    /// neither blocked the other.
     pub async fn pin_gate(&self, db: &Db) -> Result<(), ApiError> {
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
@@ -1247,13 +1246,14 @@ impl ResolvedMessage {
                     (true, false) => Err(forbidden("No permission to send in this channel")),
                 }
             }
-            (None, Some(did)) => self.dm_participant(db, did).await,
+            (None, Some(did)) => self.dm_writer(db, did).await,
             (None, None) => Err(not_found()),
         }
     }
 
     /// Editing: only the author, and only while they could still send there (a member with the
-    /// channel's send permission, or a participant of a live DM). Slow mode does not apply.
+    /// channel's send permission, or a participant of a live DM where neither blocked the other).
+    /// Slow mode does not apply.
     pub async fn edit_gate(&self, db: &Db) -> Result<(), ApiError> {
         if !self.own() {
             return Err(forbidden("You can only edit your own messages"));
@@ -1267,10 +1267,7 @@ impl ResolvedMessage {
                 }
                 channel.timeout_gate(db).await
             }
-            (None, Some(did)) => match dm_pair(db, did, true).await? {
-                Some(_) => pace(db, self.user.as_ref()),
-                None => Err(not_found()),
-            },
+            (None, Some(did)) => self.dm_writer(db, did).await,
             (None, None) => Err(not_found()),
         }
     }
@@ -1534,6 +1531,9 @@ pub(crate) async fn ws_typing_place(db: &Db, username: &str, scope: &str) -> Opt
         }
         "d" => {
             let users = resolve_dm(db, id, &user).await.ok()?;
+            crate::api::blocks::check_dm_write(db, username, &users)
+                .await
+                .ok()?;
             Some(TypingPlace {
                 server: None,
                 channel_id: None,

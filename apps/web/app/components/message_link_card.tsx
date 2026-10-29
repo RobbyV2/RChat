@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { CornerDownRight, Forward, Phone, Pin } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { cardLabel } from '../lib/message_links'
@@ -9,6 +9,7 @@ import type { MessageTarget } from '../lib/view'
 import { MessageTime } from './timestamp'
 import { Snippet } from './replies'
 import { UserAvatar } from './user_avatar'
+import { BlockedQuote } from './blocking'
 
 // A pasted link to a message on this instance. Shown only once the gated lookup says the viewer
 // can read the message; otherwise the link stays a plain link.
@@ -18,10 +19,21 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
   const known = useStore(s => id in s.linkCards)
   const resolveLinkCard = useStore(s => s.resolveLinkCard)
   const openMessage = useStore(s => s.openMessage)
+  const blocked = useStore(s => (card ? s.blocked[card.author.username] === true : false))
+  const [shown, setShown] = useState(false)
   useEffect(() => {
     if (!known) resolveLinkCard(id)
   }, [id, known, resolveLinkCard])
   if (!card) return null
+  if (blocked && !shown)
+    return (
+      <div
+        data-link-card={id}
+        className="mt-1 flex max-w-160 min-w-0 items-center gap-3 rounded-xl border border-outline-variant bg-surface-container px-3 py-2"
+      >
+        <BlockedQuote onShow={() => setShown(true)} />
+      </div>
+    )
   const { author, created_at } = card
   const jump = (e: React.MouseEvent) => {
     e.stopPropagation()

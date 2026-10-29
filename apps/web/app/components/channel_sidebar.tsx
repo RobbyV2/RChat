@@ -48,6 +48,7 @@ import {
 import { UserAvatar } from './user_avatar'
 import { ServerHeader } from './server_header'
 import { longPress } from './context_menu'
+import { blockMenuItem } from './blocking'
 import { dragScope, useDrag, type DragSpec } from './drag'
 import { profileTrigger } from './profile_card'
 import { LiveBadge, VoiceDock } from './voice_grid'
@@ -103,6 +104,7 @@ function DmRow({
               ? { label: 'Unpin DM', action: () => unpinDm(id) }
               : { label: 'Pin DM', action: () => pinDm(id) },
             { label: 'Close DM', action: () => void closeDm(id) },
+            ...[blockMenuItem(other)].filter(i => i !== null),
             {
               label: 'Copy DM ID',
               action: () => void navigator.clipboard.writeText(String(id)),

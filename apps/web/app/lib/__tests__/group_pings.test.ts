@@ -242,6 +242,15 @@ describe('live group mentions', () => {
     expect(allPings(st())).toBe(0)
   })
 
+  test('authors you blocked neither badge nor toast', () => {
+    useStore.setState({ blocked: { alice: true } })
+    dispatch(said(10, [everyone, here, crew]))
+    expect(st().groupPings.c1).toBeUndefined()
+    expect(allPings(st())).toBe(0)
+    expect(toasts()).toEqual([])
+    useStore.setState({ blocked: {} })
+  })
+
   test('a role you hold toasts with its name; one you lack stays plain', () => {
     dispatch(said(11, [crew]))
     expect(toasts()).toEqual(['Alice mentioned @Crew|s · #general'])

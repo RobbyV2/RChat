@@ -1405,7 +1405,7 @@ async fn deliver(
         store_group_pings(state, channel, &message).await;
     }
     if let (Some(id), Some(users)) = (dm_id, &dm_users) {
-        dms::reopen_for(state, id, users).await;
+        dms::reopen_for(state, id, &user.username, users).await;
     }
     state.hub.broadcast(WsEvent::Message {
         server,
@@ -1740,7 +1740,7 @@ pub(crate) async fn dm_messages(
 /// event). `reply_to` may quote a message of the same conversation; with `mention_reply`
 /// (default) its author gets a `reply` ping instead. With `forward_of` the message is a copy
 /// of a message you can read (see `SendReq`) and pings nobody. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off), or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn send_dm_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1748,6 +1748,7 @@ pub(crate) async fn send_dm_message(
     Json(req): Json<SendReq>,
 ) -> Result<Json<Message>, ApiError> {
     let users = resolve_dm(&state.db, id, &user).await?;
+    crate::api::blocks::check_dm_write(&state.db, &user.username, &users).await?;
     deliver(
         &state,
         &user,
@@ -1883,7 +1884,7 @@ pub struct EditReq {
 /// read the message again through the message list (`around=id`), which applies the
 /// read-history rules. In DMs, both participants get `message_updated` with the full message, and
 /// new previews as `embeds_resolved`. General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), request_body = EditReq, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Blocked by the profanity filter, text over 4000 characters, blank text on a message without attachment (`Message is empty`), or not a user message (`Cannot edit this message`). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not your message (`You can only edit your own messages`), no longer a member of the server, or no permission to send in the channel", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket (plain text), or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), request_body = EditReq, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Blocked by the profanity filter, text over 4000 characters, blank text on a message without attachment (`Message is empty`), or not a user message (`Cannot edit this message`). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not your message (`You can only edit your own messages`), no longer a member of the server, or no permission to send in the channel, or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket (plain text), or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn edit_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -8158,7 +8159,7 @@ mod tests {
         .collect();
         let plan = plan.join("\n");
         assert!(plan.contains("idx_group_pings_channel"), "{plan}");
-        for table in ["g", "mem", "rs", "h", "ur", "p"] {
+        for table in ["g", "mem", "rs", "h", "ur", "p", "b"] {
             assert!(
                 !plan.lines().any(|l| l.trim() == format!("SCAN {table}")),
                 "full scan of {table}:\n{plan}"

@@ -426,13 +426,16 @@ fn paced(db: &Db, actor: &str, recipients: &[String]) -> Vec<String> {
 }
 
 /// Stores the pings (see `insert_pings`) and sends each recipient's connections a `ping` event.
-/// Each actor is paced per recipient and in total; pings past the pace are dropped.
+/// Recipients who blocked the actor get nothing. Each actor is paced per recipient and in total;
+/// pings past the pace are dropped.
 pub async fn create_pings(
     state: &AppState,
     spec: &PingSpec<'_>,
     recipients: &[String],
 ) -> Result<Vec<Ping>, ApiError> {
-    let recipients = paced(&state.db, &spec.actor.username, recipients);
+    let recipients =
+        crate::api::blocks::not_blocking(&state.db, &spec.actor.username, recipients).await?;
+    let recipients = paced(&state.db, &spec.actor.username, &recipients);
     if recipients.is_empty() {
         return Ok(Vec::new());
     }
@@ -748,7 +751,7 @@ pub(crate) fn group_unseen_sql(hidden: &[i64]) -> String {
         ),
     };
     format!(
-        "SELECT g.channel_id, g.message_id, g.kind FROM members mem JOIN channels c ON c.server = mem.server JOIN group_pings g ON g.channel_id = c.id WHERE mem.username = $1 AND c.kind = 'text' AND g.message_id > COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'c' || c.id), 0) AND g.created_at >= mem.joined_at AND g.actor <> $1 AND (g.kind = 'everyone' OR (g.kind = 'here' AND EXISTS(SELECT 1 FROM here_pings h WHERE h.username = $1 AND h.ping_id = g.id)) OR (g.kind = 'role' AND EXISTS(SELECT 1 FROM user_roles ur WHERE ur.server = g.server AND ur.username = $1 AND ur.role_id = g.role_id))) AND NOT EXISTS(SELECT 1 FROM pings p WHERE p.message_id = g.message_id AND p.username = $1 AND p.kind <> 'reaction'){skip} ORDER BY g.message_id DESC LIMIT $2"
+        "SELECT g.channel_id, g.message_id, g.kind FROM members mem JOIN channels c ON c.server = mem.server JOIN group_pings g ON g.channel_id = c.id WHERE mem.username = $1 AND c.kind = 'text' AND g.message_id > COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'c' || c.id), 0) AND g.created_at >= mem.joined_at AND g.actor <> $1 AND NOT EXISTS(SELECT 1 FROM blocks b WHERE b.blocker = $1 AND b.blocked = g.actor) AND (g.kind = 'everyone' OR (g.kind = 'here' AND EXISTS(SELECT 1 FROM here_pings h WHERE h.username = $1 AND h.ping_id = g.id)) OR (g.kind = 'role' AND EXISTS(SELECT 1 FROM user_roles ur WHERE ur.server = g.server AND ur.username = $1 AND ur.role_id = g.role_id))) AND NOT EXISTS(SELECT 1 FROM pings p WHERE p.message_id = g.message_id AND p.username = $1 AND p.kind <> 'reaction'){skip} ORDER BY g.message_id DESC LIMIT $2"
     )
 }
 
@@ -756,10 +759,10 @@ pub(crate) fn group_unseen_sql(hidden: &[i64]) -> String {
 /// A message counts while it is newer than the reader's read position in the channel, was sent
 /// after they joined the server (so read-history limits never matter), is not their own, and
 /// addresses them: `@everyone`, `@here` when they were among the stored online viewers, or a
-/// role they hold now. Messages that also ping them personally (a mention or reply ping) count
+/// role they hold now. Messages by someone they blocked never count. Messages that also ping them personally (a mention or reply ping) count
 /// only there. Channels in `hidden` (the ones they cannot view) are skipped. At most
 /// `GROUP_PINGS_MAX` rows are read; every lookup is indexed (`members` by user, `channels` by server,
-/// `group_pings` by channel and message id, `read_state`, `here_pings` and `user_roles` by
+/// `group_pings` by channel and message id, `read_state`, `here_pings`, `user_roles` and `blocks` by
 /// primary key, `pings` by message).
 pub async fn group_unseen(
     db: &Db,

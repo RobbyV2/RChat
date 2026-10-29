@@ -2,6 +2,7 @@ pub mod access;
 pub mod admin;
 pub mod audit;
 pub mod auth;
+pub mod blocks;
 pub mod budget;
 pub mod categories;
 pub mod config_shares;
@@ -1750,6 +1751,9 @@ fn api_routes(
         )
         .route("/dms/{id}/pins", get(pins::dm_pins))
         .route("/dms/{id}/close", post(dms::close_dm))
+        .route("/blocks", get(blocks::list_blocks).post(blocks::block_user))
+        .route("/blocks/usernames", get(blocks::blocked_usernames))
+        .route("/blocks/{username}", delete(blocks::unblock_user))
         .route(
             "/messages/{id}",
             delete(messages::delete_message).patch(messages::edit_message),

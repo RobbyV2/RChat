@@ -11,6 +11,7 @@ import type { ForwardClip } from './forward'
 import type { OpenInvite } from './invite'
 import type { OlderState, ReadMark } from './lists'
 import type { DmZone, Layout } from './nav_layout'
+import type { Blocked } from './blocks'
 import type { Notice } from './notices'
 import type { Level, MuteUntil, NotifyPrefs, NotifyScope, Suppress } from './notify'
 import type { PassKind, Secret } from './password'
@@ -22,6 +23,7 @@ import type { Sed } from './sed'
 import type {
   AdminOverview,
   AvatarKind,
+  BlockedUser,
   CallKind,
   ChannelKind,
   ChannelPerm,
@@ -199,6 +201,10 @@ export interface RChatState {
   bans: Record<string, Paged<ServerBan>>
   adminUsers: Paged<UserRef>
   adminServers: Paged<ServerSummaryLite>
+  // Usernames this account blocked (all of them, from GET /api/blocks/usernames).
+  blocked: Blocked
+  // The Settings > Privacy list: paged and searchable.
+  blockList: Paged<BlockedUser>
   dms: DmSummary[]
   dmsMore: boolean
   serversMore: boolean
@@ -321,6 +327,13 @@ export interface RChatState {
   pinDm: (id: number) => void
   unpinDm: (id: number) => void
   closeDm: (id: number) => Promise<void>
+  loadBlockList: (q: string, reset?: boolean) => Promise<void>
+  // Resolves to an error text, or null once blocked.
+  blockUser: (username: string) => Promise<string | null>
+  // `name` (a display name) shows an "Unblocked" toast.
+  unblockUser: (username: string, name?: string) => Promise<void>
+  // A short confirm, then `blockUser` and a toast.
+  askBlock: (user: UserRef) => void
   reloadLayout: () => void
   noteEmoji: (base: string, picked: string) => void
   setSkinTone: (tone: number) => void

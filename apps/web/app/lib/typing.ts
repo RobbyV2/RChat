@@ -95,9 +95,13 @@ export const nextExpiry = (map: TypingMap): number | null => {
   return next
 }
 
-// Single place to hide typers, e.g. blocked users later.
+// Single place to hide typers: blocked users.
 const hidden = new Set<string>()
 export const typerShown = (username: string) => !hidden.has(username)
+export const hideTypers = (names: Iterable<string>) => {
+  hidden.clear()
+  for (const n of names) hidden.add(n)
+}
 
 // Display names of who is typing, in the order they started. Expired entries are pruned by
 // the store.

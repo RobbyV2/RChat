@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { Forward, Image as ImageIcon, SendHorizontal } from 'lucide-react'
 import { useStore, type ContextMenuItem } from '../lib/store'
 import { forwardOrigin, forwardPending } from '../lib/forward'
@@ -9,6 +10,7 @@ import { ComposerBar } from './replies'
 import { MarkdownMessage } from './markdown_message'
 import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
+import { BlockedQuote } from './blocking'
 import { MessageTime } from './timestamp'
 import { fullTimeOf, messageTime, plainStamps } from '../lib/timestamps'
 
@@ -87,16 +89,30 @@ export function ForwardCard({
 }) {
   const openForward = useStore(s => s.openForward)
   const fwd = m.forward
+  const blocked = useStore(s => (fwd?.author ? s.blocked[fwd.author.username] === true : false))
+  const [shown, setShown] = useState(false)
   if (!fwd) return null
   const { author } = fwd
   const origin = forwardOrigin(fwd)
   const when = fullTimeOf(fwd.created_at)
+  const head = (
+    <div className="flex items-center gap-1 text-xs text-on-surface-variant italic">
+      <Forward size={12} className="shrink-0" />
+      Forwarded
+    </div>
+  )
+  if (blocked && !shown)
+    return (
+      <div data-forward={fwd.source_id} className="min-w-0">
+        {head}
+        <div className="mt-1 max-w-160 min-w-0 rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
+          <BlockedQuote onShow={() => setShown(true)} />
+        </div>
+      </div>
+    )
   return (
     <div data-forward={fwd.source_id} className="min-w-0">
-      <div className="flex items-center gap-1 text-xs text-on-surface-variant italic">
-        <Forward size={12} className="shrink-0" />
-        Forwarded
-      </div>
+      {head}
       <div className="mt-1 max-w-160 min-w-0 rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           {author ? (

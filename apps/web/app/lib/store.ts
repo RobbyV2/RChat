@@ -70,6 +70,7 @@ import { notifications } from './platform'
 import {
   IDLE,
   TYPING_TTL_MS,
+  hideTypers,
   nextExpiry as nextTypingExpiry,
   nextTyping,
   parseTyping,
@@ -274,8 +275,10 @@ import type {
 } from './store_types'
 import { parsePath, threadKey, viewKey, viewPath, type Nav, type View } from './view'
 
+import { blockedSet, matchesBlockQuery, withoutTypers, type Blocked } from './blocks'
 import type {
   AuthResponse,
+  BlockedUser,
   CallKind,
   DmSummary,
   EditStub,
@@ -938,6 +941,47 @@ export const useStore = create<RChatState>()((set, get) => {
     void pruneScopes().then(applyStashedConfig)
   }
 
+  const setBlocked = (blocked: Blocked) => {
+    hideTypers(Object.keys(blocked))
+    set(s => ({ blocked, typing: withoutTypers(s.typing, blocked) }))
+  }
+
+  const loadBlocked = async () => {
+    const username = get().me?.username
+    if (!username || get().guest) return
+    let names: unknown
+    try {
+      names = await api.blockedUsernames()
+    } catch {
+      return
+    }
+    if (!sameUser(username) || !Array.isArray(names)) return
+    setBlocked(blockedSet(names.filter((n): n is string => typeof n === 'string')))
+  }
+
+  const noteBlocked = (b: BlockedUser) => {
+    const name = b.user.username
+    if (!get().blocked[name]) setBlocked({ ...get().blocked, [name]: true })
+    set(s => {
+      const page = s.blockList
+      if (page.list.some(x => x.user.username === name) || !matchesBlockQuery(b, page.q)) return {}
+      return { blockList: { ...page, list: [b, ...page.list] } }
+    })
+  }
+
+  const noteUnblocked = (name: string) => {
+    if (get().blocked[name]) {
+      const rest = { ...get().blocked }
+      delete rest[name]
+      setBlocked(rest)
+    }
+    set(s => {
+      const page = s.blockList
+      if (!page.list.some(x => x.user.username === name)) return {}
+      return { blockList: { ...page, list: page.list.filter(x => x.user.username !== name) } }
+    })
+  }
+
   const applyMe = (fresh: Me, keep: boolean) => {
     const cur = get()
     const same = keep && cur.me?.username === fresh.username
@@ -982,6 +1026,7 @@ export const useStore = create<RChatState>()((set, get) => {
     if (resume.servers) void get().loadMoreServers()
     if (resume.dms) void get().loadMoreDms()
     if (!same) void syncLayout(fresh.username)
+    if (!same) void loadBlocked()
   }
 
   const refetchMe = () =>
@@ -1374,6 +1419,7 @@ export const useStore = create<RChatState>()((set, get) => {
         set({ p2pAvailability: {}, voiceUsers: {}, voiceMuted: {} })
         home.ws.resubscribe()
         refreshMe()
+        void loadBlocked()
         const { view } = get()
         if (view) askP2p(get().messages[viewKey(view)] ?? [])
         const { pins } = get()
@@ -1650,7 +1696,7 @@ export const useStore = create<RChatState>()((set, get) => {
         await get()
           .ensureDms([target.dmId])
           .catch(() => {})
-      if (!known()) return fallback()
+      if (!known() && !closedDms.has(target.dmId)) return fallback()
       await unreadsReady
       return get().openDm(target.dmId, nav)
     }
@@ -2976,6 +3022,7 @@ export const useStore = create<RChatState>()((set, get) => {
     const s = get()
     const me = s.me
     if (!me || m.channel_id === null || !m.group_mentions?.length) return false
+    if (s.blocked[m.author.username]) return false
     const member = me.servers.some(x => x.name === server)
     const known = memberOf(s, server, me.username)
     const kinds = groupKindsFor(m, {
@@ -3170,6 +3217,7 @@ export const useStore = create<RChatState>()((set, get) => {
   // Drops the timers, queues and caches of the signed-in session.
   const forgetSession = () => {
     dropLinkCards()
+    hideTypers([])
     if (noticeTimer !== null) clearTimeout(noticeTimer)
     noticeTimer = null
     if (meRetry) clearTimeout(meRetry)
@@ -3224,6 +3272,8 @@ export const useStore = create<RChatState>()((set, get) => {
     bans: {},
     adminUsers: emptyPage<UserRef>(),
     adminServers: emptyPage<ServerSummaryLite>(),
+    blocked: {},
+    blockList: emptyPage<BlockedUser>(),
     dms: [],
     dmsMore: false,
     serversMore: false,
@@ -3531,6 +3581,8 @@ export const useStore = create<RChatState>()((set, get) => {
         bans: {},
         adminUsers: emptyPage<UserRef>(),
         adminServers: emptyPage<ServerSummaryLite>(),
+        blocked: {},
+        blockList: emptyPage<BlockedUser>(),
         dms: [],
         dmsMore: false,
         serversMore: false,
@@ -3864,6 +3916,58 @@ export const useStore = create<RChatState>()((set, get) => {
           throw e
         }
       }),
+
+    loadBlockList: (q, reset = false) =>
+      act(() =>
+        loadPage(
+          'blocks',
+          () => get().blockList,
+          blockList => set({ blockList }),
+          cursor => api.blocks(cursor, q),
+          b => b.user.username,
+          q,
+          reset
+        )
+      ),
+
+    blockUser: async username => {
+      const me = get().me
+      if (!me || get().guest) return null
+      try {
+        const b = await api.block(username.trim())
+        if (sameUser(me.username)) noteBlocked(b)
+        return null
+      } catch (e) {
+        return errorText(e)
+      }
+    },
+
+    unblockUser: (username, name) =>
+      act(async () => {
+        const me = get().me
+        if (!me) return
+        await api.unblock(username)
+        if (!sameUser(me.username)) return
+        noteUnblocked(username)
+        if (name) toast('Unblocked', name)
+      }),
+
+    askBlock: user => {
+      const s = get()
+      if (!s.me || s.guest || user.username === s.me.username) return
+      s.askConfirm({
+        title: 'Block',
+        body: `Block ${user.display_name}? They can't message or ping you, and their messages are hidden. They are not told.`,
+        confirm: 'Block',
+        action: () =>
+          void get()
+            .blockUser(user.username)
+            .then(err => {
+              if (err) fail(new Error(err))
+              else toast('Blocked', user.display_name)
+            }),
+      })
+    },
 
     reloadLayout: () => {
       const { me, guest } = get()
@@ -4989,6 +5093,7 @@ export const useStore = create<RChatState>()((set, get) => {
           const { me, view } = get()
           if (!me || m.author.username === me.username || (rootId !== null && m.dm_id === null))
             return
+          if (get().blocked[m.author.username]) return
           const scope = messageKey(m.channel_id, m.dm_id)
           const target = scope ? scopeOfKey(scope, ev.server ?? null) : null
           if (!scope || !target) return
@@ -5758,6 +5863,14 @@ export const useStore = create<RChatState>()((set, get) => {
           bumpDm(ev.dm_id)
           return
         }
+        case 'user_blocked': {
+          if (get().me?.username === ev.username) noteBlocked(ev.blocked)
+          return
+        }
+        case 'user_unblocked': {
+          if (get().me?.username === ev.username) noteUnblocked(ev.blocked)
+          return
+        }
         case 'banned': {
           staleInvites(null)
           if (get().me?.username === ev.username) {
@@ -5852,8 +5965,8 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'typing': {
-          const { typingOn, me } = get()
-          if (!typingOn || ev.username === me?.username) return
+          const { typingOn, me, blocked } = get()
+          if (!typingOn || ev.username === me?.username || blocked[ev.username]) return
           noteTyper(ev.scope, ev.username, ev.display_name, ev.until > 0)
           return
         }

@@ -18,7 +18,9 @@ import {
   ShieldPlus,
   Timer,
   TimerOff,
+  UserCheck,
   UserMinus,
+  UserX,
   X,
 } from 'lucide-react'
 import { ApiError } from '../lib/api'
@@ -176,6 +178,7 @@ function Card({ target }: { target: ProfileTarget }) {
   const guest = useStore(s => s.guest)
   const streamer = useStore(s => s.streamer)
   const homeHost = useStore(s => s.instanceHost)
+  const isBlocked = useStore(s => s.blocked[username] === true)
   const remote = isHomeHost(target.instance, homeHost) ? null : (target.instance as string)
   const live = useStore(s => (server ? memberState(s, server, username) : undefined))
   const serverRoles = useStore(s => (server ? s.servers[server]?.roles : undefined))
@@ -612,6 +615,24 @@ function Card({ target }: { target: ProfileTarget }) {
             <span className="shrink-0">{copied ? <Check size={16} /> : <Copy size={16} />}</span>
             {copied ? 'Copied' : 'Copy User ID'}
           </button>
+          {me && !guest && !self && !missing && !remote && (
+            <button
+              onClick={() => {
+                const s = useStore.getState()
+                if (isBlocked) void s.unblockUser(username, user.display_name)
+                else {
+                  close()
+                  s.askBlock(user)
+                }
+              }}
+              className={`${rowCls(sheet)} ${isBlocked ? 'text-on-surface' : 'text-error'}`}
+            >
+              <span className="shrink-0">
+                {isBlocked ? <UserCheck size={16} /> : <UserX size={16} />}
+              </span>
+              {isBlocked ? 'Unblock' : 'Block'}
+            </button>
+          )}
         </div>
         {me && !guest && !missing && (
           <div className="mt-2">
@@ -626,6 +647,10 @@ function Card({ target }: { target: ProfileTarget }) {
                 <Pencil size={14} />
                 Edit profile
               </button>
+            ) : isBlocked ? (
+              <p className="rounded-xl bg-surface-container-low px-3 py-2 text-sm text-on-surface-variant">
+                You blocked this user.
+              </p>
             ) : (
               <input
                 value={text}

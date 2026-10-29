@@ -17,12 +17,13 @@ import { SettingSwitch } from './admin_panel'
 import { NotificationsSection } from './notify_settings'
 import { ConfigSyncSection } from './config_sync'
 import { DesktopSection } from './desktop_settings'
+import { BlockedUsersSection } from './blocking'
 import { PassSwitch, WordGrid } from './word_grid'
 import { FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './ui'
 
 const bioFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
-type Section = 'settings' | 'notifications' | 'sync' | 'information'
+type Section = 'settings' | 'notifications' | 'privacy' | 'sync' | 'information'
 
 export default function SettingsMenu() {
   const open = useStore(s => s.activeDialog?.kind === 'settings')
@@ -644,12 +645,14 @@ function InformationSection() {
 function Menu() {
   const closeDialog = useStore(s => s.closeDialog)
   const [section, setSection] = useState<Section>('settings')
+  const signedIn = useStore(s => s.me !== null && !s.guest)
   const titleId = useId()
   useEscape(closeDialog)
 
   const sections: [Section, string][] = [
     ['settings', 'Settings'],
     ['notifications', 'Notifications'],
+    ...(signedIn ? ([['privacy', 'Privacy']] as [Section, string][]) : []),
     ['sync', 'Sync config'],
     ['information', 'Information'],
   ]
@@ -697,6 +700,11 @@ function Menu() {
             <SettingsSection />
           ) : section === 'notifications' ? (
             <NotificationsSection />
+          ) : section === 'privacy' ? (
+            <section>
+              <p className={sectionCls}>Blocked users</p>
+              <BlockedUsersSection />
+            </section>
           ) : section === 'sync' ? (
             <ConfigSyncSection />
           ) : (

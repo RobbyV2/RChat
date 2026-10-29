@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS here_pings(ping_id INTEGER NOT NULL REFERENCES group_
 CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, actor TEXT, staff INTEGER NOT NULL DEFAULT 0, action TEXT NOT NULL, target_kind TEXT, target_id INTEGER, target_name TEXT, target_staff INTEGER NOT NULL DEFAULT 0, details TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS audit_channels(entry_id INTEGER NOT NULL REFERENCES audit_log(id) ON DELETE CASCADE, channel_id INTEGER NOT NULL, private INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(entry_id, channel_id));
 CREATE TABLE IF NOT EXISTS member_timeouts(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, until INTEGER NOT NULL, reason TEXT, set_by TEXT, created_at INTEGER NOT NULL, PRIMARY KEY(server, username));
+CREATE TABLE IF NOT EXISTS blocks(blocker TEXT NOT NULL, blocked TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(blocker, blocked));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -106,6 +107,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(server, action, cre
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(server, actor, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_member_timeouts_until ON member_timeouts(until);
+CREATE INDEX IF NOT EXISTS idx_blocks_recent ON blocks(blocker, created_at, blocked);
+CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked);
 ";
 
 const POSTGRES_SCHEMA: &str = "
@@ -146,6 +149,7 @@ CREATE TABLE IF NOT EXISTS here_pings(ping_id BIGINT NOT NULL REFERENCES group_p
 CREATE TABLE IF NOT EXISTS audit_log(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, actor TEXT, staff BIGINT NOT NULL DEFAULT 0, action TEXT NOT NULL, target_kind TEXT, target_id BIGINT, target_name TEXT, target_staff BIGINT NOT NULL DEFAULT 0, details TEXT NOT NULL DEFAULT '{}', created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS audit_channels(entry_id BIGINT NOT NULL REFERENCES audit_log(id) ON DELETE CASCADE, channel_id BIGINT NOT NULL, private BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(entry_id, channel_id));
 CREATE TABLE IF NOT EXISTS member_timeouts(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, until BIGINT NOT NULL, reason TEXT, set_by TEXT, created_at BIGINT NOT NULL, PRIMARY KEY(server, username));
+CREATE TABLE IF NOT EXISTS blocks(blocker TEXT NOT NULL, blocked TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(blocker, blocked));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -204,6 +208,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(server, action, cre
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(server, actor, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_member_timeouts_until ON member_timeouts(until);
+CREATE INDEX IF NOT EXISTS idx_blocks_recent ON blocks(blocker, created_at, blocked);
+CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked);
 ";
 
 const SQLITE_SEARCH: &[&str] = &[
@@ -503,7 +509,8 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// 6: `users.presence_seq`, the version of the appear-offline setting. 7: timeouts
 /// (`member_timeouts`) and the Timeout members permission bit.
 /// 8: `dms.closed_a` and `dms.closed_b`.
-pub const SCHEMA_VERSION: i64 = 8;
+/// 9: `blocks`.
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
@@ -2057,6 +2064,79 @@ mod tests {
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM dms WHERE closed_a = 1").await,
             1
+        );
+        close(&db).await;
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn existing_databases_get_blocks() {
+        let path = std::env::temp_dir().join(format!("rchat_blocks_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_blocks_recent",
+            "DROP INDEX idx_blocks_blocked",
+            "DROP TABLE blocks",
+            "UPDATE settings SET value = '8' WHERE key = 'schema_version'",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', '', 'text', 'identicon', 1)",
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob')",
+            "INSERT INTO messages(dm_id, author, content, created_at) VALUES(1, 'bob', 'hi', 3)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM blocks").await, 0);
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_blocks_recent', 'idx_blocks_blocked')"
+                )
+                .await,
+                2
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM messages WHERE dm_id = 1 AND content = 'hi'"
+                )
+                .await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM users WHERE username = 'alice'").await,
+                1
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            close(&db).await;
+        }
+        let db = open(path.to_str()).await.expect("reopen");
+        sqlx::query("INSERT INTO blocks(blocker, blocked, created_at) VALUES('alice', 'bob', 5)")
+            .execute(&db)
+            .await
+            .expect("block");
+        assert!(
+            sqlx::query(
+                "INSERT INTO blocks(blocker, blocked, created_at) VALUES('alice', 'bob', 6)"
+            )
+            .execute(&db)
+            .await
+            .is_err(),
+            "one row per pair"
         );
         close(&db).await;
         wipe();

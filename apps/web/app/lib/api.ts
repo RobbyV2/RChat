@@ -3,6 +3,7 @@ import type {
   AdminOverview,
   AuditEntry,
   AuthResponse,
+  BlockedUser,
   AvatarKind,
   Category,
   Channel,
@@ -465,6 +466,11 @@ export const endpoints = (c: ApiClient) => ({
   dmsById: (ids: number[]) => c.req<DmSummary[]>('GET', `/dms?ids=${ids.join(',')}`),
   openDm: (username: string) => c.req<DmSummary>('POST', '/dms', { username }),
   closeDm: (id: number) => c.req<unknown>('POST', `/dms/${id}/close`),
+  blocks: (cursor: string | null, q: string) =>
+    c.page<BlockedUser>(withCursor(`/blocks?limit=50&q=${seg(q)}`, cursor)),
+  blockedUsernames: () => c.req<string[]>('GET', '/blocks/usernames'),
+  block: (username: string) => c.req<BlockedUser>('POST', '/blocks', { username }),
+  unblock: (username: string) => c.req<unknown>('DELETE', `/blocks/${seg(username)}`),
   dmMessages: (id: number, page: PageOpts = {}) =>
     c.req<Message[]>('GET', `/dms/${id}/messages${pageQuery(page)}`),
   sendDmMessage: (id: number, content: string, opts: SendOpts = {}) =>
