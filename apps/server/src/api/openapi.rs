@@ -110,6 +110,7 @@ impl Modify for Bearer {
         super::embeds::delete_embed,
         super::dms::list_dms,
         super::dms::open_dm,
+        super::dms::close_dm,
         super::media::upload_media,
         super::media::download_media,
         super::media::delete_media,

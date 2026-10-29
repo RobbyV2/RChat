@@ -28,7 +28,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 | Servers and channels   | Make servers with text channels, voice channels and threads.                                                          |
 | Roles                  | Give members roles with a color and permissions. A member cannot give more permissions than they have.                |
 | Voice, video and share | Talk in voice channels. Turn on your camera or share your screen.                                                     |
-| Direct messages        | Send private messages. Start voice or video calls in a DM.                                                            |
+| Direct messages        | Send private messages. Start voice or video calls in a DM. Close a DM to hide it until the next message.              |
 | P2P calls              | Call over a direct link between browsers.                                                                             |
 | P2P attachments        | Send files of any size from your browser. The server stores only the name, size and hash. Works when uploads are off. |
 | Relay servers          | Help calls and P2P files connect through STUN and TURN. Off by default. Relay only hides your IP address.             |

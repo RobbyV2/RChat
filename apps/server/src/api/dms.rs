@@ -1,15 +1,17 @@
 use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::Deserialize;
 use sqlx::Row;
 use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::access::resolve_dm;
+use crate::api::messages::read_dm_latest;
 use crate::api::servers::Page;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, DmSummary, Paged, cursor_int, decode_cursor, encode_cursor,
-    page_bounds, placeholders, split_list, user_from, user_ref, user_refs,
+    ApiError, ApiErrorBody, Authed, DmSummary, OkResp, Paged, cursor_int, decode_cursor,
+    encode_cursor, ok, page_bounds, placeholders, split_list, user_from, user_ref, user_refs,
 };
 use crate::db::{Db, LIVE_DM, get_user};
 use crate::state::AppState;
@@ -45,12 +47,12 @@ fn dm_half(col: &str, keyset: bool, limit: usize) -> String {
         true => " AND (last_message_id, id) < ($2, $3)",
         false => "",
     };
-    let partner = match col {
-        "user_a" => "user_b",
-        _ => "user_a",
+    let (partner, closed) = match col {
+        "user_a" => ("user_b", "closed_a"),
+        _ => ("user_a", "closed_b"),
     };
     format!(
-        "SELECT id, user_a, user_b, last_message_id FROM (SELECT id, user_a, user_b, last_message_id FROM dms WHERE {col} = $1 AND user_a <> user_b{bound} AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username = dms.{partner} AND pu.password_hash = '!purging') ORDER BY last_message_id DESC, id DESC LIMIT ${limit}) h_{col}"
+        "SELECT id, user_a, user_b, last_message_id FROM (SELECT id, user_a, user_b, last_message_id FROM dms WHERE {col} = $1 AND user_a <> user_b AND {closed} = 0{bound} AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username = dms.{partner} AND pu.password_hash = '!purging') ORDER BY last_message_id DESC, id DESC LIMIT ${limit}) h_{col}"
     )
 }
 
@@ -66,25 +68,38 @@ fn dm_union(keyset: bool) -> String {
     )
 }
 
-async fn summaries(db: &Db, viewer: &str, rows: &[AnyRow]) -> Result<Vec<DmSummary>, ApiError> {
+async fn summaries(
+    db: &Db,
+    viewer: &str,
+    rows: &[AnyRow],
+    closed_col: Option<usize>,
+) -> Result<Vec<DmSummary>, ApiError> {
     let mut parsed = Vec::with_capacity(rows.len());
     for r in rows {
         let (id, a, b): (i64, String, String) = (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
+        let closed = match closed_col {
+            Some(col) => r.try_get::<i64, _>(col)? != 0,
+            None => false,
+        };
         let is_self = a == b;
         let other = match a == viewer {
             true => b,
             false => a,
         };
-        parsed.push((id, other, is_self));
+        parsed.push((id, other, is_self, closed));
     }
-    let names: Vec<String> = parsed.iter().map(|(_, other, _)| other.clone()).collect();
+    let names: Vec<String> = parsed
+        .iter()
+        .map(|(_, other, _, _)| other.clone())
+        .collect();
     let refs = user_refs(db, &names).await;
     Ok(parsed
         .into_iter()
-        .map(|(id, other, is_self)| DmSummary {
+        .map(|(id, other, is_self, closed)| DmSummary {
             id,
             other: user_from(&refs, &other),
             is_self,
+            closed,
         })
         .collect())
 }
@@ -115,7 +130,7 @@ pub(crate) async fn dm_page(
         None => {
             if offset == 0 {
                 rows.extend(
-                    sqlx::query("SELECT id, user_a, user_b, last_message_id FROM dms WHERE user_a = $1 AND user_b = $1")
+                    sqlx::query("SELECT id, user_a, user_b, last_message_id FROM dms WHERE user_a = $1 AND user_b = $1 AND closed_a = 0")
                         .bind(viewer)
                         .fetch_all(db)
                         .await?,
@@ -150,7 +165,7 @@ pub(crate) async fn dm_page(
         _ => None,
     };
     Ok(Page {
-        items: summaries(db, viewer, &rows).await?,
+        items: summaries(db, viewer, &rows, None).await?,
         more,
         next,
     })
@@ -165,7 +180,7 @@ pub(crate) async fn dms_by_ids(
         return Ok(Vec::new());
     }
     let sql = format!(
-        "SELECT id, user_a, user_b FROM dms WHERE (user_a = $1 OR user_b = $1) AND id IN ({}) AND {LIVE_DM} ORDER BY CASE WHEN user_a = user_b THEN 0 ELSE 1 END, last_message_id DESC, id DESC",
+        "SELECT id, user_a, user_b, CASE WHEN user_a = $1 THEN closed_a ELSE closed_b END FROM dms WHERE (user_a = $1 OR user_b = $1) AND id IN ({}) AND {LIVE_DM} ORDER BY CASE WHEN user_a = user_b THEN 0 ELSE 1 END, last_message_id DESC, id DESC",
         placeholders(2, ids.len())
     );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(viewer);
@@ -173,14 +188,14 @@ pub(crate) async fn dms_by_ids(
         query = query.bind(*id);
     }
     let rows = query.fetch_all(db).await?;
-    summaries(db, viewer, &rows).await
+    summaries(db, viewer, &rows, Some(3)).await
 }
 
 /// List your DMs
 ///
 /// Returns the signed-in user's DM conversations, a page at a time or selected by id. Requires
 /// a bearer token. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/dms", tag = "Direct messages", params(DmListQuery), responses((status = 200, description = "A page (`cursor` or legacy `offset`, `limit` default 50, max 100) of the signed-in user's DM conversations: the self DM first, then by latest message (call logs included) newest first, DMs without messages last by id newest first. When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page (`dms_cursor` in `/api/me` for the page after the first). With `ids` (comma-separated, max 100) returns just those DMs, self DM first, without `X-Next-Cursor`, skipping ones the user is not part of", body = Vec<DmSummary>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid cursor (JSON), or a non-integer `offset`/`limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/dms", tag = "Direct messages", params(DmListQuery), responses((status = 200, description = "A page (`cursor` or legacy `offset`, `limit` default 50, max 100) of the signed-in user's DM conversations: the self DM first, then by latest message (call logs included) newest first, DMs without messages last by id newest first. When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page (`dms_cursor` in `/api/me` for the page after the first). DMs the user closed are left out of pages. With `ids` (comma-separated, max 100) returns just those DMs, self DM first, without `X-Next-Cursor`, skipping ones the user is not part of; closed ones are included with `closed: true`", body = Vec<DmSummary>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid cursor (JSON), or a non-integer `offset`/`limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn list_dms(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -218,7 +233,9 @@ pub(crate) async fn list_dms(
 ///
 /// Returns the one-to-one conversation between the signed-in user and `username`, creating it
 /// if it does not exist yet. Opening a DM with yourself returns your self DM. A newly created
-/// DM emits `dm_created` to both users. Requires a bearer token. General rate-limit bucket.
+/// DM emits `dm_created` to both users. If the signed-in user had closed it, it is reopened for
+/// them and `dm_reopened` (`{username, dm_id}`) goes to their connections. Requires a bearer
+/// token. General rate-limit bucket.
 #[utoipa::path(post, path = "/api/dms", tag = "Direct messages", request_body = OpenDmReq, responses((status = 200, description = "The DM with the given user, created if it did not exist yet", body = DmSummary), (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework error; 415 for the latter)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "User not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn open_dm(
     State(state): State<AppState>,
@@ -263,10 +280,17 @@ pub(crate) async fn open_dm(
             (id, true)
         }
     };
+    if !created && set_closed(&state.db, id, &user.username, false).await? {
+        state.hub.broadcast(WsEvent::DmReopened {
+            username: user.username.clone(),
+            dm_id: id,
+        });
+    }
     let dm = DmSummary {
         id,
         other: user_ref(&state.db, &target).await,
         is_self: a == b,
+        closed: false,
     };
     if created {
         state.hub.broadcast(WsEvent::DmCreated {
@@ -275,6 +299,69 @@ pub(crate) async fn open_dm(
         });
     }
     Ok(Json(dm))
+}
+
+async fn set_closed(db: &Db, id: i64, username: &str, closed: bool) -> Result<bool, ApiError> {
+    let mut changed = false;
+    for (col, side) in [("closed_a", "user_a"), ("closed_b", "user_b")] {
+        let sql =
+            format!("UPDATE dms SET {col} = $1 WHERE id = $2 AND {side} = $3 AND {col} <> $1");
+        changed |= sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(i64::from(closed))
+            .bind(id)
+            .bind(username)
+            .execute(db)
+            .await?
+            .rows_affected()
+            > 0;
+    }
+    Ok(changed)
+}
+
+/// Reopens a DM for `recipients` (the participants a new message in it reaches) and tells each
+/// one whose list it was hidden from. A participant left out stays closed.
+pub(crate) async fn reopen_for(state: &AppState, id: i64, recipients: &[String]) {
+    let mut done: Vec<&str> = Vec::with_capacity(recipients.len());
+    for user in recipients {
+        if done.contains(&user.as_str()) {
+            continue;
+        }
+        done.push(user);
+        match set_closed(&state.db, id, user, false).await {
+            Ok(true) => state.hub.broadcast(WsEvent::DmReopened {
+                username: user.clone(),
+                dm_id: id,
+            }),
+            Ok(false) => {}
+            Err(ApiError(_, e)) => tracing::warn!("dm {id} not reopened: {e}"),
+        }
+    }
+}
+
+/// Close a DM
+///
+/// Hides a DM from the signed-in user's DM list on all their devices; the history is kept and
+/// the other participant's list is unchanged. The DM comes back when a new message (or call)
+/// arrives in it from either side, or when the user opens it again with `POST /api/dms`. Closing
+/// marks the DM read up to its newest message and its pings seen (`read_updated`). Emits
+/// `dm_closed` (`{username, dm_id}`) to the user's connections when it was open. Closing a
+/// closed DM changes nothing. Requires a bearer token and being a participant. General
+/// rate-limit bucket.
+#[utoipa::path(post, path = "/api/dms/{id}/close", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), responses((status = 200, description = "Closed; body `{\"ok\": true}`", body = OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+pub(crate) async fn close_dm(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Authed(user): Authed,
+) -> Result<Json<OkResp>, ApiError> {
+    resolve_dm(&state.db, id, &user).await?;
+    if set_closed(&state.db, id, &user.username, true).await? {
+        state.hub.broadcast(WsEvent::DmClosed {
+            username: user.username.clone(),
+            dm_id: id,
+        });
+    }
+    read_dm_latest(&state, &user, id).await?;
+    Ok(ok())
 }
 
 #[cfg(test)]
@@ -438,6 +525,145 @@ mod tests {
         let a: Vec<i64> = after.items.iter().map(|d| d.id).collect();
         let b: Vec<i64> = next.items.iter().map(|d| d.id).collect();
         assert_eq!(a, b);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn closing_hides_until_a_message_or_open() {
+        use crate::api::messages::{send_dm_message, unreads};
+        let (state, path) = temp_state("dm_close").await;
+        let db = &state.db;
+        for name in ["alice", "bob", "carol"] {
+            add_user(db, name, name).await;
+        }
+        let open = |by: &str, name: &str| {
+            let state = state.clone();
+            let (by, name) = (by.to_string(), name.to_string());
+            async move {
+                open_dm(
+                    State(state),
+                    Authed(mem_user(&by, false)),
+                    Json(OpenDmReq { username: name }),
+                )
+                .await
+                .expect("open dm")
+                .0
+            }
+        };
+        let close = |by: &str, id: i64| {
+            let done = close_dm(State(state.clone()), Path(id), Authed(mem_user(by, false)));
+            async move { done.await.map(|_| ()) }
+        };
+        let send = |by: &str, id: i64, text: &str| {
+            let sent = send_dm_message(
+                State(state.clone()),
+                Path(id),
+                Authed(mem_user(by, false)),
+                Json(serde_json::from_value(serde_json::json!({ "content": text })).expect("req")),
+            );
+            async move { sent.await.map(|_| ()) }
+        };
+        let listed = |who: &str| {
+            let state = state.clone();
+            let who = who.to_string();
+            async move {
+                dm_page(&state.db, &who, 0, None, 50)
+                    .await
+                    .expect("page")
+                    .items
+                    .iter()
+                    .map(|d| d.id)
+                    .collect::<Vec<i64>>()
+            }
+        };
+        let unread = |who: &str| {
+            let state = state.clone();
+            let who = who.to_string();
+            async move {
+                unreads(
+                    State(state),
+                    Authed(mem_user(&who, false)),
+                    Query(serde_json::from_value(serde_json::json!({})).expect("query")),
+                )
+                .await
+                .expect("unreads")
+                .0
+                .items
+                .iter()
+                .map(|u| (u.scope.clone(), u.pings))
+                .collect::<Vec<(String, i64)>>()
+            }
+        };
+        let me = open("alice", "alice").await;
+        let dm = open("alice", "bob").await;
+        send("bob", dm.id, "hi @alice").await.expect("send");
+        assert_eq!(unread("alice").await, [(format!("d{}", dm.id), 1)]);
+        let mut rx = state.hub.subscribe();
+        assert!(matches!(
+            close("carol", dm.id).await,
+            Err(ApiError(StatusCode::NOT_FOUND, _))
+        ));
+        close("alice", dm.id).await.expect("close");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::DmClosed { username, dm_id }) if username == "alice" && dm_id == dm.id
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::ReadUpdated { username, .. }) if username == "alice"
+        ));
+        assert!(rx.try_recv().is_err());
+        assert_eq!(listed("alice").await, [me.id]);
+        assert_eq!(listed("bob").await, [dm.id]);
+        assert!(unread("alice").await.is_empty());
+        let found = dms_by_ids(db, "alice", &[dm.id, me.id]).await.expect("ids");
+        assert_eq!(
+            found.iter().map(|d| (d.id, d.closed)).collect::<Vec<_>>(),
+            [(me.id, false), (dm.id, true)]
+        );
+        assert!(!dms_by_ids(db, "bob", &[dm.id]).await.expect("ids")[0].closed);
+        close("alice", dm.id).await.expect("close again");
+        assert!(rx.try_recv().is_err());
+
+        send("bob", dm.id, "back").await.expect("send");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::DmReopened { username, dm_id }) if username == "alice" && dm_id == dm.id
+        ));
+        assert!(matches!(rx.try_recv(), Ok(WsEvent::Message { .. })));
+        assert_eq!(listed("alice").await, [me.id, dm.id]);
+        assert_eq!(unread("alice").await, [(format!("d{}", dm.id), 0)]);
+
+        close("alice", dm.id).await.expect("close");
+        close("bob", dm.id).await.expect("bob closes");
+        while rx.try_recv().is_ok() {}
+        send("alice", dm.id, "both").await.expect("send");
+        let mut reopened = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let WsEvent::DmReopened { username, dm_id: _ } = ev {
+                reopened.push(username);
+            }
+        }
+        assert_eq!(reopened, ["alice", "bob"]);
+
+        close("alice", dm.id).await.expect("close");
+        reopen_for(&state, dm.id, &["bob".to_string()]).await;
+        assert_eq!(listed("alice").await, [me.id]);
+        while rx.try_recv().is_ok() {}
+        assert!(!open("alice", "Bob").await.closed);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::DmReopened { username, .. }) if username == "alice"
+        ));
+        assert_eq!(listed("alice").await, [me.id, dm.id]);
+        open("alice", "bob").await;
+        assert!(rx.try_recv().is_err());
+
+        close("alice", me.id).await.expect("close self");
+        assert_eq!(listed("alice").await, [dm.id]);
+        assert!(dms_by_ids(db, "alice", &[me.id]).await.expect("ids")[0].closed);
+        send("alice", me.id, "note").await.expect("note");
+        assert_eq!(listed("alice").await, [me.id, dm.id]);
         done(state, path).await;
     }
 

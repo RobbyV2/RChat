@@ -540,6 +540,9 @@ pub struct DmSummary {
     pub other: UserRef,
     /// Whether this is the conversation with yourself.
     pub is_self: bool,
+    /// You closed it, so it is hidden from your DM list. Only `GET /api/dms?ids=` returns
+    /// closed DMs; a new message in it or opening it again reopens it.
+    pub closed: bool,
 }
 
 /// A file attached to a message, stored on the server or shared peer to peer.
@@ -1746,6 +1749,7 @@ fn api_routes(
             get(messages::dm_messages).post(messages::send_dm_message),
         )
         .route("/dms/{id}/pins", get(pins::dm_pins))
+        .route("/dms/{id}/close", post(dms::close_dm))
         .route(
             "/messages/{id}",
             delete(messages::delete_message).patch(messages::edit_message),

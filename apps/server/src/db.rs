@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name)
 CREATE TABLE IF NOT EXISTS roles(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms INTEGER NOT NULL DEFAULT 0, mentionable INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
 CREATE TABLE IF NOT EXISTS channel_perms(channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view INTEGER NOT NULL DEFAULT 1, can_send INTEGER NOT NULL DEFAULT 1, can_read_history INTEGER NOT NULL DEFAULT 1, restrict_set INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(channel_id, subject));
-CREATE TABLE IF NOT EXISTS dms(id INTEGER PRIMARY KEY AUTOINCREMENT, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id INTEGER NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
+CREATE TABLE IF NOT EXISTS dms(id INTEGER PRIMARY KEY AUTOINCREMENT, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id INTEGER NOT NULL DEFAULT 0, closed_a INTEGER NOT NULL DEFAULT 0, closed_b INTEGER NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
 CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER REFERENCES channels(id) ON DELETE CASCADE, dm_id INTEGER REFERENCES dms(id) ON DELETE CASCADE, thread_root_id INTEGER REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed INTEGER NOT NULL DEFAULT 0, media_spoiler INTEGER NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at INTEGER, media_size INTEGER, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at INTEGER, call_ended_at INTEGER, call_outcome TEXT, call_kind TEXT, call_video INTEGER, reply_to INTEGER, reply_mention INTEGER NOT NULL DEFAULT 0, edited_at INTEGER, fwd_author TEXT, fwd_created_at INTEGER, fwd_source_id INTEGER, fwd_origin TEXT, fwd_dropped TEXT, pinned_at INTEGER, pinned_by TEXT, pin_message_id INTEGER, group_mentions TEXT, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB, uploader TEXT, uploaded_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS media_chunks(media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE, seq INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(media_id, seq));
@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name)
 CREATE TABLE IF NOT EXISTS roles(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms BIGINT NOT NULL DEFAULT 0, mentionable BIGINT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
 CREATE TABLE IF NOT EXISTS channel_perms(channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view BIGINT NOT NULL DEFAULT 1, can_send BIGINT NOT NULL DEFAULT 1, can_read_history BIGINT NOT NULL DEFAULT 1, restrict_set BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(channel_id, subject));
-CREATE TABLE IF NOT EXISTS dms(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id BIGINT NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
+CREATE TABLE IF NOT EXISTS dms(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id BIGINT NOT NULL DEFAULT 0, closed_a BIGINT NOT NULL DEFAULT 0, closed_b BIGINT NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
 CREATE TABLE IF NOT EXISTS messages(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, channel_id BIGINT REFERENCES channels(id) ON DELETE CASCADE, dm_id BIGINT REFERENCES dms(id) ON DELETE CASCADE, thread_root_id BIGINT REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed BIGINT NOT NULL DEFAULT 0, media_spoiler BIGINT NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at BIGINT, media_size BIGINT, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at BIGINT, call_ended_at BIGINT, call_outcome TEXT, call_kind TEXT, call_video BIGINT, reply_to BIGINT, reply_mention BIGINT NOT NULL DEFAULT 0, edited_at BIGINT, fwd_author TEXT, fwd_created_at BIGINT, fwd_source_id BIGINT, fwd_origin TEXT, fwd_dropped TEXT, pinned_at BIGINT, pinned_by TEXT, pin_message_id BIGINT, group_mentions TEXT, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size BIGINT NOT NULL, data BYTEA, uploader TEXT, uploaded_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS media_chunks(media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE, seq BIGINT NOT NULL, data BYTEA NOT NULL, PRIMARY KEY(media_id, seq));
@@ -458,6 +458,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("audit_log", "target_staff {INT} NOT NULL DEFAULT 0"),
     ("audit_log", "details TEXT NOT NULL DEFAULT '{}'"),
     ("users", "presence_seq {INT} NOT NULL DEFAULT 0"),
+    ("dms", "closed_a {INT} NOT NULL DEFAULT 0"),
+    ("dms", "closed_b {INT} NOT NULL DEFAULT 0"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -500,7 +502,8 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// everyone permission bit. 5: the audit log (`audit_log`) and the View audit log permission bit.
 /// 6: `users.presence_seq`, the version of the appear-offline setting. 7: timeouts
 /// (`member_timeouts`) and the Timeout members permission bit.
-pub const SCHEMA_VERSION: i64 = 7;
+/// 8: `dms.closed_a` and `dms.closed_b`.
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
@@ -1967,10 +1970,10 @@ mod tests {
             assert_eq!(
                 count(
                     &db,
-                    &format!("SELECT COUNT(*) FROM settings WHERE key = 'schema_version' AND value = '{SCHEMA_VERSION}'")
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
                 )
                 .await,
-                1
+                SCHEMA_VERSION
             );
             close(&db).await;
         }
@@ -1987,6 +1990,72 @@ mod tests {
                 "SELECT COUNT(*) FROM channels WHERE category_id IS NOT NULL"
             )
             .await,
+            1
+        );
+        close(&db).await;
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn existing_dms_start_open() {
+        let path = std::env::temp_dir().join(format!("rchat_dm_closed_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "ALTER TABLE dms DROP COLUMN closed_a",
+            "ALTER TABLE dms DROP COLUMN closed_b",
+            "UPDATE settings SET value = '7' WHERE key = 'schema_version'",
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob')",
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'alice')",
+            "INSERT INTO messages(dm_id, author, content, created_at) VALUES(1, 'bob', 'hi', 3)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM dms WHERE closed_a = 0 AND closed_b = 0"
+                )
+                .await,
+                2
+            );
+            assert_eq!(
+                count(&db, "SELECT last_message_id FROM dms WHERE id = 1").await,
+                1
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM messages WHERE dm_id = 1 AND content = 'hi'"
+                )
+                .await,
+                1
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            close(&db).await;
+        }
+        let db = open(path.to_str()).await.expect("reopen");
+        sqlx::query("UPDATE dms SET closed_a = 1 WHERE id = 1")
+            .execute(&db)
+            .await
+            .expect("close");
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM dms WHERE closed_a = 1").await,
             1
         );
         close(&db).await;

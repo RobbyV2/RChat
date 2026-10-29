@@ -310,6 +310,8 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             pings_until: _,
             thread_pings: _,
         }
+        | WsEvent::DmClosed { username, dm_id: _ }
+        | WsEvent::DmReopened { username, dm_id: _ }
         | WsEvent::TokensRevoked { username } => to(vec![Target::User(username)]),
         WsEvent::RtcSignal {
             to: user,

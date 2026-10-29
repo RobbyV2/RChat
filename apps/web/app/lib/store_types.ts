@@ -320,6 +320,7 @@ export interface RChatState {
   placeDm: (id: number, zone: DmZone, index: number) => void
   pinDm: (id: number) => void
   unpinDm: (id: number) => void
+  closeDm: (id: number) => Promise<void>
   reloadLayout: () => void
   noteEmoji: (base: string, picked: string) => void
   setSkinTone: (tone: number) => void

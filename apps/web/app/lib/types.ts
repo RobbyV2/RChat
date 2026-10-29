@@ -212,6 +212,8 @@ export interface DmSummary {
   id: number
   other: UserRef
   is_self: boolean
+  // Closed by you: only lookups by id return it.
+  closed?: boolean
 }
 
 export type MediaKind = 'server' | 'p2p'
@@ -649,6 +651,8 @@ export type WsEvent =
   | ({ type: 'voice_ended'; reason: string } & Scoped)
   | { type: 'error'; message: string }
   | { type: 'dm_created'; dm_id: number; dm_users: string[] }
+  | { type: 'dm_closed'; username: string; dm_id: number }
+  | { type: 'dm_reopened'; username: string; dm_id: number }
   | { type: 'banned'; username: string }
   | { type: 'settings_changed'; settings: SiteSettings }
   | {

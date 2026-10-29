@@ -464,6 +464,7 @@ export const endpoints = (c: ApiClient) => ({
     c.page<DmSummary>(withCursor(`/dms?limit=${limit}`, cursor)),
   dmsById: (ids: number[]) => c.req<DmSummary[]>('GET', `/dms?ids=${ids.join(',')}`),
   openDm: (username: string) => c.req<DmSummary>('POST', '/dms', { username }),
+  closeDm: (id: number) => c.req<unknown>('POST', `/dms/${id}/close`),
   dmMessages: (id: number, page: PageOpts = {}) =>
     c.req<Message[]>('GET', `/dms/${id}/messages${pageQuery(page)}`),
   sendDmMessage: (id: number, content: string, opts: SendOpts = {}) =>

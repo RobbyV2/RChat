@@ -83,6 +83,7 @@ function DmRow({
   const openContextMenu = useStore(s => s.openContextMenu)
   const pinDm = useStore(s => s.pinDm)
   const unpinDm = useStore(s => s.unpinDm)
+  const closeDm = useStore(s => s.closeDm)
   const placeDm = useStore(s => s.placeDm)
   const markScopesRead = useStore(s => s.markScopesRead)
   const { id, other, is_self } = dm
@@ -101,6 +102,7 @@ function DmRow({
             pinned
               ? { label: 'Unpin DM', action: () => unpinDm(id) }
               : { label: 'Pin DM', action: () => pinDm(id) },
+            { label: 'Close DM', action: () => void closeDm(id) },
             {
               label: 'Copy DM ID',
               action: () => void navigator.clipboard.writeText(String(id)),

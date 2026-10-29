@@ -594,6 +594,8 @@ export const useStore = create<RChatState>()((set, get) => {
 
   let dmGen = 0
   let serverGen = 0
+  // DMs this account closed that a lookup by id returned, so their settings are kept.
+  const closedDms = new Map<number, DmSummary>()
   const droppedAt = new Map<string, number>()
 
   const settled = async <T>(gen: () => number, fetch: () => Promise<T>): Promise<T> => {
@@ -755,7 +757,7 @@ export const useStore = create<RChatState>()((set, get) => {
           const server = channelServer(s, id)
           return server === null || members.has(server)
         },
-        dm: id => s.guest || dms.has(id),
+        dm: id => s.guest || dms.has(id) || closedDms.has(id),
       })
     )
   }
@@ -876,7 +878,7 @@ export const useStore = create<RChatState>()((set, get) => {
         if (!still()) return SWITCHED
         const s = get()
         const members = new Set(serverNames(s))
-        const dms = new Set(s.dms.map(d => d.id))
+        const dms = new Set([...s.dms.map(d => d.id), ...closedDms.keys()])
         saveNotify(
           keepScopes(n, {
             server: name => members.has(name),
@@ -2543,6 +2545,34 @@ export const useStore = create<RChatState>()((set, get) => {
     pinSelf()
   }
 
+  // Takes a closed DM out of the list and its pin, and leaves it if it is open here.
+  const hideDm = (id: number) => {
+    const dm = get().dms.find(d => d.id === id)
+    if (dm) closedDms.set(id, { ...dm, closed: true })
+    const layout = get().layout
+    if (layout.dmPinned.includes(id)) saveLayout(noteSelfPin(unpinIn(layout, id), selfDmId(), id))
+    dmGen += 1
+    const reload = dmPager.removed()
+    set(s => ({ dms: s.dms.filter(d => d.id !== id) }))
+    if (reload) void get().loadMoreDms()
+    const { view, dms } = get()
+    if (view?.kind !== 'dm' || view.dmId !== id) return
+    const next = dms.find(d => d.is_self) ?? dms[0]
+    if (next) void get().openDm(next.id, 'replace')
+    else clearView()
+  }
+
+  const reopenDm = async (id: number) => {
+    const closed = closedDms.get(id)
+    const me = get().me
+    if (!closed || !me) return
+    const dm = await api.openDm(closed.other.username)
+    if (!sameUser(me.username)) return
+    closedDms.delete(id)
+    set(s => ({ dms: bumpFront(s.dms, dm, dmKey, isSelfDm) }))
+    pinSelf()
+  }
+
   const bumpDm = (id: number) => {
     if (get().dms.some(d => d.id === id)) moveDmUp(id)
     else
@@ -3479,6 +3509,7 @@ export const useStore = create<RChatState>()((set, get) => {
       armIce(null, false)
       clearProfiles()
       dropStashedInvite()
+      closedDms.clear()
       set({
         token: null,
         me: null,
@@ -3632,6 +3663,7 @@ export const useStore = create<RChatState>()((set, get) => {
         if (username && !get().dms.some(d => d.id === dmId))
           void get()
             .ensureDms([dmId])
+            .then(() => reopenDm(dmId))
             .catch(() => {})
         if (at !== undefined) {
           await loadAround(key, at)
@@ -3742,7 +3774,17 @@ export const useStore = create<RChatState>()((set, get) => {
           () => api.dmsById(batch)
         )
         if (!sameUser(me.username)) return
-        set(s => ({ dms: appendUnique(s.dms, found, dmKey) }))
+        for (const d of found) {
+          if (d.closed) closedDms.set(d.id, d)
+          else closedDms.delete(d.id)
+        }
+        set(s => ({
+          dms: appendUnique(
+            s.dms,
+            found.filter(d => !d.closed),
+            dmKey
+          ),
+        }))
         pinSelf()
       }
     },
@@ -3805,6 +3847,23 @@ export const useStore = create<RChatState>()((set, get) => {
 
     pinDm: id => saveLayout(noteSelfPin(pinIn(get().layout, id), selfDmId(), id)),
     unpinDm: id => saveLayout(noteSelfPin(unpinIn(get().layout, id), selfDmId(), id)),
+
+    closeDm: id =>
+      act(async () => {
+        const me = get().me
+        if (!me) return
+        hideDm(id)
+        try {
+          await api.closeDm(id)
+        } catch (e) {
+          if (!sameUser(me.username)) return
+          closedDms.delete(id)
+          await get()
+            .ensureDms([id])
+            .catch(() => {})
+          throw e
+        }
+      }),
 
     reloadLayout: () => {
       const { me, guest } = get()
@@ -5687,6 +5746,16 @@ export const useStore = create<RChatState>()((set, get) => {
         case 'dm_created': {
           const { me } = get()
           if (me && ev.dm_users.includes(me.username)) bumpDm(ev.dm_id)
+          return
+        }
+        case 'dm_closed': {
+          if (get().me?.username === ev.username) hideDm(ev.dm_id)
+          return
+        }
+        case 'dm_reopened': {
+          if (get().me?.username !== ev.username) return
+          closedDms.delete(ev.dm_id)
+          bumpDm(ev.dm_id)
           return
         }
         case 'banned': {

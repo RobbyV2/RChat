@@ -579,6 +579,16 @@ pub enum WsEvent {
         dm_id: i64,
         dm_users: Vec<String>,
     },
+    /// `username` closed the DM; to that user's connections only.
+    DmClosed {
+        username: String,
+        dm_id: i64,
+    },
+    /// The DM is back in `username`'s list; to that user's connections only.
+    DmReopened {
+        username: String,
+        dm_id: i64,
+    },
     Banned {
         username: String,
     },
@@ -736,6 +746,7 @@ async fn insert_call_log(
 
 async fn broadcast_call_log(state: &AppState, dm_id: i64, dm_users: Vec<String>, log_id: i64) {
     if let Ok(Some(message)) = load_broadcast(&state.read(), log_id).await {
+        crate::api::dms::reopen_for(state, dm_id, &dm_users).await;
         state.hub.broadcast(WsEvent::Message {
             server: None,
             channel_id: None,
@@ -4110,7 +4121,9 @@ fn wants(
             pings: _,
             pings_until: _,
             thread_pings: _,
-        } => Some(username.as_str()) == me,
+        }
+        | WsEvent::DmClosed { username, dm_id: _ }
+        | WsEvent::DmReopened { username, dm_id: _ } => Some(username.as_str()) == me,
         WsEvent::ServerCreated { server } => {
             is_site_admin || (me.is_some() && server.creator.as_deref() == me)
         }
@@ -7564,6 +7577,14 @@ mod tests {
                         pings_until: 0,
                     },
                     WsEvent::TokensRevoked { username: s(user) },
+                    WsEvent::DmClosed {
+                        username: s(user),
+                        dm_id: 1,
+                    },
+                    WsEvent::DmReopened {
+                        username: s(user),
+                        dm_id: 1,
+                    },
                     WsEvent::RtcSignal {
                         to: s(user),
                         from: s("x"),

@@ -24,7 +24,7 @@ use crate::api::reactions::attach_reactions;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, CallLog, Embed, ForwardRef, LIST_MAX, LIST_PAGE, MESSAGE_MAX,
     MaybeAuthed, MediaRef, Message, OkResp, Origin, Paged, ProfanityTarget, ReplyRef, Settings,
-    UserRef, allowed, bad, check_len, check_profanity, cursor_int, decode_cursor, embeds,
+    UserRef, allowed, bad, check_len, check_profanity, cursor_int, decode_cursor, dms, embeds,
     encode_cursor, media::MEDIA_TTL_SECS, ok, placeholders, require_guest_ok, unique_capped,
     user_from, user_refs, yes,
 };
@@ -1404,6 +1404,9 @@ async fn deliver(
     if let (None, PingScope::Channel(channel)) = (&message.forward, &scope) {
         store_group_pings(state, channel, &message).await;
     }
+    if let (Some(id), Some(users)) = (dm_id, &dm_users) {
+        dms::reopen_for(state, id, users).await;
+    }
     state.hub.broadcast(WsEvent::Message {
         server,
         channel_id,
@@ -2404,10 +2407,10 @@ pub(crate) async fn unreads(
         .await?;
     let dm_sql = match all {
         true => {
-            "SELECT d.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = d.id AND m.author <> $1), COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) FROM dms d WHERE (d.user_a = $1 OR d.user_b = $1) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')"
+            "SELECT d.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = d.id AND m.author <> $1), COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) FROM dms d WHERE ((d.user_a = $1 AND d.closed_a = 0) OR (d.user_b = $1 AND d.closed_b = 0)) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')"
         }
         false => {
-            "SELECT x.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = x.id AND m.author <> $1), x.last_read FROM (SELECT d.id, d.last_message_id, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) AS last_read FROM dms d WHERE (d.user_a = $1 OR d.user_b = $1) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')) x WHERE x.last_message_id > x.last_read OR EXISTS(SELECT 1 FROM pings p WHERE p.username = $1 AND p.seen = 0 AND p.scope = 'd' || x.id)"
+            "SELECT x.id, (SELECT MAX(m.id) FROM messages m WHERE m.dm_id = x.id AND m.author <> $1), x.last_read FROM (SELECT d.id, d.last_message_id, COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'd' || d.id), 0) AS last_read FROM dms d WHERE ((d.user_a = $1 AND d.closed_a = 0) OR (d.user_b = $1 AND d.closed_b = 0)) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')) x WHERE x.last_message_id > x.last_read OR EXISTS(SELECT 1 FROM pings p WHERE p.username = $1 AND p.seen = 0 AND p.scope = 'd' || x.id)"
         }
     };
     let dm_rows = sqlx::query(dm_sql)
@@ -2730,6 +2733,19 @@ async fn read_scope(
         }
     }
     Ok(stored)
+}
+
+/// Marks a DM read up to its newest message and its pings seen, like `POST /api/read/batch`.
+pub(crate) async fn read_dm_latest(state: &AppState, user: &User, id: i64) -> Result<(), ApiError> {
+    read_scope(
+        state,
+        user,
+        &format!("d{id}"),
+        ReadTarget::Dm(id),
+        ReadUpTo::Latest,
+    )
+    .await?;
+    Ok(())
 }
 
 pub(crate) const READ_BATCH_MAX: usize = 200;
