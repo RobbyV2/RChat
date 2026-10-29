@@ -15,7 +15,7 @@
 # Scale a role: docker compose -f deploy/compose.scale.yml up -d --scale gateway=4
 
 x-rchat: &rchat
-  image: ${RCHAT_IMAGE:-ghcr.io/robbyv2/rchat:nightly}
+  image: ${RCHAT_IMAGE:-ghcr.io/robbyv2/rchat:weekly}
   restart: unless-stopped
   networks: [edge, backend]
   depends_on:
@@ -158,7 +158,7 @@ services:
       - "49160-49415:49160-49415/udp"
 
   peerjs:
-    image: ${RCHAT_IMAGE:-ghcr.io/robbyv2/rchat:nightly}
+    image: ${RCHAT_IMAGE:-ghcr.io/robbyv2/rchat:weekly}
     restart: unless-stopped
     command: ["/app/start.sh", "peer"]
     networks: [edge]

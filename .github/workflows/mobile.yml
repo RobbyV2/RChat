@@ -1,34 +1,26 @@
 name: mobile
 
-# Proves the Android and iOS apps build. The native projects are generated here from
-# apps/desktop/src-tauri and apps/desktop/mobile; they are never committed.
+# Android and iOS builds. The native projects are generated here from apps/desktop/src-tauri and
+# apps/desktop/mobile; they are never committed. ci.yml calls this for test builds (debug APK,
+# unsigned iOS), release.yml for release builds (signed when the secrets exist).
 on:
-  push:
-    branches: [main]
-    paths:
-      - apps/desktop/**
-      - apps/web/**
-      - assets/**
-      - Cargo.toml
-      - Cargo.lock
-      - package.json
-      - bun.lock
-      - .github/workflows/mobile.yml
-  pull_request:
-    paths:
-      - apps/desktop/**
-      - apps/web/**
-      - assets/**
-      - Cargo.toml
-      - Cargo.lock
-      - package.json
-      - bun.lock
-      - .github/workflows/mobile.yml
+  workflow_call:
+    inputs:
+      release:
+        type: boolean
+        default: false
+      version:
+        description: App version; empty keeps the one in apps/web/package.json
+        type: string
+        default: ''
+      build-number:
+        description: iOS build number and Android versionCode (the release run number)
+        type: string
+        default: ''
+      retention-days:
+        type: number
+        default: 7
   workflow_dispatch:
-
-concurrency:
-  group: mobile-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -40,24 +32,24 @@ jobs:
     env:
       NDK_VERSION: 27.2.12479018
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
         with:
           packages: platform-tools ndk;27.2.12479018
       - run: echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: android
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: bun install --frozen-lockfile
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: tauri-cli
         with:
           path: ~/.cargo/bin/cargo-tauri
@@ -66,43 +58,145 @@ jobs:
         run: cargo install tauri-cli --version 2.12.2 --locked
       - run: bun apps/desktop/scripts/mobile.ts init android
       - name: Build debug APK
+        if: ${{ !inputs.release }}
         working-directory: apps/desktop/src-tauri
-        run: cargo tauri android build --ci --debug --apk --target aarch64 armv7 x86_64
-      - uses: actions/upload-artifact@v7
+        run: |
+          cargo tauri android build --ci --debug --apk --target aarch64 armv7 x86_64
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          find gen/android/app/build/outputs/apk -name '*.apk' -exec cp {} "$GITHUB_WORKSPACE/dist/" \;
+      - name: Build release APK and AAB
+        if: inputs.release
+        working-directory: apps/desktop/src-tauri
+        env:
+          VERSION: ${{ inputs.version }}
+          VERSION_CODE: ${{ inputs.build-number }}
+        run: |
+          bun ../../../scripts/release.ts tauri-config "$RUNNER_TEMP/tauri.ci.json"
+          cargo tauri android build --ci --apk --aab --target aarch64 armv7 x86_64 --config "$RUNNER_TEMP/tauri.ci.json"
+      # With the keystore secrets the APK and AAB are signed with the release key. Without them
+      # the APK is signed with a key made for this run (it installs, but cannot update a
+      # previous install) and no AAB is published, since stores need the real key.
+      - name: Sign
+        if: inputs.release
+        env:
+          VERSION: ${{ inputs.version }}
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          out=apps/desktop/src-tauri/gen/android/app/build/outputs
+          apk=$(find "$out/apk" -name '*release*.apk' | head -n 1)
+          aab=$(find "$out/bundle" -name '*release*.aab' | head -n 1)
+          tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          ks="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$ks"' EXIT
+          if [ -n "$ANDROID_KEYSTORE" ]; then
+            echo "Android signing: release key"
+            printf '%s' "$ANDROID_KEYSTORE" | base64 --decode > "$ks"
+          else
+            echo "Android signing: one-off key (no ANDROID_KEYSTORE)"
+            ANDROID_KEYSTORE_PASSWORD=$(openssl rand -hex 16)
+            ANDROID_KEY_PASSWORD=$ANDROID_KEYSTORE_PASSWORD
+            ANDROID_KEY_ALIAS=rchat
+            keytool -genkeypair -keystore "$ks" -storetype PKCS12 -alias rchat -keyalg RSA -keysize 4096 \
+              -validity 10000 -dname CN=RChat -storepass "$ANDROID_KEYSTORE_PASSWORD"
+          fi
+          export ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_PASSWORD="${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+          mkdir -p dist
+          "$tools/zipalign" -f -p 4 "$apk" "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" sign --ks "$ks" --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEY_PASSWORD \
+            --out "dist/RChat_${VERSION}_android.apk" "$RUNNER_TEMP/aligned.apk"
+          if [ -n "$ANDROID_KEYSTORE" ]; then
+            jarsigner -keystore "$ks" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" \
+              -signedjar "dist/RChat_${VERSION}_android.aab" "$aab" "$ANDROID_KEY_ALIAS"
+          fi
+          ls -l dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: rchat-android-debug
-          path: apps/desktop/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          name: mobile-android
+          path: dist/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ inputs.retention-days || 14 }}
 
   mobile-ios:
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - id: signing
+        env:
+          IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+          IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+        run: |
+          if [ -n "$IOS_CERTIFICATE" ] && [ -n "$IOS_MOBILE_PROVISION" ] && [ -n "$APPLE_DEVELOPMENT_TEAM" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "iOS signing: off (needs IOS_CERTIFICATE, IOS_MOBILE_PROVISION and APPLE_DEVELOPMENT_TEAM)"
+          fi
+      # Release builds need a signed IPA; without the secrets there is nothing to publish.
+      - id: run
+        run: echo "build=${{ !inputs.release || steps.signing.outputs.present == 'true' }}" >> "$GITHUB_OUTPUT"
+      - if: steps.run.outputs.build == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: steps.run.outputs.build == 'true'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
-      - uses: Swatinem/rust-cache@v2
+      - if: steps.run.outputs.build == 'true'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ios
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: brew install xcodegen
-      - uses: actions/cache@v4
+      - if: steps.run.outputs.build == 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - if: steps.run.outputs.build == 'true'
+        run: bun install --frozen-lockfile
+      - if: steps.run.outputs.build == 'true'
+        run: brew install xcodegen
+      - if: steps.run.outputs.build == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: tauri-cli
         with:
           path: ~/.cargo/bin/cargo-tauri
           key: tauri-cli-${{ runner.os }}-2.12.2
-      - if: steps.tauri-cli.outputs.cache-hit != 'true'
+      - if: steps.run.outputs.build == 'true' && steps.tauri-cli.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version 2.12.2 --locked
-      - run: bun apps/desktop/scripts/mobile.ts init ios
+      - if: steps.run.outputs.build == 'true'
+        run: bun apps/desktop/scripts/mobile.ts init ios
       - name: Build unsigned IPA
+        if: steps.run.outputs.build == 'true' && !inputs.release
         working-directory: apps/desktop/src-tauri
         run: cargo tauri ios build --ci --no-sign --target aarch64
-      - uses: actions/upload-artifact@v7
+      - name: Build signed IPA
+        if: steps.run.outputs.build == 'true' && inputs.release
+        working-directory: apps/desktop/src-tauri
+        env:
+          VERSION: ${{ inputs.version }}
+          BUILD_NUMBER: ${{ inputs.build-number }}
+          EXPORT_METHOD: ${{ vars.IOS_EXPORT_METHOD || 'release-testing' }}
+          IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+        run: |
+          bun ../../../scripts/release.ts tauri-config "$RUNNER_TEMP/tauri.ci.json"
+          args=(ios build --ci --target aarch64 --export-method "$EXPORT_METHOD" --config "$RUNNER_TEMP/tauri.ci.json")
+          if [ -n "$BUILD_NUMBER" ]; then args+=(--build-number "$BUILD_NUMBER"); fi
+          cargo tauri "${args[@]}"
+      - if: steps.run.outputs.build == 'true'
+        env:
+          NAME: ${{ inputs.release && format('RChat_{0}_ios.ipa', inputs.version) || '' }}
+        run: |
+          mkdir -p dist
+          ipa=$(find apps/desktop/src-tauri/gen/apple/build -name '*.ipa' | head -n 1)
+          cp "$ipa" "dist/${NAME:-$(basename "$ipa")}"
+          ls -l dist
+      - if: steps.run.outputs.build == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: rchat-ios-unsigned
-          path: apps/desktop/src-tauri/gen/apple/build/**/*.ipa
+          name: mobile-ios
+          path: dist/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ inputs.retention-days || 14 }}

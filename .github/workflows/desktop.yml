@@ -1,0 +1,192 @@
+name: desktop
+
+# Desktop installers for Windows, macOS (universal) and Linux. Called by ci.yml (unsigned test
+# builds) and release.yml (versioned builds, signed when the secrets exist).
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: App version; empty keeps the one in apps/web/package.json
+        type: string
+        default: ''
+      channel:
+        description: dev, weekly or stable
+        type: string
+        default: dev
+      wix-version:
+        description: MSI version (major.minor.patch.build) for pre-release versions
+        type: string
+        default: ''
+      linux-bundles:
+        description: Linux bundles; deb only for pre-release versions (RPM refuses the hyphen)
+        type: string
+        default: deb,rpm
+      retention-days:
+        type: number
+        default: 7
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: desktop-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-22.04
+            bundles: ''
+            target: ''
+          - os: windows
+            runner: windows-latest
+            bundles: msi,nsis
+            target: ''
+          - os: macos
+            runner: macos-latest
+            bundles: app,dmg
+            target: universal-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      RCHAT_CHANNEL: ${{ inputs.channel == 'weekly' && 'weekly' || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: ${{ matrix.os == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: desktop-${{ matrix.os }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - if: matrix.os == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - run: bun install --frozen-lockfile
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: tauri-cli
+        with:
+          path: ~/.cargo/bin/cargo-tauri${{ runner.os == 'Windows' && '.exe' || '' }}
+          key: tauri-cli-${{ runner.os }}-2.12.2
+      - if: steps.tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version 2.12.2 --locked
+
+      # Signing runs after every third-party setup action. Their post steps (cache saves) still
+      # run after the build, so the steps after Collect remove the certificate and key files
+      # first. Splitting signing into its own job would mean shipping unsigned binaries between
+      # jobs, and Tauri signs during the build.
+      - name: Windows code signing
+        if: matrix.os == 'windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE) { Write-Output 'Windows signing: off (no WINDOWS_CERTIFICATE)'; exit 0 }
+          $pfx = Join-Path $env:RUNNER_TEMP 'rchat.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password |
+            Where-Object HasPrivateKey | Select-Object -First 1
+          Remove-Item $pfx
+          "WINDOWS_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          Write-Output 'Windows signing: on'
+
+      - name: Config overrides
+        env:
+          VERSION: ${{ inputs.version }}
+          WIX_VERSION: ${{ inputs.wix-version }}
+          UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          bun scripts/release.ts tauri-config "$RUNNER_TEMP/tauri.ci.json"
+          cat "$RUNNER_TEMP/tauri.ci.json"
+
+      - name: Build
+        working-directory: apps/desktop/src-tauri
+        env:
+          BUNDLES: ${{ matrix.bundles || inputs.linux-bundles }}
+          TARGET: ${{ matrix.target }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Unset empty secrets so Tauri does not try to use them.
+          for name in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_KEY APPLE_API_ISSUER \
+            APPLE_API_KEY_P8 APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!name}" ] || unset "$name"
+          done
+          if [ "$RUNNER_OS" = macOS ]; then
+            if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+              echo "macOS signing: ad hoc, no notarization (no APPLE_CERTIFICATE)"
+              export APPLE_SIGNING_IDENTITY=-
+              unset APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_P8 APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+            fi
+            if [ -n "${APPLE_API_KEY_P8:-}" ]; then
+              export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+              printf '%s\n' "$APPLE_API_KEY_P8" > "$APPLE_API_KEY_PATH"
+            fi
+            unset APPLE_API_KEY_P8
+          fi
+          args=(build --ci --config "$RUNNER_TEMP/tauri.ci.json" --bundles "$BUNDLES")
+          if [ -n "$TARGET" ]; then args+=(--target "$TARGET"); fi
+          cargo tauri "${args[@]}"
+
+      # AppImage is best effort: linuxdeploy depends on the runner's libraries.
+      - name: Build AppImage
+        if: matrix.os == 'linux'
+        continue-on-error: true
+        working-directory: apps/desktop/src-tauri
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] || unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          cargo tauri build --ci --config "$RUNNER_TEMP/tauri.ci.json" --bundles appimage
+
+      - name: Collect
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          shopt -s nullglob
+          bundle="target/${TARGET:+$TARGET/}release/bundle"
+          mkdir -p dist
+          for file in "$bundle"/{deb,rpm,appimage,msi,nsis,dmg}/*.{deb,rpm,AppImage,msi,exe,dmg,sig}; do
+            cp "$file" dist/
+          done
+          for file in "$bundle"/macos/*.app.tar.gz{,.sig}; do
+            name=$(basename "$file")
+            version=$(basename "$bundle"/dmg/*.dmg | sed -E 's/^RChat_(.*)_universal\.dmg$/\1/')
+            cp "$file" "dist/RChat_${version}_universal.${name#*.}"
+          done
+          ls -l dist
+          [ -n "$(ls dist)" ]
+      - name: Remove the signing certificate
+        if: always() && matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          if ($env:WINDOWS_THUMBPRINT) {
+            Remove-Item -Path "Cert:\CurrentUser\My\$($env:WINDOWS_THUMBPRINT)" -DeleteKey
+          }
+      - name: Remove the notarization key
+        if: always() && matrix.os == 'macos'
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}

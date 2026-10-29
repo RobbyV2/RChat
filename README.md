@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/RobbyV2/RChat/actions/workflows/ci.yml"><img src="https://github.com/RobbyV2/RChat/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/RobbyV2/RChat/pkgs/container/rchat"><img src="https://img.shields.io/badge/ghcr-nightly-4f46e5" alt="Nightly image"></a>
+  <a href="https://github.com/RobbyV2/RChat/pkgs/container/rchat"><img src="https://img.shields.io/badge/ghcr-weekly-4f46e5" alt="Weekly image"></a>
   <img src="https://img.shields.io/badge/Rust-axum-b7410e" alt="Rust">
   <img src="https://img.shields.io/badge/Next.js-16-black" alt="Next.js">
   <img src="https://img.shields.io/badge/storage-sqlite%20%7C%20postgres-336791" alt="Storage">
@@ -114,6 +114,8 @@ Open http://localhost:3000. The first account you register is the site admin. No
 | `crates/wasm`  | The WASM module for the client.                        |
 | `assets`       | Logos, fonts and the bundled STUN list.                |
 | `deploy`       | Compose, Kubernetes and nginx files.                   |
+| `packaging`    | Package manager templates (see Releases).              |
+| `scripts`      | Release scripts for CI.                                |
 | `jfiles`       | The `just` recipes. Run them from the repository root. |
 
 Keep `.env.local` in the repository root. The root scripts and `just` recipes read it from there.
@@ -138,10 +140,10 @@ Build the frontend as static files for that API. The files go to `apps/web/out/`
 just src build-static https://api.example.com
 ```
 
-Run the nightly Docker image:
+Run the Docker image. `latest` is the newest stable release, `weekly` the newest weekly build:
 
 ```bash
-docker run -p 3000:3000 -v rchat-data:/data ghcr.io/robbyv2/rchat:nightly
+docker run -p 3000:3000 -v rchat-data:/data ghcr.io/robbyv2/rchat:latest
 ```
 
 Build the image locally with `docker compose up`.
@@ -202,6 +204,8 @@ Updates come from GitHub Releases. Stable reads `latest.json` from the latest re
 2. Put the public key in `apps/desktop/src-tauri/tauri.conf.json` under `plugins.updater.pubkey`.
 3. Give the build the private key and its password in `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, then run `just src desktop-build --config tauri.release.conf.json` to write the signed update files.
 
+The release workflow does steps 2 and 3 itself when the key is in the repository secrets and the public key is in the `TAURI_UPDATER_PUBKEY` repository variable (see Releases).
+
 ## Mobile apps
 
 The Android and iOS apps come from the same Tauri shell as the desktop app. They bundle the static client and add system notifications, the share sheet, deep links and the Android back button. Push notifications are not part of the apps; notices arrive while the app is running.
@@ -222,9 +226,46 @@ just src mobile-init ios
 just src ios-build
 ```
 
-The `mobile` workflow builds a debug APK and an unsigned iOS build on every change to the apps and keeps them as run artifacts.
+CI builds a debug APK and an unsigned iOS build on every push to main and keeps them as run artifacts. Releases carry a signed APK (see Releases).
 
 `rchat://` links open the app like on the desktop. To open `https://` links to your own instance in the app, replace `chat.example.com` in `apps/desktop/mobile/applinks.conf.json`, pass it with `--config` when you build, and serve the two files in `apps/desktop/mobile/well-known` from `https://<your instance>/.well-known/` with your signing certificate fingerprint and Apple team ID filled in.
+
+## Releases
+
+GitHub Actions has two channels:
+
+- Stable: pushing a version tag (`0.3.0`, or `0.3.0-rc.1` for a pre-release; no `v` prefix) publishes a GitHub Release. Pre-releases get no package manager files.
+- Weekly: every Monday, `main` is built as a pre-release named `weekly-YYYY-MM-DD` with version `<next patch>-weekly.YYYYMMDD`. The `weekly` and `nightly` tags move to it, the `weekly` release (updated in place) holds the updater manifest, and dated weekly releases beyond the newest 8 are deleted. It is skipped when nothing changed. Run the `release` workflow by hand to build one now.
+
+| Workflow      | When                               | What                                                                 |
+| ------------- | ---------------------------------- | -------------------------------------------------------------------- |
+| `ci.yml`      | Every push and pull request        | Format, Clippy, Rust tests, ESLint, unit tests, web and server build |
+| `ci.yml`      | Every push and pull request        | Clippy and tests of the desktop crates (no bundling)                 |
+| `ci.yml`      | Pushes to main, manual runs        | Also desktop builds, desktop smoke run, mobile builds, Docker build  |
+| `release.yml` | Version tags, Mondays, manual runs | All of the above, then the release                                   |
+
+A release holds:
+
+- Windows: MSI and NSIS installers. macOS: a universal DMG. Linux: .deb, .rpm and AppImage (when it builds). Weekly and `-rc` versions get no .rpm (RPM refuses the hyphen), and Debian sorts `0.2.3-weekly.YYYYMMDD` above `0.2.3`, so going from a weekly .deb back to the stable one of the same version needs `apt install --allow-downgrades`.
+- Android: an APK, plus an AAB when the release key is set. The versionCode is the release run number. iOS: an IPA, only when the signing secrets are set.
+- Server binaries (`rchat-server`) for Linux x86_64 and aarch64 (glibc 2.35 or newer), macOS (universal) and Windows x86_64. The aarch64 server and Docker builds use GitHub's `ubuntu-22.04-arm` runner, which is free for public repositories; private ones need an arm64 larger runner.
+- `SHA256SUMS`, the updater manifest `latest.json` with `.sig` files when updater signing is set, and `rchat-packaging_<version>.tar.gz`.
+- Docker images on GHCR: `latest` and the version for stable, `weekly`, `nightly` and `weekly-YYYY-MM-DD` for weekly, plus the commit SHA.
+
+Signing uses repository secrets when they exist. Without them the builds are unsigned: Windows shows SmartScreen, macOS asks you to allow the app under System Settings, Privacy & Security (ad hoc signature, no notarization), and the Android APK uses a key made for that build, so it cannot update an older install.
+
+| Secret or variable                                                                                                            | Used for                        |
+| ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, variable `TAURI_UPDATER_PUBKEY`                            | Updater files and `latest.json` |
+| `WINDOWS_CERTIFICATE` (base64 .pfx), `WINDOWS_CERTIFICATE_PASSWORD`                                                           | Windows code signing            |
+| `APPLE_CERTIFICATE` (base64 .p12), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`                                     | macOS code signing              |
+| `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_P8` (or `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`)                    | macOS notarization              |
+| `ANDROID_KEYSTORE` (base64), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`                         | Android APK and AAB             |
+| `IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION`, `APPLE_DEVELOPMENT_TEAM`, variable `IOS_EXPORT_METHOD` | iOS IPA                         |
+
+### Package managers
+
+`packaging/` holds templates for winget, Scoop, a Homebrew cask and the AUR packages `rchat-bin` and `rchat-weekly-bin`. Each release fills them in with its version, URLs and checksums and attaches them as `rchat-packaging_<version>.tar.gz`. Publishing them is manual: open a pull request to `microsoft/winget-pkgs` with the three winget files, put `rchat.json` in a Scoop bucket and `rchat.rb` in a Homebrew tap (the official cask tap wants a notarized app, so use your own tap until the macOS notarization secrets are set), and push a `PKGBUILD` to the AUR after running `makepkg --printsrcinfo > .SRCINFO`. `scripts/release.ts` makes these files and the updater manifest; `bun test scripts` tests it.
 
 ## Scaling
 

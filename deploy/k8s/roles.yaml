@@ -14,7 +14,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: rchat
-          image: ghcr.io/robbyv2/rchat:nightly
+          image: ghcr.io/robbyv2/rchat:weekly
           command:
             - sh
             - -c
@@ -92,7 +92,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: rchat
-          image: ghcr.io/robbyv2/rchat:nightly
+          image: ghcr.io/robbyv2/rchat:weekly
           command:
             - sh
             - -c
@@ -171,7 +171,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: rchat
-          image: ghcr.io/robbyv2/rchat:nightly
+          image: ghcr.io/robbyv2/rchat:weekly
           command:
             - sh
             - -c
@@ -250,7 +250,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: rchat
-          image: ghcr.io/robbyv2/rchat:nightly
+          image: ghcr.io/robbyv2/rchat:weekly
           command:
             - sh
             - -c
@@ -329,7 +329,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: rchat
-          image: ghcr.io/robbyv2/rchat:nightly
+          image: ghcr.io/robbyv2/rchat:weekly
           command:
             - sh
             - -c
@@ -408,7 +408,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: rchat
-          image: ghcr.io/robbyv2/rchat:nightly
+          image: ghcr.io/robbyv2/rchat:weekly
           command:
             - sh
             - -c
@@ -486,7 +486,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: rchat
-          image: ghcr.io/robbyv2/rchat:nightly
+          image: ghcr.io/robbyv2/rchat:weekly
           command:
             - sh
             - -c

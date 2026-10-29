@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: RobbyV2.RChat
+PackageVersion: {{VERSION}}
+PackageLocale: en-US
+Publisher: RobbyV2
+PublisherUrl: https://github.com/RobbyV2
+PackageName: RChat
+PackageUrl: https://github.com/{{REPO}}
+License: Unknown
+ShortDescription: Anonymous Material chat
+Description: Desktop client for RChat instances.
+ReleaseNotesUrl: https://github.com/{{REPO}}/releases/tag/{{TAG}}
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

@@ -19,7 +19,7 @@ resources:
 
 images:
   - name: ghcr.io/robbyv2/rchat
-    newTag: nightly
+    newTag: weekly
 
 # rchat-secrets comes from secrets.env. Create it from secrets.env.example and never commit
 # it. A change to a secret restarts the pods that use it.

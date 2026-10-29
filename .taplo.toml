@@ -1,0 +1,6 @@
+exclude = [
+  "target/**",
+  "**/node_modules/**",
+  "apps/desktop/src-tauri/gen/**",
+  ".superpowers/**",
+]

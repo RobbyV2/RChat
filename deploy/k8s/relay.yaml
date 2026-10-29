@@ -34,7 +34,7 @@ spec:
       #   kubernetes.io/hostname: REPLACE-with-the-node-that-owns-RELAY_PUBLIC_IP
       containers:
         - name: rchat
-          image: ghcr.io/robbyv2/rchat:nightly
+          image: ghcr.io/robbyv2/rchat:weekly
           command:
             - sh
             - -c

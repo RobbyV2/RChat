@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: RobbyV2.RChat
+PackageVersion: {{VERSION}}
+MinimumOSVersion: 10.0.17763.0
+Protocols:
+  - rchat
+Installers:
+  - Architecture: x64
+    InstallerType: nullsoft
+    Scope: user
+    InstallerUrl: {{NSIS_URL}}
+    InstallerSha256: {{NSIS_SHA256}}
+  - Architecture: x64
+    InstallerType: wix
+    Scope: machine
+    InstallerUrl: {{MSI_URL}}
+    InstallerSha256: {{MSI_SHA256}}
+ManifestType: installer
+ManifestVersion: 1.6.0

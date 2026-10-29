@@ -1,72 +1,43 @@
 name: ci
 
+# Fast checks run on every push and pull request. The heavy jobs (desktop, mobile, Docker and the
+# desktop smoke run) run on pushes to main and manual runs; release.yml runs them for releases.
+# Fast checks finish for every main commit; a newer push cancels the older heavy jobs instead.
 on:
   push:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**']
   pull_request:
-  schedule:
-    - cron: '0 6 * * *'
+    paths-ignore: ['**/*.md', 'docs/**']
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
-  fmt:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: cargo fmt --all --check
-      - run: bun run format:check
+  checks:
+    uses: ./.github/workflows/checks.yml
 
-  clippy:
+  desktop-smoke:
+    concurrency:
+      group: ci-heavy-desktop-smoke-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: true
+    if: github.event_name != 'pull_request'
+    needs: [checks]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --exclude rchat-desktop --exclude tauri-plugin-rchat-share --all-targets -- -D warnings
-
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --exclude rchat-desktop --exclude tauri-plugin-rchat-share
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: bun run lint
-      - run: bun run test:ui
-
-  desktop:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev xvfb
       - run: bun install --frozen-lockfile
       - run: bun run build:desktop
-      - run: cargo clippy -p rchat-desktop -p tauri-plugin-rchat-share --all-targets -- -D warnings
-      - run: cargo clippy -p rchat-desktop --all-targets --features smoke -- -D warnings
-      - run: cargo test -p rchat-desktop
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: tauri-cli
         with:
           path: ~/.cargo/bin/cargo-tauri
@@ -77,104 +48,33 @@ jobs:
       - name: Headless smoke run
         env:
           APP_MODE: api-only
-          SERVER_PORT: "3470"
+          SERVER_PORT: '3470'
           DATABASE_URL: /tmp/rchat-smoke.db
         run: |
           ./target/debug/server > /tmp/rchat-smoke-server.log 2>&1 &
           for _ in $(seq 60); do curl -sf http://localhost:3470/api/health > /dev/null && break; sleep 1; done
           apps/desktop/scripts/smoke.sh http://localhost:3470
 
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - run: wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --release
-      - run: bun run build
-      - run: cargo build --release --bin server
+  desktop:
+    concurrency:
+      group: ci-heavy-desktop-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: true
+    if: github.event_name != 'pull_request'
+    needs: [checks]
+    uses: ./.github/workflows/desktop.yml
 
-  nightly-build:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    needs: [fmt, clippy, test, lint, build]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-latest
-          - platform: linux/arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v7
-      - id: image
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-      - run: echo "PLATFORM_PAIR=${PLATFORM//\//-}" >> "$GITHUB_ENV"
-        env:
-          PLATFORM: ${{ matrix.platform }}
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ env.PLATFORM_PAIR }}
-          cache-to: type=gha,mode=max,scope=${{ env.PLATFORM_PAIR }}
-      - run: |
-          mkdir -p /tmp/digests
-          touch "/tmp/digests/${DIGEST#sha256:}"
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-      - uses: actions/upload-artifact@v7
-        with:
-          name: digests-${{ env.PLATFORM_PAIR }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
+  mobile:
+    concurrency:
+      group: ci-heavy-mobile-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: true
+    if: github.event_name != 'pull_request'
+    needs: [checks]
+    uses: ./.github/workflows/mobile.yml
 
-  nightly-merge:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    needs: [nightly-build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          path: /tmp/digests
-          pattern: digests-*
-          merge-multiple: true
-      - id: image
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - working-directory: /tmp/digests
-        run: |
-          docker buildx imagetools create \
-            -t "${IMAGE}:nightly" \
-            -t "${IMAGE}:${GITHUB_SHA}" \
-            $(printf "${IMAGE}@sha256:%s " *)
-        env:
-          IMAGE: ${{ steps.image.outputs.name }}
-      - run: |
-          git tag -f nightly
-          git push -f origin nightly
+  docker:
+    concurrency:
+      group: ci-heavy-docker-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: true
+    if: github.event_name != 'pull_request'
+    needs: [checks]
+    uses: ./.github/workflows/docker.yml
