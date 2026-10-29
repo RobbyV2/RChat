@@ -12,9 +12,10 @@ import type { OpenInvite } from './invite'
 import type { OlderState, ReadMark } from './lists'
 import type { DmZone, Layout } from './nav_layout'
 import type { Notice } from './notices'
-import type { Level, MuteUntil, NotifyPrefs, NotifyScope } from './notify'
+import type { Level, MuteUntil, NotifyPrefs, NotifyScope, Suppress } from './notify'
 import type { PassKind, Secret } from './password'
 import type { Pings } from './pings'
+import type { GroupPings } from './group_pings'
 import type { Replying } from './replies'
 import type { SearchArgs } from './search'
 import type { Sed } from './sed'
@@ -224,6 +225,8 @@ export interface RChatState {
   slowUntil: Record<number, number>
   reads: Record<string, ReadMark>
   pings: Pings
+  // unread messages that ping you through @everyone, @here or your roles, by channel scope
+  groupPings: GroupPings
   unreadAnchor: Record<string, number>
   atBottom: Record<string, boolean>
   authExpired: boolean
@@ -327,6 +330,8 @@ export interface RChatState {
   unpinMessage: (id: number) => Promise<void>
   reloadForward: () => void
   setNotifyLevel: (scope: NotifyScope, level: Level | null) => void
+  // "Suppress @everyone and @here" / "Suppress role mentions" for a server
+  setNotifySuppress: (server: string, which: Suppress, on: boolean) => void
   muteScope: (scope: NotifyScope, until: MuteUntil | null) => void
   muteServers: (names: string[], until: MuteUntil | null) => void
   resetNotify: (scope: NotifyScope) => void
@@ -428,7 +433,7 @@ export interface RChatState {
   updateRole: (
     server: string,
     id: number,
-    patch: { name?: string; color?: string; perms?: number }
+    patch: { name?: string; color?: string; perms?: number; mentionable?: boolean }
   ) => Promise<void>
   deleteRole: (server: string, id: number) => Promise<void>
   assignRole: (server: string, id: number, username: string) => Promise<void>

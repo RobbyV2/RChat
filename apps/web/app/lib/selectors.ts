@@ -3,6 +3,7 @@
 import { anyDmUnread, unreadServers } from './lists'
 import { dmSections, folderChildren, folderTitle, railNames, type Folder } from './nav_layout'
 import {
+  groupKindsShown,
   mutedOf,
   pingShown,
   resolve as resolveNotify,
@@ -12,6 +13,7 @@ import {
 } from './notify'
 import { dmPings, scopePings, serverPings, shownPings, totalPings, type Pings } from './pings'
 import { markTargets } from './reads'
+import { groupBadges, groupHighlights, groupNames, type GroupPings } from './group_pings'
 import { canChangeRole, memberPerms, rolePerms } from './rules'
 import type { ConfigSource } from './config_transfer'
 import type { RChatState } from './store_types'
@@ -203,19 +205,60 @@ export const allMarkTargets = (s: RChatState) => {
   )
 }
 
-let pingMemo: { pings: Pings; prefs: NotifyPrefs; shown: Pings } | null = null
+let pingMemo: {
+  pings: Pings
+  groups: GroupPings
+  reads: RChatState['reads']
+  prefs: NotifyPrefs
+  shown: Pings
+} | null = null
 
-// The pings that badge: all of them except in scopes set to "Nothing".
+// The pings that badge: all of them except in scopes set to "Nothing", plus unread messages that
+// ping you through group mentions the server's suppress settings let through.
 export const badgePings = (s: RChatState): Pings => {
-  if (pingMemo?.pings !== s.pings || pingMemo.prefs !== s.notifyPrefs) {
+  if (
+    pingMemo?.pings !== s.pings ||
+    pingMemo.prefs !== s.notifyPrefs ||
+    pingMemo.groups !== s.groupPings ||
+    (pingMemo.reads !== s.reads && Object.keys(s.groupPings).length > 0)
+  ) {
     const prefs = s.notifyPrefs
+    const reads = s.reads
+    const groups = groupBadges(
+      s.groupPings,
+      scope => reads[scope]?.lastRead ?? 0,
+      (server, kinds) => groupKindsShown(prefs, server, kinds).length > 0
+    )
+    const all = Object.keys(groups).length ? { ...s.pings, ...groups } : s.pings
     pingMemo = {
       pings: s.pings,
+      groups: s.groupPings,
+      reads,
       prefs,
-      shown: shownPings(s.pings, (scope, server) => pingShown(prefs, scope, server)),
+      shown: shownPings(all, (scope, server) => pingShown(prefs, scope, server)),
     }
   }
   return pingMemo.shown
+}
+
+// Your side of group mentions in `server`, for highlights and pills.
+const groupSelf = (s: RChatState, server: string | null) => ({
+  username: s.me?.username ?? '',
+  member: !!s.me && server !== null && serverNames(s).includes(server),
+  online: !!s.me && !s.me.appear_offline,
+  roleIds: s.me && server !== null ? (memberOf(s, server, s.me.username)?.role_ids ?? null) : null,
+})
+
+export const groupMentionsMe = (s: RChatState, m: Message): boolean =>
+  !!m.group_mentions?.length && groupHighlights(m, groupSelf(s, messageServer(s, m)))
+
+// `name\nkey` lines for the group mention pills of a message (stable string for selectors).
+export const groupPills = (s: RChatState, m: Message): string => {
+  if (!m.group_mentions?.length) return ''
+  const server = messageServer(s, m)
+  return groupNames(m.group_mentions, server ? s.servers[server]?.roles : undefined)
+    .map(([name, key]) => `${name}\t${key}`)
+    .join('\n')
 }
 
 export const scopePingCount = (s: RChatState, scope: string) => scopePings(badgePings(s), scope)

@@ -509,6 +509,291 @@ pub async fn ping_message(
     }
 }
 
+/// Most `@here` recipients stored per message (online viewers at send time).
+pub const HERE_MAX: usize = 500;
+/// Most role mentions per message.
+pub const ROLE_MENTION_MAX: usize = 20;
+/// Most online users looked at for one `@here`.
+const HERE_SCAN: usize = 4 * HERE_MAX;
+/// Most group-mentioned messages counted per user (like `PINGS_MAX`).
+pub const GROUP_PINGS_MAX: i64 = PINGS_MAX;
+
+/// Who a group mention addresses.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum GroupKind {
+    /// `@everyone`: every member who can view the channel.
+    Everyone,
+    /// `@here`: the members who were online and could view the channel when it was sent.
+    Here,
+    /// `@role name`: the members with the role who can view the channel.
+    Role,
+}
+
+impl GroupKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GroupKind::Everyone => "everyone",
+            GroupKind::Here => "here",
+            GroupKind::Role => "role",
+        }
+    }
+
+    fn parse(s: &str) -> Option<GroupKind> {
+        match s {
+            "everyone" => Some(GroupKind::Everyone),
+            "here" => Some(GroupKind::Here),
+            "role" => Some(GroupKind::Role),
+            _ => None,
+        }
+    }
+}
+
+/// An `@everyone`, `@here` or role mention that pinged.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct GroupMention {
+    /// Who it addresses.
+    pub kind: GroupKind,
+    /// The role for `role` mentions; `null` otherwise.
+    pub role_id: Option<i64>,
+}
+
+/// `messages.group_mentions`: `everyone`, `here` and `r<role id>`, space separated.
+pub fn stored_group_mentions(list: &[GroupMention]) -> Option<String> {
+    let parts: Vec<String> = list
+        .iter()
+        .map(|g| match (g.kind, g.role_id) {
+            (GroupKind::Role, Some(id)) => format!("r{id}"),
+            (kind, _) => kind.as_str().to_string(),
+        })
+        .collect();
+    match parts.is_empty() {
+        true => None,
+        false => Some(parts.join(" ")),
+    }
+}
+
+pub fn parse_group_mentions(stored: Option<&str>) -> Vec<GroupMention> {
+    stored
+        .unwrap_or_default()
+        .split_whitespace()
+        .filter_map(|part| match part.strip_prefix('r') {
+            Some(id) => id.parse().ok().map(|id| GroupMention {
+                kind: GroupKind::Role,
+                role_id: Some(id),
+            }),
+            None => GroupKind::parse(part).map(|kind| GroupMention {
+                kind,
+                role_id: None,
+            }),
+        })
+        .collect()
+}
+
+/// The group mentions in `content` that `actor` may use in `channel`: `@everyone`, `@here` and
+/// every role with the Mention everyone permission, and roles that allow anyone to mention them
+/// without it. Uses the same candidates as `@username` mentions (code is skipped). The
+/// permission is the one membership gives, so a site admin gets nothing extra.
+pub async fn group_mentions(
+    db: &Db,
+    channel: &ResolvedChannel,
+    content: &str,
+) -> Result<Vec<GroupMention>, ApiError> {
+    let candidates = mention_candidates(content);
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+    let allowed = channel.member_bits(db).await? & crate::db::Perm::MentionEveryone as i64 != 0;
+    let wanted: HashSet<&str> = candidates.iter().map(String::as_str).collect();
+    let mut out = Vec::new();
+    if allowed {
+        for kind in [GroupKind::Everyone, GroupKind::Here] {
+            if wanted.contains(kind.as_str()) {
+                out.push(GroupMention {
+                    kind,
+                    role_id: None,
+                });
+            }
+        }
+    }
+    let rows = sqlx::query("SELECT id, name, mentionable FROM roles WHERE server = $1 ORDER BY id")
+        .bind(channel.server().name())
+        .fetch_all(db)
+        .await?;
+    let mut roles = 0;
+    for r in &rows {
+        let (id, name, mentionable): (i64, String, i64) =
+            (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
+        if (allowed || mentionable != 0) && wanted.contains(name.trim().to_lowercase().as_str()) {
+            out.push(GroupMention {
+                kind: GroupKind::Role,
+                role_id: Some(id),
+            });
+            roles += 1;
+            if roles == ROLE_MENTION_MAX {
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The members who were online in the channel's server and can view the channel, without the
+/// author: at most `HERE_MAX`, looking at no more than `HERE_SCAN` online users.
+async fn here_recipients(
+    state: &AppState,
+    channel: &ResolvedChannel,
+    author: &str,
+) -> Result<Vec<String>, ApiError> {
+    let server = channel.server().name();
+    let mut out = Vec::new();
+    let mut after: Option<String> = None;
+    let mut scanned = 0;
+    while out.len() < HERE_MAX && scanned < HERE_SCAN {
+        let page = state.hub.online_after(server, after.as_deref(), HERE_MAX);
+        let Some(last) = page.last().cloned() else {
+            break;
+        };
+        scanned += page.len();
+        let names: Vec<String> = page.into_iter().filter(|n| n != author).collect();
+        out.extend(channel.viewers_among(&state.db, &names, None).await?);
+        after = Some(last);
+    }
+    out.truncate(HERE_MAX);
+    Ok(out)
+}
+
+/// Stores the group mentions of a new top-level channel message: one `group_pings` row per
+/// mention, and for `@here` the online viewers (at most `HERE_MAX`). Nothing is stored per
+/// member otherwise: unseen counts are worked out when they are read (`group_unseen`). Never
+/// fails the send: errors are logged.
+pub async fn store_group_pings(state: &AppState, channel: &ResolvedChannel, message: &Message) {
+    if message.group_mentions.is_empty() || message.thread_root_id.is_some() {
+        return;
+    }
+    let run = async {
+        let here = match message
+            .group_mentions
+            .iter()
+            .any(|g| g.kind == GroupKind::Here)
+        {
+            true => here_recipients(state, channel, &message.author.username).await?,
+            false => Vec::new(),
+        };
+        let mut tx = state.db.begin().await?;
+        for g in &message.group_mentions {
+            let id: i64 = sqlx::query(
+                "INSERT INTO group_pings(message_id, channel_id, server, kind, role_id, actor, created_at) VALUES($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+            )
+            .bind(message.id)
+            .bind(channel.id())
+            .bind(channel.server().name())
+            .bind(g.kind.as_str())
+            .bind(g.role_id)
+            .bind(&message.author.username)
+            .bind(message.created_at)
+            .fetch_one(&mut *tx)
+            .await?
+            .try_get(0)?;
+            if g.kind != GroupKind::Here {
+                continue;
+            }
+            for chunk in here.chunks(100) {
+                let values: Vec<String> = (0..chunk.len())
+                    .map(|i| format!("($1, ${})", i + 2))
+                    .collect();
+                let sql = format!(
+                    "INSERT INTO here_pings(ping_id, username) VALUES {} ON CONFLICT DO NOTHING",
+                    values.join(", ")
+                );
+                let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(id);
+                for name in chunk {
+                    query = query.bind(name);
+                }
+                query.execute(&mut *tx).await?;
+            }
+        }
+        tx.commit().await?;
+        Ok::<(), ApiError>(())
+    };
+    if let Err(ApiError(_, e)) = run.await {
+        tracing::warn!("group pings for message {} failed: {e}", message.id);
+    }
+}
+
+/// An unread message that pings the reader through group mentions.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct GroupPing {
+    /// The message.
+    pub message_id: i64,
+    /// Its group mentions that address the reader (`role` once, however many of their roles it
+    /// names).
+    pub kinds: Vec<GroupKind>,
+}
+
+/// See `group_unseen`. `hidden` channels (ids the reader cannot view) are left out in the query,
+/// so they never use up the `GROUP_PINGS_MAX` rows.
+pub(crate) fn group_unseen_sql(hidden: &[i64]) -> String {
+    let skip = match hidden {
+        [] => String::new(),
+        ids => format!(
+            " AND g.channel_id NOT IN ({})",
+            ids.iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    format!(
+        "SELECT g.channel_id, g.message_id, g.kind FROM members mem JOIN channels c ON c.server = mem.server JOIN group_pings g ON g.channel_id = c.id WHERE mem.username = $1 AND c.kind = 'text' AND g.message_id > COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'c' || c.id), 0) AND g.created_at >= mem.joined_at AND g.actor <> $1 AND (g.kind = 'everyone' OR (g.kind = 'here' AND EXISTS(SELECT 1 FROM here_pings h WHERE h.username = $1 AND h.ping_id = g.id)) OR (g.kind = 'role' AND EXISTS(SELECT 1 FROM user_roles ur WHERE ur.server = g.server AND ur.username = $1 AND ur.role_id = g.role_id))) AND NOT EXISTS(SELECT 1 FROM pings p WHERE p.message_id = g.message_id AND p.username = $1 AND p.kind <> 'reaction'){skip} ORDER BY g.message_id DESC LIMIT $2"
+    )
+}
+
+/// Unread messages that ping `username` through group mentions, by channel id, newest first.
+/// A message counts while it is newer than the reader's read position in the channel, was sent
+/// after they joined the server (so read-history limits never matter), is not their own, and
+/// addresses them: `@everyone`, `@here` when they were among the stored online viewers, or a
+/// role they hold now. Messages that also ping them personally (a mention or reply ping) count
+/// only there. Channels in `hidden` (the ones they cannot view) are skipped. At most
+/// `GROUP_PINGS_MAX` rows are read; every lookup is indexed (`members` by user, `channels` by server,
+/// `group_pings` by channel and message id, `read_state`, `here_pings` and `user_roles` by
+/// primary key, `pings` by message).
+pub async fn group_unseen(
+    db: &Db,
+    username: &str,
+    hidden: &[i64],
+) -> sqlx::Result<HashMap<i64, Vec<GroupPing>>> {
+    let rows = sqlx::query(sqlx::AssertSqlSafe(group_unseen_sql(hidden)))
+        .bind(username)
+        .bind(GROUP_PINGS_MAX)
+        .fetch_all(db)
+        .await?;
+    let mut out: HashMap<i64, Vec<GroupPing>> = HashMap::new();
+    for r in &rows {
+        let (channel, message_id, kind): (i64, i64, String) =
+            (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
+        let Some(kind) = GroupKind::parse(&kind) else {
+            continue;
+        };
+        let list = out.entry(channel).or_default();
+        match list.last_mut() {
+            Some(last) if last.message_id == message_id => {
+                if !last.kinds.contains(&kind) {
+                    last.kinds.push(kind);
+                    last.kinds.sort();
+                }
+            }
+            _ => list.push(GroupPing {
+                message_id,
+                kinds: vec![kind],
+            }),
+        }
+    }
+    Ok(out)
+}
+
 /// Which unseen pings a read covers.
 #[derive(Clone, Copy, Debug)]
 pub enum SeenScope<'a> {

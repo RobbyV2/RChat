@@ -65,7 +65,7 @@ import { postedUrl } from '../lib/embed_links'
 import { findMessageLinks, parseMessageLink } from '../lib/message_links'
 import { saveGuestMedia, useMediaSrc } from '../lib/media_src'
 import { expiryText, sameOriginImage } from '../lib/rules'
-import { knownMentions, userRefFor, useStore, type ContextMenuItem } from '../lib/store'
+import { groupPills, knownMentions, userRefFor, useStore, type ContextMenuItem } from '../lib/store'
 import type { Embed, Message, MessageMedia } from '../lib/types'
 import { longPress } from './context_menu'
 import { InviteCard, RemoteInviteCard } from './invite_card'
@@ -135,30 +135,45 @@ const splitSpoilers = (node: MdNode) => {
 
 const remarkSpoiler = () => (tree: unknown) => splitSpoilers(tree as MdNode)
 
-const markMentions = (node: MdNode, known: ReadonlySet<string>) => {
+// Group mention pills are looked up as `\n<key>` (a username never holds a line break).
+const markMentions = (
+  node: MdNode,
+  known: ReadonlySet<string>,
+  groups: ReadonlyMap<string, string>
+) => {
   const { children } = node
   if (!children) return
+  const lookup = (name: string) => {
+    if (known.has(name)) return name
+    const group = groups.get(name)
+    return group === undefined ? undefined : `\n${group}`
+  }
   node.children = children.flatMap(child => {
     if (child.type === 'link' || child.type === 'linkReference') return [child]
     if (child.type !== 'text' || child.value === undefined) {
-      markMentions(child, known)
+      markMentions(child, known, groups)
       return [child]
     }
-    return splitKnownMentions(child.value, name => (known.has(name) ? name : undefined)).map(
-      ({ text, user }) =>
-        user !== null
-          ? {
-              type: 'emphasis',
-              data: { hName: 'span', hProperties: { 'data-mention': user } },
-              children: [{ type: 'text', value: text }],
-            }
-          : { type: 'text', value: text }
+    return splitKnownMentions(child.value, lookup).map(({ text, user }) =>
+      user !== null
+        ? {
+            type: 'emphasis',
+            data: {
+              hName: 'span',
+              hProperties: user.startsWith('\n')
+                ? { 'data-group': user.slice(1) }
+                : { 'data-mention': user },
+            },
+            children: [{ type: 'text', value: text }],
+          }
+        : { type: 'text', value: text }
     )
   })
 }
 
-const remarkMention = (known: ReadonlySet<string>) => () => (tree: unknown) =>
-  markMentions(tree as MdNode, known)
+const remarkMention =
+  (known: ReadonlySet<string>, groups: ReadonlyMap<string, string>) => () => (tree: unknown) =>
+    markMentions(tree as MdNode, known, groups)
 
 // `(edited)` at the end of the last paragraph, or on its own line after other blocks.
 const remarkEdited = (at: number) => () => (tree: unknown) => {
@@ -250,6 +265,44 @@ function Mention({ username }: { username: string }) {
   )
 }
 
+const childText = (c: ReactNode): string =>
+  typeof c === 'string' || typeof c === 'number'
+    ? String(c)
+    : Array.isArray(c)
+      ? c.map(childText).join('')
+      : ''
+
+// `@everyone` and `@here` in a neutral pill, a role in its color.
+function GroupPill({ group, text }: { group: string; text: string }) {
+  const role = useStore(s => {
+    if (group[0] !== 'r') return null
+    const id = Number(group.slice(1))
+    for (const detail of Object.values(s.servers)) {
+      const r = detail.roles.find(x => x.id === id)
+      if (r) return r
+    }
+    return null
+  })
+  if (role)
+    return (
+      <span
+        data-group={group}
+        style={{ color: role.color, backgroundColor: `${role.color}26` }}
+        className="rounded px-0.5 font-medium"
+      >
+        @{role.name}
+      </span>
+    )
+  return (
+    <span
+      data-group={group}
+      className="rounded bg-on-surface/10 px-0.5 font-medium text-on-surface"
+    >
+      {text}
+    </span>
+  )
+}
+
 export function MessageLink({ href, children, ...props }: React.ComponentProps<'a'>) {
   const invite = href ? parseInvite(href, shareOrigin()) : null
   const target = href && !invite ? parseMessageLink(href, localOrigins()) : null
@@ -305,6 +358,11 @@ const components: Components = {
       />
     ) : 'data-mention' in props ? (
       <Mention username={String((props as Record<string, unknown>)['data-mention'])} />
+    ) : 'data-group' in props ? (
+      <GroupPill
+        group={String((props as Record<string, unknown>)['data-group'])}
+        text={childText(props.children)}
+      />
     ) : (
       <span {...props} />
     ),
@@ -889,15 +947,19 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     [content]
   )
   const known = useStore(s => knownMentions(s, message, candidates))
+  const pills = useStore(s => groupPills(s, message))
   const plugins = useMemo(
     () => [
       remarkGfm,
       remarkSpoiler,
       remarkStamps,
-      remarkMention(new Set(known ? known.split('\n') : [])),
+      remarkMention(
+        new Set(known ? known.split('\n') : []),
+        new Map(pills ? pills.split('\n').map(line => line.split('\t') as [string, string]) : [])
+      ),
       ...(edited ? [remarkEdited(edited)] : []),
     ],
-    [known, edited]
+    [known, pills, edited]
   )
   const homePublic = useStore(s => s.instance?.public_url ?? null)
   const local = useMemo(() => localOrigins(homePublic), [homePublic])

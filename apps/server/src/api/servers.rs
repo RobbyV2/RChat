@@ -177,8 +177,8 @@ pub struct UsernameReq {
 #[derive(Deserialize, ToSchema)]
 pub struct PermsReq {
     /// Permission bitmask: 1 Manage channels, 2 Manage messages (delete and pin messages of
-    /// others), 4 Kick, 8 Delete server, 16 Manage admins. Bits outside 31 are dropped. For an
-    /// admin, 0 means all permissions.
+    /// others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention everyone and roles. Bits
+    /// outside 63 are dropped. For an admin, 0 means all permissions.
     #[schema(example = 7)]
     perms: i64,
 }
@@ -194,11 +194,15 @@ pub struct RoleReq {
     #[schema(example = "#22c55e")]
     color: String,
     /// Permission bitmask for members with the role: 1 Manage channels, 2 Manage messages (delete
-    /// and pin messages of others), 4 Kick, 8 Delete server, 16 Manage admins. Bits outside 31 are
-    /// dropped. Roles only add permissions to members who are not admins. Admins use their own
-    /// admin permissions.
+    /// and pin messages of others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention
+    /// everyone and roles. Bits outside 63 are dropped. Roles only add permissions to members who
+    /// are not admins. Admins use their own admin permissions.
     #[schema(example = 6)]
     perms: i64,
+    /// Anyone who can send may mention the role (default `false`: only members with the Mention
+    /// everyone permission can).
+    #[serde(default)]
+    mentionable: bool,
 }
 
 /// Request body for updating a role. Every field is optional; omitted fields are left
@@ -209,8 +213,10 @@ pub struct RolePatch {
     name: Option<String>,
     /// New role color as `#rrggbb`, stored as sent.
     color: Option<String>,
-    /// New permission bitmask (see `RoleReq.perms`). Bits outside 31 are dropped.
+    /// New permission bitmask (see `RoleReq.perms`). Bits outside 63 are dropped.
     perms: Option<i64>,
+    /// Whether anyone who can send may mention the role (see `RoleReq.mentionable`).
+    mentionable: Option<bool>,
 }
 
 /// Request body for getting guest access to a password-protected server.
@@ -816,11 +822,12 @@ async fn build_member(
 }
 
 pub(crate) async fn server_roles(db: &Db, server: &str) -> Result<Vec<Role>, ApiError> {
-    let rows =
-        sqlx::query("SELECT id, name, color, perms FROM roles WHERE server = $1 ORDER BY id")
-            .bind(server)
-            .fetch_all(db)
-            .await?;
+    let rows = sqlx::query(
+        "SELECT id, name, color, perms, mentionable FROM roles WHERE server = $1 ORDER BY id",
+    )
+    .bind(server)
+    .fetch_all(db)
+    .await?;
     let mut roles = Vec::with_capacity(rows.len());
     for r in &rows {
         roles.push(Role {
@@ -828,6 +835,7 @@ pub(crate) async fn server_roles(db: &Db, server: &str) -> Result<Vec<Role>, Api
             name: r.try_get(1)?,
             color: r.try_get(2)?,
             perms: r.try_get(3)?,
+            mentionable: r.try_get::<i64, _>(4)? != 0,
         });
     }
     Ok(roles)
@@ -3150,7 +3158,7 @@ pub(crate) async fn transfer_admin(
 
 /// Set an admin's permissions
 ///
-/// Replaces the permission bitmask of the admin `username` (bits outside 31 are dropped; 0 means
+/// Replaces the permission bitmask of the admin `username` (bits outside 63 are dropped; 0 means
 /// all permissions). Taking permissions away works on any admin, like revoking admin. When the new
 /// permissions add any the admin did not have, all of the new permissions must be ones you have
 /// (equal is fine), so only callers holding every permission can set 0. Requires the Manage admins
@@ -3242,6 +3250,7 @@ fn held_above_sql(one: bool) -> String {
         Perm::Kick,
         Perm::DeleteServer,
         Perm::ManageAdmins,
+        Perm::MentionEveryone,
     ]
     .map(|p| format!("MAX(r.perms & {})", p as i64))
     .join(" | ");
@@ -3453,12 +3462,13 @@ pub(crate) async fn create_role(
         return Err(bad(&format!("A server can have at most {ROLE_MAX} roles")));
     }
     let id: i64 = sqlx::query(
-        "INSERT INTO roles(server, name, color, perms) VALUES($1, $2, $3, $4) RETURNING id",
+        "INSERT INTO roles(server, name, color, perms, mentionable) VALUES($1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(&key)
     .bind(&role_name)
     .bind(&req.color)
     .bind(perms)
+    .bind(i64::from(req.mentionable))
     .fetch_one(&state.db)
     .await?
     .try_get(0)?;
@@ -3468,6 +3478,7 @@ pub(crate) async fn create_role(
         name: role_name,
         color: req.color,
         perms,
+        mentionable: req.mentionable,
     }))
 }
 
@@ -3508,7 +3519,12 @@ pub(crate) async fn update_role(
     let key = access.name().to_string();
     let current = require_role(&state.db, &key, id).await?;
     require_role_change(&state.db, &access, id, current).await?;
-    let RolePatch { name, color, perms } = req;
+    let RolePatch {
+        name,
+        color,
+        perms,
+        mentionable,
+    } = req;
     let role_name = match &name {
         Some(role_name) => {
             let role_name = role_name.trim().to_string();
@@ -3552,8 +3568,15 @@ pub(crate) async fn update_role(
             .execute(&mut *tx)
             .await?;
     }
+    if let Some(mentionable) = mentionable {
+        sqlx::query("UPDATE roles SET mentionable = $1 WHERE id = $2")
+            .bind(i64::from(mentionable))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
-    let row = sqlx::query("SELECT name, color, perms FROM roles WHERE id = $1")
+    let row = sqlx::query("SELECT name, color, perms, mentionable FROM roles WHERE id = $1")
         .bind(id)
         .fetch_one(&state.db)
         .await?;
@@ -3562,6 +3585,7 @@ pub(crate) async fn update_role(
         name: row.try_get(0)?,
         color: row.try_get(1)?,
         perms: row.try_get(2)?,
+        mentionable: row.try_get::<i64, _>(3)? != 0,
     };
     state.hub.broadcast(WsEvent::RolesChanged {
         server: key.clone(),
@@ -4266,6 +4290,7 @@ mod tests {
                         name,
                         color: "#ffffff".to_string(),
                         perms: 0,
+                        mentionable: false,
                     }),
                 )
                 .await
@@ -4281,6 +4306,7 @@ mod tests {
                 name: Some("r".repeat(101)),
                 color: None,
                 perms: None,
+                mentionable: None,
             }),
         )
         .await;
@@ -6286,6 +6312,7 @@ mod tests {
                 name: "extra".to_string(),
                 color: "#ffffff".to_string(),
                 perms: 0,
+                mentionable: false,
             }),
         )
         .await;
@@ -6594,6 +6621,7 @@ mod tests {
                         name: "made".to_string(),
                         color: "#123456".to_string(),
                         perms,
+                        mentionable: false,
                     }),
                 )
                 .await
@@ -6619,6 +6647,7 @@ mod tests {
                         name,
                         color: None,
                         perms,
+                        mentionable: None,
                     }),
                 )
                 .await
@@ -6732,6 +6761,7 @@ mod tests {
                     name: name.map(str::to_string),
                     color: None,
                     perms,
+                    mentionable: None,
                 }),
             )
             .await,
@@ -7055,6 +7085,7 @@ mod tests {
                         name: Some(name),
                         color: Some(color),
                         perms,
+                        mentionable: None,
                     }),
                 )
                 .await

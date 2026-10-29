@@ -424,7 +424,7 @@ export const endpoints = (c: ApiClient) => ({
   updateRole: (
     server: string,
     id: number,
-    patch: { name?: string; color?: string; perms?: number }
+    patch: { name?: string; color?: string; perms?: number; mentionable?: boolean }
   ) => c.req<Role>('PATCH', `/servers/${seg(server)}/roles/${id}`, patch),
   deleteRole: (server: string, id: number) =>
     c.req<unknown>('DELETE', `/servers/${seg(server)}/roles/${id}`),

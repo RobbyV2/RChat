@@ -160,7 +160,11 @@ export interface PingAlert {
 // bottom) means no toast and no badge: the scope is marked seen instead. Otherwise it is counted
 // (badges hide it under "Nothing", see `pingShown`) and toasts unless the scope is muted or set
 // to "Nothing".
-export const pingAlert = (ping: Ping, w: Watching, rule?: Resolved): PingAlert => {
+export const pingAlert = (
+  ping: Pick<Ping, 'scope' | 'thread_root_id'>,
+  w: Watching,
+  rule?: Resolved
+): PingAlert => {
   const seen =
     w.visible &&
     (ping.thread_root_id !== null

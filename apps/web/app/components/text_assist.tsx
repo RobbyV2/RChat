@@ -10,12 +10,13 @@ import {
   type KeyboardEvent,
   type RefObject,
 } from 'react'
-import { useStore, viewKey } from '../lib/store'
+import { serverAdminPerms, useStore, viewKey } from '../lib/store'
 import { api } from '../lib/instances'
-import type { Message, UserRef } from '../lib/types'
+import { Perm, hasPerm, type Message, type Role, type UserRef } from '../lib/types'
 import {
   MENTION_QUERY,
   SUGGEST_DEBOUNCE,
+  groupSuggestions,
   mentionText,
   recentAuthors,
   suggestKey,
@@ -97,6 +98,37 @@ function useMentionSearch(listKey: string | null, query: string | null) {
   )
 }
 
+const NO_ROLES: Role[] = []
+
+type Suggestion =
+  | { kind: 'user'; user: UserRef }
+  | { kind: 'group'; key: string; label: string; color: string | null; hint: string }
+
+// `@everyone`, `@here` and roles you may mention in a channel (not in threads or DMs): all of
+// them with Mention everyone and roles, otherwise roles that allow anyone.
+function useGroupSearch(listKey: string | null) {
+  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
+  const member = useStore(s => !!server && !!s.me?.servers.some(x => x.name === server))
+  const allowed = useStore(s =>
+    server ? hasPerm(serverAdminPerms(s, server), Perm.MentionEveryone) : false
+  )
+  const roles = useStore(s => (server ? s.servers[server]?.roles : undefined)) ?? NO_ROLES
+  const open = member && listKey?.[0] === 'c'
+  return useCallback(
+    (q: string): Suggestion[] =>
+      open
+        ? groupSuggestions(q, allowed, roles).map(g => ({
+            kind: 'group' as const,
+            key: g.key,
+            label: g.label,
+            color: g.color,
+            hint: g.hint,
+          }))
+        : [],
+    [open, allowed, roles]
+  )
+}
+
 // `:shortcode`, `@mention` and `<t:` timestamp autocomplete for a message box, and auto-grow up
 // to `maxHeight`. `listKey` is the message list of the box. `getText` reads the text when the
 // user accepts an item.
@@ -147,7 +179,18 @@ export function useTextAssist({
     caret !== null && !paused && !trigger && !stampTrigger
       ? findTrigger(text, caret, '@', 0, MENTION_QUERY)
       : null
-  const searchPeople = useMentionSearch(listKey, atTrigger?.query ?? null)
+  const searchUsers = useMentionSearch(listKey, atTrigger?.query ?? null)
+  const searchGroups = useGroupSearch(listKey)
+  const searchPeople = useCallback(
+    (q: string): Suggestion[] => {
+      const groups = searchGroups(q)
+      const users = searchUsers(q)
+        .slice(0, 10 - groups.length)
+        .map(user => ({ kind: 'user' as const, user }))
+      return [...users, ...groups]
+    },
+    [searchUsers, searchGroups]
+  )
   const { data: emoji } = useEmojiData(trigger !== null)
   const searchCodes = useCallback(
     (q: string) => (emoji ? matchShortcodes(emoji, q, 10, boostFor(prefs, Date.now())) : []),
@@ -175,13 +218,13 @@ export function useTextAssist({
     },
   })
 
-  const people = useAutocomplete<UserRef>({
+  const people = useAutocomplete<Suggestion>({
     scope: atTrigger ? `${listKey}@${atTrigger.start}` : null,
     query: atTrigger?.query ?? '',
     search: searchPeople,
     onAccept: u => {
       if (!atTrigger) return
-      const token = mentionText(u.username)
+      const token = u.kind === 'user' ? mentionText(u.user.username) : u.label
       const cur = getText()
       const pad = /\s/.test(cur[atTrigger.end] ?? '') ? '' : ' '
       placeCaret.current = atTrigger.start + token.length + pad.length
@@ -257,21 +300,40 @@ export function useTextAssist({
         title="Members"
         ac={people}
         below={below}
-        keyOf={u => u.username}
-        render={u => (
-          <>
-            <UserAvatar
-              username={u.username}
-              avatarKind={u.avatar_kind}
-              avatarColor={u.avatar_color}
-              size={24}
-            />
-            <span className="streamer min-w-0 truncate font-medium">{u.display_name}</span>
-            <span className="streamer min-w-0 shrink truncate text-xs opacity-70">
-              @{u.username}
-            </span>
-          </>
-        )}
+        keyOf={u => (u.kind === 'user' ? u.user.username : `\n${u.key}`)}
+        render={u =>
+          u.kind === 'user' ? (
+            <>
+              <UserAvatar
+                username={u.user.username}
+                avatarKind={u.user.avatar_kind}
+                avatarColor={u.user.avatar_color}
+                size={24}
+              />
+              <span className="streamer min-w-0 truncate font-medium">{u.user.display_name}</span>
+              <span className="streamer min-w-0 shrink truncate text-xs opacity-70">
+                @{u.user.username}
+              </span>
+            </>
+          ) : (
+            <>
+              <span
+                aria-hidden
+                style={u.color ? { color: u.color, backgroundColor: `${u.color}26` } : undefined}
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${u.color ? '' : 'bg-on-surface/10 text-on-surface'}`}
+              >
+                @
+              </span>
+              <span
+                style={u.color ? { color: u.color } : undefined}
+                className="min-w-0 truncate font-medium"
+              >
+                {u.label}
+              </span>
+              <span className="min-w-0 shrink truncate text-xs opacity-70">{u.hint}</span>
+            </>
+          )
+        }
       />
     </>
   )

@@ -3976,6 +3976,7 @@ mod tests {
             forward: None,
             pinned_at: None,
             pin_message_id: None,
+            group_mentions: Vec::new(),
         }
     }
 

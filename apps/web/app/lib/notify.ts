@@ -2,12 +2,17 @@
 // Rules sit on servers (by name), channels and DMs (by id). A channel without its own level uses
 // its server's; a muted server mutes its channels. Expired mutes are ignored and pruned.
 
+import type { GroupKind } from './types'
+
 export type Level = 'all' | 'mentions' | 'nothing'
 export type MuteUntil = number | 'forever'
 
 export interface Rule {
   level?: Level
   muteUntil?: MuteUntil
+  // servers only: group mentions that neither toast nor badge
+  suppressEveryone?: boolean
+  suppressRoles?: boolean
 }
 
 export interface NotifyPrefs {
@@ -81,12 +86,17 @@ const muteActive = (until: MuteUntil | undefined, now: number) =>
 
 const ruleOfJson = (x: unknown, now: number): Rule | null => {
   if (typeof x !== 'object' || x === null || Array.isArray(x)) return null
-  const { level, muteUntil } = x as Record<string, unknown>
+  const { level, muteUntil, suppressEveryone, suppressRoles } = x as Record<string, unknown>
   const rule: Rule = {}
   if (isLevel(level)) rule.level = level
   if (isUntil(muteUntil) && muteActive(muteUntil, now)) rule.muteUntil = muteUntil
-  return rule.level || rule.muteUntil ? rule : null
+  if (suppressEveryone === true) rule.suppressEveryone = true
+  if (suppressRoles === true) rule.suppressRoles = true
+  return hasContent(rule) ? rule : null
 }
+
+const hasContent = (rule: Rule) =>
+  !!rule.level || rule.muteUntil !== undefined || !!rule.suppressEveryone || !!rule.suppressRoles
 
 const MAX_RULES = 5000
 
@@ -170,12 +180,20 @@ const putRule = (p: NotifyPrefs, scope: NotifyScope, rule: Rule): NotifyPrefs =>
   const [t, key] = tableOf(scope)
   if (key === '__proto__') return p
   const cur = ruleIn(p[t], key)
-  if (cur?.level === rule.level && cur?.muteUntil === rule.muteUntil) return p
+  if (
+    cur?.level === rule.level &&
+    cur?.muteUntil === rule.muteUntil &&
+    !!cur?.suppressEveryone === !!rule.suppressEveryone &&
+    !!cur?.suppressRoles === !!rule.suppressRoles
+  )
+    return p
   const next = table(p[t])
   const clean: Rule = {}
   if (rule.level) clean.level = rule.level
   if (rule.muteUntil !== undefined) clean.muteUntil = rule.muteUntil
-  if (clean.level || clean.muteUntil !== undefined) next[key] = clean
+  if (rule.suppressEveryone) clean.suppressEveryone = true
+  if (rule.suppressRoles) clean.suppressRoles = true
+  if (hasContent(clean)) next[key] = clean
   else if (cur) delete next[key]
   else return p
   return { ...p, [t]: next }
@@ -219,7 +237,9 @@ const pruneTable = (rules: Rules, now: number) => {
   for (const [key, rule] of Object.entries(rules)) {
     if (rule.muteUntil === undefined || muteActive(rule.muteUntil, now)) continue
     out ??= table(rules)
-    if (rule.level) out[key] = { level: rule.level }
+    const kept: Rule = { ...rule }
+    delete kept.muteUntil
+    if (hasContent(kept)) out[key] = kept
     else delete out[key]
   }
   return out ?? rules
@@ -308,7 +328,45 @@ export const ruleSummary = (rule: Rule, now: number, locale?: string): string =>
         ? `muted ${untilText(rule.muteUntil, now, locale)}`
         : mutedText(rule.muteUntil, now, locale)
     )
+  if (rule.suppressEveryone) parts.push(parts.length ? 'no @everyone' : 'No @everyone')
+  if (rule.suppressRoles) parts.push(parts.length ? 'no role mentions' : 'No role mentions')
   return parts.join(', ') || 'Default'
+}
+
+export type Suppress = 'everyone' | 'roles'
+
+export const SUPPRESS_LABELS: Record<Suppress, string> = {
+  everyone: 'Suppress @everyone and @here',
+  roles: 'Suppress role mentions',
+}
+
+const suppressField = (which: Suppress) =>
+  which === 'everyone' ? 'suppressEveryone' : 'suppressRoles'
+
+export const suppressedOf = (p: NotifyPrefs, server: string, which: Suppress): boolean =>
+  !!ruleIn(p.servers, server)?.[suppressField(which)]
+
+export const setSuppress = (
+  p: NotifyPrefs,
+  server: string,
+  which: Suppress,
+  on: boolean
+): NotifyPrefs => {
+  const scope: NotifyScope = { kind: 'server', name: server }
+  return putRule(p, scope, { ...(ownRule(p, scope) ?? {}), [suppressField(which)]: on })
+}
+
+// The group mention kinds that still notify in a server: `@everyone` and `@here` go with
+// "Suppress @everyone and @here", role mentions with "Suppress role mentions".
+export const groupKindsShown = (
+  p: NotifyPrefs,
+  server: string | null,
+  kinds: readonly GroupKind[]
+): GroupKind[] => {
+  if (server === null) return [...kinds]
+  const everyone = suppressedOf(p, server, 'everyone')
+  const roles = suppressedOf(p, server, 'roles')
+  return kinds.filter(k => (k === 'role' ? !roles : !everyone))
 }
 
 // The rule for a channel/DM key ("c12", "d5") with the server it belongs to.

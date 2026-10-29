@@ -6,9 +6,10 @@ export const Perm = {
   Kick: 4,
   DeleteServer: 8,
   ManageAdmins: 16,
+  MentionEveryone: 32,
 } as const
 
-export const ALL_PERMS = 31
+export const ALL_PERMS = 63
 
 export const hasPerm = (perms: number, perm: number) => (perms & perm) !== 0
 
@@ -82,6 +83,8 @@ export interface Role {
   name: string
   color: string
   perms: number
+  // anyone who can send may mention it
+  mentionable?: boolean
 }
 
 export interface ChannelPerm {
@@ -245,6 +248,21 @@ export interface Message {
   pinned_at?: number | null
   // kind 'pin': the pinned message, null once it is deleted or older than your history
   pin_message_id?: number | null
+  // @everyone, @here and role mentions that pinged when it was sent
+  group_mentions?: GroupMention[]
+}
+
+export type GroupKind = 'everyone' | 'here' | 'role'
+
+export interface GroupMention {
+  kind: GroupKind
+  role_id: number | null
+}
+
+// An unread message that pings you through group mentions.
+export interface GroupPing {
+  message_id: number
+  kinds: GroupKind[]
 }
 
 export interface SystemMessages {
@@ -410,6 +428,7 @@ export interface Unread extends PingSummary {
   server: string | null
   last_read: number
   latest: number
+  group_pings?: GroupPing[]
 }
 
 interface Scoped {

@@ -15,8 +15,9 @@ use crate::api::access::{
 use crate::api::admin::like_pattern;
 use crate::api::budget::{Budget, slow_down};
 use crate::api::pings::{
-    PingScope, ScopePings, SeenScope, ThreadPings, announce_counts, mark_seen, ping_message,
-    pinged_by, unseen_counts,
+    GroupMention, GroupPing, PingScope, ScopePings, SeenScope, ThreadPings, announce_counts,
+    group_mentions, group_unseen, mark_seen, parse_group_mentions, ping_message, pinged_by,
+    store_group_pings, stored_group_mentions, unseen_counts,
 };
 use crate::api::reactions::attach_reactions;
 use crate::api::{
@@ -33,7 +34,7 @@ use crate::db::{
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 
-const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video";
+const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions";
 const SNIPPET_MAX: usize = 200;
 
 /// Message-id paging for message lists. Give at most one of `before`, `after` and `around`;
@@ -239,6 +240,11 @@ pub struct Unread {
     /// Unseen pings on thread replies in this channel, per thread (included in `pings`). Read
     /// with scope `t<root id>`.
     pub thread_pings: Vec<ThreadPings>,
+    /// Unread messages in this channel that ping the caller through `@everyone`, `@here` or a
+    /// role they hold, newest first (not included in `pings`; at most 1000 over all scopes).
+    /// They stop counting once the read position reaches them. Empty for DMs.
+    #[serde(default)]
+    pub group_pings: Vec<GroupPing>,
 }
 
 /// The caller's unread channels and DMs.
@@ -367,6 +373,7 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
             Some(_) => r.try_get(30)?,
             None => None,
         },
+        group_mentions: parse_group_mentions(r.try_get::<Option<String>, _>(35)?.as_deref()),
     })
 }
 
@@ -1009,6 +1016,7 @@ fn replied(quote: &Option<Quoted>) -> Option<&str> {
         .map(|q| q.author.as_str())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn insert_message(
     db: &Db,
     channel_id: Option<i64>,
@@ -1017,6 +1025,7 @@ async fn insert_message(
     user: &User,
     req: SendReq,
     quote: Option<&Quoted>,
+    groups: Vec<GroupMention>,
 ) -> Result<Message, ApiError> {
     let SendReq {
         content,
@@ -1048,7 +1057,7 @@ async fn insert_message(
     }
     let t = now();
     let id: i64 = sqlx::query(
-        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, media_sha256, reply_to, reply_mention, created_at) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id",
+        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, media_sha256, reply_to, reply_mention, group_mentions, created_at) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id",
     )
     .bind(channel_id)
     .bind(dm_id)
@@ -1066,6 +1075,7 @@ async fn insert_message(
     .bind(media.as_ref().and_then(|m| m.sha256.clone()))
     .bind(quote.map(|q| q.id))
     .bind(quote.is_some_and(|q| q.mention) as i64)
+    .bind(stored_group_mentions(&groups))
     .bind(t)
     .fetch_one(&mut *tx)
     .await?
@@ -1099,6 +1109,7 @@ async fn insert_message(
         forward: None,
         pinned_at: None,
         pin_message_id: None,
+        group_mentions: groups,
     }];
     attach_quotes(db, &mut msgs, None).await?;
     let [message] = msgs;
@@ -1315,14 +1326,16 @@ async fn insert_forward(
         )),
         pinned_at: None,
         pin_message_id: None,
+        group_mentions: Vec::new(),
     }];
     attach_embeds(db, &mut msgs).await?;
     let [message] = msgs;
     Ok((message, previews > 0))
 }
 
-/// Stores a message sent to `place` after the access gate allowed it, then announces it:
-/// link previews, the `message` event and pings (forwards ping nobody).
+/// Stores a message sent to `place` after the access gate allowed it, and its group pings
+/// before the `message` event (a client reloading its unread counts on it finds them), then
+/// announces it: link previews, the `message` event and pings (forwards ping nobody).
 async fn deliver(
     state: &AppState,
     user: &User,
@@ -1353,6 +1366,12 @@ async fn deliver(
         }
         None => {
             let quote = quoted(db, user, place, req.reply_to, req.mention_reply).await?;
+            let groups = match (&scope, place) {
+                (PingScope::Channel(channel), Place::Channel(_)) => {
+                    group_mentions(db, channel, &req.content).await?
+                }
+                (_, _) => Vec::new(),
+            };
             let message = insert_message(
                 db,
                 channel_id,
@@ -1361,6 +1380,7 @@ async fn deliver(
                 user,
                 req,
                 quote.as_ref(),
+                groups,
             )
             .await?;
             (message, quote, false)
@@ -1379,6 +1399,9 @@ async fn deliver(
             message.id,
             &message.content,
         );
+    }
+    if let (None, PingScope::Channel(channel)) = (&message.forward, &scope) {
+        store_group_pings(state, channel, &message).await;
     }
     state.hub.broadcast(WsEvent::Message {
         server,
@@ -2079,7 +2102,7 @@ async fn search_once(
     let mut msgs = rows_messages(db, &rows, Quotes::Skip).await?;
     let mut ctx: Vec<(String, String)> = Vec::with_capacity(rows.len());
     for r in &rows {
-        ctx.push((r.try_get(35)?, r.try_get(36)?));
+        ctx.push((r.try_get(36)?, r.try_get(37)?));
     }
     attach_embeds(db, &mut msgs).await?;
     Ok(msgs
@@ -2303,7 +2326,9 @@ pub struct UnreadsQuery {
 /// (skipping channels they cannot view, or whose latest message they could not read without
 /// read-history access) and for their DMs (skipping DMs with an account being deleted). Only
 /// messages by other users count as unread. Each item carries the caller's unseen ping count
-/// for the scope; scopes with unseen pings are listed even when read. Requires a bearer token.
+/// for the scope; scopes with unseen pings are listed even when read. Channel items also list
+/// the unread messages that ping the caller through `@everyone`, `@here` or one of their roles
+/// (`group_pings`); reading the channel up to them clears them. Requires a bearer token.
 /// General rate-limit bucket.
 #[utoipa::path(get, path = "/api/unreads", tag = "Messages", params(UnreadsQuery), responses((status = 200, description = "Unread scopes: the latest top-level message id from someone else and the last-read id for each text channel the caller can view (with its server) and each DM whose latest message is newer than its read position, plus every such scope with unseen pings (`pings`), scopes with pings first, then newest first, capped at 500 (`more` is true when the cap cut the list). Scopes that are not listed are read. With `all=true` every viewable channel and DM with messages from others is listed, read or not (no cap)", body = Unreads), (status = 400, description = "`all` is not `true` or `false` (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn unreads(
@@ -2335,6 +2360,11 @@ pub(crate) async fn unreads(
         .await?;
     let mut pings = unseen_counts(db, &user.username).await?;
     let mut pings_of = |scope: &str| pings.remove(scope).unwrap_or_default();
+    let hidden: Vec<i64> = restricted
+        .iter()
+        .filter_map(|(id, access)| (!access.view).then_some(*id))
+        .collect();
+    let mut groups = group_unseen(db, &user.username, &hidden).await?;
     let mut items = Vec::with_capacity(channel_rows.len() + dm_rows.len());
     for r in &channel_rows {
         let id: i64 = r.try_get(0)?;
@@ -2352,17 +2382,25 @@ pub(crate) async fn unreads(
         let scope = format!("c{id}");
         let pinged = pings_of(&scope);
         let latest = latest.filter(|_| readable);
-        let ScopePings {
-            pings: pinged,
-            pings_until,
-            threads,
-        } = match restricted.get(&id) {
+        let grouped = groups.remove(&id).unwrap_or_default();
+        let (
+            ScopePings {
+                pings: pinged,
+                pings_until,
+                threads,
+            },
+            grouped,
+        ) = match restricted.get(&id) {
             Some(ChannelAccess {
                 view: false,
                 send: _,
                 history: _,
-            }) => ScopePings::default(),
-            _ => pinged,
+            }) => (ScopePings::default(), Vec::new()),
+            _ => (pinged, grouped),
+        };
+        let grouped = match latest {
+            Some(_) => grouped,
+            None => Vec::new(),
         };
         if latest.is_some_and(|latest| all || latest > last_read) || pinged > 0 {
             items.push(Unread {
@@ -2373,6 +2411,7 @@ pub(crate) async fn unreads(
                 pings: pinged,
                 pings_until,
                 thread_pings: threads,
+                group_pings: grouped,
             });
         }
     }
@@ -2395,12 +2434,15 @@ pub(crate) async fn unreads(
                 pings: pinged,
                 pings_until,
                 thread_pings: threads,
+                group_pings: Vec::new(),
             });
         }
     }
     let more = !all && items.len() > UNREADS_MAX;
     if !all {
-        items.sort_by_key(|u| std::cmp::Reverse((u.pings > 0, u.latest)));
+        items.sort_by_key(|u| {
+            std::cmp::Reverse((u.pings > 0 || !u.group_pings.is_empty(), u.latest))
+        });
         items.truncate(UNREADS_MAX);
     }
     Ok(Json(Unreads { items, more }))
@@ -2699,6 +2741,7 @@ mod tests {
     use super::*;
     use crate::api::access::reference_channel_access as channel_access;
     use crate::api::access::resolve_server;
+    use crate::api::pings::{GroupKind, GroupMention};
     use crate::api::test_util::{add_member, done, mem_user, temp_state};
     use crate::db::Perm;
 
@@ -6837,6 +6880,7 @@ mod tests {
             "secret new plan https://edit.example/x",
         )
         .await
+        .map(|_| ())
         .expect("edit");
         edit(&state, early_reply.id, "alice", "secret new detail")
             .await
@@ -7558,6 +7602,499 @@ mod tests {
             .count();
         assert_eq!(with_file, 3, "the cap is counted inside the insert");
         assert_eq!(references(db, &file).await.expect("count"), MEDIA_REFS_MAX);
+        done(state, path).await;
+    }
+
+    async fn new_role(db: &Db, name: &str, perms: i64, mentionable: bool) -> i64 {
+        sqlx::query("INSERT INTO roles(server, name, color, perms, mentionable) VALUES('rchat', $1, '#336699', $2, $3) RETURNING id")
+            .bind(name)
+            .bind(perms)
+            .bind(i64::from(mentionable))
+            .fetch_one(db)
+            .await
+            .expect("role")
+            .try_get(0)
+            .expect("id")
+    }
+
+    async fn give_role(db: &Db, username: &str, role: i64) {
+        sqlx::query("INSERT INTO user_roles(server, username, role_id) VALUES('rchat', $1, $2)")
+            .bind(username)
+            .bind(role)
+            .execute(db)
+            .await
+            .expect("assign");
+    }
+
+    async fn group_items(state: &AppState, name: &str) -> HashMap<String, Vec<GroupPing>> {
+        unreads(
+            State(state.clone()),
+            Authed(mem_user(name, false)),
+            Query(UnreadsQuery { all: Some(false) }),
+        )
+        .await
+        .expect("unreads")
+        .0
+        .items
+        .into_iter()
+        .filter(|u| !u.group_pings.is_empty())
+        .map(|u| (u.scope, u.group_pings))
+        .collect()
+    }
+
+    fn kinds(list: &[GroupMention]) -> Vec<(crate::api::pings::GroupKind, Option<i64>)> {
+        list.iter().map(|g| (g.kind, g.role_id)).collect()
+    }
+
+    async fn group_rows(db: &Db) -> i64 {
+        sqlx::query("SELECT COUNT(*) FROM group_pings")
+            .fetch_one(db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("n")
+    }
+
+    #[tokio::test]
+    async fn group_mentions_need_the_permission_or_a_mentionable_role() {
+        use crate::api::pings::GroupKind::{Everyone, Here, Role};
+        let (state, path) = temp_state("group_perm").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        let c = format!("c{cid}");
+        for name in ["alice", "boss", "mod", "bob", "carol", "sa"] {
+            add_user(db, name, name).await;
+        }
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        add_member(db, "rchat", "boss", 1, 0, 1).await;
+        add_member(db, "rchat", "limited", 1, Perm::Kick as i64, 1).await;
+        for name in ["mod", "bob", "carol", "sa"] {
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let owls = new_role(db, "Night Owls", 0, true).await;
+        let staff = new_role(db, "staff", 0, false).await;
+        let mods = new_role(db, "mods", Perm::MentionEveryone as i64, false).await;
+        give_role(db, "mod", mods).await;
+        give_role(db, "bob", owls).await;
+        give_role(db, "bob", staff).await;
+
+        let plain = say(
+            &state,
+            (Some(cid), None, None),
+            "alice",
+            "@everyone @here @night owls @staff",
+        )
+        .await;
+        assert_eq!(kinds(&plain.group_mentions), vec![(Role, Some(owls))]);
+        let boss = say(
+            &state,
+            (Some(cid), None, None),
+            "boss",
+            "@everyone hi @STAFF",
+        )
+        .await;
+        assert_eq!(
+            kinds(&boss.group_mentions),
+            vec![(Everyone, None), (Role, Some(staff))]
+        );
+        let limited = say(&state, (Some(cid), None, None), "limited", "@everyone").await;
+        assert!(
+            limited.group_mentions.is_empty(),
+            "an admin without the bit"
+        );
+        let modded = say(&state, (Some(cid), None, None), "mod", "@here and @staff").await;
+        assert_eq!(
+            kinds(&modded.group_mentions),
+            vec![(Here, None), (Role, Some(staff))]
+        );
+        let site = say_as(&state, cid, mem_user("sa", true), "@everyone").await;
+        assert!(
+            site.group_mentions.is_empty(),
+            "site admins get nothing extra"
+        );
+        let rows = group_rows(db).await;
+        for (to, content) in [
+            ((Some(cid), None, None), "`@everyone` and mail@everyone"),
+            ((None, None, Some(boss.id)), "@everyone in a thread"),
+        ] {
+            let m = say(&state, to, "boss", content).await;
+            assert!(m.group_mentions.is_empty(), "{content}");
+        }
+        assert_eq!(group_rows(db).await, rows);
+        let loaded = load_message(db, boss.id, Quotes::Skip)
+            .await
+            .expect("load")
+            .expect("message");
+        assert_eq!(loaded.group_mentions, boss.group_mentions);
+
+        edit_message(
+            State(state.clone()),
+            Path(plain.id),
+            Authed(mem_user("alice", false)),
+            Json(EditReq {
+                content: "@everyone now".to_string(),
+            }),
+        )
+        .await
+        .map(|_| ())
+        .expect("edit");
+        let edited = load_message(db, plain.id, Quotes::Skip)
+            .await
+            .expect("load")
+            .expect("message");
+        assert_eq!(kinds(&edited.group_mentions), vec![(Role, Some(owls))]);
+        assert_eq!(group_rows(db).await, rows, "edits never add group pings");
+        let personal: i64 = sqlx::query("SELECT COUNT(*) FROM pings")
+            .fetch_one(db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("n");
+        assert_eq!(personal, 0, "no per-member rows");
+
+        let bob = group_items(&state, "bob").await;
+        let bob_c: Vec<(i64, Vec<crate::api::pings::GroupKind>)> = bob[&c]
+            .iter()
+            .map(|g| (g.message_id, g.kinds.clone()))
+            .collect();
+        assert_eq!(
+            bob_c,
+            vec![
+                (modded.id, vec![Role]),
+                (boss.id, vec![Everyone, Role]),
+                (plain.id, vec![Role]),
+            ]
+        );
+        let carol = group_items(&state, "carol").await;
+        assert_eq!(
+            carol[&c].iter().map(|g| g.message_id).collect::<Vec<_>>(),
+            vec![boss.id]
+        );
+        assert!(
+            !group_items(&state, "boss").await.contains_key(&c),
+            "own messages never ping"
+        );
+
+        let both = say(
+            &state,
+            (Some(cid), None, None),
+            "boss",
+            "@everyone and @carol",
+        )
+        .await;
+        let carol = group_items(&state, "carol").await;
+        assert!(
+            !carol[&c].iter().any(|g| g.message_id == both.id),
+            "counted as a mention"
+        );
+
+        sqlx::query("DELETE FROM user_roles WHERE username = 'bob' AND role_id = $1")
+            .bind(owls)
+            .execute(db)
+            .await
+            .expect("unassign");
+        let bob = group_items(&state, "bob").await;
+        assert!(
+            !bob[&c].iter().any(|g| g.message_id == plain.id),
+            "role taken away"
+        );
+
+        mark_read(
+            State(state.clone()),
+            Authed(mem_user("bob", false)),
+            Json(ReadReq {
+                scope: c.clone(),
+                last_read: boss.id,
+                pings_until: None,
+            }),
+        )
+        .await
+        .map(|_| ())
+        .expect("read");
+        let bob = group_items(&state, "bob").await;
+        assert_eq!(
+            bob[&c].iter().map(|g| g.message_id).collect::<Vec<_>>(),
+            vec![both.id, modded.id]
+        );
+        mark_read_batch(
+            State(state.clone()),
+            Authed(mem_user("bob", false)),
+            Json(ReadBatchReq {
+                scopes: vec![c.clone()],
+            }),
+        )
+        .await
+        .map(|_| ())
+        .expect("batch");
+        assert!(group_items(&state, "bob").await.is_empty(), "read clears");
+        done(state, path).await;
+    }
+
+    async fn say_as(state: &AppState, cid: i64, user: User, content: &str) -> Message {
+        let req = SendReq {
+            content: content.to_string(),
+            media_id: None,
+            media_spoiler: None,
+            p2p: None,
+            reply_to: None,
+            mention_reply: false,
+            forward_of: None,
+        };
+        send_channel_message(State(state.clone()), Path(cid), Authed(user), Json(req))
+            .await
+            .expect("send")
+            .0
+    }
+
+    #[tokio::test]
+    async fn group_pings_follow_view_access_presence_and_join_time() {
+        let (state, path) = temp_state("group_access").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        let c = format!("c{cid}");
+        for name in ["boss", "bob", "carol", "late"] {
+            add_user(db, name, name).await;
+        }
+        add_member(db, "rchat", "boss", 1, 0, 1).await;
+        add_member(db, "rchat", "bob", 0, 0, 1).await;
+        add_member(db, "rchat", "carol", 0, 0, 1).await;
+        let secret = add_channel(db, "secret", "text").await;
+        perm(db, secret, "u:bob", 1).await;
+        let s = format!("c{secret}");
+        let conn = state.hub.next_conn();
+        state.hub.set_viewing("bob", conn, None, Some("rchat"));
+        let away = state.hub.next_conn();
+        state.hub.set_viewing("outsider", away, None, Some("rchat"));
+
+        let all = say(&state, (Some(cid), None, None), "boss", "@everyone").await;
+        let here = say(&state, (Some(cid), None, None), "boss", "@here").await;
+        let hidden = say(&state, (Some(secret), None, None), "boss", "@everyone").await;
+        let stored: Vec<String> = sqlx::query("SELECT username FROM here_pings ORDER BY username")
+            .fetch_all(db)
+            .await
+            .expect("here")
+            .iter()
+            .map(|r| r.try_get(0).expect("name"))
+            .collect();
+        assert_eq!(stored, vec!["bob".to_string()], "online viewers only");
+        add_member(db, "rchat", "late", 0, 0, now() + 10).await;
+
+        let ids = |items: &HashMap<String, Vec<GroupPing>>, scope: &str| {
+            items
+                .get(scope)
+                .map(|l| l.iter().map(|g| g.message_id).collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+        let bob = group_items(&state, "bob").await;
+        assert_eq!(ids(&bob, &c), vec![here.id, all.id]);
+        assert_eq!(ids(&bob, &s), vec![hidden.id]);
+        let carol = group_items(&state, "carol").await;
+        assert_eq!(ids(&carol, &c), vec![all.id], "offline: no @here");
+        assert!(ids(&carol, &s).is_empty(), "cannot view");
+        assert!(group_items(&state, "late").await.is_empty(), "joined after");
+
+        sqlx::query("DELETE FROM messages WHERE id = $1")
+            .bind(here.id)
+            .execute(db)
+            .await
+            .expect("delete");
+        let left: i64 = sqlx::query("SELECT COUNT(*) FROM here_pings")
+            .fetch_one(db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("n");
+        assert_eq!(left, 0, "cascade");
+        sqlx::query("UPDATE group_pings SET created_at = 1")
+            .execute(db)
+            .await
+            .expect("age");
+        crate::db::sweep_stale(db).await.expect("sweep");
+        assert_eq!(group_rows(db).await, 0, "30 days");
+        done(state, path).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn group_mentions_are_stored_with_the_message_before_it_is_announced() {
+        let (state, path) = temp_state("group_order").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "boss", "boss").await;
+        add_member(db, "rchat", "boss", 1, 0, 1).await;
+        let crew = new_role(db, "crew", 0, true).await;
+        let mut rx = state.hub.subscribe();
+        let watched = sqlx::any::AnyPoolOptions::new()
+            .max_connections(1)
+            .connect(&format!("sqlite://{}", path.display()))
+            .await
+            .expect("own connection");
+        let probe = "SELECT m.group_mentions, (SELECT COUNT(*) FROM group_pings g WHERE g.message_id = m.id) FROM messages m WHERE m.id = $1";
+        sqlx::query(probe)
+            .bind(0_i64)
+            .fetch_optional(&watched)
+            .await
+            .expect("warm");
+        let watcher = tokio::spawn(async move {
+            loop {
+                if let Ok(WsEvent::Message { message, .. }) = rx.try_recv() {
+                    let row = sqlx::query(probe)
+                        .bind(message.id)
+                        .fetch_one(&watched)
+                        .await
+                        .expect("row");
+                    return (
+                        row.try_get::<Option<String>, _>(0).expect("stored"),
+                        row.try_get::<i64, _>(1).expect("rows"),
+                    );
+                }
+                std::hint::spin_loop();
+            }
+        });
+        let m = say(&state, (Some(cid), None, None), "boss", "@everyone @crew").await;
+        let (stored, rows) = watcher.await.expect("watcher");
+        assert_eq!(stored, Some(format!("everyone r{crew}")), "in the insert");
+        assert_eq!(rows, 2, "group pings stored before the message event");
+        assert_eq!(m.group_mentions.len(), 2);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn hidden_channels_never_use_up_the_group_ping_cap() {
+        let (state, path) = temp_state("group_cap").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["boss", "bob", "carol"] {
+            add_user(db, name, name).await;
+        }
+        add_member(db, "rchat", "boss", 1, 0, 1).await;
+        add_member(db, "rchat", "bob", 0, 0, 1).await;
+        add_member(db, "rchat", "carol", 0, 0, 1).await;
+        let secret = add_channel(db, "secret", "text").await;
+        perm(db, secret, "u:bob", 1).await;
+        let seen = say(&state, (Some(cid), None, None), "boss", "@everyone").await;
+        let n = crate::api::pings::GROUP_PINGS_MAX + 5;
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < $1) INSERT INTO messages(channel_id, author, content, group_mentions, created_at) SELECT $2, 'boss', '@everyone', 'everyone', $3 FROM n")
+            .bind(n)
+            .bind(secret)
+            .bind(now())
+            .execute(db)
+            .await
+            .expect("messages");
+        sqlx::query("INSERT INTO group_pings(message_id, channel_id, server, kind, role_id, actor, created_at) SELECT id, channel_id, 'rchat', 'everyone', NULL, 'boss', created_at FROM messages WHERE channel_id = $1")
+            .bind(secret)
+            .execute(db)
+            .await
+            .expect("group pings");
+        let carol = group_items(&state, "carol").await;
+        assert_eq!(
+            carol
+                .get(&format!("c{cid}"))
+                .map(|l| l.iter().map(|g| g.message_id).collect::<Vec<_>>()),
+            Some(vec![seen.id]),
+            "older viewable ping still counted"
+        );
+        assert!(!carol.contains_key(&format!("c{secret}")));
+        let bob = group_items(&state, "bob").await;
+        assert_eq!(
+            bob[&format!("c{secret}")].len() as i64,
+            crate::api::pings::GROUP_PINGS_MAX,
+            "viewers still capped"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn group_mentions_cost_one_row_however_many_members() {
+        const MEMBERS: i64 = 5000;
+        let (state, path) = temp_state("group_scale").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        let c = format!("c{cid}");
+        add_user(db, "boss", "boss").await;
+        add_member(db, "rchat", "boss", 1, 0, 1).await;
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < $1) INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) SELECT 'u' || i, 'u' || i, '', 'text', 'identicon', 1 FROM n")
+            .bind(MEMBERS)
+            .execute(db)
+            .await
+            .expect("users");
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < $1) INSERT INTO members(server, username, is_admin, perms, joined_at) SELECT 'rchat', 'u' || i, 0, 0, 1 FROM n")
+            .bind(MEMBERS)
+            .execute(db)
+            .await
+            .expect("members");
+        let crew = new_role(db, "crew", 0, true).await;
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 2 FROM n WHERE i < $1) INSERT INTO user_roles(server, username, role_id) SELECT 'rchat', 'u' || i, $2 FROM n")
+            .bind(MEMBERS)
+            .bind(crew)
+            .execute(db)
+            .await
+            .expect("roles");
+        for i in 1..=50 {
+            let conn = state.hub.next_conn();
+            state
+                .hub
+                .set_viewing(&format!("u{i}"), conn, None, Some("rchat"));
+        }
+        let count = |sql: &'static str| async move {
+            sqlx::query(sql)
+                .fetch_one(db)
+                .await
+                .expect(sql)
+                .try_get::<i64, _>(0)
+                .expect("n")
+        };
+        let started = std::time::Instant::now();
+        let m = say(&state, (Some(cid), None, None), "boss", "@everyone @crew").await;
+        let sent = started.elapsed();
+        assert_eq!(m.group_mentions.len(), 2);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM group_pings").await,
+            2,
+            "one row per mention"
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM pings").await, 0, "no fan-out");
+        let started = std::time::Instant::now();
+        let here = say(&state, (Some(cid), None, None), "boss", "@here").await;
+        let here_sent = started.elapsed();
+        assert_eq!(here.group_mentions.len(), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM group_pings").await, 3);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM here_pings").await,
+            50,
+            "online only"
+        );
+
+        let started = std::time::Instant::now();
+        let odd = group_items(&state, "u1").await;
+        let read_odd = started.elapsed();
+        let even = group_items(&state, "u4000").await;
+        assert_eq!(odd[&c][1].kinds, vec![GroupKind::Everyone, GroupKind::Role]);
+        assert_eq!(odd[&c][0].kinds, vec![GroupKind::Here]);
+        assert_eq!(even[&c].len(), 1);
+        assert_eq!(even[&c][0].kinds, vec![GroupKind::Everyone]);
+        let plan: Vec<String> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {}",
+            crate::api::pings::group_unseen_sql(&[cid + 100, cid + 101])
+        )))
+        .bind("u1")
+        .bind(1000_i64)
+        .fetch_all(db)
+        .await
+        .expect("plan")
+        .iter()
+        .map(|r| r.try_get::<String, _>(3).expect("detail"))
+        .collect();
+        let plan = plan.join("\n");
+        assert!(plan.contains("idx_group_pings_channel"), "{plan}");
+        for table in ["g", "mem", "rs", "h", "ur", "p"] {
+            assert!(
+                !plan.lines().any(|l| l.trim() == format!("SCAN {table}")),
+                "full scan of {table}:\n{plan}"
+            );
+        }
+        eprintln!(
+            "group scale: {MEMBERS} members, @everyone+@role send {sent:?}, @here send {here_sent:?}, unreads {read_odd:?}\n{plan}"
+        );
         done(state, path).await;
     }
 }

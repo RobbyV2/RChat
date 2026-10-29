@@ -13,7 +13,10 @@ import {
   mutedText,
   ownRule,
   untilText,
+  SUPPRESS_LABELS,
+  suppressedOf,
   type MuteUntil,
+  type Suppress,
   type NotifyScope,
 } from '../lib/notify'
 
@@ -59,7 +62,19 @@ export const notifyMenuItems = (scope: NotifyScope, noun: string): ContextMenuIt
             },
             ...radios,
           ]
-        : radios,
+        : scope.kind === 'server'
+          ? [
+              ...radios,
+              ...(['everyone', 'roles'] as Suppress[]).map(which => {
+                const on = suppressedOf(prefs, scope.name, which)
+                return {
+                  label: SUPPRESS_LABELS[which],
+                  checked: on,
+                  action: () => s.setNotifySuppress(scope.name, which, !on),
+                }
+              }),
+            ]
+          : radios,
   }
   const mute: ContextMenuItem =
     end !== null

@@ -26,11 +26,11 @@ CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT 
 CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, restrict_view INTEGER NOT NULL DEFAULT 0, restrict_send INTEGER NOT NULL DEFAULT 0, topic TEXT, category_id INTEGER, position INTEGER NOT NULL DEFAULT 0, UNIQUE(server, name));
 CREATE TABLE IF NOT EXISTS channel_categories(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, perms INTEGER NOT NULL DEFAULT 0, joined_at INTEGER NOT NULL, joined_via INTEGER, PRIMARY KEY(server, username));
-CREATE TABLE IF NOT EXISTS roles(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS roles(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms INTEGER NOT NULL DEFAULT 0, mentionable INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
 CREATE TABLE IF NOT EXISTS channel_perms(channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view INTEGER NOT NULL DEFAULT 1, can_send INTEGER NOT NULL DEFAULT 1, can_read_history INTEGER NOT NULL DEFAULT 1, restrict_set INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(channel_id, subject));
 CREATE TABLE IF NOT EXISTS dms(id INTEGER PRIMARY KEY AUTOINCREMENT, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id INTEGER NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
-CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER REFERENCES channels(id) ON DELETE CASCADE, dm_id INTEGER REFERENCES dms(id) ON DELETE CASCADE, thread_root_id INTEGER REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed INTEGER NOT NULL DEFAULT 0, media_spoiler INTEGER NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at INTEGER, media_size INTEGER, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at INTEGER, call_ended_at INTEGER, call_outcome TEXT, call_kind TEXT, call_video INTEGER, reply_to INTEGER, reply_mention INTEGER NOT NULL DEFAULT 0, edited_at INTEGER, fwd_author TEXT, fwd_created_at INTEGER, fwd_source_id INTEGER, fwd_origin TEXT, fwd_dropped TEXT, pinned_at INTEGER, pinned_by TEXT, pin_message_id INTEGER, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER REFERENCES channels(id) ON DELETE CASCADE, dm_id INTEGER REFERENCES dms(id) ON DELETE CASCADE, thread_root_id INTEGER REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed INTEGER NOT NULL DEFAULT 0, media_spoiler INTEGER NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at INTEGER, media_size INTEGER, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at INTEGER, call_ended_at INTEGER, call_outcome TEXT, call_kind TEXT, call_video INTEGER, reply_to INTEGER, reply_mention INTEGER NOT NULL DEFAULT 0, edited_at INTEGER, fwd_author TEXT, fwd_created_at INTEGER, fwd_source_id INTEGER, fwd_origin TEXT, fwd_dropped TEXT, pinned_at INTEGER, pinned_by TEXT, pin_message_id INTEGER, group_mentions TEXT, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB, uploader TEXT, uploaded_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS media_chunks(media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE, seq INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(media_id, seq));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS server_bans(server TEXT NOT NULL REFERENCES servers(n
 CREATE TABLE IF NOT EXISTS pings(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('mention','reply','reaction')), scope TEXT NOT NULL, server TEXT REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, thread_root_id INTEGER, actor TEXT NOT NULL, emoji TEXT, created_at INTEGER NOT NULL, seen INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS reactions(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, username TEXT NOT NULL, emoji TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(message_id, username, emoji));
 CREATE TABLE IF NOT EXISTS config_shares(id TEXT PRIMARY KEY, owner TEXT NOT NULL, blob TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS group_pings(id INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('everyone','here','role')), role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE, actor TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS here_pings(ping_id INTEGER NOT NULL REFERENCES group_pings(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(username, ping_id));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -90,6 +92,12 @@ CREATE INDEX IF NOT EXISTS idx_messages_system ON messages(author, kind, created
 CREATE INDEX IF NOT EXISTS idx_config_shares_owner ON config_shares(owner, expires_at);
 CREATE INDEX IF NOT EXISTS idx_config_shares_expires ON config_shares(expires_at);
 CREATE INDEX IF NOT EXISTS idx_channel_categories_server ON channel_categories(server, position);
+CREATE INDEX IF NOT EXISTS idx_group_pings_channel ON group_pings(channel_id, message_id);
+CREATE INDEX IF NOT EXISTS idx_group_pings_message ON group_pings(message_id);
+CREATE INDEX IF NOT EXISTS idx_group_pings_created ON group_pings(created_at);
+CREATE INDEX IF NOT EXISTS idx_group_pings_role ON group_pings(role_id) WHERE role_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_here_pings_ping ON here_pings(ping_id);
+CREATE INDEX IF NOT EXISTS idx_group_pings_server ON group_pings(server);
 ";
 
 const POSTGRES_SCHEMA: &str = "
@@ -107,11 +115,11 @@ CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT 
 CREATE TABLE IF NOT EXISTS channels(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, restrict_view BIGINT NOT NULL DEFAULT 0, restrict_send BIGINT NOT NULL DEFAULT 0, topic TEXT, category_id BIGINT, position BIGINT NOT NULL DEFAULT 0, UNIQUE(server, name));
 CREATE TABLE IF NOT EXISTS channel_categories(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, position BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin BIGINT NOT NULL DEFAULT 0, perms BIGINT NOT NULL DEFAULT 0, joined_at BIGINT NOT NULL, joined_via BIGINT, PRIMARY KEY(server, username));
-CREATE TABLE IF NOT EXISTS roles(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms BIGINT NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS roles(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms BIGINT NOT NULL DEFAULT 0, mentionable BIGINT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
 CREATE TABLE IF NOT EXISTS channel_perms(channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view BIGINT NOT NULL DEFAULT 1, can_send BIGINT NOT NULL DEFAULT 1, can_read_history BIGINT NOT NULL DEFAULT 1, restrict_set BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(channel_id, subject));
 CREATE TABLE IF NOT EXISTS dms(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id BIGINT NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
-CREATE TABLE IF NOT EXISTS messages(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, channel_id BIGINT REFERENCES channels(id) ON DELETE CASCADE, dm_id BIGINT REFERENCES dms(id) ON DELETE CASCADE, thread_root_id BIGINT REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed BIGINT NOT NULL DEFAULT 0, media_spoiler BIGINT NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at BIGINT, media_size BIGINT, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at BIGINT, call_ended_at BIGINT, call_outcome TEXT, call_kind TEXT, call_video BIGINT, reply_to BIGINT, reply_mention BIGINT NOT NULL DEFAULT 0, edited_at BIGINT, fwd_author TEXT, fwd_created_at BIGINT, fwd_source_id BIGINT, fwd_origin TEXT, fwd_dropped TEXT, pinned_at BIGINT, pinned_by TEXT, pin_message_id BIGINT, created_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS messages(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, channel_id BIGINT REFERENCES channels(id) ON DELETE CASCADE, dm_id BIGINT REFERENCES dms(id) ON DELETE CASCADE, thread_root_id BIGINT REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed BIGINT NOT NULL DEFAULT 0, media_spoiler BIGINT NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at BIGINT, media_size BIGINT, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at BIGINT, call_ended_at BIGINT, call_outcome TEXT, call_kind TEXT, call_video BIGINT, reply_to BIGINT, reply_mention BIGINT NOT NULL DEFAULT 0, edited_at BIGINT, fwd_author TEXT, fwd_created_at BIGINT, fwd_source_id BIGINT, fwd_origin TEXT, fwd_dropped TEXT, pinned_at BIGINT, pinned_by TEXT, pin_message_id BIGINT, group_mentions TEXT, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size BIGINT NOT NULL, data BYTEA, uploader TEXT, uploaded_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS media_chunks(media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE, seq BIGINT NOT NULL, data BYTEA NOT NULL, PRIMARY KEY(media_id, seq));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -125,6 +133,8 @@ CREATE TABLE IF NOT EXISTS server_bans(server TEXT NOT NULL REFERENCES servers(n
 CREATE TABLE IF NOT EXISTS pings(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, username TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('mention','reply','reaction')), scope TEXT NOT NULL, server TEXT REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, thread_root_id BIGINT, actor TEXT NOT NULL, emoji TEXT, created_at BIGINT NOT NULL, seen BIGINT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS reactions(message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, username TEXT NOT NULL, emoji TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(message_id, username, emoji));
 CREATE TABLE IF NOT EXISTS config_shares(id TEXT PRIMARY KEY, owner TEXT NOT NULL, blob TEXT NOT NULL, created_at BIGINT NOT NULL, expires_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS group_pings(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('everyone','here','role')), role_id BIGINT REFERENCES roles(id) ON DELETE CASCADE, actor TEXT NOT NULL, created_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS here_pings(ping_id BIGINT NOT NULL REFERENCES group_pings(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(username, ping_id));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -172,6 +182,12 @@ CREATE INDEX IF NOT EXISTS idx_messages_system ON messages(author, kind, created
 CREATE INDEX IF NOT EXISTS idx_config_shares_owner ON config_shares(owner, expires_at);
 CREATE INDEX IF NOT EXISTS idx_config_shares_expires ON config_shares(expires_at);
 CREATE INDEX IF NOT EXISTS idx_channel_categories_server ON channel_categories(server, position);
+CREATE INDEX IF NOT EXISTS idx_group_pings_channel ON group_pings(channel_id, message_id);
+CREATE INDEX IF NOT EXISTS idx_group_pings_message ON group_pings(message_id);
+CREATE INDEX IF NOT EXISTS idx_group_pings_created ON group_pings(created_at);
+CREATE INDEX IF NOT EXISTS idx_group_pings_role ON group_pings(role_id) WHERE role_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_here_pings_ping ON here_pings(ping_id);
+CREATE INDEX IF NOT EXISTS idx_group_pings_server ON group_pings(server);
 ";
 
 const SQLITE_SEARCH: &[&str] = &[
@@ -416,6 +432,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("channels", "category_id {INT}"),
     ("channels", "position {INT} NOT NULL DEFAULT 0"),
     ("servers", "layout_version {INT} NOT NULL DEFAULT 0"),
+    ("roles", "mentionable {INT} NOT NULL DEFAULT 0"),
+    ("messages", "group_mentions TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -453,8 +471,10 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// do not understand. A database marked with a newer version was upgraded by a newer binary,
 /// and this one refuses to start on it.
 /// 1: hashed secrets and the 0.3.0 indexes. 2: `channel_perms.restrict_set` and
-/// `guest_grants.network`. 3: channel categories and channel positions.
-pub const SCHEMA_VERSION: i64 = 3;
+/// `guest_grants.network`. 3: channel categories and channel positions. 4: group mentions
+/// (`group_pings`, `here_pings`, `roles.mentionable`, `messages.group_mentions`) and the Mention
+/// everyone permission bit.
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
@@ -754,9 +774,12 @@ pub enum Perm {
     Kick = 4,
     DeleteServer = 8,
     ManageAdmins = 16,
+    MentionEveryone = 32,
 }
 
-pub const ALL_PERMS: i64 = 31;
+pub const ALL_PERMS: i64 = 63;
+/// Every permission before `MentionEveryone` existed.
+const OLD_ALL_PERMS: i64 = 31;
 
 pub fn perm_bits(is_admin: bool, perms: i64, roles: i64) -> i64 {
     match (is_admin, perms) {
@@ -1058,6 +1081,17 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
         tracing::info!("backfilled channels.restrict_view on {n} channels with rules");
     }
     restrict_old_rules(conn).await?;
+    if version < 4 {
+        let n = sqlx::query("UPDATE members SET perms = $1 WHERE is_admin <> 0 AND perms = $2")
+            .bind(ALL_PERMS)
+            .bind(OLD_ALL_PERMS)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+        if n > 0 {
+            tracing::info!("gave {n} admins with every permission the Mention everyone permission");
+        }
+    }
     let t = now();
     sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
         .bind(t)
@@ -1392,7 +1426,13 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
             t - PING_KEEP,
         )
         .await?
-            + trim_kept_pings(db).await?,
+            + trim_kept_pings(db).await?
+            + delete_batched(
+                db,
+                "DELETE FROM group_pings WHERE id IN (SELECT id FROM group_pings WHERE created_at < $1 LIMIT $2)",
+                t - PING_KEEP,
+            )
+            .await?,
         config_shares: delete_batched(
             db,
             "DELETE FROM config_shares WHERE id IN (SELECT id FROM config_shares WHERE expires_at <= $1 LIMIT $2)",
@@ -1813,7 +1853,7 @@ mod tests {
             assert_eq!(
                 count(
                     &db,
-                    "SELECT COUNT(*) FROM settings WHERE key = 'schema_version' AND value = '3'"
+                    &format!("SELECT COUNT(*) FROM settings WHERE key = 'schema_version' AND value = '{SCHEMA_VERSION}'")
                 )
                 .await,
                 1
@@ -2210,6 +2250,99 @@ mod tests {
                 .execute(&db)
                 .await
                 .expect("clear");
+            close(&db).await;
+        }
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn group_mentions_are_added_to_an_old_database() {
+        let path =
+            std::env::temp_dir().join(format!("rchat_group_upgrade_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_group_pings_channel",
+            "DROP INDEX idx_group_pings_message",
+            "DROP INDEX idx_group_pings_created",
+            "DROP INDEX idx_group_pings_role",
+            "DROP INDEX idx_group_pings_server",
+            "DROP INDEX idx_here_pings_ping",
+            "DROP TABLE here_pings",
+            "DROP TABLE group_pings",
+            "ALTER TABLE roles DROP COLUMN mentionable",
+            "ALTER TABLE messages DROP COLUMN group_mentions",
+            "UPDATE settings SET value = '3' WHERE key = 'schema_version'",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'all', 1, 31, 1)",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'kick', 1, 4, 1)",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'plain', 0, 31, 1)",
+            "INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'old', '#ffffff', 31)",
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES((SELECT id FROM channels WHERE server = 'rchat'), 'all', 'old @everyone', 7)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM messages WHERE author = 'all' AND content = 'old @everyone' AND created_at = 7 AND group_mentions IS NULL").await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM roles WHERE name = 'old' AND perms = 31 AND mentionable = 0").await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT perms FROM members WHERE username = 'all'").await,
+                ALL_PERMS
+            );
+            assert_eq!(
+                count(&db, "SELECT perms FROM members WHERE username = 'kick'").await,
+                4
+            );
+            assert_eq!(
+                count(&db, "SELECT perms FROM members WHERE username = 'plain'").await,
+                31
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND (name LIKE 'idx_group_pings_%' OR name = 'idx_here_pings_ping')").await,
+                6
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            sqlx::query("INSERT INTO group_pings(message_id, channel_id, server, kind, actor, created_at) SELECT id, channel_id, 'rchat', 'everyone', 'all', 7 FROM messages WHERE author = 'all'")
+                .execute(&db)
+                .await
+                .expect("new table");
+            assert!(
+                sqlx::query("INSERT INTO group_pings(message_id, channel_id, server, kind, actor, created_at) SELECT id, channel_id, 'rchat', 'nobody', 'all', 7 FROM messages WHERE author = 'all'")
+                    .execute(&db)
+                    .await
+                    .is_err(),
+                "kind is checked"
+            );
+            sqlx::query(
+                "INSERT INTO here_pings(ping_id, username) SELECT id, 'kick' FROM group_pings",
+            )
+            .execute(&db)
+            .await
+            .expect("here");
+            sqlx::query("DELETE FROM group_pings")
+                .execute(&db)
+                .await
+                .expect("clear");
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM here_pings").await, 0);
             close(&db).await;
         }
         wipe();

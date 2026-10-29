@@ -36,6 +36,15 @@ import {
   setScopePings,
 } from './pings'
 import {
+  NO_GROUP_PINGS,
+  addGroupPing,
+  dropGroupMessage,
+  forgetGroupPings,
+  groupAction,
+  groupKindsFor,
+  mergeGroupPings,
+} from './group_pings'
+import {
   EMPTY_NOTIFY,
   extendMute,
   keepScopes,
@@ -52,6 +61,8 @@ import {
   setDesktop,
   setLevel,
   setMute,
+  setSuppress,
+  groupKindsShown,
   type NotifyPrefs,
 } from './notify'
 import { notifications } from './platform'
@@ -1208,6 +1219,7 @@ export const useStore = create<RChatState>()((set, get) => {
   const loadUnreads = () => {
     const before = get().reads
     const pingsBefore = get().pings
+    const groupsBefore = get().groupPings
     unreadsLoading += 1
     unreadsReady = api
       .getUnreads()
@@ -1217,6 +1229,7 @@ export const useStore = create<RChatState>()((set, get) => {
         set(s => ({
           reads: mergeReads(before, s.reads, items, readQueue.pending),
           pings: mergePings(pingsBefore, s.pings, items),
+          groupPings: mergeGroupPings(groupsBefore, s.groupPings, items),
         }))
       })
       .catch(() => {})
@@ -1466,9 +1479,14 @@ export const useStore = create<RChatState>()((set, get) => {
         s.pings,
         (scope, p) => !keep(scope, { lastRead: 0, latest: 0, server: p.server ?? undefined })
       )
+      const groupPings = forgetGroupPings(
+        s.groupPings,
+        (scope, server) => !keep(scope, { lastRead: 0, latest: 0, server: server ?? undefined })
+      )
       return {
         ...(kept.length === entries.length ? {} : { reads: Object.fromEntries(kept) }),
         ...(pings === s.pings ? {} : { pings }),
+        ...(groupPings === s.groupPings ? {} : { groupPings }),
       }
     })
 
@@ -2834,6 +2852,85 @@ export const useStore = create<RChatState>()((set, get) => {
     if (notice) desktopAlert(notice)
   }
 
+  let groupReload: ReturnType<typeof setTimeout> | null = null
+  const reloadGroups = () => {
+    if (groupReload !== null) return
+    groupReload = setTimeout(() => {
+      groupReload = null
+      if (get().me) void loadUnreads()
+    }, 2000)
+  }
+
+  // A live channel message with @everyone, @here or role mentions. When it addresses you, it is
+  // counted (until the channel is read past it) and toasts like a ping, through the same
+  // decision as pings plus the server's suppress settings. Returns whether it was handled, so
+  // no plain message toast follows; when the suppress settings hide every kind it addresses
+  // you with, the plain message path ("All messages") decides instead. Nothing is stored per
+  // member on the server: each client decides from the message itself. `@here` counts like the
+  // server's snapshot: you are online there only while this client is viewing that server.
+  const groupAlert = (m: Message, server: string): boolean => {
+    const s = get()
+    const me = s.me
+    if (!me || m.channel_id === null || !m.group_mentions?.length) return false
+    const member = me.servers.some(x => x.name === server)
+    const known = memberOf(s, server, me.username)
+    const kinds = groupKindsFor(m, {
+      username: me.username,
+      member,
+      online: !me.appear_offline && s.view?.kind === 'channel' && s.view.server === server,
+      roleIds: known?.role_ids ?? null,
+    })
+    if (!kinds.length) {
+      if (member && !known && m.group_mentions.some(g => g.kind === 'role')) reloadGroups()
+      return false
+    }
+    const toMe =
+      mentionsUser(m.content, me.username) ||
+      repliesToMe(m, me.username) ||
+      (m.reply_to?.partial === true && m.reply_to.mention)
+    if (toMe) return true
+    const scope = `c${m.channel_id}`
+    set(st => ({
+      groupPings: addGroupPing(st.groupPings, scope, server, { message_id: m.id, kinds }),
+    }))
+    const shown = groupKindsShown(s.notifyPrefs, server, kinds)
+    if (!shown.length) return false
+    const target = scopeOfKey(scope, server)
+    const alert = pingAlert(
+      { scope, thread_root_id: null },
+      {
+        view: s.view ? viewKey(s.view) : null,
+        thread: s.panel?.kind === 'thread' ? s.panel.root.id : null,
+        following: key => s.atBottom[key] === true && !detached(key),
+        visible: pageVisible(),
+      },
+      target ? scopeRule(s, target) : undefined
+    )
+    if (!alert.toast) return true
+    const host = s.servers[server]
+    const roles = host?.roles ?? []
+    const role =
+      m.group_mentions
+        .filter(g => g.kind === 'role' && known?.role_ids.includes(g.role_id ?? -1))
+        .map(g => roles.find(r => r.id === g.role_id)?.name)
+        .find(name => name !== undefined) ?? null
+    const channelId = m.channel_id
+    alertUser({
+      key: scope,
+      actor: m.author,
+      action: groupAction(shown, role),
+      body: m.content,
+      server: host?.display_name ?? null,
+      channel: host?.channels.find(c => c.id === channelId)?.name ?? null,
+      dm: false,
+      message: true,
+      name: m.author.display_name,
+      generic: 'New notification',
+      go: () => void get().openChannel(server, channelId, 'push', m.id),
+    })
+    return true
+  }
+
   let endedVoice: number | null = null
   // Whether the server has listed us in the room we last joined. Until it has,
   // a voice_state without us predates our join and is not a removal.
@@ -3051,6 +3148,7 @@ export const useStore = create<RChatState>()((set, get) => {
     slowUntil: {},
     reads: {},
     pings: NO_PINGS,
+    groupPings: NO_GROUP_PINGS,
     unreadAnchor: {},
     atBottom: {},
     authExpired: false,
@@ -3346,6 +3444,7 @@ export const useStore = create<RChatState>()((set, get) => {
         slowUntil: {},
         reads: {},
         pings: NO_PINGS,
+        groupPings: NO_GROUP_PINGS,
         unreadAnchor: {},
         atBottom: {},
         p2pAvailability: {},
@@ -3720,6 +3819,8 @@ export const useStore = create<RChatState>()((set, get) => {
     },
 
     setNotifyLevel: (scope, level) => saveNotify(setLevel(get().notifyPrefs, scope, level)),
+    setNotifySuppress: (server, which, on) =>
+      saveNotify(setSuppress(get().notifyPrefs, server, which, on)),
     muteScope: (scope, until) => saveNotify(setMute(get().notifyPrefs, scope, until)),
     muteServers: (names, until) =>
       saveNotify(
@@ -4725,6 +4826,7 @@ export const useStore = create<RChatState>()((set, get) => {
                 get().markRead(scope, m.id)
             }
           }
+          if (rootId === null && ev.server !== null && groupAlert(m, ev.server)) return
           const { me, view } = get()
           if (!me || m.author.username === me.username || (rootId !== null && m.dm_id === null))
             return
@@ -4806,6 +4908,10 @@ export const useStore = create<RChatState>()((set, get) => {
         }
         case 'message_deleted': {
           dropLinkCards(ev.id)
+          set(s => {
+            const groupPings = dropGroupMessage(s.groupPings, ev.id)
+            return groupPings === s.groupPings ? {} : { groupPings }
+          })
           if (ev.server !== null) staleInvites(ev.server)
           const rootOf = ev.thread_root_id
           unhost(ev.id)
@@ -4991,6 +5097,12 @@ export const useStore = create<RChatState>()((set, get) => {
                 p.server === old_name ? { ...p, server: server.name } : p,
               ])
             )
+            const groupPings = Object.fromEntries(
+              Object.entries(s.groupPings).map(([scope, g]) => [
+                scope,
+                g.server === old_name ? { ...g, server: server.name } : g,
+              ])
+            )
             return {
               servers,
               members,
@@ -4998,6 +5110,7 @@ export const useStore = create<RChatState>()((set, get) => {
               interacted,
               reads,
               pings,
+              groupPings,
               voice:
                 s.voice?.server === old_name && old_name !== server.name
                   ? { ...s.voice, server: server.name }

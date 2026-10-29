@@ -394,9 +394,13 @@ pub struct Role {
     #[schema(example = "#e91e63")]
     pub color: String,
     /// Permission bits of the role: 1 Manage channels, 2 Manage messages (delete and pin messages
-    /// of others), 4 Kick (also bans), 8 Delete server (also edits the server), 16 Manage admins.
+    /// of others), 4 Kick (also bans), 8 Delete server (also edits the server), 16 Manage admins,
+    /// 32 Mention everyone and roles (`@everyone`, `@here` and every role).
     #[schema(example = 6)]
     pub perms: i64,
+    /// Anyone who can send in a channel may mention the role with `@name`. Otherwise only members
+    /// with the Mention everyone permission can.
+    pub mentionable: bool,
 }
 
 /// Roles the caller can't edit, delete or assign because of who holds them or of the channel
@@ -702,6 +706,11 @@ pub struct Message {
     /// history, and for other kinds.
     #[serde(default)]
     pub pin_message_id: Option<i64>,
+    /// `@everyone`, `@here` and role mentions that pinged when the message was sent (the author
+    /// had the Mention everyone permission, or the role allows anyone to mention it). Only
+    /// top-level channel messages have them; edits never change them. Empty otherwise.
+    #[serde(default)]
+    pub group_mentions: Vec<pings::GroupMention>,
 }
 
 /// The original of a forwarded message. The copy never changes when the original is edited or

@@ -234,6 +234,11 @@ const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
   { label: 'Kick', bit: Perm.Kick },
   { label: 'Delete server', bit: Perm.DeleteServer },
   { label: 'Manage admins', bit: Perm.ManageAdmins },
+  {
+    label: 'Mention everyone and roles',
+    bit: Perm.MentionEveryone,
+    hint: 'Use @everyone, @here and mention any role',
+  },
 ]
 
 const GRANT_NOTE = 'You can only give permissions you have.'
@@ -379,6 +384,21 @@ function RoleRow({
         allowed={limit === undefined ? undefined : v => canGrant(limit, false, v)}
         onChange={v => void updateRole(server, role.id, { perms: v }).then(after)}
       />
+      <label
+        title={locked ?? 'Members without Mention everyone and roles can mention it too'}
+        className={`flex items-center gap-1.5 text-sm ${locked ? 'opacity-60' : ''}`}
+      >
+        <input
+          type="checkbox"
+          checked={!!role.mentionable}
+          disabled={!!locked}
+          onChange={() =>
+            void updateRole(server, role.id, { mentionable: !role.mentionable }).then(after)
+          }
+          className="accent-primary"
+        />
+        Allow anyone to mention this role
+      </label>
       {(locked ?? noDelete) && (
         <p className="pt-1.5 text-xs text-on-surface-variant">{locked ?? noDelete}</p>
       )}

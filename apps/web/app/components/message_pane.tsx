@@ -59,6 +59,7 @@ import {
   myRolePerms,
   viewKey,
   allPings,
+  groupMentionsMe,
   type ContextMenuItem,
   type ContextMenuOptions,
   type Outgoing,
@@ -595,9 +596,19 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   )
   const ids = useMemo(() => messages.map(m => m.id), [messages])
   const myName = me?.username
+  const groupIds = useStore(s =>
+    messages
+      .filter(m => groupMentionsMe(s, m))
+      .map(m => m.id)
+      .join(',')
+  )
   const mentionedIds = useMemo(
-    () => new Set(messages.filter(m => mentionsMe(m, myName)).map(m => m.id)),
-    [messages, myName]
+    () =>
+      new Set([
+        ...messages.filter(m => mentionsMe(m, myName)).map(m => m.id),
+        ...(groupIds ? groupIds.split(',').map(Number) : []),
+      ]),
+    [messages, myName, groupIds]
   )
   const mark = unreadMark(ids, anchor, older?.more !== false, lastOwn(messages, me?.username))
   const dividerIndex = mark.divider

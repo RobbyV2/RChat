@@ -1,4 +1,4 @@
-import type { UserRef } from './types'
+import type { Role, UserRef } from './types'
 
 const SUGGEST_MAX = 10
 export const SUGGEST_DEBOUNCE = 150
@@ -47,3 +47,42 @@ export const recentAuthors = <T extends { author: UserRef }>(messages: readonly 
 export const suggestKey = (server: string, query: string) => `${server}\u0000${query.toLowerCase()}`
 
 export const mentionText = (username: string) => `@${username}`
+
+export interface GroupSuggestion {
+  key: string
+  // inserted as is
+  label: string
+  color: string | null
+  hint: string
+}
+
+const GROUPS_MAX = 5
+
+// `@everyone`, `@here` (with Mention everyone and roles) and the roles you may mention whose
+// name starts with the query, at most 5.
+export const groupSuggestions = (
+  query: string,
+  allowed: boolean,
+  roles: readonly Role[]
+): GroupSuggestion[] => {
+  const q = query.toLowerCase()
+  const out: GroupSuggestion[] = []
+  if (allowed) {
+    if ('everyone'.startsWith(q))
+      out.push({
+        key: 'everyone',
+        label: '@everyone',
+        color: null,
+        hint: 'Everyone in this channel',
+      })
+    if ('here'.startsWith(q))
+      out.push({ key: 'here', label: '@here', color: null, hint: 'Everyone online' })
+  }
+  for (const r of roles) {
+    if (out.length >= GROUPS_MAX) break
+    const name = r.name.trim()
+    if ((allowed || r.mentionable) && name && name.toLowerCase().startsWith(q))
+      out.push({ key: `r${r.id}`, label: `@${name}`, color: r.color, hint: 'Role' })
+  }
+  return out.slice(0, GROUPS_MAX)
+}

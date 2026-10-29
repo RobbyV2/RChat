@@ -57,7 +57,7 @@ pub struct Profile {
 
 async fn member_roles(db: &Db, server: &str, username: &str) -> Result<Vec<Role>, ApiError> {
     let rows = sqlx::query(
-        "SELECT r.id, r.name, r.color, r.perms FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2 ORDER BY r.id",
+        "SELECT r.id, r.name, r.color, r.perms, r.mentionable FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2 ORDER BY r.id",
     )
     .bind(server)
     .bind(username)
@@ -70,6 +70,7 @@ async fn member_roles(db: &Db, server: &str, username: &str) -> Result<Vec<Role>
             name: r.try_get(1)?,
             color: r.try_get(2)?,
             perms: r.try_get(3)?,
+            mentionable: r.try_get::<i64, _>(4)? != 0,
         });
     }
     Ok(roles)
