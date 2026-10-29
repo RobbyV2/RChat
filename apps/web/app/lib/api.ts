@@ -165,6 +165,44 @@ export class ApiClient {
     if (!res.ok) throw new ApiError('Could not load the file', res.status)
     return res.blob()
   }
+
+  // The first `max` bytes of a file, for a text preview; the rest is never downloaded. `cut` is
+  // true when the file goes on past them; `total` is its full size when the server says.
+  async mediaStart(id: string, server: string | undefined, max: number, signal?: AbortSignal) {
+    const headers: Record<string, string> = {}
+    const grant = server !== undefined ? this.grants[server] : undefined
+    if (this.token) headers.Authorization = `Bearer ${this.token}`
+    else if (grant) headers['X-Guest-Grant'] = grant
+    const res = await fetch(this.mediaUrl(id), { headers, signal })
+    if (!res.ok || !res.body) throw new ApiError('Could not load the file', res.status)
+    const length = Number(res.headers.get('content-length'))
+    const total = Number.isSafeInteger(length) && length > 0 ? length : null
+    return { ...(await readStart(res.body, max)), total }
+  }
+}
+
+export const readStart = async (body: ReadableStream<Uint8Array>, max: number) => {
+  const reader = body.getReader()
+  const out = new Uint8Array(max)
+  let got = 0
+  let cut = false
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const room = max - got
+      out.set(value.subarray(0, room), got)
+      got += Math.min(room, value.length)
+      if (value.length > room) {
+        cut = true
+        break
+      }
+    }
+  } finally {
+    if (cut) await reader.cancel().catch(() => {})
+    reader.releaseLock()
+  }
+  return { bytes: out.subarray(0, got), cut }
 }
 
 export interface RegisterRequest {

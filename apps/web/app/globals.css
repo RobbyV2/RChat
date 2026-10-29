@@ -43,6 +43,8 @@
   --color-on-mute: #ffffff;
   --color-mute-hover: #b71c1c;
   --color-mute-fg: #ff8a80;
+  --color-code-blue: #8fcdff;
+  --color-code-orange: #ffb59a;
   --font-sans: Roboto, 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', var(--font-sans);
   --shadow-elevation-1: 0 1px 3px 1px rgb(0 0 0 / 0.15), 0 1px 2px rgb(0 0 0 / 0.3);
@@ -132,6 +134,8 @@
   --color-status-yellow: #b26a00;
   --color-status-red: #b3261e;
   --color-mute-fg: #b3261e;
+  --color-code-blue: #00639a;
+  --color-code-orange: #9a4521;
   --shadow-elevation-1: 0 1px 3px 1px rgb(0 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.2);
   --shadow-elevation-2: 0 2px 6px 2px rgb(0 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.2);
   --shadow-elevation-3: 0 4px 8px 3px rgb(0 0 0 / 0.1), 0 1px 3px rgb(0 0 0 / 0.2);
@@ -215,6 +219,85 @@ body {
 
 [data-spoiler='hidden'] img {
   visibility: hidden;
+}
+
+/* Syntax colors for highlighted code (highlight.js scopes), from the theme tokens. */
+.code-hl {
+  color: var(--color-on-surface);
+  tab-size: 4;
+}
+
+.code-hl .hljs-keyword,
+.code-hl .hljs-selector-tag,
+.code-hl .hljs-doctag,
+.code-hl .hljs-meta .hljs-keyword {
+  color: var(--color-primary);
+}
+
+.code-hl .hljs-string,
+.code-hl .hljs-regexp,
+.code-hl .hljs-char.escape_,
+.code-hl .hljs-meta .hljs-string,
+.code-hl .hljs-link,
+.code-hl .hljs-addition {
+  color: var(--color-status-green);
+}
+
+.code-hl .hljs-number,
+.code-hl .hljs-literal,
+.code-hl .hljs-symbol,
+.code-hl .hljs-bullet,
+.code-hl .hljs-variable.constant_ {
+  color: var(--color-status-yellow);
+}
+
+.code-hl .hljs-title,
+.code-hl .hljs-section,
+.code-hl .hljs-name,
+.code-hl .hljs-selector-id {
+  color: var(--color-tertiary);
+}
+
+.code-hl .hljs-type,
+.code-hl .hljs-built_in,
+.code-hl .hljs-title.class_,
+.code-hl .hljs-selector-class,
+.code-hl .hljs-template-tag {
+  color: var(--color-code-blue);
+}
+
+.code-hl .hljs-attr,
+.code-hl .hljs-attribute,
+.code-hl .hljs-property,
+.code-hl .hljs-variable,
+.code-hl .hljs-template-variable,
+.code-hl .hljs-selector-attr,
+.code-hl .hljs-selector-pseudo {
+  color: var(--color-code-orange);
+}
+
+.code-hl .hljs-meta,
+.code-hl .hljs-subst,
+.code-hl .hljs-quote {
+  color: var(--color-secondary);
+}
+
+.code-hl .hljs-comment {
+  color: var(--color-outline);
+  font-style: italic;
+}
+
+.code-hl .hljs-deletion {
+  color: var(--color-error);
+}
+
+.code-hl .hljs-emphasis {
+  font-style: italic;
+}
+
+.code-hl .hljs-strong,
+.code-hl .hljs-section {
+  font-weight: 600;
 }
 
 [data-flash] {

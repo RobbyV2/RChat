@@ -19,6 +19,7 @@ import {
   Download,
   EllipsisVertical,
   EyeOff,
+  FileCode,
   FileText,
   Image as ImageIcon,
   Play,
@@ -26,6 +27,9 @@ import {
   ShieldAlert,
   X,
 } from 'lucide-react'
+import { fmtSize } from '../lib/bytes'
+import { fileLang, fenceTag } from '../lib/code'
+import type { CodeNode } from '../lib/highlight'
 import { relayOnly } from '../lib/ice'
 import { api, home, localOrigins, remoteAllowed, shareOrigin } from '../lib/instances'
 import { mentionCandidates, splitKnownMentions } from '../lib/mentions'
@@ -68,6 +72,17 @@ import { InviteCard, RemoteInviteCard } from './invite_card'
 import { MessageLinkCard } from './message_link_card'
 import { profileTrigger } from './profile_card'
 import { EditedMark } from './message_editor'
+import {
+  blobText,
+  CodeBlock,
+  CodePreview,
+  CodePreviewLoading,
+  keepText,
+  keptText,
+  nodeText,
+  useServerText,
+  type TextFile,
+} from './code_block'
 import { Stamp } from './timestamp'
 import { splitStamps, type StampStyle } from '../lib/timestamps'
 
@@ -309,12 +324,22 @@ const components: Components = {
   code: ({ node, ...props }) => (
     <code {...props} className="rounded bg-surface-container-high px-1 py-0.5 font-mono text-xs" />
   ),
-  pre: ({ node, ...props }) => (
-    <pre
-      {...props}
-      className="my-1 overflow-x-auto rounded-lg bg-surface-container-high p-2 [&_code]:bg-transparent [&_code]:p-0"
-    />
-  ),
+  pre: ({ node, ...props }) => {
+    const code = node?.children[0]
+    if (code?.type === 'element' && code.tagName === 'code')
+      return (
+        <CodeBlock
+          code={nodeText(code as CodeNode).replace(/\n$/, '')}
+          tag={fenceTag(code.properties.className)}
+        />
+      )
+    return (
+      <pre
+        {...props}
+        className="my-1 overflow-x-auto rounded-lg bg-surface-container-high p-2 [&_code]:bg-transparent [&_code]:p-0"
+      />
+    )
+  },
   h1: ({ node, ...props }) => <h1 {...props} className="my-1 text-lg font-bold" />,
   h2: ({ node, ...props }) => <h2 {...props} className="my-1 text-base font-bold" />,
   h3: ({ node, ...props }) => <h3 {...props} className="my-1 text-sm font-bold" />,
@@ -331,15 +356,6 @@ const components: Components = {
 
 const fmtExpiry = (ts: number | null) =>
   ts === null ? 'Indefinite' : expiryText(ts - Math.floor(Date.now() / 1000))
-
-const fmtSize = (n: number) =>
-  n < 1024
-    ? `${n} B`
-    : n < 1024 * 1024
-      ? `${(n / 1024).toFixed(0)} KB`
-      : n < 1024 ** 3
-        ? `${(n / 1024 ** 2).toFixed(1)} MB`
-        : `${(n / 1024 ** 3).toFixed(2)} GB`
 
 // The cover of a hidden spoiler attachment.
 function SpoilerCover({ title, onReveal }: { title?: string; onReveal: () => void }) {
@@ -399,6 +415,12 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   const unverified = sha256 === null && !own
   const canPreview =
     previews && guess !== null && !unverified && size !== null && size <= PREVIEW_MAX
+  // Text is shown inert, so files without a checksum get a plain preview too.
+  const lang = fileLang(filename)
+  const canText = previews && lang !== null && size !== null && size <= PREVIEW_MAX
+  const [text, setText] = useState<TextFile | null>(
+    () => (canText && live ? keptText(`p2p:${messageId}`) : null) ?? null
+  )
   const hidden = spoiler && !revealed
   const busy = progress !== null
   const autoLoad =
@@ -436,7 +458,12 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
     setFailed(null)
     setProgress({ got: 0, total: size ?? 0 })
     fetchFile(c.signal)
-      .then(got => {
+      .then(async got => {
+        if (canText && !save) {
+          const file = await blobText(got.blob)
+          keepText(`p2p:${messageId}`, file && { ...file, verified: got.verified })
+          setText(file && { ...file, verified: got.verified })
+        }
         const kind = kindOf(got.type)
         if (canPreview && got.verified && kind !== null && got.blob.size <= PREVIEW_MAX) {
           const preview = { url: URL.createObjectURL(got.blob), kind }
@@ -464,6 +491,12 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
     if (ctl.current || failed !== null) return
     run(false)
   }, [canPreview, guess, autoLoad, shown, online, hidden, failed])
+
+  useEffect(() => {
+    if (!canText || !autoLoad || text !== null || !online || hidden) return
+    if (ctl.current || failed !== null || keptText(`p2p:${messageId}`) === null) return
+    run(false)
+  }, [canText, autoLoad, text, online, hidden, failed, messageId])
 
   useEffect(() => {
     setFailed(null)
@@ -508,6 +541,21 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
       <Download size={14} />
     </button>
   )
+
+  if (text !== null && lang !== null) {
+    return (
+      <CodePreview
+        filename={filename}
+        size={size}
+        lang={lang}
+        file={text}
+        plain={text.verified === false}
+        note={text.verified === false ? 'Not verified, so shown as plain text' : undefined}
+        actions={saveButton}
+        footer={<div className="px-3 pb-2">{meta}</div>}
+      />
+    )
+  }
 
   if (shown !== null) {
     return (
@@ -578,6 +626,16 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
                 <ImageIcon size={14} />
               </button>
             )}
+            {canText && !autoLoad && keptText(`p2p:${messageId}`) !== null && (
+              <button
+                title="Show preview (connects to the sender)"
+                aria-label="Show preview"
+                onClick={() => run(false)}
+                className="shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary"
+              >
+                <FileCode size={14} />
+              </button>
+            )}
             {canPreview && guess !== 'image' && (
               <button
                 title={guess === 'video' ? 'Play video' : 'Play audio'}
@@ -618,6 +676,8 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
   const image = previews && IMAGE_EXT.test(filename)
   const src = useMediaSrc(id, server, image && !removed)
   const guest = api.guestMedia(server)
+  const lang = previews && !image ? fileLang(filename) : null
+  const text = useServerText(id, server, lang !== null && !removed && !(spoiler && !revealed))
   if (removed) {
     return (
       <p className="mt-1 text-xs text-on-surface-variant italic">
@@ -668,6 +728,46 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
   if (hidden) {
     return <SpoilerCover onReveal={() => setRevealed(true)} />
   }
+  const save = () =>
+    void saveGuestMedia(id, server ?? '', filename).catch((err: unknown) =>
+      useStore.getState().setError(err instanceof Error ? err.message : String(err))
+    )
+  if (lang !== null && text === undefined) return <CodePreviewLoading filename={filename} />
+  if (lang !== null && text) {
+    const iconBtn =
+      'shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-primary'
+    return (
+      <CodePreview
+        filename={filename}
+        size={media.size}
+        lang={lang}
+        file={text}
+        actions={
+          guest && server !== undefined ? (
+            <button
+              title={`Download ${filename}`}
+              aria-label="Download"
+              onClick={save}
+              className={iconBtn}
+            >
+              <Download size={14} />
+            </button>
+          ) : (
+            <a
+              href={api.mediaUrl(id)}
+              download={filename}
+              title={`Download ${filename}`}
+              aria-label="Download"
+              className={iconBtn}
+            >
+              <Download size={14} />
+            </a>
+          )
+        }
+        footer={expiry && <div className="px-3 pb-2">{expiry}</div>}
+      />
+    )
+  }
   const card = (
     <>
       <span className="flex items-center gap-2">
@@ -682,15 +782,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
     'mt-1 block w-fit rounded-xl border border-outline-variant bg-surface-container px-3 py-2 text-left hover:bg-surface-container-high'
   if (guest && server !== undefined) {
     return (
-      <button
-        title={`Download ${filename}`}
-        onClick={() =>
-          void saveGuestMedia(id, server, filename).catch((err: unknown) =>
-            useStore.getState().setError(err instanceof Error ? err.message : String(err))
-          )
-        }
-        className={`cursor-pointer ${box}`}
-      >
+      <button title={`Download ${filename}`} onClick={save} className={`cursor-pointer ${box}`}>
         {card}
       </button>
     )
@@ -848,7 +940,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
           )
         ))}
       {media !== null && (
-        <div className="group/att relative w-fit">
+        <div className="group/att relative w-fit max-w-full">
           {!media.removed && attachmentsOff(media) ? (
             <p className="mt-1 flex items-center gap-1.5 text-xs text-on-surface-variant italic">
               <Ban size={12} className="shrink-0" />

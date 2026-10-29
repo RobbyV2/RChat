@@ -28,3 +28,12 @@ export const toBase64Url = (bytes: Uint8Array) =>
 
 export const fromBase64Url = (text: string) =>
   fromBase64(text.replace(/-/g, '+').replace(/_/g, '/'))
+
+export const fmtSize = (n: number) =>
+  n < 1024
+    ? `${n} B`
+    : n < 1024 * 1024
+      ? `${(n / 1024).toFixed(0)} KB`
+      : n < 1024 ** 3
+        ? `${(n / 1024 ** 2).toFixed(1)} MB`
+        : `${(n / 1024 ** 3).toFixed(2)} GB`
