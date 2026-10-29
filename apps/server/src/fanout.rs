@@ -14,6 +14,7 @@ pub struct Fanned {
     pub ev: WsEvent,
     pub seq: u64,
     json: OnceLock<Option<Utf8Bytes>>,
+    order: OnceCell<Arc<Vec<i64>>>,
 }
 
 impl Fanned {
@@ -22,7 +23,24 @@ impl Fanned {
             ev,
             seq,
             json: OnceLock::new(),
+            order: OnceCell::new(),
         }
+    }
+
+    /// The channel order of `server`, loaded once for all connections that get this event.
+    pub async fn channel_order(
+        &self,
+        db: &crate::db::Db,
+        server: &str,
+    ) -> sqlx::Result<Arc<Vec<i64>>> {
+        self.order
+            .get_or_try_init(|| async {
+                crate::api::categories::channel_order(db, server)
+                    .await
+                    .map(Arc::new)
+            })
+            .await
+            .cloned()
     }
 
     pub fn frame(&self) -> Option<Utf8Bytes> {
@@ -206,11 +224,18 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
         | WsEvent::ChannelDeleted {
             server,
             channel_id: _,
+            rules: _,
         }
         | WsEvent::RolesChanged { server }
         | WsEvent::ChannelPermsChanged {
             server,
             channel_id: _,
+        }
+        | WsEvent::LayoutChanged {
+            server,
+            layout: _,
+            created: _,
+            deleted: _,
         }
         | WsEvent::VoiceState {
             server,
@@ -658,6 +683,7 @@ impl Channels {
             WsEvent::ChannelDeleted {
                 server: _,
                 channel_id,
+                rules: _,
             }
             | WsEvent::ChannelPermsChanged {
                 server: _,
@@ -807,6 +833,8 @@ mod tests {
             restrict_view: false,
             restrict_send: false,
             topic: None,
+            category_id: None,
+            position: 0,
         };
         router.deliver(WsEvent::ServerUpdated {
             server: crate::api::ServerSummaryLite {

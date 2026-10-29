@@ -9,6 +9,9 @@
 import { fromBase64Url, isRecord, toBase64Url } from './bytes'
 import type { Theme } from './types'
 import {
+  collapsedCount,
+  collapsedOf,
+  type Collapsed,
   cleanFolderName,
   parseLayout,
   type Folder,
@@ -44,6 +47,7 @@ export interface ConfigLayout {
   dmOrder: number[]
   dmPinned: number[]
   selfPin: SelfPin
+  collapsed?: Collapsed
 }
 
 export interface ConfigDoc {
@@ -76,7 +80,13 @@ export const SECTIONS: Section[] = [
   { key: 'theme', label: 'Theme', account: false, device: true, link: true },
   { key: 'streamer', label: 'Streamer mode', account: false, device: true, link: true },
   { key: 'appearOffline', label: 'Appear offline', account: true, device: false, link: true },
-  { key: 'layout', label: 'Servers, folders and DMs', account: false, device: false, link: true },
+  {
+    key: 'layout',
+    label: 'Servers, folders, DMs and categories',
+    account: false,
+    device: false,
+    link: true,
+  },
   { key: 'notify', label: 'Notification settings', account: false, device: false, link: true },
   { key: 'emoji', label: 'Frequent emoji and skin tone', account: true, device: false, link: true },
   { key: 'calls', label: 'Call connection', account: true, device: false, link: true },
@@ -95,6 +105,7 @@ export interface ConfigSource {
     dmOrder: number[]
     dmPinned: number[]
     selfPin: SelfPin
+    collapsed?: Collapsed
   } | null
   notify: NotifyPrefs | null
   emoji: EmojiPrefs | null
@@ -110,6 +121,7 @@ const pickLayout = (l: NonNullable<ConfigSource['layout']>): ConfigLayout => ({
   dmOrder: [...l.dmOrder],
   dmPinned: [...l.dmPinned],
   selfPin: l.selfPin,
+  ...(l.collapsed && collapsedCount(l.collapsed) ? { collapsed: collapsedOf(l.collapsed) } : {}),
 })
 
 const pickNotify = (p: NotifyPrefs): NotifyPrefs => JSON.parse(notifyValue(p)) as NotifyPrefs
@@ -151,8 +163,10 @@ const validName = (n: string) => n.length > 0 && n.length <= NAME_MAX
 
 const cleanLayout = (x: unknown): ConfigLayout | undefined => {
   if (!isRecord(x)) return undefined
-  const { servers, dmOrder, dmPinned, selfPin } = x
-  const parsed = parseLayout(JSON.stringify({ v: 2, servers, dmOrder, dmPinned, selfPin }))
+  const { servers, dmOrder, dmPinned, selfPin, collapsed } = x
+  const parsed = parseLayout(
+    JSON.stringify({ v: 2, servers, dmOrder, dmPinned, selfPin, collapsed })
+  )
   let budget = SERVERS_MAX
   const entries: RailEntry[] = []
   for (const e of parsed.servers) {
@@ -179,6 +193,13 @@ const cleanLayout = (x: unknown): ConfigLayout | undefined => {
     dmOrder: parsed.dmOrder.slice(0, DMS_MAX),
     dmPinned: parsed.dmPinned.slice(0, DMS_MAX),
     selfPin: parsed.selfPin,
+    ...(collapsedCount(parsed.collapsed)
+      ? {
+          collapsed: Object.fromEntries(
+            Object.entries(parsed.collapsed).filter(([name]) => validName(name))
+          ),
+        }
+      : {}),
   }
 }
 
@@ -344,6 +365,9 @@ const layoutText = (l: ConfigLayout) => {
     servers ? plural(servers, 'server') : 'Default order',
     ...(folders ? [plural(folders, 'folder')] : []),
     plural(l.dmPinned.length, 'pinned DM'),
+    ...(l.collapsed && collapsedCount(l.collapsed)
+      ? [plural(collapsedCount(l.collapsed), 'collapsed category', 'collapsed categories')]
+      : []),
   ].join(', ')
 }
 

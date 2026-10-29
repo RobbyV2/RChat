@@ -787,6 +787,7 @@ impl Replica {
             WsEvent::ChannelDeleted {
                 server: _,
                 channel_id,
+                rules: _,
             } => {
                 self.take_room(*channel_id);
             }
@@ -2628,6 +2629,7 @@ pub(crate) mod tests {
         hub.broadcast(WsEvent::ChannelDeleted {
             server: "rchat".to_string(),
             channel_id: 5,
+            rules: None,
         });
         assert!(hub.rooms_in("rchat", None).is_empty());
         assert!(hub.ready());

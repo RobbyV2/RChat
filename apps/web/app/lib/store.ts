@@ -166,6 +166,8 @@ import {
   pruneLayout,
   renameFolder as renameFolderIn,
   renameServer,
+  keepCollapsed,
+  setCollapsed,
   toggleFolder as toggleIn,
   ungroupFolder as ungroupIn,
   unpinDm as unpinIn,
@@ -173,6 +175,14 @@ import {
 } from './nav_layout'
 import { MESSAGE_MAX, charCount, cleanBio } from './rules'
 import { cleanTopic } from './topic'
+import {
+  applyLayout,
+  layoutOrder,
+  moveCategory as moveCategoryIn,
+  moveChannel as moveChannelIn,
+  orderLayout,
+  type LayoutOrder,
+} from './categories'
 import {
   dropStashedInvite,
   entryState,
@@ -779,6 +789,7 @@ export const useStore = create<RChatState>()((set, get) => {
               dmOrder: l.dmOrder,
               dmPinned: l.dmPinned,
               selfPin: l.selfPin,
+              collapsed: l.collapsed ?? s.layout.collapsed,
             },
             serverNames(s),
             s.dms.map(d => d.id)
@@ -955,7 +966,7 @@ export const useStore = create<RChatState>()((set, get) => {
       if (detached(key)) {
         if (view.kind === 'channel') {
           const detail = await api.getServer(view.server)
-          set(s => ({ servers: { ...s.servers, [view.server]: detail } }))
+          putServer(view.server, detail)
         }
         return
       }
@@ -988,7 +999,7 @@ export const useStore = create<RChatState>()((set, get) => {
       askP2p(msgs)
       if (view.kind === 'channel') {
         const detail = await api.getServer(view.server)
-        set(s => ({ servers: { ...s.servers, [view.server]: detail } }))
+        putServer(view.server, detail)
       }
     } catch (e) {
       if (view.kind === 'channel' && lockedOut(e)) guestLocked(view.server)
@@ -1009,9 +1020,55 @@ export const useStore = create<RChatState>()((set, get) => {
     dropServer(name)
   }
 
-  const refetchServer = (server: string) => {
-    if (!get().servers[server]) return
-    void api
+  // Reorders go out one at a time per server, each with the version the previous one returned.
+  // While one is pending, live layout events are skipped: the answer (or a reload) settles it.
+  // When one fails, the orders queued behind it are dropped (they were built on the failed one)
+  // and new ones are refused until the reload is in.
+  const layoutSends = new Map<
+    string,
+    { pending: number; chain: Promise<void>; round: number; reloading: boolean }
+  >()
+
+  const sendLayout = (server: string, order: LayoutOrder) => {
+    const detail = get().servers[server]
+    if (!detail) return
+    const slot = layoutSends.get(server) ?? {
+      pending: 0,
+      chain: Promise.resolve(),
+      round: 0,
+      reloading: false,
+    }
+    if (slot.reloading) return
+    patchServer(server, d => applyLayout(d, orderLayout(d, order)))
+    slot.pending += 1
+    layoutSends.set(server, slot)
+    const round = slot.round
+    slot.chain = slot.chain.then(async () => {
+      try {
+        if (round !== slot.round) return
+        const version = get().servers[server]?.layout_version ?? 0
+        const layout = await api.reorderLayout(server, { ...order, version })
+        patchServer(server, d => applyLayout(d, layout))
+      } catch (e) {
+        if (e instanceof ApiError && (e.status === 409 || e.status === 400)) {
+          fail(new Error('The channel list changed. Try again'))
+        } else fail(e)
+        slot.round += 1
+        slot.reloading = true
+        await reloadServer(server)
+        slot.reloading = false
+      } finally {
+        slot.pending -= 1
+        if (slot.pending === 0) layoutSends.delete(server)
+      }
+    })
+  }
+
+  const refetchServer = (server: string) => void reloadServer(server)
+
+  const reloadServer = (server: string): Promise<void> => {
+    if (!get().servers[server]) return Promise.resolve()
+    return api
       .getServer(server)
       .then(detail => {
         const { view } = get()
@@ -1024,7 +1081,7 @@ export const useStore = create<RChatState>()((set, get) => {
           clearView()
           if (!get().servers[server]) return
         }
-        set(s => ({ servers: { ...s.servers, [server]: detail } }))
+        putServer(server, detail)
         if (lost && next) void get().openChannel(server, next.id, 'replace')
       })
       .catch(fail)
@@ -1523,7 +1580,7 @@ export const useStore = create<RChatState>()((set, get) => {
       persistGuestServers([...guestServers, target.server])
       home.ws.subscribe([target.server])
     }
-    set(s => ({ servers: { ...s.servers, [target.server]: detail } }))
+    putServer(target.server, detail)
     void pruneScopes()
     const wanted = target.kind === 'channel' ? target.channelId : null
     const channel = detail.channels.find(c => c.id === wanted) ?? detail.channels[0]
@@ -1981,6 +2038,18 @@ export const useStore = create<RChatState>()((set, get) => {
     banner
       ? embeds.map(e => (e.ord === ord ? { ...e, banner_removed: true } : e))
       : embeds.filter(e => e.ord !== ord)
+
+  // A loaded server detail; collapsed ids of categories it no longer has are dropped.
+  const putServer = (name: string, detail: ServerDetail) => {
+    set(s => ({ servers: { ...s.servers, [name]: detail } }))
+    saveLayout(
+      keepCollapsed(
+        get().layout,
+        name,
+        (detail.categories ?? []).map(c => c.id)
+      )
+    )
+  }
 
   const patchServer = (name: string, fn: (detail: ServerDetail) => ServerDetail) => {
     set(s => {
@@ -3024,6 +3093,7 @@ export const useStore = create<RChatState>()((set, get) => {
         file_names: true,
         bios: true,
         channel_topics: true,
+        category_names: true,
       },
       asset_previews: true,
       asset_uploads: true,
@@ -3341,7 +3411,7 @@ export const useStore = create<RChatState>()((set, get) => {
     openServer: (name, channelId, nav = 'push', at) =>
       act(async () => {
         const [detail] = await Promise.all([fetchServer(name), ensureMembership(name)])
-        set(s => ({ servers: { ...s.servers, [name]: detail } }))
+        putServer(name, detail)
         void pruneScopes()
         const target = detail.channels.find(c => c.id === channelId) ?? detail.channels[0]
         if (!target) throw new Error(`No channels you can view in ${detail.display_name}`)
@@ -4246,8 +4316,22 @@ export const useStore = create<RChatState>()((set, get) => {
 
     renameServer: async (name, newName) => void (await api.updateServer(name, { name: newName })),
     deleteServer: name => act(async () => void (await api.deleteServer(name))),
-    createChannel: (server, name, kind = 'text') =>
-      act(async () => void (await api.createChannel(server, name, kind))),
+    createChannel: (server, name, kind = 'text', category = null) =>
+      act(async () => void (await api.createChannel(server, name, kind, category))),
+    createCategory: (server, name) =>
+      act(async () => void (await api.createCategory(server, name))),
+    renameCategory: (id, name) => act(async () => void (await api.renameCategory(id, name))),
+    deleteCategory: id => act(async () => void (await api.deleteCategory(id))),
+    moveChannel: (server, id, category, index) => {
+      const detail = get().servers[server]
+      if (detail) sendLayout(server, moveChannelIn(layoutOrder(detail), id, category, index))
+    },
+    moveCategory: (server, id, index) => {
+      const detail = get().servers[server]
+      if (detail) sendLayout(server, moveCategoryIn(layoutOrder(detail), id, index))
+    },
+    setCategoriesCollapsed: (server, ids, collapsed) =>
+      saveLayout(setCollapsed(get().layout, server, ids, collapsed)),
     renameChannel: (id, name) => act(async () => void (await api.updateChannel(id, { name }))),
     setSlowmode: (id, seconds) =>
       act(async () => void (await api.updateChannel(id, { slowmode_seconds: seconds }))),
@@ -5069,6 +5153,18 @@ export const useStore = create<RChatState>()((set, get) => {
         case 'channel_perms_changed': {
           dropLinkCards()
           refetchServer(ev.server)
+          return
+        }
+        case 'layout_changed': {
+          if (layoutSends.has(ev.server)) return
+          const known = get().servers[ev.server]
+          if (!known) return
+          const listed = new Set([
+            ...ev.layout.uncategorized,
+            ...ev.layout.categories.flatMap(c => c.channels),
+          ])
+          patchServer(ev.server, d => applyLayout(d, ev.layout))
+          if (known.channels.some(c => !listed.has(c.id))) refetchServer(ev.server)
           return
         }
         case 'user_updated': {

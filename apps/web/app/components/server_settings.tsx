@@ -14,6 +14,7 @@ import {
   type ConfirmRequest,
 } from '../lib/store'
 import {
+  NAME_MAX,
   SLOWMODE_MAX,
   adminMask,
   canGrant,
@@ -30,6 +31,7 @@ import {
   rolePerms,
 } from '../lib/rules'
 import { inviteUrl } from '../lib/invite'
+import { enterKey } from '../lib/keys'
 import { CUSTOM, SLOWMODE_PRESETS, customSeconds, isPreset, slowLabel } from '../lib/slowmode'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
 import type {
@@ -681,6 +683,35 @@ function SlowmodeField({ channel, refresh }: { channel: Channel; refresh?: () =>
         </form>
       )}
       {error && <p className="basis-full text-xs text-error">{error}</p>}
+    </div>
+  )
+}
+
+function CategoryCreator({ server }: { server: string }) {
+  const createCategory = useStore(s => s.createCategory)
+  const [name, setName] = useState('')
+  const trimmed = name.trim()
+  const create = () => {
+    if (!trimmed) return
+    setName('')
+    void createCategory(server, trimmed)
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 px-2 py-1.5">
+      <input
+        value={name}
+        maxLength={NAME_MAX}
+        onChange={e => setName(e.target.value)}
+        onKeyDown={e => {
+          if (enterKey(e)) create()
+        }}
+        placeholder="Category name"
+        aria-label="Category name"
+        className={`${fieldCls} min-w-40 flex-1`}
+      />
+      <button onClick={create} disabled={!trimmed} className={textBtn}>
+        Create category
+      </button>
     </div>
   )
 }
@@ -1372,6 +1403,7 @@ function Settings({ server }: { server: string }) {
       {hasPerm(perms, Perm.ManageChannels) && (
         <>
           <p className={sectionCls}>Channels</p>
+          <CategoryCreator server={server} />
           {detail.channels.map(c => (
             <ChannelControls key={c.id} server={server} channel={c} roles={detail.roles} />
           ))}

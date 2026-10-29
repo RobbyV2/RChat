@@ -16,13 +16,16 @@ use tokio::time::Instant;
 use tracing::{debug, warn};
 
 use crate::api::access::{
-    TypingPlace, servers_with_expired_passwords, typing_scope, ws_banned, ws_channel_read_since,
-    ws_channel_view, ws_grant_deadline, ws_server_open, ws_typing_place, ws_voice_channel,
-    ws_voice_viewable,
+    TypingPlace, ViewRules, servers_with_expired_passwords, typing_scope, ws_banned,
+    ws_channel_read_since, ws_channel_view, ws_grant_deadline, ws_server_open, ws_typing_place,
+    ws_view_under, ws_voice_channel, ws_voice_viewable,
 };
 use crate::api::messages::{Quotes, load_broadcast, load_message};
 use crate::api::pings::{Ping, ThreadPings};
-use crate::api::{Channel, Embed, Member, Message, ServerSummaryLite, Settings, UserRef};
+use crate::api::{
+    Channel, ChannelLayout, Embed, LayoutCategory, Member, Message, ServerSummaryLite, Settings,
+    UserRef,
+};
 use crate::db::{ChannelKind, Db, MediaKind, get_user, now, setting_on, touch_interaction};
 use crate::fanout::Topic;
 pub use crate::hub::Hub;
@@ -400,6 +403,8 @@ pub enum WsEvent {
     ChannelDeleted {
         server: String,
         channel_id: i64,
+        #[serde(default, skip_serializing_if = "routing_only")]
+        rules: Option<ViewRules>,
     },
     ServerCreated {
         server: ServerSummaryLite,
@@ -444,6 +449,14 @@ pub enum WsEvent {
     ChannelPermsChanged {
         server: String,
         channel_id: i64,
+    },
+    LayoutChanged {
+        server: String,
+        layout: ChannelLayout,
+        #[serde(default, skip_serializing_if = "routing_only")]
+        created: Option<i64>,
+        #[serde(default, skip_serializing_if = "routing_only")]
+        deleted: Option<ViewRules>,
     },
     UserUpdated {
         user: UserRef,
@@ -842,7 +855,7 @@ pub fn spawn_aftermath(state: &AppState) {
 
 async fn channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(String, Channel)>> {
     let row =
-        sqlx::query("SELECT server, name, kind, slowmode_seconds, restrict_view, restrict_send, topic FROM channels WHERE id = $1")
+        sqlx::query("SELECT server, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position FROM channels WHERE id = $1")
             .bind(id)
             .fetch_optional(db)
             .await?;
@@ -857,6 +870,8 @@ async fn channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(String, Channel)>
                 restrict_view: r.try_get::<i64, _>(4)? != 0,
                 restrict_send: r.try_get::<i64, _>(5)? != 0,
                 topic: r.try_get(6)?,
+                category_id: r.try_get(7)?,
+                position: r.try_get(8)?,
             },
         ))),
         None => Ok(None),
@@ -1034,6 +1049,23 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
         WsEvent::ChannelUpdated { server, channel } => {
             let (owner, channel) = channel_now(db, channel.id).await.ok().flatten()?;
             (owner == server).then_some(WsEvent::ChannelUpdated { server, channel })
+        }
+        WsEvent::LayoutChanged {
+            server,
+            layout: _,
+            created,
+            deleted,
+        } => {
+            let layout = crate::api::categories::current_layout(db, &server)
+                .await
+                .ok()
+                .flatten()?;
+            Some(WsEvent::LayoutChanged {
+                server,
+                layout,
+                created,
+                deleted,
+            })
         }
         WsEvent::ServerCreated { server } => {
             let server = refresh_lite(db, &server.name).await.ok().flatten()?;
@@ -2460,6 +2492,29 @@ async fn channel_gate(
     }
 }
 
+/// Whether a connection could view a channel that is now deleted: its own memo when it has one,
+/// else the channel's view rules taken before the delete. Without rules (an event from an older
+/// node) only the memo counts. `None` when the connection must close.
+async fn deleted_gate(
+    state: &AppState,
+    access: &mut Access,
+    server: &str,
+    known: Option<bool>,
+    rules: Option<&ViewRules>,
+) -> Option<bool> {
+    if let Some(view) = known {
+        return Some(view);
+    }
+    let Some(rules) = rules else {
+        return Some(false);
+    };
+    let started = Instant::now();
+    match ws_view_under(&state.read(), server, rules, access.user.as_deref()).await {
+        Ok(view) => Some(view),
+        Err(e) => access.hold(e, started).then_some(false),
+    }
+}
+
 async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent) -> Option<bool> {
     if !access.past_deadlines(state, conn).await {
         return None;
@@ -2473,6 +2528,17 @@ async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent
         }
     }
     let mut deliver = access.wants(ev);
+    let known = match ev {
+        WsEvent::ChannelDeleted {
+            server,
+            channel_id,
+            rules: _,
+        } => access
+            .viewable
+            .get(channel_id)
+            .map(|(owner, view)| *view && owner == server),
+        _ => None,
+    };
     track(ev, access);
     if let WsEvent::MemberLeft { server, username }
     | WsEvent::MemberKicked {
@@ -2508,6 +2574,15 @@ async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent
     }
     if deliver && let Some((server, cid)) = event_channel(ev) {
         deliver = channel_gate(state, access, server, cid).await?;
+    }
+    if deliver
+        && let WsEvent::ChannelDeleted {
+            server,
+            channel_id: _,
+            rules,
+        } = ev
+    {
+        deliver = deleted_gate(state, access, server, known, rules.as_ref()).await?;
     }
     if deliver {
         deliver = !hosting_via_who(access, ev);
@@ -2777,8 +2852,143 @@ fn client_frame(fanned: &crate::fanout::Fanned, me: Option<&str>) -> Option<Utf8
             .ok()
             .map(Utf8Bytes::from)
         }
+        (
+            WsEvent::LayoutChanged {
+                server: _,
+                layout: _,
+                created: _,
+                deleted: _,
+            }
+            | WsEvent::ChannelCreated {
+                server: _,
+                channel: _,
+            }
+            | WsEvent::ChannelRenamed {
+                server: _,
+                channel: _,
+            }
+            | WsEvent::ChannelUpdated {
+                server: _,
+                channel: _,
+            },
+            _,
+        ) => None,
         (_, _) => fanned.frame(),
     }
+}
+
+/// A channel event for one connection, with the channel's `position` counted among the channels
+/// that connection can see. `Some(None)` for other events or when the order can't be loaded;
+/// `None` when the connection must close.
+async fn channel_for(
+    state: &AppState,
+    access: &mut Access,
+    fanned: &crate::fanout::Fanned,
+) -> Option<Option<WsEvent>> {
+    let (server, channel) = match &fanned.ev {
+        WsEvent::ChannelCreated { server, channel }
+        | WsEvent::ChannelRenamed { server, channel }
+        | WsEvent::ChannelUpdated { server, channel } => (server, channel),
+        _ => return Some(None),
+    };
+    let started = Instant::now();
+    let order = match fanned.channel_order(&state.read(), server).await {
+        Ok(order) => order,
+        Err(e) => return access.hold(e, started).then_some(None),
+    };
+    let mut position = 0;
+    for cid in order.iter().take_while(|c| **c != channel.id) {
+        if channel_gate(state, access, server, *cid).await? {
+            position += 1;
+        }
+    }
+    let channel = Channel {
+        position,
+        ..channel.clone()
+    };
+    let server = server.clone();
+    Some(Some(match &fanned.ev {
+        WsEvent::ChannelCreated {
+            server: _,
+            channel: _,
+        } => WsEvent::ChannelCreated { server, channel },
+        WsEvent::ChannelRenamed {
+            server: _,
+            channel: _,
+        } => WsEvent::ChannelRenamed { server, channel },
+        _ => WsEvent::ChannelUpdated { server, channel },
+    }))
+}
+
+/// `layout_changed` for one connection: only the channels it can view, and only the categories
+/// that hold one of them, unless it manages channels. `Some(None)` when it comes from creating or
+/// deleting a channel the connection can't view (its layout is the same); `None` when the
+/// connection must close.
+async fn layout_for(
+    state: &AppState,
+    access: &mut Access,
+    server: &str,
+    layout: &ChannelLayout,
+    created: Option<i64>,
+    deleted: Option<&ViewRules>,
+) -> Option<Option<WsEvent>> {
+    if let Some(cid) = created
+        && !channel_gate(state, access, server, cid).await?
+    {
+        return Some(None);
+    }
+    if deleted.is_some() && !deleted_gate(state, access, server, None, deleted).await? {
+        return Some(None);
+    }
+    let mut uncategorized = Vec::new();
+    for cid in &layout.uncategorized {
+        if channel_gate(state, access, server, *cid).await? {
+            uncategorized.push(*cid);
+        }
+    }
+    let mut categories = Vec::new();
+    let mut manages = None;
+    for category in &layout.categories {
+        let mut channels = Vec::new();
+        for cid in &category.channels {
+            if channel_gate(state, access, server, *cid).await? {
+                channels.push(*cid);
+            }
+        }
+        if channels.is_empty() && manages.is_none() {
+            let started = Instant::now();
+            manages = match crate::api::access::ws_manages_channels(
+                &state.read(),
+                server,
+                access.user.as_deref(),
+            )
+            .await
+            {
+                Ok(m) => Some(m),
+                Err(e) => match access.hold(e, started) {
+                    true => Some(false),
+                    false => return None,
+                },
+            };
+        }
+        if !channels.is_empty() || manages == Some(true) {
+            categories.push(LayoutCategory {
+                id: category.id,
+                name: category.name.clone(),
+                channels,
+            });
+        }
+    }
+    Some(Some(WsEvent::LayoutChanged {
+        server: server.to_string(),
+        layout: ChannelLayout {
+            version: layout.version,
+            uncategorized,
+            categories,
+        },
+        created: None,
+        deleted: None,
+    }))
 }
 
 const PRESENCE_SNAPSHOT_MAX: usize = 50;
@@ -2971,6 +3181,22 @@ async fn run(state: AppState, mut socket: WebSocket) {
                     let Some(deliver) = on_event(&state, conn, &mut access, ev).await else {
                         break;
                     };
+                    if deliver && let WsEvent::LayoutChanged { server, layout, created, deleted } = ev {
+                        let Some(mine) = layout_for(&state, &mut access, server, layout, *created, deleted.as_ref()).await else {
+                            break;
+                        };
+                        if let Some(mine) = mine && !sent(&mut access, out.event(&mine)) {
+                            break;
+                        }
+                    }
+                    if deliver {
+                        let Some(mine) = channel_for(&state, &mut access, &fanned).await else {
+                            break;
+                        };
+                        if let Some(mine) = mine && !sent(&mut access, out.event(&mine)) {
+                            break;
+                        }
+                    }
                     if deliver
                         && let Some(frame) = client_frame(&fanned, access.user.as_deref())
                         && !sent(&mut access, out.text(frame))
@@ -3277,6 +3503,7 @@ fn track(ev: &WsEvent, access: &mut Access) {
         | WsEvent::ChannelDeleted {
             server: _,
             channel_id,
+            rules: _,
         } => {
             access.viewable.remove(channel_id);
             access.who.forget();
@@ -3415,7 +3642,8 @@ fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
             dm_users: _,
             message_id: _,
         } => scoped(server, channel_id),
-        WsEvent::ChannelRenamed { server, channel }
+        WsEvent::ChannelCreated { server, channel }
+        | WsEvent::ChannelRenamed { server, channel }
         | WsEvent::ChannelUpdated { server, channel } => Some((server.as_str(), channel.id)),
         WsEvent::VoiceState {
             server,
@@ -3555,6 +3783,7 @@ fn wants(
         WsEvent::ChannelDeleted {
             server,
             channel_id: _,
+            rules: _,
         } => in_server(server),
         WsEvent::MemberJoined { server, member } => {
             in_server(server) || Some(member.user.username.as_str()) == me
@@ -3578,6 +3807,12 @@ fn wants(
         WsEvent::ChannelPermsChanged {
             server,
             channel_id: _,
+        } => in_server(server),
+        WsEvent::LayoutChanged {
+            server,
+            layout: _,
+            created: _,
+            deleted: _,
         } => in_server(server),
         WsEvent::UserUpdated { user, scope } => {
             scope.is_empty()
@@ -6512,6 +6747,8 @@ mod tests {
             restrict_view: false,
             restrict_send: false,
             topic: None,
+            category_id: None,
+            position: 0,
         };
         let mut evs = Vec::new();
         for server in [Some(s("a")), Some(s("b")), None] {
@@ -6665,6 +6902,7 @@ mod tests {
                 WsEvent::ChannelDeleted {
                     server: s(server),
                     channel_id: 1,
+                    rules: None,
                 },
                 WsEvent::RolesChanged { server: s(server) },
                 WsEvent::ChannelPermsChanged {
@@ -7495,6 +7733,377 @@ mod tests {
                 Some(false)
             );
         }
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn layout_changes_only_carry_viewable_channels() {
+        let (state, path, general, secret) = peek_world("layout_filter").await;
+        let db = &state.db;
+        exec(
+            db,
+            "INSERT INTO members(server, username, joined_at) VALUES('open', 'nora', 1)",
+        )
+        .await;
+        exec(
+            db,
+            "UPDATE members SET is_admin = 1 WHERE server = 'open' AND username = 'alice'",
+        )
+        .await;
+        let hidden = insert_id(db, "INSERT INTO channel_categories(server, name, position, created_at) VALUES('open', 'Staff', 0, 1) RETURNING id").await;
+        let empty = insert_id(db, "INSERT INTO channel_categories(server, name, position, created_at) VALUES('open', 'Later', 1, 1) RETURNING id").await;
+        sqlx::query("UPDATE channels SET category_id = $1 WHERE id = $2")
+            .bind(hidden)
+            .bind(secret)
+            .execute(db)
+            .await
+            .unwrap();
+        let layout = crate::api::categories::current_layout(db, "open")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(layout.uncategorized, [general]);
+        assert_eq!(
+            layout.categories.iter().map(|c| c.id).collect::<Vec<_>>(),
+            [hidden, empty]
+        );
+        let ev = WsEvent::LayoutChanged {
+            server: s("open"),
+            layout: layout.clone(),
+            created: None,
+            deleted: None,
+        };
+        let fanned = crate::fanout::Fanned::new(ev.clone(), 1);
+        assert!(client_frame(&fanned, Some("nora")).is_none());
+        let mut nora = Access::new(Some(s("nora")), false, set(&["open"]));
+        assert_eq!(on_event(&state, 1, &mut nora, &ev).await, Some(true));
+        let mine = layout_for(&state, &mut nora, "open", &layout, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        let json = serde_json::to_string(&mine).unwrap();
+        assert!(json.contains("\"type\":\"layout_changed\""), "{json}");
+        assert!(!json.contains(&format!("{secret}")), "{json}");
+        assert!(!json.contains("Staff") && !json.contains("Later"), "{json}");
+        match mine {
+            WsEvent::LayoutChanged {
+                server,
+                layout,
+                created: _,
+                deleted: _,
+            } => {
+                assert_eq!(server, "open");
+                assert_eq!(layout.uncategorized, [general]);
+                assert!(layout.categories.is_empty());
+            }
+            _ => panic!("expected layout_changed"),
+        }
+        let mut alice = Access::new(Some(s("alice")), false, set(&["open"]));
+        match layout_for(&state, &mut alice, "open", &layout, None, None)
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            WsEvent::LayoutChanged {
+                server: _,
+                layout: got,
+                created: _,
+                deleted: _,
+            } => assert_eq!(got, layout),
+            _ => panic!("expected layout_changed"),
+        }
+        let mut stranger = Access::new(Some(s("zed")), false, HashSet::new());
+        assert_eq!(on_event(&state, 2, &mut stranger, &ev).await, Some(false));
+        let stale = WsEvent::LayoutChanged {
+            server: s("open"),
+            layout: crate::api::ChannelLayout {
+                version: 0,
+                uncategorized: Vec::new(),
+                categories: Vec::new(),
+            },
+            created: Some(secret),
+            deleted: None,
+        };
+        match current(&state, stale).await {
+            Some(WsEvent::LayoutChanged {
+                server: _,
+                layout: got,
+                created,
+                deleted: None,
+            }) => {
+                assert_eq!(got, layout);
+                assert_eq!(created, Some(secret));
+            }
+            _ => panic!("expected the stored layout"),
+        }
+        crate::api::test_util::done(state, path).await;
+    }
+    #[tokio::test]
+    async fn channel_events_reach_only_viewers_with_their_own_positions() {
+        let (state, path, general, secret) = peek_world("channel_event_positions").await;
+        let db = &state.db;
+        exec(
+            db,
+            "INSERT INTO members(server, username, joined_at) VALUES('open', 'nora', 1)",
+        )
+        .await;
+        let after = insert_id(db, "INSERT INTO channels(server, name, created_at, position) VALUES('open', 'after', 1, 2) RETURNING id").await;
+        exec(db, "UPDATE channels SET position = 1 WHERE name = 'secret'").await;
+        let (_, hidden) = channel_now(db, secret).await.unwrap().unwrap();
+        let (_, shown) = channel_now(db, after).await.unwrap().unwrap();
+        assert_eq!(shown.position, 2);
+        let layout = crate::api::categories::current_layout(db, "open")
+            .await
+            .unwrap()
+            .unwrap();
+        let created = WsEvent::ChannelCreated {
+            server: s("open"),
+            channel: hidden.clone(),
+        };
+        assert_eq!(event_channel(&created), Some(("open", secret)));
+        let fanned = crate::fanout::Fanned::new(created.clone(), 1);
+        assert!(client_frame(&fanned, Some("nora")).is_none());
+        let mut nora = Access::new(Some(s("nora")), false, set(&["open"]));
+        assert_eq!(on_event(&state, 1, &mut nora, &created).await, Some(false));
+        assert!(
+            matches!(
+                layout_for(&state, &mut nora, "open", &layout, Some(secret), None).await,
+                Some(None)
+            ),
+            "creating a hidden channel sends its non-viewers no layout either"
+        );
+        for ev in [
+            WsEvent::ChannelCreated {
+                server: s("open"),
+                channel: shown.clone(),
+            },
+            WsEvent::ChannelRenamed {
+                server: s("open"),
+                channel: shown.clone(),
+            },
+            WsEvent::ChannelUpdated {
+                server: s("open"),
+                channel: shown.clone(),
+            },
+        ] {
+            let fanned = crate::fanout::Fanned::new(ev.clone(), 2);
+            assert!(client_frame(&fanned, Some("nora")).is_none());
+            assert_eq!(on_event(&state, 1, &mut nora, &ev).await, Some(true));
+            let mine = channel_for(&state, &mut nora, &fanned)
+                .await
+                .unwrap()
+                .expect("own frame");
+            let wire = serde_json::to_value(&mine).unwrap();
+            assert_eq!(wire["type"], serde_json::to_value(&ev).unwrap()["type"]);
+            assert_eq!(wire["channel"]["id"], after);
+            assert_eq!(
+                wire["channel"]["position"], 1,
+                "the hidden channel in between is not counted"
+            );
+        }
+        assert!(matches!(
+            layout_for(&state, &mut nora, "open", &layout, Some(after), None).await,
+            Some(Some(WsEvent::LayoutChanged { .. }))
+        ));
+        let other = crate::fanout::Fanned::new(post_in("open", general), 3);
+        assert!(matches!(
+            channel_for(&state, &mut nora, &other).await,
+            Some(None)
+        ));
+        exec(
+            db,
+            "UPDATE members SET is_admin = 1 WHERE server = 'open' AND username = 'alice'",
+        )
+        .await;
+        let mut alice = Access::new(Some(s("alice")), false, set(&["open"]));
+        assert_eq!(on_event(&state, 2, &mut alice, &created).await, Some(true));
+        let fanned = crate::fanout::Fanned::new(
+            WsEvent::ChannelRenamed {
+                server: s("open"),
+                channel: shown.clone(),
+            },
+            4,
+        );
+        match channel_for(&state, &mut alice, &fanned).await {
+            Some(Some(WsEvent::ChannelRenamed { server: _, channel })) => {
+                assert_eq!(channel.position, 2)
+            }
+            _ => panic!("expected channel_renamed"),
+        }
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn channel_deleted_reaches_only_those_who_could_view_it() {
+        let (state, path, general, secret) = peek_world("channel_deleted_viewers").await;
+        let db = &state.db;
+        add_user(db, "vic").await;
+        add_user(db, "max").await;
+        for sql in [
+            "INSERT INTO members(server, username, joined_at) VALUES('open', 'nora', 1)",
+            "INSERT INTO members(server, username, joined_at) VALUES('open', 'vic', 1)",
+            "INSERT INTO members(server, username, joined_at) VALUES('open', 'max', 1)",
+            "UPDATE members SET is_admin = 1 WHERE server = 'open' AND username = 'alice'",
+        ] {
+            exec(db, sql).await;
+        }
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:vic', 1, 1, 1)")
+            .bind(secret)
+            .execute(db)
+            .await
+            .unwrap();
+        let rules = crate::api::access::ws_view_rules(db, secret).await.unwrap();
+        let open = crate::api::access::ws_view_rules(db, general)
+            .await
+            .unwrap();
+        let mut warm_nora = Access::new(Some(s("nora")), false, set(&["open"]));
+        let mut warm_vic = Access::new(Some(s("vic")), false, set(&["open"]));
+        assert_eq!(
+            channel_gate(&state, &mut warm_nora, "open", secret).await,
+            Some(false)
+        );
+        assert_eq!(
+            channel_gate(&state, &mut warm_vic, "open", secret).await,
+            Some(true)
+        );
+        exec(db, "DELETE FROM channel_perms").await;
+        sqlx::query("DELETE FROM channels WHERE id = $1")
+            .bind(secret)
+            .execute(db)
+            .await
+            .unwrap();
+        let deleted = |rules: Option<ViewRules>| WsEvent::ChannelDeleted {
+            server: s("open"),
+            channel_id: secret,
+            rules,
+        };
+        let ev = deleted(Some(rules.clone()));
+        let wire = serde_json::to_string(&ev).unwrap();
+        assert!(!wire.contains("rules") && !wire.contains("u:vic"), "{wire}");
+        let back: WsEvent = serde_json::from_str(&to_bus_json(&ev).unwrap()).unwrap();
+        assert!(
+            matches!(&back, WsEvent::ChannelDeleted { rules: Some(r), .. } if r.rules.len() == 2)
+        );
+        let old: WsEvent = serde_json::from_str(&wire).unwrap();
+        assert!(matches!(&old, WsEvent::ChannelDeleted { rules: None, .. }));
+        let fanned = crate::fanout::Fanned::new(back.clone(), 1);
+        assert_eq!(
+            client_frame(&fanned, Some("nora")).as_deref(),
+            Some(wire.as_str())
+        );
+        for (user, want) in [
+            ("nora", false),
+            ("max", false),
+            ("vic", true),
+            ("alice", true),
+        ] {
+            let mut cold = Access::new(Some(s(user)), false, set(&["open"]));
+            assert_eq!(
+                on_event(&state, 1, &mut cold, &back).await,
+                Some(want),
+                "{user}"
+            );
+        }
+        let mut guest = Access::new(None, false, HashSet::new());
+        guest.subs.insert(s("open"));
+        assert_eq!(on_event(&state, 1, &mut guest, &back).await, Some(false));
+        assert_eq!(
+            on_event(&state, 1, &mut warm_nora, &back).await,
+            Some(false)
+        );
+        assert!(warm_nora.viewable.is_empty());
+        assert_eq!(on_event(&state, 1, &mut warm_vic, &back).await, Some(true));
+        assert!(warm_vic.viewable.is_empty());
+        let mut cold_vic = Access::new(Some(s("vic")), false, set(&["open"]));
+        assert_eq!(
+            on_event(&state, 1, &mut cold_vic, &old).await,
+            Some(false),
+            "no rules, no memo"
+        );
+        let mut warm_vic = Access::new(Some(s("vic")), false, set(&["open"]));
+        warm_vic.viewable = HashMap::from([(secret, (s("open"), true))]);
+        assert_eq!(
+            on_event(&state, 1, &mut warm_vic, &old).await,
+            Some(true),
+            "the memo decides"
+        );
+        let mut nora = Access::new(Some(s("nora")), false, set(&["open"]));
+        let public = WsEvent::ChannelDeleted {
+            server: s("open"),
+            channel_id: general,
+            rules: Some(open),
+        };
+        assert_eq!(on_event(&state, 1, &mut nora, &public).await, Some(true));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn deleting_a_hidden_channel_sends_its_non_viewers_no_layout() {
+        let (state, path, general, secret) = peek_world("layout_after_delete").await;
+        let db = &state.db;
+        add_user(db, "vic").await;
+        for sql in [
+            "INSERT INTO members(server, username, joined_at) VALUES('open', 'nora', 1)",
+            "INSERT INTO members(server, username, joined_at) VALUES('open', 'vic', 1)",
+            "UPDATE members SET is_admin = 1 WHERE server = 'open' AND username = 'alice'",
+        ] {
+            exec(db, sql).await;
+        }
+        let after = insert_id(db, "INSERT INTO channels(server, name, created_at, position) VALUES('open', 'after', 1, 2) RETURNING id").await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:vic', 1, 1, 1)")
+            .bind(secret)
+            .execute(db)
+            .await
+            .unwrap();
+        let rules = crate::api::access::ws_view_rules(db, secret).await.unwrap();
+        let shown = crate::api::access::ws_view_rules(db, after).await.unwrap();
+        sqlx::query("DELETE FROM channels WHERE id = $1")
+            .bind(secret)
+            .execute(db)
+            .await
+            .unwrap();
+        let layout = crate::api::categories::current_layout(db, "open")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(layout.uncategorized, [general, after]);
+        let ev = WsEvent::LayoutChanged {
+            server: s("open"),
+            layout: layout.clone(),
+            created: None,
+            deleted: Some(rules.clone()),
+        };
+        let wire = serde_json::to_string(&ev).unwrap();
+        assert!(
+            !wire.contains("deleted") && !wire.contains("u:vic"),
+            "{wire}"
+        );
+        let back: WsEvent = serde_json::from_str(&to_bus_json(&ev).unwrap()).unwrap();
+        let Some(WsEvent::LayoutChanged {
+            server: _,
+            layout: _,
+            created: None,
+            deleted: Some(kept),
+        }) = current(&state, back).await
+        else {
+            panic!("expected layout_changed with its deleted rules");
+        };
+        for (user, sent) in [("nora", false), ("vic", true), ("alice", true)] {
+            let mut access = Access::new(Some(s(user)), false, set(&["open"]));
+            assert_eq!(on_event(&state, 1, &mut access, &ev).await, Some(true));
+            let mine = layout_for(&state, &mut access, "open", &layout, None, Some(&kept))
+                .await
+                .unwrap();
+            assert_eq!(mine.is_some(), sent, "{user}");
+        }
+        let mut nora = Access::new(Some(s("nora")), false, set(&["open"]));
+        assert!(
+            matches!(
+                layout_for(&state, &mut nora, "open", &layout, None, Some(&shown)).await,
+                Some(Some(WsEvent::LayoutChanged { .. }))
+            ),
+            "deleting a channel they could view still updates their layout"
+        );
         crate::api::test_util::done(state, path).await;
     }
 }

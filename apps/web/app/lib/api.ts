@@ -2,8 +2,10 @@ import type {
   AdminOverview,
   AuthResponse,
   AvatarKind,
+  Category,
   Channel,
   ChannelKind,
+  ChannelLayout,
   ChannelPerm,
   DmSummary,
   IceServers,
@@ -32,6 +34,7 @@ import type {
   Unread,
   UserRef,
 } from './types'
+import type { LayoutOrder } from './categories'
 import type { Page } from './lists'
 import type { Secret } from './password'
 
@@ -371,8 +374,24 @@ export const endpoints = (c: ApiClient) => ({
     c.req<SystemMessages>('GET', `/servers/${seg(name)}/system_messages`),
   updateSystemMessages: (name: string, patch: Partial<SystemMessages>) =>
     c.req<SystemMessages>('PATCH', `/servers/${seg(name)}/system_messages`, patch),
-  createChannel: (server: string, name: string, kind: ChannelKind = 'text') =>
-    c.req<Channel>('POST', `/servers/${seg(server)}/channels`, { name, kind }),
+  createChannel: (
+    server: string,
+    name: string,
+    kind: ChannelKind = 'text',
+    category: number | null = null
+  ) =>
+    c.req<Channel>('POST', `/servers/${seg(server)}/channels`, {
+      name,
+      kind,
+      category_id: category,
+    }),
+  createCategory: (server: string, name: string) =>
+    c.req<Category>('POST', `/servers/${seg(server)}/categories`, { name }),
+  renameCategory: (id: number, name: string) =>
+    c.req<Category>('PATCH', `/categories/${id}`, { name }),
+  deleteCategory: (id: number) => c.req<unknown>('DELETE', `/categories/${id}`),
+  reorderLayout: (server: string, order: LayoutOrder & { version: number }) =>
+    c.req<ChannelLayout>('PUT', `/servers/${seg(server)}/layout`, order),
   updateChannel: (
     id: number,
     patch: {

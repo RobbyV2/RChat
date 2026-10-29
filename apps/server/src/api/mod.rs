@@ -2,6 +2,7 @@ pub mod access;
 pub mod admin;
 pub mod auth;
 pub mod budget;
+pub mod categories;
 pub mod config_shares;
 pub mod dms;
 pub mod embeds;
@@ -335,6 +336,50 @@ pub struct Channel {
     /// control characters other than newlines; `null` when the channel has none.
     #[serde(default)]
     pub topic: Option<String>,
+    /// Id of the category the channel is listed under; `null` lists it above all categories.
+    #[serde(default)]
+    pub category_id: Option<i64>,
+    /// Sort key within its category (or among channels without one): ascending, then by `id`.
+    /// Counted over the channels the caller can see, so it has no gaps.
+    #[serde(default)]
+    pub position: i64,
+}
+
+/// A channel category: a named, collapsible group of text and voice channels.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct Category {
+    /// Category id, unique across the instance.
+    pub id: i64,
+    /// Category name, at most 100 characters.
+    #[schema(example = "Games")]
+    pub name: String,
+    /// Sort key: categories are listed by ascending `position`, then by `id`. Counted over the
+    /// categories the caller gets.
+    pub position: i64,
+}
+
+/// A category in a channel layout, with its channels.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct LayoutCategory {
+    /// Category id.
+    pub id: i64,
+    /// Category name.
+    pub name: String,
+    /// Ids of the category's channels, top first.
+    pub channels: Vec<i64>,
+}
+
+/// The order of a server's channel list: channels without a category first, then each
+/// category with its channels.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ChannelLayout {
+    /// Layout version. Every change through the layout or category endpoints, and creating or
+    /// deleting a channel, raises it; send it back when reordering.
+    pub version: i64,
+    /// Ids of channels without a category, top first.
+    pub uncategorized: Vec<i64>,
+    /// Categories, top first.
+    pub categories: Vec<LayoutCategory>,
 }
 
 /// A server role.
@@ -445,9 +490,14 @@ pub struct ServerDetail {
     pub banner_color: Option<String>,
     /// Color of the server name in that header as `#rrggbb`; `null` uses the theme color.
     pub name_color: Option<String>,
-    /// Channels the caller can see, oldest first. Channels with permission rules that do not
-    /// grant the caller `can_view` are left out.
+    /// Channels the caller can see, in list order (see `category_id` and `position`). Channels
+    /// with permission rules that do not grant the caller `can_view` are left out.
     pub channels: Vec<Channel>,
+    /// Channel categories, ordered by `position`. Categories without a channel the caller can
+    /// see are left out, unless the caller manages channels.
+    pub categories: Vec<Category>,
+    /// Version of the channel layout, for `PUT /api/servers/{name}/layout`.
+    pub layout_version: i64,
     /// Ids of listed text channels where the caller, a member, can read but not send messages
     /// or add reactions (their own reactions can still be removed). Empty for non-members, who
     /// cannot send anywhere.
@@ -779,10 +829,11 @@ pub enum ProfanityTarget {
     FileNames,
     Bios,
     ChannelTopics,
+    CategoryNames,
 }
 
 impl ProfanityTarget {
-    pub const ALL: [ProfanityTarget; 8] = [
+    pub const ALL: [ProfanityTarget; 9] = [
         ProfanityTarget::Messages,
         ProfanityTarget::Usernames,
         ProfanityTarget::ServerNames,
@@ -791,6 +842,7 @@ impl ProfanityTarget {
         ProfanityTarget::FileNames,
         ProfanityTarget::Bios,
         ProfanityTarget::ChannelTopics,
+        ProfanityTarget::CategoryNames,
     ];
 
     pub fn switch(self) -> ProfanitySwitch {
@@ -803,6 +855,7 @@ impl ProfanityTarget {
             ProfanityTarget::FileNames => ProfanitySwitch::FileNames,
             ProfanityTarget::Bios => ProfanitySwitch::Bios,
             ProfanityTarget::ChannelTopics => ProfanitySwitch::ChannelTopics,
+            ProfanityTarget::CategoryNames => ProfanitySwitch::CategoryNames,
         }
     }
 }
@@ -819,10 +872,11 @@ pub enum ProfanitySwitch {
     FileNames,
     Bios,
     ChannelTopics,
+    CategoryNames,
 }
 
 impl ProfanitySwitch {
-    pub const ALL: [ProfanitySwitch; 9] = [
+    pub const ALL: [ProfanitySwitch; 10] = [
         ProfanitySwitch::Messages,
         ProfanitySwitch::Links,
         ProfanitySwitch::Usernames,
@@ -832,6 +886,7 @@ impl ProfanitySwitch {
         ProfanitySwitch::FileNames,
         ProfanitySwitch::Bios,
         ProfanitySwitch::ChannelTopics,
+        ProfanitySwitch::CategoryNames,
     ];
 
     pub fn name(self) -> &'static str {
@@ -845,6 +900,7 @@ impl ProfanitySwitch {
             ProfanitySwitch::FileNames => "file_names",
             ProfanitySwitch::Bios => "bios",
             ProfanitySwitch::ChannelTopics => "channel_topics",
+            ProfanitySwitch::CategoryNames => "category_names",
         }
     }
 
@@ -859,6 +915,7 @@ impl ProfanitySwitch {
             ProfanitySwitch::FileNames => "profanity_file_names",
             ProfanitySwitch::Bios => "profanity_bios",
             ProfanitySwitch::ChannelTopics => "profanity_channel_topics",
+            ProfanitySwitch::CategoryNames => "profanity_category_names",
         }
     }
 
@@ -906,6 +963,9 @@ pub struct ProfanityTargets {
     /// Channel topics.
     #[serde(default = "target_default")]
     pub channel_topics: bool,
+    /// Channel category names.
+    #[serde(default = "target_default")]
+    pub category_names: bool,
 }
 
 fn target_default() -> bool {
@@ -929,6 +989,7 @@ impl ProfanityTargets {
         file_names: true,
         bios: true,
         channel_topics: true,
+        category_names: true,
     };
 
     pub fn from_fn(mut on: impl FnMut(ProfanitySwitch) -> bool) -> ProfanityTargets {
@@ -942,6 +1003,7 @@ impl ProfanityTargets {
             file_names: on(ProfanitySwitch::FileNames),
             bios: on(ProfanitySwitch::Bios),
             channel_topics: on(ProfanitySwitch::ChannelTopics),
+            category_names: on(ProfanitySwitch::CategoryNames),
         }
     }
 
@@ -956,6 +1018,7 @@ impl ProfanityTargets {
             file_names,
             bios,
             channel_topics,
+            category_names,
         } = *self;
         match switch {
             ProfanitySwitch::Messages => messages,
@@ -967,6 +1030,7 @@ impl ProfanityTargets {
             ProfanitySwitch::FileNames => file_names,
             ProfanitySwitch::Bios => bios,
             ProfanitySwitch::ChannelTopics => channel_topics,
+            ProfanitySwitch::CategoryNames => category_names,
         }
     }
 
@@ -1390,7 +1454,8 @@ impl Settings {
             | ProfanityTarget::RoleNames
             | ProfanityTarget::FileNames
             | ProfanityTarget::Bios
-            | ProfanityTarget::ChannelTopics => true,
+            | ProfanityTarget::ChannelTopics
+            | ProfanityTarget::CategoryNames => true,
         };
         self.profanity_filter && targets.get(target.switch()) && is_profane(text, links)
     }
@@ -1575,6 +1640,15 @@ fn api_routes(
         .route("/servers/{name}/interacted", get(servers::list_interacted))
         .route("/servers/{name}/leave", post(servers::leave_server))
         .route("/servers/{name}/channels", post(servers::create_channel))
+        .route(
+            "/servers/{name}/categories",
+            post(categories::create_category),
+        )
+        .route("/servers/{name}/layout", put(categories::reorder_layout))
+        .route(
+            "/categories/{id}",
+            patch(categories::rename_category).delete(categories::delete_category),
+        )
         .route(
             "/channels/{id}",
             patch(servers::update_channel).delete(servers::delete_channel),
@@ -1970,6 +2044,11 @@ mod tests {
             let want = switch == ProfanitySwitch::ChannelTopics;
             assert_eq!(on(&topics, switch.key()), Some(want), "{switch:?}");
         }
+        let categories = seed(None, Some("category_names"));
+        for switch in ProfanitySwitch::ALL {
+            let want = switch == ProfanitySwitch::CategoryNames;
+            assert_eq!(on(&categories, switch.key()), Some(want), "{switch:?}");
+        }
     }
 
     #[tokio::test]
@@ -2032,6 +2111,7 @@ mod tests {
         .expect("stale display_names field");
         assert!(stale.profanity_targets.bios);
         assert!(stale.profanity_targets.channel_topics);
+        assert!(stale.profanity_targets.category_names);
         assert!(!stale.profanity_targets.messages && stale.profanity_targets.usernames);
     }
 

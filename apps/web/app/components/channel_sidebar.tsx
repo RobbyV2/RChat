@@ -1,7 +1,18 @@
 'use client'
 
 import { useMemo, useRef, useState } from 'react'
-import { HeadphoneOff, Hash, Lock, MicOff, Pin, Plus, Volume2 } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  FolderPlus,
+  HeadphoneOff,
+  Hash,
+  Lock,
+  MicOff,
+  Pin,
+  Plus,
+  Volume2,
+} from 'lucide-react'
 import {
   badgePings,
   myPerms,
@@ -16,11 +27,28 @@ import { dmSections } from '../lib/nav_layout'
 import { canDeleteChannel } from '../lib/rules'
 import { enterKey } from '../lib/keys'
 import { rtc } from '../lib/rtc'
-import { Perm, hasPerm, type Channel, type ChannelKind, type DmSummary } from '../lib/types'
+import {
+  Perm,
+  hasPerm,
+  type Category,
+  type Channel,
+  type ChannelKind,
+  type DmSummary,
+} from '../lib/types'
+import {
+  CATEGORIES_ZONE,
+  NO_CATEGORY,
+  categoryKey,
+  categoryOfZone,
+  channelGroups,
+  fullIndex,
+  zoneOf,
+  type ChannelGroup,
+} from '../lib/categories'
 import { UserAvatar } from './user_avatar'
 import { ServerHeader } from './server_header'
 import { longPress } from './context_menu'
-import { dragScope, useDrag } from './drag'
+import { dragScope, useDrag, type DragSpec } from './drag'
 import { profileTrigger } from './profile_card'
 import { LiveBadge, VoiceDock } from './voice_grid'
 import { Sentinel } from './ui'
@@ -30,7 +58,8 @@ import { scopePings } from '../lib/pings'
 import { MutedIcon, notifyMenuItems } from './notify_menu'
 import { markReadItem } from './mark_read'
 
-type Editing = { mode: 'create'; kind: ChannelKind } | { mode: 'rename'; id: number }
+type Editing =
+  { mode: 'create'; kind: ChannelKind; category: number | null } | { mode: 'rename'; id: number }
 
 const base = 'flex h-full w-60 shrink-0 flex-col bg-surface-container-low'
 
@@ -128,6 +157,7 @@ function VoiceChannelRow({
   count,
   onJoin,
   menu,
+  drag,
 }: {
   channel: Channel
   active: boolean
@@ -135,6 +165,7 @@ function VoiceChannelRow({
   count: number
   onJoin: () => void
   menu: (x: number, y: number) => void
+  drag?: DragSpec
 }) {
   return (
     <button
@@ -143,7 +174,7 @@ function VoiceChannelRow({
         count ? `, ${count} connected` : ''
       }`}
       onClick={onJoin}
-      {...longPress(menu)}
+      {...longPress(menu, drag)}
       className={`group mx-2 flex w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm outline-offset-[-2px] transition-colors focus-visible:outline-2 focus-visible:outline-primary active:scale-[0.98] ${
         active
           ? 'bg-secondary-container text-on-secondary-container'
@@ -232,7 +263,8 @@ export function ChannelSidebar() {
   const dmsMore = useStore(s => s.dmsMore)
   const loadMoreDms = useStore(s => s.loadMoreDms)
   const startDm = useStore(s => s.startDm)
-  const dmDrag = useDrag(s => s.group === 'dm')
+  const dragGroup = useDrag(s => s.group)
+  const dmDrag = dragGroup === 'dm'
   const dragKey = useDrag(s => s.key)
   const dropZone = useDrag(s => s.zone)
   const { pinned, recent } = useMemo(() => dmSections(dms, layout), [dms, layout])
@@ -240,6 +272,10 @@ export function ChannelSidebar() {
   const openDialog = useStore(s => s.openDialog)
   const openContextMenu = useStore(s => s.openContextMenu)
   const createChannel = useStore(s => s.createChannel)
+  const deleteCategory = useStore(s => s.deleteCategory)
+  const moveChannel = useStore(s => s.moveChannel)
+  const moveCategory = useStore(s => s.moveCategory)
+  const setCategoriesCollapsed = useStore(s => s.setCategoriesCollapsed)
   const renameChannel = useStore(s => s.renameChannel)
   const deleteChannel = useStore(s => s.deleteChannel)
   const askConfirm = useStore(s => s.askConfirm)
@@ -371,6 +407,11 @@ export function ChannelSidebar() {
   const detail = view ? servers[view.server] : undefined
   if (!detail) return <aside className={base} />
   const canManage = hasPerm(perms, Perm.ManageChannels)
+  const server = detail.name
+  const groups = channelGroups(detail, canManage)
+  const shut = new Set(layout.collapsed[server] ?? [])
+  const activeId = view?.kind === 'channel' ? view.channelId : null
+  const channelDrag = dragGroup === 'channel'
 
   const startEdit = (next: Editing, initial: string) => {
     settled.current = false
@@ -388,7 +429,7 @@ export function ChannelSidebar() {
     if (!trimmed || !current) return
     switch (current.mode) {
       case 'create':
-        void createChannel(detail.name, trimmed, current.kind)
+        void createChannel(server, trimmed, current.kind, current.category)
         return
       case 'rename':
         void renameChannel(current.id, trimmed)
@@ -396,12 +437,16 @@ export function ChannelSidebar() {
     }
   }
 
-  const textChannels = detail.channels.filter(c => c.kind === 'text')
-  const voiceChannels = detail.channels.filter(c => c.kind === 'voice')
+  const createIn = (category: number | null) => {
+    if (category !== null) setCategoriesCollapsed(server, [category], false)
+    startEdit({ mode: 'create', kind: 'text', category }, '')
+  }
+
+  const allCategories = groups.categories.map(g => g.category.id)
 
   const channelMenu = (c: Channel) => (x: number, y: number) => {
     openContextMenu(x, y, [
-      ...(c.kind === 'text' && joined(detail.name)
+      ...(c.kind === 'text' && joined(server)
         ? [
             markReadItem(
               scopeMarkTargets(useStore.getState(), `c${c.id}`),
@@ -410,7 +455,7 @@ export function ChannelSidebar() {
           ]
         : []),
       ...(c.kind === 'text'
-        ? notifyMenuItems({ kind: 'channel', id: c.id, server: detail.name }, 'Channel')
+        ? notifyMenuItems({ kind: 'channel', id: c.id, server }, 'Channel')
         : []),
       {
         label: 'Copy Channel ID',
@@ -445,6 +490,86 @@ export function ChannelSidebar() {
     ])
   }
 
+  const categoryMenu = (category: Category) => (x: number, y: number) => {
+    openContextMenu(x, y, [
+      ...(canManage
+        ? [
+            { label: 'Create channel here', action: () => createIn(category.id) },
+            {
+              label: 'Rename category',
+              action: () => openDialog({ kind: 'category', server, id: category.id }),
+            },
+            {
+              label: 'Delete category',
+              danger: true,
+              action: () =>
+                askConfirm({
+                  title: 'Delete category',
+                  body: `Delete the category ${category.name}? Its channels are kept and move out of it.`,
+                  confirm: 'Delete',
+                  action: () => void deleteCategory(category.id),
+                }),
+            },
+          ]
+        : []),
+      {
+        label: 'Collapse all',
+        action: () => setCategoriesCollapsed(server, allCategories, true),
+      },
+      {
+        label: 'Expand all',
+        action: () => setCategoriesCollapsed(server, allCategories, false),
+      },
+      {
+        label: 'Copy Category ID',
+        action: () => void navigator.clipboard.writeText(String(category.id)),
+      },
+    ])
+  }
+
+  const keepShown = (c: Channel) => c.id === activeId || voice?.channelId === c.id
+
+  const shownIn = (category: number | null) => {
+    const group =
+      category === null
+        ? groups.uncategorized
+        : groups.categories.find(g => g.category.id === category)?.channels
+    if (!group) return { full: [], shown: [] }
+    const full = group.map(c => c.id)
+    const open = category === null || !shut.has(category)
+    return { full, shown: open ? full : group.filter(c => keepShown(c)).map(c => c.id) }
+  }
+
+  const channelDragSpec = (c: Channel): DragSpec | undefined =>
+    canManage
+      ? {
+          group: 'channel',
+          key: `ch:${c.id}`,
+          zones: zone => categoryOfZone(zone) !== undefined,
+          onDrop: ({ zone, index }) => {
+            const category = categoryOfZone(zone)
+            if (category === undefined) return
+            const { full, shown } = shownIn(category)
+            moveChannel(server, c.id, category, fullIndex(full, shown, c.id, index))
+          },
+        }
+      : undefined
+
+  const categoryDragSpec = (category: Category): DragSpec | undefined =>
+    canManage
+      ? {
+          group: 'category',
+          key: categoryKey(category.id),
+          zones: zone => zone === CATEGORIES_ZONE,
+          onDrop: ({ index }) =>
+            moveCategory(
+              server,
+              category.id,
+              fullIndex(allCategories, allCategories, category.id, index)
+            ),
+        }
+      : undefined
+
   const editInput = (
     <input
       autoFocus
@@ -459,21 +584,179 @@ export function ChannelSidebar() {
       }}
       onBlur={submit}
       placeholder="channel name"
-      className="mx-2 my-0.5 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
+      className="mx-2 my-0.5 min-w-0 flex-1 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
     />
   )
+
+  const createRow = (category: number | null) =>
+    editing?.mode === 'create' && editing.category === category ? (
+      <span className="flex items-center">
+        <span className="flex shrink-0 gap-0.5 pl-2">
+          <button
+            title="Text channel"
+            aria-label="Text channel"
+            onMouseDown={e => e.preventDefault()}
+            onClick={() => setEditing({ ...editing, kind: 'text' })}
+            className={`rounded-lg p-1.5 ${
+              editing.kind === 'text'
+                ? 'bg-secondary-container text-on-secondary-container'
+                : 'text-on-surface-variant hover:bg-surface-container'
+            }`}
+          >
+            <Hash size={14} />
+          </button>
+          <button
+            title="Voice channel"
+            aria-label="Voice channel"
+            onMouseDown={e => e.preventDefault()}
+            onClick={() => setEditing({ ...editing, kind: 'voice' })}
+            className={`rounded-lg p-1.5 ${
+              editing.kind === 'voice'
+                ? 'bg-secondary-container text-on-secondary-container'
+                : 'text-on-surface-variant hover:bg-surface-container'
+            }`}
+          >
+            <Volume2 size={14} />
+          </button>
+        </span>
+        {editInput}
+      </span>
+    ) : null
+
+  const textRow = (c: Channel) => (
+    <button
+      key={c.id}
+      onClick={() => void openChannel(server, c.id)}
+      {...longPress(channelMenu(c), channelDragSpec(c))}
+      className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
+        activeId === c.id
+          ? 'bg-secondary-container text-on-secondary-container'
+          : `text-on-surface-variant hover:bg-surface-container hover:text-on-surface ${
+              scopeMuted(useStore.getState(), { kind: 'channel', id: c.id, server })
+                ? 'opacity-60'
+                : ''
+            }`
+      }`}
+    >
+      <Hash size={16} className="shrink-0" />
+      <span className="truncate">{c.name}</span>
+      {c.restrict_view && <PrivateIcon />}
+      <MutedIcon scope={{ kind: 'channel', id: c.id, server }} />
+      {pingsOf(`c${c.id}`) > 0 ? (
+        <PingBadge count={pingsOf(`c${c.id}`)} className="ml-auto" />
+      ) : (
+        unread(`c${c.id}`) && (
+          <span
+            title="Unread"
+            aria-hidden
+            className="ml-auto h-2 w-2 shrink-0 rounded-full bg-error"
+          />
+        )
+      )}
+    </button>
+  )
+
+  const voiceRow = (c: Channel) => (
+    <div key={c.id} data-drag-box className="flex flex-col rounded-lg">
+      <VoiceChannelRow
+        channel={c}
+        active={activeId === c.id}
+        connected={voice?.channelId === c.id}
+        count={(voiceUsers[c.id] ?? []).length}
+        onJoin={() => void joinVoice(server, c.id)}
+        menu={channelMenu(c)}
+        drag={channelDragSpec(c)}
+      />
+      {(voiceUsers[c.id] ?? []).map(u => (
+        <VoiceMemberRow key={u} username={u} server={server} inRoom={voice?.channelId === c.id} />
+      ))}
+    </div>
+  )
+
+  const row = (c: Channel) =>
+    editing?.mode === 'rename' && editing.id === c.id ? (
+      <span key={c.id} className="flex">
+        {editInput}
+      </span>
+    ) : c.kind === 'voice' ? (
+      voiceRow(c)
+    ) : (
+      textRow(c)
+    )
+
+  const zoneCls = (zone: string, empty: boolean) =>
+    `flex flex-col rounded-lg transition-colors ${
+      channelDrag && empty ? 'mx-2 min-h-8 border-2 border-dashed border-outline-variant' : ''
+    } ${channelDrag && dropZone === zone ? 'bg-primary-container/40' : ''}`
+
+  const categoryBlock = ({ category, channels }: ChannelGroup) => {
+    const open = !shut.has(category.id)
+    const visible = open ? channels : channels.filter(keepShown)
+    const zone = zoneOf(category.id)
+    const hiddenPings = open
+      ? 0
+      : channels.reduce((n, c) => n + (keepShown(c) ? 0 : pingsOf(`c${c.id}`)), 0)
+    const hiddenUnread =
+      !open && channels.some(c => c.kind === 'text' && !keepShown(c) && unread(`c${c.id}`))
+    return (
+      <div key={category.id} data-drag-box className="group/cat flex flex-col rounded-lg pt-3">
+        <div className="flex items-center pr-2">
+          <button
+            aria-expanded={open}
+            onClick={() => setCategoriesCollapsed(server, [category.id], open)}
+            {...longPress(categoryMenu(category), categoryDragSpec(category))}
+            className="flex min-w-0 flex-1 items-center gap-1 rounded-md py-1 pr-1 pl-2 text-xs font-medium tracking-wider text-on-surface-variant uppercase outline-offset-[-2px] hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            {open ? (
+              <ChevronDown size={14} className="shrink-0" />
+            ) : (
+              <ChevronRight size={14} className="shrink-0" />
+            )}
+            <span className="truncate">{category.name}</span>
+            {hiddenPings > 0 ? (
+              <PingBadge count={hiddenPings} className="ml-auto" />
+            ) : (
+              hiddenUnread && (
+                <span
+                  title="Unread"
+                  aria-hidden
+                  className="ml-auto h-2 w-2 shrink-0 rounded-full bg-error"
+                />
+              )
+            )}
+          </button>
+          {canManage && (
+            <button
+              title={`Create channel in ${category.name}`}
+              aria-label={`Create channel in ${category.name}`}
+              onClick={() => createIn(category.id)}
+              className="shrink-0 rounded-full p-1 text-on-surface-variant opacity-100 hover:bg-surface-container-high hover:text-on-surface focus-visible:opacity-100 md:opacity-0 md:group-hover/cat:opacity-100"
+            >
+              <Plus size={14} />
+            </button>
+          )}
+        </div>
+        <div
+          data-drop-zone={zone}
+          data-drop-label={category.name}
+          className={zoneCls(zone, visible.length === 0)}
+        >
+          {visible.map(row)}
+          {createRow(category.id)}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <aside className={base}>
       <ServerHeader
-        server={detail.name}
+        server={server}
         displayName={detail.display_name}
         bannerColor={detail.banner_color}
         nameColor={detail.name_color}
         onSettings={
-          panelPerms !== 0
-            ? () => openDialog({ kind: 'server_settings', server: detail.name })
-            : undefined
+          panelPerms !== 0 ? () => openDialog({ kind: 'server_settings', server }) : undefined
         }
       />
       <div className="flex items-center justify-between px-4 pt-3 pb-1">
@@ -481,120 +764,41 @@ export function ChannelSidebar() {
           Channels
         </span>
         {canManage && (
-          <button
-            title="Create channel"
-            onClick={() => startEdit({ mode: 'create', kind: 'text' }, '')}
-            className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-          >
-            <Plus size={16} />
-          </button>
-        )}
-      </div>
-      <div className="flex flex-1 flex-col overflow-y-auto pb-3">
-        {textChannels.map(c =>
-          editing?.mode === 'rename' && editing.id === c.id ? (
-            <span key={c.id} className="flex">
-              {editInput}
-            </span>
-          ) : (
+          <span className="flex items-center gap-0.5">
             <button
-              key={c.id}
-              onClick={() => void openChannel(detail.name, c.id)}
-              {...longPress(channelMenu(c))}
-              className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
-                view?.kind === 'channel' && view.channelId === c.id
-                  ? 'bg-secondary-container text-on-secondary-container'
-                  : `text-on-surface-variant hover:bg-surface-container hover:text-on-surface ${
-                      scopeMuted(useStore.getState(), {
-                        kind: 'channel',
-                        id: c.id,
-                        server: detail.name,
-                      })
-                        ? 'opacity-60'
-                        : ''
-                    }`
-              }`}
+              title="Create category"
+              aria-label="Create category"
+              onClick={() => openDialog({ kind: 'category', server })}
+              className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
             >
-              <Hash size={16} className="shrink-0" />
-              <span className="truncate">{c.name}</span>
-              {c.restrict_view && <PrivateIcon />}
-              <MutedIcon scope={{ kind: 'channel', id: c.id, server: detail.name }} />
-              {pingsOf(`c${c.id}`) > 0 ? (
-                <PingBadge count={pingsOf(`c${c.id}`)} className="ml-auto" />
-              ) : (
-                unread(`c${c.id}`) && (
-                  <span
-                    title="Unread"
-                    aria-hidden
-                    className="ml-auto h-2 w-2 shrink-0 rounded-full bg-error"
-                  />
-                )
-              )}
+              <FolderPlus size={16} />
             </button>
-          )
-        )}
-        {editing?.mode === 'create' && (
-          <span className="flex items-center">
-            <span className="flex shrink-0 gap-0.5 pl-2">
-              <button
-                title="Text channel"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => setEditing({ mode: 'create', kind: 'text' })}
-                className={`rounded-lg p-1.5 ${
-                  editing.kind === 'text'
-                    ? 'bg-secondary-container text-on-secondary-container'
-                    : 'text-on-surface-variant hover:bg-surface-container'
-                }`}
-              >
-                <Hash size={14} />
-              </button>
-              <button
-                title="Voice channel"
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => setEditing({ mode: 'create', kind: 'voice' })}
-                className={`rounded-lg p-1.5 ${
-                  editing.kind === 'voice'
-                    ? 'bg-secondary-container text-on-secondary-container'
-                    : 'text-on-surface-variant hover:bg-surface-container'
-                }`}
-              >
-                <Volume2 size={14} />
-              </button>
-            </span>
-            {editInput}
+            <button
+              title="Create channel"
+              aria-label="Create channel"
+              onClick={() => createIn(null)}
+              className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+            >
+              <Plus size={16} />
+            </button>
           </span>
         )}
-        {voiceChannels.length > 0 && (
-          <p className="px-4 pt-4 pb-1 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-            Voice
-          </p>
-        )}
-        {voiceChannels.map(c =>
-          editing?.mode === 'rename' && editing.id === c.id ? (
-            <span key={c.id} className="flex">
-              {editInput}
-            </span>
-          ) : (
-            <div key={c.id} className="flex flex-col">
-              <VoiceChannelRow
-                channel={c}
-                active={view?.kind === 'channel' && view.channelId === c.id}
-                connected={voice?.channelId === c.id}
-                count={(voiceUsers[c.id] ?? []).length}
-                onJoin={() => void joinVoice(detail.name, c.id)}
-                menu={channelMenu(c)}
-              />
-              {(voiceUsers[c.id] ?? []).map(u => (
-                <VoiceMemberRow
-                  key={u}
-                  username={u}
-                  server={detail.name}
-                  inRoom={voice?.channelId === c.id}
-                />
-              ))}
-            </div>
-          )
-        )}
+      </div>
+      <div ref={dragScope} className="flex flex-1 flex-col overflow-y-auto pb-3">
+        <div
+          data-drop-zone={NO_CATEGORY}
+          data-drop-label="No category"
+          className={zoneCls(
+            NO_CATEGORY,
+            groups.uncategorized.length === 0 && groups.categories.length > 0
+          )}
+        >
+          {groups.uncategorized.map(row)}
+          {createRow(null)}
+        </div>
+        <div data-drop-zone={CATEGORIES_ZONE} className="flex flex-col">
+          {groups.categories.map(categoryBlock)}
+        </div>
       </div>
       <VoiceDock />
     </aside>

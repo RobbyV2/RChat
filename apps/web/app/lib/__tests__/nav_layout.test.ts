@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  COLLAPSED_MAX,
+  COLLAPSED_PER_SERVER,
   addToFolder,
   autoPinSelf,
   bootDms,
@@ -8,6 +10,7 @@ import {
   folderChildren,
   folderTitle,
   forgetServer,
+  keepCollapsed,
   knownDms,
   layoutKey,
   layoutServers,
@@ -23,6 +26,7 @@ import {
   pinDm,
   placeDm,
   pruneLayout,
+  setCollapsed,
   railItems,
   railNames,
   renameFolder,
@@ -95,8 +99,53 @@ describe('layout storage', () => {
       dmPinned: [5],
       dmSeen: 4,
       selfPin: 'auto',
+      collapsed: {},
     })
     expect(parseLayout(JSON.stringify({ v: 1, servers: [F('x', ['a', 'b'])] })).servers).toEqual([])
+  })
+
+  test('collapsed categories are parsed defensively and toggled per server and id', () => {
+    const raw = {
+      v: 2,
+      servers: [],
+      collapsed: { club: [4, 4, -1, 'x', 2.5, 9], '': [1], none: [], bad: 'x' },
+    }
+    const parsed = parseLayout(JSON.stringify(raw))
+    expect(parsed.collapsed).toEqual({ club: [4, 9] })
+    for (const collapsed of ['no', [4, 9], null])
+      expect(parseLayout(JSON.stringify({ v: 2, collapsed })).collapsed).toEqual({})
+    const proto = parseLayout('{"v":2,"collapsed":{"__proto__":[3]}}')
+    expect(Object.getPrototypeOf(proto.collapsed)).toBe(Object.prototype)
+    const shut = setCollapsed(parsed, 'club', [7, 4], true)
+    expect(shut.collapsed).toEqual({ club: [9, 7, 4] })
+    expect(setCollapsed(shut, 'club', [9], false).collapsed).toEqual({ club: [7, 4] })
+    expect(setCollapsed(shut, 'club', [9, 7, 4], false).collapsed).toEqual({})
+    expect(setCollapsed(parsed, 'club', [5], false)).toBe(parsed)
+    expect(setCollapsed(parsed, 'arena', [5], true).collapsed).toEqual({ club: [4, 9], arena: [5] })
+    const many = Array.from({ length: COLLAPSED_PER_SERVER + 5 }, (_, i) => i + 1)
+    expect(setCollapsed(emptyLayout, 'club', many, true).collapsed.club).toHaveLength(
+      COLLAPSED_PER_SERVER
+    )
+    const lots = Object.fromEntries(
+      Array.from({ length: 20 }, (_, i) => [`s${i}`, many.slice(0, COLLAPSED_PER_SERVER)])
+    )
+    const capped = parseLayout(JSON.stringify({ v: 2, collapsed: lots })).collapsed
+    expect(Object.values(capped).flat()).toHaveLength(COLLAPSED_MAX)
+  })
+
+  test('collapsed ids follow their server and are pruned to its categories', () => {
+    const layout = {
+      ...emptyLayout,
+      servers: ['club', 'arena'],
+      collapsed: { club: [4, 9], arena: [5] },
+    }
+    expect(keepCollapsed(layout, 'club', [9, 12]).collapsed).toEqual({ club: [9], arena: [5] })
+    expect(keepCollapsed(layout, 'club', []).collapsed).toEqual({ arena: [5] })
+    expect(keepCollapsed(layout, 'club', [4, 9])).toBe(layout)
+    expect(keepCollapsed(layout, 'other', [])).toBe(layout)
+    expect(renameServer(layout, 'club', 'den').collapsed).toEqual({ arena: [5], den: [4, 9] })
+    expect(forgetServer(layout, 'arena').collapsed).toEqual({ club: [4, 9] })
+    expect(pruneLayout(layout, ['club'], null).collapsed).toEqual({ club: [4, 9] })
   })
 
   test('folders are validated: names cleaned, duplicates and tiny folders flattened', () => {

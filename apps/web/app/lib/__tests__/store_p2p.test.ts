@@ -254,6 +254,7 @@ describe('attachment settings', () => {
       file_names: true,
       bios: true,
       channel_topics: true,
+      category_names: true,
     },
     asset_previews: true,
     asset_uploads: true,

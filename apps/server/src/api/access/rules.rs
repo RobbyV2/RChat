@@ -1,5 +1,7 @@
 use sqlx::Row;
 
+use super::ViewRules;
+
 use crate::db::{
     ALL_PERMS, ChannelAccess, Db, GRANT_TOUCH_SECS, Perm, PermRow, Restrict, User, fold_access,
     get_user, guest_grant_ttl, now, perm_bits, perm_row, perm_subjects, queue_grant_touches,
@@ -81,6 +83,33 @@ async fn channel_rules(db: &Db, channel_id: i64) -> sqlx::Result<Vec<PermRow>> {
     .iter()
     .map(|r| perm_row(r, 0))
     .collect()
+}
+
+pub(super) async fn view_rules(db: &Db, channel_id: i64) -> sqlx::Result<ViewRules> {
+    Ok(ViewRules {
+        restrict: channel_restrict(db, channel_id).await?,
+        rules: channel_rules(db, channel_id).await?,
+    })
+}
+
+pub(super) async fn view_under(
+    db: &Db,
+    server: &str,
+    rules: &ViewRules,
+    user: Option<&User>,
+) -> sqlx::Result<bool> {
+    let ViewRules { restrict, rules } = rules;
+    if rules.is_empty() && *restrict == Restrict::default() {
+        return Ok(true);
+    }
+    let Some(user) = user else {
+        return Ok(fold_access(rules, &[], false, *restrict).view);
+    };
+    if manages_channels(db, server, user).await? {
+        return Ok(true);
+    }
+    let subjects = perm_subjects(db, Some(server), &user.username).await?;
+    Ok(fold_access(rules, &subjects, false, *restrict).view)
 }
 
 pub(super) async fn channel_access(

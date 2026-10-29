@@ -45,6 +45,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 | Join and leave notices | Show a notice when a member joins or leaves. Server admins choose the channel or turn notices off.                    |
 | Restricted channels    | Let only some roles or members see a channel or send in it.                                                           |
 | Channel topics         | Add a topic to a text or voice channel. It shows at the top of the channel.                                           |
+| Channel categories     | Group text and voice channels into categories. Managers drag channels and categories to reorder them.                 |
 | Slow mode              | Set a wait time between messages in a channel.                                                                        |
 | Server passwords       | Use a permanent password, temporary passwords or tickets with a use limit. Close the server to new members.           |
 | Private servers        | A server with a password stays hidden from people who are not members.                                                |

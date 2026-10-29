@@ -13,6 +13,10 @@ use crate::api::access::{
 };
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
 use crate::api::auth::{Work, clean_multiline, hash_in, new_token, present};
+use crate::api::categories::{
+    announce, bump, channel_order, layout_version, listed, load_layout, rank, server_categories,
+    write_layout,
+};
 use crate::api::messages::recent_channel_messages;
 use crate::api::pings::forget_server_pings;
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
@@ -45,6 +49,10 @@ pub struct CreateChannelReq {
     /// until rules are added. Optional; omitted means off.
     #[serde(default)]
     restrict_view: bool,
+    /// Category to list the channel under, at its end. Optional; omitted or `null` lists it
+    /// at the end of the channels without a category.
+    #[serde(default)]
+    category_id: Option<i64>,
 }
 
 /// Request body for creating a server.
@@ -570,7 +578,7 @@ fn forbidden(msg: &str) -> ApiError {
     ApiError(StatusCode::FORBIDDEN, msg.to_string())
 }
 
-async fn check_name(
+pub(crate) async fn check_name(
     db: &Db,
     target: ProfanityTarget,
     what: &str,
@@ -856,6 +864,8 @@ fn channel_row(r: &sqlx::any::AnyRow) -> Result<Channel, ApiError> {
         restrict_view,
         restrict_send,
         topic: r.try_get(6)?,
+        category_id: r.try_get(7)?,
+        position: r.try_get(8)?,
     })
 }
 
@@ -885,7 +895,7 @@ async fn server_detail(
         name_color,
     } = access.lite().clone();
     let rows = sqlx::query(
-        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic FROM channels WHERE server = $1 ORDER BY id",
+        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position FROM channels WHERE server = $1 ORDER BY position, id",
     )
     .bind(&name)
     .fetch_all(db)
@@ -900,6 +910,21 @@ async fn server_detail(
         channels.push(channel_row(r)?);
     }
     let read_only = read_only_channels(access, &rights, &channels);
+    let manage = access.manages_channels(db).await?;
+    let all = server_categories(db, &name).await?;
+    let at: HashMap<i64, usize> = all.iter().enumerate().map(|(i, c)| (c.id, i)).collect();
+    channels.sort_by_key(|c| c.category_id.and_then(|id| at.get(&id).map(|i| i + 1)));
+    for (i, c) in channels.iter_mut().enumerate() {
+        c.position = i as i64;
+    }
+    let mut categories: Vec<crate::api::Category> = all
+        .into_iter()
+        .filter(|c| manage || channels.iter().any(|ch| ch.category_id == Some(c.id)))
+        .collect();
+    for (i, c) in categories.iter_mut().enumerate() {
+        c.position = i as i64;
+    }
+    let layout_version = layout_version(db, &name).await?;
     let member_count = member_count(db, &name).await?;
     let online_count = hub.online_count(&name);
     Ok(ServerDetail {
@@ -910,6 +935,8 @@ async fn server_detail(
         banner_color,
         name_color,
         channels,
+        categories,
+        layout_version,
         read_only,
         roles: server_roles(db, &name).await?,
         role_limits: role_limits(db, access).await?,
@@ -2296,8 +2323,10 @@ pub(crate) async fn delete_server(
 
 /// Create a channel
 ///
-/// Adds a text or voice channel to the server, with slow mode off. A server can have at most 500
-/// channels. Requires the Manage channels permission. Emits `channel_created` to the server.
+/// Adds a text or voice channel to the server, with slow mode off, at the end of its category
+/// (or of the channels without one). A server can have at most 500 channels. Requires the Manage
+/// channels permission. Raises the layout version, then emits `channel_created` and
+/// `layout_changed` to the server; only connections that can view the new channel get either.
 /// General rate-limit bucket.
 #[utoipa::path(
     post,
@@ -2310,7 +2339,7 @@ pub(crate) async fn delete_server(
         (status = 400, description = "Invalid channel name (blank, longer than 100 characters or blocked by the profanity filter), the name is taken in this server, or the server already has 500 channels. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
-        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses). `Category not found`: `category_id` is not a category of this server", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
@@ -2335,38 +2364,54 @@ pub(crate) async fn create_channel(
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::ManageChannels).await?;
     let key = access.name().to_string();
+    let mut tx = state.db.begin().await?;
+    bump(&mut tx, &key, None).await?;
     let taken = sqlx::query("SELECT 1 FROM channels WHERE server = $1 AND name = $2")
         .bind(&key)
         .bind(&channel_name)
-        .fetch_optional(&state.db)
+        .fetch_optional(&mut *tx)
         .await?
         .is_some();
     if taken {
         return Err(bad("Channel name is taken"));
     }
-    if count_rows(
-        &state.db,
-        "SELECT COUNT(*) FROM channels WHERE server = $1",
-        &key,
-    )
-    .await?
-        >= CHANNEL_MAX
-    {
+    let count: i64 = sqlx::query("SELECT COUNT(*) FROM channels WHERE server = $1")
+        .bind(&key)
+        .fetch_one(&mut *tx)
+        .await?
+        .try_get(0)?;
+    if count >= CHANNEL_MAX {
         return Err(bad(&format!(
             "A server can have at most {CHANNEL_MAX} channels"
         )));
     }
-    let id: i64 = sqlx::query(
-        "INSERT INTO channels(server, name, kind, created_at, restrict_view) VALUES($1, $2, $3, $4, $5) RETURNING id",
-    )
-    .bind(&key)
-    .bind(&channel_name)
-    .bind(kind.as_str())
-    .bind(now())
-    .bind(i64::from(req.restrict_view))
-    .fetch_one(&state.db)
-    .await?
-    .try_get(0)?;
+    let sql = match req.category_id {
+        Some(_) => {
+            "INSERT INTO channels(server, name, kind, created_at, restrict_view, category_id, position) SELECT $1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(position) + 1, 0) FROM channels WHERE server = $1) WHERE EXISTS(SELECT 1 FROM channel_categories WHERE id = $6 AND server = $1) RETURNING id"
+        }
+        None => {
+            "INSERT INTO channels(server, name, kind, created_at, restrict_view, category_id, position) SELECT $1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(position) + 1, 0) FROM channels WHERE server = $1) RETURNING id"
+        }
+    };
+    let Some(row) = sqlx::query(sql)
+        .bind(&key)
+        .bind(&channel_name)
+        .bind(kind.as_str())
+        .bind(now())
+        .bind(i64::from(req.restrict_view))
+        .bind(req.category_id)
+        .fetch_optional(&mut *tx)
+        .await?
+    else {
+        return Err(not_found("Category not found"));
+    };
+    let id: i64 = row.try_get(0)?;
+    let layout = load_layout(&mut tx, &key).await?;
+    tx.commit().await?;
+    let position = layout
+        .as_ref()
+        .map(|l| rank(&listed(l), id, |_| true))
+        .unwrap_or_default();
     let channel = Channel {
         id,
         name: channel_name,
@@ -2375,11 +2420,16 @@ pub(crate) async fn create_channel(
         restrict_view: req.restrict_view,
         restrict_send: false,
         topic: None,
+        category_id: req.category_id,
+        position,
     };
     state.hub.broadcast(WsEvent::ChannelCreated {
-        server: key,
+        server: key.clone(),
         channel: channel.clone(),
     });
+    if let Some(layout) = layout {
+        announce(&state, &key, layout, Some(id));
+    }
     Ok(Json(channel))
 }
 
@@ -2522,12 +2572,13 @@ pub(crate) async fn update_channel(
         }
     }
     let row = sqlx::query(
-        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic FROM channels WHERE id = $1",
+        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position FROM channels WHERE id = $1",
     )
     .bind(id)
     .fetch_one(&state.db)
     .await?;
-    let channel = channel_row(&row)?;
+    let mut channel = channel_row(&row)?;
+    channel.position = rank(&channel_order(&state.db, &server).await?, id, |_| true);
     let restrict = Restrict {
         view: channel.restrict_view,
         send: channel.restrict_send,
@@ -2556,8 +2607,9 @@ pub(crate) async fn update_channel(
 ///
 /// Deletes a channel. A server always keeps at least one channel and at least one text channel.
 /// When it was the channel for join and leave messages, they go to the default channel again.
-/// Requires the Manage channels permission in the channel's server. Emits `channel_deleted` to the
-/// server. General rate-limit bucket.
+/// Requires the Manage channels permission in the channel's server. Raises the layout version,
+/// then emits `channel_deleted` and `layout_changed` to the server; only connections that could
+/// view the channel get either. General rate-limit bucket.
 #[utoipa::path(
     delete,
     path = "/api/channels/{id}",
@@ -2603,7 +2655,9 @@ pub(crate) async fn delete_channel(
             return Err(bad("Cannot delete the only text channel"));
         }
     }
+    let rules = crate::api::access::ws_view_rules(&state.db, id).await?;
     let mut tx = state.db.begin().await?;
+    bump(&mut tx, &server, None).await?;
     sqlx::query("UPDATE servers SET system_channel_id = NULL WHERE system_channel_id = $1")
         .bind(id)
         .execute(&mut *tx)
@@ -2612,11 +2666,24 @@ pub(crate) async fn delete_channel(
         .bind(id)
         .execute(&mut *tx)
         .await?;
+    let layout = load_layout(&mut tx, &server).await?;
+    if let Some(layout) = &layout {
+        write_layout(&mut tx, &server, layout).await?;
+    }
     tx.commit().await?;
     state.hub.broadcast(WsEvent::ChannelDeleted {
-        server,
+        server: server.clone(),
         channel_id: id,
+        rules: Some(rules.clone()),
     });
+    if let Some(layout) = layout {
+        state.hub.broadcast(WsEvent::LayoutChanged {
+            server,
+            layout,
+            created: None,
+            deleted: Some(rules),
+        });
+    }
     Ok(ok())
 }
 
@@ -4135,6 +4202,7 @@ mod tests {
                         name,
                         kind: Some(kind),
                         restrict_view: false,
+                        category_id: None,
                     }),
                 )
                 .await
@@ -6200,6 +6268,7 @@ mod tests {
                 name: "extra".to_string(),
                 kind: None,
                 restrict_view: false,
+                category_id: None,
             }),
         )
         .await;
@@ -7312,6 +7381,8 @@ mod tests {
                 restrict_view: false,
                 restrict_send: false,
                 topic: None,
+                category_id: None,
+                position: 0,
             },
         };
         match crate::ws::current(&state, stale).await {
@@ -7787,6 +7858,7 @@ mod tests {
                 name: "staff".to_string(),
                 kind: None,
                 restrict_view: true,
+                category_id: None,
             }),
         )
         .await
@@ -7974,6 +8046,554 @@ mod tests {
             "only the hash is stored"
         );
         assert!(grant_valid(&state, "club", &made[0]).await);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn categories_group_and_reorder_channels() {
+        use crate::api::categories::{
+            create_category, delete_category, rename_category, reorder_layout,
+        };
+        let (state, path) = temp_state("categories").await;
+        let db = &state.db;
+        club_with(&state, &["bob"]).await;
+        let alice = || Authed(mem_user("alice", false));
+        let bob = || Authed(mem_user("bob", false));
+        let club = || Path("club".to_string());
+        fn body<T: serde::de::DeserializeOwned>(v: serde_json::Value) -> Json<T> {
+            Json(serde_json::from_value(v).expect("body"))
+        }
+        let make = |name: &str, kind: &str, category: Option<i64>| {
+            let state = state.clone();
+            let v = serde_json::json!({ "name": name, "kind": kind, "category_id": category });
+            async move {
+                create_channel(
+                    State(state),
+                    Authed(mem_user("alice", false)),
+                    Path("club".to_string()),
+                    Json(serde_json::from_value(v).expect("body")),
+                )
+                .await
+                .map(|Json(c)| c)
+            }
+        };
+        let general: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'club'")
+            .fetch_one(db)
+            .await
+            .expect("general")
+            .try_get(0)
+            .expect("id");
+        let talk = make("talk", "voice", None).await.expect("talk");
+        assert_eq!((talk.category_id, talk.position), (None, 1));
+        let mut rx = state.hub.subscribe();
+        assert_eq!(
+            code(
+                create_category(
+                    State(state.clone()),
+                    bob(),
+                    club(),
+                    body(serde_json::json!({"name": "Games"}))
+                )
+                .await
+            )
+            .map_err(|e| e.0),
+            Err(StatusCode::FORBIDDEN)
+        );
+        let games = create_category(
+            State(state.clone()),
+            alice(),
+            club(),
+            body(serde_json::json!({"name": "  Games  "})),
+        )
+        .await
+        .expect("games")
+        .0;
+        assert_eq!((games.name.as_str(), games.position), ("Games", 0));
+        match rx.try_recv() {
+            Ok(WsEvent::LayoutChanged {
+                server,
+                layout,
+                created,
+                deleted: None,
+            }) => {
+                assert_eq!(server, "club");
+                assert_eq!(created, None);
+                assert_eq!(layout.version, 2);
+                assert_eq!(layout.uncategorized, [general, talk.id]);
+                assert_eq!(layout.categories[0].name, "Games");
+            }
+            _ => panic!("expected layout_changed"),
+        }
+        let rude = code(
+            create_category(
+                State(state.clone()),
+                alice(),
+                club(),
+                body(serde_json::json!({"name": "fuck"})),
+            )
+            .await,
+        );
+        assert!(matches!(&rude, Err((StatusCode::BAD_REQUEST, m)) if m.contains("profanity")));
+        sqlx::query("UPDATE settings SET value = '0' WHERE key = 'profanity_category_names'")
+            .execute(db)
+            .await
+            .expect("off");
+        crate::api::Settings::forget(db);
+        let staff = create_category(
+            State(state.clone()),
+            alice(),
+            club(),
+            body(serde_json::json!({"name": "fuck"})),
+        )
+        .await
+        .expect("target off")
+        .0;
+        assert!(
+            check_profanity(db, ProfanityTarget::ChannelNames, "fuck")
+                .await
+                .is_err()
+        );
+        sqlx::query("UPDATE settings SET value = '1' WHERE key = 'profanity_category_names'")
+            .execute(db)
+            .await
+            .expect("on");
+        crate::api::Settings::forget(db);
+        let renamed = rename_category(
+            State(state.clone()),
+            alice(),
+            Path(staff.id),
+            body(serde_json::json!({"name": "Staff"})),
+        )
+        .await
+        .expect("rename")
+        .0;
+        assert_eq!(renamed.name, "Staff");
+        assert_eq!(
+            code(
+                rename_category(
+                    State(state.clone()),
+                    bob(),
+                    Path(staff.id),
+                    body(serde_json::json!({"name": "Mine"}))
+                )
+                .await
+            ),
+            Err((StatusCode::NOT_FOUND, "Not found".to_string()))
+        );
+        assert_eq!(
+            code(
+                rename_category(
+                    State(state.clone()),
+                    alice(),
+                    Path(9999),
+                    body(serde_json::json!({"name": "Mine"}))
+                )
+                .await
+            ),
+            Err((StatusCode::NOT_FOUND, "Not found".to_string()))
+        );
+        let empty = create_category(
+            State(state.clone()),
+            alice(),
+            club(),
+            body(serde_json::json!({"name": "Empty"})),
+        )
+        .await
+        .expect("empty")
+        .0;
+        let random = make("random", "text", Some(games.id))
+            .await
+            .expect("random");
+        assert_eq!(random.category_id, Some(games.id));
+        let lounge = make("lounge", "voice", Some(games.id))
+            .await
+            .expect("lounge");
+        let secret = make("secret", "text", Some(staff.id))
+            .await
+            .expect("secret");
+        sqlx::query("UPDATE channels SET restrict_view = 1 WHERE id = $1")
+            .bind(secret.id)
+            .execute(db)
+            .await
+            .expect("hide");
+        let _ = make("other", "text", Some(i64::MAX))
+            .await
+            .map(|_| ())
+            .map_err(|ApiError(c, _)| assert_eq!(c, StatusCode::NOT_FOUND));
+        let seen = |d: &ServerDetail| {
+            d.categories
+                .iter()
+                .map(|c| c.name.clone())
+                .collect::<Vec<_>>()
+        };
+        let as_bob = detail_as(&state, "club", Some(&mem_user("bob", false)))
+            .await
+            .expect("bob");
+        assert_eq!(seen(&as_bob), ["Games"]);
+        assert!(as_bob.channels.iter().all(|c| c.id != secret.id));
+        let as_alice = detail_as(&state, "club", Some(&mem_user("alice", false)))
+            .await
+            .expect("alice");
+        assert_eq!(seen(&as_alice), ["Games", "Staff", "Empty"]);
+        let version = as_alice.layout_version;
+        let order = |version: i64, unc: Vec<i64>, cats: Vec<(i64, Vec<i64>)>| {
+            serde_json::json!({
+                "version": version,
+                "uncategorized": unc,
+                "categories": cats.into_iter().map(|(id, channels)| serde_json::json!({"id": id, "channels": channels})).collect::<Vec<_>>(),
+            })
+        };
+        let wanted = order(
+            version,
+            vec![lounge.id, general],
+            vec![
+                (empty.id, vec![]),
+                (games.id, vec![talk.id, random.id]),
+                (staff.id, vec![secret.id]),
+            ],
+        );
+        assert_eq!(
+            code(reorder_layout(State(state.clone()), bob(), club(), body(wanted.clone())).await)
+                .map_err(|e| e.0),
+            Err(StatusCode::FORBIDDEN)
+        );
+        for broken in [
+            order(
+                version,
+                vec![lounge.id],
+                vec![
+                    (empty.id, vec![]),
+                    (games.id, vec![talk.id, random.id]),
+                    (staff.id, vec![secret.id]),
+                ],
+            ),
+            order(
+                version,
+                vec![lounge.id, general, general],
+                vec![
+                    (empty.id, vec![]),
+                    (games.id, vec![talk.id, random.id]),
+                    (staff.id, vec![secret.id]),
+                ],
+            ),
+            order(
+                version,
+                vec![lounge.id, general],
+                vec![
+                    (games.id, vec![talk.id, random.id]),
+                    (staff.id, vec![secret.id]),
+                ],
+            ),
+            order(
+                version,
+                vec![lounge.id, general],
+                vec![
+                    (empty.id, vec![]),
+                    (empty.id, vec![]),
+                    (games.id, vec![talk.id, random.id]),
+                    (staff.id, vec![secret.id]),
+                ],
+            ),
+            order(
+                version,
+                vec![lounge.id, general, 9999],
+                vec![
+                    (empty.id, vec![]),
+                    (games.id, vec![talk.id, random.id]),
+                    (staff.id, vec![secret.id]),
+                ],
+            ),
+        ] {
+            assert_eq!(
+                code(reorder_layout(State(state.clone()), alice(), club(), body(broken)).await)
+                    .map_err(|e| e.0),
+                Err(StatusCode::BAD_REQUEST)
+            );
+        }
+        assert_eq!(layout_version(db, "club").await.expect("version"), version);
+        while rx.try_recv().is_ok() {}
+        let (a, b) = tokio::join!(
+            reorder_layout(State(state.clone()), alice(), club(), body(wanted.clone())),
+            reorder_layout(
+                State(state.clone()),
+                alice(),
+                club(),
+                body(order(
+                    version,
+                    vec![general, lounge.id],
+                    vec![
+                        (games.id, vec![random.id, talk.id]),
+                        (staff.id, vec![secret.id]),
+                        (empty.id, vec![])
+                    ],
+                ))
+            ),
+        );
+        let codes = [code(a).map_err(|e| e.0), code(b).map_err(|e| e.0)];
+        assert!(
+            codes.contains(&Ok(())) && codes.contains(&Err(StatusCode::CONFLICT)),
+            "{codes:?}"
+        );
+        assert_eq!(
+            layout_version(db, "club").await.expect("version"),
+            version + 1
+        );
+        assert!(matches!(rx.try_recv(), Ok(WsEvent::LayoutChanged { .. })));
+        assert!(rx.try_recv().is_err());
+        assert_eq!(
+            code(reorder_layout(State(state.clone()), alice(), club(), body(wanted.clone())).await),
+            Err((
+                StatusCode::CONFLICT,
+                "The channel list changed. Reload it and try again".to_string()
+            ))
+        );
+        let mut fresh = wanted.clone();
+        fresh["version"] = (version + 1).into();
+        let stored = reorder_layout(State(state.clone()), alice(), club(), body(fresh))
+            .await
+            .expect("reorder")
+            .0;
+        assert_eq!(stored.version, version + 2);
+        assert_eq!(stored.uncategorized, [lounge.id, general]);
+        let as_alice = detail_as(&state, "club", Some(&mem_user("alice", false)))
+            .await
+            .expect("alice");
+        assert_eq!(seen(&as_alice), ["Empty", "Games", "Staff"]);
+        assert_eq!(
+            as_alice
+                .channels
+                .iter()
+                .map(|c| (c.id, c.category_id))
+                .collect::<Vec<_>>(),
+            [
+                (lounge.id, None),
+                (general, None),
+                (talk.id, Some(games.id)),
+                (random.id, Some(games.id)),
+                (secret.id, Some(staff.id)),
+            ]
+        );
+        assert_eq!(
+            code(delete_category(State(state.clone()), bob(), Path(games.id)).await),
+            Err((StatusCode::NOT_FOUND, "Not found".to_string()))
+        );
+        let _ = delete_category(State(state.clone()), alice(), Path(games.id))
+            .await
+            .expect("delete");
+        let layout = crate::api::categories::current_layout(db, "club")
+            .await
+            .expect("layout")
+            .expect("club");
+        assert_eq!(
+            layout.uncategorized,
+            [lounge.id, general, talk.id, random.id]
+        );
+        assert_eq!(
+            layout.categories.iter().map(|c| c.id).collect::<Vec<_>>(),
+            [empty.id, staff.id]
+        );
+        assert_eq!(layout.version, version + 3);
+        let as_bob = detail_as(&state, "club", Some(&mem_user("bob", false)))
+            .await
+            .expect("bob");
+        assert!(as_bob.categories.is_empty());
+        assert_eq!(
+            as_bob.channels.iter().map(|c| c.id).collect::<Vec<_>>(),
+            [lounge.id, general, talk.id, random.id]
+        );
+        done(state, path).await;
+    }
+    #[tokio::test]
+    async fn positions_count_only_visible_channels() {
+        use crate::api::categories::{create_category, delete_category, reorder_layout};
+        let (state, path) = temp_state("category_positions").await;
+        let db = &state.db;
+        club_with(&state, &["bob"]).await;
+        let alice = || Authed(mem_user("alice", false));
+        let club = || Path("club".to_string());
+        let make = |name: &str, hidden: bool, category: Option<i64>| {
+            let state = state.clone();
+            let v = serde_json::json!({ "name": name, "restrict_view": hidden, "category_id": category });
+            async move {
+                create_channel(
+                    State(state),
+                    Authed(mem_user("alice", false)),
+                    Path("club".to_string()),
+                    Json(serde_json::from_value(v).expect("body")),
+                )
+                .await
+                .map(|Json(c)| c)
+            }
+        };
+        let general: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'club'")
+            .fetch_one(db)
+            .await
+            .expect("general")
+            .try_get(0)
+            .expect("id");
+        let before = layout_version(db, "club").await.expect("version");
+        let mut rx = state.hub.subscribe();
+        let a = make("a", false, None).await.expect("a");
+        assert_eq!(a.position, 1);
+        assert_eq!(
+            layout_version(db, "club").await.expect("version"),
+            before + 1,
+            "creating a channel raises the layout version"
+        );
+        assert!(
+            matches!(rx.try_recv(), Ok(WsEvent::ChannelCreated { server: _, channel }) if channel.id == a.id)
+        );
+        match rx.try_recv() {
+            Ok(WsEvent::LayoutChanged {
+                server,
+                layout,
+                created,
+                deleted: None,
+            }) => {
+                assert_eq!(server, "club");
+                assert_eq!(created, Some(a.id));
+                assert_eq!(layout.version, before + 1);
+                assert_eq!(layout.uncategorized, [general, a.id]);
+            }
+            _ => panic!("expected layout_changed"),
+        }
+        let secret = make("secret", true, None).await.expect("secret");
+        let b = make("b", false, None).await.expect("b");
+        assert_eq!((secret.position, b.position), (2, 3));
+        let hidden = create_category(
+            State(state.clone()),
+            alice(),
+            club(),
+            Json(serde_json::from_value(serde_json::json!({"name": "Staff"})).expect("body")),
+        )
+        .await
+        .expect("staff")
+        .0;
+        let games = create_category(
+            State(state.clone()),
+            alice(),
+            club(),
+            Json(serde_json::from_value(serde_json::json!({"name": "Games"})).expect("body")),
+        )
+        .await
+        .expect("games")
+        .0;
+        let vault = make("vault", true, Some(hidden.id)).await.expect("vault");
+        let c = make("c", false, Some(games.id)).await.expect("c");
+        assert_eq!(c.position, 5, "the creator sees every channel");
+        let as_bob = detail_as(&state, "club", Some(&mem_user("bob", false)))
+            .await
+            .expect("bob");
+        assert_eq!(
+            as_bob
+                .channels
+                .iter()
+                .map(|ch| (ch.id, ch.position))
+                .collect::<Vec<_>>(),
+            [(general, 0), (a.id, 1), (b.id, 2), (c.id, 3)],
+            "no gap where the hidden channel sits"
+        );
+        assert_eq!(
+            as_bob
+                .categories
+                .iter()
+                .map(|cat| (cat.id, cat.position))
+                .collect::<Vec<_>>(),
+            [(games.id, 0)],
+            "no gap where the hidden category sits"
+        );
+        let as_alice = detail_as(&state, "club", Some(&mem_user("alice", false)))
+            .await
+            .expect("alice");
+        assert_eq!(
+            as_alice
+                .channels
+                .iter()
+                .map(|ch| (ch.id, ch.position))
+                .collect::<Vec<_>>(),
+            [
+                (general, 0),
+                (a.id, 1),
+                (secret.id, 2),
+                (b.id, 3),
+                (vault.id, 4),
+                (c.id, 5)
+            ]
+        );
+        let stale = as_alice.layout_version;
+        let _ = make("late", false, None).await.expect("late");
+        let late_order = serde_json::json!({
+            "version": stale,
+            "uncategorized": [general, a.id, secret.id, b.id],
+            "categories": [{"id": hidden.id, "channels": [vault.id]}, {"id": games.id, "channels": [c.id]}],
+        });
+        assert_eq!(
+            code(
+                reorder_layout(
+                    State(state.clone()),
+                    alice(),
+                    club(),
+                    Json(serde_json::from_value(late_order).expect("body"))
+                )
+                .await
+            )
+            .map_err(|e| e.0),
+            Err(StatusCode::CONFLICT),
+            "a reorder from before a channel was created is stale"
+        );
+        while rx.try_recv().is_ok() {}
+        let version = layout_version(db, "club").await.expect("version");
+        let _ = delete_channel(State(state.clone()), alice(), Path(a.id))
+            .await
+            .expect("delete");
+        assert_eq!(
+            layout_version(db, "club").await.expect("version"),
+            version + 1,
+            "deleting a channel raises the layout version"
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::ChannelDeleted { server: _, channel_id, rules: Some(_) }) if channel_id == a.id
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::LayoutChanged { server: _, layout, created: None, deleted: Some(_) }) if layout.version == version + 1
+        ));
+        let stored: Vec<i64> =
+            sqlx::query("SELECT position FROM channels WHERE server = 'club' ORDER BY position")
+                .fetch_all(db)
+                .await
+                .expect("positions")
+                .iter()
+                .map(|r| r.try_get(0).expect("position"))
+                .collect();
+        assert_eq!(stored, (0..stored.len() as i64).collect::<Vec<_>>());
+        for round in 0..4 {
+            let doomed = create_category(
+                State(state.clone()),
+                alice(),
+                club(),
+                Json(serde_json::from_value(serde_json::json!({"name": "Doomed"})).expect("body")),
+            )
+            .await
+            .expect("doomed")
+            .0;
+            let name = format!("race{round}");
+            let (made, _) = tokio::join!(
+                make(&name, false, Some(doomed.id)),
+                delete_category(State(state.clone()), alice(), Path(doomed.id)),
+            );
+            if let Err(ApiError(status, _)) = &made {
+                assert_eq!(*status, StatusCode::NOT_FOUND);
+            }
+            let dangling: i64 = sqlx::query("SELECT COUNT(*) FROM channels WHERE category_id IS NOT NULL AND category_id NOT IN (SELECT id FROM channel_categories)")
+                .fetch_one(db)
+                .await
+                .expect("dangling")
+                .try_get(0)
+                .expect("count");
+            assert_eq!(dangling, 0, "a channel never lands in a deleted category");
+        }
         done(state, path).await;
     }
 }

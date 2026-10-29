@@ -16,7 +16,11 @@ export interface Layout {
   dmPinned: number[]
   dmSeen: number
   selfPin: SelfPin
+  collapsed: Collapsed
 }
+
+// Collapsed category ids per server name.
+export type Collapsed = Record<string, number[]>
 
 export type RailItem<T> =
   | { kind: 'server'; key: string; server: T }
@@ -31,6 +35,10 @@ export interface DmSections<T> {
 
 export const FOLDER_NAME_MAX = 50
 
+export const COLLAPSED_MAX = 1000
+
+export const COLLAPSED_PER_SERVER = 100
+
 export const emptyLayout: Layout = {
   v: 2,
   servers: [],
@@ -38,6 +46,7 @@ export const emptyLayout: Layout = {
   dmPinned: [],
   dmSeen: 0,
   selfPin: 'auto',
+  collapsed: {},
 }
 
 export const layoutKey = (username: string | null) => `rchat_layout:${username ?? 'guest'}`
@@ -106,10 +115,44 @@ const folderOf = (x: unknown): RailEntry[] => {
   ]
 }
 
+export const collapsedOf = (x: unknown): Collapsed => {
+  if (typeof x !== 'object' || x === null || Array.isArray(x)) return {}
+  let budget = COLLAPSED_MAX
+  const out: [string, number[]][] = []
+  for (const [name, ids] of Object.entries(x)) {
+    if (budget <= 0) break
+    if (!isName(name)) continue
+    const list = listOf(ids, isId).slice(-Math.min(budget, COLLAPSED_PER_SERVER))
+    if (!list.length) continue
+    out.push([name, list])
+    budget -= list.length
+  }
+  return Object.fromEntries(out)
+}
+
+export const collapsedCount = (c: Collapsed) =>
+  Object.values(c).reduce((n, ids) => n + ids.length, 0)
+
+const sameIds = (a: number[], b: number[]) =>
+  a.length === b.length && a.every((id, i) => id === b[i])
+
+const withCollapsed = (layout: Layout, server: string, ids: number[]): Layout => {
+  const had = layout.collapsed[server] ?? []
+  if (sameIds(had, ids)) return layout
+  const rest = Object.entries(layout.collapsed).filter(([name]) => name !== server)
+  return {
+    ...layout,
+    collapsed: Object.fromEntries(ids.length ? [...rest, [server, ids]] : rest),
+  }
+}
+
 export const parseLayout = (raw: string | null): Layout => {
   const data = parseJson(raw)
   if (typeof data !== 'object' || data === null) return emptyLayout
-  const { v, servers, dmOrder, dmPinned, dmSeen, selfPin } = data as Record<string, unknown>
+  const { v, servers, dmOrder, dmPinned, dmSeen, selfPin, collapsed } = data as Record<
+    string,
+    unknown
+  >
   if (v !== 1 && v !== 2) return emptyLayout
   return {
     v: 2,
@@ -121,7 +164,31 @@ export const parseLayout = (raw: string | null): Layout => {
     dmPinned: listOf(dmPinned, isId),
     dmSeen: isId(dmSeen) ? dmSeen : 0,
     selfPin: selfPin === 'unpinned' ? 'unpinned' : 'auto',
+    collapsed: collapsedOf(collapsed),
   }
+}
+
+export const setCollapsed = (
+  layout: Layout,
+  server: string,
+  ids: number[],
+  on: boolean
+): Layout => {
+  const drop = new Set(ids)
+  const rest = (layout.collapsed[server] ?? []).filter(id => !drop.has(id))
+  return withCollapsed(layout, server, on ? [...rest, ...ids].slice(-COLLAPSED_PER_SERVER) : rest)
+}
+
+// Drops collapsed ids that are no longer categories of `server`.
+export const keepCollapsed = (layout: Layout, server: string, known: number[]): Layout => {
+  const had = layout.collapsed[server]
+  if (!had) return layout
+  const keep = new Set(known)
+  return withCollapsed(
+    layout,
+    server,
+    had.filter(id => keep.has(id))
+  )
 }
 
 const rank = <K>(saved: K[]) => new Map(saved.map((k, i) => [k, i]))
@@ -367,6 +434,8 @@ export const renameFolder = (layout: Layout, id: string, name: string) =>
 export const ungroupFolder = (layout: Layout, id: string) => editFolder(layout, id, f => f.servers)
 
 export const renameServer = (layout: Layout, from: string, to: string): Layout => {
+  const ids = layout.collapsed[from]
+  if (ids) layout = withCollapsed(withCollapsed(layout, from, []), to, ids)
   if (!layoutServers(layout.servers).includes(from)) return layout
   const swap = (n: string) => (n === from ? to : n)
   return {
@@ -379,10 +448,12 @@ export const renameServer = (layout: Layout, from: string, to: string): Layout =
   }
 }
 
-export const forgetServer = (layout: Layout, name: string): Layout =>
-  layoutServers(layout.servers).includes(name)
-    ? { ...layout, servers: tidy(without(layout.servers, serverKey(name))) }
-    : layout
+export const forgetServer = (layout: Layout, name: string): Layout => {
+  const next = withCollapsed(layout, name, [])
+  return layoutServers(next.servers).includes(name)
+    ? { ...next, servers: tidy(without(next.servers, serverKey(name))) }
+    : next
+}
 
 const keepOnly = (entries: RailEntry[], keep: Set<string>) =>
   tidy(
@@ -403,14 +474,19 @@ export const pruneLayout = (
   const keepServers = servers ? new Set(servers) : null
   const keepDms = dms ? new Set(dms) : null
   const gone = keepServers !== null && layoutServers(layout.servers).some(n => !keepServers.has(n))
+  const folded = Object.keys(layout.collapsed).filter(n => keepServers && !keepServers.has(n))
   const next: Layout = {
     ...layout,
     servers: gone ? keepOnly(layout.servers, keepServers) : layout.servers,
     dmOrder: keepDms ? layout.dmOrder.filter(id => keepDms.has(id)) : layout.dmOrder,
     dmPinned: keepDms ? layout.dmPinned.filter(id => keepDms.has(id)) : layout.dmPinned,
+    collapsed: folded.length
+      ? Object.fromEntries(Object.entries(layout.collapsed).filter(([n]) => !folded.includes(n)))
+      : layout.collapsed,
   }
   const same =
     !gone &&
+    !folded.length &&
     next.dmOrder.length === layout.dmOrder.length &&
     next.dmPinned.length === layout.dmPinned.length
   return same ? layout : next

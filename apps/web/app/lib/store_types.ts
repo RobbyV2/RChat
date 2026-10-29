@@ -96,6 +96,7 @@ export type ActiveDialog =
   | { kind: 'delete_user_confirm'; username: string }
   | { kind: 'settings'; focus?: 'bio' }
   | { kind: 'rename_folder'; id: string }
+  | { kind: 'category'; server: string; id?: number }
 
 export type Panel = { kind: 'thread'; root: Message } | { kind: 'search' }
 
@@ -392,7 +393,18 @@ export interface RChatState {
   leaveServer: (name: string) => Promise<void>
   renameServer: (name: string, newName: string) => Promise<void>
   deleteServer: (name: string) => Promise<void>
-  createChannel: (server: string, name: string, kind?: ChannelKind) => Promise<void>
+  createChannel: (
+    server: string,
+    name: string,
+    kind?: ChannelKind,
+    category?: number | null
+  ) => Promise<void>
+  createCategory: (server: string, name: string) => Promise<void>
+  renameCategory: (id: number, name: string) => Promise<void>
+  deleteCategory: (id: number) => Promise<void>
+  moveChannel: (server: string, id: number, category: number | null, index: number) => void
+  moveCategory: (server: string, id: number, index: number) => void
+  setCategoriesCollapsed: (server: string, ids: number[], collapsed: boolean) => void
   renameChannel: (id: number, name: string) => Promise<void>
   setSlowmode: (id: number, seconds: number) => Promise<void>
   setChannelTopic: (server: string, id: number, topic: string) => Promise<string | null>

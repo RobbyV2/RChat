@@ -21,6 +21,7 @@ export const PROFANITY_TARGETS: { key: ProfanityTarget; label: string }[] = [
   { key: 'file_names', label: 'File names' },
   { key: 'bios', label: 'Profile descriptions' },
   { key: 'channel_topics', label: 'Channel topics' },
+  { key: 'category_names', label: 'Category names' },
 ]
 
 type ProfanitySettings = Pick<SiteSettings, 'profanity_filter'> & {

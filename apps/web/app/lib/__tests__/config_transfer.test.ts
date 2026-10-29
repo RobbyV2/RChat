@@ -44,6 +44,7 @@ const source = (over: Partial<ConfigSource> = {}): ConfigSource => {
       dmOrder: [7, 3],
       dmPinned: [7],
       selfPin: 'unpinned',
+      collapsed: { club: [12], arena: [15] },
     },
     notify,
     emoji,
@@ -88,6 +89,7 @@ describe('encoding', () => {
       servers: ['club', 'arena'],
       open: true,
     })
+    expect(back.doc.layout?.collapsed).toEqual({ club: [12], arena: [15] })
     expect(back.doc.notify?.dms['7']).toEqual({ muteUntil: 'forever' })
     expect(back.doc.emoji?.tone).toBe(3)
   })
@@ -177,6 +179,26 @@ describe('sanitizing', () => {
     expect(out.doc.notify).toBeUndefined()
     expect(out.doc.emoji?.tone).toBe(0)
     expect(out.doc.emoji?.used).toEqual({ '😀': { n: 1e6, at: NOW, last: '😀' } })
+  })
+
+  test('collapsed categories are kept as clean ids per server and left out when empty', () => {
+    const out = sanitizeConfig(
+      {
+        v: 1,
+        layout: {
+          servers: [],
+          collapsed: { club: [3, 3, -1, 'x', 8], ['x'.repeat(65)]: [4], empty: [], bad: 5 },
+        },
+      },
+      NOW
+    )
+    if (!out.ok) throw new Error('rejected')
+    expect(out.doc.layout?.collapsed).toEqual({ club: [3, 8] })
+    for (const collapsed of ['no', [3, 8], { club: 'no' }]) {
+      const none = sanitizeConfig({ v: 1, layout: { servers: [], collapsed } }, NOW)
+      if (!none.ok) throw new Error('rejected')
+      expect(none.doc.layout && 'collapsed' in none.doc.layout).toBe(false)
+    }
   })
 
   test('layout is clamped: names, folder ids, folder names, counts, ids', () => {
@@ -340,7 +362,7 @@ describe('preview', () => {
     ])
     expect([by.theme.now, by.theme.next, by.theme.same]).toEqual(['Dark', 'Light', false])
     expect([by.streamer.now, by.streamer.next, by.streamer.same]).toEqual(['On', 'On', true])
-    expect(by.layout.next).toBe('3 servers, 1 folder, 1 pinned DM')
+    expect(by.layout.next).toBe('3 servers, 1 folder, 1 pinned DM, 2 collapsed categories')
     expect(by.layout.now).toBe('Default order, 0 pinned DMs')
     expect(by.notify.next).toBe('3 custom settings')
     expect(by.emoji.next).toBe('2 frequent emoji, skin tone 3')

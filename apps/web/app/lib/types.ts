@@ -61,6 +61,20 @@ export interface Channel {
   restrict_view?: boolean
   restrict_send?: boolean
   topic?: string | null
+  category_id?: number | null
+  position?: number
+}
+
+export interface Category {
+  id: number
+  name: string
+  position: number
+}
+
+export interface ChannelLayout {
+  version: number
+  uncategorized: number[]
+  categories: { id: number; name: string; channels: number[] }[]
 }
 
 export interface Role {
@@ -135,6 +149,8 @@ export interface ServerDetail {
   banner_color: string | null
   name_color: string | null
   channels: Channel[]
+  categories?: Category[]
+  layout_version?: number
   read_only?: number[]
   roles: Role[]
   role_limits?: RoleLimits
@@ -342,6 +358,7 @@ export interface ProfanityTargets {
   file_names: boolean
   bios: boolean
   channel_topics: boolean
+  category_names: boolean
 }
 
 export type ProfanityTarget = keyof ProfanityTargets
@@ -525,6 +542,7 @@ export type WsEvent =
   | { type: 'admin_changed'; server: string; username: string; is_admin: boolean; perms: number }
   | { type: 'roles_changed'; server: string }
   | { type: 'channel_perms_changed'; server: string; channel_id: number }
+  | { type: 'layout_changed'; server: string; layout: ChannelLayout }
   | { type: 'user_updated'; user: UserRef }
   | { type: 'user_registered'; user: UserRef }
   | {

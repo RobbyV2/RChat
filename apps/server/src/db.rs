@@ -22,8 +22,9 @@ CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NO
 CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NOT NULL, failures INTEGER NOT NULL, last_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at INTEGER NOT NULL, claimed_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
-CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count INTEGER NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id INTEGER, join_messages INTEGER NOT NULL DEFAULT 1, leave_messages INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, restrict_view INTEGER NOT NULL DEFAULT 0, restrict_send INTEGER NOT NULL DEFAULT 0, topic TEXT, UNIQUE(server, name));
+CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count INTEGER NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id INTEGER, join_messages INTEGER NOT NULL DEFAULT 1, leave_messages INTEGER NOT NULL DEFAULT 1, layout_version INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, restrict_view INTEGER NOT NULL DEFAULT 0, restrict_send INTEGER NOT NULL DEFAULT 0, topic TEXT, category_id INTEGER, position INTEGER NOT NULL DEFAULT 0, UNIQUE(server, name));
+CREATE TABLE IF NOT EXISTS channel_categories(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, perms INTEGER NOT NULL DEFAULT 0, joined_at INTEGER NOT NULL, joined_via INTEGER, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
@@ -88,6 +89,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_dm_pins ON messages(dm_id, pinned_at) WH
 CREATE INDEX IF NOT EXISTS idx_messages_system ON messages(author, kind, created_at) WHERE kind IN ('join','leave');
 CREATE INDEX IF NOT EXISTS idx_config_shares_owner ON config_shares(owner, expires_at);
 CREATE INDEX IF NOT EXISTS idx_config_shares_expires ON config_shares(expires_at);
+CREATE INDEX IF NOT EXISTS idx_channel_categories_server ON channel_categories(server, position);
 ";
 
 const POSTGRES_SCHEMA: &str = "
@@ -101,8 +103,9 @@ CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NO
 CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NOT NULL, failures BIGINT NOT NULL, last_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at BIGINT NOT NULL, claimed_at BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
-CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count BIGINT NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id BIGINT, join_messages BIGINT NOT NULL DEFAULT 1, leave_messages BIGINT NOT NULL DEFAULT 1, created_at BIGINT NOT NULL);
-CREATE TABLE IF NOT EXISTS channels(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, restrict_view BIGINT NOT NULL DEFAULT 0, restrict_send BIGINT NOT NULL DEFAULT 0, topic TEXT, UNIQUE(server, name));
+CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count BIGINT NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id BIGINT, join_messages BIGINT NOT NULL DEFAULT 1, leave_messages BIGINT NOT NULL DEFAULT 1, layout_version BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS channels(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice')), slowmode_seconds BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, restrict_view BIGINT NOT NULL DEFAULT 0, restrict_send BIGINT NOT NULL DEFAULT 0, topic TEXT, category_id BIGINT, position BIGINT NOT NULL DEFAULT 0, UNIQUE(server, name));
+CREATE TABLE IF NOT EXISTS channel_categories(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, position BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS members(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, is_admin BIGINT NOT NULL DEFAULT 0, perms BIGINT NOT NULL DEFAULT 0, joined_at BIGINT NOT NULL, joined_via BIGINT, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS roles(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, color TEXT NOT NULL, perms BIGINT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
@@ -168,6 +171,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_dm_pins ON messages(dm_id, pinned_at) WH
 CREATE INDEX IF NOT EXISTS idx_messages_system ON messages(author, kind, created_at) WHERE kind IN ('join','leave');
 CREATE INDEX IF NOT EXISTS idx_config_shares_owner ON config_shares(owner, expires_at);
 CREATE INDEX IF NOT EXISTS idx_config_shares_expires ON config_shares(expires_at);
+CREATE INDEX IF NOT EXISTS idx_channel_categories_server ON channel_categories(server, position);
 ";
 
 const SQLITE_SEARCH: &[&str] = &[
@@ -409,6 +413,9 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("messages", "call_kind TEXT"),
     ("messages", "call_video {INT}"),
     ("channels", "topic TEXT"),
+    ("channels", "category_id {INT}"),
+    ("channels", "position {INT} NOT NULL DEFAULT 0"),
+    ("servers", "layout_version {INT} NOT NULL DEFAULT 0"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -432,6 +439,11 @@ const BACKFILLS: &[(&str, &str, &str)] = &[
         "restrict_set",
         "UPDATE channel_perms SET restrict_set = 1 WHERE EXISTS(SELECT 1 FROM settings WHERE key = 'restrict_backfill_v1')",
     ),
+    (
+        "channels",
+        "position",
+        "UPDATE channels SET position = (SELECT COUNT(*) FROM channels c WHERE c.server = channels.server AND ((c.kind = 'text' AND channels.kind <> 'text') OR (c.kind = channels.kind AND c.id < channels.id)))",
+    ),
 ];
 
 const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
@@ -441,8 +453,8 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// do not understand. A database marked with a newer version was upgraded by a newer binary,
 /// and this one refuses to start on it.
 /// 1: hashed secrets and the 0.3.0 indexes. 2: `channel_perms.restrict_set` and
-/// `guest_grants.network`.
-pub const SCHEMA_VERSION: i64 = 2;
+/// `guest_grants.network`. 3: channel categories and channel positions.
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
@@ -807,6 +819,7 @@ pub async fn perm_subjects(
     Ok(subjects)
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PermRow {
     pub subject: String,
     pub view: bool,
@@ -825,7 +838,7 @@ pub fn perm_row(r: &AnyRow, at: usize) -> sqlx::Result<PermRow> {
 
 /// Which actions of a channel need an explicit allow from one of its rules (`restrict_view`,
 /// `restrict_send`).
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct Restrict {
     pub view: bool,
     pub send: bool,
@@ -1723,6 +1736,103 @@ mod tests {
             .expect("write topic");
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM channels WHERE topic = 'hi'").await,
+            1
+        );
+        close(&db).await;
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn existing_channels_keep_their_order_after_categories() {
+        let path = std::env::temp_dir().join(format!("rchat_layout_col_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_channel_categories_server",
+            "DROP TABLE channel_categories",
+            "ALTER TABLE channels DROP COLUMN category_id",
+            "ALTER TABLE channels DROP COLUMN position",
+            "ALTER TABLE servers DROP COLUMN layout_version",
+            "DELETE FROM settings WHERE key = 'profanity_category_names'",
+            "UPDATE settings SET value = '2' WHERE key = 'schema_version'",
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('old', 'Old', 'alice', 3)",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('old', 'talk', 'voice', 3)",
+            "INSERT INTO channels(server, name, kind, created_at, topic) VALUES('old', 'chat', 'text', 3, 'hi')",
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('old', 'music', 'voice', 3)",
+            "INSERT INTO channels(server, name, kind, created_at, restrict_view) VALUES('old', 'staff', 'text', 3, 1)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            let rows = sqlx::query("SELECT name, kind, topic, restrict_view, category_id, position FROM channels WHERE server = 'old' ORDER BY position, id")
+                .fetch_all(&db)
+                .await
+                .expect("rows");
+            type Got = (String, String, Option<String>, i64, Option<i64>, i64);
+            let got: Vec<Got> = rows
+                .iter()
+                .map(|r| {
+                    (
+                        r.try_get(0).expect("name"),
+                        r.try_get(1).expect("kind"),
+                        r.try_get(2).expect("topic"),
+                        r.try_get(3).expect("restrict_view"),
+                        r.try_get(4).expect("category"),
+                        r.try_get(5).expect("position"),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                got,
+                [
+                    ("chat".into(), "text".into(), Some("hi".into()), 0, None, 0),
+                    ("staff".into(), "text".into(), None, 1, None, 1),
+                    ("talk".into(), "voice".into(), None, 0, None, 2),
+                    ("music".into(), "voice".into(), None, 0, None, 3),
+                ]
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers WHERE layout_version = 0").await,
+                count(&db, "SELECT COUNT(*) FROM servers").await
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM channel_categories").await,
+                0
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM settings WHERE key = 'profanity_category_names' AND value = '1'").await,
+                1
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM settings WHERE key = 'schema_version' AND value = '3'"
+                )
+                .await,
+                1
+            );
+            close(&db).await;
+        }
+        let db = open(path.to_str()).await.expect("reopen");
+        let id = count(&db, "INSERT INTO channel_categories(server, name, position, created_at) VALUES('old', 'Games', 0, 4) RETURNING id").await;
+        sqlx::query("UPDATE channels SET category_id = $1 WHERE name = 'talk'")
+            .bind(id)
+            .execute(&db)
+            .await
+            .expect("move");
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM channels WHERE category_id IS NOT NULL"
+            )
+            .await,
             1
         );
         close(&db).await;

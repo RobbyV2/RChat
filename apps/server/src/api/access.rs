@@ -20,7 +20,7 @@ mod rules;
 
 use rules::{
     channel_access, channel_viewable, channel_viewers, effective_perms, grants_open, is_banned,
-    live_grant_servers, member_perms,
+    live_grant_servers, member_perms, view_rules, view_under,
 };
 
 pub const DENIED: &str = "Server not found or wrong password";
@@ -742,6 +742,24 @@ pub async fn resolve_channel(
         .await
 }
 
+/// A channel category with its server, for someone who manages channels there. Unknown ids,
+/// servers the viewer can't open and viewers without Manage channels get the same 404.
+pub async fn resolve_category(db: &Db, id: i64, viewer: &User) -> Result<ServerAccess, ApiError> {
+    let server: String = sqlx::query("SELECT server FROM channel_categories WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await?
+        .ok_or_else(not_found)?
+        .try_get(0)?;
+    let access = resolve_server(db, &server, Some(viewer), &Proof::none())
+        .await
+        .map_err(hidden)?;
+    match access.manages_channels(db).await? {
+        true => Ok(access),
+        false => Err(not_found()),
+    }
+}
+
 impl ResolvedChannel {
     pub fn id(&self) -> i64 {
         self.id
@@ -1227,6 +1245,54 @@ pub(crate) async fn ws_channel_view(
         None => None,
     };
     Ok(channel_access(db, server, cid, user.as_ref()).await?.view)
+}
+
+/// The view rules of a channel (`restrict_view` and its overrides), taken before it is deleted
+/// so `channel_deleted` and the `layout_changed` after it reach only those who could view it.
+/// Routing only, never sent to a client.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ViewRules {
+    pub restrict: Restrict,
+    pub rules: Vec<PermRow>,
+}
+
+/// The current view rules of channel `cid`, for `ws_view_under` once it is gone.
+pub(crate) async fn ws_view_rules(db: &Db, cid: i64) -> sqlx::Result<ViewRules> {
+    view_rules(db, cid).await
+}
+
+/// WS event filtering for a deleted channel: could `username` (or a guest) view a channel of
+/// `server` with these `rules`, under the same rule as `ws_channel_view`. Never answers a client.
+pub(crate) async fn ws_view_under(
+    db: &Db,
+    server: &str,
+    rules: &ViewRules,
+    username: Option<&str>,
+) -> sqlx::Result<bool> {
+    let user = match username {
+        Some(name) => crate::db::get_user(db, name).await?,
+        None => None,
+    };
+    view_under(db, server, rules, user.as_ref()).await
+}
+
+/// `layout_changed` filtering: whether `username` manages channels in `server`, so it sees
+/// categories without a channel it can view. Guests never do. Never answers a client.
+pub(crate) async fn ws_manages_channels(
+    db: &Db,
+    server: &str,
+    username: Option<&str>,
+) -> sqlx::Result<bool> {
+    let user = match username {
+        Some(name) => crate::db::get_user(db, name).await?,
+        None => None,
+    };
+    match user {
+        Some(user) => {
+            Ok(effective_perms(db, server, &user).await? & Perm::ManageChannels as i64 != 0)
+        }
+        None => Ok(false),
+    }
 }
 
 /// `p2p_who`: from when `username` may read channel `cid` of `server`, under the same rule as

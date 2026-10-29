@@ -520,7 +520,7 @@ html[data-chrome] body {
   background: var(--color-primary);
 }
 
-.drag-line[data-group='dm']::before {
+.drag-line:is([data-group='dm'], [data-group='channel'], [data-group='category'])::before {
   content: '';
   position: absolute;
   top: -3.5px;

@@ -15,6 +15,7 @@ import {
   dmPingCount,
   dmsUnread,
   folderLabel,
+  myPerms,
   previewServer,
   railServers,
   scopeMuted,
@@ -26,7 +27,7 @@ import {
 } from '../lib/store'
 import { folderKey, railItems, serverKey, type Folder } from '../lib/nav_layout'
 import type { DropTarget } from '../lib/drag'
-import type { ServerDetail } from '../lib/types'
+import { Perm, hasPerm, type ServerDetail } from '../lib/types'
 import { serverInitial } from '../lib/rules'
 import { inviteUrl } from '../lib/invite'
 import { longPress } from './context_menu'
@@ -103,6 +104,7 @@ function ServerTile({
   const askConfirm = useStore(s => s.askConfirm)
   const moveServer = useStore(s => s.moveServer)
   const markServerRead = useStore(s => s.markServerRead)
+  const openDialog = useStore(s => s.openDialog)
   const muted = useStore(s => scopeMuted(s, { kind: 'server', name }))
   const mine = me !== null && creator === me.username
   const parent = folder === null ? null : folderKey(folder)
@@ -122,6 +124,14 @@ function ServerTile({
                 ]
               : []),
             ...notifyMenuItems({ kind: 'server', name }, 'Server'),
+            ...(me && hasPerm(myPerms(useStore.getState(), name), Perm.ManageChannels)
+              ? [
+                  {
+                    label: 'Create category',
+                    action: () => openDialog({ kind: 'category', server: name }),
+                  },
+                ]
+              : []),
             {
               label: 'Copy invite link',
               action: () => void navigator.clipboard.writeText(inviteUrl(name)),
