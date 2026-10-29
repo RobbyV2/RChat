@@ -165,6 +165,16 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             dm_id: _,
             dm_users,
             reason: _,
+        }
+        | WsEvent::Typing {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            scope: _,
+            username: _,
+            display_name: _,
+            until: _,
         } => to(scoped(server, dm_users)),
         WsEvent::MessageUpdated {
             server: Some(server),

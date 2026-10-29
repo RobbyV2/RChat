@@ -475,6 +475,15 @@ export interface EditStub {
 
 export type WsEvent =
   | ({ type: 'message'; message: Message } & Scoped)
+  | ({
+      type: 'typing'
+      // `c{channel}`, `t{thread root}` or `d{dm}`.
+      scope: string
+      username: string
+      display_name: string
+      // Unix seconds; 0 when they stopped.
+      until: number
+    } & Scoped)
   | { type: 'message_updated'; message: Message; stub?: false }
   | EditStub
   | ({

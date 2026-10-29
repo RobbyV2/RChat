@@ -68,6 +68,7 @@ import { callTone, type CallTone } from '../lib/voice_layout'
 import { callLogInfo } from '../lib/call_choice'
 import { UserAvatar } from './user_avatar'
 import { MarkdownMessage } from './markdown_message'
+import { TypingIndicator } from './typing_indicator'
 import { MessageComposer } from './message_composer'
 import StatusClock from './status_clock'
 import { longPress } from './context_menu'
@@ -1006,7 +1007,10 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
               </div>
             </div>
           </div>
-          <MessageComposer />
+          <div className="relative shrink-0">
+            <TypingIndicator scope={view ? viewKey(view) : null} bg="bg-surface" />
+            <MessageComposer />
+          </div>
         </>
       )}
       {scope && <PinsWindow />}

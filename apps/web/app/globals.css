@@ -54,6 +54,7 @@
   --animate-speak: speak 1.6s ease-in-out infinite;
   --animate-ring: ring 1.4s ease-out infinite;
   --animate-notice-time: notice-time 5s linear forwards;
+  --animate-typing-dot: typing-dot 1.2s ease-in-out infinite;
 
   @keyframes sheet-up {
     from {
@@ -81,6 +82,19 @@
     }
     to {
       transform: scaleX(0);
+    }
+  }
+
+  @keyframes typing-dot {
+    0%,
+    60%,
+    100% {
+      opacity: 0.35;
+      transform: translateY(0);
+    }
+    30% {
+      opacity: 1;
+      transform: translateY(-2px);
     }
   }
 

@@ -92,6 +92,7 @@ const useConfigSource = (): ConfigSource =>
       notify: s.me || s.guest ? s.notifyPrefs : null,
       emoji: s.me ? s.emoji : null,
       calls: s.me ? s.callRoute : null,
+      typing: s.me || s.guest ? s.typingOn : null,
     }))
   )
 

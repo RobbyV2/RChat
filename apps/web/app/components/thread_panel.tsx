@@ -18,6 +18,7 @@ import { findById } from '../lib/window'
 import { newSince } from '../lib/lists'
 import { MarkdownMessage } from './markdown_message'
 import { MessageComposer } from './message_composer'
+import { TypingIndicator } from './typing_indicator'
 import {
   AuthorRow,
   OutboxRows,
@@ -297,7 +298,10 @@ export default function ThreadPanel() {
           </div>
         </div>
       </div>
-      <MessageComposer thread />
+      <div className="relative shrink-0">
+        <TypingIndicator scope={key} bg="bg-surface-container-low" />
+        <MessageComposer thread />
+      </div>
     </div>
   )
 }

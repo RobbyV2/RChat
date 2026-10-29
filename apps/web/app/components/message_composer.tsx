@@ -222,6 +222,8 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const focusAsk = useStore(s => s.composerFocus)
   const editLast = useStore(s => s.editLast)
   const sedEdit = useStore(s => s.sedEdit)
+  const noteTyping = useStore(s => s.noteTyping)
+  const [focused, setFocused] = useState(false)
   const [expiryOpen, setExpiryOpen] = useState(false)
   const [pickerFor, setPickerFor] = useState<string | null>(null)
   const sheet = useMedia(SHEET_QUERY)
@@ -239,6 +241,16 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     focusSeen.current = focusAsk.n
     if (focusAsk.key === draftKey) inputRef.current?.focus()
   }, [focusAsk, draftKey])
+
+  const typingNow = focused && text.trim() !== ''
+  useEffect(() => {
+    if (!draftKey) return
+    noteTyping(draftKey, typingNow)
+  }, [draftKey, typingNow, text, noteTyping])
+  useEffect(() => {
+    if (!draftKey) return
+    return () => noteTyping(draftKey, false)
+  }, [draftKey, noteTyping])
 
   const draftNow = () => (draftKey ? (useStore.getState().drafts[draftKey] ?? '') : '')
 
@@ -458,6 +470,11 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           ref={inputRef}
           rows={1}
           {...assist.textarea}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            assist.textarea.onBlur()
+            setFocused(false)
+          }}
           onKeyDown={e => {
             if (assist.popupKey(e)) return
             if (

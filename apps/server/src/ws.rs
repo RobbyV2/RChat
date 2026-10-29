@@ -16,8 +16,9 @@ use tokio::time::Instant;
 use tracing::{debug, warn};
 
 use crate::api::access::{
-    servers_with_expired_passwords, ws_banned, ws_channel_read_since, ws_channel_view,
-    ws_grant_deadline, ws_server_open, ws_voice_channel, ws_voice_viewable,
+    TypingPlace, servers_with_expired_passwords, typing_scope, ws_banned, ws_channel_read_since,
+    ws_channel_view, ws_grant_deadline, ws_server_open, ws_typing_place, ws_voice_channel,
+    ws_voice_viewable,
 };
 use crate::api::messages::{Quotes, load_broadcast, load_message};
 use crate::api::pings::{Ping, ThreadPings};
@@ -66,6 +67,11 @@ const LOG_EVERY: Duration = Duration::from_secs(10);
 const LAG_REAUTH_EVERY: Duration = Duration::from_secs(2);
 const P2P_ANNOUNCE_EVERY: Duration = Duration::from_secs(1);
 const P2P_SCOPE_TTL: Duration = Duration::from_secs(60);
+pub const TYPING_TTL: i64 = 8;
+const TYPING_REFRESH: Duration = Duration::from_secs(2);
+const TYPING_RATE: f64 = 1.0;
+const TYPING_BURST: f64 = 4.0;
+const TYPING_SCOPE_MAX: usize = 24;
 
 struct Gate {
     last: Option<Instant>,
@@ -568,6 +574,18 @@ pub enum WsEvent {
         error: Option<String>,
     },
     Resync,
+    /// Someone is typing in `scope` (`c{channel}`, `t{root}` or `d{dm}`) until `until` (unix
+    /// seconds), or stopped when `until` is 0. Never sent to the typer's own connections.
+    Typing {
+        server: Option<String>,
+        channel_id: Option<i64>,
+        dm_id: Option<i64>,
+        dm_users: Option<Vec<String>>,
+        scope: String,
+        username: String,
+        display_name: String,
+        until: i64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -631,6 +649,12 @@ enum ClientMsg {
         channel_id: Option<i64>,
         dm_id: Option<i64>,
         payload: serde_json::Value,
+    },
+    Typing {
+        scope: String,
+    },
+    TypingStop {
+        scope: String,
     },
 }
 
@@ -1138,6 +1162,16 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 dm_id,
                 payload,
             }),
+        WsEvent::Typing {
+            server: _,
+            channel_id: _,
+            dm_id: _,
+            dm_users: _,
+            scope: _,
+            username: _,
+            display_name: _,
+            until: _,
+        } => None,
         other => Some(other),
     }
 }
@@ -1245,8 +1279,12 @@ pub async fn depart(state: &AppState) {
 /// for DM calls, `rtc_signal` for
 /// WebRTC signalling, and `p2p_hosting` / `p2p_who` / `p2p_peer` for P2P files (`p2p_peer`
 /// gives a reader of one message the hoster's peer id and a short-lived download token; `p2p_who`
-/// never carries peer ids). Guests are read-only: no
-/// presence, voice or calls. The server sends the events in `WsEvent` (`apps/server/src/ws.rs`),
+/// never carries peer ids). `typing` / `typing_stop` with a `scope` (`c{channel}`,
+/// `t{root}` or `d{dm}`) show or clear a typing indicator where the sender may send messages
+/// (others are ignored silently); the client repeats `typing` every few seconds while typing.
+/// Others there get `typing` (`{scope, username, display_name, until}`, `until` in unix
+/// seconds, 0 when stopped), routed like messages and never to the typer's own connections.
+/// Guests are read-only: no presence, typing, voice or calls. The server sends the events in `WsEvent` (`apps/server/src/ws.rs`),
 /// for example `message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`,
 /// `voice_state`, `call_state` (with `kind` and `video`; an active P2P call also carries its id
 /// and the peer id of both tabs), `p2p_hosted` (tells a `p2p_hosting` sender which of its files are still live
@@ -1407,7 +1445,9 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             message_id: _,
             peer_id: _,
         }
-        | ClientMsg::P2pWho { hosters: _ } => Ok(()),
+        | ClientMsg::P2pWho { hosters: _ }
+        | ClientMsg::Typing { scope: _ }
+        | ClientMsg::TypingStop { scope: _ } => Ok(()),
     }
 }
 
@@ -2596,25 +2636,130 @@ fn sent(access: &mut Access, res: Sent) -> bool {
 struct Bucket {
     tokens: f64,
     at: Instant,
+    rate: f64,
+    burst: f64,
 }
 
 impl Bucket {
     fn new() -> Bucket {
+        Bucket::with(MSG_RATE, MSG_BURST)
+    }
+
+    fn with(rate: f64, burst: f64) -> Bucket {
         Bucket {
-            tokens: MSG_BURST,
+            tokens: burst,
             at: Instant::now(),
+            rate,
+            burst,
         }
     }
 
     fn take(&mut self, now: Instant) -> Option<bool> {
-        let refill = now.duration_since(self.at).as_secs_f64() * MSG_RATE;
-        self.tokens = (self.tokens + refill).min(MSG_BURST) - 1.0;
+        let refill = now.duration_since(self.at).as_secs_f64() * self.rate;
+        self.tokens = (self.tokens + refill).min(self.burst) - 1.0;
         self.at = now;
         match self.tokens {
             t if t >= 0.0 => Some(true),
-            t if t < -MSG_BURST => None,
+            t if t < -self.burst => None,
             _ => Some(false),
         }
+    }
+}
+
+fn typing_event(place: &TypingPlace, scope: &str, username: &str, until: i64) -> WsEvent {
+    let TypingPlace {
+        server,
+        channel_id,
+        dm_id,
+        dm_users,
+        display_name,
+    } = place.clone();
+    WsEvent::Typing {
+        server,
+        channel_id,
+        dm_id,
+        dm_users,
+        scope: scope.to_string(),
+        username: username.to_string(),
+        display_name,
+        until,
+    }
+}
+
+// One connection's typing indicator: at most one scope at a time, checked against the send
+// gate whenever it is shown again. Starts are paced; a stop only ends the one shown.
+struct Typer {
+    bucket: Bucket,
+    active: Option<(String, TypingPlace, Instant)>,
+}
+
+impl Typer {
+    fn new() -> Typer {
+        Typer {
+            bucket: Bucket::with(TYPING_RATE, TYPING_BURST),
+            active: None,
+        }
+    }
+
+    fn stop(&mut self, user: &str) -> Option<WsEvent> {
+        let (scope, place, at) = self.active.take()?;
+        (at.elapsed() < Duration::from_secs(TYPING_TTL as u64))
+            .then(|| typing_event(&place, &scope, user, 0))
+    }
+
+    // The events a `typing` (`on`) or `typing_stop` command gives, in order.
+    async fn command(&mut self, db: &Db, user: &str, scope: String, on: bool) -> Vec<WsEvent> {
+        let at = Instant::now();
+        let Some(scope) = (scope.len() <= TYPING_SCOPE_MAX)
+            .then(|| typing_scope(&scope))
+            .flatten()
+            .map(|(kind, id)| format!("{kind}{id}"))
+        else {
+            return Vec::new();
+        };
+        let same = self.active.as_ref().is_some_and(|(s, _, _)| *s == scope);
+        if !on {
+            return match same {
+                true => self.stop(user).into_iter().collect(),
+                false => Vec::new(),
+            };
+        }
+        if same
+            && let Some((_, _, since)) = &self.active
+            && at.duration_since(*since) < TYPING_REFRESH
+        {
+            return Vec::new();
+        }
+        let allowed = self.bucket.take(at) == Some(true);
+        self.bucket.tokens = self.bucket.tokens.max(-TYPING_BURST);
+        if !allowed {
+            return Vec::new();
+        }
+        let place = ws_typing_place(db, user, &scope).await;
+        let mut out: Vec<WsEvent> = match (same, &place) {
+            (true, Some(_)) => {
+                self.active = None;
+                Vec::new()
+            }
+            (_, _) => self.stop(user).into_iter().collect(),
+        };
+        if let Some(place) = place {
+            out.push(typing_event(&place, &scope, user, now() + TYPING_TTL));
+            self.active = Some((scope, place, at));
+        }
+        out
+    }
+}
+
+async fn type_in(state: &AppState, access: &Access, typer: &mut Typer, scope: String, on: bool) {
+    let Some(user) = access.user.as_deref() else {
+        return;
+    };
+    if on && access.retry.pending() {
+        return;
+    }
+    for ev in typer.command(&state.read(), user, scope, on).await {
+        state.hub.broadcast(ev);
     }
 }
 
@@ -2798,6 +2943,7 @@ async fn run(state: AppState, mut socket: WebSocket) {
     let out = Out::spawn(sink);
     let mut through = 0;
     let mut bucket = Bucket::new();
+    let mut typer = Typer::new();
     let mut ping = tokio::time::interval_at(Instant::now() + PING_EVERY, PING_EVERY);
     let mut heard = Instant::now();
     let mut lag = Pace::new(LAG_REAUTH_EVERY);
@@ -2922,6 +3068,8 @@ async fn run(state: AppState, mut socket: WebSocket) {
                                 break;
                             }
                         }
+                        Ok(ClientMsg::Typing { scope }) => type_in(&state, &access, &mut typer, scope, true).await,
+                        Ok(ClientMsg::TypingStop { scope }) => type_in(&state, &access, &mut typer, scope, false).await,
                         Ok(ClientMsg::Auth { token: _ }) | Err(_) => {}
                         Ok(other) => {
                             let leaving = matches!(other, ClientMsg::VoiceLeave | ClientMsg::CallLeave { dm_id: _ } | ClientMsg::CallDecline { dm_id: _ });
@@ -3000,6 +3148,9 @@ async fn run(state: AppState, mut socket: WebSocket) {
     drop(inbox);
     state.hub.close(conn);
     if let Some(user) = &access.user {
+        if let Some(ev) = typer.stop(user) {
+            state.hub.broadcast(ev);
+        }
         let (ends, drop) = state.hub.drop_conn(user, conn).await;
         for end in ends {
             finalize_call_log(&state, end, false).await;
@@ -3277,6 +3428,16 @@ fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
             dm_users: _,
             reason: _,
         } => scoped(server, channel_id),
+        WsEvent::Typing {
+            server,
+            channel_id,
+            dm_id: _,
+            dm_users: _,
+            scope: _,
+            username: _,
+            display_name: _,
+            until: _,
+        } => scoped(server, channel_id),
         _ => None,
     }
 }
@@ -3516,6 +3677,16 @@ fn wants(
             dm_users,
             reason: _,
         } => scoped(server, dm_users),
+        WsEvent::Typing {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            scope: _,
+            username,
+            display_name: _,
+            until: _,
+        } => me != Some(username.as_str()) && scoped(server, dm_users),
         WsEvent::Error { message: _ }
         | WsEvent::TokensRevoked { username: _ }
         | WsEvent::P2pHosted {
@@ -4522,6 +4693,241 @@ mod tests {
         let access = Access::new(Some(s("bob")), false, set(&[]));
         assert!(!still_held(&state.db, &access, "rchat").await.expect("held"));
         crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn typing_follows_the_send_gate() {
+        let (state, path) = crate::api::test_util::temp_state("ws_typing").await;
+        let db = &state.db;
+        for name in ["bob", "carol", "dave", "root", "erin"] {
+            add_user_row(db, name).await;
+        }
+        crate::api::test_util::add_member(db, "rchat", "erin", 1, 0, 0).await;
+        exec(
+            db,
+            "UPDATE users SET display_name = 'Bobby' WHERE username = 'bob'",
+        )
+        .await;
+        exec(
+            db,
+            "UPDATE users SET is_site_admin = 1 WHERE username = 'root'",
+        )
+        .await;
+        for name in ["bob", "carol"] {
+            crate::api::test_util::add_member(db, "rchat", name, 0, 0, 0).await;
+        }
+        let chat = insert_id(db, "INSERT INTO channels(server, name, created_at) VALUES('rchat', 'chat', 0) RETURNING id").await;
+        let news = insert_id(db, "INSERT INTO channels(server, name, created_at, restrict_send) VALUES('rchat', 'news', 0, 1) RETURNING id").await;
+        let talk = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'talk', 'voice', 0) RETURNING id").await;
+        let root = insert_id(db, "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'carol', 'hi', 1 FROM channels WHERE name = 'chat' RETURNING id").await;
+        let dm = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('bob', 'carol') RETURNING id",
+        )
+        .await;
+        let read = state.read();
+        let typed = |user: &'static str, scope: String, on: bool| {
+            let read = read.clone();
+            async move { Typer::new().command(&read, user, scope, on).await }
+        };
+        let shown = |evs: Vec<WsEvent>| match evs.as_slice() {
+            [
+                WsEvent::Typing {
+                    server,
+                    channel_id,
+                    dm_id,
+                    dm_users,
+                    scope: _,
+                    username,
+                    display_name,
+                    until,
+                },
+            ] => Some((
+                server.clone(),
+                channel_id.or(*dm_id),
+                dm_users.clone(),
+                username.clone(),
+                display_name.clone(),
+                *until > 0,
+            )),
+            _ => None,
+        };
+        assert_eq!(
+            shown(typed("bob", format!("c{chat}"), true).await),
+            Some((
+                Some(s("rchat")),
+                Some(chat),
+                None,
+                s("bob"),
+                s("Bobby"),
+                true
+            ))
+        );
+        assert_eq!(
+            shown(typed("bob", format!("t{root}"), true).await),
+            Some((
+                Some(s("rchat")),
+                Some(chat),
+                None,
+                s("bob"),
+                s("Bobby"),
+                true
+            ))
+        );
+        assert_eq!(
+            shown(typed("carol", format!("d{dm}"), true).await),
+            Some((
+                None,
+                Some(dm),
+                Some(vec![s("bob"), s("carol")]),
+                s("carol"),
+                s("carol"),
+                true
+            ))
+        );
+        assert!(shown(typed("erin", format!("c{news}"), true).await).is_some());
+        for (user, scope) in [
+            ("carol", format!("c{news}")),
+            ("bob", format!("c{talk}")),
+            ("dave", format!("c{chat}")),
+            ("dave", format!("d{dm}")),
+            ("root", format!("c{chat}")),
+            ("bob", "x1".to_string()),
+            ("bob", "c".to_string()),
+            ("bob", "c-1".to_string()),
+            ("bob", "c999".to_string()),
+            ("bob", format!("c{chat}{}", "0".repeat(30))),
+        ] {
+            assert!(
+                typed(user, scope.clone(), true).await.is_empty(),
+                "{user} {scope}"
+            );
+        }
+        assert!(typed("bob", format!("c{chat}"), false).await.is_empty());
+
+        let mut typer = Typer::new();
+        let user = "bob";
+        let first = typer.command(db, user, format!("c{chat}"), true).await;
+        assert_eq!(first.len(), 1);
+        assert!(
+            typer
+                .command(db, user, format!("c{chat}"), true)
+                .await
+                .is_empty()
+        );
+        let moved = typer.command(db, user, format!("d{dm}"), true).await;
+        assert!(matches!(
+            moved.as_slice(),
+            [
+                WsEvent::Typing { scope: a, until: 0, .. },
+                WsEvent::Typing { scope: b, .. },
+            ] if *a == format!("c{chat}") && *b == format!("d{dm}")
+        ));
+        let stopped = typer.command(db, user, format!("d{dm}"), false).await;
+        assert!(matches!(
+            stopped.as_slice(),
+            [WsEvent::Typing { until: 0, .. }]
+        ));
+        assert!(
+            typer
+                .command(db, user, format!("d{dm}"), false)
+                .await
+                .is_empty()
+        );
+        assert!(typer.stop(user).is_none());
+        typer.bucket.tokens = 0.0;
+        assert!(
+            typer
+                .command(db, user, format!("d{dm}"), true)
+                .await
+                .is_empty()
+        );
+        typer.bucket.tokens = TYPING_BURST;
+        assert_eq!(
+            typer.command(db, user, format!("d{dm}"), true).await.len(),
+            1
+        );
+        typer.bucket.tokens = -TYPING_BURST;
+        let paced = typer.command(db, user, format!("d{dm}"), false).await;
+        assert!(matches!(
+            paced.as_slice(),
+            [WsEvent::Typing { until: 0, .. }]
+        ));
+        assert_eq!(
+            typer.command(db, user, format!("d{dm}"), true).await.len(),
+            0
+        );
+        typer.bucket.tokens = TYPING_BURST;
+        typer.command(db, user, format!("d{dm}"), true).await;
+        assert!(typer.bucket.tokens >= 0.0);
+        assert!(matches!(
+            typer.stop(user),
+            Some(WsEvent::Typing { until: 0, .. })
+        ));
+        let mut flood = Typer::new();
+        for i in 0..50 {
+            flood
+                .command(db, user, format!("c{}", chat + i + 100), true)
+                .await;
+        }
+        assert!(flood.bucket.tokens >= -TYPING_BURST);
+        let mut canon = Typer::new();
+        let first = canon.command(db, user, format!("c+{chat}"), true).await;
+        assert!(matches!(
+            first.as_slice(),
+            [WsEvent::Typing { scope, .. }] if *scope == format!("c{chat}")
+        ));
+        assert!(
+            canon
+                .command(db, user, format!("c0{chat}"), true)
+                .await
+                .is_empty()
+        );
+        let stop = canon.command(db, user, format!("c{chat}"), false).await;
+        assert!(matches!(
+            stop.as_slice(),
+            [WsEvent::Typing { until: 0, .. }]
+        ));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[test]
+    fn typing_skips_the_typer_and_strangers() {
+        let typing = |server: Option<&str>, dm_users: Option<Vec<String>>| WsEvent::Typing {
+            server: server.map(s),
+            channel_id: server.map(|_| 3),
+            dm_id: dm_users.as_ref().map(|_| 4),
+            dm_users,
+            scope: s("c3"),
+            username: s("bob"),
+            display_name: s("Bob"),
+            until: 9,
+        };
+        let channel = typing(Some("rchat"), None);
+        let dm = typing(None, Some(vec![s("bob"), s("carol")]));
+        let members = set(&["rchat"]);
+        let none = HashSet::new();
+        assert!(wants(&channel, Some("carol"), false, &members, &none));
+        assert!(wants(&channel, None, false, &none, &members));
+        assert!(!wants(&channel, Some("bob"), false, &members, &none));
+        assert!(!wants(&channel, Some("dave"), true, &none, &none));
+        assert!(wants(&dm, Some("carol"), false, &none, &none));
+        assert!(!wants(&dm, Some("bob"), false, &none, &none));
+        assert!(!wants(&dm, Some("dave"), true, &members, &none));
+        assert_eq!(event_channel(&channel), Some(("rchat", 3)));
+        assert_eq!(event_channel(&dm), None);
+        let wire = to_bus_json(&dm).expect("bus json");
+        assert!(matches!(
+            serde_json::from_str::<WsEvent>(&wire),
+            Ok(WsEvent::Typing { dm_users: Some(users), until: 9, .. }) if users.len() == 2
+        ));
+        assert_eq!(
+            crate::fanout::route(&dm),
+            crate::fanout::Route::To(vec![
+                crate::fanout::Target::User("bob"),
+                crate::fanout::Target::User("carol")
+            ])
+        );
     }
 
     async fn add_user_row(db: &Db, name: &str) {

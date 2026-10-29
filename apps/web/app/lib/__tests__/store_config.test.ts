@@ -154,14 +154,31 @@ describe('export never carries secrets', () => {
       expect(json.toLowerCase().includes(word.toLowerCase())).toBe(false)
     const decoded = await decodeConfig(text)
     expect(decoded.ok && Object.keys(decoded.doc).sort()).toEqual(
-      ['appearOffline', 'calls', 'emoji', 'layout', 'notify', 'streamer', 'theme', 'v'].sort()
+      [
+        'appearOffline',
+        'calls',
+        'emoji',
+        'layout',
+        'notify',
+        'streamer',
+        'theme',
+        'typing',
+        'v',
+      ].sort()
     )
   })
 
   test('a guest exports device and layout sections only', () => {
     useStore.setState({ me: null, guest: true, token: null, guestServers: ['rchat'] })
     const doc = buildConfig(configSourceOf(st()), ALL)
-    expect(Object.keys(doc).sort()).toEqual(['layout', 'notify', 'streamer', 'theme', 'v'])
+    expect(Object.keys(doc).sort()).toEqual([
+      'layout',
+      'notify',
+      'streamer',
+      'theme',
+      'typing',
+      'v',
+    ])
   })
 })
 

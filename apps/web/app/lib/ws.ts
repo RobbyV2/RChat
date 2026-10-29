@@ -1,5 +1,6 @@
 import { backoffDelay, nextAttempt } from './backoff'
 import type { VoiceMsg, WsEvent, WsStatus } from './types'
+import type { TypingMsg } from './typing'
 
 const secure = (protocol: string) => protocol === 'https:' || protocol === 'wss:'
 
@@ -108,6 +109,10 @@ export class WsClient {
     if (this.ws?.readyState !== WebSocket.OPEN) return false
     this.ws.send(JSON.stringify(msg))
     return true
+  }
+
+  sendTyping(msg: TypingMsg) {
+    this.send(msg)
   }
 
   private send(payload: unknown) {

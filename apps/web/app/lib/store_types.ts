@@ -45,6 +45,7 @@ import type {
   WsStatus,
 } from './types'
 import type { View, Nav } from './view'
+import type { TypingMap } from './typing'
 import type { SelfAudio } from './voice_layout'
 
 // A menu row. `submenu` opens a nested menu (a flyout on desktop, a sheet with Back on touch)
@@ -199,6 +200,8 @@ export interface RChatState {
   layout: Layout
   emoji: EmojiPrefs
   notifyPrefs: NotifyPrefs
+  typingOn: boolean
+  typing: TypingMap
   voice: VoiceSession | null
   call: CallSession | null
   callRoute: CallRoute
@@ -330,6 +333,9 @@ export interface RChatState {
   setDesktopNotify: (on: boolean) => void
   reloadNotify: () => void
   pruneNotify: () => void
+  setTypingOn: (on: boolean) => void
+  reloadTyping: () => void
+  noteTyping: (scope: string, active: boolean) => void
   sendForward: (key: string) => void
   openForward: (m: Message) => Promise<void>
   openMessage: (id: number, nav?: Nav) => Promise<void>

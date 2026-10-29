@@ -55,6 +55,20 @@ import {
   type NotifyPrefs,
 } from './notify'
 import { notifications } from './platform'
+import {
+  IDLE,
+  TYPING_TTL_MS,
+  nextExpiry as nextTypingExpiry,
+  nextTyping,
+  parseTyping,
+  pruneTypers,
+  stopTyping,
+  typingKey,
+  typingValue,
+  withTyper,
+  type TypingMsg,
+  type TypingOut,
+} from './typing'
 import { forgetGuestMedia } from './media_src'
 import {
   addNotice,
@@ -542,6 +556,59 @@ export const useStore = create<RChatState>()((set, get) => {
   const readNotify = (username: string | null) =>
     readScoped(notifyKey(username), parseNotify, EMPTY_NOTIFY)
 
+  const readTyping = (owner: string | null) => readScoped(typingKey(owner), parseTyping, true)
+
+  let outgoing: TypingOut = IDLE
+  let typingTimer: ReturnType<typeof setTimeout> | null = null
+
+  const sendTyping = (msgs: TypingMsg[]) => {
+    for (const msg of msgs) home.ws.sendTyping(msg)
+  }
+
+  const armTyping = () => {
+    if (typingTimer !== null) clearTimeout(typingTimer)
+    typingTimer = null
+    const next = nextTypingExpiry(get().typing)
+    if (next === null) return
+    typingTimer = setTimeout(
+      () => {
+        typingTimer = null
+        set(s => ({ typing: pruneTypers(s.typing, Date.now()) }))
+        armTyping()
+      },
+      Math.max(next - Date.now() + 50, 50)
+    )
+  }
+
+  const forgetTyping = (sendStop: boolean) => {
+    if (sendStop) sendTyping(stopTyping(outgoing))
+    outgoing = IDLE
+    if (typingTimer !== null) clearTimeout(typingTimer)
+    typingTimer = null
+    set({ typing: {} })
+  }
+
+  const saveTypingOn = (on: boolean) => {
+    const owner = notifyOwner()
+    if (owner === undefined) return
+    if (on !== get().typingOn) set({ typingOn: on })
+    writeLocal(home.scoped(typingKey(owner)), typingValue(on))
+    if (!on) forgetTyping(true)
+  }
+
+  const noteTyper = (scope: string, username: string, name: string, on: boolean) => {
+    const { typing } = get()
+    const next = withTyper(
+      typing,
+      scope,
+      username,
+      on ? { name, until: Date.now() + TYPING_TTL_MS } : null
+    )
+    if (next === typing) return
+    set({ typing: next })
+    armTyping()
+  }
+
   let expiryTimer: ReturnType<typeof setTimeout> | null = null
 
   // One timer, set for the next mute to end; it prunes and sets itself for the one after.
@@ -747,6 +814,7 @@ export const useStore = create<RChatState>()((set, get) => {
     }
     if (want.has('emoji') && doc.emoji && me) saveEmoji(doc.emoji)
     if (want.has('calls') && doc.calls && me) saveCallRoute(doc.calls)
+    if (want.has('typing') && doc.typing !== undefined) saveTypingOn(doc.typing)
     return failed.length ? `Couldn't apply: ${failed.join(', ')}` : null
   }
 
@@ -782,7 +850,7 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   const loadGuestLayout = () => {
-    set({ layout: readLayout(null) })
+    set({ layout: readLayout(null), typingOn: readTyping(null) })
     useNotify(readNotify(null))
     saveLayout(pruneLayout(get().layout, get().guestServers, null))
     notifySynced = true
@@ -820,6 +888,7 @@ export const useStore = create<RChatState>()((set, get) => {
             p2pCallFailed: {},
             forwardClip: readForward(fresh.username),
             notifyPrefs: readNotify(fresh.username),
+            typingOn: readTyping(fresh.username),
           }),
     })
     if (!same) {
@@ -1235,6 +1304,7 @@ export const useStore = create<RChatState>()((set, get) => {
     home.ws.onStatus = wsStatus => {
       set({ wsStatus })
       if (wsStatus !== 'green') {
+        forgetTyping(false)
         if (downSince === null) downSince = Date.now()
         if (get().voice || get().call) endRtc()
         return
@@ -2889,6 +2959,8 @@ export const useStore = create<RChatState>()((set, get) => {
     layout: emptyLayout,
     emoji: EMPTY_PREFS,
     notifyPrefs: EMPTY_NOTIFY,
+    typingOn: true,
+    typing: {},
     voice: null,
     call: null,
     callRoute: DEFAULT_ROUTE,
@@ -3147,6 +3219,7 @@ export const useStore = create<RChatState>()((set, get) => {
           .then(() => api.logout(token))
           .catch(() => {})
       home.ws.stop()
+      forgetTyping(false)
       rtc.leave()
       p2p.signOut()
       writeLocal(LS.token, null)
@@ -3187,6 +3260,8 @@ export const useStore = create<RChatState>()((set, get) => {
         callRoute: DEFAULT_ROUTE,
         p2pCallFailed: {},
         notifyPrefs: EMPTY_NOTIFY,
+        typingOn: true,
+        typing: {},
         view: null,
         invite: null,
         configLink: null,
@@ -3591,6 +3666,21 @@ export const useStore = create<RChatState>()((set, get) => {
     pruneNotify: () => {
       saveNotify(get().notifyPrefs)
       armExpiry()
+    },
+    setTypingOn: saveTypingOn,
+    reloadTyping: () => {
+      const owner = notifyOwner()
+      if (owner === undefined) return
+      const on = readTyping(owner)
+      if (on !== get().typingOn) set({ typingOn: on })
+      if (!on) forgetTyping(true)
+    },
+    noteTyping: (scope, active) => {
+      const { typingOn, me, guest } = get()
+      if (!typingOn || !me || guest) return
+      const { next, send } = nextTyping(outgoing, scope, active, Date.now())
+      outgoing = next
+      sendTyping(send)
     },
 
     sendForward: key => {
@@ -4506,6 +4596,8 @@ export const useStore = create<RChatState>()((set, get) => {
           }
           askP2p([m])
           readQuote(m)
+          const typedIn = rootId !== null ? threadKey(rootId) : messageKey(ev.channel_id, ev.dm_id)
+          if (typedIn) noteTyper(typedIn, m.author.username, '', false)
           if (ev.dm_id !== null && get().me) bumpDm(ev.dm_id)
           if (m.kind === 'call') return
           if (rootId === null) {
@@ -5315,6 +5407,12 @@ export const useStore = create<RChatState>()((set, get) => {
         case 'resync': {
           dropLinkCards()
           resync()
+          return
+        }
+        case 'typing': {
+          const { typingOn, me } = get()
+          if (!typingOn || ev.username === me?.username) return
+          noteTyper(ev.scope, ev.username, ev.display_name, ev.until > 0)
           return
         }
       }

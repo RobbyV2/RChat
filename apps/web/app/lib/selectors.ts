@@ -77,6 +77,7 @@ export const configSourceOf = (s: RChatState): ConfigSource => ({
   notify: s.me || s.guest ? s.notifyPrefs : null,
   emoji: s.me ? s.emoji : null,
   calls: s.me ? s.callRoute : null,
+  typing: s.me || s.guest ? s.typingOn : null,
 })
 
 export const railOrder = (s: RChatState) => railNames(serverNames(s), s.layout.servers)

@@ -95,6 +95,7 @@ export default function AppShell() {
       if (e.key?.startsWith('rchat_emoji:')) useStore.getState().reloadEmoji()
       if (e.key?.startsWith('rchat_forward:')) useStore.getState().reloadForward()
       if (e.key?.startsWith('rchat_notify:')) useStore.getState().reloadNotify()
+      if (e.key?.startsWith('rchat_typing:')) useStore.getState().reloadTyping()
     }
     const onWake = () => {
       if (document.visibilityState === 'visible') useStore.getState().pruneNotify()

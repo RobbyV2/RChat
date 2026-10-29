@@ -455,6 +455,22 @@ function StatusSection() {
   )
 }
 
+function ChatSection() {
+  const on = useStore(s => s.typingOn)
+  const setOn = useStore(s => s.setTypingOn)
+  const shown = useStore(s => s.me !== null || s.guest)
+  if (!shown) return null
+  return (
+    <section>
+      <p className={sectionCls}>Chat</p>
+      <SettingSwitch label="Typing indicators" value={on} onChange={setOn} />
+      <p className="mt-2 px-2 text-xs text-on-surface-variant">
+        Show when others are typing and let them see when you type. Off hides both.
+      </p>
+    </section>
+  )
+}
+
 function ConnectionSection() {
   const on = useStore(s => s.iceHelpers)
   const setOn = useStore(s => s.setIceHelpers)
@@ -518,6 +534,7 @@ function SettingsSection() {
       <AccountSection />
       <PasswordSection />
       <StatusSection />
+      <ChatSection />
       <ConnectionSection />
       <section>
         <p className={sectionCls}>Appearance</p>

@@ -837,7 +837,9 @@ impl ResolvedChannel {
         }
     }
 
-    pub async fn send_gate(&self, db: &Db) -> Result<(), ApiError> {
+    /// Whether the viewer may send here at all: a member with the send permission in a text
+    /// channel. Slow mode is not checked.
+    async fn send_rights(&self, db: &Db) -> Result<&User, ApiError> {
         let Some(user) = &self.server.user else {
             return Err(forbidden("Not a member"));
         };
@@ -851,6 +853,11 @@ impl ResolvedChannel {
         if !self.member_rights(db).await?.send {
             return Err(forbidden("No permission to send in this channel"));
         }
+        Ok(user)
+    }
+
+    pub async fn send_gate(&self, db: &Db) -> Result<(), ApiError> {
+        let user = self.send_rights(db).await?;
         if self.slowmode <= 0 {
             return Ok(());
         }
@@ -1273,6 +1280,67 @@ pub(crate) async fn ws_voice_viewable(db: &Db, server: &str, cid: i64, username:
 /// events or skip a subscription, never sent to anyone else.
 pub(crate) async fn ws_banned(db: &Db, server: &str, username: &str) -> sqlx::Result<bool> {
     is_banned(db, server, username).await
+}
+
+/// Where a typing indicator goes: a channel or thread (server and channel) or a DM (its two
+/// participants).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TypingPlace {
+    pub server: Option<String>,
+    pub channel_id: Option<i64>,
+    pub dm_id: Option<i64>,
+    pub dm_users: Option<Vec<String>>,
+    pub display_name: String,
+}
+
+/// `typing`: where `username` may show as typing in `scope` (`c{channel}`, `t{root}` or
+/// `d{dm}`), which is wherever they could send a message now (slow mode aside). `None` for
+/// anything else, including errors. Never answers a client.
+pub(crate) fn typing_scope(scope: &str) -> Option<(&str, i64)> {
+    let (kind, id) = scope.split_at_checked(1)?;
+    let id: i64 = id.parse().ok().filter(|id| *id > 0)?;
+    Some((kind, id))
+}
+
+pub(crate) async fn ws_typing_place(db: &Db, username: &str, scope: &str) -> Option<TypingPlace> {
+    let (kind, id) = typing_scope(scope)?;
+    let user = crate::db::get_user(db, username).await.ok()??;
+    let display_name = user.display_name.clone();
+    let channel = |channel: &ResolvedChannel| TypingPlace {
+        server: Some(channel.server.name().to_string()),
+        channel_id: Some(channel.id),
+        dm_id: None,
+        dm_users: None,
+        display_name: display_name.clone(),
+    };
+    match kind {
+        "c" => {
+            let resolved = resolve_channel(db, id, Some(&user), &Proof::none())
+                .await
+                .ok()?;
+            resolved.send_rights(db).await.ok()?;
+            Some(channel(&resolved))
+        }
+        "t" => {
+            let root = resolve_message(db, id, Some(&user), &Proof::none())
+                .await
+                .ok()?;
+            let resolved = root.thread_channel().ok()?;
+            resolved.send_rights(db).await.ok()?;
+            Some(channel(resolved))
+        }
+        "d" => {
+            let users = resolve_dm(db, id, &user).await.ok()?;
+            Some(TypingPlace {
+                server: None,
+                channel_id: None,
+                dm_id: Some(id),
+                dm_users: Some(users),
+                display_name,
+            })
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]

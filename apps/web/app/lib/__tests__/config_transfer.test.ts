@@ -48,6 +48,7 @@ const source = (over: Partial<ConfigSource> = {}): ConfigSource => {
     notify,
     emoji,
     calls: 'p2p',
+    typing: false,
     ...over,
   }
 }
@@ -302,7 +303,17 @@ describe('building', () => {
     const doc = { ...buildConfig(source(), ALL), identity: 'x' } as ConfigDoc
     const link = linkDoc(doc)
     expect(Object.keys(link).sort()).toEqual(
-      ['appearOffline', 'calls', 'emoji', 'layout', 'notify', 'streamer', 'theme', 'v'].sort()
+      [
+        'appearOffline',
+        'calls',
+        'emoji',
+        'layout',
+        'notify',
+        'streamer',
+        'theme',
+        'typing',
+        'v',
+      ].sort()
     )
   })
 })
@@ -325,6 +336,7 @@ describe('preview', () => {
       'notify',
       'emoji',
       'calls',
+      'typing',
     ])
     expect([by.theme.now, by.theme.next, by.theme.same]).toEqual(['Dark', 'Light', false])
     expect([by.streamer.now, by.streamer.next, by.streamer.same]).toEqual(['On', 'On', true])
@@ -334,6 +346,23 @@ describe('preview', () => {
     expect(by.emoji.next).toBe('2 frequent emoji, skin tone 3')
     expect([by.calls.next, by.calls.same]).toEqual(['Direct (P2P)', true])
     expect(by.notify.same).toBe(true)
+    expect([by.typing.now, by.typing.next, by.typing.same]).toEqual(['Off', 'Off', true])
+  })
+
+  test('typing indicators travel as a plain switch', async () => {
+    const doc = buildConfig(source({ typing: false }), new Set<SectionKey>(['typing']))
+    expect(doc).toEqual({ v: 1, typing: false })
+    expect(buildConfig(source({ typing: null }), ALL).typing).toBeUndefined()
+    const decoded = await decodeConfig(await encodeConfig(doc))
+    expect(decoded).toEqual({ ok: true, doc: { v: 1, typing: false } })
+    for (const typing of ['no', 0, null, {}]) {
+      const out = sanitizeConfig({ v: 1, typing })
+      expect(out.ok && out.doc.typing).toBeUndefined()
+    }
+    const rows = describeChanges({ v: 1, typing: true }, source({ typing: false }))
+    expect(rows).toEqual([
+      { key: 'typing', label: 'Typing indicators', now: 'Off', next: 'On', same: false },
+    ])
   })
 
   test('a logged-out device shows account sections as needing an account', () => {
