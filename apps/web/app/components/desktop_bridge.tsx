@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { home } from '../lib/instances'
 import { confirmGate, openDeepLink, type LinkEnv } from '../lib/deep_links'
 import { useStore } from '../lib/store'
-import { inShell } from '../lib/platform'
+import { inShell, mobileOs } from '../lib/platform'
 import { listen, shell } from '../lib/platform/desktop'
 import { Dialog, filledBtn, textBtn } from './ui'
 
@@ -18,6 +18,7 @@ const env = (confirmSwitch: LinkEnv['confirmSwitch']): LinkEnv => {
   const stored = (key: string) => localStorage.getItem(home.scoped(key)) !== null
   return {
     homeOrigin: home.origin,
+    appLinks: mobileOs() !== null,
     signedIn: stored('rchat_token') || stored('rchat_guest'),
     live: (me !== null || guest) && !window.location.pathname.startsWith('/login'),
     push: path => {

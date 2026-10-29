@@ -23,6 +23,7 @@ import { CallBanner } from '../components/voice_grid'
 import { NoticeStack } from '../components/notice_stack'
 import { InvitePage } from '../components/invite_card'
 import { ConfigLinkPage } from '../components/config_sync'
+import { useEscape } from '../components/ui'
 
 const bannerCls =
   'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2'
@@ -45,6 +46,11 @@ export default function AppShell() {
   const booted = useRef(false)
   const [leftOpen, setLeftOpen] = useState(false)
   const [rightOpen, setRightOpen] = useState(false)
+
+  useEscape(() => {
+    setLeftOpen(false)
+    setRightOpen(false)
+  }, 'panel')
 
   useEffect(() => {
     if (booted.current) return
@@ -163,7 +169,7 @@ export default function AppShell() {
           </div>
         )}
         {leftOpen && (
-          <div className="fixed inset-x-0 top-app z-40 flex h-app md:hidden">
+          <div data-drawer className="fixed inset-x-0 top-app z-40 flex h-app md:hidden">
             <div className="flex h-full bg-surface-container-lowest pl-[env(safe-area-inset-left)] shadow-elevation-3">
               <ServerRail />
               <ChannelSidebar />
@@ -172,7 +178,10 @@ export default function AppShell() {
           </div>
         )}
         {rightOpen && isChannel && (
-          <div className="fixed inset-x-0 top-app z-40 flex h-app justify-end lg:hidden">
+          <div
+            data-drawer
+            className="fixed inset-x-0 top-app z-40 flex h-app justify-end lg:hidden"
+          >
             <div className="flex-1 bg-scrim/50" onClick={() => setRightOpen(false)} />
             <div className="h-full bg-surface-container-low pr-[env(safe-area-inset-right)] shadow-elevation-3">
               <MemberSidebar />

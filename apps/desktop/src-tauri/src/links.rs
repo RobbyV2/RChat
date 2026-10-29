@@ -3,16 +3,20 @@ use url::Url;
 pub const SCHEME: &str = "rchat";
 const MAX_LEN: usize = 4096;
 
-// An `rchat://host/path` link the app may route, or None. Only the host and path are used later;
-// credentials, other schemes and oversized links are dropped here.
+// An `rchat://host/path` link (or, on phones only, an `https://host/path` app link) the app may route,
+// or None. Only the host and path are used later; credentials, other schemes and oversized links
+// are dropped here.
 pub fn deep_link(raw: &str) -> Option<String> {
     if raw.len() > MAX_LEN {
         return None;
     }
     let url = Url::parse(raw.trim()).ok()?;
     let host = url.host_str().unwrap_or_default();
+    let app_link = cfg!(mobile) && url.scheme() == "https";
     match (url.scheme(), host, url.username(), url.password()) {
-        (SCHEME, host, "", None) if !host.is_empty() => Some(url.into()),
+        (scheme, host, "", None) if (scheme == SCHEME || app_link) && !host.is_empty() => {
+            Some(url.into())
+        }
         _ => None,
     }
 }
@@ -56,8 +60,20 @@ mod tests {
     }
 
     #[test]
+    fn app_links_are_https_on_phones_only() {
+        let link = "https://chat.example.com/invite/x/";
+        if cfg!(mobile) {
+            assert_eq!(deep_link(link).as_deref(), Some(link));
+            assert_eq!(deep_link("https://me:pw@chat.example.com/"), None);
+        } else {
+            assert_eq!(deep_link(link), None);
+        }
+        assert_eq!(deep_link("http://chat.example.com/invite/x/"), None);
+    }
+
+    #[test]
     fn deep_links_reject_other_shapes() {
-        assert_eq!(deep_link("https://chat.example.com/invite/x/"), None);
+        assert_eq!(deep_link("ftp://chat.example.com/invite/x/"), None);
         assert_eq!(deep_link("rchat:invite"), None);
         assert_eq!(deep_link("rchat:///invite/x/"), None);
         assert_eq!(deep_link("rchat://me:pw@chat.example.com/"), None);

@@ -87,7 +87,7 @@ export function DesktopSection() {
   const [autostart, setAutostart] = useState(false)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
-    if (!inShell()) return
+    if (!desktopInfo() || !inShell()) return
     void shell.settings().then(setSettings, e => setError(shellError(e)))
     void shell.autostart().then(setAutostart, () => {})
   }, [])

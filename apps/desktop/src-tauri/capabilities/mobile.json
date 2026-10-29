@@ -1,0 +1,26 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile",
+  "description": "What the bundled app may call in the main window on phones and tablets.",
+  "windows": ["main"],
+  "platforms": ["android", "iOS"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:app:allow-register-listener",
+    "core:app:allow-remove-listener",
+    "core:app:allow-exit",
+    "allow-notify",
+    "allow-notify-permission",
+    "allow-notify-request",
+    "allow-set-badge",
+    "allow-copy-text",
+    "allow-save-begin",
+    "allow-save-chunk",
+    "allow-save-end",
+    "allow-open-text",
+    "allow-open-external",
+    "allow-take-deep-links",
+    "allow-share-text"
+  ]
+}

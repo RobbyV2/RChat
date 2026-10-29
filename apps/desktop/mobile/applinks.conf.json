@@ -1,0 +1,18 @@
+{
+  "plugins": {
+    "deep-link": {
+      "mobile": [
+        {
+          "scheme": ["rchat"],
+          "appLink": false
+        },
+        {
+          "scheme": ["https"],
+          "host": "chat.example.com",
+          "pathPrefix": ["/invite/", "/s/", "/dm/", "/config/"],
+          "appLink": true
+        }
+      ]
+    }
+  }
+}

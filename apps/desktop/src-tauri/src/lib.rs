@@ -1,3 +1,4 @@
+#[cfg(desktop)]
 mod badge;
 mod files;
 mod links;
@@ -8,31 +9,26 @@ mod smoke;
 use settings::Settings;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
-use tauri::image::Image;
 use tauri::ipc::{InvokeBody, Request};
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::{NewWindowResponse, PageLoadEvent};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_deep_link::DeepLinkExt;
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, FilePath};
 use tauri_plugin_notification::{NotificationExt, PermissionState};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
 const MAIN: &str = "main";
-const NAME: &str = "RChat";
 const LINKS_MAX: usize = 20;
-const UPDATER_PLACEHOLDER: &str = "RCHAT_UPDATER_PUBKEY_PLACEHOLDER";
-const TRAY_ICON: &[u8] = include_bytes!("../icons/64x64.png");
 
 struct Shell {
     dir: PathBuf,
     settings: Mutex<Settings>,
     links: Mutex<Vec<String>>,
-    tray: Mutex<Option<TrayIcon>>,
     saves: files::Saves,
+    #[cfg(desktop)]
+    tray: Mutex<Option<tauri::tray::TrayIcon>>,
     #[cfg(desktop)]
     update: Mutex<Option<tauri_plugin_updater::Update>>,
 }
@@ -45,14 +41,14 @@ impl Shell {
     fn settings(&self) -> Settings {
         *lock(&self.settings)
     }
-
-    fn has_tray(&self) -> bool {
-        lock(&self.tray).is_some()
-    }
 }
 
 fn os() -> &'static str {
-    if cfg!(target_os = "macos") {
+    if cfg!(target_os = "android") {
+        "android"
+    } else if cfg!(target_os = "ios") {
+        "ios"
+    } else if cfg!(target_os = "macos") {
         "macos"
     } else if cfg!(windows) {
         "windows"
@@ -61,7 +57,8 @@ fn os() -> &'static str {
     }
 }
 
-// Runs before the page's own scripts, so the page can pick its window chrome before it renders.
+// Runs before the page's own scripts, so the page can pick its window chrome (or none, on phones)
+// before it renders.
 fn init_script(version: &str) -> String {
     let info = serde_json::json!({ "os": os(), "version": version });
     format!("Object.defineProperty(window,'__RCHAT_DESKTOP__',{{value:Object.freeze({info})}});")
@@ -73,18 +70,10 @@ fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
 
 fn show_main(app: &AppHandle) {
     if let Some(w) = main_window(app) {
+        #[cfg(desktop)]
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
-    }
-}
-
-fn toggle_main(app: &AppHandle) {
-    match main_window(app) {
-        Some(w) if w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false) => {
-            let _ = w.hide();
-        }
-        _ => show_main(app),
     }
 }
 
@@ -115,56 +104,6 @@ fn push_links(app: &AppHandle, urls: impl IntoIterator<Item = String>) {
     let _ = app.emit_to(MAIN, "deep-link", ());
 }
 
-fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
-    let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
-    let hide = MenuItem::with_id(app, "hide", "Hide", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
-    TrayIconBuilder::with_id(MAIN)
-        .icon(Image::from_bytes(TRAY_ICON)?)
-        .tooltip(NAME)
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => show_main(app),
-            "hide" => {
-                if let Some(w) = main_window(app) {
-                    let _ = w.hide();
-                }
-            }
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                toggle_main(tray.app_handle());
-            }
-        })
-        .build(app)
-}
-
-// Linux trays need libayatana-appindicator at runtime and panic without it; the app then runs
-// without a tray (and close-to-tray turns into a plain close).
-fn try_tray(app: &AppHandle) -> Option<TrayIcon> {
-    let app = app.clone();
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || build_tray(&app))) {
-        Ok(Ok(tray)) => Some(tray),
-        Ok(Err(e)) => {
-            eprintln!("tray unavailable: {e}");
-            None
-        }
-        Err(_) => {
-            eprintln!("tray unavailable: no appindicator library");
-            None
-        }
-    }
-}
-
 fn plain(e: impl std::fmt::Display, text: &str) -> String {
     eprintln!("{text}: {e}");
     text.to_string()
@@ -181,7 +120,9 @@ fn set_desktop_settings(shell: State<'_, Shell>, settings: Settings) -> Result<(
     settings::save(&shell.dir, &settings).map_err(|e| plain(e, "Could not save settings"))
 }
 
-#[tauri::command]
+// Commands that reach a mobile plugin run off the main thread there, as the plugins' own do.
+#[cfg_attr(desktop, tauri::command)]
+#[cfg_attr(mobile, tauri::command(async))]
 fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
     app.notification()
         .builder()
@@ -199,7 +140,8 @@ fn permission_name(state: PermissionState) -> &'static str {
     }
 }
 
-#[tauri::command]
+#[cfg_attr(desktop, tauri::command)]
+#[cfg_attr(mobile, tauri::command(async))]
 fn notify_permission(app: AppHandle) -> Result<&'static str, String> {
     app.notification()
         .permission_state()
@@ -207,7 +149,8 @@ fn notify_permission(app: AppHandle) -> Result<&'static str, String> {
         .map_err(|e| plain(e, "Could not check notifications"))
 }
 
-#[tauri::command]
+#[cfg_attr(desktop, tauri::command)]
+#[cfg_attr(mobile, tauri::command(async))]
 fn notify_request(app: AppHandle) -> Result<&'static str, String> {
     app.notification()
         .request_permission()
@@ -215,31 +158,17 @@ fn notify_request(app: AppHandle) -> Result<&'static str, String> {
         .map_err(|e| plain(e, "Could not ask for notifications"))
 }
 
+// Phones show the count in the page title only; the systems keep their own app badges.
 #[tauri::command]
-fn set_badge(app: AppHandle, shell: State<'_, Shell>, count: u32) {
-    if let Some(tray) = lock(&shell.tray).as_ref() {
-        let _ = tray.set_tooltip(Some(badge::tooltip(NAME, count)));
-        if let Ok(base) = Image::from_bytes(TRAY_ICON) {
-            let icon = if count > 0 {
-                Image::new_owned(
-                    badge::with_dot(base.rgba(), base.width(), base.height()),
-                    base.width(),
-                    base.height(),
-                )
-            } else {
-                base
-            };
-            let _ = tray.set_icon(Some(icon));
-        }
-    }
-    let Some(w) = main_window(&app) else { return };
-    #[cfg(windows)]
-    let _ = w.set_overlay_icon((count > 0).then(|| Image::new_owned(badge::dot(16), 16, 16)));
-    #[cfg(not(windows))]
-    let _ = w.set_badge_count((count > 0).then_some(i64::from(count)));
+fn set_badge(app: AppHandle, count: u32) {
+    #[cfg(desktop)]
+    desktop::show_badge(&app, count);
+    #[cfg(mobile)]
+    let _ = (app, count);
 }
 
-#[tauri::command]
+#[cfg_attr(desktop, tauri::command)]
+#[cfg_attr(mobile, tauri::command(async))]
 fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
     app.clipboard()
         .write_text(text)
@@ -258,15 +187,52 @@ async fn save_begin(
     #[cfg(not(feature = "smoke"))]
     let preset = None;
     let picked = preset.or_else(|| app.dialog().file().set_file_name(name).blocking_save_file());
-    let Some(path) = picked else { return Ok(None) };
-    let path = path
-        .into_path()
-        .map_err(|e| plain(e, "Could not save the file"))?;
-    let id = shell
-        .saves
-        .start(path)
-        .map_err(|e| plain(e, "Could not save the file"))?;
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let id = start_save(&app, &shell, picked).map_err(|e| plain(e, "Could not save the file"))?;
     Ok(Some(id))
+}
+
+// On computers the bytes go to a temp file that replaces the chosen one at the end.
+#[cfg(desktop)]
+fn start_save(_app: &AppHandle, shell: &Shell, picked: FilePath) -> Result<u32, String> {
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    shell.saves.start(path).map_err(|e| e.to_string())
+}
+
+// Phones hand out a document (an Android content URI or an iOS file URL) that only the system
+// can open, so the bytes go straight into it.
+#[cfg(mobile)]
+fn start_save(app: &AppHandle, shell: &Shell, picked: FilePath) -> Result<u32, String> {
+    use tauri_plugin_fs::{FsExt, OpenOptions};
+    let mut opts = OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    let file = app.fs().open(picked, opts).map_err(|e| e.to_string())?;
+    Ok(shell.saves.start_direct(file))
+}
+
+#[cfg(desktop)]
+fn read_picked(
+    _app: &AppHandle,
+    picked: FilePath,
+    max_bytes: u64,
+) -> Result<Option<String>, String> {
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    Ok(files::read_text(&path, max_bytes))
+}
+
+#[cfg(mobile)]
+fn read_picked(
+    app: &AppHandle,
+    picked: FilePath,
+    max_bytes: u64,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_fs::{FsExt, OpenOptions};
+    let mut opts = OpenOptions::new();
+    opts.read(true);
+    let file = app.fs().open(picked, opts).map_err(|e| e.to_string())?;
+    Ok(files::read_limited(file, max_bytes))
 }
 
 // Async so writing a large piece does not hold up the main thread.
@@ -317,13 +283,11 @@ async fn open_text(
     let Some(picked) = dialog.blocking_pick_file() else {
         return Ok(None);
     };
-    let path = picked
-        .into_path()
-        .map_err(|e| plain(e, "Could not open the file"))?;
-    Ok(files::read_text(&path, max_bytes))
+    read_picked(&app, picked, max_bytes).map_err(|e| plain(e, "Could not open the file"))
 }
 
-#[tauri::command]
+#[cfg_attr(desktop, tauri::command)]
+#[cfg_attr(mobile, tauri::command(async))]
 fn open_external(app: AppHandle, url: String) -> Result<(), String> {
     let url = Url::parse(&url).map_err(|_| "Not a link")?;
     if !links::is_external(&url) {
@@ -339,12 +303,143 @@ fn take_deep_links(shell: State<'_, Shell>) -> Vec<String> {
     std::mem::take(&mut *lock(&shell.links))
 }
 
+// The system share sheet; true when shared, false when the user closed it. Phones only.
+#[tauri::command]
+async fn share_text(app: AppHandle, title: Option<String>, text: String) -> Result<bool, String> {
+    #[cfg(mobile)]
+    {
+        use tauri_plugin_rchat_share::ShareExt;
+        app.share()
+            .text(title.as_deref(), &text)
+            .map_err(|e| plain(e, "Could not share"))
+    }
+    #[cfg(desktop)]
+    {
+        let _ = (app, title, text);
+        Err("Sharing is not available here".into())
+    }
+}
+
 #[cfg(desktop)]
 mod desktop {
     use super::*;
     use serde::Serialize;
+    use tauri::image::Image;
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
     use tauri_plugin_autostart::ManagerExt;
     use tauri_plugin_updater::UpdaterExt;
+
+    const NAME: &str = "RChat";
+    const UPDATER_PLACEHOLDER: &str = "RCHAT_UPDATER_PUBKEY_PLACEHOLDER";
+    const TRAY_ICON: &[u8] = include_bytes!("../icons/64x64.png");
+
+    fn has_tray(app: &AppHandle) -> bool {
+        lock(&app.state::<Shell>().tray).is_some()
+    }
+
+    fn toggle_main(app: &AppHandle) {
+        match main_window(app) {
+            Some(w) if w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false) => {
+                let _ = w.hide();
+            }
+            _ => show_main(app),
+        }
+    }
+
+    fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
+        let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+        let hide = MenuItem::with_id(app, "hide", "Hide", true, None::<&str>)?;
+        let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+        let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
+        TrayIconBuilder::with_id(MAIN)
+            .icon(Image::from_bytes(TRAY_ICON)?)
+            .tooltip(NAME)
+            .menu(&menu)
+            .show_menu_on_left_click(false)
+            .on_menu_event(|app, event| match event.id().as_ref() {
+                "show" => show_main(app),
+                "hide" => {
+                    if let Some(w) = main_window(app) {
+                        let _ = w.hide();
+                    }
+                }
+                "quit" => app.exit(0),
+                _ => {}
+            })
+            .on_tray_icon_event(|tray, event| {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } = event
+                {
+                    toggle_main(tray.app_handle());
+                }
+            })
+            .build(app)
+    }
+
+    // Linux trays need libayatana-appindicator at runtime and panic without it; the app then runs
+    // without a tray (and close-to-tray turns into a plain close).
+    fn try_tray(app: &AppHandle) -> Option<TrayIcon> {
+        let app = app.clone();
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || build_tray(&app))) {
+            Ok(Ok(tray)) => Some(tray),
+            Ok(Err(e)) => {
+                eprintln!("tray unavailable: {e}");
+                None
+            }
+            Err(_) => {
+                eprintln!("tray unavailable: no appindicator library");
+                None
+            }
+        }
+    }
+
+    // Puts up the tray; true when there is one.
+    pub fn start_tray(app: &AppHandle) -> bool {
+        let tray = try_tray(app);
+        let ok = tray.is_some();
+        *lock(&app.state::<Shell>().tray) = tray;
+        ok
+    }
+
+    // Close to tray: hides the main window instead of closing it when the user asked for that.
+    pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event
+            && window.label() == MAIN
+        {
+            let app = window.app_handle();
+            if app.state::<Shell>().settings().close_to_tray && has_tray(app) {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        }
+    }
+
+    pub fn show_badge(app: &AppHandle, count: u32) {
+        if let Some(tray) = lock(&app.state::<Shell>().tray).as_ref() {
+            let _ = tray.set_tooltip(Some(badge::tooltip(NAME, count)));
+            if let Ok(base) = Image::from_bytes(TRAY_ICON) {
+                let icon = if count > 0 {
+                    Image::new_owned(
+                        badge::with_dot(base.rgba(), base.width(), base.height()),
+                        base.width(),
+                        base.height(),
+                    )
+                } else {
+                    base
+                };
+                let _ = tray.set_icon(Some(icon));
+            }
+        }
+        let Some(w) = main_window(app) else { return };
+        #[cfg(windows)]
+        let _ = w.set_overlay_icon((count > 0).then(|| Image::new_owned(badge::dot(16), 16, 16)));
+        #[cfg(not(windows))]
+        let _ = w.set_badge_count((count > 0).then_some(i64::from(count)));
+    }
 
     #[derive(Serialize)]
     pub struct Found {
@@ -499,6 +594,10 @@ pub fn run() {
                 Some(vec!["--hidden"]),
             ))
     };
+    #[cfg(mobile)]
+    let builder = builder
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_rchat_share::init());
     builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
@@ -519,6 +618,7 @@ pub fn run() {
             open_text,
             open_external,
             take_deep_links,
+            share_text,
             #[cfg(desktop)]
             desktop::autostart,
             #[cfg(desktop)]
@@ -536,8 +636,9 @@ pub fn run() {
                 dir,
                 settings: Mutex::new(loaded),
                 links: Mutex::new(Vec::new()),
-                tray: Mutex::new(None),
                 saves: files::Saves::default(),
+                #[cfg(desktop)]
+                tray: Mutex::new(None),
                 #[cfg(desktop)]
                 update: Mutex::new(None),
             });
@@ -545,11 +646,11 @@ pub fn run() {
             if cfg!(dev) || std::env::var_os("APPIMAGE").is_some() {
                 let _ = app.deep_link().register_all();
             }
-            let tray = try_tray(&handle);
-            let tray_ok = tray.is_some();
-            *lock(&app.state::<Shell>().tray) = tray;
+            #[cfg(desktop)]
+            let hidden = desktop::start_tray(&handle) && std::env::args().any(|a| a == "--hidden");
+            #[cfg(mobile)]
+            let hidden = false;
             let window = create_main(&handle)?;
-            let hidden = tray_ok && std::env::args().any(|a| a == "--hidden");
             if !hidden {
                 window.show()?;
             }
@@ -567,15 +668,10 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event
-                && window.label() == MAIN
-            {
-                let shell = window.state::<Shell>();
-                if shell.settings().close_to_tray && shell.has_tray() {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
-            }
+            #[cfg(desktop)]
+            desktop::on_window_event(window, event);
+            #[cfg(mobile)]
+            let _ = (window, event);
         })
         .build(tauri::generate_context!())
         .expect("failed to build the app")

@@ -2,19 +2,32 @@ import { normalizeOrigin } from './instances'
 import { safeNext } from './invite'
 
 // `rchat://chat.example.com/invite/lobby/` names the page `/invite/lobby/` on that instance. The
-// host is read like a typed instance address, so loopback hosts use http and others https.
+// host is read like a typed instance address, so loopback hosts use http and others https. The
+// mobile app can also be opened by `https://` app links, which name their origin exactly; other
+// platforms refuse them.
 export type LinkTarget =
   { kind: 'home'; path: string } | { kind: 'other'; origin: string; path: string; url: string }
 
-export const deepLinkTarget = (raw: string, homeOrigin: string): LinkTarget | null => {
+export const deepLinkTarget = (
+  raw: string,
+  homeOrigin: string,
+  appLinks = false
+): LinkTarget | null => {
   let url: URL
   try {
     url = new URL(raw.trim())
   } catch {
     return null
   }
-  if (url.protocol !== 'rchat:' || url.username || url.password || !url.host) return null
-  const origin = normalizeOrigin(url.host)
+  const scheme = url.protocol
+  if (
+    (scheme !== 'rchat:' && !(appLinks && scheme === 'https:')) ||
+    url.username ||
+    url.password ||
+    !url.host
+  )
+    return null
+  const origin = scheme === 'https:' ? url.origin : normalizeOrigin(url.host)
   const path = safeNext(`${url.pathname || '/'}${url.search}${url.hash}`)
   if (!origin || !path) return null
   return origin === homeOrigin
@@ -24,6 +37,8 @@ export const deepLinkTarget = (raw: string, homeOrigin: string): LinkTarget | nu
 
 export interface LinkEnv {
   homeOrigin: string
+  // `https://` app links are accepted (mobile only).
+  appLinks: boolean
   // Signed in or a guest on the current instance.
   signedIn: boolean
   // The chat itself is on screen and follows URL changes.
@@ -41,7 +56,7 @@ export interface LinkEnv {
 // nobody is signed in yet and the user agrees, so a web page can't quietly point the app at
 // another server; otherwise it opens in the browser, since one window holds one sign-in.
 export const openDeepLink = async (raw: string, env: LinkEnv) => {
-  const target = deepLinkTarget(raw, env.homeOrigin)
+  const target = deepLinkTarget(raw, env.homeOrigin, env.appLinks)
   if (!target) return env.fail("That link can't be opened here")
   if (target.kind === 'home') return env.live ? env.push(target.path) : env.load(target.path)
   if (env.signedIn) return env.openOutside(target.url)

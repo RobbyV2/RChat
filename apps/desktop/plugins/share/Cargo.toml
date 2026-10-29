@@ -1,0 +1,14 @@
+[package]
+name = "tauri-plugin-rchat-share"
+version = "0.1.0"
+edition = "2024"
+description = "System share sheet for the RChat mobile app"
+publish = false
+links = "tauri-plugin-rchat-share"
+
+[dependencies]
+tauri = "2.12"
+serde = { version = "1", features = ["derive"] }
+
+[build-dependencies]
+tauri-plugin = { version = "2.7", features = ["build"] }

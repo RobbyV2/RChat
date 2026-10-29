@@ -110,7 +110,7 @@ Open http://localhost:3000. The first account you register is the site admin. No
 | -------------- | ------------------------------------------------------ |
 | `apps/web`     | The Next.js client (a Bun workspace).                  |
 | `apps/server`  | The Rust server (a Cargo workspace member).            |
-| `apps/desktop` | The Tauri desktop app (Windows, macOS, Linux).         |
+| `apps/desktop` | The Tauri app (Windows, macOS, Linux, Android, iOS).   |
 | `crates/wasm`  | The WASM module for the client.                        |
 | `assets`       | Logos, fonts and the bundled STUN list.                |
 | `deploy`       | Compose, Kubernetes and nginx files.                   |
@@ -201,6 +201,30 @@ Updates come from GitHub Releases. Stable reads `latest.json` from the latest re
 1. Make a key pair once with `cargo tauri signer generate -w ~/.tauri/rchat.key`. Never commit the private key.
 2. Put the public key in `apps/desktop/src-tauri/tauri.conf.json` under `plugins.updater.pubkey`.
 3. Give the build the private key and its password in `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, then run `just src desktop-build --config tauri.release.conf.json` to write the signed update files.
+
+## Mobile apps
+
+The Android and iOS apps come from the same Tauri shell as the desktop app. They bundle the static client and add system notifications, the share sheet, deep links and the Android back button. Push notifications are not part of the apps; notices arrive while the app is running.
+
+Android needs the [Android SDK and NDK](https://tauri.app/start/prerequisites/#android) with `ANDROID_HOME` and `NDK_HOME` set. iOS needs macOS with Xcode, CocoaPods and xcodegen. Add the Rust targets once:
+
+```bash
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+```
+
+The native projects in `apps/desktop/src-tauri/gen` are generated, not committed. `mobile-init` creates one and applies the files in `apps/desktop/mobile`: icons, splash, call permissions and the Android window insets. Run it again after changing them:
+
+```bash
+just src mobile-init android
+just src android-build
+just src mobile-init ios
+just src ios-build
+```
+
+The `mobile` workflow builds a debug APK and an unsigned iOS build on every change to the apps and keeps them as run artifacts.
+
+`rchat://` links open the app like on the desktop. To open `https://` links to your own instance in the app, replace `chat.example.com` in `apps/desktop/mobile/applinks.conf.json`, pass it with `--config` when you build, and serve the two files in `apps/desktop/mobile/well-known` from `https://<your instance>/.well-known/` with your signing certificate fingerprint and Apple team ID filled in.
 
 ## Scaling
 

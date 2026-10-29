@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { desktopInfo, inShell, shellOf, type Invoke } from '../platform/desktop'
+import {
+  desktopInfo,
+  inShell,
+  mobileOs,
+  shellInfo,
+  shellOf,
+  type Invoke,
+} from '../platform/desktop'
+import { mobileSharing, onBack, pressEscape, shareText, type BackEnv } from '../platform/mobile'
 import { desktopNotifier } from '../platform/desktop_notifications'
 import { CHUNK_BYTES, SAVE_FAILED, desktopSharing, saveTo } from '../platform/desktop_sharing'
 import { confirmGate, deepLinkTarget, openDeepLink, type LinkEnv } from '../deep_links'
@@ -39,6 +47,17 @@ describe('desktop detection', () => {
     expect(desktopInfo({ __RCHAT_DESKTOP__: { os: 'beos', version: '1' } })).toBeNull()
     expect(desktopInfo({ __RCHAT_DESKTOP__: { os: 'macos' } })).toBeNull()
     expect(desktopInfo({ __RCHAT_DESKTOP__: 'windows' })).toBeNull()
+  })
+
+  test('mobile shells are shells but not desktops', () => {
+    const android = { __RCHAT_DESKTOP__: { os: 'android', version: '1.0.0' } }
+    expect(shellInfo(android)).toEqual({ os: 'android', version: '1.0.0' })
+    expect(desktopInfo(android)).toBeNull()
+    expect(mobileOs(android)).toBe('android')
+    expect(mobileOs({ __RCHAT_DESKTOP__: { os: 'ios', version: '1' } })).toBe('ios')
+    expect(mobileOs({ __RCHAT_DESKTOP__: { os: 'linux', version: '1' } })).toBeNull()
+    expect(shellInfo({ __RCHAT_DESKTOP__: { os: 'linux', version: '1' } })?.os).toBe('linux')
+    expect(inShell({ ...android, __TAURI_INTERNALS__: {} })).toBe(true)
   })
 
   test('native calls need the real shell, not just the flag', () => {
@@ -228,8 +247,29 @@ describe('deep links', () => {
     })
   })
 
-  test('anything else is refused', () => {
+  test('https app links name their origin exactly', () => {
+    expect(deepLinkTarget('https://chat.example.com/invite/x/#password=pw', home, true)).toEqual({
+      kind: 'home',
+      path: '/invite/x/#password=pw',
+    })
+    expect(deepLinkTarget('https://other.example:8443/s/main/2/', home, true)).toEqual({
+      kind: 'other',
+      origin: 'https://other.example:8443',
+      path: '/s/main/2/',
+      url: 'https://other.example:8443/s/main/2/',
+    })
+  })
+
+  test('https app links are refused outside the mobile app', () => {
     expect(deepLinkTarget('https://chat.example.com/invite/x/', home)).toBeNull()
+    expect(deepLinkTarget('https://chat.example.com/invite/x/', home, false)).toBeNull()
+    expect(deepLinkTarget('rchat://chat.example.com/invite/x/', home, false)?.kind).toBe('home')
+  })
+
+  test('anything else is refused', () => {
+    expect(deepLinkTarget('http://chat.example.com/invite/x/', home, true)).toBeNull()
+    expect(deepLinkTarget('https://user:pw@chat.example.com/', home, true)).toBeNull()
+    expect(deepLinkTarget('https://chat.example.com//evil.example/', home, true)).toBeNull()
     expect(deepLinkTarget('rchat://user:pw@chat.example.com/', home)).toBeNull()
     expect(deepLinkTarget('rchat:///invite/x/', home)).toBeNull()
     expect(deepLinkTarget('rchat://chat.example.com//evil.example/', home)).toBeNull()
@@ -240,6 +280,7 @@ describe('deep links', () => {
     const log: string[] = []
     const env: LinkEnv = {
       homeOrigin: home,
+      appLinks: false,
       signedIn: true,
       live: true,
       push: p => void log.push(`push ${p}`),
@@ -343,5 +384,109 @@ describe('confirm gate', () => {
     expect(shown).toEqual(['a.example', 'c.example'])
     answer(false)
     expect(await third).toBe(false)
+  })
+})
+
+describe('mobile sharing', () => {
+  test('share text puts the link on its own line', () => {
+    expect(shareText({ title: 'Config', url: 'https://a.example/config/x/' })).toBe(
+      'https://a.example/config/x/'
+    )
+    expect(shareText({ text: 'Join us', url: 'https://a.example/' })).toBe(
+      'Join us\nhttps://a.example/'
+    )
+    expect(shareText({ title: 'Only a title' })).toBe('')
+  })
+
+  test('the share sheet reports shared, cancelled and failed', async () => {
+    let answer: unknown = true
+    const { call, calls } = fakeInvoke({
+      share_text: () => {
+        if (answer instanceof Error) throw answer
+        return answer
+      },
+    })
+    const s = mobileSharing(call, () => {})
+    expect(s.canShare()).toBe(true)
+    expect(await s.share({ title: 'Config', url: 'https://a.example/c/' })).toBe('shared')
+    answer = false
+    expect(await s.share({ url: 'https://a.example/c/' })).toBe('cancelled')
+    answer = new Error('no activity')
+    expect(await s.share({ url: 'https://a.example/c/' })).toBe('failed')
+    expect(await s.share({ title: 'Nothing to share' })).toBe('failed')
+    expect(calls.map(c => [c.cmd, c.args])).toEqual([
+      ['share_text', { title: 'Config', text: 'https://a.example/c/' }],
+      ['share_text', { title: null, text: 'https://a.example/c/' }],
+      ['share_text', { title: null, text: 'https://a.example/c/' }],
+    ])
+  })
+
+  test('copy and files use the shell commands', async () => {
+    const { call, calls } = fakeInvoke({ copy_text: () => null })
+    const s = mobileSharing(call, () => {})
+    expect(await s.copyText('hi')).toBe(true)
+    expect(calls[0]).toEqual({ cmd: 'copy_text', args: { text: 'hi' }, headers: undefined })
+  })
+})
+
+describe('android back button', () => {
+  const backEnv = (layers: string[], over: Partial<BackEnv> = {}) => {
+    const log: string[] = []
+    const env: BackEnv = {
+      open: () => layers.join(','),
+      escape: () => {
+        log.push('escape')
+        layers.pop()
+      },
+      settle: async () => {},
+      canGoBack: true,
+      back: () => void log.push('back'),
+      exit: () => void log.push('exit'),
+      ...over,
+    }
+    return { env, log }
+  }
+
+  test('closes the top layer before going back', async () => {
+    const { env, log } = backEnv(['drawer', 'menu'])
+    await onBack(env)
+    expect(log).toEqual(['escape'])
+  })
+
+  test('goes back, then leaves at the start of the history', async () => {
+    const first = backEnv([])
+    await onBack(first.env)
+    expect(first.log).toEqual(['back'])
+    const last = backEnv([], { canGoBack: false })
+    await onBack(last.env)
+    expect(last.log).toEqual(['exit'])
+  })
+
+  test('a layer that ignores Escape does not trap the button', async () => {
+    const { env, log } = backEnv(['stuck'], { escape: () => void log.push('escape') })
+    await onBack(env)
+    expect(log).toEqual(['escape', 'back'])
+  })
+})
+
+describe('synthetic escape', () => {
+  test('goes to the window, not the focused element', () => {
+    const real = globalThis.KeyboardEvent
+    globalThis.KeyboardEvent = class extends Event {
+      key: string
+      constructor(type: string, init: { key?: string; bubbles?: boolean; cancelable?: boolean }) {
+        super(type, init)
+        this.key = init.key ?? ''
+      }
+    } as unknown as typeof KeyboardEvent
+    try {
+      const win = new EventTarget()
+      const seen: string[] = []
+      win.addEventListener('keydown', e => void seen.push((e as KeyboardEvent).key))
+      pressEscape(win)
+      expect(seen).toEqual(['Escape'])
+    } finally {
+      globalThis.KeyboardEvent = real
+    }
   })
 })

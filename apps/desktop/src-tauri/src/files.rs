@@ -42,8 +42,13 @@ pub fn file_name(raw: &str) -> String {
 }
 
 // Reads a picked text file, or None when it is larger than `max` bytes or not UTF-8.
+#[cfg_attr(mobile, allow(dead_code))]
 pub fn read_text(path: &Path, max: u64) -> Option<String> {
-    let file = File::open(path).ok()?;
+    read_limited(File::open(path).ok()?, max)
+}
+
+// Like `read_text`, for a file the system already opened (phones hand out documents, not paths).
+pub fn read_limited(file: File, max: u64) -> Option<String> {
     if file.metadata().ok()?.len() > max {
         return None;
     }
@@ -58,24 +63,44 @@ pub fn read_text(path: &Path, max: u64) -> Option<String> {
 // At most this many saves are open at once; starting another drops the oldest.
 pub const OPEN_MAX: usize = 8;
 
-// A save in progress. Bytes go to a new randomly named `.part` file next to the chosen file, which
-// takes its place only once every piece is written; dropping an unfinished save deletes the part
-// file this shell created, never anything else.
+// Where a save's bytes go. On computers they go to a new randomly named `.part` file next to the
+// chosen file, which takes its place only once every piece is written. On phones they go straight
+// into the document the system opened for us.
+#[cfg_attr(mobile, allow(dead_code))]
+enum Target {
+    Part {
+        part: PathBuf,
+        dest: PathBuf,
+    },
+    #[cfg(any(mobile, test))]
+    Direct,
+}
+
+// A save in progress. Dropping an unfinished one deletes the part file this shell created, never
+// anything else, or empties the document it was writing.
 struct Pending {
     id: u32,
     file: Option<File>,
-    part: PathBuf,
-    dest: PathBuf,
+    target: Target,
 }
 
 impl Drop for Pending {
     fn drop(&mut self) {
-        if self.file.take().is_some() {
-            let _ = fs::remove_file(&self.part);
+        let Some(file) = self.file.take() else { return };
+        match &self.target {
+            Target::Part { part, .. } => {
+                drop(file);
+                let _ = fs::remove_file(part);
+            }
+            #[cfg(any(mobile, test))]
+            Target::Direct => {
+                let _ = file.set_len(0);
+            }
         }
     }
 }
 
+#[cfg_attr(mobile, allow(dead_code))]
 fn random_hex() -> String {
     let state = RandomState::new();
     let mut out = String::new();
@@ -88,6 +113,7 @@ fn random_hex() -> String {
 }
 
 // Creates a fresh temp file beside `dest`. `create_new` never opens or follows an existing path.
+#[cfg_attr(mobile, allow(dead_code))]
 fn create_part(dest: &Path) -> io::Result<(File, PathBuf)> {
     let dir = dest.parent().unwrap_or_else(|| Path::new("."));
     let mut last = None;
@@ -114,8 +140,19 @@ impl Saves {
         self.open.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    #[cfg_attr(mobile, allow(dead_code))]
     pub fn start(&self, dest: PathBuf) -> io::Result<u32> {
         let (file, part) = create_part(&dest)?;
+        Ok(self.push(file, Target::Part { part, dest }))
+    }
+
+    // A save into a file the system opened for writing.
+    #[cfg(any(mobile, test))]
+    pub fn start_direct(&self, file: File) -> u32 {
+        self.push(file, Target::Direct)
+    }
+
+    fn push(&self, file: File, target: Target) -> u32 {
         let mut next = self.next.lock().unwrap_or_else(|e| e.into_inner());
         *next = next.wrapping_add(1);
         let id = *next;
@@ -126,10 +163,9 @@ impl Saves {
         open.push_back(Pending {
             id,
             file: Some(file),
-            part,
-            dest,
+            target,
         });
-        Ok(id)
+        id
     }
 
     fn take(&self, id: u32) -> Option<Pending> {
@@ -151,12 +187,23 @@ impl Saves {
     pub fn finish(&self, id: u32) -> Result<(), String> {
         let mut pending = self.take(id).ok_or("Unknown save")?;
         let file = pending.file.as_ref().ok_or("Unknown save")?;
-        file.sync_all().map_err(|e| e.to_string())?;
-        drop(pending.file.take());
-        fs::rename(&pending.part, &pending.dest).map_err(|e| {
-            let _ = fs::remove_file(&pending.part);
-            e.to_string()
-        })
+        match &pending.target {
+            Target::Part { part, dest } => {
+                file.sync_all().map_err(|e| e.to_string())?;
+                drop(pending.file.take());
+                fs::rename(part, dest).map_err(|e| {
+                    let _ = fs::remove_file(part);
+                    e.to_string()
+                })
+            }
+            // Some document providers can't sync; the bytes are written either way.
+            #[cfg(any(mobile, test))]
+            Target::Direct => {
+                let _ = file.sync_all();
+                drop(pending.file.take());
+                Ok(())
+            }
+        }
     }
 
     pub fn abort(&self, id: u32) {
@@ -317,6 +364,45 @@ mod tests {
         std::fs::write(&bin, [0xff, 0xfe, 0x00]).unwrap();
         assert_eq!(read_text(&bin, 100), None);
         assert_eq!(read_text(&dir.join("missing"), 100), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn direct_saves_write_in_place_and_empty_on_abort() {
+        let dir = temp("direct");
+        let open = |name: &str| {
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(dir.join(name))
+                .unwrap()
+        };
+        let saves = Saves::default();
+        let id = saves.start_direct(open("done.txt"));
+        saves.write(id, b"hello ").unwrap();
+        saves.write(id, b"world").unwrap();
+        saves.finish(id).unwrap();
+        assert_eq!(std::fs::read(dir.join("done.txt")).unwrap(), b"hello world");
+        let id = saves.start_direct(open("cut.txt"));
+        saves.write(id, b"half").unwrap();
+        saves.abort(id);
+        assert_eq!(std::fs::read(dir.join("cut.txt")).unwrap(), b"");
+        assert!(saves.write(id, b"more").is_err());
+        assert_eq!(parts(&dir), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reads_opened_files_with_the_same_limits() {
+        let dir = temp("limited");
+        let text = dir.join("a.txt");
+        std::fs::write(&text, "rc1.abc").unwrap();
+        assert_eq!(
+            read_limited(File::open(&text).unwrap(), 100).as_deref(),
+            Some("rc1.abc")
+        );
+        assert_eq!(read_limited(File::open(&text).unwrap(), 3), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

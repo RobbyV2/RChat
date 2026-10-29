@@ -4463,8 +4463,10 @@ dependencies = [
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-deep-link",
  "tauri-plugin-dialog",
+ "tauri-plugin-fs",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
+ "tauri-plugin-rchat-share",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
@@ -6170,6 +6172,15 @@ dependencies = [
  "url",
  "windows 0.62.2",
  "zbus",
+]
+
+[[package]]
+name = "tauri-plugin-rchat-share"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]

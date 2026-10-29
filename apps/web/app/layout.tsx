@@ -4,6 +4,7 @@ import PwaRegister from './components/pwa_register'
 import ViewportHeight from './components/viewport_height'
 import TitleBar from './components/title_bar'
 import DesktopBridge from './components/desktop_bridge'
+import MobileBridge from './components/mobile_bridge'
 
 export const metadata: Metadata = {
   title: 'RChat',
@@ -40,6 +41,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <PwaRegister />
         <ViewportHeight />
         <DesktopBridge />
+        <MobileBridge />
         {children}
       </body>
     </html>

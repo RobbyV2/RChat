@@ -4,7 +4,7 @@ import { hostOf, normalizeHost, privateHost } from './qualified'
 
 export { privateHost }
 import { WsClient, wsUrlFrom, type WsEndpoints } from './ws'
-import { desktopInfo } from './platform/desktop'
+import { shellInfo } from './platform/desktop'
 import type { InstanceInfo } from './types'
 
 const CLIENT_API_MAJOR = 1
@@ -439,15 +439,14 @@ export const knownInstances = () =>
   Object.entries(readKnown()).map(([origin, info]) => ({ origin, info }))
 
 // The site links for other people point at: this page on the web, the home instance in the
-// desktop app (whose own pages live on an app-only origin nobody else can open).
+// desktop and mobile apps (whose own pages live on an app-only origin nobody else can open).
 export function shareOrigin(
   page: Pick<Location, 'protocol' | 'origin'> | null = typeof window === 'undefined'
     ? null
     : window.location,
-  desktop = desktopInfo() !== null
+  app = shellInfo() !== null
 ): string {
-  if (page && !desktop && (page.protocol === 'http:' || page.protocol === 'https:'))
-    return page.origin
+  if (page && !app && (page.protocol === 'http:' || page.protocol === 'https:')) return page.origin
   return normalizeOrigin(home.info?.public_url ?? '') ?? home.origin
 }
 

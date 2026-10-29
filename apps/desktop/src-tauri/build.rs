@@ -13,6 +13,7 @@ fn main() {
         "open_text",
         "open_external",
         "take_deep_links",
+        "share_text",
         "autostart",
         "set_autostart",
         "update_check",

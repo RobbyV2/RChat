@@ -6,7 +6,7 @@ import { ArrowRight, Globe } from 'lucide-react'
 import { DEFAULT_INSTANCE_NAME, api, home, knownInstances, normalizeOrigin } from '../lib/instances'
 import { hostOf } from '../lib/qualified'
 import { useStore } from '../lib/store'
-import { desktopInfo } from '../lib/platform'
+import { shellInfo } from '../lib/platform'
 import { safeNext } from '../lib/invite'
 import { NAME_MAX, charCount } from '../lib/rules'
 import type { AvatarKind } from '../lib/types'
@@ -72,7 +72,7 @@ function InstancePicker({
       }
       setOpen(true)
       setError(
-        desktopInfo() && home.isDefault ? (
+        shellInfo() && home.isDefault ? (
           'Enter the instance to use.'
         ) : (
           <>
@@ -147,7 +147,7 @@ function InstancePicker({
           onChange={e => setAddress(e.target.value)}
           list={streamer ? undefined : listId}
           placeholder={
-            streamer || (desktopInfo() && home.isDefault) ? 'chat.example.com' : home.origin
+            streamer || (shellInfo() && home.isDefault) ? 'chat.example.com' : home.origin
           }
           inputMode="url"
           autoCapitalize="none"

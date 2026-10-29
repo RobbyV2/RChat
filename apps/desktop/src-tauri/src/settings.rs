@@ -23,6 +23,7 @@ impl Channel {
 
     // Update manifests on GitHub Releases. Stable reads the latest full release; weekly reads the
     // pre-release under the moving `weekly` tag.
+    #[cfg_attr(mobile, allow(dead_code))]
     pub fn endpoint(self) -> &'static str {
         match self {
             Channel::Stable => {

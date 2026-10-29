@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAM_ID.io.github.robbyv2.rchat"],
+        "components": [
+          { "/": "/invite/*" },
+          { "/": "/s/*" },
+          { "/": "/dm/*" },
+          { "/": "/config/*" }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Turn on your camera in video calls.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Talk in voice and video calls.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect to instances on your local network.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

@@ -1,29 +1,52 @@
-// The Tauri desktop shell. It defines `window.__RCHAT_DESKTOP__` before the page loads; the web
-// build never has it. Calls go through `invoke` so tests can pass a fake.
+// The Tauri shell (desktop and mobile). It defines `window.__RCHAT_DESKTOP__` before the page
+// loads; the web build never has it. Calls go through `invoke` so tests can pass a fake.
 
 export type DesktopOs = 'windows' | 'macos' | 'linux'
+export type MobileOs = 'android' | 'ios'
+export type ShellOs = DesktopOs | MobileOs
 
-export interface DesktopInfo {
-  os: DesktopOs
+export interface ShellInfo {
+  os: ShellOs
   version: string
 }
 
-const OSES: readonly string[] = ['windows', 'macos', 'linux']
+export interface DesktopInfo extends ShellInfo {
+  os: DesktopOs
+}
 
-export const desktopInfo = (
+const DESKTOP: readonly string[] = ['windows', 'macos', 'linux']
+const OSES: readonly string[] = [...DESKTOP, 'android', 'ios']
+
+export const shellInfo = (
   w: unknown = typeof window === 'undefined' ? undefined : window
-): DesktopInfo | null => {
+): ShellInfo | null => {
   const raw = (w as { __RCHAT_DESKTOP__?: unknown } | undefined)?.__RCHAT_DESKTOP__
   if (typeof raw !== 'object' || raw === null) return null
   const { os, version } = raw as Record<string, unknown>
   return typeof os === 'string' && OSES.includes(os) && typeof version === 'string'
-    ? { os: os as DesktopOs, version }
+    ? { os: os as ShellOs, version }
     : null
+}
+
+// The shell on a computer: window chrome, tray, updates.
+export const desktopInfo = (
+  w: unknown = typeof window === 'undefined' ? undefined : window
+): DesktopInfo | null => {
+  const info = shellInfo(w)
+  return info && DESKTOP.includes(info.os) ? (info as DesktopInfo) : null
+}
+
+// The shell on a phone or tablet.
+export const mobileOs = (
+  w: unknown = typeof window === 'undefined' ? undefined : window
+): MobileOs | null => {
+  const os = shellInfo(w)?.os
+  return os === 'android' || os === 'ios' ? os : null
 }
 
 // True only inside the real shell, where native calls work.
 export const inShell = (w: unknown = typeof window === 'undefined' ? undefined : window) =>
-  desktopInfo(w) !== null && typeof w === 'object' && w !== null && '__TAURI_INTERNALS__' in w
+  shellInfo(w) !== null && typeof w === 'object' && w !== null && '__TAURI_INTERNALS__' in w
 
 export type InvokeArgs = Record<string, unknown> | Uint8Array
 export type Invoke = <T>(

@@ -1,0 +1,108 @@
+name: mobile
+
+# Proves the Android and iOS apps build. The native projects are generated here from
+# apps/desktop/src-tauri and apps/desktop/mobile; they are never committed.
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/desktop/**
+      - apps/web/**
+      - assets/**
+      - Cargo.toml
+      - Cargo.lock
+      - package.json
+      - bun.lock
+      - .github/workflows/mobile.yml
+  pull_request:
+    paths:
+      - apps/desktop/**
+      - apps/web/**
+      - assets/**
+      - Cargo.toml
+      - Cargo.lock
+      - package.json
+      - bun.lock
+      - .github/workflows/mobile.yml
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mobile-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      NDK_VERSION: 27.2.12479018
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools ndk;27.2.12479018
+      - run: echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        id: tauri-cli
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-${{ runner.os }}-2.12.2
+      - if: steps.tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version 2.12.2 --locked
+      - run: bun apps/desktop/scripts/mobile.ts init android
+      - name: Build debug APK
+        working-directory: apps/desktop/src-tauri
+        run: cargo tauri android build --ci --debug --apk --target aarch64 armv7 x86_64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rchat-android-debug
+          path: apps/desktop/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  mobile-ios:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: brew install xcodegen
+      - uses: actions/cache@v4
+        id: tauri-cli
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-${{ runner.os }}-2.12.2
+      - if: steps.tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version 2.12.2 --locked
+      - run: bun apps/desktop/scripts/mobile.ts init ios
+      - name: Build unsigned IPA
+        working-directory: apps/desktop/src-tauri
+        run: cargo tauri ios build --ci --no-sign --target aarch64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rchat-ios-unsigned
+          path: apps/desktop/src-tauri/gen/apple/build/**/*.ipa
+          if-no-files-found: error
+          retention-days: 14

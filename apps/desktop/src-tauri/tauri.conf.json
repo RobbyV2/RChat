@@ -96,7 +96,13 @@
     "deep-link": {
       "desktop": {
         "schemes": ["rchat"]
-      }
+      },
+      "mobile": [
+        {
+          "scheme": ["rchat"],
+          "appLink": false
+        }
+      ]
     },
     "updater": {
       "pubkey": "RCHAT_UPDATER_PUBKEY_PLACEHOLDER",

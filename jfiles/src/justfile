@@ -3,6 +3,7 @@ import "./build.just"
 import "./test.just"
 import "./run.just"
 import "./desktop.just"
+import "./mobile.just"
 
 # Default recipe
 default:
