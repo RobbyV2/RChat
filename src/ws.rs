@@ -762,17 +762,10 @@ async fn announce_hosting(
     user: &str,
     conn: u64,
     (peer_id, ids): (String, Vec<String>),
-    (scope_servers, scope_users): P2pScope,
+    scope: P2pScope,
 ) {
     state.hub.set_p2p(user, conn, peer_id.clone(), ids.clone());
-    state.hub.broadcast(WsEvent::P2pAvailability {
-        hoster: user.to_string(),
-        peer_id: Some(peer_id),
-        ids,
-        online: true,
-        scope_servers,
-        scope_users,
-    });
+    state.hub.broadcast(p2p_online(user, peer_id, ids, scope));
 }
 
 async fn announce_drop(state: &AppState, user: &str, drop: P2pDrop, cached: Option<P2pScope>) {
@@ -789,15 +782,8 @@ async fn announce_drop(state: &AppState, user: &str, drop: P2pDrop, cached: Opti
                 .broadcast(p2p_offline(user.to_string(), scope_servers, scope_users));
         }
         P2pDrop::Remaining(peer_id, ids) => {
-            let (scope_servers, scope_users) = scope().await;
-            state.hub.broadcast(WsEvent::P2pAvailability {
-                hoster: user.to_string(),
-                peer_id: Some(peer_id),
-                ids,
-                online: true,
-                scope_servers,
-                scope_users,
-            });
+            let scope = scope().await;
+            state.hub.broadcast(p2p_online(user, peer_id, ids, scope));
         }
     }
 }
@@ -1096,7 +1082,7 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             username,
             appear_offline: _,
         } => {
-            let appear_offline = appear_offline_of(db, &username).await.ok().flatten()?;
+            let appear_offline = appear_offline(db, &username).await.ok().flatten()?;
             Some(WsEvent::PresenceMode {
                 username,
                 appear_offline,
@@ -1582,19 +1568,24 @@ async fn p2p_visible(
 }
 
 const NOT_AVAILABLE: &str = "File not available";
+const RECONNECTING: &str = "Reconnecting, try again in a moment";
+
+fn p2p_refused(message_id: i64, error: &str) -> WsEvent {
+    WsEvent::P2pPeer {
+        message_id,
+        peer_id: None,
+        token: None,
+        expires_at: None,
+        error: Some(error.to_string()),
+    }
+}
 
 // The answer to `p2p_peer`: the peer id of the hoster's tab that has the attachment of
 // `message_id`, and a token for it, only for a signed-in user who can read that message. The
 // hoster must be online (not appearing offline) and still host the file. Requests are rate
 // limited per user, whatever the answer.
 async fn p2p_release(state: &AppState, access: &Access, message_id: i64, peer_id: &str) -> WsEvent {
-    let deny = |error: &str| WsEvent::P2pPeer {
-        message_id,
-        peer_id: None,
-        token: None,
-        expires_at: None,
-        error: Some(error.to_string()),
-    };
+    let deny = |error: &str| p2p_refused(message_id, error);
     let Some(me) = access.user.clone() else {
         return deny("Create an account to download P2P files");
     };
@@ -1798,6 +1789,22 @@ async fn p2p_scope(db: &Db, user: &str) -> P2pScope {
     (servers, users)
 }
 
+fn p2p_online(
+    hoster: &str,
+    peer_id: String,
+    ids: Vec<String>,
+    (scope_servers, scope_users): P2pScope,
+) -> WsEvent {
+    WsEvent::P2pAvailability {
+        hoster: hoster.to_string(),
+        peer_id: Some(peer_id),
+        ids,
+        online: true,
+        scope_servers,
+        scope_users,
+    }
+}
+
 fn p2p_offline(hoster: String, scope_servers: Vec<String>, scope_users: Vec<String>) -> WsEvent {
     WsEvent::P2pAvailability {
         hoster,
@@ -1888,17 +1895,6 @@ async fn session_of(db: &Db, token: &str) -> sqlx::Result<Option<bool>> {
     .bind(crate::db::secret_key(token))
     .fetch_optional(db)
     .await?
-    {
-        Some(r) => Ok(Some(r.try_get::<i64, _>(0)? != 0)),
-        None => Ok(None),
-    }
-}
-
-async fn appear_offline_of(db: &Db, user: &str) -> sqlx::Result<Option<bool>> {
-    match sqlx::query("SELECT appear_offline FROM users WHERE username = $1")
-        .bind(user)
-        .fetch_optional(db)
-        .await?
     {
         Some(r) => Ok(Some(r.try_get::<i64, _>(0)? != 0)),
         None => Ok(None),
@@ -2270,7 +2266,7 @@ async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::Result<bool
         Some(user) => {
             let session = match &access.token {
                 Some(token) => session_of(db, token).await?,
-                None => appear_offline_of(db, user).await?,
+                None => appear_offline(db, user).await?,
             };
             let Some(hidden) = session else {
                 return Ok(false);
@@ -2912,7 +2908,7 @@ async fn run(state: AppState, mut socket: WebSocket) {
                         }
                         Ok(ClientMsg::P2pPeer { message_id, peer_id }) => {
                             let ev = match access.retry.pending() {
-                                true => WsEvent::P2pPeer { message_id, peer_id: None, token: None, expires_at: None, error: Some("Reconnecting, try again in a moment".to_string()) },
+                                true => p2p_refused(message_id, RECONNECTING),
                                 false => p2p_release(&state, &access, message_id, &peer_id).await,
                             };
                             if !sent(&mut access, out.event(&ev)) {
@@ -2930,7 +2926,7 @@ async fn run(state: AppState, mut socket: WebSocket) {
                         Ok(other) => {
                             let leaving = matches!(other, ClientMsg::VoiceLeave | ClientMsg::CallLeave { dm_id: _ } | ClientMsg::CallDecline { dm_id: _ });
                             let res = match (&access.user, access.retry.pending() && !leaving) {
-                                (Some(_), true) => Err("Reconnecting, try again in a moment".to_string()),
+                                (Some(_), true) => Err(RECONNECTING.to_string()),
                                 (Some(user), false) => voice_msg(&state, user, conn, other).await,
                                 (None, _) => Err("Create an account to join voice".to_string()),
                             };
@@ -3044,6 +3040,19 @@ async fn look(
     seen
 }
 
+fn join(access: &mut Access, server: String) {
+    access.member_servers.insert(server);
+    access.hosted_scope = None;
+    access.viewable.clear();
+    access.who.forget();
+    access.topics_dirty = true;
+}
+
+fn forget_server(access: &mut Access, server: &str) {
+    access.viewable.retain(|_, (owner, _)| owner != server);
+    access.who.forget();
+}
+
 fn leave(access: &mut Access, server: &str) {
     access.member_servers.remove(server);
     access.hosted_scope = None;
@@ -3060,11 +3069,7 @@ fn track(ev: &WsEvent, access: &mut Access) {
     match ev {
         WsEvent::MemberJoined { server, member } => {
             if Some(member.user.username.as_str()) == me {
-                access.member_servers.insert(server.clone());
-                access.hosted_scope = None;
-                access.viewable.clear();
-                access.who.forget();
-                access.topics_dirty = true;
+                join(access, server.clone());
             }
         }
         WsEvent::MemberLeft { server, username }
@@ -3099,11 +3104,7 @@ fn track(ev: &WsEvent, access: &mut Access) {
         }
         WsEvent::ServerCreated { server } => {
             if server.creator.as_deref() == me {
-                access.member_servers.insert(server.name.clone());
-                access.hosted_scope = None;
-                access.viewable.clear();
-                access.who.forget();
-                access.topics_dirty = true;
+                join(access, server.name.clone());
             }
         }
         WsEvent::AdminChanged {
@@ -3113,14 +3114,10 @@ fn track(ev: &WsEvent, access: &mut Access) {
             perms: _,
         } => {
             if Some(username.as_str()) == me {
-                access.viewable.retain(|_, (owner, _)| owner != server);
-                access.who.forget();
+                forget_server(access, server);
             }
         }
-        WsEvent::RolesChanged { server } => {
-            access.viewable.retain(|_, (owner, _)| owner != server);
-            access.who.forget();
-        }
+        WsEvent::RolesChanged { server } => forget_server(access, server),
         WsEvent::ChannelPermsChanged {
             server: _,
             channel_id,
@@ -3147,24 +3144,14 @@ fn track(ev: &WsEvent, access: &mut Access) {
             if let Some(grant) = access.grants.remove(old_name) {
                 access.grants.insert(server.name.clone(), grant);
             }
-            if access.viewing.as_deref() == Some(old_name.as_str()) {
-                access.viewing = Some(server.name.clone());
+            for slot in [&mut access.viewing, &mut access.peek, &mut access.looking] {
+                if slot.as_deref() == Some(old_name.as_str()) {
+                    *slot = Some(server.name.clone());
+                }
             }
-            if access.peek.as_deref() == Some(old_name.as_str()) {
-                access.peek = Some(server.name.clone());
-            }
-            if access.looking.as_deref() == Some(old_name.as_str()) {
-                access.looking = Some(server.name.clone());
-            }
-            access.viewable.retain(|_, (owner, _)| owner != old_name);
-            access.who.forget();
+            forget_server(access, old_name);
         }
-        WsEvent::ServerUpdated { server } => {
-            access
-                .viewable
-                .retain(|_, (owner, _)| *owner != server.name);
-            access.who.forget();
-        }
+        WsEvent::ServerUpdated { server } => forget_server(access, &server.name),
         WsEvent::ServerDeleted { name } => {
             access.topics_dirty |= access.held(name);
             if access.member_servers.remove(name) {
@@ -3177,8 +3164,7 @@ fn track(ev: &WsEvent, access: &mut Access) {
             if access.looking.as_deref() == Some(name.as_str()) {
                 access.looking = None;
             }
-            access.viewable.retain(|_, (owner, _)| owner != name);
-            access.who.forget();
+            forget_server(access, name);
         }
         _ => {}
     }

@@ -5,6 +5,7 @@ use std::time::Duration;
 use axum::http::{HeaderMap, StatusCode};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
+use sqlx::any::AnyRow;
 use sqlx::{AnyConnection, Row};
 
 use crate::api::auth::{Work, derive_key, dummy_hash, verify_in};
@@ -648,21 +649,18 @@ impl ServerAccess {
             ),
             None => (false, Vec::new()),
         };
-        let mut rules: HashMap<i64, Vec<PermRow>> = HashMap::new();
-        if !manage {
-            let rows = sqlx::query(
-                "SELECT cp.channel_id, cp.subject, cp.can_view, cp.can_send, cp.can_read_history FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1",
-            )
-            .bind(self.name())
-            .fetch_all(db)
-            .await?;
-            for r in &rows {
-                rules
-                    .entry(r.try_get(0)?)
-                    .or_default()
-                    .push(perm_row(r, 1)?);
+        let rules = match manage {
+            true => HashMap::new(),
+            false => {
+                let rows = sqlx::query(
+                    "SELECT cp.channel_id, cp.subject, cp.can_view, cp.can_send, cp.can_read_history FROM channel_perms cp JOIN channels c ON c.id = cp.channel_id WHERE c.server = $1",
+                )
+                .bind(self.name())
+                .fetch_all(db)
+                .await?;
+                rules_by_channel(&rows)?
             }
-        }
+        };
         let mut out = HashMap::with_capacity(channels.len());
         for r in &channels {
             let id: i64 = r.try_get(0)?;
@@ -894,6 +892,27 @@ fn pace(db: &Db, user: Option<&User>) -> Result<(), ApiError> {
     }
 }
 
+/// Channel rules from rows of `channel_id` followed by a `perm_row`.
+fn rules_by_channel(rows: &[AnyRow]) -> sqlx::Result<HashMap<i64, Vec<PermRow>>> {
+    let mut rules: HashMap<i64, Vec<PermRow>> = HashMap::new();
+    for r in rows {
+        rules
+            .entry(r.try_get(0)?)
+            .or_default()
+            .push(perm_row(r, 1)?);
+    }
+    Ok(rules)
+}
+
+/// A signed-in member of the channel's server, paced.
+fn channel_actor(db: &Db, channel: &ResolvedChannel) -> Result<(), ApiError> {
+    if channel.server.user.is_none() {
+        return Err(forbidden("Not a member"));
+    }
+    channel.server.require_member()?;
+    pace(db, channel.server.user.as_ref())
+}
+
 pub struct MsgScope {
     pub channel_id: Option<i64>,
     pub dm_id: Option<i64>,
@@ -1042,32 +1061,39 @@ impl ResolvedMessage {
         }
     }
 
+    fn own(&self) -> bool {
+        self.user
+            .as_ref()
+            .is_some_and(|u| u.username == self.scope.author)
+    }
+
+    /// A participant of the live DM `did`, paced.
+    async fn dm_participant(&self, db: &Db, did: i64) -> Result<(), ApiError> {
+        match dm_pair(db, did, true).await? {
+            Some(users)
+                if self
+                    .user
+                    .as_ref()
+                    .is_some_and(|u| users.contains(&u.username)) =>
+            {
+                pace(db, self.user.as_ref())
+            }
+            _ => Err(not_found()),
+        }
+    }
+
     /// Adding or removing a reaction: in a channel like sending (a signed-in member with the
     /// channel's send permission), in a DM being a participant while both accounts are live.
     pub async fn react_gate(&self, db: &Db) -> Result<(), ApiError> {
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
-                if channel.server.user.is_none() {
-                    return Err(forbidden("Not a member"));
-                }
-                channel.server.require_member()?;
-                pace(db, channel.server.user.as_ref())?;
+                channel_actor(db, channel)?;
                 match channel.member_rights(db).await?.send {
                     true => Ok(()),
                     false => Err(forbidden("No permission to react in this channel")),
                 }
             }
-            (None, Some(did)) => match dm_pair(db, did, true).await? {
-                Some(users)
-                    if self
-                        .user
-                        .as_ref()
-                        .is_some_and(|u| users.contains(&u.username)) =>
-                {
-                    pace(db, self.user.as_ref())
-                }
-                _ => Err(not_found()),
-            },
+            (None, Some(did)) => self.dm_participant(db, did).await,
             (None, None) => Err(not_found()),
         }
     }
@@ -1077,11 +1103,7 @@ impl ResolvedMessage {
     pub async fn pin_gate(&self, db: &Db) -> Result<(), ApiError> {
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
-                if channel.server.user.is_none() {
-                    return Err(forbidden("Not a member"));
-                }
-                channel.server.require_member()?;
-                pace(db, channel.server.user.as_ref())?;
+                channel_actor(db, channel)?;
                 let manage = channel.member_bits(db).await? & Perm::DeleteMessages as i64 != 0;
                 match (manage, channel.member_rights(db).await?.send) {
                     (true, true) => Ok(()),
@@ -1089,17 +1111,7 @@ impl ResolvedMessage {
                     (true, false) => Err(forbidden("No permission to send in this channel")),
                 }
             }
-            (None, Some(did)) => match dm_pair(db, did, true).await? {
-                Some(users)
-                    if self
-                        .user
-                        .as_ref()
-                        .is_some_and(|u| users.contains(&u.username)) =>
-                {
-                    pace(db, self.user.as_ref())
-                }
-                _ => Err(not_found()),
-            },
+            (None, Some(did)) => self.dm_participant(db, did).await,
             (None, None) => Err(not_found()),
         }
     }
@@ -1107,11 +1119,7 @@ impl ResolvedMessage {
     /// Editing: only the author, and only while they could still send there (a member with the
     /// channel's send permission, or a participant of a live DM). Slow mode does not apply.
     pub async fn edit_gate(&self, db: &Db) -> Result<(), ApiError> {
-        let own = self
-            .user
-            .as_ref()
-            .is_some_and(|u| u.username == self.scope.author);
-        if !own {
+        if !self.own() {
             return Err(forbidden("You can only edit your own messages"));
         }
         match (&self.channel, self.scope.dm_id) {
@@ -1132,10 +1140,7 @@ impl ResolvedMessage {
     }
 
     pub async fn require_can_delete(&self, db: &Db) -> Result<(), ApiError> {
-        let own = self
-            .user
-            .as_ref()
-            .is_some_and(|u| u.username == self.scope.author);
+        let own = self.own();
         let allowed = own
             || match &self.channel {
                 Some(channel) => channel.server.has_perm(db, Perm::DeleteMessages).await,
@@ -1171,13 +1176,7 @@ pub(crate) async fn member_channel_rights(
     .fetch_all(db)
     .await?;
     let subjects = perm_subjects(db, None, &user.username).await?;
-    let mut rules: HashMap<i64, Vec<PermRow>> = HashMap::new();
-    for r in &rows {
-        rules
-            .entry(r.try_get(0)?)
-            .or_default()
-            .push(perm_row(r, 1)?);
-    }
+    let rules = rules_by_channel(&rows)?;
     let mut manages: HashMap<String, bool> = HashMap::new();
     let mut out = HashMap::with_capacity(channels.len());
     for r in &channels {

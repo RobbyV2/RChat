@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use axum::http::{HeaderName, Method, header};
 use clap::Parser;
@@ -91,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
     }
     let touches = state.db.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
         loop {
             interval.tick().await;
             if let Err(e) = rust_next::db::flush_grant_touches(&touches).await {
@@ -102,34 +103,20 @@ async fn main() -> anyhow::Result<()> {
     if roles.jobs {
         let sweeper = state.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
             loop {
                 interval.tick().await;
-                let mine = match &sweeper.bus {
-                    Some(bus) => {
-                        bus.try_lock("media-sweep", std::time::Duration::from_secs(55))
-                            .await
-                    }
-                    None => true,
-                };
-                if mine {
+                if holds(&sweeper, "media-sweep", Duration::from_secs(55)).await {
                     rust_next::api::media::sweep_expired(&sweeper).await;
                 }
             }
         });
         let stale = state.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
+            let mut interval = tokio::time::interval(Duration::from_secs(600));
             loop {
                 interval.tick().await;
-                let mine = match &stale.bus {
-                    Some(bus) => {
-                        bus.try_lock("db-sweep", std::time::Duration::from_secs(590))
-                            .await
-                    }
-                    None => true,
-                };
-                if mine {
+                if holds(&stale, "db-sweep", Duration::from_secs(590)).await {
                     match rust_next::db::sweep_stale(&stale.db).await {
                         Ok(swept) if swept != rust_next::db::Swept::default() => {
                             info!("swept stale rows: {swept:?}")
@@ -143,17 +130,10 @@ async fn main() -> anyhow::Result<()> {
         let purges = state.clone();
         tokio::spawn(async move {
             let every = rust_next::api::admin::PURGE_SWEEP_SECS;
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(every));
+            let mut interval = tokio::time::interval(Duration::from_secs(every));
             loop {
                 interval.tick().await;
-                let mine = match &purges.bus {
-                    Some(bus) => {
-                        bus.try_lock("purge-sweep", std::time::Duration::from_secs(every - 5))
-                            .await
-                    }
-                    None => true,
-                };
-                if mine {
+                if holds(&purges, "purge-sweep", Duration::from_secs(every - 5)).await {
                     match rust_next::api::admin::resume_purges(&purges).await {
                         Ok(0) => {}
                         Ok(n) => info!("resumed {n} interrupted deletions"),
@@ -168,18 +148,11 @@ async fn main() -> anyhow::Result<()> {
             .and_then(|v| v.parse().ok())
             .unwrap_or(60);
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
             let mut since = rust_next::db::now();
             loop {
                 interval.tick().await;
-                let mine = match &voice.bus {
-                    Some(bus) => {
-                        bus.try_lock("voice-sweep", std::time::Duration::from_millis(4_500))
-                            .await
-                    }
-                    None => true,
-                };
-                if mine {
+                if holds(&voice, "voice-sweep", Duration::from_millis(4_500)).await {
                     rust_next::ws::sweep_and_log(&voice, idle).await;
                     let until = rust_next::db::now();
                     match rust_next::ws::announce_expired_passwords(&voice, since, until).await {
@@ -285,5 +258,14 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => info!("Received Ctrl+C, shutting down..."),
         _ = terminate => info!("Received SIGTERM, shutting down..."),
+    }
+}
+
+/// Whether this instance runs the periodic `job` now: always without a bus, else while it
+/// holds the job's lock for `hold`.
+async fn holds(state: &AppState, job: &str, hold: Duration) -> bool {
+    match &state.bus {
+        Some(bus) => bus.try_lock(job, hold).await,
+        None => true,
     }
 }

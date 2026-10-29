@@ -1,8 +1,9 @@
 use sqlx::Row;
 
 use crate::db::{
-    ALL_PERMS, ChannelAccess, Db, GRANT_TOUCH_SECS, Perm, Restrict, User, fold_access, get_user,
-    guest_grant_ttl, now, perm_bits, perm_row, perm_subjects, queue_grant_touches, secret_key,
+    ALL_PERMS, ChannelAccess, Db, GRANT_TOUCH_SECS, Perm, PermRow, Restrict, User, fold_access,
+    get_user, guest_grant_ttl, now, perm_bits, perm_row, perm_subjects, queue_grant_touches,
+    secret_key,
 };
 
 pub(super) async fn effective_perms(db: &Db, server: &str, user: &User) -> sqlx::Result<i64> {
@@ -70,6 +71,18 @@ pub(super) async fn channel_restrict(db: &Db, channel_id: i64) -> sqlx::Result<R
     }
 }
 
+async fn channel_rules(db: &Db, channel_id: i64) -> sqlx::Result<Vec<PermRow>> {
+    sqlx::query(
+        "SELECT subject, can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1",
+    )
+    .bind(channel_id)
+    .fetch_all(db)
+    .await?
+    .iter()
+    .map(|r| perm_row(r, 0))
+    .collect()
+}
+
 pub(super) async fn channel_access(
     db: &Db,
     server: &str,
@@ -77,19 +90,10 @@ pub(super) async fn channel_access(
     user: Option<&User>,
 ) -> sqlx::Result<ChannelAccess> {
     let restrict = channel_restrict(db, channel_id).await?;
-    let rows = sqlx::query(
-        "SELECT subject, can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1",
-    )
-    .bind(channel_id)
-    .fetch_all(db)
-    .await?;
+    let rows = channel_rules(db, channel_id).await?;
     if rows.is_empty() && restrict == Restrict::default() {
         return Ok(ChannelAccess::all(true));
     }
-    let rows = rows
-        .iter()
-        .map(|r| perm_row(r, 0))
-        .collect::<sqlx::Result<Vec<_>>>()?;
     let Some(user) = user else {
         return Ok(fold_access(&rows, &[], false, restrict));
     };
@@ -136,15 +140,7 @@ pub(super) async fn channel_viewers(
     if members.is_empty() {
         return Ok(Vec::new());
     }
-    let overrides = sqlx::query(
-        "SELECT subject, can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1",
-    )
-    .bind(channel_id)
-    .fetch_all(db)
-    .await?
-    .iter()
-    .map(|r| perm_row(r, 0))
-    .collect::<sqlx::Result<Vec<_>>>()?;
+    let overrides = channel_rules(db, channel_id).await?;
     let restrict = channel_restrict(db, channel_id).await?;
     let listed = usernames.iter().filter(|n| members.contains_key(*n));
     if overrides.is_empty() && restrict == Restrict::default() {

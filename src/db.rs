@@ -311,10 +311,7 @@ pub(crate) fn set_fts(db: &Db, ready: bool) {
 }
 
 async fn probe_fts(db: &Db) -> bool {
-    db.connect_options()
-        .database_url
-        .scheme()
-        .starts_with("sqlite")
+    is_sqlite(db)
         && sqlx::query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages_fts'")
             .fetch_optional(db)
             .await
@@ -447,41 +444,60 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 pub const SCHEMA_VERSION: i64 = 2;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-const SQLITE_LATE: &[&str] = &[
-    "CREATE INDEX IF NOT EXISTS idx_server_passwords_revoked ON server_passwords(revoked_at) WHERE revoked_at IS NOT NULL",
-    "CREATE INDEX IF NOT EXISTS idx_server_passwords_expires ON server_passwords(expires_at) WHERE expires_at IS NOT NULL",
-    "CREATE INDEX IF NOT EXISTS idx_server_passwords_used_up ON server_passwords(used_up_at) WHERE used_up_at IS NOT NULL",
-    "CREATE INDEX IF NOT EXISTS idx_users_display_lower ON users(lower(display_name))",
-    "CREATE INDEX IF NOT EXISTS idx_reactions_agg ON reactions(message_id, emoji, created_at, username)",
-    "CREATE INDEX IF NOT EXISTS idx_pings_kept ON pings(username, id) WHERE seen <> 0",
-    "CREATE INDEX IF NOT EXISTS idx_messages_system_channel ON messages(channel_id, created_at) WHERE kind IN ('join','leave')",
-    "CREATE INDEX IF NOT EXISTS idx_messages_pin_notice ON messages(pin_message_id, created_at) WHERE kind = 'pin'",
-    "CREATE INDEX IF NOT EXISTS idx_guest_grants_network ON guest_grants(server, network) WHERE network IS NOT NULL",
-];
-
-const POSTGRES_LATE: &[&str] = &[
-    "CREATE INDEX IF NOT EXISTS idx_server_passwords_revoked ON server_passwords(revoked_at) WHERE revoked_at IS NOT NULL",
-    "CREATE INDEX IF NOT EXISTS idx_server_passwords_expires ON server_passwords(expires_at) WHERE expires_at IS NOT NULL",
-    "CREATE INDEX IF NOT EXISTS idx_server_passwords_used_up ON server_passwords(used_up_at) WHERE used_up_at IS NOT NULL",
-    "CREATE INDEX IF NOT EXISTS idx_users_display_lower ON users((lower(display_name) COLLATE \"C\"))",
-    "CREATE INDEX IF NOT EXISTS idx_reactions_agg ON reactions(message_id, emoji, created_at, username)",
-    "CREATE INDEX IF NOT EXISTS idx_pings_kept ON pings(username, id) WHERE seen <> 0",
-    "CREATE INDEX IF NOT EXISTS idx_messages_system_channel ON messages(channel_id, created_at) WHERE kind IN ('join','leave')",
-    "CREATE INDEX IF NOT EXISTS idx_messages_pin_notice ON messages(pin_message_id, created_at) WHERE kind = 'pin'",
-    "CREATE INDEX IF NOT EXISTS idx_guest_grants_network ON guest_grants(server, network) WHERE network IS NOT NULL",
-];
+fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
+    [
+        "CREATE INDEX IF NOT EXISTS idx_server_passwords_revoked ON server_passwords(revoked_at) WHERE revoked_at IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_server_passwords_expires ON server_passwords(expires_at) WHERE expires_at IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_server_passwords_used_up ON server_passwords(used_up_at) WHERE used_up_at IS NOT NULL",
+        match is_sqlite {
+            true => {
+                "CREATE INDEX IF NOT EXISTS idx_users_display_lower ON users(lower(display_name))"
+            }
+            false => {
+                "CREATE INDEX IF NOT EXISTS idx_users_display_lower ON users((lower(display_name) COLLATE \"C\"))"
+            }
+        },
+        "CREATE INDEX IF NOT EXISTS idx_reactions_agg ON reactions(message_id, emoji, created_at, username)",
+        "CREATE INDEX IF NOT EXISTS idx_pings_kept ON pings(username, id) WHERE seen <> 0",
+        "CREATE INDEX IF NOT EXISTS idx_messages_system_channel ON messages(channel_id, created_at) WHERE kind IN ('join','leave')",
+        "CREATE INDEX IF NOT EXISTS idx_messages_pin_notice ON messages(pin_message_id, created_at) WHERE kind = 'pin'",
+        "CREATE INDEX IF NOT EXISTS idx_guest_grants_network ON guest_grants(server, network) WHERE network IS NOT NULL",
+    ]
+}
 
 /// Placeholder for `server_passwords.hash`: extra passwords are checked through `lookup`
 /// only, so no second verifier is kept.
 pub const NO_EXTRA_HASH: &str = "!lookup";
 
+async fn stored_setting(conn: &mut AnyConnection, key: &str) -> sqlx::Result<Option<String>> {
+    sqlx::query("SELECT value FROM settings WHERE key = $1")
+        .bind(key)
+        .fetch_optional(&mut *conn)
+        .await?
+        .map(|r| r.try_get(0))
+        .transpose()
+}
+
+async fn store_setting(conn: &mut AnyConnection, key: &str, value: &str) -> sqlx::Result<()> {
+    sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .bind(key)
+        .bind(value)
+        .execute(&mut *conn)
+        .await
+        .map(|_| ())
+}
+
+async fn seed_setting(conn: &mut AnyConnection, key: &str, value: &str) -> sqlx::Result<()> {
+    sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO NOTHING")
+        .bind(key)
+        .bind(value)
+        .execute(&mut *conn)
+        .await
+        .map(|_| ())
+}
+
 async fn schema_version(conn: &mut AnyConnection) -> anyhow::Result<i64> {
-    let have: Option<String> =
-        sqlx::query("SELECT value FROM settings WHERE key = 'schema_version'")
-            .fetch_optional(&mut *conn)
-            .await?
-            .map(|r| r.try_get(0))
-            .transpose()?;
+    let have = stored_setting(conn, "schema_version").await?;
     Ok(have.and_then(|v| v.trim().parse().ok()).unwrap_or(0))
 }
 
@@ -955,22 +971,13 @@ pub fn trigger_version(stmts: &[&str]) -> String {
 
 async fn postgres_triggers(conn: &mut AnyConnection) -> anyhow::Result<()> {
     let want = trigger_version(POSTGRES_TRIGGERS);
-    let have: Option<String> =
-        sqlx::query("SELECT value FROM settings WHERE key = 'trigger_version'")
-            .fetch_optional(&mut *conn)
-            .await?
-            .map(|r| r.try_get(0))
-            .transpose()?;
-    if have.as_deref() == Some(want.as_str()) {
+    if stored_setting(conn, "trigger_version").await?.as_deref() == Some(want.as_str()) {
         return Ok(());
     }
     for stmt in POSTGRES_TRIGGERS {
         sqlx::query(*stmt).execute(&mut *conn).await?;
     }
-    sqlx::query("INSERT INTO settings(key, value) VALUES('trigger_version', $1) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-        .bind(&want)
-        .execute(&mut *conn)
-        .await?;
+    store_setting(conn, "trigger_version", &want).await?;
     tracing::info!("installed database triggers version {want}");
     Ok(())
 }
@@ -1001,12 +1008,8 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
     for stmt in rest {
         sqlx::query(stmt).execute(&mut *conn).await?;
     }
-    let late = match is_sqlite {
-        true => SQLITE_LATE,
-        false => POSTGRES_LATE,
-    };
-    for stmt in late {
-        sqlx::query(*stmt).execute(&mut *conn).await?;
+    for stmt in late_indexes(is_sqlite) {
+        sqlx::query(stmt).execute(&mut *conn).await?;
     }
     hash_stored_secrets(conn).await?;
     sqlx::query("UPDATE server_passwords SET hash = $1 WHERE hash <> $1")
@@ -1032,20 +1035,12 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
             tracing::info!("backfilled {table}.{col}");
         }
     }
-    let restricted = sqlx::query("SELECT 1 FROM settings WHERE key = $1")
-        .bind(RESTRICT_BACKFILL)
-        .fetch_optional(&mut *conn)
-        .await?
-        .is_some();
-    if !restricted {
+    if stored_setting(conn, RESTRICT_BACKFILL).await?.is_none() {
         let n = sqlx::query("UPDATE channels SET restrict_view = 1 WHERE restrict_view = 0 AND EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = channels.id)")
             .execute(&mut *conn)
             .await?
             .rows_affected();
-        sqlx::query("INSERT INTO settings(key, value) VALUES($1, '1') ON CONFLICT(key) DO NOTHING")
-            .bind(RESTRICT_BACKFILL)
-            .execute(&mut *conn)
-            .await?;
+        seed_setting(conn, RESTRICT_BACKFILL, "1").await?;
         tracing::info!("backfilled channels.restrict_view on {n} channels with rules");
     }
     restrict_old_rules(conn).await?;
@@ -1062,12 +1057,7 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
         Ok(v) if matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "off") => "0",
         _ => "1",
     };
-    sqlx::query(
-        "INSERT INTO settings(key, value) VALUES('guests_enabled', $1) ON CONFLICT(key) DO NOTHING",
-    )
-    .bind(guests)
-    .execute(&mut *conn)
-    .await?;
+    seed_setting(conn, "guests_enabled", guests).await?;
     let profanity = crate::api::profanity_seed(
         std::env::var("PROFANITY_FILTER").ok().as_deref(),
         std::env::var("PROFANITY_TARGETS").ok().as_deref(),
@@ -1082,16 +1072,9 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
         ("relay_secret", crate::api::auth::new_token()),
         ("p2p_secret", crate::api::auth::new_token()),
     ] {
-        sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO NOTHING")
-            .bind(key)
-            .bind(value)
-            .execute(&mut *conn)
-            .await?;
+        seed_setting(conn, key, &value).await?;
     }
-    sqlx::query("INSERT INTO settings(key, value) VALUES('schema_version', $1) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-        .bind(SCHEMA_VERSION.to_string())
-        .execute(&mut *conn)
-        .await?;
+    store_setting(conn, "schema_version", &SCHEMA_VERSION.to_string()).await?;
     Ok(())
 }
 
@@ -1118,14 +1101,11 @@ pub(crate) async fn seed_settings(
     pairs: &[(&str, bool)],
 ) -> sqlx::Result<()> {
     for (key, on) in pairs {
-        sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO NOTHING")
-            .bind(*key)
-            .bind(match on {
-                true => "1",
-                false => "0",
-            })
-            .execute(&mut *conn)
-            .await?;
+        let value = match on {
+            true => "1",
+            false => "0",
+        };
+        seed_setting(conn, key, value).await?;
     }
     Ok(())
 }
@@ -1150,49 +1130,33 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
             "DATABASE_MAX_CONNECTIONS is ignored for sqlite: it has a single writer; use DATABASE_READ_CONNECTIONS for reads"
         );
     }
-    let mut options = AnyPoolOptions::new().max_connections(writer_connections(is_sqlite, max));
+    let mut options = pool_options(writer_connections(is_sqlite, max));
     if let Some(min) = env_num("DATABASE_MIN_CONNECTIONS") {
         options = options.min_connections(min);
     }
-    if let Some(secs) = env_num("DATABASE_ACQUIRE_TIMEOUT_SECS") {
-        options = options.acquire_timeout(Duration::from_secs(secs));
+    let pragmas: &'static [&'static str] = match is_sqlite {
+        true => &[
+            "PRAGMA journal_mode=WAL",
+            "PRAGMA foreign_keys=ON",
+            "PRAGMA busy_timeout=5000",
+            "PRAGMA synchronous=NORMAL",
+            "PRAGMA mmap_size=268435456",
+        ],
+        false => &[],
+    };
+    let pool = with_pragmas(options, pragmas).connect(&url).await?;
+    let mut tx = pool.begin().await?;
+    if !is_sqlite {
+        sqlx::query("SELECT COUNT(*) FROM pg_advisory_xact_lock($1)")
+            .bind(SCHEMA_LOCK)
+            .execute(&mut *tx)
+            .await?;
     }
-    let pool = options
-        .after_connect(move |conn, _| {
-            Box::pin(async move {
-                if is_sqlite {
-                    for pragma in [
-                        "PRAGMA journal_mode=WAL",
-                        "PRAGMA foreign_keys=ON",
-                        "PRAGMA busy_timeout=5000",
-                        "PRAGMA synchronous=NORMAL",
-                        "PRAGMA mmap_size=268435456",
-                    ] {
-                        sqlx::query(pragma).execute(&mut *conn).await?;
-                    }
-                }
-                Ok(())
-            })
-        })
-        .connect(&url)
-        .await?;
-    match is_sqlite {
-        true => {
-            let mut tx = pool.begin().await?;
-            init_schema(&mut tx, true).await?;
-            tx.commit().await?;
-        }
-        false => {
-            let mut tx = pool.begin().await?;
-            sqlx::query("SELECT COUNT(*) FROM pg_advisory_xact_lock($1)")
-                .bind(SCHEMA_LOCK)
-                .execute(&mut *tx)
-                .await?;
-            init_schema(&mut tx, false).await?;
-            postgres_search_index(&mut tx).await;
-            tx.commit().await?;
-        }
+    init_schema(&mut tx, is_sqlite).await?;
+    if !is_sqlite {
+        postgres_search_index(&mut tx).await;
     }
+    tx.commit().await?;
     match is_sqlite {
         true => {
             if let Err(e) = sqlite_search_index(&pool).await {
@@ -1230,24 +1194,32 @@ pub fn writer_connections(is_sqlite: bool, configured: Option<u32>) -> u32 {
     }
 }
 
-async fn open_reader(url: &str, max: u32) -> anyhow::Result<Db> {
-    let mut options = AnyPoolOptions::new().max_connections(max);
-    if let Some(secs) = env_num("DATABASE_ACQUIRE_TIMEOUT_SECS") {
-        options = options.acquire_timeout(Duration::from_secs(secs));
+fn pool_options(max: u32) -> AnyPoolOptions {
+    let options = AnyPoolOptions::new().max_connections(max);
+    match env_num("DATABASE_ACQUIRE_TIMEOUT_SECS") {
+        Some(secs) => options.acquire_timeout(Duration::from_secs(secs)),
+        None => options,
     }
-    Ok(options
-        .after_connect(|conn, _| {
-            Box::pin(async move {
-                for pragma in [
-                    "PRAGMA busy_timeout=5000",
-                    "PRAGMA query_only=ON",
-                    "PRAGMA mmap_size=268435456",
-                ] {
-                    sqlx::query(pragma).execute(&mut *conn).await?;
-                }
-                Ok(())
-            })
+}
+
+fn with_pragmas(options: AnyPoolOptions, pragmas: &'static [&'static str]) -> AnyPoolOptions {
+    options.after_connect(move |conn, _| {
+        Box::pin(async move {
+            for pragma in pragmas {
+                sqlx::query(*pragma).execute(&mut *conn).await?;
+            }
+            Ok(())
         })
+    })
+}
+
+async fn open_reader(url: &str, max: u32) -> anyhow::Result<Db> {
+    let pragmas = &[
+        "PRAGMA busy_timeout=5000",
+        "PRAGMA query_only=ON",
+        "PRAGMA mmap_size=268435456",
+    ];
+    Ok(with_pragmas(pool_options(max), pragmas)
         .connect(url)
         .await?)
 }
@@ -3263,7 +3235,7 @@ mod tests {
         };
         wipe();
         let db = open(path.to_str()).await.expect("open");
-        for stmt in SQLITE_LATE {
+        for stmt in late_indexes(true) {
             let name = stmt
                 .split_whitespace()
                 .nth(5)

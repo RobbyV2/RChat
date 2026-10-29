@@ -2078,6 +2078,10 @@ impl Hub {
         }
     }
 
+    fn replica<R>(&self, read: impl FnOnce(&Replica) -> R) -> R {
+        read(&self.inner.store.lock().unwrap().replica)
+    }
+
     pub fn rtc_shared(
         &self,
         a: &str,
@@ -2085,16 +2089,11 @@ impl Hub {
         channel_id: Option<i64>,
         dm_id: Option<i64>,
     ) -> bool {
-        self.inner
-            .store
-            .lock()
-            .unwrap()
-            .replica
-            .rtc_shared(a, b, channel_id, dm_id)
+        self.replica(|r| r.rtc_shared(a, b, channel_id, dm_id))
     }
 
     pub fn in_p2p_call(&self, a: &str, b: &str) -> bool {
-        self.inner.store.lock().unwrap().replica.in_p2p_call(a, b)
+        self.replica(|r| r.in_p2p_call(a, b))
     }
 
     pub async fn drop_conn(&self, user: &str, conn: u64) -> (Vec<CallEnd>, P2pDrop) {
@@ -2126,28 +2125,27 @@ impl Hub {
 
     // The ids `user` hosts across all their tabs.
     pub fn p2p_ids(&self, user: &str) -> Option<Vec<String>> {
-        let store = self.inner.store.lock().unwrap();
-        let hosts = store.replica.p2p.get(user)?;
-        let mut ids: Vec<String> = Vec::new();
-        for id in hosts.values().flat_map(|h| h.ids.iter()) {
-            if !ids.contains(id) {
-                ids.push(id.clone());
+        self.replica(|r| {
+            let mut ids: Vec<String> = Vec::new();
+            for id in r.p2p.get(user)?.values().flat_map(|h| h.ids.iter()) {
+                if !ids.contains(id) {
+                    ids.push(id.clone());
+                }
             }
-        }
-        Some(ids)
+            Some(ids)
+        })
     }
 
     // The peer id of the newest tab of `user` that hosts the file `id`.
     pub fn p2p_host_of(&self, user: &str, id: &str) -> Option<String> {
-        let store = self.inner.store.lock().unwrap();
-        store
-            .replica
-            .p2p
-            .get(user)?
-            .values()
-            .rev()
-            .find(|h| h.ids.iter().any(|x| x == id))
-            .map(|h| h.peer_id.clone())
+        self.replica(|r| {
+            r.p2p
+                .get(user)?
+                .values()
+                .rev()
+                .find(|h| h.ids.iter().any(|x| x == id))
+                .map(|h| h.peer_id.clone())
+        })
     }
 
     // Peer id requests for downloads: a burst of RELEASE_BURST, then one every RELEASE_EVERY,
@@ -2174,78 +2172,58 @@ impl Hub {
     }
 
     pub fn p2p_of(&self, user: &str) -> Option<(String, Vec<String>)> {
-        self.inner
-            .store
-            .lock()
-            .unwrap()
-            .replica
-            .p2p
-            .get(user)
-            .and_then(|hosts| hosts.last_key_value())
-            .map(|(_, h)| (h.peer_id.clone(), h.ids.clone()))
+        self.replica(|r| {
+            r.p2p
+                .get(user)
+                .and_then(|hosts| hosts.last_key_value())
+                .map(|(_, h)| (h.peer_id.clone(), h.ids.clone()))
+        })
+    }
+
+    fn presence<R>(
+        &self,
+        server: &str,
+        read: impl FnOnce(&BTreeMap<String, BTreeSet<u64>>) -> R,
+    ) -> Option<R> {
+        self.replica(|r| r.presence.get(server).map(read))
     }
 
     pub fn online_set(&self, server: &str) -> HashSet<String> {
-        match self
-            .inner
-            .store
-            .lock()
-            .unwrap()
-            .replica
-            .presence
-            .get(server)
-        {
-            Some(users) => users.keys().cloned().collect(),
-            None => HashSet::new(),
-        }
+        self.presence(server, |users| users.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     pub fn online_after(&self, server: &str, after: Option<&str>, n: usize) -> Vec<String> {
-        let store = self.inner.store.lock().unwrap();
-        let Some(users) = store.replica.presence.get(server) else {
-            return Vec::new();
-        };
-        let range = match after {
-            Some(a) => {
-                users.range::<str, _>((std::ops::Bound::Excluded(a), std::ops::Bound::Unbounded))
-            }
-            None => users.range::<str, _>(..),
-        };
-        range.take(n).map(|(name, _)| name.clone()).collect()
+        self.presence(server, |users| {
+            let range = match after {
+                Some(a) => users
+                    .range::<str, _>((std::ops::Bound::Excluded(a), std::ops::Bound::Unbounded)),
+                None => users.range::<str, _>(..),
+            };
+            range.take(n).map(|(name, _)| name.clone()).collect()
+        })
+        .unwrap_or_default()
     }
 
     pub fn online_among<'a>(&self, server: &str, names: &'a [String]) -> HashSet<&'a str> {
-        let store = self.inner.store.lock().unwrap();
-        match store.replica.presence.get(server) {
-            Some(users) => names
+        self.presence(server, |users| {
+            names
                 .iter()
                 .filter(|n| users.contains_key(n.as_str()))
                 .map(String::as_str)
-                .collect(),
-            None => HashSet::new(),
-        }
+                .collect()
+        })
+        .unwrap_or_default()
     }
 
     pub fn online_count(&self, server: &str) -> i64 {
-        self.inner
-            .store
-            .lock()
-            .unwrap()
-            .replica
-            .presence
-            .get(server)
-            .map_or(0, |users| users.len() as i64)
+        self.presence(server, |users| users.len() as i64)
+            .unwrap_or(0)
     }
 
     pub fn is_online(&self, server: &str, username: &str) -> bool {
-        self.inner
-            .store
-            .lock()
-            .unwrap()
-            .replica
-            .presence
-            .get(server)
-            .is_some_and(|users| users.contains_key(username))
+        self.presence(server, |users| users.contains_key(username))
+            .unwrap_or(false)
     }
 
     pub fn set_viewing(&self, user: &str, conn: u64, old: Option<&str>, new: Option<&str>) {
@@ -2276,22 +2254,22 @@ impl Hub {
     }
 
     pub fn rooms_in(&self, server: &str, channel_id: Option<i64>) -> Vec<(i64, Vec<String>)> {
-        let store = self.inner.store.lock().unwrap();
-        let replica = &store.replica;
-        replica
-            .index
-            .server_rooms
-            .get(server)
-            .into_iter()
-            .flatten()
-            .filter(|cid| channel_id.is_none_or(|c| c == **cid))
-            .filter_map(|cid| {
-                replica
-                    .rooms
-                    .get(cid)
-                    .map(|room| (*cid, room.users.iter().map(|(u, _)| u.clone()).collect()))
-            })
-            .collect()
+        self.replica(|replica| {
+            replica
+                .index
+                .server_rooms
+                .get(server)
+                .into_iter()
+                .flatten()
+                .filter(|cid| channel_id.is_none_or(|c| c == **cid))
+                .filter_map(|cid| {
+                    replica
+                        .rooms
+                        .get(cid)
+                        .map(|room| (*cid, room.users.iter().map(|(u, _)| u.clone()).collect()))
+                })
+                .collect()
+        })
     }
 
     pub fn evict_voice(&self, user: &str, channel_id: i64) {
@@ -2302,7 +2280,7 @@ impl Hub {
     }
 
     pub fn voice_snapshot(&self) -> Vec<WsEvent> {
-        self.inner.store.lock().unwrap().replica.voice_snapshot()
+        self.replica(Replica::voice_snapshot)
     }
 
     pub fn voice_snapshot_for<'a, I: IntoIterator<Item = &'a String>>(
@@ -2310,12 +2288,7 @@ impl Hub {
         servers: I,
         user: Option<&str>,
     ) -> Vec<WsEvent> {
-        self.inner
-            .store
-            .lock()
-            .unwrap()
-            .replica
-            .voice_snapshot_for(servers, user)
+        self.replica(|r| r.voice_snapshot_for(servers, user))
     }
 }
 
