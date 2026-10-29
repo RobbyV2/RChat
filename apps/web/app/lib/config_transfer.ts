@@ -24,6 +24,7 @@ import {
   type EmojiPrefs,
 } from './emoji'
 import { ROUTE_LABEL, isRoute, type CallRoute } from './call_choice'
+import { shareOrigin } from './instances'
 
 const CONFIG_VERSION = 1
 export const PREFIX = 'rc1.'
@@ -290,8 +291,7 @@ const LINK_ID = /^[A-Za-z0-9]{12}$/
 
 export const configPath = (id: string) => `/config/${id}/`
 
-export const configUrl = (id: string, origin = window.location.origin) =>
-  `${origin}${configPath(id)}`
+export const configUrl = (id: string, origin = shareOrigin()) => `${origin}${configPath(id)}`
 
 export const parseConfigPath = (pathname: string): string | null => {
   const m = pathname.match(/^\/config\/([^/]+)\/?$/)

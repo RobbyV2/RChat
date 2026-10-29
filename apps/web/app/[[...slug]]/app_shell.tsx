@@ -25,7 +25,7 @@ import { InvitePage } from '../components/invite_card'
 import { ConfigLinkPage } from '../components/config_sync'
 
 const bannerCls =
-  'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:fixed sm:top-[calc(env(safe-area-inset-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2'
+  'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2'
 
 export default function AppShell() {
   const router = useRouter()
@@ -158,12 +158,12 @@ export default function AppShell() {
           </div>
         )}
         {panel && (
-          <div className="fixed inset-x-0 top-0 z-40 h-app bg-surface max-md:px-safe md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
+          <div className="fixed inset-x-0 top-app z-40 h-app bg-surface max-md:px-safe md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
             {panel.kind === 'thread' ? <ThreadPanel /> : <SearchPanel />}
           </div>
         )}
         {leftOpen && (
-          <div className="fixed inset-x-0 top-0 z-40 flex h-app md:hidden">
+          <div className="fixed inset-x-0 top-app z-40 flex h-app md:hidden">
             <div className="flex h-full bg-surface-container-lowest pl-[env(safe-area-inset-left)] shadow-elevation-3">
               <ServerRail />
               <ChannelSidebar />
@@ -172,7 +172,7 @@ export default function AppShell() {
           </div>
         )}
         {rightOpen && isChannel && (
-          <div className="fixed inset-x-0 top-0 z-40 flex h-app justify-end lg:hidden">
+          <div className="fixed inset-x-0 top-app z-40 flex h-app justify-end lg:hidden">
             <div className="flex-1 bg-scrim/50" onClick={() => setRightOpen(false)} />
             <div className="h-full bg-surface-container-low pr-[env(safe-area-inset-right)] shadow-elevation-3">
               <MemberSidebar />
@@ -189,7 +189,7 @@ export default function AppShell() {
         <ContextMenu />
         <ReactionPickerHost />
         <CallBanner />
-        <div className="pointer-events-none fixed inset-x-4 top-[calc(env(safe-area-inset-top)+4rem)] z-60 flex flex-col gap-2 sm:contents">
+        <div className="pointer-events-none fixed inset-x-4 top-[calc(var(--safe-top)+4rem)] z-60 flex flex-col gap-2 sm:contents">
           {error && (
             <div role="alert" className={`${bannerCls} bg-error-container text-on-error-container`}>
               {error}

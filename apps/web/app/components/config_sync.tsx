@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useShallow } from 'zustand/react/shallow'
 import { Check, Copy, QrCode as QrIcon, Share2, Trash2 } from 'lucide-react'
 import { encode } from 'uqr'
-import { api } from '../lib/instances'
+import { api, shareOrigin } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import { sharing } from '../lib/platform'
 import { untilText } from '../lib/notify'
@@ -437,7 +437,7 @@ function ImportBlock() {
     setError(null)
     setDone(null)
     setDoc(null)
-    const id = parseConfigLink(raw, window.location.origin)
+    const id = parseConfigLink(raw, shareOrigin())
     let input = raw
     if (id) {
       try {

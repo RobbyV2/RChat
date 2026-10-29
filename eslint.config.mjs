@@ -34,5 +34,23 @@ export default tseslint.config(
         Promise: 'readonly',
       },
     },
+  },
+  {
+    files: ['apps/desktop/scripts/smoke.js'],
+    languageOptions: {
+      globals: {
+        window: 'readonly',
+        document: 'readonly',
+        location: 'readonly',
+        setTimeout: 'readonly',
+        addEventListener: 'readonly',
+        HTMLInputElement: 'readonly',
+        Event: 'readonly',
+        TextEncoder: 'readonly',
+        sessionStorage: 'readonly',
+        SMOKE_INSTANCE: 'readonly',
+        SMOKE_HOLD: 'readonly',
+      },
+    },
   }
 )

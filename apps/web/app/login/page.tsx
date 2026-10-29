@@ -6,6 +6,7 @@ import { ArrowRight, Globe } from 'lucide-react'
 import { DEFAULT_INSTANCE_NAME, api, home, knownInstances, normalizeOrigin } from '../lib/instances'
 import { hostOf } from '../lib/qualified'
 import { useStore } from '../lib/store'
+import { desktopInfo } from '../lib/platform'
 import { safeNext } from '../lib/invite'
 import { NAME_MAX, charCount } from '../lib/rules'
 import type { AvatarKind } from '../lib/types'
@@ -71,10 +72,14 @@ function InstancePicker({
       }
       setOpen(true)
       setError(
-        <>
-          No RChat instance answered at <span className="streamer">{home.host}</span>. Enter the
-          instance to use.
-        </>
+        desktopInfo() && home.isDefault ? (
+          'Enter the instance to use.'
+        ) : (
+          <>
+            No RChat instance answered at <span className="streamer">{home.host}</span>. Enter the
+            instance to use.
+          </>
+        )
       )
     })
     setKnown(knownInstances().map(({ origin, info }) => ({ origin, name: info.name })))
@@ -141,7 +146,9 @@ function InstancePicker({
           value={address}
           onChange={e => setAddress(e.target.value)}
           list={streamer ? undefined : listId}
-          placeholder={streamer ? 'chat.example.com' : home.origin}
+          placeholder={
+            streamer || (desktopInfo() && home.isDefault) ? 'chat.example.com' : home.origin
+          }
           inputMode="url"
           autoCapitalize="none"
           autoCorrect="off"
@@ -300,7 +307,7 @@ export default function LoginPage() {
   )
 
   return (
-    <div className="flex min-h-dvh flex-col items-center px-safe-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-safe-4">
+    <div className="flex min-h-app flex-col items-center px-safe-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-safe-4">
       <header className="flex w-full shrink-0 items-center justify-between pt-[max(0.5rem,env(safe-area-inset-top))] pb-2">
         <ThemeToggle />
         <StatusClock />

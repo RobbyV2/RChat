@@ -27,7 +27,7 @@ import {
   X,
 } from 'lucide-react'
 import { relayOnly } from '../lib/ice'
-import { api, home, localOrigins, remoteAllowed } from '../lib/instances'
+import { api, home, localOrigins, remoteAllowed, shareOrigin } from '../lib/instances'
 import { mentionCandidates, splitKnownMentions } from '../lib/mentions'
 import {
   CANCELED,
@@ -206,7 +206,7 @@ function Mention({ username }: { username: string }) {
 }
 
 function MessageLink({ href, children, ...props }: React.ComponentProps<'a'>) {
-  const invite = href ? parseInvite(href, window.location.origin) : null
+  const invite = href ? parseInvite(href, shareOrigin()) : null
   const body = <InLink.Provider value>{children}</InLink.Provider>
   if (!invite)
     return (

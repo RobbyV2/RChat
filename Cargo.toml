@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["apps/server", "crates/wasm"]
+members = ["apps/server", "apps/desktop/src-tauri", "crates/wasm"]
 default-members = ["apps/server"]
 
 [profile.release]

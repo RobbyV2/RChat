@@ -161,7 +161,7 @@ export function NoticeStack() {
       onBlur={(e: FocusEvent) => {
         if (!region.current?.contains(e.relatedTarget as Node | null)) setFocus(false)
       }}
-      className={`flex w-full flex-col gap-2 sm:fixed sm:top-[calc(env(safe-area-inset-top)+4rem)] sm:right-[max(1rem,env(safe-area-inset-right))] sm:z-50 sm:w-80 sm:max-w-[calc(100vw-2rem)] ${empty ? '' : 'pointer-events-auto'}`}
+      className={`flex w-full flex-col gap-2 sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:right-[max(1rem,env(safe-area-inset-right))] sm:z-50 sm:w-80 sm:max-w-[calc(100vw-2rem)] ${empty ? '' : 'pointer-events-auto'}`}
     >
       {notices.map(n => (
         <NoticeCard key={n.id} notice={n} paused={paused} />

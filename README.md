@@ -106,14 +106,15 @@ Open http://localhost:3000. The first account you register is the site admin. No
 
 ## Layout
 
-| Path          | What it is                                             |
-| ------------- | ------------------------------------------------------ |
-| `apps/web`    | The Next.js client (a Bun workspace).                  |
-| `apps/server` | The Rust server (a Cargo workspace member).            |
-| `crates/wasm` | The WASM module for the client.                        |
-| `assets`      | Logos, fonts and the bundled STUN list.                |
-| `deploy`      | Compose, Kubernetes and nginx files.                   |
-| `jfiles`      | The `just` recipes. Run them from the repository root. |
+| Path           | What it is                                             |
+| -------------- | ------------------------------------------------------ |
+| `apps/web`     | The Next.js client (a Bun workspace).                  |
+| `apps/server`  | The Rust server (a Cargo workspace member).            |
+| `apps/desktop` | The Tauri desktop app (Windows, macOS, Linux).         |
+| `crates/wasm`  | The WASM module for the client.                        |
+| `assets`       | Logos, fonts and the bundled STUN list.                |
+| `deploy`       | Compose, Kubernetes and nginx files.                   |
+| `jfiles`       | The `just` recipes. Run them from the repository root. |
 
 Keep `.env.local` in the repository root. The root scripts and `just` recipes read it from there.
 
@@ -144,6 +145,62 @@ docker run -p 3000:3000 -v rchat-data:/data ghcr.io/robbyv2/rchat:nightly
 ```
 
 Build the image locally with `docker compose up`.
+
+## Desktop app
+
+`apps/desktop` is a Tauri 2 shell for Windows, macOS and Linux. It bundles the static client and connects to the instance you pick on first start, like the web app does. It adds system notifications, an unread badge, a tray, deep links, start on login and updates.
+
+You need the Tauri CLI and the [Tauri system dependencies](https://tauri.app/start/prerequisites/) for your OS. On Linux these are webkit2gtk 4.1, libsoup 3 and libayatana-appindicator.
+
+```bash
+cargo install tauri-cli --version "^2" --locked
+```
+
+Run it against the Next dev server, with hot reload:
+
+```bash
+just src desktop
+```
+
+Build the installers for your OS. They go to `target/release/bundle/` (.deb, .rpm and AppImage on Linux, NSIS and MSI on Windows, .app and .dmg on macOS):
+
+```bash
+just src desktop-build
+```
+
+Run the Linux smoke test against a running instance. It needs `xvfb-run` or KDE's `kwin_wayland`:
+
+```bash
+apps/desktop/scripts/smoke.sh http://localhost:3000
+```
+
+`rchat://chat.example.com/invite/lobby/` opens `/invite/lobby/` on that instance. Any client path works, such as channels, DMs and config links. Hosts like `localhost:3000` use http, all others https. Before signing in, a link to another instance asks before switching to it; once signed in, it opens in the browser.
+
+The content security policy only runs the app's own scripts. The app may connect to any https and wss address, because you can pick any instance, and to http and ws on `localhost` and `127.0.0.1`. To lock a build to fixed instances, write the narrower sources to a file and pass it at build time. Keys you leave out keep their values:
+
+```json
+{
+  "app": {
+    "security": {
+      "csp": {
+        "connect-src": "'self' ipc: http://ipc.localhost https://chat.example.com wss://chat.example.com",
+        "img-src": "'self' data: blob: https://chat.example.com",
+        "media-src": "'self' data: blob: mediastream: https://chat.example.com"
+      }
+    }
+  }
+}
+```
+
+```bash
+just src desktop-build --config /path/to/csp.json
+```
+
+Updates come from GitHub Releases. Stable reads `latest.json` from the latest release, weekly reads it from the release under the `weekly` tag. The app checks when you ask in Settings, or at start if you turn that on. Builds with `RCHAT_CHANNEL=weekly` follow the weekly channel by default. Update files must be signed:
+
+1. Make a key pair once with `cargo tauri signer generate -w ~/.tauri/rchat.key`. Never commit the private key.
+2. Put the public key in `apps/desktop/src-tauri/tauri.conf.json` under `plugins.updater.pubkey`.
+3. Give the build the private key and its password in `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, then run `just src desktop-build --config tauri.release.conf.json` to write the signed update files.
 
 ## Scaling
 

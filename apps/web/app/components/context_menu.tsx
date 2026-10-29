@@ -536,7 +536,7 @@ function OpenMenu({ menu, coarse }: { menu: ContextMenuState; coarse: boolean })
     const items = levels[depth]
     return (
       <div
-        className="fixed inset-x-0 top-0 z-50 flex h-app flex-col justify-end bg-scrim/40"
+        className="fixed inset-x-0 top-app z-50 flex h-app flex-col justify-end bg-scrim/40"
         onClick={close}
         onContextMenu={e => {
           e.preventDefault()

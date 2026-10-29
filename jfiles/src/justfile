@@ -2,6 +2,7 @@ import "../common.just"
 import "./build.just"
 import "./test.just"
 import "./run.just"
+import "./desktop.just"
 
 # Default recipe
 default:
@@ -12,6 +13,7 @@ install:
   cd {{ROOT}} && bun install
   cargo install taplo-cli
   cargo install wasm-pack
+  cargo install tauri-cli --version "^2" --locked
 
 # Amend no edit
 amend:

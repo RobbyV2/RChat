@@ -253,7 +253,7 @@ export function EmojiPicker({
           e.stopPropagation()
           if (e.target === e.currentTarget) onClose()
         }}
-        className="fixed inset-x-0 top-0 z-50 flex h-app flex-col justify-end bg-scrim/40"
+        className="fixed inset-x-0 top-app z-50 flex h-app flex-col justify-end bg-scrim/40"
       >
         <div
           ref={rootRef}

@@ -4,6 +4,7 @@ import { hostOf, normalizeHost, privateHost } from './qualified'
 
 export { privateHost }
 import { WsClient, wsUrlFrom, type WsEndpoints } from './ws'
+import { desktopInfo } from './platform/desktop'
 import type { InstanceInfo } from './types'
 
 const CLIENT_API_MAJOR = 1
@@ -436,6 +437,23 @@ export function noteHomeInfo(info: InstanceInfo) {
 
 export const knownInstances = () =>
   Object.entries(readKnown()).map(([origin, info]) => ({ origin, info }))
+
+// The site links for other people point at: this page on the web, the home instance in the
+// desktop app (whose own pages live on an app-only origin nobody else can open).
+export function shareOrigin(
+  page: Pick<Location, 'protocol' | 'origin'> | null = typeof window === 'undefined'
+    ? null
+    : window.location,
+  desktop = desktopInfo() !== null
+): string {
+  if (page && !desktop && (page.protocol === 'http:' || page.protocol === 'https:'))
+    return page.origin
+  return normalizeOrigin(home.info?.public_url ?? '') ?? home.origin
+}
+
+// The current page's address on the share origin, so app-only origins parse like web ones.
+export const pageHref = () =>
+  `${shareOrigin()}${window.location.pathname}${window.location.search}${window.location.hash}`
 
 export function localOrigins(homePublic: string | null = home.info?.public_url ?? null) {
   const page = typeof window === 'undefined' ? null : window.location.origin

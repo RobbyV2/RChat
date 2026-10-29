@@ -1,3 +1,5 @@
+import { shareOrigin } from './instances'
+
 export interface InviteTarget {
   server: string
   password: string | null
@@ -35,7 +37,7 @@ export const invitePath = (server: string) => `/invite/${strictEncode(server)}/`
 
 export const inviteUrl = (server: string, password?: string | null, origin?: string) => {
   const pw = password?.trim()
-  const base = origin ?? window.location.origin
+  const base = origin ?? shareOrigin()
   return `${base}${invitePath(server)}${pw ? `#password=${queryEncode(pw)}` : ''}`
 }
 

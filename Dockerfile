@@ -13,7 +13,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 # Stage 3: Build dependencies + server + WASM
 FROM chef AS rust-builder
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json --bin server
 
 COPY . .
 RUN cargo build --release --bin server

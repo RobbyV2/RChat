@@ -1,0 +1,26 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "RChat",
+        "url": "index.html",
+        "create": false,
+        "visible": false,
+        "width": 1200,
+        "height": 800,
+        "minWidth": 380,
+        "minHeight": 520,
+        "decorations": true,
+        "dragDropEnabled": false,
+        "backgroundColor": "#141218",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 11
+        }
+      }
+    ]
+  }
+}

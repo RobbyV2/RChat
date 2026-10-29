@@ -148,7 +148,7 @@ function AudioUnblock() {
   return (
     <button
       onClick={unblockAudio}
-      className={`${ctlBase} fixed top-[calc(env(safe-area-inset-top)+4rem)] left-1/2 z-50 -translate-x-1/2 gap-2 bg-inverse-surface px-4 py-2 text-sm whitespace-nowrap font-medium text-inverse-on-surface shadow-elevation-3 hover:opacity-90`}
+      className={`${ctlBase} fixed top-[calc(var(--safe-top)+4rem)] left-1/2 z-50 -translate-x-1/2 gap-2 bg-inverse-surface px-4 py-2 text-sm whitespace-nowrap font-medium text-inverse-on-surface shadow-elevation-3 hover:opacity-90`}
     >
       <Volume2 size={16} />
       Click to enable audio
@@ -947,7 +947,7 @@ export function CallBanner() {
       return (
         <div
           role="status"
-          className="fixed top-[calc(env(safe-area-inset-top)+0.75rem)] left-1/2 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
+          className="fixed top-[calc(var(--safe-top)+0.75rem)] left-1/2 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
         >
           <button
             title="Go to call"
@@ -977,7 +977,7 @@ export function CallBanner() {
       <div
         role="alertdialog"
         aria-label="Incoming call"
-        className="fixed top-[calc(env(safe-area-inset-top)+0.75rem)] left-1/2 z-50 flex w-72 max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col items-center gap-3 rounded-3xl bg-surface-container-high px-5 pt-6 pb-5 text-center shadow-elevation-3 max-sm:flex-row max-sm:rounded-2xl max-sm:px-4 max-sm:py-3 max-sm:text-left"
+        className="fixed top-[calc(var(--safe-top)+0.75rem)] left-1/2 z-50 flex w-72 max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col items-center gap-3 rounded-3xl bg-surface-container-high px-5 pt-6 pb-5 text-center shadow-elevation-3 max-sm:flex-row max-sm:rounded-2xl max-sm:px-4 max-sm:py-3 max-sm:text-left"
       >
         <span className="max-sm:hidden">{avatar(72)}</span>
         <span className="sm:hidden">{avatar(40)}</span>

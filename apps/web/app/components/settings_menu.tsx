@@ -16,6 +16,7 @@ import { UserAvatar } from './user_avatar'
 import { SettingSwitch } from './admin_panel'
 import { NotificationsSection } from './notify_settings'
 import { ConfigSyncSection } from './config_sync'
+import { DesktopSection } from './desktop_settings'
 import { PassSwitch, WordGrid } from './word_grid'
 import { FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './ui'
 
@@ -533,6 +534,7 @@ function SettingsSection() {
           Blurs server names, usernames, and DM names until hovered.
         </p>
       </section>
+      <DesktopSection />
     </div>
   )
 }
@@ -640,7 +642,7 @@ function Menu() {
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      className="fixed inset-x-0 top-0 z-50 flex h-app flex-col bg-surface px-safe md:flex-row"
+      className="fixed inset-x-0 top-app z-50 flex h-app flex-col bg-surface px-safe md:flex-row"
     >
       <div className="flex shrink-0 items-center border-b border-outline-variant bg-surface-container-low pr-3 md:contents">
         <nav className="flex min-w-0 flex-1 gap-1 overflow-x-auto p-3 md:w-56 md:flex-none md:flex-col md:overflow-y-auto md:border-r md:border-outline-variant md:bg-surface-container-low md:p-4">

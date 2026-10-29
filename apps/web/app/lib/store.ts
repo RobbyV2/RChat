@@ -11,8 +11,10 @@ import {
   fitsHome,
   home,
   noteHomeInfo,
+  pageHref,
   resolveInstance,
   selectHome,
+  shareOrigin,
   writeLocal,
 } from './instances'
 import { JoinAborted, rtc } from './rtc'
@@ -1366,12 +1368,12 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const rememberInvite = (entry: InviteEntry) =>
     queueMicrotask(() => {
-      if (parseInvite(window.location.href, window.location.origin)?.server !== entry.server) return
+      if (parseInvite(pageHref(), shareOrigin())?.server !== entry.server) return
       window.history.replaceState(entryState(entry), '', invitePath(entry.server))
     })
 
   const readInvite = () => {
-    const target = parseInvite(window.location.href, window.location.origin)
+    const target = parseInvite(pageHref(), shareOrigin())
     const handoff = takeStashedInvite(target?.server ?? null)
     if (!target) {
       leaveInvite()

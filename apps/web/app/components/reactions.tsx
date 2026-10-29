@@ -293,7 +293,7 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
         e.stopPropagation()
         if (e.target === e.currentTarget) onClose()
       }}
-      className={`fixed inset-x-0 top-0 z-50 flex h-app bg-scrim/40 ${
+      className={`fixed inset-x-0 top-app z-50 flex h-app bg-scrim/40 ${
         coarse ? 'flex-col justify-end' : 'items-center justify-center px-safe-4 py-4'
       }`}
     >

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Download } from 'lucide-react'
+import { desktopInfo } from '../lib/platform'
 
 interface InstallPromptEvent extends Event {
   prompt: () => Promise<void>
@@ -80,6 +81,7 @@ export function IosInstallHint() {
 
 export default function PwaRegister() {
   useEffect(() => {
+    if (desktopInfo()) return
     const onPrompt = (e: Event) => {
       e.preventDefault()
       if (!isStandalone()) setDeferred(e as InstallPromptEvent)

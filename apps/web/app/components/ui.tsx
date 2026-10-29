@@ -180,7 +180,7 @@ export function Dialog({
   useEscape(onClose, layer)
   return (
     <div
-      className={`fixed inset-x-0 top-0 ${layer === 'confirm' || compact ? 'z-50' : 'z-40'} flex h-app items-center justify-center bg-scrim/60 ${full ? 'px-safe sm:px-safe-4 sm:py-4' : 'px-safe-4 py-4'}`}
+      className={`fixed inset-x-0 top-app ${layer === 'confirm' || compact ? 'z-50' : 'z-40'} flex h-app items-center justify-center bg-scrim/60 ${full ? 'px-safe sm:px-safe-4 sm:py-4' : 'px-safe-4 py-4'}`}
       {...backdrop}
     >
       <div
@@ -226,7 +226,7 @@ export function LinkPage({
 }) {
   const authed = useStore(s => s.me !== null || s.guest)
   return (
-    <div className="invite-backdrop fixed inset-x-0 top-0 z-40 flex h-app flex-col overflow-y-auto px-safe-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+    <div className="invite-backdrop fixed inset-x-0 top-app z-40 flex h-app flex-col overflow-y-auto px-safe-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
       <header className="flex shrink-0 items-center justify-between pt-[max(0.75rem,env(safe-area-inset-top))] pb-2">
         <img src="/rchat_logo.png" alt="RChat" className="h-9 w-auto" />
         <div className="flex items-center gap-1">
