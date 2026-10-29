@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::ToSchema;
 
-use crate::api::access::{Proof, ServerAccess, Via, password_lookup, resolve_server};
+use crate::api::access::{Proof, ServerAccess, password_lookup, resolve_server};
+use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
 use crate::api::servers::guard_rchat;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, JoinedVia, OkResp, bad, check_len, ok, placeholders,
@@ -340,12 +341,10 @@ pub(crate) async fn create_password(
     if taken {
         return Err(bad("That password was already used here. Pick another one"));
     }
-    let created_by = match access.via() == Via::Staff
-        || (user.is_site_admin
-            && access.member_perms(db, &user.username).await? & Perm::DeleteServer as i64 == 0)
-    {
-        true => None,
-        false => Some(user.username.clone()),
+    let actor = access.audit_actor(db, Perm::DeleteServer).await?;
+    let created_by = match &actor {
+        Actor::Staff => None,
+        Actor::User(name) => Some(name.clone()),
     };
     let mut tx = db.begin().await?;
     if !crate::db::is_sqlite(db) {
@@ -387,9 +386,25 @@ pub(crate) async fn create_password(
             },
         );
     };
+    let info = password_row(&row, t)?;
+    audit::record(
+        &mut tx,
+        Entry::new(access.name(), &actor, Action::PasswordCreate)
+            .target(Target::with_id(
+                TargetKind::Password,
+                info.id,
+                info.label.as_deref(),
+            ))
+            .details(
+                Details::new()
+                    .set("expires_at", info.expires_at)
+                    .set("max_uses", info.max_uses),
+            ),
+    )
+    .await?;
     tx.commit().await?;
     Ok(Json(CreatedPassword {
-        info: password_row(&row, t)?,
+        info,
         password: secret,
     }))
 }
@@ -424,24 +439,39 @@ pub(crate) async fn revoke_password(
     Path((name, id)): Path<(String, i64)>,
 ) -> Result<Json<OkResp>, ApiError> {
     let access = manage(&state, &user, &name).await?;
+    let actor = access.audit_actor(&state.db, Perm::DeleteServer).await?;
     let mut tx = state.db.begin().await?;
-    let found = sqlx::query("SELECT 1 FROM server_passwords WHERE id = $1 AND server = $2")
+    let found = sqlx::query("SELECT label FROM server_passwords WHERE id = $1 AND server = $2")
         .bind(id)
         .bind(access.name())
         .fetch_optional(&mut *tx)
-        .await?
-        .is_some();
-    if !found {
+        .await?;
+    let Some(found) = found else {
         return Err(ApiError(
             axum::http::StatusCode::NOT_FOUND,
             "Password not found".to_string(),
         ));
-    }
-    sqlx::query("UPDATE server_passwords SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL")
-        .bind(now())
-        .bind(id)
-        .execute(&mut *tx)
+    };
+    let label: Option<String> = found.try_get(0)?;
+    let revoked = sqlx::query(
+        "UPDATE server_passwords SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL",
+    )
+    .bind(now())
+    .bind(id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if revoked > 0 {
+        audit::record(
+            &mut tx,
+            Entry::new(access.name(), &actor, Action::PasswordRevoke).target(Target::with_id(
+                TargetKind::Password,
+                id,
+                label.as_deref(),
+            )),
+        )
         .await?;
+    }
     sqlx::query("DELETE FROM guest_grants WHERE password_id = $1")
         .bind(id)
         .execute(&mut *tx)

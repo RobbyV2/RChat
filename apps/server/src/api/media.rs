@@ -10,6 +10,7 @@ use s3::Bucket;
 use sqlx::Row;
 
 use crate::api::access::{MsgScope, Proof, resolve_message};
+use crate::api::audit;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, MediaRef, OkResp, Settings, allowed, bad, header_grants, ok,
     placeholders, request_token, require_guest_ok, user_for_token,
@@ -178,12 +179,13 @@ pub(crate) async fn delete_media(
 ) -> Result<Json<OkResp>, ApiError> {
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
     message.require_can_delete(&state.db).await?;
+    let audit = crate::api::messages::moderated(&state.db, id, &message, &user, true).await?;
     let MsgScope {
         channel_id,
         dm_id,
         thread_root_id: _,
         kind: _,
-        author: _,
+        author,
         media_id,
         media_filename: _,
         media_kind,
@@ -196,15 +198,33 @@ pub(crate) async fn delete_media(
             return Err(ApiError(StatusCode::NOT_FOUND, "No attachment".to_string()));
         }
     };
+    let entry = audit.map(|(server, actor, channel)| {
+        audit::message_entry(
+            &server,
+            &actor,
+            audit::Action::AttachmentRemove,
+            id,
+            &author,
+            &channel,
+        )
+    });
     match media_kind {
         MediaKind::P2p => {
+            let mut tx = state.db.begin().await?;
             sqlx::query("UPDATE messages SET media_removed = 2, media_hoster = NULL, media_expires_at = NULL, media_size = NULL, media_mime = NULL, media_sha256 = NULL WHERE id = $1")
                 .bind(id)
-                .execute(&state.db)
+                .execute(&mut *tx)
                 .await?;
+            if let Some(entry) = entry {
+                audit::record(&mut tx, entry).await?;
+            }
+            tx.commit().await?;
         }
         MediaKind::Server => {
             let mut tx = state.db.begin().await?;
+            if let Some(entry) = entry {
+                audit::record(&mut tx, entry).await?;
+            }
             sqlx::query("UPDATE messages SET media_removed = 2 WHERE id = $1")
                 .bind(id)
                 .execute(&mut *tx)

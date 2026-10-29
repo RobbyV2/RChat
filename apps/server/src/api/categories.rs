@@ -8,6 +8,7 @@ use sqlx::{AnyConnection, Row};
 use utoipa::ToSchema;
 
 use crate::api::access::{Proof, resolve_category, resolve_server};
+use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
 use crate::api::servers::{CHANNEL_MAX, check_name};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Category, ChannelLayout, LayoutCategory, OkResp,
@@ -308,6 +309,7 @@ pub(crate) async fn create_category(
         resolve_server(&state.db, &name.to_lowercase(), Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::ManageChannels).await?;
     let server = access.name().to_string();
+    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &server, None).await?;
     let count: i64 = sqlx::query("SELECT COUNT(*) FROM channel_categories WHERE server = $1")
@@ -333,6 +335,12 @@ pub(crate) async fn create_category(
         name: category_name,
         position: row.try_get(1)?,
     };
+    audit::record(
+        &mut tx,
+        category_entry(&server, &actor, Action::CategoryCreate, &category)
+            .details(Details::new().change("name", None::<String>, category.name.as_str())),
+    )
+    .await?;
     let layout = load_layout(&mut tx, &server).await?;
     tx.commit().await?;
     if let Some(layout) = layout {
@@ -370,8 +378,17 @@ pub(crate) async fn rename_category(
     let access = resolve_category(&state.db, id, &user).await?;
     let category_name = clean_name(&state.db, &req.name).await?;
     let server = access.name().to_string();
+    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &server, None).await?;
+    let was: Option<String> =
+        sqlx::query("SELECT name FROM channel_categories WHERE id = $1 AND server = $2")
+            .bind(id)
+            .bind(&server)
+            .fetch_optional(&mut *tx)
+            .await?
+            .map(|r| r.try_get(0))
+            .transpose()?;
     let row = sqlx::query(
         "UPDATE channel_categories SET name = $1 WHERE id = $2 AND server = $3 RETURNING position",
     )
@@ -386,6 +403,14 @@ pub(crate) async fn rename_category(
         name: category_name,
         position: row.try_get(0)?,
     };
+    let changes = Details::new().change("name", was, category.name.as_str());
+    if changes.has_changes() {
+        audit::record(
+            &mut tx,
+            category_entry(&server, &actor, Action::CategoryUpdate, &category).details(changes),
+        )
+        .await?;
+    }
     let layout = load_layout(&mut tx, &server).await?;
     tx.commit().await?;
     if let Some(layout) = layout {
@@ -421,6 +446,7 @@ pub(crate) async fn delete_category(
 ) -> Result<Json<OkResp>, ApiError> {
     let access = resolve_category(&state.db, id, &user).await?;
     let server = access.name().to_string();
+    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &server, None).await?;
     let mut layout = load_layout(&mut tx, &server)
@@ -430,6 +456,17 @@ pub(crate) async fn delete_category(
         return Err(crate::api::access::not_found());
     };
     let gone = layout.categories.remove(at);
+    audit::record(
+        &mut tx,
+        Entry::new(&server, &actor, Action::CategoryDelete)
+            .target(Target::with_id(TargetKind::Category, id, Some(&gone.name)))
+            .details(
+                Details::new()
+                    .change("name", gone.name.as_str(), None::<String>)
+                    .set("channels", gone.channels.len()),
+            ),
+    )
+    .await?;
     layout.uncategorized.extend(gone.channels);
     write_layout(&mut tx, &server, &layout).await?;
     sqlx::query("DELETE FROM channel_categories WHERE id = $1")
@@ -439,6 +476,27 @@ pub(crate) async fn delete_category(
     tx.commit().await?;
     announce(&state, &server, layout, None);
     Ok(ok())
+}
+
+type Shape = (Vec<i64>, Vec<(i64, Vec<i64>)>);
+
+fn shape(layout: &ChannelLayout) -> Shape {
+    (
+        layout.uncategorized.clone(),
+        layout
+            .categories
+            .iter()
+            .map(|c| (c.id, c.channels.clone()))
+            .collect(),
+    )
+}
+
+fn category_entry(server: &str, actor: &Actor, action: Action, category: &Category) -> Entry {
+    Entry::new(server, actor, action).target(Target::with_id(
+        TargetKind::Category,
+        category.id,
+        Some(&category.name),
+    ))
 }
 
 fn check_order(req: &LayoutReq, current: &ChannelLayout) -> Result<(), ApiError> {
@@ -524,6 +582,7 @@ pub(crate) async fn reorder_layout(
         resolve_server(&state.db, &name.to_lowercase(), Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::ManageChannels).await?;
     let server = access.name().to_string();
+    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
     let mut tx = state.db.begin().await?;
     if !bump(&mut tx, &server, Some(req.version)).await? {
         return Err(conflict());
@@ -532,6 +591,7 @@ pub(crate) async fn reorder_layout(
         .await?
         .ok_or_else(crate::api::access::not_found)?;
     check_order(&req, &current)?;
+    let was = shape(&current);
     let names: HashMap<i64, String> = current
         .categories
         .into_iter()
@@ -551,6 +611,9 @@ pub(crate) async fn reorder_layout(
             .collect(),
     };
     write_layout(&mut tx, &server, &layout).await?;
+    if shape(&layout) != was {
+        audit::record(&mut tx, Entry::new(&server, &actor, Action::ChannelReorder)).await?;
+    }
     tx.commit().await?;
     announce(&state, &server, layout.clone(), None);
     Ok(Json(layout))

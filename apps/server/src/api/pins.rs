@@ -6,7 +6,8 @@ use sqlx::Row;
 use crate::api::access::{
     MsgScope, Proof, ResolvedMessage, not_found, resolve_channel, resolve_dm, resolve_message,
 };
-use crate::api::messages::{Quotes, load_broadcast, load_message, pinned_messages};
+use crate::api::audit;
+use crate::api::messages::{Quotes, load_broadcast, load_message, moderated, pinned_messages};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, OkResp, bad, now_ms, ok, require_guest_ok,
 };
@@ -95,6 +96,7 @@ pub(crate) async fn pin_message(
     if message.kind != "user" || message.thread_root_id.is_some() {
         return Err(cannot_pin());
     }
+    let audit = moderated(&state.db, id, &resolved, &user, false).await?;
     let scope = resolved.into_scope();
     let Place {
         column,
@@ -146,6 +148,20 @@ pub(crate) async fn pin_message(
     .await?
     .map(|r| r.try_get(0))
     .transpose()?;
+    if let Some((server, actor, channel)) = &audit {
+        audit::record(
+            &mut tx,
+            audit::message_entry(
+                server,
+                actor,
+                audit::Action::MessagePin,
+                id,
+                &scope.author,
+                channel,
+            ),
+        )
+        .await?;
+    }
     tx.commit().await?;
     let history_rules = match scope.channel_id {
         Some(cid) => sqlx::query(
@@ -208,14 +224,31 @@ pub(crate) async fn unpin_message(
     Authed(user): Authed,
 ) -> Result<Json<OkResp>, ApiError> {
     let resolved = pin_target(&state, id, &user).await?;
+    let audit = moderated(&state.db, id, &resolved, &user, false).await?;
+    let mut tx = state.db.begin().await?;
     let unpinned = sqlx::query(
         "UPDATE messages SET pinned_at = NULL, pinned_by = NULL WHERE id = $1 AND pinned_at IS NOT NULL",
     )
     .bind(id)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?
     .rows_affected()
         > 0;
+    if unpinned && let Some((server, actor, channel)) = &audit {
+        audit::record(
+            &mut tx,
+            audit::message_entry(
+                server,
+                actor,
+                audit::Action::MessageUnpin,
+                id,
+                &resolved.scope().author,
+                channel,
+            ),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     if unpinned {
         let MsgScope {
             channel_id,

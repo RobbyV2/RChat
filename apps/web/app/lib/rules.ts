@@ -1,5 +1,6 @@
 import {
   ALL_PERMS,
+  Perm,
   type Channel,
   type ChannelPerm,
   type ConfirmChoice,
@@ -10,6 +11,28 @@ import {
   type RoleLimits,
   type SiteSettings,
 } from './types'
+
+export const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
+  { label: 'Manage channels', bit: Perm.ManageChannels },
+  {
+    label: 'Manage messages',
+    bit: Perm.DeleteMessages,
+    hint: "Delete and pin others' messages",
+  },
+  { label: 'Kick', bit: Perm.Kick },
+  { label: 'Delete server', bit: Perm.DeleteServer },
+  { label: 'Manage admins', bit: Perm.ManageAdmins },
+  {
+    label: 'Mention everyone and roles',
+    bit: Perm.MentionEveryone,
+    hint: 'Use @everyone, @here and mention any role',
+  },
+  {
+    label: 'View audit log',
+    bit: Perm.ViewAuditLog,
+    hint: 'See who changed what in this server',
+  },
+]
 
 export const PROFANITY_TARGETS: { key: ProfanityTarget; label: string }[] = [
   { key: 'messages', label: 'Messages' },

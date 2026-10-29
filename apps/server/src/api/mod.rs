@@ -1,5 +1,6 @@
 pub mod access;
 pub mod admin;
+pub mod audit;
 pub mod auth;
 pub mod budget;
 pub mod categories;
@@ -395,7 +396,7 @@ pub struct Role {
     pub color: String,
     /// Permission bits of the role: 1 Manage channels, 2 Manage messages (delete and pin messages
     /// of others), 4 Kick (also bans), 8 Delete server (also edits the server), 16 Manage admins,
-    /// 32 Mention everyone and roles (`@everyone`, `@here` and every role).
+    /// 32 Mention everyone and roles (`@everyone`, `@here` and every role), 64 View audit log.
     #[schema(example = 6)]
     pub perms: i64,
     /// Anyone who can send in a channel may mention the role with `@name`. Otherwise only members
@@ -1673,6 +1674,7 @@ fn api_routes(
                 .patch(system_messages::update_system_messages),
         )
         .route("/servers/{name}/kick", post(servers::kick_member))
+        .route("/servers/{name}/audit", get(audit::list_audit))
         .route(
             "/servers/{name}/bans",
             get(servers::list_bans).post(servers::ban_member),

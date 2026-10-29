@@ -12,6 +12,7 @@ use crate::api::access::{
     resolve_server,
 };
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
+use crate::api::audit::{self, ChannelRef, Details, Entry, Target, TargetKind};
 use crate::api::auth::{Work, clean_multiline, hash_in, new_token, present};
 use crate::api::categories::{
     announce, bump, channel_order, layout_version, listed, load_layout, rank, server_categories,
@@ -177,8 +178,8 @@ pub struct UsernameReq {
 #[derive(Deserialize, ToSchema)]
 pub struct PermsReq {
     /// Permission bitmask: 1 Manage channels, 2 Manage messages (delete and pin messages of
-    /// others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention everyone and roles. Bits
-    /// outside 63 are dropped. For an admin, 0 means all permissions.
+    /// others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention everyone and roles, 64 View
+    /// audit log. Bits outside 127 are dropped. For an admin, 0 means all permissions.
     #[schema(example = 7)]
     perms: i64,
 }
@@ -195,12 +196,12 @@ pub struct RoleReq {
     color: String,
     /// Permission bitmask for members with the role: 1 Manage channels, 2 Manage messages (delete
     /// and pin messages of others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention
-    /// everyone and roles. Bits outside 63 are dropped. Roles only add permissions to members who
-    /// are not admins. Admins use their own admin permissions.
+    /// everyone and roles, 64 View audit log. Bits outside 127 are dropped. Roles only add
+    /// permissions to members who are not admins. Admins use their own admin permissions.
     #[schema(example = 6)]
     perms: i64,
     /// Anyone who can send may mention the role (default `false`: only members with the Mention
-    /// everyone permission can).
+    /// everyone permission can). Turning it on needs the Mention everyone permission.
     #[serde(default)]
     mentionable: bool,
 }
@@ -213,9 +214,10 @@ pub struct RolePatch {
     name: Option<String>,
     /// New role color as `#rrggbb`, stored as sent.
     color: Option<String>,
-    /// New permission bitmask (see `RoleReq.perms`). Bits outside 63 are dropped.
+    /// New permission bitmask (see `RoleReq.perms`). Bits outside 127 are dropped.
     perms: Option<i64>,
-    /// Whether anyone who can send may mention the role (see `RoleReq.mentionable`).
+    /// Whether anyone who can send may mention the role (see `RoleReq.mentionable`). Turning it
+    /// on needs the Mention everyone permission.
     mentionable: Option<bool>,
 }
 
@@ -2057,6 +2059,7 @@ pub(crate) async fn update_server(
         access.require_perm(&state.db, Perm::Kick).await?;
     }
     let mine = access.perms(&state.db).await?;
+    let own = access.member_own_perms(&state.db).await?;
     let (new_key, display) = match &name {
         Some(n) => {
             let display = n.trim().to_string();
@@ -2083,6 +2086,11 @@ pub(crate) async fn update_server(
         (None, _) => None,
     };
     let public_now = matches!(password_hash, Some(None));
+    let actor = access.audit_actor(&state.db, Perm::DeleteServer).await?;
+    let had_permanent = match password_hash {
+        Some(_) => access.has_permanent_password(&state.db).await?,
+        None => false,
+    };
     let mut tx = state.db.begin().await?;
     rename_live(&mut tx, &key, &new_key, &display, password_hash.as_ref()).await?;
     set_colors(
@@ -2092,21 +2100,75 @@ pub(crate) async fn update_server(
         name_color.as_ref(),
     )
     .await?;
-    let (removed, kept) = match purge {
-        true => purge_members(&mut tx, &new_key, &user, mine).await?,
+    let (removed, kept, bypassed) = match purge {
+        true => purge_members(&mut tx, &new_key, &user, mine, own).await?,
         false => (
             Vec::new(),
             other_members(&mut tx, &new_key, &user.username).await?,
+            false,
         ),
     };
-    if password_hash.is_some() && !(keep_guests && members == PasswordMembers::Keep) {
+    let actor = actor.staff_if(bypassed);
+    let guests_revoked =
+        password_hash.is_some() && !(keep_guests && members == PasswordMembers::Keep);
+    if guests_revoked {
         sqlx::query("DELETE FROM guest_grants WHERE server = $1")
             .bind(&new_key)
             .execute(&mut *tx)
             .await?;
     }
-    if public_now || new_key != key {
+    let passwords_revoked = public_now || new_key != key;
+    if passwords_revoked {
         crate::api::passwords::revoke_all(&mut tx, &new_key).await?;
+    }
+    let changed = audit::Details::new()
+        .change("name", lite.display_name.as_str(), display.as_str())
+        .change(
+            "banner_color",
+            lite.banner_color.clone(),
+            banner_color.clone().unwrap_or(lite.banner_color.clone()),
+        )
+        .change(
+            "name_color",
+            lite.name_color.clone(),
+            name_color.clone().unwrap_or(lite.name_color.clone()),
+        );
+    if changed.has_changes() {
+        let changed = match passwords_revoked && password_hash.is_none() {
+            true => changed.set("passwords_revoked", true),
+            false => changed,
+        };
+        audit::record(
+            &mut tx,
+            audit::Entry::new(&new_key, &actor, audit::Action::ServerUpdate)
+                .target(audit::Target::server(&display))
+                .details(changed),
+        )
+        .await?;
+    }
+    if let Some(hash) = &password_hash {
+        let permanent = hash.as_deref().is_some_and(|h| h != NO_PERMANENT_HASH);
+        let details = audit::Details::new()
+            .change("protected", lite.has_password, hash.is_some())
+            .set(
+                "permanent_password",
+                match (had_permanent, permanent) {
+                    (false, true) => "set",
+                    (true, true) => "changed",
+                    (true, false) => "removed",
+                    (false, false) => "none",
+                },
+            )
+            .set("members_removed", removed.len())
+            .set("guests_revoked", guests_revoked)
+            .set("passwords_revoked", passwords_revoked);
+        audit::record(
+            &mut tx,
+            audit::Entry::new(&new_key, &actor, audit::Action::AccessMode)
+                .target(audit::Target::server(&display))
+                .details(details),
+        )
+        .await?;
     }
     tx.commit().await?;
     let renamed = new_key != key || display != lite.display_name;
@@ -2240,12 +2302,15 @@ async fn other_members(
     )
 }
 
+/// Removes the members `actor` may moderate. Also says whether that needed instance powers:
+/// `own` is the site admin's permissions as a plain member.
 async fn purge_members(
     tx: &mut sqlx::Transaction<'_, sqlx::Any>,
     server: &str,
     actor: &User,
     mine: i64,
-) -> Result<(Vec<String>, i64), ApiError> {
+    own: Option<i64>,
+) -> Result<(Vec<String>, i64, bool), ApiError> {
     let rows = sqlx::query(
         "SELECT username, is_admin, perms FROM members WHERE server = $1 AND username <> $2",
     )
@@ -2265,6 +2330,7 @@ async fn purge_members(
     }
     let mut removed = Vec::new();
     let mut kept = 0;
+    let mut bypassed = own.is_some_and(|o| o & Perm::Kick as i64 == 0);
     for r in &rows {
         let username: String = r.try_get(0)?;
         let theirs = perm_bits(
@@ -2273,7 +2339,10 @@ async fn purge_members(
             roles.get(&username).copied().unwrap_or(0),
         );
         match can_moderate(mine, actor.is_site_admin, theirs) {
-            true => removed.push(username),
+            true => {
+                bypassed |= own.is_some_and(|o| !can_moderate(o, false, theirs));
+                removed.push(username);
+            }
             false => kept += 1,
         }
     }
@@ -2290,7 +2359,7 @@ async fn purge_members(
             query.execute(&mut **tx).await?;
         }
     }
-    Ok((removed, kept))
+    Ok((removed, kept, bypassed))
 }
 
 /// Delete a server
@@ -2372,6 +2441,7 @@ pub(crate) async fn create_channel(
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::ManageChannels).await?;
     let key = access.name().to_string();
+    let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &key, None).await?;
     let taken = sqlx::query("SELECT 1 FROM channels WHERE server = $1 AND name = $2")
@@ -2414,6 +2484,21 @@ pub(crate) async fn create_channel(
         return Err(not_found("Category not found"));
     };
     let id: i64 = row.try_get(0)?;
+    let created = ChannelRef {
+        id,
+        name: channel_name.clone(),
+        private: req.restrict_view,
+    };
+    audit::record(
+        &mut tx,
+        audit::channel_entry(&key, &actor, audit::Action::ChannelCreate, &created).details(
+            Details::new()
+                .channel(&created)
+                .set("kind", kind.as_str())
+                .set("restrict_view", req.restrict_view),
+        ),
+    )
+    .await?;
     let layout = load_layout(&mut tx, &key).await?;
     tx.commit().await?;
     let position = layout
@@ -2528,13 +2613,27 @@ pub(crate) async fn update_channel(
         }
         None => None,
     };
+    let actor = channel
+        .server()
+        .audit_actor(&state.db, Perm::ManageChannels)
+        .await?;
+    let mut tx = state.db.begin().await?;
+    let old = sqlx::query("SELECT name, topic, slowmode_seconds, restrict_view, restrict_send, CASE WHEN EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = channels.id) THEN 1 ELSE 0 END FROM channels WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(crate::api::access::not_found)?;
+    let before = Restrict::read(&old, 3)?;
+    let (was_name, was_topic, was_slow): (String, Option<String>, i64) =
+        (old.try_get(0)?, old.try_get(1)?, old.try_get(2)?);
+    let ruled = old.try_get::<i64, _>(5)? != 0;
     if let Some(channel_name) = &channel_name {
         let taken =
             sqlx::query("SELECT 1 FROM channels WHERE server = $1 AND name = $2 AND id != $3")
                 .bind(&server)
                 .bind(channel_name)
                 .bind(id)
-                .fetch_optional(&state.db)
+                .fetch_optional(&mut *tx)
                 .await?
                 .is_some();
         if taken {
@@ -2543,28 +2642,23 @@ pub(crate) async fn update_channel(
         sqlx::query("UPDATE channels SET name = $1 WHERE id = $2")
             .bind(channel_name)
             .bind(id)
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await?;
     }
     if let Some(text) = &topic {
         sqlx::query("UPDATE channels SET topic = $1 WHERE id = $2")
             .bind(text)
             .bind(id)
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await?;
     }
     if let Some(secs) = slowmode_seconds {
         sqlx::query("UPDATE channels SET slowmode_seconds = $1 WHERE id = $2")
             .bind(secs)
             .bind(id)
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await?;
     }
-    let before = sqlx::query("SELECT restrict_view, restrict_send FROM channels WHERE id = $1")
-        .bind(id)
-        .fetch_one(&state.db)
-        .await?;
-    let before = Restrict::read(&before, 0)?;
     for (column, value) in [
         ("restrict_view", restrict_view),
         ("restrict_send", restrict_send),
@@ -2575,10 +2669,50 @@ pub(crate) async fn update_channel(
             )))
             .bind(i64::from(on))
             .bind(id)
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await?;
         }
     }
+    let changes = Details::new()
+        .change(
+            "name",
+            was_name.as_str(),
+            channel_name.as_deref().unwrap_or(&was_name),
+        )
+        .change(
+            "topic",
+            was_topic.clone(),
+            topic.clone().unwrap_or(was_topic.clone()),
+        )
+        .change(
+            "slowmode_seconds",
+            was_slow,
+            slowmode_seconds.unwrap_or(was_slow),
+        )
+        .change(
+            "restrict_view",
+            before.view,
+            restrict_view.unwrap_or(before.view),
+        )
+        .change(
+            "restrict_send",
+            before.send,
+            restrict_send.unwrap_or(before.send),
+        );
+    if changes.has_changes() {
+        let at = ChannelRef {
+            id,
+            name: channel_name.clone().unwrap_or(was_name.clone()),
+            private: before.view || ruled || restrict_view == Some(true),
+        };
+        audit::record(
+            &mut tx,
+            audit::channel_entry(&server, &actor, audit::Action::ChannelUpdate, &at)
+                .details(changes.channel(&at)),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     let row = sqlx::query(
         "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position FROM channels WHERE id = $1",
     )
@@ -2664,8 +2798,21 @@ pub(crate) async fn delete_channel(
         }
     }
     let rules = crate::api::access::ws_view_rules(&state.db, id).await?;
+    let actor = channel
+        .server()
+        .audit_actor(&state.db, Perm::ManageChannels)
+        .await?;
+    let gone = audit::channel_ref(&state.db, id)
+        .await?
+        .ok_or_else(crate::api::access::not_found)?;
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &server, None).await?;
+    audit::record(
+        &mut tx,
+        audit::channel_entry(&server, &actor, audit::Action::ChannelDelete, &gone)
+            .details(Details::new().channel(&gone).set("kind", kind.as_str())),
+    )
+    .await?;
     sqlx::query("UPDATE servers SET system_channel_id = NULL WHERE system_channel_id = $1")
         .bind(id)
         .execute(&mut *tx)
@@ -2731,8 +2878,23 @@ pub(crate) async fn kick_member(
     access.require_perm(&state.db, Perm::Kick).await?;
     access.require_moderate(&state.db, &target).await?;
     let key = access.name().to_string();
+    let (db, who) = (&state.db, target.as_str());
+    let bypassed = access
+        .bypassed(|m| async move { m.require_moderate(db, who).await })
+        .await;
+    let actor = access
+        .audit_actor(&state.db, Perm::Kick)
+        .await?
+        .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
     let ended = end_membership(&mut tx, &key, &target).await?;
+    if ended.is_some() {
+        audit::record(
+            &mut tx,
+            Entry::new(&key, &actor, audit::Action::MemberKick).target(Target::user(&target)),
+        )
+        .await?;
+    }
     tx.commit().await?;
     match ended {
         None => Err(not_found("Not a member")),
@@ -2787,8 +2949,16 @@ pub(crate) async fn ban_member(
         return Err(not_found("User not found"));
     }
     access.require_moderate(&state.db, &target).await?;
+    let (db, who) = (&state.db, target.as_str());
+    let bypassed = access
+        .bypassed(|m| async move { m.require_moderate(db, who).await })
+        .await;
+    let actor = access
+        .audit_actor(&state.db, Perm::Kick)
+        .await?
+        .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
-    sqlx::query(
+    let banned = sqlx::query(
         "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES($1, $2, $3, $4) ON CONFLICT(server, username) DO NOTHING",
     )
     .bind(&key)
@@ -2796,8 +2966,19 @@ pub(crate) async fn ban_member(
     .bind(&user.username)
     .bind(now())
     .execute(&mut *tx)
-    .await?;
+    .await?
+    .rows_affected()
+        > 0;
     let ended = end_membership(&mut tx, &key, &target).await?;
+    if banned || ended.is_some() {
+        audit::record(
+            &mut tx,
+            Entry::new(&key, &actor, audit::Action::MemberBan)
+                .target(Target::user(&target))
+                .details(Details::new().set("was_member", ended.is_some())),
+        )
+        .await?;
+    }
     tx.commit().await?;
     match ended {
         None => state.hub.broadcast(WsEvent::ServerBanned {
@@ -2842,16 +3023,25 @@ pub(crate) async fn unban_member(
 ) -> Result<Json<OkResp>, ApiError> {
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::Kick).await?;
+    let target = target.to_lowercase();
+    let actor = access.audit_actor(&state.db, Perm::Kick).await?;
+    let mut tx = state.db.begin().await?;
     let removed = sqlx::query("DELETE FROM server_bans WHERE server = $1 AND username = $2")
         .bind(access.name())
-        .bind(target.to_lowercase())
-        .execute(&state.db)
+        .bind(&target)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
-    match removed {
-        0 => Err(not_found("Not banned")),
-        _ => Ok(ok()),
+    if removed == 0 {
+        return Err(not_found("Not banned"));
     }
+    audit::record(
+        &mut tx,
+        Entry::new(access.name(), &actor, audit::Action::MemberUnban).target(Target::user(&target)),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(ok())
 }
 
 /// List bans
@@ -2932,6 +3122,28 @@ const ROLE_DELETE_WIDENS: &str = "This role limits access to a channel, so delet
 const ROLE_UNASSIGN_WIDENS: &str = "This role limits access to a channel, so removing it would widen that access. That needs Manage channels";
 const REVOKE_RAISES: &str = "They hold roles with permissions you don't have, so revoking their admin would give them those";
 
+async fn require_revoke(db: &Db, access: &ServerAccess, target: &str) -> Result<(), ApiError> {
+    if access.site_admin() {
+        return Ok(());
+    }
+    let row = sqlx::query(
+        "SELECT perms FROM members WHERE server = $1 AND username = $2 AND is_admin <> 0",
+    )
+    .bind(access.name())
+    .bind(target)
+    .fetch_optional(db)
+    .await?;
+    if let Some(r) = row {
+        let old = perm_bits(true, r.try_get(0)?, 0);
+        let roles = role_perms(db, access.name(), target).await?;
+        let mine = access.perms(db).await?;
+        if roles & !old != 0 && !can_grant(mine, false, roles) {
+            return Err(forbidden(REVOKE_RAISES));
+        }
+    }
+    Ok(())
+}
+
 async fn set_admin(
     state: &AppState,
     actor: &User,
@@ -2942,34 +3154,53 @@ async fn set_admin(
     let access = resolve_server(&state.db, server, Some(actor), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::ManageAdmins).await?;
     let server = access.name();
-    if is_admin {
-        access.require_grant(&state.db, ALL_PERMS).await?;
-    } else if !actor.is_site_admin {
-        let row = sqlx::query(
-            "SELECT perms FROM members WHERE server = $1 AND username = $2 AND is_admin <> 0",
-        )
-        .bind(server)
-        .bind(target)
-        .fetch_optional(&state.db)
-        .await?;
-        if let Some(r) = row {
-            let old = perm_bits(true, r.try_get(0)?, 0);
-            let roles = role_perms(&state.db, server, target).await?;
-            let mine = access.perms(&state.db).await?;
-            if roles & !old != 0 && !can_grant(mine, false, roles) {
-                return Err(forbidden(REVOKE_RAISES));
-            }
+    let db = &state.db;
+    let check = |access: ServerAccess| async move {
+        match is_admin {
+            true => access.require_grant(db, ALL_PERMS).await,
+            false => require_revoke(db, &access, target).await,
         }
+    };
+    let bypassed = access.bypassed(check).await;
+    match is_admin {
+        true => access.require_grant(db, ALL_PERMS).await?,
+        false => require_revoke(db, &access, target).await?,
     }
+    let actor = access
+        .audit_actor(&state.db, Perm::ManageAdmins)
+        .await?
+        .staff_if(bypassed);
+    let mut tx = state.db.begin().await?;
+    let was =
+        sqlx::query("SELECT is_admin, perms FROM members WHERE server = $1 AND username = $2")
+            .bind(server)
+            .bind(target)
+            .fetch_optional(&mut *tx)
+            .await?;
     let changed = sqlx::query(
         "UPDATE members SET is_admin = $1, perms = 0 WHERE server = $2 AND username = $3",
     )
     .bind(i64::from(is_admin))
     .bind(server)
     .bind(target)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
+    if let Some(was) = &was {
+        let (was_admin, was_perms) = (was.try_get::<i64, _>(0)? != 0, was.try_get::<i64, _>(1)?);
+        if was_admin != is_admin || (is_admin && was_perms != 0) {
+            let action = match is_admin {
+                true => audit::Action::AdminGrant,
+                false => audit::Action::AdminRevoke,
+            };
+            audit::record(
+                &mut tx,
+                Entry::new(server, &actor, action).target(Target::user(target)),
+            )
+            .await?;
+        }
+    }
+    tx.commit().await?;
     match changed {
         0 => Err(not_found("Not a member")),
         _ => {
@@ -3105,6 +3336,8 @@ pub(crate) async fn transfer_admin(
     access.require_perm(&state.db, Perm::ManageAdmins).await?;
     let key = access.name().to_string();
     let mine = access.perms(&state.db).await?;
+    let own = access.member_own_perms(&state.db).await?;
+    let actor = access.audit_actor(&state.db, Perm::ManageAdmins).await?;
     let mut tx = state.db.begin().await?;
     let stored: i64 = match sqlx::query(
         "UPDATE members SET is_admin = 1 WHERE server = $1 AND username = $2 RETURNING perms",
@@ -3117,18 +3350,19 @@ pub(crate) async fn transfer_admin(
         Some(r) => r.try_get(0)?,
         None => return Err(not_found("Not a member")),
     };
-    if !can_grant(mine, user.is_site_admin, perm_bits(true, stored, 0)) {
+    let granted = perm_bits(true, stored, 0);
+    if !can_grant(mine, user.is_site_admin, granted) {
         return Err(forbidden("You can't grant permissions you don't have"));
     }
-    if !can_grant(
-        mine,
-        user.is_site_admin,
-        role_perms(&mut *tx, &key, &user.username).await?,
-    ) {
+    let own_roles = role_perms(&mut *tx, &key, &user.username).await?;
+    if !can_grant(mine, user.is_site_admin, own_roles) {
         return Err(forbidden(
             "You hold roles with permissions your admin permissions don't include, so giving up admin would give you those",
         ));
     }
+    let actor = actor.staff_if(
+        own.is_some_and(|o| !can_grant(o, false, granted) || !can_grant(o, false, own_roles)),
+    );
     let revoked = sqlx::query(
         "UPDATE members SET is_admin = 0, perms = 0 WHERE server = $1 AND username = $2",
     )
@@ -3137,6 +3371,11 @@ pub(crate) async fn transfer_admin(
     .execute(&mut *tx)
     .await?
     .rows_affected();
+    audit::record(
+        &mut tx,
+        Entry::new(&key, &actor, audit::Action::AdminTransfer).target(Target::user(&target)),
+    )
+    .await?;
     tx.commit().await?;
     state.hub.broadcast(WsEvent::AdminChanged {
         server: key.clone(),
@@ -3158,7 +3397,7 @@ pub(crate) async fn transfer_admin(
 
 /// Set an admin's permissions
 ///
-/// Replaces the permission bitmask of the admin `username` (bits outside 63 are dropped; 0 means
+/// Replaces the permission bitmask of the admin `username` (bits outside 127 are dropped; 0 means
 /// all permissions). Taking permissions away works on any admin, like revoking admin. When the new
 /// permissions add any the admin did not have, all of the new permissions must be ones you have
 /// (equal is fine), so only callers holding every permission can set 0. Requires the Manage admins
@@ -3192,6 +3431,8 @@ pub(crate) async fn set_admin_perms(
     let key = access.name().to_string();
     let perms = req.perms & ALL_PERMS;
     let mine = access.perms(&state.db).await?;
+    let own = access.member_own_perms(&state.db).await?;
+    let actor = access.audit_actor(&state.db, Perm::ManageAdmins).await?;
     let mut tx = state.db.begin().await?;
     let stored: i64 = match sqlx::query(
         "SELECT perms FROM members WHERE server = $1 AND username = $2 AND is_admin != 0",
@@ -3208,12 +3449,22 @@ pub(crate) async fn set_admin_perms(
     if new & !old != 0 && !can_grant(mine, user.is_site_admin, new) {
         return Err(forbidden("You can't grant permissions you don't have"));
     }
+    let actor = actor.staff_if(own.is_some_and(|o| new & !old != 0 && !can_grant(o, false, new)));
     sqlx::query("UPDATE members SET perms = $1 WHERE server = $2 AND username = $3")
         .bind(perms)
         .bind(&key)
         .bind(&target)
         .execute(&mut *tx)
         .await?;
+    if old != new {
+        audit::record(
+            &mut tx,
+            Entry::new(&key, &actor, audit::Action::AdminPerms)
+                .target(Target::user(&target))
+                .details(Details::new().change("perms", old, new)),
+        )
+        .await?;
+    }
     tx.commit().await?;
     state.hub.broadcast(WsEvent::AdminChanged {
         server: key.clone(),
@@ -3251,6 +3502,7 @@ fn held_above_sql(one: bool) -> String {
         Perm::DeleteServer,
         Perm::ManageAdmins,
         Perm::MentionEveryone,
+        Perm::ViewAuditLog,
     ]
     .map(|p| format!("MAX(r.perms & {})", p as i64))
     .join(" | ");
@@ -3403,6 +3655,16 @@ async fn require_role_change(
     Ok(mine)
 }
 
+const MENTIONABLE_NEEDS: &str =
+    "Letting anyone mention a role needs the Mention everyone permission";
+
+async fn require_mentionable(db: &Db, access: &ServerAccess, on: bool) -> Result<(), ApiError> {
+    match on && !access.has_perm(db, Perm::MentionEveryone).await {
+        true => Err(forbidden(MENTIONABLE_NEEDS)),
+        false => Ok(()),
+    }
+}
+
 fn check_color(color: &str) -> Result<(), ApiError> {
     match valid_color(color) {
         true => Ok(()),
@@ -3451,6 +3713,7 @@ pub(crate) async fn create_role(
     check_color(&req.color)?;
     let perms = req.perms & ALL_PERMS;
     access.require_grant(&state.db, perms).await?;
+    require_mentionable(&state.db, &access, req.mentionable).await?;
     if count_rows(
         &state.db,
         "SELECT COUNT(*) FROM roles WHERE server = $1",
@@ -3461,6 +3724,18 @@ pub(crate) async fn create_role(
     {
         return Err(bad(&format!("A server can have at most {ROLE_MAX} roles")));
     }
+    let (db, on) = (&state.db, req.mentionable);
+    let bypassed = access
+        .bypassed(|m| async move {
+            m.require_grant(db, perms).await?;
+            require_mentionable(db, &m, on).await
+        })
+        .await;
+    let actor = access
+        .audit_actor(&state.db, Perm::ManageAdmins)
+        .await?
+        .staff_if(bypassed);
+    let mut tx = state.db.begin().await?;
     let id: i64 = sqlx::query(
         "INSERT INTO roles(server, name, color, perms, mentionable) VALUES($1, $2, $3, $4, $5) RETURNING id",
     )
@@ -3469,9 +3744,23 @@ pub(crate) async fn create_role(
     .bind(&req.color)
     .bind(perms)
     .bind(i64::from(req.mentionable))
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?
     .try_get(0)?;
+    audit::record(
+        &mut tx,
+        Entry::new(&key, &actor, audit::Action::RoleCreate)
+            .target(Target::with_id(TargetKind::Role, id, Some(&role_name)))
+            .details(
+                Details::new()
+                    .change("name", None::<String>, role_name.as_str())
+                    .change("color", None::<String>, req.color.as_str())
+                    .change("perms", None::<i64>, perms)
+                    .change("mentionable", None::<bool>, req.mentionable),
+            ),
+    )
+    .await?;
+    tx.commit().await?;
     state.hub.broadcast(WsEvent::RolesChanged { server: key });
     Ok(Json(Role {
         id,
@@ -3546,7 +3835,39 @@ pub(crate) async fn update_role(
     if let Some(perms) = perms {
         access.require_grant(&state.db, perms).await?;
     }
+    let was_on = sqlx::query("SELECT mentionable FROM roles WHERE id = $1")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await?
+        .try_get::<i64, _>(0)?
+        != 0;
+    let on = mentionable == Some(true) && !was_on;
+    require_mentionable(&state.db, &access, on).await?;
+    let db = &state.db;
+    let bypassed = access
+        .bypassed(|m| async move {
+            require_role_change(db, &m, id, current).await?;
+            if let Some(perms) = perms {
+                m.require_grant(db, perms).await?;
+            }
+            require_mentionable(db, &m, on).await
+        })
+        .await;
+    let actor = access
+        .audit_actor(&state.db, Perm::ManageAdmins)
+        .await?
+        .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
+    let was = sqlx::query("SELECT name, color, perms, mentionable FROM roles WHERE id = $1")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let (was_name, was_color, was_perms, was_mentionable): (String, String, i64, bool) = (
+        was.try_get(0)?,
+        was.try_get(1)?,
+        was.try_get(2)?,
+        was.try_get::<i64, _>(3)? != 0,
+    );
     if let Some(role_name) = &role_name {
         sqlx::query("UPDATE roles SET name = $1 WHERE id = $2")
             .bind(role_name)
@@ -3574,6 +3895,36 @@ pub(crate) async fn update_role(
             .bind(id)
             .execute(&mut *tx)
             .await?;
+    }
+    let changes = Details::new()
+        .change(
+            "name",
+            was_name.as_str(),
+            role_name.as_deref().unwrap_or(&was_name),
+        )
+        .change(
+            "color",
+            was_color.as_str(),
+            color.as_deref().unwrap_or(&was_color),
+        )
+        .change("perms", was_perms, perms.unwrap_or(was_perms))
+        .change(
+            "mentionable",
+            was_mentionable,
+            mentionable.unwrap_or(was_mentionable),
+        );
+    if changes.has_changes() {
+        audit::record(
+            &mut tx,
+            Entry::new(&key, &actor, audit::Action::RoleUpdate)
+                .target(Target::with_id(
+                    TargetKind::Role,
+                    id,
+                    Some(role_name.as_deref().unwrap_or(&was_name)),
+                ))
+                .details(changes),
+        )
+        .await?;
     }
     tx.commit().await?;
     let row = sqlx::query("SELECT name, color, perms, mentionable FROM roles WHERE id = $1")
@@ -3635,14 +3986,50 @@ pub(crate) async fn delete_role(
     {
         return Err(forbidden(ROLE_DELETE_WIDENS));
     }
-    sqlx::query("DELETE FROM roles WHERE id = $1")
+    let db = &state.db;
+    let bypassed = access
+        .bypassed(|m| async move {
+            let mine = require_role_change(db, &m, id, current).await?;
+            match channel_limits(db, &m, mine, Some(id))
+                .await?
+                .denies
+                .is_empty()
+            {
+                true => Ok(()),
+                false => Err(forbidden(ROLE_DELETE_WIDENS)),
+            }
+        })
+        .await;
+    let actor = access
+        .audit_actor(&state.db, Perm::ManageAdmins)
+        .await?
+        .staff_if(bypassed);
+    let mut tx = state.db.begin().await?;
+    let gone = sqlx::query("DELETE FROM roles WHERE id = $1 RETURNING name, color, perms")
         .bind(id)
-        .execute(&state.db)
+        .fetch_optional(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM channel_perms WHERE subject = $1")
         .bind(format!("r:{id}"))
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
+    if let Some(gone) = &gone {
+        let (name, color, perms): (String, String, i64) =
+            (gone.try_get(0)?, gone.try_get(1)?, gone.try_get(2)?);
+        audit::record(
+            &mut tx,
+            Entry::new(&key, &actor, audit::Action::RoleDelete)
+                .target(Target::with_id(TargetKind::Role, id, Some(&name)))
+                .details(
+                    Details::new()
+                        .change("name", name.as_str(), None::<String>)
+                        .change("color", color.as_str(), None::<String>)
+                        .change("perms", perms, None::<i64>),
+                ),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     state.hub.broadcast(WsEvent::RolesChanged {
         server: key.clone(),
     });
@@ -3707,14 +4094,50 @@ pub(crate) async fn assign_role(
     {
         return Err(forbidden("This role gives channel access you don't have"));
     }
-    sqlx::query(
+    let (db, who, me) = (&state.db, target.as_str(), user.username.as_str());
+    let bypassed = access
+        .bypassed(|m| async move {
+            if who != me {
+                m.require_moderate(db, who).await?;
+            }
+            m.require_grant(db, role_perms).await?;
+            let mine = m.perms(db).await?;
+            match channel_limits(db, &m, mine, Some(id))
+                .await?
+                .grants
+                .is_empty()
+            {
+                true => Ok(()),
+                false => Err(forbidden("This role gives channel access you don't have")),
+            }
+        })
+        .await;
+    let actor = access
+        .audit_actor(&state.db, Perm::ManageAdmins)
+        .await?
+        .staff_if(bypassed);
+    let mut tx = state.db.begin().await?;
+    let added = sqlx::query(
         "INSERT INTO user_roles(server, username, role_id) VALUES($1, $2, $3) ON CONFLICT(server, username, role_id) DO NOTHING",
     )
     .bind(&key)
     .bind(&target)
     .bind(id)
-    .execute(&state.db)
-    .await?;
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if added > 0 {
+        record_role_member(
+            &mut tx,
+            &key,
+            &actor,
+            audit::Action::RoleAssign,
+            id,
+            &target,
+        )
+        .await?;
+    }
+    tx.commit().await?;
     state.hub.broadcast(WsEvent::RolesChanged {
         server: key.clone(),
     });
@@ -3767,14 +4190,48 @@ pub(crate) async fn unassign_role(
     {
         return Err(forbidden(ROLE_UNASSIGN_WIDENS));
     }
+    let (db, who, me) = (&state.db, target.as_str(), user.username.as_str());
+    let bypassed = access
+        .bypassed(|m| async move {
+            if who != me {
+                m.require_moderate(db, who).await?;
+            }
+            let mine = m.perms(db).await?;
+            match channel_limits(db, &m, mine, Some(id))
+                .await?
+                .denies
+                .is_empty()
+            {
+                true => Ok(()),
+                false => Err(forbidden(ROLE_UNASSIGN_WIDENS)),
+            }
+        })
+        .await;
+    let actor = access
+        .audit_actor(&state.db, Perm::ManageAdmins)
+        .await?
+        .staff_if(bypassed);
+    let mut tx = state.db.begin().await?;
     let removed =
         sqlx::query("DELETE FROM user_roles WHERE server = $1 AND username = $2 AND role_id = $3")
             .bind(&key)
             .bind(&target)
             .bind(id)
-            .execute(&state.db)
+            .execute(&mut *tx)
             .await?
             .rows_affected();
+    if removed > 0 {
+        record_role_member(
+            &mut tx,
+            &key,
+            &actor,
+            audit::Action::RoleUnassign,
+            id,
+            &target,
+        )
+        .await?;
+    }
+    tx.commit().await?;
     match removed {
         0 => Err(not_found("Not assigned")),
         _ => {
@@ -3785,6 +4242,52 @@ pub(crate) async fn unassign_role(
             Ok(ok())
         }
     }
+}
+
+/// A channel rule subject for the audit log: `{kind: "user", name}` or `{kind: "role", id,
+/// name}`.
+async fn rule_subject(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    subject: &str,
+) -> Result<serde_json::Value, ApiError> {
+    Ok(match subject.split_once(':') {
+        Some(("r", id)) => {
+            let id: i64 = id.parse().unwrap_or_default();
+            let name: Option<String> = sqlx::query("SELECT name FROM roles WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&mut **tx)
+                .await?
+                .map(|r| r.try_get(0))
+                .transpose()?;
+            serde_json::json!({ "kind": "role", "id": id, "name": name })
+        }
+        Some((_, name)) => serde_json::json!({ "kind": "user", "name": name }),
+        None => serde_json::json!({ "kind": "user", "name": subject }),
+    })
+}
+
+async fn record_role_member(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    server: &str,
+    actor: &audit::Actor,
+    action: audit::Action,
+    role: i64,
+    username: &str,
+) -> Result<(), ApiError> {
+    let name: Option<String> = sqlx::query("SELECT name FROM roles WHERE id = $1")
+        .bind(role)
+        .fetch_optional(&mut **tx)
+        .await?
+        .map(|r| r.try_get(0))
+        .transpose()?;
+    audit::record(
+        tx,
+        Entry::new(server, actor, action)
+            .target(Target::user(username))
+            .details(Details::new().set("role", serde_json::json!({ "id": role, "name": name }))),
+    )
+    .await?;
+    Ok(())
 }
 
 async fn channel_perm_guard(
@@ -3915,11 +4418,12 @@ pub(crate) async fn set_channel_perm(
     Path(id): Path<i64>,
     Json(req): Json<ChannelPerm>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let server = channel_perm_guard(&state, id, &user)
-        .await?
+    let channel = channel_perm_guard(&state, id, &user).await?;
+    let server = channel.server().name().to_string();
+    let actor = channel
         .server()
-        .name()
-        .to_string();
+        .audit_actor(&state.db, Perm::ManageChannels)
+        .await?;
     let ChannelPerm {
         subject,
         can_view,
@@ -3928,12 +4432,20 @@ pub(crate) async fn set_channel_perm(
     } = req;
     let subject = subject.to_lowercase();
     check_subject(&state.db, &server, &subject).await?;
-    let exists = sqlx::query("SELECT 1 FROM channel_perms WHERE channel_id = $1 AND subject = $2")
+    let was = sqlx::query("SELECT can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1 AND subject = $2")
         .bind(id)
         .bind(&subject)
         .fetch_optional(&state.db)
         .await?
-        .is_some();
+        .map(|r| -> sqlx::Result<[bool; 3]> {
+            Ok([
+                r.try_get::<i64, _>(0)? != 0,
+                r.try_get::<i64, _>(1)? != 0,
+                r.try_get::<i64, _>(2)? != 0,
+            ])
+        })
+        .transpose()?;
+    let exists = was.is_some();
     let rules: i64 = sqlx::query("SELECT COUNT(*) FROM channel_perms WHERE channel_id = $1")
         .bind(id)
         .fetch_one(&state.db)
@@ -3944,6 +4456,7 @@ pub(crate) async fn set_channel_perm(
             "A channel can have at most {CHANNEL_PERM_MAX} permission rules"
         )));
     }
+    let mut tx = state.db.begin().await?;
     sqlx::query(
         "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history, restrict_set) VALUES($1, $2, $3, $4, $5, 1) ON CONFLICT(channel_id, subject) DO UPDATE SET can_view = excluded.can_view, can_send = excluded.can_send, can_read_history = excluded.can_read_history, restrict_set = 1",
     )
@@ -3952,8 +4465,33 @@ pub(crate) async fn set_channel_perm(
     .bind(i64::from(can_view))
     .bind(i64::from(can_send))
     .bind(i64::from(can_read_history))
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
+    let mut changes = Details::new();
+    for (i, (field, now_on)) in [
+        ("can_view", can_view),
+        ("can_send", can_send),
+        ("can_read_history", can_read_history),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        changes = changes.change(field, was.map(|w| w[i]), now_on);
+    }
+    if changes.has_changes()
+        && let Some(at) = audit::channel_ref(&mut *tx, id).await?
+    {
+        let details = changes
+            .channel(&at)
+            .set("subject", rule_subject(&mut tx, &subject).await?);
+        audit::record(
+            &mut tx,
+            audit::channel_entry(&server, &actor, audit::Action::ChannelPermSet, &at)
+                .details(details),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     state.hub.broadcast(WsEvent::ChannelPermsChanged {
         server: server.clone(),
         channel_id: id,
@@ -3990,17 +4528,40 @@ pub(crate) async fn clear_channel_perm(
     Authed(user): Authed,
     Path((id, subject)): Path<(i64, String)>,
 ) -> Result<Json<OkResp>, ApiError> {
-    let server = channel_perm_guard(&state, id, &user)
-        .await?
+    let channel = channel_perm_guard(&state, id, &user).await?;
+    let server = channel.server().name().to_string();
+    let actor = channel
         .server()
-        .name()
-        .to_string();
-    let removed = sqlx::query("DELETE FROM channel_perms WHERE channel_id = $1 AND subject = $2")
+        .audit_actor(&state.db, Perm::ManageChannels)
+        .await?;
+    let subject = subject.to_lowercase();
+    let mut tx = state.db.begin().await?;
+    let at = audit::channel_ref(&mut *tx, id).await?;
+    let gone = sqlx::query("DELETE FROM channel_perms WHERE channel_id = $1 AND subject = $2 RETURNING can_view, can_send, can_read_history")
         .bind(id)
-        .bind(subject.to_lowercase())
-        .execute(&state.db)
-        .await?
-        .rows_affected();
+        .bind(&subject)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let removed = u64::from(gone.is_some());
+    if let (Some(gone), Some(at)) = (&gone, &at) {
+        let mut details = Details::new();
+        for (i, field) in ["can_view", "can_send", "can_read_history"]
+            .into_iter()
+            .enumerate()
+        {
+            details = details.change(field, gone.try_get::<i64, _>(i)? != 0, None::<bool>);
+        }
+        let details = details
+            .channel(at)
+            .set("subject", rule_subject(&mut tx, &subject).await?);
+        audit::record(
+            &mut tx,
+            audit::channel_entry(&server, &actor, audit::Action::ChannelPermClear, at)
+                .details(details),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     match removed {
         0 => Err(not_found("No such rule")),
         _ => {
@@ -7098,7 +7659,7 @@ mod tests {
         let err = patch(" ", "#000000", Some(MA)).await.err().map(|e| e.0);
         assert_eq!(err, Some(StatusCode::BAD_REQUEST));
         assert_eq!(role_row(db, id).await, before);
-        let Json(role) = patch("helpers", "#00ff00", Some(MA | 64))
+        let Json(role) = patch("helpers", "#00ff00", Some(MA | 128))
             .await
             .expect("valid");
         assert_eq!(

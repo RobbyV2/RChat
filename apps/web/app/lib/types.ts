@@ -7,9 +7,10 @@ export const Perm = {
   DeleteServer: 8,
   ManageAdmins: 16,
   MentionEveryone: 32,
+  ViewAuditLog: 64,
 } as const
 
-export const ALL_PERMS = 63
+export const ALL_PERMS = 127
 
 export const hasPerm = (perms: number, perm: number) => (perms & perm) !== 0
 
@@ -138,6 +139,26 @@ export interface NewPassword {
   expires_in?: number
   expires_at?: number
   max_uses?: number
+}
+
+export interface AuditTarget {
+  kind: string
+  id: number | null
+  name: string | null
+  user: UserRef | null
+  staff: boolean
+  deleted: boolean
+}
+
+export interface AuditEntry {
+  id: number
+  action: string
+  actor: UserRef | null
+  staff: boolean
+  target: AuditTarget | null
+  details: Record<string, unknown>
+  hidden: boolean
+  created_at: number
 }
 
 export interface ServerBan extends UserRef {

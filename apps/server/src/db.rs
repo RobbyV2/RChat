@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS reactions(message_id INTEGER NOT NULL REFERENCES mess
 CREATE TABLE IF NOT EXISTS config_shares(id TEXT PRIMARY KEY, owner TEXT NOT NULL, blob TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS group_pings(id INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('everyone','here','role')), role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE, actor TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS here_pings(ping_id INTEGER NOT NULL REFERENCES group_pings(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(username, ping_id));
+CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, actor TEXT, staff INTEGER NOT NULL DEFAULT 0, action TEXT NOT NULL, target_kind TEXT, target_id INTEGER, target_name TEXT, target_staff INTEGER NOT NULL DEFAULT 0, details TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS audit_channels(entry_id INTEGER NOT NULL REFERENCES audit_log(id) ON DELETE CASCADE, channel_id INTEGER NOT NULL, private INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(entry_id, channel_id));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -98,6 +100,10 @@ CREATE INDEX IF NOT EXISTS idx_group_pings_created ON group_pings(created_at);
 CREATE INDEX IF NOT EXISTS idx_group_pings_role ON group_pings(role_id) WHERE role_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_here_pings_ping ON here_pings(ping_id);
 CREATE INDEX IF NOT EXISTS idx_group_pings_server ON group_pings(server);
+CREATE INDEX IF NOT EXISTS idx_audit_log_server ON audit_log(server, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(server, action, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(server, actor, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 ";
 
 const POSTGRES_SCHEMA: &str = "
@@ -135,6 +141,8 @@ CREATE TABLE IF NOT EXISTS reactions(message_id BIGINT NOT NULL REFERENCES messa
 CREATE TABLE IF NOT EXISTS config_shares(id TEXT PRIMARY KEY, owner TEXT NOT NULL, blob TEXT NOT NULL, created_at BIGINT NOT NULL, expires_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS group_pings(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('everyone','here','role')), role_id BIGINT REFERENCES roles(id) ON DELETE CASCADE, actor TEXT NOT NULL, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS here_pings(ping_id BIGINT NOT NULL REFERENCES group_pings(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(username, ping_id));
+CREATE TABLE IF NOT EXISTS audit_log(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, actor TEXT, staff BIGINT NOT NULL DEFAULT 0, action TEXT NOT NULL, target_kind TEXT, target_id BIGINT, target_name TEXT, target_staff BIGINT NOT NULL DEFAULT 0, details TEXT NOT NULL DEFAULT '{}', created_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS audit_channels(entry_id BIGINT NOT NULL REFERENCES audit_log(id) ON DELETE CASCADE, channel_id BIGINT NOT NULL, private BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(entry_id, channel_id));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -188,6 +196,10 @@ CREATE INDEX IF NOT EXISTS idx_group_pings_created ON group_pings(created_at);
 CREATE INDEX IF NOT EXISTS idx_group_pings_role ON group_pings(role_id) WHERE role_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_here_pings_ping ON here_pings(ping_id);
 CREATE INDEX IF NOT EXISTS idx_group_pings_server ON group_pings(server);
+CREATE INDEX IF NOT EXISTS idx_audit_log_server ON audit_log(server, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(server, action, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(server, actor, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 ";
 
 const SQLITE_SEARCH: &[&str] = &[
@@ -434,6 +446,13 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "layout_version {INT} NOT NULL DEFAULT 0"),
     ("roles", "mentionable {INT} NOT NULL DEFAULT 0"),
     ("messages", "group_mentions TEXT"),
+    ("audit_log", "actor TEXT"),
+    ("audit_log", "staff {INT} NOT NULL DEFAULT 0"),
+    ("audit_log", "target_kind TEXT"),
+    ("audit_log", "target_id {INT}"),
+    ("audit_log", "target_name TEXT"),
+    ("audit_log", "target_staff {INT} NOT NULL DEFAULT 0"),
+    ("audit_log", "details TEXT NOT NULL DEFAULT '{}'"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -473,8 +492,8 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// 1: hashed secrets and the 0.3.0 indexes. 2: `channel_perms.restrict_set` and
 /// `guest_grants.network`. 3: channel categories and channel positions. 4: group mentions
 /// (`group_pings`, `here_pings`, `roles.mentionable`, `messages.group_mentions`) and the Mention
-/// everyone permission bit.
-pub const SCHEMA_VERSION: i64 = 4;
+/// everyone permission bit. 5: the audit log (`audit_log`) and the View audit log permission bit.
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
@@ -775,11 +794,14 @@ pub enum Perm {
     DeleteServer = 8,
     ManageAdmins = 16,
     MentionEveryone = 32,
+    ViewAuditLog = 64,
 }
 
-pub const ALL_PERMS: i64 = 63;
+pub const ALL_PERMS: i64 = 127;
 /// Every permission before `MentionEveryone` existed.
 const OLD_ALL_PERMS: i64 = 31;
+/// Every permission before `ViewAuditLog` existed.
+const PRE_AUDIT_PERMS: i64 = 63;
 
 pub fn perm_bits(is_admin: bool, perms: i64, roles: i64) -> i64 {
     match (is_admin, perms) {
@@ -1083,13 +1105,24 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
     restrict_old_rules(conn).await?;
     if version < 4 {
         let n = sqlx::query("UPDATE members SET perms = $1 WHERE is_admin <> 0 AND perms = $2")
-            .bind(ALL_PERMS)
+            .bind(PRE_AUDIT_PERMS)
             .bind(OLD_ALL_PERMS)
             .execute(&mut *conn)
             .await?
             .rows_affected();
         if n > 0 {
             tracing::info!("gave {n} admins with every permission the Mention everyone permission");
+        }
+    }
+    if version < 5 {
+        let n = sqlx::query("UPDATE members SET perms = $1 WHERE is_admin <> 0 AND perms = $2")
+            .bind(ALL_PERMS)
+            .bind(PRE_AUDIT_PERMS)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+        if n > 0 {
+            tracing::info!("gave {n} admins with every permission the View audit log permission");
         }
     }
     let t = now();
@@ -1281,6 +1314,7 @@ pub struct Swept {
     pub embeds: u64,
     pub pings: u64,
     pub config_shares: u64,
+    pub audit_log: u64,
 }
 
 async fn delete_batched(db: &Db, sql: &'static str, cutoff: i64) -> sqlx::Result<u64> {
@@ -1376,6 +1410,9 @@ pub const SERVER_PASSWORD_KEEP: i64 = 30 * 86400;
 
 pub const PING_KEEP: i64 = 30 * 86400;
 
+/// How long audit log entries are kept.
+pub const AUDIT_KEEP: i64 = 90 * 86400;
+
 /// Most seen and retracted pings kept per recipient. Seen reaction pings stay until they age
 /// out so that taking a reaction back and adding it again does not ping again; this caps them.
 pub const PINGS_KEPT: i64 = 2000;
@@ -1437,6 +1474,12 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
             db,
             "DELETE FROM config_shares WHERE id IN (SELECT id FROM config_shares WHERE expires_at <= $1 LIMIT $2)",
             t,
+        )
+        .await?,
+        audit_log: delete_batched(
+            db,
+            "DELETE FROM audit_log WHERE id IN (SELECT id FROM audit_log WHERE created_at < $1 LIMIT $2)",
+            t - AUDIT_KEEP,
         )
         .await?,
     })
@@ -2343,6 +2386,111 @@ mod tests {
                 .await
                 .expect("clear");
             assert_eq!(count(&db, "SELECT COUNT(*) FROM here_pings").await, 0);
+            close(&db).await;
+        }
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn audit_log_is_added_to_an_old_database() {
+        let path =
+            std::env::temp_dir().join(format!("rchat_audit_upgrade_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_audit_log_server",
+            "DROP INDEX idx_audit_log_action",
+            "DROP INDEX idx_audit_log_actor",
+            "DROP INDEX idx_audit_log_created",
+            "DROP TABLE audit_channels",
+            "DROP TABLE audit_log",
+            "UPDATE settings SET value = '4' WHERE key = 'schema_version'",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'all', 1, 63, 1)",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'zero', 1, 0, 1)",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'kick', 1, 4, 1)",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'plain', 0, 63, 1)",
+            "INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'old', '#ffffff', 63)",
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES((SELECT id FROM channels WHERE server = 'rchat'), 'all', 'old', 7)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM messages WHERE author = 'all' AND content = 'old' AND created_at = 7").await,
+                1
+            );
+            for (name, perms) in [("all", ALL_PERMS), ("zero", 0), ("kick", 4), ("plain", 63)] {
+                assert_eq!(
+                    count(
+                        &db,
+                        &format!("SELECT perms FROM members WHERE username = '{name}'")
+                    )
+                    .await,
+                    perms,
+                    "{name}"
+                );
+            }
+            assert_eq!(
+                count(&db, "SELECT perms FROM roles WHERE name = 'old'").await,
+                63
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_audit_log_%'").await,
+                4
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            sqlx::query("INSERT INTO audit_log(server, action, created_at) VALUES('rchat', 'member.kick', 1)")
+                .execute(&db)
+                .await
+                .expect("new table");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM audit_log WHERE actor IS NULL AND staff = 0 AND target_staff = 0 AND details = '{}' AND target_kind IS NULL").await,
+                1
+            );
+            sqlx::query(
+                "INSERT INTO audit_channels(entry_id, channel_id) SELECT id, 5 FROM audit_log",
+            )
+            .execute(&db)
+            .await
+            .expect("channel refs");
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM audit_channels WHERE channel_id = 5 AND private = 0"
+                )
+                .await,
+                1
+            );
+            assert!(
+                sqlx::query("INSERT INTO audit_log(server, action, created_at) VALUES('nowhere', 'member.kick', 1)")
+                    .execute(&db)
+                    .await
+                    .is_err(),
+                "server is a foreign key"
+            );
+            sqlx::query("DELETE FROM audit_log")
+                .execute(&db)
+                .await
+                .expect("clear");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM audit_channels").await,
+                0,
+                "channel refs go with their entry"
+            );
             close(&db).await;
         }
         wipe();
@@ -3457,6 +3605,14 @@ mod tests {
                 "INSERT INTO config_shares(id, owner, blob, created_at, expires_at) VALUES('livelinkaaaa', 'a', 'rc1.x', 0, $1 + 600)",
                 t,
             ),
+            (
+                "INSERT INTO audit_log(server, actor, action, created_at) VALUES('rchat', 'a', 'member.ban', $1)",
+                t - AUDIT_KEEP - 1,
+            ),
+            (
+                "INSERT INTO audit_log(server, actor, action, created_at) VALUES('rchat', 'a', 'member.kick', $1)",
+                t - AUDIT_KEEP + 60,
+            ),
         ] {
             sqlx::query(sql).bind(at).execute(db).await.expect(sql);
         }
@@ -3493,7 +3649,16 @@ mod tests {
                 embeds: 1,
                 pings: 2,
                 config_shares: 2,
+                audit_log: 1,
             }
+        );
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM audit_log WHERE action = 'member.kick'"
+            )
+            .await,
+            1
         );
         assert_eq!(
             count(

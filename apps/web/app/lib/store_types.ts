@@ -92,6 +92,7 @@ export interface ConfirmRequest {
 export type ActiveDialog =
   | { kind: 'add_server'; join?: string; locked?: boolean }
   | { kind: 'server_settings'; server: string }
+  | { kind: 'audit_log'; server: string }
   | { kind: 'admin_panel' }
   | { kind: 'ban_confirm'; username: string }
   | { kind: 'delete_user_confirm'; username: string }

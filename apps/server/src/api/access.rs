@@ -8,6 +8,7 @@ use sha2::Sha256;
 use sqlx::any::AnyRow;
 use sqlx::{AnyConnection, Row};
 
+use crate::api::audit::Actor;
 use crate::api::auth::{Work, derive_key, dummy_hash, verify_in};
 use crate::api::budget::{self, Backoff, Budget, slow_down};
 use crate::api::{ApiError, ServerSummaryLite, header_grants};
@@ -628,6 +629,57 @@ impl ServerAccess {
 
     pub fn site_admin(&self) -> bool {
         self.user.as_ref().is_some_and(|u| u.is_site_admin)
+    }
+
+    /// Who an action needing `perm` is logged as: the viewer, or the unnamed instance staff
+    /// when a site admin acts without being a member who holds `perm` themselves.
+    pub async fn audit_actor(&self, db: &Db, perm: Perm) -> Result<Actor, ApiError> {
+        let Some(user) = &self.user else {
+            return Ok(Actor::Staff);
+        };
+        let staff = self.via == Via::Staff
+            || (user.is_site_admin
+                && self.member_perms(db, &user.username).await? & perm as i64 == 0);
+        Ok(Actor::of(user, staff))
+    }
+
+    /// This access as the viewer's plain membership without instance powers: `Some` only for a
+    /// site admin who isn't already acting as staff.
+    pub fn as_member(&self) -> Option<ServerAccess> {
+        match &self.user {
+            Some(user) if user.is_site_admin && self.via != Via::Staff => Some(ServerAccess {
+                lite: self.lite.clone(),
+                via: self.via,
+                user: Some(User {
+                    is_site_admin: false,
+                    ..user.clone()
+                }),
+                ticket: self.ticket,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Whether `check`, which passed for the viewer, fails for their plain membership, so the
+    /// action only succeeds through instance powers and must be logged as the unnamed staff.
+    pub async fn bypassed<F, Fut>(&self, check: F) -> bool
+    where
+        F: FnOnce(ServerAccess) -> Fut,
+        Fut: std::future::Future<Output = Result<(), ApiError>>,
+    {
+        match self.as_member() {
+            Some(member) => check(member).await.is_err(),
+            None => false,
+        }
+    }
+
+    /// The viewer's permissions as a plain member: `Some` only for a site admin who isn't
+    /// already acting as staff.
+    pub async fn member_own_perms(&self, db: &Db) -> Result<Option<i64>, ApiError> {
+        match self.as_member() {
+            Some(member) => Ok(Some(member.perms(db).await?)),
+            None => Ok(None),
+        }
     }
 
     /// The viewer's rights in each channel of this server that has rules or restrictions;

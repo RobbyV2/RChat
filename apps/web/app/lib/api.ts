@@ -1,5 +1,6 @@
 import type {
   AdminOverview,
+  AuditEntry,
   AuthResponse,
   AvatarKind,
   Category,
@@ -411,6 +412,10 @@ export const endpoints = (c: ApiClient) => ({
     c.req<unknown>('DELETE', `/servers/${seg(server)}/bans/${seg(username)}`),
   listBans: (server: string, cursor: string | null) =>
     c.page<ServerBan>(withCursor(`/servers/${seg(server)}/bans?limit=50`, cursor)),
+  listAudit: (server: string, cursor: string | null, query: Record<string, string>) =>
+    c.page<AuditEntry>(
+      withCursor(`/servers/${seg(server)}/audit?${new URLSearchParams(query)}`, cursor)
+    ),
   grantAdmin: (server: string, username: string) =>
     c.req<unknown>('POST', `/servers/${seg(server)}/admins`, { username }),
   revokeAdmin: (server: string, username: string) =>

@@ -15,6 +15,7 @@ import {
 } from '../lib/store'
 import {
   NAME_MAX,
+  PERM_ITEMS,
   SLOWMODE_MAX,
   adminMask,
   canGrant,
@@ -224,23 +225,6 @@ function MemberPicker({
   )
 }
 
-const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
-  { label: 'Manage channels', bit: Perm.ManageChannels },
-  {
-    label: 'Manage messages',
-    bit: Perm.DeleteMessages,
-    hint: "Delete and pin others' messages",
-  },
-  { label: 'Kick', bit: Perm.Kick },
-  { label: 'Delete server', bit: Perm.DeleteServer },
-  { label: 'Manage admins', bit: Perm.ManageAdmins },
-  {
-    label: 'Mention everyone and roles',
-    bit: Perm.MentionEveryone,
-    hint: 'Use @everyone, @here and mention any role',
-  },
-]
-
 const GRANT_NOTE = 'You can only give permissions you have.'
 
 function PermChecks({
@@ -334,6 +318,8 @@ function RoleRow({
   const after = () => refresh?.()
   const locked = limit === undefined ? null : roleEditBlock(limit, false, role, limits)
   const noDelete = limit === undefined ? null : roleDeleteBlock(limit, false, role, limits)
+  const noMention =
+    !role.mentionable && limit !== undefined && !hasPerm(limit, Perm.MentionEveryone)
   return (
     <div className="space-y-1.5 rounded-xl bg-surface-container p-2">
       <div className="flex items-center gap-2">
@@ -385,13 +371,18 @@ function RoleRow({
         onChange={v => void updateRole(server, role.id, { perms: v }).then(after)}
       />
       <label
-        title={locked ?? 'Members without Mention everyone and roles can mention it too'}
-        className={`flex items-center gap-1.5 text-sm ${locked ? 'opacity-60' : ''}`}
+        title={
+          locked ??
+          (noMention
+            ? 'Needs the Mention everyone and roles permission'
+            : 'Members without Mention everyone and roles can mention it too')
+        }
+        className={`flex items-center gap-1.5 text-sm ${locked || noMention ? 'opacity-60' : ''}`}
       >
         <input
           type="checkbox"
           checked={!!role.mentionable}
-          disabled={!!locked}
+          disabled={!!locked || noMention}
           onChange={() =>
             void updateRole(server, role.id, { mentionable: !role.mentionable }).then(after)
           }
@@ -1275,6 +1266,7 @@ function Settings({ server }: { server: string }) {
   const askConfirm = useStore(s => s.askConfirm)
   const grantAdmin = useStore(s => s.grantAdmin)
   const openContextMenu = useStore(s => s.openContextMenu)
+  const openDialog = useStore(s => s.openDialog)
   const [name, setName] = useState(detail?.display_name ?? '')
   const [renameError, setRenameError] = useState<string | null>(null)
   const [editingAdmin, setEditingAdmin] = useState<string | null>(null)
@@ -1433,6 +1425,19 @@ function Settings({ server }: { server: string }) {
         <>
           <p className={sectionCls}>Bans</p>
           <BanList server={server} />
+        </>
+      )}
+      {hasPerm(perms, Perm.ViewAuditLog) && (
+        <>
+          <p className={sectionCls}>Audit Log</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <p className="min-w-48 flex-1 text-xs text-on-surface-variant">
+              See who changed what in this server over the last 90 days.
+            </p>
+            <button onClick={() => openDialog({ kind: 'audit_log', server })} className={textBtn}>
+              Open audit log
+            </button>
+          </div>
         </>
       )}
       {hasPerm(perms, Perm.ManageAdmins) && (

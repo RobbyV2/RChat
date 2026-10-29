@@ -9,10 +9,11 @@ use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::{
-    Proof, channel_manager_servers, granted_servers, member_channel_rights, resolve_channel,
-    resolve_dm, resolve_message,
+    Proof, ResolvedMessage, channel_manager_servers, granted_servers, member_channel_rights,
+    resolve_channel, resolve_dm, resolve_message,
 };
 use crate::api::admin::like_pattern;
+use crate::api::audit;
 use crate::api::budget::{Budget, slow_down};
 use crate::api::pings::{
     GroupMention, GroupPing, PingScope, ScopePings, SeenScope, ThreadPings, announce_counts,
@@ -28,7 +29,7 @@ use crate::api::{
     user_from, user_refs, yes,
 };
 use crate::db::{
-    ChannelAccess, Db, LIVE_AUTHOR, MediaKind, User, has_fts, is_sqlite, now, perm_subjects,
+    ChannelAccess, Db, LIVE_AUTHOR, MediaKind, Perm, User, has_fts, is_sqlite, now, perm_subjects,
     pool_key, touch_interaction,
 };
 use crate::state::AppState;
@@ -1771,12 +1772,29 @@ pub(crate) async fn delete_message(
 ) -> Result<Json<OkResp>, ApiError> {
     let message = resolve_message(&state.db, id, Some(&user), &Proof::none()).await?;
     message.require_can_delete(&state.db).await?;
+    let audit = moderated(&state.db, id, &message, &user, true).await?;
     let scope = message.into_scope();
     let pinged = pinged_by(&state.db, id).await?;
+    let mut tx = state.db.begin().await?;
     sqlx::query("DELETE FROM messages WHERE id = $1")
         .bind(id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
+    if let Some((server, actor, channel)) = audit {
+        audit::record(
+            &mut tx,
+            audit::message_entry(
+                &server,
+                &actor,
+                audit::Action::MessageDelete,
+                id,
+                &scope.author,
+                &channel,
+            ),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     announce_counts(&state, pinged).await;
     let crate::api::access::MsgScope {
         channel_id,
@@ -1799,6 +1817,44 @@ pub(crate) async fn delete_message(
         thread_root_id,
     });
     Ok(ok())
+}
+
+/// The audit log context of a moderator acting on a channel message: the server, the actor and
+/// the channel. `None` for DMs, and for your own messages when `others_only`.
+/// `others_only` is set for deletes (checked like `require_can_delete`), unset for pins (checked
+/// like `pin_gate`); a site admin who passes only through instance powers is the unnamed staff.
+pub(crate) async fn moderated(
+    db: &Db,
+    id: i64,
+    message: &ResolvedMessage,
+    user: &User,
+    others_only: bool,
+) -> Result<Option<(String, audit::Actor, audit::ChannelRef)>, ApiError> {
+    let Some(channel) = message.channel() else {
+        return Ok(None);
+    };
+    if others_only && message.scope().author == user.username {
+        return Ok(None);
+    }
+    let Some(found) = audit::channel_ref(db, channel.id()).await? else {
+        return Ok(None);
+    };
+    let server = channel.server();
+    let bypassed = match server.as_member().as_ref().and_then(|m| m.viewer()) {
+        Some(member) => match resolve_message(db, id, Some(member), &Proof::none()).await {
+            Ok(m) => match others_only {
+                true => m.require_can_delete(db).await.is_err(),
+                false => m.pin_gate(db).await.is_err(),
+            },
+            Err(_) => true,
+        },
+        None => false,
+    };
+    let actor = server
+        .audit_actor(db, Perm::DeleteMessages)
+        .await?
+        .staff_if(bypassed);
+    Ok(Some((server.name().to_string(), actor, found)))
 }
 
 /// New text for a message.

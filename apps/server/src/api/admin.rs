@@ -487,7 +487,7 @@ pub(crate) async fn remove_server(state: &AppState, name: &str) -> Result<bool, 
     Ok(true)
 }
 
-async fn hide_user_rows(
+pub(crate) async fn hide_user_rows(
     state: &AppState,
     key: &str,
     kind: PurgeKind,
@@ -651,6 +651,7 @@ async fn run_purge(state: &AppState, kind: PurgeKind, key: &str) -> sqlx::Result
                 key,
             )
             .await?;
+            crate::api::audit::purge_server(&state.db, key).await?;
             let mut tx = state.db.begin().await?;
             sqlx::query("DELETE FROM servers WHERE name = $1 AND password_hash = $2")
                 .bind(key)
@@ -795,7 +796,7 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         .bind(format!("u:{key}"))
         .execute(&mut **tx)
         .await?;
-    Ok(())
+    crate::api::audit::forget_user(tx, key).await
 }
 
 pub(crate) async fn ban_user(
@@ -901,10 +902,30 @@ pub(crate) async fn delete_message(
 ) -> Result<Json<OkResp>, ApiError> {
     require_site_admin(&user)?;
     let scope = staff_message(&state.db, &user, id).await?;
+    let channel = match scope.channel_id {
+        Some(cid) => crate::api::audit::channel_ref(&state.db, cid).await?,
+        None => None,
+    };
+    let mut tx = state.db.begin().await?;
     sqlx::query("DELETE FROM messages WHERE id = $1")
         .bind(id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
+    if let (Some(server), Some(channel)) = (&scope.server, &channel) {
+        crate::api::audit::record(
+            &mut tx,
+            crate::api::audit::message_entry(
+                server,
+                &crate::api::audit::Actor::Staff,
+                crate::api::audit::Action::MessageDelete,
+                id,
+                &scope.author,
+                channel,
+            ),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     let MsgScope {
         channel_id,
         dm_id,

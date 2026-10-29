@@ -5,6 +5,7 @@ use sqlx::Row;
 use utoipa::ToSchema;
 
 use crate::api::access::{Proof, ServerAccess, not_found, resolve_channel, resolve_server};
+use crate::api::audit;
 use crate::api::messages::load_broadcast;
 use crate::api::{ApiError, ApiErrorBody, Authed};
 use crate::db::{ChannelKind, Db, Perm, User, now};
@@ -130,6 +131,13 @@ async fn manage(state: &AppState, user: &User, name: &str) -> Result<ServerAcces
     Ok(access)
 }
 
+async fn channel_at(db: &Db, id: Option<i64>) -> Result<Option<audit::ChannelRef>, ApiError> {
+    Ok(match id {
+        Some(id) => audit::channel_ref(db, id).await?,
+        None => None,
+    })
+}
+
 async fn load(db: &Db, server: &str) -> Result<SystemMessages, ApiError> {
     let sql = format!(
         "SELECT {CONFIGURED}, s.join_messages, s.leave_messages FROM servers s WHERE s.name = $1"
@@ -210,12 +218,30 @@ pub(crate) async fn update_system_messages(
     } = req;
     let access = manage(&state, &user, &name).await?;
     let key = access.name().to_string();
+    let mut bypassed = false;
     if let Some(Some(id)) = channel_id {
         let channel = resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
         if channel.server().name() != key || channel.kind() != ChannelKind::Text {
             return Err(not_found());
         }
+        if let Some(member) = access.as_member().as_ref().and_then(|m| m.viewer()) {
+            bypassed = resolve_channel(&state.db, id, Some(member), &Proof::none())
+                .await
+                .is_err();
+        }
     }
+    let actor = access
+        .audit_actor(&state.db, Perm::DeleteServer)
+        .await?
+        .staff_if(bypassed);
+    let was = load(&state.db, &key).await?;
+    let moved = match channel_id {
+        Some(to) if to != was.channel_id => Some((
+            channel_at(&state.db, was.channel_id).await?,
+            channel_at(&state.db, to).await?,
+        )),
+        _ => None,
+    };
     let mut tx = state.db.begin().await?;
     if let Some(id) = channel_id {
         sqlx::query("UPDATE servers SET system_channel_id = $1 WHERE name = $2")
@@ -241,6 +267,36 @@ pub(crate) async fn update_system_messages(
                 .execute(&mut *tx)
                 .await?;
         }
+    }
+    let mut details = audit::Details::new()
+        .change(
+            "join_messages",
+            was.join_messages,
+            join_messages.unwrap_or(was.join_messages),
+        )
+        .change(
+            "leave_messages",
+            was.leave_messages,
+            leave_messages.unwrap_or(was.leave_messages),
+        );
+    if let Some((from, to)) = moved {
+        for channel in [&from, &to].into_iter().flatten() {
+            details = details.mention(channel);
+        }
+        let value = |c: &Option<audit::ChannelRef>| {
+            c.as_ref()
+                .map_or(serde_json::Value::Null, audit::ChannelRef::value)
+        };
+        details = details.change("system_channel", value(&from), value(&to));
+    }
+    if details.has_changes() {
+        audit::record(
+            &mut tx,
+            audit::Entry::new(&key, &actor, audit::Action::SystemMessages)
+                .target(audit::Target::server(&access.lite().display_name))
+                .details(details),
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(Json(load(&state.db, &key).await?))
