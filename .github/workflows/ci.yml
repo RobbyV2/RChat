@@ -2,6 +2,7 @@ name: ci
 
 # Fast checks run on every push and pull request. The heavy jobs (desktop, mobile, Docker and the
 # desktop smoke run) run on pushes to main and manual runs; release.yml runs them for releases.
+# Commit message tags and pull request labels can skip heavy parts (see scripts/ci-flags.sh).
 # Fast checks finish for every main commit; a newer push cancels the older heavy jobs instead.
 on:
   push:
@@ -22,12 +23,51 @@ jobs:
   checks:
     uses: ./.github/workflows/checks.yml
 
+  # Labels of the pull request a push to main came from count like labels on the pull request.
+  # CHANGED (the files of the push, unknown past the compare API's 300 file cap) drives the
+  # mobile path filter.
+  flags:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      desktop: ${{ steps.flags.outputs.desktop }}
+      mobile: ${{ steps.flags.outputs.mobile }}
+      docker: ${{ steps.flags.outputs.docker }}
+      e2e: ${{ steps.flags.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts
+      - id: flags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+          BEFORE: ${{ github.event.before }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          LABELS=$PR_LABELS
+          if [ "$EVENT" = push ]; then
+            LABELS=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+              --jq '[.[].labels[].name] | join(",")' 2>/dev/null || true)
+            if [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] &&
+              files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename' 2>/dev/null) &&
+              [ -n "$files" ] && [ "$(wc -l <<<"$files")" -lt 300 ]; then
+              export CHANGED=$files
+            fi
+          fi
+          export LABELS
+          scripts/ci-flags.sh | tee -a "$GITHUB_OUTPUT"
+
   desktop-smoke:
     concurrency:
       group: ci-heavy-desktop-smoke-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
-    if: github.event_name != 'pull_request'
-    needs: [checks]
+    if: github.event_name != 'pull_request' && needs.flags.outputs.e2e == 'true'
+    needs: [checks, flags]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,22 +99,22 @@ jobs:
     concurrency:
       group: ci-heavy-desktop-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
-    if: github.event_name != 'pull_request'
-    needs: [checks]
+    if: github.event_name != 'pull_request' && needs.flags.outputs.desktop == 'true'
+    needs: [checks, flags]
     uses: ./.github/workflows/desktop.yml
 
   mobile:
     concurrency:
       group: ci-heavy-mobile-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
-    if: github.event_name != 'pull_request'
-    needs: [checks]
+    if: github.event_name != 'pull_request' && needs.flags.outputs.mobile == 'true'
+    needs: [checks, flags]
     uses: ./.github/workflows/mobile.yml
 
   docker:
     concurrency:
       group: ci-heavy-docker-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
-    if: github.event_name != 'pull_request'
-    needs: [checks]
+    if: github.event_name != 'pull_request' && needs.flags.outputs.docker == 'true'
+    needs: [checks, flags]
     uses: ./.github/workflows/docker.yml

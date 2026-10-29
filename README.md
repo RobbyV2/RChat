@@ -244,6 +244,17 @@ GitHub Actions has two channels:
 | `ci.yml`      | Pushes to main, manual runs        | Also desktop builds, desktop smoke run, mobile builds, Docker build  |
 | `release.yml` | Version tags, Mondays, manual runs | All of the above, then the release                                   |
 
+To skip heavy parts of `ci.yml` on a push, put a tag in the commit message, or give the pull request the label of the same words without brackets (a push to main reads the labels of the pull request it came from). Version tags, the weekly schedule and manual runs ignore them. A push to main that changes nothing under `apps/desktop`, `apps/web`, `assets` or the Cargo and bun manifests skips the mobile builds too, and changes to Markdown or `docs/` alone run no CI.
+
+| Tag              | Skips                                    |
+| ---------------- | ---------------------------------------- |
+| `[skip desktop]` | Desktop builds and the desktop smoke run |
+| `[skip mobile]`  | Android and iOS builds                   |
+| `[skip docker]`  | The Docker build                         |
+| `[skip e2e]`     | The desktop smoke run                    |
+| `[skip native]`  | Desktop and mobile                       |
+| `[ci light]`     | Everything except the fast checks        |
+
 A release holds:
 
 - Windows: MSI and NSIS installers. macOS: a universal DMG. Linux: .deb, .rpm and AppImage (when it builds). Weekly and `-rc` versions get no .rpm (RPM refuses the hyphen), and Debian sorts `0.2.3-weekly.YYYYMMDD` above `0.2.3`, so going from a weekly .deb back to the stable one of the same version needs `apt install --allow-downgrades`.
