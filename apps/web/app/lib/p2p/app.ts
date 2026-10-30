@@ -24,6 +24,22 @@ import {
 } from './dm'
 import type { Fwd } from './event'
 import { TabLeader, webLeaderDeps } from './leader'
+import {
+  alreadyImported,
+  applyImport,
+  exportP2p,
+  IMPORTED_HERE,
+  importKind,
+  summarize,
+  unlockP2p,
+  TransferError,
+  type Dump,
+  type ImportKind,
+  type Imported,
+  type Kdf,
+  type P2pSection,
+  type Summary,
+} from './transfer'
 import { P2pNode, SQUATTED, type Presence, type Status, type Visibility } from './node'
 import { PeerTransport } from './transport'
 
@@ -99,6 +115,12 @@ export interface P2pState {
   pulling: boolean
   // The browser refused to store more P2P data.
   storageFull: boolean
+  // This browser's identity moved to another device then.
+  movedAt: number | null
+  // A P2P export paused sending here then.
+  movingAt: number | null
+  // Signs that another device uses this identity, seen then.
+  alertAt: number | null
 }
 
 const initial: P2pState = {
@@ -131,6 +153,9 @@ const initial: P2pState = {
   focus: null,
   pulling: false,
   storageFull: false,
+  movedAt: null,
+  movingAt: null,
+  alertAt: null,
 }
 
 export const useP2p = create<P2pState>()(() => initial)
@@ -159,6 +184,40 @@ const readOn = (username: string) => {
 
 const writeOn = (username: string, on: boolean) =>
   writeLocal(home.scoped(p2pKey(username)), on ? JSON.stringify({ v: 1, on: true }) : null)
+
+// Transfer files imported in this browser, kept even when its P2P data is removed: importing
+// one again as a new device would make a second device of the identity. { v: 1, ids }.
+export const importsKey = (username: string) => `rchat_p2p_imports:${username}`
+const IMPORTS_KEPT = 50
+
+export const parseImports = (raw: string | null): string[] => {
+  try {
+    const v = raw ? (JSON.parse(raw) as unknown) : null
+    const ids = (v as { v?: unknown; ids?: unknown } | null)?.ids
+    return (v as { v?: unknown } | null)?.v === 1 && Array.isArray(ids)
+      ? ids.filter((x): x is string => typeof x === 'string').slice(-IMPORTS_KEPT)
+      : []
+  } catch {
+    return []
+  }
+}
+
+const readImports = (username: string) => {
+  try {
+    return parseImports(localStorage.getItem(home.scoped(importsKey(username))))
+  } catch {
+    return []
+  }
+}
+
+const rememberImport = (username: string, id: string) =>
+  writeLocal(
+    home.scoped(importsKey(username)),
+    JSON.stringify({
+      v: 1,
+      ids: [...readImports(username).filter(x => x !== id), id].slice(-IMPORTS_KEPT),
+    })
+  )
 
 const pageVisibility: Visibility = {
   visible: () => typeof document === 'undefined' || document.visibilityState !== 'hidden',
@@ -248,6 +307,9 @@ const mirror = async () => {
     presence: v.presence,
     paused: n.paused,
     dropped: v.dropped,
+    movedAt: v.movedAt,
+    movingAt: v.movingAt,
+    alertAt: v.alertAt,
     elsewhere: false,
     error: v.status === 'squatted' ? SQUATTED : null,
   })
@@ -834,6 +896,8 @@ export const p2p = {
   scanVerify: (ik: string, text: string) => withNode(n => n.scanVerifyCode(ik, text)),
   setName: (name: string) => withNode(n => n.setName(name)),
   resetIdentity: () => withNode(n => n.resetIdentity()),
+  resumeSending: () => withNode(n => n.resumeSending()),
+  clearAlert: () => withNode(n => n.clearAlert()),
   clearDropped: () => withNode(n => n.clearDropped()),
   // Moves P2P from the tab that runs it to this one.
   useHere: () => leader?.takeOver(),
@@ -857,5 +921,158 @@ export const p2p = {
     } catch {
       useP2p.setState({ storage: null })
     }
+  },
+}
+
+// ----- Device move -----
+
+export const ELSEWHERE_IMPORT = 'P2P is open in another tab. Use it here first.'
+
+const errText = (e: unknown) =>
+  e instanceof TransferError || e instanceof Error ? e.message : String(e)
+
+// The database of this account, for a moment: the running node's, or opened just for this.
+const withDb = async <T>(fn: (s: P2pStore) => Promise<T>): Promise<T> => {
+  const username = useP2p.getState().account
+  if (!username) throw new Error('Sign in first')
+  const live = store ?? reader?.store
+  if (live && !live.closed) return fn(live)
+  const s = await P2pStore.open(dbFor(username))
+  try {
+    return await fn(s)
+  } finally {
+    s.close()
+  }
+}
+
+// Without `databases()`, opening without a version and aborting the upgrade of a database that
+// didn't exist leaves nothing behind.
+const probeDb = (name: string) =>
+  new Promise<boolean>(resolve => {
+    const req = indexedDB.open(name)
+    req.onupgradeneeded = () => {
+      if (req.transaction) req.transaction.abort()
+      resolve(false)
+    }
+    req.onsuccess = () => {
+      req.result.close()
+      resolve(true)
+    }
+    req.onerror = () => resolve(false)
+  })
+
+const hasDb = async (name: string) => {
+  try {
+    const list = await indexedDB.databases?.()
+    return list ? list.some(d => d.name === name) : await probeDb(name)
+  } catch {
+    return true
+  }
+}
+
+export interface Unlocked {
+  dump: Dump
+  summary: Summary
+  kind: ImportKind
+  // This identity already took this file in: importing changes nothing.
+  already: boolean
+}
+
+export const p2pTransfer = {
+  // Whether there is an identity here to export (one that moved away has no keys left).
+  available: () => useP2p.getState().ik !== null && useP2p.getState().movedAt === null,
+
+  // Sending pauses here afterwards, until the user resumes.
+  async exportSection(pass: string, kdf?: Kdf): Promise<P2pSection> {
+    const sec = await withDb(s => exportP2p(s.db, pass, kdf))
+    const at = Date.now()
+    const n = node
+    if (n && !n.moved) await n.markExported(at)
+    else
+      await withDb(s =>
+        s.updateSelf(cur => (cur && !cur.moved ? { ...cur, moving: { at }, exported: at } : null))
+      )
+    useP2p.setState({ movingAt: at })
+    return sec
+  },
+
+  // Decrypts and reads the file's P2P data; nothing is written.
+  async unlock(section: P2pSection, pass: string): Promise<Unlocked> {
+    const username = useP2p.getState().account
+    if (!username) throw new Error('Sign in first')
+    const dump = await unlockP2p(section, pass)
+    const st = useP2p.getState()
+    let kind: ImportKind = 'new'
+    let already = false
+    if (st.ik !== null || (await hasDb(dbFor(username)))) {
+      const local = await withDb(s => s.self())
+      kind = importKind(local, dump)
+      already = alreadyImported(local, dump)
+    }
+    if (kind !== 'merge' && readImports(username).includes(dump.id))
+      throw new TransferError(IMPORTED_HERE)
+    return { dump, summary: summarize(dump), kind, already }
+  },
+
+  // Runs in the tab that holds the account's P2P lock: the node stops, the import writes in one
+  // transaction, and the node starts again on what is stored. Another tab running P2P keeps it.
+  async apply(u: Unlocked): Promise<{ ok: true; res: Imported } | { ok: false; error: string }> {
+    const username = useP2p.getState().account
+    if (!username) return { ok: false, error: 'Sign in first' }
+    if (useP2p.getState().elsewhere) return { ok: false, error: ELSEWHERE_IMPORT }
+    const job = async () => {
+      const s = await P2pStore.open(dbFor(username))
+      try {
+        const res = await applyImport(s.db, u.dump, u.kind)
+        rememberImport(username, u.dump.id)
+        return res
+      } finally {
+        s.close()
+      }
+    }
+    try {
+      navigator.storage?.persist?.().catch(() => {})
+    } catch {
+      // Best effort.
+    }
+    const l = leader
+    if (l && l.state === 'leading') {
+      const mine = gen
+      stopNode()
+      let out: { ok: true; res: Imported } | { ok: false; error: string }
+      try {
+        out = { ok: true, res: await job() }
+      } catch (e) {
+        out = { ok: false, error: errText(e) }
+      }
+      if (mine === gen && leader === l)
+        await boot(username, null, l, () => mine === gen && leader === l && l.state === 'leading')
+      return out
+    }
+    if (l) return { ok: false, error: ELSEWHERE_IMPORT }
+    // P2P is off in this browser: hold the lock just for the import, then start as usual.
+    const locks = webLeaderDeps().locks
+    let out: { ok: true; res: Imported } | { ok: false; error: string } = {
+      ok: false,
+      error: ELSEWHERE_IMPORT,
+    }
+    const run1 = async () => {
+      try {
+        out = { ok: true, res: await job() }
+      } catch (e) {
+        out = { ok: false, error: errText(e) }
+      }
+    }
+    if (locks)
+      await locks.request(dbFor(username), { ifAvailable: true }, lock =>
+        lock ? run1() : Promise.resolve()
+      )
+    else await run1()
+    if (out.ok && useP2p.getState().account === username) {
+      writeOn(username, true)
+      useP2p.setState({ enabled: true })
+      run(username, null)
+    }
+    return out
   },
 }

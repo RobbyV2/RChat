@@ -28,7 +28,7 @@ import {
   bodyTooLong,
   FULL_BYTES_TEXT,
   FULL_TEXT,
-  MOVED_TEXT,
+  movedText,
   PEER_FULL_TEXT,
   STORAGE_FULL_TEXT,
   type P2pMessage,
@@ -63,7 +63,7 @@ import { PresentBar, useChatScroll, useFocusMessage } from '../viewport_height'
 import { mentionRowCls } from '../message_pane'
 import { textBtn } from '../ui'
 import { ContactShield, KeyAvatar, P2pBadge, PresenceDot } from './p2p_badge'
-import { ElsewhereNotice } from './p2p_home'
+import { ElsewhereNotice, MovingBanner } from './p2p_home'
 
 const EMPTY: P2pMessage[] = []
 const NONE: string[] = []
@@ -598,6 +598,8 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
   const reader = useP2p(s => s.reader)
   const elsewhere = useP2p(s => s.elsewhere)
   const status = useP2p(s => s.status)
+  const movedAt = useP2p(s => s.movedAt)
+  const movingAt = useP2p(s => s.movingAt)
   const peer = useP2p(s => s.contacts.find(c => c.ik === s.chat?.peer))
   const presence = useP2p(s => (s.chat ? (s.presence[s.chat.peer] ?? 'offline') : 'offline'))
   const room = useP2p(s => (s.chat ? s.rooms[s.chat.room] : undefined))
@@ -845,7 +847,9 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
         <ElsewhereNotice />
       </div>
     ) : status === 'moved' ? (
-      <div className={noteBarCls}>{MOVED_TEXT}</div>
+      <div className={noteBarCls}>{movedText(movedAt)}</div>
+    ) : movingAt !== null ? (
+      <MovingBanner className={noteBarCls} />
     ) : room?.full ? (
       <div className={noteBarCls} role="status">
         {room.fullWhy === 'bytes' ? FULL_BYTES_TEXT(DAG.roomBytes) : FULL_TEXT(DAG.roomCap)}

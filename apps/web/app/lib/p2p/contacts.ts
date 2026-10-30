@@ -130,7 +130,7 @@ export const recheckName = (contacts: Contact[], before: Contact | undefined, c:
 }
 
 // Certs of revoked devices are never kept or merged back.
-const mergeCerts = (have: Cert[], add: Cert[], ik: string, revs: Revocation[] = []) => {
+export const mergeCerts = (have: Cert[], add: Cert[], ik: string, revs: Revocation[] = []) => {
   const revoked = (dk: string) => revs.some(r => r.dk === dk)
   const out = have.filter(c => !revoked(c.dk))
   for (const c of add) {
@@ -140,10 +140,15 @@ const mergeCerts = (have: Cert[], add: Cert[], ik: string, revs: Revocation[] = 
   return out.sort((a, b) => b.created - a.created).slice(0, CERTS_KEPT)
 }
 
-const mergeRevocations = (have: Revocation[], add: Revocation[], ik: string) => {
+export const mergeRevocations = (have: Revocation[], add: Revocation[], ik: string) => {
   const out = [...have]
+  // The first revocation of a device counts. A second one with another successor is kept as
+  // evidence that two copies of the identity moved the same device (see identityConflict).
   for (const r of add) {
-    if (!verifyRevocation(r, ik) || out.some(o => o.dk === r.dk)) continue
+    const same = out.filter(o => o.dk === r.dk)
+    if (same.length >= 2 || same.some(o => o.successor === r.successor)) continue
+    if (same.length === 1 && r.successor === undefined) continue
+    if (!verifyRevocation(r, ik)) continue
     out.push(r)
   }
   return out.slice(-CERTS_KEPT * 2)
@@ -348,6 +353,29 @@ export const applySuccession = (
     notice: { kind: 'reset', at: now },
   }
   return withProfile(moved, profile)
+}
+
+// The same contact from another copy of this identity (a device import): devices and profile
+// merge, a block or a mutual subscription on either side wins, local names and marks stay.
+export const mergeContact = (local: Contact, other: Contact, now: number): Contact => {
+  const c = withProfile(updateDevices(local, other.certs, other.revocations, now), other.profile)
+  const state: ContactState =
+    local.state === 'blocked' || other.state === 'blocked'
+      ? 'blocked'
+      : local.state === 'mutual' || other.state === 'mutual'
+        ? 'mutual'
+        : local.state
+  return {
+    ...c,
+    state,
+    ignored: state === 'incoming' && local.ignored,
+    intros: state === 'incoming' ? local.intros : [],
+    petname: local.petname ?? other.petname,
+    verified: local.verified || other.verified,
+    verifiedAt: local.verifiedAt ?? other.verifiedAt,
+    warning: local.warning ?? other.warning,
+    lastSeen: Math.max(local.lastSeen ?? 0, other.lastSeen ?? 0) || null,
+  }
 }
 
 export const visibleContacts = (all: Contact[]) =>

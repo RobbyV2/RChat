@@ -42,7 +42,7 @@ const saveBlob = (name: string, blob: Blob) => {
   return true
 }
 
-const openFile = (accept: string, maxBytes: number) =>
+const openFile = (accept: string, maxBytes: number, tooLarge?: () => void) =>
   new Promise<string | null>(resolve => {
     if (typeof document === 'undefined') return resolve(null)
     const input = document.createElement('input')
@@ -51,7 +51,11 @@ const openFile = (accept: string, maxBytes: number) =>
     input.addEventListener('cancel', () => resolve(null))
     input.addEventListener('change', () => {
       const file = input.files?.[0]
-      if (!file || file.size > maxBytes) return resolve(null)
+      if (!file) return resolve(null)
+      if (file.size > maxBytes) {
+        tooLarge?.()
+        return resolve(null)
+      }
       file.text().then(resolve, () => resolve(null))
     })
     input.click()

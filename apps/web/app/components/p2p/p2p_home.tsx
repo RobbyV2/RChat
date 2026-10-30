@@ -17,7 +17,7 @@ import {
 import { useStore } from '../../lib/store'
 import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
 import { badgePings } from '../../lib/p2p/alerts'
-import { dmRoomId } from '../../lib/p2p/dm'
+import { dmRoomId, movedText, MOVING_TEXT, RESUME_TEXT } from '../../lib/p2p/dm'
 import { levelOf, mutedOf } from '../../lib/notify'
 import {
   displayName,
@@ -35,7 +35,7 @@ import { longPress } from '../context_menu'
 import { PingBadge, RailPingBadge } from '../ping_badge'
 import { MutedIcon, notifyMenuItems } from '../notify_menu'
 import { P2pDmPane } from './p2p_dm_pane'
-import { Dialog, fieldCls, filledBtn, iconBtn, textBtn } from '../ui'
+import { dangerBtn, Dialog, fieldCls, filledBtn, iconBtn, textBtn } from '../ui'
 import { AddContactDialog } from './add_contact'
 import { VerifyDialog } from './verify_dialog'
 import {
@@ -121,6 +121,103 @@ export function ElsewhereNotice() {
   )
 }
 
+export const ALERT_TEXT =
+  'Your P2P identity may be used on another device. Reset your identity to lock it out.'
+export const RESET_BODY =
+  'You get a new key. Contacts move over when you next connect, but have to verify you again.'
+const RESET_MOVED_BODY =
+  'You get a new key. This browser no longer has the old one, so contacts get a request from the new key and have to accept and verify you again.'
+
+export const confirmReset = (ask: ReturnType<typeof useStore.getState>['askConfirm']) =>
+  ask({
+    title: 'Reset your P2P identity?',
+    body: useP2p.getState().movedAt === null ? RESET_BODY : RESET_MOVED_BODY,
+    confirm: 'Reset',
+    action: () => void p2p.resetIdentity(),
+  })
+
+// Contacts showed us signs of another copy of this identity, or it moved without an export here.
+export function IdentityAlert() {
+  const alertAt = useP2p(s => s.alertAt)
+  const ask = useStore(s => s.askConfirm)
+  if (alertAt === null) return null
+  return (
+    <div
+      role="alert"
+      data-p2p-alert
+      className="flex flex-col items-start gap-3 rounded-2xl bg-error-container p-4 text-on-error-container"
+    >
+      <p className="text-sm">{ALERT_TEXT}</p>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => confirmReset(ask)} className={dangerBtn}>
+          Reset identity
+        </button>
+        <button onClick={() => void p2p.clearAlert()} className={textBtn}>
+          Dismiss
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// A P2P export was made here: sending waits, so nothing written here misses the new device.
+export function MovingBanner({
+  className = 'flex flex-col items-start gap-3 rounded-2xl bg-surface-container-high p-4',
+}: {
+  className?: string
+}) {
+  const movingAt = useP2p(s => s.movingAt)
+  const moved = useP2p(s => s.status === 'moved')
+  const ask = useStore(s => s.askConfirm)
+  if (movingAt === null || moved) return null
+  return (
+    <div role="status" data-p2p-moving className={className}>
+      <p className="text-sm text-on-surface">{MOVING_TEXT}</p>
+      <button
+        onClick={() =>
+          ask({
+            title: 'Resume sending here?',
+            body: RESUME_TEXT,
+            confirm: 'Resume',
+            action: () => void p2p.resumeSending(),
+          })
+        }
+        className={textBtn}
+      >
+        Resume
+      </button>
+    </div>
+  )
+}
+
+// This browser's identity moved to another device: it can only read, or remove its copy.
+export function MovedBanner() {
+  const movedAt = useP2p(s => s.movedAt)
+  const ask = useStore(s => s.askConfirm)
+  return (
+    <div
+      role="status"
+      data-p2p-moved
+      className="flex flex-col items-start gap-3 rounded-2xl bg-surface-container-high p-4"
+    >
+      <p className="text-sm text-on-surface">{movedText(movedAt)}</p>
+      <button
+        onClick={() =>
+          ask({
+            title: 'Remove P2P data from this browser?',
+            body: 'The identity lives on the other device now. Contacts and history are deleted from this browser.',
+            confirm: 'Remove',
+            action: () => void p2p.removeData(),
+          })
+        }
+        className={dangerBtn}
+      >
+        Remove P2P data from this browser
+      </button>
+    </div>
+  )
+}
+
 export function EnableDialog() {
   const [name, setName] = useState('')
   const turnOn = () => {
@@ -184,7 +281,7 @@ const statusText = (status: string, paused: boolean) =>
       : status === 'squatted'
         ? SQUATTED
         : status === 'moved'
-          ? 'Your P2P identity moved to another device. This browser can no longer send.'
+          ? 'Moved to another device'
           : 'Connecting…'
 
 const noticeText = (c: Contact) =>
@@ -494,6 +591,9 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
         ) : (
           <div className="mx-auto flex max-w-2xl flex-col gap-6 p-4">
             {elsewhere && <ElsewhereNotice />}
+            {!elsewhere && <IdentityAlert />}
+            {status === 'moved' && !elsewhere && <MovedBanner />}
+            {!elsewhere && <MovingBanner />}
             {dropped > 0 && <DroppedNote n={dropped} />}
             {pending.length > 0 && (
               <section aria-label="Message requests">

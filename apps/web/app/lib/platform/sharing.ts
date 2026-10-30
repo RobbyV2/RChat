@@ -20,6 +20,7 @@ export interface Sharing {
   // Offers a received file for download / save under `name`, never opening it; false when the
   // platform can't.
   saveBlob: (name: string, blob: Blob) => boolean
-  // Lets the user pick a text file; null when cancelled, unreadable or over `maxBytes`.
-  openFile: (accept: string, maxBytes: number) => Promise<string | null>
+  // Lets the user pick a text file; null when cancelled, unreadable or over `maxBytes` (then
+  // `tooLarge` runs, where the platform can tell).
+  openFile: (accept: string, maxBytes: number, tooLarge?: () => void) => Promise<string | null>
 }

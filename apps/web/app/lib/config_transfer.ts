@@ -2,11 +2,12 @@
 // (`rc1.` + base64url of deflate-raw JSON) and share links (`/config/{id}/`).
 //
 // Document: `{ v: 1, theme?, streamer?, appearOffline?, layout?, notify?, emoji?, calls?,
-// typing?, profanity?, spoilers?, relays? }`. All
+// typing?, profanity?, spoilers?, relays?, p2p? }`. All
 // sections are optional and decoded separately. Unknown sections and fields are dropped, so older
 // readers skip new sections. `v` changes only for an incompatible change. Only listed store
-// fields are copied, so tokens, grants, drafts, passwords, relay credentials and P2P state never
-// get in.
+// fields are copied, so tokens, grants, drafts, passwords and relay credentials never get in.
+// P2P state gets in only as the passphrase-encrypted `p2p` section, which the string and the
+// file carry and share links never do.
 import { fromBase64Url, isRecord, toBase64Url } from './bytes'
 import type { Theme } from './types'
 import {
@@ -38,6 +39,7 @@ import {
 } from './relays'
 import { shareOrigin } from './instances'
 import { isShowSpoilers, type ShowSpoilers } from './spoilers'
+import { cleanP2pSection, type P2pSection } from './p2p/section'
 
 const CONFIG_VERSION = 1
 export const PREFIX = 'rc1.'
@@ -46,6 +48,11 @@ export const LINK_MAX = 16 * 1024
 // Sanity caps for pasted strings and what they inflate to.
 export const TEXT_MAX = 2 * 1024 * 1024
 export const JSON_MAX = 4 * 1024 * 1024
+// The same for `.rchat` files, which may hold P2P history. Larger strings than this don't fit
+// in a browser's memory reliably.
+export const FILE_MAX = 256 * 1024 * 1024
+export const FILE_JSON_MAX = 320 * 1024 * 1024
+export const FILE_EXT = '.rchat'
 const SERVERS_MAX = 1000
 const DMS_MAX = 1000
 const NAME_MAX = 64
@@ -72,6 +79,7 @@ export interface ConfigDoc {
   profanity?: boolean
   spoilers?: ShowSpoilers
   relays?: RelaysSection
+  p2p?: P2pSection
 }
 
 export type SectionKey =
@@ -180,7 +188,7 @@ export const buildConfig = (src: ConfigSource, include: ReadonlySet<SectionKey>)
   return doc
 }
 
-// Sections a share link may carry.
+// Sections a share link may carry: never `p2p`, which isn't one of SECTIONS.
 export const linkDoc = (doc: ConfigDoc): ConfigDoc => {
   const out: ConfigDoc = { v: doc.v }
   for (const s of SECTIONS)
@@ -275,6 +283,7 @@ export const sanitizeConfig = (data: unknown, now = Date.now()): Decoded => {
     profanity,
     spoilers,
     relays,
+    p2p,
   } = data
   if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) return { ok: false, error: DAMAGED }
   if (v > CONFIG_VERSION) return { ok: false, error: NEWER }
@@ -294,6 +303,8 @@ export const sanitizeConfig = (data: unknown, now = Date.now()): Decoded => {
   if (isShowSpoilers(spoilers)) doc.spoilers = spoilers
   const r = cleanRelaysSection(relays)
   if (r) doc.relays = r
+  const p = cleanP2pSection(p2p)
+  if (p) doc.p2p = p
   return { ok: true, doc }
 }
 
@@ -345,13 +356,24 @@ export const encodeConfig = async (doc: ConfigDoc): Promise<string> => {
   return PREFIX + toBase64Url(packed)
 }
 
-export const decodeConfig = async (text: string, now = Date.now()): Promise<Decoded> => {
+export interface DecodeLimits {
+  text: number
+  json: number
+}
+
+export const FILE_LIMITS: DecodeLimits = { text: FILE_MAX, json: FILE_JSON_MAX }
+
+export const decodeConfig = async (
+  text: string,
+  now = Date.now(),
+  limits: DecodeLimits = { text: TEXT_MAX, json: JSON_MAX }
+): Promise<Decoded> => {
   const trimmed = text.replace(/\s+/g, '')
   if (!trimmed.startsWith(PREFIX)) return { ok: false, error: NOT_CONFIG }
-  if (trimmed.length > TEXT_MAX) return { ok: false, error: DAMAGED }
+  if (trimmed.length > limits.text) return { ok: false, error: DAMAGED }
   const bytes = readBase64Url(trimmed.slice(PREFIX.length))
   if (!bytes) return { ok: false, error: DAMAGED }
-  const raw = await inflate(bytes, JSON_MAX)
+  const raw = await inflate(bytes, limits.json)
   if (!raw) return { ok: false, error: DAMAGED }
   let data: unknown
   try {

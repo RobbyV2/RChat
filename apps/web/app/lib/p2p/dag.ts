@@ -8,7 +8,8 @@ import {
   targetOf,
   type Wire,
 } from './event'
-import type { EventRecord, P2pDatabase, RoomRecord } from './db'
+import type { IDBPTransaction } from 'idb'
+import type { EventRecord, P2pDatabase, P2pSchema, RoomRecord } from './db'
 
 // The room DAG on disk: heads (events without known children), the children index, parents we
 // still miss, and bounded walks over prev links. Inserting an event is one transaction, so the
@@ -65,8 +66,9 @@ export const blankRoom = (id: string, peer: string, now: number): RoomRecord => 
   created: now,
 })
 
-const TOTAL = 'events'
-const TOTAL_BYTES = 'bytes'
+// Totals in the meta store.
+export const TOTAL = 'events'
+export const TOTAL_BYTES = 'bytes'
 
 export const storedSize = (w: Wire) => utf8Length(JSON.stringify(w))
 
@@ -90,6 +92,12 @@ export const nextHeads = (
 
 const childRange = (id: string) => IDBKeyRange.bound([id, ''], [id, '￿'])
 
+export type InsertTx = IDBPTransaction<
+  P2pSchema,
+  ('rooms' | 'events' | 'children' | 'meta')[],
+  'readwrite'
+>
+
 export const insertEvent = async (
   db: P2pDatabase,
   id: string,
@@ -99,19 +107,26 @@ export const insertEvent = async (
 ): Promise<Inserted> => {
   const tx = db.transaction(['rooms', 'events', 'children', 'meta'], 'readwrite')
   tx.done.catch(() => {})
+  const res = await insertInto(tx, id, wire, receivedAt, ctx)
+  if (res.status === 'invalid') tx.abort()
+  else await tx.done
+  return res
+}
+
+// The same inside a transaction the caller owns (a device import writes many in one). Refusals
+// happen before anything is written.
+export const insertInto = async (
+  tx: InsertTx,
+  id: string,
+  wire: Wire,
+  receivedAt: number,
+  ctx: InsertCtx
+): Promise<Inserted> => {
   const events = tx.objectStore('events')
-  const done = async <T>(v: T) => {
-    await tx.done
-    return v
-  }
-  const refuse = (why: 'depth' | 'auth'): Inserted => {
-    tx.done.catch(() => {})
-    tx.abort()
-    return { status: 'invalid', why }
-  }
+  const refuse = (why: 'depth' | 'auth'): Inserted => ({ status: 'invalid', why })
   const ev = wire.ev
   const have = await events.get(id)
-  if (have) return done<Inserted>({ status: 'dup', rec: have })
+  if (have) return { status: 'dup', rec: have }
   const room =
     (await tx.objectStore('rooms').get(ev.room)) ?? blankRoom(ev.room, ctx.peer, receivedAt)
   const total = ((await tx.objectStore('meta').get(TOTAL)) as number | undefined) ?? 0
@@ -127,7 +142,7 @@ export const insertEvent = async (
         : null
   if (why) {
     if (!room.full) await tx.objectStore('rooms').put({ ...room, full: true, fullWhy: why })
-    return done<Inserted>({ status: 'full', why })
+    return { status: 'full', why }
   }
   const parents: EventRecord[] = []
   for (const p of ev.prev) {
@@ -234,7 +249,7 @@ export const insertEvent = async (
   await tx.objectStore('rooms').put(next)
   await tx.objectStore('meta').put(total + 1, TOTAL)
   await tx.objectStore('meta').put(totalBytes + size, TOTAL_BYTES)
-  return done<Inserted>({ status: 'new', rec, ping, unread })
+  return { status: 'new', rec, ping, unread }
 }
 
 // An event signed by a since-revoked device is kept only when a stored event signed by a device

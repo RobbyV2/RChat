@@ -22,7 +22,26 @@ export interface SelfRecord {
   created: number
   // This browser's identity moved to another device: it may no longer sign anything.
   moved: { at: number; successor: string } | null
+  // A P2P export was made here: sending pauses until the user resumes, so nothing written here
+  // is left behind by the move.
+  moving?: { at: number } | null
+  // The last P2P export from here; a move without one is unexpected.
+  exported?: number | null
+  // When we saw signs that another device uses this identity.
+  alert?: number | null
+  // Transfer files already imported into this identity (their ids).
+  imports?: string[]
 }
+
+// A browser whose identity moved keeps the public halves (its history stays readable), never
+// the secrets: nothing left here can sign for the identity again.
+export const withoutSecrets = (s: SelfRecord): SelfRecord => ({
+  ...s,
+  ik: { pk: s.ik.pk, sk: new Uint8Array(0) },
+  dk: { pk: s.dk.pk, sk: new Uint8Array(0) },
+})
+
+export const hasSecrets = (s: SelfRecord) => s.ik.sk.length > 0 && s.dk.sk.length > 0
 
 // A conversation. Its events are the source of truth; this record caches the DAG frontier and
 // the counters the room list shows.

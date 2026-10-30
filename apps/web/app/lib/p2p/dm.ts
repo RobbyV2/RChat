@@ -295,6 +295,13 @@ export const bodyTooLong = (body: string) =>
 export const clipName = (name: string) => Array.from(name).slice(0, EV.name).join('')
 export const MOVED_TEXT =
   'Your P2P identity moved to another device. This browser can no longer send.'
+export const MOVING_TEXT =
+  'You exported your P2P data to move it. Sending is paused here so nothing is lost.'
+export const RESUME_TEXT = 'Messages you send here will not be on the new device.'
+export const movedText = (at: number | null) =>
+  at === null
+    ? MOVED_TEXT
+    : `Your P2P identity moved to another device on ${new Date(at).toLocaleDateString()}. This browser can no longer send.`
 
 export interface Arrival {
   room: string
@@ -435,6 +442,7 @@ export class Dms {
   private async create(room: string, type: EvType, content: Content) {
     const author = this.deps.node.author()
     if (!author) throw new DmError(MOVED_TEXT)
+    if (await this.deps.node.sendingPaused()) throw new DmError(MOVING_TEXT)
     const rec = await this.deps.store.room(room)
     if (!rec) throw new DmError('Unknown conversation')
     const heads = rec.heads.slice(0, EV.prev)

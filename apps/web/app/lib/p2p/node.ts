@@ -1,3 +1,4 @@
+import { isRecord } from '../bytes'
 import { b64u, equalBytes, randomBytes } from './canonical'
 import { BAD_CARD, decodeCard, encodeCard, makeCard, type Card } from './card'
 import {
@@ -22,7 +23,7 @@ import {
   type AddResult,
   type Contact,
 } from './contacts'
-import type { P2pStore, SelfRecord } from './db'
+import { hasSecrets, withoutSecrets, type P2pStore, type SelfRecord } from './db'
 import type { Me } from './handshake'
 import {
   cleanName,
@@ -112,6 +113,12 @@ export interface NodeView {
   presence: Record<string, Presence>
   // Message requests dropped or pruned to limit spam, until the user clears the count.
   dropped: number
+  // When this browser's identity moved to another device.
+  movedAt: number | null
+  // When a P2P export paused sending here (until the user resumes).
+  movingAt: number | null
+  // When we saw signs that another device uses this identity.
+  alertAt: number | null
 }
 
 export interface NodeDeps {
@@ -127,6 +134,31 @@ export interface NodeDeps {
 type Rel = 'request' | 'mutual' | 'none' | 'pending'
 
 const HELLO_CERTS = 4
+
+// The revocation that moved this device of a contact to a new one, if any.
+const movedFrom = (c: Contact | undefined, dk: string) =>
+  c?.revocations.find(r => r.dk === dk && r.successor !== undefined) ?? null
+
+// Our devices as a contact knows them disagree with a single line of moves: one device revoked
+// twice with different successors, or a live device that isn't this one. Every device holds the
+// identity key, so this means a copy of it is in use somewhere else.
+export const identityConflict = (self: SelfRecord, certs: Cert[], revs: Revocation[]) => {
+  const me = keyId(self.dk.pk)
+  const all = [...self.revocations, ...revs]
+  const forked = all.some(a =>
+    all.some(
+      b =>
+        b.dk === a.dk &&
+        a.successor !== undefined &&
+        b.successor !== undefined &&
+        b.successor !== a.successor
+    )
+  )
+  const revoked = (dk: string) => all.some(r => r.dk === dk)
+  return forked || certs.some(c => c.dk !== me && !revoked(c.dk))
+}
+
+const arr = (x: unknown): unknown[] => (Array.isArray(x) ? x : [])
 
 export const createSelf = (name: string, now: number, label = 'Browser'): SelfRecord => {
   const ik = newKeyPair()
@@ -200,6 +232,12 @@ export class P2pNode {
       self = await deps.store.updateSelf(cur => (cur ? null : made))
       if (!self) return null
     }
+    // Stored before moved browsers dropped their secrets.
+    if (self.moved && hasSecrets(self))
+      self =
+        (await deps.store.updateSelf(cur =>
+          cur?.moved && hasSecrets(cur) ? withoutSecrets(cur) : null
+        )) ?? self
     const node = new P2pNode(self, deps)
     for (const c of await deps.store.contacts()) node.contacts.set(c.ik, c)
     node.userPaused = (await deps.store.meta<boolean>('paused')) === true
@@ -271,6 +309,9 @@ export class P2pNode {
       contacts: [...this.contacts.values()],
       presence,
       dropped: this.dropped,
+      movedAt: this.self.moved?.at ?? null,
+      movingAt: this.self.moving?.at ?? null,
+      alertAt: this.self.alert ?? null,
     }
   }
 
@@ -469,17 +510,19 @@ export class P2pNode {
       pipe,
       me: this.me(),
       clock: this.clock,
+      // A device that moved away is let through only to hear that it moved (our hello says so),
+      // then refused.
       admit: (r: { ik: string; dk: string }) => {
         const c = this.contacts.get(r.ik)
         return (
           r.ik !== this.ik &&
           !this.isBanned(r.ik) &&
           c?.state !== 'blocked' &&
-          !(c && isRevoked(c, r.dk)) &&
+          !(c && isRevoked(c, r.dk) && !movedFrom(c, r.dk)) &&
           (expect === null || r.ik === expect)
         )
       },
-      hello: (r: { ik: string }) => this.helloFor(r.ik),
+      hello: (r: { ik: string; dk: string }) => this.helloFor(r),
       onHello: (m: Message, s: Session) => this.onHello(m, s),
     }
   }
@@ -491,6 +534,7 @@ export class P2pNode {
     s.on('profile', m => this.onProfile(m, s))
     s.on('verified', m => this.onVerified(m, s))
     s.on('devices', m => this.onDevices(m, s))
+    s.on('yours', m => this.onYours(m, s))
     for (const x of this.exts) x.attach(s)
     s.start()
   }
@@ -575,7 +619,9 @@ export class P2pNode {
     }
   }
 
-  private helloFor(ik: string): Message {
+  private helloFor({ ik, dk }: { ik: string; dk: string }): Message {
+    const moved = movedFrom(this.contacts.get(ik), dk)
+    if (moved) return { t: 'hello', v: 1, rel: 'none', moved }
     const msg: Message = {
       t: 'hello',
       v: 1,
@@ -587,12 +633,60 @@ export class P2pNode {
     const intro = this.contacts.get(ik)?.intros[0]
     if (intro && msg.rel === 'request') msg.intro = intro
     if (this.self.succession) msg.succ = this.self.succession
+    const yours = this.yoursFor(ik)
+    if (yours) msg.yours = yours
     return msg
+  }
+
+  // What we know of a contact's devices, echoed back to them: their device can tell when a copy
+  // of their identity is in use somewhere else.
+  private yoursFor(ik: string) {
+    const c = this.contacts.get(ik)
+    if (!c || c.state === 'blocked') return null
+    return { certs: c.certs.slice(0, HELLO_CERTS), revs: c.revocations.slice(-HELLO_CERTS * 2) }
+  }
+
+  private async checkYours(y: unknown) {
+    if (!isRecord(y) || this.self.moved) return
+    const certs = arr(y.certs)
+      .slice(0, HELLO_CERTS)
+      .filter((c): c is Cert => verifyCert(c, this.ik))
+    const revs = arr(y.revs)
+      .slice(0, HELLO_CERTS * 2)
+      .filter((x): x is Revocation => verifyRevocation(x, this.ik))
+    const ours = revs.find(x => this.isOurMove(x))
+    if (ours) return this.markMoved(ours)
+    if (identityConflict(this.self, certs, revs)) await this.raiseAlert()
+  }
+
+  private async onYours(m: Message, s: Session) {
+    const r = s.remote
+    if (!r || !this.contacts.has(r.ik)) return s.strike()
+    await this.checkYours(m)
+  }
+
+  private async raiseAlert() {
+    if (this.self.alert) return
+    const now = this.clock.now()
+    await this.writeSelf(cur => ({ ...cur, alert: cur.alert ?? now })).catch(() => {})
+    this.changed()
   }
 
   private async onHello(m: Message, s: Session): Promise<boolean> {
     const r = s.remote
     if (!r) return false
+    // Our identity moved to another device, and a contact tells us with our own signed
+    // revocation of this device.
+    if (m.moved !== undefined) {
+      if (this.isOurMove(m.moved)) await this.markMoved(m.moved)
+      return false
+    }
+    const known = this.contacts.get(r.ik)
+    if (known && m.yours !== undefined) {
+      await this.checkYours(m.yours)
+      if (this.self.moved) return false
+    }
+    if (known && isRevoked(known, r.dk)) return false
     const certs = (Array.isArray(m.certs) ? m.certs : [])
       .slice(0, HELLO_CERTS)
       .filter((c): c is Cert => verifyCert(c, r.ik))
@@ -620,9 +714,8 @@ export class P2pNode {
     }
 
     const asks = rel === 'request' || rel === 'mutual'
-    const known = this.contacts.has(r.ik)
     // The slot is taken before any await, so concurrent hellos can't all pass the limit.
-    const slot = asks && !known
+    const slot = asks && !this.contacts.has(r.ik)
     if (slot) {
       if (!this.requestAllowed()) {
         await this.countDropped(1)
@@ -657,12 +750,50 @@ export class P2pNode {
       if (i >= 0) this.requestTimes.splice(i, 1)
     }
     if (!ok || !c) return false
-    // A hello from a new device may carry revocations for one still connected.
+    // A hello from a new device may carry revocations for one still connected; the others hear
+    // what we now know of their devices.
+    const yours = this.yoursFor(r.ik)
     for (const x of this.sessionsOf(r.ik))
       if (x !== s && x.remote && isRevoked(c, x.remote.dk)) x.close('refused')
+      else if (x !== s && yours) void x.send({ t: 'yours', ...yours }).catch(() => {})
     if (created) await this.pruneRequests()
     // Presence and messages flow only between mutual contacts.
     return c.state === 'mutual' && asks
+  }
+
+  private isOurMove(x: unknown): x is Revocation {
+    return (
+      verifyRevocation(x, this.ik) &&
+      x.dk === this.dk &&
+      typeof x.successor === 'string' &&
+      x.successor !== this.dk
+    )
+  }
+
+  // This browser may no longer sign anything: every session closes, the node stays down and the
+  // secret keys are dropped. A move nobody exported for here is a sign of a copy elsewhere.
+  private async markMoved(rev: Revocation) {
+    if (this.self.moved) return
+    const now = this.clock.now()
+    const moved = { at: rev.revoked_at, successor: rev.successor as string }
+    const next = (cur: SelfRecord): SelfRecord =>
+      withoutSecrets({
+        ...cur,
+        revocations: cur.revocations.some(x => x.dk === rev.dk)
+          ? cur.revocations
+          : [...cur.revocations, rev],
+        moved,
+        moving: null,
+        alert: cur.alert ?? (cur.exported ? null : now),
+      })
+    await this.writeSelf(next).catch(() => {
+      // Another tab changed the identity: this one still stops signing.
+      this.self = next(this.self)
+    })
+    this.halt('closed')
+    this.dials.clear()
+    this.status = 'moved'
+    this.changed()
   }
 
   private others(ik: string) {
@@ -931,7 +1062,7 @@ export class P2pNode {
 
   async setName(name: string) {
     const clean = cleanName(name)
-    if (!clean) return
+    if (!clean || this.self.moved) return
     const now = this.clock.now()
     await this.writeSelf(cur => ({
       ...cur,
@@ -943,12 +1074,15 @@ export class P2pNode {
 
   // A new identity key that the old one vouches for: contacts move over automatically, but see
   // the key change and lose their verified mark.
+  // A browser that moved has no old key to vouch with: its new identity starts without one, and
+  // contacts get a request from it.
   async resetIdentity(label = 'Browser') {
     const now = this.clock.now()
     const ik = newKeyPair()
     const dk = newKeyPair()
     const cert = signCert(ik, dk.pk, now, label)
-    const succession = signSuccession(this.self.ik, ik, now)
+    const succession = hasSecrets(this.self) ? signSuccession(this.self.ik, ik, now) : null
+    const wasMoved = this.self.moved !== null
     await this.writeSelf(cur => ({
       ...cur,
       ik,
@@ -959,10 +1093,54 @@ export class P2pNode {
       profile: signProfile(ik, cur.profile.name, now),
       succession,
       suffix: 0,
+      moved: null,
+      moving: null,
+      exported: null,
+      alert: null,
+      imports: [],
     }))
     this.halt('closed')
     this.dials.clear()
+    if (wasMoved && !this.stopped) {
+      await this.start()
+      return this.changed()
+    }
     if (!this.isPaused() && !this.stopped) await this.listen()
+    this.changed()
+  }
+
+  // ----- Device move -----
+
+  // After a P2P export: sending pauses here so nothing written here is left behind by the move.
+  async markExported(at = this.clock.now()) {
+    if (this.self.moved) return
+    await this.writeSelf(cur => ({ ...cur, moving: { at }, exported: at }))
+    this.changed()
+  }
+
+  async resumeSending() {
+    await this.writeSelf(cur => ({ ...cur, moving: null }))
+    this.changed()
+  }
+
+  // Whether sending is paused for a move. Another tab may have exported, so this reads the
+  // stored record.
+  async sendingPaused() {
+    const cur = await this.deps.store.self()
+    if (
+      cur &&
+      equalBytes(cur.ik.pk, this.self.ik.pk) &&
+      equalBytes(cur.dk.pk, this.self.dk.pk) &&
+      (cur.moving?.at ?? null) !== (this.self.moving?.at ?? null)
+    ) {
+      this.self = { ...this.self, moving: cur.moving ?? null, exported: cur.exported ?? null }
+      this.changed()
+    }
+    return !!this.self.moving
+  }
+
+  async clearAlert() {
+    await this.writeSelf(cur => ({ ...cur, alert: null }))
     this.changed()
   }
 

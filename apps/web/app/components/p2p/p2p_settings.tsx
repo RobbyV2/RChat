@@ -10,7 +10,7 @@ import { SettingSwitch } from '../admin_panel'
 import { dangerBtn, fieldCls, filledBtn, sectionCls, textBtn } from '../ui'
 import { MyCode } from './add_contact'
 import { P2pBadge } from './p2p_badge'
-import { ElsewhereNotice } from './p2p_home'
+import { confirmReset, ElsewhereNotice, IdentityAlert, MovedBanner, MovingBanner } from './p2p_home'
 
 function NameField() {
   const name = useP2p(s => s.name)
@@ -47,6 +47,7 @@ export function P2pSection() {
   const storage = useP2p(s => s.storage)
   const error = useP2p(s => s.error)
   const elsewhere = useP2p(s => s.elsewhere)
+  const status = useP2p(s => s.status)
   const helpers = useStore(s => s.iceHelpers)
   const setHelpers = useStore(s => s.setIceHelpers)
   const info = useStore(s => s.instance?.ice)
@@ -56,6 +57,13 @@ export function P2pSection() {
   }, [enabled])
   if (!signedIn) return null
   const offer = iceOffer(info)
+  const remove = () =>
+    ask({
+      title: 'Remove P2P data from this browser?',
+      body: 'Your P2P identity and contacts are deleted from this browser. Without a backup they are gone for good.',
+      confirm: 'Remove',
+      action: () => void p2p.removeData(),
+    })
   return (
     <section aria-label="Peer-to-peer">
       <p className={`${sectionCls} flex items-center gap-2`}>
@@ -74,8 +82,17 @@ export function P2pSection() {
         <ElsewhereNotice />
       ) : loading ? (
         <p className="px-2 text-sm text-on-surface-variant">Starting…</p>
+      ) : status === 'moved' ? (
+        <div className="flex flex-col gap-3 px-2">
+          <IdentityAlert />
+          <MovedBanner />
+        </div>
       ) : (
         <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 px-2 empty:hidden">
+            <IdentityAlert />
+            <MovingBanner />
+          </div>
           {error && (
             <p role="alert" className="px-2 text-xs text-error">
               {error}
@@ -119,35 +136,20 @@ export function P2pSection() {
                 : 'Storage use is not available in this browser.'}
             </p>
             <p className="mt-1">
-              Moving to a new device isn&apos;t available yet. Removing this data loses your
-              contacts.
+              To move to a new device, export from Sync config with Include P2P identity and
+              history. Removing this data without that loses your contacts.
+            </p>
+            <p data-p2p-lost className="mt-1">
+              Lost or stolen device? Moving can&apos;t lock it out, because every device holds your
+              identity key. Use Reset identity instead: contacts see that your key changed and have
+              to verify you again.
             </p>
           </div>
           <div className="flex flex-wrap gap-2 px-1">
-            <button
-              onClick={() =>
-                ask({
-                  title: 'Reset your P2P identity?',
-                  body: 'You get a new key. Contacts move over when you next connect, but have to verify you again.',
-                  confirm: 'Reset',
-                  action: () => void p2p.resetIdentity(),
-                })
-              }
-              className={textBtn}
-            >
+            <button onClick={() => confirmReset(ask)} className={textBtn}>
               Reset identity
             </button>
-            <button
-              onClick={() =>
-                ask({
-                  title: 'Remove P2P data from this browser?',
-                  body: 'Your P2P identity and contacts are deleted from this browser. Without a backup they are gone for good.',
-                  confirm: 'Remove',
-                  action: () => void p2p.removeData(),
-                })
-              }
-              className={dangerBtn}
-            >
+            <button onClick={remove} className={dangerBtn}>
               Remove P2P data from this browser
             </button>
           </div>

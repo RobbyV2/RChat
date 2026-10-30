@@ -12,6 +12,9 @@ import { untilText } from '../lib/notify'
 import type { ConfigShare } from '../lib/api'
 import {
   EXPIRY_CHOICES,
+  FILE_EXT,
+  FILE_LIMITS,
+  FILE_MAX,
   LINK_MAX,
   SECTIONS,
   TEXT_MAX,
@@ -31,6 +34,10 @@ import {
   type SectionKey,
 } from '../lib/config_transfer'
 import { FieldError, LinkPage, fieldCls, filledBtn, sectionCls, textBtn, useCopied } from './ui'
+import { fmtSize } from '../lib/bytes'
+import { p2pTransfer, useP2p } from '../lib/p2p/app'
+import { passProblem } from '../lib/p2p/transfer'
+import { P2pExportOption, P2pImport, type PassState } from './p2p/p2p_transfer'
 
 const iconBtn =
   'rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface disabled:pointer-events-none disabled:opacity-40'
@@ -265,40 +272,88 @@ const useExport = (include: Set<SectionKey>) => {
   return useMemo(() => buildConfig(source, include), [source, include])
 }
 
-function ExportBlock({ doc }: { doc: ConfigDoc }) {
+const download = (text: string) =>
+  sharing().saveFile(`rchat-config${FILE_EXT}`, `${text}\n`, 'application/octet-stream')
+
+// `p2p`: the passphrase when the P2P identity goes in too. That export is made on request (the
+// key derivation takes a moment), the plain one whenever the choice changes.
+function ExportBlock({ doc, p2p }: { doc: ConfigDoc; p2p: string | null | false }) {
   const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     let live = true
-    void encodeConfig(doc).then(t => live && setText(t))
+    setText('')
+    setError(null)
+    if (p2p === false) void encodeConfig(doc).then(t => live && setText(t))
     return () => {
       live = false
     }
-  }, [doc])
+  }, [doc, p2p])
+  const create = async (pass: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const section = await p2pTransfer.exportSection(pass)
+      const t = await encodeConfig({ ...doc, p2p: section })
+      if (t.length > FILE_MAX) setError(`Too large to export (over ${fmtSize(FILE_MAX)})`)
+      else setText(t)
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const fileOnly = text.length > TEXT_MAX
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-start gap-1">
-        <StreamerCover what="config string">
-          <textarea
-            readOnly
-            rows={3}
-            value={text}
-            aria-label="Config string"
-            onFocus={e => e.currentTarget.select()}
-            className={areaCls}
-          />
-        </StreamerCover>
-        <CopyButton text={text} label="Copy config string" />
-      </div>
-      <div>
-        <button
-          type="button"
-          disabled={!text}
-          onClick={() => sharing().saveFile('rchat-config.txt', `${text}\n`, 'text/plain')}
-          className={textBtn}
-        >
-          Save as file
-        </button>
-      </div>
+      {p2p !== false && !text && (
+        <div>
+          <button
+            type="button"
+            disabled={p2p === null || busy}
+            onClick={() => p2p && void create(p2p)}
+            className={filledBtn}
+          >
+            {busy ? 'Encrypting…' : 'Create export'}
+          </button>
+        </div>
+      )}
+      {fileOnly ? (
+        <p className="text-xs text-on-surface-variant">
+          This export is {fmtSize(text.length)}, too large to copy as text. Download the file
+          instead.
+        </p>
+      ) : (
+        (p2p === false || text) && (
+          <div className="flex items-start gap-1">
+            <StreamerCover what="config string">
+              <textarea
+                readOnly
+                rows={3}
+                value={text}
+                aria-label="Config string"
+                onFocus={e => e.currentTarget.select()}
+                className={areaCls}
+              />
+            </StreamerCover>
+            <CopyButton text={text} label="Copy config string" />
+          </div>
+        )
+      )}
+      <FieldError message={error} />
+      {(p2p === false || text) && (
+        <div>
+          <button
+            type="button"
+            disabled={!text}
+            onClick={() => download(text)}
+            className={fileOnly ? filledBtn : textBtn}
+          >
+            Download file
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -481,12 +536,17 @@ function ImportBlock() {
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [seq, setSeq] = useState(0)
+  const signedIn = useStore(s => s.me !== null)
 
-  const preview = async (raw: string) => {
+  const preview = async (raw: string, file = false) => {
     setError(null)
     setDone(null)
     setDoc(null)
-    const id = parseConfigLink(raw, shareOrigin())
+    if (!file && raw.length > TEXT_MAX) {
+      setError('Too long to paste. Use Import file instead')
+      return
+    }
+    const id = file ? null : parseConfigLink(raw, shareOrigin())
     let input = raw
     if (id) {
       try {
@@ -496,7 +556,9 @@ function ImportBlock() {
         return
       }
     }
-    const decoded = await (id ? decodeLink(input) : decodeConfig(input))
+    const decoded = await (id
+      ? decodeLink(input)
+      : decodeConfig(input, Date.now(), file ? FILE_LIMITS : undefined))
     if (!decoded.ok) setError(decoded.error)
     else {
       setDoc(decoded.doc)
@@ -505,10 +567,16 @@ function ImportBlock() {
   }
 
   const openFile = async () => {
-    const content = await sharing().openFile('.txt,text/plain', TEXT_MAX)
+    setError(null)
+    const content = await sharing().openFile(
+      `${FILE_EXT},.txt,text/plain,application/octet-stream`,
+      FILE_MAX,
+      () => setError(`Choose a file under ${fmtSize(FILE_MAX)}`)
+    )
     if (content === null) return
-    setText(content.trim())
-    await preview(content)
+    // Large files stay out of the text box; it would only slow the page down.
+    setText(content.length > TEXT_MAX ? '' : content.trim())
+    await preview(content, true)
   }
 
   return (
@@ -535,7 +603,7 @@ function ImportBlock() {
           Preview
         </button>
         <button type="button" onClick={() => void openFile()} className={textBtn}>
-          Open file
+          Import file
         </button>
       </div>
       <FieldError message={error} />
@@ -544,7 +612,8 @@ function ImportBlock() {
           {done}
         </p>
       )}
-      {doc && (
+      {doc?.p2p && signedIn && <P2pImport key={`p2p-${seq}`} section={doc.p2p} />}
+      {doc && (!doc.p2p || !signedIn || presentSections(doc).length > 0) && (
         <ImportPreview
           key={seq}
           doc={doc}
@@ -564,8 +633,13 @@ function ImportBlock() {
 
 export function ConfigSyncSection() {
   const me = useStore(s => s.me !== null)
+  const hasP2p = useP2p(s => s.ik !== null && s.movedAt === null) && me
   const [include, setInclude] = useState<Set<SectionKey>>(() => new Set(SECTIONS.map(s => s.key)))
+  const [withP2p, setWithP2p] = useState(false)
+  const [pass, setPass] = useState<PassState>({ pass: '', again: '' })
   const doc = useExport(include)
+  const p2pPass =
+    !hasP2p || !withP2p ? false : passProblem(pass.pass, pass.again) ? null : pass.pass
   const toggle = (key: SectionKey) =>
     setInclude(cur => {
       const next = new Set(cur)
@@ -593,9 +667,20 @@ export function ConfigSyncSection() {
           </p>
         )}
       </section>
-      <section>
+      <section className="flex flex-col gap-3">
         <p className={sectionCls}>Export</p>
-        <ExportBlock doc={doc} />
+        {hasP2p && (
+          <P2pExportOption
+            on={withP2p}
+            onToggle={on => {
+              setWithP2p(on)
+              if (!on) setPass({ pass: '', again: '' })
+            }}
+            value={pass}
+            onChange={setPass}
+          />
+        )}
+        <ExportBlock doc={doc} p2p={p2pPass} />
       </section>
       <section>
         <p className={sectionCls}>Import</p>

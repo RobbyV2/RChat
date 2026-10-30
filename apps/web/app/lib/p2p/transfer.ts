@@ -1,0 +1,839 @@
+import { isRecord } from '../bytes'
+import { b64u, canonical, equalBytes, fromB64u, nfc, randomBytes, utf8 } from './canonical'
+import {
+  isKeyId,
+  keyId,
+  newKeyPair,
+  publicOf,
+  signCert,
+  signRevocation,
+  verifyCert,
+  verifyProfile,
+  type KeyPair,
+} from './keys'
+import {
+  CERTS_KEPT,
+  mergeCerts,
+  mergeContact,
+  mergeRevocations,
+  visibleContacts,
+  type Contact,
+} from './contacts'
+import { blankRoom, insertInto, storedSize, TOTAL, TOTAL_BYTES, type InsertTx } from './dag'
+import type {
+  EventRecord,
+  OutboxRecord,
+  P2pDatabase,
+  RoomRecord,
+  SelfRecord,
+  StoreName,
+} from './db'
+import { DB_VERSION, hasSecrets, withoutSecrets } from './db'
+import { buildEvent, claimedId, isEventId, LIMITS as EV, type Wire } from './event'
+import { fingerprint } from './keys'
+import { IV_BYTES, SALT_BYTES, type Kdf, type P2pSection } from './section'
+
+// Moving P2P to another device (note section 7): every store except the excluded ones is dumped
+// as JSON lines, deflated, and sealed with AES-256-GCM under a key from Argon2id over a
+// passphrase. The section goes into the config string and the `.rchat` file only.
+//
+// Importing writes everything in one IndexedDB transaction (aborted on any error, so nothing
+// is half written) and then, on a new device, makes a new device key: the identity signs its
+// cert and a revocation of the old one, and a `move` event on top of every room's heads vouches
+// for the history the old device signed.
+
+export { type Kdf, type P2pSection } from './section'
+
+// Partial downloads and the search index are rebuilt; meta holds counters and flags of this
+// browser only.
+export const EXCLUDED: ReadonlySet<string> = new Set(['blob_parts', 'search', 'meta'])
+
+// Desktop finishes in about a second, a mid-range phone in two to three. Files say which
+// parameters they used; unlocking refuses anything below the minimum or above the maximum.
+export const KDF_DESKTOP: Kdf = { alg: 'argon2id', m: 128 * 1024, t: 3, p: 1 }
+export const KDF_MOBILE: Kdf = { alg: 'argon2id', m: 64 * 1024, t: 3, p: 1 }
+export const KDF_MIN = { m: 64 * 1024, t: 3, p: 1 }
+export const KDF_MAX = { m: 256 * 1024, t: 10, p: 4 }
+
+export const PASS_MIN = 10
+// What a dump may inflate to.
+export const DUMP_MAX = 1024 ** 3
+
+export const WRONG_PASS = 'Wrong passphrase, or the file was changed'
+export const WEAK_KDF = "This file's encryption settings are too weak. Export it again."
+export const HEAVY_KDF = 'This file needs more memory to unlock than this device allows.'
+export const DAMAGED_DUMP = 'The P2P data in this file is damaged'
+export const NEWER_DUMP = 'This P2P data is from a newer version. Update and try again'
+export const CHANGED = 'P2P data in this browser changed. Unlock the file again.'
+export const MOVED_DUMP =
+  'This file is from a browser that already moved. Export from the new device.'
+export const MOVED_EXPORT =
+  'Your P2P identity moved to another device. Export from that device instead.'
+export const IMPORTED_HERE =
+  'This file was already imported in this browser. Export again from the device you use now.'
+
+export class TransferError extends Error {}
+
+const AAD_TAG = 'rchat-p2p-transfer1\0'
+
+export const defaultKdf = (): Kdf =>
+  typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
+    ? KDF_MOBILE
+    : KDF_DESKTOP
+
+// ----- Passphrase -----
+
+export const passLength = (p: string) => Array.from(nfc(p)).length
+
+export const passProblem = (pass: string, again: string): string | null =>
+  passLength(pass) < PASS_MIN
+    ? `Use at least ${PASS_MIN} characters`
+    : nfc(pass) !== nfc(again)
+      ? "The passphrases don't match"
+      : null
+
+// A rough hint, not a promise: length counts most, then mixing kinds of characters or words.
+export const passStrength = (p: string): { score: 0 | 1 | 2 | 3; label: string } => {
+  const n = passLength(p)
+  const kinds = [/\p{Ll}/u, /\p{Lu}/u, /\p{N}/u, /[^\p{L}\p{N}\s]/u].filter(r => r.test(p)).length
+  const words = p.trim().split(/\s+/).filter(Boolean).length
+  const distinct = new Set(Array.from(p.toLowerCase())).size
+  let score: 0 | 1 | 2 | 3 =
+    n < PASS_MIN
+      ? 0
+      : n >= 20 || (n >= 14 && (kinds >= 3 || words >= 4))
+        ? 3
+        : n >= 14 || kinds >= 3 || words >= 3
+          ? 2
+          : 1
+  if (score > 1 && distinct < 6) score = 1
+  const label = ['Too short', 'Weak: add more words', 'Fair', 'Strong'][score]
+  return { score, label }
+}
+
+// ----- Encryption -----
+
+const aad = (kdf: Kdf, salt: string) => utf8(`${AAD_TAG}${canonical({ v: 1, kdf, salt })}`)
+
+const deriveKey = async (pass: string, salt: Uint8Array, kdf: Kdf) => {
+  const { argon2id } = await import('hash-wasm')
+  const raw = await argon2id({
+    password: utf8(nfc(pass)),
+    salt,
+    parallelism: kdf.p,
+    iterations: kdf.t,
+    memorySize: kdf.m,
+    hashLength: 32,
+    outputType: 'binary',
+  })
+  const key = await crypto.subtle.importKey('raw', raw as BufferSource, 'AES-GCM', false, [
+    'encrypt',
+    'decrypt',
+  ])
+  raw.fill(0)
+  return key
+}
+
+export const seal = async (plain: Uint8Array, pass: string, kdf: Kdf): Promise<P2pSection> => {
+  const salt = b64u(randomBytes(SALT_BYTES))
+  const iv = randomBytes(IV_BYTES)
+  const key = await deriveKey(pass, fromB64u(salt), kdf)
+  const ct = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv as BufferSource, additionalData: aad(kdf, salt) as BufferSource },
+    key,
+    plain as BufferSource
+  )
+  return { v: 1, kdf: { ...kdf }, salt, iv: b64u(iv), ct: b64u(new Uint8Array(ct)) }
+}
+
+export interface KdfBounds {
+  min: { m: number; t: number; p: number }
+  max: { m: number; t: number; p: number }
+}
+
+export const checkKdf = (kdf: Kdf, bounds: KdfBounds = { min: KDF_MIN, max: KDF_MAX }) => {
+  const { min, max } = bounds
+  if (kdf.m < min.m || kdf.t < min.t || kdf.p < min.p) throw new TransferError(WEAK_KDF)
+  if (kdf.m > max.m || kdf.t > max.t || kdf.p > max.p) throw new TransferError(HEAVY_KDF)
+}
+
+export const open = async (sec: P2pSection, pass: string, bounds?: KdfBounds) => {
+  checkKdf(sec.kdf, bounds)
+  let iv: Uint8Array
+  let ct: Uint8Array
+  try {
+    iv = fromB64u(sec.iv)
+    ct = fromB64u(sec.ct)
+  } catch {
+    throw new TransferError(DAMAGED_DUMP)
+  }
+  let key: CryptoKey
+  try {
+    key = await deriveKey(pass, fromB64u(sec.salt), sec.kdf)
+  } catch {
+    // Mostly Argon2 failing to get its memory on a small device.
+    throw new TransferError(HEAVY_KDF)
+  }
+  try {
+    return new Uint8Array(
+      await crypto.subtle.decrypt(
+        {
+          name: 'AES-GCM',
+          iv: iv as BufferSource,
+          additionalData: aad(sec.kdf, sec.salt) as BufferSource,
+        },
+        key,
+        ct as BufferSource
+      )
+    )
+  } catch {
+    throw new TransferError(WRONG_PASS)
+  }
+}
+
+// ----- Dump -----
+
+export interface Row {
+  value: unknown
+  // Only for stores without a key path.
+  key?: IDBValidKey
+}
+
+export interface Dump {
+  // Random per export: an import records it, so the same file never makes a second device.
+  id: string
+  schema: number
+  at: number
+  self: SelfRecord
+  stores: Map<string, Row[]>
+  // Records dropped because they were malformed.
+  skipped: number
+}
+
+// Bytes and blobs become tagged objects (keys `$b`, `$blob`). Any other key that starts with `$`
+// gets one more, so stored data can never pass for a tag.
+const tags = new WeakSet<object>()
+
+const escaped = (v: Record<string, unknown>) => {
+  const out: Record<string, unknown> = {}
+  for (const [k, x] of Object.entries(v)) out[k.startsWith('$') ? `$${k}` : k] = x
+  return out
+}
+
+const pack = (_k: string, v: unknown) =>
+  v instanceof Uint8Array
+    ? { $b: b64u(v) }
+    : v instanceof ArrayBuffer
+      ? { $b: b64u(new Uint8Array(v)) }
+      : isRecord(v) && !tags.has(v) && Object.keys(v).some(k => k.startsWith('$'))
+        ? escaped(v)
+        : v
+
+const hasBlob = (v: unknown): boolean =>
+  typeof Blob !== 'undefined' &&
+  (v instanceof Blob ||
+    (Array.isArray(v)
+      ? v.some(hasBlob)
+      : isRecord(v) && !(v instanceof Uint8Array) && Object.values(v).some(hasBlob)))
+
+const unblob = async (v: unknown): Promise<unknown> => {
+  if (!hasBlob(v)) return v
+  if (v instanceof Blob) {
+    const tag = { $blob: b64u(new Uint8Array(await v.arrayBuffer())), type: v.type }
+    tags.add(tag)
+    return tag
+  }
+  if (Array.isArray(v)) return Promise.all(v.map(unblob))
+  const out: Record<string, unknown> = {}
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = await unblob(x)
+  return out
+}
+
+const revive = (_k: string, v: unknown) => {
+  if (!isRecord(v)) return v
+  const keys = Object.keys(v)
+  if (keys.length === 1 && typeof v.$b === 'string') return fromB64u(v.$b)
+  if (keys.length === 2 && typeof v.$blob === 'string' && typeof v.type === 'string')
+    return new Blob([fromB64u(v.$blob) as BlobPart], { type: v.type })
+  if (!keys.some(k => k.startsWith('$'))) return v
+  const out: Record<string, unknown> = {}
+  for (const [k, x] of Object.entries(v)) out[k.startsWith('$$') ? k.slice(1) : k] = x
+  return out
+}
+
+interface LooseStore {
+  keyPath: string | string[] | null
+  getAll: () => Promise<unknown[]>
+  getAllKeys: () => Promise<IDBValidKey[]>
+  get: (key: IDBValidKey) => Promise<unknown>
+  put: (value: unknown, key?: IDBValidKey) => Promise<IDBValidKey>
+  clear: () => Promise<void>
+}
+
+interface LooseTx {
+  objectStore: (name: string) => LooseStore
+  done: Promise<void>
+  abort: () => void
+}
+
+const storeNames = (db: P2pDatabase) => Array.from(db.objectStoreNames) as string[]
+
+// Every store except the excluded ones, read in one transaction (a consistent snapshot).
+export const readStores = async (db: P2pDatabase) => {
+  const names = storeNames(db).filter(n => !EXCLUDED.has(n))
+  const tx = db.transaction(names as StoreName[], 'readonly') as unknown as LooseTx
+  const out = new Map<string, Row[]>()
+  for (const n of names) {
+    const st = tx.objectStore(n)
+    const values = await st.getAll()
+    const keys = st.keyPath === null ? await st.getAllKeys() : null
+    out.set(
+      n,
+      values.map((value, i) => (keys ? { value, key: keys[i] } : { value }))
+    )
+  }
+  await tx.done
+  return out
+}
+
+const HEADER = 'p2p-dump'
+
+export const dumpBytes = async (db: P2pDatabase, now = Date.now()): Promise<Uint8Array> => {
+  const stores = await readStores(db)
+  const self = stores.get('self')?.[0]?.value as SelfRecord | undefined
+  if (!self) throw new TransferError('No P2P identity here')
+  if (self.moved || !hasSecrets(self)) throw new TransferError(MOVED_EXPORT)
+  const id = b64u(randomBytes(16))
+  const cs = new CompressionStream('deflate-raw')
+  const result = new Response(cs.readable).arrayBuffer()
+  const w = cs.writable.getWriter()
+  const enc = new TextEncoder()
+  let buf = `${JSON.stringify({ rchat: HEADER, v: 1, id, schema: DB_VERSION, at: now })}\n`
+  for (const [name, rows] of stores)
+    for (const r of rows) {
+      const value = await unblob(r.value)
+      const line = r.key === undefined ? [name, value] : [name, value, r.key]
+      buf += `${JSON.stringify(line, pack)}\n`
+      if (buf.length >= 1 << 16) {
+        await w.write(enc.encode(buf))
+        buf = ''
+      }
+    }
+  if (buf) await w.write(enc.encode(buf))
+  await w.close()
+  return new Uint8Array(await result)
+}
+
+const isKeyPair = (x: unknown): x is KeyPair =>
+  isRecord(x) &&
+  x.pk instanceof Uint8Array &&
+  x.sk instanceof Uint8Array &&
+  x.pk.length === 32 &&
+  x.sk.length === 32 &&
+  equalBytes(publicOf(x.sk), x.pk)
+
+export const isSelf = (x: unknown): x is SelfRecord => {
+  if (!isRecord(x) || x.id !== 'me' || !isKeyPair(x.ik) || !isKeyPair(x.dk)) return false
+  const ik = keyId(x.ik.pk)
+  return (
+    verifyCert(x.cert, ik) &&
+    x.cert.dk === keyId(x.dk.pk) &&
+    Array.isArray(x.certs) &&
+    Array.isArray(x.revocations) &&
+    verifyProfile(x.profile, ik) &&
+    Number.isSafeInteger(x.created)
+  )
+}
+
+const isEventRow = (x: unknown): x is EventRecord =>
+  isRecord(x) &&
+  typeof x.id === 'string' &&
+  typeof x.room === 'string' &&
+  Number.isSafeInteger(x.receivedAt) &&
+  Number.isSafeInteger(x.depth) &&
+  isRecord(x.wire) &&
+  isRecord(x.wire.ev) &&
+  x.wire.ev.room === x.room &&
+  x.wire.ev.depth === x.depth &&
+  claimedId(x.wire) === x.id
+
+const HEADS_MAX = 1000
+
+const isHead = (h: unknown) =>
+  isRecord(h) && isEventId(h.id) && Number.isSafeInteger(h.depth) && (h.depth as number) >= 0
+
+const isRoomRow = (x: unknown): x is RoomRecord =>
+  isRecord(x) &&
+  typeof x.id === 'string' &&
+  x.kind === 'dm' &&
+  isKeyId(x.peer) &&
+  Array.isArray(x.heads) &&
+  x.heads.length <= HEADS_MAX &&
+  x.heads.every(isHead) &&
+  Array.isArray(x.missing)
+
+const isContactRow = (x: unknown): x is Contact =>
+  isRecord(x) &&
+  isKeyId(x.ik) &&
+  typeof x.name === 'string' &&
+  Array.isArray(x.certs) &&
+  Array.isArray(x.revocations) &&
+  Array.isArray(x.intros) &&
+  ['outgoing', 'incoming', 'mutual', 'blocked'].includes(x.state as string)
+
+// A contact keeps only the devices and profile its identity signed.
+const cleanContact = (c: Contact): Contact => {
+  const revocations = mergeRevocations([], c.revocations.slice(0, CERTS_KEPT * 2), c.ik)
+  return {
+    ...c,
+    revocations,
+    certs: mergeCerts([], c.certs.slice(0, CERTS_KEPT), c.ik, revocations),
+    profile: c.profile && verifyProfile(c.profile, c.ik) ? c.profile : null,
+  }
+}
+
+const isOutboxRow = (x: unknown): x is OutboxRecord =>
+  isRecord(x) && typeof x.id === 'string' && Array.isArray(x.deliveredTo)
+
+const ROW_CHECKS: Record<string, (x: unknown) => boolean> = {
+  events: isEventRow,
+  rooms: isRoomRow,
+  contacts: isContactRow,
+  outbox: isOutboxRow,
+}
+
+// Reads the inflated lines one at a time, so memory goes to the records, never to one huge
+// string.
+export const parseDump = async (bytes: Uint8Array, max = DUMP_MAX): Promise<Dump> => {
+  const damaged = () => new TransferError(DAMAGED_DUMP)
+  const reader = new Blob([bytes as BlobPart])
+    .stream()
+    .pipeThrough(new DecompressionStream('deflate-raw'))
+    .getReader()
+  const dec = new TextDecoder('utf-8', { fatal: true })
+  const stores = new Map<string, Row[]>()
+  let header: { id: string; schema: number; at: number } | null = null
+  let size = 0
+  let rest = ''
+  const line = (text: string) => {
+    const x = JSON.parse(text, revive) as unknown
+    if (!header) {
+      if (!isRecord(x) || x.rchat !== HEADER) throw damaged()
+      if (typeof x.v === 'number' && x.v > 1) throw new TransferError(NEWER_DUMP)
+      if (Number.isSafeInteger(x.schema) && (x.schema as number) > DB_VERSION)
+        throw new TransferError(NEWER_DUMP)
+      if (
+        x.v !== 1 ||
+        typeof x.id !== 'string' ||
+        x.id.length < 16 ||
+        x.id.length > 64 ||
+        !Number.isSafeInteger(x.schema) ||
+        !Number.isSafeInteger(x.at)
+      )
+        throw damaged()
+      header = { id: x.id, schema: x.schema as number, at: x.at as number }
+      return
+    }
+    if (!Array.isArray(x) || (x.length !== 2 && x.length !== 3) || typeof x[0] !== 'string')
+      throw damaged()
+    const rows = stores.get(x[0]) ?? []
+    rows.push(x.length === 3 ? { value: x[1], key: x[2] as IDBValidKey } : { value: x[1] })
+    stores.set(x[0], rows)
+  }
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.length
+      if (size > max) {
+        void reader.cancel().catch(() => {})
+        throw damaged()
+      }
+      rest += dec.decode(value, { stream: true })
+      let at = 0
+      for (let nl = rest.indexOf('\n'); nl >= 0; nl = rest.indexOf('\n', at)) {
+        line(rest.slice(at, nl))
+        at = nl + 1
+      }
+      rest = rest.slice(at)
+    }
+    rest += dec.decode()
+  } catch (e) {
+    throw e instanceof TransferError ? e : damaged()
+  }
+  if (rest !== '' || !header) throw damaged()
+  const selfRows = stores.get('self') ?? []
+  const self = selfRows[0]?.value
+  if (selfRows.length === 1 && isRecord(self) && self.moved) throw new TransferError(MOVED_DUMP)
+  if (selfRows.length !== 1 || !isSelf(self)) throw damaged()
+  let skipped = 0
+  for (const [name, rows] of stores) {
+    const ok = ROW_CHECKS[name]
+    if (!ok) continue
+    const kept = rows.filter(r => ok(r.value))
+    skipped += rows.length - kept.length
+    stores.set(
+      name,
+      name === 'contacts'
+        ? kept.map(r => ({ ...r, value: cleanContact(r.value as Contact) }))
+        : kept
+    )
+  }
+  const { id, schema, at } = header as { id: string; schema: number; at: number }
+  return { id, schema, at, self, stores, skipped }
+}
+
+export const rowsOf = (dump: Dump, store: string) => dump.stores.get(store) ?? []
+
+export interface Summary {
+  ik: string
+  fingerprint: string
+  name: string
+  contacts: number
+  rooms: number
+  messages: number
+}
+
+export const summarize = (dump: Dump): Summary => {
+  const ik = keyId(dump.self.ik.pk)
+  const contacts = rowsOf(dump, 'contacts').map(r => r.value as Contact)
+  return {
+    ik,
+    fingerprint: fingerprint(ik),
+    name: dump.self.profile.name,
+    contacts: visibleContacts(contacts).length,
+    rooms: rowsOf(dump, 'rooms').length,
+    messages: rowsOf(dump, 'events').filter(r => {
+      const e = r.value as EventRecord
+      return e.type === 'msg' && !e.redacted
+    }).length,
+  }
+}
+
+export const summaryText = (s: Summary) => {
+  const n = (x: number, one: string, many = `${one}s`) =>
+    `${x.toLocaleString('en-US')} ${x === 1 ? one : many}`
+  return `Identity ${s.fingerprint}, ${n(s.contacts, 'contact')}, ${n(s.rooms, 'room')}, ${n(
+    s.messages,
+    'message'
+  )}`
+}
+
+// ----- Export -----
+
+export const exportP2p = async (
+  db: P2pDatabase,
+  pass: string,
+  kdf: Kdf = defaultKdf(),
+  now = Date.now()
+) => seal(await dumpBytes(db, now), pass, kdf)
+
+export const unlockP2p = async (sec: P2pSection, pass: string, bounds?: KdfBounds) =>
+  parseDump(await open(sec, pass, bounds))
+
+// ----- Import -----
+
+// No identity here yet; this identity (merge); or another one (replace, after a warning).
+export type ImportKind = 'new' | 'merge' | 'replace'
+
+export const importKind = (local: SelfRecord | undefined, dump: Dump): ImportKind =>
+  !local ? 'new' : equalBytes(local.ik.pk, dump.self.ik.pk) ? 'merge' : 'replace'
+
+// This identity already took this file in: importing it again changes nothing.
+export const alreadyImported = (local: SelfRecord | undefined, dump: Dump) =>
+  !!local && importKind(local, dump) === 'merge' && (local.imports ?? []).includes(dump.id)
+
+const IMPORTS_KEPT = 50
+
+const withImport = (list: string[] | undefined, id: string) =>
+  [...new Set([...(list ?? []).filter(x => x !== id), id])].slice(-IMPORTS_KEPT)
+
+export interface Imported {
+  kind: ImportKind
+  contacts: number
+  rooms: number
+  events: number
+  skipped: number
+}
+
+// A new device key for the identity: the identity signs its cert and the revocation of the
+// device the dump came from. The revocation time is now, or a little later if the old device
+// signed events with a clock ahead of ours, so none of them falls after it.
+export const moveSelf = (
+  old: SelfRecord,
+  at: number,
+  label = 'Browser',
+  importId?: string
+): SelfRecord => {
+  const ik = keyId(old.ik.pk)
+  const dk = newKeyPair()
+  const cert = signCert(old.ik, dk.pk, at, label)
+  const rev = signRevocation(old.ik, keyId(old.dk.pk), at, keyId(dk.pk))
+  const revocations = mergeRevocations(old.revocations, [rev], ik)
+  const certs = mergeCerts([cert], old.certs, ik, revocations)
+  return {
+    ...old,
+    dk,
+    cert,
+    certs,
+    revocations,
+    suffix: 0,
+    moved: null,
+    moving: null,
+    exported: null,
+    alert: null,
+    imports: importId ? withImport(old.imports, importId) : (old.imports ?? []),
+  }
+}
+
+// A failed request aborts the transaction, and the import fails as a whole when it ends.
+const fire = (p: Promise<unknown>) => void p.catch(() => {})
+
+const asTx = (tx: LooseTx) => tx as unknown as InsertTx
+
+// One `move` event per ten heads (events reference at most ten), signed by the new device.
+const vouch = async (tx: LooseTx, self: SelfRecord, room: RoomRecord, now: number) => {
+  const author = { ik: self.ik, dk: self.dk }
+  const me = keyId(self.ik.pk)
+  const heads = room.heads
+  let n = 0
+  for (let i = 0; i < heads.length; i += EV.prev) {
+    const part = heads.slice(i, i + EV.prev)
+    const depth = Math.max(...part.map(h => h.depth)) + 1
+    const { id, wire } = buildEvent(
+      author,
+      room.id,
+      'move',
+      {},
+      part.map(h => h.id),
+      depth,
+      now
+    )
+    const res = await insertInto(asTx(tx), id, wire, now, { me, peer: room.peer, own: true })
+    if (res.status !== 'new') continue
+    await tx.objectStore('outbox').put({ id, room: room.id, created: now, deliveredTo: [] })
+    n += 1
+  }
+  return n
+}
+
+const load = async (
+  tx: LooseTx,
+  names: string[],
+  dump: Dump,
+  now: number,
+  label: string
+): Promise<Imported> => {
+  for (const n of names) fire(tx.objectStore(n).clear())
+  const meta = tx.objectStore('meta')
+  fire(meta.put(DB_VERSION, 'schema'))
+  const ik = keyId(dump.self.ik.pk)
+  const oldDk = keyId(dump.self.dk.pk)
+  let events = 0
+  let bytes = 0
+  let skipped = dump.skipped
+  let latest = now
+  const rooms: RoomRecord[] = []
+  const oldTs = new Map<string, number>()
+  let contacts = 0
+  for (const [name, rows] of dump.stores) {
+    if (!names.includes(name) || EXCLUDED.has(name) || name === 'self' || name === 'outbox')
+      continue
+    const st = tx.objectStore(name)
+    const inline = st.keyPath !== null
+    for (const r of rows) {
+      const v = r.value
+      if (!inline && r.key === undefined) {
+        skipped += 1
+        continue
+      }
+      if (name === 'events') {
+        const e = v as EventRecord
+        events += 1
+        bytes += storedSize(e.wire)
+        const ev = (e.wire as Wire).ev
+        if (ev.sender === ik && ev.dev === oldDk) {
+          latest = Math.max(latest, ev.ts)
+          oldTs.set(e.id, ev.ts)
+        }
+      }
+      if (name === 'rooms') rooms.push(v as RoomRecord)
+      if (name === 'contacts') contacts += 1
+      fire(inline ? st.put(v) : st.put(v, r.key))
+    }
+  }
+  fire(meta.put(events, TOTAL))
+  fire(meta.put(bytes, TOTAL_BYTES))
+  const revokedAt = Math.min(latest, now + EV.futureMs)
+  // Events the old device dated after the revocation would be refused: they stay unsent.
+  if (names.includes('outbox'))
+    for (const r of rowsOf(dump, 'outbox')) {
+      const o = r.value as OutboxRecord
+      const late = (oldTs.get(o.id) ?? 0) > revokedAt
+      fire(tx.objectStore('outbox').put(late ? { ...o, failed: true } : o))
+    }
+  const self = moveSelf(dump.self, revokedAt, label, dump.id)
+  await tx.objectStore('self').put(self)
+  for (const room of rooms) await vouch(tx, self, room, now)
+  return { kind: 'new', contacts, rooms: rooms.length, events, skipped }
+}
+
+const merge = async (
+  tx: LooseTx,
+  names: string[],
+  dump: Dump,
+  local: SelfRecord,
+  now: number
+): Promise<Imported> => {
+  const ik = keyId(local.ik.pk)
+  const d = dump.self
+  const revocations = mergeRevocations(local.revocations, d.revocations, ik)
+  const certs = mergeCerts(local.certs, [local.cert, ...d.certs], ik, revocations)
+  // The file may come from the device this one moved to: then this one is the old device.
+  const gone = revocations.find(r => r.dk === keyId(local.dk.pk) && r.successor)
+  const moved =
+    local.moved ?? (gone ? { at: gone.revoked_at, successor: gone.successor as string } : null)
+  const next: SelfRecord = {
+    ...local,
+    certs,
+    revocations,
+    profile: d.profile.updated > local.profile.updated ? d.profile : local.profile,
+    moved,
+    imports: withImport([...(local.imports ?? []), ...(d.imports ?? [])], dump.id),
+  }
+  await tx.objectStore('self').put(moved ? withoutSecrets({ ...next, moving: null }) : next)
+
+  let skipped = dump.skipped
+  let contacts = 0
+  const cs = tx.objectStore('contacts')
+  for (const r of rowsOf(dump, 'contacts')) {
+    const c = r.value as Contact
+    const cur = (await cs.get(c.ik)) as Contact | undefined
+    await cs.put(cur ? mergeContact(cur, c, now) : c)
+    contacts += 1
+  }
+
+  const roomStore = tx.objectStore('rooms')
+  const before = new Map<string, RoomRecord | undefined>()
+  const theirs = new Map<string, RoomRecord>()
+  for (const r of rowsOf(dump, 'rooms')) {
+    const room = r.value as RoomRecord
+    const cur = (await roomStore.get(room.id)) as RoomRecord | undefined
+    if (cur && cur.peer !== room.peer) {
+      skipped += 1
+      continue
+    }
+    before.set(room.id, cur)
+    theirs.set(room.id, room)
+    if (!cur) await roomStore.put(blankRoom(room.id, room.peer, room.created))
+  }
+
+  const evStore = tx.objectStore('events')
+  const list = rowsOf(dump, 'events')
+    .map(r => r.value)
+    .filter((v): v is EventRecord => {
+      const ok = theirs.has((v as EventRecord).room)
+      if (!ok) skipped += 1
+      return ok
+    })
+    .sort((a, b) => a.depth - b.depth)
+  let events = 0
+  for (const e of list) {
+    if (await evStore.get(e.id)) continue
+    const room = theirs.get(e.room) as RoomRecord
+    const res = await insertInto(asTx(tx), e.id, e.wire, e.receivedAt, { me: ik, peer: room.peer })
+    if (res.status === 'new') events += 1
+    else if (res.status !== 'dup') skipped += 1
+  }
+
+  const box = tx.objectStore('outbox')
+  for (const r of rowsOf(dump, 'outbox')) {
+    const o = r.value as OutboxRecord
+    if (!(await evStore.get(o.id))) continue
+    const cur = (await box.get(o.id)) as OutboxRecord | undefined
+    await box.put(
+      cur
+        ? {
+            ...cur,
+            deliveredTo: [...new Set([...cur.deliveredTo, ...o.deliveredTo])],
+            failed: !!cur.failed && !!o.failed,
+          }
+        : o
+    )
+  }
+
+  // Imported events count as read where either copy had read them.
+  for (const [id, prev] of before) {
+    const cur = (await roomStore.get(id)) as RoomRecord
+    const other = theirs.get(id) as RoomRecord
+    const unread = Math.min(cur.unread, (prev?.unread ?? 0) + other.unread)
+    const pings = Math.min(cur.pings, (prev?.pings ?? 0) + other.pings)
+    await roomStore.put({
+      ...cur,
+      unread,
+      pings,
+      readSeq: Math.max(cur.readSeq, cur.lastSeq - unread),
+    })
+  }
+
+  const handled = new Set(['self', 'contacts', 'rooms', 'events', 'children', 'outbox'])
+  for (const [name, rows] of dump.stores) {
+    if (!names.includes(name) || EXCLUDED.has(name) || handled.has(name)) continue
+    const st = tx.objectStore(name)
+    const inline = st.keyPath !== null
+    for (const r of rows) {
+      if (!inline && r.key === undefined) continue
+      const key = inline ? keyOf(r.value, st.keyPath as string | string[]) : r.key
+      if (key === undefined) continue
+      if ((await st.get(key)) === undefined)
+        await (inline ? st.put(r.value) : st.put(r.value, r.key))
+    }
+  }
+  return { kind: 'merge', contacts, rooms: theirs.size, events, skipped }
+}
+
+const keyOf = (v: unknown, path: string | string[]): IDBValidKey | undefined => {
+  if (!isRecord(v)) return undefined
+  if (Array.isArray(path)) {
+    const parts = path.map(p => v[p])
+    return parts.every(p => p !== undefined) ? (parts as IDBValidKey[]) : undefined
+  }
+  return v[path] as IDBValidKey | undefined
+}
+
+// Writes the dump in one transaction; any error aborts it, so the database is as before.
+export const applyImport = async (
+  db: P2pDatabase,
+  dump: Dump,
+  kind: ImportKind,
+  opts: { now?: number; label?: string } = {}
+): Promise<Imported> => {
+  const now = opts.now ?? Date.now()
+  const names = storeNames(db)
+  const tx = db.transaction(names as StoreName[], 'readwrite') as unknown as LooseTx
+  tx.done.catch(() => {})
+  try {
+    const local = (await tx.objectStore('self').get('me')) as SelfRecord | undefined
+    if (importKind(local, dump) !== kind) throw new TransferError(CHANGED)
+    if (alreadyImported(local, dump)) {
+      await tx.done
+      return { kind: 'merge', contacts: 0, rooms: 0, events: 0, skipped: 0 }
+    }
+    const res =
+      kind === 'merge'
+        ? await merge(tx, names, dump, local as SelfRecord, now)
+        : {
+            ...(await load(tx, names, dump, now, opts.label ?? 'Browser')),
+            kind,
+          }
+    await tx.done
+    return res
+  } catch (e) {
+    try {
+      tx.abort()
+    } catch {
+      // Already finished.
+    }
+    throw e
+  }
+}

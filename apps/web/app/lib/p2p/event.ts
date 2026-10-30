@@ -16,9 +16,11 @@ import {
 // binds the content through `ch`; the content sits outside the core, so a redaction can drop it
 // and the event stays verifiable. Every event is validated in full before it is stored.
 
-export type EvType = 'msg' | 'edit' | 'redact' | 'react' | 'pin'
+// `move`: written by a new device right after a device move, on top of the room heads it brought
+// along, so the old device's events before the move stay vouched for (see sync).
+export type EvType = 'msg' | 'edit' | 'redact' | 'react' | 'pin' | 'move'
 
-export const EV_TYPES: readonly EvType[] = ['msg', 'edit', 'redact', 'react', 'pin']
+export const EV_TYPES: readonly EvType[] = ['msg', 'edit', 'redact', 'react', 'pin', 'move']
 
 export interface Core {
   v: 1
@@ -66,7 +68,10 @@ export interface PinContent {
   on: boolean
 }
 
-export type Content = MsgContent | EditContent | RedactContent | ReactContent | PinContent
+export type MoveContent = Record<string, never>
+
+export type Content =
+  MsgContent | EditContent | RedactContent | ReactContent | PinContent | MoveContent
 
 export interface Wire {
   ev: Core
@@ -197,6 +202,8 @@ export const checkContent = (type: EvType, c: unknown): c is Content => {
       )
     case 'pin':
       return onlyKeys(c, ['target', 'on']) && isEventId(c.target) && typeof c.on === 'boolean'
+    case 'move':
+      return onlyKeys(c, [])
   }
 }
 
@@ -337,6 +344,7 @@ export const authorizeTarget = (ev: Core, target: Wire | undefined): boolean => 
   const t = target.ev
   switch (ev.type) {
     case 'msg':
+    case 'move':
       return true
     case 'edit':
       return (
