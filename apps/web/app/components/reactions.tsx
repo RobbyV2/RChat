@@ -19,6 +19,7 @@ import { EmojiPicker, useEmojiData, useTopEmojis } from './emoji_picker'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { UserAvatar } from './user_avatar'
 import { CloseButton, Masked, SheetGrip } from './ui'
+import { useReactionActions } from './chat_source'
 
 const EMPTY: Reaction[] = []
 
@@ -43,7 +44,7 @@ const chipOtherCls =
   'border-transparent bg-surface-container-high text-on-surface-variant hover:border-outline-variant hover:text-on-surface'
 
 function useReactors(messageId: number, emoji: string, count: number, enabled: boolean) {
-  const load = useStore(s => s.loadReactors)
+  const { load } = useReactionActions()
   const key = `${messageId}:${emoji}:${count}`
   const [got, setGot] = useState<{ key: string; list: UserRef[] } | null>(null)
   useEffect(() => {
@@ -139,7 +140,7 @@ function ReactionChip({
   canRemove: boolean
   onList: (emoji: string) => void
 }) {
-  const toggle = useStore(s => s.toggleReaction)
+  const { toggle } = useReactionActions()
   const coarse = useMedia(COARSE_QUERY)
   const ref = useRef<HTMLButtonElement>(null)
   const [tip, setTip] = useState(false)
@@ -184,7 +185,7 @@ function ReactionChip({
 }
 
 function AddReactionChip({ m }: { m: Message }) {
-  const toggle = useStore(s => s.toggleReaction)
+  const { toggle } = useReactionActions()
   const ref = useRef<HTMLButtonElement>(null)
   const keyboard = useRef(false)
   const [open, setOpen] = useState(false)
@@ -380,9 +381,8 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
 export function QuickReactions({ m, anchor }: { m: Message; anchor: HTMLElement | null }) {
   const top = useTopEmojis(3)
   const coarse = useMedia(COARSE_QUERY)
-  const toggle = useStore(s => s.toggleReaction)
+  const { toggle, openPicker } = useReactionActions()
   const close = useStore(s => s.closeContextMenu)
-  const openPicker = useStore(s => s.openReactPicker)
   const size = coarse ? 'h-12 w-12 text-[26px]' : 'h-9 w-9 text-[20px]'
   const full = reactionsFull(m)
   return (

@@ -11,6 +11,7 @@ import type { CallRoute } from './call_choice'
 import type { ConfigDoc, SectionKey } from './config_transfer'
 import type { EmojiPrefs } from './emoji'
 import type { ForwardClip } from './forward'
+import type { AlertInput } from './notices'
 import type { OpenInvite } from './invite'
 import type { OlderState, ReadMark } from './lists'
 import type { DmZone, Layout } from './nav_layout'
@@ -441,6 +442,10 @@ export interface RChatState {
   cancelReply: (key: string) => void
   toggleReplyMention: (key: string) => void
   copyForward: (m: Message) => void
+  // A message from somewhere else (a P2P conversation) on the forward clipboard.
+  copyForwardClip: (clip: ForwardClip) => void
+  // A toast and desktop notification raised outside the store (P2P conversations).
+  alertFrom: (alert: AlertInput) => void
   clearForward: () => void
   openPins: () => void
   closePins: () => void

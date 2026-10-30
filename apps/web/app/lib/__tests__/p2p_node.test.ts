@@ -276,9 +276,8 @@ describe('P2P node', () => {
     await b.node.start()
     await befriend(a.node, b.node, clock)
     await a.node.setPaused(true)
-    await settle()
-    expect(a.node.status).toBe('paused')
-    expect(b.node.presence(a.node.ik)).toBe('offline')
+    await waitFor(() => a.node.status === 'paused', 'paused')
+    await waitFor(() => b.node.presence(a.node.ik) === 'offline', 'offline at Bob')
     expect(hub.online(a.node.peerId)).toBe(false)
     await a.node.setPaused(false)
     await waitFor(() => a.node.presence(b.node.ik) === 'online', 'presence after resume')
@@ -286,8 +285,8 @@ describe('P2P node', () => {
     visible = false
     fns.forEach(f => f())
     await clock.advance(LIMITS.hiddenPauseMs + 1000)
-    expect(a.node.status).toBe('paused')
-    expect(b.node.presence(a.node.ik)).toBe('offline')
+    await waitFor(() => a.node.status === 'paused', 'hidden pause')
+    await waitFor(() => b.node.presence(a.node.ik) === 'offline', 'offline while hidden')
     visible = true
     fns.forEach(f => f())
     await waitFor(() => a.node.presence(b.node.ik) === 'online', 'presence when visible')

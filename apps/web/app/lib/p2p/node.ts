@@ -152,6 +152,13 @@ interface DialState {
   nextAt: number
 }
 
+// Features that ride on sessions (room sync): handlers go on every session before it is up,
+// `ready` runs once it is an established session with a mutual contact.
+export interface NodeExt {
+  attach: (s: Session) => void
+  ready: (s: Session) => void
+}
+
 export class P2pNode {
   status: Status = 'starting'
   private contacts = new Map<string, Contact>()
@@ -173,6 +180,7 @@ export class P2pNode {
   private hiddenPaused = false
   private stopped = false
   private fns = new Set<() => void>()
+  private exts: NodeExt[] = []
   private clock: Clock
 
   private constructor(
@@ -222,6 +230,26 @@ export class P2pNode {
 
   get host() {
     return this.deps.host
+  }
+
+  use(ext: NodeExt) {
+    this.exts.push(ext)
+  }
+
+  // The keys new events are signed with; none once this identity moved to another device.
+  author() {
+    return this.self.moved ? null : { ik: this.self.ik, dk: this.self.dk }
+  }
+
+  get moved() {
+    return this.self.moved !== null
+  }
+
+  // Certified devices of an identity: ours, or a contact's.
+  devicesOf(ik: string) {
+    if (ik === this.ik) return { certs: this.self.certs, revocations: this.self.revocations }
+    const c = this.contacts.get(ik)
+    return c ? { certs: c.certs, revocations: c.revocations } : null
   }
 
   onChange(fn: () => void) {
@@ -463,6 +491,7 @@ export class P2pNode {
     s.on('profile', m => this.onProfile(m, s))
     s.on('verified', m => this.onVerified(m, s))
     s.on('devices', m => this.onDevices(m, s))
+    for (const x of this.exts) x.attach(s)
     s.start()
   }
 
@@ -485,6 +514,7 @@ export class P2pNode {
     this.dials.delete(ik)
     this.touch(ik)
     this.changed()
+    for (const x of this.exts) x.ready(s)
   }
 
   private initiatorOf(s: Session) {

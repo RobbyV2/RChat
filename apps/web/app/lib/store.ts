@@ -4311,6 +4311,15 @@ export const useStore = create<RChatState>()((set, get) => {
 
     clearForward: () => saveForward(null),
 
+    copyForwardClip: clip => {
+      const { me, guest } = get()
+      if (!me || guest) return
+      saveForward(clip)
+      toast('Message copied for forwarding')
+    },
+
+    alertFrom: alert => alertUser(alert),
+
     openPins: () => {
       const { view } = get()
       if (!view) return
@@ -4393,6 +4402,17 @@ export const useStore = create<RChatState>()((set, get) => {
     sendForward: key => {
       const { me, guest, forwardClip: clip } = get()
       if (!me || guest || !clip || forwardPending(get().outbox[key], clip.id)) return
+      // From a P2P conversation: the instance has no original to point at, so this posts a copy
+      // of the text (the forward bar asked first).
+      if (clip.p2p) {
+        const body = clip.body ?? clip.snippet
+        const view = get().view
+        if (key[0] === 't') get().sendThreadMessage(body)
+        else if (view && viewKey(view) === key) queueMessage(view, me, body, null, null, null)
+        else return
+        saveForward(null)
+        return
+      }
       const id = Number(key.slice(1))
       const kind = key[0]
       if (!Number.isSafeInteger(id) || !'cdt'.includes(kind)) return

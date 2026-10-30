@@ -5,6 +5,7 @@ import {
   Ban,
   Check,
   Menu,
+  MessageCircle,
   Pencil,
   QrCode as QrIcon,
   ShieldCheck,
@@ -14,7 +15,10 @@ import {
   X,
 } from 'lucide-react'
 import { useStore } from '../../lib/store'
-import { p2p, useP2p } from '../../lib/p2p/app'
+import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
+import { badgePings } from '../../lib/p2p/alerts'
+import { dmRoomId } from '../../lib/p2p/dm'
+import { levelOf, mutedOf } from '../../lib/notify'
 import {
   displayName,
   PETNAME_MAX,
@@ -28,7 +32,9 @@ import { SQUATTED, type Presence } from '../../lib/p2p/node'
 import type { ContextMenuItem } from '../../lib/store_types'
 import { enterKey } from '../../lib/keys'
 import { longPress } from '../context_menu'
-import { RailPingBadge } from '../ping_badge'
+import { PingBadge, RailPingBadge } from '../ping_badge'
+import { MutedIcon, notifyMenuItems } from '../notify_menu'
+import { P2pDmPane } from './p2p_dm_pane'
 import { Dialog, fieldCls, filledBtn, iconBtn, textBtn } from '../ui'
 import { AddContactDialog } from './add_contact'
 import { VerifyDialog } from './verify_dialog'
@@ -43,13 +49,37 @@ import {
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 
-// The rail tile under the home button. Pending requests show as a badge.
+export const useP2pPings = () => {
+  const rooms = useP2p(s => s.rooms)
+  const prefs = useStore(s => s.notifyPrefs)
+  return badgePings(rooms, prefs)
+}
+
+// Unread conversations that show it: muted ones don't.
+const useP2pUnread = () => {
+  const rooms = useP2p(s => s.rooms)
+  const prefs = useStore(s => s.notifyPrefs)
+  const now = Date.now()
+  return Object.values(rooms).some(
+    r => r.unread > 0 && !mutedOf(prefs, { kind: 'p2p', room: r.id }, now)
+  )
+}
+
+// The rail tile under the home button. Pending requests and pings show as a badge.
 export function P2pRailTile() {
   const open = useP2p(s => s.home)
   const pending = useP2p(s => requestsOf(s.contacts).length)
-  const label = pending
-    ? `Peer-to-peer, ${pending} message ${pending === 1 ? 'request' : 'requests'}`
-    : 'Peer-to-peer'
+  const pings = useP2pPings()
+  const unread = useP2pUnread()
+  const badge = pending + pings
+  const label = [
+    'Peer-to-peer',
+    pending ? `${pending} message ${pending === 1 ? 'request' : 'requests'}` : '',
+    pings ? `${pings} ${pings === 1 ? 'notification' : 'notifications'}` : '',
+    unread && !pings ? 'unread messages' : '',
+  ]
+    .filter(Boolean)
+    .join(', ')
   return (
     <button
       data-p2p-tile
@@ -64,7 +94,14 @@ export function P2pRailTile() {
       }`}
     >
       <Waypoints size={22} />
-      {pending > 0 && <RailPingBadge count={pending} />}
+      {badge > 0 && <RailPingBadge count={badge} />}
+      {badge === 0 && unread && (
+        <span
+          data-p2p-unread
+          aria-hidden
+          className="absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-surface-container-lowest bg-on-surface"
+        />
+      )}
     </button>
   )
 }
@@ -157,10 +194,14 @@ const noticeText = (c: Contact) =>
       ? `${displayName(c)} reset their P2P identity`
       : null
 
-export const contactMenu = (c: Contact): ContextMenuItem[] => {
+export const contactMenu = (c: Contact, me: string | null = null): ContextMenuItem[] => {
   const ask = useStore.getState().askConfirm
   const name = displayName(c)
   const items: ContextMenuItem[] = []
+  if (c.state === 'mutual') {
+    items.push({ label: 'Message', icon: MessageCircle, action: () => void p2pDm.openDm(c.ik) })
+    if (me) items.push(...notifyMenuItems({ kind: 'p2p', room: dmRoomId(me, c.ik) }, 'DM'))
+  }
   if (c.state !== 'blocked')
     items.push(
       { label: 'Rename', icon: Pencil, action: () => p2p.openDialog({ kind: 'rename', ik: c.ik }) },
@@ -199,17 +240,40 @@ export const contactMenu = (c: Contact): ContextMenuItem[] => {
   return items
 }
 
-function ContactRow({ c, presence }: { c: Contact; presence: Presence }) {
+function ContactRow({
+  c,
+  presence,
+  active = false,
+}: {
+  c: Contact
+  presence: Presence
+  active?: boolean
+}) {
   const openMenu = useStore(s => s.openContextMenu)
+  const me = useP2p(s => s.me)
+  const room = me && c.state === 'mutual' ? dmRoomId(me, c.ik) : null
+  const summary = useP2p(s => (room ? s.rooms[room] : undefined))
+  const prefs = useStore(s => s.notifyPrefs)
+  const scope = room ? ({ kind: 'p2p', room } as const) : null
+  const pings = summary && scope && levelOf(prefs, scope) !== 'nothing' ? summary.pings : 0
+  const unread = !!summary && !!scope && summary.unread > 0 && !mutedOf(prefs, scope, Date.now())
   const notice = noticeText(c)
   const shield = shieldOf(c)
   return (
     <li>
       <button
         data-contact={c.ik}
-        onClick={() => p2p.openDialog({ kind: 'contact', ik: c.ik })}
-        {...longPress((x, y) => openMenu(x, y, contactMenu(c)))}
-        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left hover:bg-surface-container-high"
+        data-unread={unread ? '' : undefined}
+        aria-current={active || undefined}
+        onClick={() =>
+          c.state === 'mutual'
+            ? void p2pDm.openDm(c.ik)
+            : p2p.openDialog({ kind: 'contact', ik: c.ik })
+        }
+        {...longPress((x, y) => openMenu(x, y, contactMenu(c, me)))}
+        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left ${
+          active ? 'bg-surface-container-highest' : 'hover:bg-surface-container-high'
+        }`}
       >
         <span className="relative">
           <KeyAvatar ik={c.ik} />
@@ -217,8 +281,13 @@ function ContactRow({ c, presence }: { c: Contact; presence: Presence }) {
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
-            <span className="streamer truncate text-sm font-medium">{displayName(c)}</span>
+            <span
+              className={`streamer truncate text-sm ${unread || pings ? 'font-bold text-on-surface' : 'font-medium'}`}
+            >
+              {displayName(c)}
+            </span>
             <ContactShield kind={shield} size={14} />
+            {scope && <MutedIcon scope={scope} size={12} className="text-on-surface-variant" />}
           </span>
           <span className="block truncate text-xs text-on-surface-variant">
             {shield === 'warning'
@@ -231,6 +300,14 @@ function ContactRow({ c, presence }: { c: Contact; presence: Presence }) {
                     : presenceText(presence)))}
           </span>
         </span>
+        <PingBadge count={pings} />
+        {!pings && unread && (
+          <span
+            aria-label="Unread"
+            role="img"
+            className="h-2 w-2 shrink-0 rounded-full bg-on-surface"
+          />
+        )}
       </button>
     </li>
   )
@@ -301,7 +378,55 @@ function Off() {
   )
 }
 
+// Conversations on the left (desktop), the open one on the right.
+function DmList() {
+  const contacts = useP2p(s => s.contacts)
+  const presence = useP2p(s => s.presence)
+  const rooms = useP2p(s => s.rooms)
+  const me = useP2p(s => s.me)
+  const open = useP2p(s => s.chat?.peer)
+  const list = visibleContacts(contacts)
+    .filter(c => c.state === 'mutual')
+    .sort((a, b) => {
+      const ta = me ? (rooms[dmRoomId(me, a.ik)]?.lastTs ?? 0) : 0
+      const tb = me ? (rooms[dmRoomId(me, b.ik)]?.lastTs ?? 0) : 0
+      return tb - ta || displayName(a).localeCompare(displayName(b))
+    })
+  return (
+    <aside className="hidden w-72 shrink-0 flex-col border-r border-outline-variant bg-surface-container-low md:flex">
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-4">
+        <button onClick={p2pDm.closeDm} className="font-medium hover:underline">
+          Contacts
+        </button>
+        <P2pBadge />
+      </header>
+      <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2">
+        {list.map(c => (
+          <ContactRow
+            key={c.ik}
+            c={c}
+            presence={presence[c.ik] ?? 'offline'}
+            active={c.ik === open}
+          />
+        ))}
+      </ul>
+    </aside>
+  )
+}
+
 export function P2pHome({ onMenu }: { onMenu: () => void }) {
+  const chatOpen = useP2p(s => s.chat !== null)
+  if (chatOpen)
+    return (
+      <div className="flex min-w-0 flex-1">
+        <DmList />
+        <P2pDmPane onBack={p2pDm.closeDm} onMenu={onMenu} />
+      </div>
+    )
+  return <P2pContacts onMenu={onMenu} />
+}
+
+function P2pContacts({ onMenu }: { onMenu: () => void }) {
   const enabled = useP2p(s => s.enabled)
   const loading = useP2p(s => s.loading)
   const status = useP2p(s => s.status)
@@ -309,6 +434,7 @@ export function P2pHome({ onMenu }: { onMenu: () => void }) {
   const contacts = useP2p(s => s.contacts)
   const presence = useP2p(s => s.presence)
   const elsewhere = useP2p(s => s.elsewhere)
+  const reader = useP2p(s => s.reader)
   const dropped = useP2p(s => s.dropped)
   const [showBlocked, setShowBlocked] = useState(false)
   const list = visibleContacts(contacts)
@@ -361,12 +487,13 @@ export function P2pHome({ onMenu }: { onMenu: () => void }) {
       <div className="min-h-0 flex-1 overflow-y-auto">
         {!enabled ? (
           <Off />
-        ) : elsewhere ? (
+        ) : elsewhere && !reader ? (
           <div className="mx-auto flex max-w-2xl flex-col p-4">
             <ElsewhereNotice />
           </div>
         ) : (
           <div className="mx-auto flex max-w-2xl flex-col gap-6 p-4">
+            {elsewhere && <ElsewhereNotice />}
             {dropped > 0 && <DroppedNote n={dropped} />}
             {pending.length > 0 && (
               <section aria-label="Message requests">
@@ -482,19 +609,21 @@ function ContactDialog({ ik }: { ik: string }) {
         {notice && <p className="text-sm text-on-surface-variant">{notice}</p>}
         <p className="streamer font-mono text-xs text-on-surface-variant">{fingerprint(c.ik)}</p>
         <div className="flex flex-wrap justify-end gap-2">
-          {contactMenu(c).map(item => (
-            <button
-              key={item.label}
-              onClick={item.action}
-              className={
-                item.danger
-                  ? 'rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest'
-                  : textBtn
-              }
-            >
-              {item.label}
-            </button>
-          ))}
+          {contactMenu(c, useP2p.getState().me)
+            .filter(item => item.action && !item.submenu)
+            .map(item => (
+              <button
+                key={item.label}
+                onClick={item.action}
+                className={
+                  item.danger
+                    ? 'rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest'
+                    : textBtn
+                }
+              >
+                {item.label}
+              </button>
+            ))}
         </div>
       </div>
     </Dialog>

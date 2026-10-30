@@ -36,8 +36,15 @@ import { NoticeStack } from '../components/notice_stack'
 import { InvitePage } from '../components/invite_card'
 import { ConfigLinkPage } from '../components/config_sync'
 import { useEscape } from '../components/ui'
-import { P2pDialogs, P2pHome } from '../components/p2p/p2p_home'
-import { p2p, useP2p } from '../lib/p2p/app'
+import { P2pDialogs, P2pHome, useP2pPings } from '../components/p2p/p2p_home'
+import { p2p, p2pHost, useP2p } from '../lib/p2p/app'
+
+// P2P conversations notify through the same settings, toasts and read state as the rest.
+p2pHost.prefs = () => useStore.getState().notifyPrefs
+p2pHost.alert = a => useStore.getState().alertFrom(a)
+p2pHost.following = scope => useStore.getState().atBottom[scope] === true
+p2pHost.typingOn = () => useStore.getState().typingOn
+p2pHost.toast = text => useStore.getState().showToast(text)
 
 const bannerCls =
   'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2'
@@ -57,7 +64,7 @@ export default function AppShell() {
   const error = useStore(s => s.error)
   const bootError = useStore(s => s.bootError)
   const bootstrap = useStore(s => s.bootstrap)
-  const pings = useStore(allPings)
+  const pings = useStore(allPings) + useP2pPings()
   const p2pHome = useP2p(s => s.home) && me !== null
   const booted = useRef(false)
   const [leftOpen, setLeftOpen] = useState(false)

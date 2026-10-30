@@ -1,5 +1,6 @@
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb'
 import type { Contact } from './contacts'
+import type { EvType, Wire } from './event'
 import type { Cert, KeyPair, Profile, Revocation, Succession } from './keys'
 
 // P2P data lives only in this browser, in one IndexedDB database per instance and account. Each
@@ -23,17 +24,92 @@ export interface SelfRecord {
   moved: { at: number; successor: string } | null
 }
 
+// A conversation. Its events are the source of truth; this record caches the DAG frontier and
+// the counters the room list shows.
+export interface RoomRecord {
+  id: string
+  kind: 'dm'
+  // The other member of a DM.
+  peer: string
+  // Events without known children, deepest first.
+  heads: { id: string; depth: number }[]
+  // Parents we have not seen (bounded); fetched from peers.
+  missing: string[]
+  maxDepth: number
+  count: number
+  // Arrival counter: every stored event takes the next number. Unread counts go by arrival.
+  lastSeq: number
+  readSeq: number
+  unread: number
+  pings: number
+  // Newest message, for the room list.
+  lastTs: number
+  // The room reached its event or byte cap on this device.
+  full: boolean
+  fullWhy?: 'events' | 'bytes'
+  // Bytes of the events stored (rooms from before this count start at 0).
+  bytes?: number
+  // When the other side last said its storage is full (cleared once it stores again).
+  peerFull?: number | null
+  created: number
+}
+
+export interface EventRecord {
+  id: string
+  room: string
+  type: EvType
+  sender: string
+  wire: Wire
+  // Events that point at another one (edit, redact, react, pin) and replies.
+  target?: string
+  reply?: string
+  depth: number
+  effTs: number
+  sortKey: string
+  receivedAt: number
+  seq: number
+  // Content removed by a redaction (or never received).
+  redacted: boolean
+}
+
+export interface OutboxRecord {
+  id: string
+  room: string
+  created: number
+  // Identities that have the event.
+  deliveredTo: string[]
+  // It can never be delivered as it is (refused by the other side, or invalid): shown with
+  // Retry and Delete instead of waiting.
+  failed?: boolean
+}
+
 export interface P2pSchema extends DBSchema {
   self: { key: string; value: SelfRecord }
   contacts: { key: string; value: Contact; indexes: { state: string } }
   meta: { key: string; value: unknown }
+  rooms: { key: string; value: RoomRecord; indexes: { peer: string } }
+  events: {
+    key: string
+    value: EventRecord
+    indexes: {
+      room_sort: [string, string]
+      room_type_sort: [string, string, string]
+      room_target: [string, string]
+      room_reply: [string, string]
+      room_seq: [string, number]
+    }
+  }
+  children: { key: [string, string]; value: { parent: string; child: string } }
+  outbox: { key: string; value: OutboxRecord; indexes: { room: string } }
 }
 
 export type P2pDatabase = IDBPDatabase<P2pSchema>
 
+export type StoreName = 'self' | 'contacts' | 'meta' | 'rooms' | 'events' | 'children' | 'outbox'
+
 type Upgrade = (
   db: P2pDatabase,
-  tx: IDBPTransaction<P2pSchema, ('self' | 'contacts' | 'meta')[], 'versionchange'>
+  tx: IDBPTransaction<P2pSchema, StoreName[], 'versionchange'>
 ) => void
 
 export const UPGRADES: Upgrade[] = [
@@ -42,6 +118,17 @@ export const UPGRADES: Upgrade[] = [
     const contacts = db.createObjectStore('contacts', { keyPath: 'ik' })
     contacts.createIndex('state', 'state')
     db.createObjectStore('meta')
+  },
+  db => {
+    db.createObjectStore('rooms', { keyPath: 'id' }).createIndex('peer', 'peer')
+    const events = db.createObjectStore('events', { keyPath: 'id' })
+    events.createIndex('room_sort', ['room', 'sortKey'])
+    events.createIndex('room_type_sort', ['room', 'type', 'sortKey'])
+    events.createIndex('room_target', ['room', 'target'])
+    events.createIndex('room_reply', ['room', 'reply'])
+    events.createIndex('room_seq', ['room', 'seq'])
+    db.createObjectStore('children', { keyPath: ['parent', 'child'] })
+    db.createObjectStore('outbox', { keyPath: 'id' }).createIndex('room', 'room')
   },
 ]
 
@@ -161,7 +248,36 @@ export class P2pStore {
   }
 
   async counts() {
-    return { contacts: await this.db.count('contacts') }
+    return {
+      contacts: await this.db.count('contacts'),
+      rooms: await this.db.count('rooms'),
+      events: await this.db.count('events'),
+    }
+  }
+
+  rooms(): Promise<RoomRecord[]> {
+    return this.db.getAll('rooms')
+  }
+
+  room(id: string): Promise<RoomRecord | undefined> {
+    return this.db.get('rooms', id)
+  }
+
+  async updateRoom(id: string, fn: (cur: RoomRecord | undefined) => RoomRecord | null) {
+    const tx = this.db.transaction('rooms', 'readwrite')
+    const cur = await tx.store.get(id)
+    const next = fn(cur)
+    if (next) await tx.store.put(next)
+    await tx.done
+    return next ?? cur
+  }
+
+  event(id: string): Promise<EventRecord | undefined> {
+    return this.db.get('events', id)
+  }
+
+  outbox(room: string): Promise<OutboxRecord[]> {
+    return this.db.getAllFromIndex('outbox', 'room', room)
   }
 }
 

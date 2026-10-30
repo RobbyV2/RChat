@@ -42,7 +42,7 @@ import {
 } from 'lucide-react'
 import { parseAddCommand, parseNames } from './friends'
 import { api, shareOrigin } from './instances'
-import { LEVELS, MUTE_CHOICES, muteUntilFor, type Level, type NotifyScope } from './notify'
+import { LEVELS, MUTE_CHOICES, muteUntilFor, ownRule, type Level, type NotifyScope } from './notify'
 import { registerCommands, type ArgChoice, type PaletteCommand } from './palette'
 import { openPalette, openPollFromPalette } from './palette_store'
 import { sharing } from './platform'
@@ -139,14 +139,7 @@ const muteChoices: ArgChoice[] = MUTE_CHOICES.map(c => ({
 }))
 
 const mutedNow = (s: RChatState, scope: NotifyScope) => {
-  const rules =
-    scope.kind === 'server'
-      ? s.notifyPrefs.servers
-      : scope.kind === 'channel'
-        ? s.notifyPrefs.channels
-        : s.notifyPrefs.dms
-  const key = scope.kind === 'server' ? scope.name : String(scope.id)
-  const until = Object.hasOwn(rules, key) ? rules[key].muteUntil : undefined
+  const until = ownRule(s.notifyPrefs, scope)?.muteUntil
   return until === 'forever' || (typeof until === 'number' && until > Date.now())
 }
 

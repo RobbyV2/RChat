@@ -194,6 +194,7 @@ describe('parsing', () => {
       servers: { t: { level: 'all' } },
       channels: { 3: { level: 'nothing' } },
       dms: { 4: { muteUntil: 'forever' } },
+      p2p: {},
       desktop: false,
     })
   })

@@ -7,10 +7,19 @@ import { Masked } from './ui'
 const DELAYS = ['0ms', '150ms', '300ms']
 
 // One thin line over the bottom edge of the message list, so it never moves the list.
-export function TypingIndicator({ scope, bg }: { scope: string | null; bg: string }) {
+// `names` replaces the store's typers (a P2P conversation tracks its own).
+export function TypingIndicator({
+  scope,
+  bg,
+  names,
+}: {
+  scope: string | null
+  bg: string
+  names?: string[]
+}) {
   const on = useStore(s => s.typingOn)
   const here = useStore(s => (scope ? s.typing[scope] : undefined))
-  const parts = on ? typingParts(typerNames(here)) : []
+  const parts = on ? typingParts(names ?? typerNames(here)) : []
   if (!parts.length) return null
   return (
     <div

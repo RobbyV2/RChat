@@ -46,18 +46,22 @@ export const pinMenuItem = (m: Message): ContextMenuItem =>
         action: () => void useStore.getState().pinMessage(m.id),
       }
 
-const confirmUnpin = (id: number) =>
+export const confirmUnpin = (unpin: () => void) =>
   useStore.getState().askConfirm({
     title: 'Unpin Message',
     body: 'Remove this message from the pinned messages?',
     confirm: 'Unpin',
-    action: () => void useStore.getState().unpinMessage(id),
+    action: unpin,
   })
 
-export function PinsButton() {
-  const open = useStore(s => s.pins !== null && s.view !== null && s.pins.key === viewKey(s.view))
+// The header button. `toggle` binds it to another pin list (a P2P conversation).
+export function PinsButton({ toggle }: { toggle?: { open: boolean; onClick: () => void } }) {
+  const storeOpen = useStore(
+    s => s.pins !== null && s.view !== null && s.pins.key === viewKey(s.view)
+  )
   const openPins = useStore(s => s.openPins)
   const closePins = useStore(s => s.closePins)
+  const open = toggle ? toggle.open : storeOpen
   return (
     <button
       data-pins-button
@@ -65,7 +69,7 @@ export function PinsButton() {
       aria-label={PINS_TITLE}
       aria-haspopup="dialog"
       aria-expanded={open}
-      onClick={() => (open ? closePins() : openPins())}
+      onClick={() => (toggle ? toggle.onClick() : open ? closePins() : openPins())}
       className={`rounded-full p-1.5 hover:bg-surface-container-high ${
         open ? 'bg-surface-container-high text-primary' : ''
       }`}
@@ -172,10 +176,14 @@ function PinEntry({
   m,
   canUnpin,
   onJump,
+  onUnpin,
+  profiles,
 }: {
   m: Message
   canUnpin: boolean
   onJump: (id: number) => void
+  onUnpin: (id: number) => void
+  profiles: boolean
 }) {
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const text = { ...m, media: null, embeds: [] }
@@ -197,8 +205,8 @@ function PinEntry({
           size={24}
         />
         <span
-          {...profileTrigger(m.author, server)}
-          className={`streamer min-w-0 truncate text-sm font-medium text-on-surface ${nameTriggerCls}`}
+          {...(profiles ? profileTrigger(m.author, server) : {})}
+          className={`streamer min-w-0 truncate text-sm font-medium text-on-surface ${profiles ? nameTriggerCls : ''}`}
         >
           <Masked text={m.author.display_name} />
         </span>
@@ -228,7 +236,7 @@ function PinEntry({
             type="button"
             title="Unpin Message"
             aria-label="Unpin Message"
-            onClick={() => confirmUnpin(m.id)}
+            onClick={() => onUnpin(m.id)}
             className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest hover:text-error pointer-coarse:p-2"
           >
             <X size={16} />
@@ -246,13 +254,59 @@ export function PinsWindow() {
   const openPins = useStore(s => s.openPins)
   const jumpTo = useStore(s => s.jumpTo)
   const canUnpin = useCanPin()
+  if (pins === null || pins.key !== scope || !scope) return null
+  return (
+    <PinsPanel
+      list={pins.list}
+      failed={pins.failed}
+      place={pinPlace(scope)}
+      empty={noPinsText(scope)}
+      canUnpin={canUnpin}
+      profiles
+      onClose={closePins}
+      onRetry={openPins}
+      onJump={id => {
+        closePins()
+        void jumpTo(scope, id)
+      }}
+      onUnpin={id => confirmUnpin(() => void useStore.getState().unpinMessage(id))}
+    />
+  )
+}
+
+// The pinned messages of one conversation, as a popover (a sheet on phones).
+export function PinsPanel({
+  list,
+  failed,
+  place,
+  empty,
+  canUnpin,
+  profiles,
+  onClose,
+  onRetry,
+  onJump,
+  onUnpin,
+}: {
+  list: Message[] | null
+  failed: boolean
+  place: string
+  empty: string
+  canUnpin: boolean
+  profiles: boolean
+  onClose: () => void
+  onRetry: () => void
+  onJump: (id: number) => void
+  onUnpin: (id: number) => void
+}) {
   const sheet = useMedia(SHEET_QUERY)
   const rootRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
-  const open = pins !== null && pins.key === scope
+  const closeRef = useRef(onClose)
+  useEffect(() => {
+    closeRef.current = onClose
+  })
 
   useEffect(() => {
-    if (!open) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return
       const s = useStore.getState()
@@ -260,7 +314,7 @@ export function PinsWindow() {
       const modal = document.querySelector('[aria-modal="true"]')
       if (modal && !rootRef.current?.contains(modal)) return
       e.preventDefault()
-      s.closePins()
+      closeRef.current()
     }
     const onDown = (e: PointerEvent) => {
       const t = e.target
@@ -269,7 +323,7 @@ export function PinsWindow() {
       if (s.confirm || s.contextMenu || s.profile) return
       if (rootRef.current?.contains(t) || t.closest('[data-pins-button], [aria-modal="true"]'))
         return
-      s.closePins()
+      closeRef.current()
     }
     window.addEventListener('keydown', onKey)
     document.addEventListener('pointerdown', onDown, true)
@@ -277,22 +331,14 @@ export function PinsWindow() {
       window.removeEventListener('keydown', onKey)
       document.removeEventListener('pointerdown', onDown, true)
     }
-  }, [open])
+  }, [])
 
   useLayoutEffect(() => {
-    if (!open || !sheet) return
+    if (!sheet) return
     const active = document.activeElement
     if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) active.blur()
-  }, [open, sheet])
+  }, [sheet])
 
-  if (!open || !scope) return null
-
-  const jump = (id: number) => {
-    closePins()
-    void jumpTo(scope, id)
-  }
-
-  const list = pins.list
   const body = (
     <>
       <div className="flex shrink-0 items-center gap-2 px-4 pb-2">
@@ -300,20 +346,20 @@ export function PinsWindow() {
         <h2 id={titleId} className="flex-1 text-base font-medium text-on-surface">
           {PINS_TITLE}
         </h2>
-        {!sheet && <CloseButton onClick={closePins} />}
+        {!sheet && <CloseButton onClick={onClose} />}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-outline-variant px-3 pt-3 pb-3">
-        {list === null && !pins.failed && (
+        {list === null && !failed && (
           <p className="px-1 py-6 text-center text-sm text-on-surface-variant">
             Loading pinned messages
           </p>
         )}
-        {list === null && pins.failed && (
+        {list === null && failed && (
           <div className="flex flex-col items-center gap-2 py-6 text-sm text-on-surface-variant">
             <span>Couldn&apos;t load pinned messages.</span>
             <button
               type="button"
-              onClick={openPins}
+              onClick={onRetry}
               className="rounded-full px-3 py-1.5 font-medium text-primary hover:bg-surface-container-highest"
             >
               Retry
@@ -325,16 +371,20 @@ export function PinsWindow() {
             <span className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-container-highest text-on-surface-variant">
               <Pin size={26} />
             </span>
-            <p className="text-sm text-on-surface-variant">{noPinsText(scope)}</p>
+            <p className="text-sm text-on-surface-variant">{empty}</p>
           </div>
         )}
         {list !== null && list.length > 0 && (
-          <ul
-            className="flex flex-col gap-2"
-            aria-label={`Pinned messages in this ${pinPlace(scope)}`}
-          >
+          <ul className="flex flex-col gap-2" aria-label={`Pinned messages in this ${place}`}>
             {list.map(m => (
-              <PinEntry key={m.id} m={m} canUnpin={canUnpin} onJump={jump} />
+              <PinEntry
+                key={m.id}
+                m={m}
+                canUnpin={canUnpin}
+                onJump={onJump}
+                onUnpin={onUnpin}
+                profiles={profiles}
+              />
             ))}
           </ul>
         )}
@@ -347,7 +397,7 @@ export function PinsWindow() {
       <div
         data-popover
         onClick={e => {
-          if (e.target === e.currentTarget) closePins()
+          if (e.target === e.currentTarget) onClose()
         }}
         className="fixed inset-x-0 top-app z-40 flex h-app flex-col justify-end bg-scrim/40"
       >

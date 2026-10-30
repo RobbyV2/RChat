@@ -77,7 +77,8 @@ import {
   useStore,
   type ContextMenuItem,
 } from '../lib/store'
-import type { Embed, Message, MessageMedia } from '../lib/types'
+import { useChatSource } from './chat_source'
+import type { Embed, Message, MessageMedia, UserRef } from '../lib/types'
 import { longPress } from './context_menu'
 import { InviteCard, RemoteInviteCard } from './invite_card'
 import { MessageLinkCard } from './message_link_card'
@@ -266,7 +267,11 @@ const InLink = createContext(false)
 function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const previews = useStore(s => s.settings.asset_previews)
   const inLink = useContext(InLink)
-  const local = sameOriginImage(src, window.location.href, [window.location.origin, api.origin()])
+  // A P2P message never loads anything by itself: an image from the instance would tell it what
+  // was said and when it was read.
+  const chat = useChatSource()
+  const local =
+    !chat && sameOriginImage(src, window.location.href, [window.location.origin, api.origin()])
   if (previews && local)
     return <img src={src} alt={alt ?? ''} className="my-1 max-h-80 max-w-full rounded-xl" />
   if (!src) return <>{alt}</>
@@ -328,13 +333,16 @@ function SpoilerText({ children }: { children?: ReactNode }) {
 }
 
 function Mention({ username }: { username: string }) {
-  const user = useStore(s => userRefFor(s, username))
+  const src = useChatSource()
+  const stored = useStore(s => (src ? null : userRefFor(s, username)))
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
-  const mine = useStore(s => s.me?.username === username)
+  const storeMine = useStore(s => s.me?.username === username)
+  const user = src ? src.user(username) : (stored as UserRef)
+  const mine = src ? src.mine(username) : storeMine
   const mask = useMask()
   return (
     <span
-      {...profileTrigger(user, server)}
+      {...(src ? {} : profileTrigger(user, server))}
       data-mention={username}
       className={`streamer cursor-pointer rounded px-0.5 font-medium hover:underline ${
         mine ? 'bg-primary-container text-on-primary-container' : 'bg-primary/15 text-primary'
@@ -1148,10 +1156,13 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     () => (content.includes('@') ? mentionCandidates(content) : []),
     [content]
   )
-  const known = useStore(s => knownMentions(s, message, candidates))
+  const src = useChatSource()
+  const stored = useStore(s => (src ? '' : knownMentions(s, message, candidates)))
+  const known = src ? src.known(message, candidates) : stored
   const pills = useStore(s => groupPills(s, message))
   const mask = useMask()
   const card = useCardText()
+  // P2P conversations show no previews: they would ask the instance about what was said.
   const plugins = useMemo(
     () => [
       remarkGfm,
@@ -1235,17 +1246,18 @@ export const MarkdownMessage = memo(function MarkdownMessage({
       {message.webhook && message.webhook.embeds.length > 0 && (
         <RichEmbeds embeds={message.webhook.embeds} text={card.text} line={card.line} />
       )}
-      {messageLinks.map(l => (
-        <MessageLinkCard key={l.id} link={l} />
-      ))}
-      {invites.map(i => (
-        <InviteCard key={i.server} variant="embed" server={i.server} password={i.password} />
-      ))}
+      {!src && messageLinks.map(l => <MessageLinkCard key={l.id} link={l} />)}
+      {!src &&
+        invites.map(i => (
+          <InviteCard key={i.server} variant="embed" server={i.server} password={i.password} />
+        ))}
       {previews &&
+        !src &&
         remotes.map(i => (
           <RemoteInviteCard key={remoteKey(i)} invite={i} onResolved={onResolved} />
         ))}
       {previews &&
+        !src &&
         links.map(e => <EmbedCard key={e.ord} embed={e} message={message} canDelete={canDelete} />)}
       {previews && hidden.slice(0, 3).map(url => <SpoilerLinkCard key={url} url={url} />)}
     </div>

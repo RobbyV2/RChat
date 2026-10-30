@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import Peer from 'peerjs'
 import { home } from '../instances'
@@ -971,6 +971,8 @@ describe('p2p transfer', () => {
     // Relay edits make every manager still hosting announce again; keep that off the socket.
     const ws = home.ws as unknown as { sendVoice: (msg: unknown) => void }
     const realSend = ws.sendVoice
+    // Whatever prompt was there (the store's, when another file loaded it) comes back after.
+    const realPrompt = relayBook.prompt
     beforeEach(() => {
       ws.sendVoice = () => {}
     })
@@ -978,6 +980,9 @@ describe('p2p transfer', () => {
       relayBook.load(null)
       relayBook.prompt = () => Promise.resolve('deny')
       ws.sendVoice = realSend
+    })
+    afterAll(() => {
+      relayBook.prompt = realPrompt
     })
 
     type Msg = { type: string; src?: string; dst?: string; payload: Record<string, unknown> }

@@ -8,7 +8,13 @@ export interface ForwardClip {
   snippet: string
   has_media: boolean
   created_at: number
+  // The whole text, for forwards into P2P conversations (which copy it).
+  body?: string
+  // Copied from a P2P conversation: `id` is local, there is no instance message to point at.
+  p2p?: boolean
 }
+
+export const BODY_MAX = 4000
 
 export const forwardKey = (username: string) => `rchat_forward:${username}`
 
@@ -21,6 +27,7 @@ export const clipOf = (m: Message): ForwardClip => ({
   snippet: plainLine(m.content),
   has_media: (m.media !== null && !m.media.removed) || !!m.forward?.dropped,
   created_at: m.forward?.created_at ?? m.created_at,
+  body: [...m.content].slice(0, BODY_MAX).join(''),
 })
 
 const isUser = (u: unknown): u is UserRef => {
@@ -44,7 +51,7 @@ export function parseForward(raw: string | null): ForwardClip | null {
   if (typeof data !== 'object' || data === null) return null
   const { v, clip } = data as Record<string, unknown>
   if (v !== 1 || typeof clip !== 'object' || clip === null) return null
-  const { id, author, snippet, has_media, created_at } = clip as Record<string, unknown>
+  const { id, author, snippet, has_media, created_at, body, p2p } = clip as Record<string, unknown>
   if (
     typeof id !== 'number' ||
     !Number.isSafeInteger(id) ||
@@ -52,10 +59,14 @@ export function parseForward(raw: string | null): ForwardClip | null {
     (author !== null && !isUser(author)) ||
     typeof snippet !== 'string' ||
     typeof has_media !== 'boolean' ||
-    typeof created_at !== 'number'
+    typeof created_at !== 'number' ||
+    (body !== undefined && typeof body !== 'string') ||
+    (p2p !== undefined && p2p !== true)
   )
     return null
   return {
+    ...(typeof body === 'string' ? { body: [...body].slice(0, BODY_MAX).join('') } : {}),
+    ...(p2p === true ? { p2p: true } : {}),
     id,
     author:
       author === null

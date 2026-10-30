@@ -36,13 +36,27 @@ export const forwardMenuItem = (action: () => void): ContextMenuItem => ({
 
 // The bar above a composer while the forward clipboard has a message. Send forwards it here. X
 // clears the clipboard.
-export function ForwardBar({ draftKey }: { draftKey: string }) {
+// `onSend` sends it somewhere other than an instance conversation (a P2P one).
+export function ForwardBar({ draftKey, onSend }: { draftKey: string; onSend?: () => void }) {
   const clip = useStore(s => s.forwardClip)
   const busy = useStore(s => (clip ? forwardPending(s.outbox[draftKey], clip.id) : false))
   const sendForward = useStore(s => s.sendForward)
   const clearForward = useStore(s => s.clearForward)
   const mask = useMask()
+  const instance = useStore(s => s.instance?.name ?? 'this instance')
   if (!clip) return null
+  // A P2P message stored only on two devices: copying it to the instance needs a yes first.
+  const send = () =>
+    onSend
+      ? onSend()
+      : clip.p2p
+        ? useStore.getState().askConfirm({
+            title: 'Forward',
+            body: `This copies the message to ${instance}.`,
+            confirm: 'Copy',
+            action: () => sendForward(draftKey),
+          })
+        : sendForward(draftKey)
   return (
     <ComposerBar
       onClose={clearForward}
@@ -52,7 +66,7 @@ export function ForwardBar({ draftKey }: { draftKey: string }) {
           type="button"
           title="Forward here"
           disabled={busy}
-          onClick={() => sendForward(draftKey)}
+          onClick={send}
           className="flex shrink-0 items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-xs font-medium text-on-primary hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-40 pointer-coarse:min-h-10"
         >
           <SendHorizontal size={12} />
@@ -90,10 +104,13 @@ export function ForwardCard({
   m,
   canDelete,
   sending = false,
+  local = false,
 }: {
   m: Message
   canDelete: boolean
   sending?: boolean
+  // A snapshot in a P2P conversation: only a name and a time, nothing to open.
+  local?: boolean
 }) {
   const openForward = useStore(s => s.openForward)
   const fwd = m.forward
@@ -126,9 +143,9 @@ export function ForwardCard({
           {author ? (
             <>
               <span
-                {...profileTrigger(author, null, false)}
-                title="View profile"
-                className="block shrink-0 cursor-pointer rounded-full hover:opacity-85"
+                {...(local ? {} : profileTrigger(author, null, false))}
+                title={local ? undefined : 'View profile'}
+                className={`block shrink-0 rounded-full ${local ? '' : 'cursor-pointer hover:opacity-85'}`}
               >
                 <UserAvatar
                   username={author.username}
@@ -138,8 +155,8 @@ export function ForwardCard({
                 />
               </span>
               <span
-                {...profileTrigger(author, null)}
-                className="streamer min-w-0 cursor-pointer truncate rounded-sm text-sm font-medium outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+                {...(local ? {} : profileTrigger(author, null))}
+                className={`streamer min-w-0 truncate rounded-sm text-sm font-medium ${local ? '' : 'cursor-pointer outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'}`}
               >
                 <Masked text={author.display_name} />
               </span>
@@ -168,28 +185,34 @@ export function ForwardCard({
             File not forwarded: {fwd.dropped}
           </p>
         )}
-        <button
-          type="button"
-          disabled={sending}
-          title={`Open the original message, sent ${when}`}
-          onClick={e => {
-            e.stopPropagation()
-            void openForward(m)
-          }}
-          className="mt-1 flex max-w-full min-w-0 items-center gap-1 rounded-sm text-left text-xs text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary disabled:no-underline pointer-coarse:min-h-8"
-        >
-          {origin && (
-            <>
-              <span className={`truncate ${origin.isServer ? 'streamer' : ''}`}>
-                <Masked text={origin.label} />
-              </span>
-              <span aria-hidden>·</span>
-            </>
-          )}
-          <span className="shrink-0">
+        {local ? (
+          <p className="mt-1 text-xs text-on-surface-variant">
             Originally sent {messageTime(fwd.created_at * 1000, Date.now())}
-          </span>
-        </button>
+          </p>
+        ) : (
+          <button
+            type="button"
+            disabled={sending}
+            title={`Open the original message, sent ${when}`}
+            onClick={e => {
+              e.stopPropagation()
+              void openForward(m)
+            }}
+            className="mt-1 flex max-w-full min-w-0 items-center gap-1 rounded-sm text-left text-xs text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary disabled:no-underline pointer-coarse:min-h-8"
+          >
+            {origin && (
+              <>
+                <span className={`truncate ${origin.isServer ? 'streamer' : ''}`}>
+                  <Masked text={origin.label} />
+                </span>
+                <span aria-hidden>·</span>
+              </>
+            )}
+            <span className="shrink-0">
+              Originally sent {messageTime(fwd.created_at * 1000, Date.now())}
+            </span>
+          </button>
+        )}
       </div>
     </div>
   )

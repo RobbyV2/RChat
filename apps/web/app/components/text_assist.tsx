@@ -25,6 +25,7 @@ import {
 import { findTrigger, spliceText } from '../lib/autocomplete'
 import { boostFor, findShortcode, matchShortcodes, withTone, type CodeMatch } from '../lib/emoji'
 import { AutocompletePopup, useAutocomplete } from './autocomplete'
+import { useChatSource } from './chat_source'
 import { useEmojiData } from './emoji_picker'
 import { UserAvatar } from './user_avatar'
 import {
@@ -179,17 +180,21 @@ export function useTextAssist({
     caret !== null && !paused && !trigger && !stampTrigger
       ? findTrigger(text, caret, '@', 0, MENTION_QUERY)
       : null
-  const searchUsers = useMentionSearch(listKey, atTrigger?.query ?? null)
-  const searchGroups = useGroupSearch(listKey)
+  const src = useChatSource()
+  const searchUsers = useMentionSearch(
+    src ? null : listKey,
+    src ? null : (atTrigger?.query ?? null)
+  )
+  const searchGroups = useGroupSearch(src ? null : listKey)
   const searchPeople = useCallback(
     (q: string): Suggestion[] => {
       const groups = searchGroups(q)
-      const users = searchUsers(q)
+      const users = (src ? src.people(q) : searchUsers(q))
         .slice(0, 10 - groups.length)
         .map(user => ({ kind: 'user' as const, user }))
       return [...users, ...groups]
     },
-    [searchUsers, searchGroups]
+    [src, searchUsers, searchGroups]
   )
   const { data: emoji } = useEmojiData(trigger !== null)
   const searchCodes = useCallback(

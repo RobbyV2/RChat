@@ -1,6 +1,7 @@
 // Per-account notification settings, kept only in this browser (`rchat_notify:{username|guest}`).
-// Rules sit on servers (by name), channels and DMs (by id). A channel without its own level uses
-// its server's; a muted server mutes its channels. Expired mutes are ignored and pruned.
+// Rules sit on servers (by name), channels and DMs (by id), and P2P conversations (by room id). A
+// channel without its own level uses its server's; a muted server mutes its channels. Expired
+// mutes are ignored and pruned.
 
 import type { GroupKind } from './types'
 
@@ -20,6 +21,7 @@ export interface NotifyPrefs {
   servers: Record<string, Rule>
   channels: Record<string, Rule>
   dms: Record<string, Rule>
+  p2p: Record<string, Rule>
   desktop: boolean
 }
 
@@ -27,6 +29,7 @@ export type NotifyScope =
   | { kind: 'server'; name: string }
   | { kind: 'channel'; id: number; server: string | null }
   | { kind: 'dm'; id: number }
+  | { kind: 'p2p'; room: string }
 
 export interface Resolved {
   level: Level
@@ -47,6 +50,7 @@ export const EMPTY_NOTIFY: NotifyPrefs = {
   servers: table(),
   channels: table(),
   dms: table(),
+  p2p: table(),
   desktop: false,
 }
 
@@ -112,6 +116,8 @@ const rulesOf = (x: unknown, now: number, key: (k: string) => boolean) => {
 
 const isServerName = (k: string) => k.length > 0 && k.length <= 64 && k !== '__proto__'
 const isIdKey = (k: string) => /^[1-9]\d{0,15}$/.test(k)
+// A P2P room id: base64url of 32 bytes.
+const isRoomKey = (k: string) => /^[A-Za-z0-9_-]{43}$/.test(k)
 
 export const parseNotify = (raw: string | null, now = Date.now()): NotifyPrefs => {
   let data: unknown
@@ -121,27 +127,34 @@ export const parseNotify = (raw: string | null, now = Date.now()): NotifyPrefs =
     return EMPTY_NOTIFY
   }
   if (typeof data !== 'object' || data === null) return EMPTY_NOTIFY
-  const { v, servers, channels, dms, desktop } = data as Record<string, unknown>
+  const { v, servers, channels, dms, p2p, desktop } = data as Record<string, unknown>
   if (v !== 1) return EMPTY_NOTIFY
   return {
     v: 1,
     servers: rulesOf(servers, now, isServerName),
     channels: rulesOf(channels, now, isIdKey),
     dms: rulesOf(dms, now, isIdKey),
+    p2p: rulesOf(p2p, now, isRoomKey),
     desktop: desktop === true,
   }
 }
 
 export const notifyValue = (p: NotifyPrefs) => JSON.stringify(p)
 
-type Table = 'servers' | 'channels' | 'dms'
+type Table = 'servers' | 'channels' | 'dms' | 'p2p'
 
-const tableOf = (scope: NotifyScope): [Table, string] =>
-  scope.kind === 'server'
-    ? ['servers', scope.name]
-    : scope.kind === 'channel'
-      ? ['channels', String(scope.id)]
-      : ['dms', String(scope.id)]
+const tableOf = (scope: NotifyScope): [Table, string] => {
+  switch (scope.kind) {
+    case 'server':
+      return ['servers', scope.name]
+    case 'channel':
+      return ['channels', String(scope.id)]
+    case 'dm':
+      return ['dms', String(scope.id)]
+    case 'p2p':
+      return ['p2p', scope.room]
+  }
+}
 
 export const ownRule = (p: NotifyPrefs, scope: NotifyScope): Rule | undefined => {
   const [t, key] = tableOf(scope)
@@ -153,7 +166,7 @@ const serverRule = (p: NotifyPrefs, scope: NotifyScope) =>
 
 // The level that applies when the scope has none of its own.
 export const inheritedLevel = (p: NotifyPrefs, scope: NotifyScope): Level =>
-  scope.kind === 'dm'
+  scope.kind === 'dm' || scope.kind === 'p2p'
     ? DEFAULT_LEVEL.dm
     : scope.kind === 'channel'
       ? (serverRule(p, scope)?.level ?? DEFAULT_LEVEL.server)
@@ -206,7 +219,7 @@ export const setLevel = (p: NotifyPrefs, scope: NotifyScope, level: Level | null
   const plain =
     level === null ||
     (scope.kind === 'server' && level === DEFAULT_LEVEL.server) ||
-    (scope.kind === 'dm' && level === DEFAULT_LEVEL.dm)
+    ((scope.kind === 'dm' || scope.kind === 'p2p') && level === DEFAULT_LEVEL.dm)
   return putRule(p, scope, { ...cur, level: plain ? undefined : level })
 }
 
@@ -250,9 +263,10 @@ export const pruneNotify = (p: NotifyPrefs, now: number): NotifyPrefs => {
   const servers = pruneTable(p.servers, now)
   const channels = pruneTable(p.channels, now)
   const dms = pruneTable(p.dms, now)
-  return servers === p.servers && channels === p.channels && dms === p.dms
+  const p2p = pruneTable(p.p2p, now)
+  return servers === p.servers && channels === p.channels && dms === p.dms && p2p === p.p2p
     ? p
-    : { ...p, servers, channels, dms }
+    : { ...p, servers, channels, dms, p2p }
 }
 
 const keepTable = (rules: Rules, keep: (key: string) => boolean) => {
@@ -294,7 +308,7 @@ export const renameServerRule = (p: NotifyPrefs, from: string, to: string): Noti
 // The earliest timed mute still running, for the one expiry timer.
 export const nextExpiry = (p: NotifyPrefs, now: number): number | null => {
   let next: number | null = null
-  for (const table of [p.servers, p.channels, p.dms])
+  for (const table of [p.servers, p.channels, p.dms, p.p2p])
     for (const { muteUntil } of Object.values(table))
       if (typeof muteUntil === 'number' && muteUntil > now && (next === null || muteUntil < next))
         next = muteUntil
@@ -369,8 +383,10 @@ export const groupKindsShown = (
   return kinds.filter(k => (k === 'role' ? !roles : !everyone))
 }
 
-// The rule for a channel/DM key ("c12", "d5") with the server it belongs to.
+// The rule for a channel/DM key ("c12", "d5", "p2p:{room}") with the server it belongs to.
 export const scopeOfKey = (key: string, server: string | null): NotifyScope | null => {
+  if (key.startsWith('p2p:'))
+    return isRoomKey(key.slice(4)) ? { kind: 'p2p', room: key.slice(4) } : null
   const id = Number(key.slice(1))
   if (!Number.isSafeInteger(id) || id <= 0) return null
   if (key[0] === 'c') return { kind: 'channel', id, server }

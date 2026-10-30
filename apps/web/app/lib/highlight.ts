@@ -53,11 +53,11 @@ const highlighted = (data: Data, code: string, lang: Lang | null) => {
 }
 
 // Tokens for `code`, or null while the grammars load, when nothing matched, or when `enabled` is
-// false. The grammars are fetched the first time any code is shown.
-export const useHighlight = (code: string, lang: Lang | null, enabled = true) => {
+// false. The grammars are fetched the first time any code is shown, unless `fetch` is false.
+export const useHighlight = (code: string, lang: Lang | null, enabled = true, fetch = true) => {
   const [data, setData] = useState<Data | null>(loaded)
   useEffect(() => {
-    if (!enabled || data) return
+    if (!enabled || data || !fetch) return
     let live = true
     loadHighlighter().then(
       m => live && setData(m),
@@ -66,7 +66,7 @@ export const useHighlight = (code: string, lang: Lang | null, enabled = true) =>
     return () => {
       live = false
     }
-  }, [enabled, data])
+  }, [enabled, data, fetch])
   return useMemo(
     () => (enabled && data ? highlighted(data, code, lang) : null),
     [enabled, data, code, lang]

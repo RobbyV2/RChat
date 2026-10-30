@@ -41,6 +41,7 @@ describe('forward clipboard', () => {
       snippet: 'Lunch at noon',
       has_media: false,
       created_at: 5,
+      body: '**Lunch** at noon\nmore',
     })
     const copy = msg(9, {
       author: user('carol'),
@@ -61,6 +62,14 @@ describe('forward clipboard', () => {
     expect([clip.author, clip.created_at]).toEqual([null, 3])
     expect(parseForward(forwardValue(clip))).toEqual(clip)
     expect(parseForward(JSON.stringify({ v: 1, clip: { ...clip, author: 'bob' } }))).toBeNull()
+  })
+
+  test('a clip from a P2P conversation keeps its text and its mark', () => {
+    const clip = { ...clipOf(msg(7, { content: 'hi' })), p2p: true }
+    expect(parseForward(forwardValue(clip))).toEqual(clip)
+    expect(parseForward(JSON.stringify({ v: 1, clip: { ...clip, p2p: 'yes' } }))).toBeNull()
+    const long = parseForward(forwardValue({ ...clip, body: 'x'.repeat(5000) }))
+    expect(long?.body?.length).toBe(4000)
   })
 
   test('only sent user messages can be forwarded', () => {

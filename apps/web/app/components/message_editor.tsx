@@ -45,13 +45,30 @@ const POPUP_ROOM = 340
 
 const touchBtn = 'min-h-10 rounded-full px-4 text-sm font-medium'
 
-export function MessageEditor() {
-  const text = useStore(s => s.editing?.text ?? '')
-  const listKey = useStore(s => s.editing?.key ?? null)
-  const focusAsk = useStore(s => s.editing?.focus ?? 0)
-  const setEditText = useStore(s => s.setEditText)
-  const saveEdit = useStore(s => s.saveEdit)
-  const cancelEdit = useStore(s => s.cancelEdit)
+// An edit box bound to something other than the store's edit state (a P2P conversation).
+export interface EditBinding {
+  text: string
+  listKey: string
+  focus: number
+  getText: () => string
+  setText: (text: string) => void
+  save: (fine: boolean) => void
+  cancel: (fine: boolean) => void
+}
+
+export function MessageEditor({ binding }: { binding?: EditBinding }) {
+  const storeText = useStore(s => s.editing?.text ?? '')
+  const storeKey = useStore(s => s.editing?.key ?? null)
+  const storeFocus = useStore(s => s.editing?.focus ?? 0)
+  const storeSet = useStore(s => s.setEditText)
+  const storeSave = useStore(s => s.saveEdit)
+  const storeCancel = useStore(s => s.cancelEdit)
+  const text = binding ? binding.text : storeText
+  const listKey = binding ? binding.listKey : storeKey
+  const focusAsk = binding ? binding.focus : storeFocus
+  const setEditText = binding ? binding.setText : storeSet
+  const saveEdit = binding ? binding.save : storeSave
+  const cancelEdit = binding ? binding.cancel : storeCancel
   const fine = useMedia('(pointer: fine)')
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [below, setBelow] = useState(false)
@@ -65,7 +82,7 @@ export function MessageEditor() {
   const assist = useTextAssist({
     listKey,
     text,
-    getText: () => useStore.getState().editing?.text ?? '',
+    getText: binding ? binding.getText : () => useStore.getState().editing?.text ?? '',
     setText: setEditText,
     inputRef,
     paused: false,
