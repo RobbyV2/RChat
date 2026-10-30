@@ -258,14 +258,13 @@ describe('contact cards', () => {
     )
     const card = makeCard(ik, [cert], 'Alice', 'host')
     const text = await encodeCard(card)
-    // `exp` is gone: unsigned, it could never be enforced.
-    expect(await rejects(decodeCard(await encodeCard({ ...card, exp: 5000 } as typeof card)))).toBe(
-      BAD_CARD
-    )
+    // Fields a newer version adds are dropped, not refused (forward compatibility), and never
+    // kept: unsigned, they could never be enforced.
+    expect(await decodeCard(await encodeCard({ ...card, exp: 5000 } as typeof card))).toEqual(card)
     expect(await rejects(decodeCard(text.slice(0, -3)))).toBe(BAD_CARD)
     expect(await rejects(decodeCard(text.replace(PREFIX, 'rcp2.')))).toBe(BAD_CARD)
     expect(await rejects(decodeCard(`${PREFIX}${'A'.repeat(3000)}`))).toBe(BAD_CARD)
-    expect(await rejects(decodeCard(await encodeCard({ ...card, sig: 'x' } as typeof card)))).toBe(
+    expect(await rejects(decodeCard(await encodeCard({ ...card, name: 5 } as never)))).toBe(
       BAD_CARD
     )
     const otherCert = signCert(newKeyPair(), dk.pk, 1, '')

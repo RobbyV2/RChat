@@ -16,9 +16,11 @@ import {
   isLate,
   sizeOf,
   validate,
+  CALL_OUTCOMES,
   type Invalid,
   type Wire,
   type Attachment,
+  type CallContent,
   type Content,
   type EditContent,
   type EvType,
@@ -82,6 +84,9 @@ export interface P2pMessage {
   pending: boolean
   // Ours, and it can't be delivered as it is: Retry or Delete.
   failed: boolean
+  // A call log row (written by the caller, `sender`), or a missed call this side noted itself
+  // when the caller never wrote one (`local`).
+  call: (CallContent & { local?: true }) | null
 }
 
 const newer = (a: EventRecord, b: EventRecord) =>
@@ -145,6 +150,9 @@ export const deriveMessage = (
   outbox: Map<string, OutboxRecord>,
   peer: string
 ): P2pMessage | null => {
+  if (msg.type === 'call') return callRow(msg, related, me, outbox, peer)
+  // A type from a newer version is stored but not shown.
+  if (msg.type !== 'msg') return null
   const c = msg.wire.c as MsgContent | null
   if (!c || msg.redacted || isRedactedBy(msg, related)) return null
   const edit = c.fwd ? null : editOf(msg, related)
@@ -178,7 +186,86 @@ export const deriveMessage = (
     late: msg.sender !== me && isLate(msg.effTs, msg.receivedAt),
     pending: msg.sender === me && o !== undefined && !o.deliveredTo.includes(peer),
     failed: msg.sender === me && o !== undefined && !o.deliveredTo.includes(peer) && !!o.failed,
+    call: null,
   }
+}
+
+const callRow = (
+  msg: EventRecord,
+  related: EventRecord[],
+  me: string,
+  outbox: Map<string, OutboxRecord>,
+  peer: string
+): P2pMessage | null => {
+  const c = msg.wire.c as CallContent | null
+  if (!c || msg.redacted || isRedactedBy(msg, related)) return null
+  // An outcome from a newer version isn't shown.
+  if (!CALL_OUTCOMES.includes(c.outcome)) return null
+  const o = outbox.get(msg.id)
+  return {
+    ...blankRow(msg.id, msg.sender, msg.effTs, msg.sortKey, msg.seq),
+    sentTs: msg.wire.ev.ts,
+    late: msg.sender !== me && isLate(msg.effTs, msg.receivedAt),
+    pending: msg.sender === me && o !== undefined && !o.deliveredTo.includes(peer),
+    call: {
+      id: c.id,
+      video: c.video,
+      outcome: c.outcome,
+      ...(c.outcome === 'ended' ? { dur: c.dur } : {}),
+    },
+  }
+}
+
+const blankRow = (
+  id: string,
+  sender: string,
+  ts: number,
+  sortKey: string,
+  seq: number
+): P2pMessage => ({
+  id,
+  sender,
+  ts,
+  sentTs: ts,
+  sortKey,
+  seq,
+  body: '',
+  reply: null,
+  mentions: [],
+  fwd: null,
+  att: [],
+  edited: null,
+  reactions: [],
+  pinned: null,
+  late: false,
+  pending: false,
+  failed: false,
+  call: null,
+})
+
+// A missed call the caller never logged, as this side noted it.
+export interface MissedCall {
+  id: string
+  from: string
+  video: boolean
+  at: number
+}
+
+export const MISSED_MAX = 50
+
+export const missedRow = (m: MissedCall): P2pMessage => ({
+  ...blankRow(`call:${m.id}`, m.from, m.at, `${String(m.at).padStart(16, '0')}.local`, 0),
+  call: { id: m.id, video: m.video, outcome: 'missed', local: true },
+})
+
+// Local missed calls placed among loaded rows: only those the caller didn't log, and only in the
+// time the page covers (everything newer than its oldest row, or all when nothing older is left).
+export const withMissed = (rows: P2pMessage[], missed: MissedCall[], more: boolean) => {
+  const logged = new Set(rows.flatMap(r => (r.call && !r.call.local ? [r.call.id] : [])))
+  const from = more && rows.length ? rows[0].ts : -Infinity
+  const extra = missed.filter(m => !logged.has(m.id) && m.at >= from).map(missedRow)
+  if (!extra.length) return rows
+  return [...rows, ...extra].sort((a, b) => a.ts - b.ts || (a.sortKey < b.sortKey ? -1 : 1))
 }
 
 const related = async (db: P2pDatabase, room: string, id: string) =>
@@ -221,14 +308,21 @@ export const loadMessages = async (
 ) => {
   const limit = opts.limit ?? PAGE
   const recs: EventRecord[] = []
-  let cursor = await db
-    .transaction('events')
-    .store.index('room_type_sort')
-    .openCursor(sortRange(room, 'msg', opts.before, opts.after), 'prev')
-  while (cursor && recs.length < limit + 1) {
-    recs.push(cursor.value)
-    cursor = await cursor.continue()
+  // Messages and call rows, newest first.
+  for (const type of ['msg', 'call'] as const) {
+    let cursor = await db
+      .transaction('events')
+      .store.index('room_type_sort')
+      .openCursor(sortRange(room, type, opts.before, opts.after), 'prev')
+    let n = 0
+    while (cursor && n < limit + 1) {
+      recs.push(cursor.value)
+      n += 1
+      cursor = await cursor.continue()
+    }
   }
+  recs.sort((a, b) => (a.sortKey < b.sortKey ? 1 : a.sortKey > b.sortKey ? -1 : 0))
+  recs.length = Math.min(recs.length, limit + 1)
   const more = recs.length > limit
   const page = recs.slice(0, limit).reverse()
   return { messages: await viewOf(db, room, page, me, peer), more }
@@ -664,6 +758,11 @@ export class Dms {
     if (msg.fwd) content.fwd = msg.fwd
     else if (rec && mentionsIn(msg.body, this.mentionNames(rec.peer))) content.mentions = [rec.peer]
     return this.create(room, 'msg', content)
+  }
+
+  // The log row of a call we made.
+  async logCall(room: string, call: CallContent) {
+    return this.create(room, 'call', { ...call })
   }
 
   // Names the composer may write for the other member: what they call themselves, and our name

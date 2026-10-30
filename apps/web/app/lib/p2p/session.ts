@@ -393,7 +393,9 @@ export class Session {
     }
     if (this.state !== 'ready') return this.strike()
     const fn = this.handlers.get(msg.t)
-    if (!fn) return this.strike()
+    // A message type from a newer version (forward compatibility): ignored, at no cost. The
+    // session's rate limit still bounds how many arrive.
+    if (!fn) return
     try {
       await fn(msg, this)
     } catch {

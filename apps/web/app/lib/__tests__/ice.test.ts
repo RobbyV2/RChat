@@ -73,6 +73,21 @@ describe('ICE config', () => {
     const relays = files.find(({ f }) => f.endsWith('/relays.ts'))
     expect(/ice\.instanceServers\(\)/.test(relays?.src ?? '')).toBe(true)
   })
+
+  test('calls with P2P contacts use the call plan from relays.ts, through the one seam', () => {
+    const files = sources()
+    const app = files.find(({ f }) => f.endsWith('/p2p/app.ts'))?.src ?? ''
+    const calls = files.find(({ f }) => f.endsWith('/p2p/calls.ts'))?.src ?? ''
+    const rtc = files.find(({ f }) => f.endsWith('/rtc.ts'))?.src ?? ''
+    // rtc.ts builds every connection: the instance config, or the one its owner passes.
+    expect(/new RTCPeerConnection\(this\.ice\(\)\)/.test(rtc)).toBe(true)
+    // The contact call manager passes the call's plan, which relays.ts resolved (relay only,
+    // manual relays); without a call there is no path at all.
+    expect(/ice:\s*\(\)\s*=>\s*calls\?\.config\(\)/.test(app)).toBe(true)
+    expect(/plan:\s*choice\s*=>\s*relayBook\.check\(/.test(app)).toBe(true)
+    expect(/consent:\s*hosts\s*=>\s*relayBook\.consent\(hosts\)/.test(app)).toBe(true)
+    expect(/iceTransportPolicy:\s*'relay'/.test(calls)).toBe(true)
+  })
 })
 
 const timers = () => {

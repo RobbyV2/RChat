@@ -147,3 +147,12 @@ export const randomBytes = (n: number) => {
   crypto.getRandomValues(b)
   return b
 }
+
+// Forward compatibility (constraints): a parser checks the keys it knows and ignores the rest, so
+// fields a newer peer adds never make a frame, event or card invalid.
+export const hasKeys = (x: Record<string, unknown>, keys: readonly string[]) =>
+  keys.every(k => k in x)
+
+// Only the known keys of `x` that are present, for parsers that hand on a cleaned copy.
+export const pickKeys = <T>(x: Record<string, unknown>, keys: readonly string[]): T =>
+  Object.fromEntries(keys.filter(k => x[k] !== undefined).map(k => [k, x[k]])) as T

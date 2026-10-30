@@ -37,7 +37,29 @@ import {
 import type { RtcPayload, VoiceMsg } from './types'
 
 export type RtcTarget =
-  { channelId: number; dmId?: undefined } | { dmId: number; channelId?: undefined }
+  | { channelId: number; dmId?: undefined; p2pRoom?: undefined }
+  | { dmId: number; channelId?: undefined; p2pRoom?: undefined }
+  | { p2pRoom: string; channelId?: undefined; dmId?: undefined }
+
+// How a call's negotiation reaches the other side: `send` delivers one payload to `to` for the
+// session `target`; the receiving side hands it to onSignal with the scope it arrived for. The
+// instance signaler rides the WS (`rtc_signal`); the P2P one (p2p/signal.ts) the encrypted
+// session with the contact.
+export interface Signaler {
+  send(to: string, target: RtcTarget, payload: RtcPayload): void
+}
+
+// Today's signaling through the instance: an `rtc_signal` over the WS.
+export const wsSignaler = (sendVoice: (msg: VoiceMsg) => unknown): Signaler => ({
+  send: (to, target, payload) =>
+    void sendVoice({
+      type: 'rtc_signal',
+      to,
+      channel_id: target.channelId ?? null,
+      dm_id: target.dmId ?? null,
+      payload,
+    }),
+})
 
 // Thrown by join() when a later join or leave started while it waited for the
 // microphone; the caller has nothing left to do.
@@ -93,6 +115,11 @@ interface Detector {
 
 export interface RtcOptions {
   send?: (msg: VoiceMsg) => unknown
+  // Replaces `send` (which builds the instance signaler).
+  signaler?: Signaler
+  // The ICE config of each new peer connection; the instance's (iceConfig) when not given. P2P
+  // calls pass the plan relays.ts resolved for the call.
+  ice?: () => RTCConfiguration
   detector?: Detector
   connectTimeoutMs?: number
   graceMs?: number
@@ -115,14 +142,16 @@ export class RtcManager {
   muted = false
   localSpeaking = false
   private detector: Detector
-  private sendVoice: (msg: VoiceMsg) => unknown
+  private signaler: Signaler
+  private ice: (() => RTCConfiguration) | null
   private connectTimeoutMs: number
   private graceMs: number
   private restartDebounceMs: number
   onChange: () => void = () => {}
 
   constructor(opts: RtcOptions = {}) {
-    this.sendVoice = opts.send ?? (msg => home.ws.sendVoice(msg))
+    this.signaler = opts.signaler ?? wsSignaler(opts.send ?? (msg => home.ws.sendVoice(msg)))
+    this.ice = opts.ice ?? null
     this.detector = opts.detector ?? new SpeakingDetector()
     this.connectTimeoutMs = opts.connectTimeoutMs ?? CONNECT_TIMEOUT_MS
     this.graceMs = opts.graceMs ?? RECOVER_GRACE_MS
@@ -357,13 +386,7 @@ export class RtcManager {
 
   private signal(to: string, payload: RtcPayload, target: RtcTarget) {
     if (target !== this.target) return
-    this.sendVoice({
-      type: 'rtc_signal',
-      to,
-      channel_id: target.channelId ?? null,
-      dm_id: target.dmId ?? null,
-      payload,
-    })
+    this.signaler.send(to, target, payload)
   }
 
   // A peer is current while it is the one registered for its user in the
@@ -404,7 +427,7 @@ export class RtcManager {
   }
 
   private connect(user: string, target: RtcTarget): Peer {
-    const pc = new RTCPeerConnection(iceConfig())
+    const pc = this.ice ? new RTCPeerConnection(this.ice()) : new RTCPeerConnection(iceConfig())
     const peer: Peer = {
       pc,
       target,

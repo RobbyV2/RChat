@@ -227,7 +227,8 @@ describe('hashing', () => {
     expect(check({ body: 'x', att: [{ ...att, blocks: 3 }] })).toBe(false)
     expect(check({ body: 'x', att: [{ ...att, h: 'short' }] })).toBe(false)
     expect(check({ body: 'x', att: [{ ...att, spoiler: false }] })).toBe(false)
-    expect(check({ body: 'x', att: [{ ...att, extra: 1 }] })).toBe(false)
+    // A field a newer version adds is kept unread (forward compatibility).
+    expect(check({ body: 'x', att: [{ ...att, extra: 1 }] })).toBe(true)
     expect(check({ body: 'x', att: [att, att] })).toBe(false)
     expect(check({ body: 'x', att: [{ ...att, name: '' }] })).toBe(false)
     expect(check({ body: 'x', att: [{ ...att, mime: 'text/html; x' }] })).toBe(false)
@@ -437,15 +438,20 @@ describe('bulk transfers', () => {
     expect(await bb.availability(att.h)).toBe(1)
     const link = bb.pipes[0]
     const theirs = () => ba.pipes.find(l => l.ik === b.node.ik) as BulkLink
-    // Answers nobody asked for, and unknown messages.
+    // Part kinds and message types from a newer version cost nothing; an answer nobody asked
+    // for does.
+    const raw = link as unknown as { seal: (parts: Uint8Array[]) => Promise<void> }
+    await raw.seal([new Uint8Array([9, 1, 2])])
+    for (let i = 0; i < 5; i += 1) await link.send({ t: 'blob_what', extra: i })
     await link.send({ t: 'blob_has_ok', rid: 999, have: [] })
-    await link.send({ t: 'blob_what' })
-    await eventually(async () => theirs().strikes >= 2, 'strikes')
+    await eventually(async () => theirs().strikes >= 1, 'strikes')
+    expect(theirs().strikes).toBe(1)
     // None of it reached the chat sessions.
     for (const s of a.node.readySessions(b.node.ik)) expect(s.strikes).toBe(0)
     for (const s of b.node.readySessions(a.node.ik)) expect(s.strikes).toBe(0)
     // Twenty strikes close the pipe and keep that peer off the bulk pipes for a while.
-    for (let i = 0; i < 20; i += 1) await link.send({ t: 'blob_what' }).catch(() => {})
+    for (let i = 0; i < 20; i += 1)
+      await link.send({ t: 'blob_get', h: 'bad', block: 0 }).catch(() => {})
     await eventually(async () => link.state === 'closed', 'closed')
     bb.kick()
     expect(await bb.availability(att.h)).toBe(0)

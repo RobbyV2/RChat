@@ -409,7 +409,8 @@ export class BulkLink {
       this.hooks.onChunk(h, view.getUint32(33), view.getUint32(37), pt.subarray(CHUNK_HEAD), this)
       return
     }
-    if (pt[0] !== PART_MSG) return this.strike()
+    // A part kind from a newer version: ignored, at no cost (the byte budget still applies).
+    if (pt[0] !== PART_MSG) return
     let msg: Message
     try {
       const whole = this.reasm.push(pt.subarray(1))
@@ -882,7 +883,7 @@ export class Blobs {
         return call.done(m)
       }
       default:
-        link.strike()
+      // A message type from a newer version: ignored, at no cost.
     }
   }
 

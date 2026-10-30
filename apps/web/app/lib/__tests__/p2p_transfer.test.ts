@@ -55,7 +55,12 @@ import {
   filesHead,
   filesSize,
   FILES_FRAME_MAX,
+  FILES_MAGIC,
+  F_BLOCK,
+  F_END,
+  F_FILE,
   importFiles,
+  sealFilesFrame,
   unlockP2pWithFiles,
   writeFiles,
   type FilesKey,
@@ -315,6 +320,42 @@ describe('dump and encryption', () => {
         (e: Error) => e.message
       )
     ).toBe(DAMAGED_DUMP)
+  }, 60_000)
+
+  test('a files part from a newer version: unknown frames and fields are passed over', async () => {
+    const { a } = await scene()
+    const { section, files } = await exportP2pWithFiles(a.store.db, PASS, KDF)
+    const { file } = await rchatFile(a.store.db, 'rc1.x', files)
+    const { head } = await readBack(file)
+    const { dump, files: key } = await unlockP2pWithFiles(
+      section,
+      PASS,
+      head as NonNullable<typeof head>
+    )
+    const data = new Uint8Array(2000).map((_, i) => (i * 13) % 256)
+    const { h } = await hashBytes(data)
+    const meta = { h, size: data.length, own: true, created: 1, lastUsed: 2, pinned: true }
+    const enc = new TextEncoder()
+    let n = 0
+    const frame = (kind: number, body: Uint8Array, last = false) =>
+      sealFilesFrame(files, n++, kind, body, last)
+    const parts = [
+      enc.encode(`${FILES_MAGIC}${JSON.stringify({ v: 1, id: files.id, salt: files.salt })}\n`),
+      // A frame kind this version doesn't know, before and inside a file.
+      await frame(9, enc.encode('{"thumbs":[]}')),
+      await frame(F_FILE, enc.encode(JSON.stringify(meta))),
+      await frame(9, new Uint8Array(3)),
+      await frame(F_BLOCK, data),
+      await frame(F_END, new Uint8Array(0), true),
+    ]
+    const t = await fresh()
+    await applyImport(t.db, dump, 'new', { now: 1_700_000_100_000 })
+    const res = await importFiles(t.db, new Blob(parts as BlobPart[]), key)
+    expect(res).toEqual({ files: 1, skipped: 0, complete: true })
+    const got = await t.db.get('blobs', h)
+    expect(got?.done).toBe(true)
+    expect(got && 'pinned' in got).toBe(false)
+    t.close()
   }, 60_000)
 
   test('a damaged or cut files part keeps what checks out and drops the rest', async () => {
@@ -892,17 +933,19 @@ describe('moving safely', () => {
     await eventually(async () => (await bodies(a, b.node.ik)).includes('after the export'), 'old')
     a.dms.stop()
     a.node.stop()
+    // The new device has the same keys: it dials only once Bob saw the old one go, or Bob may
+    // still hold that session and the dial would back off on a clock that doesn't move.
+    await waitFor(() => b.node.presence(a.node.ik) === 'offline', 'the old device gone')
     const name = `test-move-late-${Math.random()}`
     const store = await P2pStore.open(name)
     await applyImport(store.db, dump, 'new', { now: clock.now() })
     store.close()
     const a2 = await openPeer(hub, name, clock)
     await a2.node.start()
-    a2.node.schedule(true)
-    await eventually(
-      async () => (await bodies(a2, b.node.ik)).includes('after the export'),
-      'synced to the new device'
-    )
+    await eventually(async () => {
+      a2.node.schedule(true)
+      return (await bodies(a2, b.node.ik)).includes('after the export')
+    }, 'synced to the new device')
   }, 60_000)
 
   test('limit: anyone with the identity key can move the live device away; it raises the alert', async () => {

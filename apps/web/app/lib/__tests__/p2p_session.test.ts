@@ -292,13 +292,13 @@ describe('session', () => {
     expect(sb.reason).toBe('strikes')
   })
 
-  test('unknown messages earn strikes until the session drops', async () => {
+  test('message types from a newer version are ignored without a strike', async () => {
     const { sa, sb } = pair({ limits: { strikes: 3 } })
     await settle()
-    for (let n = 0; n < 3; n += 1) await sa.send({ t: 'nonsense' })
+    for (let n = 0; n < 5; n += 1) await sa.send({ t: 'nonsense', extra: n })
     await settle()
-    expect(sb.state).toBe('closed')
-    expect(sb.reason).toBe('strikes')
+    expect(sb.state).toBe('ready')
+    expect(sb.strikes).toBe(0)
   })
 
   test('messages before hello are refused', async () => {

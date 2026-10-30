@@ -22,6 +22,8 @@ import {
   AUTO_DAILY,
   type Arrival,
   type AutoPause,
+  type MissedCall,
+  MISSED_MAX,
   type P2pMessage,
 } from './dm'
 import { contentMax, LIMITS as EV, sizeOf, type Attachment, type Fwd } from './event'
@@ -65,6 +67,9 @@ import {
 } from './transfer'
 import { P2pNode, SQUATTED, type Presence, type Status, type Visibility } from './node'
 import { PeerTransport } from './transport'
+import { RtcManager } from '../rtc'
+import { hidesIp, relayBook } from '../relays'
+import { Calls, type CallView, type PendingCall } from './calls'
 
 // The P2P view model. IndexedDB (through the node) is the source of truth; this store only
 // mirrors what the UI shows. One node per signed-in account; guests never get one.
@@ -100,6 +105,8 @@ export interface P2pChat {
   loading: boolean
   // The read marker when the conversation was opened: the unread line goes after it.
   readSeq: number
+  // Calls missed here that the caller hasn't logged (yet).
+  missed: MissedCall[]
 }
 
 export interface P2pState {
@@ -149,6 +156,14 @@ export interface P2pState {
   // What we know about each attachment shown: stored here, downloading, who has it.
   files: Record<string, FileView>
   fileUsage: Usage | null
+  // The call with a contact this tab runs, and whether its ringing stays quiet (the
+  // conversation's notification level is "Nothing" or it is muted).
+  call: CallView | null
+  callQuiet: boolean
+  // Accepting: the relay prompt or the microphone may still be pending.
+  callAccepting: boolean
+  // A call going on in the tab that runs P2P (this tab only reads).
+  callElsewhere: { room: string; peer: string } | null
 }
 
 export interface PendingFile {
@@ -206,6 +221,10 @@ const initial: P2pState = {
   attaching: {},
   files: {},
   fileUsage: null,
+  call: null,
+  callQuiet: false,
+  callAccepting: false,
+  callElsewhere: null,
 }
 
 export const useP2p = create<P2pState>()(() => initial)
@@ -281,6 +300,7 @@ const pageVisibility: Visibility = {
 let node: P2pNode | null = null
 let store: P2pStore | null = null
 let dms: Dms | null = null
+let calls: Calls | null = null
 let leader: TabLeader | null = null
 let unwatch: (() => void) | null = null
 let gen = 0
@@ -302,6 +322,11 @@ export interface P2pHost {
   toast: (text: string) => void
   // The instance is text and emoji only: no attachments anywhere, P2P ones included.
   textOnly: () => boolean
+  // In an instance call or voice channel (a P2P ring then gets "busy").
+  inCall: () => boolean
+  // Ends instance calls and voice before a P2P call starts.
+  leaveInstanceCalls: () => void
+  muted: () => boolean
 }
 
 export const p2pHost: P2pHost = {
@@ -311,6 +336,9 @@ export const p2pHost: P2pHost = {
   typingOn: () => true,
   toast: () => {},
   textOnly: () => false,
+  inCall: () => false,
+  leaveInstanceCalls: () => {},
+  muted: () => false,
 }
 
 // Auto-download per account: files up to `dm` bytes in direct messages, images up to `server`
@@ -373,7 +401,11 @@ const writeHome = (username: string | null) => {
 // Leaving the page says goodbye to every contact, so they see us go offline at once. A page
 // restored from the back-forward cache starts again.
 if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => node?.stop())
+  window.addEventListener('pagehide', () => {
+    // The other side of a call hears `end` before the sessions close.
+    calls?.stop()
+    node?.stop()
+  })
   window.addEventListener('pageshow', e => {
     if (e.persisted && node) void node.start()
   })
@@ -408,6 +440,12 @@ const mirror = async () => {
 const stopNode = () => {
   unwatch?.()
   unwatch = null
+  if (calls) {
+    calls.stop()
+    calls = null
+    data?.postMessage({ call: null })
+  }
+  if (useP2p.getState().call) useP2p.setState({ call: null, callQuiet: false })
   dms?.stop()
   dms = null
   node?.stop()
@@ -461,7 +499,9 @@ const read = async (username: string, live: () => boolean) => {
     const ch = dataChannel(username)
     if (ch) {
       ch.onmessage = e => {
-        const room = (e.data as { room?: unknown } | null)?.room
+        const msg = e.data as { room?: unknown; call?: unknown } | null
+        if (msg && 'call' in msg) return useP2p.setState({ callElsewhere: elsewhereCall(msg.call) })
+        const room = msg?.room
         if (typeof room !== 'string') return
         void refreshRoom(room)
         void s.contacts().then(
@@ -470,6 +510,7 @@ const read = async (username: string, live: () => boolean) => {
         )
       }
       data = ch
+      ch.postMessage({ ask: 'call' })
     }
     const contacts = await s.contacts()
     useP2p.setState({
@@ -558,14 +599,46 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
       autoDaily: () => readAuto(username).daily,
     })
     dms = d
+    const c = new Calls({
+      me: () => n.ik,
+      sessions: ik => n.readySessions(ik),
+      mutual: ik => n.contact(ik)?.state === 'mutual',
+      roomOf: ik => dmRoomId(n.ik, ik),
+      name: ik => contactName(ik),
+      media: callRtc,
+      plan: choice => relayBook.check(choice ?? relayBook.prefs.choice),
+      hidesIp,
+      consent: hosts => relayBook.consent(hosts),
+      log: async (room, call) => {
+        if (await s.room(room)) await d.logCall(room, call)
+      },
+      missed: (room, m) => void noteMissed(s, room, m).catch(() => {}),
+      busy: () => p2pHost.inCall(),
+      muted: () => p2pHost.muted(),
+      save: p => void s.setMeta(PENDING_CALL, p).catch(() => {}),
+      notice: text => p2pHost.toast(text),
+      leaveOthers: () => p2pHost.leaveInstanceCalls(),
+    })
+    calls = c
+    n.use({ attach: x => c.attach(x), ready: x => c.ready(x) })
+    c.onChange(() => publishCall(c))
+    c.onRing(v => ringing(v))
     d.blobs.onChange(h => scheduleFile(h))
     data = dataChannel(username)
+    if (data)
+      data.onmessage = e => {
+        if ((e.data as { ask?: unknown } | null)?.ask === 'call' && calls === c) publishCall(c)
+      }
     d.onChange(room => {
       data?.postMessage({ room })
       scheduleRefresh(room)
     })
     d.onArrive(a => arrived(a))
     void d.recheckOutbox().catch(() => {})
+    void s
+      .meta<PendingCall>(PENDING_CALL)
+      .then(p => c.recover(p && typeof p === 'object' && typeof p.id === 'string' ? p : null))
+      .catch(() => {})
     unwatch = n.onChange(() => void mirror())
     useP2p.setState({ enabled: true, loading: false, reader: false, me: n.ik })
     await mirror()
@@ -628,9 +701,10 @@ const loadChat = async (room: string, peer: string, keep = false) => {
   const limit = keep && cur?.room === room ? Math.max(PAGE, cur.messages.length) : PAGE
   try {
     const { messages, more } = await loadMessages(s.db, room, me, peer, { limit })
+    const missed = readMissed(await s.meta<unknown>(missedKey(room)).catch(() => undefined))
     const now = useP2p.getState().chat
     if (now?.room !== room) return
-    useP2p.setState({ chat: { ...now, messages, more, loading: false } })
+    useP2p.setState({ chat: { ...now, messages, more, loading: false, missed } })
   } catch {
     // Storage went away (sign out, Remove P2P data).
   }
@@ -655,6 +729,129 @@ const refreshRoom = async (room: string) => {
 }
 
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
+
+// ----- Calls -----
+
+const PENDING_CALL = 'call:out'
+const missedKey = (room: string) => `missed:${room}`
+
+const readMissed = (x: unknown): MissedCall[] =>
+  Array.isArray(x)
+    ? x.filter(
+        (m): m is MissedCall =>
+          typeof m === 'object' &&
+          m !== null &&
+          typeof (m as MissedCall).id === 'string' &&
+          typeof (m as MissedCall).from === 'string' &&
+          typeof (m as MissedCall).video === 'boolean' &&
+          Number.isSafeInteger((m as MissedCall).at)
+      )
+    : []
+
+const noteMissed = async (s: P2pStore, room: string, m: MissedCall) => {
+  const list = readMissed(await s.meta<unknown>(missedKey(room))).filter(x => x.id !== m.id)
+  list.push(m)
+  await s.setMeta(missedKey(room), list.slice(-MISSED_MAX))
+  data?.postMessage({ room })
+  scheduleRefresh(room)
+}
+
+const elsewhereCall = (x: unknown): P2pState['callElsewhere'] => {
+  if (typeof x !== 'object' || x === null) return null
+  const { room, peer } = x as { room?: unknown; peer?: unknown }
+  return typeof room === 'string' && typeof peer === 'string' ? { room, peer } : null
+}
+
+const publishCall = (c: Calls) => {
+  if (calls !== c) return
+  const call = c.view()
+  useP2p.setState(st => ({ call, callQuiet: call ? st.callQuiet : false }))
+  data?.postMessage({ call: call ? { room: call.room, peer: call.peer } : null })
+}
+
+// An incoming call rings by the conversation's notification level: "Nothing" or muted keeps it
+// to the conversation itself; otherwise the call card, and a desktop notification when the tab
+// is in the background.
+const ringing = (v: CallView) => {
+  const rule = resolveNotify(p2pHost.prefs(), { kind: 'p2p', room: v.room }, Date.now())
+  const quiet = rule.muted || rule.level === 'nothing'
+  useP2p.setState({ callQuiet: quiet })
+  if (quiet || typeof document === 'undefined' || document.visibilityState === 'visible') return
+  p2pHost.alert({
+    key: `p2p-call:${v.id}`,
+    actor: p2pUser(v.peer),
+    action: v.video ? 'is video calling you' : 'is calling you',
+    body: '',
+    server: null,
+    channel: null,
+    dm: true,
+    message: true,
+    name: contactName(v.peer),
+    generic: 'Incoming call',
+    go: () => {
+      p2p.openHome()
+      void p2pDm.openDm(v.peer)
+    },
+  })
+}
+
+// The media of calls with contacts: rtc.ts, signaled over the session and with the ICE plan of
+// the call (relays.ts), so relay only and the relay prompt work as in instance P2P calls.
+export const callRtc = new RtcManager({
+  signaler: { send: (to, target, payload) => calls?.signaler.send(to, target, payload) },
+  ice: () => calls?.config() ?? { iceServers: [], iceTransportPolicy: 'relay' },
+})
+
+export const CALL_ELSEWHERE = 'Call in another tab.'
+const ELSEWHERE_TEXT = 'P2P is open in another tab.'
+
+const callFailed = (e: unknown) => p2pHost.toast(e instanceof Error ? e.message : String(e))
+
+export const p2pCall = {
+  async start(ik: string, video: boolean, choice?: string) {
+    const c = calls
+    if (!c) return p2pHost.toast(ELSEWHERE_TEXT)
+    try {
+      await c.start(ik, video, choice)
+      if (video && calls === c && c.view()) await callRtc.camera(true)
+    } catch (e) {
+      callFailed(e)
+    }
+  },
+  async accept() {
+    const c = calls
+    if (!c) return
+    useP2p.setState({ callAccepting: true })
+    try {
+      await c.accept()
+    } catch (e) {
+      callFailed(e)
+    } finally {
+      useP2p.setState({ callAccepting: false })
+    }
+  },
+  decline: () => calls?.decline(),
+  hangup: () => calls?.hangup(),
+  // Media is up: our own call, or one we answered.
+  media: () => {
+    const v = calls?.view()
+    return !!v && (v.dir === 'out' || v.state === 'active')
+  },
+  async camera() {
+    try {
+      await callRtc.camera(callRtc.videoTrack === null)
+    } catch (e) {
+      callFailed(e)
+    }
+  },
+  async share() {
+    try {
+      await callRtc.share(!callRtc.sharing)
+    } catch (e) {
+      callFailed(e)
+    }
+  },
+}
 
 // Bursts of changes (a backfill) reload the view once.
 const scheduleRefresh = (room: string) => {
@@ -989,7 +1186,7 @@ const lastEditable = () => {
   if (!chat) return null
   for (let i = chat.messages.length - 1; i >= 0; i -= 1) {
     const m = chat.messages[i]
-    if (m.sender === me && !m.fwd) return m
+    if (m.sender === me && !m.fwd && !m.call) return m
   }
   return null
 }
@@ -1014,6 +1211,7 @@ export const p2pDm = {
         more: false,
         loading: st.chat?.room !== room,
         readSeq: r?.readSeq ?? 0,
+        missed: st.chat?.room === room ? st.chat.missed : [],
       },
       pins: null,
       editing: null,

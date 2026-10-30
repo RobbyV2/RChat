@@ -35,6 +35,7 @@ import { longPress } from '../context_menu'
 import { PingBadge, RailPingBadge } from '../ping_badge'
 import { MutedIcon, notifyMenuItems } from '../notify_menu'
 import { P2pDmPane } from './p2p_dm_pane'
+import { VoiceDock } from '../voice_grid'
 import { dangerBtn, Dialog, fieldCls, filledBtn, iconBtn, textBtn } from '../ui'
 import { AddContactDialog } from './add_contact'
 import { VerifyDialog } from './verify_dialog'
@@ -507,6 +508,7 @@ function DmList() {
           />
         ))}
       </ul>
+      <VoiceDock />
     </aside>
   )
 }

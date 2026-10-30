@@ -22,7 +22,7 @@ import { JoinTracker } from './negotiation'
 import { newP2pId, p2p } from './p2p'
 import { hashBlob } from './sha256'
 import { ice, iceKey, iceValue, parseIce } from './ice'
-import { p2pAccount } from './p2p/app'
+import { callRtc, p2pAccount, p2pCall } from './p2p/app'
 import { DENIED_CALL, hidesIp, mergeRelays, relayBook, relaysKey, type Decision } from './relays'
 import { mentionsUser } from './mentions'
 import {
@@ -1365,6 +1365,7 @@ export const useStore = create<RChatState>()((set, get) => {
     const muted = get().selfAudio.muted || forced
     if (rtc.active() && rtc.muted !== muted) rtc.setMuted(muted)
     if (p2p.mediaActive() && p2p.muted !== muted) p2p.setMuted(muted)
+    if (callRtc.active() && callRtc.muted !== muted) callRtc.setMuted(muted)
     if (forced && rtc.active()) {
       if (rtc.videoTrack) void rtc.camera(false)
       if (rtc.sharing) void rtc.share(false)
@@ -3334,6 +3335,7 @@ export const useStore = create<RChatState>()((set, get) => {
   // a voice_state without us predates our join and is not a removal.
   let voiceListed = false
   rtc.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
+  callRtc.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
   p2p.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
   p2p.onError = message => fail(new Error(message))
 
@@ -5186,6 +5188,7 @@ export const useStore = create<RChatState>()((set, get) => {
         await get().openChannel(server, channelId)
         if (voice?.channelId === channelId) return
         try {
+          p2pCall.hangup()
           p2p.endMedia()
           await rtc.join(me.username, { channelId }, get().selfAudio.muted)
           applyMic()
@@ -5211,6 +5214,7 @@ export const useStore = create<RChatState>()((set, get) => {
     toggleCamera: () =>
       act(async () => {
         const { call, voice } = get()
+        if (!voice && !call && p2pCall.media()) return await p2pCall.camera()
         if (!voice && call?.kind === 'p2p') return await p2p.toggleCamera()
         const on = rtc.videoTrack === null
         if (on && forcedMute()) throw new Error(TIMED_OUT_CAMERA)
@@ -5219,6 +5223,7 @@ export const useStore = create<RChatState>()((set, get) => {
     toggleShare: () =>
       act(async () => {
         const { call, voice } = get()
+        if (!voice && !call && p2pCall.media()) return await p2pCall.share()
         if (!voice && call?.kind === 'p2p') return await p2p.toggleShare()
         const on = !rtc.sharing
         if (on && forcedMute()) throw new Error(TIMED_OUT_SHARE)
@@ -5229,6 +5234,7 @@ export const useStore = create<RChatState>()((set, get) => {
       act(async () => {
         const me = caller()
         try {
+          p2pCall.hangup()
           p2p.endMedia()
           await rtc.join(me.username, { dmId }, get().selfAudio.muted)
           applyMic()
@@ -5247,6 +5253,7 @@ export const useStore = create<RChatState>()((set, get) => {
         caller()
         const plan = await relayBook.check(relay ?? relayBook.prefs.choice)
         try {
+          p2pCall.hangup()
           rtc.leave()
           await p2p.startMedia(get().selfAudio.muted)
           p2p.setCallIce(plan)
@@ -5288,6 +5295,7 @@ export const useStore = create<RChatState>()((set, get) => {
           if (still?.dmId !== call.dmId || still.state !== 'ringing') return
         }
         try {
+          p2pCall.hangup()
           if (call.kind === 'p2p') {
             rtc.leave()
             await p2p.startMedia(get().selfAudio.muted)

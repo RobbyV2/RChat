@@ -1,6 +1,15 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
-import { b64u, bytesOf, canonical, canonicalBytes, concat, fromB64u, utf8 } from './canonical'
+import {
+  b64u,
+  bytesOf,
+  canonical,
+  canonicalBytes,
+  concat,
+  fromB64u,
+  hasKeys,
+  utf8,
+} from './canonical'
 import { blockCount, EMPTY_ROOT } from './hashing'
 import {
   isKeyId,
@@ -16,17 +25,28 @@ import {
 // Signed room events (note section 3). The hashed core links the event into its room's DAG and
 // binds the content through `ch`; the content sits outside the core, so a redaction can drop it
 // and the event stays verifiable. Every event is validated in full before it is stored.
+// Forward compatibility: fields this version doesn't know are kept (they are signed and hashed)
+// but never read, and an event of a type it doesn't know is checked, stored and synced like any
+// other but never shown, so the room's DAG stays whole when a newer peer writes one.
 
 // `move`: written by a new device right after a device move, on top of the room heads it brought
 // along, so the old device's events before the move stay vouched for (see sync).
-export type EvType = 'msg' | 'edit' | 'redact' | 'react' | 'pin' | 'move'
+// `call`: the log row of a call, written by the caller once it is over.
+export type EvType = 'msg' | 'edit' | 'redact' | 'react' | 'pin' | 'move' | 'call'
 
-export const EV_TYPES: readonly EvType[] = ['msg', 'edit', 'redact', 'react', 'pin', 'move']
+export const EV_TYPES: readonly EvType[] = ['msg', 'edit', 'redact', 'react', 'pin', 'move', 'call']
+
+export const isKnownType = (x: unknown): x is EvType => EV_TYPES.includes(x as EvType)
+
+// A type name a newer version may use.
+const isTypeName = (x: unknown): x is string =>
+  typeof x === 'string' && /^[a-z][a-z0-9_]{0,31}$/.test(x)
 
 export interface Core {
   v: 1
   room: string
-  type: EvType
+  // One of EV_TYPES, or a newer type this version stores without reading.
+  type: EvType | (string & {})
   sender: string
   dev: string
   ts: number
@@ -91,8 +111,20 @@ export interface PinContent {
 
 export type MoveContent = Record<string, never>
 
+// How a call went, from the caller: `dur` (seconds from the answer to the end) only for an
+// answered call.
+export type CallOutcome = 'ended' | 'missed' | 'declined'
+export const CALL_OUTCOMES: readonly CallOutcome[] = ['ended', 'missed', 'declined']
+
+export interface CallContent {
+  id: string
+  video: boolean
+  outcome: CallOutcome
+  dur?: number
+}
+
 export type Content =
-  MsgContent | EditContent | RedactContent | ReactContent | PinContent | MoveContent
+  MsgContent | EditContent | RedactContent | ReactContent | PinContent | MoveContent | CallContent
 
 export interface Wire {
   ev: Core
@@ -124,19 +156,21 @@ export const LIMITS = {
   // A sender's clock may run at most this far ahead.
   futureMs: 5 * 60_000,
   depth: 2 ** 40,
+  // The longest call a log row may claim (seconds).
+  callDur: 7 * 24 * 60 * 60,
 }
 
 export const ID_LEN = 32
 
 export const isEventId = (x: unknown): x is string => bytesOf(x, ID_LEN) !== null
 
+// Calls are named by 16 random bytes (b64u).
+export const CALL_ID_LEN = 16
+export const isCallId = (x: unknown): x is string => bytesOf(x, CALL_ID_LEN) !== null
+
 const chars = (s: string) => Array.from(s).length
 
 const isInt = (x: unknown, min = 0): x is number => Number.isSafeInteger(x) && (x as number) >= min
-
-const onlyKeys = (x: Record<string, unknown>, required: string[], optional: string[] = []) =>
-  required.every(k => k in x) &&
-  Object.keys(x).every(k => required.includes(k) || optional.includes(k))
 
 export const contentHash = (c: Content) => b64u(sha256(canonicalBytes(c)))
 
@@ -187,11 +221,7 @@ const isBody = (x: unknown): x is string => typeof x === 'string' && chars(x) <=
 const isDim = (x: unknown) => x === undefined || (isInt(x, 1) && (x as number) <= LIMITS.dims)
 
 export const isAttachment = (x: unknown): x is Attachment => {
-  if (
-    !isRecord(x) ||
-    !onlyKeys(x, ['h', 'size', 'blocks', 'name', 'mime'], ['spoiler', 'w', 'h_px', 'dur', 'thumb'])
-  )
-    return false
+  if (!isRecord(x) || !hasKeys(x, ['h', 'size', 'blocks', 'name', 'mime'])) return false
   const { h, size, blocks, name, mime, spoiler, w, h_px, dur, thumb } = x
   if (thumb !== undefined) {
     const t = typeof thumb === 'string' ? bytesLen(thumb) : null
@@ -237,7 +267,7 @@ const isAtts = (x: unknown): x is Attachment[] =>
 
 const isFwd = (x: unknown): x is Fwd =>
   isRecord(x) &&
-  onlyKeys(x, ['name', 'ts', 'body'], ['att']) &&
+  hasKeys(x, ['name', 'ts', 'body']) &&
   typeof x.name === 'string' &&
   chars(x.name) <= LIMITS.name &&
   isInt(x.ts) &&
@@ -260,12 +290,12 @@ const isMentions = (x: unknown): x is string[] =>
 const reactKeyOk = (x: unknown): x is string =>
   typeof x === 'string' && x.length > 0 && utf8(x).length <= LIMITS.reactKey
 
-export const checkContent = (type: EvType, c: unknown): c is Content => {
+export const checkContent = (type: string, c: unknown): c is Content => {
   if (!isRecord(c)) return false
   switch (type) {
     case 'msg':
       return (
-        onlyKeys(c, ['body'], ['reply', 'mentions', 'fwd', 'att']) &&
+        hasKeys(c, ['body']) &&
         isBody(c.body) &&
         (c.reply === undefined || isEventId(c.reply)) &&
         (c.mentions === undefined || isMentions(c.mentions)) &&
@@ -275,29 +305,39 @@ export const checkContent = (type: EvType, c: unknown): c is Content => {
       )
     case 'edit':
       return (
-        onlyKeys(c, ['target', 'body']) &&
+        hasKeys(c, ['target', 'body']) &&
         isEventId(c.target) &&
         isBody(c.body) &&
         c.body.trim() !== ''
       )
     case 'redact':
-      return onlyKeys(c, ['target']) && isEventId(c.target)
+      return isEventId(c.target)
     case 'react':
-      return (
-        onlyKeys(c, ['target', 'key', 'on']) &&
-        isEventId(c.target) &&
-        reactKeyOk(c.key) &&
-        typeof c.on === 'boolean'
-      )
+      return isEventId(c.target) && reactKeyOk(c.key) && typeof c.on === 'boolean'
     case 'pin':
-      return onlyKeys(c, ['target', 'on']) && isEventId(c.target) && typeof c.on === 'boolean'
+      return isEventId(c.target) && typeof c.on === 'boolean'
     case 'move':
-      return onlyKeys(c, [])
+      return true
+    case 'call':
+      // An outcome a newer version adds is kept and not shown; `dur` is read only for `ended`.
+      return (
+        isCallId(c.id) &&
+        typeof c.video === 'boolean' &&
+        isTypeName(c.outcome) &&
+        (c.outcome !== 'ended' || (isInt(c.dur) && c.dur <= LIMITS.callDur))
+      )
+    default:
+      // A type this version doesn't know: any object, within the size limit.
+      return true
   }
 }
 
-export const targetOf = (w: Pick<Wire, 'c'>): string | null =>
-  w.c && 'target' in w.c ? w.c.target : null
+const TARGETED: readonly string[] = ['edit', 'redact', 'react', 'pin']
+
+// The event an edit, redaction, reaction or pin is about. Decided by the type, so a field named
+// `target` that a newer version adds to another type is never read as one.
+export const targetOf = (w: { ev: Pick<Core, 'type'>; c: Content | null }): string | null =>
+  w.c && TARGETED.includes(w.ev.type) && 'target' in w.c ? w.c.target : null
 
 // ----- Validation -----
 
@@ -337,7 +377,7 @@ const bad = (why: Invalid): Checked => ({ ok: false, why })
 const isCore = (x: unknown): x is Core => {
   if (
     !isRecord(x) ||
-    !onlyKeys(x, ['v', 'room', 'type', 'sender', 'dev', 'ts', 'depth', 'prev', 'ch'])
+    !hasKeys(x, ['v', 'room', 'type', 'sender', 'dev', 'ts', 'depth', 'prev', 'ch'])
   )
     return false
   const { v, room, type, sender, dev, ts, depth, prev, ch } = x
@@ -345,7 +385,7 @@ const isCore = (x: unknown): x is Core => {
     v === 1 &&
     typeof room === 'string' &&
     bytesOf(room, 32) !== null &&
-    EV_TYPES.includes(type as EvType) &&
+    isTypeName(type) &&
     isKeyId(sender) &&
     isKeyId(dev) &&
     isInt(ts) &&
@@ -375,7 +415,7 @@ export const sizeOf = (x: unknown) => {
 // null (redacted elsewhere). Prev ids are checked for shape and count; depth against known prevs
 // happens when it is stored.
 export const validate = (raw: unknown, auth: RoomAuth): Checked => {
-  if (!isRecord(raw) || !onlyKeys(raw, ['ev', 'c', 'sig'])) return bad('shape')
+  if (!isRecord(raw) || !hasKeys(raw, ['ev', 'c', 'sig'])) return bad('shape')
   const { ev, c, sig } = raw
   if (!isCore(ev)) return bad('shape')
   if (sizeOf(ev) > LIMITS.core || (c !== null && sizeOf(c) > contentMax(c))) return bad('size')
@@ -440,6 +480,7 @@ export const authorizeTarget = (ev: Core, target: Wire | undefined): boolean => 
   switch (ev.type) {
     case 'msg':
     case 'move':
+    case 'call':
       return true
     case 'edit':
       return (
@@ -452,6 +493,8 @@ export const authorizeTarget = (ev: Core, target: Wire | undefined): boolean => 
     case 'react':
     case 'pin':
       return t.type === 'msg'
+    default:
+      return true
   }
 }
 

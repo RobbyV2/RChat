@@ -257,7 +257,7 @@ export const insertInto = async (
     lastSeq: seq,
     unread: room.unread + (unread ? 1 : 0),
     pings: room.pings + (ping ? 1 : 0),
-    lastTs: ev.type === 'msg' ? Math.max(room.lastTs, effTs) : room.lastTs,
+    lastTs: ev.type === 'msg' || ev.type === 'call' ? Math.max(room.lastTs, effTs) : room.lastTs,
     bytes: roomBytes + size,
   }
   await tx.objectStore('rooms').put(next)

@@ -169,14 +169,13 @@ describe('event validation', () => {
 
   const cases: [string, () => unknown, string, boolean?][] = [
     ['valid message', () => ok, 'ok'],
-    ['extra top-level key', () => ({ ...ok, x: 1 }), 'shape'],
+    // Forward compatibility: what a newer version adds is kept unread, never refused.
+    ['extra top-level key', () => ({ ...ok, x: 1 }), 'ok'],
     ['missing signature', () => ({ ev: ok.ev, c: ok.c }), 'shape'],
-    [
-      'extra core key',
-      () => resign({ ...ok.ev, x: 1 } as unknown as Core, ok.c, alice.dk),
-      'shape',
-    ],
-    ['unknown type', () => craft(alice, room, 'call' as EvType, { body: 'x' }), 'shape'],
+    ['extra core key', () => resign({ ...ok.ev, x: 1 } as unknown as Core, ok.c, alice.dk), 'ok'],
+    ['unknown type', () => craft(alice, room, 'vote' as EvType, { body: 'x' }), 'ok'],
+    ['malformed type', () => craft(alice, room, 'Vote!' as EvType, { body: 'x' }), 'shape'],
+    ['missing core key', () => ({ ...ok, ev: { ...ok.ev, ch: undefined } }), 'shape'],
     ['float ts', () => ({ ...ok, ev: { ...ok.ev, ts: 1.5 } }), 'shape'],
     ['other room', () => craft(alice, dmRoomId(A, keyId(eve.ik.pk)), 'msg', { body: 'x' }), 'room'],
     ['not a member', () => craft(eve, room, 'msg', { body: 'x' }), 'sender'],
@@ -216,10 +215,15 @@ describe('event validation', () => {
       () => craft(alice, room, 'msg', { body: '', fwd: { name: 'Z', ts: 1, body: 'q' } }),
       'ok',
     ],
+    ['unknown content key', () => craft(alice, room, 'msg', { body: 'x', y: 1 } as Content), 'ok'],
     [
-      'unknown content key',
-      () => craft(alice, room, 'msg', { body: 'x', y: 1 } as Content),
-      'content',
+      'unknown attachment key',
+      () =>
+        craft(alice, room, 'msg', {
+          body: '',
+          att: [{ h: id64, size: 1, blocks: 1, name: 'a', mime: 'text/plain', z: 1 }],
+        } as unknown as Content),
+      'ok',
     ],
     ['reply not an id', () => craft(alice, room, 'msg', { body: 'x', reply: 'nope' }), 'content'],
     [
@@ -722,6 +726,42 @@ describe('sync limits', () => {
       void sessA.send({ t: 'push', room, ev: fake })
     await waitFor(() => sessB.state === 'closed', 'flood closed')
     expect(sessB.reason).toBe('strikes')
+  })
+
+  test('a newer peer: unknown messages, fields and event types cost no strike and are not shown', async () => {
+    const { a, b, room } = await pair()
+    const sessA = a.dms.sync.linksOf(room)[0].session
+    const sessB = b.dms.sync.linksOf(room)[0].session
+    const author = a.node.author()!
+    const now = 1_700_000_000_000
+    // A session message type and fields this version doesn't know.
+    await sessA.send({ t: 'sync_v2', room })
+    await sessA.send({ t: 'typing', room, on: true, mood: 'happy' })
+    // An event of a newer type, then a message on top of it with a new content field and a new
+    // core field (both signed and hashed, so they must be kept as they are).
+    const vote = buildEvent(
+      author,
+      room,
+      'vote' as EvType,
+      { choice: 2 } as unknown as Content,
+      [],
+      0,
+      now
+    )
+    const content = { body: 'after the vote', poll: { q: 'x' } } as Content
+    const core = {
+      ...buildEvent(author, room, 'msg', content, [vote.id], 1, now).wire.ev,
+      flags: 1,
+    } as Core
+    const msg = resign(core, content, author.dk)
+    await sessA.send({ t: 'push', room, ev: vote.wire, hint: 1 })
+    await sessA.send({ t: 'push', room, ev: msg })
+    await eventually(async () => (await bodies(b, a)).includes('after the vote'), 'message shown')
+    expect(await bodies(b, a)).toEqual(['after the vote'])
+    expect((await b.store.event(vote.id))?.type).toBe('vote')
+    expect((await roomOf(b, room)).missing).toEqual([])
+    expect(sessB.strikes).toBe(0)
+    expect(sessB.state).toBe('ready')
   })
 
   test('backfill stops at the horizon until "Load older"', async () => {

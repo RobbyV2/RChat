@@ -1,6 +1,6 @@
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb'
 import type { Contact } from './contacts'
-import type { EvType, Wire } from './event'
+import type { Core, Wire } from './event'
 import type { Cert, KeyPair, Profile, Revocation, Succession } from './keys'
 
 // P2P data lives only in this browser, in one IndexedDB database per instance and account. Each
@@ -76,7 +76,7 @@ export interface RoomRecord {
 export interface EventRecord {
   id: string
   room: string
-  type: EvType
+  type: Core['type']
   sender: string
   wire: Wire
   // Events that point at another one (edit, redact, react, pin) and replies.

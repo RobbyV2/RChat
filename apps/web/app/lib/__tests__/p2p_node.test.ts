@@ -56,6 +56,35 @@ describe('P2P node', () => {
     expect(a.contact(b.ik)?.lastSeen !== null).toBe(true)
   })
 
+  test('a newer peer: hello and session fields it adds cost nothing; an unknown relation changes nothing', async () => {
+    const { out, clock } = await setup(['Alice', 'Bob'])
+    const [a, b] = out.map(x => x.node)
+    type Hello = { helloFor: (r: unknown) => Record<string, unknown> }
+    const patch = (n: P2pNode, extra: Record<string, unknown>) => {
+      const h = n as unknown as Hello
+      const orig = h.helloFor.bind(n)
+      h.helloFor = r => ({ ...orig(r), ...extra })
+    }
+    patch(a, { caps: ['calls2'], future: { x: 1 } })
+    patch(b, { caps: [] })
+    await befriend(a, b, clock)
+    const sessions = [...a.readySessions(b.ik), ...b.readySessions(a.ik)]
+    await sessions[0].send({ t: 'profile2', profile: null })
+    await settle()
+    expect(sessions.map(s => s.strikes)).toEqual([0, 0])
+    // A relation a newer version adds: read as pending. The signed profile still counts, the
+    // contact stays as it was and nobody is banned.
+    b.stop()
+    await waitFor(() => a.presence(b.ik) === 'offline', 'offline')
+    await b.setName('Bobby')
+    patch(b, { rel: 'family' })
+    await b.start()
+    b.schedule(true)
+    await waitFor(() => a.contact(b.ik)?.name === 'Bobby', 'profile read')
+    expect(a.contact(b.ik)?.state).toBe('mutual')
+    expect((a as unknown as { banned: Map<string, number> }).banned.has(b.ik)).toBe(false)
+  })
+
   test('both add each other: mutual without an accept', async () => {
     const { out } = await setup(['Alice', 'Bob'])
     const [a, b] = out.map(x => x.node)

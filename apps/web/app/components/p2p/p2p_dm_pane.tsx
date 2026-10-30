@@ -32,6 +32,7 @@ import {
   movedText,
   PEER_FULL_TEXT,
   STORAGE_FULL_TEXT,
+  withMissed,
   type P2pMessage,
 } from '../../lib/p2p/dm'
 import { DAG } from '../../lib/p2p/dag'
@@ -68,6 +69,8 @@ import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { AttachmentList, attachmentMenu, PendingFiles } from './p2p_files'
 import { namePasted } from '../message_composer'
 import { p2pFiles } from '../../lib/p2p/app'
+import { useRoomCallShare, VoiceGrid } from '../voice_grid'
+import { IncomingCallBar, P2pCallButtons, P2pCallRow } from './p2p_call'
 
 const EMPTY: P2pMessage[] = []
 const NONE: string[] = []
@@ -667,10 +670,23 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
   const contentRef = useRef<HTMLDivElement>(null)
   const [picker, setPicker] = useState<{ m: Message; anchor: HTMLElement | null } | null>(null)
   const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
+  const staged = useP2p(
+    s =>
+      s.chat !== null &&
+      s.call?.room === s.chat.room &&
+      (s.call.dir === 'out' || s.call.state === 'active')
+  )
+  const callShare = useRoomCallShare(chat?.room ?? '')
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
 
-  const messages = chat?.messages ?? EMPTY
+  const raw = chat?.messages ?? EMPTY
+  const missed = chat?.missed
+  const more = chat?.more ?? false
+  const messages = useMemo(
+    () => (missed ? withMissed(raw, missed, more) : raw),
+    [raw, missed, more]
+  )
   const peerIk = chat?.peer ?? ''
   const peerName = peer ? displayName(peer) : 'Contact'
   const online = presence === 'online'
@@ -1014,8 +1030,11 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
               </span>
             </span>
           </button>
-          <P2pBadge />
+          <span className="max-sm:hidden">
+            <P2pBadge />
+          </span>
           <div className="ml-auto flex shrink-0 items-center gap-1">
+            <P2pCallButtons peer={peerIk} name={peerName} online={online} canCall={canAct} />
             <PinsButton
               toggle={{
                 open: pins !== null,
@@ -1024,6 +1043,15 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
             />
           </div>
         </header>
+        <IncomingCallBar room={chat.room} name={peerName} />
+        {staged && (
+          <div
+            data-p2p-stage
+            className={`flex shrink-0 flex-col overflow-hidden ${callShare ? 'h-[70dvh]' : 'h-[45dvh]'}`}
+          >
+            <VoiceGrid key={`p${chat.room}`} p2pRoom={chat.room} />
+          </div>
+        )}
         <div className="relative flex min-h-0 flex-1 flex-col">
           {scroll.positioned && fresh > 0 && <PresentBar count={fresh} onJump={scroll.toBottom} />}
           <div ref={listRef} onScroll={scroll.onScroll} className="flex-1 overflow-y-auto py-3">
@@ -1045,26 +1073,30 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
                 </div>
               )}
               {gapNote}
-              {rows.map(({ p, m }, i) => (
-                <P2pRow
-                  key={p.id}
-                  p={p}
-                  m={m}
-                  mine={p.sender === me}
-                  peerName={peerName}
-                  mentioned={
-                    p.sender !== me &&
-                    ((me !== null && p.mentions.includes(me)) || p.reply?.sender === me)
-                  }
-                  divider={i === divider}
-                  flash={flash === m.id}
-                  canAct={canAct}
-                  peerFull={room?.peerFull === true}
-                  editing={editing && editingState?.id === p.id ? editing : null}
-                  onMenu={rowMenu}
-                  onJump={rowJump}
-                />
-              ))}
+              {rows.map(({ p, m }, i) =>
+                p.call ? (
+                  <P2pCallRow key={p.id} p={p} me={me} />
+                ) : (
+                  <P2pRow
+                    key={p.id}
+                    p={p}
+                    m={m}
+                    mine={p.sender === me}
+                    peerName={peerName}
+                    mentioned={
+                      p.sender !== me &&
+                      ((me !== null && p.mentions.includes(me)) || p.reply?.sender === me)
+                    }
+                    divider={i === divider}
+                    flash={flash === m.id}
+                    canAct={canAct}
+                    peerFull={room?.peerFull === true}
+                    editing={editing && editingState?.id === p.id ? editing : null}
+                    onMenu={rowMenu}
+                    onJump={rowJump}
+                  />
+                )
+              )}
             </div>
           </div>
         </div>

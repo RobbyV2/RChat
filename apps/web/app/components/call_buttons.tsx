@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { ChevronDown, Phone, Video } from 'lucide-react'
 import { relayOnly } from '../lib/ice'
 import { displayHost, hostOf, manualRelays, ownTurn, type RelayChoice } from '../lib/relays'
@@ -52,10 +52,13 @@ export function CallType({
   video,
   p2p,
   incoming = false,
+  chip,
 }: {
   video: boolean
   p2p: boolean
   incoming?: boolean
+  // Shown instead of the route chip.
+  chip?: ReactNode
 }) {
   const Icon = video ? Video : Phone
   const label = video ? 'Video call' : 'Call'
@@ -65,13 +68,14 @@ export function CallType({
         <Icon size={14} aria-hidden className="shrink-0" />
         {incoming ? `Incoming ${label.toLowerCase()}` : label}
       </span>
-      {p2p ? (
-        <DirectBadge label={ROUTE_LABEL.p2p} />
-      ) : (
-        <span className="shrink-0 rounded bg-surface-container-highest px-1 py-0.5 text-[10px] leading-none font-bold whitespace-nowrap text-on-surface-variant">
-          {ROUTE_LABEL.server}
-        </span>
-      )}
+      {chip ??
+        (p2p ? (
+          <DirectBadge label={ROUTE_LABEL.p2p} />
+        ) : (
+          <span className="shrink-0 rounded bg-surface-container-highest px-1 py-0.5 text-[10px] leading-none font-bold whitespace-nowrap text-on-surface-variant">
+            {ROUTE_LABEL.server}
+          </span>
+        ))}
     </span>
   )
 }

@@ -966,9 +966,9 @@ const FRAME_LAST = 0x8000_0000
 export const FILES_FRAME_MAX = BLOCK + 1 + 16
 const HEAD_MAX = 1024
 
-const F_FILE = 1
-const F_BLOCK = 2
-const F_END = 3
+export const F_FILE = 1
+export const F_BLOCK = 2
+export const F_END = 3
 const F_DROP = 4
 
 export interface FilesKey {
@@ -1004,6 +1004,34 @@ const frameIv = (n: number) => {
 const frameAad = (id: string, n: number, last: boolean) =>
   concat(utf8(`${FILES_AAD}${id}\0`), u64(n), new Uint8Array([last ? 1 : 0]))
 
+// One frame of the files part: its length word (with the last flag), then the sealed kind byte
+// and body.
+export const sealFilesFrame = async (
+  fk: FilesKey,
+  n: number,
+  kind: number,
+  body: Uint8Array,
+  last = false
+) => {
+  const pt = new Uint8Array(1 + body.length)
+  pt[0] = kind
+  pt.set(body, 1)
+  const ct = new Uint8Array(
+    await crypto.subtle.encrypt(
+      {
+        name: 'AES-GCM',
+        iv: frameIv(n) as BufferSource,
+        additionalData: frameAad(fk.id, n, last) as BufferSource,
+      },
+      fk.key,
+      pt as BufferSource
+    )
+  )
+  const head = new Uint8Array(4)
+  new DataView(head.buffer).setUint32(0, (ct.length | (last ? FRAME_LAST : 0)) >>> 0)
+  return concat(head, ct)
+}
+
 // Writes every complete file after the config text, one block in memory at a time. `write`
 // gets the pieces in order (the caller streams them to disk or into a Blob).
 export const writeFiles = async (
@@ -1015,26 +1043,8 @@ export const writeFiles = async (
   const total = await filesSize(db)
   let done = 0
   let n = 0
-  const frame = async (kind: number, body: Uint8Array, last = false) => {
-    const pt = new Uint8Array(1 + body.length)
-    pt[0] = kind
-    pt.set(body, 1)
-    const ct = new Uint8Array(
-      await crypto.subtle.encrypt(
-        {
-          name: 'AES-GCM',
-          iv: frameIv(n) as BufferSource,
-          additionalData: frameAad(fk.id, n, last) as BufferSource,
-        },
-        fk.key,
-        pt as BufferSource
-      )
-    )
-    n += 1
-    const head = new Uint8Array(4)
-    new DataView(head.buffer).setUint32(0, (ct.length | (last ? FRAME_LAST : 0)) >>> 0)
-    await write(concat(head, ct))
-  }
+  const frame = async (kind: number, body: Uint8Array, last = false) =>
+    write(await sealFilesFrame(fk, n++, kind, body, last))
   await write(utf8(`${FILES_MAGIC}${JSON.stringify({ v: 1, id: fk.id, salt: fk.salt })}\n`))
   const keys = await db.getAllKeys('blobs')
   for (const h of keys) {
@@ -1282,7 +1292,9 @@ export const importFiles = async (
         cur = null
         continue
       }
-      if (kind !== F_BLOCK || !cur) break
+      // A frame kind from a newer version, or a block of a file that was skipped: passed over.
+      // Frames are authenticated and in order, so nothing after it is lost.
+      if (kind !== F_BLOCK || !cur) continue
       const x: Incoming = cur
       if (body.length !== Math.min(BLOCK, x.size - x.next * BLOCK)) {
         await drop(x)

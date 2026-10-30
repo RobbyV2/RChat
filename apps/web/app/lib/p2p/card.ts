@@ -1,5 +1,5 @@
 import { isRecord } from '../bytes'
-import { b64u, canonicalBytes, fromB64u, parseCanonicalBytes } from './canonical'
+import { b64u, canonicalBytes, fromB64u, parseCanonicalBytes, pickKeys } from './canonical'
 import { inflateRaw, storeRaw } from './inflate'
 import { cleanName, isKeyId, keyId, liveCerts, verifyCert, type Cert, type KeyPair } from './keys'
 
@@ -72,11 +72,9 @@ export const BAD_CARD = "That isn't a valid P2P contact code"
 
 // Checks shape and every signature.
 export const checkCard = (x: unknown): Card => {
+  // Fields a newer version adds are ignored and not kept (forward compatibility).
   if (!isRecord(x)) throw new CardError(BAD_CARD)
-  const keys = Object.keys(x)
-  const allowed = ['v', 'ik', 'certs', 'name', 'sig_host']
-  if (!keys.every(k => allowed.includes(k))) throw new CardError(BAD_CARD)
-  const c = x as unknown as Card
+  const c = pickKeys<Card>(x, ['v', 'ik', 'certs', 'name', 'sig_host'])
   if (
     c.v !== 1 ||
     !isKeyId(c.ik) ||

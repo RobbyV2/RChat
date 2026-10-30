@@ -49,6 +49,19 @@ p2pHost.textOnly = () => {
   const s = useStore.getState().settings
   return !s.asset_uploads && !s.p2p_attachments
 }
+p2pHost.inCall = () => {
+  const s = useStore.getState()
+  return s.voice !== null || s.call !== null
+}
+p2pHost.leaveInstanceCalls = () => {
+  const s = useStore.getState()
+  if (s.voice) s.leaveVoice()
+  if (s.call) {
+    if (s.call.state === 'ringing' && s.call.from !== s.me?.username) s.declineCall()
+    else s.hangupCall()
+  }
+}
+p2pHost.muted = () => useStore.getState().selfAudio.muted
 
 const bannerCls =
   'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2'

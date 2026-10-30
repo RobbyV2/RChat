@@ -133,6 +133,7 @@ export interface NodeDeps {
 
 type Rel = 'request' | 'mutual' | 'none' | 'pending'
 
+const REL = ['request', 'mutual', 'none', 'pending']
 const HELLO_CERTS = 4
 
 // The revocation that moved this device of a contact to a new one, if any.
@@ -718,8 +719,10 @@ export class P2pNode {
     if (revs.some(x => x.dk === r.dk)) return false
     if (!certs.some(c => c.dk === r.dk)) certs.unshift(r.cert)
     const profile = verifyProfile(m.profile, r.ik) ? m.profile : null
-    const rel = m.rel
-    if (rel !== 'request' && rel !== 'mutual' && rel !== 'none' && rel !== 'pending') return false
+    // A relation from a newer version is read as `pending`: it asks for nothing and changes
+    // nothing (forward compatibility).
+    const rel = REL.includes(m.rel as string) ? m.rel : typeof m.rel === 'string' ? 'pending' : null
+    if (rel === null) return false
     const now = this.clock.now()
 
     if (!this.contacts.has(r.ik) && verifySuccession(m.succ) && m.succ.new === r.ik) {

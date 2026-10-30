@@ -66,7 +66,7 @@ import {
   type ContextMenuOptions,
   type Outgoing,
 } from '../lib/store'
-import { Perm, hasPerm, type Member, type Message, type UserRef } from '../lib/types'
+import { Perm, hasPerm, type CallLog, type Member, type Message, type UserRef } from '../lib/types'
 import { callTone, type CallTone } from '../lib/voice_layout'
 import { callLogInfo } from '../lib/call_choice'
 import { UserAvatar } from './user_avatar'
@@ -150,7 +150,6 @@ function CallLogRow({ message }: { message: Message }) {
   if (!call) return null
   const tone = callTone(call)
   const incoming = me !== null && me.username !== call.from
-  const info = callLogInfo(call, me?.username ?? null)
   const caller = userRefFor(useStore.getState(), call.from)
   const other = dms.find(d => d.id === message.dm_id)?.other
   const name = (u: UserRef | undefined) => (
@@ -158,10 +157,6 @@ function CallLogRow({ message }: { message: Message }) {
       {u ? <Masked text={u.display_name} /> : 'Someone'}
     </span>
   )
-  const Icon = callIcon(tone, info.video, incoming)
-  const live = tone === 'ringing' || tone === 'active'
-  const iconCls = live ? 'text-status-green' : info.alert ? 'text-error' : 'text-on-surface-variant'
-  const direction = `${incoming ? 'Incoming' : 'Outgoing'} ${info.label.toLowerCase()}`
   const status: ReactNode =
     tone === 'ringing' ? (
       incoming ? (
@@ -171,11 +166,86 @@ function CallLogRow({ message }: { message: Message }) {
       )
     ) : tone === 'active' ? (
       <>In progress</>
-    ) : (
-      <span className={info.alert ? 'font-medium text-error' : ''}>{info.outcome}</span>
-    )
+    ) : null
   return (
-    <div className="flex items-center gap-3 px-4 py-1 hover:bg-surface-container-low">
+    <CallLogLine
+      call={call}
+      me={me?.username ?? null}
+      time={message.created_at}
+      status={status}
+      badge={call.p2p === true ? <DirectBadge /> : null}
+      live={
+        tone === 'active' &&
+        call.answered_at !== null && (
+          <span className="flex items-center gap-1 rounded-full bg-status-green/15 px-2 py-0.5 text-xs font-medium text-status-green tabular-nums">
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-status-green" />
+            <CallDuration from={call.answered_at} />
+          </span>
+        )
+      }
+    >
+      {tone === 'ringing' && incoming && (
+        <span className="flex items-center gap-1.5">
+          <button
+            title="Accept"
+            aria-label="Accept"
+            onClick={() => {
+              if (message.dm_id !== null) void openDm(message.dm_id)
+              void acceptCall()
+            }}
+            className="flex items-center gap-1 rounded-full bg-status-green px-2.5 py-1 text-xs font-medium text-surface outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            <Phone size={12} />
+            Accept
+          </button>
+          <button
+            title="Decline"
+            aria-label="Decline"
+            onClick={declineCall}
+            className="flex items-center gap-1 rounded-full bg-danger px-2.5 py-1 text-xs font-medium text-on-danger outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            <PhoneOff size={12} />
+            Decline
+          </button>
+        </span>
+      )}
+    </CallLogLine>
+  )
+}
+
+// One call log row: icon by kind and direction, "Voice call"/"Video call", the connection badge,
+// the outcome (or `status` while it rings or runs), the duration and the time. Instance and P2P
+// conversations both use it.
+export function CallLogLine({
+  call,
+  me,
+  time,
+  status,
+  badge,
+  live,
+  children,
+}: {
+  call: CallLog
+  me: string | null
+  time: number
+  status?: ReactNode
+  badge?: ReactNode
+  live?: ReactNode
+  children?: ReactNode
+}) {
+  const tone = callTone(call)
+  const incoming = me !== null && me !== call.from
+  const info = callLogInfo(call, me)
+  const Icon = callIcon(tone, info.video, incoming)
+  const running = tone === 'ringing' || tone === 'active'
+  const iconCls = running
+    ? 'text-status-green'
+    : info.alert
+      ? 'text-error'
+      : 'text-on-surface-variant'
+  const direction = `${incoming ? 'Incoming' : 'Outgoing'} ${info.label.toLowerCase()}`
+  return (
+    <div data-call-row className="flex items-center gap-3 px-4 py-1 hover:bg-surface-container-low">
       <span
         role="img"
         title={direction}
@@ -186,47 +256,22 @@ function CallLogRow({ message }: { message: Message }) {
       </span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-on-surface-variant">
         <span className="font-medium text-on-surface">{info.label}</span>
-        {info.direct && <DirectBadge />}
+        {badge}
         <span aria-hidden>·</span>
-        <span className="min-w-0">{status}</span>
+        <span className="min-w-0">
+          {status ?? (
+            <span className={info.alert ? 'font-medium text-error' : ''}>{info.outcome}</span>
+          )}
+        </span>
         {info.duration !== null && (
           <>
             <span aria-hidden>·</span>
             <span className="tabular-nums">{info.duration}</span>
           </>
         )}
-        {tone === 'active' && call.answered_at !== null && (
-          <span className="flex items-center gap-1 rounded-full bg-status-green/15 px-2 py-0.5 text-xs font-medium text-status-green tabular-nums">
-            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-status-green" />
-            <CallDuration from={call.answered_at} />
-          </span>
-        )}
-        <MessageTime ts={message.created_at} className="text-xs opacity-70" />
-        {tone === 'ringing' && incoming && (
-          <span className="flex items-center gap-1.5">
-            <button
-              title="Accept"
-              aria-label="Accept"
-              onClick={() => {
-                if (message.dm_id !== null) void openDm(message.dm_id)
-                void acceptCall()
-              }}
-              className="flex items-center gap-1 rounded-full bg-status-green px-2.5 py-1 text-xs font-medium text-surface outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary"
-            >
-              <Phone size={12} />
-              Accept
-            </button>
-            <button
-              title="Decline"
-              aria-label="Decline"
-              onClick={declineCall}
-              className="flex items-center gap-1 rounded-full bg-danger px-2.5 py-1 text-xs font-medium text-on-danger outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-primary"
-            >
-              <PhoneOff size={12} />
-              Decline
-            </button>
-          </span>
-        )}
+        {live}
+        <MessageTime ts={time} className="text-xs opacity-70" />
+        {children}
       </div>
     </div>
   )
