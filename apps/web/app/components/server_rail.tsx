@@ -42,6 +42,8 @@ import { Sentinel, iconBtn } from './ui'
 import { RailPingBadge, pingLabel } from './ping_badge'
 import { MutedIcon, folderNotifyItems, notifyMenuItems } from './notify_menu'
 import { markAllReadItem, markReadItem } from './mark_read'
+import { P2pRailTile } from './p2p/p2p_home'
+import { p2p as p2pView, useP2p } from '../lib/p2p/app'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 const idle =
@@ -99,7 +101,8 @@ function ServerTile({
   at: number
 }) {
   const me = useStore(s => s.me)
-  const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name)
+  const p2pOpen = useP2p(s => s.home)
+  const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name) && !p2pOpen
   const unread = useStore(s => serverUnread(s, name))
   const pings = useStore(s => serverPingCount(s, name))
   const openServer = useStore(s => s.openServer)
@@ -246,7 +249,8 @@ function PreviewTile() {
 }
 
 function MiniIcon({ server: { name, display_name } }: { server: RailServer }) {
-  const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name)
+  const p2pOpen = useP2p(s => s.home)
+  const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name) && !p2pOpen
   const mask = useMask()
   return (
     <span
@@ -378,6 +382,7 @@ export function ServerRail() {
   const openDialog = useStore(s => s.openDialog)
   const logout = useStore(s => s.logout)
   const saved = useStore(s => s.layout.servers)
+  const p2pHome = useP2p(s => s.home)
 
   const items = railItems(
     railServers({ me, guestServers, guestNames, servers }),
@@ -393,6 +398,11 @@ export function ServerRail() {
       </div>
       <div
         ref={dragScope}
+        onClickCapture={e => {
+          // Opening a DM, server or folder leaves the P2P home.
+          const t = e.target as HTMLElement
+          if (t.closest('button') && !t.closest('[data-p2p-tile]')) p2pView.closeHome()
+        }}
         className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto pt-2 pb-2"
       >
         <button
@@ -411,12 +421,13 @@ export function ServerRail() {
             aria-label="Direct messages"
             onClick={openLastDm}
             {...longPress((x, y) => openContextMenu(x, y, [markAllReadItem()]))}
-            className={`${tile} relative ${view?.kind === 'dm' ? 'bg-primary text-on-primary' : idle}`}
+            className={`${tile} relative ${view?.kind === 'dm' && !p2pHome ? 'bg-primary text-on-primary' : idle}`}
           >
             <MessageCircle size={22} />
             {dmPings > 0 ? <RailPingBadge count={dmPings} /> : dmUnread && <UnreadDot />}
           </button>
         )}
+        {me && <P2pRailTile />}
         {me && <div className="my-1 h-px w-8 shrink-0 bg-outline-variant" />}
         {me && <PreviewTile />}
         <div

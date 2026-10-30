@@ -36,6 +36,8 @@ import { NoticeStack } from '../components/notice_stack'
 import { InvitePage } from '../components/invite_card'
 import { ConfigLinkPage } from '../components/config_sync'
 import { useEscape } from '../components/ui'
+import { P2pDialogs, P2pHome } from '../components/p2p/p2p_home'
+import { p2p, useP2p } from '../lib/p2p/app'
 
 const bannerCls =
   'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2'
@@ -56,6 +58,7 @@ export default function AppShell() {
   const bootError = useStore(s => s.bootError)
   const bootstrap = useStore(s => s.bootstrap)
   const pings = useStore(allPings)
+  const p2pHome = useP2p(s => s.home) && me !== null
   const booted = useRef(false)
   const [leftOpen, setLeftOpen] = useState(false)
   const [rightOpen, setRightOpen] = useState(false)
@@ -132,12 +135,18 @@ export default function AppShell() {
     setLeftOpen(false)
     setRightOpen(false)
     if (useStore.getState().panel?.kind === 'thread') useStore.getState().closePanel()
+    p2p.closeHome()
   }, [view])
 
   const friendsOpen = panel?.kind === 'friends'
   useEffect(() => {
     if (friendsOpen) setLeftOpen(false)
   }, [friendsOpen])
+
+  useEffect(() => {
+    setLeftOpen(false)
+    setRightOpen(false)
+  }, [p2pHome])
 
   const paletteOpen = usePaletteUi(s => s.open)
   useEffect(() => {
@@ -173,9 +182,11 @@ export default function AppShell() {
       <div className="flex h-app overflow-hidden px-safe">
         <div className="hidden h-full md:flex">
           <ServerRail />
-          <ChannelSidebar />
+          {!p2pHome && <ChannelSidebar />}
         </div>
-        {view === null && atHome ? (
+        {p2pHome ? (
+          <P2pHome onMenu={openLeft} />
+        ) : view === null && atHome ? (
           <HomePage onMenu={openLeft} />
         ) : (
           <MessagePane
@@ -186,7 +197,7 @@ export default function AppShell() {
             }}
           />
         )}
-        {isChannel && !panel && (
+        {isChannel && !panel && !p2pHome && (
           <div className="hidden h-full lg:block">
             <MemberSidebar />
           </div>
@@ -206,7 +217,7 @@ export default function AppShell() {
           <div data-drawer className="fixed inset-x-0 top-app z-40 flex h-app md:hidden">
             <div className="flex h-full bg-surface-container-lowest pl-[env(safe-area-inset-left)] shadow-elevation-3">
               <ServerRail />
-              <ChannelSidebar />
+              {!p2pHome && <ChannelSidebar />}
             </div>
             <div className="flex-1 bg-scrim/50" onClick={() => setLeftOpen(false)} />
           </div>
@@ -237,6 +248,7 @@ export default function AppShell() {
         <InboxHost />
         <PaletteHost />
         <RelayPrompt />
+        <P2pDialogs />
         <ProfileCard />
         <ContextMenu />
         <ReactionPickerHost />

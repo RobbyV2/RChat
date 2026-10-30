@@ -22,6 +22,7 @@ import { JoinTracker } from './negotiation'
 import { newP2pId, p2p } from './p2p'
 import { hashBlob } from './sha256'
 import { ice, iceKey, iceValue, parseIce } from './ice'
+import { p2pAccount } from './p2p/app'
 import { DENIED_CALL, hidesIp, mergeRelays, relayBook, relaysKey, type Decision } from './relays'
 import { mentionsUser } from './mentions'
 import {
@@ -612,6 +613,7 @@ export const useStore = create<RChatState>()((set, get) => {
     relayBook.load(signedIn && username !== null ? home.scoped(relaysKey(username)) : null)
     set({ iceHelpers: on, iceRelay: relay })
     void ice.setSignedIn(signedIn)
+    void p2pAccount(signedIn ? username : null)
   }
 
   const expireSession = () => {

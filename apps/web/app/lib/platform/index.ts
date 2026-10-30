@@ -5,6 +5,8 @@ import { webDeviceStore } from './web_device_store'
 import type { Notifier } from './notifications'
 import { webNotifier } from './web_notifications'
 import type { Sharing } from './sharing'
+import type { QrScanner } from './qr_scanner'
+import { webQrScanner } from './web_qr_scanner'
 import { webSharing } from './web_sharing'
 import { inShell, invoke, mobileOs } from './desktop'
 import { desktopNotifier } from './desktop_notifications'
@@ -15,6 +17,7 @@ export type { BlobStore, BlobWriter } from './blobs'
 export type { DeviceStore } from './device_store'
 export type { NoticeHandle, NoticeOptions, Notifier, Permission } from './notifications'
 export type { ShareData, ShareResult, Sharing } from './sharing'
+export type { QrScanner } from './qr_scanner'
 export {
   desktopInfo,
   inShell,
@@ -72,4 +75,12 @@ export const device = () => deviceStore
 
 export const setDeviceStore = (next: DeviceStore) => {
   deviceStore = next
+}
+
+let qrScanner: QrScanner = webQrScanner
+
+export const scanner = () => qrScanner
+
+export const setScanner = (next: QrScanner) => {
+  qrScanner = next
 }

@@ -7,6 +7,7 @@ import { errorText, useStore } from '../lib/store'
 import { iceOffer } from '../lib/ice'
 import { ownTurn } from '../lib/relays'
 import { RelaySection } from './relay_settings'
+import { P2pSection } from './p2p/p2p_settings'
 import { defaultBanner } from '../lib/profile'
 import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
 import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio, siteFilterOn } from '../lib/rules'
@@ -593,6 +594,7 @@ function SettingsSection() {
       <ChatSection />
       <ConnectionSection />
       <RelaySection />
+      <P2pSection />
       <section>
         <p className={sectionCls}>Appearance</p>
         <SettingSwitch

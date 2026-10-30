@@ -263,9 +263,9 @@ describe('P2P paths', () => {
     'profanity_targets',
     'check_profanity',
   ]
-  // Directories of P2P code (none yet). A new one fails the test below until it is listed here,
-  // so whoever adds P2P code has to look at this rule.
-  const P2P_DIRS: string[] = []
+  // Directories of P2P code. A new one fails the test below until it is listed here, so whoever
+  // adds P2P code has to look at this rule.
+  const P2P_DIRS = ['components/p2p', 'lib/p2p']
   const app = walk(ROOT).filter(f => !f.includes('__tests__'))
   const p2pFiles = () =>
     app

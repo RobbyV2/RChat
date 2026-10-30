@@ -59,7 +59,15 @@ function StreamerCover({ what, children }: { what: string; children: ReactNode }
 }
 
 // Dark modules on white with a 4-module quiet zone in both themes, so all scanners can read it.
-function QrCode({ text, label }: { text: string; label: string }) {
+export function QrCode({
+  text,
+  label,
+  wide = false,
+}: {
+  text: string
+  label: string
+  wide?: boolean
+}) {
   const qr = useMemo(() => encode(text, { ecc: 'M', border: 4 }), [text])
   const path = useMemo(() => {
     let d = ''
@@ -77,7 +85,7 @@ function QrCode({ text, label }: { text: string; label: string }) {
       data-qr={text}
       viewBox={`0 0 ${qr.size} ${qr.size}`}
       shapeRendering="crispEdges"
-      className="block h-auto w-full max-w-56 rounded-lg"
+      className={`block h-auto w-full rounded-lg ${wide ? 'max-w-72' : 'max-w-56'}`}
     >
       <rect width={qr.size} height={qr.size} fill="#ffffff" />
       <path d={path} fill="#000000" />
@@ -85,7 +93,7 @@ function QrCode({ text, label }: { text: string; label: string }) {
   )
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+export function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, flashCopied] = useCopied()
   return (
     <button
