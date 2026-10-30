@@ -79,8 +79,8 @@ export default function DesktopBridge() {
   return (
     <Dialog title="Switch instance?" onClose={() => ask.answer(false)} layer="confirm" compact>
       <p className="text-sm text-on-surface-variant">
-        Open <span className="streamer font-medium break-all text-on-surface">{ask.host}</span>?
-        This changes your instance.
+        Open <span className="font-medium break-all text-on-surface">{ask.host}</span>? This changes
+        your instance.
       </p>
       <div className="mt-6 flex justify-end gap-2">
         <button type="button" autoFocus onClick={() => ask.answer(false)} className={textBtn}>

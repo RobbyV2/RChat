@@ -161,7 +161,9 @@ function PinMedia({ m }: { m: Message }) {
   return (
     <span className="mt-1 flex w-fit max-w-full items-center gap-1.5 rounded-lg bg-surface-container-highest px-2 py-1 text-xs text-on-surface-variant">
       <FileText size={12} className="shrink-0 text-primary" />
-      <span className="truncate">{media.filename}</span>
+      <span className="truncate">
+        <Masked text={media.filename} />
+      </span>
     </span>
   )
 }

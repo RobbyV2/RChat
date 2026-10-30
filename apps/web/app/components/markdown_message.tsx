@@ -505,6 +505,7 @@ const UNVERIFIED = 'Unverified: sent from an older app'
 function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number }) {
   const me = useStore(s => s.me)
   const previews = useStore(s => s.settings.asset_previews)
+  const streamer = useStore(s => s.streamer)
   const avail = useStore(s => (media.hoster !== null ? s.p2pAvailability[media.hoster] : undefined))
   // Fetching from the sender shows them our IP address, so images load on their own only when
   // that goes through the relay, or when nothing has to be fetched.
@@ -664,7 +665,11 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
 
   const saveButton = (
     <button
-      title={`Download from ${hosterName}'s browser`}
+      title={
+        streamer || hoster === null
+          ? "Download from the sender's browser"
+          : `Download from ${hosterName}'s browser`
+      }
       aria-label="Download"
       onClick={() => run(true)}
       disabled={busy || !online}
@@ -700,7 +705,9 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
           <audio src={shown.url} controls className="max-w-full" />
         )}
         <span className="mt-1 flex items-center gap-2">
-          <span className="max-w-60 truncate text-xs text-on-surface-variant">{filename}</span>
+          <span className="max-w-60 truncate text-xs text-on-surface-variant">
+            <Masked text={filename} />
+          </span>
           {saveButton}
         </span>
         {meta}
@@ -709,17 +716,33 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   }
 
   if (!online) {
-    const notice = `File not available. Ask ${hosterName} to send it again.`
+    const generic = streamer || hoster === null
     return (
       <div
-        title={notice}
+        title={
+          generic
+            ? 'File not available. Ask the sender to send it again.'
+            : `File not available. Ask ${hosterName} to send it again.`
+        }
         className="mt-1 w-fit rounded-xl border border-outline-variant bg-surface-container px-3 py-2 opacity-60"
       >
         <span className="flex items-center gap-2 text-sm text-on-surface-variant">
           <FileText size={18} className="shrink-0" />
-          <span className="max-w-60 truncate">{filename}</span>
+          <span className="max-w-60 truncate">
+            <Masked text={filename} />
+          </span>
         </span>
-        <p className="mt-1 text-xs text-on-surface-variant italic">{notice}</p>
+        <p className="mt-1 text-xs text-on-surface-variant italic">
+          File not available. Ask{' '}
+          {hoster === null ? (
+            'the sender'
+          ) : (
+            <span className="streamer">
+              <Masked text={hosterName} />
+            </span>
+          )}{' '}
+          to send it again.
+        </p>
         {meta}
       </div>
     )
@@ -731,7 +754,9 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
     <div className="mt-1 w-fit max-w-full rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
       <div className="flex items-center gap-2">
         <FileText size={18} className="shrink-0 text-tertiary" />
-        <span className="max-w-60 truncate text-sm">{filename}</span>
+        <span className="max-w-60 truncate text-sm">
+          <Masked text={filename} />
+        </span>
         {size !== null && (
           <span className="shrink-0 text-xs text-on-surface-variant tabular-nums">
             {fmtSize(size)}
@@ -911,7 +936,9 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
     <>
       <span className="flex items-center gap-2">
         <FileText size={18} className="shrink-0 text-primary" />
-        <span className="max-w-60 truncate text-sm">{filename}</span>
+        <span className="max-w-60 truncate text-sm">
+          <Masked text={filename} />
+        </span>
         <Download size={14} className="shrink-0 text-on-surface-variant" />
       </span>
       {expiry}

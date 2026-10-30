@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useId, useState, type ReactNode } from 'react'
-import { ArrowLeft, Check, Copy, Plus, Send, TriangleAlert, X } from 'lucide-react'
+import { ArrowLeft, Check, Copy, Eye, Plus, Send, TriangleAlert, X } from 'lucide-react'
 import { api } from '../lib/instances'
 import { noteRequest, sendRequest, useApiDoc, type ApiResponse } from '../lib/api_console'
 import {
@@ -255,6 +255,9 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function ResponseView({ res }: { res: ApiResponse }) {
   const ok = res.status >= 200 && res.status < 300
+  const streamer = useStore(s => s.streamer)
+  const [shown, setShown] = useState<ApiResponse | null>(null)
+  const covered = streamer && shown !== res
   return (
     <section aria-label="Response" className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -271,6 +274,26 @@ function ResponseView({ res }: { res: ApiResponse }) {
         <span className="text-xs text-on-surface-variant">{res.ms} ms</span>
         <span className="text-xs text-on-surface-variant">{res.size} bytes</span>
       </div>
+      {covered ? (
+        <button
+          type="button"
+          data-streamer-cover
+          onClick={() => setShown(res)}
+          className="flex min-h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-outline-variant px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+        >
+          <Eye size={16} />
+          Hidden in streamer mode. Show response
+        </button>
+      ) : (
+        <ResponseBody res={res} />
+      )}
+    </section>
+  )
+}
+
+function ResponseBody({ res }: { res: ApiResponse }) {
+  return (
+    <>
       <details className="rounded-lg bg-surface-container px-3 py-2 text-xs">
         <summary className="cursor-pointer text-on-surface-variant">
           Headers ({res.headers.length})
@@ -292,7 +315,7 @@ function ResponseView({ res }: { res: ApiResponse }) {
       {res.cut && (
         <p className="text-xs text-on-surface-variant">The response is too long to show in full.</p>
       )}
-    </section>
+    </>
   )
 }
 

@@ -112,7 +112,8 @@ function ServerTile({
   const muted = useStore(s => scopeMuted(s, { kind: 'server', name }))
   const mine = me !== null && creator === me.username
   const mask = useMask()
-  const shown = mask(display_name)
+  const streamer = useStore(s => s.streamer)
+  const shown = streamer ? 'Server' : mask(display_name)
   const parent = folder === null ? null : folderKey(folder)
   return (
     <button
@@ -207,8 +208,9 @@ function PreviewTile() {
   const joinPreview = useStore(s => s.joinPreview)
   const openContextMenu = useStore(s => s.openContextMenu)
   const mask = useMask()
+  const streamer = useStore(s => s.streamer)
   if (!name) return null
-  const label = `Previewing ${mask(display)}`
+  const label = streamer ? 'Previewing a server' : `Previewing ${mask(display)}`
   return (
     <button
       data-preview-tile={name}

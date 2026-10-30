@@ -3738,6 +3738,11 @@ export const useStore = create<RChatState>()((set, get) => {
         writeLocal(home.scoped(forwardKey(username)), null)
         writeLocal(home.scoped(historyKey(username)), null)
       }
+      if (get().guest) {
+        writeLocal(home.scoped(historyKey(null)), null)
+        writeLocal(LS.guestServers, null)
+        writeLocal(LS.guestNames, null)
+      }
       const flushed = readQueue.flush()
       forgetSession()
       if (token)

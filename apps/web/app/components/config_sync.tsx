@@ -1,9 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { useShallow } from 'zustand/react/shallow'
-import { Check, Copy, QrCode as QrIcon, Share2, Trash2 } from 'lucide-react'
+import { Check, Copy, Eye, QrCode as QrIcon, Share2, Trash2 } from 'lucide-react'
 import { encode } from 'uqr'
 import { api, shareOrigin } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
@@ -35,6 +35,27 @@ const iconBtn =
   'rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface disabled:pointer-events-none disabled:opacity-40'
 
 const areaCls = `${fieldCls} w-full resize-none font-mono text-xs break-all md:text-xs`
+
+// In streamer mode a secret (a share link, its QR code, a config string) stays covered until
+// pressed, so it never shows on stream by accident. Copy and share buttons next to it still work.
+function StreamerCover({ what, children }: { what: string; children: ReactNode }) {
+  const streamer = useStore(s => s.streamer)
+  const [open, setOpen] = useState(false)
+  if (!streamer || open) return <>{children}</>
+  return (
+    <button
+      type="button"
+      title={`Show ${what}`}
+      aria-label={`Show ${what}`}
+      data-streamer-cover
+      onClick={() => setOpen(true)}
+      className="flex min-h-12 w-full flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-outline-variant px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+    >
+      <Eye size={16} />
+      Hidden in streamer mode. Show {what}
+    </button>
+  )
+}
 
 // Dark modules on white with a 4-module quiet zone in both themes, so all scanners can read it.
 function QrCode({ text, label }: { text: string; label: string }) {
@@ -246,14 +267,16 @@ function ExportBlock({ doc }: { doc: ConfigDoc }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-start gap-1">
-        <textarea
-          readOnly
-          rows={3}
-          value={text}
-          aria-label="Config string"
-          onFocus={e => e.currentTarget.select()}
-          className={areaCls}
-        />
+        <StreamerCover what="config string">
+          <textarea
+            readOnly
+            rows={3}
+            value={text}
+            aria-label="Config string"
+            onFocus={e => e.currentTarget.select()}
+            className={areaCls}
+          />
+        </StreamerCover>
         <CopyButton text={text} label="Copy config string" />
       </div>
       <div>
@@ -277,6 +300,7 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [now, setNow] = useState(() => Date.now())
+  const streamer = useStore(s => s.streamer)
 
   const load = useCallback(async () => {
     try {
@@ -360,16 +384,26 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
       <FieldError message={error} />
       {shownUrl && (
         <div className="flex flex-col items-center gap-3 rounded-2xl bg-surface-container-high p-4">
-          <QrCode text={shownUrl} label="QR code of the config link" />
-          <p className="text-center text-xs text-on-surface-variant">Scan to open on your phone</p>
+          <StreamerCover key={shownUrl} what="QR code and link">
+            <QrCode text={shownUrl} label="QR code of the config link" />
+            <p className="text-center text-xs text-on-surface-variant">
+              Scan to open on your phone
+            </p>
+          </StreamerCover>
           <div className="flex w-full items-center gap-1">
-            <input
-              readOnly
-              value={shownUrl}
-              aria-label="Config link"
-              onFocus={e => e.currentTarget.select()}
-              className={`${fieldCls} font-mono text-xs md:text-xs`}
-            />
+            {streamer ? (
+              <span className="min-w-0 flex-1 truncate text-sm text-on-surface-variant">
+                Config link
+              </span>
+            ) : (
+              <input
+                readOnly
+                value={shownUrl}
+                aria-label="Config link"
+                onFocus={e => e.currentTarget.select()}
+                className={`${fieldCls} font-mono text-xs md:text-xs`}
+              />
+            )}
             <CopyButton text={shownUrl} label="Copy link" />
             {sharing().canShare() && (
               <button
@@ -389,13 +423,15 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
         <div className="flex flex-col gap-1">
           <p className="text-sm text-on-surface-variant">Active links</p>
           <ul className="flex flex-col gap-1">
-            {links.map(l => (
+            {links.map((l, i) => (
               <li
                 key={l.id}
                 className="flex items-center gap-2 rounded-xl bg-surface-container-low px-3 py-1.5"
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-mono text-xs text-on-surface">{l.id}</span>
+                  <span className="block truncate font-mono text-xs text-on-surface">
+                    {streamer ? `Link ${i + 1}` : l.id}
+                  </span>
                   <span className="block text-xs text-on-surface-variant">
                     Active {untilText(l.expires_at * 1000, now)}
                   </span>

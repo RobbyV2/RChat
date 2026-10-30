@@ -530,7 +530,10 @@ function Card({ target }: { target: ProfileTarget }) {
                 <div className="flex items-baseline justify-between gap-3">
                   <dt className="flex min-w-0 text-on-surface-variant">
                     <span className="shrink-0">Joined&nbsp;</span>
-                    <span className="streamer min-w-0 truncate" title={join.label}>
+                    <span
+                      className="streamer min-w-0 truncate"
+                      title={streamer ? undefined : join.label}
+                    >
                       {join.name}
                     </span>
                   </dt>

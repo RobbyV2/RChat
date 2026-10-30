@@ -10,6 +10,7 @@ import { create } from 'zustand'
 import { ApiError } from './api'
 import { api, home } from './instances'
 import { blobs } from './platform'
+import { replaceSpoilers } from './spoilers'
 import type { IndexMode } from './palette'
 import {
   FULL_MAX_BYTES,
@@ -185,7 +186,8 @@ export const messageDoc = (
   server: string | null
 ): IndexDoc | null => {
   if (!INDEXED_KINDS.has(m.kind) || m.id <= 0) return null
-  const text = m.content.trim()
+  // Spoiler text is never indexed, so a search can't confirm what a spoiler hides.
+  const text = replaceSpoilers(m.content, () => '\u2588\u2588\u2588').trim()
   if (!text || Object.hasOwn(s.blocked, m.author.username)) return null
   if (m.dm_id === null && !server) return null
   return {
