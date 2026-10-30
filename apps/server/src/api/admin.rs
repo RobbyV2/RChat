@@ -533,6 +533,7 @@ pub(crate) async fn hide_user_rows(
         "DELETE FROM interactions WHERE username = $1",
         "DELETE FROM server_bans WHERE username = $1",
         "DELETE FROM member_timeouts WHERE username = $1",
+        "DELETE FROM bulk_delete_jobs WHERE username = $1",
         "UPDATE server_passwords SET created_by = NULL WHERE created_by = $1",
     ] {
         sqlx::query(sql).bind(key).execute(&mut *tx).await?;
@@ -830,6 +831,7 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         .bind(format!("u:{key}"))
         .execute(&mut **tx)
         .await?;
+    crate::api::bulk_delete::forget_author(tx, key).await?;
     crate::api::audit::forget_user(tx, key).await
 }
 

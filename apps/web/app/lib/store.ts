@@ -290,6 +290,7 @@ import { blockedSet, matchesBlockQuery, withoutTypers, type Blocked } from './bl
 import { FRIENDS_SCOPE } from './friends'
 import { friendsInitial, friendsSlice } from './friends_store'
 import { pollsSlice } from './polls_store'
+import { selectionInitial, selectionSlice } from './selection_store'
 import { mergePoll } from './polls'
 import type {
   AuthResponse,
@@ -1078,6 +1079,7 @@ export const useStore = create<RChatState>()((set, get) => {
     if (!same) void syncLayout(fresh.username)
     if (!same) void loadBlocked()
     if (!same) void friendsHub.loadSummary()
+    if (!same) void selectionHub.loadJobs()
   }
 
   const refetchMe = () =>
@@ -1474,6 +1476,7 @@ export const useStore = create<RChatState>()((set, get) => {
         void loadBlocked()
         void friendsHub.loadSummary()
         friendsHub.reloadOpenLists()
+        void selectionHub.loadJobs()
         const { view } = get()
         if (view) askP2p(get().messages[viewKey(view)] ?? [])
         const { pins } = get()
@@ -2483,7 +2486,86 @@ export const useStore = create<RChatState>()((set, get) => {
     write({ ...base, list, hasMore: page.next !== null, cursor: page.next, loading: false })
   }
 
+  // A message is gone (deleted alone or in a bulk delete): drops it from every list, the open
+  // thread, replies and edits.
+  // `counted` is false when the caller already removed it and the event still follows.
+  const dropDeleted = (
+    id: number,
+    threadRootId: number | null,
+    server: string | null,
+    counted = true
+  ) => {
+    dropLinkCards(id)
+    set(s => {
+      const groupPings = dropGroupMessage(s.groupPings, id)
+      return groupPings === s.groupPings ? {} : { groupPings }
+    })
+    if (server !== null) staleInvites(server)
+    const rootOf = counted ? threadRootId : null
+    unhost(id)
+    setPinned(id, null)
+    const drop = (list: Message[]) => {
+      const i = indexOfId(list, id)
+      const cut = unlinkPin(
+        quoteDeleted(i === -1 ? list : [...list.slice(0, i), ...list.slice(i + 1)], id),
+        id
+      )
+      return rootOf === null
+        ? cut
+        : patchById(cut, rootOf, m => ({
+            ...m,
+            reply_count: Math.max(0, m.reply_count - 1),
+          }))
+    }
+    tails.delete(threadKey(id))
+    views.delete(threadKey(id))
+    mapTails(drop)
+    forgetPending(key => key !== threadKey(id))
+    set(s => {
+      const kept = { ...s.messages }
+      delete kept[threadKey(id)]
+      const messages = mapLists(kept, drop)
+      const panel =
+        s.panel?.kind === 'thread' && s.panel.root.id === id
+          ? null
+          : s.panel?.kind === 'thread' && s.panel.root.id === rootOf
+            ? {
+                ...s.panel,
+                root: {
+                  ...s.panel.root,
+                  reply_count: Math.max(0, s.panel.root.reply_count - 1),
+                },
+              }
+            : s.panel
+      const replying = Object.fromEntries(
+        Object.entries(s.replying).filter(
+          ([key, r]) => r.message.id !== id && key !== threadKey(id)
+        )
+      )
+      return {
+        messages,
+        panel:
+          panel?.kind === 'thread' && panel.root.reply_to?.id === id
+            ? { ...panel, root: quoteDeleted([panel.root], id)[0] }
+            : panel,
+        ...(Object.keys(replying).length === Object.keys(s.replying).length ? {} : { replying }),
+        ...(s.editing && (s.editing.id === id || s.editing.key === threadKey(id))
+          ? { editing: null }
+          : {}),
+      }
+    })
+  }
+
   const friendsHub = friendsSlice({ set, get, act, loadPage, toast, fail, errorText })
+  const selectionHub = selectionSlice({
+    set,
+    get,
+    toast,
+    fail,
+    dropDeleted: (ids, threadRootId, server) => {
+      for (const id of ids) if (findMessage(id)) dropDeleted(id, threadRootId, server, false)
+    },
+  })
   const pollsHub = pollsSlice({
     get,
     act,
@@ -3353,6 +3435,7 @@ export const useStore = create<RChatState>()((set, get) => {
     blocked: {},
     blockList: emptyPage<BlockedUser>(),
     ...friendsInitial(),
+    ...selectionInitial(),
     dms: [],
     dmsMore: false,
     serversMore: false,
@@ -3671,6 +3754,7 @@ export const useStore = create<RChatState>()((set, get) => {
         blocked: {},
         blockList: emptyPage<BlockedUser>(),
         ...friendsInitial(),
+        ...selectionInitial(),
         dms: [],
         dmsMore: false,
         serversMore: false,
@@ -4048,6 +4132,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
     ...friendsHub.actions,
     ...pollsHub.actions,
+    ...selectionHub.actions,
 
     askBlock: user => {
       const s = get()
@@ -5121,6 +5206,7 @@ export const useStore = create<RChatState>()((set, get) => {
     applyWsEvent: ev => {
       if (friendsHub.onEvent(ev)) return
       if (pollsHub.onEvent(ev)) return
+      if (selectionHub.onEvent(ev)) return
       switch (ev.type) {
         case 'message': {
           const m = withQuote(ev.message)
@@ -5273,67 +5359,11 @@ export const useStore = create<RChatState>()((set, get) => {
           return
         }
         case 'message_deleted': {
-          dropLinkCards(ev.id)
-          set(s => {
-            const groupPings = dropGroupMessage(s.groupPings, ev.id)
-            return groupPings === s.groupPings ? {} : { groupPings }
-          })
-          if (ev.server !== null) staleInvites(ev.server)
-          const rootOf = ev.thread_root_id
-          unhost(ev.id)
-          setPinned(ev.id, null)
-          const drop = (list: Message[]) => {
-            const i = indexOfId(list, ev.id)
-            const cut = unlinkPin(
-              quoteDeleted(i === -1 ? list : [...list.slice(0, i), ...list.slice(i + 1)], ev.id),
-              ev.id
-            )
-            return rootOf === null
-              ? cut
-              : patchById(cut, rootOf, m => ({
-                  ...m,
-                  reply_count: Math.max(0, m.reply_count - 1),
-                }))
-          }
-          tails.delete(threadKey(ev.id))
-          views.delete(threadKey(ev.id))
-          mapTails(drop)
-          forgetPending(key => key !== threadKey(ev.id))
-          set(s => {
-            const kept = { ...s.messages }
-            delete kept[threadKey(ev.id)]
-            const messages = mapLists(kept, drop)
-            const panel =
-              s.panel?.kind === 'thread' && s.panel.root.id === ev.id
-                ? null
-                : s.panel?.kind === 'thread' && s.panel.root.id === rootOf
-                  ? {
-                      ...s.panel,
-                      root: {
-                        ...s.panel.root,
-                        reply_count: Math.max(0, s.panel.root.reply_count - 1),
-                      },
-                    }
-                  : s.panel
-            const replying = Object.fromEntries(
-              Object.entries(s.replying).filter(
-                ([key, r]) => r.message.id !== ev.id && key !== threadKey(ev.id)
-              )
-            )
-            return {
-              messages,
-              panel:
-                panel?.kind === 'thread' && panel.root.reply_to?.id === ev.id
-                  ? { ...panel, root: quoteDeleted([panel.root], ev.id)[0] }
-                  : panel,
-              ...(Object.keys(replying).length === Object.keys(s.replying).length
-                ? {}
-                : { replying }),
-              ...(s.editing && (s.editing.id === ev.id || s.editing.key === threadKey(ev.id))
-                ? { editing: null }
-                : {}),
-            }
-          })
+          dropDeleted(ev.id, ev.thread_root_id, ev.server)
+          return
+        }
+        case 'messages_deleted': {
+          for (const id of ev.ids) dropDeleted(id, ev.thread_root_id, ev.server)
           return
         }
         case 'media_removed': {

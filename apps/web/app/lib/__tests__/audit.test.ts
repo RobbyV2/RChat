@@ -137,6 +137,35 @@ describe('audit sentences', () => {
     expect(sentenceText(renamed)).toBe('Alice renamed #old to #new')
   })
 
+  test('bulk deletes give the count, the authors and the thread', () => {
+    const bulk = entry({
+      action: 'message.bulk_delete',
+      target: channelTarget('general'),
+      details: {
+        channel: { id: 1, name: 'general', private: false },
+        count: 3,
+        total: 37,
+        authors: [
+          { name: 'bob', count: 2 },
+          { deleted: true, count: 1 },
+        ],
+        more_authors: 0,
+      },
+    })
+    expect(sentenceText(bulk)).toBe('Alice deleted 37 messages in #general')
+    expect(factsOf(bulk)).toEqual([
+      ['Messages deleted', '37'],
+      ["Other people's messages", '3'],
+      ['Authors', 'bob (2), Deleted user (1)'],
+    ])
+    const thread = entry({
+      ...bulk,
+      details: { ...bulk.details, total: 1, thread: true, more_authors: 4 },
+    })
+    expect(sentenceText(thread)).toBe('Alice deleted 1 message from a thread in #general')
+    expect(factsOf(thread).at(-1)).toEqual(['More authors', '4'])
+  })
+
   test('hidden entries leave the channel out', () => {
     const hidden = entry({
       action: 'message.delete',

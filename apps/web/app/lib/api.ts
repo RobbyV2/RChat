@@ -4,6 +4,7 @@ import type {
   AuditEntry,
   AuthResponse,
   BlockedUser,
+  BulkJob,
   Friend,
   FriendRequest,
   FriendSummary,
@@ -301,6 +302,31 @@ export interface PollOptionReq {
   emoji?: string | null
 }
 
+export interface BulkDeleteReq {
+  // `c{channel}`, `t{thread root}` or `d{dm}`.
+  scope: string
+  ids?: number[]
+  all?: boolean
+  except?: number[]
+  before?: number
+  after?: number
+  // With `all`: only this author's messages.
+  author?: string
+  dry_run?: boolean
+}
+
+export interface BulkDeleteResp {
+  total: number
+  deletable: number
+  others: number
+  missing: number
+  deleted: number
+  ids: number[]
+  job: BulkJob | null
+  // For `all`: the newest message id counted; send `before: upto + 1` to delete just those.
+  upto?: number | null
+}
+
 export interface PollReq {
   question: string
   kind: PollKind
@@ -559,6 +585,9 @@ export const endpoints = (c: ApiClient) => ({
   sendDmMessage: (id: number, content: string, opts: SendOpts = {}) =>
     c.req<Message>('POST', `/dms/${id}/messages`, { content, ...opts }),
   deleteMessage: (id: number) => c.req<unknown>('DELETE', `/messages/${id}`),
+  bulkDelete: (req: BulkDeleteReq) => c.req<BulkDeleteResp>('POST', '/messages/bulk_delete', req),
+  bulkJobs: () => c.req<BulkJob[]>('GET', '/messages/bulk_delete/jobs'),
+  cancelBulkJob: (id: number) => c.req<BulkJob>('DELETE', `/messages/bulk_delete/jobs/${id}`),
   editMessage: (id: number, content: string) =>
     c.req<Message>('PATCH', `/messages/${id}`, { content }),
   deleteMedia: (id: number) => c.req<unknown>('DELETE', `/messages/${id}/media`),

@@ -326,6 +326,19 @@ pub enum WsEvent {
         id: i64,
         thread_root_id: Option<i64>,
     },
+    /// Messages of one channel, thread (`thread_root_id`) or DM deleted together by a bulk
+    /// delete; ids only. A viewer without read history of some of them gets only the ids it
+    /// could read (`created` is routing only).
+    MessagesDeleted {
+        server: Option<String>,
+        channel_id: Option<i64>,
+        dm_id: Option<i64>,
+        dm_users: Option<Vec<String>>,
+        thread_root_id: Option<i64>,
+        ids: Vec<i64>,
+        #[serde(default, skip_serializing_if = "routing_only")]
+        created: Vec<i64>,
+    },
     MediaRemoved {
         server: Option<String>,
         channel_id: Option<i64>,
@@ -621,6 +634,11 @@ pub enum WsEvent {
     PollVoted {
         username: String,
         message_id: i64,
+    },
+    /// Progress of `username`'s bulk delete job; to their own connections only.
+    BulkDeleteProgress {
+        username: String,
+        job: crate::api::bulk_delete::BulkJob,
     },
     /// A friend request between `username` and `request.user` was sent or arrived; to
     /// `username`'s connections only.
@@ -2881,6 +2899,20 @@ async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent
             .is_some_and(|floor| floor.is_none_or(|floor| *created_at >= floor));
     }
     if deliver
+        && let WsEvent::MessagesDeleted {
+            server: Some(server),
+            channel_id: Some(cid),
+            created,
+            ..
+        } = ev
+    {
+        deliver = match access.floor(state, server, *cid).await {
+            Some(Some(floor)) => created.iter().any(|c| *c >= floor),
+            Some(None) => true,
+            None => false,
+        };
+    }
+    if deliver
         && let WsEvent::ChannelDeleted {
             server,
             channel_id: _,
@@ -3268,6 +3300,42 @@ async fn poll_for(state: &AppState, access: &Access, ev: &WsEvent) -> Option<WsE
     })
 }
 
+/// `messages_deleted` for a connection with a read-history floor in its channel: only the ids it
+/// could read. `None` when the shared event fits (or for other events).
+async fn deleted_for(state: &AppState, access: &mut Access, ev: &WsEvent) -> Option<WsEvent> {
+    let WsEvent::MessagesDeleted {
+        server: Some(server),
+        channel_id: Some(cid),
+        dm_id,
+        dm_users,
+        thread_root_id,
+        ids,
+        created,
+    } = ev
+    else {
+        return None;
+    };
+    let floor = access.floor(state, server, *cid).await??;
+    if created.len() == ids.len() && created.iter().all(|c| *c >= floor) {
+        return None;
+    }
+    let (ids, created): (Vec<i64>, Vec<i64>) = ids
+        .iter()
+        .zip(created)
+        .filter(|(_, c)| **c >= floor)
+        .map(|(i, c)| (*i, *c))
+        .unzip();
+    Some(WsEvent::MessagesDeleted {
+        server: Some(server.clone()),
+        channel_id: Some(*cid),
+        dm_id: *dm_id,
+        dm_users: dm_users.clone(),
+        thread_root_id: *thread_root_id,
+        ids,
+        created,
+    })
+}
+
 /// A channel event for one connection, with the channel's `position` counted among the channels
 /// that connection can see. `Some(None)` for other events or when the order can't be loaded;
 /// `None` when the connection must close.
@@ -3648,7 +3716,10 @@ async fn run(state: AppState, mut socket: WebSocket) {
                         }
                     }
                     let mine = match deliver {
-                        true => poll_for(&state, &access, ev).await,
+                        true => match poll_for(&state, &access, ev).await {
+                            Some(mine) => Some(mine),
+                            None => deleted_for(&state, &mut access, ev).await,
+                        },
                         false => None,
                     };
                     if let Some(mine) = &mine && !sent(&mut access, out.event(mine)) {
@@ -4048,6 +4119,15 @@ fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
             id: _,
             thread_root_id: _,
         } => scoped(server, channel_id),
+        WsEvent::MessagesDeleted {
+            server,
+            channel_id,
+            dm_id: _,
+            dm_users: _,
+            thread_root_id: _,
+            ids: _,
+            created: _,
+        } => scoped(server, channel_id),
         WsEvent::MediaRemoved {
             server,
             channel_id,
@@ -4198,6 +4278,15 @@ fn wants(
             dm_users,
             id: _,
             thread_root_id: _,
+        } => scoped(server, dm_users),
+        WsEvent::MessagesDeleted {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            thread_root_id: _,
+            ids: _,
+            created: _,
         } => scoped(server, dm_users),
         WsEvent::MediaRemoved {
             server,
@@ -4373,6 +4462,7 @@ fn wants(
             username,
             message_id: _,
         }
+        | WsEvent::BulkDeleteProgress { username, job: _ }
         | WsEvent::FriendRequestAdded {
             username,
             request: _,
@@ -4756,6 +4846,74 @@ mod tests {
             thread_root_id: None,
             created_at: 1,
             poll: Box::new(crate::api::polls::sample_poll()),
+        };
+        let mut nina = Access::new(Some("nina".to_string()), false, HashSet::new());
+        assert_eq!(on_event(&state, conn, &mut erin, &dm).await, Some(true));
+        assert_eq!(on_event(&state, conn, &mut nina, &dm).await, Some(false));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn bulk_deletes_reach_viewers_with_only_the_ids_they_could_read() {
+        let (state, path) = crate::api::test_util::temp_state("ws_bulk_floor").await;
+        let db = &state.db;
+        for name in ["bob", "erin", "nina", "zed"] {
+            add_user(db, name).await;
+        }
+        exec(db, "INSERT INTO members(server, username, joined_at) VALUES('rchat', 'bob', 1), ('rchat', 'erin', 500), ('rchat', 'zed', 1)").await;
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
+            .fetch_one(db)
+            .await
+            .unwrap()
+            .try_get(0)
+            .unwrap();
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:erin', 1, 1, 0), ($1, 'u:zed', 0, 0, 0)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .unwrap();
+        let ev = |ids: Vec<i64>, created: Vec<i64>| WsEvent::MessagesDeleted {
+            server: Some("rchat".to_string()),
+            channel_id: Some(cid),
+            dm_id: None,
+            dm_users: None,
+            thread_root_id: None,
+            ids,
+            created,
+        };
+        let conn = state.hub.next_conn();
+        let mut bob = Access::new(Some("bob".to_string()), false, set(&["rchat"]));
+        let mut erin = Access::new(Some("erin".to_string()), false, set(&["rchat"]));
+        let mut zed = Access::new(Some("zed".to_string()), false, set(&["rchat"]));
+        let mixed = ev(vec![9, 8, 7], vec![700, 600, 100]);
+        assert_eq!(on_event(&state, conn, &mut bob, &mixed).await, Some(true));
+        assert!(deleted_for(&state, &mut bob, &mixed).await.is_none());
+        assert_eq!(on_event(&state, conn, &mut zed, &mixed).await, Some(false));
+        assert_eq!(on_event(&state, conn, &mut erin, &mixed).await, Some(true));
+        let Some(WsEvent::MessagesDeleted { ids, .. }) =
+            deleted_for(&state, &mut erin, &mixed).await
+        else {
+            panic!("erin gets her own copy");
+        };
+        assert_eq!(ids, vec![9, 8]);
+        let old = ev(vec![3, 2], vec![100, 200]);
+        assert_eq!(on_event(&state, conn, &mut erin, &old).await, Some(false));
+        assert_eq!(on_event(&state, conn, &mut bob, &old).await, Some(true));
+        let client = serde_json::to_string(&mixed).unwrap();
+        assert!(client.contains(r#""ids":[9,8,7]"#) && !client.contains("created"));
+        assert!(
+            to_bus_json(&mixed)
+                .unwrap()
+                .contains(r#""created":[700,600,100]"#)
+        );
+        let dm = WsEvent::MessagesDeleted {
+            server: None,
+            channel_id: None,
+            dm_id: Some(1),
+            dm_users: Some(vec!["bob".to_string(), "erin".to_string()]),
+            thread_root_id: None,
+            ids: vec![5],
+            created: vec![1],
         };
         let mut nina = Access::new(Some("nina".to_string()), false, HashSet::new());
         assert_eq!(on_event(&state, conn, &mut erin, &dm).await, Some(true));
@@ -8089,6 +8247,15 @@ mod tests {
                 id: 1,
                 thread_root_id: None,
             });
+            evs.push(WsEvent::MessagesDeleted {
+                server: server.clone(),
+                channel_id: server.as_ref().map(|_| 1),
+                dm_id: None,
+                dm_users: dm_users.clone(),
+                thread_root_id: None,
+                ids: vec![1, 2],
+                created: vec![1, 2],
+            });
             evs.push(WsEvent::MediaRemoved {
                 server: server.clone(),
                 channel_id: Some(1),
@@ -8190,6 +8357,20 @@ mod tests {
                     WsEvent::PollVoted {
                         username: s(user),
                         message_id: 1,
+                    },
+                    WsEvent::BulkDeleteProgress {
+                        username: s(user),
+                        job: crate::api::bulk_delete::BulkJob {
+                            id: 1,
+                            scope: s("c1"),
+                            status: crate::api::bulk_delete::JobStatus::Running,
+                            deleted: 0,
+                            skipped: 0,
+                            estimate: 1,
+                            created_at: 1,
+                            finished_at: None,
+                            error: None,
+                        },
                     },
                     WsEvent::FriendRequestAdded {
                         username: s(user),

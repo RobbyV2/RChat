@@ -114,6 +114,15 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             id: _,
             thread_root_id: _,
         }
+        | WsEvent::MessagesDeleted {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            thread_root_id: _,
+            ids: _,
+            created: _,
+        }
         | WsEvent::MediaRemoved {
             server,
             channel_id: _,
@@ -339,6 +348,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             username,
             message_id: _,
         }
+        | WsEvent::BulkDeleteProgress { username, job: _ }
         | WsEvent::FriendRequestAdded {
             username,
             request: _,

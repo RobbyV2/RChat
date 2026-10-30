@@ -4,6 +4,7 @@ pub mod audit;
 pub mod auth;
 pub mod blocks;
 pub mod budget;
+pub mod bulk_delete;
 pub mod categories;
 pub mod config_shares;
 pub mod dms;
@@ -1636,6 +1637,12 @@ fn api_routes(
         .route("/messages/{id}/media", delete(media::delete_media))
         .route("/messages/{id}/location", get(messages::message_location))
         .route("/messages/locations", post(messages::message_locations))
+        .route("/messages/bulk_delete", post(bulk_delete::bulk_delete))
+        .route("/messages/bulk_delete/jobs", get(bulk_delete::list_jobs))
+        .route(
+            "/messages/bulk_delete/jobs/{id}",
+            delete(bulk_delete::cancel_job),
+        )
         .route(
             "/messages/{id}/pin",
             put(pins::pin_message).delete(pins::unpin_message),
@@ -1691,7 +1698,7 @@ pub(crate) mod test_util {
     use crate::ws::Hub;
 
     pub(crate) async fn temp_state(tag: &str) -> (AppState, PathBuf) {
-        let path = std::env::temp_dir().join(format!("rchat_{tag}_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path(tag);
         let _ = std::fs::remove_file(&path);
         let db = open(path.to_str()).await.expect("open db");
         let instance = Instance::load(&db, &InstanceConfig::default())

@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import type { LoginRequest, PollReq, RegisterRequest, SendOpts } from './api'
 import type { PollTarget } from './polls_store'
+import type { Selection } from './selection'
 import type { PendingUpload } from './attachments'
 import type { CallRoute } from './call_choice'
 import type { ConfigDoc, SectionKey } from './config_transfer'
@@ -27,6 +28,7 @@ import type {
   AdminOverview,
   AvatarKind,
   BlockedUser,
+  BulkJob,
   Friend,
   FriendRequest,
   CallKind,
@@ -221,6 +223,12 @@ export interface RChatState {
   friendCounts: { incoming: number; outgoing: number }
   // Settings > Privacy; null until loaded.
   privacy: Privacy | null
+  // Message selection mode (one scope at a time), the anchor a plain click sets, the viewer's
+  // running bulk delete jobs by scope, and what a selection action is busy with.
+  selection: Selection | null
+  selectAnchor: { scope: string; id: number } | null
+  bulkJobs: Record<string, BulkJob>
+  selectionBusy: string | null
   dms: DmSummary[]
   dmsMore: boolean
   serversMore: boolean
@@ -388,6 +396,24 @@ export interface RChatState {
   addPollOption: (id: number, text: string, emoji: string | null) => Promise<string | null>
   closePoll: (id: number) => Promise<void>
   reopenPoll: (id: number) => Promise<void>
+  startSelection: (scope: string, m?: Message) => void
+  exitSelection: () => void
+  setSelectAnchor: (scope: string, id: number) => void
+  toggleSelect: (scope: string, m: Message) => void
+  selectRangeTo: (scope: string, m: Message) => void
+  // A tap on mobile: toggles, or ends a range while the range helper is on.
+  tapSelect: (scope: string, m: Message) => void
+  toggleSelectRange: () => void
+  selectAllMessages: () => void
+  selectAuthorMessages: (username: string) => void
+  clearSelection: () => void
+  askDeleteSelection: () => void
+  pinSelection: (pin: boolean) => Promise<void>
+  copySelectionText: () => void
+  copySelectionLinks: () => void
+  forwardSelection: () => void
+  exportSelection: (format: 'text' | 'json') => Promise<void>
+  cancelBulkJob: (scope: string) => Promise<void>
   reloadLayout: () => void
   noteEmoji: (base: string, picked: string) => void
   setSkinTone: (tone: number) => void

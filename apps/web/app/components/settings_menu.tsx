@@ -8,6 +8,7 @@ import { iceOffer } from '../lib/ice'
 import { defaultBanner } from '../lib/profile'
 import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
 import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio, siteFilterOn } from '../lib/rules'
+import { SHORTCUTS, shortcutLabel, type Shortcut } from '../lib/shortcuts'
 import type { AvatarKind } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
 import { ColorField } from './color_field'
@@ -19,7 +20,6 @@ import { ConfigSyncSection } from './config_sync'
 import { DesktopSection } from './desktop_settings'
 import { BlockedUsersSection } from './blocking'
 import { Choice, PrivacyChoices } from './friends'
-import { FORMATS, keysLabel } from '../lib/format'
 import { PassSwitch, WordGrid } from './word_grid'
 import { FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './ui'
 
@@ -634,6 +634,35 @@ function ModerationText() {
   )
 }
 
+const WHERE: Record<Shortcut['where'], string> = {
+  anywhere: '',
+  composer: 'In the message box',
+  messages: 'On a message',
+  selection: 'While selecting',
+}
+
+function ShortcutList() {
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+      {SHORTCUTS.map(sc => (
+        <div key={`${sc.keys} ${sc.where}`} className="contents">
+          <dt>
+            <kbd className="rounded-md border border-outline-variant bg-surface-container px-1.5 py-0.5 font-mono text-xs text-on-surface">
+              {shortcutLabel(sc.keys)}
+            </kbd>
+          </dt>
+          <dd>
+            {sc.action}
+            {WHERE[sc.where] && (
+              <span className="text-on-surface-variant/70"> · {WHERE[sc.where]}</span>
+            )}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
 function InformationSection() {
   return (
     <div className="flex flex-col gap-8">
@@ -699,36 +728,17 @@ function InformationSection() {
           updates, and never appear in presence. Their server list lives in their own browser.
         </p>
       </Info>
-      <Info title="Text formatting">
-        <FormattingHelp />
+      <Info title="Keyboard shortcuts">
+        <p>
+          Select text in the message box or the edit box for the formatting toolbar, or use the keys
+          below. Spoilers are written as ||text|| and stay hidden until clicked.
+        </p>
+        <ShortcutList />
       </Info>
       <Info title="Moderation">
         <ModerationText />
       </Info>
     </div>
-  )
-}
-
-function FormattingHelp() {
-  return (
-    <>
-      <p>
-        Select text in the message box or the edit box for the formatting toolbar, or use these
-        keys. Spoilers are written as ||text|| and stay hidden until clicked.
-      </p>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-        {FORMATS.filter(f => f.keys !== null).map(f => (
-          <div key={f.format} className="contents">
-            <dt>{f.label}</dt>
-            <dd>
-              <kbd className="rounded bg-surface-container-high px-1.5 py-0.5 font-mono text-xs text-on-surface">
-                {keysLabel(f.keys ?? '')}
-              </kbd>
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </>
   )
 }
 

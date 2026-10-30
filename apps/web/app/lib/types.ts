@@ -308,6 +308,19 @@ export interface Message {
   poll?: Poll | null
 }
 
+// A background bulk delete (`all`), see `POST /api/messages/bulk_delete`.
+export interface BulkJob {
+  id: number
+  scope: string
+  status: 'running' | 'done' | 'cancelled' | 'failed'
+  deleted: number
+  skipped: number
+  estimate: number
+  created_at: number
+  finished_at: number | null
+  error: string | null
+}
+
 export type GroupKind = 'everyone' | 'here' | 'role'
 
 export interface GroupMention {
@@ -696,6 +709,8 @@ export type WsEvent =
       count?: number
     } & Scoped)
   | ({ type: 'message_deleted'; id: number; thread_root_id: number | null } & Scoped)
+  | ({ type: 'messages_deleted'; ids: number[]; thread_root_id: number | null } & Scoped)
+  | { type: 'bulk_delete_progress'; username: string; job: BulkJob }
   | { type: 'poll_voted'; username: string; message_id: number }
   | ({
       type: 'poll_updated'

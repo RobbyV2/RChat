@@ -167,6 +167,11 @@ async fn main() -> anyhow::Result<()> {
                     if let Err(e) = rust_next::api::polls::close_due(&voice).await {
                         tracing::warn!("closing due polls failed: {e}");
                     }
+                    match rust_next::api::bulk_delete::resume_jobs(&voice).await {
+                        Ok(0) => {}
+                        Ok(n) => info!("resumed {n} interrupted bulk deletions"),
+                        Err(e) => tracing::warn!("resuming bulk deletions failed: {e}"),
+                    }
                     let until = rust_next::db::now();
                     match rust_next::ws::announce_expired_passwords(&voice, since, until).await {
                         Ok(()) => since = until,

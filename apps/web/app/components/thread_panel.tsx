@@ -53,6 +53,13 @@ import { PollCard, pollMenuItems } from './poll_card'
 import { canEdit as ownEditable } from '../lib/sed'
 import { MessageEditor, editAction, editMenuItem } from './message_editor'
 import { useMyTimeoutEnds } from './timeout_dialog'
+import {
+  BulkJobBar,
+  Selectable,
+  SelectionBar,
+  openSelectionMenu,
+  selectMenuItem,
+} from './selection'
 
 const EMPTY: Message[] = []
 
@@ -108,8 +115,10 @@ export default function ThreadPanel() {
     replies[0]?.id,
     older?.loading === true || newer?.loading === true
   )
+  const selecting = useStore(s => key !== null && s.selection?.scope === key)
   useEscape(e => {
-    if (!e.defaultPrevented) closePanel()
+    if (useStore.getState().selection) useStore.getState().exitSelection()
+    else if (!e.defaultPrevented) closePanel()
   }, 'panel')
 
   const scroll = useChatScroll({
@@ -180,11 +189,15 @@ export default function ThreadPanel() {
   }
 
   const rowMenu = (m: Message) => (x: number, y: number) => {
+    const reply = m.id !== root.id
+    if (reply && openSelectionMenu(key, m, x, y)) return
+    const select = reply ? selectMenuItem(key, m) : null
     const items: ContextMenuItem[] = []
     if (canEdit(m)) items.push(editMenuItem(() => editMsg(m)))
     if (canReply(m)) items.push(replyMenuItem(() => replyTo(m)))
     if (forwardable(m)) items.push(forwardMenuItem(() => copyForward(m)))
     items.push(...pollMenuItems(m))
+    if (select) items.push(select)
     if (m.id !== root.id && canDelete(m))
       items.push({
         label: 'Delete Message',
@@ -269,13 +282,15 @@ export default function ThreadPanel() {
   }
 
   return (
-    <div className="flex h-full w-full flex-col bg-surface-container-low">
+    <div data-thread-panel className="flex h-full w-full flex-col bg-surface-container-low">
       <PanelHeader
         icon={MessageSquareText}
         title="Thread"
         closeTitle="Close thread"
         onClose={closePanel}
       />
+      {wide && <SelectionBar scope={key} sheet={false} compact />}
+      <BulkJobBar scope={key} />
       <div className="relative flex min-h-0 flex-1 flex-col">
         {older?.loading && <OlderLoading />}
         {newer?.loading && <OlderLoading newer />}
@@ -294,7 +309,15 @@ export default function ThreadPanel() {
               {root.reply_count} {root.reply_count === 1 ? 'reply' : 'replies'}
               <span className="h-px flex-1 bg-outline-variant" />
             </div>
-            <BlockedList messages={replies} focusId={focus?.id ?? null} row={row} />
+            <BlockedList
+              messages={replies}
+              focusId={focus?.id ?? null}
+              row={m => (
+                <Selectable key={m.id} m={m} scope={key}>
+                  {row(m)}
+                </Selectable>
+              )}
+            />
             {positioned && detached && replies.length > 0 && (
               <EdgeSentinel
                 key={`n${replies[replies.length - 1].id}`}
@@ -313,7 +336,7 @@ export default function ThreadPanel() {
       </div>
       <div className="relative shrink-0">
         <TypingIndicator scope={key} bg="bg-surface-container-low" />
-        <MessageComposer thread />
+        {selecting && !wide ? <SelectionBar scope={key} sheet /> : <MessageComposer thread />}
       </div>
     </div>
   )

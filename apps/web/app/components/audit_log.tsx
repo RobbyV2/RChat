@@ -22,6 +22,7 @@ import {
   changesOf,
   factsOf,
   isNameValue,
+  isNameFact,
   fieldLabel,
   groupOf,
   sentence,
@@ -365,7 +366,9 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
           {facts.map(([label, value]) => (
             <div key={label} className="contents">
               <dt className="text-on-surface-variant">{label}</dt>
-              <dd className="break-words text-on-surface">{value}</dd>
+              <dd className={`break-words text-on-surface ${isNameFact(label) ? 'streamer' : ''}`}>
+                {value}
+              </dd>
             </div>
           ))}
         </dl>

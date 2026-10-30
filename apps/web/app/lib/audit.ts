@@ -74,6 +74,11 @@ const FIELD_LABELS: Record<string, string> = {
   duration: 'Duration',
   remaining: 'Time left',
   reason: 'Reason',
+  total: 'Messages deleted',
+  count: "Other people's messages",
+  authors: 'Authors',
+  more_authors: 'More authors',
+  thread: 'Thread replies',
 }
 
 export const fieldLabel = (field: string) => FIELD_LABELS[field] ?? field.replaceAll('_', ' ')
@@ -102,6 +107,14 @@ export function valueText(field: string, v: unknown): string {
     if (field === 'until') return 'Not timed out'
     return 'None'
   }
+  if (field === 'authors' && Array.isArray(v))
+    return v
+      .map(a => {
+        const o = obj(a)
+        const n = typeof o?.count === 'number' ? ` (${o.count})` : ''
+        return `${str(o?.name) ?? 'Deleted user'}${n}`
+      })
+      .join(', ')
   if (typeof v === 'boolean') {
     if (RULE_FIELDS.has(field)) return v ? 'Allowed' : 'Denied'
     return v ? 'On' : 'Off'
@@ -136,11 +149,21 @@ const FACTS = [
   'duration',
   'remaining',
   'reason',
+  'total',
+  'count',
+  'authors',
+  'more_authors',
 ]
 
 // Extra facts of an entry next to its changes, as label and value.
 export const factsOf = (entry: AuditEntry): [string, string][] =>
-  FACTS.filter(k => k in entry.details).map(k => [fieldLabel(k), valueText(k, entry.details[k])])
+  FACTS.filter(k => k in entry.details && !(k === 'more_authors' && !entry.details[k])).map(k => [
+    fieldLabel(k),
+    valueText(k, entry.details[k]),
+  ])
+
+// Facts whose value names people (streamer blur).
+export const isNameFact = (label: string) => label === FIELD_LABELS.authors
 
 const actorParts = (entry: AuditEntry): Part[] => {
   if (entry.staff) return [{ text: 'Instance staff' }]
@@ -338,6 +361,12 @@ export function sentence(entry: AuditEntry): Part[] {
       ]
     case 'message.delete':
       return [...actor, t(' deleted a message by '), ...user, t(` in ${ch()}`)]
+    case 'message.bulk_delete': {
+      const n = typeof entry.details.total === 'number' ? entry.details.total : 0
+      const what = `${n.toLocaleString('en-US')} ${n === 1 ? 'message' : 'messages'}`
+      const where = entry.details.thread ? ` from a thread in ${ch()}` : ` in ${ch()}`
+      return [...actor, t(` deleted ${what}${where}`)]
+    }
     case 'message.attachment_remove':
       return [...actor, t(' removed an attachment from a message by '), ...user, t(` in ${ch()}`)]
     case 'message.pin':

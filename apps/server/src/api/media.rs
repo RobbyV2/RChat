@@ -684,7 +684,7 @@ mod tests {
 
     #[tokio::test]
     async fn sweep_skips_p2p() {
-        let path = std::env::temp_dir().join(format!("rchat_sweep_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("sweep");
         let _ = std::fs::remove_file(&path);
         let db = open(path.to_str()).await.expect("open db");
         let old = now() - 90000;

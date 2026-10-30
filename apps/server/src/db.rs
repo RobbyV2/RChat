@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS polls(message_id INTEGER PRIMARY KEY REFERENCES messa
 CREATE TABLE IF NOT EXISTS poll_options(id INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, position INTEGER NOT NULL, text TEXT NOT NULL, emoji TEXT, added_by TEXT, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS poll_votes(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, voter TEXT NOT NULL, option_id INTEGER NOT NULL, value INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(message_id, voter, option_id));
 CREATE TABLE IF NOT EXISTS poll_snapshots(message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS bulk_delete_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, scope TEXT NOT NULL, channel_id INTEGER, status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','done','cancelled','failed')), except_ids TEXT NOT NULL DEFAULT '[]', after_id INTEGER NOT NULL DEFAULT 0, upto_id INTEGER NOT NULL DEFAULT 0, cursor_id INTEGER NOT NULL DEFAULT 0, estimate INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, skipped INTEGER NOT NULL DEFAULT 0, authors TEXT NOT NULL DEFAULT '{}', staff INTEGER NOT NULL DEFAULT 0, author_filter TEXT, audit_id INTEGER, error TEXT, claimed_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, finished_at INTEGER);
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -129,6 +130,10 @@ CREATE INDEX IF NOT EXISTS idx_polls_due ON polls(closes_at) WHERE closed_at IS 
 CREATE INDEX IF NOT EXISTS idx_poll_options_message ON poll_options(message_id, position);
 CREATE INDEX IF NOT EXISTS idx_poll_votes_option ON poll_votes(message_id, option_id, created_at, voter);
 CREATE INDEX IF NOT EXISTS idx_poll_votes_voter ON poll_votes(voter);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bulk_delete_jobs_running ON bulk_delete_jobs(username, scope) WHERE status = 'running';
+CREATE INDEX IF NOT EXISTS idx_bulk_delete_jobs_user ON bulk_delete_jobs(username, id);
+CREATE INDEX IF NOT EXISTS idx_bulk_delete_jobs_claim ON bulk_delete_jobs(status, claimed_at);
+CREATE INDEX IF NOT EXISTS idx_bulk_delete_jobs_finished ON bulk_delete_jobs(finished_at);
 ";
 
 const POSTGRES_SCHEMA: &str = "
@@ -179,6 +184,7 @@ CREATE TABLE IF NOT EXISTS polls(message_id BIGINT PRIMARY KEY REFERENCES messag
 CREATE TABLE IF NOT EXISTS poll_options(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, position BIGINT NOT NULL, text TEXT NOT NULL, emoji TEXT, added_by TEXT, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS poll_votes(message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, voter TEXT NOT NULL, option_id BIGINT NOT NULL, value BIGINT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(message_id, voter, option_id));
 CREATE TABLE IF NOT EXISTS poll_snapshots(message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS bulk_delete_jobs(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, username TEXT NOT NULL, scope TEXT NOT NULL, channel_id BIGINT, status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','done','cancelled','failed')), except_ids TEXT NOT NULL DEFAULT '[]', after_id BIGINT NOT NULL DEFAULT 0, upto_id BIGINT NOT NULL DEFAULT 0, cursor_id BIGINT NOT NULL DEFAULT 0, estimate BIGINT NOT NULL DEFAULT 0, deleted BIGINT NOT NULL DEFAULT 0, skipped BIGINT NOT NULL DEFAULT 0, authors TEXT NOT NULL DEFAULT '{}', staff BIGINT NOT NULL DEFAULT 0, author_filter TEXT, audit_id BIGINT, error TEXT, claimed_at BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, finished_at BIGINT);
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -250,6 +256,10 @@ CREATE INDEX IF NOT EXISTS idx_polls_due ON polls(closes_at) WHERE closed_at IS 
 CREATE INDEX IF NOT EXISTS idx_poll_options_message ON poll_options(message_id, position);
 CREATE INDEX IF NOT EXISTS idx_poll_votes_option ON poll_votes(message_id, option_id, created_at, voter);
 CREATE INDEX IF NOT EXISTS idx_poll_votes_voter ON poll_votes(voter);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bulk_delete_jobs_running ON bulk_delete_jobs(username, scope) WHERE status = 'running';
+CREATE INDEX IF NOT EXISTS idx_bulk_delete_jobs_user ON bulk_delete_jobs(username, id);
+CREATE INDEX IF NOT EXISTS idx_bulk_delete_jobs_claim ON bulk_delete_jobs(status, claimed_at);
+CREATE INDEX IF NOT EXISTS idx_bulk_delete_jobs_finished ON bulk_delete_jobs(finished_at);
 ";
 
 const SQLITE_SEARCH: &[&str] = &[
@@ -507,6 +517,25 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("dms", "closed_a {INT} NOT NULL DEFAULT 0"),
     ("dms", "closed_b {INT} NOT NULL DEFAULT 0"),
     ("polls", "version {INT} NOT NULL DEFAULT 0"),
+    ("bulk_delete_jobs", "channel_id {INT}"),
+    (
+        "bulk_delete_jobs",
+        "status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','done','cancelled','failed'))",
+    ),
+    ("bulk_delete_jobs", "except_ids TEXT NOT NULL DEFAULT '[]'"),
+    ("bulk_delete_jobs", "after_id {INT} NOT NULL DEFAULT 0"),
+    ("bulk_delete_jobs", "upto_id {INT} NOT NULL DEFAULT 0"),
+    ("bulk_delete_jobs", "cursor_id {INT} NOT NULL DEFAULT 0"),
+    ("bulk_delete_jobs", "estimate {INT} NOT NULL DEFAULT 0"),
+    ("bulk_delete_jobs", "deleted {INT} NOT NULL DEFAULT 0"),
+    ("bulk_delete_jobs", "skipped {INT} NOT NULL DEFAULT 0"),
+    ("bulk_delete_jobs", "authors TEXT NOT NULL DEFAULT '{}'"),
+    ("bulk_delete_jobs", "staff {INT} NOT NULL DEFAULT 0"),
+    ("bulk_delete_jobs", "author_filter TEXT"),
+    ("bulk_delete_jobs", "audit_id {INT}"),
+    ("bulk_delete_jobs", "error TEXT"),
+    ("bulk_delete_jobs", "claimed_at {INT} NOT NULL DEFAULT 0"),
+    ("bulk_delete_jobs", "finished_at {INT}"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -555,7 +584,23 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// 11: polls (`polls`, `poll_options`, `poll_votes`, `poll_snapshots`).
 /// 12: `group_pings_read` (group mentions marked read in the inbox) and the
 /// `group_pings(server, created_at, message_id)` index.
-pub const SCHEMA_VERSION: i64 = 12;
+/// 13: bulk delete jobs (`bulk_delete_jobs`).
+pub const SCHEMA_VERSION: i64 = 13;
+
+/// A temp database path no other test in any process uses at the same time: the process id,
+/// the test's name and a counter.
+#[cfg(test)]
+pub(crate) fn temp_db_path(tag: &str) -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let test: String = std::thread::current()
+        .name()
+        .unwrap_or("test")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    std::env::temp_dir().join(format!("rchat_{tag}_{}_{test}_{n}.db", std::process::id()))
+}
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
@@ -1397,6 +1442,7 @@ pub struct Swept {
     pub config_shares: u64,
     pub audit_log: u64,
     pub member_timeouts: u64,
+    pub bulk_delete_jobs: u64,
 }
 
 async fn delete_batched(db: &Db, sql: &'static str, cutoff: i64) -> sqlx::Result<u64> {
@@ -1584,6 +1630,12 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
             db,
             "DELETE FROM member_timeouts WHERE (server, username) IN (SELECT server, username FROM member_timeouts WHERE until < $1 LIMIT $2)",
             t - TIMEOUT_KEEP,
+        )
+        .await?,
+        bulk_delete_jobs: delete_batched(
+            db,
+            "DELETE FROM bulk_delete_jobs WHERE id IN (SELECT id FROM bulk_delete_jobs WHERE status <> 'running' AND finished_at < $1 LIMIT $2)",
+            t - crate::api::bulk_delete::JOB_KEEP,
         )
         .await?,
     })
@@ -1816,7 +1868,7 @@ mod tests {
 
     #[tokio::test]
     async fn new_columns_are_backfilled_on_existing_databases() {
-        let path = std::env::temp_dir().join(format!("rchat_backfill_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("backfill");
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
@@ -1865,8 +1917,7 @@ mod tests {
 
     #[tokio::test]
     async fn existing_users_get_a_presence_seq_column() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_presence_seq_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("presence_seq");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -1905,7 +1956,7 @@ mod tests {
 
     #[tokio::test]
     async fn existing_channels_get_an_empty_topic_column() {
-        let path = std::env::temp_dir().join(format!("rchat_topic_col_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("topic_col");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -1975,7 +2026,7 @@ mod tests {
 
     #[tokio::test]
     async fn existing_channels_keep_their_order_after_categories() {
-        let path = std::env::temp_dir().join(format!("rchat_layout_col_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("layout_col");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -2072,7 +2123,7 @@ mod tests {
 
     #[tokio::test]
     async fn existing_dms_start_open() {
-        let path = std::env::temp_dir().join(format!("rchat_dm_closed_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("dm_closed");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -2138,7 +2189,7 @@ mod tests {
 
     #[tokio::test]
     async fn existing_databases_get_blocks() {
-        let path = std::env::temp_dir().join(format!("rchat_blocks_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("blocks");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -2211,7 +2262,7 @@ mod tests {
 
     #[tokio::test]
     async fn existing_databases_get_friends() {
-        let path = std::env::temp_dir().join(format!("rchat_friends_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("friends");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -2316,7 +2367,7 @@ mod tests {
 
     #[tokio::test]
     async fn existing_databases_get_polls() {
-        let path = std::env::temp_dir().join(format!("rchat_polls_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("polls");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -2431,8 +2482,111 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn existing_databases_get_bulk_delete_jobs() {
+        let path = crate::db::temp_db_path("bulk_jobs_migration");
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_bulk_delete_jobs_running",
+            "DROP INDEX idx_bulk_delete_jobs_user",
+            "DROP INDEX idx_bulk_delete_jobs_claim",
+            "DROP INDEX idx_bulk_delete_jobs_finished",
+            "DROP TABLE bulk_delete_jobs",
+            "UPDATE settings SET value = '12' WHERE key = 'schema_version'",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', '', 'text', 'identicon', 1)",
+            "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', 'old message', 3 FROM channels WHERE server = 'rchat'",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM bulk_delete_jobs").await, 0);
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_bulk_delete_jobs_%'"
+                )
+                .await,
+                4
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM messages WHERE content = 'old message' AND created_at = 3"
+                )
+                .await,
+                1
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            close(&db).await;
+        }
+        let db = open(path.to_str()).await.expect("reopen");
+        sqlx::query(
+            "INSERT INTO bulk_delete_jobs(username, scope, created_at) VALUES('alice', 'c1', 5)",
+        )
+        .execute(&db)
+        .await
+        .expect("job");
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM bulk_delete_jobs WHERE status = 'running' AND except_ids = '[]' AND after_id = 0 AND upto_id = 0 AND cursor_id = 0 AND estimate = 0 AND deleted = 0 AND skipped = 0 AND authors = '{}' AND staff = 0 AND author_filter IS NULL AND audit_id IS NULL AND error IS NULL AND claimed_at = 0 AND finished_at IS NULL AND channel_id IS NULL").await,
+            1,
+            "defaults"
+        );
+        for bad in [
+            "INSERT INTO bulk_delete_jobs(username, scope, created_at) VALUES('alice', 'c1', 6)",
+            "UPDATE bulk_delete_jobs SET status = 'paused'",
+        ] {
+            assert!(sqlx::query(bad).execute(&db).await.is_err(), "{bad}");
+        }
+        sqlx::query("UPDATE bulk_delete_jobs SET status = 'done'")
+            .execute(&db)
+            .await
+            .expect("done");
+        sqlx::query(
+            "INSERT INTO bulk_delete_jobs(username, scope, created_at) VALUES('alice', 'c1', 6)",
+        )
+        .execute(&db)
+        .await
+        .expect("a new job once the old one ended");
+        for stmt in [
+            "DROP INDEX idx_bulk_delete_jobs_running",
+            "DROP INDEX idx_bulk_delete_jobs_claim",
+            "DROP INDEX idx_bulk_delete_jobs_finished",
+            "DROP TABLE bulk_delete_jobs",
+            "CREATE TABLE bulk_delete_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, scope TEXT NOT NULL, created_at INTEGER NOT NULL)",
+            "INSERT INTO bulk_delete_jobs(username, scope, created_at) VALUES('alice', 'c9', 7)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("heal columns");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM bulk_delete_jobs WHERE status = 'running' AND deleted = 0 AND claimed_at = 0 AND author_filter IS NULL AND audit_id IS NULL").await,
+                1,
+                "healed"
+            );
+            close(&db).await;
+        }
+        wipe();
+    }
+
+    #[tokio::test]
     async fn existing_users_get_an_empty_bio_column() {
-        let path = std::env::temp_dir().join(format!("rchat_bio_col_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("bio_col");
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
@@ -2467,8 +2621,7 @@ mod tests {
 
     #[tokio::test]
     async fn existing_servers_get_empty_color_columns() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_server_colors_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("server_colors");
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
@@ -2506,7 +2659,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_interrupted_migration_still_backfills_on_the_next_boot() {
-        let path = std::env::temp_dir().join(format!("rchat_migrate_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("migrate");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -2557,10 +2710,7 @@ mod tests {
 
     #[tokio::test]
     async fn guest_grant_networks_migrate_onto_an_old_database() {
-        let path = std::env::temp_dir().join(format!(
-            "rchat_grant_network_upgrade_{}.db",
-            std::process::id()
-        ));
+        let path = crate::db::temp_db_path("grant_network_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -2594,8 +2744,7 @@ mod tests {
 
     #[tokio::test]
     async fn call_log_kinds_migrate_onto_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_call_kind_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("call_kind_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -2639,7 +2788,7 @@ mod tests {
 
     #[tokio::test]
     async fn server_passwords_migrate_onto_an_old_database() {
-        let path = std::env::temp_dir().join(format!("rchat_pw_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("pw_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -2733,8 +2882,7 @@ mod tests {
 
     #[tokio::test]
     async fn config_shares_table_is_added_to_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_share_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("share_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -2808,8 +2956,7 @@ mod tests {
 
     #[tokio::test]
     async fn group_mentions_are_added_to_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_group_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("group_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -2901,7 +3048,7 @@ mod tests {
 
     #[tokio::test]
     async fn group_pings_read_replaces_the_inbox_markers() {
-        let path = std::env::temp_dir().join(format!("rchat_group_read_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("group_read");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -2977,8 +3124,7 @@ mod tests {
 
     #[tokio::test]
     async fn audit_log_is_added_to_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_audit_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("audit_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3082,8 +3228,7 @@ mod tests {
 
     #[tokio::test]
     async fn timeouts_are_added_to_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_timeout_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("timeout_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3164,8 +3309,7 @@ mod tests {
 
     #[tokio::test]
     async fn pings_table_is_added_to_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_ping_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("ping_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3256,8 +3400,7 @@ mod tests {
 
     #[tokio::test]
     async fn edited_at_is_added_to_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_edit_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("edit_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3334,8 +3477,7 @@ mod tests {
 
     #[tokio::test]
     async fn forward_columns_are_added_to_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_fwd_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("fwd_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3417,8 +3559,7 @@ mod tests {
 
     #[tokio::test]
     async fn pin_columns_are_added_to_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_pin_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("pin_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3508,8 +3649,7 @@ mod tests {
 
     #[tokio::test]
     async fn system_message_columns_are_added_to_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_system_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("system_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3578,8 +3718,7 @@ mod tests {
 
     #[tokio::test]
     async fn channel_restrictions_are_added_to_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_restrict_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("restrict_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3675,8 +3814,7 @@ mod tests {
 
     #[tokio::test]
     async fn p2p_hashes_and_the_p2p_switch_are_added_to_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_p2p_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("p2p_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3737,8 +3875,7 @@ mod tests {
 
     #[tokio::test]
     async fn restrict_backfill_survives_an_interrupted_upgrade() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_restrict_marker_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("restrict_marker");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3791,7 +3928,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_sweep_keeps_the_newest_seen_pings_of_recipients_above_the_cap() {
-        let path = std::env::temp_dir().join(format!("rchat_pings_kept_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("pings_kept");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3832,8 +3969,7 @@ mod tests {
 
     #[tokio::test]
     async fn rules_from_an_older_binary_restrict_their_channel_on_the_next_start() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_restrict_set_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("restrict_set");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3897,8 +4033,7 @@ mod tests {
 
     #[tokio::test]
     async fn restrict_marks_are_added_to_a_database_that_was_already_upgraded() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_restrict_mark_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("restrict_mark");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -3950,8 +4085,7 @@ mod tests {
 
     #[tokio::test]
     async fn reply_columns_are_added_to_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_reply_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("reply_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -4027,8 +4161,7 @@ mod tests {
 
     #[tokio::test]
     async fn reactions_table_is_added_to_an_old_database() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_reaction_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("reaction_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -4291,6 +4424,18 @@ mod tests {
                 "INSERT INTO member_timeouts(server, username, until, created_at) VALUES('rchat', 'live', $1, 0)",
                 t + 600,
             ),
+            (
+                "INSERT INTO bulk_delete_jobs(username, scope, status, created_at, finished_at) VALUES('a', 'c1', 'done', 0, $1)",
+                t - crate::api::bulk_delete::JOB_KEEP - 1,
+            ),
+            (
+                "INSERT INTO bulk_delete_jobs(username, scope, status, created_at, finished_at) VALUES('a', 'c2', 'cancelled', 0, $1)",
+                t - 60,
+            ),
+            (
+                "INSERT INTO bulk_delete_jobs(username, scope, status, created_at, finished_at, claimed_at) VALUES('a', 'c3', 'running', 0, NULL, $1)",
+                t - crate::api::bulk_delete::JOB_KEEP - 1,
+            ),
         ] {
             sqlx::query(sql).bind(at).execute(db).await.expect(sql);
         }
@@ -4329,6 +4474,7 @@ mod tests {
                 config_shares: 2,
                 audit_log: 1,
                 member_timeouts: 1,
+                bulk_delete_jobs: 1,
             }
         );
         assert_eq!(
@@ -4395,8 +4541,7 @@ mod tests {
 
     #[tokio::test]
     async fn secrets_are_hashed_in_place_and_newer_databases_are_refused() {
-        let path =
-            std::env::temp_dir().join(format!("rchat_secret_upgrade_{}.db", std::process::id()));
+        let path = crate::db::temp_db_path("secret_upgrade");
         let wipe = || {
             for suffix in ["", "-wal", "-shm"] {
                 let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));

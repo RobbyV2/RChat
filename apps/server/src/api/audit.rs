@@ -52,6 +52,7 @@ pub enum Action {
     PasswordCreate,
     PasswordRevoke,
     MessageDelete,
+    MessageBulkDelete,
     AttachmentRemove,
     MessagePin,
     MessageUnpin,
@@ -89,6 +90,7 @@ pub const ACTIONS: &[Action] = &[
     Action::PasswordCreate,
     Action::PasswordRevoke,
     Action::MessageDelete,
+    Action::MessageBulkDelete,
     Action::AttachmentRemove,
     Action::MessagePin,
     Action::MessageUnpin,
@@ -131,6 +133,7 @@ impl Action {
             Action::PasswordCreate => "access.password_create",
             Action::PasswordRevoke => "access.password_revoke",
             Action::MessageDelete => "message.delete",
+            Action::MessageBulkDelete => "message.bulk_delete",
             Action::AttachmentRemove => "message.attachment_remove",
             Action::MessagePin => "message.pin",
             Action::MessageUnpin => "message.unpin",
@@ -422,6 +425,11 @@ async fn is_site_admin(conn: &mut AnyConnection, username: &str) -> sqlx::Result
 /// names people as usual, message authors included: a marker that other events contradict
 /// would reveal who is staff.
 pub async fn record(conn: &mut AnyConnection, entry: Entry) -> sqlx::Result<()> {
+    record_id(conn, entry).await.map(|_| ())
+}
+
+/// `record`, answering the new entry's id.
+pub(crate) async fn record_id(conn: &mut AnyConnection, entry: Entry) -> sqlx::Result<i64> {
     let Entry {
         server,
         actor,
@@ -483,6 +491,20 @@ pub async fn record(conn: &mut AnyConnection, entry: Entry) -> sqlx::Result<()> 
             .execute(&mut *conn)
             .await?;
     }
+    Ok(entry)
+}
+
+/// Replaces the details of entry `id` (written by `record_id` for the same place) with those of
+/// `entry`, for an action that is logged as it goes. The actor only ever turns into Staff, so a
+/// name `forget_user` removed never comes back.
+pub(crate) async fn rewrite(conn: &mut AnyConnection, id: i64, entry: Entry) -> sqlx::Result<()> {
+    let staff = i64::from(matches!(entry.actor, Actor::Staff));
+    sqlx::query("UPDATE audit_log SET details = $1, staff = CASE WHEN $2 = 1 THEN 1 ELSE staff END, actor = CASE WHEN $2 = 1 THEN NULL ELSE actor END WHERE id = $3")
+        .bind(Details::encode(entry.details.map))
+        .bind(staff)
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
     Ok(())
 }
 
@@ -516,6 +538,38 @@ pub(crate) async fn forget_user(conn: &mut AnyConnection, username: &str) -> sql
                 "subject".to_string(),
                 json!({ "kind": "user", "deleted": true }),
             );
+            sqlx::query("UPDATE audit_log SET details = $1 WHERE id = $2")
+                .bind(Value::Object(map).to_string())
+                .bind(id)
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
+    let rows = sqlx::query("SELECT id, details FROM audit_log WHERE action = 'message.bulk_delete' AND details LIKE $1 ESCAPE '\\'")
+        .bind(like_escape(username))
+        .fetch_all(&mut *conn)
+        .await?;
+    for r in &rows {
+        let (id, text): (i64, String) = (r.try_get(0)?, r.try_get(1)?);
+        let Ok(Value::Object(mut map)) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        let Some(Value::Array(authors)) = map.get("authors") else {
+            continue;
+        };
+        let mut changed = false;
+        let authors: Vec<Value> = authors
+            .iter()
+            .map(|a| match a.get("name").and_then(Value::as_str) {
+                Some(n) if n == username => {
+                    changed = true;
+                    json!({ "deleted": true, "count": a.get("count").cloned().unwrap_or(Value::Null) })
+                }
+                _ => a.clone(),
+            })
+            .collect();
+        if changed {
+            map.insert("authors".to_string(), Value::Array(authors));
             sqlx::query("UPDATE audit_log SET details = $1 WHERE id = $2")
                 .bind(Value::Object(map).to_string())
                 .bind(id)

@@ -75,7 +75,7 @@ import { TypingIndicator } from './typing_indicator'
 import { MessageComposer } from './message_composer'
 import StatusClock from './status_clock'
 import { InboxButton } from './inbox'
-import { longPress } from './context_menu'
+import { longPress, useMedia } from './context_menu'
 import { profileTrigger } from './profile_card'
 import { useCallShare, VoiceGrid } from './voice_grid'
 import { ChannelTopic } from './channel_topic'
@@ -110,6 +110,15 @@ import { messageStampToken } from '../lib/timestamps'
 import { MessageTime } from './timestamp'
 import { BlockedComposer, BlockedList, blockMenuItem } from './blocking'
 import { friendMenuItem } from './friends'
+import {
+  BulkJobBar,
+  SelectButton,
+  Selectable,
+  SelectionBar,
+  openSelectionMenu,
+  selectMenuItem,
+  useSelectionKeys,
+} from './selection'
 
 const EMPTY: Message[] = []
 
@@ -645,7 +654,15 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const fresh = newSince(messages, scroll.leftAt, me?.username)
 
   const flash = useFocusMessage(listRef, scope, focus, messages, scroll.settle)
+  const threadScope = useStore(s => (s.panel?.kind === 'thread' ? `t${s.panel.root.id}` : null))
+  useSelectionKeys(scope, [scope, threadScope], threadScope)
+  const selecting = useStore(s => scope !== null && s.selection?.scope === scope)
+  const wide = useMedia('(min-width: 768px)')
   useEscape(e => {
+    if (useStore.getState().selection) {
+      useStore.getState().exitSelection()
+      return
+    }
     if (guest || !escapeMarksRead(e)) return
     if (e.shiftKey) askMarkAllRead()
     else if (scope) dismissUnread(scope)
@@ -674,6 +691,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   }
 
   const messageMenu = (msg: Message, x: number, y: number) => {
+    if (openSelectionMenu(scope, msg, x, y)) return
+    const select = selectMenuItem(scope, msg)
     if (!me) {
       openContextMenu(x, y, messageCopyItems(msg))
       return
@@ -690,6 +709,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
               },
             ]
           : []),
+        ...(select ? [select] : []),
         { label: 'Copy Message ID', icon: Hash, action: () => copy(String(msg.id)) },
       ])
       return
@@ -781,6 +801,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         action: () => openDialog({ kind: 'ban_confirm', username: author.username }),
       })
     }
+    if (select) items.push(select)
     if (canDelete(msg))
       items.push({
         label: 'Delete Message',
@@ -952,6 +973,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {dm && !dm.is_self && !guest && !otherBlocked && <CallButtons dm={dm} />}
           <StatusClock />
+          {scope && <SelectButton scope={scope} />}
           {scope && <PinsButton />}
           {!guest && <InboxButton />}
           {view?.kind === 'channel' && !isVoice && (
@@ -987,6 +1009,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
               <VoiceGrid key={`d${dm.id}`} dmId={dm.id} />
             </div>
           )}
+          {wide && <SelectionBar scope={scope} sheet={false} />}
+          <BulkJobBar scope={scope} />
           <div className="relative flex min-h-0 flex-1 flex-col">
             {older?.loading ? (
               <OlderLoading />
@@ -1033,33 +1057,38 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                   dividerAt={dividerIndex}
                   divider={unreadDivider}
                   row={(m, i) => (
-                    <MessageRow
-                      m={m}
-                      mentioned={mentionedIds.has(m.id)}
-                      divider={i === dividerIndex}
-                      flash={flash === m.id}
-                      canDelete={canDelete(m)}
-                      canReact={canReact}
-                      canUnreact={canUnreact}
-                      canEdit={canEdit(m)}
-                      canForward={forwardable(m)}
-                      editing={editingId === m.id}
-                      channel={view?.kind === 'channel'}
-                      server={memberServer}
-                      color={roleColor(detail?.roles, memberFor(m.author.username)?.role_ids ?? [])}
-                      quoteColor={
-                        m.reply_to?.author
-                          ? roleColor(
-                              detail?.roles,
-                              memberFor(m.reply_to.author.username)?.role_ids ?? []
-                            )
-                          : undefined
-                      }
-                      onMenu={rowMenu}
-                      onReply={rowReply}
-                      onEdit={rowEdit}
-                      onJump={rowJump}
-                    />
+                    <Selectable m={m} scope={scope}>
+                      <MessageRow
+                        m={m}
+                        mentioned={mentionedIds.has(m.id)}
+                        divider={i === dividerIndex}
+                        flash={flash === m.id}
+                        canDelete={canDelete(m)}
+                        canReact={canReact}
+                        canUnreact={canUnreact}
+                        canEdit={canEdit(m)}
+                        canForward={forwardable(m)}
+                        editing={editingId === m.id}
+                        channel={view?.kind === 'channel'}
+                        server={memberServer}
+                        color={roleColor(
+                          detail?.roles,
+                          memberFor(m.author.username)?.role_ids ?? []
+                        )}
+                        quoteColor={
+                          m.reply_to?.author
+                            ? roleColor(
+                                detail?.roles,
+                                memberFor(m.reply_to.author.username)?.role_ids ?? []
+                              )
+                            : undefined
+                        }
+                        onMenu={rowMenu}
+                        onReply={rowReply}
+                        onEdit={rowEdit}
+                        onJump={rowJump}
+                      />
+                    </Selectable>
                   )}
                 />
                 {positioned && detached && messages.length > 0 && (
@@ -1076,7 +1105,13 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           </div>
           <div className="relative shrink-0">
             <TypingIndicator scope={view ? viewKey(view) : null} bg="bg-surface" />
-            {dm && otherBlocked ? <BlockedComposer user={dm.other} /> : <MessageComposer />}
+            {selecting && !wide ? (
+              <SelectionBar scope={scope} sheet />
+            ) : dm && otherBlocked ? (
+              <BlockedComposer user={dm.other} />
+            ) : (
+              <MessageComposer />
+            )}
           </div>
         </>
       )}
