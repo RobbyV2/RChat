@@ -63,6 +63,7 @@ import { sendKey } from '../lib/keys'
 import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { useCopied } from './ui'
+import { ProfileFriendButton } from './friends'
 import { COARSE_QUERY, useMedia } from './context_menu'
 import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
 
@@ -615,6 +616,9 @@ function Card({ target }: { target: ProfileTarget }) {
             <span className="shrink-0">{copied ? <Check size={16} /> : <Copy size={16} />}</span>
             {copied ? 'Copied' : 'Copy User ID'}
           </button>
+          {me && !guest && !self && !missing && !remote && !isBlocked && (
+            <ProfileFriendButton user={user} className={rowCls(sheet)} onDone={close} />
+          )}
           {me && !guest && !self && !missing && !remote && (
             <button
               onClick={() => {

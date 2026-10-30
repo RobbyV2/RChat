@@ -22,6 +22,7 @@ import TimeoutDialog from '../components/timeout_dialog'
 import SettingsMenu from '../components/settings_menu'
 import ThreadPanel from '../components/thread_panel'
 import SearchPanel from '../components/search_panel'
+import FriendsPanel, { AddFriendsDialog } from '../components/friends'
 import { CallBanner } from '../components/voice_grid'
 import { NoticeStack } from '../components/notice_stack'
 import { InvitePage } from '../components/invite_card'
@@ -121,6 +122,11 @@ export default function AppShell() {
     if (useStore.getState().panel?.kind === 'thread') useStore.getState().closePanel()
   }, [view])
 
+  const friendsOpen = panel?.kind === 'friends'
+  useEffect(() => {
+    if (friendsOpen) setLeftOpen(false)
+  }, [friendsOpen])
+
   useEffect(() => {
     if (dialog || confirming) {
       setLeftOpen(false)
@@ -169,7 +175,13 @@ export default function AppShell() {
         )}
         {panel && (
           <div className="fixed inset-x-0 top-app z-40 h-app bg-surface max-md:px-safe md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
-            {panel.kind === 'thread' ? <ThreadPanel /> : <SearchPanel />}
+            {panel.kind === 'thread' ? (
+              <ThreadPanel />
+            ) : panel.kind === 'search' ? (
+              <SearchPanel />
+            ) : (
+              <FriendsPanel />
+            )}
           </div>
         )}
         {leftOpen && (
@@ -195,6 +207,7 @@ export default function AppShell() {
         <ServerDialogs />
         <FolderDialog />
         <CategoryDialog />
+        <AddFriendsDialog />
         <ServerSettings />
         <AuditLogDialog />
         <TimeoutDialog />

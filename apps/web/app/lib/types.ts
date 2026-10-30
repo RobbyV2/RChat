@@ -173,6 +173,25 @@ export interface BlockedUser {
   blocked_at: number
 }
 
+export interface Friend {
+  user: UserRef
+  since: number
+  online: boolean
+}
+
+export interface FriendRequest {
+  user: UserRef
+  created_at: number
+  incoming: boolean
+}
+
+export interface FriendSummary {
+  incoming: number
+  outgoing: number
+  pings: number
+  pings_until: number
+}
+
 export interface ServerBan extends UserRef {
   banned_at: number
 }
@@ -504,7 +523,7 @@ export interface RtcPayload {
   rsid?: string
 }
 
-export type PingKind = 'mention' | 'reply' | 'reaction'
+export type PingKind = 'mention' | 'reply' | 'reaction' | 'friend_request' | 'friend_accept'
 
 export interface Ping {
   id: number
@@ -660,6 +679,12 @@ export type WsEvent =
   | { type: 'dm_reopened'; username: string; dm_id: number }
   | { type: 'user_blocked'; username: string; blocked: BlockedUser }
   | { type: 'user_unblocked'; username: string; blocked: string }
+  | { type: 'friend_request_added'; username: string; request: FriendRequest }
+  | { type: 'friend_request_removed'; username: string; other: string }
+  | { type: 'friend_added'; username: string; friend: Friend }
+  | { type: 'friend_removed'; username: string; friend: string }
+  | { type: 'friend_presence'; username: string; friend: string; online: boolean }
+  | { type: 'privacy_changed'; username: string; privacy: unknown }
   | { type: 'banned'; username: string }
   | { type: 'settings_changed'; settings: SiteSettings }
   | {

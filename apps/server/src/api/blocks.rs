@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::friends;
 use crate::api::pings::announce_counts;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, OkResp, Paged, UserRef, bad, cursor_int, decode_cursor,
@@ -24,6 +25,10 @@ const BLOCKS_PAGE: i64 = 50;
 /// Friends-only DMs give the same text, so it does not tell a block apart.
 pub const NOT_ACCEPTING: &str = "This user is not accepting messages from you.";
 const YOU_BLOCKED: &str = "You blocked this user. Unblock them to send messages.";
+/// The answer when your own "Who can DM you" setting is Friends only and the other user is not
+/// your friend.
+pub const YOU_FRIENDS_ONLY: &str =
+    "You only accept DMs from friends. Change this in Settings > Privacy.";
 
 /// The user to block.
 #[derive(Deserialize, ToSchema)]
@@ -107,8 +112,9 @@ pub(crate) async fn not_blocking(
         .collect())
 }
 
-/// Refuses a DM message or call from `sender` to `other` when either blocked the other. The
-/// blocked side gets the same answer as for any recipient who does not take their messages.
+/// Refuses a DM message or call from `sender` to `other` when either blocked the other, or when
+/// either takes DMs only from friends and they are not friends. The blocked side and non-friends
+/// get the same answer; a refusal because of your own settings says so.
 pub(crate) async fn check_dm(db: &Db, sender: &str, other: &str) -> Result<(), ApiError> {
     if sender == other {
         return Ok(());
@@ -118,6 +124,15 @@ pub(crate) async fn check_dm(db: &Db, sender: &str, other: &str) -> Result<(), A
     }
     if is_blocked(db, sender, other).await? {
         return Err(ApiError(StatusCode::FORBIDDEN, YOU_BLOCKED.to_string()));
+    }
+    if friends::dm_refused(db, other, sender).await? {
+        return Err(ApiError(StatusCode::FORBIDDEN, NOT_ACCEPTING.to_string()));
+    }
+    if friends::dm_refused(db, sender, other).await? {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            YOU_FRIENDS_ONLY.to_string(),
+        ));
     }
     Ok(())
 }
@@ -141,12 +156,6 @@ pub(crate) async fn check_dm_id(db: &Db, actor: &str, dm_id: i64) -> Result<(), 
         return Ok(());
     };
     check_dm_write(db, actor, &[r.try_get(0)?, r.try_get(1)?]).await
-}
-
-/// Ends a friendship between the two users when one blocks the other. Friends do not exist
-/// yet, so there is nothing to remove.
-async fn end_friendship(_state: &AppState, _blocker: &str, _blocked: &str) -> Result<(), ApiError> {
-    Ok(())
 }
 
 /// Removes the unseen pings `blocked` caused for `blocker` and sends `ping_count` for each
@@ -204,12 +213,7 @@ pub(crate) async fn block_user(
     }
     let at = now();
     let mut tx = state.db.begin().await?;
-    if !crate::db::is_sqlite(&state.db) {
-        sqlx::query("SELECT username FROM users WHERE username = $1 FOR NO KEY UPDATE")
-            .bind(&user.username)
-            .fetch_optional(&mut *tx)
-            .await?;
-    }
+    friends::lock_users(&mut tx, &state.db, &[&user.username, &other.username]).await?;
     let added = sqlx::query(
         "INSERT INTO blocks(blocker, blocked, created_at) SELECT $1, $2, $3 WHERE (SELECT COUNT(*) FROM blocks WHERE blocker = $1) < $4 ON CONFLICT(blocker, blocked) DO NOTHING",
     )
@@ -221,21 +225,22 @@ pub(crate) async fn block_user(
     .await?
     .rows_affected()
         > 0;
+    let stored = sqlx::query("SELECT created_at FROM blocks WHERE blocker = $1 AND blocked = $2")
+        .bind(&user.username)
+        .bind(&other.username)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some(stored) = stored else {
+        return Err(bad("You can block at most 1000 users"));
+    };
+    let ended = friends::end_rows(&mut tx, &user.username, &other.username).await?;
     tx.commit().await?;
     if !added {
-        let stored =
-            sqlx::query("SELECT created_at FROM blocks WHERE blocker = $1 AND blocked = $2")
-                .bind(&user.username)
-                .bind(&other.username)
-                .fetch_optional(&state.db)
-                .await?;
-        return match stored {
-            Some(r) => Ok(Json(BlockedUser {
-                user: UserRef::from_user(&other),
-                blocked_at: r.try_get(0)?,
-            })),
-            None => Err(bad("You can block at most 1000 users")),
-        };
+        friends::end_events(&state, &user.username, &other.username, ended).await?;
+        return Ok(Json(BlockedUser {
+            user: UserRef::from_user(&other),
+            blocked_at: stored.try_get(0)?,
+        }));
     }
     let blocked = BlockedUser {
         user: UserRef::from_user(&other),
@@ -245,7 +250,7 @@ pub(crate) async fn block_user(
         username: user.username.clone(),
         blocked: blocked.clone(),
     });
-    end_friendship(&state, &user.username, &other.username).await?;
+    friends::end_events(&state, &user.username, &other.username, ended).await?;
     drop_pings(&state, &user.username, &other.username).await?;
     if let Some(dm_id) = crate::api::dms::close_with(&state, &user, &other.username).await? {
         crate::ws::end_dm_call(&state, &user.username, dm_id).await;
@@ -282,7 +287,7 @@ pub(crate) async fn unblock_user(
     Ok(ok())
 }
 
-fn prefix_pattern(q: &str) -> String {
+pub(crate) fn prefix_pattern(q: &str) -> String {
     let mut p = String::with_capacity(q.len() + 1);
     for c in q.chars() {
         if matches!(c, '%' | '_' | '\\') {

@@ -18,6 +18,7 @@ import { NotificationsSection } from './notify_settings'
 import { ConfigSyncSection } from './config_sync'
 import { DesktopSection } from './desktop_settings'
 import { BlockedUsersSection } from './blocking'
+import { PrivacyChoices } from './friends'
 import { PassSwitch, WordGrid } from './word_grid'
 import { FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './ui'
 
@@ -702,6 +703,8 @@ function Menu() {
             <NotificationsSection />
           ) : section === 'privacy' ? (
             <section>
+              <p className={sectionCls}>Privacy</p>
+              <PrivacyChoices />
               <p className={sectionCls}>Blocked users</p>
               <BlockedUsersSection />
             </section>

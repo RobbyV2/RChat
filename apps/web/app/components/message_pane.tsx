@@ -107,6 +107,7 @@ import { sharing } from '../lib/platform'
 import { messageStampToken } from '../lib/timestamps'
 import { MessageTime } from './timestamp'
 import { BlockedComposer, BlockedList, blockMenuItem } from './blocking'
+import { friendMenuItem } from './friends'
 
 const EMPTY: Message[] = []
 
@@ -762,6 +763,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         label: 'Assign Role',
         action: () => openContextMenu(x, y, roleMenuItems(view.server, author.username)),
       })
+    const friend = friendMenuItem(author)
+    if (friend && !self) items.push(friend)
     const block = blockMenuItem(author)
     if (block) items.push(block)
     if (me.is_site_admin && !self) {

@@ -44,6 +44,7 @@ import {
 } from './viewport_height'
 import { PanelHeader, useEscape } from './ui'
 import { BlockedList, blockMenuItem } from './blocking'
+import { friendMenuItem } from './friends'
 import { ReplyPreview } from './replies'
 import { canQuote } from '../lib/replies'
 import { canForward } from '../lib/forward'
@@ -189,6 +190,8 @@ export default function ThreadPanel() {
         icon: Trash2,
         action: () => confirmDeleteMessage(m.id),
       })
+    const friend = friendMenuItem(m.author)
+    if (friend) items.push(friend)
     const block = blockMenuItem(m.author)
     if (block) items.push(block)
     items.push(...messageCopyItems(m))

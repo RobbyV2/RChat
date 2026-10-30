@@ -12,6 +12,7 @@ import type { OpenInvite } from './invite'
 import type { OlderState, ReadMark } from './lists'
 import type { DmZone, Layout } from './nav_layout'
 import type { Blocked } from './blocks'
+import type { FriendsTab, Privacy, SendResult } from './friends'
 import type { Notice } from './notices'
 import type { Level, MuteUntil, NotifyPrefs, NotifyScope, Suppress } from './notify'
 import type { PassKind, Secret } from './password'
@@ -24,6 +25,8 @@ import type {
   AdminOverview,
   AvatarKind,
   BlockedUser,
+  Friend,
+  FriendRequest,
   CallKind,
   ChannelKind,
   ChannelPerm,
@@ -103,8 +106,10 @@ export type ActiveDialog =
   | { kind: 'settings'; focus?: 'bio' }
   | { kind: 'rename_folder'; id: string }
   | { kind: 'category'; server: string; id?: number }
+  | { kind: 'add_friends'; names: string[] }
 
-export type Panel = { kind: 'thread'; root: Message } | { kind: 'search' }
+export type Panel =
+  { kind: 'thread'; root: Message } | { kind: 'search' } | { kind: 'friends'; tab: FriendsTab }
 
 // The message being edited inline: the list it was started from and the text so far.
 export interface Editing {
@@ -205,6 +210,14 @@ export interface RChatState {
   blocked: Blocked
   // The Settings > Privacy list: paged and searchable.
   blockList: Paged<BlockedUser>
+  // Friends lists (by display name) and pending requests (newest first), lazy loaded.
+  friends: Paged<Friend>
+  onlineFriends: Paged<Friend>
+  incomingRequests: Paged<FriendRequest>
+  outgoingRequests: Paged<FriendRequest>
+  friendCounts: { incoming: number; outgoing: number }
+  // Settings > Privacy; null until loaded.
+  privacy: Privacy | null
   dms: DmSummary[]
   dmsMore: boolean
   serversMore: boolean
@@ -334,6 +347,23 @@ export interface RChatState {
   unblockUser: (username: string, name?: string) => Promise<void>
   // A short confirm, then `blockUser` and a toast.
   askBlock: (user: UserRef) => void
+  openFriends: (tab?: FriendsTab) => void
+  setFriendsTab: (tab: FriendsTab) => void
+  loadFriends: (q: string, reset?: boolean) => Promise<void>
+  loadOnlineFriends: (q: string, reset?: boolean) => Promise<void>
+  loadFriendRequests: (incoming: boolean, reset?: boolean) => Promise<void>
+  sendFriendRequest: (username: string) => Promise<SendResult>
+  sendFriendRequests: (names: string[]) => Promise<Record<string, SendResult>>
+  // Opens the confirm with mini profile previews of `names`.
+  askAddFriends: (names: string[]) => void
+  acceptFriend: (user: UserRef) => Promise<void>
+  denyFriend: (username: string) => Promise<void>
+  cancelFriendRequest: (username: string) => Promise<void>
+  removeFriend: (user: UserRef) => Promise<void>
+  askRemoveFriend: (user: UserRef) => void
+  loadPrivacy: () => Promise<void>
+  setPrivacy: (patch: Partial<Privacy>) => Promise<void>
+  markFriendsSeen: () => void
   reloadLayout: () => void
   noteEmoji: (base: string, picked: string) => void
   setSkinTone: (tone: number) => void

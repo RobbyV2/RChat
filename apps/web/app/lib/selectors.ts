@@ -280,7 +280,11 @@ export const scopePingCount = (s: RChatState, scope: string) => scopePings(badge
 
 export const serverPingCount = (s: RChatState, name: string) => serverPings(badgePings(s), name)
 
-export const dmPingCount = (s: RChatState) => dmPings(badgePings(s))
+// The DM button's count: DM pings plus friend requests and accepted requests.
+export const dmPingCount = (s: RChatState) => {
+  const p = badgePings(s)
+  return dmPings(p) + scopePings(p, 'friends')
+}
 
 export const allPings = (s: RChatState) => totalPings(badgePings(s))
 

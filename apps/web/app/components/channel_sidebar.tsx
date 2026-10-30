@@ -49,6 +49,7 @@ import { UserAvatar } from './user_avatar'
 import { ServerHeader } from './server_header'
 import { longPress } from './context_menu'
 import { blockMenuItem } from './blocking'
+import { FriendsEntry, friendMenuItem } from './friends'
 import { dragScope, useDrag, type DragSpec } from './drag'
 import { profileTrigger } from './profile_card'
 import { LiveBadge, VoiceDock } from './voice_grid'
@@ -104,7 +105,9 @@ function DmRow({
               ? { label: 'Unpin DM', action: () => unpinDm(id) }
               : { label: 'Pin DM', action: () => pinDm(id) },
             { label: 'Close DM', action: () => void closeDm(id) },
-            ...[blockMenuItem(other)].filter(i => i !== null),
+            ...[is_self ? null : friendMenuItem(other), blockMenuItem(other)].filter(
+              i => i !== null
+            ),
             {
               label: 'Copy DM ID',
               action: () => void navigator.clipboard.writeText(String(id)),
@@ -335,6 +338,7 @@ export function ChannelSidebar() {
     return (
       <aside className={base}>
         <div ref={dragScope} className="flex flex-1 flex-col overflow-y-auto pb-3">
+          <FriendsEntry />
           {pinned.length > 0 && (
             <div
               data-drop-zone="pinned"

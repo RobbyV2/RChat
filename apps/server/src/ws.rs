@@ -599,6 +599,48 @@ pub enum WsEvent {
         username: String,
         blocked: String,
     },
+    /// A friend request between `username` and `request.user` was sent or arrived; to
+    /// `username`'s connections only.
+    FriendRequestAdded {
+        username: String,
+        request: crate::api::friends::FriendRequest,
+    },
+    /// The friend request between `username` and `other` is gone (accepted, denied or
+    /// cancelled); to `username`'s connections only.
+    FriendRequestRemoved {
+        username: String,
+        other: String,
+    },
+    /// `friend.user` is now a friend of `username`; to `username`'s connections only.
+    FriendAdded {
+        username: String,
+        friend: crate::api::friends::Friend,
+    },
+    /// `friend` is no longer a friend of `username`; to `username`'s connections only.
+    FriendRemoved {
+        username: String,
+        friend: String,
+    },
+    /// `friend` (a friend of `username`) came online or went offline; to `username`'s
+    /// connections only.
+    FriendPresence {
+        username: String,
+        friend: String,
+        online: bool,
+    },
+    /// `username` changed their privacy settings; to that user's connections only.
+    PrivacyChanged {
+        username: String,
+        privacy: crate::api::friends::Privacy,
+    },
+    /// Internal, never delivered: `username` became visible on the site (`online`), or stopped
+    /// being visible (after the offline grace, or at once when they appear offline). The hub's
+    /// replica emits it on every instance (`Hub::take_shown`), and each instance tells the
+    /// friends connected to it (`friend_presence`).
+    UserShown {
+        username: String,
+        online: bool,
+    },
     Banned {
         username: String,
     },
@@ -887,6 +929,14 @@ pub async fn settle(state: &AppState, purge: Purge) {
 }
 
 pub fn spawn_aftermath(state: &AppState) {
+    if let Some(mut shown) = state.hub.take_shown() {
+        let state = state.clone();
+        tokio::spawn(async move {
+            while let Some((user, online)) = shown.recv().await {
+                crate::api::friends::tell_friends(&state, &user, online).await;
+            }
+        });
+    }
     if let Some(mut rx) = state.hub.take_aftermath() {
         let state = state.clone();
         tokio::spawn(async move {
@@ -4162,6 +4212,28 @@ fn wants(
         | WsEvent::UserUnblocked {
             username,
             blocked: _,
+        }
+        | WsEvent::FriendRequestAdded {
+            username,
+            request: _,
+        }
+        | WsEvent::FriendRequestRemoved { username, other: _ }
+        | WsEvent::FriendAdded {
+            username,
+            friend: _,
+        }
+        | WsEvent::FriendRemoved {
+            username,
+            friend: _,
+        }
+        | WsEvent::FriendPresence {
+            username,
+            friend: _,
+            online: _,
+        }
+        | WsEvent::PrivacyChanged {
+            username,
+            privacy: _,
         } => Some(username.as_str()) == me,
         WsEvent::ServerCreated { server } => {
             is_site_admin || (me.is_some() && server.creator.as_deref() == me)
@@ -4256,6 +4328,10 @@ fn wants(
             token: _,
             expires_at: _,
             error: _,
+        }
+        | WsEvent::UserShown {
+            username: _,
+            online: _,
         }
         | WsEvent::Resync => false,
     }
@@ -7782,6 +7858,39 @@ mod tests {
                         username: s(user),
                         blocked: s("x"),
                     },
+                    WsEvent::FriendRequestAdded {
+                        username: s(user),
+                        request: crate::api::friends::FriendRequest {
+                            user: crate::api::missing_user("x"),
+                            created_at: 1,
+                            incoming: true,
+                        },
+                    },
+                    WsEvent::FriendRequestRemoved {
+                        username: s(user),
+                        other: s("x"),
+                    },
+                    WsEvent::FriendAdded {
+                        username: s(user),
+                        friend: crate::api::friends::Friend {
+                            user: crate::api::missing_user("x"),
+                            since: 1,
+                            online: false,
+                        },
+                    },
+                    WsEvent::FriendRemoved {
+                        username: s(user),
+                        friend: s("x"),
+                    },
+                    WsEvent::FriendPresence {
+                        username: s(user),
+                        friend: s("x"),
+                        online: true,
+                    },
+                    WsEvent::PrivacyChanged {
+                        username: s(user),
+                        privacy: crate::api::friends::Privacy::default(),
+                    },
                     WsEvent::RtcSignal {
                         to: s(user),
                         from: s("x"),
@@ -7915,6 +8024,10 @@ mod tests {
                 token: Some(s("t")),
                 expires_at: Some(2),
                 error: None,
+            },
+            WsEvent::UserShown {
+                username: s("alice"),
+                online: true,
             },
             WsEvent::Resync,
         ]);

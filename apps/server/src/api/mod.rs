@@ -8,6 +8,7 @@ pub mod categories;
 pub mod config_shares;
 pub mod dms;
 pub mod embeds;
+pub mod friends;
 pub mod health;
 pub mod instance;
 pub mod media;
@@ -1754,6 +1755,33 @@ fn api_routes(
         .route("/blocks", get(blocks::list_blocks).post(blocks::block_user))
         .route("/blocks/usernames", get(blocks::blocked_usernames))
         .route("/blocks/{username}", delete(blocks::unblock_user))
+        .route("/friends", get(friends::list_friends))
+        .route("/friends/summary", get(friends::summary))
+        .route("/friends/seen", post(friends::mark_seen))
+        .route(
+            "/friends/requests",
+            get(friends::list_requests).post(friends::send_request),
+        )
+        .route(
+            "/friends/requests/{username}",
+            delete(friends::cancel_request),
+        )
+        .route(
+            "/friends/requests/{username}/accept",
+            post(friends::accept_request),
+        )
+        .route(
+            "/friends/requests/{username}/deny",
+            post(friends::deny_request),
+        )
+        .route(
+            "/users/{username}/friendship",
+            get(friends::friendship).delete(friends::remove_friend),
+        )
+        .route(
+            "/me/privacy",
+            get(friends::get_privacy).patch(friends::patch_privacy),
+        )
         .route(
             "/messages/{id}",
             delete(messages::delete_message).patch(messages::edit_message),

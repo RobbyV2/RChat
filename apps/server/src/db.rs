@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, serve
 CREATE TABLE IF NOT EXISTS audit_channels(entry_id INTEGER NOT NULL REFERENCES audit_log(id) ON DELETE CASCADE, channel_id INTEGER NOT NULL, private INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(entry_id, channel_id));
 CREATE TABLE IF NOT EXISTS member_timeouts(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, until INTEGER NOT NULL, reason TEXT, set_by TEXT, created_at INTEGER NOT NULL, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS blocks(blocker TEXT NOT NULL, blocked TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(blocker, blocked));
+CREATE TABLE IF NOT EXISTS friends(username TEXT NOT NULL, friend TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(username, friend));
+CREATE TABLE IF NOT EXISTS friend_requests(sender TEXT NOT NULL, recipient TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(sender, recipient));
+CREATE TABLE IF NOT EXISTS friend_pings(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('friend_request','friend_accept')), actor TEXT NOT NULL, created_at INTEGER NOT NULL, seen INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS privacy(username TEXT PRIMARY KEY, dms TEXT NOT NULL DEFAULT 'everyone' CHECK(dms IN ('everyone','friends')), friend_requests TEXT NOT NULL DEFAULT 'everyone' CHECK(friend_requests IN ('everyone','servers','nobody')));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -109,6 +113,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_member_timeouts_until ON member_timeouts(until);
 CREATE INDEX IF NOT EXISTS idx_blocks_recent ON blocks(blocker, created_at, blocked);
 CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked);
+CREATE INDEX IF NOT EXISTS idx_friends_friend ON friends(friend);
+CREATE INDEX IF NOT EXISTS idx_friend_requests_in ON friend_requests(recipient, created_at, sender);
+CREATE INDEX IF NOT EXISTS idx_friend_requests_out ON friend_requests(sender, created_at, recipient);
+CREATE INDEX IF NOT EXISTS idx_friend_pings_user ON friend_pings(username, seen, id);
 ";
 
 const POSTGRES_SCHEMA: &str = "
@@ -150,6 +158,10 @@ CREATE TABLE IF NOT EXISTS audit_log(id BIGINT GENERATED ALWAYS AS IDENTITY PRIM
 CREATE TABLE IF NOT EXISTS audit_channels(entry_id BIGINT NOT NULL REFERENCES audit_log(id) ON DELETE CASCADE, channel_id BIGINT NOT NULL, private BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(entry_id, channel_id));
 CREATE TABLE IF NOT EXISTS member_timeouts(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, until BIGINT NOT NULL, reason TEXT, set_by TEXT, created_at BIGINT NOT NULL, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS blocks(blocker TEXT NOT NULL, blocked TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(blocker, blocked));
+CREATE TABLE IF NOT EXISTS friends(username TEXT NOT NULL, friend TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(username, friend));
+CREATE TABLE IF NOT EXISTS friend_requests(sender TEXT NOT NULL, recipient TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(sender, recipient));
+CREATE TABLE IF NOT EXISTS friend_pings(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, username TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('friend_request','friend_accept')), actor TEXT NOT NULL, created_at BIGINT NOT NULL, seen BIGINT NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS privacy(username TEXT PRIMARY KEY, dms TEXT NOT NULL DEFAULT 'everyone' CHECK(dms IN ('everyone','friends')), friend_requests TEXT NOT NULL DEFAULT 'everyone' CHECK(friend_requests IN ('everyone','servers','nobody')));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -210,6 +222,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_member_timeouts_until ON member_timeouts(until);
 CREATE INDEX IF NOT EXISTS idx_blocks_recent ON blocks(blocker, created_at, blocked);
 CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked);
+CREATE INDEX IF NOT EXISTS idx_friends_friend ON friends(friend);
+CREATE INDEX IF NOT EXISTS idx_friend_requests_in ON friend_requests(recipient, created_at, sender);
+CREATE INDEX IF NOT EXISTS idx_friend_requests_out ON friend_requests(sender, created_at, recipient);
+CREATE INDEX IF NOT EXISTS idx_friend_pings_user ON friend_pings(username, seen, id);
 ";
 
 const SQLITE_SEARCH: &[&str] = &[
@@ -510,7 +526,8 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// (`member_timeouts`) and the Timeout members permission bit.
 /// 8: `dms.closed_a` and `dms.closed_b`.
 /// 9: `blocks`.
-pub const SCHEMA_VERSION: i64 = 9;
+/// 10: `friends`, `friend_requests`, `friend_pings` and `privacy`.
+pub const SCHEMA_VERSION: i64 = 10;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
@@ -1504,6 +1521,12 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
                 "DELETE FROM group_pings WHERE id IN (SELECT id FROM group_pings WHERE created_at < $1 LIMIT $2)",
                 t - PING_KEEP,
             )
+            .await?
+            + delete_batched(
+                db,
+                "DELETE FROM friend_pings WHERE id IN (SELECT id FROM friend_pings WHERE seen <> 0 OR created_at < $1 LIMIT $2)",
+                t - PING_KEEP,
+            )
             .await?,
         config_shares: delete_batched(
             db,
@@ -2137,6 +2160,111 @@ mod tests {
             .await
             .is_err(),
             "one row per pair"
+        );
+        close(&db).await;
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn existing_databases_get_friends() {
+        let path = std::env::temp_dir().join(format!("rchat_friends_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_friends_friend",
+            "DROP INDEX idx_friend_requests_in",
+            "DROP INDEX idx_friend_requests_out",
+            "DROP INDEX idx_friend_pings_user",
+            "DROP TABLE friends",
+            "DROP TABLE friend_requests",
+            "DROP TABLE friend_pings",
+            "DROP TABLE privacy",
+            "UPDATE settings SET value = '9' WHERE key = 'schema_version'",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', '', 'text', 'identicon', 1)",
+            "INSERT INTO blocks(blocker, blocked, created_at) VALUES('alice', 'bob', 2)",
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob')",
+            "INSERT INTO messages(dm_id, author, content, created_at) VALUES(1, 'bob', 'hi', 3)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            for table in ["friends", "friend_requests", "friend_pings", "privacy"] {
+                assert_eq!(
+                    count(&db, &format!("SELECT COUNT(*) FROM {table}")).await,
+                    0,
+                    "{table}"
+                );
+            }
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_friends_friend', 'idx_friend_requests_in', 'idx_friend_requests_out', 'idx_friend_pings_user')"
+                )
+                .await,
+                4
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM messages WHERE dm_id = 1 AND content = 'hi'"
+                )
+                .await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM blocks WHERE blocker = 'alice'").await,
+                1
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            close(&db).await;
+        }
+        let db = open(path.to_str()).await.expect("reopen");
+        sqlx::query("INSERT INTO privacy(username) VALUES('alice')")
+            .execute(&db)
+            .await
+            .expect("privacy");
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM privacy WHERE dms = 'everyone' AND friend_requests = 'everyone'"
+            )
+            .await,
+            1,
+            "defaults"
+        );
+        for bad in [
+            "UPDATE privacy SET dms = 'nobody'",
+            "UPDATE privacy SET friend_requests = 'friends'",
+            "INSERT INTO friend_pings(username, kind, actor, created_at) VALUES('alice', 'mention', 'bob', 1)",
+        ] {
+            assert!(sqlx::query(bad).execute(&db).await.is_err(), "{bad}");
+        }
+        sqlx::query(
+            "INSERT INTO friend_requests(sender, recipient, created_at) VALUES('bob', 'alice', 5)",
+        )
+        .execute(&db)
+        .await
+        .expect("request");
+        assert!(
+            sqlx::query("INSERT INTO friend_requests(sender, recipient, created_at) VALUES('bob', 'alice', 6)")
+                .execute(&db)
+                .await
+                .is_err(),
+            "one request per pair"
         );
         close(&db).await;
         wipe();

@@ -679,11 +679,20 @@ async fn run_purge(state: &AppState, kind: PurgeKind, key: &str) -> sqlx::Result
             let purging = user_row(&mut *tx, key)
                 .await?
                 .is_none_or(|u| u.password_hash == PURGING_HASH);
-            if purging {
-                drop_user_rows(&mut tx, key).await?;
-            }
+            let gone = match purging {
+                true => {
+                    let gone = crate::api::friends::gone_of(&mut tx, key).await?;
+                    drop_user_rows(&mut tx, key).await?;
+                    Some(gone)
+                }
+                false => None,
+            };
             clear_purge(&mut tx, kind, key).await?;
-            tx.commit().await
+            tx.commit().await?;
+            if let Some(gone) = gone {
+                crate::api::friends::announce_gone(state, key, gone).await;
+            }
+            Ok(())
         }
     }
 }
@@ -793,6 +802,13 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         "DELETE FROM read_state WHERE username = $1",
         "DELETE FROM blocks WHERE blocker = $1",
         "DELETE FROM blocks WHERE blocked = $1",
+        "DELETE FROM friends WHERE username = $1",
+        "DELETE FROM friends WHERE friend = $1",
+        "DELETE FROM friend_requests WHERE sender = $1",
+        "DELETE FROM friend_requests WHERE recipient = $1",
+        "DELETE FROM friend_pings WHERE username = $1",
+        "DELETE FROM friend_pings WHERE actor = $1",
+        "DELETE FROM privacy WHERE username = $1",
         "DELETE FROM users WHERE username = $1",
     ] {
         sqlx::query(sql).bind(key).execute(&mut **tx).await?;

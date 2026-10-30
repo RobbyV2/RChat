@@ -32,6 +32,12 @@ pub enum PingKind {
     Reply,
     /// A reaction to the recipient's message.
     Reaction,
+    /// A friend request from `actor` (scope `friends`, no message).
+    #[serde(rename = "friend_request")]
+    FriendRequest,
+    /// `actor` accepted the recipient's friend request (scope `friends`, no message).
+    #[serde(rename = "friend_accept")]
+    FriendAccept,
 }
 
 impl PingKind {
@@ -40,6 +46,8 @@ impl PingKind {
             PingKind::Mention => "mention",
             PingKind::Reply => "reply",
             PingKind::Reaction => "reaction",
+            PingKind::FriendRequest => "friend_request",
+            PingKind::FriendAccept => "friend_accept",
         }
     }
 }
@@ -52,13 +60,13 @@ pub struct Ping {
     pub id: i64,
     /// What caused the ping.
     pub kind: PingKind,
-    /// `c<channel id>` (thread replies use their channel and set `thread_root_id`) or
-    /// `d<dm id>`.
+    /// `c<channel id>` (thread replies use their channel and set `thread_root_id`), `d<dm id>`,
+    /// or `friends` for friend requests and accepted requests.
     #[schema(example = "c12")]
     pub scope: String,
     /// Server of a channel scope; `null` for DMs.
     pub server: Option<String>,
-    /// The message that pinged, or that was reacted to.
+    /// The message that pinged, or that was reacted to; 0 in the `friends` scope.
     pub message_id: i64,
     /// Root message when the ping is about a thread reply. Thread pings count toward their
     /// channel scope but are only marked seen by reading the thread (`t<root id>`).

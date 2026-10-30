@@ -106,15 +106,19 @@ export const forgetPings = (
 }
 
 // Server counts from GET /api/unreads win, except for keys that changed locally while the
-// request was in flight (a live ping or a read since `before`).
+// request was in flight (a live ping or a read since `before`) and scopes it does not list.
 export const mergePings = (before: Pings, current: Pings, items: Unread[]): Pings => {
   const out: Pings = {}
   for (const i of items)
     for (const [key, p] of summaryPings(i.scope, i.server, i))
       if (current[key] === before[key]) out[key] = p
-  for (const [key, p] of Object.entries(current)) if (p !== before[key]) out[key] = p
+  for (const [key, p] of Object.entries(current))
+    if (p !== before[key] || !messageScope(p.scope)) out[key] = p
   return out
 }
+
+// Channel and DM scopes; others (`friends`) are not in /api/unreads.
+const messageScope = (scope: string) => scope[0] === 'c' || scope[0] === 'd'
 
 const sum = (pings: Pings, pick: (p: PingCount) => boolean) => {
   let n = 0
@@ -177,6 +181,8 @@ const ACTION: Record<Ping['kind'], string> = {
   mention: 'mentioned you',
   reply: 'replied to you',
   reaction: 'reacted to your message',
+  friend_request: 'sent you a friend request',
+  friend_accept: 'accepted your friend request',
 }
 
 export const pingAction = (ping: Ping, channel: string | null) => {

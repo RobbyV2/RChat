@@ -4,6 +4,9 @@ import type {
   AuditEntry,
   AuthResponse,
   BlockedUser,
+  Friend,
+  FriendRequest,
+  FriendSummary,
   AvatarKind,
   Category,
   Channel,
@@ -39,6 +42,7 @@ import type {
 } from './types'
 import type { LayoutOrder } from './categories'
 import type { Page } from './lists'
+import type { Privacy, Relation, RequestStatus } from './friends'
 import type { Secret } from './password'
 
 export function resolveApiBase(
@@ -471,6 +475,28 @@ export const endpoints = (c: ApiClient) => ({
   blockedUsernames: () => c.req<string[]>('GET', '/blocks/usernames'),
   block: (username: string) => c.req<BlockedUser>('POST', '/blocks', { username }),
   unblock: (username: string) => c.req<unknown>('DELETE', `/blocks/${seg(username)}`),
+  friends: (cursor: string | null, q: string, online = false) =>
+    c.page<Friend>(
+      withCursor(`/friends?limit=50&q=${seg(q)}${online ? '&online=true' : ''}`, cursor)
+    ),
+  friendRequests: (incoming: boolean, cursor: string | null) =>
+    c.page<FriendRequest>(withCursor(`/friends/requests?limit=50&incoming=${incoming}`, cursor)),
+  friendSummary: () => c.req<FriendSummary>('GET', '/friends/summary'),
+  friendsSeen: (until: number) => c.req<unknown>('POST', '/friends/seen', { pings_until: until }),
+  sendFriendRequest: (username: string) =>
+    c.req<{ status: RequestStatus; user: UserRef }>('POST', '/friends/requests', { username }),
+  cancelFriendRequest: (username: string) =>
+    c.req<unknown>('DELETE', `/friends/requests/${seg(username)}`),
+  acceptFriend: (username: string) =>
+    c.req<Friend>('POST', `/friends/requests/${seg(username)}/accept`),
+  denyFriend: (username: string) =>
+    c.req<unknown>('POST', `/friends/requests/${seg(username)}/deny`),
+  friendship: (username: string) =>
+    c.req<{ status: Relation }>('GET', `/users/${seg(username)}/friendship`),
+  removeFriend: (username: string) =>
+    c.req<unknown>('DELETE', `/users/${seg(username)}/friendship`),
+  privacy: () => c.req<unknown>('GET', '/me/privacy'),
+  setPrivacy: (patch: Partial<Privacy>) => c.req<unknown>('PATCH', '/me/privacy', patch),
   dmMessages: (id: number, page: PageOpts = {}) =>
     c.req<Message[]>('GET', `/dms/${id}/messages${pageQuery(page)}`),
   sendDmMessage: (id: number, content: string, opts: SendOpts = {}) =>

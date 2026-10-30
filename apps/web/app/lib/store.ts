@@ -276,6 +276,8 @@ import type {
 import { parsePath, threadKey, viewKey, viewPath, type Nav, type View } from './view'
 
 import { blockedSet, matchesBlockQuery, withoutTypers, type Blocked } from './blocks'
+import { FRIENDS_SCOPE } from './friends'
+import { friendsInitial, friendsSlice } from './friends_store'
 import type {
   AuthResponse,
   BlockedUser,
@@ -1027,6 +1029,7 @@ export const useStore = create<RChatState>()((set, get) => {
     if (resume.dms) void get().loadMoreDms()
     if (!same) void syncLayout(fresh.username)
     if (!same) void loadBlocked()
+    if (!same) void friendsHub.loadSummary()
   }
 
   const refetchMe = () =>
@@ -1420,6 +1423,8 @@ export const useStore = create<RChatState>()((set, get) => {
         home.ws.resubscribe()
         refreshMe()
         void loadBlocked()
+        void friendsHub.loadSummary()
+        friendsHub.reloadOpenLists()
         const { view } = get()
         if (view) askP2p(get().messages[viewKey(view)] ?? [])
         const { pins } = get()
@@ -2421,6 +2426,8 @@ export const useStore = create<RChatState>()((set, get) => {
     write({ ...base, list, hasMore: page.next !== null, cursor: page.next, loading: false })
   }
 
+  const friendsHub = friendsSlice({ set, get, act, loadPage, toast, fail, errorText })
+
   const writeMembers = (server: string) => (page: Paged<Member>) =>
     set(s => ({ members: { ...s.members, [server]: page } }))
 
@@ -3274,6 +3281,7 @@ export const useStore = create<RChatState>()((set, get) => {
     adminServers: emptyPage<ServerSummaryLite>(),
     blocked: {},
     blockList: emptyPage<BlockedUser>(),
+    ...friendsInitial(),
     dms: [],
     dmsMore: false,
     serversMore: false,
@@ -3583,6 +3591,7 @@ export const useStore = create<RChatState>()((set, get) => {
         adminServers: emptyPage<ServerSummaryLite>(),
         blocked: {},
         blockList: emptyPage<BlockedUser>(),
+        ...friendsInitial(),
         dms: [],
         dmsMore: false,
         serversMore: false,
@@ -3951,6 +3960,8 @@ export const useStore = create<RChatState>()((set, get) => {
         noteUnblocked(username)
         if (name) toast('Unblocked', name)
       }),
+
+    ...friendsHub.actions,
 
     askBlock: user => {
       const s = get()
@@ -5019,6 +5030,7 @@ export const useStore = create<RChatState>()((set, get) => {
     },
 
     applyWsEvent: ev => {
+      if (friendsHub.onEvent(ev)) return
       switch (ev.type) {
         case 'message': {
           const m = withQuote(ev.message)
@@ -5641,6 +5653,24 @@ export const useStore = create<RChatState>()((set, get) => {
           const me = get().me
           if (!me || me.username !== ev.username) return
           const { ping } = ev
+          if (ping.scope === FRIENDS_SCOPE) {
+            friendsHub.onPing(ping, (go, action, actor) =>
+              alertUser({
+                key: FRIENDS_SCOPE,
+                actor,
+                action,
+                body: '',
+                server: null,
+                channel: null,
+                dm: false,
+                message: false,
+                name: actor.display_name,
+                generic: 'New notification',
+                go,
+              })
+            )
+            return
+          }
           const s = get()
           const target = scopeOfKey(ping.scope, ping.server)
           const alert = pingAlert(

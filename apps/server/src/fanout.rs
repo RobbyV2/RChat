@@ -320,6 +320,28 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             username,
             blocked: _,
         }
+        | WsEvent::FriendRequestAdded {
+            username,
+            request: _,
+        }
+        | WsEvent::FriendRequestRemoved { username, other: _ }
+        | WsEvent::FriendAdded {
+            username,
+            friend: _,
+        }
+        | WsEvent::FriendRemoved {
+            username,
+            friend: _,
+        }
+        | WsEvent::FriendPresence {
+            username,
+            friend: _,
+            online: _,
+        }
+        | WsEvent::PrivacyChanged {
+            username,
+            privacy: _,
+        }
         | WsEvent::TokensRevoked { username } => to(vec![Target::User(username)]),
         WsEvent::RtcSignal {
             to: user,
@@ -383,6 +405,10 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             token: _,
             expires_at: _,
             error: _,
+        }
+        | WsEvent::UserShown {
+            username: _,
+            online: _,
         }
         | WsEvent::Resync => to(Vec::new()),
     }

@@ -624,6 +624,13 @@ fn call_phase(call: &Call) -> CallPhase {
     }
 }
 
+fn shown_ev(username: &str, online: bool) -> WsEvent {
+    WsEvent::UserShown {
+        username: username.to_string(),
+        online,
+    }
+}
+
 fn presence_ev(server: &str, username: &str, online: bool, online_count: usize) -> WsEvent {
     WsEvent::PresenceChanged {
         server: server.to_string(),
@@ -922,6 +929,7 @@ impl Replica {
                 seen.up = true;
                 let servers: Vec<String> = seen.servers.iter().cloned().collect();
                 self.set_wake(user, 0);
+                evs.push(shown_ev(user, true));
                 for server in servers {
                     self.show_in(&server, user, evs);
                 }
@@ -946,6 +954,7 @@ impl Replica {
             for server in servers {
                 self.unshow(&server, user, evs);
             }
+            evs.push(shown_ev(user, false));
         }
         if empty {
             self.retire(user, t, evs);
@@ -985,6 +994,9 @@ impl Replica {
             if seen.up {
                 self.unshow(server, user, evs);
             }
+        }
+        if seen.up {
+            evs.push(shown_ev(user, false));
         }
     }
 
@@ -1907,6 +1919,8 @@ struct Inner {
     epoch: watch::Sender<Epoch>,
     aftermath: mpsc::UnboundedSender<Aftermath>,
     aftermath_rx: Mutex<Option<mpsc::UnboundedReceiver<Aftermath>>>,
+    shown: mpsc::UnboundedSender<(String, bool)>,
+    shown_rx: Mutex<Option<mpsc::UnboundedReceiver<(String, bool)>>>,
     release: Mutex<HashMap<String, (f64, Instant)>>,
     connects: Mutex<HashMap<String, (f64, Instant)>>,
     limits: Mutex<Limits>,
@@ -1982,6 +1996,7 @@ impl Default for Hub {
 impl Hub {
     fn build(link: Option<Link>) -> Hub {
         let (aftermath, aftermath_rx) = mpsc::unbounded_channel();
+        let (shown, shown_rx) = mpsc::unbounded_channel();
         Hub {
             inner: Arc::new(Inner {
                 instance: rand::random(),
@@ -2000,6 +2015,8 @@ impl Hub {
                 epoch: watch::channel(Epoch::default()).0,
                 aftermath,
                 aftermath_rx: Mutex::new(Some(aftermath_rx)),
+                shown,
+                shown_rx: Mutex::new(Some(shown_rx)),
                 release: Mutex::new(HashMap::new()),
                 connects: Mutex::new(HashMap::new()),
                 limits: Mutex::new(Limits::default()),
@@ -2079,6 +2096,26 @@ impl Hub {
             })
     }
 
+    /// Whether `user` is shown online on the site: connected anywhere (or inside the offline
+    /// grace) and not appearing offline. Friends see this.
+    pub fn shown_anywhere(&self, user: &str) -> bool {
+        self.replica(|r| r.seen.get(user).is_some_and(|seen| seen.up && !seen.hidden))
+    }
+
+    /// Delivers `ev` to this instance's connections only. Each instance sends it itself, for
+    /// events every instance derives from the replica.
+    pub fn deliver_local(&self, ev: WsEvent) {
+        if self.inner.tx.receiver_count() > 0 {
+            let _ = self.inner.tx.send(ev.clone());
+        }
+        self.inner.router.deliver(ev);
+    }
+
+    /// Whether `user` has an open connection on this instance.
+    pub fn listens_here(&self, user: &str) -> bool {
+        self.inner.router.has_user(user)
+    }
+
     pub fn channels(&self) -> &Channels {
         &self.inner.channels
     }
@@ -2134,10 +2171,20 @@ impl Hub {
         self.inner.aftermath_rx.lock().unwrap().take()
     }
 
+    /// Users who became visible on the site (`true`) or stopped being visible (`false`), in
+    /// order, as this instance's replica sees it (`WsEvent::UserShown`, never delivered).
+    pub fn take_shown(&self) -> Option<mpsc::UnboundedReceiver<(String, bool)>> {
+        self.inner.shown_rx.lock().unwrap().take()
+    }
+
     fn dispatch(&self, events: Vec<WsEvent>, live: bool) {
         for ev in events {
             self.inner.channels.observe(&ev);
             if !live {
+                continue;
+            }
+            if let WsEvent::UserShown { username, online } = ev {
+                let _ = self.inner.shown.send((username, online));
                 continue;
             }
             if self.inner.tx.receiver_count() > 0 {
