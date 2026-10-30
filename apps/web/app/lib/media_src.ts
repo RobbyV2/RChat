@@ -95,26 +95,45 @@ const cache = blobCache(60)
 
 export const forgetGuestMedia = () => cache.clear()
 
-// The address to show an image from: the plain media URL for signed-in users, a `blob:` URL for
-// guests (undefined while it loads, null when it failed or the bytes are not an image).
-export const useMediaSrc = (id: string, server: string | undefined, wanted: boolean) => {
+// The address to show an image from: `plain` for signed-in users, a `blob:` URL for guests
+// (undefined while it loads, null when it failed or the bytes are not an image).
+const useBlobSrc = (key: string, plain: string, server: string | undefined, wanted: boolean) => {
   const guest = api.guestMedia(server)
-  const [blob, setBlob] = useState<{ id: string; url: string | null } | null>(null)
+  const [blob, setBlob] = useState<{ key: string; url: string | null } | null>(null)
   useEffect(() => {
     if (!guest || !wanted || server === undefined) return
     let live = true
-    const held = cache.acquire(id, (media, signal) => api.mediaBlob(media, server, signal))
+    const held = cache.acquire(key, (_, signal) => api.blobAt(plain, server, signal))
     held.url.then(
-      url => live && setBlob({ id, url }),
-      () => live && setBlob({ id, url: null })
+      url => live && setBlob({ key, url }),
+      () => live && setBlob({ key, url: null })
     )
     return () => {
       live = false
       held.release()
     }
-  }, [guest, wanted, id, server])
-  if (!guest) return api.mediaUrl(id)
-  return blob?.id === id ? blob.url : undefined
+  }, [guest, wanted, key, plain, server])
+  if (!guest) return plain
+  return blob?.key === key ? blob.url : undefined
+}
+
+export const useMediaSrc = (id: string, server: string | undefined, wanted: boolean) =>
+  useBlobSrc(id, api.mediaUrl(id), server, wanted)
+
+// Link preview images are served by this instance, which fetched them; the page's image host
+// is never contacted. `image_url` must name exactly this preview's path on the instance,
+// anything else is never loaded.
+export const previewPath = (messageId: number, ord: number, imageUrl: string | null) => {
+  if (imageUrl === null) return null
+  const m = /^\/api(\/messages\/(\d+)\/embeds\/(\d+)\/image\?v=[0-9a-f]{1,64})$/.exec(imageUrl)
+  if (!m || Number(m[2]) !== messageId || Number(m[3]) !== ord) return null
+  return m[1]
+}
+
+export const usePreviewSrc = (path: string | null, server: string | undefined) => {
+  const url = path === null ? '' : api.previewUrl(path)
+  const src = useBlobSrc(`preview:${url}`, url, server, path !== null)
+  return path === null ? null : src
 }
 
 export const saveGuestMedia = async (id: string, server: string, filename: string) => {

@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mi
 CREATE TABLE IF NOT EXISTS media_chunks(media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE, seq INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(media_id, seq));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS embeds(url TEXT PRIMARY KEY, site_name TEXT, title TEXT, description TEXT, image_url TEXT, fetched_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS preview_images(key TEXT PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL, size INTEGER NOT NULL, fetched_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS message_embeds(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, ord INTEGER NOT NULL, url TEXT NOT NULL, banner_removed INTEGER NOT NULL DEFAULT 0, removed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(message_id, ord));
 CREATE TABLE IF NOT EXISTS interactions(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, last_at INTEGER NOT NULL, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS guest_grants(\"grant\" TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL DEFAULT 0, password_id INTEGER, network TEXT);
@@ -74,6 +75,7 @@ CREATE INDEX IF NOT EXISTS idx_media_uploaded_at ON media(uploaded_at);
 CREATE INDEX IF NOT EXISTS idx_messages_media ON messages(media_id) WHERE media_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_channel_author ON messages(channel_id, author, id);
 CREATE INDEX IF NOT EXISTS idx_message_embeds_url ON message_embeds(url);
+CREATE INDEX IF NOT EXISTS idx_preview_images_fetched ON preview_images(fetched_at);
 CREATE INDEX IF NOT EXISTS idx_user_roles_username ON user_roles(username);
 CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role_id);
 CREATE INDEX IF NOT EXISTS idx_roles_server ON roles(server, id);
@@ -169,6 +171,7 @@ CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mi
 CREATE TABLE IF NOT EXISTS media_chunks(media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE, seq BIGINT NOT NULL, data BYTEA NOT NULL, PRIMARY KEY(media_id, seq));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS embeds(url TEXT PRIMARY KEY, site_name TEXT, title TEXT, description TEXT, image_url TEXT, fetched_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS preview_images(key TEXT PRIMARY KEY, mime TEXT NOT NULL, data BYTEA NOT NULL, size BIGINT NOT NULL, fetched_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS message_embeds(message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, ord BIGINT NOT NULL, url TEXT NOT NULL, banner_removed BIGINT NOT NULL DEFAULT 0, removed BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(message_id, ord));
 CREATE TABLE IF NOT EXISTS interactions(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, last_at BIGINT NOT NULL, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS guest_grants(\"grant\" TEXT PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, created_at BIGINT NOT NULL, last_used_at BIGINT NOT NULL DEFAULT 0, password_id BIGINT, network TEXT);
@@ -208,6 +211,7 @@ CREATE INDEX IF NOT EXISTS idx_media_uploaded_at ON media(uploaded_at);
 CREATE INDEX IF NOT EXISTS idx_messages_media ON messages(media_id) WHERE media_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_channel_author ON messages(channel_id, author, id);
 CREATE INDEX IF NOT EXISTS idx_message_embeds_url ON message_embeds(url);
+CREATE INDEX IF NOT EXISTS idx_preview_images_fetched ON preview_images(fetched_at);
 CREATE INDEX IF NOT EXISTS idx_user_roles_username ON user_roles(username);
 CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role_id);
 CREATE INDEX IF NOT EXISTS idx_roles_server ON roles(server, id);
@@ -609,7 +613,8 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// 13: bulk delete jobs (`bulk_delete_jobs`).
 /// 14: webhooks (`webhooks`, `outgoing_webhooks`, `webhook_deliveries`, the `messages.webhook_*`
 /// columns) and the Manage webhooks permission bit.
-pub const SCHEMA_VERSION: i64 = 14;
+/// 15: `preview_images` (the cache of link preview images served by the instance).
+pub const SCHEMA_VERSION: i64 = 15;
 
 /// A temp database path no other test in any process uses at the same time: the process id,
 /// the test's name and a counter.
@@ -1629,7 +1634,13 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
             "DELETE FROM embeds WHERE url IN (SELECT e.url FROM embeds e WHERE e.fetched_at < $1 AND NOT EXISTS(SELECT 1 FROM message_embeds me WHERE me.url = e.url) LIMIT $2)",
             t - days("EMBED_CACHE_DAYS", 30),
         )
-        .await?,
+        .await?
+            + delete_batched(
+                db,
+                "DELETE FROM preview_images WHERE key IN (SELECT key FROM preview_images WHERE fetched_at < $1 LIMIT $2)",
+                t - 7 * 86400,
+            )
+            .await?,
         pings: delete_batched(
             db,
             "DELETE FROM pings WHERE id IN (SELECT id FROM pings WHERE created_at < $1 LIMIT $2)",
@@ -2231,6 +2242,57 @@ mod tests {
             1
         );
         close(&db).await;
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn existing_databases_get_the_preview_image_cache() {
+        let path = crate::db::temp_db_path("preview_images");
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_preview_images_fetched",
+            "DROP TABLE preview_images",
+            "UPDATE settings SET value = '14' WHERE key = 'schema_version'",
+            "INSERT INTO embeds(url, title, image_url, fetched_at) VALUES('https://a.example/', 'A', 'https://a.example/i.png', 1)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM preview_images").await, 0);
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_preview_images_fetched'"
+                )
+                .await,
+                1
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM embeds WHERE image_url = 'https://a.example/i.png'"
+                )
+                .await,
+                1
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            close(&db).await;
+        }
         wipe();
     }
 

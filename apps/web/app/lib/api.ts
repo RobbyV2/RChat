@@ -203,10 +203,19 @@ export class ApiClient {
     return !this.token && server !== undefined && this.grants[server] !== undefined
   }
 
+  // A link preview's image, always from this instance (see `previewPath`).
+  previewUrl(path: string) {
+    return `${this.base}${path}`
+  }
+
   async mediaBlob(id: string, server: string, signal?: AbortSignal) {
+    return this.blobAt(this.mediaUrl(id), server, signal)
+  }
+
+  async blobAt(url: string, server: string, signal?: AbortSignal) {
     const grant = this.grants[server]
     const headers: Record<string, string> = grant ? { 'X-Guest-Grant': grant } : {}
-    const res = await fetch(this.mediaUrl(id), { headers, signal })
+    const res = await fetch(url, { headers, signal, referrerPolicy: 'no-referrer' })
     if (!res.ok) throw new ApiError('Could not load the file', res.status)
     return res.blob()
   }

@@ -762,7 +762,7 @@ pub(crate) async fn load_broadcast(db: &Db, id: i64) -> Result<Option<Message>, 
 /// Attaches stored link previews. A preview of a link the text now hides in a spoiler (stored by
 /// an older build) is left out.
 pub(crate) async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), ApiError> {
-    if msgs.is_empty() {
+    if msgs.is_empty() || !Settings::cached(db).await.asset_previews {
         return Ok(());
     }
     let ph: Vec<String> = (1..=msgs.len()).map(|n| format!("${n}")).collect();
@@ -777,14 +777,20 @@ pub(crate) async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), A
     let rows = query.fetch_all(db).await?;
     let mut map: HashMap<i64, Vec<Embed>> = HashMap::new();
     for r in &rows {
-        map.entry(r.try_get(0)?).or_default().push(Embed {
-            ord: r.try_get(1)?,
+        let message_id: i64 = r.try_get(0)?;
+        let ord: i64 = r.try_get(1)?;
+        let banner_removed = r.try_get::<i64, _>(3)? != 0;
+        let source: Option<String> = r.try_get(7)?;
+        map.entry(message_id).or_default().push(Embed {
+            ord,
             url: r.try_get(2)?,
             site_name: r.try_get(4)?,
             title: r.try_get(5)?,
             description: r.try_get(6)?,
-            image_url: r.try_get(7)?,
-            banner_removed: r.try_get::<i64, _>(3)? != 0,
+            image_url: source
+                .filter(|_| !banner_removed)
+                .map(|source| crate::api::embeds::proxied_image(message_id, ord, &source)),
+            banner_removed,
         });
     }
     for m in msgs.iter_mut() {

@@ -34,7 +34,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 | Relay servers          | Help calls and P2P files connect through STUN and TURN. Off by default. Relay only hides your IP address.             |
 | Uploads                | Upload files and images up to 25 MB. The server deletes them after one day. The site admin can turn them off.         |
 | Text only mode         | Turn off uploads and P2P attachments. Then messages can contain only text and emoji.                                  |
-| Link previews          | Show a card for links in a message. The server gets the preview, not your browser.                                    |
+| Link previews          | Show a card for links in a message. The server gets the preview and its image, not your browser.                      |
 | Mentions               | Type `@name` to ping a person. The app highlights messages that mention you.                                          |
 | Reactions              | React to a message with an emoji. Your own reactions show in blue.                                                    |
 | Emoji picker           | Search emoji by name. The picker keeps your frequent emoji and skin tone.                                             |

@@ -13,9 +13,10 @@ use url::Url;
 use utoipa::IntoParams;
 
 use crate::api::access::{Proof, resolve_message};
-use crate::api::{ApiError, ApiErrorBody, Authed, Embed, OkResp, ok};
+use crate::api::{ApiError, ApiErrorBody, Authed, Embed, OkResp, Settings, ok};
 use crate::db::{Db, now};
 use crate::instance::Instance;
+use crate::net_guard::Policy;
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 
@@ -27,10 +28,15 @@ pub(crate) fn ip_ok(ip: IpAddr) -> bool {
     !crate::net_guard::blocked(ip)
 }
 
-async fn fetch_html(start: &Url) -> anyhow::Result<(Url, String)> {
+/// What link previews and their images may reach.
+pub(crate) fn preview_policy() -> Policy {
+    Policy::previews()
+}
+
+async fn fetch_html(start: &Url, policy: &Policy) -> anyhow::Result<(Url, String)> {
     let mut url = start.clone();
     for _ in 0..4 {
-        let checked = crate::net_guard::check(&url, &crate::net_guard::Policy::previews()).await?;
+        let checked = crate::net_guard::check(&url, policy).await?;
         let mut resp = checked
             .client(Duration::from_secs(5), Duration::from_secs(5))?
             .get(url.clone())
@@ -342,7 +348,7 @@ fn note_failure(url: &str, now: Instant) {
     }
 }
 
-async fn resolve(db: &Db, url: &str) -> anyhow::Result<Option<Embed>> {
+async fn resolve(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Option<Embed>> {
     let lock = match IN_FLIGHT.lock() {
         Ok(mut map) => map.entry(url.to_string()).or_default().clone(),
         Err(_) => Arc::default(),
@@ -351,7 +357,7 @@ async fn resolve(db: &Db, url: &str) -> anyhow::Result<Option<Embed>> {
     let out = match failed_lately(url, Instant::now()) {
         true => Ok(None),
         false => {
-            let out = resolve_once(db, url).await;
+            let out = resolve_once(db, url, policy).await;
             if !matches!(out, Ok(Some(_))) {
                 note_failure(url, Instant::now());
             }
@@ -369,7 +375,7 @@ async fn resolve(db: &Db, url: &str) -> anyhow::Result<Option<Embed>> {
     out
 }
 
-async fn resolve_once(db: &Db, url: &str) -> anyhow::Result<Option<Embed>> {
+async fn resolve_once(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Option<Embed>> {
     let embed = |site_name, title, description, image_url| Embed {
         ord: 0,
         url: url.to_string(),
@@ -397,7 +403,7 @@ async fn resolve_once(db: &Db, url: &str) -> anyhow::Result<Option<Embed>> {
     let parsed = Url::parse(url)?;
     let _permit = FETCHING.acquire().await?;
     let (final_url, html) =
-        tokio::time::timeout(Duration::from_secs(5), fetch_html(&parsed)).await??;
+        tokio::time::timeout(Duration::from_secs(5), fetch_html(&parsed, policy)).await??;
     let meta = parse_meta(&html, &final_url);
     if meta.is_empty() {
         return Ok(None);
@@ -537,7 +543,28 @@ pub(crate) fn spawn_unfurl(
     });
 }
 
+/// Fetches and stores the previews of one message, unless link previews are off: then nothing
+/// is fetched or stored.
 pub async fn unfurl(state: &AppState, job: UnfurlJob) {
+    unfurl_with(state, job, &preview_policy()).await
+}
+
+/// The path that serves a preview's image from this instance, versioned by the image's source
+/// so a changed image is never served from a stale browser cache. The source URL itself never
+/// reaches clients.
+pub(crate) fn proxied_image(message_id: i64, ord: i64, source: &str) -> String {
+    use sha2::Digest;
+    let digest = hex::encode(sha2::Sha256::digest(source.as_bytes()));
+    format!(
+        "/api/messages/{message_id}/embeds/{ord}/image?v={}",
+        &digest[..16]
+    )
+}
+
+async fn unfurl_with(state: &AppState, job: UnfurlJob, policy: &Policy) {
+    if !Settings::cached(&state.db).await.asset_previews {
+        return;
+    }
     let UnfurlJob {
         server,
         channel_id,
@@ -554,7 +581,7 @@ pub async fn unfurl(state: &AppState, job: UnfurlJob) {
         if own_message_link(&state.instance, url) {
             continue;
         }
-        match resolve(&state.db, url).await {
+        match resolve(&state.db, url, policy).await {
             Ok(Some(mut embed)) => {
                 embed.ord = embeds.len() as i64;
                 embeds.push(embed);
@@ -583,6 +610,12 @@ pub async fn unfurl(state: &AppState, job: UnfurlJob) {
         thread_root_id,
         edited_at,
     } = stored;
+    for embed in &mut embeds {
+        embed.image_url = embed
+            .image_url
+            .as_deref()
+            .map(|source| proxied_image(message_id, embed.ord, source));
+    }
     let event = match (&server, edited_at) {
         (Some(_), Some(_)) => WsEvent::MessageUpdated {
             server,
@@ -906,6 +939,123 @@ mod tests {
         assert_eq!(stored.edited_at, Some(5));
         assert_eq!(stored.thread_root_id, None);
         assert_eq!(count(db.clone()).await, 1);
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn previews_off_makes_no_requests_stores_and_serves_nothing() {
+        use crate::api::preview_images::fake::{png, response, upstream};
+        let (state, path) = crate::api::test_util::temp_state("unfurl_switch").await;
+        let db = state.db.clone();
+        let image = upstream(response("200 OK", &[], &png(4, 4))).await;
+        let html = format!(
+            "<html><head><title>Page</title><meta property=\"og:image\" content=\"{}\"></head></html>",
+            image.url("/og.png")
+        );
+        let page = upstream(response(
+            "200 OK",
+            &[("content-type", "text/html".to_string())],
+            html.as_bytes(),
+        ))
+        .await;
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
+            .fetch_one(&db)
+            .await
+            .expect("general")
+            .try_get(0)
+            .expect("id");
+        let content = format!("see {}", page.url("/post"));
+        let mid: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'a', $2, 1) RETURNING id")
+            .bind(cid)
+            .bind(&content)
+            .fetch_one(&db)
+            .await
+            .expect("msg")
+            .try_get(0)
+            .expect("id");
+        let job = || UnfurlJob {
+            server: Some("rchat".to_string()),
+            channel_id: Some(cid),
+            dm_id: None,
+            dm_users: None,
+            message_id: mid,
+            urls: extract_urls(&content),
+        };
+        let switch = |on: &'static str| {
+            let db = db.clone();
+            async move {
+                sqlx::query("INSERT INTO settings(key, value) VALUES('asset_previews', $1) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+                    .bind(on)
+                    .execute(&db)
+                    .await
+                    .expect("setting");
+                crate::api::Settings::forget(&db);
+            }
+        };
+        let stored = |db: Db| async move {
+            sqlx::query("SELECT COUNT(*) FROM message_embeds WHERE message_id = $1")
+                .bind(mid)
+                .fetch_one(&db)
+                .await
+                .expect("count")
+                .try_get::<i64, _>(0)
+                .expect("n")
+        };
+        let shown = |db: Db| async move {
+            crate::api::messages::load_broadcast(&db, mid)
+                .await
+                .expect("load")
+                .expect("message")
+                .embeds
+        };
+        let image_status = |state: AppState, policy: Policy| async move {
+            match crate::api::preview_images::serve(
+                &state,
+                &axum::http::HeaderMap::new(),
+                mid,
+                0,
+                &policy,
+            )
+            .await
+            {
+                Ok(res) => res.status(),
+                Err(ApiError(code, _)) => code,
+            }
+        };
+        switch("0").await;
+        unfurl_with(&state, job(), &page.policy()).await;
+        assert_eq!(page.hits(), 0, "no request for the page");
+        assert_eq!(stored(db.clone()).await, 0, "nothing stored");
+        switch("1").await;
+        unfurl_with(&state, job(), &page.policy()).await;
+        assert_eq!(page.hits(), 1);
+        assert_eq!(stored(db.clone()).await, 1);
+        let embeds = shown(db.clone()).await;
+        let served = embeds[0].image_url.clone().expect("image");
+        assert!(
+            served.starts_with(&format!("/api/messages/{mid}/embeds/0/image?v=")),
+            "{served}"
+        );
+        assert!(
+            !served.contains("127.0.0.1"),
+            "the source never reaches clients"
+        );
+        switch("0").await;
+        assert!(
+            shown(db.clone()).await.is_empty(),
+            "stored previews are not served"
+        );
+        assert_eq!(
+            image_status(state.clone(), image.policy()).await,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(image.hits(), 0, "no request for the image");
+        switch("1").await;
+        assert_eq!(
+            image_status(state.clone(), image.policy()).await,
+            StatusCode::OK
+        );
+        assert_eq!(image.hits(), 1);
         crate::api::test_util::done(state, path).await;
     }
 

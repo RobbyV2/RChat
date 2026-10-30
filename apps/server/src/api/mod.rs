@@ -20,6 +20,7 @@ pub mod passwords;
 pub mod pings;
 pub mod pins;
 pub mod polls;
+pub mod preview_images;
 pub mod reactions;
 pub mod servers;
 pub mod system_messages;
@@ -624,7 +625,9 @@ pub struct Embed {
     pub title: Option<String>,
     /// Page description, at most 600 characters, or `null`.
     pub description: Option<String>,
-    /// Absolute http(s) URL of the preview image, or `null`.
+    /// Path on this instance that serves the preview image
+    /// (`/api/messages/{id}/embeds/{ord}/image?v=...`), or `null` when there is none or it was
+    /// removed. The instance fetches the image itself; the page's image host is never named.
     pub image_url: Option<String>,
     /// The preview image was removed; the text part stays.
     pub banner_removed: bool,
@@ -1740,6 +1743,10 @@ fn api_routes(
                 .delete(reactions::remove_reaction),
         )
         .route("/messages/{id}/embeds/{ord}", delete(embeds::delete_embed))
+        .route(
+            "/messages/{id}/embeds/{ord}/image",
+            get(preview_images::preview_image),
+        )
         .route("/polls/{id}", get(polls::get_poll))
         .route(
             "/polls/{id}/vote",

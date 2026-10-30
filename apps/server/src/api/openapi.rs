@@ -111,6 +111,7 @@ impl Modify for Bearer {
         super::pins::channel_pins,
         super::pins::dm_pins,
         super::embeds::delete_embed,
+        super::preview_images::preview_image,
         super::polls::get_poll,
         super::polls::vote,
         super::polls::retract_vote,

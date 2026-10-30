@@ -64,7 +64,7 @@ import {
 } from '../lib/invite'
 import { postedUrl, spoileredUrls } from '../lib/embed_links'
 import { findMessageLinks, parseMessageLink } from '../lib/message_links'
-import { saveGuestMedia, useMediaSrc } from '../lib/media_src'
+import { previewPath, saveGuestMedia, useMediaSrc, usePreviewSrc } from '../lib/media_src'
 import { expiryText, sameOriginImage } from '../lib/rules'
 import { remarkMask } from '../lib/profanity'
 import { CLOSE, OPEN, markSpoilers, spoilerParts, unmarkSpoilers } from '../lib/spoilers'
@@ -945,6 +945,10 @@ function EmbedCard({
   const deleteEmbed = useStore(s => s.deleteEmbed)
   const openContextMenu = useStore(s => s.openContextMenu)
   const { ord, site_name, title, description, image_url, banner_removed } = embed
+  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
+  const path = banner_removed ? null : previewPath(message.id, ord, image_url)
+  const src = usePreviewSrc(path, server)
+  const [broken, setBroken] = useState<string | null>(null)
   const mask = useMask()
   const url = useMemo(() => postedUrl(message.content, embed.url), [message.content, embed.url])
 
@@ -956,7 +960,7 @@ function EmbedCard({
         action: () => void deleteEmbed(message.id, ord, false),
       },
     ]
-    if (image_url !== null && !banner_removed) {
+    if (path !== null) {
       items.push({ label: 'Remove banner', action: () => void deleteEmbed(message.id, ord, true) })
     }
     items.push({
@@ -990,8 +994,15 @@ function EmbedCard({
           {mask(description)}
         </p>
       )}
-      {image_url !== null && !banner_removed && (
-        <img src={image_url} alt={title ?? url} className="mt-2 max-h-60 max-w-full rounded-md" />
+      {src && broken !== src && (
+        <img
+          src={src}
+          alt={title ?? url}
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          onError={() => setBroken(src)}
+          className="mt-2 max-h-60 max-w-full rounded-md"
+        />
       )}
       {canDelete && (
         <button
