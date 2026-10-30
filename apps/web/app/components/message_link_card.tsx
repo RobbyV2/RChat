@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { CornerDownRight, Forward, Phone, Pin } from 'lucide-react'
+import { ChartColumn, CornerDownRight, Forward, Phone, Pin } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { cardLabel } from '../lib/message_links'
 import type { MessageLocation } from '../lib/types'
@@ -88,7 +88,7 @@ function Label({ icon, text }: { icon: React.ReactNode; text: string }) {
   )
 }
 
-const LABEL_ICONS = { pin: Pin, call: Phone, forward: Forward }
+const LABEL_ICONS = { pin: Pin, call: Phone, forward: Forward, poll: ChartColumn }
 
 function CardText({ card }: { card: MessageLocation }) {
   const shown = cardLabel(card)

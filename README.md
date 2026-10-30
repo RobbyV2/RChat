@@ -54,6 +54,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 | Moderation             | Kick and ban members. The site admin can delete users, servers and messages.                                          |
 | Blocking               | Block a person. They cannot DM, call or ping you, and their messages are hidden. Manage the list in Settings.         |
 | Friends                | Send, accept and deny friend requests and see who is online. Limit DMs and friend requests in Settings.               |
+| Polls                  | Single, multiple and ranked choice, rating scales and yes/no. Anonymous or public, deadlines, live results.           |
 | Notifications          | Choose all messages, mentions only or nothing per server or channel. Mute for a time. Get desktop alerts.             |
 | Organize               | Drag servers and DMs into your order. Drop a server on another to make a folder. Pin DMs.                             |
 | Search                 | Search messages with date filters. Search for servers by name.                                                        |

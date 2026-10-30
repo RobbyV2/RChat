@@ -267,7 +267,7 @@ export interface Embed {
   banner_removed: boolean
 }
 
-export type MessageKind = 'user' | 'call' | 'pin' | 'join' | 'leave'
+export type MessageKind = 'user' | 'poll' | 'call' | 'pin' | 'join' | 'leave'
 
 export type CallOutcome = 'missed' | 'declined' | 'completed'
 
@@ -304,6 +304,8 @@ export interface Message {
   pin_message_id?: number | null
   // @everyone, @here and role mentions that pinged when it was sent
   group_mentions?: GroupMention[]
+  // kind 'poll': the poll as you see it; on a forwarded poll, a frozen snapshot
+  poll?: Poll | null
 }
 
 export type GroupKind = 'everyone' | 'here' | 'role'
@@ -317,6 +319,62 @@ export interface GroupMention {
 export interface GroupPing {
   message_id: number
   kinds: GroupKind[]
+}
+
+export type PollKind = 'single' | 'multiple' | 'ranked' | 'rating' | 'yes_no'
+export type ShowResults = 'always' | 'after_vote' | 'after_close'
+
+export interface PollOption {
+  id: number
+  text: string
+  emoji: string | null
+}
+
+export interface OptionCount {
+  option_id: number
+  count: number
+}
+
+export interface RunoffRound {
+  counts: OptionCount[]
+  exhausted: number
+  eliminated: number | null
+}
+
+export interface PollResults {
+  // single, multiple, yes_no: picks; ranked: first choices; empty for rating
+  counts: OptionCount[]
+  rounds: RunoffRound[]
+  winner: number | null
+  // rating: voters per score from 1
+  distribution: number[]
+  average: number | null
+}
+
+export interface Poll {
+  kind: PollKind
+  question: string
+  options: PollOption[]
+  anonymous: boolean
+  show_results: ShowResults
+  allow_change: boolean
+  allow_add: boolean
+  min_choices: number
+  max_choices: number
+  scale: number | null
+  closes_at: number | null
+  closed: boolean
+  voters: number
+  // null while hidden from you
+  results: PollResults | null
+  // your vote: option ids (rank order for ranked) or [score]; null when you did not vote or in events
+  mine: number[] | null
+  snapshot?: boolean
+}
+
+export interface PollVoter {
+  user: UserRef
+  voted_at: number
 }
 
 export interface SystemMessages {
@@ -588,6 +646,14 @@ export type WsEvent =
       count?: number
     } & Scoped)
   | ({ type: 'message_deleted'; id: number; thread_root_id: number | null } & Scoped)
+  | { type: 'poll_voted'; username: string; message_id: number }
+  | ({
+      type: 'poll_updated'
+      message_id: number
+      thread_root_id: number | null
+      created_at: number
+      poll: Poll
+    } & Scoped)
   | ({
       type: 'message_pinned'
       message_id: number

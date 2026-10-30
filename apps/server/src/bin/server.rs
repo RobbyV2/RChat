@@ -164,6 +164,9 @@ async fn main() -> anyhow::Result<()> {
                 interval.tick().await;
                 if holds(&voice, "voice-sweep", Duration::from_millis(4_500)).await {
                     rust_next::ws::sweep_and_log(&voice, idle).await;
+                    if let Err(e) = rust_next::api::polls::close_due(&voice).await {
+                        tracing::warn!("closing due polls failed: {e}");
+                    }
                     let until = rust_next::db::now();
                     match rust_next::ws::announce_expired_passwords(&voice, since, until).await {
                         Ok(()) => since = until,

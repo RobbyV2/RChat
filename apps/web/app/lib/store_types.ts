@@ -2,7 +2,8 @@
 
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
-import type { LoginRequest, RegisterRequest, SendOpts } from './api'
+import type { LoginRequest, PollReq, RegisterRequest, SendOpts } from './api'
+import type { PollTarget } from './polls_store'
 import type { PendingUpload } from './attachments'
 import type { CallRoute } from './call_choice'
 import type { ConfigDoc, SectionKey } from './config_transfer'
@@ -107,6 +108,7 @@ export type ActiveDialog =
   | { kind: 'rename_folder'; id: string }
   | { kind: 'category'; server: string; id?: number }
   | { kind: 'add_friends'; names: string[] }
+  | { kind: 'poll_voters'; message: Message }
 
 export type Panel =
   { kind: 'thread'; root: Message } | { kind: 'search' } | { kind: 'friends'; tab: FriendsTab }
@@ -364,6 +366,14 @@ export interface RChatState {
   loadPrivacy: () => Promise<void>
   setPrivacy: (patch: Partial<Privacy>) => Promise<void>
   markFriendsSeen: () => void
+  // Posts a poll; the error text, or null once it is sent.
+  createPoll: (target: PollTarget, req: PollReq) => Promise<string | null>
+  votePoll: (id: number, body: { options?: number[]; value?: number }) => Promise<void>
+  retractVote: (id: number) => Promise<void>
+  // The error text, or null once the option is added.
+  addPollOption: (id: number, text: string, emoji: string | null) => Promise<string | null>
+  closePoll: (id: number) => Promise<void>
+  reopenPoll: (id: number) => Promise<void>
   reloadLayout: () => void
   noteEmoji: (base: string, picked: string) => void
   setSkinTone: (tone: number) => void

@@ -278,6 +278,8 @@ import { parsePath, threadKey, viewKey, viewPath, type Nav, type View } from './
 import { blockedSet, matchesBlockQuery, withoutTypers, type Blocked } from './blocks'
 import { FRIENDS_SCOPE } from './friends'
 import { friendsInitial, friendsSlice } from './friends_store'
+import { pollsSlice } from './polls_store'
+import { mergePoll } from './polls'
 import type {
   AuthResponse,
   BlockedUser,
@@ -2037,7 +2039,11 @@ export const useStore = create<RChatState>()((set, get) => {
   // its reactions, and quotes of it take the new text.
   const applyUpdated = (m: Message) => {
     const next = withQuote(m)
-    patchReactions(next.id, x => ({ ...next, reactions: x.reactions }))
+    patchReactions(next.id, x => ({
+      ...next,
+      reactions: x.reactions,
+      poll: next.poll && x.poll ? mergePoll(x.poll, next.poll) : next.poll,
+    }))
     readQuote(next)
     for (const [id, q] of quotes) {
       const e = editedQuote(q, next)
@@ -2427,6 +2433,13 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   const friendsHub = friendsSlice({ set, get, act, loadPage, toast, fail, errorText })
+  const pollsHub = pollsSlice({
+    get,
+    act,
+    patch: patchReactions,
+    find: findMessage,
+    errorText,
+  })
 
   const writeMembers = (server: string) => (page: Paged<Member>) =>
     set(s => ({ members: { ...s.members, [server]: page } }))
@@ -3962,6 +3975,7 @@ export const useStore = create<RChatState>()((set, get) => {
       }),
 
     ...friendsHub.actions,
+    ...pollsHub.actions,
 
     askBlock: user => {
       const s = get()
@@ -5031,6 +5045,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
     applyWsEvent: ev => {
       if (friendsHub.onEvent(ev)) return
+      if (pollsHub.onEvent(ev)) return
       switch (ev.type) {
         case 'message': {
           const m = withQuote(ev.message)

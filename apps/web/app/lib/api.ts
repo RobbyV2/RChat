@@ -21,6 +21,10 @@ import type {
   Member,
   Message,
   MessageLocation,
+  Poll,
+  PollKind,
+  PollVoter,
+  ShowResults,
   PasswordMembers,
   CreatedPassword,
   NewPassword,
@@ -267,6 +271,26 @@ export interface SendOpts {
   reply_to?: number
   mention_reply?: boolean
   forward_of?: number
+  poll?: PollReq
+}
+
+export interface PollOptionReq {
+  text: string
+  emoji?: string | null
+}
+
+export interface PollReq {
+  question: string
+  kind: PollKind
+  options?: PollOptionReq[]
+  anonymous?: boolean
+  show_results?: ShowResults
+  allow_change?: boolean
+  allow_add?: boolean
+  min_choices?: number
+  max_choices?: number
+  scale?: number
+  duration_seconds?: number | null
 }
 
 export interface PageOpts {
@@ -520,6 +544,21 @@ export const endpoints = (c: ApiClient) => ({
     c.req<unknown>('DELETE', `/messages/${id}/reactions/${seg(emoji)}`),
   reactors: (id: number, emoji: string) =>
     c.req<UserRef[]>('GET', `/messages/${id}/reactions/${seg(emoji)}?limit=100`),
+  poll: (id: number) => c.req<Poll>('GET', `/polls/${id}`),
+  vote: (id: number, body: { options?: number[]; value?: number }) =>
+    c.req<Poll>('PUT', `/polls/${id}/vote`, body),
+  retractVote: (id: number) => c.req<Poll>('DELETE', `/polls/${id}/vote`),
+  addPollOption: (id: number, text: string, emoji: string | null) =>
+    c.req<Poll>('POST', `/polls/${id}/options`, { text, emoji }),
+  closePoll: (id: number) => c.req<Poll>('POST', `/polls/${id}/close`),
+  reopenPoll: (id: number) => c.req<Poll>('POST', `/polls/${id}/reopen`),
+  pollVoters: (id: number, option: number | null, cursor: string | null) =>
+    c.page<PollVoter>(
+      withCursor(
+        `/polls/${id}/voters?limit=50${option === null ? '' : `&option=${option}`}`,
+        cursor
+      )
+    ),
   threadMessages: (id: number, page: PageOpts = {}) =>
     c.req<Message[]>('GET', `/messages/${id}/thread${pageQuery(page)}`),
   sendThreadMessage: (id: number, content: string, opts: SendOpts = {}) =>

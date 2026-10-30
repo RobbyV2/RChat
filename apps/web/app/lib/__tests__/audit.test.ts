@@ -160,6 +160,12 @@ describe('audit sentences', () => {
       details: { channel: { id: 5, name: 'general', private: false } },
     })
     expect(sentenceText(msg)).toBe('Alice pinned a message by Bob in #general')
+    expect(sentenceText({ ...msg, action: 'message.poll_close' })).toBe(
+      'Alice closed a poll by Bob in #general'
+    )
+    expect(sentenceText({ ...msg, action: 'message.poll_reopen' })).toBe(
+      'Alice reopened a poll by Bob in #general'
+    )
     expect(
       sentenceText(entry({ action: 'role.assign', details: { role: { id: 2, name: 'Mods' } } }))
     ).toBe('Alice gave Bob the role "Mods"')

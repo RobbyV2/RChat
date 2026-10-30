@@ -23,6 +23,7 @@ import SettingsMenu from '../components/settings_menu'
 import ThreadPanel from '../components/thread_panel'
 import SearchPanel from '../components/search_panel'
 import FriendsPanel, { AddFriendsDialog } from '../components/friends'
+import { PollVotersDialog } from '../components/poll_card'
 import { CallBanner } from '../components/voice_grid'
 import { NoticeStack } from '../components/notice_stack'
 import { InvitePage } from '../components/invite_card'
@@ -208,6 +209,7 @@ export default function AppShell() {
         <FolderDialog />
         <CategoryDialog />
         <AddFriendsDialog />
+        <PollVotersDialog />
         <ServerSettings />
         <AuditLogDialog />
         <TimeoutDialog />

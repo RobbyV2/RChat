@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { EyeOff, FileText, Pin, PinOff, X } from 'lucide-react'
+import { ChartColumn, EyeOff, FileText, Pin, PinOff, X } from 'lucide-react'
 import { useMediaSrc } from '../lib/media_src'
 import { PINS_TITLE, noPinsText, pinPlace } from '../lib/pins'
 import { myPerms, useStore, viewKey, type ContextMenuItem } from '../lib/store'
@@ -203,6 +203,12 @@ function PinEntry({
         <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
       </div>
       {m.forward && <p className="mt-1 text-xs text-on-surface-variant italic">Forwarded</p>}
+      {(m.kind === 'poll' || m.poll?.snapshot) && (
+        <p className="mt-1 flex items-center gap-1 text-xs font-medium text-primary">
+          <ChartColumn size={12} />
+          Poll
+        </p>
+      )}
       <div className="mt-1 max-h-36 overflow-hidden">
         <MarkdownMessage message={text} />
       </div>

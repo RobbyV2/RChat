@@ -283,7 +283,7 @@ pub(crate) async fn add_reaction(
 ) -> Result<Json<OkResp>, ApiError> {
     let emoji = check_emoji(&emoji)?;
     let target = react_target(&state, id, &user, true).await?;
-    if target.message.kind != "user" {
+    if !matches!(target.message.kind.as_str(), "user" | "poll") {
         return Err(bad("Cannot react to this message"));
     }
     let mut tx = state.db.begin().await?;

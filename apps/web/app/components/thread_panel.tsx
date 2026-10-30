@@ -49,6 +49,7 @@ import { ReplyPreview } from './replies'
 import { canQuote } from '../lib/replies'
 import { canForward } from '../lib/forward'
 import { ForwardCard, forwardAction, forwardMenuItem } from './forwards'
+import { PollCard, pollMenuItems } from './poll_card'
 import { canEdit as ownEditable } from '../lib/sed'
 import { MessageEditor, editAction, editMenuItem } from './message_editor'
 import { useMyTimeoutEnds } from './timeout_dialog'
@@ -183,6 +184,7 @@ export default function ThreadPanel() {
     if (canEdit(m)) items.push(editMenuItem(() => editMsg(m)))
     if (canReply(m)) items.push(replyMenuItem(() => replyTo(m)))
     if (forwardable(m)) items.push(forwardMenuItem(() => copyForward(m)))
+    items.push(...pollMenuItems(m))
     if (m.id !== root.id && canDelete(m))
       items.push({
         label: 'Delete Message',
@@ -245,6 +247,8 @@ export default function ThreadPanel() {
         >
           {m.forward ? (
             <ForwardCard m={m} canDelete={canDelete(m)} />
+          ) : m.kind === 'poll' ? (
+            <PollCard m={m} canVote={canReact} />
           ) : (
             <MarkdownMessage
               message={m}

@@ -996,7 +996,7 @@ impl ResolvedChannel {
             return Ok(());
         }
         let last: Option<i64> = sqlx::query(
-            "SELECT created_at FROM messages WHERE channel_id = $1 AND author = $2 AND kind = 'user' ORDER BY id DESC LIMIT 1",
+            "SELECT created_at FROM messages WHERE channel_id = $1 AND author = $2 AND kind IN ('user', 'poll') ORDER BY id DESC LIMIT 1",
         )
         .bind(self.id)
         .bind(&user.username)
@@ -1188,7 +1188,9 @@ impl ResolvedMessage {
 
     pub fn thread_channel(&self) -> Result<&ResolvedChannel, ApiError> {
         match (&self.channel, self.scope.thread_root_id) {
-            (Some(channel), None) if self.scope.kind == "user" => Ok(channel),
+            (Some(channel), None) if matches!(self.scope.kind.as_str(), "user" | "poll") => {
+                Ok(channel)
+            }
             (_, _) => Err(ApiError(
                 StatusCode::BAD_REQUEST,
                 "Threads only start on channel messages".to_string(),
@@ -1227,6 +1229,50 @@ impl ResolvedMessage {
                 channel.timeout_gate(db).await
             }
             (None, Some(did)) => self.dm_writer(db, did).await,
+            (None, None) => Err(not_found()),
+        }
+    }
+
+    /// Voting in a poll or adding an option: like reacting (a signed-in member with the
+    /// channel's send permission who is not timed out, or a participant of a live DM where
+    /// neither blocked the other).
+    pub async fn vote_gate(&self, db: &Db) -> Result<(), ApiError> {
+        match (&self.channel, self.scope.dm_id) {
+            (Some(channel), _) => {
+                channel_actor(db, channel)?;
+                if !channel.member_rights(db).await?.send {
+                    return Err(forbidden("No permission to vote in this channel"));
+                }
+                channel.timeout_gate(db).await
+            }
+            (None, Some(did)) => self.dm_writer(db, did).await,
+            (None, None) => Err(not_found()),
+        }
+    }
+
+    /// Closing or reopening a poll: its author while they are still a member who may view and
+    /// send in the channel (or a participant of a live DM where neither blocked the other), or
+    /// in a channel a member with the Manage messages (`DeleteMessages`) permission. Nobody who is
+    /// timed out in the channel's server. `Ok(true)` when a moderator acts on someone else's poll.
+    pub async fn poll_manage_gate(&self, db: &Db) -> Result<bool, ApiError> {
+        let refused = || forbidden("Only the author or a moderator can do this");
+        match (&self.channel, self.scope.dm_id) {
+            (Some(channel), _) => {
+                channel_actor(db, channel)?;
+                channel.timeout_gate(db).await?;
+                if self.own() {
+                    let rights = channel.member_rights(db).await?;
+                    if rights.view && rights.send {
+                        return Ok(false);
+                    }
+                }
+                match channel.member_bits(db).await? & Perm::DeleteMessages as i64 != 0 {
+                    true => Ok(!self.own()),
+                    false => Err(refused()),
+                }
+            }
+            (None, Some(did)) if self.own() => self.dm_writer(db, did).await.map(|()| false),
+            (None, Some(_)) => Err(refused()),
             (None, None) => Err(not_found()),
         }
     }
@@ -1430,6 +1476,28 @@ pub(crate) async fn ws_channel_read_since(
     match row {
         Some(r) => Some(Some(r.try_get(0).ok()?)),
         None => Some(Some(now())),
+    }
+}
+
+/// Poll updates: from when `username` (or a guest) may read channel `cid` of `server`, under
+/// the rule of `ResolvedChannel::read_since`. `None` when they can't view it (or on any
+/// error), `Some(None)` with read history. Never answers a client with target data.
+pub(crate) async fn ws_read_floor(
+    db: &Db,
+    server: &str,
+    cid: i64,
+    username: Option<&str>,
+) -> Option<Option<i64>> {
+    match username {
+        Some(name) => ws_channel_read_since(db, server, cid, name).await,
+        None => {
+            let access = channel_access(db, server, cid, None).await.ok()?;
+            match (access.view, access.history) {
+                (false, _) => None,
+                (true, true) => Some(None),
+                (true, false) => Some(Some(now())),
+            }
+        }
     }
 }
 

@@ -17,7 +17,7 @@ export interface BlockedRun {
 }
 
 export const collapsible = (m: Message, blocked: Blocked) =>
-  m.kind === 'user' && blocked[m.author.username] === true
+  (m.kind === 'user' || m.kind === 'poll') && blocked[m.author.username] === true
 
 // Index of each collapsible message -> its run.
 export const blockedRuns = (messages: Message[], blocked: Blocked): Map<number, BlockedRun> => {

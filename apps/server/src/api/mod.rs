@@ -17,6 +17,7 @@ pub mod openapi;
 pub mod passwords;
 pub mod pings;
 pub mod pins;
+pub mod polls;
 pub mod reactions;
 pub mod servers;
 pub mod system_messages;
@@ -696,9 +697,10 @@ pub struct Message {
     /// Link previews; empty until they are fetched, then delivered by the `embeds_resolved`
     /// WebSocket event and included in later reads.
     pub embeds: Vec<Embed>,
-    /// `user` for a normal message, `call` for a direct-message call log, `pin` when someone
-    /// pinned a message (`pin_message_id`; empty `content`), or `join` / `leave` when the
-    /// author joined or left the server (empty `content`; leaving includes kicks and bans).
+    /// `user` for a normal message, `poll` for a poll (`poll`; `content` is the question),
+    /// `call` for a direct-message call log, `pin` when someone pinned a message
+    /// (`pin_message_id`; empty `content`), or `join` / `leave` when the author joined or left
+    /// the server (empty `content`; leaving includes kicks and bans).
     #[schema(example = "user")]
     pub kind: String,
     /// Call details when `kind` is `call`; `null` otherwise.
@@ -731,6 +733,11 @@ pub struct Message {
     /// top-level channel messages have them; edits never change them. Empty otherwise.
     #[serde(default)]
     pub group_mentions: Vec<pings::GroupMention>,
+    /// For a `poll` message, the poll as you see it (counts only when you may see them; your
+    /// own vote only in message lists and `GET /api/polls/{id}`). For a forwarded poll, a frozen
+    /// `snapshot` that takes no votes. `null` otherwise.
+    #[serde(default)]
+    pub poll: Option<polls::Poll>,
 }
 
 /// The original of a forwarded message. The copy never changes when the original is edited or
@@ -1800,6 +1807,15 @@ fn api_routes(
                 .delete(reactions::remove_reaction),
         )
         .route("/messages/{id}/embeds/{ord}", delete(embeds::delete_embed))
+        .route("/polls/{id}", get(polls::get_poll))
+        .route(
+            "/polls/{id}/vote",
+            put(polls::vote).delete(polls::retract_vote),
+        )
+        .route("/polls/{id}/options", post(polls::add_option))
+        .route("/polls/{id}/close", post(polls::close_poll))
+        .route("/polls/{id}/reopen", post(polls::reopen_poll))
+        .route("/polls/{id}/voters", get(polls::list_voters))
         .route(
             "/messages/{id}/thread",
             get(messages::thread_messages).post(messages::send_thread_message),

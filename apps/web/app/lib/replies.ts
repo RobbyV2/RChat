@@ -50,7 +50,7 @@ export function plainLine(content: string): string {
 export const quoteOf = ({ message: m, mention }: Replying, me: string): ReplyRef =>
   quoteFrom(m, mention && m.author.username !== me)
 
-export const canQuote = (m: Message) => m.kind === 'user'
+export const canQuote = (m: Message) => m.kind === 'user' || m.kind === 'poll'
 
 const deletedQuote = (id: number, mention: boolean): ReplyRef => ({
   id,

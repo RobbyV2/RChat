@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS friends(username TEXT NOT NULL, friend TEXT NOT NULL,
 CREATE TABLE IF NOT EXISTS friend_requests(sender TEXT NOT NULL, recipient TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(sender, recipient));
 CREATE TABLE IF NOT EXISTS friend_pings(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('friend_request','friend_accept')), actor TEXT NOT NULL, created_at INTEGER NOT NULL, seen INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS privacy(username TEXT PRIMARY KEY, dms TEXT NOT NULL DEFAULT 'everyone' CHECK(dms IN ('everyone','friends')), friend_requests TEXT NOT NULL DEFAULT 'everyone' CHECK(friend_requests IN ('everyone','servers','nobody')));
+CREATE TABLE IF NOT EXISTS polls(message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('single','multiple','ranked','rating','yes_no')), question TEXT NOT NULL, anonymous INTEGER NOT NULL DEFAULT 0, results TEXT NOT NULL DEFAULT 'always' CHECK(results IN ('always','after_vote','after_close')), allow_change INTEGER NOT NULL DEFAULT 1, allow_add INTEGER NOT NULL DEFAULT 0, min_choices INTEGER NOT NULL DEFAULT 1, max_choices INTEGER NOT NULL DEFAULT 1, scale INTEGER, closes_at INTEGER, closed_at INTEGER, closed_by TEXT, created_at INTEGER NOT NULL, version INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS poll_options(id INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, position INTEGER NOT NULL, text TEXT NOT NULL, emoji TEXT, added_by TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS poll_votes(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, voter TEXT NOT NULL, option_id INTEGER NOT NULL, value INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(message_id, voter, option_id));
+CREATE TABLE IF NOT EXISTS poll_snapshots(message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE, data TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -117,6 +121,10 @@ CREATE INDEX IF NOT EXISTS idx_friends_friend ON friends(friend);
 CREATE INDEX IF NOT EXISTS idx_friend_requests_in ON friend_requests(recipient, created_at, sender);
 CREATE INDEX IF NOT EXISTS idx_friend_requests_out ON friend_requests(sender, created_at, recipient);
 CREATE INDEX IF NOT EXISTS idx_friend_pings_user ON friend_pings(username, seen, id);
+CREATE INDEX IF NOT EXISTS idx_polls_due ON polls(closes_at) WHERE closed_at IS NULL AND closes_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_poll_options_message ON poll_options(message_id, position);
+CREATE INDEX IF NOT EXISTS idx_poll_votes_option ON poll_votes(message_id, option_id, created_at, voter);
+CREATE INDEX IF NOT EXISTS idx_poll_votes_voter ON poll_votes(voter);
 ";
 
 const POSTGRES_SCHEMA: &str = "
@@ -162,6 +170,10 @@ CREATE TABLE IF NOT EXISTS friends(username TEXT NOT NULL, friend TEXT NOT NULL,
 CREATE TABLE IF NOT EXISTS friend_requests(sender TEXT NOT NULL, recipient TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(sender, recipient));
 CREATE TABLE IF NOT EXISTS friend_pings(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, username TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('friend_request','friend_accept')), actor TEXT NOT NULL, created_at BIGINT NOT NULL, seen BIGINT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS privacy(username TEXT PRIMARY KEY, dms TEXT NOT NULL DEFAULT 'everyone' CHECK(dms IN ('everyone','friends')), friend_requests TEXT NOT NULL DEFAULT 'everyone' CHECK(friend_requests IN ('everyone','servers','nobody')));
+CREATE TABLE IF NOT EXISTS polls(message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('single','multiple','ranked','rating','yes_no')), question TEXT NOT NULL, anonymous BIGINT NOT NULL DEFAULT 0, results TEXT NOT NULL DEFAULT 'always' CHECK(results IN ('always','after_vote','after_close')), allow_change BIGINT NOT NULL DEFAULT 1, allow_add BIGINT NOT NULL DEFAULT 0, min_choices BIGINT NOT NULL DEFAULT 1, max_choices BIGINT NOT NULL DEFAULT 1, scale BIGINT, closes_at BIGINT, closed_at BIGINT, closed_by TEXT, created_at BIGINT NOT NULL, version BIGINT NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS poll_options(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, position BIGINT NOT NULL, text TEXT NOT NULL, emoji TEXT, added_by TEXT, created_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS poll_votes(message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, voter TEXT NOT NULL, option_id BIGINT NOT NULL, value BIGINT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(message_id, voter, option_id));
+CREATE TABLE IF NOT EXISTS poll_snapshots(message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE, data TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -226,6 +238,10 @@ CREATE INDEX IF NOT EXISTS idx_friends_friend ON friends(friend);
 CREATE INDEX IF NOT EXISTS idx_friend_requests_in ON friend_requests(recipient, created_at, sender);
 CREATE INDEX IF NOT EXISTS idx_friend_requests_out ON friend_requests(sender, created_at, recipient);
 CREATE INDEX IF NOT EXISTS idx_friend_pings_user ON friend_pings(username, seen, id);
+CREATE INDEX IF NOT EXISTS idx_polls_due ON polls(closes_at) WHERE closed_at IS NULL AND closes_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_poll_options_message ON poll_options(message_id, position);
+CREATE INDEX IF NOT EXISTS idx_poll_votes_option ON poll_votes(message_id, option_id, created_at, voter);
+CREATE INDEX IF NOT EXISTS idx_poll_votes_voter ON poll_votes(voter);
 ";
 
 const SQLITE_SEARCH: &[&str] = &[
@@ -482,6 +498,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("users", "presence_seq {INT} NOT NULL DEFAULT 0"),
     ("dms", "closed_a {INT} NOT NULL DEFAULT 0"),
     ("dms", "closed_b {INT} NOT NULL DEFAULT 0"),
+    ("polls", "version {INT} NOT NULL DEFAULT 0"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -527,7 +544,8 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// 8: `dms.closed_a` and `dms.closed_b`.
 /// 9: `blocks`.
 /// 10: `friends`, `friend_requests`, `friend_pings` and `privacy`.
-pub const SCHEMA_VERSION: i64 = 10;
+/// 11: polls (`polls`, `poll_options`, `poll_votes`, `poll_snapshots`).
+pub const SCHEMA_VERSION: i64 = 11;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
@@ -2267,6 +2285,122 @@ mod tests {
             "one request per pair"
         );
         close(&db).await;
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn existing_databases_get_polls() {
+        let path = std::env::temp_dir().join(format!("rchat_polls_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_polls_due",
+            "DROP INDEX idx_poll_options_message",
+            "DROP INDEX idx_poll_votes_option",
+            "DROP INDEX idx_poll_votes_voter",
+            "DROP TABLE poll_votes",
+            "DROP TABLE poll_options",
+            "DROP TABLE poll_snapshots",
+            "DROP TABLE polls",
+            "UPDATE settings SET value = '10' WHERE key = 'schema_version'",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', '', 'text', 'identicon', 1)",
+            "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', 'old message', 3 FROM channels WHERE server = 'rchat'",
+            "INSERT INTO reactions(message_id, username, emoji, created_at) SELECT id, 'alice', 'x', 4 FROM messages",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            for table in ["polls", "poll_options", "poll_votes", "poll_snapshots"] {
+                assert_eq!(
+                    count(&db, &format!("SELECT COUNT(*) FROM {table}")).await,
+                    0,
+                    "{table}"
+                );
+            }
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_polls_due', 'idx_poll_options_message', 'idx_poll_votes_option', 'idx_poll_votes_voter')"
+                )
+                .await,
+                4
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM messages WHERE content = 'old message' AND kind = 'user' AND created_at = 3").await,
+                1
+            );
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM reactions").await, 1);
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            close(&db).await;
+        }
+        let db = open(path.to_str()).await.expect("reopen");
+        let id = count(&db, "SELECT id FROM messages").await;
+        sqlx::query("INSERT INTO polls(message_id, kind, question, created_at) VALUES($1, 'single', 'q', 5)")
+            .bind(id)
+            .execute(&db)
+            .await
+            .expect("poll");
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM polls WHERE anonymous = 0 AND results = 'always' AND allow_change = 1 AND allow_add = 0 AND min_choices = 1 AND max_choices = 1 AND closes_at IS NULL AND closed_at IS NULL AND version = 0").await,
+            1,
+            "defaults"
+        );
+        for bad in [
+            "UPDATE polls SET kind = 'other'",
+            "UPDATE polls SET results = 'never'",
+            "INSERT INTO polls(message_id, kind, question, created_at) VALUES(999999, 'single', 'q', 5)",
+        ] {
+            assert!(sqlx::query(bad).execute(&db).await.is_err(), "{bad}");
+        }
+        sqlx::query("INSERT INTO poll_votes(message_id, voter, option_id, value, created_at) VALUES($1, 'alice', 1, 1, 6)")
+            .bind(id)
+            .execute(&db)
+            .await
+            .expect("vote");
+        sqlx::query("DELETE FROM messages WHERE id = $1")
+            .bind(id)
+            .execute(&db)
+            .await
+            .expect("delete");
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM polls").await, 0, "cascade");
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM poll_votes").await,
+            0,
+            "cascade"
+        );
+        for stmt in [
+            "DROP INDEX idx_polls_due",
+            "DROP TABLE polls",
+            "CREATE TABLE polls(message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('single','multiple','ranked','rating','yes_no')), question TEXT NOT NULL, anonymous INTEGER NOT NULL DEFAULT 0, results TEXT NOT NULL DEFAULT 'always' CHECK(results IN ('always','after_vote','after_close')), allow_change INTEGER NOT NULL DEFAULT 1, allow_add INTEGER NOT NULL DEFAULT 0, min_choices INTEGER NOT NULL DEFAULT 1, max_choices INTEGER NOT NULL DEFAULT 1, scale INTEGER, closes_at INTEGER, closed_at INTEGER, closed_by TEXT, created_at INTEGER NOT NULL)",
+            "INSERT INTO messages(channel_id, author, content, kind, created_at) SELECT id, 'alice', 'q', 'poll', 7 FROM channels WHERE server = 'rchat'",
+            "INSERT INTO polls(message_id, kind, question, created_at) SELECT MAX(id), 'single', 'q', 7 FROM messages",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("add version");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM polls WHERE version = 0").await,
+                1,
+                "version"
+            );
+            close(&db).await;
+        }
         wipe();
     }
 

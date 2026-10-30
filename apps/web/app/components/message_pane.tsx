@@ -98,6 +98,7 @@ import { canEdit as ownEditable } from '../lib/sed'
 import { canForward } from '../lib/forward'
 import { ForwardCard, forwardAction, forwardMenuItem } from './forwards'
 import { PinNotice, PinsButton, PinsWindow, pinMenuItem, useCanPin } from './pins'
+import { PollCard, pollMenuItems } from './poll_card'
 import { SystemNotice } from './system_messages'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { canPin } from '../lib/pins'
@@ -434,6 +435,8 @@ const MessageRow = memo(function MessageRow({
         >
           {m.forward ? (
             <ForwardCard m={m} canDelete={canDelete} />
+          ) : m.kind === 'poll' ? (
+            <PollCard m={m} canVote={canReact} />
           ) : (
             <MarkdownMessage
               message={m}
@@ -704,6 +707,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     if (canReact && canQuote(msg)) items.unshift(replyMenuItem(() => replyTo(msg)))
     if (canEdit(msg)) items.unshift(editMenuItem(() => editMsg(msg)))
     if (pinRights && canPin(msg)) items.push(pinMenuItem(msg))
+    items.push(...pollMenuItems(msg))
     if (view?.kind === 'channel' && !self) {
       const target = memberOf(useStore.getState(), view.server, author.username)
       const left = memberState(useStore.getState(), view.server, author.username) === null

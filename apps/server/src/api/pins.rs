@@ -93,7 +93,7 @@ pub(crate) async fn pin_message(
     let message = load_message(&state.db, id, Quotes::Skip)
         .await?
         .ok_or_else(not_found)?;
-    if message.kind != "user" || message.thread_root_id.is_some() {
+    if !matches!(message.kind.as_str(), "user" | "poll") || message.thread_root_id.is_some() {
         return Err(cannot_pin());
     }
     let audit = moderated(&state.db, id, &resolved, &user, false).await?;

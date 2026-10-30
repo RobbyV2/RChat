@@ -373,6 +373,16 @@ pub enum WsEvent {
         username: String,
         count: i64,
     },
+    PollUpdated {
+        server: Option<String>,
+        channel_id: Option<i64>,
+        dm_id: Option<i64>,
+        dm_users: Option<Vec<String>>,
+        message_id: i64,
+        thread_root_id: Option<i64>,
+        created_at: i64,
+        poll: Box<crate::api::polls::Poll>,
+    },
     MessagePinned {
         server: Option<String>,
         channel_id: Option<i64>,
@@ -598,6 +608,12 @@ pub enum WsEvent {
     UserUnblocked {
         username: String,
         blocked: String,
+    },
+    /// `username` voted in or took back their vote in poll `message_id`; to their own
+    /// connections only, so their other tabs load the poll again.
+    PollVoted {
+        username: String,
+        message_id: i64,
     },
     /// A friend request between `username` and `request.user` was sent or arrived; to
     /// `username`'s connections only.
@@ -979,6 +995,8 @@ async fn channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(String, Channel)>
     }
 }
 
+const FLOOR_TTL: Duration = Duration::from_secs(30);
+
 async fn admin_state(db: &Db, server: &str, user: &str) -> sqlx::Result<Option<(bool, i64)>> {
     let row =
         sqlx::query("SELECT is_admin, perms FROM members WHERE server = $1 AND username = $2")
@@ -1103,6 +1121,19 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 count,
             })
         }
+        WsEvent::PollUpdated {
+            server: _,
+            channel_id: _,
+            dm_id: _,
+            dm_users: _,
+            message_id,
+            thread_root_id: _,
+            created_at: _,
+            poll: _,
+        } => crate::api::polls::update_event(db, message_id)
+            .await
+            .ok()
+            .flatten(),
         WsEvent::MessagePinned {
             server,
             channel_id,
@@ -2237,6 +2268,8 @@ async fn catch_up(
 
 struct Access {
     user: Option<String>,
+    /// When the account was created (it keys anonymous poll votes).
+    since: Option<i64>,
     token: Option<String>,
     site_admin: bool,
     member_servers: HashSet<String>,
@@ -2258,6 +2291,7 @@ struct Access {
     hosting_pace: Pace,
     who: Who,
     viewable: Viewable,
+    floors: HashMap<i64, (Instant, Option<Option<i64>>)>,
     retry: Retry,
     topics_dirty: bool,
 }
@@ -2266,6 +2300,7 @@ impl Access {
     fn new(user: Option<String>, site_admin: bool, member_servers: HashSet<String>) -> Access {
         Access {
             user,
+            since: None,
             token: None,
             site_admin,
             member_servers,
@@ -2287,6 +2322,7 @@ impl Access {
             hosting_pace: Pace::new(P2P_ANNOUNCE_EVERY),
             who: Who::new(),
             viewable: HashMap::new(),
+            floors: HashMap::new(),
             retry: Retry::new(),
             topics_dirty: false,
         }
@@ -2454,6 +2490,24 @@ impl Access {
         }
     }
 
+    /// The read-history floor of channel `cid` for this connection (see `ws_read_floor`),
+    /// remembered for 30 seconds.
+    async fn floor(&mut self, state: &AppState, server: &str, cid: i64) -> Option<Option<i64>> {
+        if let Some((at, floor)) = self.floors.get(&cid)
+            && at.elapsed() < FLOOR_TTL
+        {
+            return *floor;
+        }
+        let floor =
+            crate::api::access::ws_read_floor(&state.read(), server, cid, self.user.as_deref())
+                .await;
+        if self.floors.len() > 1000 {
+            self.floors.clear();
+        }
+        self.floors.insert(cid, (Instant::now(), floor));
+        floor
+    }
+
     fn held(&self, name: &str) -> bool {
         self.member_servers.contains(name) || self.subs.contains(name)
     }
@@ -2468,6 +2522,7 @@ impl Access {
 
     fn hold(&mut self, e: sqlx::Error, started: Instant) -> bool {
         self.viewable.clear();
+        self.floors.clear();
         self.missed = true;
         self.retry.fail(e, started)
     }
@@ -2577,6 +2632,7 @@ async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::Result<bool
         }
     }
     access.viewable.clear();
+    access.floors.clear();
     if access.member_servers != servers {
         access.hosted_scope = None;
     }
@@ -2803,6 +2859,19 @@ async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent
     }
     if deliver && let Some((server, cid)) = event_channel(ev) {
         deliver = channel_gate(state, access, server, cid).await?;
+    }
+    if deliver
+        && let WsEvent::PollUpdated {
+            server: Some(server),
+            channel_id: Some(cid),
+            created_at,
+            ..
+        } = ev
+    {
+        deliver = access
+            .floor(state, server, *cid)
+            .await
+            .is_some_and(|floor| floor.is_none_or(|floor| *created_at >= floor));
     }
     if deliver
         && let WsEvent::ChannelDeleted {
@@ -3151,6 +3220,47 @@ async fn own_timeout(
     }))
 }
 
+/// `poll_updated` of an open `after_vote` poll for a connection whose account voted in it:
+/// with the counts the shared event leaves out. `None` for everything else.
+async fn poll_for(state: &AppState, access: &Access, ev: &WsEvent) -> Option<WsEvent> {
+    let WsEvent::PollUpdated {
+        server,
+        channel_id,
+        dm_id,
+        dm_users,
+        message_id,
+        thread_root_id,
+        created_at,
+        poll,
+    } = ev
+    else {
+        return None;
+    };
+    if poll.results.is_some()
+        || poll.closed
+        || poll.show_results != crate::api::polls::ShowResults::AfterVote
+    {
+        return None;
+    }
+    let (user, since) = (access.user.as_deref()?, access.since?);
+    let results =
+        crate::api::polls::voter_results(&state.read(), *message_id, poll.anonymous, user, since)
+            .await?;
+    Some(WsEvent::PollUpdated {
+        server: server.clone(),
+        channel_id: *channel_id,
+        dm_id: *dm_id,
+        dm_users: dm_users.clone(),
+        message_id: *message_id,
+        thread_root_id: *thread_root_id,
+        created_at: *created_at,
+        poll: Box::new(crate::api::polls::Poll {
+            results: Some(results),
+            ..(**poll).clone()
+        }),
+    })
+}
+
 /// A channel event for one connection, with the channel's `position` counted among the channels
 /// that connection can see. `Some(None)` for other events or when the order can't be loaded;
 /// `None` when the connection must close.
@@ -3418,10 +3528,10 @@ async fn run(state: AppState, mut socket: WebSocket) {
     };
     let mut epoch = state.hub.epoch();
     let mut lossy = epoch.borrow_and_update().lossy;
-    let (username, is_site_admin): (Option<String>, bool) = match &token {
+    let (username, is_site_admin, since): (Option<String>, bool, Option<i64>) = match &token {
         Some(token) => {
             let row = sqlx::query(
-                "SELECT u.username, u.is_site_admin FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
+                "SELECT u.username, u.is_site_admin, u.created_at FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
             )
             .bind(crate::db::secret_key(token))
             .fetch_optional(&state.read())
@@ -3430,12 +3540,13 @@ async fn run(state: AppState, mut socket: WebSocket) {
                 Ok(Some(r)) => (
                     r.try_get(0).ok(),
                     r.try_get::<i64, _>(1).map(|v| v != 0).unwrap_or(false),
+                    r.try_get(2).ok(),
                 ),
-                Ok(None) => (None, false),
+                Ok(None) => (None, false, None),
                 Err(e) => return refuse(e),
             }
         }
-        None => (None, false),
+        None => (None, false, None),
     };
     let mut mode = None;
     if let Some(user) = &username {
@@ -3470,6 +3581,7 @@ async fn run(state: AppState, mut socket: WebSocket) {
     if let Some(mode) = mode {
         access.take_mode(mode);
     }
+    access.since = since;
     access.token = token.filter(|_| access.user.is_some());
     state.hub.reconcile(conn, &access.topics(), 0);
     let (sink, mut stream) = socket.split();
@@ -3528,7 +3640,15 @@ async fn run(state: AppState, mut socket: WebSocket) {
                             break;
                         }
                     }
+                    let mine = match deliver {
+                        true => poll_for(&state, &access, ev).await,
+                        false => None,
+                    };
+                    if let Some(mine) = &mine && !sent(&mut access, out.event(mine)) {
+                        break;
+                    }
                     if deliver
+                        && mine.is_none()
                         && let Some(frame) = client_frame(&fanned, access.user.as_deref())
                         && !sent(&mut access, out.text(frame))
                     {
@@ -3757,12 +3877,14 @@ fn join(access: &mut Access, server: String) {
     access.member_servers.insert(server);
     access.hosted_scope = None;
     access.viewable.clear();
+    access.floors.clear();
     access.who.forget();
     access.topics_dirty = true;
 }
 
 fn forget_server(access: &mut Access, server: &str) {
     access.viewable.retain(|_, (owner, _)| owner != server);
+    access.floors.clear();
     access.who.forget();
 }
 
@@ -3771,6 +3893,7 @@ fn leave(access: &mut Access, server: &str) {
     access.member_servers.remove(server);
     access.hosted_scope = None;
     access.viewable.clear();
+    access.floors.clear();
     access.who.forget();
     access.topics_dirty = true;
     if access.viewing.as_deref() == Some(server) {
@@ -3842,6 +3965,7 @@ fn track(ev: &WsEvent, access: &mut Access) {
             rules: _,
         } => {
             access.viewable.remove(channel_id);
+            access.floors.clear();
             access.who.forget();
         }
         WsEvent::ServerRenamed { old_name, server } => {
@@ -3963,6 +4087,16 @@ fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
             emoji: _,
             username: _,
             count: _,
+        }
+        | WsEvent::PollUpdated {
+            server,
+            channel_id,
+            dm_id: _,
+            dm_users: _,
+            message_id: _,
+            thread_root_id: _,
+            created_at: _,
+            poll: _,
         } => scoped(server, channel_id),
         WsEvent::MessagePinned {
             server,
@@ -4104,6 +4238,16 @@ fn wants(
             emoji: _,
             username: _,
             count: _,
+        }
+        | WsEvent::PollUpdated {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            message_id: _,
+            thread_root_id: _,
+            created_at: _,
+            poll: _,
         } => scoped(server, dm_users),
         WsEvent::MessagePinned {
             server,
@@ -4212,6 +4356,10 @@ fn wants(
         | WsEvent::UserUnblocked {
             username,
             blocked: _,
+        }
+        | WsEvent::PollVoted {
+            username,
+            message_id: _,
         }
         | WsEvent::FriendRequestAdded {
             username,
@@ -4371,6 +4519,7 @@ mod tests {
             pinned_at: None,
             pin_message_id: None,
             group_mentions: Vec::new(),
+            poll: None,
         }
     }
 
@@ -4447,6 +4596,159 @@ mod tests {
 
     fn set(items: &[&str]) -> HashSet<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[tokio::test]
+    async fn after_vote_updates_carry_counts_only_for_voters() {
+        let (state, path) = crate::api::test_util::temp_state("ws_poll_voters").await;
+        let db = &state.db;
+        for name in ["bob", "carol"] {
+            add_user(db, name).await;
+        }
+        exec(db, "INSERT INTO members(server, username, joined_at) VALUES('rchat', 'bob', 1), ('rchat', 'carol', 1)").await;
+        let pepper = crate::db::pepper(db).await.unwrap();
+        for anonymous in [0, 1] {
+            let id: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, kind, created_at) SELECT id, 'bob', 'q', 'poll', 5 FROM channels WHERE server = 'rchat' RETURNING id")
+                .fetch_one(db)
+                .await
+                .unwrap()
+                .try_get(0)
+                .unwrap();
+            sqlx::query("INSERT INTO polls(message_id, kind, question, anonymous, results, created_at) VALUES($1, 'single', 'q', $2, 'after_vote', 5)")
+                .bind(id)
+                .bind(anonymous)
+                .execute(db)
+                .await
+                .unwrap();
+            let option: i64 = sqlx::query("INSERT INTO poll_options(message_id, position, text, created_at) VALUES($1, 0, 'a', 5) RETURNING id")
+                .bind(id)
+                .fetch_one(db)
+                .await
+                .unwrap()
+                .try_get(0)
+                .unwrap();
+            let voter = match anonymous {
+                0 => "bob".to_string(),
+                _ => crate::api::polls::anonymous_key(&pepper, id, "bob", 1),
+            };
+            sqlx::query("INSERT INTO poll_votes(message_id, voter, option_id, value, created_at) VALUES($1, $2, $3, 1, 6)")
+                .bind(id)
+                .bind(voter)
+                .bind(option)
+                .execute(db)
+                .await
+                .unwrap();
+            let ev = crate::api::polls::update_event(db, id)
+                .await
+                .unwrap()
+                .unwrap();
+            let mut bob = Access::new(Some("bob".to_string()), false, set(&["rchat"]));
+            bob.since = Some(1);
+            let mut carol = Access::new(Some("carol".to_string()), false, set(&["rchat"]));
+            carol.since = Some(1);
+            let counts = |ev: Option<WsEvent>| match ev {
+                Some(WsEvent::PollUpdated { poll, .. }) => poll
+                    .results
+                    .map(|r| r.counts.iter().map(|c| c.count).collect::<Vec<_>>()),
+                _ => None,
+            };
+            assert_eq!(
+                counts(Some(ev.clone())),
+                None,
+                "the shared event hides counts"
+            );
+            assert_eq!(
+                counts(poll_for(&state, &bob, &ev).await),
+                Some(vec![1]),
+                "the voter's own copy has them"
+            );
+            assert!(
+                poll_for(&state, &carol, &ev).await.is_none(),
+                "others get the shared event"
+            );
+            bob.since = Some(2);
+            assert_eq!(
+                poll_for(&state, &bob, &ev).await.is_some(),
+                anonymous == 0,
+                "an anonymous vote belongs to the account that cast it"
+            );
+        }
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn poll_updates_respect_the_read_history_floor() {
+        let (state, path) = crate::api::test_util::temp_state("ws_poll_floor").await;
+        let db = &state.db;
+        for name in ["bob", "erin", "nina"] {
+            add_user(db, name).await;
+        }
+        exec(db, "INSERT INTO members(server, username, joined_at) VALUES('rchat', 'bob', 1), ('rchat', 'erin', 500)").await;
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
+            .fetch_one(db)
+            .await
+            .unwrap()
+            .try_get(0)
+            .unwrap();
+        let ev = |created_at: i64| WsEvent::PollUpdated {
+            server: Some("rchat".to_string()),
+            channel_id: Some(cid),
+            dm_id: None,
+            dm_users: None,
+            message_id: 1,
+            thread_root_id: None,
+            created_at,
+            poll: Box::new(crate::api::polls::sample_poll()),
+        };
+        let conn = state.hub.next_conn();
+        let mut bob = Access::new(Some("bob".to_string()), false, set(&["rchat"]));
+        let mut erin = Access::new(Some("erin".to_string()), false, set(&["rchat"]));
+        let mut guest = Access::new(None, false, HashSet::new());
+        guest.subs = set(&["rchat"]);
+        for access in [&mut bob, &mut erin, &mut guest] {
+            assert_eq!(
+                on_event(&state, conn, access, &ev(100)).await,
+                Some(true),
+                "read history for all"
+            );
+        }
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:erin', 1, 1, 0)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .unwrap();
+        for access in [&mut bob, &mut erin, &mut guest] {
+            access.viewable.clear();
+            access.floors.clear();
+        }
+        assert_eq!(on_event(&state, conn, &mut bob, &ev(100)).await, Some(true));
+        assert_eq!(
+            on_event(&state, conn, &mut erin, &ev(100)).await,
+            Some(false),
+            "a poll from before erin joined"
+        );
+        assert_eq!(
+            on_event(&state, conn, &mut erin, &ev(600)).await,
+            Some(true)
+        );
+        assert_eq!(
+            on_event(&state, conn, &mut guest, &ev(100)).await,
+            Some(true)
+        );
+        let dm = WsEvent::PollUpdated {
+            server: None,
+            channel_id: None,
+            dm_id: Some(1),
+            dm_users: Some(vec!["bob".to_string(), "erin".to_string()]),
+            message_id: 2,
+            thread_root_id: None,
+            created_at: 1,
+            poll: Box::new(crate::api::polls::sample_poll()),
+        };
+        let mut nina = Access::new(Some("nina".to_string()), false, HashSet::new());
+        assert_eq!(on_event(&state, conn, &mut erin, &dm).await, Some(true));
+        assert_eq!(on_event(&state, conn, &mut nina, &dm).await, Some(false));
+        crate::api::test_util::done(state, path).await;
     }
 
     #[tokio::test]
@@ -7757,6 +8059,16 @@ mod tests {
                 update: Updated::full(message()),
                 dm_users: dm_users.clone().unwrap_or_default(),
             });
+            evs.push(WsEvent::PollUpdated {
+                server: server.clone(),
+                channel_id: server.as_ref().map(|_| 1),
+                dm_id: None,
+                dm_users: dm_users.clone(),
+                message_id: 1,
+                thread_root_id: None,
+                created_at: 1,
+                poll: Box::new(crate::api::polls::sample_poll()),
+            });
             evs.push(WsEvent::MessageDeleted {
                 server: server.clone(),
                 channel_id: Some(1),
@@ -7857,6 +8169,10 @@ mod tests {
                     WsEvent::UserUnblocked {
                         username: s(user),
                         blocked: s("x"),
+                    },
+                    WsEvent::PollVoted {
+                        username: s(user),
+                        message_id: 1,
                     },
                     WsEvent::FriendRequestAdded {
                         username: s(user),

@@ -3,7 +3,8 @@ import type { Message } from './types'
 export const PINS_TITLE = 'Pinned Messages'
 
 // Only top-level user messages take pins (the server checks the same).
-export const canPin = (m: Message) => m.kind === 'user' && m.thread_root_id === null && m.id > 0
+export const canPin = (m: Message) =>
+  (m.kind === 'user' || m.kind === 'poll') && m.thread_root_id === null && m.id > 0
 
 export const isPinned = (m: Message) => typeof m.pinned_at === 'number'
 

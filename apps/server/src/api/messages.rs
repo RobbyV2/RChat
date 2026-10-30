@@ -100,6 +100,10 @@ pub struct SendReq {
     #[schema(example = 42)]
     #[serde(default)]
     forward_of: Option<i64>,
+    /// Optional poll: the message becomes a `poll` message whose text is the question
+    /// (`content` is ignored). It cannot have an attachment. Ignored with `forward_of`.
+    #[serde(default)]
+    poll: Option<crate::api::polls::PollReq>,
 }
 
 /// A file offered peer to peer by the sender, who becomes its `hoster`. The server stores only
@@ -375,6 +379,7 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
             None => None,
         },
         group_mentions: parse_group_mentions(r.try_get::<Option<String>, _>(35)?.as_deref()),
+        poll: None,
     })
 }
 
@@ -427,6 +432,7 @@ async fn rows_messages(db: &Db, rows: &[AnyRow], quotes: Quotes) -> Result<Vec<M
         .iter()
         .map(|r| row_message(r, &refs))
         .collect::<Result<Vec<_>, _>>()?;
+    crate::api::polls::attach(db, &mut msgs).await?;
     if let Quotes::Since(Some(floor)) = quotes {
         for (m, r) in msgs.iter_mut().zip(rows) {
             if r.try_get::<Option<i64>, _>(31)?.is_some_and(|t| t < floor) {
@@ -1000,7 +1006,7 @@ async fn quoted(
         .await?
         .map(|r| r.try_get(0))
         .transpose()?;
-    if kind.as_deref() != Some("user") {
+    if !matches!(kind.as_deref(), Some("user" | "poll")) {
         return Err(cannot_reply());
     }
     Ok(Some(Quoted {
@@ -1036,10 +1042,25 @@ async fn insert_message(
         reply_to: _,
         mention_reply: _,
         forward_of: _,
+        poll,
     } = req;
+    let settings = Settings::cached(db).await;
+    let poll = match poll {
+        Some(_) if media_id.is_some() || p2p.is_some() => {
+            return Err(bad("Polls cannot have attachments"));
+        }
+        Some(req) => Some(crate::api::polls::validate(
+            req,
+            channel_id.map(|_| &settings),
+        )?),
+        None => None,
+    };
+    let content = match &poll {
+        Some(spec) => spec.question().to_string(),
+        None => content,
+    };
     check_len(&content, MESSAGE_MAX, "Message")?;
     let spoiler = media_spoiler.unwrap_or(false);
-    let settings = Settings::cached(db).await;
     attachments_allowed(&settings, media_id.is_some(), p2p.is_some())?;
     let mut tx = db.begin().await?;
     let media = match (&media_id, p2p) {
@@ -1058,7 +1079,7 @@ async fn insert_message(
     }
     let t = now();
     let id: i64 = sqlx::query(
-        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, media_sha256, reply_to, reply_mention, group_mentions, created_at) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id",
+        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, media_sha256, reply_to, reply_mention, group_mentions, created_at, kind) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id",
     )
     .bind(channel_id)
     .bind(dm_id)
@@ -1078,9 +1099,16 @@ async fn insert_message(
     .bind(quote.is_some_and(|q| q.mention) as i64)
     .bind(stored_group_mentions(&groups))
     .bind(t)
+    .bind(match poll {
+        Some(_) => "poll",
+        None => "user",
+    })
     .fetch_one(&mut *tx)
     .await?
     .try_get(0)?;
+    if let Some(spec) = &poll {
+        crate::api::polls::insert(&mut tx, id, spec, t).await?;
+    }
     tx.commit().await?;
     let mut msgs = [Message {
         id,
@@ -1093,7 +1121,11 @@ async fn insert_message(
         reply_count: 0,
         media,
         embeds: Vec::new(),
-        kind: "user".to_string(),
+        kind: match poll {
+            Some(_) => "poll",
+            None => "user",
+        }
+        .to_string(),
         call: None,
         reactions: Vec::new(),
         reply_to: quote.map(|q| ReplyRef {
@@ -1111,8 +1143,10 @@ async fn insert_message(
         pinned_at: None,
         pin_message_id: None,
         group_mentions: groups,
+        poll: None,
     }];
     attach_quotes(db, &mut msgs, None).await?;
+    crate::api::polls::attach(db, &mut msgs).await?;
     let [message] = msgs;
     Ok(message)
 }
@@ -1131,6 +1165,7 @@ struct Forwarded {
     created_at: i64,
     origin: Option<Origin>,
     dropped: Option<String>,
+    snapshot: Option<String>,
 }
 
 /// Checks and reads `id` for a forward into `dest` (the destination's server, `None` for a
@@ -1175,9 +1210,11 @@ async fn forwarded(
         .fetch_optional(db)
         .await?
         .ok_or_else(cannot_forward)?;
-    if row.try_get::<String, _>(1)? != "user" {
+    let kind: String = row.try_get(1)?;
+    if !matches!(kind.as_str(), "user" | "poll") {
         return Err(cannot_forward());
     }
+    let snapshot = crate::api::polls::snapshot_of(db, id).await?;
     let content: String = row.try_get(0)?;
     let filename = row.try_get::<Option<String>, _>(3)?.unwrap_or_default();
     let uploads = Settings::cached(db).await.asset_uploads;
@@ -1226,6 +1263,7 @@ async fn forwarded(
         created_at,
         origin,
         dropped,
+        snapshot,
     })
 }
 
@@ -1247,12 +1285,16 @@ async fn insert_forward(
         created_at,
         origin,
         dropped,
+        snapshot,
     } = fwd;
     if channel_id.is_some() {
         let settings = Settings::cached(db).await;
         settings.check_profanity(ProfanityTarget::Messages, &content)?;
         if let Some(media) = &media {
             settings.check_profanity(ProfanityTarget::FileNames, &media.filename)?;
+        }
+        if let Some(data) = &snapshot {
+            crate::api::polls::check_snapshot(&settings, data)?;
         }
     }
     let t = now();
@@ -1300,6 +1342,9 @@ async fn insert_forward(
         .execute(&mut *tx)
         .await?
         .rows_affected();
+    if let Some(data) = &snapshot {
+        crate::api::polls::store_snapshot(&mut tx, id, data).await?;
+    }
     tx.commit().await?;
     let refs = user_refs(db, author.as_slice()).await;
     let mut msgs = [Message {
@@ -1328,8 +1373,10 @@ async fn insert_forward(
         pinned_at: None,
         pin_message_id: None,
         group_mentions: Vec::new(),
+        poll: None,
     }];
     attach_embeds(db, &mut msgs).await?;
+    crate::api::polls::attach(db, &mut msgs).await?;
     let [message] = msgs;
     Ok((message, previews > 0))
 }
@@ -1613,6 +1660,7 @@ pub(crate) async fn channel_messages(
     )
     .await?;
     attach_reactions(db, &mut msgs, user.as_ref()).await?;
+    crate::api::polls::personalize(db, &mut msgs, user.as_ref()).await?;
     Ok(Json(msgs))
 }
 
@@ -1672,6 +1720,7 @@ pub(crate) async fn thread_messages(
     let min_ts = root.thread_channel()?.read_since(db).await?;
     let mut msgs = page(db, "m.thread_root_id = $1", id, &q, min_ts).await?;
     attach_reactions(db, &mut msgs, user.as_ref()).await?;
+    crate::api::polls::personalize(db, &mut msgs, user.as_ref()).await?;
     Ok(Json(msgs))
 }
 
@@ -1727,6 +1776,7 @@ pub(crate) async fn dm_messages(
     resolve_dm(db, id, &user).await?;
     let mut msgs = page(db, "m.dm_id = $1", id, &q, None).await?;
     attach_reactions(db, &mut msgs, Some(&user)).await?;
+    crate::api::polls::personalize(db, &mut msgs, Some(&user)).await?;
     Ok(Json(msgs))
 }
 
@@ -1976,6 +2026,7 @@ pub(crate) async fn edit_message(
     let mut msgs = [edited];
     attach_embeds(&state.db, &mut msgs).await?;
     attach_reactions(&state.db, &mut msgs, Some(&user)).await?;
+    crate::api::polls::personalize(&state.db, &mut msgs, Some(&user)).await?;
     let [edited] = msgs;
     Ok(Json(edited))
 }
@@ -2227,7 +2278,10 @@ async fn search_sql(
         None => (i64::MIN, before.unwrap_or(i64::MAX)),
     };
     check_nul([&q, &server, &from, &has], &servers)?;
-    let mut conds: Vec<String> = vec![LIVE_AUTHOR.to_string(), "m.kind = 'user'".to_string()];
+    let mut conds: Vec<String> = vec![
+        LIVE_AUTHOR.to_string(),
+        "m.kind IN ('user', 'poll')".to_string(),
+    ];
     let mut binds: Vec<Bind> = Vec::new();
     match user {
         Some(u) => {
@@ -2924,6 +2978,7 @@ mod tests {
                 reply_to: None,
                 mention_reply: true,
                 forward_of: None,
+                poll: None,
             }),
         )
         .await
@@ -2969,6 +3024,7 @@ mod tests {
                 reply_to: None,
                 mention_reply: true,
                 forward_of: None,
+                poll: None,
             }),
         )
         .await
@@ -3016,6 +3072,7 @@ mod tests {
                 reply_to: None,
                 mention_reply: true,
                 forward_of: None,
+                poll: None,
             }),
         )
         .await;
@@ -3087,6 +3144,7 @@ mod tests {
             reply_to: None,
             mention_reply: true,
             forward_of: None,
+            poll: None,
         }
     }
 
@@ -4792,6 +4850,7 @@ mod tests {
                         reply_to: None,
                         mention_reply: true,
                         forward_of: None,
+                        poll: None,
                     }),
                 )
                 .await
@@ -4851,6 +4910,7 @@ mod tests {
             reply_to,
             mention_reply,
             forward_of: None,
+            poll: None,
         };
         let user = Authed(mem_user(author, false));
         let sent = match to {
@@ -7158,6 +7218,7 @@ mod tests {
             reply_to: Some(source),
             mention_reply: true,
             forward_of: Some(source),
+            poll: None,
         };
         let user = Authed(mem_user(author, false));
         let sent = match to {
@@ -7912,6 +7973,7 @@ mod tests {
             reply_to: None,
             mention_reply: false,
             forward_of: None,
+            poll: None,
         };
         send_channel_message(State(state.clone()), Path(cid), Authed(user), Json(req))
             .await

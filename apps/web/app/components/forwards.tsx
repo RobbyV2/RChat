@@ -12,6 +12,7 @@ import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
 import { BlockedQuote } from './blocking'
 import { MessageTime } from './timestamp'
+import { PollCard } from './poll_card'
 import { fullTimeOf, messageTime, plainStamps } from '../lib/timestamps'
 
 const DELETED_USER = 'Deleted user'
@@ -149,7 +150,11 @@ export function ForwardCard({
           )}
           <MessageTime ts={fwd.created_at} className="shrink-0 text-xs text-on-surface-variant" />
         </div>
-        <MarkdownMessage message={m} canDelete={canDelete} />
+        {m.poll?.snapshot ? (
+          <PollCard m={m} />
+        ) : (
+          <MarkdownMessage message={m} canDelete={canDelete} />
+        )}
         {fwd.dropped && (
           <p className="mt-1 text-xs text-on-surface-variant italic">
             File not forwarded: {fwd.dropped}

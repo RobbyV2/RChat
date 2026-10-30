@@ -55,6 +55,8 @@ pub enum Action {
     AttachmentRemove,
     MessagePin,
     MessageUnpin,
+    PollClose,
+    PollReopen,
 }
 
 pub const ACTIONS: &[Action] = &[
@@ -90,6 +92,8 @@ pub const ACTIONS: &[Action] = &[
     Action::AttachmentRemove,
     Action::MessagePin,
     Action::MessageUnpin,
+    Action::PollClose,
+    Action::PollReopen,
 ];
 
 /// Action groups, the part of an action name before the dot.
@@ -130,6 +134,8 @@ impl Action {
             Action::AttachmentRemove => "message.attachment_remove",
             Action::MessagePin => "message.pin",
             Action::MessageUnpin => "message.unpin",
+            Action::PollClose => "message.poll_close",
+            Action::PollReopen => "message.poll_reopen",
         }
     }
 
@@ -570,7 +576,8 @@ pub struct AuditEntry {
     /// `category_update`, `category_delete`. `server`: `update` (name and colors),
     /// `system_messages`. `access`: `mode` (password protection and the permanent password, never
     /// the password itself), `password_create`, `password_revoke`. `message`: `delete` and
-    /// `attachment_remove` (of other people's messages), `pin`, `unpin`. Clients should show
+    /// `attachment_remove` (of other people's messages), `pin`, `unpin`, `poll_close` and
+    /// `poll_reopen` (of other people's polls). Clients should show
     /// unknown actions generically; new ones may be added.
     #[schema(example = "member.ban")]
     pub action: String,

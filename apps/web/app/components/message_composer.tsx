@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
+  ChartColumn,
   Clock,
   Eye,
   EyeOff,
@@ -33,6 +34,8 @@ import { ForwardBar } from './forwards'
 import { useTextAssist } from './text_assist'
 import { useMyTimeoutEnds, useNow } from './timeout_dialog'
 import { remainingText, timedOutLine } from '../lib/timeouts'
+import { CreatePollDialog } from './poll_dialog'
+import type { PollTarget } from '../lib/polls_store'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
   { label: '1 hour', seconds: 3600 },
@@ -245,6 +248,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const noteTyping = useStore(s => s.noteTyping)
   const [focused, setFocused] = useState(false)
   const [expiryOpen, setExpiryOpen] = useState(false)
+  const [pollOpen, setPollOpen] = useState(false)
   const [pickerFor, setPickerFor] = useState<string | null>(null)
   const sheet = useMedia(SHEET_QUERY)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -359,6 +363,16 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     if (draftKey) setDraft(draftKey, value)
   }
 
+  const pollTarget: PollTarget | null = thread
+    ? rootId !== null
+      ? { kind: 'thread', id: rootId }
+      : null
+    : view?.kind === 'channel'
+      ? { kind: 'channel', id: view.channelId }
+      : view?.kind === 'dm'
+        ? { kind: 'dm', id: view.dmId }
+        : null
+
   const switchable = pending !== null && uploadsOn && p2pOn && pending.file.size <= MAX_UPLOAD
 
   const attach = (file: File | null) => {
@@ -398,6 +412,9 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
 
   return (
     <div className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3">
+      {pollOpen && pollTarget && (
+        <CreatePollDialog target={pollTarget} onClose={() => setPollOpen(false)} />
+      )}
       {expiryOpen && (
         <ExpiryDialog
           onPick={seconds => {
@@ -488,6 +505,18 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
               }}
             />
           </>
+        )}
+        {pollTarget && (
+          <button
+            type="button"
+            title="Create poll"
+            aria-label="Create poll"
+            data-create-poll
+            onClick={() => setPollOpen(true)}
+            className="shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+          >
+            <ChartColumn size={20} />
+          </button>
         )}
         <textarea
           ref={inputRef}

@@ -344,6 +344,10 @@ export function sentence(entry: AuditEntry): Part[] {
       return [...actor, t(' pinned a message by '), ...user, t(` in ${ch()}`)]
     case 'message.unpin':
       return [...actor, t(' unpinned a message by '), ...user, t(` in ${ch()}`)]
+    case 'message.poll_close':
+      return [...actor, t(' closed a poll by '), ...user, t(` in ${ch()}`)]
+    case 'message.poll_reopen':
+      return [...actor, t(' reopened a poll by '), ...user, t(` in ${ch()}`)]
     default:
       return [...actor, t(` did ${entry.action}`)]
   }

@@ -161,6 +161,16 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             username: _,
             count: _,
         }
+        | WsEvent::PollUpdated {
+            server,
+            channel_id: _,
+            dm_id: _,
+            dm_users,
+            message_id: _,
+            thread_root_id: _,
+            created_at: _,
+            poll: _,
+        }
         | WsEvent::MessagePinned {
             server,
             channel_id: _,
@@ -319,6 +329,10 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
         | WsEvent::UserUnblocked {
             username,
             blocked: _,
+        }
+        | WsEvent::PollVoted {
+            username,
+            message_id: _,
         }
         | WsEvent::FriendRequestAdded {
             username,

@@ -42,7 +42,7 @@ export const findMessageLinks = (text: string, origins: string[], max = 3): Mess
   return out
 }
 
-export type CardLabel = 'pin' | 'call' | 'forward'
+export type CardLabel = 'pin' | 'call' | 'forward' | 'poll'
 
 // What a link card shows instead of a text snippet: pin notices and call logs have no text, and a
 // forward without text or attachment says so. `forwarded` marks a forward that still shows its text.
@@ -51,6 +51,7 @@ export const cardLabel = (
 ): { label: CardLabel; text: string } | { label: null; forwarded: boolean } => {
   if (card.kind === 'pin') return { label: 'pin', text: 'Pinned a message' }
   if (card.kind === 'call') return { label: 'call', text: 'Call' }
+  if (card.kind === 'poll') return { label: 'poll', text: `Poll: ${card.content}` }
   if (card.forwarded && !card.content && !card.has_media)
     return { label: 'forward', text: 'Forwarded message' }
   return { label: null, forwarded: card.forwarded }

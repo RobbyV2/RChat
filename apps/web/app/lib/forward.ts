@@ -12,7 +12,7 @@ export interface ForwardClip {
 
 export const forwardKey = (username: string) => `rchat_forward:${username}`
 
-export const canForward = (m: Message) => m.kind === 'user' && m.id > 0
+export const canForward = (m: Message) => (m.kind === 'user' || m.kind === 'poll') && m.id > 0
 
 // The original author and time travel with forwards of forwards (the server does the same).
 export const clipOf = (m: Message): ForwardClip => ({

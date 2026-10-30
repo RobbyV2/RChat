@@ -664,6 +664,7 @@ async fn run_purge(state: &AppState, kind: PurgeKind, key: &str) -> sqlx::Result
             tx.commit().await
         }
         PurgeKind::User | PurgeKind::Ban => {
+            let pepper = crate::db::pepper(&state.db).await?;
             purge_messages(&state.db, "author = $1", key).await?;
             purge_messages(
                 &state.db,
@@ -676,20 +677,29 @@ async fn run_purge(state: &AppState, kind: PurgeKind, key: &str) -> sqlx::Result
                 .bind(key)
                 .execute(&mut *tx)
                 .await?;
-            let purging = user_row(&mut *tx, key)
-                .await?
-                .is_none_or(|u| u.password_hash == PURGING_HASH);
+            let row = user_row(&mut *tx, key).await?;
+            let purging = row.as_ref().is_none_or(|u| u.password_hash == PURGING_HASH);
             let gone = match purging {
                 true => {
                     let gone = crate::api::friends::gone_of(&mut tx, key).await?;
+                    let polls = crate::api::polls::forget_voter(
+                        &mut tx,
+                        &pepper,
+                        key,
+                        row.as_ref().map(|u| u.created_at),
+                    )
+                    .await?;
                     drop_user_rows(&mut tx, key).await?;
-                    Some(gone)
+                    Some((gone, polls))
                 }
                 false => None,
             };
             clear_purge(&mut tx, kind, key).await?;
             tx.commit().await?;
-            if let Some(gone) = gone {
+            if let Some((gone, polls)) = gone {
+                for id in polls {
+                    crate::api::polls::schedule_update(state, id);
+                }
                 crate::api::friends::announce_gone(state, key, gone).await;
             }
             Ok(())
@@ -797,6 +807,8 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         "DELETE FROM pings WHERE username = $1",
         "DELETE FROM pings WHERE actor = $1",
         "DELETE FROM reactions WHERE username = $1",
+        "UPDATE poll_options SET added_by = NULL WHERE added_by = $1",
+        "UPDATE polls SET closed_by = NULL WHERE closed_by = $1",
         "UPDATE server_passwords SET created_by = NULL WHERE created_by = $1",
         "UPDATE messages SET pinned_by = NULL WHERE pinned_by = $1",
         "DELETE FROM read_state WHERE username = $1",
