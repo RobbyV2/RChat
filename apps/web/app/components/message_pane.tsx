@@ -74,6 +74,7 @@ import { MarkdownMessage } from './markdown_message'
 import { TypingIndicator } from './typing_indicator'
 import { MessageComposer } from './message_composer'
 import StatusClock from './status_clock'
+import { InboxButton } from './inbox'
 import { longPress } from './context_menu'
 import { profileTrigger } from './profile_card'
 import { useCallShare, VoiceGrid } from './voice_grid'
@@ -952,6 +953,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           {dm && !dm.is_self && !guest && !otherBlocked && <CallButtons dm={dm} />}
           <StatusClock />
           {scope && <PinsButton />}
+          {!guest && <InboxButton />}
           {view?.kind === 'channel' && !isVoice && (
             <button
               title="Search"

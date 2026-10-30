@@ -599,6 +599,13 @@ pub enum WsEvent {
         username: String,
         dm_id: i64,
     },
+    /// `username` marked these group-mentioned messages of channel `scope` seen in the inbox
+    /// (at most 1000 ids); to that user's connections only.
+    GroupPingsSeen {
+        username: String,
+        scope: String,
+        message_ids: Vec<i64>,
+    },
     /// `username` blocked a user; to that user's connections only.
     UserBlocked {
         username: String,
@@ -4349,6 +4356,11 @@ fn wants(
         }
         | WsEvent::DmClosed { username, dm_id: _ }
         | WsEvent::DmReopened { username, dm_id: _ }
+        | WsEvent::GroupPingsSeen {
+            username,
+            scope: _,
+            message_ids: _,
+        }
         | WsEvent::UserBlocked {
             username,
             blocked: _,
@@ -8158,6 +8170,11 @@ mod tests {
                     WsEvent::DmReopened {
                         username: s(user),
                         dm_id: 1,
+                    },
+                    WsEvent::GroupPingsSeen {
+                        username: s(user),
+                        scope: s("c1"),
+                        message_ids: vec![1],
                     },
                     WsEvent::UserBlocked {
                         username: s(user),

@@ -596,6 +596,56 @@ export interface Ping {
   created_at: number
 }
 
+// GET /api/inbox: one notification. `id` is unique within `source` (a ping id, the message id of
+// a group mention, a friend ping id).
+export type InboxSource = 'ping' | 'group' | 'friend'
+
+export type InboxKind =
+  | 'mention'
+  | 'reply'
+  | 'reaction'
+  | 'everyone'
+  | 'here'
+  | 'role'
+  | 'friend_request'
+  | 'friend_accept'
+
+export type InboxFilter = 'mentions' | 'replies' | 'reactions' | 'friends'
+
+export interface InboxItem {
+  source: InboxSource
+  id: number
+  kind: InboxKind
+  unread: boolean
+  created_at: number
+  actor: UserRef
+  emoji: string | null
+  role: string | null
+  group_kinds?: GroupKind[]
+  scope: string | null
+  server: string | null
+  server_name: string | null
+  channel_name: string | null
+  message_id: number | null
+  thread_root_id: number | null
+  content: string | null
+  media_filename: string | null
+  media_spoiler?: boolean
+}
+
+export interface InboxUntil {
+  pings: number
+  groups: number
+  friends: number
+}
+
+export interface InboxPage {
+  items: InboxItem[]
+  next: string | null
+  // only with the first page
+  until: InboxUntil | null
+}
+
 export type VoiceMsg =
   | { type: 'voice_join'; channel_id: number }
   | { type: 'voice_leave' }
@@ -704,6 +754,7 @@ export type WsEvent =
     }
   | { type: 'ping'; username: string; ping: Ping }
   | ({ type: 'ping_count'; username: string; scope: string } & PingSummary)
+  | { type: 'group_pings_seen'; username: string; scope: string; message_ids: number[] }
   | { type: 'voice_state'; server: string; channel_id: number; users: string[] }
   | { type: 'voice_muted'; server: string; channel_id: number; username: string; muted: boolean }
   | {

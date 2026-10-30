@@ -39,6 +39,7 @@ import {
   NO_GROUP_PINGS,
   addGroupPing,
   dropGroupMessage,
+  seenGroupMessages,
   forgetGroupPings,
   groupAction,
   groupKindsFor,
@@ -3397,6 +3398,7 @@ export const useStore = create<RChatState>()((set, get) => {
     confirm: null,
     confirmSeq: 0,
     panel: null,
+    inboxOpen: false,
     pending: {},
     notices: [],
     noticesPaused: false,
@@ -3695,6 +3697,7 @@ export const useStore = create<RChatState>()((set, get) => {
         activeDialog: null,
         confirm: null,
         panel: null,
+        inboxOpen: false,
         pending: {},
         notices: [],
         noticesPaused: false,
@@ -4584,6 +4587,7 @@ export const useStore = create<RChatState>()((set, get) => {
     openSearch: () => set({ panel: { kind: 'search' }, search: emptySearch() }),
 
     closePanel: () => set({ panel: null }),
+    setInboxOpen: open => set({ inboxOpen: open }),
 
     loadOlderThread: () =>
       act(async () => {
@@ -5779,6 +5783,14 @@ export const useStore = create<RChatState>()((set, get) => {
             name: ping.actor.display_name,
             generic: 'New notification',
             go: () => void get().openPing(ping),
+          })
+          return
+        }
+        case 'group_pings_seen': {
+          if (get().me?.username !== ev.username) return
+          set(s => {
+            const groupPings = seenGroupMessages(s.groupPings, ev.scope, ev.message_ids)
+            return groupPings === s.groupPings ? {} : { groupPings }
           })
           return
         }

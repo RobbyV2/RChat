@@ -7,6 +7,10 @@ import type {
   Friend,
   FriendRequest,
   FriendSummary,
+  InboxFilter,
+  InboxPage,
+  InboxSource,
+  InboxUntil,
   AvatarKind,
   Category,
   Channel,
@@ -87,6 +91,24 @@ const withCursor = (path: string, cursor: string | null) =>
   cursor ? `${path}${path.includes('?') ? '&' : '?'}cursor=${seg(cursor)}` : path
 
 const seg = encodeURIComponent
+
+export interface InboxQuery {
+  unread?: boolean
+  kind?: InboxFilter
+  server?: string
+  dms?: boolean
+  limit?: number
+}
+
+export const inboxParams = (q: InboxQuery) => {
+  const p = new URLSearchParams()
+  if (q.unread) p.set('unread', 'true')
+  if (q.kind) p.set('kind', q.kind)
+  if (q.server) p.set('server', q.server)
+  if (q.dms) p.set('dms', 'true')
+  p.set('limit', String(q.limit ?? 30))
+  return p.toString()
+}
 
 export class ApiClient {
   private token: string | null = null
@@ -507,6 +529,17 @@ export const endpoints = (c: ApiClient) => ({
     c.page<FriendRequest>(withCursor(`/friends/requests?limit=50&incoming=${incoming}`, cursor)),
   friendSummary: () => c.req<FriendSummary>('GET', '/friends/summary'),
   friendsSeen: (until: number) => c.req<unknown>('POST', '/friends/seen', { pings_until: until }),
+  inbox: (query: InboxQuery, cursor: string | null) =>
+    c.req<InboxPage>('GET', withCursor(`/inbox?${inboxParams(query)}`, cursor)),
+  inboxRead: (source: InboxSource, id: number) =>
+    c.req<unknown>('POST', '/inbox/read', { source, id }),
+  inboxReadAll: (until: InboxUntil, query: InboxQuery) =>
+    c.req<unknown>('POST', '/inbox/read_all', {
+      until,
+      kind: query.kind,
+      server: query.server,
+      dms: query.dms || undefined,
+    }),
   sendFriendRequest: (username: string) =>
     c.req<{ status: RequestStatus; user: UserRef }>('POST', '/friends/requests', { username }),
   cancelFriendRequest: (username: string) =>

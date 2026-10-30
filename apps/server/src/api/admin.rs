@@ -806,6 +806,7 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         "DELETE FROM config_shares WHERE owner = $1",
         "DELETE FROM pings WHERE username = $1",
         "DELETE FROM pings WHERE actor = $1",
+        "DELETE FROM group_pings_read WHERE username = $1",
         "DELETE FROM reactions WHERE username = $1",
         "UPDATE poll_options SET added_by = NULL WHERE added_by = $1",
         "UPDATE polls SET closed_by = NULL WHERE closed_by = $1",

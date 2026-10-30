@@ -322,6 +322,11 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
         }
         | WsEvent::DmClosed { username, dm_id: _ }
         | WsEvent::DmReopened { username, dm_id: _ }
+        | WsEvent::GroupPingsSeen {
+            username,
+            scope: _,
+            message_ids: _,
+        }
         | WsEvent::UserBlocked {
             username,
             blocked: _,

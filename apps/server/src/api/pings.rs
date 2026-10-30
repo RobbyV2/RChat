@@ -249,7 +249,7 @@ pub async fn mentioned_users(
 
 /// The first `EXCERPT_MAX` characters; a spoiler cut open is closed again, so clients keep it
 /// hidden.
-fn excerpt(content: &str) -> String {
+pub(crate) fn excerpt(content: &str) -> String {
     let Some((cut, _)) = content.char_indices().nth(EXCERPT_MAX) else {
         return content.to_string();
     };
@@ -771,7 +771,7 @@ pub(crate) fn group_unseen_sql(hidden: &[i64]) -> String {
         ),
     };
     format!(
-        "SELECT g.channel_id, g.message_id, g.kind FROM members mem JOIN channels c ON c.server = mem.server JOIN group_pings g ON g.channel_id = c.id WHERE mem.username = $1 AND c.kind = 'text' AND g.message_id > COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'c' || c.id), 0) AND g.created_at >= mem.joined_at AND g.actor <> $1 AND NOT EXISTS(SELECT 1 FROM blocks b WHERE b.blocker = $1 AND b.blocked = g.actor) AND (g.kind = 'everyone' OR (g.kind = 'here' AND EXISTS(SELECT 1 FROM here_pings h WHERE h.username = $1 AND h.ping_id = g.id)) OR (g.kind = 'role' AND EXISTS(SELECT 1 FROM user_roles ur WHERE ur.server = g.server AND ur.username = $1 AND ur.role_id = g.role_id))) AND NOT EXISTS(SELECT 1 FROM pings p WHERE p.message_id = g.message_id AND p.username = $1 AND p.kind <> 'reaction'){skip} ORDER BY g.message_id DESC LIMIT $2"
+        "SELECT g.channel_id, g.message_id, g.kind FROM members mem JOIN channels c ON c.server = mem.server JOIN group_pings g ON g.channel_id = c.id WHERE mem.username = $1 AND c.kind = 'text' AND g.message_id > COALESCE((SELECT rs.last_read FROM read_state rs WHERE rs.username = $1 AND rs.scope = 'c' || c.id), 0) AND g.created_at >= mem.joined_at AND g.actor <> $1 AND NOT EXISTS(SELECT 1 FROM blocks b WHERE b.blocker = $1 AND b.blocked = g.actor) AND (g.kind = 'everyone' OR (g.kind = 'here' AND EXISTS(SELECT 1 FROM here_pings h WHERE h.username = $1 AND h.ping_id = g.id)) OR (g.kind = 'role' AND EXISTS(SELECT 1 FROM user_roles ur WHERE ur.server = g.server AND ur.username = $1 AND ur.role_id = g.role_id))) AND NOT EXISTS(SELECT 1 FROM pings p WHERE p.message_id = g.message_id AND p.username = $1 AND p.kind <> 'reaction') AND NOT EXISTS(SELECT 1 FROM group_pings_read gr WHERE gr.username = $1 AND gr.message_id = g.message_id){skip} ORDER BY g.message_id DESC LIMIT $2"
     )
 }
 
@@ -780,7 +780,8 @@ pub(crate) fn group_unseen_sql(hidden: &[i64]) -> String {
 /// after they joined the server (so read-history limits never matter), is not their own, and
 /// addresses them: `@everyone`, `@here` when they were among the stored online viewers, or a
 /// role they hold now. Messages by someone they blocked never count. Messages that also ping them personally (a mention or reply ping) count
-/// only there. Channels in `hidden` (the ones they cannot view) are skipped. At most
+/// only there, and messages they marked read in the inbox (`group_pings_read`) do not count.
+/// Channels in `hidden` (the ones they cannot view) are skipped. At most
 /// `GROUP_PINGS_MAX` rows are read; every lookup is indexed (`members` by user, `channels` by server,
 /// `group_pings` by channel and message id, `read_state`, `here_pings`, `user_roles` and `blocks` by
 /// primary key, `pings` by message).
@@ -961,6 +962,11 @@ pub async fn forget_server_pings(
     server: &str,
     username: &str,
 ) -> sqlx::Result<u64> {
+    sqlx::query("DELETE FROM group_pings_read WHERE username = $2 AND message_id IN (SELECT g.message_id FROM group_pings g WHERE g.server = $1)")
+        .bind(server)
+        .bind(username)
+        .execute(&mut *conn)
+        .await?;
     Ok(
         sqlx::query("DELETE FROM pings WHERE server = $1 AND username = $2")
             .bind(server)
@@ -1160,7 +1166,7 @@ mod tests {
             None
         );
         let swept = crate::db::sweep_stale(db).await.expect("sweep");
-        assert_eq!(swept.pings, PINGS_MAX as u64 + 1);
+        assert_eq!(swept.pings, 1, "seen pings stay until they age out");
         sqlx::query("DELETE FROM messages WHERE id = $1")
             .bind(mid)
             .execute(db)

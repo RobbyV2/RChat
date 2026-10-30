@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS reactions(message_id INTEGER NOT NULL REFERENCES mess
 CREATE TABLE IF NOT EXISTS config_shares(id TEXT PRIMARY KEY, owner TEXT NOT NULL, blob TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS group_pings(id INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('everyone','here','role')), role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE, actor TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS here_pings(ping_id INTEGER NOT NULL REFERENCES group_pings(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(username, ping_id));
+CREATE TABLE IF NOT EXISTS group_pings_read(username TEXT NOT NULL, message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, created_at INTEGER NOT NULL, PRIMARY KEY(username, message_id));
 CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, actor TEXT, staff INTEGER NOT NULL DEFAULT 0, action TEXT NOT NULL, target_kind TEXT, target_id INTEGER, target_name TEXT, target_staff INTEGER NOT NULL DEFAULT 0, details TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS audit_channels(entry_id INTEGER NOT NULL REFERENCES audit_log(id) ON DELETE CASCADE, channel_id INTEGER NOT NULL, private INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(entry_id, channel_id));
 CREATE TABLE IF NOT EXISTS member_timeouts(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, until INTEGER NOT NULL, reason TEXT, set_by TEXT, created_at INTEGER NOT NULL, PRIMARY KEY(server, username));
@@ -110,6 +111,9 @@ CREATE INDEX IF NOT EXISTS idx_group_pings_created ON group_pings(created_at);
 CREATE INDEX IF NOT EXISTS idx_group_pings_role ON group_pings(role_id) WHERE role_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_here_pings_ping ON here_pings(ping_id);
 CREATE INDEX IF NOT EXISTS idx_group_pings_server ON group_pings(server);
+CREATE INDEX IF NOT EXISTS idx_group_pings_server_time ON group_pings(server, created_at, message_id);
+CREATE INDEX IF NOT EXISTS idx_group_pings_read_message ON group_pings_read(message_id);
+CREATE INDEX IF NOT EXISTS idx_group_pings_read_created ON group_pings_read(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_log_server ON audit_log(server, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(server, action, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(server, actor, created_at, id);
@@ -162,6 +166,7 @@ CREATE TABLE IF NOT EXISTS reactions(message_id BIGINT NOT NULL REFERENCES messa
 CREATE TABLE IF NOT EXISTS config_shares(id TEXT PRIMARY KEY, owner TEXT NOT NULL, blob TEXT NOT NULL, created_at BIGINT NOT NULL, expires_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS group_pings(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, kind TEXT NOT NULL CHECK(kind IN ('everyone','here','role')), role_id BIGINT REFERENCES roles(id) ON DELETE CASCADE, actor TEXT NOT NULL, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS here_pings(ping_id BIGINT NOT NULL REFERENCES group_pings(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(username, ping_id));
+CREATE TABLE IF NOT EXISTS group_pings_read(username TEXT NOT NULL, message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, created_at BIGINT NOT NULL, PRIMARY KEY(username, message_id));
 CREATE TABLE IF NOT EXISTS audit_log(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, actor TEXT, staff BIGINT NOT NULL DEFAULT 0, action TEXT NOT NULL, target_kind TEXT, target_id BIGINT, target_name TEXT, target_staff BIGINT NOT NULL DEFAULT 0, details TEXT NOT NULL DEFAULT '{}', created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS audit_channels(entry_id BIGINT NOT NULL REFERENCES audit_log(id) ON DELETE CASCADE, channel_id BIGINT NOT NULL, private BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(entry_id, channel_id));
 CREATE TABLE IF NOT EXISTS member_timeouts(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, until BIGINT NOT NULL, reason TEXT, set_by TEXT, created_at BIGINT NOT NULL, PRIMARY KEY(server, username));
@@ -227,6 +232,9 @@ CREATE INDEX IF NOT EXISTS idx_group_pings_created ON group_pings(created_at);
 CREATE INDEX IF NOT EXISTS idx_group_pings_role ON group_pings(role_id) WHERE role_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_here_pings_ping ON here_pings(ping_id);
 CREATE INDEX IF NOT EXISTS idx_group_pings_server ON group_pings(server);
+CREATE INDEX IF NOT EXISTS idx_group_pings_server_time ON group_pings(server, created_at, message_id);
+CREATE INDEX IF NOT EXISTS idx_group_pings_read_message ON group_pings_read(message_id);
+CREATE INDEX IF NOT EXISTS idx_group_pings_read_created ON group_pings_read(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_log_server ON audit_log(server, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(server, action, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(server, actor, created_at, id);
@@ -545,7 +553,9 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// 9: `blocks`.
 /// 10: `friends`, `friend_requests`, `friend_pings` and `privacy`.
 /// 11: polls (`polls`, `poll_options`, `poll_votes`, `poll_snapshots`).
-pub const SCHEMA_VERSION: i64 = 11;
+/// 12: `group_pings_read` (group mentions marked read in the inbox) and the
+/// `group_pings(server, created_at, message_id)` index.
+pub const SCHEMA_VERSION: i64 = 12;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
@@ -1191,6 +1201,11 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
             tracing::info!("gave {n} admins with every permission the Timeout members permission");
         }
     }
+    if version < 12 {
+        sqlx::query("DELETE FROM pings WHERE seen = 3")
+            .execute(&mut *conn)
+            .await?;
+    }
     let t = now();
     sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
         .bind(t)
@@ -1483,8 +1498,9 @@ pub const AUDIT_KEEP: i64 = 90 * 86400;
 /// How long an ended timeout row is kept before the sweep deletes it (the checks ignore it).
 pub const TIMEOUT_KEEP: i64 = 3600;
 
-/// Most seen and retracted pings kept per recipient. Seen reaction pings stay until they age
-/// out so that taking a reaction back and adding it again does not ping again; this caps them.
+/// Most seen and retracted pings kept per recipient. Seen pings stay until they age out, so the
+/// inbox can list them and taking a reaction back and adding it again does not ping again; this
+/// caps them.
 pub const PINGS_KEPT: i64 = 2000;
 
 pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
@@ -1529,7 +1545,7 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
         .await?,
         pings: delete_batched(
             db,
-            "DELETE FROM pings WHERE id IN (SELECT id FROM pings WHERE (seen <> 0 AND seen <> 2 AND kind <> 'reaction') OR created_at < $1 LIMIT $2)",
+            "DELETE FROM pings WHERE id IN (SELECT id FROM pings WHERE created_at < $1 LIMIT $2)",
             t - PING_KEEP,
         )
         .await?
@@ -1542,7 +1558,13 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
             .await?
             + delete_batched(
                 db,
-                "DELETE FROM friend_pings WHERE id IN (SELECT id FROM friend_pings WHERE seen <> 0 OR created_at < $1 LIMIT $2)",
+                "DELETE FROM group_pings_read WHERE (username, message_id) IN (SELECT username, message_id FROM group_pings_read WHERE created_at < $1 LIMIT $2)",
+                t - PING_KEEP,
+            )
+            .await?
+            + delete_batched(
+                db,
+                "DELETE FROM friend_pings WHERE id IN (SELECT id FROM friend_pings WHERE created_at < $1 LIMIT $2)",
                 t - PING_KEEP,
             )
             .await?,
@@ -1572,10 +1594,14 @@ pub const PURGE_BATCH: i64 = 500;
 /// Recipients with more than `PINGS_KEPT` seen pings handled per sweep.
 const KEPT_USERS_MAX: i64 = 1000;
 
+/// Recipients above the seen-ping cap. `seen IN (1, 2)` keeps it on the covering
+/// `idx_pings_user (username, seen, id)`, so no ping row is looked up.
+pub(crate) const KEPT_USERS_SQL: &str = "SELECT username FROM pings WHERE seen IN (1, 2) GROUP BY username HAVING COUNT(*) > $1 LIMIT $2";
+
 /// Keeps the newest `PINGS_KEPT` seen and retracted pings of each recipient. One pass over the
-/// seen-ping index finds the recipients above the cap; only their pings are looked at.
+/// covering per-user index finds the recipients above the cap; only their pings are looked at.
 async fn trim_kept_pings(db: &Db) -> sqlx::Result<u64> {
-    let users = sqlx::query("SELECT username FROM pings WHERE seen <> 0 GROUP BY username HAVING COUNT(*) > $1 LIMIT $2")
+    let users = sqlx::query(KEPT_USERS_SQL)
         .bind(PINGS_KEPT)
         .bind(KEPT_USERS_MAX)
         .fetch_all(db)
@@ -2836,7 +2862,7 @@ mod tests {
             );
             assert_eq!(
                 count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND (name LIKE 'idx_group_pings_%' OR name = 'idx_here_pings_ping')").await,
-                6
+                9
             );
             assert_eq!(
                 count(
@@ -2868,6 +2894,82 @@ mod tests {
                 .await
                 .expect("clear");
             assert_eq!(count(&db, "SELECT COUNT(*) FROM here_pings").await, 0);
+            close(&db).await;
+        }
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn group_pings_read_replaces_the_inbox_markers() {
+        let path = std::env::temp_dir().join(format!("rchat_group_read_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_group_pings_read_message",
+            "DROP INDEX idx_group_pings_read_created",
+            "DROP INDEX idx_group_pings_server_time",
+            "DROP TABLE group_pings_read",
+            "UPDATE settings SET value = '11' WHERE key = 'schema_version'",
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES((SELECT id FROM channels WHERE server = 'rchat'), 'boss', '@everyone', 7)",
+            "INSERT INTO group_pings(message_id, channel_id, server, kind, actor, created_at) SELECT id, channel_id, 'rchat', 'everyone', 'boss', 7 FROM messages",
+            "INSERT INTO pings(username, kind, scope, server, message_id, actor, created_at, seen) SELECT 'alice', 'mention', 'c' || channel_id, 'rchat', id, 'boss', 7, 3 FROM messages",
+            "INSERT INTO pings(username, kind, scope, server, message_id, actor, created_at, seen) SELECT 'alice', 'reaction', 'c' || channel_id, 'rchat', id, 'bob', 7, 1 FROM messages",
+            "INSERT INTO pings(username, kind, scope, server, message_id, actor, created_at, seen) SELECT 'alice', 'mention', 'c' || channel_id, 'rchat', id, 'bob', 7, 0 FROM messages",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM pings WHERE seen = 3").await,
+                0,
+                "markers are gone"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM pings WHERE seen IN (0, 1)").await,
+                2,
+                "real pings stay"
+            );
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM group_pings").await, 1);
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_group_pings_read_message', 'idx_group_pings_read_created', 'idx_group_pings_server_time')").await,
+                3
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            if round == 0 {
+                sqlx::query("INSERT INTO group_pings_read(username, message_id, created_at) SELECT 'alice', id, 7 FROM messages")
+                    .execute(&db)
+                    .await
+                    .expect("new table");
+            } else {
+                assert_eq!(
+                    count(&db, "SELECT COUNT(*) FROM group_pings_read").await,
+                    1,
+                    "kept on a second start"
+                );
+                sqlx::query("DELETE FROM messages")
+                    .execute(&db)
+                    .await
+                    .expect("delete");
+                assert_eq!(
+                    count(&db, "SELECT COUNT(*) FROM group_pings_read").await,
+                    0,
+                    "cascades with the message"
+                );
+            }
             close(&db).await;
         }
         wipe();
@@ -4223,7 +4325,7 @@ mod tests {
                 login_attempts: 1,
                 password_attempts: 1,
                 embeds: 1,
-                pings: 2,
+                pings: 1,
                 config_shares: 2,
                 audit_log: 1,
                 member_timeouts: 1,

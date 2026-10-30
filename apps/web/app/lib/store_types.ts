@@ -278,6 +278,8 @@ export interface RChatState {
   confirm: ConfirmRequest | null
   confirmSeq: number
   panel: Panel | null
+  // The notifications inbox (popover on desktop, sheet on mobile).
+  inboxOpen: boolean
   pending: Record<string, PendingUpload>
   notices: Notice[]
   noticesPaused: boolean
@@ -453,6 +455,7 @@ export interface RChatState {
   openThread: (root: Message, at?: number) => Promise<void>
   openSearch: () => void
   closePanel: () => void
+  setInboxOpen: (open: boolean) => void
   loadOlderThread: () => Promise<void>
   loadNewerThread: () => Promise<void>
   sendThreadMessage: (content: string, p2pExpiresIn?: number | null) => void

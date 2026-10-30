@@ -23,6 +23,7 @@ import SettingsMenu from '../components/settings_menu'
 import ThreadPanel from '../components/thread_panel'
 import SearchPanel from '../components/search_panel'
 import FriendsPanel, { AddFriendsDialog } from '../components/friends'
+import { InboxHost } from '../components/inbox'
 import { PollVotersDialog } from '../components/poll_card'
 import { CallBanner } from '../components/voice_grid'
 import { NoticeStack } from '../components/notice_stack'
@@ -216,6 +217,7 @@ export default function AppShell() {
         <SettingsMenu />
         <AdminPanel />
         <ConfirmDialog />
+        <InboxHost />
         <ProfileCard />
         <ContextMenu />
         <ReactionPickerHost />

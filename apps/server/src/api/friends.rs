@@ -29,7 +29,8 @@ pub const INCOMING_MAX: i64 = 1000;
 pub const REQUESTS_PER_WINDOW: u32 = 20;
 const REQUEST_WINDOW: Duration = Duration::from_secs(600);
 const PAGE: i64 = 50;
-/// Unseen friend pings kept per user, like other pings; older ones are dropped.
+/// Unseen (and, separately, seen) friend pings kept per user, like other pings; older ones are
+/// dropped.
 const PINGS_KEPT: i64 = crate::api::pings::PINGS_MAX;
 /// Seen friend pings are removed after this many seconds.
 const SEEN_KEPT: i64 = 30 * 24 * 3600;
@@ -375,7 +376,7 @@ async fn unseen(db: &Db, user: &str) -> Result<(i64, i64), ApiError> {
 }
 
 /// Sends `user` a `ping_count` for the `friends` scope.
-async fn announce_count(state: &AppState, user: &str) -> Result<(), ApiError> {
+pub(crate) async fn announce_count(state: &AppState, user: &str) -> Result<(), ApiError> {
     let (pings, pings_until) = unseen(&state.db, user).await?;
     state.hub.broadcast(WsEvent::PingCount {
         username: user.to_string(),
@@ -415,6 +416,13 @@ async fn ping(
     .bind(PINGS_KEPT)
     .execute(&state.db)
     .await?;
+    sqlx::query(
+        "DELETE FROM friend_pings WHERE username = $1 AND seen <> 0 AND id <= (SELECT id FROM friend_pings WHERE username = $1 AND seen <> 0 ORDER BY id DESC LIMIT 1 OFFSET $2)",
+    )
+    .bind(recipient)
+    .bind(PINGS_KEPT)
+    .execute(&state.db)
+    .await?;
     state.hub.broadcast(WsEvent::Ping {
         username: recipient.to_string(),
         ping: Ping {
@@ -433,23 +441,36 @@ async fn ping(
     Ok(())
 }
 
-/// Removes the unseen friend pings `actor` caused for `recipient` (of `kind`, or all kinds) and
-/// sends `recipient` the new count when any were removed.
+/// Removes the friend pings `actor` caused for `recipient` (of `kind`, or all kinds): only the
+/// unseen ones, or with `seen_too` also the seen ones the inbox still lists (the request or
+/// friendship they describe is gone). Sends `recipient` the new count when any were removed.
 async fn drop_pings(
     state: &AppState,
     recipient: &str,
     actor: &str,
     kind: Option<PingKind>,
+    seen_too: bool,
 ) -> Result<(), ApiError> {
+    let kind = kind.map_or("", PingKind::as_str);
     let gone = sqlx::query(
         "DELETE FROM friend_pings WHERE username = $1 AND actor = $2 AND seen = 0 AND ($3 = '' OR kind = $3)",
     )
     .bind(recipient)
     .bind(actor)
-    .bind(kind.map_or("", PingKind::as_str))
+    .bind(kind)
     .execute(&state.db)
     .await?
     .rows_affected();
+    if seen_too {
+        sqlx::query(
+            "DELETE FROM friend_pings WHERE username = $1 AND actor = $2 AND seen <> 0 AND ($3 = '' OR kind = $3)",
+        )
+        .bind(recipient)
+        .bind(actor)
+        .bind(kind)
+        .execute(&state.db)
+        .await?;
+    }
     if gone > 0 {
         announce_count(state, recipient).await?;
     }
@@ -569,6 +590,7 @@ async fn befriend(state: &AppState, me: &User, other: &User) -> Result<Friend, A
         &me.username,
         &other.username,
         Some(PingKind::FriendRequest),
+        false,
     )
     .await?;
     ping(state, &other.username, me, PingKind::FriendAccept).await?;
@@ -629,8 +651,8 @@ pub(crate) async fn end_events(
     if unrequested {
         request_gone(state, a, b);
     }
-    drop_pings(state, a, b, None).await?;
-    drop_pings(state, b, a, None).await
+    drop_pings(state, a, b, None, true).await?;
+    drop_pings(state, b, a, None, true).await
 }
 
 /// The users who must hear that a purged account is gone.
@@ -866,7 +888,14 @@ async fn drop_request(
         .rows_affected();
     if gone > 0 {
         request_gone(state, sender, recipient);
-        drop_pings(state, recipient, sender, Some(PingKind::FriendRequest)).await?;
+        drop_pings(
+            state,
+            recipient,
+            sender,
+            Some(PingKind::FriendRequest),
+            true,
+        )
+        .await?;
     }
     Ok(ok())
 }
@@ -888,8 +917,8 @@ pub(crate) async fn deny_request(
 /// Cancel a friend request
 ///
 /// Takes back the signed-in user's pending friend request to `username`. Emits
-/// `friend_request_removed` to both users when there was one, and removes the recipient's unseen
-/// ping for it. Requires a bearer token. General rate-limit bucket.
+/// `friend_request_removed` to both users when there was one, and removes the recipient's ping
+/// for it, seen or not. Requires a bearer token. General rate-limit bucket.
 #[utoipa::path(delete, path = "/api/friends/requests/{username}", tag = "Friends", params(("username" = String, Path, description = "The recipient, case-insensitive")), responses((status = 200, description = "No request to them is pending; body `{\"ok\": true}`", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn cancel_request(
     State(state): State<AppState>,
@@ -925,7 +954,7 @@ pub(crate) async fn remove_friend(
             (other.as_str(), user.username.as_str()),
             (user.username.as_str(), other.as_str()),
         ] {
-            drop_pings(&state, to, from, Some(PingKind::FriendAccept)).await?;
+            drop_pings(&state, to, from, Some(PingKind::FriendAccept), true).await?;
         }
     }
     Ok(ok())
@@ -2124,7 +2153,11 @@ mod tests {
             .iter()
             .map(|r| r.try_get(0).expect("id"))
             .collect();
-        assert_eq!(left, [1], "seen and old friend pings go");
+        assert_eq!(
+            left,
+            [1, 2],
+            "old friend pings go, seen ones stay for the inbox"
+        );
         done(state, path).await;
     }
 

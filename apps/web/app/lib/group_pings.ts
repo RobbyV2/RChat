@@ -71,6 +71,23 @@ export const dropGroupMessage = (groups: GroupPings, messageId: number): GroupPi
   return groups
 }
 
+// Group mentions marked seen in the inbox (`group_pings_seen`): they stop counting.
+export const seenGroupMessages = (
+  groups: GroupPings,
+  scope: string,
+  ids: readonly number[]
+): GroupPings => {
+  const e = groups[scope]
+  if (!e) return groups
+  const gone = new Set(ids)
+  const items = e.items.filter(i => !gone.has(i.message_id))
+  if (items.length === e.items.length) return groups
+  const out = { ...groups }
+  if (items.length) out[scope] = { ...e, items }
+  else delete out[scope]
+  return out
+}
+
 // The badge entries (keyed `g<scope>`, never sent anywhere) for messages past the read position
 // whose kinds still notify.
 export const groupBadges = (

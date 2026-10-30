@@ -10,6 +10,7 @@ pub mod dms;
 pub mod embeds;
 pub mod friends;
 pub mod health;
+pub mod inbox;
 pub mod instance;
 pub mod media;
 pub mod messages;
@@ -1601,6 +1602,9 @@ fn api_routes(
         .route("/friends", get(friends::list_friends))
         .route("/friends/summary", get(friends::summary))
         .route("/friends/seen", post(friends::mark_seen))
+        .route("/inbox", get(inbox::list_inbox))
+        .route("/inbox/read", post(inbox::read_item))
+        .route("/inbox/read_all", post(inbox::read_all))
         .route(
             "/friends/requests",
             get(friends::list_requests).post(friends::send_request),
