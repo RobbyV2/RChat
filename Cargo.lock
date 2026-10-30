@@ -4768,6 +4768,7 @@ dependencies = [
  "stun",
  "tl",
  "tokio",
+ "tokio-tungstenite",
  "tower-http 0.7.1",
  "tower_governor",
  "tracing",

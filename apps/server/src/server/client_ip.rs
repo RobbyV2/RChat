@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::extract::ConnectInfo;
 use axum::http::header::FORWARDED;
-use axum::http::{HeaderMap, Request};
+use axum::http::{Extensions, HeaderMap, Request};
 use tower_governor::GovernorError;
 use tower_governor::key_extractor::KeyExtractor;
 use tracing::warn;
@@ -171,15 +171,20 @@ impl KeyExtractor for ClientIp {
     type Key = IpAddr;
 
     fn extract<T>(&self, req: &Request<T>) -> Result<IpAddr, GovernorError> {
-        let peer = req
-            .extensions()
+        self.of(req.extensions(), req.headers())
+            .ok_or(GovernorError::UnableToExtractKey)
+    }
+}
+
+impl ClientIp {
+    /// The rate-limit key of a request from its extensions and headers: the client address,
+    /// an IPv6 /64 as one.
+    pub fn of(&self, extensions: &Extensions, headers: &HeaderMap) -> Option<IpAddr> {
+        let peer = extensions
             .get::<ConnectInfo<SocketAddr>>()
             .map(|c| c.0.ip())
-            .or_else(|| req.extensions().get::<SocketAddr>().map(|a| a.ip()))
-            .ok_or(GovernorError::UnableToExtractKey)?;
-        Ok(crate::api::budget::group(
-            self.0.client(peer, req.headers()),
-        ))
+            .or_else(|| extensions.get::<SocketAddr>().map(|a| a.ip()))?;
+        Some(crate::api::budget::group(self.0.client(peer, headers)))
     }
 }
 

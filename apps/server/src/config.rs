@@ -8,7 +8,10 @@ use s3::{Bucket, Region};
 use serde::Deserialize;
 
 use crate::bus::DEFAULT_HUB_MAXLEN;
-use crate::hub::{CONNECT_BURST, CONNECTS_PER_MINUTE, CONNS_PER_USER, Limits as WsLimits};
+use crate::hub::{
+    CONNECT_BURST, CONNECTS_PER_MINUTE, CONNS_PER_USER, GUESTS_MAX, GUESTS_PER_IP,
+    Limits as WsLimits, SOCKETS_PER_IP,
+};
 use crate::instance::InstanceConfig;
 use crate::relay::{Capacity, Cidr, IceConfig, Limits, RelayAdvert, RelaySettings};
 use crate::server::client_ip::ProxyTrust;
@@ -152,6 +155,9 @@ pub struct AppConfig {
     pub ws_connections_per_user: usize,
     pub ws_connect_burst: u32,
     pub ws_connects_per_minute: u32,
+    pub ws_sockets_per_ip: usize,
+    pub ws_guest_sockets_per_ip: usize,
+    pub ws_guest_sockets_max: usize,
     pub s3_endpoint: Option<String>,
     pub s3_bucket: Option<String>,
     pub s3_access_key: Option<String>,
@@ -211,6 +217,9 @@ impl AppConfig {
             .set_default("ws_connections_per_user", CONNS_PER_USER as i64)?
             .set_default("ws_connect_burst", i64::from(CONNECT_BURST))?
             .set_default("ws_connects_per_minute", i64::from(CONNECTS_PER_MINUTE))?
+            .set_default("ws_sockets_per_ip", SOCKETS_PER_IP as i64)?
+            .set_default("ws_guest_sockets_per_ip", GUESTS_PER_IP as i64)?
+            .set_default("ws_guest_sockets_max", GUESTS_MAX as i64)?
             .set_default("redis_prefix", "rchat")?
             .set_default("redis_hub_maxlen", DEFAULT_HUB_MAXLEN as i64)?
             .set_default("trust_proxy", false)?
@@ -255,9 +264,10 @@ impl AppConfig {
         if config.ws_connections_per_user == 0
             || config.ws_connect_burst == 0
             || config.ws_connects_per_minute == 0
+            || config.ws_sockets_per_ip == 0
         {
             anyhow::bail!(
-                "WS_CONNECTIONS_PER_USER, WS_CONNECT_BURST and WS_CONNECTS_PER_MINUTE must be at least 1"
+                "WS_CONNECTIONS_PER_USER, WS_CONNECT_BURST, WS_CONNECTS_PER_MINUTE and WS_SOCKETS_PER_IP must be at least 1"
             );
         }
         if config.redis_hub_maxlen < MIN_HUB_MAXLEN {
@@ -527,6 +537,9 @@ impl AppConfig {
             conns_per_user: self.ws_connections_per_user,
             connect_burst: self.ws_connect_burst,
             connect_every: Duration::from_secs(60) / self.ws_connects_per_minute,
+            sockets_per_ip: self.ws_sockets_per_ip,
+            guests_per_ip: self.ws_guest_sockets_per_ip,
+            guests_max: self.ws_guest_sockets_max,
         }
     }
 
@@ -647,6 +660,9 @@ mod tests {
             ("WS_CONNECTIONS_PER_USER", "5"),
             ("WS_CONNECT_BURST", "4"),
             ("WS_CONNECTS_PER_MINUTE", "12"),
+            ("WS_SOCKETS_PER_IP", "30"),
+            ("WS_GUEST_SOCKETS_PER_IP", "0"),
+            ("WS_GUEST_SOCKETS_MAX", "7"),
         ];
         let limits = AppConfig::load_from(&cli(None, None), env(&set))
             .unwrap()
@@ -657,6 +673,9 @@ mod tests {
                 conns_per_user: 5,
                 connect_burst: 4,
                 connect_every: Duration::from_secs(5),
+                sockets_per_ip: 30,
+                guests_per_ip: 0,
+                guests_max: 7,
             }
         );
         assert!(

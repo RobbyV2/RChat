@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { CLOSE_TOO_MANY, WsClient, reconnectsAfter } from '../ws'
+import { CLOSE_TOO_MANY, WsClient, mayConnectEarly, reconnectsAfter } from '../ws'
 
 type Fake = {
   readyState: number
@@ -68,6 +68,29 @@ describe('realtime close codes', () => {
     expect((client as unknown as { reconnectTimer: unknown }).reconnectTimer).toBeNull()
     client.ensureConnected()
     expect(sockets.length).toBe(2)
+    client.stop()
+  })
+
+  test('user actions skip the backoff only a while after the last failure', () => {
+    expect(mayConnectEarly(null, 0, false)).toBe(true)
+    expect(mayConnectEarly(1_000, 2_000, false)).toBe(false)
+    expect(mayConnectEarly(1_000, 6_000, false)).toBe(true)
+    expect(mayConnectEarly(1_000, 60_000, true)).toBe(false)
+    const { client, ws } = openClient()
+    ws.readyState = 3
+    ws.onclose?.({ code: 1006 })
+    client.ensureConnected()
+    expect(sockets.length).toBe(1)
+    client.stop()
+  })
+
+  test('closed for too many attempts: no early reconnect, a longer backoff', () => {
+    const { client, ws } = openClient()
+    ws.readyState = 3
+    ws.onclose?.({ code: 4029 })
+    client.ensureConnected()
+    expect(sockets.length).toBe(1)
+    expect((client as unknown as { attempt: number }).attempt >= 3).toBe(true)
     client.stop()
   })
 

@@ -21,7 +21,15 @@ export function wsUrlFrom(
 
 export const CLOSE_TOO_MANY = 4008
 
+export const CLOSE_TOO_OFTEN = 4029
+
 export const reconnectsAfter = (code: number): boolean => code !== CLOSE_TOO_MANY
+
+const EARLY_AFTER = 5_000
+const LIMITED_ATTEMPT = 3
+
+export const mayConnectEarly = (failedAt: number | null, now: number, limited: boolean): boolean =>
+  !limited && (failedAt === null || now - failedAt >= EARLY_AFTER)
 
 export interface WsEndpoints {
   url: () => string
@@ -39,6 +47,8 @@ export class WsClient {
   private connectTimer: ReturnType<typeof setTimeout> | null = null
   private attempt = 0
   private openedAt: number | null = null
+  private failedAt: number | null = null
+  private limited = false
 
   onEvent: (ev: WsEvent) => void = () => {}
   onStatus: (status: WsStatus) => void = () => {}
@@ -65,6 +75,8 @@ export class WsClient {
     this.connectTimer = null
     this.attempt = 0
     this.openedAt = null
+    this.failedAt = null
+    this.limited = false
     const ws = this.ws
     this.ws = null
     ws?.close()
@@ -77,6 +89,7 @@ export class WsClient {
     const rs = this.ws?.readyState
     if (rs === WebSocket.OPEN || rs === WebSocket.CONNECTING) return
     if (this.reconnectTimer) {
+      if (!mayConnectEarly(this.failedAt, Date.now(), this.limited)) return
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
@@ -134,6 +147,7 @@ export class WsClient {
       if (this.connectTimer) clearTimeout(this.connectTimer)
       this.connectTimer = null
       this.openedAt = Date.now()
+      this.limited = false
       this.send({ type: 'auth', token: this.token })
       if (this.token) this.send({ type: 'viewing', server: this.viewing })
       if (this.subs.size) this.sendSubscribe()
@@ -151,7 +165,7 @@ export class WsClient {
       this.connectTimer = null
       if (this.ws !== ws || this.stopped) return
       if (reconnectsAfter(e.code)) {
-        this.dropped()
+        this.dropped(e.code === CLOSE_TOO_OFTEN)
         return
       }
       this.openedAt = null
@@ -160,10 +174,13 @@ export class WsClient {
     ws.onerror = () => ws.close()
   }
 
-  private dropped() {
+  private dropped(limited: boolean) {
     const openFor = this.openedAt === null ? null : Date.now() - this.openedAt
     this.openedAt = null
+    this.failedAt = Date.now()
+    this.limited = limited
     this.attempt = nextAttempt(this.attempt, openFor)
+    if (limited) this.attempt = Math.max(this.attempt, LIMITED_ATTEMPT)
     void this.probe()
     this.reconnectTimer = setTimeout(
       () => {

@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use axum::Extension;
 use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message as Frame, Utf8Bytes, WebSocket, WebSocketUpgrade};
-use axum::http::StatusCode;
+use axum::http::{Extensions, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
@@ -30,7 +31,11 @@ use crate::api::{
 use crate::db::{ChannelKind, Db, MediaKind, get_user, now, setting_on, touch_interaction};
 use crate::fanout::Topic;
 pub use crate::hub::Hub;
-use crate::hub::{Aftermath, CallEnd, Epoch, Op, P2pDrop, PRESENCE_SERVERS_MAX, Purge, Scope};
+use crate::hub::{
+    AddrSlot, Aftermath, CallEnd, Epoch, Op, P2pDrop, PRESENCE_SERVERS_MAX, Purge, Scope,
+    VOICE_EVERY,
+};
+use crate::server::client_ip::ClientIp;
 use crate::state::AppState;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,8 +60,14 @@ const P2P_WHO_EVERY: Duration = Duration::from_secs(2);
 const P2P_WHO_TTL: Duration = Duration::from_secs(10);
 const P2P_WHO_CACHE_MAX: usize = 1024;
 const SUBSCRIBE_CAP: usize = 100;
+const GUEST_SUBSCRIBE_CAP: usize = 50;
+// Server access checks a connection may run for `subscribe`: a burst, then this many per second.
+const SUB_CHECKS_BURST: f64 = 200.0;
+const SUB_CHECKS_RATE: f64 = 20.0;
+const GUEST_SUB_CHECKS_BURST: f64 = 100.0;
+const GUEST_SUB_CHECKS_RATE: f64 = 5.0;
 const FRAME_MAX: usize = 64 * 1024;
-const SIGNAL_MAX: usize = 32 * 1024;
+const SIGNAL_MAX: usize = 20 * 1024;
 const OUT_FRAMES: usize = 256;
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 const MSG_RATE: f64 = 50.0;
@@ -83,14 +94,14 @@ struct Gate {
     flushing: bool,
 }
 
-struct LogGate {
+pub(crate) struct LogGate {
     state: Mutex<Gate>,
     every: Duration,
     summary: fn(u64),
 }
 
 impl LogGate {
-    const fn new(every: Duration, summary: fn(u64)) -> LogGate {
+    pub(crate) const fn new(every: Duration, summary: fn(u64)) -> LogGate {
         LogGate {
             state: Mutex::new(Gate {
                 last: None,
@@ -106,7 +117,7 @@ impl LogGate {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn admit(&'static self, now: Instant) -> bool {
+    pub(crate) fn admit(&'static self, now: Instant) -> bool {
         let due = {
             let mut gate = self.gate();
             match gate.last {
@@ -1491,14 +1502,31 @@ pub async fn depart(state: &AppState) {
 /// attachments, and the key it checks download tokens with), `p2p_peer`, `error` and `resync` (fetch state again after missed events). Frames
 /// are at most 64 KiB. The token goes in the `auth` frame, not in the bearer security scheme.
 /// General rate-limit bucket for the upgrade request.
-#[utoipa::path(get, path = "/api/ws", tag = "Realtime", responses((status = 101, description = "WebSocket upgrade"), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String), (status = 503, description = "Realtime bus not ready", content_type = "text/plain", body = String)), security(()))]
-pub async fn handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
+#[utoipa::path(get, path = "/api/ws", tag = "Realtime", responses((status = 101, description = "WebSocket upgrade"), (status = 429, description = "Too many requests in the general bucket, or too many open connections from this address", content_type = "text/plain", body = String), (status = 503, description = "Realtime bus not ready", content_type = "text/plain", body = String)), security(()))]
+pub async fn handler(
+    State(state): State<AppState>,
+    Extension(key): Extension<ClientIp>,
+    extensions: Extensions,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
     if !state.hub.ready() {
         return (StatusCode::SERVICE_UNAVAILABLE, "Realtime bus not ready").into_response();
     }
+    // A request without a peer address counts as 0.0.0.0, like the rate limits.
+    let addr = key
+        .of(&extensions, &headers)
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    let slot = match state.hub.addr_slot(addr) {
+        Some(slot) => slot,
+        None => {
+            debug!("refused a realtime connection from an address with too many open");
+            return (StatusCode::TOO_MANY_REQUESTS, CLOSE_TOO_MANY_ADDR.1).into_response();
+        }
+    };
     ws.max_message_size(FRAME_MAX)
         .max_frame_size(FRAME_MAX)
-        .on_upgrade(move |socket| run(state, socket))
+        .on_upgrade(move |socket| run(state, socket, slot))
 }
 
 async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> Result<(), String> {
@@ -1556,6 +1584,9 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             peer_id,
         } => {
             let peer_id = call_peer_id(peer_id)?;
+            if !state.hub.call_ok(user, dm_id) {
+                return Err(CALLING_TOO_OFTEN.to_string());
+            }
             let row = sqlx::query("SELECT user_a, user_b FROM dms WHERE id = $1")
                 .bind(dm_id)
                 .fetch_optional(&state.read())
@@ -1583,6 +1614,9 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
                 true => CallKind::P2p,
                 false => CallKind::Rtc,
             };
+            if let Some(busy) = state.hub.call_busy(user, other) {
+                return Err(busy);
+            }
             let dm_users = vec![a, b];
             let log_id = insert_call_log(state, dm_id, user, (kind, video))
                 .await
@@ -1616,6 +1650,9 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
         }
         ClientMsg::CallAccept { dm_id, peer_id } => {
             let peer_id = call_peer_id(peer_id)?;
+            if !state.hub.voice_ok(user) {
+                return Err(TOO_FAST.to_string());
+            }
             crate::api::blocks::check_dm_id(&state.db, user, dm_id)
                 .await
                 .map_err(|crate::api::ApiError(_, e)| e)?;
@@ -1640,8 +1677,12 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             payload,
         } => {
             let to = to.to_lowercase();
-            if serde_json::to_string(&payload).map_or(true, |p| p.len() > SIGNAL_MAX) {
+            let size = serde_json::to_string(&payload).map_or(usize::MAX, |p| p.len());
+            if size > SIGNAL_MAX {
                 return Err("Signal too large".to_string());
+            }
+            if !state.hub.signal_ok(user, size) {
+                return Err(TOO_FAST.to_string());
             }
             if let Some(cid) = channel_id
                 && shows_video(&payload)
@@ -1873,6 +1914,8 @@ async fn p2p_blocked(state: &AppState, me: &str, hoster: &str) -> bool {
 
 const NOT_AVAILABLE: &str = "File not available";
 const RECONNECTING: &str = "Reconnecting, try again in a moment";
+const TOO_FAST: &str = "Too many requests, slow down";
+const CALLING_TOO_OFTEN: &str = "Calling too often, try again in a moment";
 
 fn p2p_refused(message_id: i64, error: &str) -> WsEvent {
     WsEvent::P2pPeer {
@@ -2293,6 +2336,81 @@ impl Pace {
     }
 }
 
+// A connection's `subscribe` requests: each costs `SUB_FRAME_COST` plus one per server it
+// newly checks, from a bucket of checks. A request past the bucket waits, and a later one
+// replaces it.
+struct SubPace {
+    tokens: f64,
+    at: Instant,
+    rate: f64,
+    burst: f64,
+    cap: usize,
+    wanted: Option<(Vec<String>, HashMap<String, String>)>,
+    due: Option<Instant>,
+}
+
+const SUB_FRAME_COST: f64 = 10.0;
+
+impl SubPace {
+    fn new(signed_in: bool) -> SubPace {
+        let (rate, burst, cap) = match signed_in {
+            true => (SUB_CHECKS_RATE, SUB_CHECKS_BURST, SUBSCRIBE_CAP),
+            false => (
+                GUEST_SUB_CHECKS_RATE,
+                GUEST_SUB_CHECKS_BURST,
+                GUEST_SUBSCRIBE_CAP,
+            ),
+        };
+        SubPace {
+            tokens: burst,
+            at: Instant::now(),
+            rate,
+            burst,
+            cap,
+            wanted: None,
+            due: None,
+        }
+    }
+
+    fn want(&mut self, servers: Vec<String>, grants: HashMap<String, String>) {
+        let mut seen = HashSet::new();
+        let servers: Vec<String> = servers
+            .into_iter()
+            .map(|s| s.to_lowercase())
+            .filter(|s| seen.insert(s.clone()))
+            .take(self.cap)
+            .collect();
+        let grants = grants
+            .into_iter()
+            .map(|(s, g)| (s.to_lowercase(), g))
+            .filter(|(s, _)| seen.contains(s))
+            .collect();
+        self.wanted = Some((servers, grants));
+    }
+
+    // Takes the wanted list when the bucket holds its cost (`fresh` new checks), or sets when
+    // to try again.
+    fn take(
+        &mut self,
+        fresh: impl Fn(&[String], &HashMap<String, String>) -> usize,
+        now: Instant,
+    ) -> Option<(Vec<String>, HashMap<String, String>)> {
+        let (servers, grants) = self.wanted.take()?;
+        let cost = SUB_FRAME_COST + fresh(&servers, &grants) as f64;
+        self.tokens =
+            (self.tokens + now.duration_since(self.at).as_secs_f64() * self.rate).min(self.burst);
+        self.at = now;
+        if self.tokens < cost {
+            self.due = Some(now + Duration::from_secs_f64((cost - self.tokens) / self.rate));
+            self.wanted = Some((servers, grants));
+            return None;
+        }
+        self.tokens -= cost;
+        self.due = None;
+        Some((servers, grants))
+    }
+}
+
 async fn catch_up(
     state: &AppState,
     conn: u64,
@@ -2333,6 +2451,7 @@ struct Access {
     hosted_scope: Option<(Instant, P2pScope)>,
     hosting_pace: Pace,
     who: Who,
+    sub: SubPace,
     viewable: Viewable,
     floors: HashMap<i64, (Instant, Option<Option<i64>>)>,
     retry: Retry,
@@ -2341,6 +2460,7 @@ struct Access {
 
 impl Access {
     fn new(user: Option<String>, site_admin: bool, member_servers: HashSet<String>) -> Access {
+        let sub = SubPace::new(user.is_some());
         Access {
             user,
             since: None,
@@ -2364,6 +2484,7 @@ impl Access {
             hosted_scope: None,
             hosting_pace: Pace::new(P2P_ANNOUNCE_EVERY),
             who: Who::new(),
+            sub,
             viewable: HashMap::new(),
             floors: HashMap::new(),
             retry: Retry::new(),
@@ -3217,7 +3338,10 @@ async fn type_in(state: &AppState, access: &Access, typer: &mut Typer, scope: St
         .command(&typing_db(state, &scope), user, scope, on)
         .await
     {
-        state.hub.broadcast(ev);
+        let shows = matches!(&ev, WsEvent::Typing { until, .. } if *until > 0);
+        if !shows || state.hub.typing_ok(user) {
+            state.hub.broadcast(ev);
+        }
     }
 }
 
@@ -3570,6 +3694,18 @@ async fn send_voice_snapshot(state: &AppState, out: &Out, access: &mut Access) -
 /// opened too many in a short time (retry later, like a 429).
 pub const CLOSE_TOO_MANY: (u16, &str) = (4008, "Too many open connections for this account");
 pub const CLOSE_TOO_OFTEN: (u16, &str) = (4029, "Too many connection attempts, try again later");
+/// Close codes of realtime connections from an address with too many open (as guests), and
+/// of connections that sent no `auth` frame in time.
+pub const CLOSE_TOO_MANY_ADDR: (u16, &str) = (
+    4029,
+    "Too many open connections from this address, try again later",
+);
+/// Close code of guest connections past the guest connections of the whole instance.
+pub const CLOSE_TOO_MANY_GUESTS: (u16, &str) = (
+    4029,
+    "Too many guest connections right now, try again later",
+);
+pub const CLOSE_NO_AUTH: (u16, &str) = (4001, "No auth frame in time");
 
 fn close_frame((code, reason): (u16, &str)) -> Frame {
     Frame::Close(Some(CloseFrame {
@@ -3629,16 +3765,30 @@ fn hosting_ids(ids: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-async fn run(state: AppState, mut socket: WebSocket) {
-    let conn = state.hub.next_conn();
-    let token = loop {
+async fn first_frame(socket: &mut WebSocket) -> Option<Option<String>> {
+    loop {
         match socket.recv().await {
-            Some(Ok(Frame::Text(text))) => match serde_json::from_str::<ClientMsg>(&text) {
-                Ok(ClientMsg::Auth { token }) => break token,
-                Ok(_) | Err(_) => break None,
-            },
-            Some(Ok(Frame::Close(_))) | Some(Err(_)) | None => return,
+            Some(Ok(Frame::Text(text))) => {
+                return match serde_json::from_str::<ClientMsg>(&text) {
+                    Ok(ClientMsg::Auth { token }) => Some(token),
+                    Ok(_) | Err(_) => Some(None),
+                };
+            }
+            Some(Ok(Frame::Close(_))) | Some(Err(_)) | None => return None,
             Some(Ok(_)) => {}
+        }
+    }
+}
+
+async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
+    let conn = state.hub.next_conn();
+    let token = match tokio::time::timeout(state.hub.auth_wait(), first_frame(&mut socket)).await {
+        Ok(Some(token)) => token,
+        Ok(None) => return,
+        Err(_) => {
+            debug!("closed a realtime connection that sent no auth frame in time");
+            let _ = socket.send(close_frame(CLOSE_NO_AUTH)).await;
+            return;
         }
     };
     let mut inbox = state.hub.open(conn, &HashSet::from([Topic::All]));
@@ -3696,6 +3846,15 @@ async fn run(state: AppState, mut socket: WebSocket) {
             Ok(false) => return,
             Err(e) => return refuse(e),
         }
+        if !slot.guest() {
+            debug!("closed a guest realtime connection past the guest caps");
+            let full = match state.hub.guests_full() {
+                true => CLOSE_TOO_MANY_GUESTS,
+                false => CLOSE_TOO_MANY_ADDR,
+            };
+            let _ = socket.send(close_frame(full)).await;
+            return;
+        }
     }
     let mut access = Access::new(username, is_site_admin, member_servers);
     if let Some(mode) = mode {
@@ -3709,6 +3868,7 @@ async fn run(state: AppState, mut socket: WebSocket) {
     let mut through = 0;
     let mut bucket = Bucket::new();
     let mut typer = Typer::new();
+    let mut voice = VoiceWait::default();
     let mut ping = tokio::time::interval_at(Instant::now() + PING_EVERY, PING_EVERY);
     let mut heard = Instant::now();
     let mut lag = Pace::new(LAG_REAUTH_EVERY);
@@ -3809,32 +3969,8 @@ async fn run(state: AppState, mut socket: WebSocket) {
                             }
                         }
                         Ok(ClientMsg::Subscribe { servers, grants }) => {
-                            let servers: Vec<String> = servers.into_iter().take(SUBSCRIBE_CAP).map(|s| s.to_lowercase()).collect();
-                            let early: Vec<Topic> = servers.iter().flat_map(|s| [Topic::Server(s.clone()), Topic::View(s.clone())]).collect();
-                            state.hub.listen(conn, &early);
-                            let peek = access.peek.take();
-                            access.subs.clear();
-                            access.grants.clear();
-                            access.topics_dirty = true;
-                            for s in servers {
-                                let grant = grants.get(&s).cloned();
-                                let allowed = match &access.user {
-                                    Some(user) => authed_sub_ok(&state.read(), &s, user, access.site_admin).await.unwrap_or(false),
-                                    None => guest_sub_ok(&state.read(), &s, grant.as_deref()).await.unwrap_or(false),
-                                };
-                                if allowed {
-                                    if let Some(g) = grant {
-                                        access.grants.insert(s.clone(), g);
-                                    }
-                                    access.subs.insert(s);
-                                }
-                            }
-                            access.deadlines = match grant_deadlines(&state.read(), &access.grants).await {
-                                Ok(deadlines) => deadlines,
-                                Err(_) => access.grants.keys().map(|s| (s.clone(), 0)).collect(),
-                            };
-                            access.set_peek(peek);
-                            if !send_voice_snapshot(&state, &out, &mut access).await {
+                            access.sub.want(servers, grants);
+                            if !try_subscribe(&state, conn, &mut access, &out).await {
                                 break;
                             }
                         }
@@ -3873,11 +4009,15 @@ async fn run(state: AppState, mut socket: WebSocket) {
                         Ok(ClientMsg::TypingStop { scope }) => type_in(&state, &access, &mut typer, scope, false).await,
                         Ok(ClientMsg::Auth { token: _ }) | Err(_) => {}
                         Ok(other) => {
-                            let leaving = matches!(other, ClientMsg::VoiceLeave | ClientMsg::CallLeave { dm_id: _ } | ClientMsg::CallDecline { dm_id: _ });
-                            let res = match (&access.user, access.retry.pending() && !leaving) {
-                                (Some(_), true) => Err(RECONNECTING.to_string()),
-                                (Some(user), false) => voice_msg(&state, user, conn, other).await,
-                                (None, _) => Err("Create an account to join voice".to_string()),
+                            let now = Instant::now();
+                            let res = match (&access.user, &other) {
+                                (Some(user), ClientMsg::VoiceJoin { channel_id: _ } | ClientMsg::VoiceLeave) => {
+                                    match voice.offer(other, || state.hub.voice_ok(user), now) {
+                                        Some(msg) => voice_cmd(&state, &access, conn, msg).await,
+                                        None => Ok(()),
+                                    }
+                                }
+                                (_, _) => voice_cmd(&state, &access, conn, other).await,
                             };
                             if let Err(message) = res
                                 && !sent(&mut access, out.event(&WsEvent::Error { message }))
@@ -3904,6 +4044,23 @@ async fn run(state: AppState, mut socket: WebSocket) {
             _ = tokio::time::sleep_until(access.who.pace.due.unwrap_or_else(Instant::now)), if access.who.pace.due.is_some() => {
                 access.who.pace.fire(Instant::now());
                 if !access.retry.pending() && !answer_who(&state, &mut access, &out).await {
+                    break;
+                }
+            }
+            _ = tokio::time::sleep_until(voice.due.unwrap_or_else(Instant::now)), if voice.due.is_some() => {
+                let ready = match &access.user {
+                    Some(user) => voice.fire(|| state.hub.voice_ok(user), Instant::now()),
+                    None => voice.wanted.take(),
+                };
+                if let Some(msg) = ready
+                    && let Err(message) = voice_cmd(&state, &access, conn, msg).await
+                    && !sent(&mut access, out.event(&WsEvent::Error { message }))
+                {
+                    break;
+                }
+            }
+            _ = tokio::time::sleep_until(access.sub.due.unwrap_or_else(Instant::now)), if access.sub.due.is_some() => {
+                if !try_subscribe(&state, conn, &mut access, &out).await {
                     break;
                 }
             }
@@ -3962,6 +4119,148 @@ async fn run(state: AppState, mut socket: WebSocket) {
         let cached = access.hosted_scope.take().map(|(_, scope)| scope);
         announce_drop(&state, user, drop, cached).await;
     }
+}
+
+async fn voice_cmd(
+    state: &AppState,
+    access: &Access,
+    conn: u64,
+    msg: ClientMsg,
+) -> Result<(), String> {
+    let leaving = matches!(
+        msg,
+        ClientMsg::VoiceLeave
+            | ClientMsg::CallLeave { dm_id: _ }
+            | ClientMsg::CallDecline { dm_id: _ }
+    );
+    match (&access.user, access.retry.pending() && !leaving) {
+        (Some(_), true) => Err(RECONNECTING.to_string()),
+        (Some(user), false) => voice_msg(state, user, conn, msg).await,
+        (None, _) => Err("Create an account to join voice".to_string()),
+    }
+}
+
+// A connection's `voice_join` / `voice_leave` past its user's pace: the latest waits and runs
+// once the pace allows, and replaces any earlier one still waiting.
+#[derive(Default)]
+struct VoiceWait {
+    wanted: Option<ClientMsg>,
+    due: Option<Instant>,
+}
+
+impl VoiceWait {
+    fn offer(
+        &mut self,
+        msg: ClientMsg,
+        ok: impl FnOnce() -> bool,
+        now: Instant,
+    ) -> Option<ClientMsg> {
+        if self.wanted.is_none() && ok() {
+            return Some(msg);
+        }
+        self.wanted = Some(msg);
+        self.due.get_or_insert(now + VOICE_EVERY);
+        None
+    }
+
+    fn fire(&mut self, ok: impl FnOnce() -> bool, now: Instant) -> Option<ClientMsg> {
+        if self.wanted.is_some() && !ok() {
+            self.due = Some(now + VOICE_EVERY);
+            return None;
+        }
+        self.due = None;
+        self.wanted.take()
+    }
+}
+
+// Whether `server` is subscribed already with `grant`, so needs no new check.
+fn sub_held(access: &Access, server: &str, grant: Option<&String>) -> bool {
+    held_sub(
+        &access.subs,
+        &access.grants,
+        access.user.is_some(),
+        server,
+        grant,
+    )
+}
+
+fn held_sub(
+    subs: &HashSet<String>,
+    grants: &HashMap<String, String>,
+    signed_in: bool,
+    server: &str,
+    grant: Option<&String>,
+) -> bool {
+    subs.contains(server) && (signed_in || grants.get(server) == grant)
+}
+
+async fn try_subscribe(state: &AppState, conn: u64, access: &mut Access, out: &Out) -> bool {
+    let (subs, held, signed_in) = (&access.subs, &access.grants, access.user.is_some());
+    let fresh = |servers: &[String], grants: &HashMap<String, String>| {
+        servers
+            .iter()
+            .filter(|s| !held_sub(subs, held, signed_in, s, grants.get(*s)))
+            .count()
+    };
+    let Some((servers, grants)) = access.sub.take(fresh, Instant::now()) else {
+        return true;
+    };
+    subscribe(state, conn, access, servers, grants).await;
+    send_voice_snapshot(state, out, access).await
+}
+
+// Replaces the subscriptions with `servers`, checking only those not held already.
+async fn subscribe(
+    state: &AppState,
+    conn: u64,
+    access: &mut Access,
+    servers: Vec<String>,
+    grants: HashMap<String, String>,
+) {
+    let early: Vec<Topic> = servers
+        .iter()
+        .flat_map(|s| [Topic::Server(s.clone()), Topic::View(s.clone())])
+        .collect();
+    state.hub.listen(conn, &early);
+    let peek = access.peek.take();
+    let held: HashSet<String> = servers
+        .iter()
+        .filter(|s| sub_held(access, s, grants.get(*s)))
+        .cloned()
+        .collect();
+    let old_grants = std::mem::take(&mut access.grants);
+    let mut deadlines = std::mem::take(&mut access.deadlines);
+    access.subs.clear();
+    access.topics_dirty = true;
+    let mut fresh = HashMap::new();
+    for s in servers {
+        let grant = grants.get(&s).cloned();
+        let allowed = held.contains(&s)
+            || match &access.user {
+                Some(user) => authed_sub_ok(&state.read(), &s, user, access.site_admin)
+                    .await
+                    .unwrap_or(false),
+                None => guest_sub_ok(&state.read(), &s, grant.as_deref())
+                    .await
+                    .unwrap_or(false),
+            };
+        if allowed {
+            if let Some(g) = grant {
+                if !held.contains(&s) || old_grants.get(&s) != Some(&g) {
+                    fresh.insert(s.clone(), g.clone());
+                }
+                access.grants.insert(s.clone(), g);
+            }
+            access.subs.insert(s);
+        }
+    }
+    deadlines.retain(|s, _| access.grants.contains_key(s) && !fresh.contains_key(s));
+    match grant_deadlines(&state.read(), &fresh).await {
+        Ok(found) => deadlines.extend(found),
+        Err(_) => deadlines.extend(fresh.into_keys().map(|s| (s, 0))),
+    }
+    access.deadlines = deadlines;
+    access.set_peek(peek);
 }
 
 async fn look(
@@ -5727,7 +6026,7 @@ mod tests {
         assert!(GATE.admit(t0 + LOG_EVERY * 5));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn hidden_failures_are_summarized_later() {
         const EVERY: Duration = Duration::from_millis(200);
         static SUMMED: AtomicU64 = AtomicU64::new(0);
@@ -5821,7 +6120,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let at = now() + 1;
+        let at = now() + 3600;
         let id: i64 = sqlx::query("INSERT INTO server_passwords(server, hash, lookup, created_by, created_at, expires_at) VALUES('tmp', 'h', 'l', 'alice', 0, $1) RETURNING id")
             .bind(at)
             .fetch_one(db)
@@ -5857,9 +6156,16 @@ mod tests {
                 .unwrap(),
             vec![s("tmp")]
         );
-        while now() < at {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
+        // The clock reaches the expiry: move the expiry (and the deadline read from it) to
+        // the past instead of waiting for the wall clock.
+        let at = now() - 1;
+        sqlx::query("UPDATE server_passwords SET expires_at = $1 WHERE id = $2")
+            .bind(at)
+            .bind(id)
+            .execute(db)
+            .await
+            .unwrap();
+        guest.deadlines.insert(s("tmp"), at);
         let ev = WsEvent::PresenceChanged {
             server: s("tmp"),
             username: s("bob"),
@@ -9828,5 +10134,478 @@ mod tests {
             "deleting a channel they could view still updates their layout"
         );
         crate::api::test_util::done(state, path).await;
+    }
+
+    type Client = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+
+    async fn live(tag: &str) -> (AppState, std::path::PathBuf, std::net::SocketAddr) {
+        let (state, path) = crate::api::test_util::temp_state(tag).await;
+        let trusted = crate::server::client_ip::ProxyTrust::from_config(false, Some("127.0.0.1"))
+            .expect("trust");
+        let app = crate::api::routes(state.clone(), &crate::config::Roles::ALL, ClientIp(trusted))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await;
+        });
+        (state, path, addr)
+    }
+
+    async fn dial(
+        addr: std::net::SocketAddr,
+        from: &str,
+    ) -> Result<Client, tokio_tungstenite::tungstenite::Error> {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut req = format!("ws://{addr}/ws")
+            .into_client_request()
+            .expect("request");
+        req.headers_mut()
+            .insert("x-forwarded-for", from.parse().expect("header"));
+        tokio_tungstenite::connect_async(req)
+            .await
+            .map(|(ws, _)| ws)
+    }
+
+    async fn send_auth(ws: &mut Client, token: Option<&str>) {
+        let frame = serde_json::json!({ "type": "auth", "token": token }).to_string();
+        ws.send(tokio_tungstenite::tungstenite::Message::text(frame))
+            .await
+            .expect("auth");
+    }
+
+    // The close code the socket gets within `wait`, or `None` while it stays open.
+    async fn closed_with(ws: &mut Client, wait: Duration) -> Option<u16> {
+        use tokio_tungstenite::tungstenite::Message as T;
+        let until = Instant::now() + wait;
+        loop {
+            match tokio::time::timeout_at(until, ws.next()).await {
+                Err(_) => return None,
+                Ok(Some(Ok(T::Close(frame)))) => {
+                    return Some(frame.map_or(1005, |f| f.code.into()));
+                }
+                Ok(Some(Ok(_))) => {}
+                Ok(Some(Err(_)) | None) => return Some(1006),
+            }
+        }
+    }
+
+    // Waits until `done` holds; the ceiling only bounds a failing run.
+    async fn until(mut done: impl FnMut() -> bool) {
+        let ceiling = Instant::now() + Duration::from_secs(30);
+        while !done() {
+            assert!(Instant::now() < ceiling, "condition never held");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn silent_sockets_close_and_addresses_are_capped() {
+        let (state, path, addr) = live("ws_addr_cap").await;
+        add_user_row(&state.db, "alice").await;
+        sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, 'alice', 0)")
+            .bind(crate::db::secret_key("alice-token"))
+            .execute(&state.db)
+            .await
+            .expect("token");
+        let ceiling = Duration::from_secs(30);
+        state.hub.set_auth_wait(Duration::from_millis(100));
+        let mut quiet = dial(addr, "203.0.113.1").await.expect("dial");
+        quiet
+            .send(tokio_tungstenite::tungstenite::Message::Ping(
+                Default::default(),
+            ))
+            .await
+            .expect("ping");
+        assert_eq!(
+            closed_with(&mut quiet, ceiling).await,
+            Some(CLOSE_NO_AUTH.0),
+            "a socket that never authenticates is closed"
+        );
+        // From here on no socket may close for want of an auth frame, however slow the run.
+        state.hub.set_auth_wait(Duration::from_secs(3600));
+        state.hub.set_limits(crate::hub::Limits {
+            sockets_per_ip: 3,
+            guests_per_ip: 1,
+            ..crate::hub::Limits::default()
+        });
+        let ip = |s: &str| s.parse::<std::net::IpAddr>().expect("ip");
+        let mut tabs = Vec::new();
+        for _ in 0..3 {
+            let mut tab = dial(addr, "203.0.113.2").await.expect("tab");
+            send_auth(&mut tab, Some("alice-token")).await;
+            tabs.push(tab);
+        }
+        match dial(addr, "203.0.113.2").await {
+            Err(tokio_tungstenite::tungstenite::Error::Http(res)) => {
+                assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS)
+            }
+            Err(e) => panic!("unexpected error {e}"),
+            Ok(_) => panic!("a fourth socket from one address was accepted"),
+        }
+        let mut guest = dial(addr, "203.0.113.3").await.expect("guest");
+        send_auth(&mut guest, None).await;
+        until(|| state.hub.addr_open(ip("203.0.113.3")) == (1, 1)).await;
+        let mut second = dial(addr, "203.0.113.3").await.expect("second guest");
+        send_auth(&mut second, None).await;
+        assert_eq!(
+            closed_with(&mut second, ceiling).await,
+            Some(CLOSE_TOO_MANY_ADDR.0)
+        );
+        until(|| state.hub.addr_open(ip("203.0.113.3")) == (1, 1)).await;
+        assert_eq!(
+            closed_with(&mut guest, Duration::from_millis(50)).await,
+            None,
+            "the first guest stays open"
+        );
+        for tab in &mut tabs {
+            assert_eq!(
+                closed_with(tab, Duration::from_millis(50)).await,
+                None,
+                "signed-in tabs stay open"
+            );
+        }
+        let mut first = tabs.remove(0);
+        first.close(None).await.expect("close");
+        assert!(closed_with(&mut first, ceiling).await.is_some());
+        until(|| state.hub.addr_open(ip("203.0.113.2")).0 == 2).await;
+        assert!(
+            dial(addr, "203.0.113.2").await.is_ok(),
+            "a closed socket frees its slot"
+        );
+        crate::api::test_util::done(state, path).await;
+    }
+
+    async fn next_of_type(
+        ws: &mut Client,
+        kind: &str,
+        wait: Duration,
+    ) -> Option<serde_json::Value> {
+        use tokio_tungstenite::tungstenite::Message as T;
+        let until = Instant::now() + wait;
+        loop {
+            match tokio::time::timeout_at(until, ws.next()).await {
+                Ok(Some(Ok(T::Text(text)))) => {
+                    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+                    if v["type"] == kind {
+                        return Some(v);
+                    }
+                    assert_ne!(v["type"], "error", "{v}");
+                }
+                Ok(Some(Ok(_))) => {}
+                Err(_) | Ok(Some(Err(_)) | None) => return None,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn normal_tabs_keep_working_under_the_limits() {
+        let (state, path, addr) = live("ws_normal_tabs").await;
+        for name in ["alice", "bob"] {
+            add_user_row(&state.db, name).await;
+            crate::api::test_util::add_member(&state.db, "rchat", name, 0, 0, 0).await;
+        }
+        sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, 'alice', 0)")
+            .bind(crate::db::secret_key("alice-token"))
+            .execute(&state.db)
+            .await
+            .expect("token");
+        let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+        let mut tabs = Vec::new();
+        for n in 0..4 {
+            let mut tab = dial(addr, "203.0.113.9").await.expect("tab");
+            send_auth(&mut tab, (n < 3).then_some("alice-token")).await;
+            for _ in 0..5 {
+                let frame = serde_json::json!({ "type": "subscribe", "servers": ["rchat"] });
+                tab.send(tokio_tungstenite::tungstenite::Message::text(
+                    frame.to_string(),
+                ))
+                .await
+                .expect("subscribe");
+            }
+            tabs.push(tab);
+        }
+        voice_msg(&state, "bob", 1, ClientMsg::VoiceJoin { channel_id: cid })
+            .await
+            .expect("join");
+        for tab in &mut tabs {
+            let ev = next_of_type(tab, "voice_state", Duration::from_secs(30)).await;
+            assert!(ev.is_some_and(|v| v["users"] == serde_json::json!(["bob"])));
+        }
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[test]
+    fn subscribe_checks_are_paced_and_the_last_list_wins() {
+        let now = Instant::now();
+        let names: Vec<String> = (0..200).map(|i| format!("Srv{i}")).collect();
+        let mut guest = SubPace::new(false);
+        let mut applied = 0;
+        for _ in 0..200 {
+            guest.want(names.clone(), HashMap::new());
+            if guest.take(|servers, _| servers.len(), now).is_some() {
+                applied += 1;
+            }
+        }
+        assert_eq!(
+            applied, 1,
+            "one flood of unknown names runs its checks once"
+        );
+        let (waiting, _) = guest.wanted.clone().expect("the last list waits");
+        assert_eq!(waiting.len(), GUEST_SUBSCRIBE_CAP);
+        assert_eq!(waiting[0], "srv0");
+        let due = guest.due.expect("due");
+        assert!(due >= now + Duration::from_secs(3));
+        assert!(guest.take(|servers, _| servers.len(), due).is_some());
+        let mut user = SubPace::new(true);
+        let mut applied = 0;
+        for _ in 0..200 {
+            user.want(vec![s("RChat"), s("rchat")], HashMap::new());
+            if let Some((servers, _)) = user.take(|_, _| 0, now) {
+                assert_eq!(servers, vec![s("rchat")]);
+                applied += 1;
+            }
+        }
+        assert_eq!(applied, (SUB_CHECKS_BURST / SUB_FRAME_COST) as usize);
+        let mut tab = SubPace::new(true);
+        tab.want(vec![s("rchat")], HashMap::new());
+        assert!(
+            tab.take(|servers, _| servers.len(), now).is_some(),
+            "a normal client subscribes at once"
+        );
+    }
+
+    #[tokio::test]
+    async fn subscribe_checks_only_servers_not_held() {
+        let (state, path) = crate::api::test_util::temp_state("ws_sub_held").await;
+        let conn = state.hub.next_conn();
+        let mut guest = Access::new(None, false, set(&[]));
+        subscribe(
+            &state,
+            conn,
+            &mut guest,
+            vec![s("rchat"), s("nope")],
+            HashMap::new(),
+        )
+        .await;
+        assert_eq!(guest.subs, set(&["rchat"]));
+        assert!(sub_held(&guest, "rchat", None));
+        assert!(
+            !sub_held(&guest, "rchat", Some(&s("grant"))),
+            "a new grant is checked again"
+        );
+        let mut user = Access::new(Some(s("bob")), false, set(&[]));
+        add_user_row(&state.db, "bob").await;
+        subscribe(&state, conn, &mut user, vec![s("rchat")], HashMap::new()).await;
+        assert_eq!(user.subs, set(&["rchat"]));
+        crate::db::close(&state.read()).await;
+        subscribe(
+            &state,
+            conn,
+            &mut guest,
+            vec![s("rchat"), s("other")],
+            HashMap::new(),
+        )
+        .await;
+        assert_eq!(
+            guest.subs,
+            set(&["rchat"]),
+            "held servers need no database read"
+        );
+        subscribe(&state, conn, &mut user, vec![s("rchat")], HashMap::new()).await;
+        assert_eq!(user.subs, set(&["rchat"]));
+        subscribe(&state, conn, &mut user, Vec::new(), HashMap::new()).await;
+        assert!(user.subs.is_empty());
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn voice_hops_are_paced_per_account_and_the_last_wins() {
+        let (state, path) = crate::api::test_util::temp_state("ws_voice_pace").await;
+        add_user_row(&state.db, "bob").await;
+        crate::api::test_util::add_member(&state.db, "rchat", "bob", 0, 0, 0).await;
+        let a = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'a', 'voice', 0) RETURNING id").await;
+        let b = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'b', 'voice', 0) RETURNING id").await;
+        let mut rx = state.hub.subscribe();
+        let mut tabs: Vec<VoiceWait> = (0..20).map(|_| VoiceWait::default()).collect();
+        let now = Instant::now();
+        let at = now.into_std();
+        let mut ran = 0;
+        for n in 0..100 {
+            let channel_id = if n % 2 == 0 { a } else { b };
+            let msg = ClientMsg::VoiceJoin { channel_id };
+            if let Some(msg) = tabs[n % 20].offer(msg, || state.hub.voice_ok_at("bob", at), now) {
+                voice_msg(&state, "bob", 1, msg).await.expect("join");
+                ran += 1;
+            }
+        }
+        assert_eq!(ran, crate::hub::VOICE_BURST);
+        let mut states = 0;
+        while let Ok(ev) = rx.try_recv() {
+            if matches!(ev, WsEvent::VoiceState { .. }) {
+                states += 1;
+            }
+        }
+        assert!(states <= 2 * ran as usize, "{states} voice states");
+        assert!(
+            matches!(tabs[0].wanted, Some(ClientMsg::VoiceJoin { channel_id }) if channel_id == a)
+        );
+        tabs[0].offer(ClientMsg::VoiceLeave, || true, now);
+        assert!(
+            matches!(tabs[0].wanted, Some(ClientMsg::VoiceLeave)),
+            "the latest replaces a waiting join"
+        );
+        assert!(
+            tabs[1]
+                .fire(|| state.hub.voice_ok_at("bob", at), now)
+                .is_none()
+        );
+        assert!(tabs[1].due.is_some());
+        let later = now + VOICE_EVERY * 2;
+        assert!(matches!(
+            tabs[1].fire(|| state.hub.voice_ok_at("bob", later.into_std()), later),
+            Some(ClientMsg::VoiceJoin { channel_id }) if channel_id == b
+        ));
+        assert!(
+            state.hub.voice_ok("carol"),
+            "other accounts keep their own pace"
+        );
+        crate::api::test_util::done(state, path).await;
+    }
+
+    async fn message_seq(db: &Db) -> i64 {
+        sqlx::query("SELECT seq FROM sqlite_sequence WHERE name = 'messages'")
+            .fetch_optional(db)
+            .await
+            .expect("seq")
+            .map_or(0, |r| r.try_get(0).expect("seq"))
+    }
+
+    #[tokio::test]
+    async fn refused_call_starts_write_nothing_and_are_paced() {
+        let (state, path) = crate::api::test_util::temp_state("ws_call_pace").await;
+        let db = &state.db;
+        for name in ["alice", "bob", "carol", "dave", "erin"] {
+            add_user_row(db, name).await;
+        }
+        let ab = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
+        )
+        .await;
+        let ac = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'carol') RETURNING id",
+        )
+        .await;
+        let de = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('dave', 'erin') RETURNING id",
+        )
+        .await;
+        let start = |dm_id| ClientMsg::CallStart {
+            dm_id,
+            p2p: false,
+            video: false,
+            peer_id: None,
+        };
+        voice_msg(&state, "alice", 1, start(ab))
+            .await
+            .expect("call");
+        let before = message_seq(db).await;
+        let mut errs = Vec::new();
+        for _ in 0..100 {
+            errs.push(
+                voice_msg(&state, "alice", 1, start(ac))
+                    .await
+                    .expect_err("refused"),
+            );
+        }
+        assert_eq!(
+            voice_msg(&state, "carol", 2, start(ac)).await,
+            Err(s("alice is already in a call"))
+        );
+        assert_eq!(
+            message_seq(db).await,
+            before,
+            "refused calls write no log row"
+        );
+        assert!(
+            errs[..3].iter().all(|e| e == "You are already in a call"),
+            "{errs:?}"
+        );
+        assert!(errs[3..].iter().all(|e| e == CALLING_TOO_OFTEN), "{errs:?}");
+        for _ in 0..crate::hub::DM_CALL_BURST {
+            voice_msg(&state, "dave", 3, start(de)).await.expect("call");
+            voice_msg(&state, "dave", 3, ClientMsg::CallLeave { dm_id: de })
+                .await
+                .expect("leave");
+        }
+        assert_eq!(
+            voice_msg(&state, "dave", 3, start(de)).await,
+            Err(s(CALLING_TOO_OFTEN)),
+            "ringing the same DM over and over is paced"
+        );
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn signals_are_capped_in_size_and_bytes_per_account() {
+        let (state, path) = crate::api::test_util::temp_state("ws_signal_pace").await;
+        for name in ["alice", "bob"] {
+            add_user_row(&state.db, name).await;
+            crate::api::test_util::add_member(&state.db, "rchat", name, 0, 0, 0).await;
+        }
+        let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+        for name in ["alice", "bob"] {
+            voice_msg(&state, name, 1, ClientMsg::VoiceJoin { channel_id: cid })
+                .await
+                .expect("join");
+        }
+        let signal = |to: &str, size: usize| ClientMsg::RtcSignal {
+            to: to.to_string(),
+            channel_id: Some(cid),
+            dm_id: None,
+            payload: serde_json::json!({ "sdp": "x".repeat(size) }),
+        };
+        assert_eq!(
+            voice_msg(&state, "alice", 1, signal("bob", 24 * 1024)).await,
+            Err(s("Signal too large"))
+        );
+        let mut sent = 0;
+        for _ in 0..100 {
+            if voice_msg(&state, "alice", 1, signal("bob", 15 * 1024))
+                .await
+                .is_ok()
+            {
+                sent += 1;
+            }
+        }
+        let each = 15 * 1024 + 10;
+        assert_eq!(
+            sent,
+            crate::hub::SIGNAL_BURST / each,
+            "{sent} signals passed"
+        );
+        voice_msg(&state, "bob", 1, signal("alice", 4 * 1024))
+            .await
+            .expect("the other account signals as usual");
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[test]
+    fn typing_is_paced_per_account() {
+        let hub = Hub::new();
+        let shown = (0..40).filter(|_| hub.typing_ok("bob")).count();
+        assert_eq!(shown, crate::hub::TYPING_USER_BURST as usize);
+        assert!(hub.typing_ok("carol"));
     }
 }

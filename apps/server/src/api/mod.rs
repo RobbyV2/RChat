@@ -1536,7 +1536,10 @@ pub fn routes(state: AppState, roles: &Roles, key: ClientIp) -> Router<AppState>
         router = router.merge(api_routes(state, strict_routes, invite_routes));
     }
     if roles.gateway {
-        router = router.route("/ws", get(crate::ws::handler));
+        router = router.route(
+            "/ws",
+            get(crate::ws::handler).layer(axum::Extension(key.clone())),
+        );
     }
     if roles.media {
         let upload = Router::new()

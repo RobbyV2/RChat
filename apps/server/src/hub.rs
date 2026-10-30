@@ -1,6 +1,7 @@
 use std::borrow::Borrow;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -32,6 +33,10 @@ pub const READ_FLUSH: Duration = Duration::from_millis(500);
 pub const RELEASE_BURST: u32 = 30;
 pub const RELEASE_EVERY: Duration = Duration::from_secs(2);
 const RELEASE_USERS_MAX: usize = 10_000;
+const PACED_USERS_MAX: usize = 10_000;
+// Unconfirmed RTC signals kept for a repost, per call or voice room; older ones are dropped.
+const SIGNALS_PENDING: usize = 64;
+const SIGNAL_CALLS_MAX: usize = 1024;
 
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 
@@ -421,6 +426,23 @@ fn yes() -> bool {
 }
 
 impl Op {
+    // The call or voice room of an RTC signal.
+    fn signal_key(&self) -> Option<SignalKey> {
+        match self {
+            Op::Broadcast {
+                event:
+                    WsEvent::RtcSignal {
+                        to: _,
+                        from: _,
+                        channel_id,
+                        dm_id,
+                        payload: _,
+                    },
+            } => Some((*channel_id, *dm_id)),
+            _ => None,
+        }
+    }
+
     fn repostable(&self) -> bool {
         match self {
             Op::Broadcast { event: _ }
@@ -1812,7 +1834,10 @@ struct Link {
     diverged: AtomicBool,
     overflow: AtomicBool,
     reads: Mutex<Option<Reads>>,
+    signals: Mutex<HashMap<SignalKey, VecDeque<u64>>>,
 }
+
+type SignalKey = (Option<i64>, Option<i64>);
 
 #[derive(Default)]
 struct Resolved {
@@ -1923,24 +1948,38 @@ struct Inner {
     shown_rx: Mutex<Option<mpsc::UnboundedReceiver<(String, bool)>>>,
     release: Mutex<HashMap<String, (f64, Instant)>>,
     connects: Mutex<HashMap<String, (f64, Instant)>>,
+    pacing: Pacing,
+    addrs: Mutex<HashMap<IpAddr, (usize, usize)>>,
+    guests: AtomicUsize,
     limits: Mutex<Limits>,
+    auth_wait: Mutex<Duration>,
     reannounced: Mutex<(Option<Instant>, bool)>,
     tap: std::sync::OnceLock<mpsc::Sender<WsEvent>>,
 }
 
 /// Per-user bounds on realtime connections: at most `conns_per_user` open at once across all
 /// instances (the oldest is closed), and `connect_burst` new ones, then one per
-/// `connect_every`, per instance.
+/// `connect_every`, per instance. Per client address (an IPv6 /64 counts as one), at most
+/// `sockets_per_ip` open on this instance, `guests_per_ip` of them as guests. At most
+/// `guests_max` guest sockets on this instance from all addresses together (0 turns guests off).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Limits {
     pub conns_per_user: usize,
     pub connect_burst: u32,
     pub connect_every: Duration,
+    pub sockets_per_ip: usize,
+    pub guests_per_ip: usize,
+    pub guests_max: usize,
 }
 
 pub const CONNS_PER_USER: usize = 20;
 pub const CONNECT_BURST: u32 = 20;
 pub const CONNECTS_PER_MINUTE: u32 = 30;
+pub const SOCKETS_PER_IP: usize = 200;
+/// How long a new realtime socket has to send its `auth` frame.
+pub const AUTH_WAIT: Duration = Duration::from_secs(10);
+pub const GUESTS_PER_IP: usize = 50;
+pub const GUESTS_MAX: usize = 2000;
 
 impl Default for Limits {
     fn default() -> Limits {
@@ -1948,6 +1987,133 @@ impl Default for Limits {
             conns_per_user: CONNS_PER_USER,
             connect_burst: CONNECT_BURST,
             connect_every: Duration::from_secs(60) / CONNECTS_PER_MINUTE,
+            sockets_per_ip: SOCKETS_PER_IP,
+            guests_per_ip: GUESTS_PER_IP,
+            guests_max: GUESTS_MAX,
+        }
+    }
+}
+
+/// A token bucket per user: `burst` units at once, then one more per `every`.
+struct Pacer {
+    burst: f64,
+    every: Duration,
+    users: Mutex<HashMap<String, (f64, Instant)>>,
+}
+
+impl Pacer {
+    fn new(burst: f64, every: Duration) -> Pacer {
+        Pacer {
+            burst,
+            every,
+            users: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn take(&self, key: &str, cost: f64) -> bool {
+        self.take_at(key, cost, Instant::now())
+    }
+
+    fn take_at(&self, key: &str, cost: f64, now: Instant) -> bool {
+        let mut users = self.users.lock().unwrap();
+        if users.len() > PACED_USERS_MAX {
+            let full = self.every.mul_f64(self.burst);
+            users.retain(|_, (_, at)| now.duration_since(*at) < full);
+        }
+        let (tokens, at) = users.entry(key.to_string()).or_insert((self.burst, now));
+        let refill = now.duration_since(*at).as_secs_f64() / self.every.as_secs_f64();
+        *tokens = (*tokens + refill).min(self.burst);
+        *at = now;
+        match *tokens >= cost {
+            true => {
+                *tokens -= cost;
+                true
+            }
+            false => false,
+        }
+    }
+}
+
+pub const VOICE_BURST: u32 = 5;
+pub const VOICE_EVERY: Duration = Duration::from_millis(250);
+pub const CALL_BURST: u32 = 5;
+pub const CALL_EVERY: Duration = Duration::from_secs(3);
+pub const DM_CALL_BURST: u32 = 3;
+pub const DM_CALL_EVERY: Duration = Duration::from_secs(10);
+pub const SIGNAL_BURST: usize = 512 * 1024;
+pub const SIGNAL_BYTES_PER_SEC: u32 = 64 * 1024;
+pub const TYPING_USER_BURST: u32 = 8;
+pub const TYPING_USER_EVERY: Duration = Duration::from_millis(500);
+
+/// Per-account pacing of realtime commands, across all of a user's connections on this
+/// instance.
+struct Pacing {
+    voice: Pacer,
+    calls: Pacer,
+    dm_calls: Pacer,
+    signals: Pacer,
+    typing: Pacer,
+}
+
+impl Default for Pacing {
+    fn default() -> Pacing {
+        Pacing {
+            voice: Pacer::new(f64::from(VOICE_BURST), VOICE_EVERY),
+            calls: Pacer::new(f64::from(CALL_BURST), CALL_EVERY),
+            dm_calls: Pacer::new(f64::from(DM_CALL_BURST), DM_CALL_EVERY),
+            signals: Pacer::new(
+                SIGNAL_BURST as f64,
+                Duration::from_secs(1) / SIGNAL_BYTES_PER_SEC,
+            ),
+            typing: Pacer::new(f64::from(TYPING_USER_BURST), TYPING_USER_EVERY),
+        }
+    }
+}
+
+/// A realtime socket counted against its client address until dropped.
+pub struct AddrSlot {
+    hub: Hub,
+    addr: IpAddr,
+    guest: bool,
+}
+
+impl AddrSlot {
+    /// Counts this socket as a guest too: false past the guests' share of the address or past
+    /// the guest sockets of the whole instance.
+    pub fn guest(&mut self) -> bool {
+        if self.guest {
+            return true;
+        }
+        let limits = self.hub.limits();
+        let mut addrs = self.hub.inner.addrs.lock().unwrap();
+        let entry = addrs.entry(self.addr).or_insert((1, 0));
+        let total = &self.hub.inner.guests;
+        if entry.1 >= limits.guests_per_ip || total.load(Ordering::Relaxed) >= limits.guests_max {
+            return false;
+        }
+        total.fetch_add(1, Ordering::Relaxed);
+        entry.1 += 1;
+        self.guest = true;
+        true
+    }
+}
+
+impl Drop for AddrSlot {
+    fn drop(&mut self) {
+        let mut addrs = self.hub.inner.addrs.lock().unwrap();
+        if let Some((all, guests)) = addrs.get_mut(&self.addr) {
+            *all = all.saturating_sub(1);
+            if self.guest {
+                *guests = guests.saturating_sub(1);
+                let _ =
+                    self.hub
+                        .inner
+                        .guests
+                        .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+            }
+            if *all == 0 {
+                addrs.remove(&self.addr);
+            }
         }
     }
 }
@@ -2020,7 +2186,11 @@ impl Hub {
                 shown_rx: Mutex::new(Some(shown_rx)),
                 release: Mutex::new(HashMap::new()),
                 connects: Mutex::new(HashMap::new()),
+                pacing: Pacing::default(),
+                addrs: Mutex::new(HashMap::new()),
+                guests: AtomicUsize::new(0),
                 limits: Mutex::new(Limits::default()),
+                auth_wait: Mutex::new(AUTH_WAIT),
                 reannounced: Mutex::new((None, false)),
                 tap: std::sync::OnceLock::new(),
             }),
@@ -2043,6 +2213,7 @@ impl Hub {
             diverged: AtomicBool::new(false),
             overflow: AtomicBool::new(false),
             reads: Mutex::new(None),
+            signals: Mutex::new(HashMap::new()),
         };
         (Self::build(Some(link)), rx)
     }
@@ -2236,6 +2407,20 @@ impl Hub {
         };
         if keep {
             let mut pending = link.pending.lock().unwrap();
+            if let Some(key) = op.signal_key() {
+                let mut signals = link.signals.lock().unwrap();
+                if signals.len() >= SIGNAL_CALLS_MAX {
+                    signals.retain(|_, kept| kept.iter().any(|s| pending.contains_key(s)));
+                }
+                let kept = signals.entry(key).or_default();
+                kept.retain(|s| pending.contains_key(s));
+                while kept.len() >= SIGNALS_PENDING {
+                    if let Some(old) = kept.pop_front() {
+                        pending.remove(&old);
+                    }
+                }
+                kept.push_back(*seq);
+            }
             while pending.len() >= PENDING_CAP {
                 let Some((_, evicted)) = pending.pop_first() else {
                     break;
@@ -2515,6 +2700,15 @@ impl Hub {
         if !self.is_replicated() {
             self.local(Op::Heartbeat);
         }
+    }
+
+    #[cfg(test)]
+    fn pending_len(&self) -> (usize, bool) {
+        let link = self.inner.link.as_ref().expect("replicated");
+        (
+            link.pending.lock().unwrap().len(),
+            link.overflow.load(Ordering::Relaxed),
+        )
     }
 
     #[cfg(test)]
@@ -2810,6 +3004,9 @@ impl Hub {
             conns_per_user: _,
             connect_burst,
             connect_every,
+            sockets_per_ip: _,
+            guests_per_ip: _,
+            guests_max: _,
         } = self.limits();
         let every = connect_every.as_millis() as i64;
         let (opened, clock) =
@@ -2828,6 +3025,89 @@ impl Hub {
 
     pub fn limits(&self) -> Limits {
         *self.inner.limits.lock().unwrap()
+    }
+
+    /// Counts a new realtime socket from `addr` (an IPv6 /64 counts as one address), or `None`
+    /// when the address already has `sockets_per_ip` open on this instance.
+    pub fn addr_slot(&self, addr: IpAddr) -> Option<AddrSlot> {
+        let addr = crate::api::budget::group(addr);
+        let cap = self.limits().sockets_per_ip;
+        let mut addrs = self.inner.addrs.lock().unwrap();
+        let entry = addrs.entry(addr).or_insert((0, 0));
+        if entry.0 >= cap {
+            return None;
+        }
+        entry.0 += 1;
+        drop(addrs);
+        Some(AddrSlot {
+            hub: self.clone(),
+            addr,
+            guest: false,
+        })
+    }
+
+    /// Whether this instance holds as many guest sockets as `guests_max` allows.
+    pub fn guests_full(&self) -> bool {
+        self.inner.guests.load(Ordering::Relaxed) >= self.limits().guests_max
+    }
+
+    /// Whether `user` may join or leave voice (or answer a call) now.
+    pub fn voice_ok(&self, user: &str) -> bool {
+        self.voice_ok_at(user, Instant::now())
+    }
+
+    /// Whether `user` may join or leave voice (or answer a call) at `now`.
+    pub fn voice_ok_at(&self, user: &str, now: Instant) -> bool {
+        self.inner.pacing.voice.take_at(user, 1.0, now)
+    }
+
+    /// How long a new realtime socket has to send its `auth` frame.
+    pub fn auth_wait(&self) -> Duration {
+        *self.inner.auth_wait.lock().unwrap()
+    }
+
+    #[cfg(test)]
+    pub fn set_auth_wait(&self, wait: Duration) {
+        *self.inner.auth_wait.lock().unwrap() = wait;
+    }
+
+    /// Realtime sockets open from `addr` on this instance: all, and those of guests.
+    #[cfg(test)]
+    pub fn addr_open(&self, addr: IpAddr) -> (usize, usize) {
+        let addr = crate::api::budget::group(addr);
+        let addrs = self.inner.addrs.lock().unwrap();
+        addrs.get(&addr).copied().unwrap_or((0, 0))
+    }
+
+    /// Whether `user` may start a call on DM `dm_id` now: paced per account and per DM.
+    pub fn call_ok(&self, user: &str, dm_id: i64) -> bool {
+        let Pacing {
+            voice: _,
+            calls,
+            dm_calls,
+            signals: _,
+            typing: _,
+        } = &self.inner.pacing;
+        dm_calls.take(&format!("{user}\0{dm_id}"), 1.0) && calls.take(user, 1.0)
+    }
+
+    /// Whether `user` may send `bytes` more of RTC signalling now.
+    pub fn signal_ok(&self, user: &str, bytes: usize) -> bool {
+        self.inner.pacing.signals.take(user, bytes as f64)
+    }
+
+    /// Whether `user` may show a typing indicator now, across all their connections.
+    pub fn typing_ok(&self, user: &str) -> bool {
+        self.inner.pacing.typing.take(user, 1.0)
+    }
+
+    /// Why a call between `user` and `other` would be refused now, read from the replica.
+    pub fn call_busy(&self, user: &str, other: &str) -> Option<String> {
+        self.replica(|r| match (r.in_call(user), r.in_call(other)) {
+            (true, _) => Some("You are already in a call".to_string()),
+            (false, true) => Some(format!("{other} is already in a call")),
+            (false, false) => None,
+        })
     }
 
     pub fn set_limits(&self, limits: Limits) {
@@ -3793,6 +4073,97 @@ pub(crate) mod tests {
         );
         assert_eq!(replica.seen["alice"].servers.len(), PRESENCE_SERVERS_MAX);
         assert_eq!(replica.index, reindexed(&replica));
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_signals_are_bounded_per_call_without_a_resync() {
+        let (hub, _rx) = Hub::replicated();
+        for _ in 0..1000 {
+            hub.broadcast(signal("alice", "bob", Some(1), None));
+        }
+        for _ in 0..10 {
+            hub.broadcast(signal("alice", "bob", None, Some(7)));
+        }
+        hub.force_offline("rchat", "alice");
+        assert_eq!(hub.pending_len(), (SIGNALS_PENDING + 10 + 1, false));
+        let kept: Vec<u64> = hub
+            .inner
+            .link
+            .as_ref()
+            .unwrap()
+            .pending
+            .lock()
+            .unwrap()
+            .keys()
+            .copied()
+            .collect();
+        assert_eq!(
+            kept[0],
+            1000 - SIGNALS_PENDING as u64 + 1,
+            "the oldest signals go first"
+        );
+    }
+
+    #[test]
+    fn sockets_are_counted_per_address() {
+        let hub = Hub::new();
+        hub.set_limits(Limits {
+            sockets_per_ip: 3,
+            guests_per_ip: 1,
+            ..Limits::default()
+        });
+        let (a, b): (IpAddr, IpAddr) = (
+            "203.0.113.1".parse().unwrap(),
+            "203.0.113.2".parse().unwrap(),
+        );
+        let mut slots: Vec<AddrSlot> = (0..3).filter_map(|_| hub.addr_slot(a)).collect();
+        assert_eq!(slots.len(), 3);
+        assert!(hub.addr_slot(a).is_none() && hub.addr_slot(b).is_some());
+        assert!(slots[0].guest() && slots[0].guest());
+        assert!(!slots[1].guest(), "past the guests' share");
+        slots.remove(0);
+        assert!(slots[0].guest());
+        drop(slots);
+        assert!(hub.inner.addrs.lock().unwrap().is_empty());
+        let (v6a, v6b): (IpAddr, IpAddr) = (
+            "2001:db8:1:2::1".parse().unwrap(),
+            "2001:db8:1:2:ffff::9".parse().unwrap(),
+        );
+        let held: Vec<AddrSlot> = (0..3).filter_map(|_| hub.addr_slot(v6a)).collect();
+        assert_eq!(held.len(), 3);
+        assert!(
+            hub.addr_slot(v6b).is_none(),
+            "an IPv6 /64 counts as one address"
+        );
+        assert!(hub.addr_slot("2001:db8:1:3::1".parse().unwrap()).is_some());
+    }
+
+    #[test]
+    fn guest_sockets_are_capped_for_the_whole_instance() {
+        let hub = Hub::new();
+        hub.set_limits(Limits {
+            guests_per_ip: 5,
+            guests_max: 2,
+            ..Limits::default()
+        });
+        let addr = |n: u8| -> IpAddr { format!("203.0.113.{n}").parse().unwrap() };
+        let mut slots: Vec<AddrSlot> = (1..=3).filter_map(|n| hub.addr_slot(addr(n))).collect();
+        assert!(slots[0].guest() && slots[1].guest());
+        assert!(
+            !slots[2].guest(),
+            "the third guest is past the instance's cap"
+        );
+        assert!(slots[0].guest(), "a counted guest stays counted");
+        slots.remove(0);
+        assert!(slots[1].guest(), "a closed guest frees its place");
+        drop(slots);
+        assert_eq!(hub.inner.guests.load(Ordering::Relaxed), 0);
+        hub.set_limits(Limits {
+            guests_max: 0,
+            ..Limits::default()
+        });
+        let mut slot = hub.addr_slot(addr(9)).expect("slot");
+        assert!(!slot.guest(), "0 turns guests off");
     }
 
     #[tokio::test]

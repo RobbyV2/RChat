@@ -16,7 +16,22 @@ use crate::api::embeds::{UnfurlJob, unfurl};
 use crate::config::Roles;
 use crate::hub::{Envelope, Hub, READ_FLUSH, stream_pos};
 use crate::state::AppState;
-use crate::ws::to_bus_json;
+use crate::ws::{LogGate, to_bus_json};
+
+const SKIP_LOG_EVERY: Duration = Duration::from_secs(10);
+
+static SKIPPED: LogGate = LogGate::new(SKIP_LOG_EVERY, |n| {
+    warn!(
+        "skipped {n} more realtime entries in the last {}s that this version cannot read (another version is running, or the entries are corrupt)",
+        SKIP_LOG_EVERY.as_secs()
+    )
+});
+
+fn skip(line: &str) {
+    if SKIPPED.admit(tokio::time::Instant::now()) {
+        warn!("{line}");
+    }
+}
 
 pub const DEFAULT_HUB_MAXLEN: u64 = 100_000;
 const JOBS_MAXLEN: u64 = 10_000;
@@ -396,8 +411,8 @@ async fn follow(mut conn: ConnectionManager, log: Log, hub: Hub) {
                 .map(|raw| serde_json::from_str::<Envelope>(&raw))
             {
                 Some(Ok(env)) => hub.ingest(&entry.id, env, live),
-                Some(Err(e)) => warn!("skipping realtime entry {}: {e}", entry.id),
-                None => warn!("skipping realtime entry {} without op", entry.id),
+                Some(Err(e)) => skip(&format!("skipping realtime entry {}: {e}", entry.id)),
+                None => skip(&format!("skipping realtime entry {} without op", entry.id)),
             }
             last = entry.id;
         }
