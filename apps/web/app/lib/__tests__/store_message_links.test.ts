@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { MessageLocation, WsEvent } from '../types'
 import { home } from '../instances'
@@ -19,7 +19,19 @@ let pages: string[] = []
 let replaced: string[] = []
 let path = '/'
 
-const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
+// Link card tests run on fake timers: `wait` moves the clock 5 ms at a time and lets every
+// pending callback and response run in between, so a busy machine can't change the outcome,
+// only how long the test takes.
+const settle = async () => {
+  for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r))
+}
+const wait = async (ms: number) => {
+  for (let at = 0; at < ms; at += 5) {
+    await settle()
+    jest.advanceTimersByTime(5)
+  }
+  await settle()
+}
 
 const card = (over: Partial<MessageLocation> = {}): MessageLocation => ({
   id: 40,
@@ -166,6 +178,13 @@ describe('opening a message link', () => {
 })
 
 describe('link cards', () => {
+  beforeEach(() => {
+    jest.useFakeTimers()
+  })
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
   test('visible cards resolve in one batch and refusals are cached', async () => {
     readable[40] = card()
     st().resolveLinkCard(40)

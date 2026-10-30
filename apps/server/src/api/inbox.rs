@@ -1320,12 +1320,15 @@ mod tests {
         assert_eq!(items.len(), 9, "one item per ping, the double mention once");
         assert_eq!(items.last().map(|i| i.kind), Some(InboxKind::FriendRequest));
         assert!(items.iter().all(|i| i.unread));
-        let grouped = items.iter().find(|i| i.id == role.id).expect("role");
+        let grouped = items
+            .iter()
+            .find(|i| i.id == role.id && i.source == InboxSource::Group)
+            .expect("role");
         assert_eq!(grouped.role.as_deref(), Some("crew"));
         assert_eq!(grouped.source, InboxSource::Group);
         let news = items
             .iter()
-            .find(|i| i.id == everyone.id)
+            .find(|i| i.id == everyone.id && i.source == InboxSource::Group)
             .expect("everyone");
         assert_eq!(news.content.as_deref(), Some("@everyone ||big|| news"));
         assert_eq!(news.server_name.as_deref(), Some("RChat"));

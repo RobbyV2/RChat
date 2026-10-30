@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { JoinAborted, RtcManager } from '../rtc'
 import type { RtcPayload, VoiceMsg } from '../types'
 
@@ -297,8 +297,18 @@ class FakePC {
   }
 }
 
-const tick = () => new Promise(r => setTimeout(r, 0))
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+// Tests on fake timers (`virtual`) move the clock themselves; the fake connection then yields
+// through the real event loop, so awaiting it never waits on a timer nobody advances.
+let virtual = false
+const tick = () => new Promise(r => (virtual ? setImmediate(r) : setTimeout(r, 0)))
+const sleep = async (ms: number) => {
+  if (!virtual) return new Promise(r => setTimeout(r, ms))
+  for (let at = 0; at < ms; at += 1) {
+    for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r))
+    jest.advanceTimersByTime(1)
+  }
+  for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r))
+}
 
 interface Wire {
   from: string
@@ -356,9 +366,8 @@ async function pump() {
   }
 }
 
-// Delivers signals for `ms` steps of at least 1 ms each, then until the wire is empty. Steps,
-// not a wall-clock window: a timer of n ms set before step k has fired by step k + n + 1 however
-// slowly the machine runs, so a busy CPU only makes this take longer.
+// Delivers signals for `ms` steps of at least 1 ms each, then until the wire is empty. On fake
+// timers each step is exactly 1 ms of the clock, so a busy CPU can't change the outcome.
 async function settle(ms = 30) {
   for (let step = 0; step < ms || wire.length; step += 1) {
     await pump()
@@ -516,6 +525,15 @@ describe('closed peers', () => {
 })
 
 describe('recovery', () => {
+  beforeEach(() => {
+    jest.useFakeTimers()
+    virtual = true
+  })
+  afterEach(() => {
+    virtual = false
+    jest.useRealTimers()
+  })
+
   test('a lost first offer is re-sent with an ICE restart', async () => {
     const { alice, bob } = await room({ alice: 40, bob: 40 })
     let dropped = 0

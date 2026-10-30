@@ -14,4 +14,9 @@ declare module 'bun:test' {
   export function beforeEach(fn: () => void | Promise<void>): void
   export function afterEach(fn: () => void | Promise<void>): void
   export function afterAll(fn: () => void | Promise<void>): void
+  export const jest: {
+    useFakeTimers(): void
+    useRealTimers(): void
+    advanceTimersByTime(ms: number): void
+  }
 }
