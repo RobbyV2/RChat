@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  Fragment,
   memo,
   useCallback,
   useContext,
@@ -66,7 +67,7 @@ import { findMessageLinks, parseMessageLink } from '../lib/message_links'
 import { saveGuestMedia, useMediaSrc } from '../lib/media_src'
 import { expiryText, sameOriginImage } from '../lib/rules'
 import { remarkMask } from '../lib/profanity'
-import { CLOSE, OPEN, markSpoilers, unmarkSpoilers } from '../lib/spoilers'
+import { CLOSE, OPEN, markSpoilers, spoilerParts, unmarkSpoilers } from '../lib/spoilers'
 import {
   groupPills,
   knownMentions,
@@ -79,6 +80,7 @@ import type { Embed, Message, MessageMedia } from '../lib/types'
 import { longPress } from './context_menu'
 import { InviteCard, RemoteInviteCard } from './invite_card'
 import { MessageLinkCard } from './message_link_card'
+import { RichEmbeds } from './webhooks'
 import { profileTrigger } from './profile_card'
 import { EditedMark } from './message_editor'
 import {
@@ -1043,6 +1045,30 @@ function SpoilerLinkCard({ url }: { url: string }) {
   )
 }
 
+// Text inside a webhook's rich embed, read like messages (spoilers, the personal filter) but
+// without mentions. `text` is markdown; `line` is one plain line (title, field name, footer).
+function useCardText() {
+  const mask = useMask()
+  return useMemo(() => {
+    const plugins = [remarkGfm, remarkSpoiler, remarkMask(mask)]
+    return {
+      text: (text: string) => (
+        <ReactMarkdown remarkPlugins={plugins} components={components}>
+          {markSpoilers(text)}
+        </ReactMarkdown>
+      ),
+      line: (text: string) =>
+        spoilerParts(text).map((part, i) =>
+          part.spoiler ? (
+            <SpoilerText key={i}>{mask(part.text)}</SpoilerText>
+          ) : (
+            <Fragment key={i}>{mask(part.text)}</Fragment>
+          )
+        ),
+    }
+  }, [mask])
+}
+
 export const MarkdownMessage = memo(function MarkdownMessage({
   message,
   canDelete = false,
@@ -1070,6 +1096,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   const known = useStore(s => knownMentions(s, message, candidates))
   const pills = useStore(s => groupPills(s, message))
   const mask = useMask()
+  const card = useCardText()
   const plugins = useMemo(
     () => [
       remarkGfm,
@@ -1149,6 +1176,9 @@ export const MarkdownMessage = memo(function MarkdownMessage({
             </button>
           )}
         </div>
+      )}
+      {message.webhook && message.webhook.embeds.length > 0 && (
+        <RichEmbeds embeds={message.webhook.embeds} text={card.text} line={card.line} />
       )}
       {messageLinks.map(l => (
         <MessageLinkCard key={l.id} link={l} />

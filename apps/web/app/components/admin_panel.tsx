@@ -186,6 +186,15 @@ function SiteSwitches() {
         value={settings.guests_enabled}
         onChange={v => void updateSettings({ guests_enabled: v })}
       />
+      <SettingSwitch
+        label="Outgoing webhooks"
+        value={settings.outgoing_webhooks ?? false}
+        onChange={v => void updateSettings({ outgoing_webhooks: v })}
+      />
+      <p className="px-2 pb-1 text-xs text-on-surface-variant">
+        Lets server managers send events to URLs they choose. The instance then makes requests to
+        outside servers. Private and local addresses stay blocked unless allowlisted.
+      </p>
     </div>
   )
 }

@@ -1427,6 +1427,20 @@ function Settings({ server }: { server: string }) {
           <BanList server={server} />
         </>
       )}
+      {(hasPerm(perms, Perm.ManageWebhooks) || hasPerm(perms, Perm.ManageChannels)) && (
+        <>
+          <p className={sectionCls}>Integrations</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <p className="min-w-48 flex-1 text-xs text-on-surface-variant">
+              Webhooks post into channels from scripts and services, or send this server&apos;s
+              events to a URL.
+            </p>
+            <button onClick={() => openDialog({ kind: 'webhooks', server })} className={textBtn}>
+              Webhooks
+            </button>
+          </div>
+        </>
+      )}
       {hasPerm(perms, Perm.ViewAuditLog) && (
         <>
           <p className={sectionCls}>Audit Log</p>

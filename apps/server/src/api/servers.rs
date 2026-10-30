@@ -180,8 +180,8 @@ pub struct UsernameReq {
 pub struct PermsReq {
     /// Permission bitmask: 1 Manage channels, 2 Manage messages (delete and pin messages of
     /// others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention everyone and roles, 64 View
-    /// audit log, 128 Timeout members. Bits outside 255 are dropped. For an admin, 0 means all
-    /// permissions.
+    /// audit log, 128 Timeout members, 256 Manage webhooks. Bits outside 511 are dropped. For an
+    /// admin, 0 means all permissions.
     #[schema(example = 7)]
     perms: i64,
 }
@@ -198,7 +198,8 @@ pub struct RoleReq {
     color: String,
     /// Permission bitmask for members with the role: 1 Manage channels, 2 Manage messages (delete
     /// and pin messages of others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention
-    /// everyone and roles, 64 View audit log, 128 Timeout members. Bits outside 255 are dropped.
+    /// everyone and roles, 64 View audit log, 128 Timeout members, 256 Manage webhooks. Bits
+    /// outside 511 are dropped.
     /// Roles only add permissions to members who are not admins. Admins use their own admin
     /// permissions.
     #[schema(example = 6)]
@@ -217,7 +218,7 @@ pub struct RolePatch {
     name: Option<String>,
     /// New role color as `#rrggbb`, stored as sent.
     color: Option<String>,
-    /// New permission bitmask (see `RoleReq.perms`). Bits outside 255 are dropped.
+    /// New permission bitmask (see `RoleReq.perms`). Bits outside 511 are dropped.
     perms: Option<i64>,
     /// Whether anyone who can send may mention the role (see `RoleReq.mentionable`). Turning it
     /// on needs the Mention everyone permission.
@@ -3415,7 +3416,7 @@ pub(crate) async fn transfer_admin(
 
 /// Set an admin's permissions
 ///
-/// Replaces the permission bitmask of the admin `username` (bits outside 255 are dropped; 0 means
+/// Replaces the permission bitmask of the admin `username` (bits outside 511 are dropped; 0 means
 /// all permissions). Taking permissions away works on any admin, like revoking admin. When the new
 /// permissions add any the admin did not have, all of the new permissions must be ones you have
 /// (equal is fine), so only callers holding every permission can set 0. Requires the Manage admins
@@ -3522,6 +3523,7 @@ fn held_above_sql(one: bool) -> String {
         Perm::MentionEveryone,
         Perm::ViewAuditLog,
         Perm::TimeoutMembers,
+        Perm::ManageWebhooks,
     ]
     .map(|p| format!("MAX(r.perms & {})", p as i64))
     .join(" | ");
@@ -7676,7 +7678,7 @@ mod tests {
         let err = patch(" ", "#000000", Some(MA)).await.err().map(|e| e.0);
         assert_eq!(err, Some(StatusCode::BAD_REQUEST));
         assert_eq!(role_row(db, id).await, before);
-        let Json(role) = patch("helpers", "#00ff00", Some(MA | 256))
+        let Json(role) = patch("helpers", "#00ff00", Some(MA | 512))
             .await
             .expect("valid");
         assert_eq!(

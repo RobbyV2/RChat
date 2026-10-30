@@ -187,6 +187,8 @@ pub struct AppConfig {
     pub relay_user_kib_per_sec: u64,
     pub relay_max_kib_per_sec: u64,
     pub ice_servers: Option<String>,
+    pub webhook_allowed_hosts: Option<String>,
+    pub webhook_allow_http: bool,
     #[serde(skip)]
     pub roles: Roles,
     #[serde(skip)]
@@ -220,6 +222,7 @@ impl AppConfig {
             .set_default("relay_min_port", i64::from(crate::relay::DEFAULT_MIN_PORT))?
             .set_default("relay_max_port", i64::from(crate::relay::DEFAULT_MAX_PORT))?
             .set_default("relay_allow_private", false)?
+            .set_default("webhook_allow_http", false)?
             .set_default(
                 "relay_user_allocations",
                 crate::relay::DEFAULT_USER_ALLOCATIONS as i64,
@@ -272,7 +275,53 @@ impl AppConfig {
         crate::instance::parse_allowed_hosts(config.allowed_hosts.as_deref().unwrap_or_default())?;
         config.ice()?;
         config.relay()?;
+        config.outbound()?;
         Ok(config)
+    }
+
+    /// The rules for outgoing webhook requests: `WEBHOOK_ALLOWED_HOSTS` (comma-separated
+    /// `host` or `host:port` that may be private addresses), `WEBHOOK_ALLOW_HTTP` (plain http
+    /// for those hosts only), and the instance's own addresses and host names (`PUBLIC_URL`,
+    /// `PUBLIC_API_URL`, `RELAY_PUBLIC_IP`) refused like private ones.
+    ///
+    /// Prefer `host:port` entries: a bare `host` opens every port of it, and an allowlisted
+    /// domain skips the address check for whatever it resolves to, so whoever controls its DNS
+    /// decides where requests go.
+    pub fn outbound(&self) -> anyhow::Result<crate::api::webhooks::Outbound> {
+        let mut own: Vec<IpAddr> = Vec::new();
+        let mut own_hosts: Vec<String> = Vec::new();
+        if let Some(ip) = self
+            .relay_public_ip
+            .as_deref()
+            .and_then(|r| r.trim().parse::<IpAddr>().ok())
+        {
+            own.push(ip);
+        }
+        for raw in [&self.public_url, &self.public_api_url]
+            .into_iter()
+            .flatten()
+        {
+            if let Some(ip) = url::Url::parse(raw.trim())
+                .ok()
+                .and_then(|u| match u.host() {
+                    Some(url::Host::Ipv4(ip)) => Some(IpAddr::V4(ip)),
+                    Some(url::Host::Ipv6(ip)) => Some(IpAddr::V6(ip)),
+                    Some(url::Host::Domain(d)) => {
+                        own_hosts.push(d.to_string());
+                        None
+                    }
+                    None => None,
+                })
+            {
+                own.push(ip);
+            }
+        }
+        crate::api::webhooks::Outbound::parse(
+            self.webhook_allowed_hosts.as_deref().unwrap_or_default(),
+            self.webhook_allow_http,
+            own,
+            own_hosts,
+        )
     }
 
     fn relay_host(&self) -> anyhow::Result<Option<String>> {

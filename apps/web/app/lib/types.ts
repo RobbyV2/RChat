@@ -11,9 +11,10 @@ export const Perm = {
   MentionEveryone: 32,
   ViewAuditLog: 64,
   TimeoutMembers: 128,
+  ManageWebhooks: 256,
 } as const
 
-export const ALL_PERMS = 255
+export const ALL_PERMS = 511
 
 export const hasPerm = (perms: number, perm: number) => (perms & perm) !== 0
 
@@ -306,6 +307,28 @@ export interface Message {
   group_mentions?: GroupMention[]
   // kind 'poll': the poll as you see it; on a forwarded poll, a frozen snapshot
   poll?: Poll | null
+  // Posted through an incoming webhook: the author is `@webhook:<id>`
+  webhook?: MessageWebhook | null
+}
+
+export interface EmbedField {
+  name: string
+  value: string
+  inline?: boolean
+}
+
+export interface RichEmbed {
+  title?: string | null
+  description?: string | null
+  url?: string | null
+  color?: number | null
+  fields?: EmbedField[]
+  footer?: { text: string } | null
+}
+
+export interface MessageWebhook {
+  id: number
+  embeds: RichEmbed[]
 }
 
 // A background bulk delete (`all`), see `POST /api/messages/bulk_delete`.
@@ -515,6 +538,8 @@ export interface SiteSettings {
   // Absent on servers before 0.3.0, where P2P attachments are always on.
   p2p_attachments: boolean
   guests_enabled: boolean
+  // Absent on servers before webhooks: off.
+  outgoing_webhooks?: boolean
 }
 
 export type SiteSettingsPatch = Partial<Omit<SiteSettings, 'profanity_targets'>> & {

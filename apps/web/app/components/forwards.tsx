@@ -16,6 +16,8 @@ import { MessageTime } from './timestamp'
 import { PollCard } from './poll_card'
 import { fullTimeOf, messageTime, plainStamps } from '../lib/timestamps'
 import { Masked } from './ui'
+import { WebhookBadge } from './webhooks'
+import { isWebhookAuthor } from '../lib/webhooks'
 
 const DELETED_USER = 'Deleted user'
 
@@ -141,6 +143,7 @@ export function ForwardCard({
               >
                 <Masked text={author.display_name} />
               </span>
+              {isWebhookAuthor(author.username) && <WebhookBadge />}
             </>
           ) : (
             <>

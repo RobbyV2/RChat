@@ -837,6 +837,45 @@ pub async fn resolve_channel(
         .await
 }
 
+/// A channel as an incoming webhook that posts into it sees it: no viewer, and every right in
+/// that one channel (a webhook can always send in its own channel and nowhere else). Unknown
+/// channels and servers being deleted get `not_found`.
+pub(crate) async fn webhook_channel(db: &Db, id: i64) -> Result<ResolvedChannel, ApiError> {
+    let r = sqlx::query(
+        "SELECT c.server, c.kind, c.name, c.slowmode_seconds, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(not_found)?;
+    Ok(ResolvedChannel {
+        server: ServerAccess {
+            lite: ServerSummaryLite {
+                name: r.try_get(0)?,
+                display_name: r.try_get(4)?,
+                creator: r.try_get(5)?,
+                has_password: r.try_get::<Option<String>, _>(6)?.is_some(),
+                banner_color: r.try_get(7)?,
+                name_color: r.try_get(8)?,
+            },
+            via: Via::Public,
+            user: None,
+            ticket: None,
+        },
+        id,
+        kind: ChannelKind::parse(&r.try_get::<String, _>(1)?)?,
+        name: r.try_get(2)?,
+        slowmode: r.try_get(3)?,
+        rights: ChannelAccess::all(true),
+    })
+}
+
+/// The server permissions membership gives `username` (admin mask or roles), ignoring site
+/// admin powers and timeouts; 0 for non-members.
+pub(crate) async fn plain_member_perms(db: &Db, server: &str, username: &str) -> sqlx::Result<i64> {
+    member_perms(db, server, username).await
+}
+
 /// A channel category with its server, for someone who manages channels there. Unknown ids,
 /// servers the viewer can't open and viewers without Manage channels get the same 404.
 pub async fn resolve_category(db: &Db, id: i64, viewer: &User) -> Result<ServerAccess, ApiError> {
@@ -995,11 +1034,19 @@ impl ResolvedChannel {
         if exempt {
             return Ok(());
         }
+        self.slowmode_for(db, &user.username).await
+    }
+
+    /// Slow mode for `author` without exemptions: the wait since their last message here.
+    pub(crate) async fn slowmode_for(&self, db: &Db, author: &str) -> Result<(), ApiError> {
+        if self.slowmode <= 0 {
+            return Ok(());
+        }
         let last: Option<i64> = sqlx::query(
             "SELECT created_at FROM messages WHERE channel_id = $1 AND author = $2 AND kind IN ('user', 'poll') ORDER BY id DESC LIMIT 1",
         )
         .bind(self.id)
-        .bind(&user.username)
+        .bind(author)
         .fetch_optional(db)
         .await?
         .map(|r| r.try_get(0))

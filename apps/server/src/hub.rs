@@ -1925,6 +1925,7 @@ struct Inner {
     connects: Mutex<HashMap<String, (f64, Instant)>>,
     limits: Mutex<Limits>,
     reannounced: Mutex<(Option<Instant>, bool)>,
+    tap: std::sync::OnceLock<mpsc::Sender<WsEvent>>,
 }
 
 /// Per-user bounds on realtime connections: at most `conns_per_user` open at once across all
@@ -2021,6 +2022,7 @@ impl Hub {
                 connects: Mutex::new(HashMap::new()),
                 limits: Mutex::new(Limits::default()),
                 reannounced: Mutex::new((None, false)),
+                tap: std::sync::OnceLock::new(),
             }),
         }
     }
@@ -2569,7 +2571,23 @@ impl Hub {
         }
     }
 
+    /// Sends a copy of every event this process broadcasts (not those replicated from other
+    /// processes) to `tx`, when `wanted` says so. Full taps drop events. Set once.
+    pub fn set_tap(&self, tx: mpsc::Sender<WsEvent>) {
+        let _ = self.inner.tap.set(tx);
+    }
+
+    fn tapped(&self, ev: &WsEvent) {
+        if let Some(tx) = self.inner.tap.get()
+            && crate::api::webhooks::wanted(ev)
+            && tx.try_send(ev.clone()).is_err()
+        {
+            tracing::warn!("outgoing webhook queue is full; an event was dropped");
+        }
+    }
+
     pub fn broadcast(&self, ev: WsEvent) {
+        self.tapped(&ev);
         if let (
             WsEvent::ReadUpdated {
                 username,
@@ -2591,6 +2609,7 @@ impl Hub {
     }
 
     pub async fn broadcast_confirmed(&self, ev: WsEvent) -> bool {
+        self.tapped(&ev);
         !matches!(self.ask(Op::Broadcast { event: ev }).await, Outcome::Lost)
     }
 

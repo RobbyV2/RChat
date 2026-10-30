@@ -58,6 +58,14 @@ pub enum Action {
     MessageUnpin,
     PollClose,
     PollReopen,
+    WebhookCreate,
+    WebhookUpdate,
+    WebhookDelete,
+    WebhookTokenReset,
+    OutgoingCreate,
+    OutgoingUpdate,
+    OutgoingDelete,
+    OutgoingSecretReset,
 }
 
 pub const ACTIONS: &[Action] = &[
@@ -96,10 +104,20 @@ pub const ACTIONS: &[Action] = &[
     Action::MessageUnpin,
     Action::PollClose,
     Action::PollReopen,
+    Action::WebhookCreate,
+    Action::WebhookUpdate,
+    Action::WebhookDelete,
+    Action::WebhookTokenReset,
+    Action::OutgoingCreate,
+    Action::OutgoingUpdate,
+    Action::OutgoingDelete,
+    Action::OutgoingSecretReset,
 ];
 
 /// Action groups, the part of an action name before the dot.
-pub const GROUPS: &[&str] = &["member", "role", "channel", "server", "access", "message"];
+pub const GROUPS: &[&str] = &[
+    "member", "role", "channel", "server", "access", "message", "webhook",
+];
 
 impl Action {
     pub fn as_str(self) -> &'static str {
@@ -139,6 +157,14 @@ impl Action {
             Action::MessageUnpin => "message.unpin",
             Action::PollClose => "message.poll_close",
             Action::PollReopen => "message.poll_reopen",
+            Action::WebhookCreate => "webhook.create",
+            Action::WebhookUpdate => "webhook.update",
+            Action::WebhookDelete => "webhook.delete",
+            Action::WebhookTokenReset => "webhook.token_reset",
+            Action::OutgoingCreate => "webhook.outgoing_create",
+            Action::OutgoingUpdate => "webhook.outgoing_update",
+            Action::OutgoingDelete => "webhook.outgoing_delete",
+            Action::OutgoingSecretReset => "webhook.outgoing_secret_reset",
         }
     }
 
@@ -180,6 +206,7 @@ pub enum TargetKind {
     Message,
     Password,
     Server,
+    Webhook,
 }
 
 impl TargetKind {
@@ -192,6 +219,7 @@ impl TargetKind {
             TargetKind::Message => "message",
             TargetKind::Password => "password",
             TargetKind::Server => "server",
+            TargetKind::Webhook => "webhook",
         }
     }
 }

@@ -35,7 +35,7 @@ use crate::db::{
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 
-const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions";
+const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions, m.webhook_id, m.webhook_name, m.webhook_avatar, m.webhook_embeds";
 const SNIPPET_MAX: usize = 200;
 
 /// Message-id paging for message lists. Give at most one of `before`, `after` and `around`;
@@ -70,27 +70,27 @@ pub struct SendReq {
     /// an attachment is given. Up to 3 `http(s)` links in it (invite links excluded) get link
     /// previews after the message is posted.
     #[schema(example = "Hello https://example.com")]
-    content: String,
+    pub(crate) content: String,
     /// Optional id of a file from `POST /api/media` to attach. The caller must be its uploader
     /// and it must not already be attached to another message. Omit for no server-hosted file.
-    media_id: Option<String>,
+    pub(crate) media_id: Option<String>,
     /// Optional; blur the attachment behind a spoiler. Defaults to `false`.
-    media_spoiler: Option<bool>,
+    pub(crate) media_spoiler: Option<bool>,
     /// Optional peer-to-peer attachment hosted by the sender's client instead of the server.
     /// Omit for no P2P file.
-    p2p: Option<P2pAttachment>,
+    pub(crate) p2p: Option<P2pAttachment>,
     /// Optional id of a message to reply to inline (quoted above the new message). It must be a
     /// `user` message you can read in the same place: the same channel outside threads, the
     /// same thread (or its root) for thread replies, or the same DM. Anything else, including
     /// ids that do not exist, gives the same `400 Cannot reply to that message`.
     #[schema(example = 42)]
     #[serde(default)]
-    reply_to: Option<i64>,
+    pub(crate) reply_to: Option<i64>,
     /// With `reply_to`: ping the quoted message's author (a `reply` ping, if they can see the
     /// message and are not you). Defaults to `true`; ignored without `reply_to`.
     #[serde(default = "yes")]
     #[schema(default = true)]
-    mention_reply: bool,
+    pub(crate) mention_reply: bool,
     /// Optional id of a message to forward here. The server makes the new message as a copy: its
     /// text, its server-hosted attachment (unless removed, expired, uploads are off, or 50
     /// messages already carry that file; P2P attachments are not forwarded) and its link
@@ -99,11 +99,11 @@ pub struct SendReq {
     /// `400 Cannot forward that message`. Forwards never ping anyone.
     #[schema(example = 42)]
     #[serde(default)]
-    forward_of: Option<i64>,
+    pub(crate) forward_of: Option<i64>,
     /// Optional poll: the message becomes a `poll` message whose text is the question
     /// (`content` is ignored). It cannot have an attachment. Ignored with `forward_of`.
     #[serde(default)]
-    poll: Option<crate::api::polls::PollReq>,
+    pub(crate) poll: Option<crate::api::polls::PollReq>,
 }
 
 /// A file offered peer to peer by the sender, who becomes its `hoster`. The server stores only
@@ -331,12 +331,21 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
         }),
         _ => None,
     };
+    let hook: Option<i64> = r.try_get(36)?;
+    let author = match hook {
+        Some(id) => crate::api::webhooks::author_ref(
+            id,
+            r.try_get::<Option<String>, _>(37)?.as_deref(),
+            r.try_get::<Option<String>, _>(38)?.as_deref(),
+        ),
+        None => user_from(refs, &r.try_get::<String, _>(4)?),
+    };
     Ok(Message {
         id: r.try_get(0)?,
         channel_id: r.try_get(1)?,
         dm_id: r.try_get(2)?,
         thread_root_id: r.try_get(3)?,
-        author: user_from(refs, &r.try_get::<String, _>(4)?),
+        author,
         content: r.try_get(5)?,
         created_at: r.try_get(10)?,
         reply_count: r.try_get(11)?,
@@ -380,6 +389,12 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
         },
         group_mentions: parse_group_mentions(r.try_get::<Option<String>, _>(35)?.as_deref()),
         poll: None,
+        webhook: hook.map(|id| crate::api::webhooks::MessageWebhook {
+            id,
+            embeds: crate::api::webhooks::parse_embeds(
+                r.try_get::<Option<String>, _>(39).ok().flatten().as_deref(),
+            ),
+        }),
     })
 }
 
@@ -630,6 +645,7 @@ struct Original {
     channel_id: Option<i64>,
     dm_id: Option<i64>,
     author: String,
+    hook: Option<UserRef>,
     content: String,
     has_media: bool,
     created_at: i64,
@@ -650,7 +666,7 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
         return Ok(());
     }
     let sql = format!(
-        "SELECT m.id, m.channel_id, m.dm_id, m.author, m.content, m.media_id, m.created_at, m.fwd_source_id FROM messages m WHERE m.id IN ({}) AND {LIVE_AUTHOR}",
+        "SELECT m.id, m.channel_id, m.dm_id, m.author, m.content, m.media_id, m.created_at, m.fwd_source_id, m.webhook_id, m.webhook_name, m.webhook_avatar FROM messages m WHERE m.id IN ({}) AND {LIVE_AUTHOR}",
         placeholders(1, ids.len())
     );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
@@ -666,6 +682,14 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
                 channel_id: r.try_get(1)?,
                 dm_id: r.try_get(2)?,
                 author: r.try_get(3)?,
+                hook: match r.try_get::<Option<i64>, _>(8)? {
+                    Some(id) => Some(crate::api::webhooks::author_ref(
+                        id,
+                        r.try_get::<Option<String>, _>(9)?.as_deref(),
+                        r.try_get::<Option<String>, _>(10)?.as_deref(),
+                    )),
+                    None => None,
+                },
                 content: r.try_get(4)?,
                 has_media: r.try_get::<Option<String>, _>(5)?.is_some(),
                 created_at: r.try_get(6)?,
@@ -684,6 +708,7 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
             channel_id: qc,
             dm_id: qd,
             author,
+            hook,
             content,
             has_media,
             created_at,
@@ -696,7 +721,10 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
         if !same || floor.is_some_and(|f| *created_at < f) {
             continue;
         }
-        quote.author = Some(user_from(&refs, author));
+        quote.author = Some(match hook {
+            Some(hook) => hook.clone(),
+            None => user_from(&refs, author),
+        });
         quote.content = reply_snippet(content);
         quote.has_media = *has_media;
         quote.forwarded = *forwarded;
@@ -731,7 +759,7 @@ pub(crate) async fn load_broadcast(db: &Db, id: i64) -> Result<Option<Message>, 
     Ok(Some(message))
 }
 
-async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), ApiError> {
+pub(crate) async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), ApiError> {
     if msgs.is_empty() {
         return Ok(());
     }
@@ -1021,20 +1049,20 @@ async fn p2p_media(
 
 /// Where a new message goes, for checking what it may reply to.
 #[derive(Clone, Copy)]
-enum Place {
+pub(crate) enum Place {
     Channel(i64),
     Thread(i64),
     Dm(i64),
 }
 
 /// The message a reply quotes, checked.
-struct Quoted {
-    id: i64,
-    author: String,
-    mention: bool,
+pub(crate) struct Quoted {
+    pub(crate) id: i64,
+    pub(crate) author: String,
+    pub(crate) mention: bool,
 }
 
-fn cannot_reply() -> ApiError {
+pub(crate) fn cannot_reply() -> ApiError {
     bad("Cannot reply to that message")
 }
 
@@ -1081,7 +1109,7 @@ async fn quoted(
     }))
 }
 
-fn replied(quote: &Option<Quoted>) -> Option<&str> {
+pub(crate) fn replied(quote: &Option<Quoted>) -> Option<&str> {
     quote
         .as_ref()
         .filter(|q| q.mention)
@@ -1089,7 +1117,7 @@ fn replied(quote: &Option<Quoted>) -> Option<&str> {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn insert_message(
+pub(crate) async fn insert_message(
     db: &Db,
     channel_id: Option<i64>,
     dm_id: Option<i64>,
@@ -1098,6 +1126,7 @@ async fn insert_message(
     req: SendReq,
     quote: Option<&Quoted>,
     groups: Vec<GroupMention>,
+    hook: Option<&crate::api::webhooks::HookPost>,
 ) -> Result<Message, ApiError> {
     let SendReq {
         content,
@@ -1142,12 +1171,13 @@ async fn insert_message(
     {
         settings.check_profanity(ProfanityTarget::FileNames, &media.filename)?;
     }
-    if content.trim().is_empty() && media.is_none() {
+    let has_cards = hook.is_some_and(|h| !h.embeds.is_empty());
+    if content.trim().is_empty() && media.is_none() && !has_cards && poll.is_none() {
         return Err(bad("Message is empty"));
     }
     let t = now();
     let id: i64 = sqlx::query(
-        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, media_sha256, reply_to, reply_mention, group_mentions, created_at, kind) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id",
+        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, media_sha256, reply_to, reply_mention, group_mentions, created_at, kind, webhook_id, webhook_name, webhook_avatar, webhook_embeds) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23) RETURNING id",
     )
     .bind(channel_id)
     .bind(dm_id)
@@ -1171,6 +1201,10 @@ async fn insert_message(
         Some(_) => "poll",
         None => "user",
     })
+    .bind(hook.map(|h| h.id))
+    .bind(hook.map(|h| h.name.clone()))
+    .bind(hook.map(|h| h.avatar.clone()))
+    .bind(hook.and_then(|h| crate::api::webhooks::stored_embeds(&h.embeds)))
     .fetch_one(&mut *tx)
     .await?
     .try_get(0)?;
@@ -1212,6 +1246,10 @@ async fn insert_message(
         pin_message_id: None,
         group_mentions: groups,
         poll: None,
+        webhook: hook.map(|h| crate::api::webhooks::MessageWebhook {
+            id: h.id,
+            embeds: h.embeds.clone(),
+        }),
     }];
     attach_quotes(db, &mut msgs, None).await?;
     crate::api::polls::attach(db, &mut msgs).await?;
@@ -1442,6 +1480,7 @@ async fn insert_forward(
         pin_message_id: None,
         group_mentions: Vec::new(),
         poll: None,
+        webhook: None,
     }];
     attach_embeds(db, &mut msgs).await?;
     crate::api::polls::attach(db, &mut msgs).await?;
@@ -1497,6 +1536,7 @@ async fn deliver(
                 req,
                 quote.as_ref(),
                 groups,
+                None,
             )
             .await?;
             (message, quote, false)
@@ -2281,7 +2321,7 @@ async fn search_once(
     let mut msgs = rows_messages(db, &rows, Quotes::Skip).await?;
     let mut ctx: Vec<(String, String)> = Vec::with_capacity(rows.len());
     for r in &rows {
-        ctx.push((r.try_get(36)?, r.try_get(37)?));
+        ctx.push((r.try_get(40)?, r.try_get(41)?));
     }
     attach_embeds(db, &mut msgs).await?;
     Ok(msgs

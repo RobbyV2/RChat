@@ -5,6 +5,7 @@ import {
   dayBound,
   factsOf,
   groupOf,
+  isNameValue,
   permNames,
   sentence,
   sentenceText,
@@ -233,9 +234,32 @@ describe('audit values and filters', () => {
     ])
   })
 
+  test('webhook changes say when the actor became the owner', () => {
+    const hook = {
+      kind: 'webhook',
+      id: 3,
+      name: 'Deploys',
+      user: null,
+      staff: false,
+      deleted: false,
+    }
+    const owner = { changes: [{ field: 'owner', before: 'bob', after: 'alice' }] }
+    expect(
+      sentenceText(entry({ action: 'webhook.token_reset', target: hook, details: owner }))
+    ).toBe('Alice reset the URL of the webhook "Deploys" and became its owner')
+    expect(sentenceText(entry({ action: 'webhook.token_reset', target: hook }))).toBe(
+      'Alice reset the URL of the webhook "Deploys"'
+    )
+    expect(
+      sentenceText(entry({ action: 'webhook.outgoing_update', target: hook, details: owner }))
+    ).toBe('Alice updated the outgoing webhook "Deploys" and became its owner')
+    expect(isNameValue(entry({ action: 'webhook.outgoing_update' }), 'owner')).toBe(true)
+  })
+
   test('groups come from the action name', () => {
     expect(groupOf('channel.category_create')).toBe('channel')
-    expect(groupOf('webhook.create')).toBeNull()
+    expect(groupOf('webhook.create')).toBe('webhook')
+    expect(groupOf('bot.create')).toBeNull()
   })
 
   test('filters become query parameters', () => {

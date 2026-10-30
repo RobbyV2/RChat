@@ -6,6 +6,7 @@ pub mod fanout;
 pub mod hub;
 pub mod identity;
 pub mod instance;
+pub mod net_guard;
 pub mod p2p;
 pub mod relay;
 pub mod server;

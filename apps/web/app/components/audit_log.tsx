@@ -10,6 +10,7 @@ import {
   Server,
   Shield,
   Users,
+  Webhook,
   X,
   type LucideIcon,
 } from 'lucide-react'
@@ -46,6 +47,7 @@ const ICONS: Record<AuditGroup, LucideIcon> = {
   server: Server,
   access: KeyRound,
   message: MessageSquare,
+  webhook: Webhook,
 }
 
 const smallField = `${fieldCls} w-full`

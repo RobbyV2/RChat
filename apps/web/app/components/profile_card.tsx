@@ -67,6 +67,8 @@ import { Masked, useCopied } from './ui'
 import { ProfileFriendButton } from './friends'
 import { COARSE_QUERY, useMedia } from './context_menu'
 import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
+import { WebhookProfile } from './webhooks'
+import { isWebhookAuthor } from '../lib/webhooks'
 
 export function Badge({ tone, children }: { tone: 'primary' | 'tertiary'; children: string }) {
   const cls =
@@ -181,6 +183,7 @@ function Card({ target }: { target: ProfileTarget }) {
   const streamer = useStore(s => s.streamer)
   const homeHost = useStore(s => s.instanceHost)
   const isBlocked = useStore(s => s.blocked[username] === true)
+  const hook = isWebhookAuthor(username)
   const remote = isHomeHost(target.instance, homeHost) ? null : (target.instance as string)
   const live = useStore(s => (server ? memberState(s, server, username) : undefined))
   const serverRoles = useStore(s => (server ? s.servers[server]?.roles : undefined))
@@ -218,6 +221,7 @@ function Card({ target }: { target: ProfileTarget }) {
   const inside = useRef(false)
 
   useEffect(() => {
+    if (hook) return
     let current = true
     const key = profileKey(username, server)
     api
@@ -246,7 +250,7 @@ function Card({ target }: { target: ProfileTarget }) {
     return () => {
       current = false
     }
-  }, [username, server, rev])
+  }, [username, server, rev, hook])
 
   useEffect(() => {
     if (view !== opened.current.view || dialog !== opened.current.dialog) close()
@@ -433,7 +437,9 @@ function Card({ target }: { target: ProfileTarget }) {
     void useStore.getState().messageUser(username, text)
   }
 
-  const body = (
+  const body = hook ? (
+    <WebhookProfile user={target.user} sheet={sheet} titleId={titleId} />
+  ) : (
     <>
       <div
         aria-hidden

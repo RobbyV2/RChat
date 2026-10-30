@@ -9,6 +9,8 @@ import { plainStamps } from '../lib/timestamps'
 import type { ReplyRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { Masked } from './ui'
+import { WebhookBadge } from './webhooks'
+import { isWebhookAuthor } from '../lib/webhooks'
 
 // A small marker for forwarded messages where only a line of them is shown (search, quotes).
 export function ForwardedTag() {
@@ -148,6 +150,7 @@ export function ReplyPreview({
           {quote.mention ? '@' : ''}
           <Masked text={author.display_name} />
         </span>
+        {isWebhookAuthor(author.username) && <WebhookBadge />}
         {quote.forwarded && <ForwardedTag />}
         <Snippet quote={quote} />
       </button>

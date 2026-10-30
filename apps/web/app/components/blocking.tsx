@@ -7,11 +7,13 @@ import { blockedLabel, blockedRuns, type BlockedRun } from '../lib/blocks'
 import type { Message, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { fieldCls, FieldError, filledBtn, Masked, Sentinel, textBtn } from './ui'
+import { isWebhookAuthor } from '../lib/webhooks'
 
 // "Block" (with a short confirm) or "Unblock" for a user menu; null for yourself and guests.
 export const blockMenuItem = (user: UserRef): ContextMenuItem | null => {
   const s = useStore.getState()
-  if (!s.me || s.guest || user.username === s.me.username) return null
+  if (!s.me || s.guest || isWebhookAuthor(user.username) || user.username === s.me.username)
+    return null
   return s.blocked[user.username]
     ? {
         label: 'Unblock',

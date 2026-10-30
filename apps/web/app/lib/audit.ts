@@ -3,7 +3,7 @@ import { slowLabel } from './slowmode'
 import { durationText } from './timeouts'
 import type { AuditEntry } from './types'
 
-export type AuditGroup = 'member' | 'role' | 'channel' | 'server' | 'access' | 'message'
+export type AuditGroup = 'member' | 'role' | 'channel' | 'server' | 'access' | 'message' | 'webhook'
 
 export const AUDIT_GROUPS: { key: AuditGroup; label: string }[] = [
   { key: 'member', label: 'Members' },
@@ -12,6 +12,7 @@ export const AUDIT_GROUPS: { key: AuditGroup; label: string }[] = [
   { key: 'server', label: 'Server' },
   { key: 'access', label: 'Access' },
   { key: 'message', label: 'Messages' },
+  { key: 'webhook', label: 'Webhooks' },
 ]
 
 export const groupOf = (action: string): AuditGroup | null => {
@@ -79,6 +80,7 @@ const FIELD_LABELS: Record<string, string> = {
   authors: 'Authors',
   more_authors: 'More authors',
   thread: 'Thread replies',
+  owner: 'Owner',
 }
 
 export const fieldLabel = (field: string) => FIELD_LABELS[field] ?? field.replaceAll('_', ' ')
@@ -261,7 +263,11 @@ function systemMessages(entry: AuditEntry, actor: Part[]): Part[] {
 
 // Whether a details value is a server name (streamer blur).
 export const isNameValue = (entry: AuditEntry, field: string) =>
-  entry.action === 'server.update' && field === 'name'
+  (entry.action === 'server.update' && field === 'name') || field === 'owner'
+
+// " and became its owner" when a webhook change moved its ownership to the actor.
+const tookOver = (entry: AuditEntry): Part[] =>
+  changesOf(entry).some(c => c.field === 'owner') ? [{ text: ' and became its owner' }] : []
 
 // The readable sentence of an entry, e.g. "alice banned bob".
 export function sentence(entry: AuditEntry): Part[] {
@@ -377,6 +383,27 @@ export function sentence(entry: AuditEntry): Part[] {
       return [...actor, t(' closed a poll by '), ...user, t(` in ${ch()}`)]
     case 'message.poll_reopen':
       return [...actor, t(' reopened a poll by '), ...user, t(` in ${ch()}`)]
+    case 'webhook.create':
+      return [...actor, t(` created the webhook ${label} in ${ch()}`)]
+    case 'webhook.update': {
+      const c = changesOf(entry).find(c => c.field === 'name')
+      const what = c
+        ? t(` renamed the webhook "${String(c.before)}" to "${String(c.after)}"`)
+        : t(` updated the webhook ${label}`)
+      return [...actor, what, ...tookOver(entry)]
+    }
+    case 'webhook.delete':
+      return [...actor, t(` deleted the webhook ${label}`)]
+    case 'webhook.token_reset':
+      return [...actor, t(` reset the URL of the webhook ${label}`), ...tookOver(entry)]
+    case 'webhook.outgoing_create':
+      return [...actor, t(` created the outgoing webhook ${label}`)]
+    case 'webhook.outgoing_update':
+      return [...actor, t(` updated the outgoing webhook ${label}`), ...tookOver(entry)]
+    case 'webhook.outgoing_delete':
+      return [...actor, t(` deleted the outgoing webhook ${label}`)]
+    case 'webhook.outgoing_secret_reset':
+      return [...actor, t(` reset the secret of the outgoing webhook ${label}`), ...tookOver(entry)]
     default:
       return [...actor, t(` did ${entry.action}`)]
   }

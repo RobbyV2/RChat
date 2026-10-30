@@ -37,6 +37,11 @@ export const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
     bit: Perm.TimeoutMembers,
     hint: 'Stop members from chatting for a while',
   },
+  {
+    label: 'Manage webhooks',
+    bit: Perm.ManageWebhooks,
+    hint: 'Create and change webhooks that post into channels',
+  },
 ]
 
 export const PROFANITY_TARGETS: { key: ProfanityTarget; label: string }[] = [

@@ -70,6 +70,8 @@ import { Perm, hasPerm, type Member, type Message, type UserRef } from '../lib/t
 import { callTone, type CallTone } from '../lib/voice_layout'
 import { callLogInfo } from '../lib/call_choice'
 import { UserAvatar } from './user_avatar'
+import { WebhookBadge } from './webhooks'
+import { isWebhookAuthor, webhookIdOf } from '../lib/webhooks'
 import { MarkdownMessage } from './markdown_message'
 import { TypingIndicator } from './typing_indicator'
 import { MessageComposer } from './message_composer'
@@ -279,6 +281,7 @@ export function AuthorRow({
           >
             <Masked text={author.display_name} />
           </span>
+          {isWebhookAuthor(author.username) && <WebhookBadge />}
           {meta}
         </div>
         {children}
@@ -494,7 +497,13 @@ export const messageCopyItems = (m: Message): ContextMenuItem[] => {
       action: () => void sharing().copyText(messageStampToken(m.created_at)),
     },
     { label: 'Copy Message ID', icon: Hash, action: () => copy(String(m.id)) },
-    { label: 'Copy User ID', icon: AtSign, action: () => copy(m.author.username) },
+    isWebhookAuthor(m.author.username)
+      ? {
+          label: 'Copy Webhook ID',
+          icon: AtSign,
+          action: () => copy(String(webhookIdOf(m.author.username) ?? '')),
+        }
+      : { label: 'Copy User ID', icon: AtSign, action: () => copy(m.author.username) },
   ]
 }
 
@@ -716,9 +725,16 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     }
     const { author } = msg
     const self = author.username === me.username
-    const items: ContextMenuItem[] = [
-      { label: 'Direct Message', icon: MessageCircle, action: () => void startDm(author.username) },
-    ]
+    const hook = isWebhookAuthor(author.username)
+    const items: ContextMenuItem[] = hook
+      ? []
+      : [
+          {
+            label: 'Direct Message',
+            icon: MessageCircle,
+            action: () => void startDm(author.username),
+          },
+        ]
     if (view?.kind === 'channel') {
       items.unshift({
         label: 'Reply in thread',
@@ -731,7 +747,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     if (canEdit(msg)) items.unshift(editMenuItem(() => editMsg(msg)))
     if (pinRights && canPin(msg)) items.push(pinMenuItem(msg))
     items.push(...pollMenuItems(msg))
-    if (view?.kind === 'channel' && !self) {
+    if (view?.kind === 'channel' && !self && !hook) {
       const target = memberOf(useStore.getState(), view.server, author.username)
       const left = memberState(useStore.getState(), view.server, author.username) === null
       if (
@@ -783,6 +799,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     }
     if (
       view?.kind === 'channel' &&
+      !hook &&
       hasPerm(perms, Perm.ManageAdmins) &&
       changeableRoles(useStore.getState(), view.server, author.username).length
     )
@@ -794,7 +811,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     if (friend && !self) items.push(friend)
     const block = blockMenuItem(author)
     if (block) items.push(block)
-    if (me.is_site_admin && !self) {
+    if (me.is_site_admin && !self && !hook) {
       items.push({
         label: 'Ban site-wide',
         danger: true,

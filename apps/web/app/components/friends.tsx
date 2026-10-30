@@ -48,11 +48,19 @@ import {
   textBtn,
   useEscape,
 } from './ui'
+import { isWebhookAuthor } from '../lib/webhooks'
 
 // "Add friend" for a user menu; null for yourself, guests and people you blocked.
 export const friendMenuItem = (user: UserRef): ContextMenuItem | null => {
   const s = useStore.getState()
-  if (!s.me || s.guest || user.username === s.me.username || s.blocked[user.username]) return null
+  if (
+    !s.me ||
+    s.guest ||
+    isWebhookAuthor(user.username) ||
+    user.username === s.me.username ||
+    s.blocked[user.username]
+  )
+    return null
   const known = [s.friends, s.onlineFriends, s.incomingRequests, s.outgoingRequests].some(p =>
     p.list.some((x: { user: UserRef }) => x.user.username === user.username)
   )

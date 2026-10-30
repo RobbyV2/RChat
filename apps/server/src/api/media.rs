@@ -123,6 +123,24 @@ pub(crate) async fn upload_media(
         .bytes()
         .await
         .map_err(|e| ApiError(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))?;
+    let (id, uploaded_at) = save_upload(&state, &filename, &mime, &data, &user.username).await?;
+    Ok(Json(MediaRef::server(
+        id,
+        filename,
+        false,
+        uploaded_at + MEDIA_TTL_SECS,
+    )))
+}
+
+/// Stores an uploaded file for `uploader` (S3 when configured, else the database). Returns its
+/// id and upload time.
+pub(crate) async fn save_upload(
+    state: &AppState,
+    filename: &str,
+    mime: &str,
+    data: &[u8],
+    uploader: &str,
+) -> Result<(String, i64), ApiError> {
     if data.len() > MAX_SIZE {
         return Err(ApiError(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -134,30 +152,25 @@ pub(crate) async fn upload_media(
     let in_db = match &state.s3 {
         Some(bucket) => {
             bucket
-                .put_object_with_content_type(s3_key(&id), &data, &mime)
+                .put_object_with_content_type(s3_key(&id), data, mime)
                 .await
                 .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             None
         }
-        None => Some(data.as_ref()),
+        None => Some(data),
     };
     store_media(
         &state.db,
         &id,
-        &filename,
-        &mime,
+        filename,
+        mime,
         data.len() as i64,
         in_db,
-        &user.username,
+        uploader,
         uploaded_at,
     )
     .await?;
-    Ok(Json(MediaRef::server(
-        id,
-        filename,
-        false,
-        uploaded_at + MEDIA_TTL_SECS,
-    )))
+    Ok((id, uploaded_at))
 }
 
 /// Remove a message's attachment

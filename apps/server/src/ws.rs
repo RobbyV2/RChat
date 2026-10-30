@@ -4622,6 +4622,7 @@ mod tests {
             pin_message_id: None,
             group_mentions: Vec::new(),
             poll: None,
+            webhook: None,
         }
     }
 
@@ -8522,6 +8523,7 @@ mod tests {
                     asset_uploads: false,
                     p2p_attachments: false,
                     guests_enabled: false,
+                    outgoing_webhooks: false,
                 },
             },
             WsEvent::Error { message: s("e") },

@@ -30,6 +30,8 @@ use turn::server::request::Request;
 use utoipa::ToSchema;
 use webrtc_util::Conn;
 
+pub use crate::net_guard::blocked;
+use crate::net_guard::embedded_v4;
 pub use crate::server::client_ip::Cidr;
 
 pub const DEFAULT_PORT: u16 = 3478;
@@ -81,58 +83,6 @@ pub fn pick_stun(list: &[String], instance_id: &str, count: usize) -> Vec<String
         .filter(|s| ranked.contains(s))
         .cloned()
         .collect()
-}
-
-fn v4_blocked(ip: Ipv4Addr) -> bool {
-    let [a, b, c, _] = ip.octets();
-    ip.is_unspecified()
-        || ip.is_loopback()
-        || ip.is_private()
-        || ip.is_link_local()
-        || ip.is_multicast()
-        || ip.is_broadcast()
-        || ip.is_documentation()
-        || a == 0
-        || (a == 100 && (64..128).contains(&b))
-        || (a == 192 && b == 0 && c == 0)
-        || (a == 192 && b == 88 && c == 99)
-        || (a == 198 && (b == 18 || b == 19))
-        || a >= 240
-}
-
-fn embedded_v4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
-    let s = ip.segments();
-    let o = ip.octets();
-    let tail = Ipv4Addr::new(o[12], o[13], o[14], o[15]);
-    match s {
-        [0, 0, 0, 0, 0, 0xffff, _, _] => Some(tail),
-        [0x64, 0xff9b, 0, 0, 0, 0, _, _] => Some(tail),
-        [0x2002, _, _, _, _, _, _, _] => Some(Ipv4Addr::new(o[2], o[3], o[4], o[5])),
-        _ => None,
-    }
-}
-
-fn v6_blocked(ip: Ipv6Addr) -> bool {
-    let s = ip.segments();
-    let global_unicast = s[0] & 0xe000 == 0x2000;
-    !global_unicast
-        || s[0] == 0x2001 && s[1] < 0x0200
-        || s[0] == 0x2001 && s[1] == 0x0db8
-        || s[0] == 0x3fff && s[1] < 0x1000
-        || s[0] == 0x2002 && embedded_v4(ip).is_none_or(v4_blocked)
-}
-
-/// True when the relay must not exchange packets with this address: loopback, private
-/// (RFC 1918, ULA), link-local, CGNAT, multicast, unspecified, documentation, reserved and
-/// cloud metadata addresses, including IPv4 written as IPv6.
-pub fn blocked(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => v4_blocked(v4),
-        IpAddr::V6(v6) => match embedded_v4(v6) {
-            Some(v4) if v6.segments()[0] != 0x2002 => v4_blocked(v4),
-            Some(_) | None => v6_blocked(v6),
-        },
-    }
 }
 
 /// One ICE server, as in the WebRTC `RTCIceServer` dictionary.

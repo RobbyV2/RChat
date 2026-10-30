@@ -53,6 +53,14 @@ import type { LayoutOrder } from './categories'
 import type { Page } from './lists'
 import type { Privacy, Relation, RequestStatus } from './friends'
 import type { Secret } from './password'
+import type {
+  Delivery,
+  OutgoingList,
+  OutgoingSecret,
+  OutgoingWebhook,
+  Webhook,
+  WebhookSecret,
+} from './webhooks'
 
 export function resolveApiBase(
   url: string | undefined,
@@ -502,6 +510,42 @@ export const endpoints = (c: ApiClient) => ({
     c.req<unknown>('DELETE', `/servers/${seg(server)}/bans/${seg(username)}`),
   listBans: (server: string, cursor: string | null) =>
     c.page<ServerBan>(withCursor(`/servers/${seg(server)}/bans?limit=50`, cursor)),
+  listWebhooks: (server: string) => c.req<Webhook[]>('GET', `/servers/${seg(server)}/webhooks`),
+  createWebhook: (
+    server: string,
+    body: { channel_id: number; name: string; avatar_kind: AvatarKind; avatar_color: string | null }
+  ) => c.req<WebhookSecret>('POST', `/servers/${seg(server)}/webhooks`, body),
+  updateWebhook: (
+    server: string,
+    id: number,
+    patch: {
+      channel_id?: number
+      name?: string
+      avatar_kind?: AvatarKind
+      avatar_color?: string | null
+    }
+  ) => c.req<Webhook>('PATCH', `/servers/${seg(server)}/webhooks/${id}`, patch),
+  resetWebhookToken: (server: string, id: number) =>
+    c.req<WebhookSecret>('POST', `/servers/${seg(server)}/webhooks/${id}/token`),
+  deleteWebhook: (server: string, id: number) =>
+    c.req<unknown>('DELETE', `/servers/${seg(server)}/webhooks/${id}`),
+  listOutgoing: (server: string) =>
+    c.req<OutgoingList>('GET', `/servers/${seg(server)}/outgoing_webhooks`),
+  createOutgoing: (server: string, body: { name: string; url: string; events: string[] }) =>
+    c.req<OutgoingSecret>('POST', `/servers/${seg(server)}/outgoing_webhooks`, body),
+  updateOutgoing: (
+    server: string,
+    id: number,
+    patch: { name?: string; url?: string; events?: string[]; enabled?: boolean }
+  ) => c.req<OutgoingWebhook>('PATCH', `/servers/${seg(server)}/outgoing_webhooks/${id}`, patch),
+  resetOutgoingSecret: (server: string, id: number) =>
+    c.req<OutgoingSecret>('POST', `/servers/${seg(server)}/outgoing_webhooks/${id}/secret`),
+  deleteOutgoing: (server: string, id: number) =>
+    c.req<unknown>('DELETE', `/servers/${seg(server)}/outgoing_webhooks/${id}`),
+  testOutgoing: (server: string, id: number) =>
+    c.req<unknown>('POST', `/servers/${seg(server)}/outgoing_webhooks/${id}/test`),
+  listDeliveries: (server: string, id: number) =>
+    c.req<Delivery[]>('GET', `/servers/${seg(server)}/outgoing_webhooks/${id}/deliveries`),
   listAudit: (server: string, cursor: string | null, query: Record<string, string>) =>
     c.page<AuditEntry>(
       withCursor(`/servers/${seg(server)}/audit?${new URLSearchParams(query)}`, cursor)

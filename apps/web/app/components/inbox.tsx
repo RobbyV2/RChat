@@ -36,6 +36,8 @@ import {
 import { inboxAdapters } from '../lib/inbox_source'
 import { PingBadge, pingLabel } from './ping_badge'
 import { UserAvatar } from './user_avatar'
+import { WebhookBadge } from './webhooks'
+import { isWebhookAuthor } from '../lib/webhooks'
 import { MessageTime } from './timestamp'
 import { Masked, Sentinel, SheetGrip, SkeletonRows, textBtn as textBtnCls, useEscape } from './ui'
 import { longPress, useMedia } from './context_menu'
@@ -255,6 +257,11 @@ function Row({
               <span className={`streamer ${entry.unread ? 'font-semibold' : 'font-medium'}`}>
                 <Masked text={entry.actor.display_name} />
               </span>{' '}
+              {isWebhookAuthor(entry.actor.username) && (
+                <>
+                  <WebhookBadge />{' '}
+                </>
+              )}
               <InboxAction entry={entry} />
             </span>
             <MessageTime

@@ -191,6 +191,29 @@ describe('the message view', () => {
     expect(html).toContain('oh ****')
     expect(html.includes('shit')).toBe(false)
   })
+  test('webhook embeds hide spoilers and go through the profanity filter', async () => {
+    const webhook = {
+      id: 3,
+      embeds: [
+        {
+          title: '||shit title||',
+          description: 'see ||https://example.com/b|| and shit',
+          fields: [{ name: '||secret name||', value: '||hidden value||' }],
+          footer: { text: 'by ||someone||' },
+        },
+      ],
+    }
+    const html = render('', { webhook })
+    expect(hidden(html)).toBe(5)
+    expect(html.includes('data-spoiler-link')).toBe(false)
+    expect(html.includes('||')).toBe(false)
+    await setMasking(true, () => Promise.resolve((t: string) => t.replace(/shit/g, '****')))
+    setInitial({ profanityReady: true, showSpoilers: 'always' })
+    const open = render('', { webhook })
+    expect(open).toContain('**** title')
+    expect(open).toContain('and ****')
+    expect(open.includes('shit')).toBe(false)
+  })
 })
 
 describe('previews keep spoilers hidden', () => {

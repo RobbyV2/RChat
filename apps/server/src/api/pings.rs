@@ -482,6 +482,25 @@ pub async fn ping_message(
     actor: &User,
     replied: Option<&str>,
 ) {
+    ping_message_for(state, scope, message, actor, replied, &UserMentions::All).await
+}
+
+/// Which `@username` mentions of a message may ping.
+#[derive(Clone, Debug)]
+pub enum UserMentions {
+    All,
+    Only(Vec<String>),
+}
+
+/// `ping_message`, with the `@username` mentions limited to `users`.
+pub async fn ping_message_for(
+    state: &AppState,
+    scope: PingScope<'_>,
+    message: &Message,
+    actor: &User,
+    replied: Option<&str>,
+    users: &UserMentions,
+) {
     let run = async {
         let replied: Vec<String> = replied
             .filter(|name| *name != actor.username)
@@ -511,6 +530,10 @@ pub async fn ping_message(
             .await?
             .into_iter()
             .filter(|name| !replied.contains(name))
+            .filter(|name| match users {
+                UserMentions::All => true,
+                UserMentions::Only(list) => list.contains(name),
+            })
             .collect();
         let recipients = scope.recipients(&state.db, &named, message).await?;
         if recipients.is_empty() {
@@ -624,14 +647,61 @@ pub async fn group_mentions(
     channel: &ResolvedChannel,
     content: &str,
 ) -> Result<Vec<GroupMention>, ApiError> {
+    if mention_candidates(content).is_empty() {
+        return Ok(Vec::new());
+    }
+    let allowed = channel.member_bits(db).await? & crate::db::Perm::MentionEveryone as i64 != 0;
+    group_mentions_as(
+        db,
+        channel.server().name(),
+        content,
+        GroupRights {
+            everyone: allowed,
+            any_role: allowed,
+            roles: RoleRights::Mentionable,
+        },
+    )
+    .await
+}
+
+/// Which role mentions may ping besides those `any_role` allows.
+#[derive(Clone, Debug)]
+pub enum RoleRights {
+    /// Roles that allow anyone to mention them.
+    Mentionable,
+    /// Mentionable roles among these ids only.
+    MentionableAmong(Vec<i64>),
+    /// None.
+    Nothing,
+}
+
+/// What a sender may use: `everyone` for `@everyone` and `@here`, `any_role` for every role.
+#[derive(Clone, Debug)]
+pub struct GroupRights {
+    pub everyone: bool,
+    pub any_role: bool,
+    pub roles: RoleRights,
+}
+
+/// The group mentions in `content` that a sender with `rights` may use in `server`.
+pub async fn group_mentions_as(
+    db: &Db,
+    server: &str,
+    content: &str,
+    rights: GroupRights,
+) -> Result<Vec<GroupMention>, ApiError> {
     let candidates = mention_candidates(content);
     if candidates.is_empty() {
         return Ok(Vec::new());
     }
-    let allowed = channel.member_bits(db).await? & crate::db::Perm::MentionEveryone as i64 != 0;
+    let GroupRights {
+        everyone,
+        any_role,
+        roles: role_rights,
+    } = rights;
     let wanted: HashSet<&str> = candidates.iter().map(String::as_str).collect();
     let mut out = Vec::new();
-    if allowed {
+    if everyone {
         for kind in [GroupKind::Everyone, GroupKind::Here] {
             if wanted.contains(kind.as_str()) {
                 out.push(GroupMention {
@@ -642,14 +712,21 @@ pub async fn group_mentions(
         }
     }
     let rows = sqlx::query("SELECT id, name, mentionable FROM roles WHERE server = $1 ORDER BY id")
-        .bind(channel.server().name())
+        .bind(server)
         .fetch_all(db)
         .await?;
     let mut roles = 0;
     for r in &rows {
         let (id, name, mentionable): (i64, String, i64) =
             (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
-        if (allowed || mentionable != 0) && wanted.contains(name.trim().to_lowercase().as_str()) {
+        let may = any_role
+            || mentionable != 0
+                && match &role_rights {
+                    RoleRights::Mentionable => true,
+                    RoleRights::MentionableAmong(ids) => ids.contains(&id),
+                    RoleRights::Nothing => false,
+                };
+        if may && wanted.contains(name.trim().to_lowercase().as_str()) {
             out.push(GroupMention {
                 kind: GroupKind::Role,
                 role_id: Some(id),

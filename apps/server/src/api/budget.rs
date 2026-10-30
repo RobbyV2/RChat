@@ -100,6 +100,22 @@ impl Budget {
         }
     }
 
+    #[cfg(test)]
+    pub fn forget_prefix(&self, prefix: &str) {
+        let mut table = locked(&self.table);
+        let keys: Vec<String> = table
+            .map
+            .keys()
+            .filter(|k| k.starts_with(prefix))
+            .cloned()
+            .collect();
+        for k in keys {
+            if let Some(entry) = table.map.get_mut(&k) {
+                entry.1 = 0;
+            }
+        }
+    }
+
     /// Counts one use. False when the key already used its budget in this window.
     pub fn take(&self, key: &str) -> bool {
         self.reserve(key).is_some()

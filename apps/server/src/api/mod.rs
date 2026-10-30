@@ -25,6 +25,7 @@ pub mod servers;
 pub mod system_messages;
 pub mod timeouts;
 pub mod users;
+pub mod webhooks;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
@@ -113,7 +114,7 @@ impl From<sqlx::Error> for ApiError {
 
 /// A user as shown next to messages and in lists. A deleted account still appears, as its
 /// username on a grey color avatar.
-#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct UserRef {
     /// Lowercase username, the user's unique key.
     #[schema(example = "alice")]
@@ -177,6 +178,11 @@ pub async fn user_refs(db: &Db, names: &[String]) -> HashMap<String, UserRef> {
     keys.sort();
     keys.dedup();
     let mut found: HashMap<String, UserRef> = HashMap::with_capacity(keys.len());
+    let hooks: Vec<i64> = keys.iter().filter_map(|k| webhooks::hook_of(k)).collect();
+    if !hooks.is_empty() {
+        found.extend(webhooks::current_refs(db, &hooks).await);
+        keys.retain(|k| webhooks::hook_of(k).is_none());
+    }
     for chunk in keys.chunks(500) {
         let sql = format!(
             "SELECT username, display_name, avatar_kind, avatar_color FROM users WHERE username IN ({})",
@@ -410,7 +416,7 @@ pub struct Role {
     /// Permission bits of the role: 1 Manage channels, 2 Manage messages (delete and pin messages
     /// of others), 4 Kick (also bans), 8 Delete server (also edits the server), 16 Manage admins,
     /// 32 Mention everyone and roles (`@everyone`, `@here` and every role), 64 View audit log,
-    /// 128 Timeout members.
+    /// 128 Timeout members, 256 Manage webhooks.
     #[schema(example = 6)]
     pub perms: i64,
     /// Anyone who can send in a channel may mention the role with `@name`. Otherwise only members
@@ -742,6 +748,11 @@ pub struct Message {
     /// `snapshot` that takes no votes. `null` otherwise.
     #[serde(default)]
     pub poll: Option<polls::Poll>,
+    /// For a message posted through an incoming webhook, the webhook and its rich embeds;
+    /// `null` otherwise. `author` then carries the name and avatar the webhook posted with (its
+    /// `username` is `@webhook:<id>`, which no account can have). Clients show a WEBHOOK badge.
+    #[serde(default)]
+    pub webhook: Option<webhooks::MessageWebhook>,
 }
 
 /// The original of a forwarded message. The copy never changes when the original is edited or
@@ -1117,6 +1128,16 @@ impl ProfanityTargets {
     }
 }
 
+/// A switch that starts off: on only for `1`, `true`, `on` or `yes`.
+pub fn switch_off_seed(value: Option<&str>) -> bool {
+    value.is_some_and(|v| {
+        matches!(
+            v.trim().to_lowercase().as_str(),
+            "1" | "true" | "on" | "yes"
+        )
+    })
+}
+
 /// Seed value of an on/off setting from its environment variable: on unless it says off.
 pub fn switch_seed(value: Option<&str>) -> bool {
     !value.is_some_and(|v| {
@@ -1168,6 +1189,11 @@ pub struct Settings {
     pub p2p_attachments: bool,
     /// Guest access: reading servers without an account.
     pub guests_enabled: bool,
+    /// Outgoing webhooks: servers may have the instance POST signed event payloads to URLs
+    /// their managers choose. Off by default (`OUTGOING_WEBHOOKS` seeds it); while off, nothing
+    /// is queued or sent and outgoing webhooks cannot be created.
+    #[serde(default)]
+    pub outgoing_webhooks: bool,
 }
 
 pub(crate) fn yes() -> bool {
@@ -1187,11 +1213,12 @@ impl Settings {
         asset_uploads: false,
         p2p_attachments: false,
         guests_enabled: false,
+        outgoing_webhooks: false,
     };
 
     pub async fn load(db: &Db) -> Settings {
         let rows = match sqlx::query(
-            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'p2p_attachments', 'guests_enabled') OR key LIKE 'profanity\\_%' ESCAPE '\\'",
+            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'p2p_attachments', 'guests_enabled', 'outgoing_webhooks') OR key LIKE 'profanity\\_%' ESCAPE '\\'",
         )
             .fetch_all(db)
             .await
@@ -1225,6 +1252,14 @@ impl Settings {
             asset_uploads: on("asset_uploads"),
             p2p_attachments: on("p2p_attachments"),
             guests_enabled: on("guests_enabled"),
+            outgoing_webhooks: rows
+                .iter()
+                .find(|r| {
+                    r.try_get::<String, _>(0)
+                        .is_ok_and(|k| k == "outgoing_webhooks")
+                })
+                .and_then(|r| r.try_get::<String, _>(1).ok())
+                .is_some_and(|v| v == "1"),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1466,7 +1501,38 @@ pub fn routes(state: AppState, roles: &Roles, key: ClientIp) -> Router<AppState>
                 "/config_shares/{id}",
                 get(config_shares::get_share).delete(config_shares::delete_share),
             )
+            .route("/servers/{name}/webhooks", post(webhooks::create_webhook))
+            .route(
+                "/servers/{name}/webhooks/{id}/token",
+                post(webhooks::reset_token),
+            )
+            .route(
+                "/servers/{name}/outgoing_webhooks",
+                post(webhooks::create_outgoing),
+            )
+            .route(
+                "/servers/{name}/outgoing_webhooks/{id}/secret",
+                post(webhooks::reset_secret),
+            )
+            .route(
+                "/servers/{name}/outgoing_webhooks/{id}/test",
+                post(webhooks::test_outgoing),
+            )
             .route_layer(strict.clone());
+        let invite_routes = invite_routes.merge(
+            Router::new()
+                .route(
+                    "/webhooks/{id}/{token}",
+                    get(webhooks::webhook_info)
+                        .post(webhooks::execute)
+                        .layer(DefaultBodyLimit::max(26 * 1024 * 1024)),
+                )
+                .route(
+                    "/webhooks/{id}/{token}/messages/{message_id}",
+                    patch(webhooks::edit_hook_message).delete(webhooks::delete_hook_message),
+                )
+                .route_layer(limiter()),
+        );
         router = router.merge(api_routes(state, strict_routes, invite_routes));
     }
     if roles.gateway {
@@ -1543,6 +1609,23 @@ fn api_routes(
             put(timeouts::set_timeout).delete(timeouts::remove_timeout),
         )
         .route("/servers/{name}/audit", get(audit::list_audit))
+        .route("/servers/{name}/webhooks", get(webhooks::list_webhooks))
+        .route(
+            "/servers/{name}/webhooks/{id}",
+            patch(webhooks::update_webhook).delete(webhooks::delete_webhook),
+        )
+        .route(
+            "/servers/{name}/outgoing_webhooks",
+            get(webhooks::list_outgoing),
+        )
+        .route(
+            "/servers/{name}/outgoing_webhooks/{id}",
+            patch(webhooks::update_outgoing).delete(webhooks::delete_outgoing),
+        )
+        .route(
+            "/servers/{name}/outgoing_webhooks/{id}/deliveries",
+            get(webhooks::list_deliveries),
+        )
         .route(
             "/servers/{name}/bans",
             get(servers::list_bans).post(servers::ban_member),

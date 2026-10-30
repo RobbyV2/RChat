@@ -317,6 +317,9 @@ export const knownMentions = (s: RChatState, m: Message, candidates: string[]) =
   return candidates.filter(n => knowsUser(s, m, server, n)).join('\n')
 }
 
+// Stable fallbacks, so a selector for an unknown user returns the same object every time.
+const fallbackRefs = new Map<string, UserRef>()
+
 export const userRefFor = (s: RChatState, username: string): UserRef => {
   if (s.me?.username === username) return s.me
   const dm = s.dms.find(d => d.other.username === username)
@@ -333,7 +336,13 @@ export const userRefFor = (s: RChatState, username: string): UserRef => {
     const u = byUsername(cache.list).get(username)
     if (u) return u
   }
-  return { username, display_name: username, avatar_kind: 'identicon', avatar_color: null }
+  let ref = fallbackRefs.get(username)
+  if (!ref) {
+    if (fallbackRefs.size > 1000) fallbackRefs.clear()
+    ref = { username, display_name: username, avatar_kind: 'identicon', avatar_color: null }
+    fallbackRefs.set(username, ref)
+  }
+  return ref
 }
 
 export const changeableRoles = (s: RChatState, server: string, username: string): Role[] => {

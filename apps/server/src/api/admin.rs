@@ -221,6 +221,8 @@ pub struct SettingsPatch {
     asset_uploads: Option<bool>,
     p2p_attachments: Option<bool>,
     guests_enabled: Option<bool>,
+    #[serde(default)]
+    outgoing_webhooks: Option<bool>,
 }
 
 fn require_site_admin(user: &User) -> Result<(), ApiError> {
@@ -254,6 +256,7 @@ pub(crate) async fn patch_settings(
         asset_uploads,
         p2p_attachments,
         guests_enabled,
+        outgoing_webhooks,
     } = req;
     let pairs = [
         ("profanity_filter", profanity_filter),
@@ -261,6 +264,7 @@ pub(crate) async fn patch_settings(
         ("asset_uploads", asset_uploads),
         ("p2p_attachments", p2p_attachments),
         ("guests_enabled", guests_enabled),
+        ("outgoing_webhooks", outgoing_webhooks),
     ]
     .into_iter()
     .chain(
@@ -535,6 +539,8 @@ pub(crate) async fn hide_user_rows(
         "DELETE FROM member_timeouts WHERE username = $1",
         "DELETE FROM bulk_delete_jobs WHERE username = $1",
         "UPDATE server_passwords SET created_by = NULL WHERE created_by = $1",
+        "UPDATE webhooks SET creator = NULL, creator_mentions = 0 WHERE creator = $1",
+        "UPDATE outgoing_webhooks SET creator = NULL WHERE creator = $1",
     ] {
         sqlx::query(sql).bind(key).execute(&mut *tx).await?;
     }

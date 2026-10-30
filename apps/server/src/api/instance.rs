@@ -58,6 +58,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         p2p_attachments,
         profanity_filter: _,
         profanity_targets: _,
+        outgoing_webhooks: _,
     } = Settings::cached(&state.read()).await;
     state.instance.discovery(
         &state.instance.origin(peer, headers),

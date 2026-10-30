@@ -1,16 +1,15 @@
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::sync::Semaphore;
-use url::{Host, Url};
+use url::Url;
 use utoipa::IntoParams;
 
 use crate::api::access::{Proof, resolve_message};
@@ -25,78 +24,15 @@ const CACHE_TTL: i64 = 86400;
 const MAX_URLS: usize = 3;
 
 pub(crate) fn ip_ok(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            let [a, b, c, _] = v4.octets();
-            !(v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || v4.is_multicast()
-                || v4.is_documentation()
-                || a == 0
-                || a >= 240
-                || (a == 100 && (64..128).contains(&b))
-                || (a == 192 && b == 0 && c == 0)
-                || (a == 198 && (18..20).contains(&b)))
-        }
-        IpAddr::V6(v6) => {
-            let seg = v6.segments();
-            let embedded = |hi: u16, lo: u16| {
-                ip_ok(IpAddr::V4(std::net::Ipv4Addr::from(
-                    (u32::from(hi) << 16) | u32::from(lo),
-                )))
-            };
-            match seg {
-                [0, 0, 0, 0, 0, 0 | 0xffff, hi, lo]
-                | [0, 0, 0, 0, 0xffff, 0, hi, lo]
-                | [0x64, 0xff9b, 0, 0, 0, 0, hi, lo]
-                | [0x2002, hi, lo, ..] => embedded(hi, lo),
-                [0x2001, second, ..] => second >= 0x200 && second != 0xdb8,
-                [0x3fff, second, ..] => second >= 0x1000,
-                [first, ..] => first & 0xe000 == 0x2000,
-            }
-        }
-    }
-}
-
-async fn guard(url: &Url) -> anyhow::Result<Vec<SocketAddr>> {
-    match url.scheme() {
-        "http" | "https" => {}
-        other => anyhow::bail!("scheme {other} not allowed"),
-    }
-    let port = url.port_or_known_default().unwrap_or(0);
-    if port != 80 && port != 443 {
-        anyhow::bail!("port {port} not allowed");
-    }
-    match url.host() {
-        Some(Host::Ipv4(ip)) if ip_ok(IpAddr::V4(ip)) => Ok(Vec::new()),
-        Some(Host::Ipv6(ip)) if ip_ok(IpAddr::V6(ip)) => Ok(Vec::new()),
-        Some(Host::Domain(domain)) => {
-            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((domain, port)).await?.collect();
-            match !addrs.is_empty() && addrs.iter().all(|a| ip_ok(a.ip())) {
-                true => Ok(addrs),
-                false => anyhow::bail!("address not globally routable"),
-            }
-        }
-        _ => anyhow::bail!("address not globally routable"),
-    }
+    !crate::net_guard::blocked(ip)
 }
 
 async fn fetch_html(start: &Url) -> anyhow::Result<(Url, String)> {
     let mut url = start.clone();
     for _ in 0..4 {
-        let addrs = guard(&url).await?;
-        let mut builder = reqwest::Client::builder()
-            .redirect(Policy::none())
-            .no_proxy()
-            .timeout(Duration::from_secs(5));
-        if let Some(Host::Domain(domain)) = url.host() {
-            builder = builder.resolve_to_addrs(domain, &addrs);
-        }
-        let mut resp = builder
-            .build()?
+        let checked = crate::net_guard::check(&url, &crate::net_guard::Policy::previews()).await?;
+        let mut resp = checked
+            .client(Duration::from_secs(5), Duration::from_secs(5))?
             .get(url.clone())
             .header("user-agent", "rchat-embed/1.0")
             .header("accept", "text/html")

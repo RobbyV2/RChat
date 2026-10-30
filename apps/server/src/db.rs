@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS roles(id INTEGER PRIMARY KEY AUTOINCREMENT, server TE
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
 CREATE TABLE IF NOT EXISTS channel_perms(channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view INTEGER NOT NULL DEFAULT 1, can_send INTEGER NOT NULL DEFAULT 1, can_read_history INTEGER NOT NULL DEFAULT 1, restrict_set INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(channel_id, subject));
 CREATE TABLE IF NOT EXISTS dms(id INTEGER PRIMARY KEY AUTOINCREMENT, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id INTEGER NOT NULL DEFAULT 0, closed_a INTEGER NOT NULL DEFAULT 0, closed_b INTEGER NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
-CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER REFERENCES channels(id) ON DELETE CASCADE, dm_id INTEGER REFERENCES dms(id) ON DELETE CASCADE, thread_root_id INTEGER REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed INTEGER NOT NULL DEFAULT 0, media_spoiler INTEGER NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at INTEGER, media_size INTEGER, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at INTEGER, call_ended_at INTEGER, call_outcome TEXT, call_kind TEXT, call_video INTEGER, reply_to INTEGER, reply_mention INTEGER NOT NULL DEFAULT 0, edited_at INTEGER, fwd_author TEXT, fwd_created_at INTEGER, fwd_source_id INTEGER, fwd_origin TEXT, fwd_dropped TEXT, pinned_at INTEGER, pinned_by TEXT, pin_message_id INTEGER, group_mentions TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER REFERENCES channels(id) ON DELETE CASCADE, dm_id INTEGER REFERENCES dms(id) ON DELETE CASCADE, thread_root_id INTEGER REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed INTEGER NOT NULL DEFAULT 0, media_spoiler INTEGER NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at INTEGER, media_size INTEGER, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at INTEGER, call_ended_at INTEGER, call_outcome TEXT, call_kind TEXT, call_video INTEGER, reply_to INTEGER, reply_mention INTEGER NOT NULL DEFAULT 0, edited_at INTEGER, fwd_author TEXT, fwd_created_at INTEGER, fwd_source_id INTEGER, fwd_origin TEXT, fwd_dropped TEXT, pinned_at INTEGER, pinned_by TEXT, pin_message_id INTEGER, group_mentions TEXT, webhook_id INTEGER, webhook_name TEXT, webhook_avatar TEXT, webhook_embeds TEXT, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB, uploader TEXT, uploaded_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS media_chunks(media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE, seq INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(media_id, seq));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -60,6 +60,9 @@ CREATE TABLE IF NOT EXISTS poll_options(id INTEGER PRIMARY KEY AUTOINCREMENT, me
 CREATE TABLE IF NOT EXISTS poll_votes(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, voter TEXT NOT NULL, option_id INTEGER NOT NULL, value INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(message_id, voter, option_id));
 CREATE TABLE IF NOT EXISTS poll_snapshots(message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS bulk_delete_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, scope TEXT NOT NULL, channel_id INTEGER, status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','done','cancelled','failed')), except_ids TEXT NOT NULL DEFAULT '[]', after_id INTEGER NOT NULL DEFAULT 0, upto_id INTEGER NOT NULL DEFAULT 0, cursor_id INTEGER NOT NULL DEFAULT 0, estimate INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0, skipped INTEGER NOT NULL DEFAULT 0, authors TEXT NOT NULL DEFAULT '{}', staff INTEGER NOT NULL DEFAULT 0, author_filter TEXT, audit_id INTEGER, error TEXT, claimed_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, finished_at INTEGER);
+CREATE TABLE IF NOT EXISTS webhooks(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, name TEXT NOT NULL, avatar_kind TEXT NOT NULL DEFAULT 'identicon' CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, token_hash TEXT NOT NULL, creator TEXT, creator_mentions INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, last_used_at INTEGER);
+CREATE TABLE IF NOT EXISTS outgoing_webhooks(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, url TEXT NOT NULL, events TEXT NOT NULL, secret TEXT NOT NULL, creator TEXT, enabled INTEGER NOT NULL DEFAULT 1, failures INTEGER NOT NULL DEFAULT 0, disabled_at INTEGER, disabled_reason TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS webhook_deliveries(id INTEGER PRIMARY KEY AUTOINCREMENT, hook_id INTEGER NOT NULL REFERENCES outgoing_webhooks(id) ON DELETE CASCADE, event TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','failed')), attempts INTEGER NOT NULL DEFAULT 0, next_at INTEGER NOT NULL, claimed_at INTEGER NOT NULL DEFAULT 0, last_code INTEGER, last_ms INTEGER, last_error TEXT, created_at INTEGER NOT NULL, finished_at INTEGER);
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -134,6 +137,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bulk_delete_jobs_running ON bulk_delete_jo
 CREATE INDEX IF NOT EXISTS idx_bulk_delete_jobs_user ON bulk_delete_jobs(username, id);
 CREATE INDEX IF NOT EXISTS idx_bulk_delete_jobs_claim ON bulk_delete_jobs(status, claimed_at);
 CREATE INDEX IF NOT EXISTS idx_bulk_delete_jobs_finished ON bulk_delete_jobs(finished_at);
+CREATE INDEX IF NOT EXISTS idx_webhooks_server ON webhooks(server, id);
+CREATE INDEX IF NOT EXISTS idx_webhooks_channel ON webhooks(channel_id);
+CREATE INDEX IF NOT EXISTS idx_outgoing_webhooks_server ON outgoing_webhooks(server, id);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries(status, next_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_hook ON webhook_deliveries(hook_id, id);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at);
 ";
 
 const POSTGRES_SCHEMA: &str = "
@@ -155,7 +164,7 @@ CREATE TABLE IF NOT EXISTS roles(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY 
 CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE, PRIMARY KEY(server, username, role_id));
 CREATE TABLE IF NOT EXISTS channel_perms(channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view BIGINT NOT NULL DEFAULT 1, can_send BIGINT NOT NULL DEFAULT 1, can_read_history BIGINT NOT NULL DEFAULT 1, restrict_set BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(channel_id, subject));
 CREATE TABLE IF NOT EXISTS dms(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id BIGINT NOT NULL DEFAULT 0, closed_a BIGINT NOT NULL DEFAULT 0, closed_b BIGINT NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
-CREATE TABLE IF NOT EXISTS messages(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, channel_id BIGINT REFERENCES channels(id) ON DELETE CASCADE, dm_id BIGINT REFERENCES dms(id) ON DELETE CASCADE, thread_root_id BIGINT REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed BIGINT NOT NULL DEFAULT 0, media_spoiler BIGINT NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at BIGINT, media_size BIGINT, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at BIGINT, call_ended_at BIGINT, call_outcome TEXT, call_kind TEXT, call_video BIGINT, reply_to BIGINT, reply_mention BIGINT NOT NULL DEFAULT 0, edited_at BIGINT, fwd_author TEXT, fwd_created_at BIGINT, fwd_source_id BIGINT, fwd_origin TEXT, fwd_dropped TEXT, pinned_at BIGINT, pinned_by TEXT, pin_message_id BIGINT, group_mentions TEXT, created_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS messages(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, channel_id BIGINT REFERENCES channels(id) ON DELETE CASCADE, dm_id BIGINT REFERENCES dms(id) ON DELETE CASCADE, thread_root_id BIGINT REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed BIGINT NOT NULL DEFAULT 0, media_spoiler BIGINT NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at BIGINT, media_size BIGINT, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at BIGINT, call_ended_at BIGINT, call_outcome TEXT, call_kind TEXT, call_video BIGINT, reply_to BIGINT, reply_mention BIGINT NOT NULL DEFAULT 0, edited_at BIGINT, fwd_author TEXT, fwd_created_at BIGINT, fwd_source_id BIGINT, fwd_origin TEXT, fwd_dropped TEXT, pinned_at BIGINT, pinned_by TEXT, pin_message_id BIGINT, group_mentions TEXT, webhook_id BIGINT, webhook_name TEXT, webhook_avatar TEXT, webhook_embeds TEXT, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size BIGINT NOT NULL, data BYTEA, uploader TEXT, uploaded_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS media_chunks(media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE, seq BIGINT NOT NULL, data BYTEA NOT NULL, PRIMARY KEY(media_id, seq));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -185,6 +194,9 @@ CREATE TABLE IF NOT EXISTS poll_options(id BIGINT GENERATED ALWAYS AS IDENTITY P
 CREATE TABLE IF NOT EXISTS poll_votes(message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, voter TEXT NOT NULL, option_id BIGINT NOT NULL, value BIGINT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(message_id, voter, option_id));
 CREATE TABLE IF NOT EXISTS poll_snapshots(message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS bulk_delete_jobs(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, username TEXT NOT NULL, scope TEXT NOT NULL, channel_id BIGINT, status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','done','cancelled','failed')), except_ids TEXT NOT NULL DEFAULT '[]', after_id BIGINT NOT NULL DEFAULT 0, upto_id BIGINT NOT NULL DEFAULT 0, cursor_id BIGINT NOT NULL DEFAULT 0, estimate BIGINT NOT NULL DEFAULT 0, deleted BIGINT NOT NULL DEFAULT 0, skipped BIGINT NOT NULL DEFAULT 0, authors TEXT NOT NULL DEFAULT '{}', staff BIGINT NOT NULL DEFAULT 0, author_filter TEXT, audit_id BIGINT, error TEXT, claimed_at BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, finished_at BIGINT);
+CREATE TABLE IF NOT EXISTS webhooks(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, name TEXT NOT NULL, avatar_kind TEXT NOT NULL DEFAULT 'identicon' CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, token_hash TEXT NOT NULL, creator TEXT, creator_mentions BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, last_used_at BIGINT);
+CREATE TABLE IF NOT EXISTS outgoing_webhooks(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, url TEXT NOT NULL, events TEXT NOT NULL, secret TEXT NOT NULL, creator TEXT, enabled BIGINT NOT NULL DEFAULT 1, failures BIGINT NOT NULL DEFAULT 0, disabled_at BIGINT, disabled_reason TEXT, created_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS webhook_deliveries(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, hook_id BIGINT NOT NULL REFERENCES outgoing_webhooks(id) ON DELETE CASCADE, event TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','failed')), attempts BIGINT NOT NULL DEFAULT 0, next_at BIGINT NOT NULL, claimed_at BIGINT NOT NULL DEFAULT 0, last_code BIGINT, last_ms BIGINT, last_error TEXT, created_at BIGINT NOT NULL, finished_at BIGINT);
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -260,6 +272,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bulk_delete_jobs_running ON bulk_delete_jo
 CREATE INDEX IF NOT EXISTS idx_bulk_delete_jobs_user ON bulk_delete_jobs(username, id);
 CREATE INDEX IF NOT EXISTS idx_bulk_delete_jobs_claim ON bulk_delete_jobs(status, claimed_at);
 CREATE INDEX IF NOT EXISTS idx_bulk_delete_jobs_finished ON bulk_delete_jobs(finished_at);
+CREATE INDEX IF NOT EXISTS idx_webhooks_server ON webhooks(server, id);
+CREATE INDEX IF NOT EXISTS idx_webhooks_channel ON webhooks(channel_id);
+CREATE INDEX IF NOT EXISTS idx_outgoing_webhooks_server ON outgoing_webhooks(server, id);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries(status, next_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_hook ON webhook_deliveries(hook_id, id);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at);
 ";
 
 const SQLITE_SEARCH: &[&str] = &[
@@ -536,6 +554,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("bulk_delete_jobs", "error TEXT"),
     ("bulk_delete_jobs", "claimed_at {INT} NOT NULL DEFAULT 0"),
     ("bulk_delete_jobs", "finished_at {INT}"),
+    ("messages", "webhook_id {INT}"),
+    ("messages", "webhook_name TEXT"),
+    ("messages", "webhook_avatar TEXT"),
+    ("messages", "webhook_embeds TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -585,7 +607,9 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// 12: `group_pings_read` (group mentions marked read in the inbox) and the
 /// `group_pings(server, created_at, message_id)` index.
 /// 13: bulk delete jobs (`bulk_delete_jobs`).
-pub const SCHEMA_VERSION: i64 = 13;
+/// 14: webhooks (`webhooks`, `outgoing_webhooks`, `webhook_deliveries`, the `messages.webhook_*`
+/// columns) and the Manage webhooks permission bit.
+pub const SCHEMA_VERSION: i64 = 14;
 
 /// A temp database path no other test in any process uses at the same time: the process id,
 /// the test's name and a counter.
@@ -903,15 +927,18 @@ pub enum Perm {
     MentionEveryone = 32,
     ViewAuditLog = 64,
     TimeoutMembers = 128,
+    ManageWebhooks = 256,
 }
 
-pub const ALL_PERMS: i64 = 255;
+pub const ALL_PERMS: i64 = 511;
 /// Every permission before `MentionEveryone` existed.
 const OLD_ALL_PERMS: i64 = 31;
 /// Every permission before `ViewAuditLog` existed.
 const PRE_AUDIT_PERMS: i64 = 63;
 /// Every permission before `TimeoutMembers` existed.
 const PRE_TIMEOUT_PERMS: i64 = 127;
+/// Every permission before `ManageWebhooks` existed.
+const PRE_WEBHOOK_PERMS: i64 = 255;
 
 pub fn perm_bits(is_admin: bool, perms: i64, roles: i64) -> i64 {
     match (is_admin, perms) {
@@ -1237,7 +1264,7 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
     }
     if version < 7 {
         let n = sqlx::query("UPDATE members SET perms = $1 WHERE is_admin <> 0 AND perms = $2")
-            .bind(ALL_PERMS)
+            .bind(PRE_WEBHOOK_PERMS)
             .bind(PRE_TIMEOUT_PERMS)
             .execute(&mut *conn)
             .await?
@@ -1250,6 +1277,17 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
         sqlx::query("DELETE FROM pings WHERE seen = 3")
             .execute(&mut *conn)
             .await?;
+    }
+    if version < 14 {
+        let n = sqlx::query("UPDATE members SET perms = $1 WHERE is_admin <> 0 AND perms = $2")
+            .bind(ALL_PERMS)
+            .bind(PRE_WEBHOOK_PERMS)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+        if n > 0 {
+            tracing::info!("gave {n} admins with every permission the Manage webhooks permission");
+        }
     }
     let t = now();
     sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
@@ -1272,6 +1310,8 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
     seed_settings(&mut *conn, &profanity).await?;
     let p2p = crate::api::switch_seed(std::env::var("P2P_ATTACHMENTS").ok().as_deref());
     seed_settings(&mut *conn, &[("p2p_attachments", p2p)]).await?;
+    let outgoing = crate::api::switch_off_seed(std::env::var("OUTGOING_WEBHOOKS").ok().as_deref());
+    seed_settings(&mut *conn, &[("outgoing_webhooks", outgoing)]).await?;
     for (key, value) in [
         ("instance_id", crate::identity::random_id()),
         ("instance_signing_key", crate::identity::new_seed()),
@@ -1443,6 +1483,7 @@ pub struct Swept {
     pub audit_log: u64,
     pub member_timeouts: u64,
     pub bulk_delete_jobs: u64,
+    pub webhook_deliveries: u64,
 }
 
 async fn delete_batched(db: &Db, sql: &'static str, cutoff: i64) -> sqlx::Result<u64> {
@@ -1636,6 +1677,12 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
             db,
             "DELETE FROM bulk_delete_jobs WHERE id IN (SELECT id FROM bulk_delete_jobs WHERE status <> 'running' AND finished_at < $1 LIMIT $2)",
             t - crate::api::bulk_delete::JOB_KEEP,
+        )
+        .await?,
+        webhook_deliveries: delete_batched(
+            db,
+            "DELETE FROM webhook_deliveries WHERE id IN (SELECT id FROM webhook_deliveries WHERE created_at < $1 LIMIT $2)",
+            t - crate::api::webhooks::DELIVERY_KEEP,
         )
         .await?,
     })
@@ -3256,7 +3303,7 @@ mod tests {
                 count(&db, "SELECT COUNT(*) FROM messages WHERE author = 'all' AND content = 'old' AND created_at = 7").await,
                 1
             );
-            for (name, perms) in [("all", 255), ("zero", 0), ("kick", 4), ("plain", 127)] {
+            for (name, perms) in [("all", 511), ("zero", 0), ("kick", 4), ("plain", 127)] {
                 assert_eq!(
                     count(
                         &db,
@@ -3299,6 +3346,139 @@ mod tests {
                 "server is a foreign key"
             );
             sqlx::query("DELETE FROM member_timeouts")
+                .execute(&db)
+                .await
+                .expect("clear");
+            close(&db).await;
+        }
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn webhooks_are_added_to_an_old_database() {
+        let path = crate::db::temp_db_path("webhook_upgrade");
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_webhooks_server",
+            "DROP INDEX idx_webhooks_channel",
+            "DROP INDEX idx_outgoing_webhooks_server",
+            "DROP INDEX idx_webhook_deliveries_due",
+            "DROP INDEX idx_webhook_deliveries_hook",
+            "DROP INDEX idx_webhook_deliveries_created",
+            "DROP TABLE webhook_deliveries",
+            "DROP TABLE outgoing_webhooks",
+            "DROP TABLE webhooks",
+            "ALTER TABLE messages DROP COLUMN webhook_id",
+            "ALTER TABLE messages DROP COLUMN webhook_name",
+            "ALTER TABLE messages DROP COLUMN webhook_avatar",
+            "ALTER TABLE messages DROP COLUMN webhook_embeds",
+            "DELETE FROM settings WHERE key = 'outgoing_webhooks'",
+            "UPDATE settings SET value = '13' WHERE key = 'schema_version'",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'all', 1, 255, 1)",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'zero', 1, 0, 1)",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'kick', 1, 4, 1)",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'plain', 0, 255, 1)",
+            "INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'old', '#ffffff', 255)",
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES((SELECT id FROM channels WHERE server = 'rchat'), 'all', 'old', 7)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM messages WHERE author = 'all' AND content = 'old' AND created_at = 7 AND webhook_id IS NULL AND webhook_name IS NULL AND webhook_avatar IS NULL AND webhook_embeds IS NULL").await,
+                1
+            );
+            for (name, perms) in [("all", 511), ("zero", 0), ("kick", 4), ("plain", 255)] {
+                assert_eq!(
+                    count(
+                        &db,
+                        &format!("SELECT perms FROM members WHERE username = '{name}'")
+                    )
+                    .await,
+                    perms,
+                    "{name}"
+                );
+            }
+            assert_eq!(
+                count(&db, "SELECT perms FROM roles WHERE name = 'old'").await,
+                255
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%webhook%'").await,
+                6
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM settings WHERE key = 'outgoing_webhooks' AND value = '0'"
+                )
+                .await,
+                1,
+                "outgoing webhooks start off"
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            let cid = count(&db, "SELECT id FROM channels WHERE server = 'rchat'").await;
+            sqlx::query("INSERT INTO webhooks(server, channel_id, name, token_hash, created_at) VALUES('rchat', $1, 'Hook', 'h', 1)")
+                .bind(cid)
+                .execute(&db)
+                .await
+                .expect("new table");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM webhooks WHERE avatar_kind = 'identicon' AND creator_mentions = 0 AND avatar_color IS NULL AND last_used_at IS NULL").await,
+                1
+            );
+            sqlx::query("INSERT INTO outgoing_webhooks(server, name, url, events, secret, created_at) VALUES('rchat', 'Out', 'https://example.com/', 'message.created', 's', 1)")
+                .execute(&db)
+                .await
+                .expect("outgoing table");
+            sqlx::query("INSERT INTO webhook_deliveries(hook_id, event, next_at, created_at) VALUES((SELECT id FROM outgoing_webhooks), 'ping', 1, 1)")
+                .execute(&db)
+                .await
+                .expect("deliveries table");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM webhook_deliveries WHERE status = 'pending' AND attempts = 0 AND claimed_at = 0").await,
+                1
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM outgoing_webhooks WHERE enabled = 1 AND failures = 0"
+                )
+                .await,
+                1
+            );
+            assert!(
+                sqlx::query("INSERT INTO webhooks(server, channel_id, name, token_hash, created_at) VALUES('nowhere', $1, 'Hook', 'h', 1)")
+                    .bind(cid)
+                    .execute(&db)
+                    .await
+                    .is_err(),
+                "server is a foreign key"
+            );
+            sqlx::query("DELETE FROM outgoing_webhooks")
+                .execute(&db)
+                .await
+                .expect("clear outgoing");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM webhook_deliveries").await,
+                0
+            );
+            sqlx::query("DELETE FROM webhooks")
                 .execute(&db)
                 .await
                 .expect("clear");
@@ -4475,6 +4655,7 @@ mod tests {
                 audit_log: 1,
                 member_timeouts: 1,
                 bulk_delete_jobs: 1,
+                webhook_deliveries: 0,
             }
         );
         assert_eq!(

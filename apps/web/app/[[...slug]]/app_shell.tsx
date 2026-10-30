@@ -20,6 +20,7 @@ import MemberSidebar from '../components/member_sidebar'
 import AdminPanel from '../components/admin_panel'
 import ServerSettings, { ConfirmDialog } from '../components/server_settings'
 import AuditLogDialog from '../components/audit_log'
+import WebhooksDialog from '../components/webhooks_dialog'
 import TimeoutDialog from '../components/timeout_dialog'
 import SettingsMenu from '../components/settings_menu'
 import ThreadPanel from '../components/thread_panel'
@@ -223,6 +224,7 @@ export default function AppShell() {
         <PollVotersDialog />
         <ServerSettings />
         <AuditLogDialog />
+        <WebhooksDialog />
         <TimeoutDialog />
         <SettingsMenu />
         <AdminPanel />
