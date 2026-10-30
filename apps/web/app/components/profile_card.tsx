@@ -16,6 +16,8 @@ import {
   Plus,
   ShieldMinus,
   ShieldPlus,
+  Timer,
+  TimerOff,
   UserMinus,
   X,
 } from 'lucide-react'
@@ -30,6 +32,7 @@ import {
   memberState,
   myPerms,
   myRolePerms,
+  noteTimeout,
   revokeAdminFor,
   useStore,
   type ProfileTarget,
@@ -59,6 +62,7 @@ import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { useCopied } from './ui'
 import { COARSE_QUERY, useMedia } from './context_menu'
+import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
 
 export function Badge({ tone, children }: { tone: 'primary' | 'tertiary'; children: string }) {
   const cls =
@@ -141,6 +145,8 @@ const fmtDate = (ts: number) =>
 const ACTIONS: Record<ProfileAction, { label: string; icon: ReactNode; danger?: boolean }> = {
   kick: { label: 'Kick', icon: <UserMinus size={16} />, danger: true },
   server_ban: { label: 'Ban from server', icon: <Ban size={16} />, danger: true },
+  timeout: { label: 'Time out', icon: <Timer size={16} />, danger: true },
+  untimeout: { label: 'Remove timeout', icon: <TimerOff size={16} /> },
   promote: { label: 'Promote to Admin', icon: <ShieldPlus size={16} /> },
   revoke: { label: 'Revoke Admin', icon: <ShieldMinus size={16} />, danger: true },
   transfer: { label: 'Transfer Admin', icon: <ArrowRightLeft size={16} /> },
@@ -188,6 +194,7 @@ function Card({ target }: { target: ProfileTarget }) {
       : null
   )
   const perms = useStore(s => (server ? myPerms(s, server) : 0))
+  const timeout = useMemberTimeout(server, username)
   const coarse = useMedia(COARSE_QUERY)
   const small = useMedia(SHEET_QUERY)
   const sheet = coarse || small
@@ -217,6 +224,7 @@ function Card({ target }: { target: ProfileTarget }) {
         setFailed(false)
         const s = useStore.getState()
         if (server && s.servers[server]) s.rememberMember(server, username, asMember(p))
+        if (server && p.member) noteTimeout(server, username, p.member.timeout)
         if (server && p.member) s.notePresence(server, username, p.member.online)
         useStore.setState(st =>
           st.profile?.user.username === username ? { profile: { ...st.profile, user: p.user } } : {}
@@ -343,6 +351,7 @@ function Card({ target }: { target: ProfileTarget }) {
     channelDenies,
     targetRolePerms: rolePerms(member, serverRoles ?? fetched?.roles ?? []),
     myRolePerms: mine,
+    timedOut: timeout !== null,
   }
   const actions = known && !missing ? profileActions(input) : []
   const editRoles = known && !missing && canEditRoles(input) && serverRoles !== undefined
@@ -368,6 +377,22 @@ function Card({ target }: { target: ProfileTarget }) {
       case 'server_ban':
         close()
         banMenuItem(server, username).action?.()
+        return
+      case 'timeout':
+        close()
+        s.openDialog({
+          kind: 'timeout',
+          server,
+          user: {
+            username: user.username,
+            display_name: user.display_name,
+            avatar_kind: user.avatar_kind,
+            avatar_color: user.avatar_color,
+          },
+        })
+        return
+      case 'untimeout':
+        void s.removeTimeout(server, username)
         return
       case 'promote':
         void s.grantAdmin(server, username)
@@ -479,6 +504,16 @@ function Card({ target }: { target: ProfileTarget }) {
                   {profile ? fmtDate(profile.created_at) : '…'}
                 </dd>
               </div>
+              {timeout && (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="min-w-0 truncate text-on-surface-variant">
+                    Timed out{timeout.reason ? `: ${timeout.reason}` : ''}
+                  </dt>
+                  <dd className="shrink-0">
+                    <TimeoutBadge t={timeout} />
+                  </dd>
+                </div>
+              )}
               {join && (
                 <div className="flex items-baseline justify-between gap-3">
                   <dt className="flex min-w-0 text-on-surface-variant">
@@ -560,7 +595,8 @@ function Card({ target }: { target: ProfileTarget }) {
         )}
         <div className="mt-2 flex flex-col">
           {actions.map(a => {
-            const { label, icon, danger } = ACTIONS[a]
+            const { icon, danger } = ACTIONS[a]
+            const label = a === 'timeout' && timeout ? 'Change timeout' : ACTIONS[a].label
             return (
               <button
                 key={a}

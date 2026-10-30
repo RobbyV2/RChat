@@ -18,6 +18,7 @@ import MemberSidebar from '../components/member_sidebar'
 import AdminPanel from '../components/admin_panel'
 import ServerSettings, { ConfirmDialog } from '../components/server_settings'
 import AuditLogDialog from '../components/audit_log'
+import TimeoutDialog from '../components/timeout_dialog'
 import SettingsMenu from '../components/settings_menu'
 import ThreadPanel from '../components/thread_panel'
 import SearchPanel from '../components/search_panel'
@@ -196,6 +197,7 @@ export default function AppShell() {
         <CategoryDialog />
         <ServerSettings />
         <AuditLogDialog />
+        <TimeoutDialog />
         <SettingsMenu />
         <AdminPanel />
         <ConfirmDialog />

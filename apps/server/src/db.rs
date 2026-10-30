@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS group_pings(id INTEGER PRIMARY KEY AUTOINCREMENT, mes
 CREATE TABLE IF NOT EXISTS here_pings(ping_id INTEGER NOT NULL REFERENCES group_pings(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(username, ping_id));
 CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, actor TEXT, staff INTEGER NOT NULL DEFAULT 0, action TEXT NOT NULL, target_kind TEXT, target_id INTEGER, target_name TEXT, target_staff INTEGER NOT NULL DEFAULT 0, details TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS audit_channels(entry_id INTEGER NOT NULL REFERENCES audit_log(id) ON DELETE CASCADE, channel_id INTEGER NOT NULL, private INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(entry_id, channel_id));
+CREATE TABLE IF NOT EXISTS member_timeouts(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, until INTEGER NOT NULL, reason TEXT, set_by TEXT, created_at INTEGER NOT NULL, PRIMARY KEY(server, username));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -104,6 +105,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_server ON audit_log(server, created_at,
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(server, action, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(server, actor, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_member_timeouts_until ON member_timeouts(until);
 ";
 
 const POSTGRES_SCHEMA: &str = "
@@ -143,6 +145,7 @@ CREATE TABLE IF NOT EXISTS group_pings(id BIGINT GENERATED ALWAYS AS IDENTITY PR
 CREATE TABLE IF NOT EXISTS here_pings(ping_id BIGINT NOT NULL REFERENCES group_pings(id) ON DELETE CASCADE, username TEXT NOT NULL, PRIMARY KEY(username, ping_id));
 CREATE TABLE IF NOT EXISTS audit_log(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, actor TEXT, staff BIGINT NOT NULL DEFAULT 0, action TEXT NOT NULL, target_kind TEXT, target_id BIGINT, target_name TEXT, target_staff BIGINT NOT NULL DEFAULT 0, details TEXT NOT NULL DEFAULT '{}', created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS audit_channels(entry_id BIGINT NOT NULL REFERENCES audit_log(id) ON DELETE CASCADE, channel_id BIGINT NOT NULL, private BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(entry_id, channel_id));
+CREATE TABLE IF NOT EXISTS member_timeouts(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, until BIGINT NOT NULL, reason TEXT, set_by TEXT, created_at BIGINT NOT NULL, PRIMARY KEY(server, username));
 CREATE INDEX IF NOT EXISTS idx_members_username ON members(username);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
@@ -200,6 +203,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_server ON audit_log(server, created_at,
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(server, action, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(server, actor, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_member_timeouts_until ON member_timeouts(until);
 ";
 
 const SQLITE_SEARCH: &[&str] = &[
@@ -494,8 +498,9 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// `guest_grants.network`. 3: channel categories and channel positions. 4: group mentions
 /// (`group_pings`, `here_pings`, `roles.mentionable`, `messages.group_mentions`) and the Mention
 /// everyone permission bit. 5: the audit log (`audit_log`) and the View audit log permission bit.
-/// 6: `users.presence_seq`, the version of the appear-offline setting.
-pub const SCHEMA_VERSION: i64 = 6;
+/// 6: `users.presence_seq`, the version of the appear-offline setting. 7: timeouts
+/// (`member_timeouts`) and the Timeout members permission bit.
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
@@ -797,13 +802,16 @@ pub enum Perm {
     ManageAdmins = 16,
     MentionEveryone = 32,
     ViewAuditLog = 64,
+    TimeoutMembers = 128,
 }
 
-pub const ALL_PERMS: i64 = 127;
+pub const ALL_PERMS: i64 = 255;
 /// Every permission before `MentionEveryone` existed.
 const OLD_ALL_PERMS: i64 = 31;
 /// Every permission before `ViewAuditLog` existed.
 const PRE_AUDIT_PERMS: i64 = 63;
+/// Every permission before `TimeoutMembers` existed.
+const PRE_TIMEOUT_PERMS: i64 = 127;
 
 pub fn perm_bits(is_admin: bool, perms: i64, roles: i64) -> i64 {
     match (is_admin, perms) {
@@ -1118,13 +1126,24 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
     }
     if version < 5 {
         let n = sqlx::query("UPDATE members SET perms = $1 WHERE is_admin <> 0 AND perms = $2")
-            .bind(ALL_PERMS)
+            .bind(PRE_TIMEOUT_PERMS)
             .bind(PRE_AUDIT_PERMS)
             .execute(&mut *conn)
             .await?
             .rows_affected();
         if n > 0 {
             tracing::info!("gave {n} admins with every permission the View audit log permission");
+        }
+    }
+    if version < 7 {
+        let n = sqlx::query("UPDATE members SET perms = $1 WHERE is_admin <> 0 AND perms = $2")
+            .bind(ALL_PERMS)
+            .bind(PRE_TIMEOUT_PERMS)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+        if n > 0 {
+            tracing::info!("gave {n} admins with every permission the Timeout members permission");
         }
     }
     let t = now();
@@ -1317,6 +1336,7 @@ pub struct Swept {
     pub pings: u64,
     pub config_shares: u64,
     pub audit_log: u64,
+    pub member_timeouts: u64,
 }
 
 async fn delete_batched(db: &Db, sql: &'static str, cutoff: i64) -> sqlx::Result<u64> {
@@ -1415,6 +1435,9 @@ pub const PING_KEEP: i64 = 30 * 86400;
 /// How long audit log entries are kept.
 pub const AUDIT_KEEP: i64 = 90 * 86400;
 
+/// How long an ended timeout row is kept before the sweep deletes it (the checks ignore it).
+pub const TIMEOUT_KEEP: i64 = 3600;
+
 /// Most seen and retracted pings kept per recipient. Seen reaction pings stay until they age
 /// out so that taking a reaction back and adding it again does not ping again; this caps them.
 pub const PINGS_KEPT: i64 = 2000;
@@ -1482,6 +1505,12 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
             db,
             "DELETE FROM audit_log WHERE id IN (SELECT id FROM audit_log WHERE created_at < $1 LIMIT $2)",
             t - AUDIT_KEEP,
+        )
+        .await?,
+        member_timeouts: delete_batched(
+            db,
+            "DELETE FROM member_timeouts WHERE (server, username) IN (SELECT server, username FROM member_timeouts WHERE until < $1 LIMIT $2)",
+            t - TIMEOUT_KEEP,
         )
         .await?,
     })
@@ -2533,6 +2562,88 @@ mod tests {
                 0,
                 "channel refs go with their entry"
             );
+            close(&db).await;
+        }
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn timeouts_are_added_to_an_old_database() {
+        let path =
+            std::env::temp_dir().join(format!("rchat_timeout_upgrade_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_member_timeouts_until",
+            "DROP TABLE member_timeouts",
+            "UPDATE settings SET value = '6' WHERE key = 'schema_version'",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'all', 1, 127, 1)",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'zero', 1, 0, 1)",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'kick', 1, 4, 1)",
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'plain', 0, 127, 1)",
+            "INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'old', '#ffffff', 127)",
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES((SELECT id FROM channels WHERE server = 'rchat'), 'all', 'old', 7)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM messages WHERE author = 'all' AND content = 'old' AND created_at = 7").await,
+                1
+            );
+            for (name, perms) in [("all", 255), ("zero", 0), ("kick", 4), ("plain", 127)] {
+                assert_eq!(
+                    count(
+                        &db,
+                        &format!("SELECT perms FROM members WHERE username = '{name}'")
+                    )
+                    .await,
+                    perms,
+                    "{name}"
+                );
+            }
+            assert_eq!(
+                count(&db, "SELECT perms FROM roles WHERE name = 'old'").await,
+                127
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_member_timeouts_until'").await,
+                1
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            sqlx::query("INSERT INTO member_timeouts(server, username, until, created_at) VALUES('rchat', 'plain', 9, 1)")
+                .execute(&db)
+                .await
+                .expect("new table");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM member_timeouts WHERE reason IS NULL AND set_by IS NULL AND until = 9").await,
+                1
+            );
+            assert!(
+                sqlx::query("INSERT INTO member_timeouts(server, username, until, created_at) VALUES('nowhere', 'plain', 9, 1)")
+                    .execute(&db)
+                    .await
+                    .is_err(),
+                "server is a foreign key"
+            );
+            sqlx::query("DELETE FROM member_timeouts")
+                .execute(&db)
+                .await
+                .expect("clear");
             close(&db).await;
         }
         wipe();
@@ -3655,6 +3766,18 @@ mod tests {
                 "INSERT INTO audit_log(server, actor, action, created_at) VALUES('rchat', 'a', 'member.kick', $1)",
                 t - AUDIT_KEEP + 60,
             ),
+            (
+                "INSERT INTO member_timeouts(server, username, until, created_at) VALUES('rchat', 'gone', $1, 0)",
+                t - TIMEOUT_KEEP - 1,
+            ),
+            (
+                "INSERT INTO member_timeouts(server, username, until, created_at) VALUES('rchat', 'ended', $1, 0)",
+                t - 5,
+            ),
+            (
+                "INSERT INTO member_timeouts(server, username, until, created_at) VALUES('rchat', 'live', $1, 0)",
+                t + 600,
+            ),
         ] {
             sqlx::query(sql).bind(at).execute(db).await.expect(sql);
         }
@@ -3692,8 +3815,18 @@ mod tests {
                 pings: 2,
                 config_shares: 2,
                 audit_log: 1,
+                member_timeouts: 1,
             }
         );
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM member_timeouts WHERE username IN ('ended', 'live')"
+            )
+            .await,
+            count(db, "SELECT COUNT(*) FROM member_timeouts").await
+        );
+        assert_eq!(count(db, "SELECT COUNT(*) FROM member_timeouts").await, 2);
         assert_eq!(
             count(
                 db,

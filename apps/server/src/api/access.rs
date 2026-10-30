@@ -28,6 +28,7 @@ pub const DENIED: &str = "Server not found or wrong password";
 pub const PASSWORD_REQUIRED: &str = "Password required";
 pub const NOT_FOUND: &str = "Not found";
 pub const BANNED: &str = "You are banned from this server";
+pub const TIMED_OUT: &str = "You are timed out in this server";
 
 pub fn denied() -> ApiError {
     ApiError(StatusCode::NOT_FOUND, DENIED.to_string())
@@ -39,6 +40,28 @@ pub fn password_required() -> ApiError {
 
 pub fn not_found() -> ApiError {
     ApiError(StatusCode::NOT_FOUND, NOT_FOUND.to_string())
+}
+
+/// The permissions a timed-out member keeps: only those that read.
+pub const READ_PERMS: i64 = Perm::ViewAuditLog as i64;
+
+pub fn timed_out_error() -> ApiError {
+    forbidden(TIMED_OUT)
+}
+
+/// When the timeout of `username` in `server` ends (unix seconds), if they are timed out right
+/// now. Expiry is time-based: a row whose `until` has passed counts as no timeout.
+pub async fn timed_out(db: &Db, server: &str, username: &str) -> Result<Option<i64>, ApiError> {
+    Ok(sqlx::query(
+        "SELECT until FROM member_timeouts WHERE server = $1 AND username = $2 AND until > $3",
+    )
+    .bind(server)
+    .bind(username)
+    .bind(now())
+    .fetch_optional(db)
+    .await?
+    .map(|r| r.try_get(0))
+    .transpose()?)
 }
 
 fn banned() -> ApiError {
@@ -601,7 +624,25 @@ impl ServerAccess {
         }
     }
 
+    /// The viewer's permissions for acting. A member who is timed out keeps only the read
+    /// rights (`READ_PERMS`) until the timeout ends; site admins are never limited, so a
+    /// timeout shows nothing about them.
     pub async fn perms(&self, db: &Db) -> Result<i64, ApiError> {
+        let bits = self.view_perms(db).await?;
+        match &self.user {
+            Some(user)
+                if !user.is_site_admin
+                    && bits & !READ_PERMS != 0
+                    && timed_out(db, self.name(), &user.username).await?.is_some() =>
+            {
+                Ok(bits & READ_PERMS)
+            }
+            Some(_) | None => Ok(bits),
+        }
+    }
+
+    /// The viewer's permissions for seeing things, which a timeout does not take away.
+    pub async fn view_perms(&self, db: &Db) -> Result<i64, ApiError> {
         match &self.user {
             Some(user) => Ok(effective_perms(db, self.name(), user).await?),
             None => Ok(0),
@@ -617,14 +658,16 @@ impl ServerAccess {
     }
 
     pub async fn require_perm(&self, db: &Db, perm: Perm) -> Result<(), ApiError> {
-        match self.has_perm(db, perm).await {
-            true => Ok(()),
-            false => Err(forbidden("Missing permission")),
+        let bit = perm as i64;
+        match (self.perms(db).await?, self.view_perms(db).await?) {
+            (p, _) if p & bit != 0 => Ok(()),
+            (_, v) if v & bit != 0 => Err(timed_out_error()),
+            _ => Err(forbidden("Missing permission")),
         }
     }
 
     pub async fn manages_channels(&self, db: &Db) -> Result<bool, ApiError> {
-        Ok(self.perms(db).await? & Perm::ManageChannels as i64 != 0)
+        Ok(self.view_perms(db).await? & Perm::ManageChannels as i64 != 0)
     }
 
     pub fn site_admin(&self) -> bool {
@@ -807,7 +850,8 @@ pub async fn resolve_category(db: &Db, id: i64, viewer: &User) -> Result<ServerA
         .await
         .map_err(hidden)?;
     match access.manages_channels(db).await? {
-        true => Ok(access),
+        true if access.perms(db).await? & Perm::ManageChannels as i64 != 0 => Ok(access),
+        true => Err(timed_out_error()),
         false => Err(not_found()),
     }
 }
@@ -907,8 +951,21 @@ impl ResolvedChannel {
         }
     }
 
+    /// Refuses a viewer who is timed out in this channel's server. Every write in a server
+    /// channel (sending, replies, threads, forwards, edits, reactions, pins, typing, voice and
+    /// polls) goes through this; reading never does.
+    pub async fn timeout_gate(&self, db: &Db) -> Result<(), ApiError> {
+        let Some(user) = &self.server.user else {
+            return Ok(());
+        };
+        match timed_out(db, self.server.name(), &user.username).await? {
+            Some(_) => Err(timed_out_error()),
+            None => Ok(()),
+        }
+    }
+
     /// Whether the viewer may send here at all: a member with the send permission in a text
-    /// channel. Slow mode is not checked.
+    /// channel who is not timed out. Slow mode is not checked.
     async fn send_rights(&self, db: &Db) -> Result<&User, ApiError> {
         let Some(user) = &self.server.user else {
             return Err(forbidden("Not a member"));
@@ -923,6 +980,7 @@ impl ResolvedChannel {
         if !self.member_rights(db).await?.send {
             return Err(forbidden("No permission to send in this channel"));
         }
+        self.timeout_gate(db).await?;
         Ok(user)
     }
 
@@ -1165,10 +1223,10 @@ impl ResolvedMessage {
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
                 channel_actor(db, channel)?;
-                match channel.member_rights(db).await?.send {
-                    true => Ok(()),
-                    false => Err(forbidden("No permission to react in this channel")),
+                if !channel.member_rights(db).await?.send {
+                    return Err(forbidden("No permission to react in this channel"));
                 }
+                channel.timeout_gate(db).await
             }
             (None, Some(did)) => self.dm_participant(db, did).await,
             (None, None) => Err(not_found()),
@@ -1181,6 +1239,7 @@ impl ResolvedMessage {
         match (&self.channel, self.scope.dm_id) {
             (Some(channel), _) => {
                 channel_actor(db, channel)?;
+                channel.timeout_gate(db).await?;
                 let manage = channel.member_bits(db).await? & Perm::DeleteMessages as i64 != 0;
                 match (manage, channel.member_rights(db).await?.send) {
                     (true, true) => Ok(()),
@@ -1203,10 +1262,10 @@ impl ResolvedMessage {
             (Some(channel), _) => {
                 channel.server.require_member()?;
                 pace(db, self.user.as_ref())?;
-                match channel.member_rights(db).await?.send {
-                    true => Ok(()),
-                    false => Err(forbidden("No permission to send in this channel")),
+                if !channel.member_rights(db).await?.send {
+                    return Err(forbidden("No permission to send in this channel"));
                 }
+                channel.timeout_gate(db).await
             }
             (None, Some(did)) => match dm_pair(db, did, true).await? {
                 Some(_) => pace(db, self.user.as_ref()),
@@ -1394,6 +1453,32 @@ pub(crate) async fn ws_voice_viewable(db: &Db, server: &str, cid: i64, username:
     channel_viewable(db, server, cid, Some(username), true).await
 }
 
+/// `member_timeout` fan-out: whether `username` sees the timeouts of `server` (the Timeout
+/// members permission, or a site admin). A timeout takes the permission away, as in `perms`.
+/// Never sent to anyone else.
+pub(crate) async fn ws_sees_timeouts(
+    db: &Db,
+    server: &str,
+    username: &str,
+    site_admin: bool,
+) -> sqlx::Result<bool> {
+    if site_admin {
+        return Ok(true);
+    }
+    if member_perms(db, server, username).await? & Perm::TimeoutMembers as i64 == 0 {
+        return Ok(false);
+    }
+    let row = sqlx::query(
+        "SELECT 1 FROM member_timeouts WHERE server = $1 AND username = $2 AND until > $3",
+    )
+    .bind(server)
+    .bind(username)
+    .bind(now())
+    .fetch_optional(db)
+    .await?;
+    Ok(row.is_none())
+}
+
 /// WS ban fan-out and `look`: whether `username` is banned from `server`. Only used to drop
 /// events or skip a subscription, never sent to anyone else.
 pub(crate) async fn ws_banned(db: &Db, server: &str, username: &str) -> sqlx::Result<bool> {
@@ -1569,7 +1654,7 @@ mod tests {
         (after.0 - before.0, after.1 - before.1)
     }
 
-    const HANDLERS: [(&str, &str); 18] = [
+    const HANDLERS: [(&str, &str); 19] = [
         ("servers.rs", include_str!("servers.rs")),
         ("passwords.rs", include_str!("passwords.rs")),
         ("messages.rs", include_str!("messages.rs")),
@@ -1588,6 +1673,7 @@ mod tests {
         ("reactions.rs", include_str!("reactions.rs")),
         ("pins.rs", include_str!("pins.rs")),
         ("system_messages.rs", include_str!("system_messages.rs")),
+        ("timeouts.rs", include_str!("timeouts.rs")),
     ];
 
     fn calls(code: &str, token: &str) -> bool {

@@ -46,6 +46,7 @@ import type {
   WsStatus,
 } from './types'
 import type { View, Nav } from './view'
+import type { Timeout } from './timeouts'
 import type { TypingMap } from './typing'
 import type { SelfAudio } from './voice_layout'
 
@@ -93,6 +94,7 @@ export type ActiveDialog =
   | { kind: 'add_server'; join?: string; locked?: boolean }
   | { kind: 'server_settings'; server: string }
   | { kind: 'audit_log'; server: string }
+  | { kind: 'timeout'; server: string; user: UserRef }
   | { kind: 'admin_panel' }
   | { kind: 'ban_confirm'; username: string }
   | { kind: 'delete_user_confirm'; username: string }
@@ -211,6 +213,10 @@ export interface RChatState {
   // DMs where a P2P call could not connect because the other side can't do P2P, with the time (ms).
   p2pCallFailed: Record<number, number>
   voiceUsers: Record<number, string[]>
+  // users muted by a timeout in each voice channel
+  voiceMuted: Record<number, string[]>
+  // running timeouts by server and username, as moderators see them
+  timeouts: Record<string, Record<string, Timeout>>
   p2pAvailability: Record<string, P2pAvailability>
   rtcTick: number
   selfAudio: SelfAudio
@@ -421,6 +427,13 @@ export interface RChatState {
   deleteChannel: (id: number) => Promise<void>
   kickMember: (server: string, username: string) => Promise<void>
   banMember: (server: string, username: string) => Promise<void>
+  timeoutMember: (
+    server: string,
+    username: string,
+    seconds: number,
+    reason: string
+  ) => Promise<boolean>
+  removeTimeout: (server: string, username: string) => Promise<void>
   unbanMember: (server: string, username: string) => Promise<void>
   loadBans: (server: string, reset?: boolean) => Promise<void>
   grantAdmin: (server: string, username: string) => Promise<void>

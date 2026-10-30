@@ -470,6 +470,7 @@ pub(crate) async fn remove_server(state: &AppState, name: &str) -> Result<bool, 
         "members",
         "server_bans",
         "interactions",
+        "member_timeouts",
     ] {
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {table} WHERE server = $1"
@@ -531,6 +532,7 @@ pub(crate) async fn hide_user_rows(
         "DELETE FROM user_roles WHERE username = $1",
         "DELETE FROM interactions WHERE username = $1",
         "DELETE FROM server_bans WHERE username = $1",
+        "DELETE FROM member_timeouts WHERE username = $1",
         "UPDATE server_passwords SET created_by = NULL WHERE created_by = $1",
     ] {
         sqlx::query(sql).bind(key).execute(&mut *tx).await?;
@@ -780,6 +782,7 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         "DELETE FROM user_roles WHERE username = $1",
         "DELETE FROM interactions WHERE username = $1",
         "DELETE FROM server_bans WHERE username = $1",
+        "DELETE FROM member_timeouts WHERE username = $1",
         "DELETE FROM tokens WHERE username = $1",
         "DELETE FROM config_shares WHERE owner = $1",
         "DELETE FROM pings WHERE username = $1",

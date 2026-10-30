@@ -7,7 +7,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::{Proof, resolve_server};
 use crate::api::{ApiError, ApiErrorBody, MaybeAuthed, Role, UserRef, allowed, require_guest_ok};
-use crate::db::{Db, User, get_user};
+use crate::db::{Db, Perm, User, get_user};
 use crate::state::AppState;
 
 /// Optional profile context.
@@ -37,6 +37,10 @@ pub struct ProfileMember {
     /// Whether the user currently shows as online in the server (false while they appear
     /// offline).
     pub online: bool,
+    /// The user's running timeout in the server. Only for viewers with the Timeout members
+    /// permission; absent otherwise and when none is running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<crate::api::timeouts::MemberTimeout>,
 }
 
 /// A user's mini profile.
@@ -99,6 +103,16 @@ async fn profile_member(
     match row {
         Some(r) => {
             let roles = member_roles(&state.db, &lite.name, username).await?;
+            let timeout = match access.has_perm(&state.db, Perm::TimeoutMembers).await {
+                true => crate::api::timeouts::running_timeouts(
+                    &state.db,
+                    &lite.name,
+                    &[username.to_string()],
+                )
+                .await?
+                .remove(username),
+                false => None,
+            };
             Ok(Some(ProfileMember {
                 is_admin: r.try_get::<i64, _>(0)? != 0,
                 is_creator: lite.creator.as_deref() == Some(username),
@@ -107,6 +121,7 @@ async fn profile_member(
                 roles,
                 joined_at: r.try_get(2)?,
                 online: state.hub.is_online(&lite.name, username),
+                timeout,
             }))
         }
         None => Ok(None),

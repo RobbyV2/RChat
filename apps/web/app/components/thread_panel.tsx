@@ -49,6 +49,7 @@ import { canForward } from '../lib/forward'
 import { ForwardCard, forwardAction, forwardMenuItem } from './forwards'
 import { canEdit as ownEditable } from '../lib/sed'
 import { MessageEditor, editAction, editMenuItem } from './message_editor'
+import { useMyTimeoutEnds } from './timeout_dialog'
 
 const EMPTY: Message[] = []
 
@@ -68,6 +69,7 @@ export default function ThreadPanel() {
   const detail = useStore(s => (s.view?.kind === 'channel' ? s.servers[s.view.server] : undefined))
   const roles = detail?.roles
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
+  const timedOutEnds = useMyTimeoutEnds(server)
   const memberFor = useMemberLookup(server)
   const people = useMemo(() => (root ? [root, ...replies] : replies), [root, replies])
   useAuthorMembers(server, usePeopleKey(people))
@@ -148,7 +150,8 @@ export default function ThreadPanel() {
     canUnreact &&
     server !== null &&
     me.servers.some(x => x.name === server) &&
-    !readOnly(detail, root.channel_id)
+    !readOnly(detail, root.channel_id) &&
+    timedOutEnds === null
 
   const onScroll = () => {
     scroll.onScroll()

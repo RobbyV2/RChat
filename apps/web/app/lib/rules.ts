@@ -32,6 +32,11 @@ export const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
     bit: Perm.ViewAuditLog,
     hint: 'See who changed what in this server',
   },
+  {
+    label: 'Timeout members',
+    bit: Perm.TimeoutMembers,
+    hint: 'Stop members from chatting for a while',
+  },
 ]
 
 export const PROFANITY_TARGETS: { key: ProfanityTarget; label: string }[] = [

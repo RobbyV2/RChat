@@ -118,7 +118,8 @@ export const heldRoles = (roles: Role[], roleIds: number[]) =>
 export const freeRoles = (roles: Role[], roleIds: number[]) =>
   roles.filter(r => !roleIds.includes(r.id))
 
-export type ProfileAction = 'kick' | 'server_ban' | 'promote' | 'revoke' | 'transfer' | 'site_ban'
+export type ProfileAction =
+  'kick' | 'server_ban' | 'timeout' | 'untimeout' | 'promote' | 'revoke' | 'transfer' | 'site_ban'
 
 export interface ActionInput {
   signedIn: boolean
@@ -132,6 +133,7 @@ export interface ActionInput {
   channelDenies?: number[]
   targetRolePerms?: number
   myRolePerms?: number
+  timedOut?: boolean
 }
 
 export const profileActions = ({
@@ -144,6 +146,7 @@ export const profileActions = ({
   targetPerms,
   targetRolePerms = 0,
   myRolePerms = 0,
+  timedOut = false,
 }: ActionInput): ProfileAction[] => {
   if (!signedIn) return []
   const out: ProfileAction[] = []
@@ -152,6 +155,13 @@ export const profileActions = ({
     const admins = hasPerm(perms, Perm.ManageAdmins)
     if (kick && member) out.push('kick')
     if (kick) out.push('server_ban')
+    if (
+      member &&
+      !self &&
+      hasPerm(perms, Perm.TimeoutMembers) &&
+      canModerate(perms, siteAdmin, targetPerms)
+    )
+      out.push(...(timedOut ? (['timeout', 'untimeout'] as const) : (['timeout'] as const)))
     if (admins && member?.is_admin && canRevoke(perms, siteAdmin, member.perms, targetRolePerms))
       out.push('revoke')
     if (admins && member && !member.is_admin && canPromote(perms, siteAdmin)) out.push('promote')

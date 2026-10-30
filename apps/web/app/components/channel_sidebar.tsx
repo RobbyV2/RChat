@@ -57,6 +57,7 @@ import { PingBadge } from './ping_badge'
 import { scopePings } from '../lib/pings'
 import { MutedIcon, notifyMenuItems } from './notify_menu'
 import { markReadItem } from './mark_read'
+import { shownMedia } from '../lib/timeouts'
 
 type Editing =
   { mode: 'create'; kind: ChannelKind; category: number | null } | { mode: 'rename'; id: number }
@@ -210,10 +211,12 @@ function VoiceMemberRow({
   useStore(s => s.rtcTick)
   const user = userRefFor(useStore.getState(), username)
   const self = me?.username === username
-  const speaking = inRoom && rtc.isSpeaking(username)
-  const muted = inRoom && (self ? selfAudio.muted : (rtc.peer(username)?.muted ?? false))
+  const silenced = useStore(s => Object.values(s.voiceMuted).some(l => l.includes(username)))
+  const speaking = inRoom && rtc.isSpeaking(username) && !silenced
+  const muted =
+    silenced || (inRoom && (self ? selfAudio.muted : (rtc.peer(username)?.muted ?? false)))
   const deafened = inRoom && self && selfAudio.deafened
-  const live = inRoom && (self ? rtc.sharing : (rtc.peer(username)?.screenOn ?? false))
+  const live = inRoom && (self ? rtc.sharing : shownMedia(rtc.peer(username), silenced).screen)
   return (
     <div
       {...profileTrigger(user, server)}

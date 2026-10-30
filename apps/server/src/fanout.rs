@@ -241,7 +241,20 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             server,
             channel_id: _,
             users: _,
+        }
+        | WsEvent::VoiceMuted {
+            server,
+            channel_id: _,
+            username: _,
+            muted: _,
         } => to(vec![Target::Server(server)]),
+        WsEvent::MemberTimeout {
+            server,
+            username,
+            until: _,
+            remaining: _,
+            reason: _,
+        } => to(vec![Target::Server(server), Target::User(username)]),
         WsEvent::MemberJoined { server, member } => to(vec![
             Target::Server(server),
             Target::User(&member.user.username),
@@ -813,6 +826,7 @@ mod tests {
                 perms: 0,
                 role_ids: Vec::new(),
                 joined_via: None,
+                timeout: None,
             },
         });
         router.deliver(roles("club"));

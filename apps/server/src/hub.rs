@@ -2666,6 +2666,11 @@ impl Hub {
         self.replica(|r| r.in_p2p_call(a, b))
     }
 
+    /// The server of the voice room `channel_id`, while anyone is in it.
+    pub fn room_server(&self, channel_id: i64) -> Option<String> {
+        self.replica(|r| r.rooms.get(&channel_id).map(|room| room.server.clone()))
+    }
+
     pub async fn drop_conn(&self, user: &str, conn: u64) -> (Vec<CallEnd>, P2pDrop) {
         let op = Op::DropConn {
             user: user.to_string(),

@@ -1,5 +1,6 @@
 import { PERM_ITEMS } from './rules'
 import { slowLabel } from './slowmode'
+import { durationText } from './timeouts'
 import type { AuditEntry } from './types'
 
 export type AuditGroup = 'member' | 'role' | 'channel' | 'server' | 'access' | 'message'
@@ -69,6 +70,10 @@ const FIELD_LABELS: Record<string, string> = {
   expires_at: 'Expires',
   max_uses: 'Uses',
   channels: 'Channels moved out',
+  until: 'Ends',
+  duration: 'Duration',
+  remaining: 'Time left',
+  reason: 'Reason',
 }
 
 export const fieldLabel = (field: string) => FIELD_LABELS[field] ?? field.replaceAll('_', ' ')
@@ -94,6 +99,7 @@ export function valueText(field: string, v: unknown): string {
     if (field === 'system_channel') return 'Default channel'
     if (field === 'expires_at') return 'Never'
     if (field === 'max_uses') return 'Unlimited'
+    if (field === 'until') return 'Not timed out'
     return 'None'
   }
   if (typeof v === 'boolean') {
@@ -103,7 +109,8 @@ export function valueText(field: string, v: unknown): string {
   if (typeof v === 'number') {
     if (field === 'slowmode_seconds') return slowLabel(v)
     if (field === 'perms') return permNames(v)
-    if (field === 'expires_at') return new Date(v * 1000).toLocaleString()
+    if (field === 'expires_at' || field === 'until') return new Date(v * 1000).toLocaleString()
+    if (field === 'duration' || field === 'remaining') return durationText(v)
     return String(v)
   }
   if (typeof v === 'string') {
@@ -126,6 +133,9 @@ const FACTS = [
   'expires_at',
   'max_uses',
   'channels',
+  'duration',
+  'remaining',
+  'reason',
 ]
 
 // Extra facts of an entry next to its changes, as label and value.
@@ -243,6 +253,18 @@ export function sentence(entry: AuditEntry): Part[] {
       return [...actor, t(' banned '), ...user]
     case 'member.unban':
       return [...actor, t(' unbanned '), ...user]
+    case 'member.timeout': {
+      const d = entry.details.duration
+      const changed = changesOf(entry).some(c => c.field === 'until' && c.before !== null)
+      return [
+        ...actor,
+        t(changed ? ' changed the timeout of ' : ' timed out '),
+        ...user,
+        ...(typeof d === 'number' ? [t(`${changed ? ' to' : ' for'} ${durationText(d)}`)] : []),
+      ]
+    }
+    case 'member.untimeout':
+      return [...actor, t(' removed the timeout of '), ...user]
     case 'member.admin_grant':
       return [...actor, t(' made '), ...user, t(' an admin')]
     case 'member.admin_revoke':

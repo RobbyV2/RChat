@@ -17,11 +17,12 @@ use tracing::{debug, warn};
 
 use crate::api::access::{
     TypingPlace, ViewRules, servers_with_expired_passwords, typing_scope, ws_banned,
-    ws_channel_read_since, ws_channel_view, ws_grant_deadline, ws_server_open, ws_typing_place,
-    ws_view_under, ws_voice_channel, ws_voice_viewable,
+    ws_channel_read_since, ws_channel_view, ws_grant_deadline, ws_sees_timeouts, ws_server_open,
+    ws_typing_place, ws_view_under, ws_voice_channel, ws_voice_viewable,
 };
 use crate::api::messages::{Quotes, load_broadcast, load_message};
 use crate::api::pings::{Ping, ThreadPings};
+use crate::api::timeouts::running_timeouts;
 use crate::api::{
     Channel, ChannelLayout, Embed, LayoutCategory, Member, Message, ServerSummaryLite, Settings,
     UserRef,
@@ -509,6 +510,24 @@ pub enum WsEvent {
         server: String,
         channel_id: i64,
         users: Vec<String>,
+    },
+    /// A user in a voice channel was muted there by a timeout, or the timeout ended. Apps stop
+    /// sending and playing a muted user's audio.
+    VoiceMuted {
+        server: String,
+        channel_id: i64,
+        username: String,
+        muted: bool,
+    },
+    /// A timeout of `username` in `server` started or changed (`until`, `remaining` seconds and
+    /// the reason) or ended (`until` null). Only to that user and to members with the Timeout
+    /// members permission; the user's own copy has no reason unless they hold it too.
+    MemberTimeout {
+        server: String,
+        username: String,
+        until: Option<i64>,
+        remaining: i64,
+        reason: Option<String>,
     },
     CallState {
         dm_id: i64,
@@ -1363,6 +1382,7 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             {
                 return Err("Channel not found".to_string());
             }
+            channel.timeout_gate(&state.db).await.map_err(|e| e.1)?;
             let server = channel.server().name().to_string();
             let ends = state
                 .hub
@@ -1370,6 +1390,18 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
                 .await?;
             for end in ends {
                 finalize_call_log(state, end, false).await;
+            }
+            if crate::api::access::timed_out(&state.db, &server, user)
+                .await
+                .map_err(|e| e.1)?
+                .is_some()
+            {
+                state.hub.broadcast(WsEvent::VoiceMuted {
+                    server: server.clone(),
+                    channel_id,
+                    username: user.to_string(),
+                    muted: true,
+                });
             }
             touch_interaction(&state.db, &server, user)
                 .await
@@ -1463,6 +1495,16 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             if serde_json::to_string(&payload).map_or(true, |p| p.len() > SIGNAL_MAX) {
                 return Err("Signal too large".to_string());
             }
+            if let Some(cid) = channel_id
+                && shows_video(&payload)
+                && let Some(server) = state.hub.room_server(cid)
+                && crate::api::access::timed_out(&state.db, &server, user)
+                    .await
+                    .map_err(|e| e.1)?
+                    .is_some()
+            {
+                return Err(crate::api::access::TIMED_OUT.to_string());
+            }
             match state.hub.rtc_shared(user, &to, channel_id, dm_id) {
                 true => {
                     state.hub.broadcast(WsEvent::RtcSignal {
@@ -1492,6 +1534,13 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
         | ClientMsg::Typing { scope: _ }
         | ClientMsg::TypingStop { scope: _ } => Ok(()),
     }
+}
+
+/// Whether an RTC signal turns on (or announces) a camera or a screen share.
+fn shows_video(payload: &serde_json::Value) -> bool {
+    ["cam", "screen"]
+        .iter()
+        .any(|k| payload.get(k).and_then(serde_json::Value::as_bool) == Some(true))
 }
 
 fn call_peer_id(peer_id: Option<String>) -> Result<Option<String>, String> {
@@ -2599,6 +2648,23 @@ async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent
         }
     }
     let mut deliver = access.wants(ev);
+    if deliver
+        && let WsEvent::MemberTimeout {
+            server,
+            username,
+            until: _,
+            remaining: _,
+            reason: _,
+        } = ev
+        && let Some(me) = access.user.as_deref()
+        && me != username
+    {
+        let started = Instant::now();
+        match ws_sees_timeouts(&state.read(), server, me, access.site_admin).await {
+            Ok(sees) => deliver = sees,
+            Err(e) => return access.hold(e, started).then_some(false),
+        }
+    }
     let known = match ev {
         WsEvent::ChannelDeleted {
             server,
@@ -2924,6 +2990,16 @@ fn client_frame(fanned: &crate::fanout::Fanned, me: Option<&str>) -> Option<Utf8
             .map(Utf8Bytes::from)
         }
         (
+            WsEvent::MemberTimeout {
+                server: _,
+                username,
+                until: _,
+                remaining: _,
+                reason: _,
+            },
+            Some(me),
+        ) if username == me => None,
+        (
             WsEvent::LayoutChanged {
                 server: _,
                 layout: _,
@@ -2946,6 +3022,41 @@ fn client_frame(fanned: &crate::fanout::Fanned, me: Option<&str>) -> Option<Utf8
         ) => None,
         (_, _) => fanned.frame(),
     }
+}
+
+/// A `member_timeout` about the connection's own user: without the reason unless they hold
+/// Timeout members themselves. `Some(None)` for other events; `None` when the connection must
+/// close.
+async fn own_timeout(
+    state: &AppState,
+    access: &mut Access,
+    ev: &WsEvent,
+) -> Option<Option<WsEvent>> {
+    let WsEvent::MemberTimeout {
+        server,
+        username,
+        until,
+        remaining,
+        reason,
+    } = ev
+    else {
+        return Some(None);
+    };
+    if access.user.as_deref() != Some(username.as_str()) {
+        return Some(None);
+    }
+    let started = Instant::now();
+    let sees = match ws_sees_timeouts(&state.read(), server, username, access.site_admin).await {
+        Ok(sees) => sees,
+        Err(e) => return access.hold(e, started).then_some(None),
+    };
+    Some(Some(WsEvent::MemberTimeout {
+        server: server.clone(),
+        username: username.clone(),
+        until: *until,
+        remaining: *remaining,
+        reason: reason.clone().filter(|_| sees),
+    }))
 }
 
 /// A channel event for one connection, with the channel's `position` counted among the channels
@@ -3105,6 +3216,28 @@ async fn send_voice_snapshot(state: &AppState, out: &Out, access: &mut Access) -
         }
         if !sent(access, out.event(&ev)) {
             return false;
+        }
+        if let WsEvent::VoiceState {
+            server,
+            channel_id,
+            users,
+        } = &ev
+            && !users.is_empty()
+        {
+            let muted = running_timeouts(&state.read(), server, users)
+                .await
+                .unwrap_or_default();
+            for username in users.iter().filter(|u| muted.contains_key(*u)) {
+                let ev = WsEvent::VoiceMuted {
+                    server: server.clone(),
+                    channel_id: *channel_id,
+                    username: username.clone(),
+                    muted: true,
+                };
+                if !sent(access, out.event(&ev)) {
+                    return false;
+                }
+            }
         }
     }
     true
@@ -3289,6 +3422,14 @@ async fn run(state: AppState, mut socket: WebSocket) {
                     }
                     if deliver {
                         let Some(mine) = channel_for(&state, &mut access, &fanned).await else {
+                            break;
+                        };
+                        if let Some(mine) = mine && !sent(&mut access, out.event(&mine)) {
+                            break;
+                        }
+                    }
+                    if deliver {
+                        let Some(mine) = own_timeout(&state, &mut access, ev).await else {
                             break;
                         };
                         if let Some(mine) = mine && !sent(&mut access, out.event(&mine)) {
@@ -3755,6 +3896,12 @@ fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
             channel_id,
             users: _,
         } => Some((server.as_str(), *channel_id)),
+        WsEvent::VoiceMuted {
+            server,
+            channel_id,
+            username: _,
+            muted: _,
+        } => Some((server.as_str(), *channel_id)),
         WsEvent::VoiceEnded {
             server,
             channel_id,
@@ -3982,6 +4129,19 @@ fn wants(
             channel_id: _,
             users: _,
         } => in_server(server),
+        WsEvent::VoiceMuted {
+            server,
+            channel_id: _,
+            username: _,
+            muted: _,
+        } => in_server(server),
+        WsEvent::MemberTimeout {
+            server,
+            username,
+            until: _,
+            remaining: _,
+            reason: _,
+        } => Some(username.as_str()) == me || (me.is_some() && in_server(server)),
         WsEvent::CallState {
             dm_id: _,
             dm_users,
@@ -4134,6 +4294,7 @@ mod tests {
                 perms: 0,
                 role_ids: vec![3],
                 joined_via: None,
+                timeout: None,
             },
         };
         let back: WsEvent = serde_json::from_str(&to_bus_json(&member).unwrap()).unwrap();
@@ -4145,6 +4306,15 @@ mod tests {
 
     async fn exec(db: &Db, sql: &'static str) {
         sqlx::query(sql).execute(db).await.unwrap();
+    }
+
+    async fn time_out(db: &Db, user: &str, until: i64) {
+        sqlx::query("INSERT INTO member_timeouts(server, username, until, created_at) VALUES('rchat', $1, $2, 0) ON CONFLICT(server, username) DO UPDATE SET until = excluded.until")
+            .bind(user)
+            .bind(until)
+            .execute(db)
+            .await
+            .expect("timeout");
     }
 
     fn set(items: &[&str]) -> HashSet<String> {
@@ -4490,6 +4660,7 @@ mod tests {
                 perms: 0,
                 role_ids: Vec::new(),
                 joined_via: None,
+                timeout: None,
             },
         }
     }
@@ -4890,6 +5061,7 @@ mod tests {
                 perms: 0,
                 role_ids: Vec::new(),
                 joined_via: None,
+                timeout: None,
             },
         };
         assert_eq!(self_grant(&joined, Some("alice")), Some("vault"));
@@ -5035,6 +5207,218 @@ mod tests {
         );
         let access = Access::new(Some(s("bob")), false, set(&[]));
         assert!(!still_held(&state.db, &access, "rchat").await.expect("held"));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn timed_out_members_cannot_join_voice() {
+        let (state, path) = crate::api::test_util::temp_state("timeout_voice").await;
+        for name in ["bob", "carol"] {
+            add_user_row(&state.db, name).await;
+            crate::api::test_util::add_member(&state.db, "rchat", name, 0, 0, 0).await;
+        }
+        let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+        let other = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'den', 'voice', 0) RETURNING id").await;
+        time_out(&state.db, "bob", now() + 600).await;
+        let join =
+            |user, channel_id| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id });
+        let timed_out = Err(crate::api::access::TIMED_OUT.to_string());
+        assert_eq!(join("bob", cid).await, timed_out);
+        join("carol", cid).await.expect("carol joins");
+        time_out(&state.db, "carol", now() + 600).await;
+        assert_eq!(
+            state.hub.rooms_in("rchat", None),
+            vec![(cid, vec!["carol".to_string()])],
+            "a timeout mutes, it does not disconnect"
+        );
+        assert_eq!(join("carol", other).await, timed_out, "no switching rooms");
+        voice_msg(&state, "carol", 1, ClientMsg::VoiceLeave)
+            .await
+            .expect("leave");
+        assert_eq!(
+            join("carol", cid).await,
+            timed_out,
+            "leaving and rejoining stays blocked"
+        );
+        time_out(&state.db, "carol", now()).await;
+        join("carol", cid).await.expect("joins once it ended");
+        exec(
+            &state.db,
+            "DELETE FROM member_timeouts WHERE username = 'bob'",
+        )
+        .await;
+        join("bob", cid).await.expect("joins once removed");
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn timeout_events_reach_only_the_member_and_moderators() {
+        let (state, path) = crate::api::test_util::temp_state("timeout_events").await;
+        let db = &state.db;
+        for name in ["bob", "carol", "mo", "boss"] {
+            add_user_row(db, name).await;
+        }
+        crate::api::test_util::add_member(db, "rchat", "bob", 0, 0, 0).await;
+        crate::api::test_util::add_member(db, "rchat", "carol", 0, 0, 0).await;
+        crate::api::test_util::add_member(db, "rchat", "mo", 0, 0, 0).await;
+        crate::api::test_util::add_member(db, "rchat", "boss", 1, 0, 0).await;
+        let role = insert_id(db, "INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'mods', '#ffffff', 128) RETURNING id").await;
+        sqlx::query("INSERT INTO user_roles(server, username, role_id) VALUES('rchat', 'mo', $1)")
+            .bind(role)
+            .execute(db)
+            .await
+            .expect("role");
+        let ev = WsEvent::MemberTimeout {
+            server: s("rchat"),
+            username: s("bob"),
+            until: Some(now() + 60),
+            remaining: 60,
+            reason: Some(s("spam")),
+        };
+        let conn = state.hub.next_conn();
+        for (user, site_admin, member, expected) in [
+            ("bob", false, true, true),
+            ("bob", false, false, true),
+            ("mo", false, true, true),
+            ("boss", false, true, true),
+            ("carol", false, true, false),
+            ("root", true, false, false),
+        ] {
+            let servers = match member {
+                true => set(&["rchat"]),
+                false => set(&[]),
+            };
+            let mut access = Access::new(Some(s(user)), site_admin, servers);
+            assert_eq!(
+                on_event(&state, conn, &mut access, &ev).await,
+                Some(expected),
+                "{user}"
+            );
+        }
+        let mut guest = Access::new(None, false, set(&[]));
+        guest.subs = set(&["rchat"]);
+        assert_eq!(on_event(&state, conn, &mut guest, &ev).await, Some(false));
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn timed_out_members_cannot_turn_on_video_in_voice() {
+        let (state, path) = crate::api::test_util::temp_state("timeout_video").await;
+        for name in ["bob", "carol"] {
+            add_user_row(&state.db, name).await;
+            crate::api::test_util::add_member(&state.db, "rchat", name, 0, 0, 0).await;
+        }
+        let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+        for name in ["bob", "carol"] {
+            voice_msg(&state, name, 1, ClientMsg::VoiceJoin { channel_id: cid })
+                .await
+                .expect("join");
+        }
+        time_out(&state.db, "bob", now() + 600).await;
+        let signal = |from, payload| {
+            voice_msg(
+                &state,
+                from,
+                1,
+                ClientMsg::RtcSignal {
+                    to: s(if from == "bob" { "carol" } else { "bob" }),
+                    channel_id: Some(cid),
+                    dm_id: None,
+                    payload,
+                },
+            )
+        };
+        let timed_out = Err(crate::api::access::TIMED_OUT.to_string());
+        assert_eq!(
+            signal("bob", serde_json::json!({"cam": true})).await,
+            timed_out
+        );
+        assert_eq!(
+            signal(
+                "bob",
+                serde_json::json!({"muted": true, "cam": false, "screen": true})
+            )
+            .await,
+            timed_out
+        );
+        for ok in [
+            serde_json::json!({"muted": true, "cam": false, "screen": false}),
+            serde_json::json!({"candidate": {"candidate": ""}}),
+            serde_json::json!({"restart": true}),
+        ] {
+            signal("bob", ok.clone())
+                .await
+                .expect("audio signalling stays");
+        }
+        signal("carol", serde_json::json!({"cam": true, "screen": true}))
+            .await
+            .expect("others are not affected");
+        time_out(&state.db, "bob", now()).await;
+        signal("bob", serde_json::json!({"cam": true}))
+            .await
+            .expect("works once it ended");
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_member_gets_their_timeout_without_the_reason() {
+        let (state, path) = crate::api::test_util::temp_state("timeout_reason").await;
+        let db = &state.db;
+        for name in ["bob", "mo"] {
+            add_user_row(db, name).await;
+            crate::api::test_util::add_member(db, "rchat", name, 0, 0, 0).await;
+        }
+        let role = insert_id(db, "INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'mods', '#ffffff', 128) RETURNING id").await;
+        sqlx::query("INSERT INTO user_roles(server, username, role_id) VALUES('rchat', 'mo', $1)")
+            .bind(role)
+            .execute(db)
+            .await
+            .expect("role");
+        let ev = |username: &str| WsEvent::MemberTimeout {
+            server: s("rchat"),
+            username: s(username),
+            until: Some(now() + 60),
+            remaining: 60,
+            reason: Some(s("spam")),
+        };
+        let reason_of = |ev: &WsEvent| match ev {
+            WsEvent::MemberTimeout {
+                server: _,
+                username: _,
+                until: _,
+                remaining: _,
+                reason,
+            } => reason.clone(),
+            _ => panic!("not a timeout"),
+        };
+        let fanned = crate::fanout::Fanned::new(ev("bob"), 1);
+        assert!(
+            client_frame(&fanned, Some("bob")).is_none(),
+            "the shared frame (with the reason) never goes to the member"
+        );
+        let mod_frame = client_frame(&fanned, Some("mo")).expect("moderators get the frame");
+        assert!(mod_frame.as_str().contains("spam"));
+        let mut bob = Access::new(Some(s("bob")), false, set(&["rchat"]));
+        let mine = own_timeout(&state, &mut bob, &ev("bob"))
+            .await
+            .expect("open")
+            .expect("bob's own event");
+        assert_eq!(reason_of(&mine), None);
+        assert!(!serde_json::to_string(&mine).unwrap().contains("spam"));
+        let mut mo = Access::new(Some(s("mo")), false, set(&["rchat"]));
+        assert!(matches!(
+            own_timeout(&state, &mut mo, &ev("bob")).await,
+            Some(None)
+        ));
+        let mine = own_timeout(&state, &mut mo, &ev("mo"))
+            .await
+            .expect("open")
+            .expect("mo's own event");
+        assert_eq!(
+            reason_of(&mine),
+            Some(s("spam")),
+            "a member who holds Timeout members sees the reason of their own"
+        );
         crate::api::test_util::done(state, path).await;
     }
 
@@ -6930,6 +7314,7 @@ mod tests {
                 perms: 0,
                 role_ids: Vec::new(),
                 joined_via: None,
+                timeout: None,
             },
         });
         let first = inbox.rx.recv().await.unwrap();

@@ -13,6 +13,7 @@ import {
   Server,
   Share2,
   Smile,
+  Timer,
   X,
 } from 'lucide-react'
 import { errorText, MAX_UPLOAD, useStore, viewKey, type UploadMode } from '../lib/store'
@@ -30,6 +31,8 @@ import { useMedia } from './context_menu'
 import { ReplyBar } from './replies'
 import { ForwardBar } from './forwards'
 import { useTextAssist } from './text_assist'
+import { useMyTimeoutEnds, useNow } from './timeout_dialog'
+import { remainingText, timedOutLine } from '../lib/timeouts'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
   { label: '1 hour', seconds: 3600 },
@@ -106,6 +109,23 @@ function ExpiryDialog({
 }
 
 const NO_SEND = 'You do not have permission to send messages in this channel.'
+
+function TimedOutBar({ ends }: { ends: number }) {
+  const now = useNow(true)
+  return (
+    <div
+      data-timed-out
+      role="status"
+      className="mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] flex shrink-0 items-center gap-2 rounded-2xl bg-error-container px-4 py-3 text-sm text-on-error-container keyboard:mb-3"
+    >
+      <Timer size={16} className="shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1">{timedOutLine(ends, now)}</span>
+      <span title="Time left" className="shrink-0 font-medium tabular-nums">
+        {remainingText(ends - now)}
+      </span>
+    </div>
+  )
+}
 
 const useSlowLeft = (channelId: number | null): number => {
   const until = useStore(s => (channelId === null ? 0 : (s.slowUntil[channelId] ?? 0)))
@@ -235,6 +255,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const focusSeen = useRef(focusAsk?.n ?? 0)
   const channelId = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
   const slowLeft = useSlowLeft(channelId)
+  const timedOutEnds = useMyTimeoutEnds(view?.kind === 'channel' ? view.server : null)
 
   useEffect(() => {
     if (!focusAsk || focusAsk.n === focusSeen.current) return
@@ -311,6 +332,8 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       </div>
     )
   }
+
+  if (view?.kind === 'channel' && timedOutEnds !== null) return <TimedOutBar ends={timedOutEnds} />
 
   if (view?.kind === 'channel' && readOnly(servers[view.server], channelId)) {
     return (

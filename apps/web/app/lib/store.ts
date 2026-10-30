@@ -218,6 +218,14 @@ import { clearProfiles, forgetProfiles } from './profile'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from './voice_layout'
 import { retrySeconds, tooManyText } from './rate_limit'
 import { slowExempt, slowWait } from './slowmode'
+import {
+  fromWire,
+  localUntil,
+  timedOutLine,
+  TIMED_OUT_CAMERA,
+  TIMED_OUT_SHARE,
+  type TimeoutWire,
+} from './timeouts'
 import { deniedAccess, runJoinStep } from './join_flow'
 import { secretsKey } from './passwords'
 import {
@@ -246,11 +254,14 @@ import {
   dmView,
   dmsMarkTargets,
   memberOf,
+  memberTimeout,
   myPerms,
+  myTimeoutEnds,
   previewServer,
   scopeRule,
   serverNames,
   serversMarkTargets,
+  voiceMutedIn,
 } from './selectors'
 import type {
   ContextMenuItem,
@@ -415,6 +426,50 @@ export const banMenuItem = (server: string, username: string): ContextMenuItem =
       action: () => void s.banMember(server, username),
     })
   },
+})
+
+// Records the running timeouts (or none) of members of `server`, as a moderator sees them.
+export const noteMemberTimeouts = (
+  server: string,
+  members: { username: string; timeout?: TimeoutWire }[]
+) =>
+  useStore.setState(s => {
+    const was = s.timeouts[server] ?? {}
+    const changed = members.filter(m => m.timeout || was[m.username])
+    if (!changed.length) return {}
+    const list = { ...was }
+    for (const m of changed) {
+      if (m.timeout) list[m.username] = fromWire(m.timeout)
+      else delete list[m.username]
+    }
+    return { timeouts: { ...s.timeouts, [server]: list } }
+  })
+
+export const noteTimeout = (server: string, username: string, timeout: TimeoutWire | undefined) =>
+  noteMemberTimeouts(server, [{ username, timeout }])
+
+// Time out a member, or change or remove their timeout (context menus).
+export const timeoutMenuItems = (server: string, user: UserRef): ContextMenuItem[] => {
+  const s = useStore.getState()
+  const running = memberTimeout(s, server, user.username) !== null
+  const open = () => s.openDialog({ kind: 'timeout', server, user: userRefOf(user) })
+  return running
+    ? [
+        { label: 'Change Timeout', action: open },
+        {
+          label: 'Remove Timeout',
+          danger: true,
+          action: () => void s.removeTimeout(server, user.username),
+        },
+      ]
+    : [{ label: 'Time Out', danger: true, action: open }]
+}
+
+const userRefOf = (u: UserRef): UserRef => ({
+  username: u.username,
+  display_name: u.display_name,
+  avatar_kind: u.avatar_kind,
+  avatar_color: u.avatar_color,
 })
 
 export const confirmKick = (server: string, username: string, after?: () => void) =>
@@ -1136,10 +1191,26 @@ export const useStore = create<RChatState>()((set, get) => {
   }
   const joins = new JoinTracker()
 
+  // Muted by a timeout in the voice channel you are in: by the server, or by your own clock.
+  const forcedMute = () => {
+    const s = get()
+    if (!s.voice || !s.me) return false
+    return (
+      voiceMutedIn(s, s.voice.channelId).includes(s.me.username) ||
+      myTimeoutEnds(s, s.voice.server) !== null
+    )
+  }
+
+  // Also stops your camera and screen share while a timeout mutes you in voice.
   const applyMic = () => {
-    const { muted } = get().selfAudio
+    const forced = forcedMute()
+    const muted = get().selfAudio.muted || forced
     if (rtc.active() && rtc.muted !== muted) rtc.setMuted(muted)
     if (p2p.mediaActive() && p2p.muted !== muted) p2p.setMuted(muted)
+    if (forced && rtc.active()) {
+      if (rtc.videoTrack) void rtc.camera(false)
+      if (rtc.sharing) void rtc.share(false)
+    }
   }
 
   const setSelfAudio = (selfAudio: SelfAudio) => {
@@ -1298,7 +1369,7 @@ export const useStore = create<RChatState>()((set, get) => {
     resyncTimer = setTimeout(
       () => {
         resyncTimer = null
-        set({ p2pAvailability: {}, voiceUsers: {} })
+        set({ p2pAvailability: {}, voiceUsers: {}, voiceMuted: {} })
         home.ws.resubscribe()
         refreshMe()
         const { view } = get()
@@ -1384,7 +1455,7 @@ export const useStore = create<RChatState>()((set, get) => {
       }
       const outage = downSince === null ? 0 : Date.now() - downSince
       downSince = null
-      set({ p2pAvailability: {}, voiceUsers: {} })
+      set({ p2pAvailability: {}, voiceUsers: {}, voiceMuted: {} })
       if (get().me) p2p.announce()
       else if (get().token) void recoverMe()
       const { view } = get()
@@ -3136,6 +3207,8 @@ export const useStore = create<RChatState>()((set, get) => {
     callRoute: DEFAULT_ROUTE,
     p2pCallFailed: {},
     voiceUsers: {},
+    voiceMuted: {},
+    timeouts: {},
     p2pAvailability: {},
     rtcTick: 0,
     selfAudio: SELF_AUDIO_IDLE,
@@ -3416,6 +3489,8 @@ export const useStore = create<RChatState>()((set, get) => {
         call: null,
         selfAudio: SELF_AUDIO_IDLE,
         voiceUsers: {},
+        voiceMuted: {},
+        timeouts: {},
         servers: {},
         members: {},
         memberInfo: {},
@@ -4455,6 +4530,21 @@ export const useStore = create<RChatState>()((set, get) => {
     deleteChannel: id => act(async () => void (await api.deleteChannel(id))),
     kickMember: (server, username) =>
       act(async () => void (await api.kickMember(server, username))),
+    timeoutMember: async (server, username, seconds, reason) => {
+      try {
+        const t = await api.timeoutMember(server, username, seconds, reason.trim() || null)
+        noteTimeout(server, username, t)
+        return true
+      } catch (e) {
+        fail(e)
+        return false
+      }
+    },
+    removeTimeout: (server, username) =>
+      act(async () => {
+        await api.removeTimeout(server, username)
+        noteTimeout(server, username, undefined)
+      }),
     banMember: (server, username) =>
       act(async () => {
         await api.banMember(server, username)
@@ -4517,6 +4607,7 @@ export const useStore = create<RChatState>()((set, get) => {
             const page = await api.listMembers(server, cursor).catch(e => {
               throw banCheck(e, server)
             })
+            noteMemberTimeouts(server, page.items)
             return {
               ...page,
               items: freshPresence(
@@ -4604,6 +4695,8 @@ export const useStore = create<RChatState>()((set, get) => {
       act(async () => {
         const { me, guest, voice } = get()
         if (guest || !me) throw new Error('Create an account to join voice')
+        const ends = myTimeoutEnds(get(), server)
+        if (ends !== null) throw new Error(timedOutLine(ends))
         home.ws.ensureConnected()
         await get().openChannel(server, channelId)
         if (voice?.channelId === channelId) return
@@ -4633,14 +4726,18 @@ export const useStore = create<RChatState>()((set, get) => {
     toggleCamera: () =>
       act(async () => {
         const { call, voice } = get()
-        if (!voice && call?.kind === 'p2p') await p2p.toggleCamera()
-        else await rtc.camera(rtc.videoTrack === null)
+        if (!voice && call?.kind === 'p2p') return await p2p.toggleCamera()
+        const on = rtc.videoTrack === null
+        if (on && forcedMute()) throw new Error(TIMED_OUT_CAMERA)
+        await rtc.camera(on)
       }),
     toggleShare: () =>
       act(async () => {
         const { call, voice } = get()
-        if (!voice && call?.kind === 'p2p') await p2p.toggleShare()
-        else await rtc.share(!rtc.sharing)
+        if (!voice && call?.kind === 'p2p') return await p2p.toggleShare()
+        const on = !rtc.sharing
+        if (on && forcedMute()) throw new Error(TIMED_OUT_SHARE)
+        await rtc.share(on)
       }),
 
     startCall: (dmId, video) =>
@@ -5437,7 +5534,13 @@ export const useStore = create<RChatState>()((set, get) => {
             const voiceUsers = { ...s.voiceUsers }
             if (ev.users.length) voiceUsers[ev.channel_id] = ev.users
             else delete voiceUsers[ev.channel_id]
-            return { voiceUsers }
+            const muted = s.voiceMuted[ev.channel_id]
+            const kept = muted?.filter(u => ev.users.includes(u))
+            if (!muted || kept?.length === muted.length) return { voiceUsers }
+            const voiceMuted = { ...s.voiceMuted }
+            if (kept?.length) voiceMuted[ev.channel_id] = kept
+            else delete voiceMuted[ev.channel_id]
+            return { voiceUsers, voiceMuted }
           })
           const { me, voice } = get()
           if (!me) return
@@ -5451,6 +5554,50 @@ export const useStore = create<RChatState>()((set, get) => {
               endVoiceMedia()
             }
           }
+          return
+        }
+        case 'voice_muted': {
+          set(s => {
+            const was = s.voiceMuted[ev.channel_id] ?? []
+            const list = was.filter(u => u !== ev.username)
+            if (ev.muted) list.push(ev.username)
+            const voiceMuted = { ...s.voiceMuted }
+            if (list.length) voiceMuted[ev.channel_id] = list
+            else delete voiceMuted[ev.channel_id]
+            return { voiceMuted }
+          })
+          applyMic()
+          return
+        }
+        case 'member_timeout': {
+          const wire =
+            ev.until === null
+              ? undefined
+              : { until: ev.until, remaining: ev.remaining, reason: ev.reason }
+          const mine = get().me?.username === ev.username
+          if (mine) {
+            set(s =>
+              s.me
+                ? {
+                    me: {
+                      ...s.me,
+                      servers: s.me.servers.map(x =>
+                        x.name === ev.server
+                          ? {
+                              ...x,
+                              timed_out_until:
+                                ev.until === null ? undefined : localUntil(ev.remaining),
+                            }
+                          : x
+                      ),
+                    },
+                  }
+                : {}
+            )
+            applyMic()
+          }
+          if (!mine || hasPerm(myPerms(get(), ev.server), Perm.TimeoutMembers))
+            noteTimeout(ev.server, ev.username, wire)
           return
         }
         case 'call_state': {

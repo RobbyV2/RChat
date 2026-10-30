@@ -15,10 +15,13 @@ import { UserAvatar } from './user_avatar'
 import { CloseButton, SheetGrip } from './ui'
 import { nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
+import { useMyTimeoutEnds } from './timeout_dialog'
 
 // Pinning and unpinning: either DM participant, or a member with Manage messages.
 export function useCanPin() {
-  return useStore(s => {
+  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
+  const timedOut = useMyTimeoutEnds(server) !== null
+  const can = useStore(s => {
     const v = s.view
     if (!v || !s.me || s.guest) return false
     if (v.kind === 'dm') return true
@@ -27,6 +30,7 @@ export function useCanPin() {
       hasPerm(myPerms(s, v.server), Perm.DeleteMessages)
     )
   })
+  return can && !timedOut
 }
 
 export const pinMenuItem = (m: Message): ContextMenuItem =>

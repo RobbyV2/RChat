@@ -162,9 +162,24 @@ describe('roles and actions', () => {
     expect(profileActions({ ...full, siteAdmin: true })).toEqual([
       'kick',
       'server_ban',
+      'timeout',
       'revoke',
       'transfer',
       'site_ban',
+    ])
+  })
+
+  test('timeouts need the permission, strictly more perms, and a member who is not you', () => {
+    const mod = { ...base, perms: Perm.TimeoutMembers, targetPerms: 0 }
+    expect(profileActions(mod)).toEqual(['timeout'])
+    expect(profileActions({ ...mod, timedOut: true })).toEqual(['timeout', 'untimeout'])
+    expect(profileActions({ ...mod, self: true })).toEqual([])
+    expect(profileActions({ ...mod, member: null })).toEqual([])
+    expect(profileActions({ ...mod, targetPerms: Perm.TimeoutMembers })).toEqual([])
+    expect(profileActions({ ...mod, targetPerms: Perm.Kick })).toEqual([])
+    expect(profileActions({ ...base, perms: Perm.Kick, targetPerms: 0 })).toEqual([
+      'kick',
+      'server_ban',
     ])
   })
 
@@ -174,6 +189,7 @@ describe('roles and actions', () => {
     expect(profileActions({ ...ma, perms: ALL_PERMS })).toEqual([
       'kick',
       'server_ban',
+      'timeout',
       'promote',
       'transfer',
     ])

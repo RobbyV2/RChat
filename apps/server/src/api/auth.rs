@@ -532,6 +532,7 @@ pub(crate) async fn register(
             perms: 0,
             role_ids: Vec::new(),
             joined_via: None,
+            timeout: None,
         },
     });
     announce_system(&state, "rchat", notice).await;

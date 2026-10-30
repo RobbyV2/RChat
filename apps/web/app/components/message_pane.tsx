@@ -47,8 +47,10 @@ import {
   changeableRoles,
   confirmDeleteMessage,
   confirmKick,
+  timeoutMenuItems,
   confirmTransfer,
   memberOf,
+  memberState,
   messageServer,
   myPerms,
   revokeAdminFor,
@@ -97,6 +99,7 @@ import { canForward } from '../lib/forward'
 import { ForwardCard, forwardAction, forwardMenuItem } from './forwards'
 import { PinNotice, PinsButton, PinsWindow, pinMenuItem, useCanPin } from './pins'
 import { SystemNotice } from './system_messages'
+import { useMyTimeoutEnds } from './timeout_dialog'
 import { canPin } from '../lib/pins'
 import { isSystem } from '../lib/system_messages'
 import { messageLinkUrl } from '../lib/message_links'
@@ -698,7 +701,9 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     if (pinRights && canPin(msg)) items.push(pinMenuItem(msg))
     if (view?.kind === 'channel' && !self) {
       const target = memberOf(useStore.getState(), view.server, author.username)
+      const left = memberState(useStore.getState(), view.server, author.username) === null
       if (
+        !left &&
         hasPerm(perms, Perm.Kick) &&
         canModerate(perms, me.is_site_admin, memberPerms(target, detail?.roles ?? []))
       )
@@ -710,6 +715,12 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           },
           banMenuItem(view.server, author.username)
         )
+      if (
+        !left &&
+        hasPerm(perms, Perm.TimeoutMembers) &&
+        canModerate(perms, me.is_site_admin, memberPerms(target, detail?.roles ?? []))
+      )
+        items.push(...timeoutMenuItems(view.server, author))
       if (hasPerm(perms, Perm.ManageAdmins)) {
         if (target?.is_admin) {
           if (
@@ -766,13 +777,15 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   }
 
   const canUnreact = me !== null && !guest
+  const timedOutEnds = useMyTimeoutEnds(view?.kind === 'channel' ? view.server : null)
   const pinRights = useCanPin()
   const canReact =
     canUnreact &&
     (view?.kind === 'dm' ||
       (view?.kind === 'channel' &&
         me.servers.some(x => x.name === view.server) &&
-        !readOnly(detail, view.channelId)))
+        !readOnly(detail, view.channelId) &&
+        timedOutEnds === null))
 
   const canDelete = (m: Message) =>
     me !== null &&
@@ -817,7 +830,14 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       className="relative flex h-full min-w-0 flex-1 flex-col bg-surface"
       onDragEnter={e => {
         e.preventDefault()
-        if (guest || !view || isVoice || !canAttach || !e.dataTransfer.types.includes('Files'))
+        if (
+          guest ||
+          !view ||
+          isVoice ||
+          !canAttach ||
+          timedOutEnds !== null ||
+          !e.dataTransfer.types.includes('Files')
+        )
           return
         dragDepth.current += 1
         setDragging(true)
@@ -831,7 +851,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         e.preventDefault()
         dragDepth.current = 0
         setDragging(false)
-        if (guest || !view || isVoice || !canAttach) return
+        if (guest || !view || isVoice || !canAttach || timedOutEnds !== null) return
         const file = e.dataTransfer.files.item(0)
         if (file) uploadFile(viewKey(view), file)
       }}

@@ -1,3 +1,5 @@
+import type { TimeoutWire } from './timeouts'
+
 export type AvatarKind = 'identicon' | 'color'
 
 export const Perm = {
@@ -8,9 +10,10 @@ export const Perm = {
   ManageAdmins: 16,
   MentionEveryone: 32,
   ViewAuditLog: 64,
+  TimeoutMembers: 128,
 } as const
 
-export const ALL_PERMS = 127
+export const ALL_PERMS = 255
 
 export const hasPerm = (perms: number, perm: number) => (perms & perm) !== 0
 
@@ -28,6 +31,9 @@ export interface ServerSummary {
   is_admin: boolean
   banner_color?: string | null
   name_color?: string | null
+  // your timeout's end in unix seconds; on this device's clock once loaded (see api.ts)
+  timed_out_until?: number
+  timed_out_remaining?: number
 }
 
 export interface ServerSummaryLite {
@@ -102,6 +108,7 @@ export interface Member extends UserRef {
   perms: number
   role_ids: number[]
   joined_via?: JoinedVia
+  timeout?: TimeoutWire
 }
 
 export interface JoinedVia {
@@ -358,6 +365,7 @@ export interface ProfileMember {
   roles: Role[]
   joined_at: number
   online: boolean
+  timeout?: TimeoutWire
 }
 
 export interface Profile {
@@ -605,6 +613,15 @@ export type WsEvent =
   | { type: 'ping'; username: string; ping: Ping }
   | ({ type: 'ping_count'; username: string; scope: string } & PingSummary)
   | { type: 'voice_state'; server: string; channel_id: number; users: string[] }
+  | { type: 'voice_muted'; server: string; channel_id: number; username: string; muted: boolean }
+  | {
+      type: 'member_timeout'
+      server: string
+      username: string
+      until: number | null
+      remaining: number
+      reason: string | null
+    }
   | {
       type: 'call_state'
       dm_id: number

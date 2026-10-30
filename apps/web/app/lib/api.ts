@@ -1,3 +1,4 @@
+import { localUntil, type TimeoutWire } from './timeouts'
 import type {
   AdminOverview,
   AuditEntry,
@@ -285,8 +286,9 @@ export interface SearchParams {
 }
 
 export const endpoints = (c: ApiClient) => ({
-  register: (body: RegisterRequest) => c.req<AuthResponse>('POST', '/auth/register', body),
-  login: (body: LoginRequest) => c.req<AuthResponse>('POST', '/auth/login', body),
+  register: (body: RegisterRequest) =>
+    c.req<AuthResponse>('POST', '/auth/register', body).then(localAuth),
+  login: (body: LoginRequest) => c.req<AuthResponse>('POST', '/auth/login', body).then(localAuth),
   logout: (token: string) =>
     c.req<{ ok: boolean }>(
       'POST',
@@ -297,11 +299,15 @@ export const endpoints = (c: ApiClient) => ({
       3000
     ),
   words: (username: string) => c.req<{ words: string[] }>('GET', `/auth/words/${seg(username)}`),
-  me: () => c.req<Me>('GET', '/me'),
+  me: () => c.req<Me>('GET', '/me').then(localMe),
   myServers: (cursor: string | null, limit: number) =>
-    c.page<ServerSummary>(withCursor(`/me/servers?limit=${limit}`, cursor)),
+    c
+      .page<ServerSummary>(withCursor(`/me/servers?limit=${limit}`, cursor))
+      .then(p => ({ ...p, items: p.items.map(localSummary) })),
   myServersByName: (names: string[]) =>
-    c.req<ServerSummary[]>('GET', `/me/servers?${names.map(n => `names=${seg(n)}`).join('&')}`),
+    c
+      .req<ServerSummary[]>('GET', `/me/servers?${names.map(n => `names=${seg(n)}`).join('&')}`)
+      .then(list => list.map(localSummary)),
   patchMe: (avatar_kind: AvatarKind, avatar_color?: string, banner_color?: string | null) =>
     c.req<MeUpdated>('PATCH', '/me', { avatar_kind, avatar_color, banner_color }),
   setBio: (bio: string | null) => c.req<MeUpdated>('PATCH', '/me', { bio }),
@@ -408,6 +414,13 @@ export const endpoints = (c: ApiClient) => ({
     c.req<unknown>('POST', `/servers/${seg(server)}/kick`, { username }),
   banMember: (server: string, username: string) =>
     c.req<unknown>('POST', `/servers/${seg(server)}/bans`, { username }),
+  timeoutMember: (server: string, username: string, seconds: number, reason: string | null) =>
+    c.req<TimeoutWire>('PUT', `/servers/${seg(server)}/timeouts/${seg(username)}`, {
+      seconds,
+      reason,
+    }),
+  removeTimeout: (server: string, username: string) =>
+    c.req<unknown>('DELETE', `/servers/${seg(server)}/timeouts/${seg(username)}`),
   unbanMember: (server: string, username: string) =>
     c.req<unknown>('DELETE', `/servers/${seg(server)}/bans/${seg(username)}`),
   listBans: (server: string, cursor: string | null) =>
@@ -533,6 +546,16 @@ export interface Assertion {
   sub: string
   expires_at: number
 }
+
+// Your own timeouts end on this device's clock, counted from the seconds left the server sent.
+export const localSummary = (s: ServerSummary, now = Date.now()): ServerSummary =>
+  s.timed_out_remaining === undefined
+    ? s
+    : { ...s, timed_out_until: localUntil(s.timed_out_remaining, now) }
+
+const localMe = (me: Me): Me => ({ ...me, servers: me.servers.map(s => localSummary(s)) })
+
+const localAuth = (res: AuthResponse): AuthResponse => ({ ...res, user: localMe(res.user) })
 
 function pageQuery(page: PageOpts) {
   const parts = Object.entries(page)

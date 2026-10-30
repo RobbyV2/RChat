@@ -4,6 +4,7 @@ import { rtc } from '../rtc'
 import { useStore, resetSessionCaches } from '../store'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from '../voice_layout'
 import type { VoiceMsg } from '../types'
+import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE } from '../timeouts'
 import { me } from './fixtures'
 
 afterAll(resetSessionCaches)
@@ -43,7 +44,12 @@ beforeEach(() => {
         getUserMedia: async () => {
           const track: FakeTrack = { kind: 'audio', enabled: true, stop: () => {} }
           tracks.push(track)
-          return { getTracks: () => [track], getAudioTracks: () => [track] }
+          return {
+            getTracks: () => [track],
+            getAudioTracks: () => [track],
+            addTrack: () => {},
+            removeTrack: () => {},
+          }
         },
       },
     },
@@ -77,6 +83,8 @@ afterEach(() => {
     call: null,
     selfAudio: SELF_AUDIO_IDLE,
     error: null,
+    voiceMuted: {},
+    timeouts: {},
     openChannel: realOpen,
   })
 })
@@ -309,5 +317,145 @@ describe('voice and call mic state', () => {
     ])
     expect(sent.some(m => m.type === 'voice_leave')).toBe(false)
     expect(stopped).toEqual([false, true])
+  })
+})
+
+describe('timeouts in voice', () => {
+  const summary = (until?: number) => ({
+    name: 'lounge',
+    display_name: 'Lounge',
+    creator: null,
+    is_admin: false,
+    ...(until === undefined ? {} : { timed_out_until: until }),
+  })
+  const timeoutEvent = (until: number | null) =>
+    st().applyWsEvent({
+      type: 'member_timeout',
+      server: 'lounge',
+      username: 'alice',
+      until,
+      remaining: until === null ? 0 : 600,
+      reason: null,
+    })
+
+  test('a timed out member cannot join voice in that server', async () => {
+    useStore.setState({ me: me('alice', { servers: [summary()] }) })
+    timeoutEvent(Math.floor(Date.now() / 1000) + 600)
+    expect((st().me?.servers[0].timed_out_until ?? 0) > Date.now() / 1000).toBe(true)
+    expect(st().timeouts).toEqual({})
+    await st().joinVoice('lounge', 1)
+    expect(/^You are timed out until .+\.$/.test(st().error ?? '')).toBe(true)
+    expect(st().voice).toBeNull()
+    expect(sent.some(m => m.type === 'voice_join')).toBe(false)
+    useStore.setState({ error: null })
+    timeoutEvent(null)
+    expect(st().me?.servers[0].timed_out_until).toBeUndefined()
+    await st().joinVoice('lounge', 1)
+    expect(st().error).toBeNull()
+    expect(st().voice?.channelId).toBe(1)
+  })
+
+  test('a timeout mutes the mic while joined and unmuting is ignored until it ends', async () => {
+    useStore.setState({ me: me('alice', { servers: [summary()] }) })
+    await st().joinVoice('lounge', 1)
+    expect(lastTrack().enabled).toBe(true)
+    st().applyWsEvent({
+      type: 'voice_muted',
+      server: 'lounge',
+      channel_id: 1,
+      username: 'alice',
+      muted: true,
+    })
+    expect(st().voiceMuted).toEqual({ 1: ['alice'] })
+    expect(lastTrack().enabled).toBe(false)
+    st().toggleMute()
+    st().toggleMute()
+    expect(lastTrack().enabled).toBe(false)
+    st().applyWsEvent({
+      type: 'voice_muted',
+      server: 'lounge',
+      channel_id: 1,
+      username: 'alice',
+      muted: false,
+    })
+    expect(st().voiceMuted).toEqual({})
+    expect(lastTrack().enabled).toBe(true)
+  })
+
+  test('a timeout stops the camera and screen share and keeps them off', async () => {
+    useStore.setState({ me: me('alice', { servers: [summary()] }) })
+    await st().joinVoice('lounge', 1)
+    let stopped = 0
+    const video = () => ({ kind: 'video', enabled: true, stop: () => (stopped += 1) })
+    const live = rtc as unknown as { videoTrack: unknown; screen: unknown }
+    live.videoTrack = video()
+    live.screen = { video: video(), audio: null, audioNote: false }
+    st().applyWsEvent({
+      type: 'voice_muted',
+      server: 'lounge',
+      channel_id: 1,
+      username: 'alice',
+      muted: true,
+    })
+    await Promise.resolve()
+    expect(rtc.videoTrack).toBeNull()
+    expect(rtc.sharing).toBe(false)
+    expect(stopped).toBe(2)
+    const asked = tracks.length
+    await st().toggleCamera()
+    expect(st().error).toBe(TIMED_OUT_CAMERA)
+    useStore.setState({ error: null })
+    await st().toggleShare()
+    expect(st().error).toBe(TIMED_OUT_SHARE)
+    expect(tracks.length).toBe(asked)
+    expect(rtc.videoTrack).toBeNull()
+    expect(rtc.sharing).toBe(false)
+  })
+
+  test("the member's own timeout follows the seconds left, not their clock", () => {
+    useStore.setState({ me: me('alice', { servers: [summary()] }) })
+    st().applyWsEvent({
+      type: 'member_timeout',
+      server: 'lounge',
+      username: 'alice',
+      until: 1,
+      remaining: 600,
+      reason: null,
+    })
+    const until = st().me?.servers[0].timed_out_until ?? 0
+    expect(Math.abs(until - (Date.now() / 1000 + 600)) < 2).toBe(true)
+  })
+
+  test('muted users who leave the room are forgotten', () => {
+    useStore.setState({ voiceMuted: { 4: ['bob', 'carol'] }, voiceUsers: {} })
+    st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id: 4, users: ['carol'] })
+    expect(st().voiceMuted).toEqual({ 4: ['carol'] })
+    st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id: 4, users: [] })
+    expect(st().voiceMuted).toEqual({})
+  })
+
+  test('moderators keep timeouts by server, the member keeps their own end', () => {
+    useStore.setState({ me: me('mo', { servers: [summary()] }), timeouts: {} })
+    st().applyWsEvent({
+      type: 'member_timeout',
+      server: 'lounge',
+      username: 'bob',
+      until: 1,
+      remaining: 60,
+      reason: 'spam',
+    })
+    const t = st().timeouts.lounge?.bob
+    expect(t?.reason).toBe('spam')
+    expect((t?.ends ?? 0) - Date.now() > 59_000).toBe(true)
+    expect(st().me?.servers[0].timed_out_until).toBeUndefined()
+    st().applyWsEvent({
+      type: 'member_timeout',
+      server: 'lounge',
+      username: 'bob',
+      until: null,
+      remaining: 0,
+      reason: null,
+    })
+    expect(st().timeouts.lounge).toEqual({})
   })
 })

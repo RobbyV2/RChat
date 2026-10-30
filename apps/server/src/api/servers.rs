@@ -21,6 +21,7 @@ use crate::api::categories::{
 use crate::api::messages::recent_channel_messages;
 use crate::api::pings::forget_server_pings;
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
+use crate::api::timeouts::{running_timeouts, timeout_event};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message,
     NAME_MAX, OFFSET_MAX, OkResp, Paged, ProfanityTarget, Role, RoleLimits, SLOWMODE_MAX,
@@ -179,7 +180,8 @@ pub struct UsernameReq {
 pub struct PermsReq {
     /// Permission bitmask: 1 Manage channels, 2 Manage messages (delete and pin messages of
     /// others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention everyone and roles, 64 View
-    /// audit log. Bits outside 127 are dropped. For an admin, 0 means all permissions.
+    /// audit log, 128 Timeout members. Bits outside 255 are dropped. For an admin, 0 means all
+    /// permissions.
     #[schema(example = 7)]
     perms: i64,
 }
@@ -196,8 +198,9 @@ pub struct RoleReq {
     color: String,
     /// Permission bitmask for members with the role: 1 Manage channels, 2 Manage messages (delete
     /// and pin messages of others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention
-    /// everyone and roles, 64 View audit log. Bits outside 127 are dropped. Roles only add
-    /// permissions to members who are not admins. Admins use their own admin permissions.
+    /// everyone and roles, 64 View audit log, 128 Timeout members. Bits outside 255 are dropped.
+    /// Roles only add permissions to members who are not admins. Admins use their own admin
+    /// permissions.
     #[schema(example = 6)]
     perms: i64,
     /// Anyone who can send may mention the role (default `false`: only members with the Mention
@@ -214,7 +217,7 @@ pub struct RolePatch {
     name: Option<String>,
     /// New role color as `#rrggbb`, stored as sent.
     color: Option<String>,
-    /// New permission bitmask (see `RoleReq.perms`). Bits outside 127 are dropped.
+    /// New permission bitmask (see `RoleReq.perms`). Bits outside 255 are dropped.
     perms: Option<i64>,
     /// Whether anyone who can send may mention the role (see `RoleReq.mentionable`). Turning it
     /// on needs the Mention everyone permission.
@@ -660,11 +663,13 @@ async fn role_ids_of(
     Ok(map)
 }
 
-const MY_SERVERS: &str = "SELECT s.name, s.display_name, s.creator, m.is_admin, m.joined_at, s.banner_color, s.name_color FROM members m JOIN servers s ON s.name = m.server WHERE m.username = $1";
+const MY_SERVERS: &str = "SELECT s.name, s.display_name, s.creator, m.is_admin, m.joined_at, s.banner_color, s.name_color, t.until FROM members m JOIN servers s ON s.name = m.server LEFT JOIN member_timeouts t ON t.server = m.server AND t.username = m.username WHERE m.username = $1";
 
 fn summary_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<ServerSummary>, ApiError> {
+    let t = now();
     let mut servers = Vec::with_capacity(rows.len());
     for r in rows {
+        let timed_out_until = r.try_get::<Option<i64>, _>(7)?.filter(|u| *u > t);
         servers.push(ServerSummary {
             name: r.try_get(0)?,
             display_name: r.try_get(1)?,
@@ -672,6 +677,8 @@ fn summary_rows(rows: &[sqlx::any::AnyRow]) -> Result<Vec<ServerSummary>, ApiErr
             is_admin: r.try_get::<i64, _>(3)? != 0,
             banner_color: r.try_get(5)?,
             name_color: r.try_get(6)?,
+            timed_out_until,
+            timed_out_remaining: timed_out_until.map(|u| u - t),
         });
     }
     Ok(servers)
@@ -819,6 +826,7 @@ async fn build_member(
         perms,
         role_ids: role_ids(db, server, username).await?,
         joined_via: None,
+        timeout: None,
     })
 }
 
@@ -1213,9 +1221,14 @@ pub(crate) async fn list_members(
         true => crate::api::passwords::joined_via(db, &key, &names).await?,
         false => HashMap::new(),
     };
+    let mut timeouts = match access.has_perm(db, Perm::TimeoutMembers).await {
+        true => running_timeouts(db, &key, &names).await?,
+        false => HashMap::new(),
+    };
     let members = rows
         .into_iter()
         .map(|(username, is_admin, perms)| Member {
+            timeout: timeouts.remove(&username),
             online: online.contains(username.as_str()),
             is_admin: is_admin != 0,
             is_creator: creator.as_deref() == Some(username.as_str()),
@@ -1909,6 +1922,13 @@ pub(crate) async fn join_server(
             server: key.clone(),
             member,
         });
+        let running =
+            running_timeouts(&state.db, &key, std::slice::from_ref(&user.username)).await?;
+        if let Some(timeout) = running.into_values().next() {
+            state
+                .hub
+                .broadcast(timeout_event(&key, &user.username, Some(timeout)));
+        }
         announce_system(&state, &key, notice).await;
     }
     Ok(Json(detail))
@@ -3395,7 +3415,7 @@ pub(crate) async fn transfer_admin(
 
 /// Set an admin's permissions
 ///
-/// Replaces the permission bitmask of the admin `username` (bits outside 127 are dropped; 0 means
+/// Replaces the permission bitmask of the admin `username` (bits outside 255 are dropped; 0 means
 /// all permissions). Taking permissions away works on any admin, like revoking admin. When the new
 /// permissions add any the admin did not have, all of the new permissions must be ones you have
 /// (equal is fine), so only callers holding every permission can set 0. Requires the Manage admins
@@ -3501,6 +3521,7 @@ fn held_above_sql(one: bool) -> String {
         Perm::ManageAdmins,
         Perm::MentionEveryone,
         Perm::ViewAuditLog,
+        Perm::TimeoutMembers,
     ]
     .map(|p| format!("MAX(r.perms & {})", p as i64))
     .join(" | ");
@@ -7655,7 +7676,7 @@ mod tests {
         let err = patch(" ", "#000000", Some(MA)).await.err().map(|e| e.0);
         assert_eq!(err, Some(StatusCode::BAD_REQUEST));
         assert_eq!(role_row(db, id).await, before);
-        let Json(role) = patch("helpers", "#00ff00", Some(MA | 128))
+        let Json(role) = patch("helpers", "#00ff00", Some(MA | 256))
             .await
             .expect("valid");
         assert_eq!(

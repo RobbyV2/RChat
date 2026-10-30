@@ -22,6 +22,7 @@ import {
   roleColor,
   myRolePerms,
   roleMenuItems,
+  timeoutMenuItems,
   useStore,
   type ContextMenuItem,
 } from '../lib/store'
@@ -29,6 +30,7 @@ import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
 import { Badge, profileTrigger } from './profile_card'
 import { Sentinel } from './ui'
+import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
 
 const byName = (a: Member, b: Member) => a.display_name.localeCompare(b.display_name)
 
@@ -77,6 +79,11 @@ function useWindowed(items: Item[]) {
   const prefix = useMemo(() => prefixHeights(items.map(heightOf)), [items])
   const range = visibleRange(prefix, port.top, port.height, OVERSCAN)
   return { ref, range }
+}
+
+function MemberTimeout({ server, username }: { server: string; username: string }) {
+  const t = useMemberTimeout(server, username)
+  return t ? <TimeoutBadge t={t} compact /> : null
 }
 
 export default function MemberSidebar() {
@@ -164,6 +171,12 @@ export default function MemberSidebar() {
         },
         banMenuItem(detail.name, m.username)
       )
+    if (
+      hasPerm(perms, Perm.TimeoutMembers) &&
+      !self &&
+      canModerate(perms, me.is_site_admin, memberPerms(m, detail.roles))
+    )
+      items.push(...timeoutMenuItems(detail.name, m))
     if (hasPerm(perms, Perm.ManageAdmins)) {
       if (m.is_admin) {
         if (canRevoke(perms, me.is_site_admin, m.perms, rolePerms(m, detail.roles)))
@@ -236,6 +249,7 @@ export default function MemberSidebar() {
         >
           {m.display_name}
         </span>
+        <MemberTimeout server={detail.name} username={m.username} />
         {m.is_creator && <Badge tone="tertiary">Creator</Badge>}
         {m.is_admin && <Badge tone="primary">Admin</Badge>}
       </div>

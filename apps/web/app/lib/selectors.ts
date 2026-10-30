@@ -22,8 +22,9 @@ import {
 } from './group_pings'
 import { canChangeRole, memberPerms, rolePerms } from './rules'
 import type { ConfigSource } from './config_transfer'
+import { running, type Timeout } from './timeouts'
 import type { RChatState } from './store_types'
-import { ALL_PERMS } from './types'
+import { ALL_PERMS, Perm } from './types'
 import type { Member, Message, Role, UserRef } from './types'
 
 const nameIndex = new WeakMap<readonly UserRef[], Map<string, UserRef>>()
@@ -52,12 +53,20 @@ export const memberState = (
 export const memberOf = (s: RChatState, server: string, username: string): Member | undefined =>
   memberState(s, server, username) ?? undefined
 
+// The permissions a timed-out member keeps: only those that read.
+export const TIMED_OUT_PERMS = Perm.ViewAuditLog
+
+// Your own permissions in `server` as a member; while you are timed out, only the read ones.
 export const serverAdminPerms = (s: RChatState, server: string): number => {
   const { me } = s
   if (!me) return 0
   const row = memberOf(s, server, me.username)
-  if (row) return memberPerms(row, s.servers[server]?.roles ?? [])
-  return (me.servers.find(x => x.name === server)?.is_admin ?? false) ? ALL_PERMS : 0
+  const perms = row
+    ? memberPerms(row, s.servers[server]?.roles ?? [])
+    : (me.servers.find(x => x.name === server)?.is_admin ?? false)
+      ? ALL_PERMS
+      : 0
+  return myTimeoutEnds(s, server) === null ? perms : perms & TIMED_OUT_PERMS
 }
 
 export const myRolePerms = (s: RChatState, server: string): number =>
@@ -343,3 +352,31 @@ export const changeableRoles = (s: RChatState, server: string, username: string)
     )
   )
 }
+
+// When your timeout in `server` ends (ms), while it runs.
+export const myTimeoutEnds = (
+  s: Pick<RChatState, 'me'>,
+  server: string | null | undefined,
+  now = Date.now()
+): number | null => {
+  if (!server || !s.me) return null
+  const until = s.me.servers.find(x => x.name === server)?.timed_out_until
+  return until !== undefined && until * 1000 > now ? until * 1000 : null
+}
+
+// The running timeout of `username` in `server` as moderators see it.
+export const memberTimeout = (
+  s: Pick<RChatState, 'timeouts'>,
+  server: string | null | undefined,
+  username: string,
+  now = Date.now()
+): Timeout | null => {
+  const t = server ? s.timeouts[server]?.[username] : undefined
+  return running(t, now) ? t : null
+}
+
+// Users muted by a timeout in voice channel `channelId`.
+export const voiceMutedIn = (s: Pick<RChatState, 'voiceMuted'>, channelId: number | null) =>
+  channelId === null ? EMPTY_NAMES : (s.voiceMuted[channelId] ?? EMPTY_NAMES)
+
+const EMPTY_NAMES: string[] = []

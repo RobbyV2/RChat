@@ -18,6 +18,7 @@ pub mod pins;
 pub mod reactions;
 pub mod servers;
 pub mod system_messages;
+pub mod timeouts;
 pub mod users;
 
 use std::collections::{HashMap, HashSet};
@@ -288,6 +289,13 @@ pub struct ServerSummary {
     pub banner_color: Option<String>,
     /// Color of the server name in that header as `#rrggbb`; `null` uses the theme color.
     pub name_color: Option<String>,
+    /// When your timeout in this server ends (unix seconds), while you are timed out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timed_out_until: Option<i64>,
+    /// Seconds left of that timeout when the response was made (count down from this, so a
+    /// device clock that is off does not matter).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timed_out_remaining: Option<i64>,
 }
 
 /// Public facts about a server, without membership details.
@@ -396,7 +404,8 @@ pub struct Role {
     pub color: String,
     /// Permission bits of the role: 1 Manage channels, 2 Manage messages (delete and pin messages
     /// of others), 4 Kick (also bans), 8 Delete server (also edits the server), 16 Manage admins,
-    /// 32 Mention everyone and roles (`@everyone`, `@here` and every role), 64 View audit log.
+    /// 32 Mention everyone and roles (`@everyone`, `@here` and every role), 64 View audit log,
+    /// 128 Timeout members.
     #[schema(example = 6)]
     pub perms: i64,
     /// Anyone who can send in a channel may mention the role with `@name`. Otherwise only members
@@ -467,6 +476,10 @@ pub struct Member {
     /// row is purged, 30 days after the password was revoked, expired or used up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub joined_via: Option<JoinedVia>,
+    /// The member's running timeout. Only in `GET /api/servers/{name}/members` for callers with
+    /// the Timeout members permission; absent otherwise and when none is running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<timeouts::MemberTimeout>,
 }
 
 /// The extra server password a member joined with.
@@ -1675,6 +1688,10 @@ fn api_routes(
                 .patch(system_messages::update_system_messages),
         )
         .route("/servers/{name}/kick", post(servers::kick_member))
+        .route(
+            "/servers/{name}/timeouts/{username}",
+            put(timeouts::set_timeout).delete(timeouts::remove_timeout),
+        )
         .route("/servers/{name}/audit", get(audit::list_audit))
         .route(
             "/servers/{name}/bans",

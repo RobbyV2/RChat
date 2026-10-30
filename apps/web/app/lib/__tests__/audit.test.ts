@@ -180,7 +180,7 @@ describe('audit sentences', () => {
         })
       )
     ).toBe('Alice created an extra password')
-    expect(sentenceText(entry({ action: 'member.timeout' }))).toBe('Alice did member.timeout')
+    expect(sentenceText(entry({ action: 'member.nope' }))).toBe('Alice did member.nope')
   })
 })
 
@@ -213,5 +213,44 @@ describe('audit values and filters', () => {
     expect(
       auditQuery({ group: 'role', actor: ' Bob ', target: ' gen ', from: '2026-10-01', to: '' })
     ).toEqual({ action: 'role', actor: 'bob', target: 'gen', from: String(from) })
+  })
+})
+
+describe('timeout entries', () => {
+  test('sentences say what happened and for how long', () => {
+    const set = (details: Record<string, unknown>) =>
+      sentenceText(entry({ action: 'member.timeout', details }))
+    expect(set({ duration: 600, changes: [{ field: 'until', before: null, after: 9 }] })).toBe(
+      'Alice timed out Bob for 10 minutes'
+    )
+    expect(set({ duration: 86400, changes: [{ field: 'until', before: 5, after: 9 }] })).toBe(
+      'Alice changed the timeout of Bob to 1 day'
+    )
+    expect(set({})).toBe('Alice timed out Bob')
+    expect(sentenceText(entry({ action: 'member.untimeout' }))).toBe(
+      'Alice removed the timeout of Bob'
+    )
+    expect(sentenceText(entry({ action: 'member.timeout', staff: true, actor: null }))).toBe(
+      'Instance staff timed out Bob'
+    )
+  })
+
+  test('details show the duration, time left and reason', () => {
+    const e = entry({
+      action: 'member.untimeout',
+      details: { remaining: 3599, reason: 'spam', changes: [] },
+    })
+    expect(factsOf(e)).toEqual([
+      ['Time left', '59 minutes 59 seconds'],
+      ['Reason', 'spam'],
+    ])
+    expect(
+      factsOf(entry({ action: 'member.timeout', details: { duration: 90, reason: null } }))
+    ).toEqual([
+      ['Duration', '1 minute 30 seconds'],
+      ['Reason', 'None'],
+    ])
+    expect(valueText('until', null)).toBe('Not timed out')
+    expect(valueText('until', 0)).toBe(new Date(0).toLocaleString())
   })
 })
