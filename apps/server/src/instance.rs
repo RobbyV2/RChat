@@ -33,7 +33,7 @@ pub struct InstanceConfig {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AllowedHost {
-    name: String,
+    pub(crate) name: String,
     port: Option<u16>,
 }
 

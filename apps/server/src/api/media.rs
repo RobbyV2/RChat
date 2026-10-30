@@ -21,6 +21,323 @@ use crate::ws::WsEvent;
 
 pub(crate) const MAX_SIZE: usize = 25 * 1024 * 1024;
 pub(crate) const MEDIA_TTL_SECS: i64 = 86400;
+/// Longest stored file name, in bytes.
+pub(crate) const FILENAME_MAX: usize = 255;
+/// Longest stored content type, in bytes.
+pub(crate) const MIME_MAX: usize = 127;
+const NEUTRAL_MIME: &str = "application/octet-stream";
+
+/// The file name to store for an uploaded `raw` name: path parts, control and bidi-override
+/// characters dropped, trimmed, cut on a character boundary to `FILENAME_MAX` bytes keeping a
+/// short extension, `file` when nothing is left.
+pub(crate) fn clean_filename(raw: &str) -> String {
+    let base = raw.rsplit(['/', '\\']).next().unwrap_or_default();
+    let kept: String = base
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(u32::from(*c), 0x202a..=0x202e | 0x2066..=0x2069))
+        .collect();
+    let name = kept.trim();
+    if name.is_empty() || name == "." || name == ".." {
+        return "file".to_string();
+    }
+    if name.len() <= FILENAME_MAX {
+        return name.to_string();
+    }
+    let ext = match name.rfind('.') {
+        Some(at) if at > 0 && name.len() - at <= 16 => &name[at..],
+        Some(_) | None => "",
+    };
+    let mut stem = &name[..name.len() - ext.len()];
+    let mut end = FILENAME_MAX - ext.len();
+    while !stem.is_char_boundary(end) {
+        end -= 1;
+    }
+    stem = stem[..end].trim_end();
+    format!("{stem}{ext}")
+}
+
+fn mime_token(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes().all(|b| {
+            b.is_ascii_alphanumeric()
+                || matches!(
+                    b,
+                    b'!' | b'#' | b'$' | b'&' | b'^' | b'_' | b'.' | b'+' | b'-'
+                )
+        })
+}
+
+/// The content type to store for an uploaded `raw` one: `type/subtype` in lowercase without
+/// parameters, at most `MIME_MAX` bytes; anything else becomes `application/octet-stream`.
+pub(crate) fn clean_mime(raw: &str) -> String {
+    let essence = raw
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match essence.split_once('/') {
+        Some((kind, sub)) if essence.len() <= MIME_MAX && mime_token(kind) && mime_token(sub) => {
+            essence
+        }
+        Some(_) | None => NEUTRAL_MIME.to_string(),
+    }
+}
+
+/// The operator's upload limits.
+#[derive(Clone, Copy, Debug)]
+pub struct UploadLimits {
+    /// Most bytes of one account's files kept at once (uploads live a day); 0 for no limit.
+    pub budget: u64,
+    /// Most bytes of upload bodies held in memory at once across all requests.
+    pub buffer: u64,
+}
+
+impl Default for UploadLimits {
+    fn default() -> UploadLimits {
+        UploadLimits {
+            budget: DEFAULT_BUDGET_MIB * 1024 * 1024,
+            buffer: DEFAULT_BUFFER_MIB * 1024 * 1024,
+        }
+    }
+}
+
+pub const DEFAULT_BUDGET_MIB: u64 = 2048;
+pub const DEFAULT_BUFFER_MIB: u64 = 256;
+
+static LIMITS: std::sync::OnceLock<UploadLimits> = std::sync::OnceLock::new();
+static BUFFER: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+    std::sync::OnceLock::new();
+
+/// Sets the upload limits once at startup.
+pub fn configure(limits: UploadLimits) {
+    let _ = LIMITS.set(limits);
+}
+
+fn limits() -> UploadLimits {
+    LIMITS.get().copied().unwrap_or_default()
+}
+
+/// Upload bodies in memory, counted in KiB.
+fn buffer() -> std::sync::Arc<tokio::sync::Semaphore> {
+    BUFFER
+        .get_or_init(|| {
+            let kib = (limits().buffer / 1024).clamp(MAX_SIZE as u64 / 1024, u32::MAX as u64);
+            std::sync::Arc::new(tokio::sync::Semaphore::new(kib as usize))
+        })
+        .clone()
+}
+
+const BUFFER_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+/// How long an upload body may send nothing before it is dropped with 408.
+const IDLE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Longest an upload body may take to arrive.
+const BODY_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
+/// Most upload bodies one account reads at once (its own uploads and those of its webhooks).
+pub const UPLOADS_PER_ACCOUNT: usize = 3;
+
+static READING: std::sync::LazyLock<crate::api::budget::Slots> =
+    std::sync::LazyLock::new(|| crate::api::budget::Slots::new(UPLOADS_PER_ACCOUNT));
+
+/// How long reading an upload body may wait, for tests to shorten.
+#[derive(Clone, Copy)]
+struct Waits {
+    /// For room in the upload buffer.
+    room: std::time::Duration,
+    /// For the next piece of the body.
+    idle: std::time::Duration,
+    /// For the whole body.
+    body: std::time::Duration,
+}
+
+const WAITS: Waits = Waits {
+    room: BUFFER_WAIT,
+    idle: IDLE_WAIT,
+    body: BODY_WAIT,
+};
+
+/// One of the `UPLOADS_PER_ACCOUNT` places of the account an upload is charged to, held while
+/// its body is read and stored. 429 when the account already reads that many.
+pub(crate) fn reading_slot(db: &Db, account: &str) -> Result<crate::api::budget::Slot, ApiError> {
+    READING
+        .enter(format!("{}\n{account}", crate::db::pool_key(db)))
+        .ok_or_else(|| {
+            ApiError(
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Too many uploads at once: up to {UPLOADS_PER_ACCOUNT} per account"),
+            )
+        })
+}
+
+/// The `Content-Length` of a request, the most its file can be.
+pub(crate) fn declared_length(headers: &axum::http::HeaderMap) -> Option<u64> {
+    headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse().ok())
+}
+
+fn too_large() -> ApiError {
+    ApiError(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "File exceeds 25MB limit".to_string(),
+    )
+}
+
+/// An upload body held in memory, counted against the instance-wide upload buffer and its
+/// account's uploads at once until it is dropped.
+pub(crate) struct Buffered {
+    pub data: Vec<u8>,
+    _held: tokio::sync::OwnedSemaphorePermit,
+    _slot: crate::api::budget::Slot,
+}
+
+/// Reads one multipart file part of a request that declared `declared` bytes (`None`: not
+/// declared). Room in the upload buffer for the whole file (the declared length, at most
+/// `MAX_SIZE`) is taken once before reading, so a body never waits for more room while it holds
+/// some; when the buffer stays full the upload is refused with 503. A body that sends nothing
+/// for `IDLE_WAIT`, or takes longer than `BODY_WAIT`, is dropped with 408 and its room given
+/// back. `slot` is the account's place among its uploads at once.
+pub(crate) async fn read_file(
+    field: axum::extract::multipart::Field<'_>,
+    declared: Option<u64>,
+    slot: crate::api::budget::Slot,
+) -> Result<Buffered, ApiError> {
+    read_chunks(field, declared, buffer(), WAITS, slot).await
+}
+
+async fn read_chunks<S, E>(
+    stream: S,
+    declared: Option<u64>,
+    buffer: std::sync::Arc<tokio::sync::Semaphore>,
+    waits: Waits,
+    slot: crate::api::budget::Slot,
+) -> Result<Buffered, ApiError>
+where
+    S: futures_util::Stream<Item = Result<axum::body::Bytes, E>>,
+    E: std::fmt::Display,
+{
+    use futures_util::StreamExt;
+    let most = declared.map_or(MAX_SIZE, |n| n.min(MAX_SIZE as u64) as usize);
+    let kib = u32::try_from(most.div_ceil(1024)).map_err(|_| too_large())?;
+    let held = tokio::time::timeout(waits.room, buffer.acquire_many_owned(kib))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .ok_or_else(|| {
+            ApiError(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Too many uploads right now, try again in a moment".to_string(),
+            )
+        })?;
+    let stalled = || {
+        ApiError(
+            StatusCode::REQUEST_TIMEOUT,
+            "The upload stopped sending data".to_string(),
+        )
+    };
+    let end = tokio::time::Instant::now() + waits.body;
+    let mut stream = std::pin::pin!(stream);
+    let mut data: Vec<u8> = Vec::new();
+    loop {
+        let next = (tokio::time::Instant::now() + waits.idle).min(end);
+        let chunk = match tokio::time::timeout_at(next, stream.next()).await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(_) => return Err(stalled()),
+        };
+        let chunk = chunk.map_err(|e| ApiError(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))?;
+        if data.len() + chunk.len() > most {
+            return Err(too_large());
+        }
+        data.extend_from_slice(&chunk);
+    }
+    Ok(Buffered {
+        data,
+        _held: held,
+        _slot: slot,
+    })
+}
+
+fn fmt_bytes(n: u64) -> String {
+    const MIB: u64 = 1024 * 1024;
+    match n {
+        n if n >= 1024 * MIB && n % (1024 * MIB) == 0 => format!("{} GiB", n / (1024 * MIB)),
+        n if n >= MIB => format!("{} MiB", n / MIB),
+        n => format!("{n} bytes"),
+    }
+}
+
+/// Who an upload is charged to: an account for its own uploads, or, for an incoming webhook's
+/// upload, the webhook's owner and also the webhooks of its server together.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Charge<'a> {
+    /// The account whose budget the file counts against.
+    pub account: &'a str,
+    /// For webhook uploads, the server whose webhooks share one more budget.
+    pub hooks_of: Option<&'a str>,
+}
+
+impl<'a> Charge<'a> {
+    pub(crate) fn own(account: &'a str) -> Charge<'a> {
+        Charge {
+            account,
+            hooks_of: None,
+        }
+    }
+}
+
+fn over_budget(budget: u64, charge: Charge<'_>) -> ApiError {
+    let whose = match charge.hooks_of {
+        Some(_) => "files from this webhook's owner (or from all webhooks of its server)",
+        None => "your files",
+    };
+    ApiError(
+        StatusCode::TOO_MANY_REQUESTS,
+        format!(
+            "Upload limit reached: up to {} of {whose} are kept at once, and each is deleted 1 day after upload",
+            fmt_bytes(budget)
+        ),
+    )
+}
+
+/// The files counted against an account: its own uploads and those charged to it.
+const ACCOUNT_USED: &str = "SELECT CAST(COALESCE(SUM(size), 0) AS BIGINT) FROM media WHERE (uploader = $1 OR charged_to = $1) AND uploaded_at > $2";
+/// The files of a server's webhooks.
+const HOOKS_USED: &str = "SELECT CAST(COALESCE(SUM(size), 0) AS BIGINT) FROM media WHERE charged_server = $1 AND uploaded_at > $2";
+
+/// Refuses an upload of `adding` bytes that would take `charge` past the storage budget.
+pub(crate) async fn check_budget(
+    db: &Db,
+    charge: Charge<'_>,
+    adding: u64,
+    budget: u64,
+) -> Result<(), ApiError> {
+    if budget == 0 {
+        return Ok(());
+    }
+    let mut checks = vec![(ACCOUNT_USED, charge.account)];
+    if let Some(server) = charge.hooks_of {
+        checks.push((HOOKS_USED, server));
+    }
+    for (sql, key) in checks {
+        let used: i64 = sqlx::query(sql)
+            .bind(key)
+            .bind(now() - MEDIA_TTL_SECS)
+            .fetch_one(db)
+            .await?
+            .try_get(0)?;
+        if (used.max(0) as u64).saturating_add(adding) > budget {
+            return Err(over_budget(budget, charge));
+        }
+    }
+    Ok(())
+}
+
+/// The upload budget of this instance in bytes (0: no limit).
+pub(crate) fn budget() -> u64 {
+    limits().budget
+}
 
 fn s3_key(id: &str) -> String {
     format!("media/{id}")
@@ -52,6 +369,8 @@ async fn fresh_id(db: &Db) -> Result<String, ApiError> {
 
 pub(crate) const MEDIA_CHUNK: usize = 256 * 1024;
 
+/// Stores a file with no budget check, for tests.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn store_media(
     db: &Db,
@@ -63,21 +382,85 @@ pub(crate) async fn store_media(
     uploader: &str,
     uploaded_at: i64,
 ) -> Result<(), ApiError> {
+    let file = NewMedia {
+        id,
+        filename,
+        mime,
+        size,
+        in_db,
+        uploader,
+        uploaded_at,
+    };
+    store_within(db, &file, Charge::own(uploader), 0).await
+}
+
+struct NewMedia<'a> {
+    id: &'a str,
+    filename: &'a str,
+    mime: &'a str,
+    size: i64,
+    in_db: Option<&'a [u8]>,
+    uploader: &'a str,
+    uploaded_at: i64,
+}
+
+/// Stores `file` unless it takes `charge` past `budget` bytes of live files (0 for no limit):
+/// the charged account, and for a webhook upload also the webhooks of its server together. The
+/// check and the insert are one statement in one transaction: SQLite takes its write lock
+/// before the statement reads, and on Postgres advisory locks on the account (then the server)
+/// are held until commit, so concurrent uploads cannot pass the budget together.
+async fn store_within(
+    db: &Db,
+    file: &NewMedia<'_>,
+    charge: Charge<'_>,
+    budget: u64,
+) -> Result<(), ApiError> {
     let mut tx = db.begin().await?;
-    sqlx::query(
-        "INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at) VALUES($1, $2, $3, $4, NULL, $5, $6)",
+    if budget > 0 && !crate::db::is_sqlite(db) {
+        let mut keys = vec![format!("media budget:{}", charge.account)];
+        if let Some(server) = charge.hooks_of {
+            keys.push(format!("media budget:hooks:{server}"));
+        }
+        for key in keys {
+            sqlx::query("SELECT COUNT(*) FROM pg_advisory_xact_lock(hashtextextended($1, 0))")
+                .bind(key)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    let charged_to = charge
+        .hooks_of
+        .map(|_| charge.account.to_string())
+        .filter(|account| account != file.uploader);
+    let inserted = sqlx::query(
+        "INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at, charged_to, charged_server) SELECT $1, $2, $3, $4, NULL, $5, $6, $9, $10 WHERE $7 = 0 OR ((SELECT COALESCE(SUM(size), 0) FROM media WHERE (uploader = $11 OR charged_to = $11) AND uploaded_at > $8) + $4 <= $7 AND ($10 IS NULL OR (SELECT COALESCE(SUM(size), 0) FROM media WHERE charged_server = $10 AND uploaded_at > $8) + $4 <= $7))",
     )
-    .bind(id)
-    .bind(filename)
-    .bind(mime)
-    .bind(size)
-    .bind(uploader)
-    .bind(uploaded_at)
+    .bind(file.id)
+    .bind(file.filename)
+    .bind(file.mime)
+    .bind(file.size)
+    .bind(file.uploader)
+    .bind(file.uploaded_at)
+    .bind(budget.min(i64::MAX as u64) as i64)
+    .bind(file.uploaded_at - MEDIA_TTL_SECS)
+    .bind(charged_to)
+    .bind(charge.hooks_of.map(str::to_string))
+    .bind(charge.account)
     .execute(&mut *tx)
-    .await?;
-    for (seq, chunk) in in_db.unwrap_or_default().chunks(MEDIA_CHUNK).enumerate() {
+    .await?
+    .rows_affected();
+    if inserted == 0 {
+        tx.rollback().await?;
+        return Err(over_budget(budget, charge));
+    }
+    for (seq, chunk) in file
+        .in_db
+        .unwrap_or_default()
+        .chunks(MEDIA_CHUNK)
+        .enumerate()
+    {
         sqlx::query("INSERT INTO media_chunks(media_id, seq, data) VALUES($1, $2, $3)")
-            .bind(id)
+            .bind(file.id)
             .bind(seq as i64)
             .bind(chunk.to_vec())
             .execute(&mut *tx)
@@ -90,17 +473,25 @@ pub(crate) async fn store_media(
 /// Upload a file
 ///
 /// Stores one file for attaching to a message: send it as the first part of a
-/// `multipart/form-data` body (any field name). The part's file name (default `file`) and
-/// content type (default `application/octet-stream`) are kept. Then pass the returned `id` as
+/// `multipart/form-data` body (any field name). The part's file name (default `file`) is kept
+/// without path parts and control characters, cut to 255 bytes (keeping a short extension);
+/// its content type (default `application/octet-stream`) is kept as `type/subtype` without
+/// parameters when it is at most 127 bytes, else stored as `application/octet-stream`. Then
+/// pass the returned `id` as
 /// `media_id` when sending a message; only the uploader can attach it, and only to one
 /// message. The file is deleted 24 hours after upload whether attached or not, and messages
-/// carrying it then show it as removed (`media_removed` event). At most 25 MiB.
+/// carrying it then show it as removed (`media_removed` event). At most 25 MiB per file, and
+/// at most the instance's per-account budget (`UPLOAD_BUDGET_MIB`, 2 GiB unless set) of your
+/// files kept at once (files your webhooks sent count too). At most 3 of your uploads are read
+/// at once; a body that sends nothing for 30 seconds (or takes over 10 minutes) is dropped with
+/// 408.
 ///
 /// Requires a bearer token and the instance's uploads setting. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/media", tag = "Media", request_body(content = Vec<u8>, content_type = "multipart/form-data", description = "A multipart form whose first part is the file"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef), (status = 400, description = "No file part (JSON `No file provided`) or a malformed multipart body (JSON). A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "File uploads are disabled on this instance", body = ApiErrorBody), (status = 413, description = "File over 25 MiB (`File exceeds 25MB limit`). A request body over 26 MiB is cut off while the file is read and answers with this status and the JSON error \"Error parsing `multipart/form-data` request\"", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket (shared with register, login, word hints, password change and guest access) or the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/media", tag = "Media", request_body(content = Vec<u8>, content_type = "multipart/form-data", description = "A multipart form whose first part is the file"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef), (status = 400, description = "No file part (JSON `No file provided`) or a malformed multipart body (JSON). A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "File uploads are disabled on this instance", body = ApiErrorBody), (status = 413, description = "File over 25 MiB (`File exceeds 25MB limit`). A request body over 26 MiB is cut off while the file is read and answers with this status and the JSON error \"Error parsing `multipart/form-data` request\"", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket (shared with register, login, word hints, password change and guest access) or the general bucket (plain text), the per-account budget is used up (JSON `Upload limit reached: ...`; space frees up as your files expire), or 3 of your uploads are already being read (JSON `Too many uploads at once: ...`)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`: the instance holds as many upload bodies in memory as it allows (each upload takes room for its whole declared size first)", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn upload_media(
     State(state): State<AppState>,
     Authed(user): Authed,
+    headers: axum::http::HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<MediaRef>, ApiError> {
     if !Settings::cached(&state.db).await.asset_uploads {
@@ -109,21 +500,26 @@ pub(crate) async fn upload_media(
             "File uploads are disabled".to_string(),
         ));
     }
+    check_budget(&state.db, Charge::own(&user.username), 1, budget()).await?;
+    let slot = reading_slot(&state.db, &user.username)?;
+    let declared = declared_length(&headers);
     let field = multipart
         .next_field()
         .await
         .map_err(|e| ApiError(StatusCode::BAD_REQUEST, e.to_string()))?
         .ok_or_else(|| bad("No file provided"))?;
-    let filename = field.file_name().unwrap_or("file").to_string();
-    let mime = field
-        .content_type()
-        .unwrap_or("application/octet-stream")
-        .to_string();
-    let data = field
-        .bytes()
-        .await
-        .map_err(|e| ApiError(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))?;
-    let (id, uploaded_at) = save_upload(&state, &filename, &mime, &data, &user.username).await?;
+    let filename = clean_filename(field.file_name().unwrap_or("file"));
+    let mime = clean_mime(field.content_type().unwrap_or(NEUTRAL_MIME));
+    let body = read_file(field, declared, slot).await?;
+    let (id, uploaded_at) = save_upload(
+        &state,
+        &filename,
+        &mime,
+        &body.data,
+        &user.username,
+        Charge::own(&user.username),
+    )
+    .await?;
     Ok(Json(MediaRef::server(
         id,
         filename,
@@ -132,21 +528,35 @@ pub(crate) async fn upload_media(
     )))
 }
 
-/// Stores an uploaded file for `uploader` (S3 when configured, else the database). Returns its
-/// id and upload time.
+/// Stores an uploaded file for `uploader`, counted against `charge` (S3 when configured, else
+/// the database). Returns its id and upload time.
 pub(crate) async fn save_upload(
     state: &AppState,
     filename: &str,
     mime: &str,
     data: &[u8],
     uploader: &str,
+    charge: Charge<'_>,
+) -> Result<(String, i64), ApiError> {
+    save_within(state, filename, mime, data, uploader, charge, budget()).await
+}
+
+async fn save_within(
+    state: &AppState,
+    filename: &str,
+    mime: &str,
+    data: &[u8],
+    uploader: &str,
+    charge: Charge<'_>,
+    budget: u64,
 ) -> Result<(String, i64), ApiError> {
     if data.len() > MAX_SIZE {
-        return Err(ApiError(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "File exceeds 25MB limit".to_string(),
-        ));
+        return Err(too_large());
     }
+    let filename = &clean_filename(filename);
+    let mime = &clean_mime(mime);
+    // A cheap early refusal before the S3 write; `store_within` makes the binding check.
+    check_budget(&state.db, charge, data.len() as u64, budget).await?;
     let id = fresh_id(&state.db).await?;
     let uploaded_at = now();
     let in_db = match &state.s3 {
@@ -159,17 +569,19 @@ pub(crate) async fn save_upload(
         }
         None => Some(data),
     };
-    store_media(
-        &state.db,
-        &id,
+    let file = NewMedia {
+        id: &id,
         filename,
         mime,
-        data.len() as i64,
+        size: data.len() as i64,
         in_db,
         uploader,
         uploaded_at,
-    )
-    .await?;
+    };
+    if let Err(e) = store_within(&state.db, &file, charge, budget).await {
+        s3_delete(state.s3.as_deref(), &id).await;
+        return Err(e);
+    }
     Ok((id, uploaded_at))
 }
 
@@ -626,14 +1038,437 @@ pub async fn sweep_expired(state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::{
-        SWEEP_BATCH, content_disposition, delete_media, download_media, media_view_ok, store_media,
-        sweep,
+        Charge, FILENAME_MAX, MAX_SIZE, MEDIA_TTL_SECS, MIME_MAX, NEUTRAL_MIME, SWEEP_BATCH,
+        UPLOADS_PER_ACCOUNT, Waits, check_budget, clean_filename, clean_mime, content_disposition,
+        delete_media, download_media, media_view_ok, read_chunks, reading_slot, save_within,
+        store_media, sweep,
     };
     use crate::api::test_util::{done, mem_user, temp_state};
     use crate::api::{ApiError, Authed};
     use crate::db::{now, open};
     use axum::extract::{Path, State};
+    use axum::http::StatusCode;
     use sqlx::Row;
+
+    #[test]
+    fn file_names_are_cleaned_and_capped() {
+        let long = format!("{}.tar.gz", "a".repeat(300));
+        let cut = clean_filename(&long);
+        assert!(cut.len() <= FILENAME_MAX, "{}", cut.len());
+        assert!(cut.ends_with(".gz"), "{cut}");
+        let wide = format!("{}.txt", "\u{00e9}".repeat(200));
+        let cut = clean_filename(&wide);
+        assert!(cut.len() <= FILENAME_MAX && cut.ends_with(".txt"), "{cut}");
+        assert_eq!(clean_filename("../../etc/passwd"), "passwd");
+        assert_eq!(clean_filename("C:\\Users\\me\\a.png"), "a.png");
+        assert_eq!(clean_filename("a\r\nb\u{0}.txt"), "ab.txt");
+        assert_eq!(clean_filename("evil\u{202e}gpj.exe"), "evilgpj.exe");
+        assert_eq!(clean_filename("  spaced.txt  "), "spaced.txt");
+        for empty in ["", "   ", "\n", "..", "dir/"] {
+            assert_eq!(clean_filename(empty), "file", "{empty:?}");
+        }
+        assert_eq!(clean_filename(&"b".repeat(400)).len(), FILENAME_MAX);
+    }
+
+    #[test]
+    fn content_types_are_kept_only_when_well_formed() {
+        assert_eq!(clean_mime("image/png"), "image/png");
+        assert_eq!(clean_mime("Text/Plain; charset=utf-8"), "text/plain");
+        let padded = format!("text/plain; x={}", "y".repeat(10_000));
+        assert_eq!(clean_mime(&padded), "text/plain");
+        for bad in [
+            "text plain",
+            "text/plain extra",
+            "a/b/c",
+            "text/",
+            "/plain",
+            "",
+            "image/png\r\nX-Evil: 1",
+        ] {
+            assert_eq!(clean_mime(bad), NEUTRAL_MIME, "{bad:?}");
+        }
+        let long = format!("application/{}", "x".repeat(MIME_MAX));
+        assert_eq!(clean_mime(&long), NEUTRAL_MIME);
+    }
+
+    #[tokio::test]
+    async fn the_budget_refuses_the_upload_that_crosses_it_and_frees_with_time() {
+        let (state, path) = temp_state("media_budget").await;
+        let db = &state.db;
+        let mib = 1024 * 1024;
+        store_media(
+            db,
+            &"aa".repeat(16),
+            "a",
+            NEUTRAL_MIME,
+            3 * mib,
+            None,
+            "alice",
+            now(),
+        )
+        .await
+        .expect("store");
+        store_media(
+            db,
+            &"bb".repeat(16),
+            "b",
+            NEUTRAL_MIME,
+            9 * mib,
+            None,
+            "bob",
+            now(),
+        )
+        .await
+        .expect("store");
+        let budget = 4 * mib as u64;
+        assert!(
+            check_budget(db, Charge::own("alice"), mib as u64, budget)
+                .await
+                .is_ok()
+        );
+        let refused = check_budget(db, Charge::own("alice"), mib as u64 + 1, budget).await;
+        match refused {
+            Err(ApiError(code, msg)) => {
+                assert_eq!(code, StatusCode::TOO_MANY_REQUESTS);
+                assert!(msg.starts_with("Upload limit reached"), "{msg}");
+                assert!(msg.contains("4 MiB"), "{msg}");
+                assert!(msg.is_ascii());
+            }
+            Ok(()) => panic!("crossing the budget is refused"),
+        }
+        assert!(
+            check_budget(db, Charge::own("alice"), u64::MAX, 0)
+                .await
+                .is_ok(),
+            "0 = no limit"
+        );
+        sqlx::query("UPDATE media SET uploaded_at = $1 WHERE uploader = 'alice'")
+            .bind(now() - MEDIA_TTL_SECS - 1)
+            .execute(db)
+            .await
+            .expect("age");
+        assert!(
+            check_budget(db, Charge::own("alice"), budget, budget)
+                .await
+                .is_ok(),
+            "space frees up once files are a day old"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_uploads_never_pass_the_budget_together() {
+        let (state, path) = temp_state("media_budget_race").await;
+        let kib = 1024u64;
+        let budget = 10 * kib;
+        let data = vec![7u8; kib as usize];
+        let uploads = (0..40).map(|_| {
+            save_within(
+                &state,
+                "a.bin",
+                NEUTRAL_MIME,
+                &data,
+                "alice",
+                Charge::own("alice"),
+                budget,
+            )
+        });
+        let results = futures_util::future::join_all(uploads).await;
+        let stored = results.iter().filter(|r| r.is_ok()).count();
+        for r in &results {
+            if let Err(ApiError(code, msg)) = r {
+                assert_eq!(*code, StatusCode::TOO_MANY_REQUESTS, "{msg}");
+            }
+        }
+        let (rows, used): (i64, i64) = {
+            let row = sqlx::query(
+                "SELECT COUNT(*), CAST(COALESCE(SUM(size), 0) AS BIGINT) FROM media WHERE uploader = 'alice'",
+            )
+            .fetch_one(&state.db)
+            .await
+            .expect("sum");
+            (row.get(0), row.get(1))
+        };
+        assert_eq!(rows as usize, stored);
+        assert!(
+            used as u64 <= budget,
+            "{used} bytes stored past a {budget} byte budget"
+        );
+        assert_eq!(stored, 10, "the budget is filled exactly");
+        let chunks: i64 = sqlx::query("SELECT COUNT(*) FROM media_chunks")
+            .fetch_one(&state.db)
+            .await
+            .expect("chunks")
+            .get(0);
+        assert_eq!(chunks, 10, "refused uploads leave no chunks behind");
+        done(state, path).await;
+    }
+
+    fn test_waits(room_ms: u64, idle_ms: u64) -> Waits {
+        Waits {
+            room: std::time::Duration::from_millis(room_ms),
+            idle: std::time::Duration::from_millis(idle_ms),
+            body: std::time::Duration::from_secs(60),
+        }
+    }
+
+    fn pieces(
+        n: usize,
+        kib: usize,
+    ) -> impl futures_util::Stream<Item = Result<axum::body::Bytes, std::io::Error>> {
+        use futures_util::StreamExt;
+        futures_util::stream::iter(0..n).then(move |_| async move {
+            tokio::task::yield_now().await;
+            Ok(axum::body::Bytes::from(vec![7u8; kib * 1024]))
+        })
+    }
+
+    /// A body that sends one piece of `kib` KiB and then nothing.
+    fn stalled(
+        kib: usize,
+    ) -> impl futures_util::Stream<Item = Result<axum::body::Bytes, std::io::Error>> {
+        use futures_util::StreamExt;
+        pieces(1, kib).chain(futures_util::stream::pending())
+    }
+
+    fn slot(db: &crate::db::Db, who: &str) -> crate::api::budget::Slot {
+        reading_slot(db, who).expect("slot")
+    }
+
+    #[tokio::test]
+    async fn the_whole_body_is_reserved_once_and_given_back() {
+        let (state, path) = temp_state("media_reserve").await;
+        let db = &state.db;
+        let room = std::sync::Arc::new(tokio::sync::Semaphore::new(64));
+        let first = read_chunks(
+            pieces(3, 16),
+            Some(48 * 1024),
+            room.clone(),
+            test_waits(50, 5000),
+            slot(db, "a"),
+        )
+        .await
+        .expect("fits");
+        assert_eq!(first.data.len(), 48 * 1024);
+        assert_eq!(room.available_permits(), 16);
+        let busy = read_chunks(
+            pieces(2, 16),
+            Some(32 * 1024),
+            room.clone(),
+            test_waits(50, 5000),
+            slot(db, "b"),
+        )
+        .await;
+        assert_eq!(
+            busy.err().map(|ApiError(c, _)| c),
+            Some(StatusCode::SERVICE_UNAVAILABLE),
+            "no room for the declared length: refused before reading"
+        );
+        assert_eq!(room.available_permits(), 16, "a refused body holds nothing");
+        drop(first);
+        assert_eq!(
+            room.available_permits(),
+            64,
+            "a stored body gives its room back"
+        );
+        let lying = read_chunks(
+            pieces(3, 16),
+            Some(16 * 1024),
+            room.clone(),
+            test_waits(50, 5000),
+            slot(db, "c"),
+        )
+        .await;
+        assert_eq!(
+            lying.err().map(|ApiError(c, _)| c),
+            Some(StatusCode::PAYLOAD_TOO_LARGE),
+            "never more than the room taken"
+        );
+        let big = read_chunks(
+            pieces(MAX_SIZE / (16 * 1024) + 1, 16),
+            None,
+            std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_SIZE / 1024)),
+            test_waits(50, 5000),
+            slot(db, "d"),
+        )
+        .await;
+        assert_eq!(
+            big.err().map(|ApiError(c, _)| c),
+            Some(StatusCode::PAYLOAD_TOO_LARGE)
+        );
+        assert_eq!(room.available_permits(), 64);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn stalled_uploads_of_one_account_do_not_block_others() {
+        let (state, path) = temp_state("media_stalled").await;
+        let db = state.db.clone();
+        let room = std::sync::Arc::new(tokio::sync::Semaphore::new(100));
+        let waits = test_waits(5000, 300);
+        let stuck: Vec<_> = (0..UPLOADS_PER_ACCOUNT)
+            .map(|_| {
+                let (room, held) = (room.clone(), slot(&db, "mallory"));
+                tokio::spawn(read_chunks(stalled(1), Some(30 * 1024), room, waits, held))
+            })
+            .collect();
+        let ceiling = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while room.available_permits() > 10 {
+            assert!(
+                std::time::Instant::now() < ceiling,
+                "each body reserves its declared size"
+            );
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            matches!(
+                reading_slot(&db, "mallory"),
+                Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+            ),
+            "one account reads at most {UPLOADS_PER_ACCOUNT} bodies at once"
+        );
+        let small = read_chunks(
+            pieces(1, 8),
+            Some(8 * 1024),
+            room.clone(),
+            waits,
+            slot(&db, "alice"),
+        )
+        .await
+        .expect("another account's upload goes through");
+        drop(small);
+        let started = std::time::Instant::now();
+        let large = read_chunks(
+            pieces(4, 8),
+            Some(32 * 1024),
+            room.clone(),
+            waits,
+            slot(&db, "bob"),
+        )
+        .await
+        .expect("room comes back once the stalled bodies are dropped");
+        assert_eq!(large.data.len(), 32 * 1024);
+        assert!(started.elapsed() < std::time::Duration::from_secs(4));
+        for upload in stuck {
+            let res = upload.await.expect("task");
+            assert_eq!(
+                res.err().map(|ApiError(c, _)| c),
+                Some(StatusCode::REQUEST_TIMEOUT)
+            );
+        }
+        drop(large);
+        assert_eq!(room.available_permits(), 100);
+        assert!(
+            reading_slot(&db, "mallory").is_ok(),
+            "the account's places are given back"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_large_uploads_all_finish() {
+        let (state, path) = temp_state("media_concurrent").await;
+        let room = std::sync::Arc::new(tokio::sync::Semaphore::new(100));
+        let uploads = (0..8).map(|n| {
+            let (room, held) = (room.clone(), slot(&state.db, &format!("user{n}")));
+            tokio::spawn(async move {
+                let body = read_chunks(
+                    pieces(5, 8),
+                    Some(40 * 1024),
+                    room,
+                    test_waits(20_000, 5000),
+                    held,
+                )
+                .await?;
+                tokio::task::yield_now().await;
+                Ok::<usize, ApiError>(body.data.len())
+            })
+        });
+        for done in futures_util::future::join_all(uploads).await {
+            assert_eq!(
+                done.expect("task").ok(),
+                Some(40 * 1024),
+                "every upload finishes"
+            );
+        }
+        assert_eq!(room.available_permits(), 100);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn webhook_uploads_count_against_the_owner_and_the_server() {
+        let (state, path) = temp_state("media_hook_budget").await;
+        let kib = 1024u64;
+        let budget = 10 * kib;
+        let data = vec![7u8; 6 * kib as usize];
+        let hook = |account, server| Charge {
+            account,
+            hooks_of: Some(server),
+        };
+        let save = |uploader: &'static str, charge: Charge<'static>| {
+            let (state, data) = (state.clone(), data.clone());
+            async move {
+                save_within(
+                    &state,
+                    "a.bin",
+                    NEUTRAL_MIME,
+                    &data,
+                    uploader,
+                    charge,
+                    budget,
+                )
+                .await
+            }
+        };
+        let refused = |r: Result<(String, i64), ApiError>| {
+            matches!(r, Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _)))
+        };
+        assert!(save("@1", hook("alice", "s1")).await.is_ok());
+        assert!(
+            refused(save("@2", hook("alice", "s2")).await),
+            "a second webhook of the same owner"
+        );
+        assert!(
+            refused(save("alice", Charge::own("alice")).await),
+            "the owner's own uploads share the budget"
+        );
+        assert!(refused(
+            check_budget(&state.db, hook("alice", "s3"), 6 * kib, budget)
+                .await
+                .map(|_| (String::new(), 0))
+        ));
+        assert!(
+            refused(save("@3", hook("bob", "s1")).await),
+            "the server's webhooks together"
+        );
+        assert!(save("@4", hook("bob", "s2")).await.is_ok());
+        assert!(save("carol", Charge::own("carol")).await.is_ok());
+        let charged: Vec<(String, Option<String>, Option<String>)> =
+            sqlx::query("SELECT uploader, charged_to, charged_server FROM media ORDER BY uploader")
+                .fetch_all(&state.db)
+                .await
+                .expect("rows")
+                .iter()
+                .map(|r| (r.get(0), r.get(1), r.get(2)))
+                .collect();
+        assert_eq!(
+            charged,
+            vec![
+                (
+                    "@1".to_string(),
+                    Some("alice".to_string()),
+                    Some("s1".to_string())
+                ),
+                (
+                    "@4".to_string(),
+                    Some("bob".to_string()),
+                    Some("s2".to_string())
+                ),
+                ("carol".to_string(), None, None),
+            ]
+        );
+        done(state, path).await;
+    }
 
     #[test]
     fn disposition_keeps_unicode() {

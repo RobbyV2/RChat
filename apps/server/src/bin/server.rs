@@ -88,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
     hub.set_limits(config.ws_limits());
     let state = AppState::new(db, hub, config.s3()?, bus, instance);
     rust_next::api::webhooks::configure(config.outbound()?);
+    rust_next::api::media::configure(config.upload_limits());
     rust_next::api::webhooks::spawn(&state, roles.jobs);
     rust_next::ws::spawn_aftermath(&state);
     if let Some(bus) = &state.bus {

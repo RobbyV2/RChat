@@ -168,7 +168,15 @@ impl Policy {
 
     fn address_ok(&self, ip: IpAddr) -> bool {
         let ip = ip.to_canonical();
-        !blocked(ip) && !self.own.iter().any(|o| o.to_canonical() == ip)
+        let inner = match ip {
+            IpAddr::V6(v6) => embedded_v4(v6).map(IpAddr::V4),
+            IpAddr::V4(_) => None,
+        };
+        !blocked(ip)
+            && !self.own.iter().any(|o| {
+                let o = o.to_canonical();
+                o == ip || Some(o) == inner
+            })
     }
 }
 
@@ -299,7 +307,10 @@ mod tests {
                 .iter()
                 .map(|a| AllowedHost::parse(a).expect("host"))
                 .collect(),
-            own: vec!["203.0.113.7".parse().expect("ip")],
+            own: vec![
+                "203.0.113.7".parse().expect("ip"),
+                "93.184.216.40".parse().expect("ip"),
+            ],
             own_hosts: vec!["chat.example.org".to_string()],
         }
     }
@@ -333,6 +344,10 @@ mod tests {
             ("https://[64:ff9b::a9fe:a9fe]/", Err(Refusal::Address)),
             ("https://[2002:7f00:1::1]/", Err(Refusal::Address)),
             ("https://203.0.113.7/", Err(Refusal::Address)),
+            ("https://93.184.216.40/", Err(Refusal::Address)),
+            ("https://[64:ff9b::5db8:d828]/", Err(Refusal::Address)),
+            ("https://[2002:5db8:d828::1]/", Err(Refusal::Address)),
+            ("https://[::ffff:93.184.216.40]/", Err(Refusal::Address)),
             (
                 "https://chat.example.org/api/webhooks/1/x",
                 Err(Refusal::Address),

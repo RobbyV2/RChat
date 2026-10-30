@@ -142,7 +142,7 @@ impl std::fmt::Debug for Secret {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct AppConfig {
     pub app_mode: AppMode,
     pub host: String,
@@ -195,10 +195,25 @@ pub struct AppConfig {
     pub ice_servers: Option<String>,
     pub webhook_allowed_hosts: Option<String>,
     pub webhook_allow_http: bool,
+    pub upload_budget_mib: u64,
+    pub upload_buffer_mib: u64,
     #[serde(skip)]
     pub roles: Roles,
     #[serde(skip)]
     pub proxy_trust: ProxyTrust,
+}
+
+/// Prints no secrets: the S3 key, database and Redis URLs (passwords) and fixed ICE servers
+/// (TURN credentials) are left out along with everything else.
+impl std::fmt::Debug for AppConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppConfig")
+            .field("app_mode", &self.app_mode)
+            .field("host", &self.host)
+            .field("server_port", &self.server_port)
+            .field("port", &self.port)
+            .finish_non_exhaustive()
+    }
 }
 
 impl AppConfig {
@@ -232,6 +247,14 @@ impl AppConfig {
             .set_default("relay_max_port", i64::from(crate::relay::DEFAULT_MAX_PORT))?
             .set_default("relay_allow_private", false)?
             .set_default("webhook_allow_http", false)?
+            .set_default(
+                "upload_budget_mib",
+                crate::api::media::DEFAULT_BUDGET_MIB as i64,
+            )?
+            .set_default(
+                "upload_buffer_mib",
+                crate::api::media::DEFAULT_BUFFER_MIB as i64,
+            )?
             .set_default(
                 "relay_user_allocations",
                 crate::relay::DEFAULT_USER_ALLOCATIONS as i64,
@@ -286,13 +309,26 @@ impl AppConfig {
         config.ice()?;
         config.relay()?;
         config.outbound()?;
+        if config.upload_buffer_mib < 32 {
+            anyhow::bail!("UPLOAD_BUFFER_MIB must be at least 32");
+        }
         Ok(config)
+    }
+
+    /// `UPLOAD_BUDGET_MIB` (most MiB of one account's files kept at once, 0 for no limit) and
+    /// `UPLOAD_BUFFER_MIB` (most MiB of upload bodies in memory at once).
+    pub fn upload_limits(&self) -> crate::api::media::UploadLimits {
+        crate::api::media::UploadLimits {
+            budget: self.upload_budget_mib.saturating_mul(1024 * 1024),
+            buffer: self.upload_buffer_mib.saturating_mul(1024 * 1024),
+        }
     }
 
     /// The rules for outgoing webhook requests: `WEBHOOK_ALLOWED_HOSTS` (comma-separated
     /// `host` or `host:port` that may be private addresses), `WEBHOOK_ALLOW_HTTP` (plain http
     /// for those hosts only), and the instance's own addresses and host names (`PUBLIC_URL`,
-    /// `PUBLIC_API_URL`, `RELAY_PUBLIC_IP`) refused like private ones.
+    /// `PUBLIC_API_URL`, `PUBLIC_WS_URL`, `PUBLIC_PEERJS_URL`, `ALLOWED_HOSTS`, `RELAY_HOST`,
+    /// `RELAY_PUBLIC_IP`) refused like private ones. Link previews refuse the same addresses.
     ///
     /// Prefer `host:port` entries: a bare `host` opens every port of it, and an allowlisted
     /// domain skips the address check for whatever it resolves to, so whoever controls its DNS
@@ -307,9 +343,25 @@ impl AppConfig {
         {
             own.push(ip);
         }
-        for raw in [&self.public_url, &self.public_api_url]
-            .into_iter()
-            .flatten()
+        if let Ok(Some(host)) = self.relay_host() {
+            match host.parse::<IpAddr>() {
+                Ok(ip) => own.push(ip),
+                Err(_) => own_hosts.push(host),
+            }
+        }
+        if let Ok(hosts) =
+            crate::instance::parse_allowed_hosts(self.allowed_hosts.as_deref().unwrap_or_default())
+        {
+            own_hosts.extend(hosts.into_iter().map(|h| h.name));
+        }
+        for raw in [
+            &self.public_url,
+            &self.public_api_url,
+            &self.public_ws_url,
+            &self.public_peerjs_url,
+        ]
+        .into_iter()
+        .flatten()
         {
             if let Some(ip) = url::Url::parse(raw.trim())
                 .ok()
@@ -780,6 +832,52 @@ mod tests {
         assert_eq!(config.redis_hub_maxlen, 250_000);
         let low = env(&[("REDIS_HUB_MAXLEN", "10")]);
         assert!(AppConfig::load_from(&cli(None, None), low).is_err());
+    }
+
+    #[test]
+    fn upload_limits_default_and_parse() {
+        let load = |pairs: &[(&str, &str)]| AppConfig::load_from(&cli(None, None), env(pairs));
+        let limits = load(&[]).unwrap().upload_limits();
+        assert_eq!(limits.budget, 2048 * 1024 * 1024);
+        assert_eq!(limits.buffer, 256 * 1024 * 1024);
+        let set = load(&[("UPLOAD_BUDGET_MIB", "0"), ("UPLOAD_BUFFER_MIB", "64")])
+            .unwrap()
+            .upload_limits();
+        assert_eq!((set.budget, set.buffer), (0, 64 * 1024 * 1024));
+        assert!(load(&[("UPLOAD_BUFFER_MIB", "8")]).is_err());
+        let config = load(&[
+            ("S3_SECRET_KEY", "s3-hunter2"),
+            ("DATABASE_URL", "postgres://u:pg-hunter2@db/x"),
+            ("REDIS_URL", "redis://:redis-hunter2@r:6379"),
+        ])
+        .unwrap();
+        assert!(!format!("{config:?}").contains("hunter2"));
+    }
+
+    #[test]
+    fn previews_and_webhooks_refuse_every_own_host() {
+        let load = |pairs: &[(&str, &str)]| AppConfig::load_from(&cli(None, None), env(pairs));
+        let outbound = load(&[
+            ("PUBLIC_URL", "https://chat.example.org"),
+            ("PUBLIC_WS_URL", "wss://ws.example.org"),
+            ("PUBLIC_PEERJS_URL", "https://peer.example.org"),
+            ("ALLOWED_HOSTS", "alt.example.org:8443"),
+            ("RELAY_HOST", "relay.example.org"),
+            ("RELAY_PUBLIC_IP", "203.0.113.10"),
+        ])
+        .unwrap()
+        .outbound()
+        .unwrap();
+        for host in [
+            "chat.example.org",
+            "ws.example.org",
+            "peer.example.org",
+            "alt.example.org",
+            "relay.example.org",
+        ] {
+            assert!(outbound.own_hosts.iter().any(|h| h == host), "{host}");
+        }
+        assert!(outbound.own.contains(&"203.0.113.10".parse().unwrap()));
     }
 
     #[test]

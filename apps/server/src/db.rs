@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(na
 CREATE TABLE IF NOT EXISTS channel_perms(channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view INTEGER NOT NULL DEFAULT 1, can_send INTEGER NOT NULL DEFAULT 1, can_read_history INTEGER NOT NULL DEFAULT 1, restrict_set INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(channel_id, subject));
 CREATE TABLE IF NOT EXISTS dms(id INTEGER PRIMARY KEY AUTOINCREMENT, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id INTEGER NOT NULL DEFAULT 0, closed_a INTEGER NOT NULL DEFAULT 0, closed_b INTEGER NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
 CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER REFERENCES channels(id) ON DELETE CASCADE, dm_id INTEGER REFERENCES dms(id) ON DELETE CASCADE, thread_root_id INTEGER REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed INTEGER NOT NULL DEFAULT 0, media_spoiler INTEGER NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at INTEGER, media_size INTEGER, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at INTEGER, call_ended_at INTEGER, call_outcome TEXT, call_kind TEXT, call_video INTEGER, reply_to INTEGER, reply_mention INTEGER NOT NULL DEFAULT 0, edited_at INTEGER, fwd_author TEXT, fwd_created_at INTEGER, fwd_source_id INTEGER, fwd_origin TEXT, fwd_dropped TEXT, pinned_at INTEGER, pinned_by TEXT, pin_message_id INTEGER, group_mentions TEXT, webhook_id INTEGER, webhook_name TEXT, webhook_avatar TEXT, webhook_embeds TEXT, created_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB, uploader TEXT, uploaded_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB, uploader TEXT, uploaded_at INTEGER NOT NULL, charged_to TEXT, charged_server TEXT);
 CREATE TABLE IF NOT EXISTS media_chunks(media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE, seq INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(media_id, seq));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS embeds(url TEXT PRIMARY KEY, site_name TEXT, title TEXT, description TEXT, image_url TEXT, fetched_at INTEGER NOT NULL);
@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS user_roles(server TEXT NOT NULL REFERENCES servers(na
 CREATE TABLE IF NOT EXISTS channel_perms(channel_id BIGINT NOT NULL REFERENCES channels(id) ON DELETE CASCADE, subject TEXT NOT NULL, can_view BIGINT NOT NULL DEFAULT 1, can_send BIGINT NOT NULL DEFAULT 1, can_read_history BIGINT NOT NULL DEFAULT 1, restrict_set BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(channel_id, subject));
 CREATE TABLE IF NOT EXISTS dms(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, user_a TEXT NOT NULL, user_b TEXT NOT NULL, last_message_id BIGINT NOT NULL DEFAULT 0, closed_a BIGINT NOT NULL DEFAULT 0, closed_b BIGINT NOT NULL DEFAULT 0, UNIQUE(user_a, user_b));
 CREATE TABLE IF NOT EXISTS messages(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, channel_id BIGINT REFERENCES channels(id) ON DELETE CASCADE, dm_id BIGINT REFERENCES dms(id) ON DELETE CASCADE, thread_root_id BIGINT REFERENCES messages(id) ON DELETE CASCADE, author TEXT NOT NULL, content TEXT NOT NULL, media_id TEXT, media_filename TEXT, media_removed BIGINT NOT NULL DEFAULT 0, media_spoiler BIGINT NOT NULL DEFAULT 0, media_kind TEXT NOT NULL DEFAULT 'server' CHECK(media_kind IN ('server','p2p')), media_hoster TEXT, media_expires_at BIGINT, media_size BIGINT, media_mime TEXT, media_sha256 TEXT, kind TEXT NOT NULL DEFAULT 'user', call_answered_at BIGINT, call_ended_at BIGINT, call_outcome TEXT, call_kind TEXT, call_video BIGINT, reply_to BIGINT, reply_mention BIGINT NOT NULL DEFAULT 0, edited_at BIGINT, fwd_author TEXT, fwd_created_at BIGINT, fwd_source_id BIGINT, fwd_origin TEXT, fwd_dropped TEXT, pinned_at BIGINT, pinned_by TEXT, pin_message_id BIGINT, group_mentions TEXT, webhook_id BIGINT, webhook_name TEXT, webhook_avatar TEXT, webhook_embeds TEXT, created_at BIGINT NOT NULL);
-CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size BIGINT NOT NULL, data BYTEA, uploader TEXT, uploaded_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS media(id TEXT PRIMARY KEY, filename TEXT NOT NULL, mime TEXT NOT NULL, size BIGINT NOT NULL, data BYTEA, uploader TEXT, uploaded_at BIGINT NOT NULL, charged_to TEXT, charged_server TEXT);
 CREATE TABLE IF NOT EXISTS media_chunks(media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE, seq BIGINT NOT NULL, data BYTEA NOT NULL, PRIMARY KEY(media_id, seq));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS embeds(url TEXT PRIMARY KEY, site_name TEXT, title TEXT, description TEXT, image_url TEXT, fetched_at BIGINT NOT NULL);
@@ -562,6 +562,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("messages", "webhook_name TEXT"),
     ("messages", "webhook_avatar TEXT"),
     ("messages", "webhook_embeds TEXT"),
+    ("media", "charged_to TEXT"),
+    ("media", "charged_server TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -614,7 +616,9 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// 14: webhooks (`webhooks`, `outgoing_webhooks`, `webhook_deliveries`, the `messages.webhook_*`
 /// columns) and the Manage webhooks permission bit.
 /// 15: `preview_images` (the cache of link preview images served by the instance).
-pub const SCHEMA_VERSION: i64 = 15;
+/// 16: `media.charged_to` and `media.charged_server` (webhook uploads count against the
+/// webhook's owner and its server's webhooks).
+pub const SCHEMA_VERSION: i64 = 16;
 
 /// A temp database path no other test in any process uses at the same time: the process id,
 /// the test's name and a counter.

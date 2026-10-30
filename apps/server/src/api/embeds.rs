@@ -30,7 +30,7 @@ pub(crate) fn ip_ok(ip: IpAddr) -> bool {
 
 /// What link previews and their images may reach.
 pub(crate) fn preview_policy() -> Policy {
-    Policy::previews()
+    crate::api::webhooks::previews_policy()
 }
 
 async fn fetch_html(start: &Url, policy: &Policy) -> anyhow::Result<(Url, String)> {
@@ -208,6 +208,43 @@ fn is_invite(url: &Url) -> bool {
 
 fn own_message_link(instance: &Instance, url: &str) -> bool {
     Url::parse(url).is_ok_and(|u| is_message_link(&u) && instance.serves(&u))
+}
+
+/// Whether the link's path looks like a credential: a long opaque token segment, or a
+/// one-time action (password reset, sign-in, verify, unsubscribe) or a webhook URL. Fetching it
+/// could use it up, so it gets no preview.
+fn secret_path(url: &str) -> bool {
+    let Ok(url) = Url::parse(url) else {
+        return true;
+    };
+    let path = url.path().to_ascii_lowercase();
+    let opaque = |run: &str| {
+        run.len() >= 16
+            && run.bytes().filter(u8::is_ascii_digit).count() >= 2
+            && run.bytes().filter(u8::is_ascii_alphabetic).count() >= 2
+    };
+    let token = |seg: &str| {
+        seg.len() >= 32
+            && seg
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            && seg.split(['-', '_']).any(opaque)
+    };
+    url.path().split('/').any(token)
+        || [
+            "/webhooks/",
+            "/webhook/",
+            "/hooks/",
+            "/reset",
+            "/verify",
+            "/magic",
+            "/unsubscribe",
+            "/login/",
+            "/confirm",
+            "/activate",
+        ]
+        .iter()
+        .any(|p| path.contains(p))
 }
 
 fn is_message_link(url: &Url) -> bool {
@@ -578,7 +615,7 @@ async fn unfurl_with(state: &AppState, job: UnfurlJob, policy: &Policy) {
     }
     let mut embeds: Vec<Embed> = Vec::new();
     for url in &urls {
-        if own_message_link(&state.instance, url) {
+        if own_message_link(&state.instance, url) || secret_path(url) {
             continue;
         }
         match resolve(&state.db, url, policy).await {
@@ -721,6 +758,36 @@ mod tests {
             extract_urls("https://s3.example/o?X-Amz-Signature=s&X-Amz-Credential=c&v=1"),
             ["https://s3.example/o?v=1"]
         );
+    }
+
+    #[test]
+    fn links_with_secrets_in_the_path_are_never_fetched() {
+        for (url, secret) in [
+            (
+                "https://discord.com/api/webhooks/123/AbCdEfGhIjKlMnOpQrStUvWxYz012345-_x",
+                true,
+            ),
+            ("https://hooks.slack.com/services/T0/B0/xyz", false),
+            ("https://hooks.example/hooks/abc", true),
+            ("https://site.example/password/reset/abc", true),
+            ("https://site.example/Verify-Email?x=1", true),
+            ("https://site.example/auth/magic-link", true),
+            ("https://news.example/unsubscribe/7", true),
+            ("https://site.example/login/once", true),
+            (
+                "https://site.example/s/aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE",
+                true,
+            ),
+            ("https://site.example/blog/how-to-reset", false),
+            (
+                "https://site.example/blog/a-perfectly-ordinary-but-long-title",
+                false,
+            ),
+            ("https://site.example/watch?v=dQw4w9WgXcQ", false),
+            ("https://site.example/", false),
+        ] {
+            assert_eq!(secret_path(url), secret, "{url}");
+        }
     }
 
     #[test]

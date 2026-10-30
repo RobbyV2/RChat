@@ -5,7 +5,6 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use axum::Json;
-use axum::body::Bytes;
 use axum::extract::{FromRequest, Multipart, Path, Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -37,7 +36,7 @@ use crate::api::pings::{
 use crate::api::polls::PollReq;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, MESSAGE_MAX, Message, OkResp, ProfanityTarget, Settings,
-    UserRef, allowed, bad, check_len, embeds, ok, placeholders, valid_color,
+    UserRef, allowed, bad, check_len, embeds, media, ok, placeholders, valid_color,
 };
 use crate::db::{AvatarKind, ChannelKind, Db, Perm, User, get_user, now, pepper};
 use crate::net_guard::{self, AllowedHost, Http, Policy};
@@ -1200,10 +1199,31 @@ async fn creator_may_group(db: &Db, hook: &Hook) -> Result<bool, ApiError> {
     Ok(plain_member_perms(db, &hook.server, creator).await? & Perm::MentionEveryone as i64 != 0)
 }
 
+/// Who a webhook's upload is charged to: its owner, and its server's webhooks together.
+/// Refused before anything is read when uploads are off, the webhook has no owner, or the
+/// budget is already used up.
+async fn upload_charge<'a>(db: &Db, hook: &'a Hook) -> Result<media::Charge<'a>, ApiError> {
+    if !Settings::cached(db).await.asset_uploads {
+        return Err(forbidden("File uploads are turned off on this server"));
+    }
+    let Some(owner) = hook.creator.as_deref() else {
+        return Err(forbidden(
+            "This webhook has no owner, so it cannot upload files",
+        ));
+    };
+    let charge = media::Charge {
+        account: owner,
+        hooks_of: Some(&hook.server),
+    };
+    media::check_budget(db, charge, 1, media::budget()).await?;
+    Ok(charge)
+}
+
 async fn read_execute(
     state: &AppState,
+    hook: &Hook,
     req: Request,
-) -> Result<(ExecuteReq, Option<(String, String, Bytes)>), ApiError> {
+) -> Result<(ExecuteReq, Option<Upload>), ApiError> {
     let multipart = req
         .headers()
         .get(header::CONTENT_TYPE)
@@ -1215,6 +1235,7 @@ async fn read_execute(
             .map_err(|e| bad(&e.body_text()))?;
         return Ok((body, None));
     }
+    let declared = media::declared_length(req.headers());
     let mut form = Multipart::from_request(req, state)
         .await
         .map_err(|e| bad(&e.body_text()))?;
@@ -1234,16 +1255,17 @@ async fn read_execute(
                 body = Some(serde_json::from_str(&text).map_err(|_| bad("Invalid payload_json"))?);
             }
             Some(_) | None if file.is_none() && field.file_name().is_some() => {
-                let filename = field.file_name().unwrap_or("file").to_string();
-                let mime = field
-                    .content_type()
-                    .unwrap_or("application/octet-stream")
-                    .to_string();
-                let data = field
-                    .bytes()
-                    .await
-                    .map_err(|e| ApiError(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))?;
-                file = Some((filename, mime, data));
+                let filename = media::clean_filename(field.file_name().unwrap_or("file"));
+                let mime =
+                    media::clean_mime(field.content_type().unwrap_or("application/octet-stream"));
+                let charge = upload_charge(&state.db, hook).await?;
+                let slot = media::reading_slot(&state.db, charge.account)?;
+                let data = media::read_file(field, declared, slot).await?;
+                file = Some(Upload {
+                    filename,
+                    mime,
+                    data,
+                });
             }
             Some(_) | None => return Err(bad("Send one file and payload_json")),
         }
@@ -1268,7 +1290,7 @@ async fn post(
     state: &AppState,
     hook: &Hook,
     req: ExecuteReq,
-    file: Option<(String, String, Bytes)>,
+    file: Option<Upload>,
 ) -> Result<Message, ApiError> {
     let ExecuteReq {
         content,
@@ -1380,13 +1402,18 @@ async fn post(
         ),
     };
     let media_id = match file {
-        Some((filename, mime, data)) => {
+        Some(Upload {
+            filename,
+            mime,
+            data,
+        }) => {
             if !settings.asset_uploads {
                 return Err(forbidden("File uploads are turned off on this server"));
             }
             settings.check_profanity(ProfanityTarget::FileNames, &filename)?;
+            let charge = upload_charge(db, hook).await?;
             let (id, _) =
-                crate::api::media::save_upload(state, &filename, &mime, &data, &user.username)
+                media::save_upload(state, &filename, &mime, &data.data, &user.username, charge)
                     .await?;
             Some(id)
         }
@@ -1463,7 +1490,9 @@ async fn post(
 ///
 /// Posts a message into the webhook's channel as the webhook. No bearer token: the URL is the
 /// secret. Send JSON, or `multipart/form-data` with the JSON in a `payload_json` part and one
-/// file part (only while file uploads are on; at most 25 MiB). The same rules as a user's
+/// file part (only while file uploads are on and the webhook has an owner; at most 25 MiB). Files
+/// count against the upload budget of the webhook's owner, and the webhooks of one server
+/// together get one more budget of the same size. The same rules as a user's
 /// message apply: length limit, profanity filter, slow mode (per webhook, no exemption),
 /// attachment switches, and reply and thread placement inside its channel. The webhook can
 /// always send in its own channel and nowhere else; timeouts and blocks do not apply to it.
@@ -1472,7 +1501,7 @@ async fn post(
 /// and still has the Mention everyone permission (mentionable roles also when asked). Rate
 /// limits: 5 per 2 seconds per webhook, 30 per minute per channel, and the strict bucket per
 /// IP. Wrong ids, wrong tokens and deleted webhooks all get the same 404.
-#[utoipa::path(post, path = "/api/webhooks/{id}/{token}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ExecuteQuery), request_body(content = ExecuteReq, description = "JSON, or multipart with `payload_json` and one file", content_type = "application/json"), responses((status = 200, description = "With `wait=true`: the posted message", body = Message), (status = 204, description = "Posted"), (status = 400, description = "Empty message, text over 4000 characters, invalid embeds, name, avatar, poll, `reply_to` (`Cannot reply to that message`) or `thread_id` (`Unknown thread`), or the profanity filter", body = ApiErrorBody), (status = 403, description = "`File uploads are turned off on this server`", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`: no such webhook or a wrong token (identical responses)", body = ApiErrorBody), (status = 413, description = "File over 25 MiB", body = ApiErrorBody), (status = 429, description = "Slow mode (`Slow mode: wait Ns`), the webhook or channel budget (`Too many attempts. Try again later`), or the strict bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
+#[utoipa::path(post, path = "/api/webhooks/{id}/{token}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ExecuteQuery), request_body(content = ExecuteReq, description = "JSON, or multipart with `payload_json` and one file", content_type = "application/json"), responses((status = 200, description = "With `wait=true`: the posted message", body = Message), (status = 204, description = "Posted"), (status = 400, description = "Empty message, text over 4000 characters, invalid embeds, name, avatar, poll, `reply_to` (`Cannot reply to that message`) or `thread_id` (`Unknown thread`), or the profanity filter", body = ApiErrorBody), (status = 403, description = "`File uploads are turned off on this server`, or `This webhook has no owner, so it cannot upload files`", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`: no such webhook or a wrong token (identical responses)", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the file sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 413, description = "File over 25 MiB", body = ApiErrorBody), (status = 429, description = "Slow mode (`Slow mode: wait Ns`), the webhook or channel budget (`Too many attempts. Try again later`), the upload budget of the webhook's owner or of the server's webhooks (`Upload limit reached: ...`), 3 uploads of the owner already being read (`Too many uploads at once: ...`), or the strict bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`", body = ApiErrorBody)), security(()))]
 pub(crate) async fn execute(
     State(state): State<AppState>,
     Path((id, token)): Path<(String, String)>,
@@ -1481,7 +1510,7 @@ pub(crate) async fn execute(
 ) -> Result<Response, ApiError> {
     let hook = hook_for(&state.db, &id, &token).await?;
     paced(&state.db, &hook)?;
-    let (body, file) = read_execute(&state, req).await?;
+    let (body, file) = read_execute(&state, &hook, req).await?;
     let message = post(&state, &hook, body, file).await?;
     Ok(match query.wait {
         true => Json(message).into_response(),
@@ -1670,6 +1699,13 @@ pub(crate) async fn delete_hook_message(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// A file sent with a webhook message, its name and type already cleaned.
+struct Upload {
+    filename: String,
+    mime: String,
+    data: media::Buffered,
+}
+
 /// The operator's rules for outgoing webhook requests.
 #[derive(Clone, Debug, Default)]
 pub struct Outbound {
@@ -1738,6 +1774,17 @@ pub fn configure(outbound: Outbound) {
         );
     }
     let _ = OUTBOUND.set(outbound);
+}
+
+/// Link previews and their images: public addresses on the web ports, never this instance's
+/// own addresses or host names.
+pub(crate) fn previews_policy() -> Policy {
+    let Outbound { own, own_hosts, .. } = OUTBOUND.get().cloned().unwrap_or_default();
+    Policy {
+        own,
+        own_hosts,
+        ..Policy::previews()
+    }
 }
 
 fn outbound_policy() -> Policy {
@@ -3870,10 +3917,10 @@ mod tests {
         let (state, path, cid) = setup("wh_multipart").await;
         let db = &state.db;
         let made = create(&state, "owner", cid, "Files").await.expect("create");
-        let send = |state: AppState, id: String, token: String| async move {
+        let send_as = |state: AppState, id: String, token: String, name: String, mime: String| async move {
             let boundary = "XyZ";
             let body = format!(
-                "--{boundary}\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n{{\"content\": \"report attached\"}}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"report.txt\"\r\nContent-Type: text/plain\r\n\r\nall good\r\n--{boundary}--\r\n"
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n{{\"content\": \"report attached\"}}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: {mime}\r\n\r\nall good\r\n--{boundary}--\r\n"
             );
             let req = Request::builder()
                 .method("POST")
@@ -3895,6 +3942,15 @@ mod tests {
                 .expect("body");
             Ok::<Message, ApiError>(serde_json::from_slice(&bytes).expect("message"))
         };
+        let send = |state: AppState, id: String, token: String| {
+            send_as(
+                state,
+                id,
+                token,
+                "report.txt".to_string(),
+                "text/plain".to_string(),
+            )
+        };
         let id = made.webhook.id.to_string();
         let posted = send(state.clone(), id.clone(), made.token.clone())
             .await
@@ -3904,6 +3960,26 @@ mod tests {
             posted.media.as_ref().map(|m| m.filename.as_str()),
             Some("report.txt")
         );
+        HOOK_PACE.forget_prefix(&format!("{}\n", crate::db::pool_key(db)));
+        let long = send_as(
+            state.clone(),
+            id.clone(),
+            made.token.clone(),
+            format!("{}.log", "r".repeat(300)),
+            format!("text/plain; x={}", "y".repeat(10_000)),
+        )
+        .await
+        .expect("long name");
+        let stored = long.media.as_ref().expect("media");
+        assert!(stored.filename.len() <= 255 && stored.filename.ends_with(".log"));
+        let mime: String = sqlx::query("SELECT mime FROM media WHERE id = $1")
+            .bind(&stored.id)
+            .fetch_one(db)
+            .await
+            .expect("media row")
+            .try_get(0)
+            .expect("mime");
+        assert_eq!(mime, "text/plain");
         exec(
             db,
             "INSERT INTO settings(key, value) VALUES('asset_uploads', '0') ON CONFLICT(key) DO UPDATE SET value = excluded.value",
