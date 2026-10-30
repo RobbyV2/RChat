@@ -1406,6 +1406,7 @@ export const useStore = create<RChatState>()((set, get) => {
       .finally(() => {
         unreadsLoading -= 1
         if (!unreadsLoading) lateAnchor.clear()
+        if (!get().readsReady) set({ readsReady: true })
       })
     return unreadsReady
   }
@@ -1713,6 +1714,8 @@ export const useStore = create<RChatState>()((set, get) => {
     return true
   }
 
+  const atHome = () => window.location.pathname === viewPath(null)
+
   const syncUrl = (view: View | null, nav: Nav) => {
     leaveInvite()
     if (nav === 'none') return
@@ -1741,6 +1744,7 @@ export const useStore = create<RChatState>()((set, get) => {
     }
     const cur = get().view
     if (target && target.kind !== 'server' && cur && viewPath(target) === viewPath(cur)) return
+    if (!target && atHome()) return cur ? clearView() : set({ home: true })
     if (!target) return fallback()
     if (target.kind === 'dm') {
       if (get().guest) return fallback()
@@ -1846,7 +1850,7 @@ export const useStore = create<RChatState>()((set, get) => {
     const { view } = get()
     removedFrom(server, true)
     const stuck = view?.kind === 'channel' && view.server !== server && bannedHere.has(view.server)
-    if (!view || stuck) void leaveForSafety()
+    if ((!view && !atHome()) || stuck) void leaveForSafety()
   }
 
   const removedFrom = (server: string, banned: boolean, title?: string) => {
@@ -2426,10 +2430,11 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   // Leaves the current view for none (home); a previewed server is forgotten on the way out.
-  const clearView = () => {
+  const clearView = (nav: Nav = 'replace') => {
+    readQueue.flush()
     leaveServerView(null)
-    set({ view: null, pins: null })
-    syncUrl(null, 'replace')
+    syncUrl(null, nav)
+    set({ view: null, pins: null, home: true })
     get().setViewing(null)
   }
 
@@ -2859,6 +2864,7 @@ export const useStore = create<RChatState>()((set, get) => {
     if (left && left !== key) lateAnchor.delete(left)
     set(s => ({
       view,
+      home: false,
       atBottom: { ...s.atBottom, [key]: true },
       focus: keyed(s.focus, key, null),
       unreadAnchor: left && left !== key ? keyed(s.unreadAnchor, left, null) : s.unreadAnchor,
@@ -3370,6 +3376,7 @@ export const useStore = create<RChatState>()((set, get) => {
     rtcTick: 0,
     selfAudio: SELF_AUDIO_IDLE,
     view: null,
+    home: false,
     invite: null,
     configLink: null,
     messages: {},
@@ -3380,6 +3387,7 @@ export const useStore = create<RChatState>()((set, get) => {
     outbox: {},
     slowUntil: {},
     reads: {},
+    readsReady: false,
     pings: NO_PINGS,
     groupPings: NO_GROUP_PINGS,
     unreadAnchor: {},
@@ -3675,6 +3683,7 @@ export const useStore = create<RChatState>()((set, get) => {
         typing: {},
         showSpoilers: 'click',
         view: null,
+        home: false,
         invite: null,
         configLink: null,
         messages: {},
@@ -3685,6 +3694,7 @@ export const useStore = create<RChatState>()((set, get) => {
         outbox: {},
         slowUntil: {},
         reads: {},
+        readsReady: false,
         pings: NO_PINGS,
         groupPings: NO_GROUP_PINGS,
         unreadAnchor: {},
@@ -3822,7 +3832,7 @@ export const useStore = create<RChatState>()((set, get) => {
       leaveInvite()
       if (pushed) window.history.back()
       else if (view) syncUrl(view, 'push')
-      else void leaveForSafety('push')
+      else clearView('push')
     },
 
     syncInvite: readInvite,
@@ -3834,7 +3844,7 @@ export const useStore = create<RChatState>()((set, get) => {
       set({ configLink: null })
       if (!me && !guest) return
       if (view) syncUrl(view, 'replace')
-      else void leaveForSafety('replace')
+      else clearView('replace')
     },
 
     applyConfig: applyConfigDoc,
@@ -3843,6 +3853,8 @@ export const useStore = create<RChatState>()((set, get) => {
 
     consumeInviteJoin: () =>
       set(s => (s.invite?.join ? { invite: { ...s.invite, join: false } } : {})),
+
+    goHome: () => clearView(get().view || !atHome() ? 'push' : 'replace'),
 
     openLastDm: () => {
       const { me } = get()

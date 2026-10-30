@@ -98,7 +98,7 @@ export interface ConfirmRequest {
 }
 
 export type ActiveDialog =
-  | { kind: 'add_server'; join?: string; locked?: boolean }
+  | { kind: 'add_server'; join?: string; locked?: boolean; tab?: 'create' | 'join' }
   | { kind: 'server_settings'; server: string }
   | { kind: 'audit_log'; server: string }
   | { kind: 'timeout'; server: string; user: UserRef }
@@ -249,6 +249,8 @@ export interface RChatState {
   rtcTick: number
   selfAudio: SelfAudio
   view: View | null
+  // Home shows: no view is open and the address is the root
+  home: boolean
   invite: OpenInvite | null
   configLink: string | null
   messages: Record<string, Message[]>
@@ -259,6 +261,8 @@ export interface RChatState {
   outbox: Record<string, Outgoing[]>
   slowUntil: Record<number, number>
   reads: Record<string, ReadMark>
+  // the first /api/unreads answer arrived (Home shows skeletons until then)
+  readsReady: boolean
   pings: Pings
   // unread messages that ping you through @everyone, @here or your roles, by channel scope
   groupPings: GroupPings
@@ -325,6 +329,7 @@ export interface RChatState {
   openChannel: (server: string, channelId: number, nav?: Nav, at?: number) => Promise<void>
   openDm: (dmId: number, nav?: Nav, at?: number) => Promise<void>
   openLastDm: () => void
+  goHome: () => void
   openInvite: (server: string, password?: string | null) => void
   closeInvite: () => void
   syncInvite: () => boolean

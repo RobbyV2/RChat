@@ -5,6 +5,7 @@ import {
   Eye,
   Folder as FolderIcon,
   FolderOpen,
+  House,
   LogOut,
   MessageCircle,
   Plus,
@@ -366,6 +367,7 @@ export function ServerRail() {
   const dmUnread = useStore(dmsUnread)
   const dmPings = useStore(dmPingCount)
   const openLastDm = useStore(s => s.openLastDm)
+  const goHome = useStore(s => s.goHome)
   const openContextMenu = useStore(s => s.openContextMenu)
   const serversMore = useStore(s => s.serversMore)
   const loadMoreServers = useStore(s => s.loadMoreServers)
@@ -389,6 +391,16 @@ export function ServerRail() {
         ref={dragScope}
         className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto pt-2 pb-2"
       >
+        <button
+          title="Home"
+          aria-label="Home"
+          aria-current={view === null ? 'page' : undefined}
+          data-home-button
+          onClick={goHome}
+          className={`${tile} ${view === null ? 'bg-primary text-on-primary' : idle}`}
+        >
+          <House size={22} />
+        </button>
         {me && (
           <button
             title={dmPings ? `Direct messages, ${pingLabel(dmPings)}` : 'Direct messages'}

@@ -44,6 +44,7 @@ import {
   Masked,
   PanelHeader,
   Sentinel,
+  SkeletonRows,
   textBtn,
   useEscape,
 } from './ui'
@@ -465,21 +466,41 @@ export function FriendsSection({ max = 5 }: { max?: number }) {
   const loadOnline = useStore(s => s.loadOnlineFriends)
   const loadRequests = useStore(s => s.loadFriendRequests)
   const openFriends = useStore(s => s.openFriends)
+  const [asked, setAsked] = useState(false)
   useEffect(() => {
     void loadOnline('', true)
     void loadRequests(true, true)
+    setAsked(true)
   }, [loadOnline, loadRequests])
+  const loading = !asked || online.loading || incoming.loading
+  const requests = incoming.list.slice(0, max)
+  const friends = online.list.slice(0, max)
   return (
     <section className="flex flex-col">
-      {incoming.list.slice(0, max).map(r => (
-        <RequestRow key={r.user.username} request={r} />
-      ))}
-      {online.list.slice(0, max).map(f => (
-        <FriendRow key={f.user.username} friend={f} />
-      ))}
-      <button onClick={() => openFriends()} className={`${textBtn} self-start`}>
-        All friends
-      </button>
+      {requests.length > 0 && (
+        <>
+          <Heading>Pending requests</Heading>
+          {requests.map(r => (
+            <RequestRow key={r.user.username} request={r} />
+          ))}
+        </>
+      )}
+      <Heading>Online friends</Heading>
+      {friends.length === 0 && loading ? (
+        <SkeletonRows rows={2} label="Loading friends" />
+      ) : friends.length === 0 ? (
+        <p className="px-2 py-2 text-sm text-on-surface-variant">No friends online right now.</p>
+      ) : (
+        friends.map(f => <FriendRow key={f.user.username} friend={f} />)
+      )}
+      <div className="flex flex-wrap gap-1">
+        <button onClick={() => openFriends()} className={textBtn}>
+          All friends
+        </button>
+        <button onClick={() => openFriends('add')} className={textBtn}>
+          Add friend
+        </button>
+      </div>
     </section>
   )
 }

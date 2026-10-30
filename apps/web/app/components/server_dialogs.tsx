@@ -9,13 +9,21 @@ import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
 import { SHORT_PASSWORD, tooShort } from '../lib/passwords'
 import { Dialog, FieldError } from './ui'
 
-function AddServerDialog({ join, locked }: { join?: string; locked?: boolean }) {
+function AddServerDialog({
+  join,
+  locked,
+  initial,
+}: {
+  join?: string
+  locked?: boolean
+  initial?: 'create' | 'join'
+}) {
   const guest = useStore(s => s.guest)
   const createServer = useStore(s => s.createServer)
   const joinServer = useStore(s => s.joinServer)
   const guestJoinServer = useStore(s => s.guestJoinServer)
   const closeDialog = useStore(s => s.closeDialog)
-  const [tab, setTab] = useState<'create' | 'join'>(guest || join ? 'join' : 'create')
+  const [tab, setTab] = useState<'create' | 'join'>(guest || join ? 'join' : (initial ?? 'create'))
   const [name, setName] = useState(join ?? '')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -198,6 +206,6 @@ function AddServerDialog({ join, locked }: { join?: string; locked?: boolean }) 
 export function ServerDialogs() {
   const dialog = useStore(s => s.activeDialog)
   return dialog?.kind === 'add_server' ? (
-    <AddServerDialog join={dialog.join} locked={dialog.locked} />
+    <AddServerDialog join={dialog.join} locked={dialog.locked} initial={dialog.tab} />
   ) : null
 }

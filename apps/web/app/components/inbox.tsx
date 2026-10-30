@@ -37,7 +37,7 @@ import { inboxAdapters } from '../lib/inbox_source'
 import { PingBadge, pingLabel } from './ping_badge'
 import { UserAvatar } from './user_avatar'
 import { MessageTime } from './timestamp'
-import { Masked, Sentinel, SheetGrip, useEscape } from './ui'
+import { Masked, Sentinel, SheetGrip, SkeletonRows, textBtn as textBtnCls, useEscape } from './ui'
 import { longPress, useMedia } from './context_menu'
 
 const chipCls = (on: boolean) =>
@@ -472,6 +472,63 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
           <p className="px-3 py-2 text-center text-xs text-on-surface-variant">Loading</p>
         )}
       </div>
+    </div>
+  )
+}
+
+// The newest unread notifications, for Home. Opens the full inbox for the rest.
+export function InboxPreview({ max = 5 }: { max?: number }) {
+  const { setSources, entries, more, loading, failed, reload, markedHere } = useInbox(DEFAULT_VIEW)
+  const setOpen = useStore(s => s.setInboxOpen)
+  const shown = entries.slice(0, max)
+
+  const open = (entry: InboxEntry) => {
+    const adapter = adapterOf(entry.adapter)
+    if (!adapter) return
+    if (entry.unread) {
+      markedHere()
+      void adapter.markRead(entry).catch(() => {})
+    }
+    void adapter.open(entry)
+  }
+
+  const read = (entry: InboxEntry) => {
+    const adapter = adapterOf(entry.adapter)
+    if (!adapter) return
+    markedHere()
+    setSources(s => markedRead(s, entry.key, true))
+    void adapter.markRead(entry).then(
+      () => {},
+      () => reload()
+    )
+  }
+
+  return (
+    <div className="flex flex-col">
+      {failed ? (
+        <div className="flex items-center gap-2 px-2 py-3 text-sm text-on-surface-variant">
+          <span>Couldn&apos;t load notifications.</span>
+          <button type="button" onClick={reload} className={textBtnCls}>
+            Try again
+          </button>
+        </div>
+      ) : (loading || more) && shown.length === 0 ? (
+        <SkeletonRows rows={2} label="Loading notifications" />
+      ) : shown.length === 0 ? (
+        <p className="flex items-center gap-2 px-2 py-3 text-sm text-on-surface-variant">
+          <AtSign size={16} className="shrink-0" />
+          You&apos;re all caught up.
+        </p>
+      ) : (
+        <ul aria-label="Unread notifications">
+          {shown.map(e => (
+            <Row key={e.key} entry={e} onOpen={open} onRead={read} />
+          ))}
+        </ul>
+      )}
+      <button type="button" onClick={() => setOpen(true)} className={`${textBtnCls} self-start`}>
+        Open inbox
+      </button>
     </div>
   )
 }

@@ -419,7 +419,8 @@ export function ChannelSidebar() {
     )
   }
 
-  const detail = view ? servers[view.server] : undefined
+  if (!view) return null
+  const detail = servers[view.server]
   if (!detail) return <aside className={base} />
   const canManage = hasPerm(perms, Perm.ManageChannels)
   const server = detail.name

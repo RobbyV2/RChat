@@ -255,3 +255,20 @@ export function Masked({ text, code = false }: { text: string; code?: boolean })
   const mask = useMask()
   return <>{code ? maskOutsideCode(text, mask) : mask(text)}</>
 }
+
+// Placeholder rows while a section loads.
+export function SkeletonRows({ rows = 3, label }: { rows?: number; label: string }) {
+  return (
+    <div role="status" aria-label={label} data-skeleton className="flex flex-col gap-1">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="flex items-center gap-3 px-2 py-2">
+          <span className="size-8 shrink-0 rounded-full bg-surface-container-highest/70 motion-safe:animate-pulse" />
+          <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <span className="h-3 w-2/5 rounded-full bg-surface-container-highest/70 motion-safe:animate-pulse" />
+            <span className="h-2.5 w-3/5 rounded-full bg-surface-container-highest/50 motion-safe:animate-pulse" />
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}

@@ -11,6 +11,8 @@ import { ProfileCard } from '../components/profile_card'
 import { ServerRail } from '../components/server_rail'
 import { ChannelSidebar } from '../components/channel_sidebar'
 import { MessagePane } from '../components/message_pane'
+import { HomePage } from '../components/home'
+import { reloadHome, useHomeSync } from '../lib/home_store'
 import { ServerDialogs } from '../components/server_dialogs'
 import { FolderDialog } from '../components/folder_dialog'
 import { CategoryDialog } from '../components/category_dialog'
@@ -39,6 +41,7 @@ export default function AppShell() {
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)
   const view = useStore(s => s.view)
+  const atHome = useStore(s => s.home)
   const invite = useStore(s => s.invite)
   const configLink = useStore(s => s.configLink)
   const dialog = useStore(s => s.activeDialog)
@@ -52,6 +55,7 @@ export default function AppShell() {
   const booted = useRef(false)
   const [leftOpen, setLeftOpen] = useState(false)
   const [rightOpen, setRightOpen] = useState(false)
+  useHomeSync()
 
   useEscape(() => {
     setLeftOpen(false)
@@ -102,6 +106,7 @@ export default function AppShell() {
       if (e.key?.startsWith('rchat_forward:')) useStore.getState().reloadForward()
       if (e.key?.startsWith('rchat_notify:')) useStore.getState().reloadNotify()
       if (e.key?.startsWith('rchat_typing:')) useStore.getState().reloadTyping()
+      if (e.key?.startsWith('rchat_home:')) reloadHome()
     }
     const onWake = () => {
       if (document.visibilityState === 'visible') useStore.getState().pruneNotify()
@@ -152,6 +157,10 @@ export default function AppShell() {
   }
 
   const isChannel = view?.kind === 'channel'
+  const openLeft = () => {
+    setRightOpen(false)
+    setLeftOpen(true)
+  }
 
   return (
     <>
@@ -160,16 +169,17 @@ export default function AppShell() {
           <ServerRail />
           <ChannelSidebar />
         </div>
-        <MessagePane
-          onMenu={() => {
-            setRightOpen(false)
-            setLeftOpen(true)
-          }}
-          onMembers={() => {
-            setLeftOpen(false)
-            setRightOpen(o => !o)
-          }}
-        />
+        {view === null && atHome ? (
+          <HomePage onMenu={openLeft} />
+        ) : (
+          <MessagePane
+            onMenu={openLeft}
+            onMembers={() => {
+              setLeftOpen(false)
+              setRightOpen(o => !o)
+            }}
+          />
+        )}
         {isChannel && !panel && (
           <div className="hidden h-full lg:block">
             <MemberSidebar />
