@@ -1,4 +1,4 @@
-import { replaceSpoilers } from './spoilers'
+import { replaceSpoilers, typedMarks } from './spoilers'
 import type { Message, ReplyRef } from './types'
 
 export interface Replying {
@@ -32,7 +32,8 @@ const OPEN = '\uE000'
 const CLOSE = '\uE001'
 const PLAIN = /\\([!-/:-@[-`{-~])|~~|[*`]|[|\\]|\uE000|\uE001/g
 
-const spoilerMarked = (text: string) => replaceSpoilers(text, inner => `${OPEN}${inner}${CLOSE}`)
+const spoilerMarked = (text: string) =>
+  replaceSpoilers(typedMarks(text), inner => `${OPEN}${inner}${CLOSE}`)
 
 // Close to the server's `reply_snippet`, for replies still being sent: the first line with
 // text, without block markers, emphasis or code marks. Spoilers are wrapped in `||` (closed also

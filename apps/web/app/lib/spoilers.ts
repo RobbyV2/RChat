@@ -182,7 +182,11 @@ export const replaceSpoilers = (text: string, hide: (inner: string) => string, c
 export const OPEN = '<\uE000|'
 export const CLOSE = '<\uE001|'
 
-export const markSpoilers = (text: string) => {
+// Marker characters typed in the text become U+FFFD (the same length), so they mark nothing.
+export const typedMarks = (text: string) => text.replace(/[\uE000\uE001]/g, '\uFFFD')
+
+export const markSpoilers = (raw: string) => {
+  const text = typedMarks(raw)
   const spans = spoilerSpans(text)
   if (!spans.length) return text
   let out = ''

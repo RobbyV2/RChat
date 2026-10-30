@@ -228,18 +228,27 @@ pub const OPEN: char = '\u{E000}';
 pub const CLOSE: char = '\u{E001}';
 
 /// `text` with each spoiler's markers replaced by [`OPEN`] and [`CLOSE`], so later steps can
-/// tell them from literal pipes.
+/// tell them from literal pipes. Marker characters typed in the text become U+FFFD (the same
+/// length), so they can't open or close anything.
 pub fn marked(text: &str) -> String {
+    let typed = |s: &str| {
+        s.chars()
+            .map(|c| match c {
+                OPEN | CLOSE => char::REPLACEMENT_CHARACTER,
+                c => c,
+            })
+            .collect::<String>()
+    };
     let mut out = String::with_capacity(text.len());
     let mut at = 0;
     for Span { start, end, closed } in spans(text, false) {
-        out.push_str(&text[at..start]);
+        out.push_str(&typed(&text[at..start]));
         out.push(OPEN);
-        out.push_str(&text[start + 2..if closed { end - 2 } else { end }]);
+        out.push_str(&typed(&text[start + 2..if closed { end - 2 } else { end }]));
         out.push(CLOSE);
         at = end;
     }
-    out.push_str(&text[at..]);
+    out.push_str(&typed(&text[at..]));
     out
 }
 
@@ -302,5 +311,14 @@ mod tests {
     fn marked_keeps_literal_pipes() {
         assert_eq!(marked("a ||b|| \\|| c"), "a \u{E000}b\u{E001} \\|| c");
         assert_eq!(marked("`||` ||x"), "`||` ||x");
+    }
+
+    #[test]
+    fn typed_marker_characters_mark_nothing() {
+        assert_eq!(
+            marked("||secret\u{E001} more secret||"),
+            "\u{E000}secret\u{FFFD} more secret\u{E001}"
+        );
+        assert_eq!(marked("a \u{E000}b\u{E001} c"), "a \u{FFFD}b\u{FFFD} c");
     }
 }

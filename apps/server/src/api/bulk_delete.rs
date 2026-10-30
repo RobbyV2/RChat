@@ -1069,9 +1069,17 @@ pub(crate) async fn forget_author(conn: &mut AnyConnection, username: &str) -> s
         .bind(username)
         .execute(&mut *conn)
         .await?;
-    let rows = sqlx::query("SELECT id, authors FROM bulk_delete_jobs WHERE authors <> '{}'")
-        .fetch_all(&mut *conn)
-        .await?;
+    let sql = match conn.backend_name() {
+        "PostgreSQL" => {
+            "SELECT id, authors FROM bulk_delete_jobs WHERE authors LIKE $1 ESCAPE '\\' ORDER BY id FOR UPDATE"
+        }
+        _ => {
+            "SELECT id, authors FROM bulk_delete_jobs WHERE authors LIKE $1 ESCAPE '\\' ORDER BY id"
+        }
+    };
+    let key = serde_json::to_string(username).unwrap_or_default();
+    let named = crate::api::admin::like_pattern(&key, false);
+    let rows = sqlx::query(sql).bind(named).fetch_all(&mut *conn).await?;
     for r in &rows {
         let (id, text): (i64, String) = (r.try_get(0)?, r.try_get(1)?);
         let mut tally = Tally::decode(&text, false);

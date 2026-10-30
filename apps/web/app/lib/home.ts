@@ -143,6 +143,24 @@ export const greeting = (hour: number) =>
       ? 'Good afternoon'
       : 'Good evening'
 
+// Where the user can still go: their servers and DMs, and the channels of loaded servers.
+export interface RecentPlaces {
+  servers: Set<string>
+  serversMore: boolean
+  dmIds: Set<number>
+  // channel ids of servers whose details are loaded
+  channels: Record<string, number[]>
+}
+
+// Whether a recent place is still open to the user: a DM they have, or a channel of a server they
+// joined that still lists it (once the server's details are loaded).
+export const recentShown = (r: Recent, at: RecentPlaces) => {
+  if (r.kind === 'dm') return at.dmIds.has(r.dmId)
+  if (!at.servers.has(r.server) && !(at.serversMore && !!r.channel)) return false
+  const loaded = at.channels[r.server]
+  return !loaded || loaded.includes(r.channelId)
+}
+
 // A new account: nothing visited yet, no DMs with others and no server beyond the default one.
 export const isNewAccount = (recents: number, otherDms: number, servers: number) =>
   recents === 0 && otherDms === 0 && servers <= 1

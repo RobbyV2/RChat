@@ -942,7 +942,8 @@ pub(crate) async fn update_webhook(
 /// Makes a new token and returns it once; the old URL stops working at once. Resetting someone
 /// else's webhook makes you its owner: whether it may use group mentions is then taken from
 /// your Mention everyone permission (this needs Manage webhooks or Manage channels as a
-/// member). Requires the Manage webhooks or Manage channels permission. Logged in the audit
+/// member). Instance staff without those permissions as a member reset it without taking it
+/// over; the owner stays. Requires the Manage webhooks or Manage channels permission. Logged in the audit
 /// log. Strict rate-limit bucket.
 #[utoipa::path(post, path = "/api/servers/{name}/webhooks/{id}/token", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Webhook id")), responses((status = 200, description = "The webhook with its new token", body = WebhookSecret), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission` (also when taking over someone else's webhook without Manage webhooks or Manage channels as a member), or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn reset_token(
@@ -953,10 +954,13 @@ pub(crate) async fn reset_token(
     let access = manager(&state, &user, &name).await?;
     let db = &state.db;
     let (hook, _) = managed_hook(db, &access, &user, id).await?;
-    let owner = takeover(db, &access, &user, hook.creator.as_deref()).await?;
+    let actor = manager_actor(db, &access, &user).await?;
+    let owner = match actor {
+        Actor::Staff => None,
+        Actor::User(_) => takeover(db, &access, &user, hook.creator.as_deref()).await?,
+    };
     let token = new_token();
     let hash = token_hash(&pepper(db).await?, &token);
-    let actor = manager_actor(db, &access, &user).await?;
     let mut tx = db.begin().await?;
     sqlx::query("UPDATE webhooks SET token_hash = $1, creator = CASE WHEN $3 <> 0 THEN $4 ELSE creator END, creator_mentions = CASE WHEN $3 <> 0 THEN $5 ELSE creator_mentions END WHERE id = $2")
         .bind(&hash)
@@ -1747,8 +1751,12 @@ pub struct OutgoingWebhook {
     pub id: i64,
     /// Name shown to managers.
     pub name: String,
-    /// Where events are POSTed.
+    /// Where events are POSTed. Only its owner gets the whole URL; other managers get its
+    /// scheme and host (`https://example.com/`), since the path can itself be a credential.
     pub url: String,
+    /// Whether `url` is cut to its scheme and host because you are not the owner.
+    #[serde(default)]
+    pub url_hidden: bool,
     /// The subscribed events.
     pub events: Vec<String>,
     /// Its owner: who created it, or the last manager who changed its URL or events, turned it
@@ -1810,7 +1818,8 @@ pub struct OutgoingPatch {
     /// 1 to 80 characters.
     #[serde(default)]
     pub name: Option<String>,
-    /// A new URL, checked like `NewOutgoing.url`.
+    /// A new URL, checked like `NewOutgoing.url`. Required when the change makes you the
+    /// owner: the previous owner's URL is never shown to you.
     #[serde(default)]
     pub url: Option<String>,
     /// The new event list, at least one.
@@ -1820,6 +1829,17 @@ pub struct OutgoingPatch {
     #[serde(default)]
     pub enabled: Option<bool>,
 }
+
+/// A secret reset; `url` is required when the reset makes you the owner.
+#[derive(Deserialize, ToSchema, Default)]
+pub struct SecretReset {
+    /// The destination URL, checked like `NewOutgoing.url`.
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// Refusal when a takeover does not name the destination URL.
+const TAKEOVER_URL: &str = "Enter the destination URL to take over this webhook.";
 
 /// One delivery: status codes and timings only, never response bodies.
 #[derive(Serialize, Deserialize, ToSchema)]
@@ -1849,9 +1869,20 @@ pub struct Delivery {
 const OUT_COLS: &str =
     "id, name, url, events, creator, enabled, disabled_at, failures, created_at, disabled_reason";
 
+/// The scheme and host of an outgoing URL, all that managers other than its owner see.
+fn url_origin(url: &str) -> String {
+    match Url::parse(url) {
+        Ok(u) => format!("{}/", u.origin().ascii_serialization()),
+        Err(_) => String::new(),
+    }
+}
+
+/// Outgoing webhooks as `viewer` sees them: the whole URL only for its owner. `None` is the
+/// stored form, for checks that never leave the server.
 async fn outgoing_rows(
     db: &Db,
     rows: &[sqlx::any::AnyRow],
+    viewer: Option<&str>,
 ) -> Result<Vec<OutgoingWebhook>, ApiError> {
     let creators: Vec<String> = rows
         .iter()
@@ -1861,17 +1892,23 @@ async fn outgoing_rows(
     let live = live_users(db, &creators).await?;
     rows.iter()
         .map(|r| {
+            let url: String = r.try_get(2)?;
+            let owner: Option<String> = r.try_get(4)?;
+            let url_hidden = viewer.is_some_and(|v| owner.as_deref() != Some(v));
             Ok(OutgoingWebhook {
                 id: r.try_get(0)?,
                 name: r.try_get(1)?,
-                url: r.try_get(2)?,
+                url: match url_hidden {
+                    true => url_origin(&url),
+                    false => url,
+                },
+                url_hidden,
                 events: r
                     .try_get::<String, _>(3)?
                     .split_whitespace()
                     .map(str::to_string)
                     .collect(),
-                creator: r
-                    .try_get::<Option<String>, _>(4)?
+                creator: owner
                     .filter(|c| live.contains(c))
                     .and_then(|c| refs.get(&c).cloned()),
                 enabled: r.try_get::<i64, _>(5)? != 0,
@@ -1940,7 +1977,8 @@ fn new_secret() -> String {
 /// List outgoing webhooks
 ///
 /// The server's outgoing webhooks and whether the instance sends them. Requires the Manage
-/// webhooks or Manage channels permission. Secrets are never listed. General rate-limit
+/// webhooks or Manage channels permission. Secrets are never listed, and only a webhook's
+/// owner sees its whole URL (others get the scheme and host). General rate-limit
 /// bucket.
 #[utoipa::path(get, path = "/api/servers/{name}/outgoing_webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), responses((status = 200, description = "The outgoing webhooks", body = OutgoingList), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn list_outgoing(
@@ -1957,7 +1995,7 @@ pub(crate) async fn list_outgoing(
         .await?;
     Ok(Json(OutgoingList {
         available: Settings::cached(db).await.outgoing_webhooks,
-        webhooks: outgoing_rows(db, &rows).await?,
+        webhooks: outgoing_rows(db, &rows, Some(&user.username)).await?,
     }))
 }
 
@@ -2045,7 +2083,9 @@ pub(crate) async fn create_outgoing(
     .await?;
     tx.commit().await?;
     Ok(Json(OutgoingSecret {
-        webhook: outgoing_rows(db, &[row]).await?.remove(0),
+        webhook: outgoing_rows(db, &[row], Some(&user.username))
+            .await?
+            .remove(0),
         secret,
     }))
 }
@@ -2064,14 +2104,73 @@ async fn managed_outgoing(
         .ok_or_else(unknown)
 }
 
+/// What an edit read from an outgoing webhook; the write applies only while it still holds.
+struct Read<'a> {
+    url: &'a str,
+    events: &'a str,
+    enabled: bool,
+    owner: Option<&'a str>,
+}
+
+struct Write<'a> {
+    name: &'a str,
+    url: &'a str,
+    events: &'a str,
+    enabled: bool,
+    reset: bool,
+    owner: Option<&'a str>,
+}
+
+/// Writes an edit unless another one changed the URL, events, switch or owner since `read`, so
+/// a stale edit can never pair the old URL with a new owner's view. Whether it was written.
+async fn write_outgoing(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    id: i64,
+    read: Read<'_>,
+    write: Write<'_>,
+) -> Result<bool, ApiError> {
+    let Read {
+        url: was_url,
+        events: was_events,
+        enabled: was_enabled,
+        owner: was_owner,
+    } = read;
+    let Write {
+        name,
+        url,
+        events,
+        enabled,
+        reset,
+        owner,
+    } = write;
+    let done = sqlx::query("UPDATE outgoing_webhooks SET name = $1, url = $2, events = $3, enabled = $4, failures = CASE WHEN $5 <> 0 THEN 0 ELSE failures END, disabled_at = CASE WHEN $5 <> 0 THEN NULL ELSE disabled_at END, disabled_reason = CASE WHEN $5 <> 0 THEN NULL ELSE disabled_reason END, creator = CASE WHEN $7 <> 0 THEN $8 ELSE creator END WHERE id = $6 AND url = $9 AND events = $10 AND enabled = $11 AND COALESCE(creator, '') = $12")
+        .bind(name)
+        .bind(url)
+        .bind(events)
+        .bind(enabled as i64)
+        .bind(reset as i64)
+        .bind(id)
+        .bind(owner.is_some() as i64)
+        .bind(owner.unwrap_or_default())
+        .bind(was_url)
+        .bind(was_events)
+        .bind(was_enabled as i64)
+        .bind(was_owner.unwrap_or_default())
+        .execute(&mut **tx)
+        .await?
+        .rows_affected();
+    Ok(done == 1)
+}
+
 /// Edit an outgoing webhook
 ///
 /// Renames it, changes its URL or events, or turns it on or off (on clears the failure count).
 /// The secret stays. Changing the URL or events of someone else's webhook, or turning it on,
-/// makes you its owner: payloads then include only what you can view (this needs Manage
-/// webhooks or Manage channels as a member). Requires the Manage webhooks or Manage channels
+/// makes you its owner, and the request must then include the destination `url` (the
+/// previous owner's URL is never shown): payloads then include only what you can view (this
+/// needs Manage webhooks or Manage channels as a member). Requires the Manage webhooks or Manage channels
 /// permission. Logged in the audit log. General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/servers/{name}/outgoing_webhooks/{id}", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), request_body = OutgoingPatch, responses((status = 200, description = "The webhook", body = OutgoingWebhook), (status = 400, description = "Invalid name, URL or events", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, or turning it on while the instance switch is off", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/servers/{name}/outgoing_webhooks/{id}", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), request_body = OutgoingPatch, responses((status = 200, description = "The webhook", body = OutgoingWebhook), (status = 400, description = "Invalid name, URL or events, or `Enter the destination URL to take over this webhook.` when a change that makes you the owner has no URL", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, or turning it on while the instance switch is off", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 409, description = "`This webhook was just changed, try again`: its URL, events, switch or owner changed while this edit was being checked; nothing was written", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn update_outgoing(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2088,7 +2187,7 @@ pub(crate) async fn update_outgoing(
     let db = &state.db;
     let row = managed_outgoing(db, &access, id).await?;
     let owner: Option<String> = row.try_get(4)?;
-    let before = outgoing_rows(db, &[row]).await?.remove(0);
+    let before = outgoing_rows(db, &[row], None).await?.remove(0);
     let new_name = match new_name {
         Some(n) => {
             let n = n.trim().to_string();
@@ -2100,15 +2199,24 @@ pub(crate) async fn update_outgoing(
         }
         None => before.name.clone(),
     };
-    let url = match url {
-        Some(u) if u.trim() != before.url => check_url(&u).await?,
-        Some(_) | None => before.url.clone(),
-    };
     let events = match events {
         Some(list) => check_events(&list)?,
         None => before.events.join(" "),
     };
     let enabled = enabled.unwrap_or(before.enabled);
+    let blank = url.as_deref().is_none_or(|u| u.trim().is_empty());
+    if blank
+        && (events != before.events.join(" ") || enabled && !before.enabled)
+        && takeover(db, &access, &user, owner.as_deref())
+            .await?
+            .is_some()
+    {
+        return Err(bad(TAKEOVER_URL));
+    }
+    let url = match url {
+        Some(u) if u.trim() != before.url => check_url(&u).await?,
+        Some(_) | None => before.url.clone(),
+    };
     if enabled && !before.enabled && !Settings::cached(db).await.outgoing_webhooks {
         return Err(forbidden(
             "Outgoing webhooks are turned off on this instance",
@@ -2143,17 +2251,31 @@ pub(crate) async fn update_outgoing(
     let actor = manager_actor(db, &access, &user).await?;
     let reset = enabled && !before.enabled;
     let mut tx = db.begin().await?;
-    sqlx::query("UPDATE outgoing_webhooks SET name = $1, url = $2, events = $3, enabled = $4, failures = CASE WHEN $5 <> 0 THEN 0 ELSE failures END, disabled_at = CASE WHEN $5 <> 0 THEN NULL ELSE disabled_at END, disabled_reason = CASE WHEN $5 <> 0 THEN NULL ELSE disabled_reason END, creator = CASE WHEN $7 <> 0 THEN $8 ELSE creator END WHERE id = $6")
-        .bind(&new_name)
-        .bind(&url)
-        .bind(&events)
-        .bind(enabled as i64)
-        .bind(reset as i64)
-        .bind(id)
-        .bind(takes as i64)
-        .bind(&user.username)
-        .execute(&mut *tx)
-        .await?;
+    let wrote = write_outgoing(
+        &mut tx,
+        id,
+        Read {
+            url: &before.url,
+            events: &before.events.join(" "),
+            enabled: before.enabled,
+            owner: owner.as_deref(),
+        },
+        Write {
+            name: &new_name,
+            url: &url,
+            events: &events,
+            enabled,
+            reset,
+            owner: takes.then_some(user.username.as_str()),
+        },
+    )
+    .await?;
+    if !wrote {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "This webhook was just changed, try again".to_string(),
+        ));
+    }
     if details.has_changes() {
         audit::record(
             &mut tx,
@@ -2164,44 +2286,76 @@ pub(crate) async fn update_outgoing(
     }
     tx.commit().await?;
     Ok(Json(
-        outgoing_rows(db, &[managed_outgoing(db, &access, id).await?])
-            .await?
-            .remove(0),
+        outgoing_rows(
+            db,
+            &[managed_outgoing(db, &access, id).await?],
+            Some(&user.username),
+        )
+        .await?
+        .remove(0),
     ))
 }
 
 /// Reset an outgoing webhook's secret
 ///
 /// Makes a new signing secret and returns it once; deliveries are signed with it from now on.
-/// Resetting someone else's webhook makes you its owner: payloads then include only what you
+/// Resetting someone else's webhook makes you its owner, and you must give its destination
+/// `url` in the body (the previous owner's URL is never shown): payloads then include only what you
 /// can view (this needs Manage webhooks or Manage channels as a member). Requires the Manage
 /// webhooks or Manage channels permission. Logged in the audit log. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/servers/{name}/outgoing_webhooks/{id}/secret", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), responses((status = 200, description = "The webhook with its new secret", body = OutgoingSecret), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission` (also when taking over someone else's webhook without Manage webhooks or Manage channels as a member), or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/servers/{name}/outgoing_webhooks/{id}/secret", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), request_body(content = SecretReset, description = "Needed only when the reset makes you the owner"), responses((status = 200, description = "The webhook with its new secret", body = OutgoingSecret), (status = 400, description = "`Enter the destination URL to take over this webhook.`, or an invalid URL", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission` (also when taking over someone else's webhook without Manage webhooks or Manage channels as a member), or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 409, description = "`This webhook was just changed, try again`: its owner changed while this reset was being checked; nothing was written", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn reset_secret(
     State(state): State<AppState>,
     Authed(user): Authed,
     Path((name, id)): Path<(String, i64)>,
+    body: Option<Json<SecretReset>>,
 ) -> Result<Json<OutgoingSecret>, ApiError> {
     let access = manager(&state, &user, &name).await?;
     let db = &state.db;
     let row = managed_outgoing(db, &access, id).await?;
     let hook_name: String = row.try_get(1)?;
+    let was_url: String = row.try_get(2)?;
     let owner: Option<String> = row.try_get(4)?;
     let takes = takeover(db, &access, &user, owner.as_deref())
         .await?
         .is_some();
+    let given = body
+        .and_then(|Json(b)| b.url)
+        .filter(|u| !u.trim().is_empty());
+    let url = match (takes, given) {
+        (true, None) => return Err(bad(TAKEOVER_URL)),
+        (true, Some(u)) if u.trim() != was_url => check_url(&u).await?,
+        _ => was_url.clone(),
+    };
     let secret = new_secret();
     let actor = manager_actor(db, &access, &user).await?;
     let mut tx = db.begin().await?;
-    sqlx::query("UPDATE outgoing_webhooks SET secret = $1, creator = CASE WHEN $3 <> 0 THEN $4 ELSE creator END WHERE id = $2")
+    let wrote = sqlx::query("UPDATE outgoing_webhooks SET secret = $1, creator = CASE WHEN $3 <> 0 THEN $4 ELSE creator END, url = $6 WHERE id = $2 AND COALESCE(creator, '') = $5 AND url = $7")
         .bind(&secret)
         .bind(id)
         .bind(takes as i64)
         .bind(&user.username)
+        .bind(owner.as_deref().unwrap_or_default())
+        .bind(&url)
+        .bind(&was_url)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected();
+    if wrote != 1 {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "This webhook was just changed, try again".to_string(),
+        ));
+    }
     let details = match takes {
-        true => Details::new().change("owner", owner.clone(), user.username.clone()),
+        true => Details::new()
+            .change("owner", owner.clone(), user.username.clone())
+            .change("host", host_of(&was_url), host_of(&url))
+            .change(
+                "url_path_changed",
+                false,
+                url != was_url && host_of(&url) == host_of(&was_url),
+            ),
         false => Details::new(),
     };
     audit::record(
@@ -2218,9 +2372,13 @@ pub(crate) async fn reset_secret(
     .await?;
     tx.commit().await?;
     Ok(Json(OutgoingSecret {
-        webhook: outgoing_rows(db, &[managed_outgoing(db, &access, id).await?])
-            .await?
-            .remove(0),
+        webhook: outgoing_rows(
+            db,
+            &[managed_outgoing(db, &access, id).await?],
+            Some(&user.username),
+        )
+        .await?
+        .remove(0),
         secret,
     }))
 }
@@ -2766,20 +2924,10 @@ async fn payload(
             allowed(resolve_channel(db, cid, Some(owner), &Proof::none()).await)?.is_some(),
         )
     };
-    if let Some((id, channel_id, thread_root_id)) = fact.message()
+    if let Some((id, _, _)) = fact.message()
         && !message_exists(db, id).await?
     {
-        return Ok(match channel_id {
-            Some(cid) if can_view(cid).await? => Some((
-                "message.deleted",
-                serde_json::json!({
-                    "channel_id": cid,
-                    "thread_root_id": thread_root_id,
-                    "ids": [id],
-                }),
-            )),
-            Some(_) | None => None,
-        });
+        return Ok(None);
     }
     let event = fact.event();
     let data = match fact {
@@ -2975,14 +3123,20 @@ pub async fn send(
     let Ok(parsed) = Url::parse(url) else {
         return fail("Invalid URL", started);
     };
-    let checked = match net_guard::check(&parsed, policy).await {
-        Ok(c) => c,
-        Err(r) => {
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    let checked = match tokio::time::timeout_at(deadline, net_guard::check(&parsed, policy)).await {
+        Err(_) => return fail("timed out", started),
+        Ok(Ok(c)) => c,
+        Ok(Err(r)) => {
             tracing::debug!("outgoing webhook delivery {delivery} refused: {r}");
             return fail(refusal_text(r), started);
         }
     };
-    let Ok(client) = checked.client(TIMEOUT, CONNECT_TIMEOUT) else {
+    let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if left.is_zero() {
+        return fail("timed out", started);
+    }
+    let Ok(client) = checked.client(left, CONNECT_TIMEOUT.min(left)) else {
         return fail("client error", started);
     };
     let sent = client
@@ -3230,7 +3384,15 @@ async fn deliver(state: &AppState, policy: &Policy, id: i64, at: i64) -> Result<
         return Ok(false);
     };
     let Some((event, data)) = payload(db, &owner, &fact).await? else {
-        give_up("Owner cannot see this").await?;
+        let gone = match fact.message() {
+            Some((id, _, _)) => !message_exists(db, id).await?,
+            None => false,
+        };
+        give_up(match gone {
+            true => "Message was deleted",
+            false => "Owner cannot see this",
+        })
+        .await?;
         return Ok(false);
     };
     let body = envelope(id, hook, &server, event, created, &data);
@@ -4465,18 +4627,52 @@ mod tests {
             (Some("owner".to_string()), 1),
             "a rename keeps the owner"
         );
+        let Json(by_staff) = reset_token(
+            State(state.clone()),
+            Authed(mem_user("root", true)),
+            Path(("rchat".to_string(), id)),
+        )
+        .await
+        .expect("staff resets a leaked token");
+        assert_eq!(
+            owner_of(id).await,
+            (Some("owner".to_string()), 1),
+            "staff powers reset without taking the hook over"
+        );
         assert_eq!(
             code(
-                reset_token(
-                    State(state.clone()),
-                    Authed(mem_user("root", true)),
-                    Path(("rchat".to_string(), id)),
+                run(
+                    &state,
+                    &id.to_string(),
+                    &made.token,
+                    json!({"content": "old"})
                 )
                 .await
             )
             .0,
-            StatusCode::FORBIDDEN,
-            "staff powers cannot take a hook over"
+            StatusCode::NOT_FOUND,
+            "the leaked token is dead"
+        );
+        run(
+            &state,
+            &id.to_string(),
+            &by_staff.token,
+            json!({"content": "new"}),
+        )
+        .await
+        .expect("the new token posts");
+        let entry = sqlx::query("SELECT actor, staff, details FROM audit_log WHERE action = 'webhook.token_reset' ORDER BY id DESC LIMIT 1")
+            .fetch_one(db)
+            .await
+            .expect("entry");
+        assert_eq!(
+            (
+                entry.get::<Option<String>, _>(0),
+                entry.get::<i64, _>(1),
+                entry.get::<String, _>(2).contains("owner"),
+            ),
+            (None, 1, false),
+            "logged as Instance staff, nobody named"
         );
         let Json(fresh) = reset_token(
             State(state.clone()),
@@ -4540,6 +4736,235 @@ mod tests {
             (Some("moder".to_string()), 0),
             "moving it to another channel makes the mover the owner"
         );
+        done(state, path).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_lookup_shares_the_delivery_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let silent = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock);
+            }
+        });
+        let host = "9.stall.test";
+        let policy = Policy {
+            http: Http::AllowedHostsOnly,
+            web_ports_only: false,
+            allowed: vec![AllowedHost::parse(&format!("{host}:{port}")).expect("host")],
+            own: Vec::new(),
+            own_hosts: Vec::new(),
+        };
+        let started = tokio::time::Instant::now();
+        let attempt = send(
+            &policy,
+            &format!("http://{host}:{port}/hook"),
+            "whsec_test",
+            "ping",
+            1,
+            b"{}",
+            1,
+        )
+        .await;
+        assert_eq!(attempt.error.as_deref(), Some("timed out"));
+        assert!(
+            started.elapsed() <= TIMEOUT + Duration::from_millis(500),
+            "a 9 s lookup leaves 1 s for the request, took {:?}",
+            started.elapsed()
+        );
+        silent.abort();
+    }
+
+    #[tokio::test]
+    async fn only_the_owner_sees_the_whole_outgoing_url() {
+        let (state, path, _) = setup("wh_out_url").await;
+        let db = &state.db;
+        add_moder(db).await;
+        switch_on(db).await;
+        let hook = outgoing_hook(
+            db,
+            "https://hooks.example:8443/services/T0/B0/secret?key=1",
+            "message.created",
+            "owner",
+        )
+        .await;
+        let listed = |who: &'static str| {
+            let state = state.clone();
+            async move {
+                let Json(list) = list_outgoing(
+                    State(state),
+                    Authed(mem_user(who, false)),
+                    Path("rchat".to_string()),
+                )
+                .await
+                .expect("list");
+                list.webhooks.into_iter().next().expect("hook")
+            }
+        };
+        let mine = listed("owner").await;
+        assert_eq!(
+            (mine.url.as_str(), mine.url_hidden),
+            (
+                "https://hooks.example:8443/services/T0/B0/secret?key=1",
+                false
+            )
+        );
+        let theirs = listed("moder").await;
+        assert_eq!(
+            (theirs.url.as_str(), theirs.url_hidden),
+            ("https://hooks.example:8443/", true)
+        );
+        let Json(renamed) = update_outgoing(
+            State(state.clone()),
+            Authed(mem_user("moder", false)),
+            Path(("rchat".to_string(), hook)),
+            Json(OutgoingPatch {
+                name: Some("Renamed".to_string()),
+                url: None,
+                events: None,
+                enabled: None,
+            }),
+        )
+        .await
+        .expect("rename");
+        assert_eq!(
+            (renamed.url.as_str(), renamed.url_hidden),
+            ("https://hooks.example:8443/", true)
+        );
+        assert_eq!(
+            text(
+                db,
+                &format!("SELECT url FROM outgoing_webhooks WHERE id = {hook}")
+            )
+            .await
+            .as_deref(),
+            Some("https://hooks.example:8443/services/T0/B0/secret?key=1"),
+            "a rename keeps the URL"
+        );
+        let refused = |r: Result<(), ApiError>| {
+            let e = r.expect_err("takeover without a URL");
+            assert_eq!((e.0, e.1.as_str()), (StatusCode::BAD_REQUEST, TAKEOVER_URL));
+        };
+        refused(
+            reset_secret(
+                State(state.clone()),
+                Authed(mem_user("moder", false)),
+                Path(("rchat".to_string(), hook)),
+                None,
+            )
+            .await
+            .map(|_| ()),
+        );
+        refused(
+            reset_secret(
+                State(state.clone()),
+                Authed(mem_user("moder", false)),
+                Path(("rchat".to_string(), hook)),
+                Some(Json(SecretReset {
+                    url: Some("  ".to_string()),
+                })),
+            )
+            .await
+            .map(|_| ()),
+        );
+        for (url, events, enabled) in [
+            (None, Some(vec!["message.deleted".to_string()]), None),
+            (Some(""), Some(vec!["message.deleted".to_string()]), None),
+        ] {
+            refused(
+                update_outgoing(
+                    State(state.clone()),
+                    Authed(mem_user("moder", false)),
+                    Path(("rchat".to_string(), hook)),
+                    Json(OutgoingPatch {
+                        name: None,
+                        url: url.map(str::to_string),
+                        events,
+                        enabled,
+                    }),
+                )
+                .await
+                .map(|_| ()),
+            );
+        }
+        exec(
+            db,
+            &format!("UPDATE outgoing_webhooks SET enabled = 0 WHERE id = {hook}"),
+        )
+        .await;
+        refused(
+            update_outgoing(
+                State(state.clone()),
+                Authed(mem_user("moder", false)),
+                Path(("rchat".to_string(), hook)),
+                Json(OutgoingPatch {
+                    name: None,
+                    url: None,
+                    events: None,
+                    enabled: Some(true),
+                }),
+            )
+            .await
+            .map(|_| ()),
+        );
+        exec(
+            db,
+            &format!("UPDATE outgoing_webhooks SET enabled = 1 WHERE id = {hook}"),
+        )
+        .await;
+        assert_eq!(
+            text(
+                db,
+                &format!("SELECT creator FROM outgoing_webhooks WHERE id = {hook}")
+            )
+            .await
+            .as_deref(),
+            Some("owner"),
+            "a refused takeover changes nothing"
+        );
+        let Json(reset) = reset_secret(
+            State(state.clone()),
+            Authed(mem_user("moder", false)),
+            Path(("rchat".to_string(), hook)),
+            Some(Json(SecretReset {
+                url: Some("https://93.184.216.35/fresh".to_string()),
+            })),
+        )
+        .await
+        .expect("reset with a URL makes moder the owner");
+        assert_eq!(
+            (reset.webhook.url.as_str(), reset.webhook.url_hidden),
+            ("https://93.184.216.35/fresh", false)
+        );
+        let seen = format!(
+            "{} {} {}",
+            serde_json::to_string(&reset.webhook).expect("json"),
+            serde_json::to_string(&listed("moder").await).expect("json"),
+            sqlx::query("SELECT COALESCE(details, '') FROM audit_log")
+                .fetch_all(db)
+                .await
+                .expect("audit")
+                .iter()
+                .map(|r| r.try_get::<String, _>(0).expect("details"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        assert!(!seen.contains("T0/B0") && !seen.contains("key=1"), "{seen}");
+        let Json(log) = list_deliveries(
+            State(state.clone()),
+            Authed(mem_user("moder", false)),
+            Path(("rchat".to_string(), hook)),
+        )
+        .await
+        .expect("log");
+        let log = serde_json::to_string(&log).expect("json");
+        assert!(!log.contains("T0/B0") && !log.contains("key=1"), "{log}");
+        let before = listed("owner").await;
+        assert!(before.url_hidden, "the old owner now sees the host only");
         done(state, path).await;
     }
 
@@ -4624,6 +5049,9 @@ mod tests {
                     State(state.clone()),
                     Authed(mem_user("root", true)),
                     Path(("rchat".to_string(), second)),
+                    Some(Json(SecretReset {
+                        url: Some("https://93.184.216.35/c".to_string()),
+                    })),
                 )
                 .await
             )
@@ -4634,6 +5062,9 @@ mod tests {
             State(state.clone()),
             Authed(mem_user("moder", false)),
             Path(("rchat".to_string(), second)),
+            Some(Json(SecretReset {
+                url: Some("https://93.184.216.35/c".to_string()),
+            })),
         )
         .await
         .expect("secret");
@@ -4650,7 +5081,7 @@ mod tests {
             Path(("rchat".to_string(), third)),
             Json(OutgoingPatch {
                 name: None,
-                url: None,
+                url: Some("https://93.184.216.34/d".to_string()),
                 events: None,
                 enabled: Some(true),
             }),
@@ -4674,7 +5105,7 @@ mod tests {
         let (state, path, cid) = setup("wh_rebuild").await;
         let db = &state.db;
         switch_on(db).await;
-        let (port, seen) = receiver(vec![200, 200]).await;
+        let (port, seen) = receiver(vec![200]).await;
         let hook = outgoing_hook(
             db,
             &format!("http://127.0.0.1:{port}/in"),
@@ -4708,28 +5139,34 @@ mod tests {
         .await;
         exec(db, &format!("DELETE FROM messages WHERE id = {gone}")).await;
         let policy = local_policy();
-        assert_eq!(run_due(&state, &policy, now()).await.expect("run"), 2);
+        assert_eq!(run_due(&state, &policy, now()).await.expect("run"), 1);
         let seen = seen.await.expect("receiver");
         let bodies: Vec<Value> = seen
             .iter()
             .map(|(_, b)| serde_json::from_str(b).expect("json"))
             .collect();
+        assert_eq!(bodies.len(), 1);
         assert_eq!(bodies[0]["type"], "message.created");
         assert_eq!(bodies[0]["data"]["message"]["content"], "final text");
         assert!(!seen[0].1.contains("first draft"));
-        assert_eq!(bodies[1]["type"], "message.deleted");
-        assert_eq!(seen[1].0["x-webhook-event"], "message.deleted");
-        assert_eq!(bodies[1]["data"]["ids"], json!([gone]));
-        assert_eq!(bodies[1]["data"]["channel_id"], cid);
-        assert!(!seen[1].1.contains("doomed"));
+        let dropped = sqlx::query(
+            "SELECT event, status, last_error FROM webhook_deliveries ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(db)
+        .await
+        .expect("row");
         assert_eq!(
-            text(
-                db,
-                "SELECT event FROM webhook_deliveries ORDER BY id DESC LIMIT 1"
-            )
-            .await
-            .as_deref(),
-            Some("message.deleted")
+            (
+                dropped.get::<String, _>(0),
+                dropped.get::<String, _>(1),
+                dropped.get::<Option<String>, _>(2),
+            ),
+            (
+                "message.created".to_string(),
+                "failed".to_string(),
+                Some("Message was deleted".to_string())
+            ),
+            "a hook not subscribed to deletions never gets one"
         );
         let late = post_msg(db, cid, "late").await;
         enqueue(&state, created(db, cid, late).await)
@@ -4975,6 +5412,130 @@ mod tests {
             .expect("visible");
         assert_eq!(event, "message.created");
         assert_eq!(data["message"]["content"], content, "raw content goes out");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_stale_edit_never_pairs_an_old_url_with_a_new_owner() {
+        let (state, path, _) = setup("wh_stale_edit").await;
+        let db = &state.db;
+        let hook = outgoing_hook(db, "https://a.example/in", "message.created", "owner").await;
+        let edit = async |read: Read<'_>, name: &str| {
+            let url = read_url(db, hook).await;
+            let mut tx = db.begin().await.expect("tx");
+            let wrote = write_outgoing(
+                &mut tx,
+                hook,
+                read,
+                Write {
+                    name,
+                    url: &url,
+                    events: "message.created",
+                    enabled: true,
+                    reset: false,
+                    owner: None,
+                },
+            )
+            .await
+            .expect("write");
+            tx.commit().await.expect("commit");
+            wrote
+        };
+        let a_read = || Read {
+            url: "https://a.example/in",
+            events: "message.created",
+            enabled: true,
+            owner: Some("owner"),
+        };
+        assert!(
+            edit(a_read(), "Renamed").await,
+            "nothing changed in between"
+        );
+        exec(
+            db,
+            &format!("UPDATE outgoing_webhooks SET url = 'https://b.example/in', creator = 'mod' WHERE id = {hook}"),
+        )
+        .await;
+        assert!(
+            !edit(a_read(), "Stale").await,
+            "a takeover landed in between"
+        );
+        let row = sqlx::query("SELECT name, url, creator FROM outgoing_webhooks WHERE id = $1")
+            .bind(hook)
+            .fetch_one(db)
+            .await
+            .expect("row");
+        let got: (String, String, String) = (
+            row.try_get(0).expect("name"),
+            row.try_get(1).expect("url"),
+            row.try_get(2).expect("creator"),
+        );
+        assert_eq!(
+            got,
+            (
+                "Renamed".to_string(),
+                "https://b.example/in".to_string(),
+                "mod".to_string()
+            )
+        );
+        done(state, path).await;
+    }
+
+    async fn read_url(db: &Db, hook: i64) -> String {
+        sqlx::query("SELECT url FROM outgoing_webhooks WHERE id = $1")
+            .bind(hook)
+            .fetch_one(db)
+            .await
+            .expect("url")
+            .try_get(0)
+            .expect("text")
+    }
+
+    #[tokio::test]
+    async fn facts_about_a_deleted_message_are_not_sent_as_its_deletion() {
+        let (state, path, cid) = setup("wh_deleted_facts").await;
+        let db = &state.db;
+        let owner = get_user(db, "owner").await.expect("db").expect("owner");
+        let gone = 999_999;
+        let created = Fact::Created {
+            server: "rchat".to_string(),
+            id: gone,
+            channel_id: Some(cid),
+            thread_root_id: None,
+        };
+        let updated = Fact::Updated {
+            server: "rchat".to_string(),
+            id: gone,
+            channel_id: Some(cid),
+            thread_root_id: None,
+            edited_at: Some(1),
+        };
+        for fact in [
+            created,
+            updated,
+            Fact::Reaction {
+                server: "rchat".to_string(),
+                added: true,
+                message_id: gone,
+                channel_id: Some(cid),
+                thread_root_id: None,
+                emoji: "+1".to_string(),
+                username: "owner".to_string(),
+                count: 1,
+            },
+            Fact::PollEnded {
+                server: "rchat".to_string(),
+                message_id: gone,
+                channel_id: Some(cid),
+                thread_root_id: None,
+            },
+        ] {
+            assert!(
+                payload(db, &owner, &fact).await.expect("payload").is_none(),
+                "{}",
+                fact.event()
+            );
+        }
         done(state, path).await;
     }
 }

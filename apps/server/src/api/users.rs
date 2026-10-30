@@ -38,7 +38,8 @@ pub struct ProfileMember {
     /// offline).
     pub online: bool,
     /// The user's running timeout in the server. Only for viewers with the Timeout members
-    /// permission; absent otherwise and when none is running.
+    /// permission (kept while they are timed out themselves); absent otherwise and when none is
+    /// running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<crate::api::timeouts::MemberTimeout>,
 }
@@ -103,7 +104,7 @@ async fn profile_member(
     match row {
         Some(r) => {
             let roles = member_roles(&state.db, &lite.name, username).await?;
-            let timeout = match access.has_perm(&state.db, Perm::TimeoutMembers).await {
+            let timeout = match access.can_view(&state.db, Perm::TimeoutMembers).await {
                 true => crate::api::timeouts::running_timeouts(
                     &state.db,
                     &lite.name,

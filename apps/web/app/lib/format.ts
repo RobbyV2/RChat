@@ -34,12 +34,17 @@ export const isApple = () =>
 export const keysLabel = (keys: string, apple = isApple()) =>
   keys.replaceAll('Mod', apple ? 'Cmd' : 'Ctrl')
 
-type KeyLike = Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>
+type KeyLike = Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'> &
+  Partial<Pick<KeyboardEvent, 'code'>>
 
-// The format a key press asks for, if any.
-export const formatKey = (e: KeyLike): Format | null => {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null
-  const pressed = `Mod+${e.shiftKey ? 'Shift+' : ''}${e.key.toUpperCase()}`
+// The format a key press asks for, if any. Mod is Cmd alone on Apple devices (Ctrl+B and Ctrl+E
+// move the caret there) and Ctrl alone elsewhere; on non-Latin layouts the physical key counts.
+export const formatKey = (e: KeyLike, apple = isApple()): Format | null => {
+  const mod = apple ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
+  if (!mod || e.altKey) return null
+  const latin = /^[a-z]$/i.test(e.key)
+  const letter = latin ? e.key : (/^Key([A-Z])$/.exec(e.code ?? '')?.[1] ?? e.key)
+  const pressed = `Mod+${e.shiftKey ? 'Shift+' : ''}${letter.toUpperCase()}`
   return FORMATS.find(f => f.keys === pressed)?.format ?? null
 }
 

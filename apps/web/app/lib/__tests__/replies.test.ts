@@ -49,6 +49,7 @@ describe('plain snippets for replies being sent', () => {
       'see the docs or https://a.b'
     )
     expect(plainLine('a ||secret|| b')).toBe('a ||secret|| b')
+    expect(plainLine('||secret\uE001 more secret||')).toBe('||secret\uFFFD more secret||')
     expect(plainLine('')).toBe('')
     expect([...plainLine('é'.repeat(300))].length).toBe(200)
     expect(plainLine('a\u202Eb\u200Fc\u2066d\u2069\u200Ee\u0007f\u202Ag')).toBe('abcdefg')

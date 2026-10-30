@@ -15,6 +15,9 @@ import {
   eventLabel,
   nameProblem,
   outgoingReach,
+  outgoingUrl,
+  TAKEOVER_URL,
+  takeoverUrlProblem,
   takesOver,
   urlProblem,
   webhookUrl,
@@ -461,12 +464,14 @@ interface OutForm {
 
 function OutEditor({
   initial,
+  urlHidden = false,
   busy,
   submit,
   submitLabel,
   onCancel,
 }: {
   initial: OutForm
+  urlHidden?: boolean
   busy: boolean
   submit: (f: OutForm) => Promise<string | null>
   submitLabel: string
@@ -480,7 +485,8 @@ function OutEditor({
       events: f.events.includes(key) ? f.events.filter(e => e !== key) : [...f.events, key],
     }))
   const save = async () => {
-    const problem = nameProblem(form.name) ?? urlProblem(form.url)
+    const problem =
+      nameProblem(form.name) ?? (urlHidden && !form.url.trim() ? null : urlProblem(form.url))
     if (problem) {
       setError(problem)
       return
@@ -510,9 +516,14 @@ function OutEditor({
           type="url"
           inputMode="url"
           onChange={e => setForm({ ...form, url: e.target.value })}
-          placeholder="https://example.com/hooks/chat"
+          placeholder={urlHidden ? 'Keep the current URL' : 'https://example.com/hooks/chat'}
           className={`${fieldCls} text-on-surface`}
         />
+        {urlHidden && (
+          <span className="text-xs">
+            Only the owner sees the whole URL. Leave this empty to keep it.
+          </span>
+        )}
       </label>
       <fieldset className="flex flex-col gap-1">
         <legend className="mb-1 text-sm text-on-surface-variant">Events</legend>
@@ -541,6 +552,70 @@ function OutEditor({
         </button>
         <button disabled={busy} onClick={() => void save()} className={filledBtn}>
           {submitLabel}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// Taking over someone else's webhook: its owner's URL path is never shown, so the new owner
+// types the whole destination URL.
+function TakeoverForm({
+  hook,
+  host,
+  kind,
+  busy,
+  submit,
+  onCancel,
+}: {
+  hook: OutgoingWebhook
+  host: string
+  kind: 'on' | 'secret'
+  busy: boolean
+  submit: (url: string) => Promise<string | null>
+  onCancel: () => void
+}) {
+  const [url, setUrl] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const go = async () => {
+    const problem = takeoverUrlProblem(url)
+    if (problem) return setError(problem)
+    setError(await submit(url.trim()))
+  }
+  return (
+    <div
+      role="group"
+      aria-label={`Take over ${hook.name}`}
+      className="mt-2 flex flex-col gap-3 rounded-2xl bg-surface-container p-3"
+    >
+      <p className="text-sm text-on-surface">
+        {kind === 'on'
+          ? `Turn on ${hook.name}? `
+          : `Make a new secret for ${hook.name}? Requests are signed with it from now on. `}
+        {OWNER_NOTE} It will then send only what you can see.
+      </p>
+      <label className="flex flex-col gap-1 text-sm text-on-surface-variant">
+        Destination URL
+        <input
+          value={url}
+          type="url"
+          inputMode="url"
+          autoFocus
+          onChange={e => setUrl(e.target.value)}
+          placeholder={`https://${host}/…`}
+          className={`${fieldCls} text-on-surface`}
+        />
+        <span className="text-xs">
+          It sends to {host}. Only the owner sees the whole URL, so enter it in full.
+        </span>
+      </label>
+      <FieldError message={error} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel} className={textBtn}>
+          Cancel
+        </button>
+        <button disabled={busy} onClick={() => void go()} className={filledBtn}>
+          {kind === 'on' ? 'Turn on' : 'Make new secret'}
         </button>
       </div>
     </div>
@@ -606,6 +681,7 @@ function Outgoing({ server }: { server: string }) {
   const [editing, setEditing] = useState<number | null>(null)
   const [log, setLog] = useState<number | null>(null)
   const [secret, setSecret] = useState<{ name: string; value: string } | null>(null)
+  const [taking, setTaking] = useState<{ id: number; kind: 'on' | 'secret' } | null>(null)
 
   const load = useCallback(() => {
     api
@@ -643,7 +719,7 @@ function Outgoing({ server }: { server: string }) {
     run(async () => {
       await api.updateOutgoing(server, hook.id, {
         name: f.name.trim(),
-        url: f.url.trim(),
+        url: outgoingUrl(hook, f.url),
         events: f.events,
       })
       setEditing(null)
@@ -651,6 +727,7 @@ function Outgoing({ server }: { server: string }) {
 
   const update = (hook: OutgoingWebhook) => (f: OutForm) => {
     if (!outgoingReach(hook, f) || !takesOver(hook.creator, me)) return save(hook, f)
+    if (outgoingUrl(hook, f.url) === undefined) return Promise.resolve(TAKEOVER_URL)
     return new Promise<string | null>(resolve =>
       askConfirm({
         title: 'Change outgoing webhook',
@@ -667,12 +744,17 @@ function Outgoing({ server }: { server: string }) {
   const toggle = (hook: OutgoingWebhook) =>
     hook.enabled || !takesOver(hook.creator, me)
       ? flip(hook)
-      : askConfirm({
-          title: 'Turn on outgoing webhook',
-          body: `Turn on ${hook.name}? ${OWNER_NOTE} It will then send only what you can see.`,
-          confirm: 'Turn on',
-          action: () => flip(hook),
-        })
+      : setTaking({ id: hook.id, kind: 'on' })
+
+  const takeOver = (hook: OutgoingWebhook, kind: 'on' | 'secret', url: string) =>
+    run(async () => {
+      if (kind === 'on') await api.updateOutgoing(server, hook.id, { enabled: true, url })
+      else {
+        const made = await api.resetOutgoingSecret(server, hook.id, url)
+        setSecret({ name: made.name, value: made.secret })
+      }
+      setTaking(null)
+    })
 
   const test = (hook: OutgoingWebhook) =>
     void run(async () => {
@@ -682,19 +764,21 @@ function Outgoing({ server }: { server: string }) {
     }).then(setError)
 
   const newSecret = (hook: OutgoingWebhook) =>
-    askConfirm({
-      title: 'New signing secret',
-      body: `Make a new secret for ${hook.name}? Requests are signed with it from now on.${takesOver(hook.creator, me) ? ` ${OWNER_NOTE} It will then send only what you can see.` : ''}`,
-      confirm: 'Make new secret',
-      action: () =>
-        void api
-          .resetOutgoingSecret(server, hook.id)
-          .then(made => {
-            setSecret({ name: made.name, value: made.secret })
-            load()
-          })
-          .catch((e: unknown) => setError(errorText(e))),
-    })
+    takesOver(hook.creator, me)
+      ? setTaking({ id: hook.id, kind: 'secret' })
+      : askConfirm({
+          title: 'New signing secret',
+          body: `Make a new secret for ${hook.name}? Requests are signed with it from now on.`,
+          confirm: 'Make new secret',
+          action: () =>
+            void api
+              .resetOutgoingSecret(server, hook.id)
+              .then(made => {
+                setSecret({ name: made.name, value: made.secret })
+                load()
+              })
+              .catch((e: unknown) => setError(errorText(e))),
+        })
 
   const remove = (hook: OutgoingWebhook) =>
     askConfirm({
@@ -777,7 +861,10 @@ function Outgoing({ server }: { server: string }) {
                   <p className="truncate text-sm font-medium text-on-surface">
                     <Masked text={h.name} />
                   </p>
-                  <p className="truncate text-xs text-on-surface-variant" title={h.url}>
+                  <p
+                    className="truncate text-xs text-on-surface-variant"
+                    title={h.url_hidden ? `${h.url} (path hidden)` : h.url}
+                  >
                     {hostOf(h.url)} · {h.events.map(eventLabel).join(', ')}
                     {h.creator && (
                       <>
@@ -840,10 +927,21 @@ function Outgoing({ server }: { server: string }) {
                     : `Turned off ${ago(h.disabled_at)} after 10 failed deliveries in a row. Check the URL, then turn it back on.`}
                 </p>
               )}
+              {taking?.id === h.id && (
+                <TakeoverForm
+                  hook={h}
+                  host={hostOf(h.url)}
+                  kind={taking.kind}
+                  busy={busy}
+                  submit={url => takeOver(h, taking.kind, url)}
+                  onCancel={() => setTaking(null)}
+                />
+              )}
               {editing === h.id && (
                 <div className="mt-2">
                   <OutEditor
-                    initial={{ name: h.name, url: h.url, events: h.events }}
+                    initial={{ name: h.name, url: h.url_hidden ? '' : h.url, events: h.events }}
+                    urlHidden={h.url_hidden}
                     busy={busy}
                     submit={update(h)}
                     submitLabel="Save"

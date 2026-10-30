@@ -1384,6 +1384,10 @@ mod tests {
         let _ = delete_category(s(), who("alice"), Path(category.id))
             .await
             .expect("delete category");
+        assert!(
+            last(&state).await.details.get("channels").is_none(),
+            "no count of channels some viewers can't see"
+        );
         let _ = delete_channel(s(), who("alice"), Path(made.id))
             .await
             .expect("delete");

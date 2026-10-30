@@ -242,11 +242,12 @@ fn scrub(mut url: Url) -> Url {
     url
 }
 
-/// The links of `content` that get previews, scrubbed, at most `MAX_URLS`. Links inside or
-/// touching a `||spoiler||` are never fetched (`crate::spoilers`, read like the client).
-pub(crate) fn extract_urls(content: &str) -> Vec<String> {
+/// Every link of `content` in text order, scrubbed, with whether it is inside or touching a
+/// `||spoiler||` (`crate::spoilers`, read like the client). A spoilered word is read both whole
+/// and split at its markers, so `||https://x.example||` yields `https://x.example/`.
+fn scan_urls(content: &str) -> Vec<(String, bool)> {
     let spoilers = crate::spoilers::spans(content, false);
-    let mut out: Vec<String> = Vec::new();
+    let mut out = Vec::new();
     let mut words: Vec<(usize, &str)> = Vec::new();
     let mut from = 0;
     for (i, c) in content.char_indices() {
@@ -257,24 +258,51 @@ pub(crate) fn extract_urls(content: &str) -> Vec<String> {
     }
     words.push((from, &content[from..]));
     for (at, word) in words {
-        if crate::spoilers::overlaps(&spoilers, at, at + word.len()) {
-            continue;
-        }
-        let trimmed = word.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '"', '\'']);
-        if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
-            continue;
-        }
-        match Url::parse(trimmed) {
-            Ok(url) if url.host().is_some() && !is_invite(&url) => {
-                let s = scrub(url).to_string();
-                if !out.contains(&s) {
-                    out.push(s);
-                    if out.len() == MAX_URLS {
-                        break;
-                    }
-                }
+        let spoilered = crate::spoilers::overlaps(&spoilers, at, at + word.len());
+        let pieces = match spoilered {
+            true => std::iter::once(word).chain(word.split("||")).collect(),
+            false => vec![word],
+        };
+        for piece in pieces {
+            let trimmed =
+                piece.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '"', '\'']);
+            if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+                continue;
             }
-            _ => continue,
+            match Url::parse(trimmed) {
+                Ok(url) if url.host().is_some() && !is_invite(&url) => {
+                    out.push((scrub(url).to_string(), spoilered))
+                }
+                _ => continue,
+            }
+        }
+    }
+    out
+}
+
+/// The links of `content` that get previews, scrubbed, at most `MAX_URLS`. Links inside or
+/// touching a `||spoiler||` are never fetched.
+pub(crate) fn extract_urls(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (url, spoilered) in scan_urls(content) {
+        if !spoilered && !out.contains(&url) {
+            out.push(url);
+            if out.len() == MAX_URLS {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// The scrubbed links of `content` that appear only inside spoilers: their previews must never
+/// be shown, whatever stored them. Links also written in the open are left out.
+pub(crate) fn spoilered_urls(content: &str) -> Vec<String> {
+    let scanned = scan_urls(content);
+    let mut out: Vec<String> = Vec::new();
+    for (url, spoilered) in &scanned {
+        if *spoilered && !out.contains(url) && !scanned.iter().any(|(u, s)| !s && u == url) {
+            out.push(url.clone());
         }
     }
     out
@@ -433,14 +461,16 @@ async fn store_embeds(
         .bind(message_id)
         .fetch_one(&mut *tx)
         .await?;
-    if extract_urls(&row.try_get::<String, _>(0)?) != urls {
+    let content: String = row.try_get(0)?;
+    if extract_urls(&content) != urls {
         return Ok(None);
     }
+    let hidden = spoilered_urls(&content);
     let stored = Stored {
         thread_root_id: row.try_get(1)?,
         edited_at: row.try_get(2)?,
     };
-    for embed in embeds {
+    for embed in embeds.iter().filter(|e| !hidden.contains(&e.url)) {
         sqlx::query(
             "INSERT INTO message_embeds(message_id, ord, url, banner_removed, removed) VALUES($1, $2, $3, 0, 0) ON CONFLICT(message_id, ord) DO NOTHING",
         )

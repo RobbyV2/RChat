@@ -74,3 +74,4 @@ webrtc-util = { version = "0.17.2", default-features = false, features = [
 
 [dev-dependencies]
 rust-next-wasm = { path = "../../crates/wasm" }
+tokio = { version = "1", features = ["full", "test-util"] }

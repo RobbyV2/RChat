@@ -36,6 +36,7 @@ export interface OutgoingWebhook {
   id: number
   name: string
   url: string
+  url_hidden: boolean
   events: string[]
   creator: UserRef | null
   enabled: boolean
@@ -107,14 +108,29 @@ export const takesOver = (owner: UserRef | null, me: string | null | undefined) 
 
 export const OWNER_NOTE = 'You will become the owner of this webhook.'
 
+export const TAKEOVER_URL = 'Enter the destination URL to take over this webhook.'
+
+// Taking a webhook over never shows the previous owner's URL: the new owner types the whole URL.
+export const takeoverUrlProblem = (raw: string): string | null =>
+  raw.trim() ? urlProblem(raw) : TAKEOVER_URL
+
+type OutgoingBefore = Pick<OutgoingWebhook, 'url' | 'events'> & { url_hidden?: boolean }
+
+// The URL an outgoing edit sends: none when only the owner sees it and the field stays empty.
+export function outgoingUrl(before: OutgoingBefore, url: string): string | undefined {
+  const t = url.trim()
+  return before.url_hidden && !t ? undefined : t
+}
+
 // Whether an outgoing edit changes what it receives: its URL or its events.
 export function outgoingReach(
-  before: Pick<OutgoingWebhook, 'url' | 'events'>,
+  before: OutgoingBefore,
   after: { url: string; events: string[] }
 ): boolean {
   const same = (a: string[], b: string[]) =>
     a.length === b.length && [...a].sort().join(' ') === [...b].sort().join(' ')
-  return after.url.trim() !== before.url || !same(before.events, after.events)
+  const url = outgoingUrl(before, after.url)
+  return (url !== undefined && url !== before.url) || !same(before.events, after.events)
 }
 
 // A local check of an outgoing URL; the server also checks the address it resolves to.

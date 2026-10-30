@@ -10,6 +10,7 @@ import {
   isNewAccount,
   parseHome,
   pushRecent,
+  recentShown,
   shownTips,
   unreadChannels,
   unreadRows,
@@ -146,5 +147,31 @@ describe('palette registry', () => {
     expect(usePalette.getState().open).toBe(null)
     expect(paletteShortcut(true)).toBe('⌘K')
     expect(paletteShortcut(false)).toBe('Ctrl+K')
+  })
+})
+
+describe('jump back in', () => {
+  test('keeps only places still open to the user', () => {
+    const at = {
+      servers: new Set(['s']),
+      serversMore: false,
+      dmIds: new Set([3]),
+      channels: { s: [1, 2] },
+    }
+    const channel = (server: string, channelId: number) => ({
+      kind: 'channel' as const,
+      server,
+      channelId,
+      channel: 'c',
+      serverName: null,
+      at: 1,
+    })
+    expect(recentShown(channel('s', 1), at)).toBe(true)
+    expect(recentShown(channel('s', 9), at)).toBe(false)
+    expect(recentShown(channel('t', 1), at)).toBe(false)
+    expect(recentShown(channel('t', 1), { ...at, serversMore: true })).toBe(true)
+    expect(recentShown(channel('s', 9), { ...at, channels: {} })).toBe(true)
+    expect(recentShown({ kind: 'dm', dmId: 3, at: 1 }, at)).toBe(true)
+    expect(recentShown({ kind: 'dm', dmId: 4, at: 1 }, at)).toBe(false)
   })
 })

@@ -759,6 +759,8 @@ pub(crate) async fn load_broadcast(db: &Db, id: i64) -> Result<Option<Message>, 
     Ok(Some(message))
 }
 
+/// Attaches stored link previews. A preview of a link the text now hides in a spoiler (stored by
+/// an older build) is left out.
 pub(crate) async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), ApiError> {
     if msgs.is_empty() {
         return Ok(());
@@ -786,7 +788,11 @@ pub(crate) async fn attach_embeds(db: &Db, msgs: &mut [Message]) -> Result<(), A
         });
     }
     for m in msgs.iter_mut() {
-        if let Some(embeds) = map.remove(&m.id) {
+        if let Some(mut embeds) = map.remove(&m.id) {
+            if m.content.contains("||") {
+                let hidden = crate::api::embeds::spoilered_urls(&m.content);
+                embeds.retain(|e| !hidden.contains(&e.url));
+            }
             m.embeds = embeds;
         }
     }
@@ -7250,6 +7256,52 @@ mod tests {
         assert_eq!(shown[0].id, early_reply.id);
         assert_eq!(shown[0].content, "secret new detail");
         done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn stored_previews_of_spoilered_links_are_not_served() {
+        let (state, path) = temp_state("spoiler_embeds").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "alice").await;
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        let note = say(
+            &state,
+            (Some(cid), None, None),
+            "alice",
+            "||see https://hidden.example/a|| ||https://bare.example|| ||https://Mixed.Example/p|| ||https://dl.example/f.zip?sig=abc&exp=9|| and https://open.example/b",
+        )
+        .await;
+        for (ord, url) in [
+            (0, "https://hidden.example/a"),
+            (1, "https://open.example/b"),
+            (2, "https://bare.example/"),
+            (3, "https://mixed.example/p"),
+            (4, "https://dl.example/f.zip?exp=9"),
+            (5, "https://elsewhere.example/"),
+        ] {
+            sqlx::query("INSERT INTO embeds(url, title, fetched_at) VALUES($1, 'T', $2)")
+                .bind(url)
+                .bind(now())
+                .execute(db)
+                .await
+                .expect("cached preview");
+            sqlx::query("INSERT INTO message_embeds(message_id, ord, url, banner_removed, removed) VALUES($1, $2, $3, 0, 0)")
+                .bind(note.id)
+                .bind(ord)
+                .bind(url)
+                .execute(db)
+                .await
+                .expect("stored by an older build");
+        }
+        let listed = list(&state, cid, Some("alice")).await.expect("list");
+        let row = listed.iter().find(|m| m.id == note.id).expect("listed");
+        let urls: Vec<&str> = row.embeds.iter().map(|e| e.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            ["https://open.example/b", "https://elsewhere.example/"]
+        );
+        crate::api::test_util::done(state, path).await;
     }
 
     #[tokio::test]

@@ -1218,11 +1218,11 @@ pub(crate) async fn list_members(
     let online = state.hub.online_among(&key, &names);
     let refs = user_refs(db, &names).await;
     let mut roles = role_ids_of(db, &key, &names).await?;
-    let mut via = match access.has_perm(db, Perm::DeleteServer).await {
+    let mut via = match access.can_view(db, Perm::DeleteServer).await {
         true => crate::api::passwords::joined_via(db, &key, &names).await?,
         false => HashMap::new(),
     };
-    let mut timeouts = match access.has_perm(db, Perm::TimeoutMembers).await {
+    let mut timeouts = match access.can_view(db, Perm::TimeoutMembers).await {
         true => running_timeouts(db, &key, &names).await?,
         false => HashMap::new(),
     };
@@ -3383,13 +3383,17 @@ pub(crate) async fn transfer_admin(
         own.is_some_and(|o| !can_grant(o, false, granted) || !can_grant(o, false, own_roles)),
     );
     let revoked = sqlx::query(
-        "UPDATE members SET is_admin = 0, perms = 0 WHERE server = $1 AND username = $2",
+        "UPDATE members SET is_admin = 0, perms = 0 WHERE server = $1 AND username = $2 AND is_admin = 1",
     )
     .bind(&key)
     .bind(&user.username)
     .execute(&mut *tx)
     .await?
     .rows_affected();
+    let actor = match revoked {
+        0 => actor,
+        _ => audit::Actor::of(&user, false),
+    };
     audit::record(
         &mut tx,
         Entry::new(&key, &actor, audit::Action::AdminTransfer).target(Target::user(&target)),
@@ -7755,6 +7759,53 @@ mod tests {
             [
                 ("carol".to_string(), true, 0),
                 ("alice".to_string(), false, 0)
+            ]
+        );
+        join(&state, "root", "club").await.expect("root joins");
+        set_admin_row(db, "root", MA).await;
+        let as_root = |target: &str| {
+            let state = state.clone();
+            let target = target.to_string();
+            async move {
+                code(
+                    transfer_admin(
+                        State(state),
+                        Authed(mem_user("root", true)),
+                        Path("club".to_string()),
+                        Json(UsernameReq { username: target }),
+                    )
+                    .await,
+                )
+            }
+        };
+        as_root("dave")
+            .await
+            .expect("site admin grants beyond own perms");
+        assert_eq!(
+            admin_events(&mut rx),
+            [
+                ("dave".to_string(), true, KICK),
+                ("root".to_string(), false, 0)
+            ]
+        );
+        as_root("bob").await.expect("staff without an admin row");
+        assert_eq!(admin_events(&mut rx), [("bob".to_string(), true, 0)]);
+        let actors: Vec<(Option<String>, i64)> = sqlx::query(
+            "SELECT actor, staff FROM audit_log WHERE action = 'member.admin_transfer' ORDER BY id",
+        )
+        .fetch_all(db)
+        .await
+        .expect("entries")
+        .iter()
+        .map(|r| (r.get(0), r.get(1)))
+        .collect();
+        assert_eq!(
+            actors,
+            [
+                (Some("bob".to_string()), 0),
+                (Some("alice".to_string()), 0),
+                (Some("root".to_string()), 0),
+                (None, 1)
             ]
         );
         done(state, path).await;

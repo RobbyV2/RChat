@@ -142,6 +142,22 @@ function TopicWindow({
     }
   }, [anchor])
 
+  // Focus moves into the window once it is shown and back to the topic when it closes, unless
+  // the user moved it elsewhere (a link, the composer).
+  const shown = sheet || at !== null
+  useEffect(() => {
+    if (shown) rootRef.current?.focus({ preventScroll: true })
+  }, [shown])
+
+  useEffect(() => {
+    const root = rootRef.current
+    const back = anchor.current
+    return () => {
+      const now = document.activeElement
+      if (!now || now === document.body || root?.contains(now)) back?.focus({ preventScroll: true })
+    }
+  }, [anchor])
+
   useEffect(() => {
     const id = channel.id
     const unsub = useStore.subscribe(s => {
@@ -185,7 +201,8 @@ function TopicWindow({
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
-          className="flex max-h-[70%] animate-sheet-up flex-col overflow-hidden rounded-t-3xl bg-surface-container-high px-safe pt-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-elevation-3"
+          tabIndex={-1}
+          className="flex max-h-[70%] animate-sheet-up outline-none flex-col overflow-hidden rounded-t-3xl bg-surface-container-high px-safe pt-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-elevation-3"
         >
           <SheetGrip />
           {body}
@@ -199,9 +216,10 @@ function TopicWindow({
       ref={rootRef}
       role="dialog"
       aria-labelledby={titleId}
+      tabIndex={-1}
       data-popover
       style={at ? { top: at.top, left: at.left } : { visibility: 'hidden' }}
-      className="fixed z-30 flex max-h-[min(28rem,calc(100dvh-6rem))] w-[28rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
+      className="fixed z-30 flex max-h-[min(28rem,calc(100dvh-6rem))] outline-none w-[28rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl bg-surface-container-high pt-3 shadow-elevation-3"
     >
       {body}
     </div>,

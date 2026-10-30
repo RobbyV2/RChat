@@ -39,4 +39,10 @@ impl AppState {
     pub fn read(&self) -> Db {
         self.reader.clone()
     }
+
+    /// The same state reading from `reader`, standing in for a replica behind the primary.
+    #[cfg(test)]
+    pub fn with_reader(self, reader: Db) -> AppState {
+        AppState { reader, ..self }
+    }
 }

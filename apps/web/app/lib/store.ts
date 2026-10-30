@@ -325,6 +325,11 @@ export * from './view'
 const emptySearch = (): SearchState => ({ results: [], hasMore: false, loading: false })
 
 const PAGE = 50
+
+// Waits before opening the URL again after a boot left nothing open because of 429s. Exported
+// so tests can shorten them.
+export const BOOT_RETRY_MS = [1000, 3000, 10_000]
+
 const LIST_MAX = 100
 
 const BANNED = 'You are banned from this server'
@@ -546,8 +551,12 @@ export const resetSessionCaches = () => forgetStoreSession()
 export const useStore = create<RChatState>()((set, get) => {
   const epochs: Record<string, number> = {}
 
+  // When the last 429 was seen; a boot that hit one and opened nothing is retried.
+  let limitedAt = 0
+
   const fail = (e: unknown) => {
     if (e instanceof Banned) return
+    if (e instanceof ApiError && e.status === 429) limitedAt = Date.now()
     const message = errorText(e)
     set({ error: message })
     setTimeout(() => {
@@ -1107,7 +1116,7 @@ export const useStore = create<RChatState>()((set, get) => {
       set({ bootError: null })
       p2p.announce()
       void loadUnreads()
-      await resolveUrl('replace')
+      await bootUrl()
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
         expireSession()
@@ -1732,7 +1741,8 @@ export const useStore = create<RChatState>()((set, get) => {
     else window.history.replaceState(null, '', path)
   }
 
-  const resolveUrl = async (nav: 'replace' | 'none') => {
+  // `retrying`: a boot that tries again after a 429, so it must not fall back yet.
+  const resolveUrl = async (nav: 'replace' | 'none', retrying = false) => {
     if (readInvite() || readConfigLink() || (!get().me && !get().guest)) return
     const target = parsePath(window.location.pathname)
     const fallback = async () => {
@@ -1773,6 +1783,7 @@ export const useStore = create<RChatState>()((set, get) => {
         if (now) syncUrl(now, 'replace')
         return
       }
+      if (e instanceof ApiError && e.status === 429 && !get().view && retrying) return fail(e)
       await fallback()
       if (deniedAccess(e)) get().openDialog({ kind: 'add_server', join: target.server })
       else fail(e)
@@ -1792,6 +1803,21 @@ export const useStore = create<RChatState>()((set, get) => {
       return syncUrl(cur, 'replace')
     await unreadsReady
     return get().openChannel(target.server, channel.id, channel.id === wanted ? nav : 'replace')
+  }
+
+  // Opens what the URL asks for at load. Rate limited requests (many tabs or a busy network) can
+  // leave nothing open; then it tries again a few times, unless the user went somewhere else.
+  const bootUrl = async (attempt = 0): Promise<void> => {
+    const started = Date.now()
+    await resolveUrl('replace', attempt < BOOT_RETRY_MS.length)
+    const s = get()
+    const stuck = !s.view && !s.home && !s.invite && !s.configLink && (!!s.me || s.guest)
+    if (!stuck || limitedAt < started || attempt >= BOOT_RETRY_MS.length) return
+    const path = window.location.pathname
+    setTimeout(() => {
+      const now = get()
+      if (window.location.pathname === path && !now.view && !now.home) void bootUrl(attempt + 1)
+    }, BOOT_RETRY_MS[attempt])
   }
 
   const enter = (res: AuthResponse) => {
@@ -3651,7 +3677,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
     bootstrap: async () => {
       if (get().me || get().guest) {
-        await resolveUrl('replace')
+        await bootUrl()
         return
       }
       void get().loadSettings()
@@ -3684,7 +3710,7 @@ export const useStore = create<RChatState>()((set, get) => {
         applyMe(me, false)
         set({ token, guest: false, bootError: null })
         startWs()
-        await resolveUrl('replace')
+        await bootUrl()
       } else if (guest) {
         persistGrants(readJson<Record<string, string>>(LS.guestGrants, {}))
         set({
@@ -3695,7 +3721,7 @@ export const useStore = create<RChatState>()((set, get) => {
         loadGuestLayout()
         armIce(null, false)
         startWs()
-        await resolveUrl('replace')
+        await bootUrl()
       }
     },
 

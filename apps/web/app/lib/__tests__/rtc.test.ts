@@ -356,12 +356,14 @@ async function pump() {
   }
 }
 
+// Delivers signals for `ms` steps of at least 1 ms each, then until the wire is empty. Steps,
+// not a wall-clock window: a timer of n ms set before step k has fired by step k + n + 1 however
+// slowly the machine runs, so a busy CPU only makes this take longer.
 async function settle(ms = 30) {
-  const end = Date.now() + ms
-  do {
+  for (let step = 0; step < ms || wire.length; step += 1) {
     await pump()
     await sleep(1)
-  } while (wire.length || Date.now() < end)
+  }
 }
 
 const pcOf = (m: RtcManager, user: string) =>

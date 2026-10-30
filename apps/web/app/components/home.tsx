@@ -39,6 +39,7 @@ import {
   greeting,
   isNewAccount,
   recentKey,
+  recentShown,
   shownTips,
   type Recent,
 } from '../lib/home'
@@ -182,7 +183,7 @@ function QuickActions() {
   }
   return (
     <section aria-label="Quick actions" className="flex flex-col gap-2">
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+      <div className={`grid grid-cols-2 gap-2 ${palette ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
         <button
           type="button"
           onClick={() => openDialog({ kind: 'add_server', tab: 'create' })}
@@ -342,15 +343,18 @@ function JumpBackIn({ recents }: { recents: Recent[] }) {
   const joined = useStore(s => s.me?.servers)
   const serversMore = useStore(s => s.serversMore)
   const dms = useStore(s => s.dms)
+  const details = useStore(s => s.servers)
   const shown = useMemo(() => {
-    const names = new Set((joined ?? []).map(x => x.name))
-    const dmIds = new Set(dms.map(d => d.id))
-    return recents
-      .filter(r =>
-        r.kind === 'dm' ? dmIds.has(r.dmId) : names.has(r.server) || (serversMore && !!r.channel)
-      )
-      .slice(0, RECENTS_SHOWN)
-  }, [recents, joined, serversMore, dms])
+    const at = {
+      servers: new Set((joined ?? []).map(x => x.name)),
+      serversMore,
+      dmIds: new Set(dms.map(d => d.id)),
+      channels: Object.fromEntries(
+        Object.entries(details).map(([name, d]) => [name, d.channels.map(c => c.id)])
+      ),
+    }
+    return recents.filter(r => recentShown(r, at)).slice(0, RECENTS_SHOWN)
+  }, [recents, joined, serversMore, dms, details])
   return (
     <Card title="Jump back in" icon={<House size={18} />}>
       {shown.length === 0 ? (
@@ -684,6 +688,10 @@ function MemberHome() {
   const recents = useHome(s => s.prefs.recents)
   const otherDms = useStore(s => s.dms.filter(d => !d.is_self).length)
   const servers = useStore(s => s.me?.servers.length ?? 0)
+  const unread = useStore(s => {
+    const { dms, servers } = parseSummary(unreadSummaryKey(s))
+    return dms.unread || dms.pings > 0 || servers.length > 0
+  })
   const fresh = isNewAccount(recents.length, otherDms, servers)
   return (
     <div className="flex flex-col gap-4">
@@ -692,7 +700,7 @@ function MemberHome() {
       <QuickActions />
       <div className="grid gap-4 lg:grid-cols-2">
         {fresh ? <GetStarted /> : <JumpBackIn recents={recents} />}
-        {!fresh && <UnreadSummary />}
+        {(!fresh || unread) && <UnreadSummary />}
         <Card title="Inbox" icon={<Bell size={18} />}>
           <InboxPreview max={INBOX_SHOWN} />
         </Card>

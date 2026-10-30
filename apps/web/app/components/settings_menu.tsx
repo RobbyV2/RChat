@@ -732,7 +732,8 @@ function InformationSection() {
       <Info title="Keyboard shortcuts">
         <p>
           Select text in the message box or the edit box for the formatting toolbar, or use the keys
-          below. Spoilers are written as ||text|| and stay hidden until clicked.
+          below. Spoilers are written as ||text|| and stay hidden until clicked, unless Show
+          spoilers is set to Always.
         </p>
         <ShortcutList />
       </Info>

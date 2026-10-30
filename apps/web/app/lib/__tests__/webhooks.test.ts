@@ -7,7 +7,10 @@ import {
   isWebhookMessage,
   nameProblem,
   outgoingReach,
+  outgoingUrl,
   takesOver,
+  takeoverUrlProblem,
+  TAKEOVER_URL,
   safeLink,
   urlProblem,
   webhookIdOf,
@@ -128,5 +131,21 @@ describe('webhook owners', () => {
     ).toBe(false)
     expect(outgoingReach(hook, { url: 'https://b.example/x', events: hook.events })).toBe(true)
     expect(outgoingReach(hook, { url: hook.url, events: ['message.created'] })).toBe(true)
+  })
+
+  test('a URL only its owner sees stays unless a new one is typed', () => {
+    const hook = { url: 'https://a.example/', url_hidden: true, events: ['message.created'] }
+    expect(outgoingUrl(hook, '  ')).toBeUndefined()
+    expect(outgoingReach(hook, { url: '', events: hook.events })).toBe(false)
+    expect(outgoingUrl(hook, ' https://b.example/x ')).toBe('https://b.example/x')
+    expect(outgoingReach(hook, { url: 'https://b.example/x', events: hook.events })).toBe(true)
+    expect(outgoingUrl({ ...hook, url_hidden: false }, '')).toBe('')
+  })
+
+  test('taking a webhook over requires its whole URL', () => {
+    expect(takeoverUrlProblem('')).toBe(TAKEOVER_URL)
+    expect(takeoverUrlProblem('   ')).toBe(TAKEOVER_URL)
+    expect(takeoverUrlProblem('http://a.example/x')).toBe(urlProblem('http://a.example/x'))
+    expect(takeoverUrlProblem(' https://a.example/hooks/1 ')).toBeNull()
   })
 })

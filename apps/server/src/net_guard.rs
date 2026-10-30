@@ -247,10 +247,7 @@ pub async fn check(url: &Url, policy: &Policy) -> Result<Checked, Refusal> {
             addrs: Vec::new(),
         }),
         Some(Host::Domain(domain)) => {
-            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((domain, port))
-                .await
-                .map_err(|_| Refusal::Lookup)?
-                .collect();
+            let addrs = lookup(domain, port).await.map_err(|_| Refusal::Lookup)?;
             match !addrs.is_empty() && addrs.iter().all(|a| ok(a.ip())) {
                 true => Ok(Checked {
                     domain: Some(domain.to_string()),
@@ -261,6 +258,18 @@ pub async fn check(url: &Url, policy: &Policy) -> Result<Checked, Refusal> {
         }
         _ => Err(Refusal::Address),
     }
+}
+
+async fn lookup(domain: &str, port: u16) -> std::io::Result<Vec<SocketAddr>> {
+    #[cfg(test)]
+    if let Some(secs) = domain
+        .strip_suffix(".stall.test")
+        .and_then(|s| s.parse::<u64>().ok())
+    {
+        tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+        return Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))]);
+    }
+    Ok(tokio::net::lookup_host((domain, port)).await?.collect())
 }
 
 impl Checked {

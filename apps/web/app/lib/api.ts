@@ -538,8 +538,12 @@ export const endpoints = (c: ApiClient) => ({
     id: number,
     patch: { name?: string; url?: string; events?: string[]; enabled?: boolean }
   ) => c.req<OutgoingWebhook>('PATCH', `/servers/${seg(server)}/outgoing_webhooks/${id}`, patch),
-  resetOutgoingSecret: (server: string, id: number) =>
-    c.req<OutgoingSecret>('POST', `/servers/${seg(server)}/outgoing_webhooks/${id}/secret`),
+  resetOutgoingSecret: (server: string, id: number, url?: string) =>
+    c.req<OutgoingSecret>(
+      'POST',
+      `/servers/${seg(server)}/outgoing_webhooks/${id}/secret`,
+      url === undefined ? undefined : { url }
+    ),
   deleteOutgoing: (server: string, id: number) =>
     c.req<unknown>('DELETE', `/servers/${seg(server)}/outgoing_webhooks/${id}`),
   testOutgoing: (server: string, id: number) =>

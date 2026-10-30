@@ -365,6 +365,7 @@ export function ServerRail() {
   const guestNames = useStore(s => s.guestNames)
   const servers = useStore(s => (s.me ? NO_DETAILS : s.servers))
   const view = useStore(s => s.view)
+  const atHome = useStore(s => s.home && s.view === null)
   const dmUnread = useStore(dmsUnread)
   const dmPings = useStore(dmPingCount)
   const openLastDm = useStore(s => s.openLastDm)
@@ -395,10 +396,10 @@ export function ServerRail() {
         <button
           title="Home"
           aria-label="Home"
-          aria-current={view === null ? 'page' : undefined}
+          aria-current={atHome ? 'page' : undefined}
           data-home-button
           onClick={goHome}
-          className={`${tile} ${view === null ? 'bg-primary text-on-primary' : idle}`}
+          className={`${tile} ${atHome ? 'bg-primary text-on-primary' : idle}`}
         >
           <House size={22} />
         </button>

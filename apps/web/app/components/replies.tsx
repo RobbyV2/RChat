@@ -55,6 +55,7 @@ export function SpoilerLine({ parts }: { parts: SnippetPart[] }) {
           <span
             key={i}
             data-reply-spoiler
+            role="img"
             aria-label="Spoiler"
             className="rounded-sm bg-on-surface-variant/70 text-transparent select-none"
           >

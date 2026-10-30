@@ -76,7 +76,7 @@ describe('quotes and links', () => {
 describe('keys', () => {
   test('match the list and nothing else', () => {
     expect(formatKey(key('b'))).toBe('bold')
-    expect(formatKey(key('i', { meta: true }))).toBe('italic')
+    expect(formatKey({ ...key('i', { meta: true }), ctrlKey: false }, true)).toBe('italic')
     expect(formatKey(key('X', { shift: true }))).toBe('strike')
     expect(formatKey(key('e'))).toBe('code')
     expect(formatKey(key('H', { shift: true }))).toBe('spoiler')
@@ -85,6 +85,17 @@ describe('keys', () => {
     expect(formatKey(key('P', { shift: true }))).toBeNull()
     expect(formatKey(key('S', { shift: true }))).toBeNull()
     expect(formatKey({ ...key('b'), ctrlKey: false })).toBeNull()
+  })
+
+  test('Mod is Cmd on Apple devices and Ctrl elsewhere, by physical key on other layouts', () => {
+    const ctrl = key('b')
+    const cmd = { ...key('b'), ctrlKey: false, metaKey: true }
+    expect(formatKey(ctrl, true)).toBeNull()
+    expect(formatKey(cmd, true)).toBe('bold')
+    expect(formatKey(cmd, false)).toBeNull()
+    expect(formatKey(ctrl, false)).toBe('bold')
+    expect(formatKey({ ...key('и'), code: 'KeyB' }, false)).toBe('bold')
+    expect(formatKey({ ...key('Ч'), code: 'KeyX', shiftKey: true }, false)).toBe('strike')
   })
 
   test('labels and no clash with each other', () => {

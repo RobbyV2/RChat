@@ -495,7 +495,7 @@ function SpoilerCover({ title, onReveal }: { title?: string; onReveal: () => voi
       <span className="rounded-full bg-spoiler px-2 py-0.5 text-xs font-medium tracking-wide text-white uppercase">
         Spoiler
       </span>
-      <span className="text-sm text-on-surface-variant">Click to reveal</span>
+      <span className="text-sm text-on-surface-variant">Reveal</span>
     </button>
   )
 }
@@ -659,7 +659,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   )
 
   if (hidden) {
-    return <SpoilerCover title="Click to reveal" onReveal={() => setRevealed(true)} />
+    return <SpoilerCover title="Reveal" onReveal={() => setRevealed(true)} />
   }
 
   const saveButton = (
@@ -840,7 +840,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
     if (hidden) {
       return (
         <button
-          title="Click to reveal"
+          title="Reveal"
           aria-label="Spoiler image, press to reveal"
           data-spoiler-media
           onClick={() => setRevealed(true)}

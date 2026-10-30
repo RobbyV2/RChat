@@ -460,11 +460,7 @@ pub(crate) async fn delete_category(
         &mut tx,
         Entry::new(&server, &actor, Action::CategoryDelete)
             .target(Target::with_id(TargetKind::Category, id, Some(&gone.name)))
-            .details(
-                Details::new()
-                    .change("name", gone.name.as_str(), None::<String>)
-                    .set("channels", gone.channels.len()),
-            ),
+            .details(Details::new().change("name", gone.name.as_str(), None::<String>)),
     )
     .await?;
     layout.uncategorized.extend(gone.channels);

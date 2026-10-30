@@ -1040,8 +1040,61 @@ mod tests {
         )
         .await;
         assert!(
-            !sees("mo").await.expect("sees"),
-            "a timed-out moderator gets no timeout events, so no reasons"
+            sees("mo").await.expect("sees"),
+            "a timed-out moderator keeps timeout events, a read-only view"
+        );
+        time_out(
+            state,
+            "alice",
+            "carol",
+            json!({"seconds": 60, "reason": "spam"}),
+        )
+        .await
+        .expect("alice times out carol");
+        let Paged(members, _) = list_members(
+            State(state.clone()),
+            MaybeAuthed(Some(mem_user("mo", false))),
+            HeaderMap::new(),
+            Path("club".to_string()),
+            RawQuery(None),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("list: {}", e.1));
+        let mut listed: Vec<(String, Option<String>)> = members
+            .into_iter()
+            .filter_map(|m| m.timeout.map(|t| (m.user.username, t.reason)))
+            .collect();
+        listed.sort();
+        assert_eq!(
+            listed,
+            [
+                ("carol".to_string(), Some("spam".to_string())),
+                ("mo".to_string(), None)
+            ],
+            "the member list keeps timeouts"
+        );
+        let card = crate::api::users::profile(
+            State(state.clone()),
+            MaybeAuthed(Some(mem_user("mo", false))),
+            HeaderMap::new(),
+            Path("carol".to_string()),
+            axum::extract::Query(req(json!({"server": "club"}))),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("profile: {}", e.1))
+        .0
+        .member
+        .expect("member")
+        .timeout
+        .map(|t| t.reason);
+        assert_eq!(
+            card,
+            Some(Some("spam".to_string())),
+            "so does the profile card"
+        );
+        assert!(
+            status(time_out(state, "mo", "carol", json!({"seconds": 60})).await).is_err(),
+            "writes stay cut"
         );
         exec(
             &state.db,

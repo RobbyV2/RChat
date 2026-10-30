@@ -1022,6 +1022,9 @@ async fn channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(String, Channel)>
 
 const FLOOR_TTL: Duration = Duration::from_secs(30);
 
+/// Seconds after which a `message` event is checked against the read-history floor.
+const REPLAY_AGE: i64 = 2;
+
 async fn admin_state(db: &Db, server: &str, user: &str) -> sqlx::Result<Option<(bool, i64)>> {
     let row =
         sqlx::query("SELECT is_admin, perms FROM members WHERE server = $1 AND username = $2")
@@ -1851,10 +1854,21 @@ async fn p2p_visible(
         return None;
     }
     let ids = match Settings::cached(&db).await.p2p_attachments {
-        true => readable_p2p_ids(&db, access, me, hoster, ids).await,
-        false => Vec::new(),
+        true if !p2p_blocked(state, me, hoster).await => {
+            readable_p2p_ids(&db, access, me, hoster, ids).await
+        }
+        true | false => Vec::new(),
     };
     Some(ids)
+}
+
+// Whether either of the two blocked the other, read from the primary; errors count as blocked.
+async fn p2p_blocked(state: &AppState, me: &str, hoster: &str) -> bool {
+    let blocks = (
+        crate::api::blocks::is_blocked(&state.db, me, hoster).await,
+        crate::api::blocks::is_blocked(&state.db, hoster, me).await,
+    );
+    !matches!(blocks, (Ok(false), Ok(false)))
 }
 
 const NOT_AVAILABLE: &str = "File not available";
@@ -1872,7 +1886,8 @@ fn p2p_refused(message_id: i64, error: &str) -> WsEvent {
 
 // The answer to `p2p_peer`: the peer id of the hoster's tab that has the attachment of
 // `message_id`, and a token for it, only for a signed-in user who can read that message. The
-// hoster must be online (not appearing offline) and still host the file. Requests are rate
+// hoster must be online (not appearing offline) and still host the file, and neither of the two
+// may have blocked the other. Requests are rate
 // limited per user, whatever the answer.
 async fn p2p_release(state: &AppState, access: &Access, message_id: i64, peer_id: &str) -> WsEvent {
     let deny = |error: &str| p2p_refused(message_id, error);
@@ -1911,6 +1926,9 @@ async fn p2p_release(state: &AppState, access: &Access, message_id: i64, peer_id
         return deny(NOT_AVAILABLE);
     }
     if !row_readable(&db, access, &me, &mut ReadCache::default(), &row).await {
+        return deny(NOT_AVAILABLE);
+    }
+    if p2p_blocked(state, &me, &hoster).await {
         return deny(NOT_AVAILABLE);
     }
     let shown = matches!(appear_offline(&db, &hoster).await, Ok(Some(false)))
@@ -2898,6 +2916,22 @@ async fn on_event(state: &AppState, conn: u64, access: &mut Access, ev: &WsEvent
             .await
             .is_some_and(|floor| floor.is_none_or(|floor| *created_at >= floor));
     }
+    // A live message is newer than any floor; an older one is a replay after a bus outage
+    // (`repost_event`), which must not reach members without read history of it.
+    if deliver
+        && let WsEvent::Message {
+            server: Some(server),
+            channel_id: Some(cid),
+            message,
+            ..
+        } = ev
+        && message.created_at < now() - REPLAY_AGE
+    {
+        deliver = access
+            .floor(state, server, *cid)
+            .await
+            .is_some_and(|floor| floor.is_none_or(|floor| message.created_at >= floor));
+    }
     if deliver
         && let WsEvent::MessagesDeleted {
             server: Some(server),
@@ -3164,6 +3198,14 @@ impl Typer {
     }
 }
 
+// DM typing is checked against blocks on the primary, so a block takes effect at once.
+fn typing_db(state: &AppState, scope: &str) -> Db {
+    match scope.starts_with('d') {
+        true => state.db.clone(),
+        false => state.read(),
+    }
+}
+
 async fn type_in(state: &AppState, access: &Access, typer: &mut Typer, scope: String, on: bool) {
     let Some(user) = access.user.as_deref() else {
         return;
@@ -3171,7 +3213,10 @@ async fn type_in(state: &AppState, access: &Access, typer: &mut Typer, scope: St
     if on && access.retry.pending() {
         return;
     }
-    for ev in typer.command(&state.read(), user, scope, on).await {
+    for ev in typer
+        .command(&typing_db(state, &scope), user, scope, on)
+        .await
+    {
         state.hub.broadcast(ev);
     }
 }
@@ -4855,6 +4900,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replayed_messages_respect_the_read_history_floor() {
+        let (state, path) = crate::api::test_util::temp_state("ws_replay_floor").await;
+        let db = &state.db;
+        for name in ["bob", "erin"] {
+            add_user(db, name).await;
+        }
+        exec(db, "INSERT INTO members(server, username, joined_at) VALUES('rchat', 'bob', 1), ('rchat', 'erin', 500)").await;
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
+            .fetch_one(db)
+            .await
+            .unwrap()
+            .try_get(0)
+            .unwrap();
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:erin', 1, 1, 0)")
+            .bind(cid)
+            .execute(db)
+            .await
+            .unwrap();
+        let ev = |created_at: i64| WsEvent::Message {
+            server: Some("rchat".to_string()),
+            channel_id: Some(cid),
+            dm_id: None,
+            dm_users: None,
+            message: Box::new(Message {
+                channel_id: Some(cid),
+                dm_id: None,
+                created_at,
+                edited_at: Some(created_at + 1),
+                ..message()
+            }),
+        };
+        let conn = state.hub.next_conn();
+        let mut bob = Access::new(Some("bob".to_string()), false, set(&["rchat"]));
+        let mut erin = Access::new(Some("erin".to_string()), false, set(&["rchat"]));
+        assert_eq!(on_event(&state, conn, &mut bob, &ev(100)).await, Some(true));
+        assert_eq!(
+            on_event(&state, conn, &mut erin, &ev(100)).await,
+            Some(false),
+            "a replayed message from before erin joined"
+        );
+        assert_eq!(
+            on_event(&state, conn, &mut erin, &ev(now())).await,
+            Some(true)
+        );
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn bulk_deletes_reach_viewers_with_only_the_ids_they_could_read() {
         let (state, path) = crate::api::test_util::temp_state("ws_bulk_floor").await;
         let db = &state.db;
@@ -6024,6 +6117,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dm_typing_reads_blocks_from_the_primary() {
+        let (state, path) = crate::api::test_util::temp_state("ws_typing_primary").await;
+        let (replica, replica_path) = crate::api::test_util::temp_state("ws_typing_replica").await;
+        for db in [&state.db, &replica.db] {
+            for name in ["bob", "carol"] {
+                add_user_row(db, name).await;
+            }
+            exec(
+                db,
+                "INSERT INTO dms(id, user_a, user_b) VALUES(77, 'bob', 'carol')",
+            )
+            .await;
+        }
+        exec(
+            &state.db,
+            "INSERT INTO blocks(blocker, blocked, created_at) VALUES('carol', 'bob', 0)",
+        )
+        .await;
+        let lagging = state.clone().with_reader(replica.db.clone());
+        assert_eq!(
+            Typer::new()
+                .command(&lagging.read(), "bob", s("d77"), true)
+                .await
+                .len(),
+            1,
+            "the replica has not seen the block yet"
+        );
+        assert!(
+            Typer::new()
+                .command(&typing_db(&lagging, "d77"), "bob", s("d77"), true)
+                .await
+                .is_empty()
+        );
+        crate::api::test_util::done(replica, replica_path).await;
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn typing_follows_the_send_gate() {
         let (state, path) = crate::api::test_util::temp_state("ws_typing").await;
         let db = &state.db;
@@ -6717,6 +6848,11 @@ mod tests {
             } => Some((message_id, error)),
             _ => None,
         };
+        let listed = |me: &'static str| {
+            let mut access = Access::new(Some(s(me)), false, set(&["rchat"]));
+            let state = state.clone();
+            async move { p2p_visible(&state, &mut access, me, "alice").await }
+        };
         let key = crate::p2p::host_key(&state.instance.p2p_secret, "alice", "peer-a");
         let (peer, granted) = token(ask(Some("bob"), "new").await).expect("bob reads new");
         assert_eq!(peer, "peer-a");
@@ -6788,6 +6924,29 @@ mod tests {
         state.hub.set_p2p("alice", 2, s("peer-a2"), vec![s("new")]);
         let (peer, _) = token(ask(Some("dave"), "new").await).expect("the other tab");
         assert_eq!(peer, "peer-a2");
+        for (blocker, blocked) in [("alice", "dave"), ("dave", "alice")] {
+            sqlx::query("INSERT INTO blocks(blocker, blocked, created_at) VALUES($1, $2, 0)")
+                .bind(blocker)
+                .bind(blocked)
+                .execute(db)
+                .await
+                .expect("block");
+            assert_eq!(
+                refusal(ask(Some("dave"), "new").await),
+                Some((ids["new"], s(NOT_AVAILABLE))),
+                "{blocker} blocked {blocked}"
+            );
+            assert_eq!(
+                listed("dave").await,
+                Some(Vec::new()),
+                "{blocker} blocked {blocked}: no file shows as available"
+            );
+            exec(db, "DELETE FROM blocks").await;
+        }
+        assert!(token(ask(Some("dave"), "new").await).is_some(), "unblocked");
+        let mut shown = listed("dave").await.expect("shown");
+        shown.sort();
+        assert_eq!(shown, [s("new"), s("old")]);
         exec(
             db,
             "INSERT INTO settings(key, value) VALUES('p2p_attachments', '0') ON CONFLICT(key) DO UPDATE SET value = '0'",
@@ -7328,7 +7487,10 @@ mod tests {
             channel_id: Some(7),
             dm_id: None,
             dm_users: None,
-            message: Box::new(message()),
+            message: Box::new(Message {
+                created_at: now(),
+                ..message()
+            }),
         };
         let presence = WsEvent::PresenceChanged {
             server: s("open"),

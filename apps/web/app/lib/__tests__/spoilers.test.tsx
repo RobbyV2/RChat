@@ -61,6 +61,9 @@ describe('the shared reader (fixture also read by apps/server/src/spoilers.rs)',
   test('the renderer markers wrap only what the reader paired', () => {
     expect(markSpoilers('a ||b|| `||c||` \\||d||')).toBe('a <\uE000|b<\uE001| `||c||` \\||d||')
     expect(markSpoilers('no pairs ||')).toBe('no pairs ||')
+    expect(markSpoilers('typed <\uE000|hidden https://a.b x<\uE001| end')).toBe(
+      'typed <\uFFFD|hidden https://a.b x<\uFFFD| end'
+    )
     expect(replaceSpoilers('x ||y|| z', () => '#')).toBe('x # z')
   })
 
@@ -245,7 +248,7 @@ describe('previews keep spoilers hidden', () => {
       <Snippet quote={{ content: plainLine('hey ||the ending|| ok'), has_media: false }} />
     )
     expect(html).toContain('data-reply-spoiler')
-    expect(html).toContain('aria-label="Spoiler"')
+    expect(html).toContain('role="img" aria-label="Spoiler"')
     expect(html).toContain('text-transparent')
     const clip = clipOf(msg(4, { content: '||plot twist|| lol', author: user('bob') }))
     expect(snippetParts(clip.snippet)).toEqual([

@@ -657,6 +657,13 @@ impl ServerAccess {
         self.perms(db).await.is_ok_and(|p| p & perm as i64 != 0)
     }
 
+    /// Whether the viewer may see what `perm` shows, which a timeout does not take away.
+    pub async fn can_view(&self, db: &Db, perm: Perm) -> bool {
+        self.view_perms(db)
+            .await
+            .is_ok_and(|p| p & perm as i64 != 0)
+    }
+
     pub async fn require_perm(&self, db: &Db, perm: Perm) -> Result<(), ApiError> {
         let bit = perm as i64;
         match (self.perms(db).await?, self.view_perms(db).await?) {
@@ -1566,7 +1573,7 @@ pub(crate) async fn ws_voice_viewable(db: &Db, server: &str, cid: i64, username:
 }
 
 /// `member_timeout` fan-out: whether `username` sees the timeouts of `server` (the Timeout
-/// members permission, or a site admin). A timeout takes the permission away, as in `perms`.
+/// members permission, or a site admin). A timeout keeps this read-only view (`view_perms`).
 /// Never sent to anyone else.
 pub(crate) async fn ws_sees_timeouts(
     db: &Db,
@@ -1577,18 +1584,7 @@ pub(crate) async fn ws_sees_timeouts(
     if site_admin {
         return Ok(true);
     }
-    if member_perms(db, server, username).await? & Perm::TimeoutMembers as i64 == 0 {
-        return Ok(false);
-    }
-    let row = sqlx::query(
-        "SELECT 1 FROM member_timeouts WHERE server = $1 AND username = $2 AND until > $3",
-    )
-    .bind(server)
-    .bind(username)
-    .bind(now())
-    .fetch_optional(db)
-    .await?;
-    Ok(row.is_none())
+    Ok(member_perms(db, server, username).await? & Perm::TimeoutMembers as i64 != 0)
 }
 
 /// WS ban fan-out and `look`: whether `username` is banned from `server`. Only used to drop

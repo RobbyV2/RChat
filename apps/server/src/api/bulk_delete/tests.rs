@@ -936,3 +936,57 @@ async fn deleted_messages_leave_the_inbox() {
     let Club { state, path, .. } = c;
     done(state, path).await;
 }
+
+/// Postgres only (set `RCHAT_TEST_POSTGRES` to a database URL): purging an author locks the
+/// jobs whose tally names them, and only those.
+#[tokio::test]
+async fn forgetting_an_author_locks_only_the_jobs_naming_them() {
+    let Ok(url) = std::env::var("RCHAT_TEST_POSTGRES") else {
+        return;
+    };
+    let db = crate::db::open(Some(&url)).await.expect("postgres");
+    let tag = format!("fa{}", rand::random::<u32>());
+    let job = |who: String| {
+        let db = db.clone();
+        let tag = tag.clone();
+        async move {
+            sqlx::query("INSERT INTO bulk_delete_jobs(username, scope, status, authors, created_at) VALUES($1, $2, 'done', $3, 1) RETURNING id")
+                .bind(&tag)
+                .bind(format!("{tag}:{who}"))
+                .bind(json!({ "authors": { who: 2 }, "unnamed": 0 }).to_string())
+                .fetch_one(&db)
+                .await
+                .expect("job")
+                .get::<i64, _>(0)
+        }
+    };
+    let named = job(format!("{tag}_v")).await;
+    let other = job(format!("{tag}x")).await;
+    let mut tx = db.begin().await.expect("tx");
+    forget_author(&mut tx, &format!("{tag}_v"))
+        .await
+        .expect("forget");
+    let nowait = |id: i64| {
+        let db = db.clone();
+        async move {
+            sqlx::query("SELECT id FROM bulk_delete_jobs WHERE id = $1 FOR UPDATE NOWAIT")
+                .bind(id)
+                .fetch_optional(&db)
+                .await
+                .map(|_| ())
+                .map_err(|e| {
+                    e.as_database_error()
+                        .and_then(|d| d.code())
+                        .map(|c| c.to_string())
+                })
+        }
+    };
+    assert_eq!(nowait(named).await, Err(Some("55P03".to_string())));
+    assert_eq!(nowait(other).await, Ok(()), "jobs naming others stay free");
+    tx.rollback().await.expect("rollback");
+    sqlx::query("DELETE FROM bulk_delete_jobs WHERE username = $1")
+        .bind(&tag)
+        .execute(&db)
+        .await
+        .expect("clean up");
+}

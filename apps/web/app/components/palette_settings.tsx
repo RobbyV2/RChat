@@ -21,7 +21,7 @@ const MODE_NOTE: Record<IndexMode, string> = {
   off: 'Nothing is indexed. The palette still finds servers, channels, people and commands.',
   loaded:
     'Messages and members you load are indexed in memory for this session only. Nothing is kept on this device.',
-  full: `Also kept on this device until you log out, and filled in the background with recent messages of your servers and DMs, up to ${fmtSize(FULL_MAX_BYTES)}.`,
+  full: `Also kept on this device until you log out, and filled in the background with recent messages of your servers and DMs, up to ${fmtSize(FULL_MAX_BYTES)}. Older messages you scrolled to drop out at the next refill, every 12 hours.`,
 }
 
 // Settings > Command palette: the local index and the palette's local history.
