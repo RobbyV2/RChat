@@ -449,10 +449,13 @@ async fn rows_messages(db: &Db, rows: &[AnyRow], quotes: Quotes) -> Result<Vec<M
 }
 
 /// The first line of `content` with text left, as plain text: code fences, quote, heading and
-/// subtext markers, emphasis, strikethrough, inline code and link targets are removed;
-/// `||spoilers||` stay so clients can hide them. At most 200 characters.
+/// subtext markers, emphasis, strikethrough, inline code and link targets are removed. Spoilers
+/// (read by `crate::spoilers`) are wrapped in `||`, always closed, also when cut; a literal pipe
+/// or backslash gets a backslash before it. At most 200 characters.
 pub fn reply_snippet(content: &str) -> String {
-    let line = content
+    use crate::spoilers::{CLOSE, OPEN};
+    let marked = crate::spoilers::marked(content);
+    let line = marked
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with("```") && !l.starts_with("~~~"))
@@ -474,19 +477,83 @@ pub fn reply_snippet(content: &str) -> String {
                 }
             }
         })
-        .find(|l| !l.is_empty())
-        .unwrap_or("");
-    let chars: Vec<char> = line.chars().collect();
+        .find(|l| !l.is_empty());
+    let Some(line) = line else {
+        return String::new();
+    };
+    let before = &marked[..line.as_ptr() as usize - marked.as_ptr() as usize];
     let mut out = String::new();
+    if before.matches(OPEN).count() > before.matches(CLOSE).count() {
+        out.push(OPEN);
+    }
+    let chars: Vec<char> = line.chars().collect();
+    push_plain(&chars, &mut out);
+    let mut snippet = String::new();
+    let mut shown = 0;
+    let mut opened: Option<usize> = None;
+    let mut rest = out.trim().chars();
+    while let Some(c) = rest.next() {
+        match c {
+            OPEN | CLOSE => {
+                match (c, opened) {
+                    (OPEN, None) => {
+                        opened = Some(snippet.len());
+                        snippet.push_str("||");
+                    }
+                    (CLOSE, Some(at)) if at + 2 == snippet.trim_end().len() => {
+                        snippet.truncate(at);
+                        opened = None;
+                    }
+                    (CLOSE, Some(_)) => {
+                        let kept = snippet.trim_end().len();
+                        snippet.truncate(kept);
+                        snippet.push_str("||");
+                        opened = None;
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            _ if shown == SNIPPET_MAX => break,
+            '\\' => {
+                snippet.push(c);
+                snippet.extend(rest.next());
+            }
+            c => snippet.push(c),
+        }
+        shown += 1;
+    }
+    let kept = snippet.trim_end().len();
+    snippet.truncate(kept);
+    match opened {
+        Some(at) if at + 2 == snippet.len() => snippet.truncate(at),
+        Some(_) => snippet.push_str("||"),
+        None => {}
+    }
+    snippet.trim_end().to_string()
+}
+
+/// Appends `chars` as plain text: markdown marks dropped, spoiler marks (`OPEN`, `CLOSE`) kept,
+/// literal pipes and backslashes escaped.
+fn push_plain(chars: &[char], out: &mut String) {
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
         let next = chars.get(i + 1).copied();
         match c {
             '\\' if next.is_some_and(|n| n.is_ascii_punctuation()) => {
-                out.push(next.unwrap_or(c));
+                if let Some(n @ ('|' | '\\')) = next {
+                    out.push('\\');
+                    out.push(n);
+                } else {
+                    out.push(next.unwrap_or(c));
+                }
                 i += 2;
                 continue;
+            }
+            '|' | '\\' => {
+                out.push('\\');
+                out.push(c);
             }
             '*' | '`' => {}
             '~' if next == Some('~') => i += 1,
@@ -512,8 +579,7 @@ pub fn reply_snippet(content: &str) -> String {
                 });
                 match end {
                     Some((label_end, link_end)) => {
-                        let label: String = chars[i + 1..label_end].iter().collect();
-                        out.push_str(&reply_snippet(&label));
+                        push_plain(&chars[i + 1..label_end], out);
                         i = link_end + 1;
                         continue;
                     }
@@ -530,7 +596,12 @@ pub fn reply_snippet(content: &str) -> String {
                     (Some(e), Some(url))
                         if url.starts_with("http://") || url.starts_with("https://") =>
                     {
-                        out.push_str(&url);
+                        for u in url.chars() {
+                            if matches!(u, '|' | '\\') {
+                                out.push('\\');
+                            }
+                            out.push(u);
+                        }
                         i = e + 1;
                         continue;
                     }
@@ -547,12 +618,6 @@ pub fn reply_snippet(content: &str) -> String {
         }
         i += 1;
     }
-    out.trim()
-        .chars()
-        .take(SNIPPET_MAX)
-        .collect::<String>()
-        .trim_end()
-        .to_string()
 }
 
 /// Control characters and bidirectional formatting marks, which a one-line preview drops.
@@ -4993,6 +5058,25 @@ mod tests {
             "see the docs or https://a.b"
         );
         assert_eq!(reply_snippet("a ||secret|| b"), "a ||secret|| b");
+        assert_eq!(reply_snippet("||two\nlines|| x"), "||two||");
+        assert_eq!(
+            reply_snippet("a ||**bold** `x||y`|| b"),
+            "a ||bold x\\|\\|y|| b"
+        );
+        assert_eq!(
+            reply_snippet("a \\||b|| `||c||` d\\e"),
+            "a \\|\\|b\\|\\| \\|\\|c\\|\\| d\\\\e"
+        );
+        assert_eq!(
+            reply_snippet("unmatched || pipes"),
+            "unmatched \\|\\| pipes"
+        );
+        assert_eq!(reply_snippet("||**||"), "");
+        assert_eq!(reply_snippet("x ||  a  || y"), "x || a|| y");
+        let long = format!("hi ||{}||", "s".repeat(300));
+        let cut = reply_snippet(&long);
+        assert_eq!(cut.chars().count(), 3 + 2 + 197 + 2);
+        assert!(cut.starts_with("hi ||s") && cut.ends_with("s||"));
         assert_eq!(reply_snippet("2 \\* 3   =  6"), "2 * 3 = 6");
         assert_eq!(reply_snippet(""), "");
         assert_eq!(reply_snippet(&"é".repeat(300)).chars().count(), 200);
@@ -7237,6 +7321,65 @@ mod tests {
                 .map(|m| m.embeds.len()),
             Some(0),
             "a job for links the message no longer has stores nothing"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn spoilered_links_get_no_previews_and_edits_reevaluate() {
+        let (state, path) = temp_state("spoiler_embeds").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "alice").await;
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        sqlx::query(
+            "INSERT INTO embeds(url, title, fetched_at) VALUES('https://old.example/a', 'Old', $1)",
+        )
+        .bind(now())
+        .execute(db)
+        .await
+        .expect("cached preview");
+        let note = say(
+            &state,
+            (Some(cid), None, None),
+            "alice",
+            "see ||https://old.example/a||",
+        )
+        .await;
+        let embeds_of = |state: AppState| async move {
+            list(&state, cid, Some("alice"))
+                .await
+                .expect("list")
+                .into_iter()
+                .find(|m| m.id == note.id)
+                .map(|m| m.embeds.len())
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(embeds_of(state.clone()).await, Some(0), "never fetched");
+        edit(&state, note.id, "alice", "see https://old.example/a")
+            .await
+            .expect("out of the spoiler");
+        let mut shown = Some(0);
+        for _ in 0..50 {
+            shown = embeds_of(state.clone()).await;
+            if shown == Some(1) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert_eq!(shown, Some(1), "a link out of the spoiler gets its preview");
+        let hidden = edit(&state, note.id, "alice", "see || https://old.example/a ||")
+            .await
+            .expect("into a spoiler");
+        assert!(
+            hidden.embeds.is_empty(),
+            "the preview is dropped with the edit"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(
+            embeds_of(state.clone()).await,
+            Some(0),
+            "and not fetched again"
         );
         done(state, path).await;
     }

@@ -9,5 +9,6 @@ pub mod instance;
 pub mod p2p;
 pub mod relay;
 pub mod server;
+pub mod spoilers;
 pub mod state;
 pub mod ws;

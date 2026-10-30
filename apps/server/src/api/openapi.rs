@@ -495,10 +495,15 @@ mod tests {
     /// the code outside the test modules, so all of that code is plain ASCII.
     #[test]
     fn server_code_is_plain_ascii() {
-        // The legacy forward origin parser input, and the bidi controls the name check rejects.
+        // The legacy forward origin parser input, the bidi controls the name check rejects, and
+        // the spoiler reader (line ends as the client reads them, internal markers never sent).
         const ESCAPES_ALLOWED: &[&str] = &[
             ".split_once(\" \\u{b7} \")",
             "matches!(c, '\\u{200E}' | '\\u{200F}'",
+            "rest.contains(['\\r', '\\u{2028}', '\\u{2029}'])",
+            "(c.is_whitespace() && c as u32 != 0x85) || c == '\\u{feff}'",
+            "pub const OPEN: char = '\\u{E000}';",
+            "pub const CLOSE: char = '\\u{E001}';",
         ];
         fn non_ascii_escapes(text: &str) -> Vec<String> {
             text.lines()

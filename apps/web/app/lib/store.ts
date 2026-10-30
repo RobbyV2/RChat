@@ -76,6 +76,7 @@ import {
   setMasking,
   showText,
 } from './profanity'
+import { parseSpoilers, spoilersKey, spoilersValue, type ShowSpoilers } from './spoilers'
 import {
   IDLE,
   TYPING_TTL_MS,
@@ -654,6 +655,16 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const readTyping = (owner: string | null) => readScoped(typingKey(owner), parseTyping, true)
 
+  const readSpoilers = (owner: string | null) =>
+    readScoped(spoilersKey(owner), parseSpoilers, 'click' as ShowSpoilers)
+
+  const saveShowSpoilers = (show: ShowSpoilers) => {
+    const owner = notifyOwner()
+    if (owner === undefined) return
+    if (show !== get().showSpoilers) set({ showSpoilers: show })
+    writeLocal(home.scoped(spoilersKey(owner)), spoilersValue(show))
+  }
+
   const readProfanity = (owner: string | null) =>
     readScoped(profanityKey(owner), parseProfanity, false)
 
@@ -933,6 +944,7 @@ export const useStore = create<RChatState>()((set, get) => {
     if (want.has('calls') && doc.calls && me) saveCallRoute(doc.calls)
     if (want.has('typing') && doc.typing !== undefined) saveTypingOn(doc.typing)
     if (want.has('profanity') && doc.profanity !== undefined) saveProfanityOn(doc.profanity)
+    if (want.has('spoilers') && doc.spoilers !== undefined) saveShowSpoilers(doc.spoilers)
     return failed.length ? `Couldn't apply: ${failed.join(', ')}` : null
   }
 
@@ -968,7 +980,7 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 
   const loadGuestLayout = () => {
-    set({ layout: readLayout(null), typingOn: readTyping(null) })
+    set({ layout: readLayout(null), typingOn: readTyping(null), showSpoilers: readSpoilers(null) })
     useProfanity(readProfanity(null))
     useNotify(readNotify(null))
     saveLayout(pruneLayout(get().layout, get().guestServers, null))
@@ -1049,6 +1061,7 @@ export const useStore = create<RChatState>()((set, get) => {
             forwardClip: readForward(fresh.username),
             notifyPrefs: readNotify(fresh.username),
             typingOn: readTyping(fresh.username),
+            showSpoilers: readSpoilers(fresh.username),
           }),
     })
     if (!same) {
@@ -3341,6 +3354,7 @@ export const useStore = create<RChatState>()((set, get) => {
     notifyPrefs: EMPTY_NOTIFY,
     typingOn: true,
     typing: {},
+    showSpoilers: 'click',
     profanityOn: false,
     profanityReady: false,
     profanityFailed: false,
@@ -3657,6 +3671,7 @@ export const useStore = create<RChatState>()((set, get) => {
         notifyPrefs: EMPTY_NOTIFY,
         typingOn: true,
         typing: {},
+        showSpoilers: 'click',
         view: null,
         invite: null,
         configLink: null,
@@ -4150,6 +4165,7 @@ export const useStore = create<RChatState>()((set, get) => {
     },
     setTypingOn: saveTypingOn,
     setProfanityOn: saveProfanityOn,
+    setShowSpoilers: saveShowSpoilers,
     reloadTyping: () => {
       const owner = notifyOwner()
       if (owner === undefined) return

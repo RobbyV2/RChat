@@ -10,7 +10,12 @@ import { avatarTriggerCls, nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { plainStamps } from '../lib/timestamps'
 import { profileTrigger } from './profile_card'
-import { ForwardedTag } from './replies'
+import { ForwardedTag, SpoilerLine } from './replies'
+import { spoilerParts } from '../lib/spoilers'
+import type { MessageMedia } from '../lib/types'
+
+const mediaLabel = (m: MessageMedia | null) =>
+  m === null ? '' : m.spoiler ? 'Spoiler' : m.filename
 
 const chipCls = (on: boolean) =>
   `rounded-full border px-3 py-1 text-xs font-medium ${
@@ -175,15 +180,15 @@ export default function SearchPanel() {
             </div>
             <p className="mt-0.5 line-clamp-2 text-sm break-words text-on-surface">
               {r.message.content ? (
-                <Masked text={plainStamps(r.message.content)} code />
+                <SpoilerLine parts={spoilerParts(plainStamps(r.message.content))} />
               ) : (
-                r.message.media?.filename
+                mediaLabel(r.message.media)
               )}
             </p>
             {r.message.media && (
               <p className="mt-0.5 flex items-center gap-1 text-xs text-on-surface-variant">
                 <FileText size={12} />
-                {r.message.media.filename}
+                {mediaLabel(r.message.media)}
               </p>
             )}
           </button>

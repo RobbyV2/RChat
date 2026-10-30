@@ -32,6 +32,7 @@ import { useMedia } from './context_menu'
 import { ReplyBar } from './replies'
 import { ForwardBar } from './forwards'
 import { useTextAssist } from './text_assist'
+import { FormatToolbar, useFormatting } from './format_toolbar'
 import { useMyTimeoutEnds, useNow } from './timeout_dialog'
 import { remainingText, timedOutLine } from '../lib/timeouts'
 import { CreatePollDialog } from './poll_dialog'
@@ -292,6 +293,13 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     maxHeight: 160,
   })
   const { trackCaret } = assist
+  const formatting = useFormatting({
+    inputRef,
+    getText: draftNow,
+    setText: value => {
+      if (draftKey) setDraft(draftKey, value)
+    },
+  })
 
   const openPicker = () => {
     const el = inputRef.current
@@ -486,6 +494,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         className={`relative flex items-end gap-2 bg-surface-container-high px-3 py-2 ${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}
       >
         {assist.popups}
+        <FormatToolbar open={formatting.selected} onFormat={formatting.apply} />
         {canAttach && (
           <>
             <button
@@ -530,6 +539,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           }}
           onKeyDown={e => {
             if (assist.popupKey(e)) return
+            if (formatting.onKeyDown(e)) return
             if (
               e.key === 'ArrowUp' &&
               !text &&

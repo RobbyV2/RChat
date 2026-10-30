@@ -306,9 +306,24 @@ fn scrub(mut url: Url) -> Url {
     url
 }
 
+/// The links of `content` that get previews, scrubbed, at most `MAX_URLS`. Links inside or
+/// touching a `||spoiler||` are never fetched (`crate::spoilers`, read like the client).
 pub(crate) fn extract_urls(content: &str) -> Vec<String> {
+    let spoilers = crate::spoilers::spans(content, false);
     let mut out: Vec<String> = Vec::new();
-    for word in content.split(|c: char| c.is_whitespace() || c == '<' || c == '>') {
+    let mut words: Vec<(usize, &str)> = Vec::new();
+    let mut from = 0;
+    for (i, c) in content.char_indices() {
+        if c.is_whitespace() || c == '<' || c == '>' {
+            words.push((from, &content[from..i]));
+            from = i + c.len_utf8();
+        }
+    }
+    words.push((from, &content[from..]));
+    for (at, word) in words {
+        if crate::spoilers::overlaps(&spoilers, at, at + word.len()) {
+            continue;
+        }
         let trimmed = word.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '"', '\'']);
         if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
             continue;

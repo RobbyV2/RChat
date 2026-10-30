@@ -651,8 +651,10 @@ pub struct ReplyRef {
     pub id: i64,
     /// Who wrote it; `null` when `deleted`.
     pub author: Option<UserRef>,
-    /// First line of its text as plain text (formatting removed, `||spoilers||` kept), at most
-    /// 200 characters; empty when it has only an attachment or is `deleted`.
+    /// First line of its text as plain text (formatting removed), at most 200 characters; empty
+    /// when it has only an attachment or is `deleted`. Spoilers are wrapped in `||` (always
+    /// closed, also when cut off), and a literal pipe or backslash has a backslash before it, so
+    /// `||` only ever marks a spoiler.
     #[schema(example = "See you at 8")]
     pub content: String,
     /// It has an attachment.

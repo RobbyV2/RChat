@@ -94,6 +94,7 @@ const useConfigSource = (): ConfigSource =>
       calls: s.me ? s.callRoute : null,
       typing: s.me || s.guest ? s.typingOn : null,
       profanity: s.me || s.guest ? s.profanityOn : null,
+      spoilers: s.me || s.guest ? s.showSpoilers : null,
     }))
   )
 

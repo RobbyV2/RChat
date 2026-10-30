@@ -18,7 +18,8 @@ import { NotificationsSection } from './notify_settings'
 import { ConfigSyncSection } from './config_sync'
 import { DesktopSection } from './desktop_settings'
 import { BlockedUsersSection } from './blocking'
-import { PrivacyChoices } from './friends'
+import { Choice, PrivacyChoices } from './friends'
+import { FORMATS, keysLabel } from '../lib/format'
 import { PassSwitch, WordGrid } from './word_grid'
 import { FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './ui'
 
@@ -470,7 +471,27 @@ function ChatSection() {
         Show when others are typing and let them see when you type. Off hides both.
       </p>
       <ProfanitySwitch />
+      <SpoilersChoice />
     </section>
+  )
+}
+
+const SPOILER_CHOICES = [
+  { value: 'click', label: 'On click' },
+  { value: 'always', label: 'Always' },
+] as const
+
+function SpoilersChoice() {
+  const show = useStore(s => s.showSpoilers)
+  const setShow = useStore(s => s.setShowSpoilers)
+  return (
+    <div className="mt-4 px-2">
+      <Choice label="Show spoilers" value={show} options={SPOILER_CHOICES} onChange={setShow} />
+      <p className="mt-2 text-xs text-on-surface-variant">
+        Always shows spoiler text and attachments without a click, except in streamer mode. Previews
+        and notifications keep them hidden.
+      </p>
+    </div>
   )
 }
 
@@ -678,10 +699,36 @@ function InformationSection() {
           updates, and never appear in presence. Their server list lives in their own browser.
         </p>
       </Info>
+      <Info title="Text formatting">
+        <FormattingHelp />
+      </Info>
       <Info title="Moderation">
         <ModerationText />
       </Info>
     </div>
+  )
+}
+
+function FormattingHelp() {
+  return (
+    <>
+      <p>
+        Select text in the message box or the edit box for the formatting toolbar, or use these
+        keys. Spoilers are written as ||text|| and stay hidden until clicked.
+      </p>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+        {FORMATS.filter(f => f.keys !== null).map(f => (
+          <div key={f.format} className="contents">
+            <dt>{f.label}</dt>
+            <dd>
+              <kbd className="rounded bg-surface-container-high px-1.5 py-0.5 font-mono text-xs text-on-surface">
+                {keysLabel(f.keys ?? '')}
+              </kbd>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </>
   )
 }
 

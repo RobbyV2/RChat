@@ -708,7 +708,7 @@ export function ProfileFriendButton({
   )
 }
 
-function Choice<T extends string>({
+export function Choice<T extends string>({
   label,
   value,
   options,

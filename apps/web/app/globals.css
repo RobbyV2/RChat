@@ -34,6 +34,7 @@
   --color-inverse-on-surface: #322f35;
   --color-inverse-primary: #6750a4;
   --color-scrim: #000000;
+  --color-spoiler: #34313a;
   --color-status-green: #7dd97b;
   --color-status-yellow: #ffd54f;
   --color-status-red: #f2b8b5;
@@ -111,6 +112,7 @@
 }
 
 :root[data-theme='light'] {
+  --color-spoiler: #2b2930;
   --color-primary: #6750a4;
   --color-on-primary: #ffffff;
   --color-primary-container: #eaddff;
@@ -225,14 +227,18 @@ body {
 }
 
 [data-spoiler='hidden'] * {
-  color: transparent !important;
-  background: transparent !important;
-  text-decoration-color: transparent !important;
   pointer-events: none;
 }
 
+[data-spoiler]:has(img) {
+  display: inline-block;
+}
+
+/* Images in a hidden spoiler show blurred, clipped to their box. */
 [data-spoiler='hidden'] img {
-  visibility: hidden;
+  visibility: visible;
+  filter: blur(24px);
+  clip-path: inset(0 round 0.75rem);
 }
 
 /* Syntax colors for highlighted code (highlight.js scopes), from the theme tokens. */

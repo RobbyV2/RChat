@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import { Forward, Image as ImageIcon, X } from 'lucide-react'
 import { maskOutsideCode } from '../lib/profanity'
 import { useMask, useStore } from '../lib/store'
-import { snippetParts } from '../lib/replies'
+import { snippetParts, type SnippetPart } from '../lib/replies'
 import { plainStamps } from '../lib/timestamps'
 import type { ReplyRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
@@ -24,7 +24,6 @@ export function ForwardedTag() {
 }
 
 export function Snippet({ quote }: { quote: Pick<ReplyRef, 'content' | 'has_media'> }) {
-  const mask = useMask()
   if (!quote.content)
     return (
       <span className="flex min-w-0 items-center gap-1 italic">
@@ -37,22 +36,33 @@ export function Snippet({ quote }: { quote: Pick<ReplyRef, 'content' | 'has_medi
   return (
     <span className="flex min-w-0 items-center gap-1">
       <span className="truncate">
-        {snippetParts(plainStamps(quote.content)).map((p, i) =>
-          p.spoiler ? (
-            <span
-              key={i}
-              data-reply-spoiler
-              className="rounded-sm bg-on-surface-variant/70 text-transparent select-none"
-            >
-              {maskOutsideCode(p.text, mask)}
-            </span>
-          ) : (
-            <span key={i}>{maskOutsideCode(p.text, mask)}</span>
-          )
-        )}
+        <SpoilerLine parts={snippetParts(plainStamps(quote.content))} />
       </span>
       {quote.has_media && <ImageIcon size={14} className="shrink-0" />}
     </span>
+  )
+}
+
+// One line of preview text with its spoilers as dark bars (they never reveal in previews).
+export function SpoilerLine({ parts }: { parts: SnippetPart[] }) {
+  const mask = useMask()
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.spoiler ? (
+          <span
+            key={i}
+            data-reply-spoiler
+            aria-label="Spoiler"
+            className="rounded-sm bg-on-surface-variant/70 text-transparent select-none"
+          >
+            <span aria-hidden>{maskOutsideCode(p.text, mask)}</span>
+          </span>
+        ) : (
+          <span key={i}>{maskOutsideCode(p.text, mask)}</span>
+        )
+      )}
+    </>
   )
 }
 

@@ -2,12 +2,12 @@
 
 import { useState } from 'react'
 import { Forward, Image as ImageIcon, SendHorizontal } from 'lucide-react'
-import { maskOutsideCode } from '../lib/profanity'
 import { useMask, useStore, type ContextMenuItem } from '../lib/store'
 import { forwardOrigin, forwardPending } from '../lib/forward'
 import type { Message } from '../lib/types'
 import type { ToolbarAction } from './message_toolbar'
-import { ComposerBar } from './replies'
+import { ComposerBar, SpoilerLine } from './replies'
+import { snippetParts } from '../lib/replies'
 import { MarkdownMessage } from './markdown_message'
 import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
@@ -72,7 +72,9 @@ export function ForwardBar({ draftKey }: { draftKey: string }) {
           &apos;s message
         </span>
         <span className="flex min-w-0 items-center gap-1 text-xs">
-          <span className="truncate">{maskOutsideCode(plainStamps(clip.snippet), mask)}</span>
+          <span className="truncate">
+            <SpoilerLine parts={snippetParts(plainStamps(clip.snippet))} />
+          </span>
           {clip.has_media && <ImageIcon size={12} className="shrink-0" aria-label="Attachment" />}
         </span>
       </span>

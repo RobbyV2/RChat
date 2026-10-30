@@ -1,4 +1,5 @@
 import { shareOrigin } from './instances'
+import { replaceSpoilers } from './spoilers'
 
 export interface InviteTarget {
   server: string
@@ -25,7 +26,6 @@ const TRAIL = /[)\]}>.,;:!?*_~|'"]+$/
 const FENCE = /^(?: {0,3}>)* {0,3}(`{3,}|~{3,})(.*)$/
 const LIST_ITEM = /^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:\s|$)/
 const CODE_SPAN = /(^|[^`])(`+)(?!`)(?:(?!\n[ \t]*\n)[\s\S])*?[^`]\2(?!`)/g
-const SPOILER = /\|\|(?:(?!\|\||\n[ \t]*\n)[\s\S])+\|\|/g
 
 const hex = (c: string) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
 
@@ -115,9 +115,10 @@ const withoutCodeBlocks = (text: string) => {
 }
 
 const visibleText = (text: string) =>
-  withoutCodeBlocks(text)
-    .replace(CODE_SPAN, (_, lead: string) => `${lead} `)
-    .replace(SPOILER, ' ')
+  withoutCodeBlocks(replaceSpoilers(text, () => ' ')).replace(
+    CODE_SPAN,
+    (_, lead: string) => `${lead} `
+  )
 
 export const visibleLinks = (text: string) =>
   [...visibleText(text).matchAll(URL_RE)].map(match => match[0].replace(TRAIL, ''))
@@ -162,11 +163,13 @@ export const safeNext = (raw: string | null | undefined) => {
   return control ? null : raw
 }
 
-export const previewText = (content: string) =>
-  content
-    .replace(/\|\|([\s\S]+?)\|\|/g, (_, inner: string) =>
-      '\u2588'.repeat(Math.min(8, Math.max(3, inner.trim().length)))
-    )
+export const spoilerBlocks = (inner: string) =>
+  inner.trim() ? '\u2588'.repeat(Math.min(8, Math.max(3, inner.trim().length))) : ''
+
+// One line of plain text for a preview, spoilers as blocks. `cut`: an excerpt, where an unclosed
+// spoiler hides the rest.
+export const previewText = (content: string, cut = false) =>
+  replaceSpoilers(content, spoilerBlocks, cut)
     .replace(/^\s{0,3}(#{1,6}|>)\s+/gm, '')
     .replace(/(\*\*|__|~~|`)/g, '')
     .replace(/\s+/g, ' ')

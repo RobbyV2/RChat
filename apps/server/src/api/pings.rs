@@ -247,8 +247,20 @@ pub async fn mentioned_users(
         .collect())
 }
 
+/// The first `EXCERPT_MAX` characters; a spoiler cut open is closed again, so clients keep it
+/// hidden.
 fn excerpt(content: &str) -> String {
-    content.chars().take(EXCERPT_MAX).collect()
+    let Some((cut, _)) = content.char_indices().nth(EXCERPT_MAX) else {
+        return content.to_string();
+    };
+    let mut out = content[..cut].to_string();
+    let open = crate::spoilers::spans(content, false)
+        .iter()
+        .any(|s| s.start + 2 <= cut && cut < s.end);
+    if open {
+        out.push_str("||");
+    }
+    out
 }
 
 /// What a batch of pings is about. `message` must be the stored message; its content gives the
@@ -996,6 +1008,17 @@ pub async fn announce_counts(state: &AppState, pairs: Vec<(String, String)>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn excerpts_keep_spoilers_closed() {
+        assert_eq!(super::excerpt("short ||one||"), "short ||one||");
+        let long = format!("a ||{}||", "s".repeat(300));
+        let cut = super::excerpt(&long);
+        assert!(cut.ends_with("s||"));
+        assert_eq!(cut.chars().count(), super::EXCERPT_MAX + 2);
+        let plain = format!("||x|| {}", "p".repeat(300));
+        assert_eq!(super::excerpt(&plain).chars().count(), super::EXCERPT_MAX);
+    }
+
     use super::*;
     use crate::api::test_util::{done, mem_user, temp_state};
 

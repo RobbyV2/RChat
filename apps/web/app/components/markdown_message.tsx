@@ -61,11 +61,12 @@ import {
   parseInviteAt,
   remoteKey,
 } from '../lib/invite'
-import { postedUrl } from '../lib/embed_links'
+import { postedUrl, spoileredUrls } from '../lib/embed_links'
 import { findMessageLinks, parseMessageLink } from '../lib/message_links'
 import { saveGuestMedia, useMediaSrc } from '../lib/media_src'
 import { expiryText, sameOriginImage } from '../lib/rules'
 import { remarkMask } from '../lib/profanity'
+import { CLOSE, OPEN, markSpoilers, unmarkSpoilers } from '../lib/spoilers'
 import {
   groupPills,
   knownMentions,
@@ -104,45 +105,79 @@ interface MdNode {
   data?: unknown
 }
 
-const splitSpoilers = (node: MdNode) => {
+type SpoilerToken = MdNode | 'open' | 'close'
+
+const MARKS = new RegExp(`(${[OPEN, CLOSE].map(m => m.replace(/[|<]/g, '\\$&')).join('|')})`)
+
+// Pairs the markers `markSpoilers` left in the text (see `lib/spoilers.ts`) among siblings.
+// A marker whose partner ended up in another node (markdown nesting split them) stays `||`, as
+// does every marker in code. Returns whether `node` kept an unpaired marker.
+const splitSpoilers = (node: MdNode): boolean => {
   const { children } = node
-  if (!children) return
-  for (const child of children) splitSpoilers(child)
-  const tokens: (MdNode | null)[] = []
+  if (!children) return false
+  const barrier = new Set(children.filter(splitSpoilers))
+  const tokens: SpoilerToken[] = []
   for (const child of children) {
-    if (child.type === 'text' && child.value !== undefined && child.value.includes('||')) {
-      child.value.split('||').forEach((value, i) => {
-        if (i) tokens.push(null)
-        if (value) tokens.push({ type: 'text', value })
-      })
-    } else {
+    if (child.type !== 'text' || child.value === undefined || !MARKS.test(child.value)) {
       tokens.push(child)
+      continue
+    }
+    for (const piece of child.value.split(MARKS)) {
+      if (piece === OPEN) tokens.push('open')
+      else if (piece === CLOSE) tokens.push('close')
+      else if (piece) tokens.push({ type: 'text', value: piece })
     }
   }
+  let left = barrier.size > 0
   const out: MdNode[] = []
   for (let i = 0; i < tokens.length; i += 1) {
     const tok = tokens[i]
-    if (tok !== null) {
+    if (typeof tok !== 'string') {
       out.push(tok)
       continue
     }
-    const close = tokens.indexOf(null, i + 1)
-    const inner = close === -1 ? [] : tokens.slice(i + 1, close)
-    if (inner.length === 0) {
+    let close = -1
+    if (tok === 'open')
+      for (let j = i + 1; j < tokens.length; j += 1) {
+        const t = tokens[j]
+        if (t === 'close') close = j
+        if (typeof t === 'string' || barrier.has(t)) break
+      }
+    if (close === -1) {
+      left = true
       out.push({ type: 'text', value: '||' })
       continue
     }
     out.push({
       type: 'emphasis',
       data: { hName: 'span', hProperties: { 'data-spoiler': '' } },
-      children: inner.filter((t): t is MdNode => t !== null),
+      children: tokens.slice(i + 1, close) as MdNode[],
     })
     i = close
   }
-  node.children = out
+  node.children = out.reduce<MdNode[]>((acc, n) => {
+    const last = acc[acc.length - 1]
+    if (n.type === 'text' && last?.type === 'text' && !last.data && !n.data)
+      acc[acc.length - 1] = { ...last, value: `${last.value ?? ''}${n.value ?? ''}` }
+    else acc.push(n)
+    return acc
+  }, [])
+  return left
 }
 
-const remarkSpoiler = () => (tree: unknown) => splitSpoilers(tree as MdNode)
+// Markers left anywhere else (code, link targets, alt text) read as typed.
+const unmarkTree = (node: MdNode & { url?: string; alt?: string; title?: string }) => {
+  if (node.value !== undefined) node.value = unmarkSpoilers(node.value)
+  if (typeof node.url === 'string') node.url = unmarkSpoilers(node.url)
+  if (typeof node.alt === 'string') node.alt = unmarkSpoilers(node.alt)
+  if (typeof node.title === 'string') node.title = unmarkSpoilers(node.title)
+  node.children?.forEach(unmarkTree)
+}
+
+const remarkSpoiler = () => (tree: unknown) => {
+  splitSpoilers(tree as MdNode)
+  unmarkTree(tree as MdNode)
+}
 
 // Group mention pills are looked up as `\n<key>` (a username never holds a line break).
 const markMentions = (
@@ -240,19 +275,38 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   )
 }
 
+// A `||spoiler||`: a dark pill until clicked (or Enter / Space). Each one reveals on its own, for
+// this view only. "Show spoilers: Always" starts them open, except in streamer mode.
+const useSpoilersOpen = () => useStore(s => s.showSpoilers === 'always' && !s.streamer)
+
 function SpoilerText({ children }: { children?: ReactNode }) {
+  const always = useSpoilersOpen()
   const [revealed, setRevealed] = useState(false)
+  if (revealed || always)
+    return (
+      <span data-spoiler="shown" className="rounded bg-on-surface/10 px-0.5">
+        {children}
+      </span>
+    )
+  const reveal = (e: React.SyntheticEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setRevealed(true)
+  }
   return (
     <span
-      data-spoiler={revealed ? 'shown' : 'hidden'}
-      onClick={() => setRevealed(true)}
-      className={`rounded px-1 ${
-        revealed
-          ? 'bg-surface-container-high'
-          : 'cursor-pointer bg-on-surface text-transparent select-none'
-      }`}
+      data-spoiler="hidden"
+      role="button"
+      tabIndex={0}
+      aria-label="Spoiler, press to reveal"
+      title="Spoiler"
+      onClick={reveal}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') reveal(e)
+      }}
+      className="cursor-pointer rounded bg-spoiler px-0.5 select-none hover:bg-spoiler/85 focus-visible:outline-2 focus-visible:outline-primary"
     >
-      {children}
+      <span className="invisible">{children}</span>
     </span>
   )
 }
@@ -431,11 +485,15 @@ function SpoilerCover({ title, onReveal }: { title?: string; onReveal: () => voi
   return (
     <button
       title={title}
+      aria-label="Spoiler attachment, press to reveal"
       onClick={onReveal}
       className="mt-1 flex w-fit cursor-pointer items-center gap-2 rounded-xl border border-outline-variant bg-surface-container px-3 py-2 hover:bg-surface-container-high"
     >
       <EyeOff size={18} className="shrink-0 text-on-surface-variant" />
-      <span className="text-sm text-on-surface-variant">Spoiler · click to reveal</span>
+      <span className="rounded-full bg-spoiler px-2 py-0.5 text-xs font-medium tracking-wide text-white uppercase">
+        Spoiler
+      </span>
+      <span className="text-sm text-on-surface-variant">Click to reveal</span>
     </button>
   )
 }
@@ -490,7 +548,8 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   const [text, setText] = useState<TextFile | null>(
     () => (canText && live ? keptText(`p2p:${messageId}`) : null) ?? null
   )
-  const hidden = spoiler && !revealed
+  const always = useSpoilersOpen()
+  const hidden = spoiler && !revealed && !always
   const busy = progress !== null
   const autoLoad =
     hidesIp || localFile !== null || (hoster !== null && p2p.hasReceived(id, hoster, sha256))
@@ -743,12 +802,17 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
   const previews = useStore(s => s.settings.asset_previews)
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
   const [revealed, setRevealed] = useState(false)
+  const always = useSpoilersOpen()
   const { id, filename, removed, removed_by_author, spoiler, expires_at } = media
   const image = previews && IMAGE_EXT.test(filename)
   const src = useMediaSrc(id, server, image && !removed)
   const guest = api.guestMedia(server)
   const lang = previews && !image ? fileLang(filename) : null
-  const text = useServerText(id, server, lang !== null && !removed && !(spoiler && !revealed))
+  const text = useServerText(
+    id,
+    server,
+    lang !== null && !removed && !(spoiler && !revealed && !always)
+  )
   if (removed) {
     return (
       <p className="mt-1 text-xs text-on-surface-variant italic">
@@ -758,7 +822,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
       </p>
     )
   }
-  const hidden = spoiler && !revealed
+  const hidden = spoiler && !revealed && !always
   const expiry =
     expires_at !== null ? (
       <span className="mt-1.5 flex items-center gap-1 text-xs text-on-surface-variant">
@@ -775,6 +839,8 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
       return (
         <button
           title="Click to reveal"
+          aria-label="Spoiler image, press to reveal"
+          data-spoiler-media
           onClick={() => setRevealed(true)}
           className="relative mt-1 block w-fit cursor-pointer overflow-hidden rounded-xl"
         >
@@ -938,6 +1004,45 @@ function EmbedCard({
   )
 }
 
+// In place of a preview for a link inside a spoiler: nothing is fetched for it. Revealing shows
+// the link itself, still without a preview.
+function SpoilerLinkCard({ url }: { url: string }) {
+  const always = useSpoilersOpen()
+  const [revealed, setRevealed] = useState(false)
+  const box =
+    'mt-1 flex w-fit max-w-md items-center gap-2 rounded-lg border-l-4 border-outline bg-surface-container py-2 pr-3 pl-3 text-sm'
+  if (revealed || always)
+    return (
+      <div data-spoiler-link="shown" className={box}>
+        <EyeOff size={14} className="shrink-0 text-on-surface-variant" />
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="min-w-0 break-all text-primary hover:underline"
+        >
+          {url}
+        </a>
+      </div>
+    )
+  return (
+    <button
+      type="button"
+      data-spoiler-link="hidden"
+      title="Spoiler link, click to show"
+      aria-label="Spoiler link, press to show"
+      onClick={() => setRevealed(true)}
+      className={`${box} cursor-pointer text-on-surface-variant hover:bg-surface-container-high`}
+    >
+      <EyeOff size={14} className="shrink-0" />
+      <span className="rounded-full bg-spoiler px-2 py-0.5 text-xs font-medium tracking-wide text-white uppercase">
+        Spoiler
+      </span>
+      Link hidden
+    </button>
+  )
+}
+
 export const MarkdownMessage = memo(function MarkdownMessage({
   message,
   canDelete = false,
@@ -979,6 +1084,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     ],
     [known, pills, edited, mask]
   )
+  const source = useMemo(() => markSpoilers(content), [content])
+  const hidden = useMemo(() => spoileredUrls(content), [content])
   const homePublic = useStore(s => s.instance?.public_url ?? null)
   const local = useMemo(() => localOrigins(homePublic), [homePublic])
   const invites = useMemo(() => {
@@ -998,19 +1105,20 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   const links = useMemo(
     () =>
       embeds.filter(e => {
+        if (hidden.includes(e.url)) return false
         if (local.some(origin => parseInvite(e.url, origin) !== null)) return false
         if (parseMessageLink(e.url, local)) return false
         const remote = parseInviteAt(e.url, 'http://invalid')
         return !(remote && remoteOk[remoteKey(remote)])
       }),
-    [embeds, local, remoteOk]
+    [embeds, local, remoteOk, hidden]
   )
   return (
     <div className="min-w-0 text-sm leading-relaxed break-words">
       {editor ??
         (content.trim() !== '' ? (
           <ReactMarkdown remarkPlugins={plugins} components={components}>
-            {content}
+            {source}
           </ReactMarkdown>
         ) : (
           edited && (
@@ -1054,6 +1162,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
         ))}
       {previews &&
         links.map(e => <EmbedCard key={e.ord} embed={e} message={message} canDelete={canDelete} />)}
+      {previews && hidden.slice(0, 3).map(url => <SpoilerLinkCard key={url} url={url} />)}
     </div>
   )
 })

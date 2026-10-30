@@ -22,6 +22,7 @@ import type { GroupPings } from './group_pings'
 import type { Replying } from './replies'
 import type { SearchArgs } from './search'
 import type { Sed } from './sed'
+import type { ShowSpoilers } from './spoilers'
 import type {
   AdminOverview,
   AvatarKind,
@@ -228,6 +229,8 @@ export interface RChatState {
   notifyPrefs: NotifyPrefs
   typingOn: boolean
   typing: TypingMap
+  // Settings > Chat > Show spoilers.
+  showSpoilers: ShowSpoilers
   // The personal profanity filter: on, loaded and masking, or failed to load.
   profanityOn: boolean
   profanityReady: boolean
@@ -406,6 +409,7 @@ export interface RChatState {
   pruneNotify: () => void
   setTypingOn: (on: boolean) => void
   setProfanityOn: (on: boolean) => void
+  setShowSpoilers: (show: ShowSpoilers) => void
   reloadTyping: () => void
   noteTyping: (scope: string, active: boolean) => void
   sendForward: (key: string) => void

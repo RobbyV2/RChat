@@ -96,6 +96,7 @@ export const configSourceOf = (s: RChatState): ConfigSource => ({
   calls: s.me ? s.callRoute : null,
   typing: s.me || s.guest ? s.typingOn : null,
   profanity: s.me || s.guest ? s.profanityOn : null,
+  spoilers: s.me || s.guest ? s.showSpoilers : null,
 })
 
 export const railOrder = (s: RChatState) => railNames(serverNames(s), s.layout.servers)

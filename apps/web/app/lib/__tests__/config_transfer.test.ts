@@ -51,6 +51,7 @@ const source = (over: Partial<ConfigSource> = {}): ConfigSource => {
     calls: 'p2p',
     typing: false,
     profanity: true,
+    spoilers: 'always',
     ...over,
   }
 }
@@ -336,6 +337,7 @@ describe('building', () => {
         'theme',
         'typing',
         'profanity',
+        'spoilers',
         'v',
       ].sort()
     )
@@ -362,6 +364,7 @@ describe('preview', () => {
       'calls',
       'typing',
       'profanity',
+      'spoilers',
     ])
     expect([by.theme.now, by.theme.next, by.theme.same]).toEqual(['Dark', 'Light', false])
     expect([by.streamer.now, by.streamer.next, by.streamer.same]).toEqual(['On', 'On', true])
@@ -403,6 +406,22 @@ describe('preview', () => {
     const rows = describeChanges({ v: 1, profanity: true }, source({ profanity: false }))
     expect(rows).toEqual([
       { key: 'profanity', label: 'Filter profanity', now: 'Off', next: 'On', same: false },
+    ])
+  })
+
+  test('show spoilers travels as a choice', async () => {
+    const doc = buildConfig(source({ spoilers: 'always' }), new Set<SectionKey>(['spoilers']))
+    expect(doc).toEqual({ v: 1, spoilers: 'always' })
+    expect(buildConfig(source({ spoilers: null }), ALL).spoilers).toBeUndefined()
+    const decoded = await decodeConfig(await encodeConfig(doc))
+    expect(decoded).toEqual({ ok: true, doc: { v: 1, spoilers: 'always' } })
+    for (const spoilers of ['never', true, 1, null, {}]) {
+      const out = sanitizeConfig({ v: 1, spoilers })
+      expect(out.ok && out.doc.spoilers).toBeUndefined()
+    }
+    const rows = describeChanges({ v: 1, spoilers: 'always' }, source({ spoilers: 'click' }))
+    expect(rows).toEqual([
+      { key: 'spoilers', label: 'Show spoilers', now: 'On click', next: 'Always', same: false },
     ])
   })
 

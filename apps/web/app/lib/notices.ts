@@ -140,15 +140,11 @@ export const context = (n: Notice): Piece[] => {
   return out
 }
 
-const BLOCKS = (inner: string) => '█'.repeat(Math.min(8, Math.max(3, inner.trim().length)))
-
 // Message text for a toast or system notification: markdown and spoilers masked, including a
 // spoiler cut open by a short excerpt. Streamer mode shows no text at all.
 export const alertBody = (body: string, streamer: boolean) => {
   if (streamer) return ''
-  return previewText(plainStamps(body))
-    .replace(/\|\|([\s\S]*)$/, (_, inner: string) => (inner.trim() ? BLOCKS(inner) : ''))
-    .trim()
+  return previewText(plainStamps(body), true)
 }
 
 const plain = (pieces: Piece[]) => pieces.map(p => p.text).join('')

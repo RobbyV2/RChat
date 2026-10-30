@@ -8,6 +8,7 @@ import { sendKey } from '../lib/keys'
 import type { ToolbarAction } from './message_toolbar'
 import { useMedia } from './context_menu'
 import { useTextAssist } from './text_assist'
+import { FormatToolbar, useFormatting } from './format_toolbar'
 import { fullTimeOf } from '../lib/timestamps'
 
 export const editAction = (onClick: () => void): ToolbarAction => ({
@@ -72,6 +73,11 @@ export function MessageEditor() {
     below,
   })
   const { trackCaret } = assist
+  const formatting = useFormatting({
+    inputRef,
+    getText: () => useStore.getState().editing?.text ?? '',
+    setText: setEditText,
+  })
 
   useEffect(() => {
     const el = inputRef.current
@@ -98,6 +104,7 @@ export function MessageEditor() {
     >
       <div className="relative flex items-end gap-2 rounded-xl bg-surface-container-high px-3 py-2">
         {assist.popups}
+        <FormatToolbar open={formatting.selected} onFormat={formatting.apply} below={below} />
         <textarea
           ref={inputRef}
           rows={1}
@@ -105,6 +112,7 @@ export function MessageEditor() {
           {...assist.textarea}
           onKeyDown={e => {
             if (assist.popupKey(e)) return
+            if (formatting.onKeyDown(e)) return
             if (e.key === 'Escape' && !e.nativeEvent.isComposing) {
               e.preventDefault()
               cancel()

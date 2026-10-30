@@ -2,7 +2,7 @@
 // (`rc1.` + base64url of deflate-raw JSON) and share links (`/config/{id}/`).
 //
 // Document: `{ v: 1, theme?, streamer?, appearOffline?, layout?, notify?, emoji?, calls?,
-// typing?, profanity? }`. All
+// typing?, profanity?, spoilers? }`. All
 // sections are optional and decoded separately. Unknown sections and fields are dropped, so older
 // readers skip new sections. `v` changes only for an incompatible change. Only listed store
 // fields are copied, so tokens, grants, drafts, passwords and P2P state never get in.
@@ -29,6 +29,7 @@ import {
 } from './emoji'
 import { ROUTE_LABEL, isRoute, type CallRoute } from './call_choice'
 import { shareOrigin } from './instances'
+import { isShowSpoilers, type ShowSpoilers } from './spoilers'
 
 const CONFIG_VERSION = 1
 export const PREFIX = 'rc1.'
@@ -61,6 +62,7 @@ export interface ConfigDoc {
   calls?: CallRoute
   typing?: boolean
   profanity?: boolean
+  spoilers?: ShowSpoilers
 }
 
 export type SectionKey =
@@ -73,6 +75,7 @@ export type SectionKey =
   | 'calls'
   | 'typing'
   | 'profanity'
+  | 'spoilers'
 
 export interface Section {
   key: SectionKey
@@ -101,6 +104,7 @@ export const SECTIONS: Section[] = [
   { key: 'calls', label: 'Call connection', account: true, device: false, link: true },
   { key: 'typing', label: 'Typing indicators', account: false, device: false, link: true },
   { key: 'profanity', label: 'Filter profanity', account: false, device: false, link: true },
+  { key: 'spoilers', label: 'Show spoilers', account: false, device: false, link: true },
 ]
 
 export const sectionOf = (key: SectionKey) => SECTIONS.find(s => s.key === key) as Section
@@ -122,6 +126,7 @@ export interface ConfigSource {
   calls: CallRoute | null
   typing: boolean | null
   profanity: boolean | null
+  spoilers: ShowSpoilers | null
 }
 
 const copyEntry = (e: RailEntry): RailEntry =>
@@ -157,6 +162,7 @@ export const buildConfig = (src: ConfigSource, include: ReadonlySet<SectionKey>)
   if (on('calls') && src.calls) doc.calls = src.calls
   if (on('typing') && src.typing !== null) doc.typing = src.typing
   if (on('profanity') && src.profanity !== null) doc.profanity = src.profanity
+  if (on('spoilers') && src.spoilers !== null) doc.spoilers = src.spoilers
   return doc
 }
 
@@ -242,8 +248,19 @@ export const NOT_CONFIG = 'Not a config string'
 // Validates and clamps every field; unknown sections and fields are dropped.
 export const sanitizeConfig = (data: unknown, now = Date.now()): Decoded => {
   if (!isRecord(data)) return { ok: false, error: DAMAGED }
-  const { v, theme, streamer, appearOffline, layout, notify, emoji, calls, typing, profanity } =
-    data
+  const {
+    v,
+    theme,
+    streamer,
+    appearOffline,
+    layout,
+    notify,
+    emoji,
+    calls,
+    typing,
+    profanity,
+    spoilers,
+  } = data
   if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) return { ok: false, error: DAMAGED }
   if (v > CONFIG_VERSION) return { ok: false, error: NEWER }
   const doc: ConfigDoc = { v: 1 }
@@ -259,6 +276,7 @@ export const sanitizeConfig = (data: unknown, now = Date.now()): Decoded => {
   if (isRoute(calls)) doc.calls = calls
   if (typeof typing === 'boolean') doc.typing = typing
   if (typeof profanity === 'boolean') doc.profanity = profanity
+  if (isShowSpoilers(spoilers)) doc.spoilers = spoilers
   return { ok: true, doc }
 }
 
@@ -423,6 +441,12 @@ export const describeChanges = (doc: ConfigDoc, src: ConfigSource): Change[] => 
         return d.typing === undefined ? 'Not set' : onOff(d.typing)
       case 'profanity':
         return d.profanity === undefined ? 'Not set' : onOff(d.profanity)
+      case 'spoilers':
+        return d.spoilers === undefined
+          ? 'Not set'
+          : d.spoilers === 'always'
+            ? 'Always'
+            : 'On click'
     }
   }
   return presentSections(doc).map(key => ({

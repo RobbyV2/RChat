@@ -164,6 +164,7 @@ describe('export never carries secrets', () => {
         'theme',
         'typing',
         'profanity',
+        'spoilers',
         'v',
       ].sort()
     )
@@ -176,6 +177,7 @@ describe('export never carries secrets', () => {
       'layout',
       'notify',
       'profanity',
+      'spoilers',
       'streamer',
       'theme',
       'typing',

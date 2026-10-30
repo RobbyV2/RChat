@@ -1,0 +1,305 @@
+{
+  "_about": "Shared by apps/web/app/lib/__tests__/spoilers.test.ts and apps/server/src/spoilers.rs. parts: the text split into [text, is_spoiler] with markers removed; cut: read as an excerpt. links: what the server fetches previews for (embeds.rs extract_urls).",
+  "spoilers": [
+    {
+      "text": "no spoilers here",
+      "parts": [["no spoilers here", false]]
+    },
+    {
+      "text": "a ||b|| c",
+      "parts": [
+        ["a ", false],
+        ["b", true],
+        [" c", false]
+      ]
+    },
+    {
+      "text": "||whole||",
+      "parts": [["whole", true]]
+    },
+    {
+      "text": "||a|| and ||b||",
+      "parts": [
+        ["a", true],
+        [" and ", false],
+        ["b", true]
+      ]
+    },
+    {
+      "text": "unmatched || here",
+      "parts": [["unmatched || here", false]]
+    },
+    {
+      "text": "||open only",
+      "parts": [["||open only", false]]
+    },
+    {
+      "text": "||open only",
+      "cut": true,
+      "parts": [["open only", true]]
+    },
+    {
+      "text": "done ||a|| then ||cut",
+      "cut": true,
+      "parts": [
+        ["done ", false],
+        ["a", true],
+        [" then ", false],
+        ["cut", true]
+      ]
+    },
+    {
+      "text": "dangling ||",
+      "cut": true,
+      "parts": [["dangling ", false]]
+    },
+    {
+      "text": "dangling ||",
+      "parts": [["dangling ||", false]]
+    },
+    {
+      "text": "||||",
+      "parts": [["||||", false]]
+    },
+    {
+      "text": "|||| x ||y||",
+      "parts": [
+        ["||", false],
+        [" x ", true],
+        ["y||", false]
+      ]
+    },
+    {
+      "text": "|||a|||",
+      "parts": [
+        ["|a", true],
+        ["|", false]
+      ]
+    },
+    {
+      "text": "|| ||",
+      "parts": [[" ", true]]
+    },
+    {
+      "text": "\\||not a spoiler||",
+      "parts": [["\\||not a spoiler||", false]]
+    },
+    {
+      "text": "\\|\\|not\\|\\|",
+      "parts": [["\\|\\|not\\|\\|", false]]
+    },
+    {
+      "text": "\\\\||yes||",
+      "parts": [
+        ["\\\\", false],
+        ["yes", true]
+      ]
+    },
+    {
+      "text": "a `||code||` b",
+      "parts": [["a `||code||` b", false]]
+    },
+    {
+      "text": "||a `code` b||",
+      "parts": [["a `code` b", true]]
+    },
+    {
+      "text": "||a `x||y` b||",
+      "parts": [["a `x||y` b", true]]
+    },
+    {
+      "text": "`` a || b `` ||c||",
+      "parts": [
+        ["`` a || b `` ", false],
+        ["c", true]
+      ]
+    },
+    {
+      "text": "`unclosed ||x||",
+      "parts": [
+        ["`unclosed ", false],
+        ["x", true]
+      ]
+    },
+    {
+      "text": "```\n||in fence||\n```\n||out||",
+      "parts": [
+        ["```\n||in fence||\n```\n", false],
+        ["out", true]
+      ]
+    },
+    {
+      "text": "~~~\n||a\n~~~\nb||",
+      "parts": [["~~~\n||a\n~~~\nb||", false]]
+    },
+    {
+      "text": "||a\n```\ncode\n```\nb||",
+      "parts": [["||a\n```\ncode\n```\nb||", false]]
+    },
+    {
+      "text": "    ||indented code||\n\n||text||",
+      "parts": [
+        ["    ||indented code||\n\n", false],
+        ["text", true]
+      ]
+    },
+    {
+      "text": "- item\n    ||list continuation||",
+      "parts": [
+        ["- item\n    ", false],
+        ["list continuation", true]
+      ]
+    },
+    {
+      "text": "||line one\nline two||",
+      "parts": [["line one\nline two", true]]
+    },
+    {
+      "text": "||para one\n\npara two||",
+      "parts": [["||para one\n\npara two||", false]]
+    },
+    {
+      "text": "> ||quoted\n> still||",
+      "parts": [
+        ["> ", false],
+        ["quoted\n> still", true]
+      ]
+    },
+    {
+      "text": "> ||a\n>\n> b||",
+      "parts": [["> ||a\n>\n> b||", false]]
+    },
+    {
+      "text": "**||bold spoiler||**",
+      "parts": [
+        ["**", false],
+        ["bold spoiler", true],
+        ["**", false]
+      ]
+    },
+    {
+      "text": "||**bold** inside||",
+      "parts": [["**bold** inside", true]]
+    },
+    {
+      "text": "- ||in a list||\n- plain",
+      "parts": [
+        ["- ", false],
+        ["in a list", true],
+        ["\n- plain", false]
+      ]
+    },
+    {
+      "text": "# ||heading||",
+      "parts": [
+        ["# ", false],
+        ["heading", true]
+      ]
+    },
+    {
+      "text": "https://a.example/||x||",
+      "parts": [
+        ["https://a.example/", false],
+        ["x", true]
+      ]
+    },
+    {
+      "text": "||https://hidden.example/x|| https://shown.example/",
+      "parts": [
+        ["https://hidden.example/x", true],
+        [" https://shown.example/", false]
+      ]
+    },
+    {
+      "text": "café ||thé|| ☕ ||🙂||",
+      "parts": [
+        ["café ", false],
+        ["thé", true],
+        [" ☕ ", false],
+        ["🙂", true]
+      ]
+    },
+    {
+      "text": "||a\n\nhttps://x.y b||",
+      "parts": [["a\n\nhttps://x.y b", true]]
+    },
+    {
+      "text": "```\ncode\n```\n||https://x.y||",
+      "parts": [["```\ncode\n```\n||https://x.y||", false]]
+    }
+  ],
+  "links": [
+    {
+      "text": "|| https://a.example/secret ||",
+      "urls": []
+    },
+    {
+      "text": "||see https://a.example/x|| and https://b.example/",
+      "urls": ["https://b.example/"]
+    },
+    {
+      "text": "https://a.example/x||y||",
+      "urls": []
+    },
+    {
+      "text": "https://a.example/?q=||x|| https://b.example/",
+      "urls": ["https://b.example/"]
+    },
+    {
+      "text": "\\|| https://a.example/ ||",
+      "urls": ["https://a.example/"]
+    },
+    {
+      "text": "`||` https://a.example/ `||`",
+      "urls": ["https://a.example/"]
+    },
+    {
+      "text": "||a||https://a.example/",
+      "urls": []
+    },
+    {
+      "text": "||x\nhttps://a.example/\ny||",
+      "urls": []
+    },
+    {
+      "text": "||x\n\nhttps://a.example/ y||",
+      "urls": ["https://a.example/"]
+    },
+    {
+      "text": "<https://a.example/>||x||",
+      "urls": ["https://a.example/"]
+    },
+    {
+      "text": "||<https://a.example/>||",
+      "urls": []
+    },
+    {
+      "text": "> ||quote https://a.example/\n> more||",
+      "urls": []
+    },
+    {
+      "text": "**||https://a.example/||**",
+      "urls": []
+    },
+    {
+      "text": "||https://a.example/||, https://a.example/",
+      "urls": ["https://a.example/"]
+    },
+    {
+      "text": "```\n||\n```\nhttps://a.example/ ||",
+      "urls": ["https://a.example/"]
+    },
+    {
+      "text": "plain https://a.example/ and ||hidden https://b.example/|| and https://c.example/",
+      "urls": ["https://a.example/", "https://c.example/"]
+    },
+    {
+      "text": "||a\n\nhttps://x.y b||",
+      "urls": []
+    },
+    {
+      "text": "```\ncode\n```\n||https://x.y||",
+      "urls": []
+    }
+  ]
+}
