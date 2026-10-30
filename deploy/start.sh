@@ -3,6 +3,17 @@ set -e
 
 export HOSTNAME="${FRONTEND_HOST:-127.0.0.1}"
 
+case "${DATABASE_URL:-}" in
+    postgres:* | postgresql:* | "") ;;
+    *)
+        data=$(dirname "${DATABASE_URL#sqlite:}")
+        if [ -d "$data" ] && [ ! -w "$data" ]; then
+            echo "$data is not writable by user $(id -u). Volumes made by images before 0.3.0 belong to root; fix once with: docker run --rm -u 0 -v <volume>:$data --entrypoint chown <image> -R 10001:10001 $data" >&2
+            exit 1
+        fi
+        ;;
+esac
+
 peer() {
     cd /app/peer && bunx peer --port "${PEERJS_PORT:-9001}" --path /peerjs 2>&1 | {
         case "${RUST_LOG:-info}" in

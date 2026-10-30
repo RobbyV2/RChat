@@ -6,6 +6,6 @@ license = "MIT"
 description = "The profanity matcher shared by the server and the web client"
 
 [dependencies]
-rustrict = "0.7.39"
+rustrict = "=0.7.39"
 percent-encoding = "2.3.2"
-unicode-normalization = "0.1.22"
+unicode-normalization = "=0.1.26"

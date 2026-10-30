@@ -1,0 +1,7 @@
+{
+  "name": "peer-runtime",
+  "private": true,
+  "dependencies": {
+    "peer": "1.0.2"
+  }
+}

@@ -8,3 +8,19 @@ updates:
       actions:
         patterns:
           - '*'
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        patterns:
+          - '*'
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      bun:
+        patterns:
+          - '*'

@@ -76,7 +76,13 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: bun install --frozen-lockfile
-      - run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: wasm-pack
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-${{ runner.os }}-0.15.0
+      - if: steps.wasm-pack.outputs.cache-hit != 'true'
+        run: cargo install wasm-pack --version 0.15.0 --locked
       - run: wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --release
       # The compiled matcher against the Rust fixture (the lint job has no wasm and skips it).
       - run: bun test app/lib/__tests__/profanity.test.tsx

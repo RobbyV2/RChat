@@ -154,6 +154,12 @@ Run the Docker image. `latest` is the newest stable release, `weekly` the newest
 docker run -p 3000:3000 -v rchat-data:/data ghcr.io/robbyv2/rchat:latest
 ```
 
+The image runs as user 10001. A volume made by an image before 0.3.0 belongs to root; give it to that user once:
+
+```bash
+docker run --rm -u 0 -v rchat-data:/data --entrypoint chown ghcr.io/robbyv2/rchat:latest -R 10001:10001 /data
+```
+
 Build the image locally with `docker compose up`.
 
 ## Desktop app
