@@ -49,6 +49,20 @@ import {
   type SectionKey,
 } from '../config_transfer'
 import { EMPTY_NOTIFY } from '../notify'
+import { BLOCK, blobRoot, hashBytes } from '../p2p/hashing'
+import {
+  exportP2pWithFiles,
+  filesHead,
+  filesSize,
+  FILES_FRAME_MAX,
+  importFiles,
+  unlockP2pWithFiles,
+  writeFiles,
+  type FilesKey,
+} from '../p2p/transfer'
+import { splitFile } from '../config_transfer'
+import { assemble } from '../p2p/blobs'
+import type { P2pDatabase } from '../p2p/db'
 
 // Device move (note section 7): the encrypted section, the dump of every store, the three
 // import cases, and what contacts and the old device see afterwards.
@@ -146,9 +160,16 @@ const scene = async () => {
   await a.dms.react(room, first, '👍', true)
   await a.dms.pin(room, first, true)
   await a.dms.edit(room, first, 'hello there Bob')
+  const file = new Uint8Array(3000).map((_, i) => i % 251)
+  const hashed = await hashBytes(file)
+  await a.dms.blobs.putOwn(new Blob([file as BlobPart]), hashed)
+  await a.dms.send(room, {
+    body: 'a file',
+    att: [{ h: hashed.h, size: 3000, blocks: 1, name: 'notes.txt', mime: 'text/plain' }],
+  })
   await eventually(
     async () =>
-      (await bodies(a, b.node.ik)).length === 2 &&
+      (await bodies(a, b.node.ik)).length === 3 &&
       (await bodies(b, a.node.ik))[0] === 'hello there Bob',
     'conversation'
   )
@@ -231,10 +252,155 @@ describe('dump and encryption', () => {
     target.close()
   }, 60_000)
 
+  // The `.rchat` file with files: the config text line, then the files, streamed.
+  const rchatFile = async (db: P2pDatabase, text: string, fk: FilesKey) => {
+    const parts: BlobPart[] = [`${text}\n`]
+    let biggest = 0
+    let pieces = 0
+    await writeFiles(db, fk, async part => {
+      biggest = Math.max(biggest, part.length)
+      pieces += 1
+      parts.push(new Blob([part as BlobPart]))
+    })
+    return { file: new Blob(parts), biggest, pieces }
+  }
+
+  const readBack = async (file: Blob) => {
+    const split = await splitFile(file)
+    if (!split) throw new Error('no first line')
+    const head = await filesHead(split.rest)
+    return { text: split.text, rest: split.rest, head }
+  }
+
+  test('files go only in the file, streamed after the data, and work on the new device', async () => {
+    const { a } = await scene()
+    const [rec] = await a.store.db.getAll('blobs')
+    expect(await filesSize(a.store.db)).toBe(3000)
+    // The dump itself never carries files.
+    expect((await parseDump(await dumpBytes(a.store.db))).stores.has('blobs')).toBe(false)
+    const { section, files } = await exportP2pWithFiles(a.store.db, PASS, KDF)
+    const { file } = await rchatFile(a.store.db, 'rc1.config-text', files)
+    const back = await readBack(file)
+    expect(back.text).toBe('rc1.config-text')
+    expect(back.head).toEqual({ id: files.id, salt: files.salt })
+    const { dump, files: key } = await unlockP2pWithFiles(
+      section,
+      PASS,
+      back.head as NonNullable<typeof back.head>
+    )
+    const target = await fresh()
+    await applyImport(target.db, dump, 'new', { now: 1_700_000_100_000 })
+    const res = await importFiles(target.db, back.rest, key)
+    expect(res).toEqual({ files: 1, skipped: 0, complete: true })
+    const got = await target.db.get('blobs', rec.h)
+    expect(got?.done).toBe(true)
+    expect(got?.hashed).toBe(true)
+    // Checked and sniffed here, not taken from the file.
+    expect(got?.type).toBe('application/octet-stream')
+    expect(
+      new Uint8Array(await ((await assemble(target.db, rec.h)) as Blob).arrayBuffer())
+    ).toEqual(new Uint8Array(await (rec.file as Blob).arrayBuffer()))
+    // Live messages still name the file, so the new device may serve it.
+    expect(await target.db.countFromIndex('events', 'att', rec.h)).toBe(1)
+    target.close()
+    // The files of one export can't be read with another export's data.
+    const other = await exportP2pWithFiles(a.store.db, PASS, KDF)
+    expect(
+      await unlockP2pWithFiles(
+        other.section,
+        PASS,
+        back.head as NonNullable<typeof back.head>
+      ).then(
+        () => 'ok',
+        (e: Error) => e.message
+      )
+    ).toBe(DAMAGED_DUMP)
+  }, 60_000)
+
+  test('a damaged or cut files part keeps what checks out and drops the rest', async () => {
+    const { a } = await scene()
+    // A second file, two blocks long.
+    const two = new Uint8Array(BLOCK + 500).map((_, i) => (i * 7) % 256)
+    const hashed = await hashBytes(two)
+    await a.dms.blobs.putOwn(new Blob([two as BlobPart]), hashed)
+    const { section, files } = await exportP2pWithFiles(a.store.db, PASS, KDF)
+    const { file } = await rchatFile(a.store.db, 'rc1.x', files)
+    const { rest, head } = await readBack(file)
+    const { dump, files: key } = await unlockP2pWithFiles(
+      section,
+      PASS,
+      head as NonNullable<typeof head>
+    )
+    const bytes = new Uint8Array(await rest.arrayBuffer())
+    const into = async (data: Uint8Array) => {
+      const t = await fresh()
+      await applyImport(t.db, dump, 'new', { now: 1_700_000_100_000 })
+      const res = await importFiles(t.db, new Blob([data as BlobPart]), key)
+      const parts = await t.db.count('blob_parts')
+      const kept = (await t.db.getAll('blobs')).filter(r => r.done)
+      const blocks = kept.reduce((x, r) => x + Math.ceil(r.size / BLOCK), 0)
+      t.close()
+      return { res, parts, done: kept.length, blocks }
+    }
+    expect((await into(bytes)).res).toEqual({ files: 2, skipped: 0, complete: true })
+    // Cut short: files that came whole stay, a partial one leaves no blocks behind, and the cut
+    // is reported.
+    for (const end of [bytes.length - 2000, bytes.length - BLOCK / 2, 40]) {
+      const cut = await into(bytes.subarray(0, end))
+      expect(cut.res.complete).toBe(false)
+      expect(cut.done).toBe(cut.res.files)
+      expect(cut.parts).toBe(cut.blocks)
+    }
+    // A flipped byte: decryption stops there, and nothing after it is trusted.
+    const flipped = bytes.slice()
+    flipped[flipped.length - 100] ^= 1
+    const bad = await into(flipped)
+    expect(bad.res.complete).toBe(false)
+    expect(bad.done).toBe(bad.res.files)
+    expect(bad.parts).toBe(bad.blocks)
+  }, 60_000)
+
+  test('a large export streams one block at a time and has no size cap', async () => {
+    const { a } = await scene()
+    // 130 MiB (over the old 128 MiB cap) made of one repeated block, so the test stays fast.
+    const block = new Uint8Array(BLOCK).map((_, i) => (i * 13) % 256)
+    const n = 130
+    const big = new Blob(Array.from({ length: n }, () => block as BlobPart))
+    const one = b64u(new Uint8Array(await crypto.subtle.digest('SHA-256', block)))
+    const blocks = Array.from({ length: n }, () => one)
+    const h = blobRoot(n * BLOCK, blocks.map(fromB64u))
+    await a.dms.blobs.putOwn(big, { h, size: n * BLOCK, blocks })
+    expect(await filesSize(a.store.db)).toBe(n * BLOCK + 3000)
+    const started = Date.now()
+    const { section, files } = await exportP2pWithFiles(a.store.db, PASS, KDF)
+    const { file, biggest, pieces } = await rchatFile(a.store.db, 'rc1.big', files)
+    // Never more than one block (and its framing) at once.
+    expect(biggest).toBeLessThanOrEqual(FILES_FRAME_MAX + 4)
+    expect(pieces).toBeGreaterThan(n)
+    const { rest, head } = await readBack(file)
+    const { dump, files: key } = await unlockP2pWithFiles(
+      section,
+      PASS,
+      head as NonNullable<typeof head>
+    )
+    const t = await fresh()
+    await applyImport(t.db, dump, 'new', { now: 1_700_000_100_000 })
+    let seen = 0
+    const res = await importFiles(t.db, rest, key, d => {
+      seen = d
+    })
+    expect(res).toEqual({ files: 2, skipped: 0, complete: true })
+    expect(seen).toBe(n * BLOCK + 3000)
+    expect((await t.db.get('blobs', h))?.done).toBe(true)
+    expect(await t.db.count('blob_parts')).toBe(n + 1)
+    t.close()
+    expect(Date.now() - started).toBeLessThan(60_000)
+  }, 120_000)
+
   test('summary of a dump', async () => {
     const { a } = await scene()
     const s = summarize(await parseDump(await dumpBytes(a.store.db)))
-    expect(s).toMatchObject({ ik: a.node.ik, contacts: 1, rooms: 1, messages: 3 })
+    expect(s).toMatchObject({ ik: a.node.ik, contacts: 1, rooms: 1, messages: 4 })
     expect(summaryText({ ...s, contacts: 12, rooms: 3, messages: 4210 })).toBe(
       `Identity ${s.fingerprint}, 12 contacts, 3 rooms, 4,210 messages`
     )
@@ -488,6 +654,7 @@ describe('after the move', () => {
     expect(await bodies(b, a.node.ik)).toEqual([
       'hello there Bob',
       'hi Alice',
+      'a file',
       'sent while Bob was away',
     ])
     // Bob writes to the new device; it answers.

@@ -53,6 +53,36 @@ export const JSON_MAX = 4 * 1024 * 1024
 export const FILE_MAX = 256 * 1024 * 1024
 export const FILE_JSON_MAX = 320 * 1024 * 1024
 export const FILE_EXT = '.rchat'
+
+// The first line of a `.rchat` file (the config text) and what follows it (the P2P files, when
+// there are any), read in pieces that are each searched once. Null when the line runs past
+// `max`.
+export const splitFile = async (
+  file: Blob,
+  max = FILE_MAX
+): Promise<{ text: string; rest: Blob } | null> => {
+  const reader = file.stream().getReader()
+  const parts: Uint8Array[] = []
+  let size = 0
+  let end = -1
+  try {
+    while (end < 0) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const nl = value.indexOf(0x0a)
+      if (nl >= 0) {
+        parts.push(value.subarray(0, nl))
+        end = size + nl
+      } else parts.push(value)
+      size += nl >= 0 ? nl : value.length
+      if (size > max) return null
+    }
+  } finally {
+    void reader.cancel().catch(() => {})
+  }
+  const text = new TextDecoder().decode(await new Blob(parts as BlobPart[]).arrayBuffer())
+  return { text, rest: end < 0 ? new Blob([]) : file.slice(end + 1) }
+}
 const SERVERS_MAX = 1000
 const DMS_MAX = 1000
 const NAME_MAX = 64

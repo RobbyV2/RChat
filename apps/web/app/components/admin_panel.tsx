@@ -178,8 +178,8 @@ function SiteSwitches() {
       />
       <p className="px-2 pb-1 text-xs text-on-surface-variant">
         {settings.asset_uploads || settings.p2p_attachments
-          ? "P2P files stay in the sender's browser and have no size limit. Turn off both file uploads and P2P attachments for text only."
-          : 'Text only: messages can have text and emoji, no attachments.'}
+          ? "P2P files stay in the sender's browser and have no size limit. Files in P2P conversations work either way. Turn off both file uploads and P2P attachments for text only, which hides files in P2P conversations too."
+          : 'Text only: messages can have text and emoji, no attachments, in P2P conversations too.'}
       </p>
       <SettingSwitch
         label="Enable guests"

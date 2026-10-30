@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore } from '../../lib/store'
-import { p2p, p2pTransfer, useP2p, type Unlocked } from '../../lib/p2p/app'
+import { p2p, p2pTransfer, useP2p, type FilesPart, type Unlocked } from '../../lib/p2p/app'
 import { passProblem, passStrength, summaryText, type P2pSection } from '../../lib/p2p/transfer'
+import { fmtSize } from '../../lib/bytes'
 import { dangerBtn, FieldError, fieldCls, filledBtn, textBtn } from '../ui'
 
 // The P2P part of Sync config: an encrypted copy of the identity and history for moving to a
@@ -12,6 +13,42 @@ import { dangerBtn, FieldError, fieldCls, filledBtn, textBtn } from '../ui'
 export interface PassState {
   pass: string
   again: string
+  // Downloaded (and sent) files go along too.
+  files?: boolean
+}
+
+// Off by default, with the size shown. Any size: the files are streamed into the file.
+function FilesOption({ value, onChange }: { value: boolean; onChange: (on: boolean) => void }) {
+  const [size, setSize] = useState<number | null>(null)
+  useEffect(() => {
+    let live = true
+    void p2pTransfer.filesSize().then(n => live && setSize(n))
+    return () => {
+      live = false
+    }
+  }, [])
+  return (
+    <div className="flex flex-col gap-0.5">
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={value}
+          disabled={size === 0}
+          onChange={e => onChange(e.target.checked)}
+          className="accent-primary"
+          data-p2p-include-files
+        />
+        Include downloaded attachments
+        {size !== null && (
+          <span className="text-xs text-on-surface-variant tabular-nums">({fmtSize(size)})</span>
+        )}
+      </label>
+      <p className="pl-6 text-xs text-on-surface-variant">
+        Files you sent go too, in the downloaded file only (not the text or QR code). Without this,
+        the new device downloads them again from contacts who have them.
+      </p>
+    </div>
+  )
 }
 
 const strengthCls = ['text-error', 'text-error', 'text-tertiary', 'text-primary']
@@ -72,6 +109,7 @@ export function P2pExportOption({
             </p>
           )}
           <FieldError message={problem} />
+          <FilesOption value={!!value.files} onChange={files => onChange({ ...value, files })} />
         </div>
       )}
     </div>
@@ -85,7 +123,13 @@ const caseText = {
     'This browser has a different P2P identity. Replacing it deletes that identity, its contacts and its history from this browser for good. Export it first if you still need it.',
 }
 
-export function P2pImport({ section }: { section: P2pSection }) {
+export function P2pImport({
+  section,
+  files = null,
+}: {
+  section: P2pSection
+  files?: FilesPart | null
+}) {
   const signedIn = useStore(s => s.me !== null)
   const ask = useStore(s => s.askConfirm)
   const closeDialog = useStore(s => s.closeDialog)
@@ -95,12 +139,13 @@ export function P2pImport({ section }: { section: P2pSection }) {
   const [error, setError] = useState<string | null>(null)
   const [unlocked, setUnlocked] = useState<Unlocked | null>(null)
   const [done, setDone] = useState<string | null>(null)
+  const [read, setRead] = useState(0)
 
   const unlock = async () => {
     setBusy('unlock')
     setError(null)
     try {
-      setUnlocked(await p2pTransfer.unlock(section, pass))
+      setUnlocked(await p2pTransfer.unlock(section, pass, files))
       setPass('')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -112,14 +157,21 @@ export function P2pImport({ section }: { section: P2pSection }) {
   const apply = async (u: Unlocked) => {
     setBusy('apply')
     setError(null)
-    const out = await p2pTransfer.apply(u)
+    setRead(0)
+    const out = await p2pTransfer.apply(u, setRead)
     setBusy(null)
     if (!out.ok) return setError(out.error)
     setUnlocked(null)
+    const f = out.res.files
+    const filesText = !f
+      ? ''
+      : ` ${f.files.toLocaleString('en-US')} ${f.files === 1 ? 'file' : 'files'} added${
+          f.skipped ? `, ${f.skipped.toLocaleString('en-US')} skipped (damaged)` : ''
+        }.${f.complete ? '' : ' The file was cut short: download the rest again from contacts.'}`
     setDone(
-      out.res.kind === 'merge'
+      (out.res.kind === 'merge'
         ? `Merged. ${out.res.events.toLocaleString('en-US')} new events.`
-        : 'Imported. Contacts reach you here the next time they connect.'
+        : 'Imported. Contacts reach you here the next time they connect.') + filesText
     )
   }
 
@@ -206,7 +258,9 @@ export function P2pImport({ section }: { section: P2pSection }) {
                 className={unlocked.kind === 'replace' ? dangerBtn : filledBtn}
               >
                 {busy === 'apply'
-                  ? 'Importing…'
+                  ? read > 0
+                    ? `Importing files (${fmtSize(read)})…`
+                    : 'Importing…'
                   : unlocked.kind === 'merge'
                     ? 'Merge'
                     : unlocked.kind === 'replace'

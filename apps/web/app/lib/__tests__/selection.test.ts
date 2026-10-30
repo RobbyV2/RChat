@@ -278,6 +278,7 @@ describe('selection store', () => {
       saveFile: () => true,
       saveBlob: () => true,
       openFile: async () => null,
+      openBlob: async () => null,
     } as Sharing)
     useStore.setState({
       token: 'tok',

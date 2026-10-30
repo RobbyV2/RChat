@@ -45,6 +45,10 @@ p2pHost.alert = a => useStore.getState().alertFrom(a)
 p2pHost.following = scope => useStore.getState().atBottom[scope] === true
 p2pHost.typingOn = () => useStore.getState().typingOn
 p2pHost.toast = text => useStore.getState().showToast(text)
+p2pHost.textOnly = () => {
+  const s = useStore.getState().settings
+  return !s.asset_uploads && !s.p2p_attachments
+}
 
 const bannerCls =
   'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2'

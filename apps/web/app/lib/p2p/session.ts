@@ -24,6 +24,10 @@ import { Initiator, Responder, type Established, type Me, type Remote } from './
 export interface Pipe {
   // The remote peer id, as the signaling server reported it.
   readonly remote: string
+  // `bulk` for an attachment pipe of an established session (blobs.ts); absent for sessions.
+  readonly kind?: 'bulk'
+  // Resolves once the bytes waiting to go out dropped below the transport's low mark.
+  drain?: () => Promise<void>
   send: (data: Uint8Array) => void
   onData: (fn: (data: Uint8Array) => void) => void
   onClose: (fn: () => void) => void
@@ -126,6 +130,10 @@ export class Session {
   queued = 0
   private wake: (() => void) | null = null
   private rekeying: { init: Initiator | null; resp: Responder | null } | null = null
+  // Bulk channel keys (handshake `bulk1`) of the current and the previous key epoch. Bulk pipes
+  // derive their own keys from these (blobs.ts).
+  private bulk = new Map<number, { send: Uint8Array; recv: Uint8Array }>()
+  private bulkWaiters = new Set<() => void>()
 
   constructor(private opts: SessionOpts) {
     this.clock = opts.clock ?? realClock
@@ -305,9 +313,43 @@ export class Session {
   private install(est: Established, epoch: number) {
     this.tx = { epoch, cipher: new Cipher(est.keys.send) }
     this.rx = { epoch, cipher: new Cipher(est.keys.recv) }
-    est.keys.bulkSend.fill(0)
-    est.keys.bulkRecv.fill(0)
+    this.keepBulk(est, epoch)
     this.keyedAt = this.clock.now()
+  }
+
+  private keepBulk(est: Established, epoch: number) {
+    this.bulk.set(epoch, { send: est.keys.bulkSend, recv: est.keys.bulkRecv })
+    for (const [e, k] of this.bulk)
+      if (this.bulk.size > 2 && e !== epoch) {
+        k.send.fill(0)
+        k.recv.fill(0)
+        this.bulk.delete(e)
+      }
+    for (const fn of this.bulkWaiters) fn()
+  }
+
+  // The bulk keys of a key epoch (copies), or null when it is unknown or long gone.
+  bulkKeys(epoch: number) {
+    const k = this.bulk.get(epoch)
+    return k && this.state === 'ready' ? { send: k.send.slice(), recv: k.recv.slice() } : null
+  }
+
+  // The same, waiting up to `ms` for a rekey still on its way here.
+  async waitBulkKeys(epoch: number, ms = this.limits.handshakeMs) {
+    const end = this.clock.now() + ms
+    for (;;) {
+      const k = this.bulkKeys(epoch)
+      if (k || this.state === 'closed' || this.clock.now() >= end) return k
+      await new Promise<void>(resolve => {
+        const done = () => {
+          this.bulkWaiters.delete(done)
+          this.clock.clear(h)
+          resolve()
+        }
+        const h = this.clock.set(done, Math.max(1, end - this.clock.now()))
+        this.bulkWaiters.add(done)
+      })
+    }
   }
 
   private heartbeat() {
@@ -444,8 +486,7 @@ export class Session {
     const epoch = ((this.tx?.epoch ?? 0) + 1) & 0xff
     this.tx = { epoch, cipher: new Cipher(est.keys.send) }
     this.nextRx = { epoch, cipher: new Cipher(est.keys.recv) }
-    est.keys.bulkSend.fill(0)
-    est.keys.bulkRecv.fill(0)
+    this.keepBulk(est, epoch)
     this.keyedAt = this.clock.now()
     this.rekeying = null
   }
@@ -482,6 +523,12 @@ export class Session {
     this.tx = null
     this.rx = null
     this.nextRx = null
+    for (const k of this.bulk.values()) {
+      k.send.fill(0)
+      k.recv.fill(0)
+    }
+    this.bulk.clear()
+    for (const fn of this.bulkWaiters) fn()
     for (const fn of this.closeFns) fn(this, reason)
   }
 }

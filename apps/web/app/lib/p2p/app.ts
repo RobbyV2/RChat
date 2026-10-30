@@ -19,20 +19,43 @@ import {
   loadMessages,
   loadPins,
   PAGE,
+  AUTO_DAILY,
   type Arrival,
+  type AutoPause,
   type P2pMessage,
 } from './dm'
-import type { Fwd } from './event'
+import { contentMax, LIMITS as EV, sizeOf, type Attachment, type Fwd } from './event'
+import { assemble, EMPTY_VIEW, type BlobView, type Usage } from './blobs'
+import type { Hashed } from './hashing'
+import {
+  checkedThumb,
+  freeSpace,
+  hashFile,
+  imageFits,
+  previewOf,
+  saveName,
+  storageSpace,
+  type Preview,
+} from './files'
+import { kindOf, NEUTRAL_TYPE } from '../sniff'
+import { sharing } from '../platform'
 import { TabLeader, webLeaderDeps } from './leader'
 import {
   alreadyImported,
   applyImport,
   exportP2p,
+  exportP2pWithFiles,
+  filesSize,
   IMPORTED_HERE,
+  importFiles,
   importKind,
   summarize,
   unlockP2p,
+  unlockP2pWithFiles,
+  writeFiles,
   TransferError,
+  type FilesHead,
+  type FilesKey,
   type Dump,
   type ImportKind,
   type Imported,
@@ -121,6 +144,30 @@ export interface P2pState {
   movingAt: number | null
   // Signs that another device uses this identity, seen then.
   alertAt: number | null
+  // Files being attached in the composer, per conversation.
+  attaching: Record<string, PendingFile[]>
+  // What we know about each attachment shown: stored here, downloading, who has it.
+  files: Record<string, FileView>
+  fileUsage: Usage | null
+}
+
+export interface PendingFile {
+  id: number
+  file: File
+  spoiler: boolean
+  // Hashing progress, 0..1.
+  progress: number
+  hashed: Hashed | null
+  preview: Preview | null
+  error: string | null
+}
+
+export interface FileView extends BlobView {
+  own: boolean
+  // Arrived and wasn't fetched by itself (the daily limit for its sender, or storage).
+  paused: AutoPause | null
+  // A stored image too large to decode safely: shown as a file to save.
+  tooBig?: boolean
 }
 
 const initial: P2pState = {
@@ -156,6 +203,9 @@ const initial: P2pState = {
   movedAt: null,
   movingAt: null,
   alertAt: null,
+  attaching: {},
+  files: {},
+  fileUsage: null,
 }
 
 export const useP2p = create<P2pState>()(() => initial)
@@ -250,6 +300,8 @@ export interface P2pHost {
   following: (scope: string) => boolean
   typingOn: () => boolean
   toast: (text: string) => void
+  // The instance is text and emoji only: no attachments anywhere, P2P ones included.
+  textOnly: () => boolean
 }
 
 export const p2pHost: P2pHost = {
@@ -258,6 +310,42 @@ export const p2pHost: P2pHost = {
   following: () => false,
   typingOn: () => true,
   toast: () => {},
+  textOnly: () => false,
+}
+
+// Auto-download per account: files up to `dm` bytes in direct messages, images up to `server`
+// bytes in P2P servers, and at most `daily` bytes per contact per day. { v: 1, dm, server, daily }.
+export const autoKey = (username: string) => `rchat_p2p_auto:${username}`
+export const AUTO_DEFAULT = { dm: 10 * 1024 * 1024, server: 5 * 1024 * 1024, daily: AUTO_DAILY }
+export const AUTO_DAILY_OPTIONS = [256 * 1024 ** 2, 1024 ** 3, 4 * 1024 ** 3, 16 * 1024 ** 3]
+export const AUTO_DM = [0, 1, 10, 25, 100].map(n => n * 1024 * 1024)
+export const AUTO_SERVER = [0, 1, 5, 10].map(n => n * 1024 * 1024)
+
+export const parseAuto = (raw: string | null) => {
+  try {
+    const v = raw
+      ? (JSON.parse(raw) as { v?: unknown; dm?: unknown; server?: unknown; daily?: unknown })
+      : null
+    if (v?.v !== 1) return AUTO_DEFAULT
+    return {
+      dm: AUTO_DM.includes(v.dm as number) ? (v.dm as number) : AUTO_DEFAULT.dm,
+      server: AUTO_SERVER.includes(v.server as number) ? (v.server as number) : AUTO_DEFAULT.server,
+      daily: AUTO_DAILY_OPTIONS.includes(v.daily as number)
+        ? (v.daily as number)
+        : AUTO_DEFAULT.daily,
+    }
+  } catch {
+    return AUTO_DEFAULT
+  }
+}
+
+export const readAuto = (username: string | null) => {
+  if (!username) return AUTO_DEFAULT
+  try {
+    return parseAuto(localStorage.getItem(home.scoped(autoKey(username))))
+  } catch {
+    return AUTO_DEFAULT
+  }
 }
 
 export const chatScope = (room: string) => `p2p:${room}`
@@ -460,8 +548,17 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
     store = s
     node = n
     stopReader()
-    const d = new Dms({ node: n, store: s })
+    const d = new Dms({
+      node: n,
+      store: s,
+      attachments: () => !p2pHost.textOnly(),
+      room: freeSpace,
+      space: storageSpace,
+      autoMax: () => readAuto(username).dm,
+      autoDaily: () => readAuto(username).daily,
+    })
     dms = d
+    d.blobs.onChange(h => scheduleFile(h))
     data = dataChannel(username)
     d.onChange(room => {
       data?.postMessage({ room })
@@ -477,6 +574,7 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
     const chat = useP2p.getState().chat
     if (chat) await loadChat(chat.room, chat.peer)
     await n.start()
+    void d.blobs.resume().catch(() => {})
   } catch {
     if (live())
       useP2p.setState({ loading: false, error: "Couldn't open P2P storage in this browser" })
@@ -568,6 +666,264 @@ const scheduleRefresh = (room: string) => {
       void refreshRoom(room)
     }, 30)
   )
+}
+
+// ----- Attachments -----
+
+const sizes = new Map<string, number>()
+const fileTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+const recordOf = (h: string) => {
+  const s = dbNow()
+  return s ? s.db.get('blobs', h).catch(() => undefined) : Promise.resolve(undefined)
+}
+
+const refreshFile = async (h: string) => {
+  const size = sizes.get(h)
+  if (size === undefined) return
+  const rec = await recordOf(h)
+  const v = dms ? dms.blobs.view(h, size) : { ...EMPTY_VIEW, total: size }
+  const paused = (!rec?.wanted && v.state === 'none' && dms?.paused.get(h)) || null
+  const next: FileView = rec?.done
+    ? {
+        ...v,
+        state: 'done',
+        got: size,
+        type: rec.type,
+        own: rec.own,
+        paused: null,
+        tooBig: big.has(h),
+      }
+    : { ...v, own: false, paused }
+  if (!rec?.done) dropUrl(h)
+  const cur = useP2p.getState().files[h]
+  if (cur && JSON.stringify(cur) === JSON.stringify(next)) return
+  useP2p.setState(st => ({ files: { ...st.files, [h]: next } }))
+}
+
+const scheduleFile = (h: string) => {
+  if (fileTimers.has(h)) return
+  fileTimers.set(
+    h,
+    setTimeout(() => {
+      fileTimers.delete(h)
+      void refreshFile(h)
+    }, 100)
+  )
+}
+
+// Object URLs of stored files shown inline (only of types sniffing allows), newest last.
+const urls = new Map<string, Promise<string | null>>()
+// Stored images whose header says they are too large to show inline.
+const big = new Set<string>()
+const URLS_MAX = 24
+
+const dropUrl = (h: string) => {
+  const u = urls.get(h)
+  if (!u) return
+  urls.delete(h)
+  void u.then(x => x && URL.revokeObjectURL(x))
+}
+
+let pendingSeq = 0
+
+const setPending = (room: string, fn: (list: PendingFile[]) => PendingFile[]) =>
+  useP2p.setState(st => ({ attaching: { ...st.attaching, [room]: fn(st.attaching[room] ?? []) } }))
+
+const patchPending = (room: string, id: number, patch: Partial<PendingFile>) =>
+  setPending(room, list => list.map(p => (p.id === id ? { ...p, ...patch } : p)))
+
+const clipText = (s: string, chars: number, bytes: number) => {
+  let out = Array.from(s).slice(0, chars).join('')
+  while (new TextEncoder().encode(out).length > bytes) out = Array.from(out).slice(0, -1).join('')
+  return out
+}
+
+const cleanMime = (t: string) => (/^[\x21-\x7e]{1,127}$/.test(t) ? t : 'application/octet-stream')
+
+// The attachments of a message: as many thumbnails as fit, the last ones dropped first.
+export const fitAttachments = (body: string, list: Attachment[]): Attachment[] | null => {
+  const out = list.map(a => ({ ...a }))
+  const fits = () => sizeOf({ body, att: out }) <= contentMax({ att: out })
+  for (let i = out.length - 1; i >= 0 && !fits(); i -= 1) delete out[i].thumb
+  return fits() ? out : null
+}
+
+export const TOO_MANY_FILES = 'These files have names too long to send in one message.'
+export const FILES_MAX_TEXT = `You can attach up to ${EV.att} files to a message.`
+export const PREPARING_TEXT = 'Files are still being prepared.'
+export const BIG_FILE = 1024 ** 3
+
+export const p2pFiles = {
+  // A tile is shown: keep its state current and ask who has it.
+  watch(att: Pick<Attachment, 'h' | 'size'>) {
+    sizes.set(att.h, att.size)
+    void refreshFile(att.h).then(async () => {
+      const d = dms
+      const v = useP2p.getState().files[att.h]
+      if (!d || v?.state === 'done' || p2pHost.textOnly()) return
+      await d.blobs.availability(att.h).catch(() => 0)
+      void refreshFile(att.h)
+    })
+  },
+
+  async download(att: Attachment) {
+    sizes.set(att.h, att.size)
+    const d = dms
+    if (!d) return
+    d.paused.delete(att.h)
+    try {
+      await d.blobs.download(att)
+    } catch (e) {
+      p2pHost.toast(e instanceof Error ? e.message : String(e))
+    }
+    void refreshFile(att.h)
+  },
+
+  async cancel(h: string) {
+    await dms?.blobs.cancel(h).catch(() => {})
+    void refreshFile(h)
+  },
+
+  // The stored file as a URL, for the passive players only (by its sniffed type).
+  url(h: string): Promise<string | null> {
+    const hit = urls.get(h)
+    if (hit) {
+      urls.delete(h)
+      urls.set(h, hit)
+      return hit
+    }
+    const run = (async () => {
+      const s = dbNow()
+      const blob = s ? await assemble(s.db, h).catch(() => null) : null
+      if (!blob || kindOf(blob.type) === null) return null
+      if (kindOf(blob.type) === 'image' && !(await imageFits(blob))) {
+        big.add(h)
+        void refreshFile(h)
+        return null
+      }
+      return URL.createObjectURL(blob)
+    })()
+    urls.set(h, run)
+    while (urls.size > URLS_MAX) dropUrl(urls.keys().next().value as string)
+    return run
+  },
+
+  thumb: checkedThumb,
+
+  // Saves a stored file under a safe name, as plain bytes (never opened).
+  async save(att: Attachment) {
+    const s = dbNow()
+    const blob = s ? await assemble(s.db, att.h).catch(() => null) : null
+    if (!blob) return p2pHost.toast('This file is not on this device yet.')
+    sharing().saveBlob(saveName(att.name), new Blob([blob], { type: NEUTRAL_TYPE }))
+  },
+
+  add(room: string, files: File[]) {
+    if (p2pHost.textOnly() || files.length === 0) return
+    const have = useP2p.getState().attaching[room]?.length ?? 0
+    const take = files.slice(0, Math.max(0, EV.att - have))
+    if (take.length < files.length) p2pHost.toast(FILES_MAX_TEXT)
+    for (const file of take) {
+      const id = ++pendingSeq
+      setPending(room, list => [
+        ...list,
+        { id, file, spoiler: false, progress: 0, hashed: null, preview: null, error: null },
+      ])
+      let last = 0
+      hashFile(file, n => {
+        if (n - last < 0.02 && n < 1) return
+        last = n
+        patchPending(room, id, { progress: n })
+      }).then(
+        hashed => patchPending(room, id, { hashed, progress: 1 }),
+        () => patchPending(room, id, { error: "Couldn't read this file" })
+      )
+      void previewOf(file).then(preview => patchPending(room, id, { preview }))
+    }
+  },
+
+  remove: (room: string, id: number) => setPending(room, list => list.filter(p => p.id !== id)),
+
+  toggleSpoiler: (room: string, id: number) =>
+    setPending(room, list => list.map(p => (p.id === id ? { ...p, spoiler: !p.spoiler } : p))),
+
+  clear: (room: string) => setPending(room, () => []),
+
+  // Keeps the files here and returns them as message attachments; null (with a toast) when they
+  // can't go yet.
+  async stage(room: string, body: string): Promise<Attachment[] | null> {
+    const list = useP2p.getState().attaching[room] ?? []
+    const d = dms
+    if (!list.length || !d) return []
+    if (p2pHost.textOnly()) {
+      p2pHost.toast('Attachments are turned off on this instance.')
+      return null
+    }
+    if (list.some(p => p.error)) {
+      p2pHost.toast('Remove the files that could not be read.')
+      return null
+    }
+    if (list.some(p => !p.hashed || p.preview === null)) {
+      p2pHost.toast(PREPARING_TEXT)
+      return null
+    }
+    const seen = new Set<string>()
+    const att: Attachment[] = []
+    for (const p of list) {
+      const hashed = p.hashed as Hashed
+      if (seen.has(hashed.h)) continue
+      seen.add(hashed.h)
+      const a: Attachment = {
+        h: hashed.h,
+        size: hashed.size,
+        blocks: hashed.blocks.length,
+        name: clipText(p.file.name.trim() || 'file', EV.attName, EV.attNameBytes) || 'file',
+        mime: cleanMime(p.file.type),
+      }
+      if (p.spoiler) a.spoiler = true
+      const pv = p.preview ?? {}
+      if (pv.w) a.w = pv.w
+      if (pv.h_px) a.h_px = pv.h_px
+      if (pv.dur !== undefined) a.dur = pv.dur
+      if (pv.thumb) a.thumb = pv.thumb
+      att.push(a)
+    }
+    const fitted = fitAttachments(body, att)
+    if (!fitted) {
+      p2pHost.toast(TOO_MANY_FILES)
+      return null
+    }
+    try {
+      for (const p of list) await d.blobs.putOwn(p.file, p.hashed as Hashed)
+    } catch (e) {
+      p2pHost.toast(e instanceof Error ? e.message : String(e))
+      return null
+    }
+    return fitted
+  },
+
+  async usage() {
+    const u = dms ? await dms.blobs.usage().catch(() => null) : null
+    useP2p.setState({ fileUsage: u })
+    return u
+  },
+
+  async clearOlder(days: number) {
+    const n = (await dms?.blobs.clearOlder(days).catch(() => 0)) ?? 0
+    for (const h of sizes.keys()) void refreshFile(h)
+    await p2pFiles.usage()
+    void p2p.refreshStorage()
+    return n
+  },
+
+  readAuto: () => readAuto(useP2p.getState().account),
+
+  writeAuto(patch: Partial<{ dm: number; server: number; daily: number }>) {
+    const user = useP2p.getState().account
+    if (!user) return
+    writeLocal(home.scoped(autoKey(user)), JSON.stringify({ v: 1, ...readAuto(user), ...patch }))
+  },
 }
 
 const loadPinList = async (room: string) => {
@@ -733,8 +1089,9 @@ export const p2pDm = {
   // while the reply bar is open).
   async send(room: string, text: string): Promise<boolean> {
     const body = text.trim()
-    if (!body) return false
-    const sed = parseSed(text)
+    const files = useP2p.getState().attaching[room]?.length ?? 0
+    if (!body && !files) return false
+    const sed = files ? null : parseSed(text)
     if (sed) {
       const last = lastEditable()
       const next = last ? applySed(last.body, sed) : null
@@ -745,10 +1102,13 @@ export const p2pDm = {
       }
       return (await withDms(d => d.edit(room, last.id, next))) !== null
     }
+    const att = files ? await p2pFiles.stage(room, text) : []
+    if (att === null) return false
     const st = useP2p.getState()
     const reply = st.replying?.room === room ? st.replying.id : undefined
     useP2p.setState({ replying: null })
-    const id = await withDms(d => d.send(room, { body: text, reply }))
+    const id = await withDms(d => d.send(room, { body: text, reply, att }))
+    if (id !== null && files) p2pFiles.clear(room)
     return id !== null
   },
 
@@ -976,15 +1336,37 @@ export interface Unlocked {
   kind: ImportKind
   // This identity already took this file in: importing changes nothing.
   already: boolean
+  // The files that follow the data in the `.rchat` file, and their key.
+  files: { blob: Blob; key: FilesKey } | null
+}
+
+// A `.rchat` file's files part: everything after its first line.
+export interface FilesPart {
+  blob: Blob
+  head: FilesHead
 }
 
 export const p2pTransfer = {
+  // Bytes of the complete files here, for the export option.
+  async filesSize() {
+    return (await withDb(s => filesSize(s.db)).catch(() => 0)) ?? 0
+  },
+
   // Whether there is an identity here to export (one that moved away has no keys left).
   available: () => useP2p.getState().ik !== null && useP2p.getState().movedAt === null,
 
-  // Sending pauses here afterwards, until the user resumes.
-  async exportSection(pass: string, kdf?: Kdf): Promise<P2pSection> {
-    const sec = await withDb(s => exportP2p(s.db, pass, kdf))
+  // Sending pauses here afterwards, until the user resumes. With `files`, also the key to write
+  // the files into the `.rchat` file with (`writeFiles`).
+  async exportSection(
+    pass: string,
+    kdf?: Kdf,
+    files = false
+  ): Promise<{ section: P2pSection; files: FilesKey | null }> {
+    const out = await withDb(async s =>
+      files
+        ? exportP2pWithFiles(s.db, pass, kdf, Date.now())
+        : { section: await exportP2p(s.db, pass, kdf, Date.now()), files: null }
+    )
     const at = Date.now()
     const n = node
     if (n && !n.moved) await n.markExported(at)
@@ -993,14 +1375,29 @@ export const p2pTransfer = {
         s.updateSelf(cur => (cur && !cur.moved ? { ...cur, moving: { at }, exported: at } : null))
       )
     useP2p.setState({ movingAt: at })
-    return sec
+    return out
+  },
+
+  // Streams the files after the config text, block by block.
+  async writeFiles(
+    fk: FilesKey,
+    write: (part: Uint8Array) => Promise<void>,
+    progress?: (done: number, total: number) => void
+  ) {
+    await withDb(s => writeFiles(s.db, fk, write, progress))
   },
 
   // Decrypts and reads the file's P2P data; nothing is written.
-  async unlock(section: P2pSection, pass: string): Promise<Unlocked> {
+  async unlock(section: P2pSection, pass: string, part?: FilesPart | null): Promise<Unlocked> {
     const username = useP2p.getState().account
     if (!username) throw new Error('Sign in first')
-    const dump = await unlockP2p(section, pass)
+    let dump: Dump
+    let files: Unlocked['files'] = null
+    if (part) {
+      const got = await unlockP2pWithFiles(section, pass, part.head)
+      dump = got.dump
+      files = { blob: part.blob, key: got.files }
+    } else dump = await unlockP2p(section, pass)
     const st = useP2p.getState()
     let kind: ImportKind = 'new'
     let already = false
@@ -1011,20 +1408,25 @@ export const p2pTransfer = {
     }
     if (kind !== 'merge' && readImports(username).includes(dump.id))
       throw new TransferError(IMPORTED_HERE)
-    return { dump, summary: summarize(dump), kind, already }
+    return { dump, summary: summarize(dump), kind, already, files }
   },
 
   // Runs in the tab that holds the account's P2P lock: the node stops, the import writes in one
   // transaction, and the node starts again on what is stored. Another tab running P2P keeps it.
-  async apply(u: Unlocked): Promise<{ ok: true; res: Imported } | { ok: false; error: string }> {
+  // The files that came with it are read in afterwards, block by block (`progress` gets bytes).
+  async apply(
+    u: Unlocked,
+    progress?: (done: number) => void
+  ): Promise<{ ok: true; res: Imported } | { ok: false; error: string }> {
     const username = useP2p.getState().account
     if (!username) return { ok: false, error: 'Sign in first' }
     if (useP2p.getState().elsewhere) return { ok: false, error: ELSEWHERE_IMPORT }
     const job = async () => {
       const s = await P2pStore.open(dbFor(username))
       try {
-        const res = await applyImport(s.db, u.dump, u.kind)
+        const res: Imported = await applyImport(s.db, u.dump, u.kind)
         rememberImport(username, u.dump.id)
+        if (u.files) res.files = await importFiles(s.db, u.files.blob, u.files.key, progress)
         return res
       } finally {
         s.close()

@@ -18,12 +18,13 @@ export interface Wire {
   cut: boolean
 }
 
-export const pipePair = (aId: string, bId: string, wire: Wire = { cut: false }) => {
+export const pipePair = (aId: string, bId: string, wire: Wire = { cut: false }, kind?: 'bulk') => {
   const make = (remote: string) => {
     const dataFns: ((d: Uint8Array) => void)[] = []
     const closeFns: (() => void)[] = []
     const end: PipeEnd & { deliver: (d: Uint8Array) => void; shut: () => void } = {
       remote,
+      ...(kind ? { kind } : {}),
       sent: [],
       closed: false,
       send(data: Uint8Array) {
@@ -121,6 +122,9 @@ export class Hub {
   private peers = new Map<string, { onPipe: (p: Pipe) => void; onLost: () => void }>()
   squatted = new Set<string>()
   dialCount = 0
+  bulkDials = 0
+  // Bulk pipes made, for cutting or tampering with them.
+  bulkWires: { from: string; to: string; wire: Wire; a: PipeEnd; b: PipeEnd }[] = []
 
   transport(): Transport {
     return {
@@ -129,11 +133,14 @@ export class Hub {
         this.peers.set(id, { onPipe, onLost })
         return { close: () => void this.peers.delete(id) }
       },
-      dial: async (from, to) => {
-        this.dialCount += 1
+      dial: async (from, to, kind) => {
+        if (kind === 'bulk') this.bulkDials += 1
+        else this.dialCount += 1
         const target = this.peers.get(to)
         if (!target) throw new TransportError('peer-unavailable')
-        const { a, b } = pipePair(from, to)
+        const wire: Wire = { cut: false }
+        const { a, b } = pipePair(from, to, wire, kind)
+        if (kind === 'bulk') this.bulkWires.push({ from, to, wire, a, b })
         target.onPipe(b)
         return a
       },

@@ -301,7 +301,7 @@ describe('event validation', () => {
 })
 
 describe('storage', () => {
-  test('schema v2 upgrades a v1 database and keeps what it had', async () => {
+  test('the current schema upgrades a v1 database and keeps what it had', async () => {
     const name = `upgrade-${Math.random()}`
     const v1 = await openDB(name, 1, {
       upgrade(db, _old, _new, tx) {
@@ -312,9 +312,12 @@ describe('storage', () => {
     await v1.put('meta', 1, 'schema')
     v1.close()
     const store = await Store.open(name)
-    expect(DB_VERSION).toBe(2)
-    expect(store.db.version).toBe(2)
+    expect(DB_VERSION).toBe(3)
+    expect(store.db.version).toBe(3)
     expect([...store.db.objectStoreNames].sort()).toEqual([
+      'blob_hashes',
+      'blob_parts',
+      'blobs',
       'children',
       'contacts',
       'events',
@@ -324,7 +327,7 @@ describe('storage', () => {
       'self',
     ])
     expect((await store.contact('kept'))?.state).toBe('mutual')
-    expect(await store.meta('schema')).toBe(2)
+    expect(await store.meta('schema')).toBe(3)
     expect(await store.rooms()).toEqual([])
     store.close()
     // Opening again changes nothing.

@@ -505,7 +505,7 @@ const fmtExpiry = (ts: number | null) =>
   ts === null ? 'Indefinite' : expiryText(ts - Math.floor(Date.now() / 1000))
 
 // The cover of a hidden spoiler attachment.
-function SpoilerCover({ title, onReveal }: { title?: string; onReveal: () => void }) {
+export function SpoilerCover({ title, onReveal }: { title?: string; onReveal: () => void }) {
   return (
     <button
       title={title}

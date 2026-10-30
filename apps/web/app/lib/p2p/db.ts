@@ -89,6 +89,54 @@ export interface EventRecord {
   seq: number
   // Content removed by a redaction (or never received).
   redacted: boolean
+  // Root hashes of the files a live message carries (dropped when it is redacted), and the same
+  // as `fileKey`s, so the serving gate is one index lookup whatever else is stored.
+  atts?: string[]
+  files?: string[]
+}
+
+export const fileKey = (room: string, sender: string, h: string) => `${room}\n${sender}\n${h}`
+
+// An event record carrying exactly these files (none: no file fields at all).
+export const withFiles = (r: EventRecord, atts: string[]): EventRecord => {
+  const { atts: _a, files: _f, ...rest } = r
+  return atts.length ? { ...rest, atts, files: atts.map(h => fileKey(r.room, r.sender, h)) } : rest
+}
+
+// A file this browser holds or is fetching (note section 5). The sender's own file is kept
+// whole in `file`; a downloaded one lives in `blob_parts`, one verified 1 MiB block per record,
+// and is put together only when it is opened or saved.
+export interface BlobRecord {
+  h: string
+  size: number
+  // The block hashes are stored (in `blob_hashes`, written once) and were checked against `h`.
+  hashed: boolean
+  // Blocks stored in blob_parts.
+  have: number
+  done: boolean
+  file?: Blob
+  // What the first bytes say it is (sniff.ts), once known; never what the sender claimed.
+  type: string | null
+  // Sent from here.
+  own: boolean
+  // The user (or auto-download) asked for it: an unfinished download resumes when a holder is
+  // online.
+  wanted: boolean
+  created: number
+  lastUsed: number
+}
+
+// Block hashes of a file, HASH_PAGE per page (32 bytes each, in block order).
+export interface HashPage {
+  h: string
+  page: number
+  data: Uint8Array
+}
+
+export interface PartRecord {
+  h: string
+  block: number
+  data: Blob
 }
 
 export interface OutboxRecord {
@@ -116,15 +164,30 @@ export interface P2pSchema extends DBSchema {
       room_target: [string, string]
       room_reply: [string, string]
       room_seq: [string, number]
+      att: string
+      file: string
     }
   }
   children: { key: [string, string]; value: { parent: string; child: string } }
   outbox: { key: string; value: OutboxRecord; indexes: { room: string } }
+  blobs: { key: string; value: BlobRecord; indexes: { created: number } }
+  blob_parts: { key: [string, number]; value: PartRecord }
+  blob_hashes: { key: [string, number]; value: HashPage }
 }
 
 export type P2pDatabase = IDBPDatabase<P2pSchema>
 
-export type StoreName = 'self' | 'contacts' | 'meta' | 'rooms' | 'events' | 'children' | 'outbox'
+export type StoreName =
+  | 'self'
+  | 'contacts'
+  | 'meta'
+  | 'rooms'
+  | 'events'
+  | 'children'
+  | 'outbox'
+  | 'blobs'
+  | 'blob_parts'
+  | 'blob_hashes'
 
 type Upgrade = (
   db: P2pDatabase,
@@ -148,6 +211,13 @@ export const UPGRADES: Upgrade[] = [
     events.createIndex('room_seq', ['room', 'seq'])
     db.createObjectStore('children', { keyPath: ['parent', 'child'] })
     db.createObjectStore('outbox', { keyPath: 'id' }).createIndex('room', 'room')
+  },
+  (db, tx) => {
+    tx.objectStore('events').createIndex('att', 'atts', { multiEntry: true })
+    tx.objectStore('events').createIndex('file', 'files', { multiEntry: true })
+    db.createObjectStore('blobs', { keyPath: 'h' }).createIndex('created', 'created')
+    db.createObjectStore('blob_parts', { keyPath: ['h', 'block'] })
+    db.createObjectStore('blob_hashes', { keyPath: ['h', 'page'] })
   },
 ]
 
@@ -285,6 +355,15 @@ export class P2pStore {
   async updateRoom(id: string, fn: (cur: RoomRecord | undefined) => RoomRecord | null) {
     const tx = this.db.transaction('rooms', 'readwrite')
     const cur = await tx.store.get(id)
+    const next = fn(cur)
+    if (next) await tx.store.put(next)
+    await tx.done
+    return next ?? cur
+  }
+
+  async updateBlob(h: string, fn: (cur: BlobRecord | undefined) => BlobRecord | null) {
+    const tx = this.db.transaction('blobs', 'readwrite')
+    const cur = await tx.store.get(h)
     const next = fn(cur)
     if (next) await tx.store.put(next)
     await tx.done

@@ -1,6 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
-import { b64u, bytesOf, canonical, canonicalBytes, concat, utf8 } from './canonical'
+import { b64u, bytesOf, canonical, canonicalBytes, concat, fromB64u, utf8 } from './canonical'
+import { blockCount, EMPTY_ROOT } from './hashing'
 import {
   isKeyId,
   keyBytes,
@@ -34,11 +35,30 @@ export interface Core {
   ch: string
 }
 
+// A file in a message (note section 5): its root hash `h` over the 1 MiB block hashes, its
+// size and block count, and what the sender says about it. `name`, `mime` and the thumbnail are
+// claims: what a received file is shown as is decided from its bytes only.
+export interface Attachment {
+  h: string
+  size: number
+  blocks: number
+  name: string
+  mime: string
+  spoiler?: true
+  // Pixel size of an image or video, and the length of a video or audio file in ms.
+  w?: number
+  h_px?: number
+  dur?: number
+  // A JPEG preview of at most 6 KiB (b64u), checked again before it is shown.
+  thumb?: string
+}
+
 // A forwarded copy: who wrote it, when, and what. No link back to the source.
 export interface Fwd {
   name: string
   ts: number
   body: string
+  att?: Attachment[]
 }
 
 export interface MsgContent {
@@ -46,6 +66,7 @@ export interface MsgContent {
   reply?: string
   mentions?: string[]
   fwd?: Fwd
+  att?: Attachment[]
 }
 
 export interface EditContent {
@@ -90,6 +111,14 @@ export const LIMITS = {
   mentions: 20,
   reactKey: 32,
   name: 64,
+  // Files per message, and the content size a message with files may reach (thumbnails).
+  att: 50,
+  attContent: 64 * 1024,
+  attName: 255,
+  attNameBytes: 1024,
+  mime: 127,
+  thumb: 6 * 1024,
+  dims: 100_000,
   // Events shown more than this before they arrived get the "arrived later" marker.
   lateMs: 60_000,
   // A sender's clock may run at most this far ahead.
@@ -155,13 +184,72 @@ export const redacted = (w: Wire): Wire => ({ ev: w.ev, c: null, sig: w.sig })
 
 const isBody = (x: unknown): x is string => typeof x === 'string' && chars(x) <= LIMITS.body
 
+const isDim = (x: unknown) => x === undefined || (isInt(x, 1) && (x as number) <= LIMITS.dims)
+
+export const isAttachment = (x: unknown): x is Attachment => {
+  if (
+    !isRecord(x) ||
+    !onlyKeys(x, ['h', 'size', 'blocks', 'name', 'mime'], ['spoiler', 'w', 'h_px', 'dur', 'thumb'])
+  )
+    return false
+  const { h, size, blocks, name, mime, spoiler, w, h_px, dur, thumb } = x
+  if (thumb !== undefined) {
+    const t = typeof thumb === 'string' ? bytesLen(thumb) : null
+    if (t === null || t === 0 || t > LIMITS.thumb) return false
+  }
+  return (
+    bytesOf(h, 32) !== null &&
+    isInt(size) &&
+    // An empty file has exactly one root; any other zero-length claim is refused, so it can
+    // never stand for (and block) a real file.
+    ((size as number) > 0 || h === EMPTY_ROOT) &&
+    isInt(blocks) &&
+    blocks === blockCount(size as number) &&
+    typeof name === 'string' &&
+    name.trim() !== '' &&
+    chars(name) <= LIMITS.attName &&
+    utf8(name).length <= LIMITS.attNameBytes &&
+    typeof mime === 'string' &&
+    mime.length <= LIMITS.mime &&
+    /^[\x21-\x7e]*$/.test(mime) &&
+    (spoiler === undefined || spoiler === true) &&
+    isDim(w) &&
+    isDim(h_px) &&
+    (dur === undefined || isInt(dur))
+  )
+}
+
+// Decoded length of a b64u string, or null when it isn't one.
+const bytesLen = (s: string) => {
+  try {
+    return fromB64u(s).length
+  } catch {
+    return null
+  }
+}
+
+const isAtts = (x: unknown): x is Attachment[] =>
+  Array.isArray(x) &&
+  x.length > 0 &&
+  x.length <= LIMITS.att &&
+  x.every(isAttachment) &&
+  new Set(x.map(a => a.h)).size === x.length
+
 const isFwd = (x: unknown): x is Fwd =>
   isRecord(x) &&
-  onlyKeys(x, ['name', 'ts', 'body']) &&
+  onlyKeys(x, ['name', 'ts', 'body'], ['att']) &&
   typeof x.name === 'string' &&
   chars(x.name) <= LIMITS.name &&
   isInt(x.ts) &&
-  isBody(x.body)
+  isBody(x.body) &&
+  (x.att === undefined || isAtts(x.att))
+
+// Root hashes of the files a message carries, its own and forwarded ones.
+export const attsOf = (c: Content | null | undefined): string[] => {
+  if (!c || !('body' in c) || 'target' in c) return []
+  const m = c as MsgContent
+  return [...new Set([...(m.att ?? []), ...(m.fwd?.att ?? [])].map(a => a.h))]
+}
 
 const isMentions = (x: unknown): x is string[] =>
   Array.isArray(x) &&
@@ -177,12 +265,13 @@ export const checkContent = (type: EvType, c: unknown): c is Content => {
   switch (type) {
     case 'msg':
       return (
-        onlyKeys(c, ['body'], ['reply', 'mentions', 'fwd']) &&
+        onlyKeys(c, ['body'], ['reply', 'mentions', 'fwd', 'att']) &&
         isBody(c.body) &&
         (c.reply === undefined || isEventId(c.reply)) &&
         (c.mentions === undefined || isMentions(c.mentions)) &&
         (c.fwd === undefined || isFwd(c.fwd)) &&
-        (c.body.trim() !== '' || c.fwd !== undefined)
+        (c.att === undefined || (c.fwd === undefined && isAtts(c.att))) &&
+        (c.body.trim() !== '' || c.fwd !== undefined || c.att !== undefined)
       )
     case 'edit':
       return (
@@ -268,6 +357,12 @@ const isCore = (x: unknown): x is Core => {
   )
 }
 
+// Messages with files may be larger (names and thumbnails); everything else stays small.
+export const contentMax = (c: unknown) =>
+  isRecord(c) && (Array.isArray(c.att) || (isRecord(c.fwd) && Array.isArray(c.fwd.att)))
+    ? LIMITS.attContent
+    : LIMITS.content
+
 export const sizeOf = (x: unknown) => {
   try {
     return utf8(canonical(x)).length
@@ -283,7 +378,7 @@ export const validate = (raw: unknown, auth: RoomAuth): Checked => {
   if (!isRecord(raw) || !onlyKeys(raw, ['ev', 'c', 'sig'])) return bad('shape')
   const { ev, c, sig } = raw
   if (!isCore(ev)) return bad('shape')
-  if (sizeOf(ev) > LIMITS.core || (c !== null && sizeOf(c) > LIMITS.content)) return bad('size')
+  if (sizeOf(ev) > LIMITS.core || (c !== null && sizeOf(c) > contentMax(c))) return bad('size')
   if (ev.room !== auth.room) return bad('room')
   if (
     ev.prev.length > LIMITS.prev ||

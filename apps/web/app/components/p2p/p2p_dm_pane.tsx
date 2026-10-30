@@ -13,6 +13,7 @@ import {
   Menu,
   Pin,
   PinOff,
+  Plus,
   Reply,
   SendHorizontal,
   Smile,
@@ -64,6 +65,9 @@ import { mentionRowCls } from '../message_pane'
 import { textBtn } from '../ui'
 import { ContactShield, KeyAvatar, P2pBadge, PresenceDot } from './p2p_badge'
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
+import { AttachmentList, attachmentMenu, PendingFiles } from './p2p_files'
+import { namePasted } from '../message_composer'
+import { p2pFiles } from '../../lib/p2p/app'
 
 const EMPTY: P2pMessage[] = []
 const NONE: string[] = []
@@ -313,11 +317,14 @@ const P2pRow = memo(function P2pRow({
             {m.forward ? (
               <ForwardCard m={m} canDelete={false} local />
             ) : (
-              <MarkdownMessage
-                message={m}
-                editor={editing ? <MessageEditor binding={editing} /> : undefined}
-              />
+              (m.content.trim() !== '' || editing) && (
+                <MarkdownMessage
+                  message={m}
+                  editor={editing ? <MessageEditor binding={editing} /> : undefined}
+                />
+              )
             )}
+            <AttachmentList att={p.fwd?.att ?? p.att} canFetch={canAct} />
             <ReactionBar m={m} canReact={canAct} canRemove={canAct} />
           </div>
         </div>
@@ -362,7 +369,12 @@ const copyForP2p = (p: P2pMessage, m: Message) => {
 
 // Forwards straight into another P2P conversation.
 const forwardTo = async (ik: string, p: P2pMessage, author: string) => {
-  const fwd = p.fwd ?? { name: author, ts: p.sentTs, body: p.body }
+  const fwd = p.fwd ?? {
+    name: author,
+    ts: p.sentTs,
+    body: p.body,
+    ...(p.att.length ? { att: p.att } : {}),
+  }
   const target = await p2pDm.ensureRoom(ik)
   if (target && (await p2pDm.forward(target, fwd))) {
     const c = useP2p.getState().contacts.find(x => x.ik === ik)
@@ -408,6 +420,9 @@ function P2pComposer({
   const [focused, setFocused] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const emojiRef = useRef<HTMLButtonElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const files = useP2p(s => s.attaching[room]?.length ?? 0)
+  const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
   const sel = useRef({ start: 0, end: 0 })
   const typedAt = useRef(0)
   const getText = () => useP2p.getState().drafts[room] ?? ''
@@ -440,7 +455,7 @@ function P2pComposer({
   const count = charCount(text)
   const tooLong = count > MESSAGE_MAX || bodyTooLong(text)
   const send = () => {
-    if (!text.trim() || tooLong) return
+    if ((!text.trim() && !files) || tooLong) return
     const sent = text
     void p2pDm.send(room, sent).then(ok => {
       if (ok && getText() === sent) setText('')
@@ -496,11 +511,35 @@ function P2pComposer({
           }}
         />
       )}
+      {!textOnly && <PendingFiles room={room} />}
       {bar}
       <div
         className={`relative flex items-end gap-2 bg-surface-container-high px-3 py-2 ${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}
       >
         {assist.popups}
+        {!textOnly && (
+          <>
+            <button
+              title="Attach files"
+              aria-label="Attach files"
+              onClick={() => fileRef.current?.click()}
+              className="shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+            >
+              <Plus size={20} />
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              data-p2p-file-input
+              className="hidden"
+              onChange={e => {
+                p2pFiles.add(room, Array.from(e.target.files ?? []))
+                e.target.value = ''
+              }}
+            />
+          </>
+        )}
         <textarea
           ref={inputRef}
           rows={1}
@@ -535,6 +574,19 @@ function P2pComposer({
               e.preventDefault()
               send()
             }
+          }}
+          onPaste={e => {
+            if (textOnly) return
+            const pasted = Array.from(e.clipboardData.items)
+              .filter(i => i.kind === 'file')
+              .map(i => i.getAsFile())
+              .filter((f): f is File => f !== null)
+            if (!pasted.length) return
+            e.preventDefault()
+            p2pFiles.add(
+              room,
+              pasted.map(f => (f.name && f.name !== 'image.png' ? f : namePasted(f)))
+            )
           }}
           placeholder={streamer ? 'Send a P2P message' : `Message ${displayName(peer)}`}
           className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:text-on-surface-variant md:text-sm"
@@ -614,6 +666,9 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
   const listRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const [picker, setPicker] = useState<{ m: Message; anchor: HTMLElement | null } | null>(null)
+  const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
+  const [dragging, setDragging] = useState(false)
+  const dragDepth = useRef(0)
 
   const messages = chat?.messages ?? EMPTY
   const peerIk = chat?.peer ?? ''
@@ -621,6 +676,7 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
   const online = presence === 'online'
   const scope = chat ? chatScope(chat.room) : null
   const canAct = !reader && !elsewhere && peer?.state === 'mutual' && status !== 'moved'
+  const canDrop = canAct && !textOnly && movingAt === null
 
   const user = useCallback(
     (ik: string) => p2pUser(ik, ik === me ? myName || 'You' : peerName),
@@ -793,6 +849,8 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
         icon: Trash2,
         action: () => confirmDelete(p.id),
       })
+    const files = attachmentMenu(p.fwd?.att ?? p.att, canAct)
+    if (files) items.push(files)
     const body = p.fwd ? p.fwd.body : p.body
     if (body.trim())
       items.push({
@@ -893,7 +951,27 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
 
   return (
     <ChatSourceProvider value={source}>
-      <main data-p2p-dm className="relative flex h-full min-w-0 flex-1 flex-col bg-surface">
+      <main
+        data-p2p-dm
+        className="relative flex h-full min-w-0 flex-1 flex-col bg-surface"
+        onDragEnter={e => {
+          e.preventDefault()
+          if (!canDrop || !e.dataTransfer.types.includes('Files')) return
+          dragDepth.current += 1
+          setDragging(true)
+        }}
+        onDragOver={e => e.preventDefault()}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1)
+          if (!dragDepth.current) setDragging(false)
+        }}
+        onDrop={e => {
+          e.preventDefault()
+          dragDepth.current = 0
+          setDragging(false)
+          if (canDrop && chat) p2pFiles.add(chat.room, Array.from(e.dataTransfer.files))
+        }}
+      >
         <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-3 md:px-4">
           <button
             title={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
@@ -1034,6 +1112,11 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
             onPick={e => source.toggleReaction(picker.m, e, false)}
             onClose={() => setPicker(null)}
           />
+        )}
+        {dragging && (
+          <div className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-tertiary bg-surface/80 font-medium text-tertiary">
+            Drop files to send peer-to-peer
+          </div>
         )}
       </main>
     </ChatSourceProvider>

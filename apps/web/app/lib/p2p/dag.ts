@@ -1,4 +1,5 @@
 import {
+  attsOf,
   authorizeTarget,
   effTsOf,
   isLate,
@@ -9,7 +10,13 @@ import {
   type Wire,
 } from './event'
 import type { IDBPTransaction } from 'idb'
-import type { EventRecord, P2pDatabase, P2pSchema, RoomRecord } from './db'
+import {
+  withFiles,
+  type EventRecord,
+  type P2pDatabase,
+  type P2pSchema,
+  type RoomRecord,
+} from './db'
 
 // The room DAG on disk: heads (events without known children), the children index, parents we
 // still miss, and bounded walks over prev links. Inserting an event is one transaction, so the
@@ -31,7 +38,8 @@ export const DAG = {
 export type PingKind = 'mention' | 'reply' | 'reaction'
 
 export type Inserted =
-  | { status: 'new'; rec: EventRecord; ping: PingKind | null; unread: boolean }
+  // `freed`: files of a message this insert redacted (they may be deleted here now).
+  | { status: 'new'; rec: EventRecord; ping: PingKind | null; unread: boolean; freed: string[] }
   | { status: 'dup'; rec: EventRecord }
   | { status: 'invalid'; why: 'depth' | 'auth' }
   | { status: 'full'; why: FullWhy }
@@ -88,6 +96,11 @@ export const nextHeads = (
   if (!hasChild) out.push({ id, depth })
   out.sort((a, b) => b.depth - a.depth || (a.id < b.id ? -1 : 1))
   return out.slice(0, DAG.heads)
+}
+
+// The stored form of a redacted event: no content, and no files to serve.
+export const stripped = (r: EventRecord): EventRecord => {
+  return { ...withFiles(r, []), wire: redacted(r.wire), redacted: true }
 }
 
 const childRange = (id: string) => IDBKeyRange.bound([id, ''], [id, '￿'])
@@ -182,9 +195,7 @@ export const insertInto = async (
   const gone = pointing.some(r => r.type === 'redact' && r.sender === ev.sender)
   if (gone) {
     isRedacted = true
-    for (const r of pointing)
-      if (r.type === 'edit' && !r.redacted)
-        await events.put({ ...r, wire: redacted(r.wire), redacted: true })
+    for (const r of pointing) if (r.type === 'edit' && !r.redacted) await events.put(stripped(r))
   }
   if (ev.type === 'edit' && target?.redacted) {
     const marks = await events.index('room_target').getAll([ev.room, target.id])
@@ -206,12 +217,15 @@ export const insertInto = async (
   }
   if (tid) rec.target = tid
   if (reply) rec.reply = reply
+  const atts = isRedacted || ev.type !== 'msg' ? [] : attsOf(stored.c)
+  if (atts.length) Object.assign(rec, withFiles(rec, atts))
   await events.put(rec)
+  let freed: string[] = []
   if (ev.type === 'redact' && target && !target.redacted) {
-    await events.put({ ...target, wire: redacted(target.wire), redacted: true })
+    freed = target.atts ?? []
+    await events.put(stripped(target))
     for (const r of await events.index('room_target').getAll([ev.room, target.id]))
-      if (r.type === 'edit' && !r.redacted)
-        await events.put({ ...r, wire: redacted(r.wire), redacted: true })
+      if (r.type === 'edit' && !r.redacted) await events.put(stripped(r))
   }
   const children = tx.objectStore('children')
   for (const p of ev.prev) await children.put({ parent: p, child: id })
@@ -249,7 +263,7 @@ export const insertInto = async (
   await tx.objectStore('rooms').put(next)
   await tx.objectStore('meta').put(total + 1, TOTAL)
   await tx.objectStore('meta').put(totalBytes + size, TOTAL_BYTES)
-  return { status: 'new', rec, ping, unread }
+  return { status: 'new', rec, ping, unread, freed }
 }
 
 // An event signed by a since-revoked device is kept only when a stored event signed by a device

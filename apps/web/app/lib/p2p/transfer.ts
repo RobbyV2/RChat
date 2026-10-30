@@ -1,5 +1,17 @@
 import { isRecord } from '../bytes'
-import { b64u, canonical, equalBytes, fromB64u, nfc, randomBytes, utf8 } from './canonical'
+import { sha256 } from '@noble/hashes/sha2.js'
+import { hkdf } from '@noble/hashes/hkdf.js'
+import {
+  b64u,
+  bytesOf,
+  canonical,
+  concat,
+  equalBytes,
+  fromB64u,
+  nfc,
+  randomBytes,
+  utf8,
+} from './canonical'
 import {
   isKeyId,
   keyId,
@@ -21,6 +33,7 @@ import {
 } from './contacts'
 import { blankRoom, insertInto, storedSize, TOTAL, TOTAL_BYTES, type InsertTx } from './dag'
 import type {
+  BlobRecord,
   EventRecord,
   OutboxRecord,
   P2pDatabase,
@@ -28,9 +41,12 @@ import type {
   SelfRecord,
   StoreName,
 } from './db'
-import { DB_VERSION, hasSecrets, withoutSecrets } from './db'
-import { buildEvent, claimedId, isEventId, LIMITS as EV, type Wire } from './event'
+import { DB_VERSION, hasSecrets, withFiles, withoutSecrets } from './db'
+import { attsOf, buildEvent, claimedId, isEventId, LIMITS as EV, type Wire } from './event'
 import { fingerprint } from './keys'
+import { hashPages, partRange, readBlock } from './blobs'
+import { BLOCK, blobRootOf, blockCount, digest } from './hashing'
+import { NEUTRAL_TYPE, safeType, SNIFF_BYTES } from '../sniff'
 import { IV_BYTES, SALT_BYTES, type Kdf, type P2pSection } from './section'
 
 // Moving P2P to another device (note section 7): every store except the excluded ones is dumped
@@ -44,9 +60,20 @@ import { IV_BYTES, SALT_BYTES, type Kdf, type P2pSection } from './section'
 
 export { type Kdf, type P2pSection } from './section'
 
-// Partial downloads and the search index are rebuilt; meta holds counters and flags of this
-// browser only.
-export const EXCLUDED: ReadonlySet<string> = new Set(['blob_parts', 'search', 'meta'])
+// The search index is rebuilt; meta holds counters and flags of this browser only. Files never
+// go into the dump: when the user asks for them, they follow it in the `.rchat` file, streamed
+// (see `writeFiles`).
+export const EXCLUDED: ReadonlySet<string> = new Set([
+  'blobs',
+  'blob_parts',
+  'blob_hashes',
+  'search',
+  'meta',
+])
+
+// Bytes of the complete files stored here (sent and downloaded).
+export const filesSize = async (db: P2pDatabase) =>
+  (await db.getAll('blobs')).reduce((n, r) => n + (r.done ? r.size : 0), 0)
 
 // Desktop finishes in about a second, a mid-range phone in two to three. Files say which
 // parameters they used; unlocking refuses anything below the minimum or above the maximum.
@@ -115,9 +142,9 @@ export const passStrength = (p: string): { score: 0 | 1 | 2 | 3; label: string }
 
 const aad = (kdf: Kdf, salt: string) => utf8(`${AAD_TAG}${canonical({ v: 1, kdf, salt })}`)
 
-const deriveKey = async (pass: string, salt: Uint8Array, kdf: Kdf) => {
+const deriveRaw = async (pass: string, salt: Uint8Array, kdf: Kdf) => {
   const { argon2id } = await import('hash-wasm')
-  const raw = await argon2id({
+  return argon2id({
     password: utf8(nfc(pass)),
     salt,
     parallelism: kdf.p,
@@ -126,25 +153,44 @@ const deriveKey = async (pass: string, salt: Uint8Array, kdf: Kdf) => {
     hashLength: 32,
     outputType: 'binary',
   })
-  const key = await crypto.subtle.importKey('raw', raw as BufferSource, 'AES-GCM', false, [
-    'encrypt',
-    'decrypt',
-  ])
-  raw.fill(0)
+}
+
+const aesKey = (raw: Uint8Array) =>
+  crypto.subtle.importKey('raw', raw as BufferSource, 'AES-GCM', false, ['encrypt', 'decrypt'])
+
+// The key for the files that follow a dump: from the same passphrase key, with its own salt.
+const filesKeyOf = (raw: Uint8Array, salt: Uint8Array) => {
+  const k = hkdf(sha256, raw, salt, utf8(FILES_INFO), 32)
+  const key = aesKey(k)
+  k.fill(0)
   return key
 }
 
-export const seal = async (plain: Uint8Array, pass: string, kdf: Kdf): Promise<P2pSection> => {
+// Seals the dump; with `filesSalt`, also gives the key for the files that follow it.
+const sealWith = async (plain: Uint8Array, pass: string, kdf: Kdf, filesSalt?: Uint8Array) => {
   const salt = b64u(randomBytes(SALT_BYTES))
   const iv = randomBytes(IV_BYTES)
-  const key = await deriveKey(pass, fromB64u(salt), kdf)
+  const raw = await deriveRaw(pass, fromB64u(salt), kdf)
+  const key = await aesKey(raw)
+  const files = filesSalt ? await filesKeyOf(raw, filesSalt) : null
+  raw.fill(0)
   const ct = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv: iv as BufferSource, additionalData: aad(kdf, salt) as BufferSource },
     key,
     plain as BufferSource
   )
-  return { v: 1, kdf: { ...kdf }, salt, iv: b64u(iv), ct: b64u(new Uint8Array(ct)) }
+  const section: P2pSection = {
+    v: 1,
+    kdf: { ...kdf },
+    salt,
+    iv: b64u(iv),
+    ct: b64u(new Uint8Array(ct)),
+  }
+  return { section, files }
 }
+
+export const seal = async (plain: Uint8Array, pass: string, kdf: Kdf): Promise<P2pSection> =>
+  (await sealWith(plain, pass, kdf)).section
 
 export interface KdfBounds {
   min: { m: number; t: number; p: number }
@@ -157,7 +203,15 @@ export const checkKdf = (kdf: Kdf, bounds: KdfBounds = { min: KDF_MIN, max: KDF_
   if (kdf.m > max.m || kdf.t > max.t || kdf.p > max.p) throw new TransferError(HEAVY_KDF)
 }
 
-export const open = async (sec: P2pSection, pass: string, bounds?: KdfBounds) => {
+export const open = async (sec: P2pSection, pass: string, bounds?: KdfBounds) =>
+  (await openWith(sec, pass, bounds)).plain
+
+const openWith = async (
+  sec: P2pSection,
+  pass: string,
+  bounds?: KdfBounds,
+  filesSalt?: Uint8Array
+) => {
   checkKdf(sec.kdf, bounds)
   let iv: Uint8Array
   let ct: Uint8Array
@@ -168,14 +222,18 @@ export const open = async (sec: P2pSection, pass: string, bounds?: KdfBounds) =>
     throw new TransferError(DAMAGED_DUMP)
   }
   let key: CryptoKey
+  let files: CryptoKey | null = null
   try {
-    key = await deriveKey(pass, fromB64u(sec.salt), sec.kdf)
+    const raw = await deriveRaw(pass, fromB64u(sec.salt), sec.kdf)
+    key = await aesKey(raw)
+    if (filesSalt) files = await filesKeyOf(raw, filesSalt)
+    raw.fill(0)
   } catch {
     // Mostly Argon2 failing to get its memory on a small device.
     throw new TransferError(HEAVY_KDF)
   }
   try {
-    return new Uint8Array(
+    const plain = new Uint8Array(
       await crypto.subtle.decrypt(
         {
           name: 'AES-GCM',
@@ -186,6 +244,7 @@ export const open = async (sec: P2pSection, pass: string, bounds?: KdfBounds) =>
         ct as BufferSource
       )
     )
+    return { plain, files }
   } catch {
     throw new TransferError(WRONG_PASS)
   }
@@ -279,8 +338,8 @@ interface LooseTx {
 const storeNames = (db: P2pDatabase) => Array.from(db.objectStoreNames) as string[]
 
 // Every store except the excluded ones, read in one transaction (a consistent snapshot).
-export const readStores = async (db: P2pDatabase) => {
-  const names = storeNames(db).filter(n => !EXCLUDED.has(n))
+export const readStores = async (db: P2pDatabase, skip: ReadonlySet<string> = new Set()) => {
+  const names = storeNames(db).filter(n => !EXCLUDED.has(n) && !skip.has(n))
   const tx = db.transaction(names as StoreName[], 'readonly') as unknown as LooseTx
   const out = new Map<string, Row[]>()
   for (const n of names) {
@@ -298,12 +357,16 @@ export const readStores = async (db: P2pDatabase) => {
 
 const HEADER = 'p2p-dump'
 
-export const dumpBytes = async (db: P2pDatabase, now = Date.now()): Promise<Uint8Array> => {
+export const dumpBytes = async (
+  db: P2pDatabase,
+  now = Date.now(),
+  opts: { id?: string } = {}
+): Promise<Uint8Array> => {
   const stores = await readStores(db)
   const self = stores.get('self')?.[0]?.value as SelfRecord | undefined
   if (!self) throw new TransferError('No P2P identity here')
   if (self.moved || !hasSecrets(self)) throw new TransferError(MOVED_EXPORT)
-  const id = b64u(randomBytes(16))
+  const id = opts.id ?? b64u(randomBytes(16))
   const cs = new CompressionStream('deflate-raw')
   const result = new Response(cs.readable).arrayBuffer()
   const w = cs.writable.getWriter()
@@ -392,6 +455,8 @@ const cleanContact = (c: Contact): Contact => {
   }
 }
 
+const isHash = (x: unknown) => typeof x === 'string' && isEventId(x)
+
 const isOutboxRow = (x: unknown): x is OutboxRecord =>
   isRecord(x) && typeof x.id === 'string' && Array.isArray(x.deliveredTo)
 
@@ -400,6 +465,12 @@ const ROW_CHECKS: Record<string, (x: unknown) => boolean> = {
   rooms: isRoomRow,
   contacts: isContactRow,
   outbox: isOutboxRow,
+}
+
+// What a stored event says about its files is derived from its content, never taken from a file.
+const cleanEvent = (e: EventRecord): EventRecord => {
+  const atts = e.redacted || e.wire.ev.type !== 'msg' ? [] : attsOf(e.wire.c)
+  return withFiles(e, atts)
 }
 
 // Reads the inflated lines one at a time, so memory goes to the records, never to one huge
@@ -414,7 +485,9 @@ export const parseDump = async (bytes: Uint8Array, max = DUMP_MAX): Promise<Dump
   const stores = new Map<string, Row[]>()
   let header: { id: string; schema: number; at: number } | null = null
   let size = 0
-  let rest = ''
+  // Text of the line so far, in pieces: each new piece is searched once, so a long line costs
+  // what it weighs, not its length times the number of pieces.
+  let parts: string[] = []
   const line = (text: string) => {
     const x = JSON.parse(text, revive) as unknown
     if (!header) {
@@ -449,19 +522,22 @@ export const parseDump = async (bytes: Uint8Array, max = DUMP_MAX): Promise<Dump
         void reader.cancel().catch(() => {})
         throw damaged()
       }
-      rest += dec.decode(value, { stream: true })
+      const text = dec.decode(value, { stream: true })
       let at = 0
-      for (let nl = rest.indexOf('\n'); nl >= 0; nl = rest.indexOf('\n', at)) {
-        line(rest.slice(at, nl))
+      for (let nl = text.indexOf('\n'); nl >= 0; nl = text.indexOf('\n', at)) {
+        parts.push(text.slice(at, nl))
+        line(parts.join(''))
+        parts = []
         at = nl + 1
       }
-      rest = rest.slice(at)
+      if (at < text.length) parts.push(text.slice(at))
     }
-    rest += dec.decode()
+    const tail = dec.decode()
+    if (tail) parts.push(tail)
   } catch (e) {
     throw e instanceof TransferError ? e : damaged()
   }
-  if (rest !== '' || !header) throw damaged()
+  if (parts.join('') !== '' || !header) throw damaged()
   const selfRows = stores.get('self') ?? []
   const self = selfRows[0]?.value
   if (selfRows.length === 1 && isRecord(self) && self.moved) throw new TransferError(MOVED_DUMP)
@@ -476,7 +552,9 @@ export const parseDump = async (bytes: Uint8Array, max = DUMP_MAX): Promise<Dump
       name,
       name === 'contacts'
         ? kept.map(r => ({ ...r, value: cleanContact(r.value as Contact) }))
-        : kept
+        : name === 'events'
+          ? kept.map(r => ({ ...r, value: cleanEvent(r.value as EventRecord) }))
+          : kept
     )
   }
   const { id, schema, at } = header as { id: string; schema: number; at: number }
@@ -528,8 +606,36 @@ export const exportP2p = async (
   now = Date.now()
 ) => seal(await dumpBytes(db, now), pass, kdf)
 
+// The same, plus the key for writing the files after it into the `.rchat` file.
+export const exportP2pWithFiles = async (
+  db: P2pDatabase,
+  pass: string,
+  kdf: Kdf = defaultKdf(),
+  now = Date.now()
+): Promise<{ section: P2pSection; files: FilesKey }> => {
+  const id = b64u(randomBytes(16))
+  const salt = randomBytes(SALT_BYTES)
+  const { section, files } = await sealWith(await dumpBytes(db, now, { id }), pass, kdf, salt)
+  return { section, files: { id, salt: b64u(salt), key: files as CryptoKey } }
+}
+
 export const unlockP2p = async (sec: P2pSection, pass: string, bounds?: KdfBounds) =>
   parseDump(await open(sec, pass, bounds))
+
+// The same, with the key for the files that follow it (from their header's salt).
+export const unlockP2pWithFiles = async (
+  sec: P2pSection,
+  pass: string,
+  head: FilesHead,
+  bounds?: KdfBounds
+): Promise<{ dump: Dump; files: FilesKey }> => {
+  const salt = bytesOf(head.salt, SALT_BYTES)
+  if (!salt) throw new TransferError(DAMAGED_DUMP)
+  const { plain, files } = await openWith(sec, pass, bounds, salt)
+  const dump = await parseDump(plain)
+  if (dump.id !== head.id) throw new TransferError(DAMAGED_DUMP)
+  return { dump, files: { id: head.id, salt: head.salt, key: files as CryptoKey } }
+}
 
 // ----- Import -----
 
@@ -554,6 +660,8 @@ export interface Imported {
   rooms: number
   events: number
   skipped: number
+  // Files read from the `.rchat` file after the data.
+  files?: FilesResult
 }
 
 // A new device key for the identity: the identity signs its cert and the revocation of the
@@ -836,4 +944,366 @@ export const applyImport = async (
     }
     throw e
   }
+}
+
+// ----- Files in the `.rchat` file -----
+//
+// With "Include downloaded attachments", the `.rchat` file is the config text line, then
+// FILES_MAGIC, a header line `{v, id, salt}` (`id` is the dump's, so files can't be moved to
+// another export), then frames: u32 (big endian; top bit set on the last frame) length, then
+// AES-256-GCM ciphertext under a key from the passphrase key (HKDF, the header's salt), with the
+// frame counter as nonce and `FILES_AAD || id || u64 counter || last` as associated data, so
+// frames can't be reordered, dropped or spliced, and a cut is noticed. Plaintext: one kind byte,
+// then a file's header (JSON), one 1 MiB block of it, a drop of the current file, or the end.
+// Both sides go one block at a time, so a file of any size fits; the string and QR forms never
+// carry files.
+
+export const FILES_MAGIC = 'RCHATFILES1\n'
+const FILES_INFO = 'rchat-p2p files1'
+const FILES_AAD = 'rchat-p2p-files1\0'
+const FRAME_LAST = 0x8000_0000
+// One block, its kind byte and the tag.
+export const FILES_FRAME_MAX = BLOCK + 1 + 16
+const HEAD_MAX = 1024
+
+const F_FILE = 1
+const F_BLOCK = 2
+const F_END = 3
+const F_DROP = 4
+
+export interface FilesKey {
+  id: string
+  salt: string
+  key: CryptoKey
+}
+
+export interface FilesHead {
+  id: string
+  salt: string
+}
+
+export interface FilesResult {
+  files: number
+  skipped: number
+  // The end frame arrived: nothing was cut off.
+  complete: boolean
+}
+
+const u64 = (n: number) => {
+  const out = new Uint8Array(8)
+  new DataView(out.buffer).setBigUint64(0, BigInt(n))
+  return out
+}
+
+const frameIv = (n: number) => {
+  const iv = new Uint8Array(12)
+  iv.set(u64(n), 4)
+  return iv
+}
+
+const frameAad = (id: string, n: number, last: boolean) =>
+  concat(utf8(`${FILES_AAD}${id}\0`), u64(n), new Uint8Array([last ? 1 : 0]))
+
+// Writes every complete file after the config text, one block in memory at a time. `write`
+// gets the pieces in order (the caller streams them to disk or into a Blob).
+export const writeFiles = async (
+  db: P2pDatabase,
+  fk: FilesKey,
+  write: (part: Uint8Array) => Promise<void>,
+  progress?: (done: number, total: number) => void
+) => {
+  const total = await filesSize(db)
+  let done = 0
+  let n = 0
+  const frame = async (kind: number, body: Uint8Array, last = false) => {
+    const pt = new Uint8Array(1 + body.length)
+    pt[0] = kind
+    pt.set(body, 1)
+    const ct = new Uint8Array(
+      await crypto.subtle.encrypt(
+        {
+          name: 'AES-GCM',
+          iv: frameIv(n) as BufferSource,
+          additionalData: frameAad(fk.id, n, last) as BufferSource,
+        },
+        fk.key,
+        pt as BufferSource
+      )
+    )
+    n += 1
+    const head = new Uint8Array(4)
+    new DataView(head.buffer).setUint32(0, (ct.length | (last ? FRAME_LAST : 0)) >>> 0)
+    await write(concat(head, ct))
+  }
+  await write(utf8(`${FILES_MAGIC}${JSON.stringify({ v: 1, id: fk.id, salt: fk.salt })}\n`))
+  const keys = await db.getAllKeys('blobs')
+  for (const h of keys) {
+    const rec = await db.get('blobs', h)
+    if (!rec?.done) continue
+    const meta = {
+      h: rec.h,
+      size: rec.size,
+      own: rec.own,
+      created: rec.created,
+      lastUsed: rec.lastUsed,
+    }
+    await frame(F_FILE, utf8(JSON.stringify(meta)))
+    const count = blockCount(rec.size)
+    let ok = true
+    for (let i = 0; i < count; i += 1) {
+      const data = await readBlock(db, rec, i).catch(() => null)
+      if (!data || data.length !== Math.min(BLOCK, rec.size - i * BLOCK)) {
+        ok = false
+        break
+      }
+      await frame(F_BLOCK, data)
+      done += data.length
+      progress?.(done, total)
+    }
+    if (!ok) await frame(F_DROP, new Uint8Array(0))
+  }
+  await frame(F_END, new Uint8Array(0), true)
+}
+
+// Reads exactly `n` bytes at a time from a stream, copying each byte once.
+class ByteReader {
+  private chunks: Uint8Array[] = []
+  private have = 0
+  private ended = false
+
+  constructor(private reader: ReadableStreamDefaultReader<Uint8Array>) {}
+
+  async read(n: number): Promise<Uint8Array | null> {
+    while (this.have < n && !this.ended) {
+      const { done, value } = await this.reader.read()
+      if (done) this.ended = true
+      else if (value.length) {
+        this.chunks.push(value)
+        this.have += value.length
+      }
+    }
+    if (this.have < n) return null
+    const out = new Uint8Array(n)
+    let at = 0
+    while (at < n) {
+      const c = this.chunks[0]
+      const take = Math.min(c.length, n - at)
+      out.set(c.subarray(0, take), at)
+      at += take
+      if (take === c.length) this.chunks.shift()
+      else this.chunks[0] = c.subarray(take)
+    }
+    this.have -= n
+    return out
+  }
+
+  cancel() {
+    void this.reader.cancel().catch(() => {})
+  }
+}
+
+// The header of the files part of a `.rchat` file, or null when there is none.
+export const filesHead = async (trailer: Blob): Promise<FilesHead | null> => {
+  if (trailer.size < FILES_MAGIC.length) return null
+  const head = new Uint8Array(await trailer.slice(0, FILES_MAGIC.length + HEAD_MAX).arrayBuffer())
+  const text = new TextDecoder().decode(head)
+  if (!text.startsWith(FILES_MAGIC)) return null
+  const nl = text.indexOf('\n', FILES_MAGIC.length)
+  if (nl < 0) return null
+  try {
+    const x = JSON.parse(text.slice(FILES_MAGIC.length, nl)) as unknown
+    if (
+      isRecord(x) &&
+      x.v === 1 &&
+      typeof x.id === 'string' &&
+      x.id.length >= 16 &&
+      x.id.length <= 64 &&
+      bytesOf(x.salt, SALT_BYTES)
+    )
+      return { id: x.id, salt: x.salt as string }
+  } catch {
+    // Not a header.
+  }
+  return null
+}
+
+interface Incoming {
+  h: string
+  size: number
+  own: boolean
+  created: number
+  lastUsed: number
+  count: number
+  next: number
+  hashes: Uint8Array
+  type: string
+  // Already complete here: the bytes are read and checked, not stored again.
+  had: boolean
+}
+
+// Largest file an import takes (its hash list is held while it streams in).
+const FILE_SIZE_MAX = 256 * 1024 ** 3
+
+const isFileMeta = (x: unknown) =>
+  isRecord(x) &&
+  isHash(x.h) &&
+  Number.isSafeInteger(x.size) &&
+  (x.size as number) >= 0 &&
+  (x.size as number) <= FILE_SIZE_MAX &&
+  typeof x.own === 'boolean' &&
+  Number.isSafeInteger(x.created) &&
+  Number.isSafeInteger(x.lastUsed)
+
+// Reads the files part of a `.rchat` file into the database, one block at a time. Every block is
+// checked against the hashes it adds up to and the file's root, and its type is sniffed here; a
+// file that doesn't check out, or is cut off, is dropped (blocks and all). What came before a
+// damaged or missing part stays.
+export const importFiles = async (
+  db: P2pDatabase,
+  trailer: Blob,
+  fk: FilesKey,
+  progress?: (done: number) => void
+): Promise<FilesResult> => {
+  const r = new ByteReader(trailer.stream().getReader())
+  const out: FilesResult = { files: 0, skipped: 0, complete: false }
+  let cur: Incoming | null = null
+  let n = 0
+  let done = 0
+  const drop = async (x: Incoming) => {
+    if (!x.had) await db.delete('blob_parts', partRange(x.h)).catch(() => {})
+    out.skipped += 1
+  }
+  const finish = async (x: Incoming) => {
+    if (x.had) return
+    if (blobRootOf(x.size, x.hashes) !== x.h) return drop(x)
+    const tx = db.transaction(['blobs', 'blob_hashes'], 'readwrite')
+    const now = await tx.objectStore('blobs').get(x.h)
+    if (!now?.done) {
+      await tx.objectStore('blob_hashes').delete(partRange(x.h))
+      for (const p of hashPages(x.h, x.hashes)) await tx.objectStore('blob_hashes').put(p)
+      const rec: BlobRecord = {
+        h: x.h,
+        size: x.size,
+        hashed: true,
+        have: x.count,
+        done: true,
+        type: x.type,
+        own: x.own,
+        wanted: false,
+        created: x.created,
+        lastUsed: x.lastUsed,
+      }
+      await tx.objectStore('blobs').put(rec)
+    }
+    await tx.done
+    out.files += 1
+  }
+  try {
+    const magic = await r.read(FILES_MAGIC.length)
+    if (!magic || new TextDecoder().decode(magic) !== FILES_MAGIC) return out
+    // The header line, byte by byte (it is short).
+    for (let i = 0; ; i += 1) {
+      const b = await r.read(1)
+      if (!b || i > HEAD_MAX) return out
+      if (b[0] === 0x0a) break
+    }
+    for (;;) {
+      const head = await r.read(4)
+      if (!head) break
+      const word = new DataView(head.buffer).getUint32(0)
+      const last = (word & FRAME_LAST) !== 0
+      const len = word & ~FRAME_LAST
+      if (len < 17 || len > FILES_FRAME_MAX) break
+      const ct = await r.read(len)
+      if (!ct) break
+      let pt: Uint8Array
+      try {
+        pt = new Uint8Array(
+          await crypto.subtle.decrypt(
+            {
+              name: 'AES-GCM',
+              iv: frameIv(n) as BufferSource,
+              additionalData: frameAad(fk.id, n, last) as BufferSource,
+            },
+            fk.key,
+            ct as BufferSource
+          )
+        )
+      } catch {
+        break
+      }
+      n += 1
+      const kind = pt[0]
+      const body = pt.subarray(1)
+      if (kind === F_END) {
+        out.complete = last && body.length === 0
+        break
+      }
+      if (last) break
+      if (kind === F_FILE) {
+        if (cur) await drop(cur)
+        cur = null
+        let meta: unknown
+        try {
+          meta = JSON.parse(new TextDecoder().decode(body))
+        } catch {
+          meta = null
+        }
+        if (!isFileMeta(meta)) {
+          out.skipped += 1
+          continue
+        }
+        const m = meta as {
+          h: string
+          size: number
+          own: boolean
+          created: number
+          lastUsed: number
+        }
+        const count = blockCount(m.size)
+        // Already here, or being downloaded (that download keeps its own blocks): left alone.
+        const had = !!(await db.get('blobs', m.h))
+        cur = {
+          ...m,
+          count,
+          next: 0,
+          hashes: new Uint8Array(count * 32),
+          type: NEUTRAL_TYPE,
+          had,
+        }
+        if (count === 0) {
+          await finish(cur)
+          cur = null
+        }
+        continue
+      }
+      if (kind === F_DROP) {
+        if (cur) await drop(cur)
+        cur = null
+        continue
+      }
+      if (kind !== F_BLOCK || !cur) break
+      const x: Incoming = cur
+      if (body.length !== Math.min(BLOCK, x.size - x.next * BLOCK)) {
+        await drop(x)
+        cur = null
+        continue
+      }
+      x.hashes.set(await digest(body), x.next * 32)
+      if (x.next === 0) x.type = safeType(body.subarray(0, SNIFF_BYTES))
+      if (!x.had)
+        await db.put('blob_parts', { h: x.h, block: x.next, data: new Blob([body as BlobPart]) })
+      x.next += 1
+      done += body.length
+      progress?.(done)
+      if (x.next === x.count) {
+        await finish(x)
+        cur = null
+      }
+    }
+  } finally {
+    r.cancel()
+  }
+  if (cur) await drop(cur)
+  return out
 }

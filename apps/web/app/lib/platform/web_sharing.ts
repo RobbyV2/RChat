@@ -61,4 +61,24 @@ const openFile = (accept: string, maxBytes: number, tooLarge?: () => void) =>
     input.click()
   })
 
-export const webSharing: Sharing = { copyText, canShare, share, saveFile, saveBlob, openFile }
+// A picked file as it is on disk: nothing is read until the caller streams it.
+export const openBlob = (accept: string) =>
+  new Promise<Blob | null>(resolve => {
+    if (typeof document === 'undefined') return resolve(null)
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = accept
+    input.addEventListener('cancel', () => resolve(null))
+    input.addEventListener('change', () => resolve(input.files?.[0] ?? null))
+    input.click()
+  })
+
+export const webSharing: Sharing = {
+  copyText,
+  canShare,
+  share,
+  saveFile,
+  saveBlob,
+  openFile,
+  openBlob,
+}

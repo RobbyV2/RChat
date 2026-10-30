@@ -23,4 +23,6 @@ export interface Sharing {
   // Lets the user pick a text file; null when cancelled, unreadable or over `maxBytes` (then
   // `tooLarge` runs, where the platform can tell).
   openFile: (accept: string, maxBytes: number, tooLarge?: () => void) => Promise<string | null>
+  // Lets the user pick a file of any size, read later as a stream; null when cancelled.
+  openBlob: (accept: string) => Promise<Blob | null>
 }

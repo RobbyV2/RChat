@@ -1,7 +1,15 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { b64u, concat, utf8 } from './canonical'
 import { blankRoom, DAG, insertEvent, type FullWhy, type Inserted, type PingKind } from './dag'
-import type { EventRecord, OutboxRecord, P2pDatabase, P2pStore, RoomRecord } from './db'
+import {
+  fileKey,
+  type EventRecord,
+  type OutboxRecord,
+  type P2pDatabase,
+  type P2pStore,
+  type RoomRecord,
+} from './db'
+import { Blobs, type BulkLimits } from './blobs'
 import {
   buildEvent,
   LIMITS as EV,
@@ -10,6 +18,7 @@ import {
   validate,
   type Invalid,
   type Wire,
+  type Attachment,
   type Content,
   type EditContent,
   type EvType,
@@ -63,6 +72,7 @@ export interface P2pMessage {
   reply: { id: string; sender: string | null; body: string | null } | null
   mentions: string[]
   fwd: Fwd | null
+  att: Attachment[]
   edited: number | null
   reactions: P2pReaction[]
   pinned: number | null
@@ -161,6 +171,7 @@ export const deriveMessage = (
     reply,
     mentions: c.fwd ? [] : (c.mentions ?? []),
     fwd: c.fwd ?? null,
+    att: c.att ?? [],
     edited: edit ? edit.effTs : null,
     reactions: reactionsOf(related, me),
     pinned: pinOf(related),
@@ -321,14 +332,41 @@ export interface DmDeps {
   roomBytes?: number
   totalBytes?: number
   pace?: () => Promise<void>
+  bulk?: Partial<BulkLimits>
+  // Attachments are off (the instance is text only).
+  attachments?: () => boolean
+  // Free storage for downloads, or null when unknown.
+  room?: () => Promise<number | null>
+  // Files up to this size are fetched as soon as they arrive (0: never).
+  autoMax?: () => number
+  // Bytes fetched by themselves per contact per day; past it files wait for a click.
+  autoDaily?: () => number
+  // Free and total storage for this site, or null when the platform can't tell. Files are only
+  // fetched by themselves while at least max(10% of the quota, 512 MiB) stays free.
+  space?: () => Promise<{ free: number; quota: number } | null>
+}
+
+export const AUTO_DAILY = 1024 ** 3
+export const AUTO_FLOOR = 512 * 1024 ** 2
+const DAY = 24 * 60 * 60_000
+
+// Why a file that arrived was not fetched by itself.
+export type AutoPause = 'daily' | 'space'
+export const AUTO_PAUSED_TEXT: Record<AutoPause, string> = {
+  daily: 'Auto-download paused for this contact today.',
+  space: 'Auto-download paused: storage on this device is getting full.',
 }
 
 export class Dms {
   readonly sync: Sync
+  readonly blobs: Blobs
   private clock: Clock
   private changeFns = new Set<(room: string) => void>()
   private arriveFns = new Set<(a: Arrival) => void>()
   private typers = new Map<string, { until: number; timer: unknown }>()
+  // Files that arrived and wait for a click instead of fetching by themselves, and why.
+  readonly paused = new Map<string, AutoPause>()
+  private autoChain: Promise<unknown> = Promise.resolve()
   // The browser refused to store more (quota exceeded). Pulls pause for a minute after that.
   storageFull = false
   private quotaAt = 0
@@ -357,6 +395,103 @@ export class Dms {
       pace: deps.pace,
     })
     node.use({ attach: s => this.sync.attach(s), ready: s => this.sync.ready(s) })
+    this.blobs = new Blobs({
+      node,
+      store: deps.store,
+      clock: this.clock,
+      limits: deps.bulk,
+      entitled: (ik, h) => this.entitled(ik, h),
+      members: h => this.holdersOf(h),
+      enabled: deps.attachments,
+      room: deps.room,
+    })
+  }
+
+  // The serving gate for files: a mutual contact, in a conversation where a live message carries
+  // the file and was not written by them (we sent it there, or someone else did). Their own
+  // message never counts, so posting a hash they learned elsewhere gets them nothing, not even
+  // whether we have it.
+  // One index lookup in our conversation with them (only we and they write there), the same work
+  // for any hash, whatever else we hold.
+  async entitled(ik: string, h: string) {
+    if (this.deps.node.contact(ik)?.state !== 'mutual') return false
+    const key = await this.db.getKeyFromIndex(
+      'events',
+      'file',
+      fileKey(this.roomFor(ik), this.me, h)
+    )
+    return key !== undefined
+  }
+
+  // Who may have a file: the other members of the conversations where they sent it to us (they
+  // would refuse a message we wrote as their only reason to give it back).
+  async holdersOf(h: string) {
+    const out = new Set<string>()
+    for (const r of await this.db.getAllFromIndex('events', 'att', h)) {
+      if (r.redacted || r.sender === this.me) continue
+      const room = await this.deps.store.room(r.room)
+      if (room && this.deps.node.contact(room.peer)?.state === 'mutual') out.add(room.peer)
+    }
+    return [...out]
+  }
+
+  private async peerOf(room: string) {
+    return (await this.deps.store.room(room))?.peer
+  }
+
+  // Files of messages that were just deleted go away here too; new files from others are
+  // fetched at once when they are small enough.
+  private files(added: Inserted[]) {
+    // After our own redaction in a conversation, a message its other member wrote doesn't keep
+    // the file (they could have planted it just to pin our copy); every other live message does,
+    // such as the one we first got it in.
+    for (const a of added)
+      if (a.status === 'new' && a.freed.length) {
+        const run = async () => {
+          const peer = a.rec.sender === this.me ? await this.peerOf(a.rec.room) : undefined
+          await this.blobs.release(a.freed, peer ? r => r.sender !== peer : undefined)
+        }
+        void run().catch(() => {})
+      }
+    const max = this.deps.autoMax?.() ?? 0
+    if (max <= 0 || this.deps.attachments?.() === false) return
+    for (const a of added) {
+      if (a.status !== 'new' || a.rec.sender === this.me || a.rec.type !== 'msg') continue
+      const c = a.rec.wire.c as MsgContent | null
+      const seen = new Set<string>()
+      for (const f of [...(c?.att ?? []), ...(c?.fwd?.att ?? [])]) {
+        if (f.size > max || seen.has(f.h)) continue
+        seen.add(f.h)
+        const from = a.rec.sender
+        this.autoChain = this.autoChain.then(() => this.auto(from, f)).catch(() => {})
+      }
+    }
+  }
+
+  // Fetches a file by itself, one decision at a time: only while enough storage stays free and
+  // while this contact's files today stay under the daily limit. Otherwise it waits for a click.
+  private async auto(from: string, f: Attachment) {
+    const rec = await this.blobs.record(f.h)
+    if (rec?.done || rec?.wanted) return
+    const space = (await this.deps.space?.()) ?? null
+    if (space) {
+      const floor = Math.max(space.quota / 10, AUTO_FLOOR)
+      if (space.free - this.blobs.reservedBytes() - f.size < floor) return this.pause(f.h, 'space')
+    }
+    const key = `auto:${from}`
+    const day = Math.floor(this.clock.now() / DAY)
+    const cur = (await this.db.get('meta', key)) as { day?: unknown; bytes?: unknown } | undefined
+    const used = cur?.day === day && Number.isSafeInteger(cur.bytes) ? (cur.bytes as number) : 0
+    if (used + f.size > (this.deps.autoDaily?.() ?? AUTO_DAILY)) return this.pause(f.h, 'daily')
+    await this.db.put('meta', { day, bytes: used + f.size }, key)
+    this.paused.delete(f.h)
+    await this.blobs.download(f).catch(() => {})
+  }
+
+  private pause(h: string, why: AutoPause) {
+    this.paused.set(h, why)
+    while (this.paused.size > 1000) this.paused.delete(this.paused.keys().next().value as string)
+    this.blobs.touchView(h)
   }
 
   get me() {
@@ -406,6 +541,7 @@ export class Dms {
   }
 
   private stored(room: string, from: string, added: Inserted[]) {
+    this.files(added)
     for (const a of added) {
       if (a.status !== 'new') continue
       if (a.rec.sender === this.me) continue
@@ -480,6 +616,7 @@ export class Dms {
     if (res.status === 'full') throw new DmError(this.fullText(res.why))
     if (res.status === 'invalid') throw new DmError("Couldn't save the message")
     this.quota(false)
+    this.files([res])
     this.sync.push(room, id, wire)
     this.sync.announce(room)
     this.changed(room)
@@ -519,10 +656,11 @@ export class Dms {
     this.changed(room)
   }
 
-  async send(room: string, msg: { body: string; reply?: string; fwd?: Fwd }) {
+  async send(room: string, msg: { body: string; reply?: string; fwd?: Fwd; att?: Attachment[] }) {
     const rec = await this.deps.store.room(room)
     const content: MsgContent = { body: msg.body }
     if (msg.reply) content.reply = msg.reply
+    if (msg.att?.length) content.att = msg.att
     if (msg.fwd) content.fwd = msg.fwd
     else if (rec && mentionsIn(msg.body, this.mentionNames(rec.peer))) content.mentions = [rec.peer]
     return this.create(room, 'msg', content)
@@ -618,6 +756,7 @@ export class Dms {
     for (const t of this.typers.values()) this.clock.clear(t.timer)
     this.typers.clear()
     this.sync.stop()
+    this.blobs.stop()
   }
 }
 

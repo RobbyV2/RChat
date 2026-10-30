@@ -18,6 +18,7 @@ import {
   LINK_MAX,
   SECTIONS,
   TEXT_MAX,
+  splitFile,
   buildConfig,
   configUrl,
   decodeConfig,
@@ -35,8 +36,8 @@ import {
 } from '../lib/config_transfer'
 import { FieldError, LinkPage, fieldCls, filledBtn, sectionCls, textBtn, useCopied } from './ui'
 import { fmtSize } from '../lib/bytes'
-import { p2pTransfer, useP2p } from '../lib/p2p/app'
-import { passProblem } from '../lib/p2p/transfer'
+import { p2pTransfer, useP2p, type FilesPart } from '../lib/p2p/app'
+import { filesHead, passProblem, type FilesKey } from '../lib/p2p/transfer'
 import { P2pExportOption, P2pImport, type PassState } from './p2p/p2p_transfer'
 
 const iconBtn =
@@ -272,39 +273,116 @@ const useExport = (include: Set<SectionKey>) => {
   return useMemo(() => buildConfig(source, include), [source, include])
 }
 
+const FILE_NAME = `rchat-config${FILE_EXT}`
+
 const download = (text: string) =>
-  sharing().saveFile(`rchat-config${FILE_EXT}`, `${text}\n`, 'application/octet-stream')
+  sharing().saveFile(FILE_NAME, `${text}\n`, 'application/octet-stream')
+
+type SavePicker = (opts: { suggestedName: string }) => Promise<{
+  createWritable: () => Promise<{
+    write: (data: BufferSource | Blob | string) => Promise<void>
+    close: () => Promise<void>
+    abort: () => Promise<void>
+  }>
+}>
+
+// The config text, then the P2P files, one block at a time: straight to disk where the browser
+// lets the page write a file, otherwise into a Blob made of per-block Blobs (which the browser
+// keeps in its own storage, not the page's memory). False when the user cancelled.
+const downloadWithFiles = async (
+  text: string,
+  fk: FilesKey,
+  progress: (n: number) => void
+): Promise<boolean> => {
+  const onBytes = (done: number, total: number) => progress(total ? done / total : 1)
+  const picker = (globalThis as { showSaveFilePicker?: SavePicker }).showSaveFilePicker
+  if (typeof picker === 'function') {
+    let handle: Awaited<ReturnType<SavePicker>> | null = null
+    try {
+      handle = await picker({ suggestedName: FILE_NAME })
+    } catch (e) {
+      if ((e as { name?: unknown })?.name === 'AbortError') return false
+    }
+    if (handle) {
+      const w = await handle.createWritable()
+      try {
+        await w.write(`${text}\n`)
+        await p2pTransfer.writeFiles(fk, part => w.write(part as BufferSource), onBytes)
+        await w.close()
+        return true
+      } catch (e) {
+        await w.abort().catch(() => {})
+        throw e
+      }
+    }
+  }
+  const parts: BlobPart[] = [`${text}\n`]
+  await p2pTransfer.writeFiles(
+    fk,
+    async part => void parts.push(new Blob([part as BlobPart])),
+    onBytes
+  )
+  sharing().saveBlob(FILE_NAME, new Blob(parts, { type: 'application/octet-stream' }))
+  return true
+}
 
 // `p2p`: the passphrase when the P2P identity goes in too. That export is made on request (the
 // key derivation takes a moment), the plain one whenever the choice changes.
-function ExportBlock({ doc, p2p }: { doc: ConfigDoc; p2p: string | null | false }) {
+function ExportBlock({
+  doc,
+  p2p,
+  files = false,
+}: {
+  doc: ConfigDoc
+  p2p: string | null | false
+  files?: boolean
+}) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Set when the P2P files go too: then the export is a file only.
+  const [filesKey, setFilesKey] = useState<FilesKey | null>(null)
+  const [writing, setWriting] = useState<number | null>(null)
   useEffect(() => {
     let live = true
     setText('')
+    setFilesKey(null)
     setError(null)
     if (p2p === false) void encodeConfig(doc).then(t => live && setText(t))
     return () => {
       live = false
     }
-  }, [doc, p2p])
+  }, [doc, p2p, files])
   const create = async (pass: string) => {
     setBusy(true)
     setError(null)
     try {
-      const section = await p2pTransfer.exportSection(pass)
-      const t = await encodeConfig({ ...doc, p2p: section })
+      const made = await p2pTransfer.exportSection(pass, undefined, files)
+      const t = await encodeConfig({ ...doc, p2p: made.section })
       if (t.length > FILE_MAX) setError(`Too large to export (over ${fmtSize(FILE_MAX)})`)
-      else setText(t)
+      else {
+        setText(t)
+        setFilesKey(made.files)
+      }
     } catch (e) {
       setError(errorText(e))
     } finally {
       setBusy(false)
     }
   }
-  const fileOnly = text.length > TEXT_MAX
+  const fileOnly = text.length > TEXT_MAX || filesKey !== null
+  const save = async () => {
+    if (!filesKey) return download(text)
+    setError(null)
+    setWriting(0)
+    try {
+      await downloadWithFiles(text, filesKey, setWriting)
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setWriting(null)
+    }
+  }
   return (
     <div className="flex flex-col gap-2">
       {p2p !== false && !text && (
@@ -319,7 +397,12 @@ function ExportBlock({ doc, p2p }: { doc: ConfigDoc; p2p: string | null | false 
           </button>
         </div>
       )}
-      {fileOnly ? (
+      {filesKey && text ? (
+        <p className="text-xs text-on-surface-variant">
+          With attachments, the export is a file only. Copying it as text or a QR code leaves them
+          out.
+        </p>
+      ) : fileOnly ? (
         <p className="text-xs text-on-surface-variant">
           This export is {fmtSize(text.length)}, too large to copy as text. Download the file
           instead.
@@ -346,11 +429,11 @@ function ExportBlock({ doc, p2p }: { doc: ConfigDoc; p2p: string | null | false 
         <div>
           <button
             type="button"
-            disabled={!text}
-            onClick={() => download(text)}
+            disabled={!text || writing !== null}
+            onClick={() => void save()}
             className={fileOnly ? filledBtn : textBtn}
           >
-            Download file
+            {writing !== null ? `Writing files ${Math.floor(writing * 100)}%` : 'Download file'}
           </button>
         </div>
       )}
@@ -536,12 +619,15 @@ function ImportBlock() {
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [seq, setSeq] = useState(0)
+  // P2P files that came after the config text in a `.rchat` file.
+  const [files, setFiles] = useState<FilesPart | null>(null)
   const signedIn = useStore(s => s.me !== null)
 
   const preview = async (raw: string, file = false) => {
     setError(null)
     setDone(null)
     setDoc(null)
+    setFiles(null)
     if (!file && raw.length > TEXT_MAX) {
       setError('Too long to paste. Use Import file instead')
       return
@@ -566,17 +652,19 @@ function ImportBlock() {
     }
   }
 
+  // Only the first line is read now; P2P files after it are streamed when they are imported.
   const openFile = async () => {
     setError(null)
-    const content = await sharing().openFile(
-      `${FILE_EXT},.txt,text/plain,application/octet-stream`,
-      FILE_MAX,
-      () => setError(`Choose a file under ${fmtSize(FILE_MAX)}`)
-    )
-    if (content === null) return
+    const file = await sharing().openBlob(`${FILE_EXT},.txt,text/plain,application/octet-stream`)
+    if (file === null) return
+    const split = await splitFile(file).catch(() => null)
+    if (!split) return setError(`Choose a file under ${fmtSize(FILE_MAX)}`)
+    const content = split.text.trim()
+    const head = await filesHead(split.rest).catch(() => null)
     // Large files stay out of the text box; it would only slow the page down.
-    setText(content.length > TEXT_MAX ? '' : content.trim())
+    setText(content.length > TEXT_MAX || head ? '' : content)
     await preview(content, true)
+    setFiles(head ? { blob: split.rest, head } : null)
   }
 
   return (
@@ -612,7 +700,7 @@ function ImportBlock() {
           {done}
         </p>
       )}
-      {doc?.p2p && signedIn && <P2pImport key={`p2p-${seq}`} section={doc.p2p} />}
+      {doc?.p2p && signedIn && <P2pImport key={`p2p-${seq}`} section={doc.p2p} files={files} />}
       {doc && (!doc.p2p || !signedIn || presentSections(doc).length > 0) && (
         <ImportPreview
           key={seq}
@@ -636,7 +724,7 @@ export function ConfigSyncSection() {
   const hasP2p = useP2p(s => s.ik !== null && s.movedAt === null) && me
   const [include, setInclude] = useState<Set<SectionKey>>(() => new Set(SECTIONS.map(s => s.key)))
   const [withP2p, setWithP2p] = useState(false)
-  const [pass, setPass] = useState<PassState>({ pass: '', again: '' })
+  const [pass, setPass] = useState<PassState>({ pass: '', again: '', files: false })
   const doc = useExport(include)
   const p2pPass =
     !hasP2p || !withP2p ? false : passProblem(pass.pass, pass.again) ? null : pass.pass
@@ -674,13 +762,13 @@ export function ConfigSyncSection() {
             on={withP2p}
             onToggle={on => {
               setWithP2p(on)
-              if (!on) setPass({ pass: '', again: '' })
+              if (!on) setPass({ pass: '', again: '', files: false })
             }}
             value={pass}
             onChange={setPass}
           />
         )}
-        <ExportBlock doc={doc} p2p={p2pPass} />
+        <ExportBlock doc={doc} p2p={p2pPass} files={withP2p && pass.files} />
       </section>
       <section>
         <p className={sectionCls}>Import</p>

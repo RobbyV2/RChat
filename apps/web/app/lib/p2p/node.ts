@@ -71,7 +71,7 @@ export interface Transport {
   // Registers our peer id and hands over every incoming connection. Rejects with
   // TransportError('unavailable-id') when someone else holds the id.
   listen: (id: string, onPipe: (pipe: Pipe) => void, onLost: () => void) => Promise<Listener>
-  dial: (from: string, to: string) => Promise<Pipe>
+  dial: (from: string, to: string, kind?: 'bulk') => Promise<Pipe>
 }
 
 export interface Visibility {
@@ -189,6 +189,8 @@ interface DialState {
 export interface NodeExt {
   attach: (s: Session) => void
   ready: (s: Session) => void
+  // A bulk pipe a ready session's peer opened to us.
+  bulk?: (pipe: Pipe, s: Session) => void
 }
 
 export class P2pNode {
@@ -493,6 +495,7 @@ export class P2pNode {
   }
 
   private incoming(pipe: Pipe) {
+    if (pipe.kind === 'bulk') return this.incomingBulk(pipe)
     if (
       this.stopped ||
       this.isPaused() ||
@@ -502,6 +505,25 @@ export class P2pNode {
     )
       return pipe.close()
     this.run(new Session(this.sessionOpts('responder', pipe, null)))
+  }
+
+  // Only from the peer of a ready session, and only to an extension that takes bulk pipes.
+  private incomingBulk(pipe: Pipe) {
+    const s = [...this.sessions.values()].find(x => x.peer === pipe.remote && x.state === 'ready')
+    const ext = this.exts.find(x => x.bulk)
+    if (!s || !ext?.bulk || this.stopped || this.isPaused()) return pipe.close()
+    ext.bulk(pipe, s)
+  }
+
+  // Opens a bulk pipe to the device of a ready session.
+  async dialBulk(s: Session): Promise<Pipe> {
+    if (s.state !== 'ready' || this.stopped) throw new TransportError('network')
+    return this.deps.transport.dial(this.peerId, s.peer, 'bulk')
+  }
+
+  // Ready sessions with the devices of an identity.
+  readySessions(ik: string) {
+    return [...this.sessions.values()].filter(s => s.remote?.ik === ik && s.state === 'ready')
   }
 
   private sessionOpts(role: 'initiator' | 'responder', pipe: Pipe, expect: string | null) {

@@ -1,5 +1,6 @@
 import type { Invoke } from './desktop'
 import type { Sharing } from './sharing'
+import { openBlob } from './web_sharing'
 
 // Files go to disk in pieces this big, so a large one never sits in memory twice.
 export const CHUNK_BYTES = 4 * 1024 * 1024
@@ -53,5 +54,7 @@ export const desktopSharing = (call: Invoke, report: (message: string) => void):
     saveBlob,
     openFile: (accept, maxBytes) =>
       call<string | null>('open_text', { accept, maxBytes }).catch(() => null),
+    // The webview's own file picker: the file is streamed from disk, never sent over IPC.
+    openBlob,
   }
 }

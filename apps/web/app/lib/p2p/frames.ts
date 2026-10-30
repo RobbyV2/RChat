@@ -6,7 +6,8 @@ import { isRecord } from '../bytes'
 // that isn't exactly the next one is refused, so frames can't be replayed, dropped or reordered
 // without the session noticing. Messages larger than one frame are chunked.
 
-export const FrameType = { H1: 1, H2: 2, H3: 3, Data: 16 } as const
+// B1/B2 open a bulk pipe (blobs.ts): the opener's key epoch and nonce, then the other nonce.
+export const FrameType = { H1: 1, H2: 2, H3: 3, Data: 16, B1: 32, B2: 33 } as const
 
 export type FrameType = (typeof FrameType)[keyof typeof FrameType]
 

@@ -8,9 +8,13 @@ import type { Pipe } from './session'
 
 // The PeerJS side of P2P messaging: our own Peer on the instance's PeerServer (never the one P2P
 // files use), configured only from the shared ICE seam. Every connection is a reliable binary
-// data channel labeled `rcp1`; what crosses it is already encrypted by the session.
+// data channel labeled `rcp1`, plus `rcp1b` for attachments (opened on demand, so file transfers
+// never hold up chat); what crosses them is already encrypted.
 
 export const LABEL = 'rcp1'
+export const BULK_LABEL = 'rcp1b'
+// A bulk sender waits once this much is queued in the data channel.
+const LOW_MARK = 256 * 1024
 const DIAL_MS = 15_000
 // Offers held while the user decides about a relay host they don't know.
 const HELD_MAX = 4
@@ -24,6 +28,34 @@ type Offer = {
 
 const relaysOf = (meta: unknown): unknown =>
   typeof meta === 'object' && meta !== null ? (meta as { relays?: unknown }).relays : undefined
+
+const channelOf = (conn: DataConnection) =>
+  (conn as { dataChannel?: RTCDataChannel }).dataChannel ?? null
+
+// PeerJS keeps its own queue in front of the channel.
+const queuedIn = (conn: DataConnection) =>
+  (channelOf(conn)?.bufferedAmount ?? 0) +
+  ((conn as { bufferSize?: number }).bufferSize ?? 0) * 16384
+
+const drainOf = (conn: DataConnection) => () =>
+  new Promise<void>(resolve => {
+    const ch = channelOf(conn)
+    if (!ch || queuedIn(conn) <= LOW_MARK || ch.readyState !== 'open') return resolve()
+    ch.bufferedAmountLowThreshold = LOW_MARK
+    const done = () => {
+      clearInterval(poll)
+      ch.removeEventListener('bufferedamountlow', check)
+      ch.removeEventListener('close', done)
+      resolve()
+    }
+    const check = () => {
+      if (queuedIn(conn) <= LOW_MARK || ch.readyState !== 'open') done()
+    }
+    // PeerJS's own queue drains on a timer, so the event alone isn't enough.
+    const poll = setInterval(check, 50)
+    ch.addEventListener('bufferedamountlow', check)
+    ch.addEventListener('close', done)
+  })
 
 const pipeOf = (conn: DataConnection): Pipe => {
   const dataFns: ((d: Uint8Array) => void)[] = []
@@ -44,6 +76,8 @@ const pipeOf = (conn: DataConnection): Pipe => {
   conn.on('error', shut)
   return {
     remote: conn.peer,
+    ...(conn.label === BULK_LABEL ? { kind: 'bulk' as const } : {}),
+    drain: drainOf(conn),
     send: data => {
       if (closed) throw new Error('closed')
       void conn.send(data)
@@ -83,7 +117,8 @@ export class PeerTransport implements Transport {
         resolve({ close: () => this.close(peer) })
       })
       peer.on('connection', conn => {
-        if (conn.label !== LABEL || conn.serialization !== 'raw') return conn.close()
+        if ((conn.label !== LABEL && conn.label !== BULK_LABEL) || conn.serialization !== 'raw')
+          return conn.close()
         conn.on('open', () => onPipe(pipeOf(conn)))
       })
       peer.on('disconnected', () => {
@@ -125,7 +160,9 @@ export class PeerTransport implements Transport {
     if (typeof handle !== 'function') return
     p._handleMessage = (msg: unknown) => {
       const m = msg as Offer | null
-      if (m?.type !== 'OFFER' || m.payload?.label !== LABEL) return handle.call(peer, msg)
+      const label = m?.payload?.label
+      if (m?.type !== 'OFFER' || (label !== LABEL && label !== BULK_LABEL))
+        return handle.call(peer, msg)
       const declared = relaysOf(m.payload?.metadata)
       const ask =
         relayBook.prefs.ask &&
@@ -145,12 +182,12 @@ export class PeerTransport implements Transport {
     }
   }
 
-  dial(_from: string, to: string): Promise<Pipe> {
+  dial(_from: string, to: string, kind?: 'bulk'): Promise<Pipe> {
     const peer = this.peer
     if (!peer || peer.destroyed) return Promise.reject(new TransportError('network'))
     const plan = relayBook.resolve()
     const conn = peer.connect(to, {
-      label: LABEL,
+      label: kind === 'bulk' ? BULK_LABEL : LABEL,
       reliable: true,
       serialization: 'raw',
       metadata: { relays: plan.ok ? plan.declared : [] },
