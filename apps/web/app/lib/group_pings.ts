@@ -90,11 +90,16 @@ export const groupBadges = (
   return out
 }
 
+// Online for `@here`: signed in (so connected) and not appearing offline. Which server or page
+// is open does not matter, the same rule as the server's presence.
+export const onlineForHere = (me: { appear_offline: boolean } | null | undefined): boolean =>
+  !!me && !me.appear_offline
+
 export interface GroupSelf {
   username: string
   // a member of the message's server (guests and previewers are never pinged)
   member: boolean
-  // shown as online (not "appear offline")
+  // shown as online anywhere on the site (not "appear offline")
   online: boolean
   // your roles there, when known
   roleIds: readonly number[] | null

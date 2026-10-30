@@ -7918,9 +7918,11 @@ mod tests {
         perm(db, secret, "u:bob", 1).await;
         let s = format!("c{secret}");
         let conn = state.hub.next_conn();
-        state.hub.set_viewing("bob", conn, None, Some("rchat"));
+        state.hub.set_online("bob", conn, &["elsewhere", "rchat"]);
         let away = state.hub.next_conn();
-        state.hub.set_viewing("outsider", away, None, Some("rchat"));
+        state.hub.set_online("outsider", away, &["rchat"]);
+        let quiet = state.hub.next_conn();
+        state.hub.set_online("carol", quiet, &[] as &[&str]);
 
         let all = say(&state, (Some(cid), None, None), "boss", "@everyone").await;
         let here = say(&state, (Some(cid), None, None), "boss", "@here").await;
@@ -8087,9 +8089,7 @@ mod tests {
             .expect("roles");
         for i in 1..=50 {
             let conn = state.hub.next_conn();
-            state
-                .hub
-                .set_viewing(&format!("u{i}"), conn, None, Some("rchat"));
+            state.hub.set_online(&format!("u{i}"), conn, &["rchat"]);
         }
         let count = |sql: &'static str| async move {
             sqlx::query(sql)

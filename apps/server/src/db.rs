@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS users(
   username TEXT PRIMARY KEY, display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
   password_kind TEXT NOT NULL CHECK(password_kind IN ('text','words')),
   avatar_kind TEXT NOT NULL CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, banner_color TEXT, bio TEXT,
-  is_site_admin INTEGER NOT NULL DEFAULT 0, appear_offline INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+  is_site_admin INTEGER NOT NULL DEFAULT 0, appear_offline INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, presence_seq INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NOT NULL, count INTEGER NOT NULL, last_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NOT NULL, failures INTEGER NOT NULL, last_at INTEGER NOT NULL);
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS users(
   username TEXT PRIMARY KEY, display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
   password_kind TEXT NOT NULL CHECK(password_kind IN ('text','words')),
   avatar_kind TEXT NOT NULL CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, banner_color TEXT, bio TEXT,
-  is_site_admin BIGINT NOT NULL DEFAULT 0, appear_offline BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL);
+  is_site_admin BIGINT NOT NULL DEFAULT 0, appear_offline BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, presence_seq BIGINT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NOT NULL, count BIGINT NOT NULL, last_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NOT NULL, failures BIGINT NOT NULL, last_at BIGINT NOT NULL);
@@ -453,6 +453,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("audit_log", "target_name TEXT"),
     ("audit_log", "target_staff {INT} NOT NULL DEFAULT 0"),
     ("audit_log", "details TEXT NOT NULL DEFAULT '{}'"),
+    ("users", "presence_seq {INT} NOT NULL DEFAULT 0"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -493,7 +494,8 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// `guest_grants.network`. 3: channel categories and channel positions. 4: group mentions
 /// (`group_pings`, `here_pings`, `roles.mentionable`, `messages.group_mentions`) and the Mention
 /// everyone permission bit. 5: the audit log (`audit_log`) and the View audit log permission bit.
-pub const SCHEMA_VERSION: i64 = 5;
+/// 6: `users.presence_seq`, the version of the appear-offline setting.
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
@@ -1753,6 +1755,46 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
+    }
+
+    #[tokio::test]
+    async fn existing_users_get_a_presence_seq_column() {
+        let path =
+            std::env::temp_dir().join(format!("rchat_presence_seq_{}.db", std::process::id()));
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        for stmt in [
+            "ALTER TABLE users DROP COLUMN presence_seq",
+            "UPDATE settings SET value = '5' WHERE key = 'schema_version'",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, appear_offline, created_at) VALUES('alice', 'Alice', 'h', 'text', 'identicon', 1, 5)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        assert!(
+            sqlx::query("SELECT presence_seq FROM users")
+                .fetch_all(&db)
+                .await
+                .is_err()
+        );
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM users WHERE username = 'alice' AND appear_offline = 1 AND created_at = 5 AND presence_seq = 0").await,
+                1
+            );
+            assert_eq!(
+                count(&db, &format!("SELECT COUNT(*) FROM settings WHERE key = 'schema_version' AND value = '{SCHEMA_VERSION}'")).await,
+                1
+            );
+            close(&db).await;
+        }
+        wipe();
     }
 
     #[tokio::test]

@@ -924,7 +924,9 @@ pub(crate) async fn patch_me(
             .await?;
     }
     if let Some(hidden) = appear_offline {
-        sqlx::query("UPDATE users SET appear_offline = $1 WHERE username = $2")
+        sqlx::query(
+            "UPDATE users SET appear_offline = $1, presence_seq = presence_seq + 1 WHERE username = $2",
+        )
             .bind(i64::from(hidden))
             .bind(&user.username)
             .execute(&mut *tx)
@@ -941,10 +943,13 @@ pub(crate) async fn patch_me(
             scope: crate::ws::user_scope(&state.read(), &stored.username).await,
         });
     }
-    if appear_offline.is_some() {
+    if appear_offline.is_some()
+        && let Some((hidden, seq)) = crate::ws::presence_mode(&state.db, &stored.username).await?
+    {
         state.hub.broadcast(WsEvent::PresenceMode {
             username: stored.username.clone(),
-            appear_offline: stored.appear_offline,
+            appear_offline: hidden,
+            seq,
         });
     }
     Ok(Json(MeUpdated {
@@ -1747,7 +1752,7 @@ mod tests {
         assert!(stored(state.clone()).await);
         assert!(matches!(
             rx.try_recv(),
-            Ok(WsEvent::PresenceMode { username, appear_offline: true }) if username == "olive"
+            Ok(WsEvent::PresenceMode { username, appear_offline: true, seq: 1 }) if username == "olive"
         ));
         let _ = patch(Some(AvatarKind::Identicon), None, None).await;
         assert!(stored(state.clone()).await);
@@ -1761,7 +1766,8 @@ mod tests {
             rx.try_recv(),
             Ok(WsEvent::PresenceMode {
                 username: _,
-                appear_offline: false
+                appear_offline: false,
+                seq: 2
             })
         ));
         let both = patch(Some(AvatarKind::Color), Some("#ABCDEF"), Some(true))
@@ -1777,7 +1783,8 @@ mod tests {
             rx.try_recv(),
             Ok(WsEvent::PresenceMode {
                 username: _,
-                appear_offline: true
+                appear_offline: true,
+                seq: 3
             })
         ));
         done(state, path).await;

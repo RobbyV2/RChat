@@ -4,7 +4,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::extract::State;
-use axum::extract::ws::{Message as Frame, Utf8Bytes, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{CloseFrame, Message as Frame, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use futures_util::stream::SplitSink;
@@ -29,7 +29,7 @@ use crate::api::{
 use crate::db::{ChannelKind, Db, MediaKind, get_user, now, setting_on, touch_interaction};
 use crate::fanout::Topic;
 pub use crate::hub::Hub;
-use crate::hub::{Aftermath, CallEnd, Epoch, Op, P2pDrop, Purge};
+use crate::hub::{Aftermath, CallEnd, Epoch, Op, P2pDrop, PRESENCE_SERVERS_MAX, Purge, Scope};
 use crate::state::AppState;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -475,6 +475,9 @@ pub enum WsEvent {
     PresenceMode {
         username: String,
         appear_offline: bool,
+        // `users.presence_seq` of this value: the newest one wins.
+        #[serde(default, skip_serializing_if = "routing_only")]
+        seq: i64,
     },
     PresenceSnapshot {
         server: String,
@@ -1138,11 +1141,13 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
         WsEvent::PresenceMode {
             username,
             appear_offline: _,
+            seq: _,
         } => {
-            let appear_offline = appear_offline(db, &username).await.ok().flatten()?;
+            let (appear_offline, seq) = presence_mode(&state.db, &username).await.ok().flatten()?;
             Some(WsEvent::PresenceMode {
                 username,
                 appear_offline,
+                seq,
             })
         }
         WsEvent::AdminChanged {
@@ -1250,10 +1255,7 @@ pub(crate) async fn repost(state: &AppState, op: Op) {
     match op {
         Op::Broadcast { event } => repost_event(state, event).await,
         Op::ForceOffline { server, user } => {
-            if !is_member(&state.read(), &server, &user)
-                .await
-                .unwrap_or(false)
-            {
+            if !is_member(&state.db, &server, &user).await.unwrap_or(false) {
                 state.hub.force_offline(&server, &user);
             }
         }
@@ -1306,7 +1308,15 @@ pub async fn depart(state: &AppState) {
 /// `token` (or send an unknown one) to connect as a guest, which only works while guest access
 /// is on, otherwise the socket closes. Any other first frame also connects as a guest.
 ///
-/// Then the client sends `viewing` (the open server, for presence), `subscribe` (servers to
+/// A signed-in user is online in every server they are a member of while any of their
+/// connections is open, unless they appear offline. They go offline about 10 seconds after
+/// their last connection closes, so a quick reconnect shows nothing. Switching to appear
+/// offline hides them at once; coming back online is allowed a few times in a row, then
+/// about once per 10 seconds (the last setting wins). An account keeps at most 20
+/// connections open by default: opening another closes the oldest with code 4008. Opening
+/// them too often closes the new one with code 4029 (try again later). Then the client sends
+/// `viewing` (the open
+/// server, for its `presence_snapshot` and `presence_changed` events), `subscribe` (servers to
 /// follow, with guest grants for password-protected ones), `voice_join` / `voice_leave`,
 /// `call_start` (with `p2p` and `video` flags) / `call_accept` / `call_decline` / `call_leave`
 /// for DM calls, `rtc_signal` for
@@ -1557,6 +1567,16 @@ impl Who {
             self.media.clear();
         }
     }
+}
+
+/// Whether `user` appears offline, and the version of that setting (`users.presence_seq`).
+pub(crate) async fn presence_mode(db: &Db, user: &str) -> sqlx::Result<Option<(bool, i64)>> {
+    sqlx::query("SELECT appear_offline, presence_seq FROM users WHERE username = $1")
+        .bind(user)
+        .fetch_optional(db)
+        .await?
+        .map(|row| Ok((row.try_get::<i64, _>(0)? != 0, row.try_get::<i64, _>(1)?)))
+        .transpose()
 }
 
 async fn appear_offline(db: &Db, hoster: &str) -> sqlx::Result<Option<bool>> {
@@ -1961,17 +1981,14 @@ async fn token_live(db: &Db, token: Option<&str>) -> sqlx::Result<bool> {
     }
 }
 
-async fn session_of(db: &Db, token: &str) -> sqlx::Result<Option<bool>> {
-    match sqlx::query(
-        "SELECT u.appear_offline FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
+async fn session_of(db: &Db, token: &str) -> sqlx::Result<bool> {
+    Ok(sqlx::query(
+        "SELECT 1 FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
     )
     .bind(crate::db::secret_key(token))
     .fetch_optional(db)
     .await?
-    {
-        Some(r) => Ok(Some(r.try_get::<i64, _>(0)? != 0)),
-        None => Ok(None),
-    }
+    .is_some())
 }
 
 type Viewable = HashMap<i64, (String, bool)>;
@@ -2089,7 +2106,10 @@ struct Access {
     looking: Option<String>,
     peek: Option<String>,
     hidden: bool,
-    shown: Option<String>,
+    mode: i64,
+    announced: bool,
+    moved: Vec<String>,
+    hidden_moved: bool,
     dark: bool,
     missed: bool,
     hosting: Option<(String, Vec<String>)>,
@@ -2115,7 +2135,10 @@ impl Access {
             looking: None,
             peek: None,
             hidden: false,
-            shown: None,
+            mode: 0,
+            announced: false,
+            moved: Vec::new(),
+            hidden_moved: false,
             dark: false,
             missed: false,
             hosting: None,
@@ -2145,22 +2168,50 @@ impl Access {
         topics
     }
 
-    fn target(&self) -> Option<String> {
-        match self.hidden {
-            true => None,
-            false => self.viewing.clone(),
+    // What this connection announces for its user: every member server (at most
+    // `PRESENCE_SERVERS_MAX`, by name), whatever is open, and whether they appear offline.
+    fn scope(&self) -> Scope {
+        let mut servers: Vec<String> = self.member_servers.iter().cloned().collect();
+        servers.sort_unstable();
+        servers.truncate(PRESENCE_SERVERS_MAX);
+        Scope {
+            servers,
+            hidden: self.hidden,
+            seq: self.mode,
         }
     }
 
+    fn shows(&self, server: &str) -> bool {
+        self.announced && !self.dark && !self.hidden && self.member_servers.contains(server)
+    }
+
+    // The first call announces the connection with the user's full scope. Later membership
+    // or appear-offline changes go out as a delta of the servers they touched.
     fn sync(&mut self, hub: &Hub, conn: u64) {
-        let target = self.target();
-        if let Some(user) = &self.user
-            && !self.dark
-            && target != self.shown
-        {
-            hub.set_viewing(user, conn, self.shown.as_deref(), target.as_deref());
-            self.shown = target;
+        let Some(user) = &self.user else {
+            return;
+        };
+        if self.dark {
+            return;
         }
+        if !self.announced {
+            hub.announce(user, conn, true, Some(self.scope()));
+            self.announced = true;
+            self.moved.clear();
+            self.hidden_moved = false;
+            return;
+        }
+        if self.moved.is_empty() && !self.hidden_moved {
+            return;
+        }
+        let mut moved = std::mem::take(&mut self.moved);
+        moved.sort_unstable();
+        moved.dedup();
+        let (add, remove) = moved
+            .into_iter()
+            .partition(|s| self.member_servers.contains(s));
+        let hidden = std::mem::take(&mut self.hidden_moved).then_some((self.hidden, self.mode));
+        hub.rescope(user, add, remove, hidden);
     }
 
     fn view(&mut self, hub: &Hub, conn: u64, target: Option<String>) {
@@ -2191,20 +2242,35 @@ impl Access {
         }
     }
 
-    fn set_hidden(&mut self, hub: &Hub, conn: u64, hidden: bool) {
+    // Takes the appear-offline value of version `seq` unless a newer one is already known (an
+    // event queued before the connection reread the setting).
+    fn set_hidden(&mut self, hub: &Hub, conn: u64, hidden: bool, seq: i64) {
+        if seq < self.mode {
+            return;
+        }
+        self.mode = seq;
         self.hidden = hidden;
+        self.hidden_moved = true;
         self.sync(hub, conn);
     }
 
+    fn take_mode(&mut self, (hidden, seq): (bool, i64)) {
+        if seq >= self.mode {
+            self.mode = seq;
+            self.hidden = hidden;
+        }
+    }
+
+    // While the database retry is pending the connection is dark: open, but it shows nobody
+    // and leaves the scope alone, since its membership may be stale.
     fn reshow(&mut self, hub: &Hub, conn: u64) {
         if let Some(user) = &self.user {
-            let target = match self.retry.pending() {
-                true => None,
-                false => self.target(),
-            };
-            hub.reannounce(user, conn, target.as_deref());
-            self.dark = self.retry.pending();
-            self.shown = target;
+            let lit = !self.retry.pending();
+            hub.announce(user, conn, lit, lit.then(|| self.scope()));
+            self.dark = !lit;
+            self.announced = true;
+            self.moved.clear();
+            self.hidden_moved = false;
         }
     }
 
@@ -2335,22 +2401,25 @@ impl Access {
 
 async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::Result<bool> {
     let db = &state.read();
-    let (servers, hidden) = match &access.user {
+    // The appear-offline setting comes from the primary: a replica behind it would announce a
+    // stale value, and only a newer one replaces what the presence replica holds.
+    let (servers, mode) = match &access.user {
         Some(user) => {
-            let session = match &access.token {
-                Some(token) => session_of(db, token).await?,
-                None => appear_offline(db, user).await?,
-            };
-            let Some(hidden) = session else {
+            if let Some(token) = &access.token
+                && !session_of(db, token).await?
+            {
+                return Ok(false);
+            }
+            let Some(mode) = presence_mode(&state.db, user).await? else {
                 return Ok(false);
             };
-            (member_servers_of(db, user).await?, hidden)
+            (member_servers_of(db, user).await?, Some(mode))
         }
         None => {
             if !setting_on(db, "guests_enabled").await? {
                 return Ok(false);
             }
-            (HashSet::new(), false)
+            (HashSet::new(), None)
         }
     };
     let mut kept = HashSet::new();
@@ -2371,7 +2440,9 @@ async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::Result<bool
         access.hosted_scope = None;
     }
     access.member_servers = servers;
-    access.hidden = hidden;
+    if let Some(mode) = mode {
+        access.take_mode(mode);
+    }
     access.grants.retain(|server, _| kept.contains(server));
     access.deadlines = grant_deadlines(db, &access.grants).await?;
     access.subs = kept;
@@ -3000,7 +3071,7 @@ fn presence_snapshot(hub: &Hub, access: &Access, server: &str) -> Option<WsEvent
     let mut online = hub.online_after(server, None, PRESENCE_SNAPSHOT_MAX);
     let mut online_count = hub.online_count(server);
     if let Some(user) = access.user.as_deref()
-        && access.shown.as_deref() == Some(server)
+        && access.shows(server)
         && !hub.is_online(server, user)
     {
         online_count += 1;
@@ -3037,6 +3108,19 @@ async fn send_voice_snapshot(state: &AppState, out: &Out, access: &mut Access) -
         }
     }
     true
+}
+
+/// Close codes of realtime connections closed for a limit: the user opened more than
+/// `CONNS_PER_USER` at once (this, the oldest, was closed; reconnect only when used again), or
+/// opened too many in a short time (retry later, like a 429).
+pub const CLOSE_TOO_MANY: (u16, &str) = (4008, "Too many open connections for this account");
+pub const CLOSE_TOO_OFTEN: (u16, &str) = (4029, "Too many connection attempts, try again later");
+
+fn close_frame((code, reason): (u16, &str)) -> Frame {
+    Frame::Close(Some(CloseFrame {
+        code,
+        reason: Utf8Bytes::from(reason),
+    }))
 }
 
 fn refuse(e: sqlx::Error) {
@@ -3109,10 +3193,10 @@ async fn run(state: AppState, mut socket: WebSocket) {
     };
     let mut epoch = state.hub.epoch();
     let mut lossy = epoch.borrow_and_update().lossy;
-    let (username, is_site_admin, hidden): (Option<String>, bool, bool) = match &token {
+    let (username, is_site_admin): (Option<String>, bool) = match &token {
         Some(token) => {
             let row = sqlx::query(
-                "SELECT u.username, u.is_site_admin, u.appear_offline FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
+                "SELECT u.username, u.is_site_admin FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
             )
             .bind(crate::db::secret_key(token))
             .fetch_optional(&state.read())
@@ -3121,16 +3205,27 @@ async fn run(state: AppState, mut socket: WebSocket) {
                 Ok(Some(r)) => (
                     r.try_get(0).ok(),
                     r.try_get::<i64, _>(1).map(|v| v != 0).unwrap_or(false),
-                    r.try_get::<i64, _>(2).map(|v| v != 0).unwrap_or(false),
                 ),
-                Ok(None) => (None, false, false),
+                Ok(None) => (None, false),
                 Err(e) => return refuse(e),
             }
         }
-        None => (None, false, false),
+        None => (None, false),
     };
+    let mut mode = None;
     if let Some(user) = &username {
+        if !state.hub.connect_ok(user) {
+            debug!("closed a realtime connection of a user who reconnects too often");
+            let _ = socket.send(close_frame(CLOSE_TOO_OFTEN)).await;
+            return;
+        }
         state.hub.listen(conn, &[Topic::User(user.clone())]);
+        // Read once listening, from the primary: a change committed before this read is seen
+        // here, a later one arrives as a `PresenceMode` event.
+        mode = match presence_mode(&state.db, user).await {
+            Ok(mode) => mode,
+            Err(e) => return refuse(e),
+        };
     }
     let member_servers: HashSet<String> = match &username {
         Some(user) => match member_servers_of(&state.read(), user).await {
@@ -3147,7 +3242,9 @@ async fn run(state: AppState, mut socket: WebSocket) {
         }
     }
     let mut access = Access::new(username, is_site_admin, member_servers);
-    access.hidden = hidden;
+    if let Some(mode) = mode {
+        access.take_mode(mode);
+    }
     access.token = token.filter(|_| access.user.is_some());
     state.hub.reconcile(conn, &access.topics(), 0);
     let (sink, mut stream) = socket.split();
@@ -3161,6 +3258,7 @@ async fn run(state: AppState, mut socket: WebSocket) {
     if !send_voice_snapshot(&state, &out, &mut access).await {
         return;
     }
+    access.sync(&state.hub, conn);
     loop {
         tokio::select! {
             got = inbox.rx.recv() => {
@@ -3207,8 +3305,8 @@ async fn run(state: AppState, mut socket: WebSocket) {
                         WsEvent::Banned { username: banned } if Some(banned.as_str()) == access.user.as_deref() => break,
                         WsEvent::TokensRevoked { username: user } if Some(user.as_str()) == access.user.as_deref() && !access.check_token(&state.read()).await => break,
                         WsEvent::SettingsChanged { settings } if access.user.is_none() && !settings.guests_enabled => break,
-                        WsEvent::PresenceMode { username: user, appear_offline } if Some(user.as_str()) == access.user.as_deref() => {
-                            access.set_hidden(&state.hub, conn, *appear_offline);
+                        WsEvent::PresenceMode { username: user, appear_offline, seq } if Some(user.as_str()) == access.user.as_deref() => {
+                            access.set_hidden(&state.hub, conn, *appear_offline, *seq);
                         }
                         _ => access.sync(&state.hub, conn),
                     }
@@ -3372,6 +3470,9 @@ async fn run(state: AppState, mut socket: WebSocket) {
             }
         }
     }
+    if inbox.evicted() {
+        out.push(close_frame(CLOSE_TOO_MANY));
+    }
     drop(inbox);
     state.hub.close(conn);
     if let Some(user) = &access.user {
@@ -3419,6 +3520,7 @@ async fn look(
 }
 
 fn join(access: &mut Access, server: String) {
+    access.moved.push(server.clone());
     access.member_servers.insert(server);
     access.hosted_scope = None;
     access.viewable.clear();
@@ -3432,6 +3534,7 @@ fn forget_server(access: &mut Access, server: &str) {
 }
 
 fn leave(access: &mut Access, server: &str) {
+    access.moved.push(server.to_string());
     access.member_servers.remove(server);
     access.hosted_scope = None;
     access.viewable.clear();
@@ -3512,6 +3615,7 @@ fn track(ev: &WsEvent, access: &mut Access) {
             access.topics_dirty |= access.held(old_name);
             if access.member_servers.remove(old_name) {
                 access.member_servers.insert(server.name.clone());
+                access.moved.extend([old_name.clone(), server.name.clone()]);
                 access.hosted_scope = None;
             }
             if access.subs.remove(old_name) {
@@ -3534,6 +3638,7 @@ fn track(ev: &WsEvent, access: &mut Access) {
         WsEvent::ServerDeleted { name } => {
             access.topics_dirty |= access.held(name);
             if access.member_servers.remove(name) {
+                access.moved.push(name.clone());
                 access.hosted_scope = None;
             }
             access.subs.remove(name);
@@ -3843,6 +3948,7 @@ fn wants(
         | WsEvent::PresenceMode {
             username,
             appear_offline: _,
+            seq: _,
         }
         | WsEvent::ReadUpdated {
             username,
@@ -4193,7 +4299,7 @@ mod tests {
         let mut stale = kept.clone();
         stale.content = "stale".to_string();
         let bob = state.hub.next_conn();
-        state.hub.set_viewing("bob", bob, None, Some("rchat"));
+        state.hub.set_online("bob", bob, &["rchat"]);
         state.hub.voice_join("bob", bob, "rchat", talk).await;
         let mut rx = state.hub.subscribe();
         let s = |v: &str| v.to_string();
@@ -4502,7 +4608,7 @@ mod tests {
         )
         .await;
         let conn = state.hub.next_conn();
-        state.hub.set_viewing("alice", conn, None, Some("a"));
+        state.hub.set_online("alice", conn, &["a"]);
         let mut alice = Access::new(Some(s("alice")), false, set(&["a"]));
         alice.viewing = Some(s("a"));
         let created = WsEvent::ServerCreated {
@@ -5946,7 +6052,7 @@ mod tests {
         let hub = Hub::new();
         let mut names: Vec<String> = (0..60).map(|i| format!("u{i:02}")).collect();
         for (i, name) in names.iter().enumerate() {
-            hub.set_viewing(name, 100 + i as u64, None, Some("rchat"));
+            hub.set_online(name, 100 + i as u64, &["rchat"]);
         }
         let mut me = viewer("aaron", false);
         me.view(&hub, 1, Some(s("rchat")));
@@ -5976,7 +6082,7 @@ mod tests {
         assert!(!online.iter().any(|n| n == "zed"));
         assert_eq!(online_count, 61);
         let mut early = viewer("ab", false);
-        early.shown = Some(s("rchat"));
+        early.announced = true;
         let Some(WsEvent::PresenceSnapshot {
             online,
             online_count,
@@ -6004,12 +6110,12 @@ mod tests {
     fn presence_events_carry_the_online_count() {
         let hub = Hub::new();
         let mut rx = hub.subscribe();
-        hub.set_viewing("ann", 1, None, Some("rchat"));
-        hub.set_viewing("bo", 2, None, Some("rchat"));
-        hub.set_viewing("bo", 3, None, Some("rchat"));
-        hub.set_viewing("bo", 2, Some("rchat"), None);
-        hub.set_viewing("bo", 3, Some("rchat"), None);
-        hub.set_viewing("ann", 1, Some("rchat"), Some("other"));
+        hub.set_online("ann", 1, &["rchat"]);
+        hub.set_online("bo", 2, &["rchat"]);
+        hub.set_online("bo", 3, &["rchat"]);
+        hub.set_online("bo", 2, &[] as &[&str]);
+        hub.set_online("bo", 3, &[] as &[&str]);
+        hub.set_online("ann", 1, &["other"]);
         let mut counts = Vec::new();
         while let Ok(ev) = rx.try_recv() {
             if let WsEvent::PresenceChanged {
@@ -6047,7 +6153,7 @@ mod tests {
             "\u{1f600}a",
         ];
         for (i, name) in names.iter().enumerate() {
-            hub.set_viewing(name, 10 + i as u64, None, Some("rchat"));
+            hub.set_online(name, 10 + i as u64, &["rchat"]);
         }
         assert_eq!(
             hub.online_after("rchat", None, 50),
@@ -6179,6 +6285,162 @@ mod tests {
         out
     }
 
+    fn presence_counts(rx: &mut broadcast::Receiver<WsEvent>) -> Vec<(String, String, bool, i64)> {
+        let mut out = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let WsEvent::PresenceChanged {
+                server,
+                username,
+                online,
+                online_count,
+            } = ev
+            {
+                out.push((server, username, online, online_count));
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn members_are_online_in_every_server_without_viewing_one() {
+        let hub = Hub::new();
+        let mut rx = hub.subscribe();
+        let mut a = Access::new(Some(s("alice")), false, set(&["one", "two"]));
+        a.sync(&hub, 1);
+        assert!(a.viewing.is_none());
+        assert!(hub.is_online("one", "alice") && hub.is_online("two", "alice"));
+        a.view(&hub, 1, Some(s("one")));
+        a.view(&hub, 1, None);
+        assert!(hub.is_online("one", "alice") && hub.is_online("two", "alice"));
+        let mut b = Access::new(Some(s("alice")), false, set(&["one", "two"]));
+        b.sync(&hub, 2);
+        assert_eq!(hub.online_count("one"), 1);
+        assert_eq!(
+            presence_counts(&mut rx),
+            vec![
+                (s("one"), s("alice"), true, 1),
+                (s("two"), s("alice"), true, 1)
+            ]
+        );
+        let _ = hub.drop_conn("alice", 1).await;
+        assert!(hub.is_online("one", "alice") && hub.is_online("two", "alice"));
+        assert!(presence_counts(&mut rx).is_empty());
+        let _ = hub.drop_conn("alice", 2).await;
+        let mut back = Access::new(Some(s("alice")), false, set(&["one", "two"]));
+        back.sync(&hub, 5);
+        let _ = hub.drop_conn("alice", 5).await;
+        assert!(hub.is_online("one", "alice") && presence_counts(&mut rx).is_empty());
+        hub.expire_presence();
+        assert!(!hub.is_online("one", "alice") && !hub.is_online("two", "alice"));
+        assert_eq!(
+            presence_counts(&mut rx),
+            vec![
+                (s("one"), s("alice"), false, 0),
+                (s("two"), s("alice"), false, 0)
+            ]
+        );
+        let mut lone = Access::new(Some(s("zoe")), false, HashSet::new());
+        lone.sync(&hub, 3);
+        assert!(lone.announced && hub.is_online_anywhere("zoe"));
+        assert!(presence_counts(&mut rx).is_empty());
+        let mut guest = Access::new(None, false, set(&["one"]));
+        guest.sync(&hub, 4);
+        assert!(!guest.announced && hub.online_set("one").is_empty());
+    }
+
+    #[tokio::test]
+    async fn online_counts_follow_membership() {
+        let hub = Hub::new();
+        let mut rx = hub.subscribe();
+        let mut alice = Access::new(Some(s("alice")), false, set(&["one"]));
+        let mut bob = Access::new(Some(s("bob")), false, set(&["one", "two"]));
+        alice.sync(&hub, 1);
+        bob.sync(&hub, 2);
+        assert_eq!((hub.online_count("one"), hub.online_count("two")), (2, 1));
+        let _ = presence_counts(&mut rx);
+        let mut step = |ev: WsEvent| {
+            hub.broadcast(ev.clone());
+            for (conn, access) in [(1, &mut alice), (2, &mut bob)] {
+                track(&ev, access);
+                access.sync(&hub, conn);
+            }
+            presence_counts(&mut rx)
+        };
+        assert_eq!(
+            step(joined("two", "alice")),
+            vec![(s("two"), s("alice"), true, 2)]
+        );
+        let left = WsEvent::MemberLeft {
+            server: s("two"),
+            username: s("alice"),
+        };
+        assert_eq!(step(left), vec![(s("two"), s("alice"), false, 1)]);
+        step(joined("two", "alice"));
+        let kicked = WsEvent::MemberKicked {
+            server: s("two"),
+            username: s("alice"),
+            banned: false,
+        };
+        assert_eq!(step(kicked), vec![(s("two"), s("alice"), false, 1)]);
+        let banned = WsEvent::MemberKicked {
+            server: s("one"),
+            username: s("bob"),
+            banned: true,
+        };
+        assert_eq!(step(banned), vec![(s("one"), s("bob"), false, 1)]);
+        assert!(step(renamed("two", "deux")).is_empty());
+        assert_eq!(hub.online_set("deux"), HashSet::from([s("bob")]));
+        assert!(hub.online_set("two").is_empty());
+        assert!(step(WsEvent::ServerDeleted { name: s("deux") }).is_empty());
+        assert_eq!(hub.online_count("deux"), 0);
+        let purged = WsEvent::MembersPurged {
+            server: s("one"),
+            usernames: vec![s("alice")],
+        };
+        assert_eq!(step(purged), vec![(s("one"), s("alice"), false, 0)]);
+        assert!(hub.online_set("one").is_empty());
+        assert!(bob.member_servers.is_empty() && bob.moved.is_empty());
+    }
+
+    #[tokio::test]
+    async fn membership_changes_post_deltas_not_full_lists() {
+        let (hub, mut out) = Hub::replicated();
+        let mut ops =
+            || -> Vec<Op> { std::iter::from_fn(|| out.try_recv().ok().map(|e| e.op)).collect() };
+        let many: HashSet<String> = (0..1500).map(|i| format!("s{i:04}")).collect();
+        let mut alice = Access::new(Some(s("alice")), false, many);
+        alice.sync(&hub, 1);
+        assert!(matches!(
+            ops().as_slice(),
+            [Op::Online { lit: true, cap: 20, scope: Some(Scope { servers, hidden: false, seq: 0 }), .. }]
+                if servers.len() == PRESENCE_SERVERS_MAX && servers[0] == "s0000"
+        ));
+        let mut step = |ev: WsEvent| {
+            track(&ev, &mut alice);
+            alice.sync(&hub, 1);
+        };
+        step(joined("elsewhere", "bob"));
+        step(renamed("other", "else"));
+        step(WsEvent::RolesChanged { server: s("s0001") });
+        assert!(ops().is_empty());
+        step(joined("new", "alice"));
+        step(WsEvent::MemberLeft {
+            server: s("s0002"),
+            username: s("alice"),
+        });
+        alice.set_hidden(&hub, 1, true, 0);
+        let posted = ops();
+        assert!(matches!(
+            posted.as_slice(),
+            [
+                Op::Rescope { add: a1, remove: r1, hidden: None, .. },
+                Op::Rescope { add: a2, remove: r2, hidden: None, .. },
+                Op::Rescope { add: a3, remove: r3, hidden: Some(true), .. },
+            ] if *a1 == [s("new")] && r1.is_empty() && a2.is_empty() && *r2 == [s("s0002")]
+                && a3.is_empty() && r3.is_empty()
+        ));
+    }
+
     fn viewer(user: &str, hidden: bool) -> Access {
         let mut access = Access::new(Some(s(user)), false, set(&["rchat", "other"]));
         access.hidden = hidden;
@@ -6190,47 +6452,49 @@ mod tests {
         let hub = Hub::new();
         let mut rx = hub.subscribe();
         let (mut a, mut b) = (viewer("alice", false), viewer("alice", false));
-        a.view(&hub, 1, Some(s("rchat")));
-        b.view(&hub, 2, Some(s("rchat")));
-        assert!(hub.is_online("rchat", "alice"));
-        assert_eq!(hub.online_count("rchat"), 1);
-        assert_eq!(presence_events(&mut rx), vec![(s("rchat"), true)]);
-        a.set_hidden(&hub, 1, true);
-        assert!(hub.is_online("rchat", "alice"));
-        b.set_hidden(&hub, 2, true);
-        assert!(!hub.is_online("rchat", "alice"));
-        assert_eq!(hub.online_count("rchat"), 0);
-        assert!(hub.online_set("rchat").is_empty());
-        assert_eq!(presence_events(&mut rx), vec![(s("rchat"), false)]);
-        let mut c = viewer("alice", true);
-        c.view(&hub, 3, Some(s("rchat")));
-        a.view(&hub, 1, Some(s("other")));
-        b.set_hidden(&hub, 2, true);
-        assert!(!hub.is_online("rchat", "alice"));
-        assert!(!hub.is_online("other", "alice"));
-        assert!(presence_events(&mut rx).is_empty());
-        a.set_hidden(&hub, 1, false);
-        assert!(hub.is_online("other", "alice"));
-        assert!(!hub.is_online("rchat", "alice"));
-        c.set_hidden(&hub, 3, false);
-        b.set_hidden(&hub, 2, false);
-        assert!(hub.is_online("rchat", "alice"));
+        a.sync(&hub, 1);
+        b.sync(&hub, 2);
+        assert!(hub.is_online("rchat", "alice") && hub.is_online("other", "alice"));
         assert_eq!(hub.online_count("rchat"), 1);
         assert_eq!(
             presence_events(&mut rx),
             vec![(s("other"), true), (s("rchat"), true)]
         );
-        a.set_hidden(&hub, 1, true);
-        let _ = hub.drop_conn("alice", 1).await;
-        let _ = hub.drop_conn("alice", 3).await;
-        assert!(hub.is_online("rchat", "alice"));
-        let _ = hub.drop_conn("alice", 2).await;
-        assert!(!hub.is_online("rchat", "alice"));
-        assert!(!hub.is_online("other", "alice"));
+        a.set_hidden(&hub, 1, true, 0);
+        assert!(!hub.is_online("rchat", "alice") && !hub.is_online("other", "alice"));
+        b.set_hidden(&hub, 2, true, 0);
+        assert_eq!(hub.online_count("rchat"), 0);
+        assert!(hub.online_set("rchat").is_empty());
         assert_eq!(
             presence_events(&mut rx),
             vec![(s("other"), false), (s("rchat"), false)]
         );
+        let mut c = viewer("alice", true);
+        c.sync(&hub, 3);
+        c.view(&hub, 3, Some(s("rchat")));
+        b.set_hidden(&hub, 2, true, 0);
+        assert!(!hub.is_online("rchat", "alice") && !hub.is_online("other", "alice"));
+        assert!(presence_events(&mut rx).is_empty());
+        a.set_hidden(&hub, 1, false, 0);
+        assert!(hub.is_online("other", "alice") && hub.is_online("rchat", "alice"));
+        c.set_hidden(&hub, 3, false, 0);
+        b.set_hidden(&hub, 2, false, 0);
+        assert_eq!(hub.online_count("rchat"), 1);
+        assert_eq!(
+            presence_events(&mut rx),
+            vec![(s("other"), true), (s("rchat"), true)]
+        );
+        a.set_hidden(&hub, 1, true, 0);
+        assert!(!hub.is_online("rchat", "alice") && !hub.is_online("other", "alice"));
+        assert_eq!(
+            presence_events(&mut rx),
+            vec![(s("other"), false), (s("rchat"), false)]
+        );
+        let _ = hub.drop_conn("alice", 1).await;
+        let _ = hub.drop_conn("alice", 3).await;
+        let _ = hub.drop_conn("alice", 2).await;
+        hub.expire_presence();
+        assert!(!hub.is_online("rchat", "alice") && presence_events(&mut rx).is_empty());
     }
 
     async fn lagged_presence_state(tag: &str) -> (AppState, std::path::PathBuf) {
@@ -6263,11 +6527,17 @@ mod tests {
         assert!(a.refresh(&state, 1).await);
         assert!(a.hidden);
         assert_eq!(a.viewing, None);
+        hub.expire_presence();
         assert!(!hub.is_online("chat", "alice"));
         assert_eq!(presence_events(&mut rx), vec![(s("chat"), false)]);
-        a.set_hidden(&hub, 1, false);
+        a.set_hidden(&hub, 1, false, 0);
+        assert!(hub.is_online("chat", "alice") && !hub.is_online("rchat", "alice"));
         let _ = hub.drop_conn("alice", 1).await;
-        assert!(presence_events(&mut rx).is_empty());
+        hub.expire_presence();
+        assert_eq!(
+            presence_events(&mut rx),
+            vec![(s("chat"), true), (s("chat"), false)]
+        );
         assert!(hub.online_set("chat").is_empty() && hub.online_set("rchat").is_empty());
         crate::api::test_util::done(state, path).await;
     }
@@ -6284,11 +6554,13 @@ mod tests {
         assert!(hub.is_online("chat", "alice"));
         exec(&state.db, "UPDATE users SET appear_offline = 1").await;
         assert!(a.refresh(&state, 1).await);
+        hub.expire_presence();
         assert!(!hub.is_online("chat", "alice"));
         exec(&state.db, "UPDATE users SET appear_offline = 0").await;
         assert!(a.refresh(&state, 1).await);
         assert!(hub.is_online("chat", "alice"));
         let _ = hub.drop_conn("alice", 1).await;
+        hub.expire_presence();
         assert!(!hub.is_online("chat", "alice"));
         crate::api::test_util::done(state, path).await;
     }
@@ -6300,6 +6572,7 @@ mod tests {
         a.view(&hub, 1, Some(s("rchat")));
         hub.broadcast(renamed("rchat", "chat"));
         let _ = hub.drop_conn("alice", 1).await;
+        hub.expire_presence();
         assert!(!hub.is_online("chat", "alice"));
         assert!(hub.online_set("chat").is_empty());
     }
@@ -6308,23 +6581,25 @@ mod tests {
     async fn force_offline_does_not_steal_other_connections() {
         let hub = Hub::new();
         let (mut a, mut b) = (viewer("alice", false), viewer("alice", false));
-        a.view(&hub, 1, Some(s("rchat")));
+        a.sync(&hub, 1);
         hub.force_offline("rchat", "alice");
-        assert!(!hub.is_online("rchat", "alice"));
-        b.view(&hub, 2, Some(s("rchat")));
-        a.view(&hub, 1, None);
+        assert!(!hub.is_online("rchat", "alice") && hub.is_online("other", "alice"));
+        b.sync(&hub, 2);
         assert!(hub.is_online("rchat", "alice"));
-        a.view(&hub, 1, Some(s("rchat")));
         let _ = hub.drop_conn("alice", 2).await;
-        assert!(hub.is_online("rchat", "alice"));
+        assert!(hub.is_online("rchat", "alice") && hub.is_online("other", "alice"));
         let mut rx = hub.subscribe();
         hub.broadcast(WsEvent::Banned {
             username: s("alice"),
         });
-        assert!(!hub.is_online("rchat", "alice"));
+        assert!(!hub.is_online("other", "alice"));
         let _ = hub.drop_conn("alice", 1).await;
-        assert_eq!(presence_events(&mut rx), vec![(s("rchat"), false)]);
-        assert!(hub.online_set("rchat").is_empty());
+        hub.expire_presence();
+        assert_eq!(
+            presence_events(&mut rx),
+            vec![(s("other"), false), (s("rchat"), false)]
+        );
+        assert!(hub.online_set("rchat").is_empty() && hub.online_set("other").is_empty());
     }
 
     #[test]
@@ -6332,6 +6607,7 @@ mod tests {
         let ev = WsEvent::PresenceMode {
             username: s("alice"),
             appear_offline: true,
+            seq: 0,
         };
         let none = HashSet::new();
         assert!(wants(&ev, Some("alice"), false, &none, &none));
@@ -6350,10 +6626,11 @@ mod tests {
             if let WsEvent::PresenceMode {
                 username,
                 appear_offline,
+                seq,
             } = ev
                 && access.user.as_deref() == Some(username.as_str())
             {
-                access.set_hidden(hub, conn, appear_offline);
+                access.set_hidden(hub, conn, appear_offline, seq);
             }
         }
     }
@@ -6373,6 +6650,7 @@ mod tests {
         a.broadcast(WsEvent::PresenceMode {
             username: s("alice"),
             appear_offline: true,
+            seq: 1,
         });
         a.flush().await;
         apply_modes(&a, &mut rx_a, ca, &mut on_a);
@@ -6386,6 +6664,7 @@ mod tests {
         b.broadcast(WsEvent::PresenceMode {
             username: s("alice"),
             appear_offline: false,
+            seq: 2,
         });
         b.flush().await;
         apply_modes(&a, &mut rx_a, ca, &mut on_a);
@@ -6394,6 +6673,51 @@ mod tests {
         b.flush().await;
         assert!(a.is_online("rchat", "alice") && a.is_online("other", "alice"));
         assert!(b.is_online("rchat", "alice") && b.is_online("other", "alice"));
+    }
+
+    // Review I1: a socket reads `appear_offline` before alice turns it on and announces after
+    // the change, without ever seeing the event. She stays hidden on every node.
+    #[tokio::test]
+    async fn a_socket_with_a_stale_appear_offline_can_not_unhide() {
+        let bus = crate::hub::tests::MemBus::new();
+        let (a, b) = (bus.join(), bus.join());
+        let mut rx_a = a.subscribe();
+        let (ca, cb) = (a.next_conn(), b.next_conn());
+        let mut on_a = viewer("alice", false);
+        on_a.view(&a, ca, Some(s("rchat")));
+        a.flush().await;
+        b.flush().await;
+        assert!(b.is_online("rchat", "alice"));
+        let mut late = viewer("alice", false);
+        late.take_mode((false, 0));
+        a.broadcast(WsEvent::PresenceMode {
+            username: s("alice"),
+            appear_offline: true,
+            seq: 1,
+        });
+        a.flush().await;
+        apply_modes(&a, &mut rx_a, ca, &mut on_a);
+        a.flush().await;
+        b.flush().await;
+        assert!(!a.is_online("rchat", "alice") && !b.is_online("rchat", "alice"));
+        late.view(&b, cb, Some(s("rchat")));
+        b.flush().await;
+        a.flush().await;
+        assert!(!a.is_online("rchat", "alice") && !b.is_online("rchat", "alice"));
+        assert!(!b.is_online("other", "alice") && a.online_set("rchat").is_empty());
+        // An event older than what the connection read is ignored by the connection too.
+        late.take_mode((true, 1));
+        late.set_hidden(&b, cb, false, 0);
+        assert!(late.hidden);
+        // A newer value shows her again.
+        b.broadcast(WsEvent::PresenceMode {
+            username: s("alice"),
+            appear_offline: false,
+            seq: 2,
+        });
+        b.flush().await;
+        a.flush().await;
+        assert!(a.is_online("rchat", "alice") && b.is_online("rchat", "alice"));
     }
 
     #[tokio::test]
@@ -6412,9 +6736,10 @@ mod tests {
         assert!(a.hold(sqlx::Error::PoolClosed, Instant::now()));
         a.announce(&state, 1).await;
         assert!(a.dark);
+        hub.expire_presence();
         assert!(!hub.is_online("chat", "alice"));
         a.view(&hub, 1, Some(s("chat")));
-        a.set_hidden(&hub, 1, false);
+        a.set_hidden(&hub, 1, false, 0);
         assert!(!hub.is_online("chat", "alice"));
         let mut hosted = 0;
         while let Ok(ev) = rx.try_recv() {
@@ -6458,6 +6783,7 @@ mod tests {
         let mode = |user: &str, appear_offline| WsEvent::PresenceMode {
             username: s(user),
             appear_offline,
+            seq: 0,
         };
         assert!(matches!(
             current(&state, mode("alice", false)).await,
@@ -6527,6 +6853,7 @@ mod tests {
             WsEvent::PresenceMode {
                 username: s("tia"),
                 appear_offline: true,
+                seq: 0,
             },
             WsEvent::PresenceChanged {
                 server: s("open"),
@@ -6843,6 +7170,7 @@ mod tests {
                     WsEvent::PresenceMode {
                         username: s(user),
                         appear_offline: true,
+                        seq: 0,
                     },
                     WsEvent::ReadUpdated {
                         username: s(user),

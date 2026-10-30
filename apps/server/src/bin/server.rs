@@ -85,11 +85,20 @@ async fn main() -> anyhow::Result<()> {
         }
         None => None,
     };
+    hub.set_limits(config.ws_limits());
     let state = AppState::new(db, hub, config.s3()?, bus, instance);
     rust_next::ws::spawn_aftermath(&state);
     if let Some(bus) = &state.bus {
         bus.spawn_workers(&state);
     }
+    let ticks = state.hub.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            ticks.tick();
+        }
+    });
     let touches = state.db.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));

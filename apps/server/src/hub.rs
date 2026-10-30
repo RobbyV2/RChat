@@ -12,6 +12,15 @@ use crate::fanout::{Channels, Inbox, Router, Topic};
 use crate::ws::{CallKind, CallPeer, CallPhase, WsEvent};
 
 pub const DEAD_AFTER_MS: i64 = 30_000;
+pub const PRESENCE_GRACE_MS: i64 = 10_000;
+pub const PRESENCE_SERVERS_MAX: usize = 1000;
+// Coming back online (after appear offline, or a dark or closed spell) is allowed
+// `SHOW_BURST` times at once, then once per `SHOW_EVERY_MS`; a show past that waits and the
+// state at the end wins. Going offline by appear offline is never delayed.
+pub const SHOW_BURST: i64 = 4;
+pub const SHOW_EVERY_MS: i64 = PRESENCE_GRACE_MS;
+const REANNOUNCE_EVERY: Duration = Duration::from_secs(10);
+const CONNECT_USERS_MAX: usize = 10_000;
 const GAPS_KEPT: usize = 32;
 const OUT_CAP: usize = 10_000;
 const PENDING_CAP: usize = 50_000;
@@ -145,16 +154,90 @@ struct Peer {
 
 #[derive(Clone, Default, Debug, PartialEq)]
 struct Index {
-    views: BTreeMap<u64, BTreeSet<String>>,
+    presence: BTreeMap<String, BTreeSet<String>>,
+    scoped: BTreeMap<String, BTreeSet<String>>,
+    lingering: BTreeSet<(i64, String)>,
+    waking: BTreeSet<(i64, String)>,
     user_rooms: BTreeMap<String, BTreeSet<i64>>,
     server_rooms: BTreeMap<String, BTreeSet<i64>>,
     user_calls: BTreeMap<String, BTreeSet<i64>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+struct Tab {
+    lit: bool,
+    at: i64,
+}
+
+// What a signed-in user shows: their member servers and appear-offline flag once, shared by
+// all their open connections. `up` while they are in those servers' presence; `gone` is when
+// they stopped being visible, kept online until the grace ends.
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct Seen {
+    servers: BTreeSet<String>,
+    #[serde(skip_serializing_if = "is_false")]
+    hidden: bool,
+    // The version (`users.presence_seq`) of `hidden`; an older value never replaces it.
+    #[serde(skip_serializing_if = "is_zero_ms")]
+    mode: i64,
+    conns: BTreeMap<u64, Tab>,
+    #[serde(skip_serializing_if = "is_false")]
+    up: bool,
+    #[serde(skip_serializing_if = "is_zero_ms")]
+    gone: i64,
+    // Rate state (GCRA theoretical arrival times, ms): of coming online, and of new
+    // connections across the cluster. `wake` is when a show held back by the rate is due.
+    #[serde(skip_serializing_if = "is_zero_ms")]
+    shows: i64,
+    #[serde(skip_serializing_if = "is_zero_ms")]
+    wake: i64,
+    #[serde(skip_serializing_if = "is_zero_ms")]
+    opened: i64,
+}
+
+impl Seen {
+    fn visible(&self) -> bool {
+        !self.hidden && self.conns.values().any(|tab| tab.lit)
+    }
+
+    // Last writer wins by version: a connection that read the setting before a change can not
+    // undo it.
+    fn take_mode(&mut self, hidden: bool, seq: i64) {
+        if seq >= self.mode {
+            self.mode = seq;
+            self.hidden = hidden;
+        }
+    }
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+fn is_zero_ms(t: &i64) -> bool {
+    *t == 0
+}
+
+/// What a connection announces for its user: their member servers (the first
+/// `PRESENCE_SERVERS_MAX` by name are kept) and whether they appear offline, with the version
+/// of that setting (`users.presence_seq`) it read.
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Scope {
+    pub servers: Vec<String>,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default, skip_serializing_if = "is_zero_ms")]
+    pub seq: i64,
+}
+
+// Older nodes wrote no `seen` map, only `presence` with the connections viewing each server.
+// Those are taken as open, and the restoring node asks every node to announce again.
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct Wire {
     presence: BTreeMap<String, BTreeMap<String, BTreeSet<u64>>>,
+    seen: Option<BTreeMap<String, Seen>>,
     rooms: BTreeMap<i64, Room>,
     calls: BTreeMap<i64, Call>,
     p2p: BTreeMap<String, BTreeMap<u64, P2pHost>>,
@@ -165,12 +248,14 @@ struct Wire {
 #[derive(Default, Serialize, Deserialize)]
 #[serde(from = "Wire")]
 pub struct Replica {
-    presence: BTreeMap<String, BTreeMap<String, BTreeSet<u64>>>,
+    seen: BTreeMap<String, Seen>,
     rooms: BTreeMap<i64, Room>,
     calls: BTreeMap<i64, Call>,
     p2p: BTreeMap<String, BTreeMap<u64, P2pHost>>,
     peers: BTreeMap<u32, Peer>,
     clock: i64,
+    #[serde(skip)]
+    legacy: bool,
     #[serde(skip)]
     index: Index,
 }
@@ -179,19 +264,36 @@ impl From<Wire> for Replica {
     fn from(wire: Wire) -> Replica {
         let Wire {
             presence,
+            seen,
             rooms,
             calls,
             p2p,
             peers,
             clock,
         } = wire;
+        let legacy = seen.is_none();
+        let seen = seen.unwrap_or_else(|| {
+            let mut seen: BTreeMap<String, Seen> = BTreeMap::new();
+            for (server, users) in presence {
+                for (user, conns) in users {
+                    let entry = seen.entry(user).or_default();
+                    entry.servers.insert(server.clone());
+                    entry.up = true;
+                    for conn in conns {
+                        entry.conns.insert(conn, Tab { lit: true, at: 0 });
+                    }
+                }
+            }
+            seen
+        });
         let mut replica = Replica {
-            presence,
+            seen,
             rooms,
             calls,
             p2p,
             peers,
             clock,
+            legacy,
             index: Index::default(),
         };
         replica.reindex();
@@ -224,6 +326,31 @@ pub enum Op {
         conn: u64,
         server: Option<String>,
     },
+    Online {
+        user: String,
+        conn: u64,
+        #[serde(default = "yes")]
+        lit: bool,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        cap: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<Scope>,
+        // The poster's per-user connect interval (ms), counted across the cluster.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        every: usize,
+    },
+    Rescope {
+        user: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        add: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        remove: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hidden: Option<bool>,
+        #[serde(default, skip_serializing_if = "is_zero_ms")]
+        seq: i64,
+    },
+    Reannounce,
     ForceOffline {
         server: String,
         user: String,
@@ -289,6 +416,10 @@ fn is_zero(n: &usize) -> bool {
     *n == 0
 }
 
+fn yes() -> bool {
+    true
+}
+
 impl Op {
     fn repostable(&self) -> bool {
         match self {
@@ -309,6 +440,22 @@ impl Op {
                 conn: _,
                 server: _,
             }
+            | Op::Online {
+                user: _,
+                conn: _,
+                lit: _,
+                cap: _,
+                scope: _,
+                every: _,
+            }
+            | Op::Rescope {
+                user: _,
+                add: _,
+                remove: _,
+                hidden: _,
+                seq: _,
+            }
+            | Op::Reannounce
             | Op::SetP2p {
                 user: _,
                 conn: _,
@@ -414,6 +561,7 @@ pub struct Applied {
     pub outcome: Outcome,
     pub purge: Purge,
     pub purged: Vec<u32>,
+    pub evicted: Vec<u64>,
 }
 
 fn room_state(channel_id: i64, room: &Room) -> WsEvent {
@@ -488,23 +636,31 @@ fn presence_ev(server: &str, username: &str, online: bool, online_count: usize) 
 impl Replica {
     fn detached(&self) -> Replica {
         Replica {
-            presence: self.presence.clone(),
+            seen: self.seen.clone(),
             rooms: self.rooms.clone(),
             calls: self.calls.clone(),
             p2p: self.p2p.clone(),
             peers: self.peers.clone(),
             clock: self.clock,
+            legacy: self.legacy,
             index: Index::default(),
         }
     }
 
     fn reindex(&mut self) {
         let mut index = Index::default();
-        for (server, users) in &self.presence {
-            for conns in users.values() {
-                for conn in conns {
-                    link(&mut index.views, *conn, server.clone());
+        for (user, seen) in &self.seen {
+            for server in &seen.servers {
+                link(&mut index.scoped, server.clone(), user.clone());
+                if seen.up {
+                    link(&mut index.presence, server.clone(), user.clone());
                 }
+            }
+            if seen.gone > 0 {
+                index.lingering.insert((seen.gone, user.clone()));
+            }
+            if seen.wake > 0 {
+                index.waking.insert((seen.wake, user.clone()));
             }
         }
         for (cid, room) in &self.rooms {
@@ -630,84 +786,287 @@ impl Replica {
         })
     }
 
-    fn unview(&mut self, server: &str, user: &str, conn: u64, evs: &mut Vec<WsEvent>) {
-        if let Some(users) = self.presence.get_mut(server) {
-            let mut emptied = false;
-            if let Some(conns) = users.get_mut(user)
-                && conns.remove(&conn)
-            {
-                unlink(&mut self.index.views, &conn, server);
-                emptied = conns.is_empty();
-            }
-            if emptied {
-                users.remove(user);
-                evs.push(presence_ev(server, user, false, users.len()));
-            }
+    fn show_in(&mut self, server: &str, user: &str, evs: &mut Vec<WsEvent>) {
+        let users = self.index.presence.entry(server.to_string()).or_default();
+        if users.insert(user.to_string()) {
+            evs.push(presence_ev(server, user, true, users.len()));
+        }
+    }
+
+    fn unshow(&mut self, server: &str, user: &str, evs: &mut Vec<WsEvent>) {
+        if let Some(users) = self.index.presence.get_mut(server)
+            && users.remove(user)
+        {
+            evs.push(presence_ev(server, user, false, users.len()));
             if users.is_empty() {
-                self.presence.remove(server);
+                self.index.presence.remove(server);
             }
         }
     }
 
-    fn view(&mut self, server: &str, user: &str, conn: u64, evs: &mut Vec<WsEvent>) {
-        let conns = self
-            .presence
-            .entry(server.to_string())
-            .or_default()
-            .entry(user.to_string())
-            .or_default();
-        let fresh = conns.is_empty();
-        if conns.insert(conn) {
-            link(&mut self.index.views, conn, server.to_string());
+    fn set_gone(&mut self, user: &str, gone: i64) {
+        let Some(seen) = self.seen.get_mut(user) else {
+            return;
+        };
+        if seen.gone == gone {
+            return;
         }
-        if fresh {
-            let count = self.presence.get(server).map_or(0, BTreeMap::len);
-            evs.push(presence_ev(server, user, true, count));
+        if seen.gone > 0 {
+            self.index.lingering.remove(&(seen.gone, user.to_string()));
+        }
+        seen.gone = gone;
+        if gone > 0 {
+            self.index.lingering.insert((gone, user.to_string()));
         }
     }
 
-    fn drop_presence(&mut self, server: &str, user: &str, evs: &mut Vec<WsEvent>) {
-        let Some(users) = self.presence.get_mut(server) else {
+    fn set_wake(&mut self, user: &str, wake: i64) {
+        let Some(seen) = self.seen.get_mut(user) else {
             return;
         };
-        let Some(conns) = users.remove(user) else {
+        if seen.wake == wake {
             return;
-        };
-        let count = users.len();
-        if users.is_empty() {
-            self.presence.remove(server);
         }
-        for conn in &conns {
-            unlink(&mut self.index.views, conn, server);
+        if seen.wake > 0 {
+            self.index.waking.remove(&(seen.wake, user.to_string()));
         }
-        evs.push(presence_ev(server, user, false, count));
+        seen.wake = wake;
+        if wake > 0 {
+            self.index.waking.insert((wake, user.to_string()));
+        }
     }
 
-    fn present(&mut self, user: &str, conn: u64, server: Option<&str>, evs: &mut Vec<WsEvent>) {
-        let stale: Vec<String> = self
-            .index
-            .views
-            .get(&conn)
-            .map(|servers| {
-                servers
-                    .iter()
-                    .filter(|s| {
-                        Some(s.as_str()) != server
-                            && self
-                                .presence
-                                .get(*s)
-                                .and_then(|users| users.get(user))
-                                .is_some_and(|c| c.contains(&conn))
-                    })
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default();
-        for s in stale {
-            self.unview(&s, user, conn, evs);
+    // Past `PRESENCE_SERVERS_MAX`, a server joins only in place of the last one by name.
+    fn scope_add(&mut self, user: &str, server: &str, evs: &mut Vec<WsEvent>) {
+        let Some(seen) = self.seen.get(user) else {
+            return;
+        };
+        if seen.servers.contains(server) {
+            return;
         }
-        if let Some(s) = server {
-            self.view(s, user, conn, evs);
+        if seen.servers.len() >= PRESENCE_SERVERS_MAX {
+            match seen.servers.last() {
+                Some(last) if server < last.as_str() => {
+                    let last = last.clone();
+                    self.scope_remove(user, &last, evs);
+                }
+                _ => return,
+            }
+        }
+        let Some(seen) = self.seen.get_mut(user) else {
+            return;
+        };
+        seen.servers.insert(server.to_string());
+        let shown = seen.up && !seen.hidden;
+        link(&mut self.index.scoped, server.to_string(), user.to_string());
+        if shown {
+            self.show_in(server, user, evs);
+        }
+    }
+
+    fn scope_remove(&mut self, user: &str, server: &str, evs: &mut Vec<WsEvent>) {
+        let Some(seen) = self.seen.get_mut(user) else {
+            return;
+        };
+        if !seen.servers.remove(server) {
+            return;
+        }
+        unlink(&mut self.index.scoped, server, user);
+        self.unshow(server, user, evs);
+    }
+
+    fn rescope(&mut self, user: &str, scope: Scope, evs: &mut Vec<WsEvent>) {
+        let Scope {
+            mut servers,
+            hidden,
+            seq,
+        } = scope;
+        servers.sort_unstable();
+        servers.dedup();
+        servers.truncate(PRESENCE_SERVERS_MAX);
+        let Some(seen) = self.seen.get_mut(user) else {
+            return;
+        };
+        seen.take_mode(hidden, seq);
+        let want: BTreeSet<String> = servers.into_iter().collect();
+        let stale: Vec<String> = seen.servers.difference(&want).cloned().collect();
+        let fresh: Vec<String> = want.difference(&seen.servers).cloned().collect();
+        for server in stale {
+            self.scope_remove(user, &server, evs);
+        }
+        for server in fresh {
+            self.scope_add(user, &server, evs);
+        }
+    }
+
+    // Shows `user` when they become visible, at once unless they came online too often
+    // lately (`SHOW_BURST`), then when the rate allows (`expire`). Appear offline hides them at
+    // once. Otherwise, when they stop being visible (last connection closed, dark), they stay
+    // online until `PRESENCE_GRACE_MS` after `t`, so a reconnect inside the grace emits nothing.
+    fn settle_user(&mut self, user: &str, t: i64, evs: &mut Vec<WsEvent>) {
+        let Some(seen) = self.seen.get_mut(user) else {
+            return;
+        };
+        match (seen.visible(), seen.up) {
+            (true, true) => {
+                self.set_gone(user, 0);
+                self.set_wake(user, 0);
+            }
+            (true, false) => {
+                let due = seen.shows.saturating_sub((SHOW_BURST - 1) * SHOW_EVERY_MS);
+                if due > t {
+                    self.set_wake(user, due);
+                    return;
+                }
+                seen.shows = seen.shows.max(t).saturating_add(SHOW_EVERY_MS);
+                seen.up = true;
+                let servers: Vec<String> = seen.servers.iter().cloned().collect();
+                self.set_wake(user, 0);
+                for server in servers {
+                    self.show_in(&server, user, evs);
+                }
+            }
+            (false, true) if seen.hidden => self.hide_now(user, t, evs),
+            (false, true) if seen.gone == 0 => self.set_gone(user, t.max(1)),
+            (false, true) => {}
+            (false, false) if seen.conns.is_empty() => self.retire(user, t, evs),
+            (false, false) => self.set_wake(user, 0),
+        }
+    }
+
+    fn hide_now(&mut self, user: &str, t: i64, evs: &mut Vec<WsEvent>) {
+        self.set_gone(user, 0);
+        let Some(seen) = self.seen.get_mut(user) else {
+            return;
+        };
+        let was_up = std::mem::take(&mut seen.up);
+        let empty = seen.conns.is_empty();
+        if was_up {
+            let servers: Vec<String> = seen.servers.iter().cloned().collect();
+            for server in servers {
+                self.unshow(&server, user, evs);
+            }
+        }
+        if empty {
+            self.retire(user, t, evs);
+        }
+    }
+
+    // A user with no connections left is forgotten, except for their rate state and
+    // appear-offline version while the rates have not drained: reconnecting then still counts
+    // against the cluster-wide limits. `expire` forgets them at `wake`.
+    fn retire(&mut self, user: &str, t: i64, evs: &mut Vec<WsEvent>) {
+        let Some(seen) = self.seen.get(user) else {
+            return;
+        };
+        let drained = seen.opened.max(seen.shows);
+        let rates = Seen {
+            hidden: seen.hidden,
+            mode: seen.mode,
+            shows: seen.shows,
+            opened: seen.opened,
+            ..Seen::default()
+        };
+        self.forget(user, evs);
+        if drained > t {
+            self.seen.insert(user.to_string(), rates);
+            self.set_wake(user, drained);
+        }
+    }
+
+    fn forget(&mut self, user: &str, evs: &mut Vec<WsEvent>) {
+        self.set_gone(user, 0);
+        self.set_wake(user, 0);
+        let Some(seen) = self.seen.remove(user) else {
+            return;
+        };
+        for server in &seen.servers {
+            unlink(&mut self.index.scoped, server.as_str(), user);
+            if seen.up {
+                self.unshow(server, user, evs);
+            }
+        }
+    }
+
+    fn expire(&mut self, t: i64, evs: &mut Vec<WsEvent>) {
+        while let Some((wake, user)) = self.index.waking.first().cloned()
+            && wake <= t
+        {
+            self.set_wake(&user, 0);
+            self.settle_user(&user, t, evs);
+        }
+        while let Some((gone, user)) = self.index.lingering.first().cloned()
+            && t - gone >= PRESENCE_GRACE_MS
+        {
+            self.hide_now(&user, t, evs);
+        }
+    }
+
+    // An open connection of `user`, `lit` unless it is waiting for the database. With `cap`,
+    // the user's oldest connections past it are closed.
+    #[allow(clippy::too_many_arguments)]
+    fn connect(
+        &mut self,
+        user: &str,
+        conn: u64,
+        lit: bool,
+        cap: usize,
+        scope: Option<Scope>,
+        t: i64,
+        evs: &mut Vec<WsEvent>,
+    ) -> Vec<u64> {
+        let seen = self.seen.entry(user.to_string()).or_default();
+        seen.conns.entry(conn).or_insert(Tab { lit, at: t }).lit = lit;
+        let mut evicted = Vec::new();
+        if cap > 0 && seen.conns.len() > cap {
+            let mut oldest: Vec<(i64, u64)> = seen
+                .conns
+                .iter()
+                .filter(|(c, _)| **c != conn)
+                .map(|(c, tab)| (tab.at, *c))
+                .collect();
+            oldest.sort_unstable();
+            for (_, c) in oldest.into_iter().take(seen.conns.len() - cap) {
+                seen.conns.remove(&c);
+                evicted.push(c);
+            }
+        }
+        if let Some(scope) = scope {
+            self.rescope(user, scope, evs);
+        }
+        self.settle_user(user, t, evs);
+        evicted
+    }
+
+    fn disconnect(&mut self, user: &str, conn: u64, t: i64, evs: &mut Vec<WsEvent>) {
+        if let Some(seen) = self.seen.get_mut(user)
+            && seen.conns.remove(&conn).is_some()
+        {
+            self.settle_user(user, t, evs);
+        }
+    }
+
+    // `Viewing` and `Present` come from nodes that predate site-wide presence: the connection
+    // views one server, or none and is offline.
+    fn legacy_view(
+        &mut self,
+        user: &str,
+        conn: u64,
+        server: Option<&str>,
+        t: i64,
+        evs: &mut Vec<WsEvent>,
+    ) {
+        match server {
+            Some(s) => {
+                let seen = self.seen.entry(user.to_string()).or_default();
+                seen.conns
+                    .entry(conn)
+                    .or_insert(Tab { lit: true, at: t })
+                    .lit = true;
+                self.scope_add(user, s, evs);
+                self.settle_user(user, t, evs);
+            }
+            None => self.disconnect(user, conn, t, evs),
         }
     }
 
@@ -733,21 +1092,25 @@ impl Replica {
     }
 
     fn rename_server(&mut self, old_name: &str, new_name: &str) {
-        if let Some(moved) = self.presence.remove(old_name) {
-            if let Some(replaced) = self.presence.insert(new_name.to_string(), moved) {
-                for conn in replaced.values().flatten() {
-                    unlink(&mut self.index.views, conn, new_name);
+        if let Some(users) = self.index.scoped.remove(old_name) {
+            for user in &users {
+                if let Some(seen) = self.seen.get_mut(user) {
+                    seen.servers.remove(old_name);
+                    seen.servers.insert(new_name.to_string());
                 }
             }
-            let conns: Vec<u64> = self.presence[new_name]
-                .values()
-                .flatten()
-                .copied()
-                .collect();
-            for conn in conns {
-                unlink(&mut self.index.views, &conn, old_name);
-                link(&mut self.index.views, conn, new_name.to_string());
-            }
+            self.index
+                .scoped
+                .entry(new_name.to_string())
+                .or_default()
+                .extend(users);
+        }
+        if let Some(users) = self.index.presence.remove(old_name) {
+            self.index
+                .presence
+                .entry(new_name.to_string())
+                .or_default()
+                .extend(users);
         }
         if let Some(cids) = self.index.server_rooms.remove(old_name) {
             for cid in &cids {
@@ -763,17 +1126,19 @@ impl Replica {
         }
     }
 
-    fn side_effects(&mut self, ev: &WsEvent, t: i64, extra: &mut Vec<WsEvent>) {
+    fn side_effects(&mut self, ev: &WsEvent, t_ms: i64, extra: &mut Vec<WsEvent>) {
+        let t = t_ms.div_euclid(1000);
         match ev {
             WsEvent::ServerRenamed { old_name, server } => {
                 self.rename_server(old_name, &server.name);
             }
             WsEvent::ServerDeleted { name } => {
-                if let Some(users) = self.presence.remove(name) {
-                    for conn in users.values().flatten() {
-                        unlink(&mut self.index.views, conn, name.as_str());
+                for user in self.index.scoped.remove(name).unwrap_or_default() {
+                    if let Some(seen) = self.seen.get_mut(&user) {
+                        seen.servers.remove(name);
                     }
                 }
+                self.index.presence.remove(name);
                 let cids: Vec<i64> = self
                     .index
                     .server_rooms
@@ -796,23 +1161,40 @@ impl Replica {
                 server,
                 username,
                 banned: _,
-            } => self.kick(server, username, t, extra),
+            } => {
+                self.kick(server, username, t, extra);
+                self.scope_remove(username, server, extra);
+            }
+            WsEvent::ServerBanned { server, username } => {
+                self.scope_remove(username, server, extra);
+            }
             WsEvent::MembersPurged { server, usernames } => {
                 for username in usernames {
                     self.kick(server, username, t, extra);
-                    self.drop_presence(server, username, extra);
+                    self.scope_remove(username, server, extra);
                 }
             }
-            WsEvent::Banned { username } => {
-                let servers: Vec<String> = self
-                    .presence
-                    .iter()
-                    .filter(|(_, users)| users.contains_key(username))
-                    .map(|(s, _)| s.clone())
-                    .collect();
-                for server in servers {
-                    self.drop_presence(&server, username, extra);
+            WsEvent::MemberJoined { server, member } => {
+                self.scope_add(&member.user.username, server, extra);
+            }
+            WsEvent::ServerCreated { server } => {
+                if let Some(creator) = &server.creator {
+                    self.scope_add(creator, &server.name, extra);
                 }
+            }
+            WsEvent::PresenceMode {
+                username,
+                appear_offline,
+                seq,
+            } => {
+                if let Some(seen) = self.seen.get_mut(username) {
+                    seen.take_mode(*appear_offline, *seq);
+                }
+                self.settle_user(username, t_ms, extra);
+            }
+            WsEvent::Banned { username } => {
+                self.hide_now(username, t_ms, extra);
+                self.forget(username, extra);
                 self.p2p.remove(username);
                 let rooms = self.rooms_of(username);
                 self.leave_rooms(rooms, |_, u, _| u == username, t, extra);
@@ -823,24 +1205,33 @@ impl Replica {
         }
     }
 
-    fn purge(&mut self, id: u32, t: i64, evs: &mut Vec<WsEvent>, purge: &mut Purge) {
+    // A departing instance's users get the offline grace, since its connections move to other
+    // instances. A dead one's were gone for `DEAD_AFTER_MS` already.
+    fn purge(
+        &mut self,
+        id: u32,
+        t_ms: i64,
+        grace: bool,
+        evs: &mut Vec<WsEvent>,
+        purge: &mut Purge,
+    ) {
+        let t = t_ms.div_euclid(1000);
         self.peers.remove(&id);
-        for (server, users) in self.presence.iter_mut() {
-            let mut gone = Vec::new();
-            for (user, conns) in users.iter_mut() {
-                let before = conns.len();
-                conns.retain(|c| owner(*c) != id);
-                if before > 0 && conns.is_empty() {
-                    gone.push(user.clone());
-                }
-            }
-            for user in gone {
-                users.remove(&user);
-                evs.push(presence_ev(server, &user, false, users.len()));
+        let users: Vec<String> = self
+            .seen
+            .iter_mut()
+            .filter_map(|(user, seen)| {
+                let before = seen.conns.len();
+                seen.conns.retain(|c, _| owner(*c) != id);
+                (seen.conns.len() != before).then(|| user.clone())
+            })
+            .collect();
+        for user in users {
+            self.settle_user(&user, t_ms, evs);
+            if !grace && self.seen.get(&user).is_some_and(|seen| !seen.visible()) {
+                self.hide_now(&user, t_ms, evs);
             }
         }
-        self.presence.retain(|_, users| !users.is_empty());
-        self.index.views.retain(|c, _| owner(*c) != id);
         let rooms: Vec<i64> = self.rooms.keys().copied().collect();
         self.leave_rooms(rooms, |_, _, c| owner(c) == id, t, evs);
         let calls: Vec<i64> = self.calls.keys().copied().collect();
@@ -887,11 +1278,10 @@ impl Replica {
 
     fn holds<F: Fn(&str, u64) -> bool>(&self, mine: F) -> bool {
         let slots = |users: &[(String, u64)]| users.iter().any(|(u, c)| mine(u, *c));
-        self.presence.values().any(|users| {
-            users
-                .iter()
-                .any(|(u, conns)| conns.iter().any(|c| mine(u, *c)))
-        }) || self.rooms.values().any(|r| slots(&r.users))
+        self.seen
+            .iter()
+            .any(|(u, seen)| seen.conns.keys().any(|c| mine(u, *c)))
+            || self.rooms.values().any(|r| slots(&r.users))
             || self.calls.values().any(|c| slots(&c.occupants))
             || self
                 .p2p
@@ -976,15 +1366,17 @@ impl Replica {
         let t = t_ms.div_euclid(1000);
         let mut evs = Vec::new();
         let mut purge = Purge::default();
+        let mut evicted = Vec::new();
         let purged = self.sweep_dead(origin, t_ms);
         for id in &purged {
-            self.purge(*id, t, &mut evs, &mut purge);
+            self.purge(*id, t_ms, false, &mut evs, &mut purge);
         }
+        self.expire(self.clock, &mut evs);
         let outcome = match op {
             Op::Broadcast { event } if stale_signal(self, &event) => Outcome::Done,
             Op::Broadcast { event } => {
                 let mut extra = Vec::new();
-                self.side_effects(&event, t, &mut extra);
+                self.side_effects(&event, t_ms, &mut extra);
                 evs.push(event);
                 evs.append(&mut extra);
                 Outcome::Done
@@ -996,21 +1388,51 @@ impl Replica {
                 new,
             } => {
                 if old != new {
-                    if let Some(s) = &old {
-                        self.unview(s, &user, conn, &mut evs);
-                    }
-                    if let Some(s) = &new {
-                        self.view(s, &user, conn, &mut evs);
-                    }
+                    self.legacy_view(&user, conn, new.as_deref(), t_ms, &mut evs);
                 }
                 Outcome::Done
             }
             Op::Present { user, conn, server } => {
-                self.present(&user, conn, server.as_deref(), &mut evs);
+                self.legacy_view(&user, conn, server.as_deref(), t_ms, &mut evs);
                 Outcome::Done
             }
+            Op::Online {
+                user,
+                conn,
+                lit,
+                cap,
+                scope,
+                every,
+            } => {
+                let seen = self.seen.entry(user.clone()).or_default();
+                if every > 0 && !seen.conns.contains_key(&conn) {
+                    seen.opened = seen.opened.max(t_ms).saturating_add(every as i64);
+                }
+                evicted = self.connect(&user, conn, lit, cap, scope, t_ms, &mut evs);
+                Outcome::Done
+            }
+            Op::Rescope {
+                user,
+                add,
+                remove,
+                hidden,
+                seq,
+            } => {
+                for server in &remove {
+                    self.scope_remove(&user, server, &mut evs);
+                }
+                for server in &add {
+                    self.scope_add(&user, server, &mut evs);
+                }
+                if let (Some(hidden), Some(seen)) = (hidden, self.seen.get_mut(&user)) {
+                    seen.take_mode(hidden, seq);
+                }
+                self.settle_user(&user, t_ms, &mut evs);
+                Outcome::Done
+            }
+            Op::Reannounce => Outcome::Done,
             Op::ForceOffline { server, user } => {
-                self.drop_presence(&server, &user, &mut evs);
+                self.scope_remove(&user, &server, &mut evs);
                 Outcome::Done
             }
             Op::VoiceJoin {
@@ -1167,7 +1589,7 @@ impl Replica {
                     |c| c.occupants.iter().any(|(u, cn)| *u == user && *cn == conn),
                     &mut evs,
                 );
-                self.present(&user, conn, None, &mut evs);
+                self.disconnect(&user, conn, t_ms, &mut evs);
                 Outcome::Dropped(ends, self.clear_host(&user, conn))
             }
             Op::SweepVoice { idle } => {
@@ -1265,7 +1687,7 @@ impl Replica {
             }
             Op::Heartbeat => Outcome::Done,
             Op::Depart => {
-                self.purge(origin, t, &mut evs, &mut purge);
+                self.purge(origin, t_ms, true, &mut evs, &mut purge);
                 Outcome::Departed(std::mem::take(&mut purge))
             }
         };
@@ -1274,6 +1696,7 @@ impl Replica {
             outcome,
             purge,
             purged,
+            evicted,
         }
     }
 
@@ -1485,6 +1908,59 @@ struct Inner {
     aftermath: mpsc::UnboundedSender<Aftermath>,
     aftermath_rx: Mutex<Option<mpsc::UnboundedReceiver<Aftermath>>>,
     release: Mutex<HashMap<String, (f64, Instant)>>,
+    connects: Mutex<HashMap<String, (f64, Instant)>>,
+    limits: Mutex<Limits>,
+    reannounced: Mutex<(Option<Instant>, bool)>,
+}
+
+/// Per-user bounds on realtime connections: at most `conns_per_user` open at once across all
+/// instances (the oldest is closed), and `connect_burst` new ones, then one per
+/// `connect_every`, per instance.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Limits {
+    pub conns_per_user: usize,
+    pub connect_burst: u32,
+    pub connect_every: Duration,
+}
+
+pub const CONNS_PER_USER: usize = 20;
+pub const CONNECT_BURST: u32 = 20;
+pub const CONNECTS_PER_MINUTE: u32 = 30;
+
+impl Default for Limits {
+    fn default() -> Limits {
+        Limits {
+            conns_per_user: CONNS_PER_USER,
+            connect_burst: CONNECT_BURST,
+            connect_every: Duration::from_secs(60) / CONNECTS_PER_MINUTE,
+        }
+    }
+}
+
+fn take_token(
+    buckets: &mut HashMap<String, (f64, Instant)>,
+    key: &str,
+    burst: u32,
+    every: Duration,
+    users_max: usize,
+) -> bool {
+    let now = Instant::now();
+    if buckets.len() > users_max {
+        buckets.retain(|_, (_, at)| now.duration_since(*at) < every * burst);
+    }
+    let (tokens, at) = buckets
+        .entry(key.to_string())
+        .or_insert((burst as f64, now));
+    let refill = now.duration_since(*at).as_secs_f64() / every.as_secs_f64().max(f64::EPSILON);
+    *tokens = (*tokens + refill).min(burst as f64);
+    *at = now;
+    match *tokens >= 1.0 {
+        true => {
+            *tokens -= 1.0;
+            true
+        }
+        false => false,
+    }
 }
 
 enum Waited {
@@ -1525,6 +2001,9 @@ impl Hub {
                 aftermath,
                 aftermath_rx: Mutex::new(Some(aftermath_rx)),
                 release: Mutex::new(HashMap::new()),
+                connects: Mutex::new(HashMap::new()),
+                limits: Mutex::new(Limits::default()),
+                reannounced: Mutex::new((None, false)),
             }),
         }
     }
@@ -1584,6 +2063,20 @@ impl Hub {
 
     pub fn connections(&self) -> usize {
         self.inner.router.connections()
+    }
+
+    /// Whether `user` has an open signed-in connection on any instance, whatever they view.
+    /// It is true for users who appear offline: callers must check `appear_offline` before
+    /// showing it to anyone else. This instance's connections are read from the router, so a
+    /// closed one counts as gone at once: unlike server presence, there is no grace here.
+    pub fn is_online_anywhere(&self, user: &str) -> bool {
+        let me = self.inner.instance;
+        self.inner.router.has_user(user)
+            || self.replica(|r| {
+                r.seen
+                    .get(user)
+                    .is_some_and(|seen| seen.conns.keys().any(|c| owner(*c) != me))
+            })
     }
 
     pub fn channels(&self) -> &Channels {
@@ -1661,11 +2154,13 @@ impl Hub {
             outcome,
             purge,
             purged: _,
+            evicted,
         } = store.replica.apply(self.inner.instance, op, now_ms());
         let order = self.inner.order.lock().unwrap();
         drop(store);
         self.dispatch(events, true);
         drop(order);
+        self.evict(&evicted);
         if !purge.is_empty() {
             let _ = self.inner.aftermath.send(Aftermath::Settle(purge));
         }
@@ -1828,17 +2323,23 @@ impl Hub {
             store.own = store.own.max(seq);
         }
         let beat = matches!(op, Op::Heartbeat);
+        let reannounce = matches!(op, Op::Reannounce);
         let Applied {
             events,
             outcome,
             purge,
             purged,
+            evicted,
         } = store.replica.apply(origin, op, t_ms as i64);
         store.dirty |= !beat || !events.is_empty() || !purged.is_empty();
         let order = self.inner.order.lock().unwrap();
         drop(store);
         self.dispatch(events, live);
         drop(order);
+        self.evict(&evicted);
+        if reannounce && live {
+            self.reannounce();
+        }
         if mine {
             let mut outcome = Some(outcome);
             self.settle_own(link, seq, |s, _| match s == seq {
@@ -1887,6 +2388,7 @@ impl Hub {
 
     pub fn restore(&self, last_id: &str, json: &str) -> serde_json::Result<()> {
         let replica: Replica = serde_json::from_str(json)?;
+        let legacy = replica.legacy;
         let me = self.inner.instance;
         let applied = replica.peers.get(&me).map_or(0, |p| p.seq);
         let mut store = self.inner.store.lock().unwrap();
@@ -1902,13 +2404,80 @@ impl Hub {
                 false => None,
             });
         }
+        drop(store);
+        if legacy {
+            warn!(
+                "restored a realtime snapshot from an older version; asking every instance to announce its connections again"
+            );
+            self.post(Op::Reannounce);
+        }
         Ok(())
+    }
+
+    fn evict(&self, conns: &[u64]) {
+        for conn in conns {
+            if owner(*conn) == self.inner.instance {
+                self.inner.router.evict(*conn);
+            }
+        }
+    }
+
+    // Every connection on this instance announces itself again. Repeated requests within
+    // `REANNOUNCE_EVERY` are folded into one more at its end.
+    fn reannounce(&self) {
+        let now = Instant::now();
+        let mut at = self.inner.reannounced.lock().unwrap();
+        let wait = match at.0 {
+            Some(last) if now.duration_since(last) < REANNOUNCE_EVERY => {
+                REANNOUNCE_EVERY - now.duration_since(last)
+            }
+            _ => {
+                at.0 = Some(now);
+                drop(at);
+                self.resync(false);
+                return;
+            }
+        };
+        if std::mem::replace(&mut at.1, true) {
+            return;
+        }
+        drop(at);
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            self.inner.reannounced.lock().unwrap().1 = false;
+            return;
+        };
+        let hub = self.clone();
+        rt.spawn(async move {
+            tokio::time::sleep(wait).await;
+            *hub.inner.reannounced.lock().unwrap() = (Some(Instant::now()), false);
+            hub.resync(false);
+        });
     }
 
     pub fn heartbeat(&self) {
         if self.is_replicated() {
             self.post(Op::Heartbeat);
         }
+    }
+
+    /// Ends the offline grace of users whose time is up. Replicated hubs do it on every op
+    /// (heartbeats keep them coming), so this only acts without a bus.
+    pub fn tick(&self) {
+        if !self.is_replicated() {
+            self.local(Op::Heartbeat);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn expire_presence(&self) {
+        let mut store = self.inner.store.lock().unwrap();
+        let mut evs = Vec::new();
+        let t = store.replica.clock.max(now_ms()) + PRESENCE_GRACE_MS;
+        store.replica.expire(t, &mut evs);
+        let order = self.inner.order.lock().unwrap();
+        drop(store);
+        self.dispatch(evs, true);
+        drop(order);
     }
 
     pub async fn flush(&self) {
@@ -2152,24 +2721,46 @@ impl Hub {
     // Peer id requests for downloads: a burst of RELEASE_BURST, then one every RELEASE_EVERY,
     // per user and per process.
     pub fn release_ok(&self, user: &str) -> bool {
-        let now = Instant::now();
-        let mut limits = self.inner.release.lock().unwrap();
-        if limits.len() > RELEASE_USERS_MAX {
-            limits.retain(|_, (_, at)| now.duration_since(*at) < RELEASE_EVERY * RELEASE_BURST);
+        take_token(
+            &mut self.inner.release.lock().unwrap(),
+            user,
+            RELEASE_BURST,
+            RELEASE_EVERY,
+            RELEASE_USERS_MAX,
+        )
+    }
+
+    /// Whether `user` may open another realtime connection now: within the burst and rate
+    /// both on this instance and across the cluster. The cluster part reads the connections
+    /// the replica has seen open, against the replica clock (the last op, at most a heartbeat
+    /// old), and starts over once the user has been offline past the grace.
+    pub fn connect_ok(&self, user: &str) -> bool {
+        let Limits {
+            conns_per_user: _,
+            connect_burst,
+            connect_every,
+        } = self.limits();
+        let every = connect_every.as_millis() as i64;
+        let (opened, clock) =
+            self.replica(|r| (r.seen.get(user).map_or(0, |seen| seen.opened), r.clock));
+        if opened.saturating_sub((i64::from(connect_burst) - 1) * every) > clock {
+            return false;
         }
-        let (tokens, at) = limits
-            .entry(user.to_string())
-            .or_insert((RELEASE_BURST as f64, now));
-        let refill = now.duration_since(*at).as_secs_f64() / RELEASE_EVERY.as_secs_f64();
-        *tokens = (*tokens + refill).min(RELEASE_BURST as f64);
-        *at = now;
-        match *tokens >= 1.0 {
-            true => {
-                *tokens -= 1.0;
-                true
-            }
-            false => false,
-        }
+        take_token(
+            &mut self.inner.connects.lock().unwrap(),
+            user,
+            connect_burst,
+            connect_every,
+            CONNECT_USERS_MAX,
+        )
+    }
+
+    pub fn limits(&self) -> Limits {
+        *self.inner.limits.lock().unwrap()
+    }
+
+    pub fn set_limits(&self, limits: Limits) {
+        *self.inner.limits.lock().unwrap() = limits;
     }
 
     pub fn p2p_of(&self, user: &str) -> Option<(String, Vec<String>)> {
@@ -2181,16 +2772,12 @@ impl Hub {
         })
     }
 
-    fn presence<R>(
-        &self,
-        server: &str,
-        read: impl FnOnce(&BTreeMap<String, BTreeSet<u64>>) -> R,
-    ) -> Option<R> {
-        self.replica(|r| r.presence.get(server).map(read))
+    fn presence<R>(&self, server: &str, read: impl FnOnce(&BTreeSet<String>) -> R) -> Option<R> {
+        self.replica(|r| r.index.presence.get(server).map(read))
     }
 
     pub fn online_set(&self, server: &str) -> HashSet<String> {
-        self.presence(server, |users| users.keys().cloned().collect())
+        self.presence(server, |users| users.iter().cloned().collect())
             .unwrap_or_default()
     }
 
@@ -2201,7 +2788,7 @@ impl Hub {
                     .range::<str, _>((std::ops::Bound::Excluded(a), std::ops::Bound::Unbounded)),
                 None => users.range::<str, _>(..),
             };
-            range.take(n).map(|(name, _)| name.clone()).collect()
+            range.take(n).cloned().collect()
         })
         .unwrap_or_default()
     }
@@ -2210,7 +2797,7 @@ impl Hub {
         self.presence(server, |users| {
             names
                 .iter()
-                .filter(|n| users.contains_key(n.as_str()))
+                .filter(|n| users.contains(n.as_str()))
                 .map(String::as_str)
                 .collect()
         })
@@ -2223,28 +2810,56 @@ impl Hub {
     }
 
     pub fn is_online(&self, server: &str, username: &str) -> bool {
-        self.presence(server, |users| users.contains_key(username))
+        self.presence(server, |users| users.contains(username))
             .unwrap_or(false)
     }
 
-    pub fn set_viewing(&self, user: &str, conn: u64, old: Option<&str>, new: Option<&str>) {
-        if old == new {
-            return;
-        }
-        self.post(Op::Viewing {
+    /// Announces an open connection of `user`, `lit` unless it waits for the database. With
+    /// `scope`, it also replaces the user's member servers and appear-offline flag, which all
+    /// their connections share.
+    pub fn announce(&self, user: &str, conn: u64, lit: bool, scope: Option<Scope>) {
+        self.post(Op::Online {
             user: user.to_string(),
             conn,
-            old: old.map(str::to_string),
-            new: new.map(str::to_string),
+            lit,
+            cap: self.limits().conns_per_user,
+            scope,
+            every: self.limits().connect_every.as_millis() as usize,
         });
     }
 
-    pub fn reannounce(&self, user: &str, conn: u64, server: Option<&str>) {
-        self.post(Op::Present {
+    pub fn set_online<S: AsRef<str>>(&self, user: &str, conn: u64, servers: &[S]) {
+        let servers = servers.iter().map(|s| s.as_ref().to_string()).collect();
+        let scope = Scope {
+            servers,
+            ..Scope::default()
+        };
+        self.announce(user, conn, true, Some(scope));
+    }
+
+    /// Changes the member servers or appear-offline flag (with its version) of `user` by a
+    /// delta.
+    pub fn rescope(
+        &self,
+        user: &str,
+        add: Vec<String>,
+        remove: Vec<String>,
+        hidden: Option<(bool, i64)>,
+    ) {
+        if add.is_empty() && remove.is_empty() && hidden.is_none() {
+            return;
+        }
+        self.post(Op::Rescope {
             user: user.to_string(),
-            conn,
-            server: server.map(str::to_string),
+            add,
+            remove,
+            hidden: hidden.map(|(hidden, _)| hidden),
+            seq: hidden.map_or(0, |(_, seq)| seq),
         });
+    }
+
+    pub fn reannounce_all(&self) {
+        self.post(Op::Reannounce);
     }
 
     pub fn force_offline(&self, server: &str, user: &str) {
@@ -2318,7 +2933,7 @@ pub(crate) mod tests {
             }
         }
 
-        fn advance(&self, ms: i64) {
+        pub(crate) fn advance(&self, ms: i64) {
             self.clock.fetch_add(ms, Ordering::SeqCst);
         }
 
@@ -2551,7 +3166,10 @@ pub(crate) mod tests {
         assert!(replica.rooms.is_empty());
         assert!(replica.calls.is_empty());
         assert!(replica.p2p.is_empty());
-        assert_eq!(replica.presence.keys().collect::<Vec<_>>(), vec!["rchat"]);
+        assert_eq!(
+            replica.index.presence.keys().collect::<Vec<_>>(),
+            vec!["rchat"]
+        );
     }
 
     #[test]
@@ -2606,13 +3224,15 @@ pub(crate) mod tests {
         let mut rx = hub.subscribe();
         let a = hub.next_conn();
         let b = hub.next_conn();
-        hub.set_viewing("alice", a, None, Some("rchat"));
-        hub.set_viewing("alice", b, None, Some("rchat"));
+        hub.set_online("alice", a, &["rchat"]);
+        hub.set_online("alice", b, &["rchat"]);
         assert!(hub.is_online("rchat", "alice"));
         assert_eq!(hub.online_count("rchat"), 1);
-        hub.set_viewing("alice", a, Some("rchat"), None);
+        hub.announce("alice", a, false, None);
         assert!(hub.is_online("rchat", "alice"));
-        hub.set_viewing("alice", b, Some("rchat"), None);
+        hub.announce("alice", b, false, None);
+        assert!(hub.is_online("rchat", "alice"));
+        hub.expire_presence();
         assert!(!hub.is_online("rchat", "alice"));
         assert_eq!(
             presence_of(&drain(&mut rx)),
@@ -2635,6 +3255,607 @@ pub(crate) mod tests {
         assert!(hub.ready());
     }
 
+    fn online_op(user: &str, conn: u64, cap: usize, servers: Option<&[&str]>) -> Op {
+        Op::Online {
+            user: user.to_string(),
+            conn,
+            lit: true,
+            cap,
+            scope: servers.map(|servers| Scope {
+                servers: servers.iter().map(|v| v.to_string()).collect(),
+                hidden: false,
+                seq: 0,
+            }),
+            every: 0,
+        }
+    }
+
+    fn drop_op(user: &str, conn: u64) -> Op {
+        Op::DropConn {
+            user: user.to_string(),
+            conn,
+        }
+    }
+
+    #[test]
+    fn presence_is_kept_per_user_and_reads_old_state() {
+        let s = |v: &str| v.to_string();
+        let (a1, a2, bob) = (1_u64 << 32, (1_u64 << 32) | 1, (1_u64 << 32) | 2);
+        let mut replica = Replica::default();
+        let first = replica.apply(1, online_op("alice", a1, 0, Some(&["one", "two"])), T0);
+        assert_eq!(
+            presence_of(&first.events),
+            vec![(s("one"), s("alice"), true), (s("two"), s("alice"), true)]
+        );
+        assert!(
+            replica
+                .apply(1, online_op("alice", a2, 0, None), T0 + 1)
+                .events
+                .is_empty()
+        );
+        replica.apply(1, online_op("bob", bob, 0, Some(&[])), T0 + 2);
+        let moved = replica.apply(
+            1,
+            Op::Rescope {
+                user: s("alice"),
+                add: vec![s("three")],
+                remove: vec![s("one")],
+                hidden: None,
+                seq: 0,
+            },
+            T0 + 3,
+        );
+        assert_eq!(
+            presence_of(&moved.events),
+            vec![
+                (s("one"), s("alice"), false),
+                (s("three"), s("alice"), true)
+            ]
+        );
+        let json = serde_json::to_string(&replica).unwrap();
+        assert!(json.contains(
+            r#""alice":{"servers":["three","two"],"conns":{"4294967296":{"lit":true,"at":1700000000000},"4294967297":{"lit":true,"at":1700000000001}},"up":true,"shows":1700000010000}"#
+        ));
+        assert!(!json.contains("\"presence\""));
+        let reloaded: Replica = serde_json::from_str(&json).unwrap();
+        assert!(!reloaded.legacy);
+        assert_eq!(serde_json::to_string(&reloaded).unwrap(), json);
+        assert_eq!(reloaded.index, reindexed(&replica));
+
+        let old = r#"{"presence":{"rchat":{"carol":[8589934592]}},"rooms":{},"calls":{},"p2p":{},"peers":{},"clock":0}"#;
+        let mut legacy: Replica = serde_json::from_str(old).unwrap();
+        assert!(legacy.legacy);
+        assert_eq!(
+            legacy.index.presence,
+            BTreeMap::from([(s("rchat"), BTreeSet::from([s("carol")]))])
+        );
+        let viewing: Op = serde_json::from_str(
+            r#"{"op":"viewing","user":"dave","conn":8589934593,"old":null,"new":"rchat"}"#,
+        )
+        .unwrap();
+        legacy.apply(2, viewing, T0);
+        assert!(legacy.index.presence["rchat"].contains("dave"));
+        let present: Op = serde_json::from_str(
+            r#"{"op":"present","user":"dave","conn":8589934593,"server":null}"#,
+        )
+        .unwrap();
+        assert!(legacy.apply(2, present, T0 + 1).events.is_empty());
+        legacy.apply(2, drop_op("carol", 2 << 32), T0 + 2);
+        let gone = legacy.apply(2, Op::Heartbeat, T0 + 2 + PRESENCE_GRACE_MS);
+        assert_eq!(
+            presence_of(&gone.events),
+            vec![
+                (s("rchat"), s("dave"), false),
+                (s("rchat"), s("carol"), false)
+            ]
+        );
+        assert!(legacy.seen.is_empty() && legacy.index.presence.is_empty());
+        assert_eq!(legacy.index, reindexed(&legacy));
+    }
+
+    #[test]
+    fn offline_waits_out_the_grace() {
+        let s = |v: &str| v.to_string();
+        let (c1, c2, c3) = (1_u64 << 32, (1_u64 << 32) | 1, (1_u64 << 32) | 2);
+        let mut replica = Replica::default();
+        let at = |r: &mut Replica, op: Op, t: i64| presence_of(&r.apply(1, op, T0 + t).events);
+        assert_eq!(
+            at(&mut replica, online_op("alice", c1, 0, Some(&["one"])), 0),
+            vec![(s("one"), s("alice"), true)]
+        );
+        assert!(at(&mut replica, drop_op("alice", c1), 1_000).is_empty());
+        assert!(replica.index.presence["one"].contains("alice"));
+        assert!(
+            at(
+                &mut replica,
+                online_op("alice", c2, 0, Some(&["one"])),
+                1_000 + PRESENCE_GRACE_MS - 1
+            )
+            .is_empty()
+        );
+        assert!(at(&mut replica, Op::Heartbeat, 30_000).is_empty());
+        assert!(at(&mut replica, drop_op("alice", c2), 40_000).is_empty());
+        assert!(at(&mut replica, Op::Heartbeat, 40_000 + PRESENCE_GRACE_MS - 1).is_empty());
+        assert_eq!(
+            at(&mut replica, Op::Heartbeat, 40_000 + PRESENCE_GRACE_MS),
+            vec![(s("one"), s("alice"), false)]
+        );
+        assert!(replica.seen.is_empty());
+
+        let mode = |hidden: bool| Op::Broadcast {
+            event: WsEvent::PresenceMode {
+                username: s("bob"),
+                appear_offline: hidden,
+                seq: 0,
+            },
+        };
+        let t = 100_000;
+        assert_eq!(
+            at(&mut replica, online_op("bob", c3, 0, Some(&["one"])), t),
+            vec![(s("one"), s("bob"), true)]
+        );
+        assert_eq!(
+            at(&mut replica, mode(true), t + 1_000),
+            vec![(s("one"), s("bob"), false)]
+        );
+        assert!(replica.seen["bob"].hidden && !replica.seen["bob"].up);
+        assert_eq!(
+            at(&mut replica, mode(false), t + 30_000),
+            vec![(s("one"), s("bob"), true)]
+        );
+        let banned = Op::Broadcast {
+            event: WsEvent::Banned { username: s("bob") },
+        };
+        assert_eq!(
+            at(&mut replica, banned, t + 31_000),
+            vec![(s("one"), s("bob"), false)]
+        );
+        assert_eq!(replica.index, reindexed(&replica));
+    }
+
+    #[test]
+    fn appear_offline_hides_at_once_even_inside_the_grace() {
+        let s = |v: &str| v.to_string();
+        let (c1, c2, c3) = (1_u64 << 32, (1_u64 << 32) | 1, (2_u64 << 32) | 1);
+        let mut replica = Replica::default();
+        let at = |r: &mut Replica, op: Op, t: i64| presence_of(&r.apply(1, op, T0 + t).events);
+        let mode = |hidden: bool| Op::Broadcast {
+            event: WsEvent::PresenceMode {
+                username: s("bob"),
+                appear_offline: hidden,
+                seq: 0,
+            },
+        };
+        assert_eq!(
+            at(
+                &mut replica,
+                online_op("bob", c1, 0, Some(&["one", "two"])),
+                0
+            ),
+            vec![(s("one"), s("bob"), true), (s("two"), s("bob"), true)]
+        );
+        // A reconnect inside the grace is silent, and appear offline right after it hides
+        // bob at once in every server.
+        assert!(at(&mut replica, drop_op("bob", c1), 1_000).is_empty());
+        assert!(
+            at(
+                &mut replica,
+                online_op("bob", c2, 0, Some(&["one", "two"])),
+                2_000
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            at(&mut replica, mode(true), 2_001),
+            vec![(s("one"), s("bob"), false), (s("two"), s("bob"), false)]
+        );
+        assert!(!replica.index.presence.contains_key("one"));
+        // Also while lingering after a disconnect (another device still connected elsewhere
+        // is dark): the hide does not wait for the grace.
+        assert_eq!(
+            at(&mut replica, mode(false), 3_000),
+            vec![(s("one"), s("bob"), true), (s("two"), s("bob"), true)]
+        );
+        assert!(at(&mut replica, drop_op("bob", c2), 4_000).is_empty());
+        assert!(replica.seen["bob"].gone > 0);
+        assert_eq!(
+            at(
+                &mut replica,
+                Op::Rescope {
+                    user: s("bob"),
+                    add: vec![],
+                    remove: vec![],
+                    hidden: Some(true),
+                    seq: 0,
+                },
+                4_500
+            ),
+            vec![(s("one"), s("bob"), false), (s("two"), s("bob"), false)]
+        );
+        // Only bob's rate state and appear-offline version stay, until the rates drain.
+        let rest = &replica.seen["bob"];
+        assert!(rest.conns.is_empty() && rest.servers.is_empty() && !rest.up && rest.hidden);
+        assert!(replica.index.scoped.is_empty() && replica.index.lingering.is_empty());
+        // A connection that opens already hidden never shows.
+        let hidden = Op::Online {
+            user: s("bob"),
+            conn: c3,
+            lit: true,
+            cap: 0,
+            scope: Some(Scope {
+                servers: vec![s("one")],
+                hidden: true,
+                seq: 0,
+            }),
+            every: 0,
+        };
+        assert!(at(&mut replica, hidden, 5_000).is_empty());
+        assert_eq!(replica.index, reindexed(&replica));
+    }
+
+    #[test]
+    fn a_stale_appear_offline_value_never_undoes_a_newer_one() {
+        let s = |v: &str| v.to_string();
+        let (c1, c2) = (1_u64 << 32, 2_u64 << 32);
+        let mut replica = Replica::default();
+        let at = |r: &mut Replica, op: Op, t: i64| presence_of(&r.apply(1, op, T0 + t).events);
+        let mode = |hidden: bool, seq: i64| Op::Broadcast {
+            event: WsEvent::PresenceMode {
+                username: s("bob"),
+                appear_offline: hidden,
+                seq,
+            },
+        };
+        let opened = |conn: u64, hidden: bool, seq: i64| Op::Online {
+            user: s("bob"),
+            conn,
+            lit: true,
+            cap: 0,
+            scope: Some(Scope {
+                servers: vec![s("one")],
+                hidden,
+                seq,
+            }),
+            every: 0,
+        };
+        assert_eq!(
+            at(&mut replica, opened(c1, false, 4), 0),
+            vec![(s("one"), s("bob"), true)]
+        );
+        assert_eq!(
+            at(&mut replica, mode(true, 5), 1_000),
+            vec![(s("one"), s("bob"), false)]
+        );
+        // A connection that read version 4 before the change announces after it, and a delta
+        // or an event of an older version arrives late: bob stays hidden.
+        assert!(at(&mut replica, opened(c2, false, 4), 2_000).is_empty());
+        let late = Op::Rescope {
+            user: s("bob"),
+            add: vec![],
+            remove: vec![],
+            hidden: Some(false),
+            seq: 4,
+        };
+        assert!(at(&mut replica, late, 3_000).is_empty());
+        assert!(at(&mut replica, mode(false, 4), 4_000).is_empty());
+        assert!(!replica.index.presence.contains_key("one"));
+        assert_eq!(
+            (replica.seen["bob"].hidden, replica.seen["bob"].mode),
+            (true, 5)
+        );
+        // The same version again, or a newer one, applies.
+        assert!(at(&mut replica, mode(true, 5), 5_000).is_empty());
+        assert_eq!(
+            at(&mut replica, mode(false, 6), 6_000),
+            vec![(s("one"), s("bob"), true)]
+        );
+        assert_eq!(replica.index, reindexed(&replica));
+        // A new connection whose scope adds a server and hides bob shows him nowhere first.
+        let wider = Op::Online {
+            user: s("bob"),
+            conn: c2,
+            lit: true,
+            cap: 0,
+            scope: Some(Scope {
+                servers: vec![s("one"), s("two")],
+                hidden: true,
+                seq: 7,
+            }),
+            every: 0,
+        };
+        assert_eq!(
+            at(&mut replica, wider, 7_000),
+            vec![(s("one"), s("bob"), false)]
+        );
+        assert_eq!(replica.index, reindexed(&replica));
+    }
+
+    #[test]
+    fn hidden_users_keep_their_connect_count_after_closing() {
+        let s = |v: &str| v.to_string();
+        let mut replica = Replica::default();
+        let every = 60_000;
+        let mut events = 0;
+        for i in 0..3_u64 {
+            let conn = (1_u64 << 32) | i;
+            let open = Op::Online {
+                user: s("bob"),
+                conn,
+                lit: true,
+                cap: 0,
+                scope: Some(Scope {
+                    servers: vec![s("one")],
+                    hidden: true,
+                    seq: 1,
+                }),
+                every,
+            };
+            let t = T0 + i as i64 * 100;
+            events += replica.apply(1, open, t).events.len();
+            events += replica.apply(1, drop_op("bob", conn), t + 50).events.len();
+            assert_eq!(replica.index, reindexed(&replica));
+        }
+        assert_eq!(events, 0);
+        // Three opens are still counted, though bob has no connection left.
+        let rest = &replica.seen["bob"];
+        assert!(rest.conns.is_empty() && rest.servers.is_empty() && rest.hidden);
+        assert_eq!(rest.opened, T0 + 3 * every as i64);
+        assert_eq!(rest.wake, rest.opened);
+        // Once the count drains, bob is forgotten.
+        let later = online_op("carol", 2 << 32, 0, Some(&[]));
+        replica.apply(1, later, rest.opened);
+        assert!(!replica.seen.contains_key("bob"));
+        assert!(replica.index.waking.iter().all(|(_, u)| u != "bob"));
+    }
+
+    #[test]
+    fn appear_offline_toggle_storms_are_bounded_and_end_in_the_last_state() {
+        let s = |v: &str| v.to_string();
+        let names: Vec<String> = (0..50).map(|i| format!("s{i:02}")).collect();
+        let all: Vec<&str> = names.iter().map(String::as_str).collect();
+        let n = all.len();
+        let mut replica = Replica::default();
+        let at = |r: &mut Replica, op: Op, t: i64| presence_of(&r.apply(1, op, T0 + t).events);
+        let mode = |hidden: bool| Op::Broadcast {
+            event: WsEvent::PresenceMode {
+                username: s("bob"),
+                appear_offline: hidden,
+                seq: 0,
+            },
+        };
+        assert_eq!(
+            at(&mut replica, online_op("bob", 1 << 32, 0, Some(&all)), 0).len(),
+            n
+        );
+        // 200 toggles in 2 s: every hide is immediate; shows past the burst wait.
+        let mut events = 0;
+        for i in 0..200_i64 {
+            let ev = at(&mut replica, mode(i % 2 == 0), 1 + i * 10);
+            if i % 2 == 0 {
+                assert!(
+                    !replica.index.presence.contains_key("s00"),
+                    "hide {i} waited"
+                );
+            }
+            events += ev.len();
+        }
+        // The first show was spent connecting: three more shows, four hides.
+        assert_eq!(events, 2 * n * (SHOW_BURST as usize - 1) + n);
+        // The last toggle showed bob; it comes due when the rate allows, once.
+        assert!(!replica.seen["bob"].up && replica.seen["bob"].wake > 0);
+        assert_eq!(replica.index, reindexed(&replica));
+        let wake = replica.seen["bob"].wake - T0;
+        assert!(at(&mut replica, Op::Heartbeat, wake - 1).is_empty());
+        let shown = at(&mut replica, Op::Heartbeat, wake);
+        assert_eq!(shown.len(), n);
+        assert!(
+            shown
+                .iter()
+                .all(|(_, user, online)| user == "bob" && *online)
+        );
+        assert!(at(&mut replica, Op::Heartbeat, wake + 60_000).is_empty());
+        // A storm that ends hidden leaves bob hidden, with no show due.
+        let t = wake + 100_000;
+        for i in 0..21_i64 {
+            at(&mut replica, mode(i % 2 == 0), t + i);
+        }
+        assert!(!replica.index.presence.contains_key("s00"));
+        assert!(replica.seen["bob"].hidden && !replica.seen["bob"].up);
+        let later = replica.seen["bob"].wake.max(T0 + t) - T0 + 60_000;
+        assert!(at(&mut replica, Op::Heartbeat, later).is_empty());
+        assert!(!replica.index.presence.contains_key("s00"));
+        assert_eq!(replica.seen["bob"].wake, 0);
+    }
+
+    #[test]
+    fn connections_per_user_are_capped_and_the_replica_stays_small() {
+        let names: Vec<String> = (0..PRESENCE_SERVERS_MAX)
+            .map(|i| format!("server-{i:04}"))
+            .collect();
+        let all: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut replica = Replica::default();
+        let mut evicted = Vec::new();
+        let mut events = 0;
+        for i in 0..200_u64 {
+            let scope = (i % 50 == 0).then_some(all.as_slice());
+            let applied = replica.apply(
+                1,
+                online_op("alice", (1 << 32) | i, 20, scope),
+                T0 + i as i64,
+            );
+            events += presence_of(&applied.events).len();
+            evicted.extend(applied.evicted);
+        }
+        assert_eq!(events, PRESENCE_SERVERS_MAX);
+        assert_eq!(
+            evicted,
+            (0..180).map(|i| (1 << 32) | i).collect::<Vec<u64>>()
+        );
+        let seen = &replica.seen["alice"];
+        assert_eq!(
+            seen.conns.keys().copied().collect::<Vec<u64>>(),
+            (180..200).map(|i| (1 << 32) | i).collect::<Vec<u64>>()
+        );
+        assert_eq!(seen.servers.len(), PRESENCE_SERVERS_MAX);
+        let entries: usize = replica.index.presence.values().map(BTreeSet::len).sum();
+        assert_eq!(entries, PRESENCE_SERVERS_MAX);
+        let json = serde_json::to_string(&replica).unwrap();
+        assert!(json.len() < 16_000 + 20 * 64, "{} bytes", json.len());
+
+        let mut add = |server: &str| {
+            let op = Op::Rescope {
+                user: "alice".to_string(),
+                add: vec![server.to_string()],
+                remove: Vec::new(),
+                hidden: None,
+                seq: 0,
+            };
+            presence_of(&replica.apply(1, op, T0 + 1_000).events)
+        };
+        assert!(add("zed").is_empty());
+        assert_eq!(
+            add("aaa"),
+            vec![
+                ("server-0999".to_string(), "alice".to_string(), false),
+                ("aaa".to_string(), "alice".to_string(), true)
+            ]
+        );
+        assert_eq!(replica.seen["alice"].servers.len(), PRESENCE_SERVERS_MAX);
+        assert_eq!(replica.index, reindexed(&replica));
+    }
+
+    #[tokio::test]
+    async fn oldest_connection_closes_past_the_cap() {
+        let hub = Hub::new();
+        hub.set_limits(Limits {
+            conns_per_user: 2,
+            ..Limits::default()
+        });
+        let mut inboxes = Vec::new();
+        for _ in 0..3 {
+            let conn = hub.next_conn();
+            inboxes.push(hub.open(conn, &HashSet::from([Topic::User("alice".to_string())])));
+            hub.set_online("alice", conn, &["rchat"]);
+        }
+        let evicted: Vec<bool> = inboxes.iter().map(Inbox::evicted).collect();
+        assert_eq!(evicted, [true, false, false]);
+        assert!(inboxes[0].rx.recv().await.is_none());
+        assert_eq!(hub.connections(), 2);
+        assert_eq!(hub.online_count("rchat"), 1);
+        hub.set_limits(Limits {
+            connect_burst: 3,
+            connect_every: Duration::from_secs(3600),
+            ..Limits::default()
+        });
+        assert!((0..3).all(|_| hub.connect_ok("bob")));
+        assert!(!hub.connect_ok("bob") && hub.connect_ok("carol"));
+    }
+
+    #[test]
+    fn unknown_ops_fail_alone() {
+        let future = r#"{"origin":7,"seq":1,"op":{"op":"future_op","user":"x"}}"#;
+        assert!(serde_json::from_str::<Envelope>(future).is_err());
+        let next = r#"{"origin":7,"seq":2,"op":{"op":"online","user":"amy","conn":30064771072,"scope":{"servers":["rchat"]}}}"#;
+        let Envelope { origin, seq, op } = serde_json::from_str(next).unwrap();
+        let mut replica = Replica::default();
+        assert!(replica.admit(origin, seq));
+        let applied = replica.apply(origin, op, T0);
+        assert_eq!(
+            presence_of(&applied.events),
+            vec![("rchat".to_string(), "amy".to_string(), true)]
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_snapshot_makes_every_node_announce_again() {
+        let bus = MemBus::new();
+        let (a, b) = (bus.join(), bus.join());
+        let (alice, bob) = (a.next_conn(), b.next_conn());
+        a.set_online("alice", alice, &["rchat"]);
+        b.set_online("bob", bob, &["rchat"]);
+        a.flush().await;
+        b.flush().await;
+        let (id, current) = a.snapshot().unwrap();
+        let mut epochs = [a.epoch(), b.epoch()];
+        for epoch in epochs.iter_mut() {
+            epoch.borrow_and_update();
+        }
+        let old = r#"{"presence":{"rchat":{"olga":[8589934592]}},"rooms":{},"calls":{},"p2p":{},"peers":{},"clock":0}"#;
+        let (c, out) = Hub::replicated();
+        c.restore(&id, old).unwrap();
+        bus.attach(c.clone(), out, Some(&id));
+        assert_eq!(c.online_set("rchat"), HashSet::from(["olga".to_string()]));
+        c.flush().await;
+        for ((hub, conn, user), epoch) in [(&a, alice, "alice"), (&b, bob, "bob")]
+            .into_iter()
+            .zip(epochs.iter_mut())
+        {
+            assert!(epoch.has_changed().unwrap());
+            epoch.borrow_and_update();
+            hub.set_online(user, conn, &["rchat"]);
+            hub.flush().await;
+        }
+        assert_eq!(
+            c.online_set("rchat"),
+            HashSet::from(["alice", "bob", "olga"].map(String::from))
+        );
+        a.reannounce_all();
+        a.flush().await;
+        assert!(!epochs[0].has_changed().unwrap() && !epochs[1].has_changed().unwrap());
+        let (d, out) = Hub::replicated();
+        d.restore(&id, &current).unwrap();
+        bus.attach(d.clone(), out, Some(&id));
+        d.flush().await;
+        assert!(!epochs[0].has_changed().unwrap());
+    }
+
+    #[tokio::test]
+    async fn online_anywhere_spans_instances() {
+        let bus = MemBus::new();
+        let (a, b) = (bus.join(), bus.join());
+        let conn = a.next_conn();
+        let _inbox = a.open(conn, &HashSet::from([Topic::User("zoe".to_string())]));
+        assert!(a.is_online_anywhere("zoe") && !b.is_online_anywhere("zoe"));
+        a.set_online("zoe", conn, &[] as &[&str]);
+        a.flush().await;
+        b.flush().await;
+        assert!(b.is_online_anywhere("zoe") && !b.is_online_anywhere("yan"));
+        assert!(b.online_set("rchat").is_empty());
+        a.close(conn);
+        assert!(!a.is_online_anywhere("zoe") && b.is_online_anywhere("zoe"));
+        let _ = a.drop_conn("zoe", conn).await;
+        a.flush().await;
+        b.flush().await;
+        assert!(!b.is_online_anywhere("zoe"));
+    }
+
+    #[tokio::test]
+    async fn connect_rate_counts_across_instances() {
+        let bus = MemBus::new();
+        let (a, b) = (bus.join(), bus.join());
+        let limits = Limits {
+            connect_burst: 3,
+            connect_every: Duration::from_secs(60),
+            ..Limits::default()
+        };
+        a.set_limits(limits);
+        b.set_limits(limits);
+        for _ in 0..3 {
+            assert!(a.connect_ok("bob"));
+            a.set_online("bob", a.next_conn(), &["rchat"]);
+        }
+        a.flush().await;
+        b.flush().await;
+        // b has not seen a connect from bob itself, but the cluster has seen three.
+        assert!(!b.connect_ok("bob") && b.connect_ok("carol"));
+        bus.advance(60_000);
+        b.flush().await;
+        assert!(b.connect_ok("bob"));
+        b.set_online("bob", b.next_conn(), &["rchat"]);
+        b.flush().await;
+        assert!(!a.connect_ok("bob"));
+    }
+
     #[tokio::test]
     async fn presence_across_instances() {
         let bus = MemBus::new();
@@ -2642,16 +3863,19 @@ pub(crate) mod tests {
         let mut rx_b = b.subscribe();
         let conn_a = a.next_conn();
         let conn_b = b.next_conn();
-        a.set_viewing("alice", conn_a, None, Some("rchat"));
+        a.set_online("alice", conn_a, &["rchat"]);
         a.flush().await;
         assert!(b.is_online("rchat", "alice"));
         assert_eq!(b.online_set("rchat"), HashSet::from(["alice".to_string()]));
-        b.set_viewing("alice", conn_b, None, Some("rchat"));
+        b.set_online("alice", conn_b, &["rchat"]);
         b.flush().await;
-        a.set_viewing("alice", conn_a, Some("rchat"), None);
+        a.announce("alice", conn_a, false, None);
         a.flush().await;
         assert!(a.is_online("rchat", "alice") && b.is_online("rchat", "alice"));
-        b.set_viewing("alice", conn_b, Some("rchat"), None);
+        b.announce("alice", conn_b, false, None);
+        b.flush().await;
+        assert!(a.is_online("rchat", "alice") && b.is_online("rchat", "alice"));
+        bus.advance(PRESENCE_GRACE_MS);
         b.flush().await;
         assert!(!a.is_online("rchat", "alice") && !b.is_online("rchat", "alice"));
         assert_eq!(
@@ -2849,8 +4073,8 @@ pub(crate) mod tests {
         let mut aftermath = b.take_aftermath().unwrap();
         let mut rx_b = b.subscribe();
         let (alice, bob) = (a.next_conn(), b.next_conn());
-        a.set_viewing("alice", alice, None, Some("rchat"));
-        b.set_viewing("bob", bob, None, Some("rchat"));
+        a.set_online("alice", alice, &["rchat"]);
+        b.set_online("bob", bob, &["rchat"]);
         a.set_p2p("alice", alice, "peer-a".to_string(), vec!["f".to_string()]);
         a.call_start(
             "alice",
@@ -2899,17 +4123,17 @@ pub(crate) mod tests {
         let (a, b) = (bus.join(), bus.join());
         let mut epoch = a.epoch();
         let alice = a.next_conn();
-        a.set_viewing("alice", alice, None, Some("rchat"));
+        a.set_online("alice", alice, &["rchat"]);
         a.flush().await;
         outlive(&bus, &b).await;
         assert!(epoch.has_changed().unwrap());
         assert_eq!(epoch.borrow_and_update().lossy, 0);
         a.resync(true);
         assert_eq!(epoch.borrow_and_update().lossy, 1);
-        a.set_viewing("alice", alice, None, Some("rchat"));
+        a.set_online("alice", alice, &["rchat"]);
         a.flush().await;
         assert!(b.is_online("rchat", "alice"));
-        a.set_viewing("alice", alice, Some("rchat"), None);
+        a.set_online("alice", alice, &[] as &[&str]);
         a.flush().await;
         assert!(!b.is_online("rchat", "alice"));
     }
@@ -2938,17 +4162,14 @@ pub(crate) mod tests {
         );
         assert_eq!(
             presence_of(&stale.events),
-            vec![
-                ("one".to_string(), "alice".to_string(), false),
-                ("two".to_string(), "alice".to_string(), true)
-            ]
+            vec![("two".to_string(), "alice".to_string(), true)]
         );
-        a.set_viewing("alice", alice, None, Some("one"));
+        a.set_online("alice", alice, &["one"]);
         a.flush().await;
-        a.reannounce("alice", alice, Some("two"));
+        a.set_online("alice", alice, &["two"]);
         a.flush().await;
         assert!(!b.is_online("one", "alice") && b.is_online("two", "alice"));
-        a.reannounce("alice", alice, None);
+        a.set_online("alice", alice, &[] as &[&str]);
         a.flush().await;
         assert!(!b.is_online("two", "alice") && !a.is_online("two", "alice"));
     }
@@ -2958,12 +4179,15 @@ pub(crate) mod tests {
         let bus = MemBus::new();
         let (a, b) = (bus.join(), bus.join());
         let alice = a.next_conn();
-        a.set_viewing("alice", alice, None, Some("rchat"));
+        a.set_online("alice", alice, &["rchat"]);
         assert!(a.voice_join("alice", alice, "rchat", 5).await.is_empty());
         let purge = a.depart().await.unwrap();
         assert!(purge.ends.is_empty());
-        assert!(!b.is_online("rchat", "alice"));
+        assert!(b.is_online("rchat", "alice"));
         assert!(b.rooms_in("rchat", None).is_empty());
+        bus.advance(PRESENCE_GRACE_MS);
+        b.flush().await;
+        assert!(!b.is_online("rchat", "alice"));
     }
 
     #[tokio::test]
@@ -2971,10 +4195,10 @@ pub(crate) mod tests {
         let bus = MemBus::new();
         let (a, b) = (bus.join(), bus.join());
         let (alice, bob) = (a.next_conn(), b.next_conn());
-        a.set_viewing("alice", alice, None, Some("rchat"));
+        a.set_online("alice", alice, &["rchat"]);
         assert!(a.voice_join("alice", alice, "rchat", 5).await.is_empty());
         let (id, json) = a.snapshot().unwrap();
-        b.set_viewing("bob", bob, None, Some("rchat"));
+        b.set_online("bob", bob, &["rchat"]);
         assert!(b.voice_join("bob", bob, "rchat", 5).await.is_empty());
         let (c, out) = Hub::replicated();
         c.restore(&id, &json).unwrap();
@@ -2988,7 +4212,7 @@ pub(crate) mod tests {
         );
         assert!(drain(&mut rx_c).is_empty());
         let carol = c.next_conn();
-        c.set_viewing("carol", carol, None, Some("rchat"));
+        c.set_online("carol", carol, &["rchat"]);
         c.flush().await;
         assert!(a.is_online("rchat", "carol"));
         assert_eq!(a.snapshot().unwrap().1, c.snapshot().unwrap().1);
@@ -3002,7 +4226,7 @@ pub(crate) mod tests {
         let mut rx = hubs[0].subscribe();
         for (i, h) in hubs.iter().enumerate() {
             for u in 0..100 {
-                h.set_viewing(&format!("u{i}_{u}"), h.next_conn(), None, Some("big"));
+                h.set_online(&format!("u{i}_{u}"), h.next_conn(), &["big"]);
             }
             h.flush().await;
         }
@@ -3060,6 +4284,62 @@ pub(crate) mod tests {
                 user: s("dave"),
                 conn: 3 << 32,
                 server: Some(s("two")),
+            },
+            Op::Online {
+                user: s("dave"),
+                conn: 3 << 32,
+                lit: true,
+                cap: 2,
+                scope: Some(Scope {
+                    servers: vec![s("one"), s("two")],
+                    hidden: false,
+                    seq: 0,
+                }),
+                every: 0,
+            },
+            Op::Online {
+                user: s("hal"),
+                conn: (3 << 32) | 4,
+                lit: true,
+                cap: 0,
+                scope: Some(Scope {
+                    servers: vec![s("two")],
+                    hidden: false,
+                    seq: 0,
+                }),
+                every: 0,
+            },
+            Op::Online {
+                user: s("hal"),
+                conn: (3 << 32) | 5,
+                lit: false,
+                cap: 0,
+                scope: None,
+                every: 0,
+            },
+            Op::Rescope {
+                user: s("hal"),
+                add: vec![s("one")],
+                remove: vec![s("two")],
+                hidden: None,
+                seq: 0,
+            },
+            Op::Broadcast {
+                event: WsEvent::PresenceMode {
+                    username: s("hal"),
+                    appear_offline: true,
+                    seq: 0,
+                },
+            },
+            Op::DropConn {
+                user: s("hal"),
+                conn: (3 << 32) | 4,
+            },
+            Op::Broadcast {
+                event: WsEvent::MemberLeft {
+                    server: s("one"),
+                    username: s("dave"),
+                },
             },
             Op::VoiceJoin {
                 user: s("dave"),
@@ -3140,7 +4420,13 @@ pub(crate) mod tests {
             replica.apply(origin, op, at);
             assert_eq!(replica.index, reindexed(&replica));
         }
-        assert!(replica.index.views.is_empty() || !replica.presence.is_empty());
+        assert!(
+            replica
+                .index
+                .lingering
+                .iter()
+                .all(|(_, u)| replica.seen[u].up)
+        );
     }
 
     #[test]
@@ -3407,7 +4693,7 @@ pub(crate) mod tests {
             Some(&(3, vec![s("dave")]))
         );
         assert_eq!(
-            replica.presence["club"].keys().collect::<Vec<_>>(),
+            replica.index.presence["club"].iter().collect::<Vec<_>>(),
             ["dave"]
         );
     }
@@ -3485,7 +4771,7 @@ pub(crate) mod tests {
         let mut epoch = hub.epoch();
         let conn = hub.next_conn();
         for i in 0..=OUT_CAP {
-            hub.set_viewing("alice", conn, None, Some(&format!("s{}", i % 2)));
+            hub.set_online("alice", conn, &[&format!("s{}", i % 2)]);
         }
         let queued: Vec<Envelope> = std::iter::from_fn(|| out.try_recv().ok()).collect();
         assert_eq!(queued.len(), OUT_CAP);
@@ -3504,7 +4790,7 @@ pub(crate) mod tests {
         let (hub, mut out) = Hub::replicated();
         let mut aftermath = hub.take_aftermath().unwrap();
         let conn = hub.next_conn();
-        hub.set_viewing("alice", conn, None, Some("rchat"));
+        hub.set_online("alice", conn, &["rchat"]);
         hub.set_p2p("alice", conn, "peer".to_string(), vec!["f".to_string()]);
         let started = std::time::Instant::now();
         let (ends, drop) = hub.drop_conn("alice", conn).await;
@@ -3515,6 +4801,10 @@ pub(crate) mod tests {
         for (i, env) in posted.into_iter().enumerate() {
             hub.ingest(&format!("{T0}-{i}"), env, true);
         }
+        assert!(hub.is_online("rchat", "alice"));
+        hub.heartbeat();
+        let beat = out.try_recv().unwrap();
+        hub.ingest(&format!("{}-0", T0 + PRESENCE_GRACE_MS), beat, true);
         assert!(!hub.is_online("rchat", "alice"));
         let Ok(Aftermath::Settle(purge)) = aftermath.try_recv() else {
             panic!("the late drop should be settled");

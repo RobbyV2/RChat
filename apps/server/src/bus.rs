@@ -888,7 +888,7 @@ mod tests {
         let (b, _) = Hub::replicated();
         let me = a.instance();
         let conn = a.next_conn();
-        a.set_viewing("alice", conn, None, Some("rchat"));
+        a.set_online("alice", conn, &["rchat"]);
         a.broadcast(crate::ws::WsEvent::RolesChanged {
             server: "rchat".to_string(),
         });
@@ -948,7 +948,7 @@ mod tests {
             a.ingest(&id, serde_json::from_str(&raw).unwrap(), true);
             b.ingest(&id, serde_json::from_str(&raw).unwrap(), true);
         };
-        a.set_viewing("alice", conn, None, Some("rchat"));
+        a.set_online("alice", conn, &["rchat"]);
         a.set_p2p("alice", conn, "peer".to_string(), vec!["f".to_string()]);
         deliver(out.try_recv().unwrap());
         deliver(out.try_recv().unwrap());
@@ -970,8 +970,8 @@ mod tests {
         let (ends, drop) = dropping.await.unwrap();
         assert!(ends.is_empty());
         assert!(matches!(drop, crate::hub::P2pDrop::Offline));
-        assert!(!b.is_online("rchat", "alice") && b.p2p_of("alice").is_none());
-        assert!(!a.is_online("rchat", "alice"));
+        assert!(!b.is_online_anywhere("alice") && b.p2p_of("alice").is_none());
+        assert!(!a.is_online_anywhere("alice") && a.is_online("rchat", "alice"));
     }
 
     fn deliver_to(hubs: Vec<Hub>, prefix: &'static str) -> impl FnMut(Envelope) {
@@ -1023,7 +1023,7 @@ mod tests {
         a.force_offline("rchat", "carol");
         a.broadcast(availability("erin", true));
         a.broadcast(availability("frank", true));
-        a.set_viewing("alice", a.next_conn(), None, Some("rchat"));
+        a.set_online("alice", a.next_conn(), &["rchat"]);
         a.broadcast(WsEvent::RolesChanged {
             server: "rchat".to_string(),
         });
@@ -1243,7 +1243,7 @@ mod tests {
         let mut deliver = deliver_to(vec![a.clone(), b.clone()], "70");
         let alice = a.next_conn();
         let bob = 9 << 32;
-        a.set_viewing("alice", alice, None, Some("rchat"));
+        a.set_online("alice", alice, &["rchat"]);
         a.set_p2p("alice", alice, "peer".to_string(), vec!["f".to_string()]);
         deliver(out.try_recv().unwrap());
         deliver(out.try_recv().unwrap());
@@ -1290,7 +1290,7 @@ mod tests {
             }
             false => {
                 b.ingest("71-0", drop, true);
-                assert!(!b.is_online("rchat", "alice"));
+                assert!(!b.is_online_anywhere("alice"));
             }
         }
         let (id, mut json) = b.snapshot().unwrap();
@@ -1313,7 +1313,7 @@ mod tests {
         assert!(ends[0].log_id == 70 && ends[0].answered);
         assert!(matches!(drop, crate::hub::P2pDrop::Offline));
         for hub in [&a, &b] {
-            assert!(!hub.is_online("rchat", "alice"));
+            assert!(!hub.is_online_anywhere("alice"));
             assert!(hub.p2p_of("alice").is_none());
             assert!(!hub.rtc_shared("alice", "bob", None, Some(3)));
         }
@@ -1411,7 +1411,7 @@ mod tests {
             .unwrap();
         until("both ready", || a.ready() && b.ready()).await;
         let alice = a.next_conn();
-        a.set_viewing("alice", alice, None, Some("rchat"));
+        a.set_online("alice", alice, &["rchat"]);
         until("presence reaches b", || b.is_online("rchat", "alice")).await;
         let mut conn = bus.conn.clone();
         let snapshot_key = format!("{prefix}:hub:snapshot");
@@ -1446,7 +1446,7 @@ mod tests {
             .await
             .unwrap();
         let bob = b.next_conn();
-        b.set_viewing("bob", bob, None, Some("rchat"));
+        b.set_online("bob", bob, &["rchat"]);
         until("presence after reset", || a.is_online("rchat", "bob")).await;
         until("ready after reset", || a.ready() && b.ready()).await;
         let mut live = false;

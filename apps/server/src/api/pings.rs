@@ -640,8 +640,9 @@ pub async fn group_mentions(
     Ok(out)
 }
 
-/// The members who were online in the channel's server and can view the channel, without the
-/// author: at most `HERE_MAX`, looking at no more than `HERE_SCAN` online users.
+/// The members of the channel's server who are online anywhere on the site and can view the
+/// channel, without the author: at most `HERE_MAX`, looking at no more than `HERE_SCAN` of the
+/// server's online members.
 async fn here_recipients(
     state: &AppState,
     channel: &ResolvedChannel,

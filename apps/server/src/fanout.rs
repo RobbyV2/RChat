@@ -281,6 +281,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
         | WsEvent::PresenceMode {
             username,
             appear_offline: _,
+            seq: _,
         }
         | WsEvent::ReadUpdated {
             username,
@@ -387,6 +388,7 @@ fn grants(ev: &WsEvent) -> Vec<(Target<'_>, Topic)> {
 struct Reg {
     tx: mpsc::Sender<Arc<Fanned>>,
     lagged: Arc<AtomicBool>,
+    evicted: Arc<AtomicBool>,
     topics: HashMap<Topic, u64>,
 }
 
@@ -494,9 +496,15 @@ pub struct Router {
 pub struct Inbox {
     pub rx: mpsc::Receiver<Arc<Fanned>>,
     pub lagged: Arc<AtomicBool>,
+    evicted: Arc<AtomicBool>,
 }
 
 impl Inbox {
+    /// Whether the inbox was closed because its user opened too many connections.
+    pub fn evicted(&self) -> bool {
+        self.evicted.load(Ordering::Relaxed)
+    }
+
     pub fn lagged(&self) -> bool {
         self.lagged.swap(false, Ordering::Relaxed)
     }
@@ -515,19 +523,33 @@ impl Router {
     pub fn open(&self, conn: u64, topics: &HashSet<Topic>) -> Inbox {
         let (tx, rx) = mpsc::channel(INBOX);
         let lagged = Arc::new(AtomicBool::new(false));
+        let evicted = Arc::new(AtomicBool::new(false));
         let mut index = self.index.write().unwrap();
         index.conns.insert(
             conn,
             Reg {
                 tx,
                 lagged: lagged.clone(),
+                evicted: evicted.clone(),
                 topics: HashMap::new(),
             },
         );
         for topic in topics {
             index.add(conn, topic.clone(), 0);
         }
-        Inbox { rx, lagged }
+        Inbox {
+            rx,
+            lagged,
+            evicted,
+        }
+    }
+
+    /// Closes `conn`'s inbox and marks it evicted, so the connection ends with that reason.
+    pub fn evict(&self, conn: u64) {
+        if let Some(reg) = self.index.read().unwrap().conns.get(&conn) {
+            reg.evicted.store(true, Ordering::Relaxed);
+        }
+        self.close(conn);
     }
 
     pub fn close(&self, conn: u64) {
@@ -585,6 +607,16 @@ impl Router {
 
     pub fn connections(&self) -> usize {
         self.index.read().unwrap().conns.len()
+    }
+
+    /// Whether any connection of this process listens for `user`'s own events.
+    pub fn has_user(&self, user: &str) -> bool {
+        self.index
+            .read()
+            .unwrap()
+            .users
+            .get(user)
+            .is_some_and(|conns| !conns.is_empty())
     }
 
     pub fn deliver(&self, ev: WsEvent) {

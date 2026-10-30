@@ -19,6 +19,10 @@ export function wsUrlFrom(
   return `${l.protocol === 'https:' ? 'wss' : 'ws'}://${l.host}${basePath}/api/ws`
 }
 
+export const CLOSE_TOO_MANY = 4008
+
+export const reconnectsAfter = (code: number): boolean => code !== CLOSE_TOO_MANY
+
 export interface WsEndpoints {
   url: () => string
   probe: () => string
@@ -142,11 +146,16 @@ export class WsClient {
         console.error('ws parse', err)
       }
     }
-    ws.onclose = () => {
+    ws.onclose = e => {
       if (this.connectTimer) clearTimeout(this.connectTimer)
       this.connectTimer = null
       if (this.ws !== ws || this.stopped) return
-      this.dropped()
+      if (reconnectsAfter(e.code)) {
+        this.dropped()
+        return
+      }
+      this.openedAt = null
+      this.onStatus('red')
     }
     ws.onerror = () => ws.close()
   }

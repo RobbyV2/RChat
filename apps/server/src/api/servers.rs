@@ -620,7 +620,6 @@ fn announce_kick(hub: &Hub, server: &str, username: &str, banned: bool) {
         username: username.to_string(),
         banned,
     });
-    hub.force_offline(server, username);
 }
 
 async fn role_ids(db: &Db, server: &str, username: &str) -> Result<Vec<i64>, ApiError> {
@@ -1986,7 +1985,6 @@ pub(crate) async fn leave_server(
                 server: key.clone(),
                 username: user.username.clone(),
             });
-            state.hub.force_offline(&key, &user.username);
             Ok(ok())
         }
     }
@@ -6222,7 +6220,7 @@ mod tests {
         assert!(grant_valid(&state, "club", &grant).await);
         assert!(kicks(&mut rx).is_empty());
         let _ = state.hub.voice_join("bob", 7, "club", cid).await;
-        state.hub.set_viewing("carol", 8, None, Some("club"));
+        state.hub.set_online("carol", 8, &["club"]);
         assert!(state.hub.is_online("club", "carol"));
         let removed = change_keeping(
             &state,
@@ -6478,11 +6476,9 @@ mod tests {
         }
         let online: Vec<String> = names.iter().step_by(7).cloned().collect();
         for (conn, name) in online.iter().enumerate() {
-            state
-                .hub
-                .set_viewing(name, conn as u64 + 1, None, Some("rchat"));
+            state.hub.set_online(name, conn as u64 + 1, &["rchat"]);
         }
-        state.hub.set_viewing("stranger", 999, None, Some("rchat"));
+        state.hub.set_online("stranger", 999, &["rchat"]);
         names.retain(|n| !online.contains(n));
         let expected: Vec<String> = [online.clone(), names].concat();
         let mut walked = Vec::new();

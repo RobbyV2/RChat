@@ -451,8 +451,9 @@ pub struct Member {
     pub is_admin: bool,
     /// Whether the member created the server.
     pub is_creator: bool,
-    /// Whether the member is online in this server right now. Members who chose to appear
-    /// offline are always `false`.
+    /// Whether the member is online right now: signed in with at least one open connection,
+    /// whatever server or page they have open. Members who chose to appear offline are always
+    /// `false`.
     pub online: bool,
     /// Admin permission bits (see `Role.perms`). For an admin, 0 means every permission and
     /// any other value is the granted subset; always 0 for non-admins, whose permissions come
@@ -513,7 +514,7 @@ pub struct ServerDetail {
     pub role_limits: RoleLimits,
     /// Number of members.
     pub member_count: i64,
-    /// Number of members online in this server right now.
+    /// Number of members of this server who are online right now (anywhere on the site).
     pub online_count: i64,
 }
 

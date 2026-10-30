@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 
 use s3::creds::Credentials;
 use s3::{Bucket, Region};
 use serde::Deserialize;
 
 use crate::bus::DEFAULT_HUB_MAXLEN;
+use crate::hub::{CONNECT_BURST, CONNECTS_PER_MINUTE, CONNS_PER_USER, Limits as WsLimits};
 use crate::instance::InstanceConfig;
 use crate::relay::{Capacity, Cidr, IceConfig, Limits, RelayAdvert, RelaySettings};
 use crate::server::client_ip::ProxyTrust;
@@ -147,6 +149,9 @@ pub struct AppConfig {
     pub database_url: Option<String>,
     pub rate_limit_per_second: u64,
     pub rate_limit_burst: u32,
+    pub ws_connections_per_user: usize,
+    pub ws_connect_burst: u32,
+    pub ws_connects_per_minute: u32,
     pub s3_endpoint: Option<String>,
     pub s3_bucket: Option<String>,
     pub s3_access_key: Option<String>,
@@ -201,6 +206,9 @@ impl AppConfig {
             .set_default("port", 3001_i64)?
             .set_default("rate_limit_per_second", 10_i64)?
             .set_default("rate_limit_burst", 60_i64)?
+            .set_default("ws_connections_per_user", CONNS_PER_USER as i64)?
+            .set_default("ws_connect_burst", i64::from(CONNECT_BURST))?
+            .set_default("ws_connects_per_minute", i64::from(CONNECTS_PER_MINUTE))?
             .set_default("redis_prefix", "rchat")?
             .set_default("redis_hub_maxlen", DEFAULT_HUB_MAXLEN as i64)?
             .set_default("trust_proxy", false)?
@@ -241,6 +249,14 @@ impl AppConfig {
 
         let mut config: AppConfig = builder.build()?.try_deserialize()?;
         config.roles = config.resolve_roles()?;
+        if config.ws_connections_per_user == 0
+            || config.ws_connect_burst == 0
+            || config.ws_connects_per_minute == 0
+        {
+            anyhow::bail!(
+                "WS_CONNECTIONS_PER_USER, WS_CONNECT_BURST and WS_CONNECTS_PER_MINUTE must be at least 1"
+            );
+        }
         if config.redis_hub_maxlen < MIN_HUB_MAXLEN {
             anyhow::bail!("REDIS_HUB_MAXLEN must be at least {MIN_HUB_MAXLEN}");
         }
@@ -456,6 +472,15 @@ impl AppConfig {
         }
     }
 
+    /// Per-user realtime connection limits.
+    pub fn ws_limits(&self) -> WsLimits {
+        WsLimits {
+            conns_per_user: self.ws_connections_per_user,
+            connect_burst: self.ws_connect_burst,
+            connect_every: Duration::from_secs(60) / self.ws_connects_per_minute,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn defaults() -> AppConfig {
         let cli = CliOverrides {
@@ -564,6 +589,32 @@ mod tests {
         ("DATABASE_URL", "postgres://rchat:pw@db:5432/rchat"),
         ("REDIS_URL", "redis://:pw@valkey:6379"),
     ];
+
+    #[test]
+    fn ws_limits_default_and_load_from_env() {
+        let config = AppConfig::load_from(&cli(None, None), env(&[])).unwrap();
+        assert_eq!(config.ws_limits(), WsLimits::default());
+        let set = [
+            ("WS_CONNECTIONS_PER_USER", "5"),
+            ("WS_CONNECT_BURST", "4"),
+            ("WS_CONNECTS_PER_MINUTE", "12"),
+        ];
+        let limits = AppConfig::load_from(&cli(None, None), env(&set))
+            .unwrap()
+            .ws_limits();
+        assert_eq!(
+            limits,
+            WsLimits {
+                conns_per_user: 5,
+                connect_burst: 4,
+                connect_every: Duration::from_secs(5),
+            }
+        );
+        assert!(
+            AppConfig::load_from(&cli(None, None), env(&[("WS_CONNECTIONS_PER_USER", "0")]))
+                .is_err()
+        );
+    }
 
     #[test]
     fn roles_fallback_to_app_mode() {

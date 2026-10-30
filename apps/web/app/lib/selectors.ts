@@ -13,7 +13,13 @@ import {
 } from './notify'
 import { dmPings, scopePings, serverPings, shownPings, totalPings, type Pings } from './pings'
 import { markTargets } from './reads'
-import { groupBadges, groupHighlights, groupNames, type GroupPings } from './group_pings'
+import {
+  groupBadges,
+  groupHighlights,
+  groupNames,
+  onlineForHere,
+  type GroupPings,
+} from './group_pings'
 import { canChangeRole, memberPerms, rolePerms } from './rules'
 import type { ConfigSource } from './config_transfer'
 import type { RChatState } from './store_types'
@@ -245,7 +251,7 @@ export const badgePings = (s: RChatState): Pings => {
 const groupSelf = (s: RChatState, server: string | null) => ({
   username: s.me?.username ?? '',
   member: !!s.me && server !== null && serverNames(s).includes(server),
-  online: !!s.me && !s.me.appear_offline,
+  online: onlineForHere(s.me),
   roleIds: s.me && server !== null ? (memberOf(s, server, s.me.username)?.role_ids ?? null) : null,
 })
 

@@ -161,6 +161,40 @@ describe('presence_changed', () => {
   })
 })
 
+describe('site-wide presence (regression guard: the reducer already followed server counts)', () => {
+  test('joins and leaves follow the online count the server sends, whatever is open', async () => {
+    useStore.setState({
+      me: me('alice'),
+      view: { kind: 'dm', dmId: 4 },
+      servers: { s: serverDetail('s', { member_count: 1, online_count: 1 }) },
+      members: { s: paged([member('alice', { online: true })]) },
+    })
+    dispatch({ type: 'member_joined', server: 's', member: member('bob', { online: false }) })
+    dispatch({
+      type: 'presence_changed',
+      server: 's',
+      username: 'bob',
+      online: true,
+      online_count: 2,
+    })
+    await frame()
+    expect(st().servers.s.online_count).toBe(2)
+    expect(st().members.s.list.find(m => m.username === 'bob')?.online).toBe(true)
+    dispatch({ type: 'member_left', server: 's', username: 'bob' })
+    dispatch({
+      type: 'presence_changed',
+      server: 's',
+      username: 'bob',
+      online: false,
+      online_count: 1,
+    })
+    await frame()
+    expect(st().servers.s.member_count).toBe(1)
+    expect(st().servers.s.online_count).toBe(1)
+    expect(st().members.s.list.map(m => m.username)).toEqual(['alice'])
+  })
+})
+
 describe('presence_mode', () => {
   test('syncs appear_offline only for the signed-in user', () => {
     useStore.setState({ me: me('alice') })

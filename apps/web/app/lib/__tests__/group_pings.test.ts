@@ -16,6 +16,7 @@ import {
   groupKindsFor,
   groupNames,
   mergeGroupPings,
+  onlineForHere,
 } from '../group_pings'
 import { groupSuggestions } from '../mention_suggest'
 import {
@@ -262,25 +263,34 @@ describe('live group mentions', () => {
     expect(allPings(st())).toBe(0)
   })
 
-  test('@here counts only while viewing that server, like the server snapshot', () => {
+  test('@here counts wherever you are, unless you appear offline', () => {
+    const kinds = (id: number) => st().groupPings.c1?.items.find(i => i.message_id === id)?.kinds
     useStore.setState({ view: { kind: 'channel', server: 'other', channelId: 9 } })
     dispatch(said(40, [here]))
-    expect(st().groupPings).toEqual({})
-    expect(allPings(st())).toBe(0)
-    expect(toasts()).toEqual([])
-    useStore.setState({ view: { kind: 'dm', dmId: 3 } })
-    dispatch(said(41, [here]))
-    expect(allPings(st())).toBe(0)
-    dispatch(said(42, [everyone, here]))
-    expect(st().groupPings.c1.items).toEqual([{ message_id: 42, kinds: ['everyone'] }])
-    useStore.setState({ view: { kind: 'channel', server: 's', channelId: 2 }, notices: [] })
-    dispatch(said(43, [here]))
-    expect(allPings(st())).toBe(2)
+    expect(kinds(40)).toEqual(['here'])
+    expect(allPings(st())).toBe(1)
     expect(toasts()).toEqual(['Alice mentioned @here|s · #general'])
+    useStore.setState({ view: { kind: 'dm', dmId: 3 }, notices: [] })
+    dispatch(said(41, [here]))
+    expect(kinds(41)).toEqual(['here'])
+    useStore.setState({ view: null, notices: [] })
+    dispatch(said(42, [everyone, here]))
+    expect(kinds(42)).toEqual(['everyone', 'here'])
+    expect(allPings(st())).toBe(3)
+    expect(toasts()).toEqual(['Alice mentioned @everyone|s · #general'])
     useStore.setState({ me: { ...st().me!, appear_offline: true }, notices: [] })
-    dispatch(said(44, [here]))
-    expect(allPings(st())).toBe(2)
-    expect(toasts()).toEqual([])
+    dispatch(said(43, [here]))
+    dispatch(said(44, [everyone, here]))
+    expect(kinds(43)).toBeUndefined()
+    expect(kinds(44)).toEqual(['everyone'])
+    expect(allPings(st())).toBe(4)
+  })
+
+  test('onlineForHere ignores the open view', () => {
+    expect(onlineForHere(null)).toBe(false)
+    expect(onlineForHere(undefined)).toBe(false)
+    expect(onlineForHere({ appear_offline: false })).toBe(true)
+    expect(onlineForHere({ appear_offline: true })).toBe(false)
   })
 
   test('every kind suppressed: "All messages" still alerts as a plain message', () => {

@@ -43,6 +43,7 @@ import {
   groupAction,
   groupKindsFor,
   mergeGroupPings,
+  onlineForHere,
 } from './group_pings'
 import {
   EMPTY_NOTIFY,
@@ -1348,6 +1349,7 @@ export const useStore = create<RChatState>()((set, get) => {
         readQueue.flush()
         return
       }
+      home.ws.ensureConnected()
       const { view, atBottom, messages, reads, unreadAnchor, panel } = get()
       if (panel?.kind === 'thread') {
         const thread = threadKey(panel.root.id)
@@ -2866,8 +2868,9 @@ export const useStore = create<RChatState>()((set, get) => {
   // decision as pings plus the server's suppress settings. Returns whether it was handled, so
   // no plain message toast follows; when the suppress settings hide every kind it addresses
   // you with, the plain message path ("All messages") decides instead. Nothing is stored per
-  // member on the server: each client decides from the message itself. `@here` counts like the
-  // server's snapshot: you are online there only while this client is viewing that server.
+  // member on the server: each client decides from the message itself. `@here` uses the
+  // server's rule: you are online while connected anywhere on the site, unless you appear
+  // offline, whatever server or page is open.
   const groupAlert = (m: Message, server: string): boolean => {
     const s = get()
     const me = s.me
@@ -2877,7 +2880,7 @@ export const useStore = create<RChatState>()((set, get) => {
     const kinds = groupKindsFor(m, {
       username: me.username,
       member,
-      online: !me.appear_offline && s.view?.kind === 'channel' && s.view.server === server,
+      online: onlineForHere(me),
       roleIds: known?.role_ids ?? null,
     })
     if (!kinds.length) {
