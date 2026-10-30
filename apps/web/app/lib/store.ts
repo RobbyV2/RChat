@@ -240,6 +240,7 @@ import {
 } from './timeouts'
 import { deniedAccess, runJoinStep } from './join_flow'
 import { secretsKey } from './passwords'
+import { historyKey } from './openapi'
 import {
   freshPresence,
   knownPresence,
@@ -1549,7 +1550,10 @@ export const useStore = create<RChatState>()((set, get) => {
     downSince = null
     stopCatchUp()
     listenPage()
-    home.ws.onEvent = ev => get().applyWsEvent(ev)
+    home.ws.onEvent = ev => {
+      get().applyWsEvent(ev)
+      for (const tap of wsTaps) tap(ev)
+    }
     home.ws.onStatus = wsStatus => {
       set({ wsStatus })
       if (wsStatus !== 'green') {
@@ -3706,6 +3710,7 @@ export const useStore = create<RChatState>()((set, get) => {
       if (username) {
         writeLocal(home.scoped(secretsKey(username)), null)
         writeLocal(home.scoped(forwardKey(username)), null)
+        writeLocal(home.scoped(historyKey(username)), null)
       }
       const flushed = readQueue.flush()
       forgetSession()
@@ -4681,7 +4686,14 @@ export const useStore = create<RChatState>()((set, get) => {
         askP2p(msgs)
       }),
 
-    openSearch: () => set({ panel: { kind: 'search' }, search: emptySearch() }),
+    openSearch: q =>
+      set({
+        panel: { kind: 'search' },
+        search:
+          typeof q === 'string' && q.trim()
+            ? { ...emptySearch(), seed: q.trim(), seedN: (get().search.seedN ?? 0) + 1 }
+            : emptySearch(),
+      }),
 
     closePanel: () => set({ panel: null }),
     setInboxOpen: open => set({ inboxOpen: open }),
@@ -6193,6 +6205,15 @@ export const useStore = create<RChatState>()((set, get) => {
     setError: message => set({ error: message }),
   }
 })
+
+// Called with every live event after the store applied it (the palette index drops what the
+// viewer lost access to).
+const wsTaps = new Set<(ev: WsEvent) => void>()
+
+export const tapWs = (tap: (ev: WsEvent) => void) => {
+  wsTaps.add(tap)
+  return () => void wsTaps.delete(tap)
+}
 
 // What every display path masks names and text with: the personal profanity filter once it is
 // on and loaded, else the text as it is.

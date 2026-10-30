@@ -33,7 +33,12 @@ export default function SearchPanel() {
   const searchRun = useStore(s => s.searchRun)
   const closePanel = useStore(s => s.closePanel)
   const openResult = useStore(s => s.openResult)
-  const [q, setQ] = useState('')
+  const [q, setQ] = useState(() => useStore.getState().search.seed ?? '')
+  const [seedN, setSeedN] = useState(search.seedN)
+  if (search.seedN !== seedN) {
+    setSeedN(search.seedN)
+    if (search.seed) setQ(search.seed)
+  }
   const [from, setFrom] = useState('')
   const [channelId, setChannelId] = useState('')
   const [hasFile, setHasFile] = useState(false)

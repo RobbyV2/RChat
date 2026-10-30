@@ -50,6 +50,7 @@ import type { DmSummary } from '../lib/types'
 import { longPress } from './context_menu'
 import { dragScope, useDrag } from './drag'
 import { InboxButton, InboxPreview } from './inbox'
+import { PaletteButton } from './palette'
 import { FriendsSection } from './friends'
 import { PingBadge, pingLabel } from './ping_badge'
 import { ServerGlyph } from './server_rail'
@@ -731,6 +732,7 @@ export function HomePage({ onMenu }: { onMenu: () => void }) {
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <StatusClock />
           {signedIn && !guest && <InboxButton />}
+          <PaletteButton />
         </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">

@@ -996,7 +996,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
           {view?.kind === 'channel' && !isVoice && (
             <button
               title="Search"
-              onClick={openSearch}
+              onClick={() => openSearch()}
               className="rounded-full p-1.5 hover:bg-surface-container-high"
             >
               <Search size={20} />

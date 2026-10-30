@@ -27,6 +27,8 @@ import ThreadPanel from '../components/thread_panel'
 import SearchPanel from '../components/search_panel'
 import FriendsPanel, { AddFriendsDialog } from '../components/friends'
 import { InboxHost } from '../components/inbox'
+import { PaletteHost } from '../components/palette'
+import { reloadPalettePrefs, usePaletteUi } from '../lib/palette_store'
 import { PollVotersDialog } from '../components/poll_card'
 import { CallBanner } from '../components/voice_grid'
 import { NoticeStack } from '../components/notice_stack'
@@ -108,6 +110,7 @@ export default function AppShell() {
       if (e.key?.startsWith('rchat_notify:')) useStore.getState().reloadNotify()
       if (e.key?.startsWith('rchat_typing:')) useStore.getState().reloadTyping()
       if (e.key?.startsWith('rchat_home:')) reloadHome()
+      if (e.key?.startsWith('rchat_palette:')) reloadPalettePrefs()
     }
     const onWake = () => {
       if (document.visibilityState === 'visible') useStore.getState().pruneNotify()
@@ -135,12 +138,13 @@ export default function AppShell() {
     if (friendsOpen) setLeftOpen(false)
   }, [friendsOpen])
 
+  const paletteOpen = usePaletteUi(s => s.open)
   useEffect(() => {
-    if (dialog || confirming) {
+    if (dialog || confirming || paletteOpen) {
       setLeftOpen(false)
       setRightOpen(false)
     }
-  }, [dialog, confirming])
+  }, [dialog, confirming, paletteOpen])
 
   if (!me && !guest) {
     return (
@@ -230,6 +234,7 @@ export default function AppShell() {
         <AdminPanel />
         <ConfirmDialog />
         <InboxHost />
+        <PaletteHost />
         <ProfileCard />
         <ContextMenu />
         <ReactionPickerHost />

@@ -108,7 +108,11 @@ export type ActiveDialog =
   | { kind: 'admin_panel' }
   | { kind: 'ban_confirm'; username: string }
   | { kind: 'delete_user_confirm'; username: string }
-  | { kind: 'settings'; focus?: 'bio' }
+  | {
+      kind: 'settings'
+      focus?: 'bio'
+      section?: 'settings' | 'notifications' | 'privacy' | 'sync' | 'information' | 'palette'
+    }
   | { kind: 'rename_folder'; id: string }
   | { kind: 'category'; server: string; id?: number }
   | { kind: 'add_friends'; names: string[] }
@@ -166,6 +170,10 @@ export interface PinsView {
 }
 
 export interface SearchState {
+  // What the search box starts with when the panel opens, and which request set it (a new
+  // "Search the server for ..." replaces the query even while the panel is open).
+  seed?: string
+  seedN?: number
   results: SearchResult[]
   hasMore: boolean
   loading: boolean
@@ -485,7 +493,8 @@ export interface RChatState {
   toggleSpoiler: (key: string) => void
   toggleUploadMode: (key: string) => void
   openThread: (root: Message, at?: number) => Promise<void>
-  openSearch: () => void
+  // `q` fills the search box (from the palette).
+  openSearch: (q?: string) => void
   closePanel: () => void
   setInboxOpen: (open: boolean) => void
   loadOlderThread: () => Promise<void>

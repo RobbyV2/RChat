@@ -37,6 +37,7 @@ import { dragScope } from './drag'
 import { InstallButton } from './pwa_register'
 import { RailInstance } from './instance_badge'
 import { ThemeToggle } from './status_clock'
+import { PaletteButton } from './palette'
 import { Sentinel, iconBtn } from './ui'
 import { RailPingBadge, pingLabel } from './ping_badge'
 import { MutedIcon, folderNotifyItems, notifyMenuItems } from './notify_menu'
@@ -438,6 +439,7 @@ export function ServerRail() {
         </button>
       </div>
       <div className="flex shrink-0 flex-col items-center gap-2 border-t border-outline-variant pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <PaletteButton className={iconBtn} />
         <ThemeToggle />
         <InstallButton compact />
         <button

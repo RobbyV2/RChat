@@ -19,6 +19,7 @@ export const SHORTCUTS: Shortcut[] = [
   ...FORMATS.flatMap(({ label, keys }): Shortcut[] =>
     keys === null ? [] : [{ keys, action: label, where: 'composer' }]
   ),
+  { keys: 'Mod+K', action: 'Open the command palette', where: 'anywhere' },
   { keys: 'Escape', action: 'Mark the conversation as read, close a panel', where: 'anywhere' },
   { keys: 'Shift+Escape', action: 'Mark everything as read', where: 'anywhere' },
   { keys: 'Shift+Click', action: 'Delete without confirming (trash icon)', where: 'messages' },

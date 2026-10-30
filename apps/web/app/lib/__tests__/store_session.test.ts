@@ -2,6 +2,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { api, home } from '../instances'
 import { secretsKey } from '../passwords'
 import { forwardKey } from '../forward'
+import { loadApiHistory, useApiDoc } from '../api_console'
+import { historyKey } from '../openapi'
 import { useStore, resetSessionCaches } from '../store'
 import { me, serverDetail } from './fixtures'
 
@@ -102,6 +104,47 @@ describe('session', () => {
     expect(storage.has(grants)).toBe(false)
     expect(storage.has(clip)).toBe(false)
     expect(storage.has(other)).toBe(true)
+    Object.assign(globalThis, { localStorage: real })
+  })
+
+  test('logout forgets the API console history; old saved paths with secrets are rewritten', () => {
+    const real = (globalThis as { localStorage?: unknown }).localStorage
+    const storage = new Map<string, string>()
+    Object.assign(globalThis, {
+      localStorage: {
+        getItem: (k: string) => storage.get(k) ?? null,
+        setItem: (k: string, v: string) => void storage.set(k, v),
+        removeItem: (k: string) => void storage.delete(k),
+      },
+    })
+    const key = home.scoped(historyKey('bob'))
+    const other = home.scoped(historyKey('carol'))
+    storage.set(
+      key,
+      JSON.stringify({
+        v: 1,
+        items: [
+          {
+            op: 'run_hook',
+            method: 'POST',
+            path: '/api/webhooks/7/s3cr3t',
+            status: 204,
+            at: 1,
+            values: { params: { id: '7', token: '[redacted]' }, body: '' },
+          },
+        ],
+      })
+    )
+    storage.set(other, '{"v":2,"items":[]}')
+    loadApiHistory('bob')
+    expect((storage.get(key) ?? '').includes('s3cr3t')).toBe(false)
+    expect(JSON.stringify(useApiDoc.getState().history).includes('s3cr3t')).toBe(false)
+    expect(useApiDoc.getState().history.items).toHaveLength(1)
+    useStore.setState({ token: null, me: me('bob'), authExpired: true })
+    st().logout()
+    expect(storage.has(key)).toBe(false)
+    expect(storage.has(other)).toBe(true)
+    loadApiHistory(null)
     Object.assign(globalThis, { localStorage: real })
   })
 

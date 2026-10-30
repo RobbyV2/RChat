@@ -90,8 +90,18 @@ const room = async () => {
 }
 
 export const webBlobs: BlobStore = {
-  put: async (key, blob) => {
-    await run<IDBValidKey>('readwrite', s => s.put(blob, key))
+  put: async (key, blob, live) => {
+    const db = await open()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite')
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error ?? new Error('IndexedDB failed'))
+      tx.onabort = () => (tx.error ? reject(tx.error) : resolve())
+      // Transactions on the store run in the order they were made, so a removal made after
+      // `live` turned false always runs after this one.
+      if (live && !live()) tx.abort()
+      else tx.objectStore(STORE).put(blob, key)
+    })
   },
   get: async key => {
     const got = await run<unknown>('readonly', s => s.get(key))

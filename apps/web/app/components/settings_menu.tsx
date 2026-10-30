@@ -19,13 +19,14 @@ import { NotificationsSection } from './notify_settings'
 import { ConfigSyncSection } from './config_sync'
 import { DesktopSection } from './desktop_settings'
 import { BlockedUsersSection } from './blocking'
+import { PaletteSettingsSection } from './palette_settings'
 import { Choice, PrivacyChoices } from './friends'
 import { PassSwitch, WordGrid } from './word_grid'
 import { FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './ui'
 
 const bioFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
-type Section = 'settings' | 'notifications' | 'privacy' | 'sync' | 'information'
+type Section = 'settings' | 'notifications' | 'privacy' | 'sync' | 'palette' | 'information'
 
 export default function SettingsMenu() {
   const open = useStore(s => s.activeDialog?.kind === 'settings')
@@ -744,8 +745,18 @@ function InformationSection() {
 
 function Menu() {
   const closeDialog = useStore(s => s.closeDialog)
-  const [section, setSection] = useState<Section>('settings')
   const signedIn = useStore(s => s.me !== null && !s.guest)
+  const asked = useStore(s =>
+    s.activeDialog?.kind === 'settings' ? (s.activeDialog.section ?? null) : null
+  )
+  const [section, setSection] = useState<Section>(() =>
+    asked && (asked !== 'privacy' || signedIn) ? asked : 'settings'
+  )
+  const [seenAsked, setSeenAsked] = useState(asked)
+  if (seenAsked !== asked) {
+    setSeenAsked(asked)
+    if (asked && (asked !== 'privacy' || signedIn)) setSection(asked)
+  }
   const titleId = useId()
   useEscape(closeDialog)
 
@@ -754,6 +765,7 @@ function Menu() {
     ['notifications', 'Notifications'],
     ...(signedIn ? ([['privacy', 'Privacy']] as [Section, string][]) : []),
     ['sync', 'Sync config'],
+    ['palette', 'Command palette'],
     ['information', 'Information'],
   ]
 
@@ -809,6 +821,8 @@ function Menu() {
             </section>
           ) : section === 'sync' ? (
             <ConfigSyncSection />
+          ) : section === 'palette' ? (
+            <PaletteSettingsSection />
           ) : (
             <InformationSection />
           )}

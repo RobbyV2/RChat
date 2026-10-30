@@ -13,8 +13,9 @@ export interface BlobWriter {
 }
 
 export interface BlobStore {
-  // Rejects when the platform has no room or no storage.
-  put: (key: string, blob: Blob) => Promise<void>
+  // Rejects when the platform has no room or no storage. With `live`, it is asked again inside
+  // the write's transaction and nothing is written when it says no.
+  put: (key: string, blob: Blob, live?: () => boolean) => Promise<void>
   get: (key: string) => Promise<Blob | null>
   remove: (key: string) => Promise<void>
   create: (key: string) => Promise<BlobWriter>
