@@ -8,8 +8,8 @@ use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::{
-    BANNED, InviteView, Proof, ResolvedChannel, ServerAccess, Via, resolve_channel, resolve_invite,
-    resolve_server,
+    BANNED, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, resolve_channel,
+    resolve_invite, resolve_server,
 };
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
 use crate::api::audit::{self, ChannelRef, Details, Entry, Target, TargetKind};
@@ -2893,6 +2893,7 @@ pub(crate) async fn kick_member(
     Json(req): Json<UsernameReq>,
 ) -> Result<Json<OkResp>, ApiError> {
     let target = req.username.to_lowercase();
+    let user = acting_on(&user, &target);
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::Kick).await?;
     access.require_moderate(&state.db, &target).await?;
@@ -3040,9 +3041,10 @@ pub(crate) async fn unban_member(
     Authed(user): Authed,
     Path((name, target)): Path<(String, String)>,
 ) -> Result<Json<OkResp>, ApiError> {
+    let target = target.to_lowercase();
+    let user = acting_on(&user, &target);
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::Kick).await?;
-    let target = target.to_lowercase();
     let actor = access.audit_actor(&state.db, Perm::Kick).await?;
     let mut tx = state.db.begin().await?;
     let removed = sqlx::query("DELETE FROM server_bans WHERE server = $1 AND username = $2")
@@ -3170,6 +3172,7 @@ async fn set_admin(
     target: &str,
     is_admin: bool,
 ) -> Result<Json<OkResp>, ApiError> {
+    let actor = &acting_on(actor, target);
     let access = resolve_server(&state.db, server, Some(actor), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::ManageAdmins).await?;
     let server = access.name();
@@ -3449,6 +3452,7 @@ pub(crate) async fn set_admin_perms(
     Json(req): Json<PermsReq>,
 ) -> Result<Json<OkResp>, ApiError> {
     let target = target.to_lowercase();
+    let user = acting_on(&user, &target);
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::ManageAdmins).await?;
     let key = access.name().to_string();
@@ -3508,6 +3512,15 @@ async fn require_role(db: &Db, server: &str, id: i64) -> Result<i64, ApiError> {
     {
         Some(r) => Ok(r.try_get(0)?),
         None => Err(not_found("Role not found")),
+    }
+}
+
+/// Who sets or clears a channel rule for `subject`: a rule for yourself (`u:<you>`) is set with
+/// your plain membership only (see `acting_on`).
+fn rule_actor(user: &User, subject: &str) -> User {
+    match subject.to_lowercase().strip_prefix("u:") {
+        Some(target) => acting_on(user, target),
+        None => user.clone(),
     }
 }
 
@@ -4094,10 +4107,11 @@ pub(crate) async fn assign_role(
     Path((name, id)): Path<(String, i64)>,
     Json(req): Json<UsernameReq>,
 ) -> Result<Json<OkResp>, ApiError> {
+    let target = req.username.to_lowercase();
+    let user = acting_on(&user, &target);
     let access = role_guard(&state, &name, &user).await?;
     let key = access.name().to_string();
     let role_perms = require_role(&state.db, &key, id).await?;
-    let target = req.username.to_lowercase();
     let member = sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
         .bind(&key)
         .bind(&target)
@@ -4200,10 +4214,11 @@ pub(crate) async fn unassign_role(
     Authed(user): Authed,
     Path((name, id, target)): Path<(String, i64, String)>,
 ) -> Result<Json<OkResp>, ApiError> {
+    let target = target.to_lowercase();
+    let user = acting_on(&user, &target);
     let access = role_guard(&state, &name, &user).await?;
     let key = access.name().to_string();
     require_role(&state.db, &key, id).await?;
-    let target = target.to_lowercase();
     if target != user.username {
         access.require_moderate(&state.db, &target).await?;
     }
@@ -4443,6 +4458,7 @@ pub(crate) async fn set_channel_perm(
     Path(id): Path<i64>,
     Json(req): Json<ChannelPerm>,
 ) -> Result<Json<OkResp>, ApiError> {
+    let user = rule_actor(&user, &req.subject);
     let channel = channel_perm_guard(&state, id, &user).await?;
     let server = channel.server().name().to_string();
     let actor = channel
@@ -4553,6 +4569,7 @@ pub(crate) async fn clear_channel_perm(
     Authed(user): Authed,
     Path((id, subject)): Path<(i64, String)>,
 ) -> Result<Json<OkResp>, ApiError> {
+    let user = rule_actor(&user, &subject);
     let channel = channel_perm_guard(&state, id, &user).await?;
     let server = channel.server().name().to_string();
     let actor = channel

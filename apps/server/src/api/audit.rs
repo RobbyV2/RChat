@@ -435,23 +435,10 @@ pub fn channel_entry(server: &str, actor: &Actor, action: Action, channel: &Chan
     ))
 }
 
-async fn is_site_admin(conn: &mut AnyConnection, username: &str) -> sqlx::Result<bool> {
-    Ok(
-        sqlx::query("SELECT is_site_admin FROM users WHERE username = $1")
-            .bind(username)
-            .fetch_optional(&mut *conn)
-            .await?
-            .map(|r| r.try_get::<i64, _>(0))
-            .transpose()?
-            .is_some_and(|v| v != 0),
-    )
-}
-
 /// Writes `entry`. Pass the action's transaction, so a failed action logs nothing and a failed
-/// write undoes the action. A site admin user target or rule subject is stored as the unnamed
-/// staff only when the actor is staff (the action relied on instance powers). Everything else
-/// names people as usual, message authors included: a marker that other events contradict
-/// would reveal who is staff.
+/// write undoes the action. Targets and rule subjects are always named, site admins included:
+/// the action's own events name them anyway, so a staff marker on them would only reveal who
+/// is staff (`target_staff` stays 0 for new entries).
 pub async fn record(conn: &mut AnyConnection, entry: Entry) -> sqlx::Result<()> {
     record_id(conn, entry).await.map(|_| ())
 }
@@ -463,36 +450,12 @@ pub(crate) async fn record_id(conn: &mut AnyConnection, entry: Entry) -> sqlx::R
         actor,
         action,
         target,
-        details: Details { mut map, channels },
+        details: Details { map, channels },
     } = entry;
     let (kind, id, name) = match target {
         Some(Target { kind, id, name }) => (Some(kind), id, name),
         None => (None, None, None),
     };
-    let by_staff = matches!(actor, Actor::Staff);
-    let target_staff = match (kind, name.as_deref()) {
-        (Some(TargetKind::User), Some(n)) if by_staff => is_site_admin(&mut *conn, n).await?,
-        _ => false,
-    };
-    let name = match target_staff {
-        true => None,
-        false => name,
-    };
-    let subject_staff = match map.get("subject") {
-        Some(s) if s.get("kind").and_then(Value::as_str) == Some("user") => {
-            match s.get("name").and_then(Value::as_str) {
-                Some(n) if by_staff => is_site_admin(&mut *conn, n).await?,
-                _ => false,
-            }
-        }
-        _ => false,
-    };
-    if subject_staff {
-        map.insert(
-            "subject".to_string(),
-            json!({ "kind": "user", "staff": true }),
-        );
-    }
     let (actor, staff) = match actor {
         Actor::User(name) => (Some(name), 0i64),
         Actor::Staff => (None, 1),
@@ -505,7 +468,7 @@ pub(crate) async fn record_id(conn: &mut AnyConnection, entry: Entry) -> sqlx::R
         .bind(kind.map(TargetKind::as_str))
         .bind(id)
         .bind(name)
-        .bind(i64::from(target_staff))
+        .bind(0i64)
         .bind(Details::encode(map))
         .bind(now())
         .fetch_one(&mut *conn)
@@ -2045,19 +2008,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn site_admins_are_unnamed_only_in_staff_actions() {
+    async fn site_admins_are_named_as_targets_and_act_on_themselves_as_members() {
         let (state, path, general) = club("audit_staff_target").await;
         let db = &state.db;
         let s = || State(state.clone());
         add_member(db, "club", "root", 0, 0, 0).await;
-        let _ = grant_admin(
+        let refused = grant_admin(
             s(),
             who("root"),
             named("club"),
             Json(req(json!({ "username": "root" }))),
         )
+        .await;
+        assert_eq!(
+            refused.err().map(|ApiError(c, m)| (c, m)),
+            Some((StatusCode::FORBIDDEN, "Missing permission".to_string())),
+            "a site admin can't grant themselves admin through instance powers"
+        );
+        let _ = grant_admin(
+            s(),
+            who("alice"),
+            named("club"),
+            Json(req(json!({ "username": "root" }))),
+        )
         .await
-        .expect("staff grants themselves admin");
+        .expect("alice grants root admin");
         let _ = crate::api::servers::revoke_admin(
             s(),
             who("alice"),
@@ -2102,7 +2077,7 @@ mod tests {
         let (entries, _) = page(&state, "alice", json!({})).await.expect("log");
         assert_eq!(entries.len(), 6);
         // Members acting on a site admin name them as usual: marking them would reveal staff.
-        for e in &entries[..5] {
+        for e in &entries {
             assert!(!e.staff, "{:?}", e.action);
             let t = e.target.as_ref().expect("target");
             if matches!(t.kind.as_str(), "user" | "message") {
@@ -2114,7 +2089,6 @@ mod tests {
             entries[3].details["subject"],
             json!({ "kind": "user", "name": "root" })
         );
-        // Staff acting on themselves stay unnamed on both sides.
         let pin = &entries[1];
         assert_eq!(pin.action, "message.pin");
         assert_eq!(
@@ -2123,10 +2097,10 @@ mod tests {
         );
         let grant = &entries[5];
         assert_eq!(grant.action, "member.admin_grant");
-        assert!(grant.staff && grant.actor.is_none());
-        let t = grant.target.as_ref().expect("target");
-        assert!(t.staff && t.name.is_none() && t.user.is_none());
-        assert!(!serde_json::to_string(grant).expect("json").contains("root"));
+        assert_eq!(
+            grant.actor.as_ref().map(|a| a.username.as_str()),
+            Some("alice")
+        );
         done(state, path).await;
     }
 

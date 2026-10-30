@@ -45,6 +45,17 @@ pub fn not_found() -> ApiError {
 /// The permissions a timed-out member keeps: only those that read.
 pub const READ_PERMS: i64 = Perm::ViewAuditLog as i64;
 
+/// Who `user` acts as on `target` inside a server: on themselves a site admin has only their
+/// plain membership, never instance powers, so whatever they do to themselves (lifting their
+/// own timeout, granting themselves admin or roles, setting channel rules for themselves) works
+/// and is logged exactly as for any member, and shows nothing about them.
+pub fn acting_on(user: &User, target: &str) -> User {
+    User {
+        is_site_admin: user.is_site_admin && user.username != target,
+        ..user.clone()
+    }
+}
+
 pub fn timed_out_error() -> ApiError {
     forbidden(TIMED_OUT)
 }
@@ -625,13 +636,15 @@ impl ServerAccess {
     }
 
     /// The viewer's permissions for acting. A member who is timed out keeps only the read
-    /// rights (`READ_PERMS`) until the timeout ends; site admins are never limited, so a
-    /// timeout shows nothing about them.
+    /// rights (`READ_PERMS`) until the timeout ends. That holds for a site admin who is a
+    /// member too: acting normally while timed out would show what they are. Only a site
+    /// admin reaching the server as staff (not a member, so never timed out here) is not
+    /// limited.
     pub async fn perms(&self, db: &Db) -> Result<i64, ApiError> {
         let bits = self.view_perms(db).await?;
         match &self.user {
             Some(user)
-                if !user.is_site_admin
+                if self.via != Via::Staff
                     && bits & !READ_PERMS != 0
                     && timed_out(db, self.name(), &user.username).await?.is_some() =>
             {
@@ -1179,12 +1192,22 @@ pub async fn resolve_message(
     let channel = match (scope.channel_id, scope.dm_id) {
         (Some(cid), _) => {
             let channel = resolve_channel(db, cid, viewer, proof).await?;
-            if channel
-                .read_since(db)
-                .await?
-                .is_some_and(|since| created_at < since)
-            {
-                return Err(not_found());
+            if let Some(since) = channel.read_since(db).await? {
+                if created_at < since {
+                    return Err(not_found());
+                }
+                if let Some(root) = scope.thread_root_id {
+                    let root_at: Option<i64> =
+                        sqlx::query("SELECT created_at FROM messages WHERE id = $1")
+                            .bind(root)
+                            .fetch_optional(db)
+                            .await?
+                            .map(|r| r.try_get(0))
+                            .transpose()?;
+                    if root_at.is_some_and(|at| at < since) {
+                        return Err(not_found());
+                    }
+                }
             }
             scope.server = Some(channel.server.name().to_string());
             Some(channel)

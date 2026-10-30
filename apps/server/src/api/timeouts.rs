@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::ToSchema;
 
-use crate::api::access::{Proof, ServerAccess, resolve_server};
+use crate::api::access::{Proof, ServerAccess, acting_on, resolve_server};
 use crate::api::audit::{self, Details, Entry, Target};
 use crate::api::{ApiError, ApiErrorBody, OkResp, bad, ok, placeholders};
 use crate::api::{Authed, check_len};
@@ -304,9 +304,10 @@ pub(crate) async fn remove_timeout(
     Path((name, username)): Path<(String, String)>,
 ) -> Result<Json<OkResp>, ApiError> {
     let target = username.to_lowercase();
+    let user = acting_on(&user, &target);
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::TimeoutMembers).await?;
-    if target == user.username && !user.is_site_admin {
+    if target == user.username {
         return Err(bad("You can't remove your own timeout"));
     }
     if get_user(&state.db, &target).await?.is_none() {
@@ -791,6 +792,182 @@ mod tests {
             "a timed-out admin can't lift their own timeout"
         );
         assert_eq!(status(untime(state, "root", "alice").await), Ok(()));
+        done(c.state, c.path).await;
+    }
+
+    #[tokio::test]
+    async fn site_admins_have_no_instance_powers_over_themselves_or_their_timeout() {
+        let c = club("timeout_staff_self").await;
+        let state = &c.state;
+        let db = &state.db;
+        add_member(db, "club", "root", 0, 0, 0).await;
+        let chans = id_of(db, "INSERT INTO roles(server, name, color, perms) VALUES('club', 'chans', '#ffffff', 1) RETURNING id").await;
+        exec(db, &format!("INSERT INTO user_roles(server, username, role_id) VALUES('club', 'root', {chans}), ('club', 'carol', {chans})")).await;
+        exec(db, "UPDATE roles SET perms = 131 WHERE name = 'mods'").await;
+        let category = |by: &'static str| async move {
+            crate::api::categories::create_category(
+                State(state.clone()),
+                who(by),
+                Path("club".to_string()),
+                Json(req(json!({"name": format!("by {by}")}))),
+            )
+            .await
+            .map(|_| ())
+        };
+        assert_eq!(status(category("root").await), Ok(()));
+        for target in ["root", "carol"] {
+            time_out(state, "mo", target, json!({"seconds": 600}))
+                .await
+                .expect("timed out");
+        }
+        assert_eq!(status(category("carol").await), timed_out_err());
+        assert_eq!(
+            status(category("root").await),
+            timed_out_err(),
+            "a timed-out site admin acting in the server is limited like any member"
+        );
+        assert_eq!(
+            status(untime(state, "root", "root").await),
+            Err((403, "Missing permission".to_string())),
+            "nor can they lift their own timeout: on themselves they are a plain member"
+        );
+        assert_eq!(
+            status(untime(state, "carol", "carol").await),
+            Err((403, "Missing permission".to_string()))
+        );
+        assert_eq!(
+            status(untime(state, "root", "carol").await),
+            timed_out_err()
+        );
+        exec(db, "DELETE FROM member_timeouts").await;
+        assert_eq!(
+            status(untime(state, "root", "root").await),
+            Err((403, "Missing permission".to_string()))
+        );
+        let assign = crate::api::servers::assign_role(
+            State(state.clone()),
+            who("root"),
+            Path(("club".to_string(), chans)),
+            Json(req(json!({"username": "root"}))),
+        )
+        .await;
+        assert_eq!(
+            status(assign),
+            Err((403, "Missing permission".to_string())),
+            "no roles for themselves through instance powers"
+        );
+        let promote = crate::api::servers::grant_admin(
+            State(state.clone()),
+            who("root"),
+            Path("club".to_string()),
+            Json(req(json!({"username": "root"}))),
+        )
+        .await;
+        assert_eq!(
+            status(promote),
+            Err((403, "Missing permission".to_string()))
+        );
+        exec(db, "DELETE FROM user_roles WHERE username = 'root'").await;
+        let rule = crate::api::servers::set_channel_perm(
+            State(state.clone()),
+            who("root"),
+            Path(c.general),
+            Json(req(json!({"subject": "U:Root", "can_view": true, "can_send": true, "can_read_history": true}))),
+        )
+        .await;
+        assert!(status(rule).is_err(), "no channel rules for themselves");
+        let rule = crate::api::servers::set_channel_perm(
+            State(state.clone()),
+            who("root"),
+            Path(c.general),
+            Json(req(json!({"subject": "u:carol", "can_view": true, "can_send": true, "can_read_history": true}))),
+        )
+        .await;
+        assert_eq!(status(rule), Ok(()), "on others they still act as staff");
+        let staff_on_staff: i64 = id_of(
+            db,
+            "SELECT COUNT(*) FROM audit_log WHERE staff = 1 AND (target_staff = 1 OR details LIKE '%\"staff\"%')",
+        )
+        .await;
+        assert_eq!(staff_on_staff, 0);
+        let named: i64 = id_of(
+            db,
+            "SELECT COUNT(*) FROM audit_log WHERE actor = 'root' AND action = 'channel.category_create'",
+        )
+        .await;
+        assert_eq!(named, 1, "only the category made before the timeout");
+        let kick = crate::api::servers::kick_member(
+            State(state.clone()),
+            who("root"),
+            Path("club".to_string()),
+            Json(req(json!({"username": "root"}))),
+        )
+        .await;
+        assert_eq!(
+            status(kick),
+            Err((403, "Missing permission".to_string())),
+            "no kicking themselves through instance powers"
+        );
+        let members: i64 = id_of(
+            db,
+            "SELECT COUNT(*) FROM members WHERE server = 'club' AND username = 'root'",
+        )
+        .await;
+        assert_eq!(members, 1);
+        exec(
+            db,
+            "DELETE FROM members WHERE server = 'club' AND username = 'root'",
+        )
+        .await;
+        exec(db, &format!("INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('club', 'root', 'mo', {})", now())).await;
+        let unban = crate::api::servers::unban_member(
+            State(state.clone()),
+            who("root"),
+            Path(("club".to_string(), "root".to_string())),
+        )
+        .await;
+        assert!(status(unban).is_err(), "nor lifting their own ban");
+        let bans: i64 = id_of(
+            db,
+            "SELECT COUNT(*) FROM server_bans WHERE username = 'root'",
+        )
+        .await;
+        assert_eq!(bans, 1);
+        let unban = crate::api::servers::unban_member(
+            State(state.clone()),
+            Authed(mem_user("root2", true)),
+            Path(("club".to_string(), "root".to_string())),
+        )
+        .await;
+        assert_eq!(status(unban), Ok(()), "another site admin still can");
+        done(c.state, c.path).await;
+    }
+
+    #[tokio::test]
+    async fn staff_acting_on_another_site_admin_names_them_like_anyone() {
+        let c = club("timeout_staff_other").await;
+        let state = &c.state;
+        let db = &state.db;
+        add_member(db, "club", "root", 0, 0, 0).await;
+        let _ = set_timeout(
+            State(state.clone()),
+            Authed(mem_user("root2", true)),
+            Path(("club".to_string(), "root".to_string())),
+            Json(req(json!({"seconds": 60}))),
+        )
+        .await
+        .expect("staff times out another site admin");
+        let row = sqlx::query("SELECT actor, staff, target_name, target_staff FROM audit_log WHERE action = 'member.timeout'")
+            .fetch_one(db)
+            .await
+            .expect("entry");
+        let got: (Option<String>, i64, Option<String>, i64) = (
+            row.try_get(0).expect("actor"),
+            row.try_get(1).expect("staff"),
+            row.try_get(2).expect("target"),
+            row.try_get(3).expect("target_staff"),
+        );
+        assert_eq!(got, (None, 1, Some("root".to_string()), 0));
         done(c.state, c.path).await;
     }
 

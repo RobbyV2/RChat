@@ -3647,6 +3647,61 @@ mod tests {
         done(state, path).await;
     }
 
+    #[tokio::test]
+    async fn thread_replies_under_a_root_before_the_floor_stay_hidden() {
+        let (state, path) = temp_state("history_thread_root").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        let joined = now() - 1000;
+        add_member(db, "rchat", "alice", 0, 0, joined).await;
+        let insert = |content: &'static str, at: i64, root: Option<i64>| async move {
+            sqlx::query("INSERT INTO messages(channel_id, thread_root_id, author, content, created_at) VALUES($1, $2, 'bob', $3, $4) RETURNING id")
+                .bind(cid)
+                .bind(root)
+                .bind(content)
+                .bind(at)
+                .fetch_one(db)
+                .await
+                .expect("insert message")
+                .try_get::<i64, _>(0)
+                .expect("id")
+        };
+        let old_root = insert("old root", joined - 500, None).await;
+        let hidden_reply = insert("reply", joined + 100, Some(old_root)).await;
+        let new_root = insert("new root", joined + 200, None).await;
+        let shown_reply = insert("reply", joined + 300, Some(new_root)).await;
+        sqlx::query(
+            "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:alice', 1, 1, 0)",
+        )
+        .bind(cid)
+        .execute(db)
+        .await
+        .expect("insert perm");
+        crate::api::test_util::restrict_ruled(db).await;
+        let alice = mem_user("alice", false);
+        let read = |id: i64| {
+            let alice = alice.clone();
+            async move {
+                crate::api::access::resolve_message(db, id, Some(&alice), &Proof::none())
+                    .await
+                    .map(|_| ())
+                    .map_err(|ApiError(code, _)| code)
+            }
+        };
+        assert_eq!(read(hidden_reply).await, Err(StatusCode::NOT_FOUND));
+        assert_eq!(read(old_root).await, Err(StatusCode::NOT_FOUND));
+        assert_eq!(read(shown_reply).await, Ok(()));
+        let located = message_location(
+            State(state.clone()),
+            MaybeAuthed(Some(alice.clone())),
+            HeaderMap::new(),
+            Path(hidden_reply),
+        )
+        .await;
+        assert!(matches!(located, Err(ApiError(StatusCode::NOT_FOUND, _))));
+        done(state, path).await;
+    }
+
     fn query(q: Option<&str>) -> SearchQuery {
         SearchQuery {
             q: q.map(str::to_string),
