@@ -87,6 +87,10 @@ export interface P2pMessage {
   // A call log row (written by the caller, `sender`), or a missed call this side noted itself
   // when the caller never wrote one (`local`).
   call: (CallContent & { local?: true }) | null
+  // P2P servers: a join or leave line made from a member event, and a mention of everyone by
+  // someone allowed to.
+  system?: { kind: 'join' | 'leave'; ik: string } | null
+  everyone?: boolean
 }
 
 const newer = (a: EventRecord, b: EventRecord) =>
@@ -460,6 +464,9 @@ export class Dms {
   private typers = new Map<string, { until: number; timer: unknown }>()
   // Files that arrived and wait for a click instead of fetching by themselves, and why.
   readonly paused = new Map<string, AutoPause>()
+  // P2P servers add their own serving gate and holders (server.ts).
+  moreEntitled: ((ik: string, h: string) => Promise<boolean>) | null = null
+  moreHolders: ((h: string) => Promise<string[]>) | null = null
   private autoChain: Promise<unknown> = Promise.resolve()
   // The browser refused to store more (quota exceeded). Pulls pause for a minute after that.
   storageFull = false
@@ -494,8 +501,11 @@ export class Dms {
       store: deps.store,
       clock: this.clock,
       limits: deps.bulk,
-      entitled: (ik, h) => this.entitled(ik, h),
-      members: h => this.holdersOf(h),
+      entitled: async (ik, h) =>
+        (await this.entitled(ik, h)) || ((await this.moreEntitled?.(ik, h)) ?? false),
+      members: async h => [
+        ...new Set([...(await this.holdersOf(h)), ...((await this.moreHolders?.(h)) ?? [])]),
+      ],
       enabled: deps.attachments,
       room: deps.room,
     })
@@ -556,10 +566,14 @@ export class Dms {
       for (const f of [...(c?.att ?? []), ...(c?.fwd?.att ?? [])]) {
         if (f.size > max || seen.has(f.h)) continue
         seen.add(f.h)
-        const from = a.rec.sender
-        this.autoChain = this.autoChain.then(() => this.auto(from, f)).catch(() => {})
+        this.autoFetch(a.rec.sender, f)
       }
     }
+  }
+
+  // Queues a file to fetch by itself (one decision at a time, with the daily and storage limits).
+  autoFetch(from: string, f: Attachment) {
+    this.autoChain = this.autoChain.then(() => this.auto(from, f)).catch(() => {})
   }
 
   // Fetches a file by itself, one decision at a time: only while enough storage stays free and

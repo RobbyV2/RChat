@@ -39,6 +39,9 @@ import { VoiceDock } from '../voice_grid'
 import { dangerBtn, Dialog, fieldCls, filledBtn, iconBtn, textBtn } from '../ui'
 import { AddContactDialog } from './add_contact'
 import { VerifyDialog } from './verify_dialog'
+import { P2pFolderDialog, ServerInviteDialog, ServerNewDialog } from './p2p_invite_dialog'
+import { ServerSettingsDialog } from './p2p_server_settings'
+import { allServerPings, ServerInviteRows, serverUnread } from './p2p_server_view'
 import {
   ContactShield,
   KeyAvatar,
@@ -50,10 +53,25 @@ import {
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 
+// Pings of P2P conversations and P2P server channels (the tab title counts both).
 export const useP2pPings = () => {
+  const rooms = useP2p(s => s.rooms)
+  const servers = useP2p(s => s.servers)
+  const prefs = useStore(s => s.notifyPrefs)
+  return badgePings(rooms, prefs) + allServerPings(servers, prefs)
+}
+
+// Only conversations: the P2P tile badges these, server tiles badge their own.
+const useDmPings = () => {
   const rooms = useP2p(s => s.rooms)
   const prefs = useStore(s => s.notifyPrefs)
   return badgePings(rooms, prefs)
+}
+
+export const useServerUnread = () => {
+  const servers = useP2p(s => s.servers)
+  const prefs = useStore(s => s.notifyPrefs)
+  return Object.values(servers).some(v => serverUnread(v, prefs))
 }
 
 // Unread conversations that show it: muted ones don't.
@@ -70,7 +88,7 @@ const useP2pUnread = () => {
 export function P2pRailTile() {
   const open = useP2p(s => s.home)
   const pending = useP2p(s => requestsOf(s.contacts).length)
-  const pings = useP2pPings()
+  const pings = useDmPings()
   const unread = useP2pUnread()
   const badge = pending + pings
   const label = [
@@ -597,6 +615,7 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
             {status === 'moved' && !elsewhere && <MovedBanner />}
             {!elsewhere && <MovingBanner />}
             {dropped > 0 && <DroppedNote n={dropped} />}
+            <ServerInviteRows />
             {pending.length > 0 && (
               <section aria-label="Message requests">
                 <p className="px-3 pb-2 text-xs font-medium tracking-wide text-on-surface-variant uppercase">
@@ -784,5 +803,13 @@ export function P2pDialogs() {
       return <RenameDialog key={dialog.ik} ik={dialog.ik} />
     case 'enable':
       return <EnableDialog />
+    case 'server_new':
+      return <ServerNewDialog tab={dialog.tab} code={dialog.code} />
+    case 'server_invite':
+      return <ServerInviteDialog key={dialog.room} room={dialog.room} />
+    case 'server_settings':
+      return <ServerSettingsDialog key={dialog.room} room={dialog.room} tab={dialog.tab} />
+    case 'p2p_folder':
+      return <P2pFolderDialog key={dialog.id} id={dialog.id} />
   }
 }

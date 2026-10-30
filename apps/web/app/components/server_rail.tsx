@@ -43,6 +43,7 @@ import { RailPingBadge, pingLabel } from './ping_badge'
 import { MutedIcon, folderNotifyItems, notifyMenuItems } from './notify_menu'
 import { markAllReadItem, markReadItem } from './mark_read'
 import { P2pRailTile } from './p2p/p2p_home'
+import { P2pServerRail } from './p2p/p2p_server_view'
 import { p2p as p2pView, useP2p } from '../lib/p2p/app'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
@@ -101,7 +102,7 @@ function ServerTile({
   at: number
 }) {
   const me = useStore(s => s.me)
-  const p2pOpen = useP2p(s => s.home)
+  const p2pOpen = useP2p(s => s.home || s.server !== null)
   const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name) && !p2pOpen
   const unread = useStore(s => serverUnread(s, name))
   const pings = useStore(s => serverPingCount(s, name))
@@ -172,6 +173,8 @@ function ServerTile({
         {
           group: 'rail',
           key: serverKey(name),
+          // P2P servers have zones of their own.
+          zones: zone => zone !== 'p2p' && !zone.startsWith('p2p:'),
           onto: key => key !== parent,
           onDrop: target => dropServer(name, target),
         }
@@ -249,7 +252,7 @@ function PreviewTile() {
 }
 
 function MiniIcon({ server: { name, display_name } }: { server: RailServer }) {
-  const p2pOpen = useP2p(s => s.home)
+  const p2pOpen = useP2p(s => s.home || s.server !== null)
   const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name) && !p2pOpen
   const mask = useMask()
   return (
@@ -382,7 +385,7 @@ export function ServerRail() {
   const openDialog = useStore(s => s.openDialog)
   const logout = useStore(s => s.logout)
   const saved = useStore(s => s.layout.servers)
-  const p2pHome = useP2p(s => s.home)
+  const p2pHome = useP2p(s => s.home || s.server !== null)
 
   const items = railItems(
     railServers({ me, guestServers, guestNames, servers }),
@@ -451,6 +454,7 @@ export function ServerRail() {
         >
           <Plus size={22} />
         </button>
+        {me && <P2pServerRail />}
       </div>
       <div className="flex shrink-0 flex-col items-center gap-2 border-t border-outline-variant pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <PaletteButton className={iconBtn} />

@@ -68,6 +68,7 @@ import {
 import { splitFile } from '../config_transfer'
 import { assemble } from '../p2p/blobs'
 import type { P2pDatabase } from '../p2p/db'
+import { Servers } from '../p2p/server'
 
 // Device move (note section 7): the encrypted section, the dump of every store, the three
 // import cases, and what contacts and the old device see afterwards.
@@ -79,12 +80,14 @@ interface Peer {
   node: P2pNode
   store: P2pStore
   dms: Dms
+  servers?: Servers
   db: string
 }
 
 const live: Peer[] = []
 afterEach(() => {
   for (const p of live.splice(0)) {
+    p.servers?.stop()
     p.dms.stop()
     p.node.stop()
   }
@@ -92,7 +95,9 @@ afterEach(() => {
 
 const peerOf = (node: P2pNode, store: P2pStore, db: string, clock: ManualClock): Peer => {
   const dms = new Dms({ node, store, clock })
-  const p = { node, store, dms, db }
+  const servers = new Servers({ node, store, dms, clock, random: () => 0.5 })
+  void servers.start()
+  const p = { node, store, dms, servers, db }
   live.push(p)
   return p
 }
@@ -113,6 +118,10 @@ const openPeer = async (hub: Hub, db: string, clock: ManualClock) => {
   })) as P2pNode
   return peerOf(node, store, db, clock)
 }
+
+// Waits on real time for work that runs on WebCrypto and fake-indexeddb, which a loaded full
+// test run slows down a lot (the move test is the longest chain of it).
+const SLOW = 40_000
 
 const eventually = async (ok: () => Promise<boolean>, what: string, ms = 15_000) => {
   const end = Date.now() + ms
@@ -152,7 +161,7 @@ const selfOf = async (s: P2pStore) => (await s.self()) as SelfRecord
 
 // Alice and Bob with a conversation that touches every store: messages, an edit, a reaction, a
 // pin, a reply, and one message still waiting in the outbox.
-const scene = async () => {
+const scene = async (opts: { server?: boolean } = {}) => {
   const clock = new ManualClock()
   const hub = new Hub()
   const a = await makePeer(hub, 'Alice', clock)
@@ -178,10 +187,22 @@ const scene = async () => {
       (await bodies(b, a.node.ik))[0] === 'hello there Bob',
     'conversation'
   )
+  // With `server`: a P2P server they are both in, so Alice keeps a code she issued and Bob's
+  // devices.
+  const [sa, sb] = [a.servers as Servers, b.servers as Servers]
+  const server = opts.server ? await sa.create('Club') : null
+  if (server) {
+    await sb.redeem(await sa.issueCode(server, 60 * 60_000))
+    const end = Date.now() + 15_000
+    while (sa.view(server)?.members.find(m => m.ik === b.node.ik)?.m !== 'join') {
+      if (Date.now() > end) throw new Error('timed out waiting for Bob to join')
+      await clock.advance(5_000)
+    }
+  }
   await b.node.setPaused(true)
   await waitFor(() => !a.dms.online(room), 'Bob away')
   await a.dms.send(room, { body: 'sent while Bob was away' })
-  return { clock, hub, a, b, room }
+  return { clock, hub, a, b, room, server }
 }
 
 describe('passphrase and section', () => {
@@ -223,7 +244,7 @@ describe('passphrase and section', () => {
 
 describe('dump and encryption', () => {
   test('every store but the excluded ones round-trips', async () => {
-    const { a } = await scene()
+    const { a } = await scene({ server: true })
     const names = Array.from(a.store.db.objectStoreNames).filter(n => !EXCLUDED.has(n))
     const before = await readStores(a.store.db)
     // The scene must put something in every store, so a store added later without a test
@@ -248,11 +269,14 @@ describe('dump and encryption', () => {
       const got = (after.get(n) ?? []).map(r => text(r.value))
       for (const r of before.get(n) ?? []) expect(got).toContain(text(r.value))
     }
+    // DMs and servers are counted apart (servers have a budget of their own).
     const meta = {
-      events: await target.db.get('meta', 'events'),
+      events: (await target.db.get('meta', 'events')) as number,
       bytes: await target.db.get('meta', 'bytes'),
+      server: (await target.db.get('meta', 'sevents')) as number,
     }
-    expect(meta.events).toBe((before.get('events') ?? []).length + 1)
+    expect(meta.events + meta.server).toBe((before.get('events') ?? []).length + 1)
+    expect(meta.server).toBeGreaterThan(0)
     expect(meta.bytes).toBeGreaterThan(0)
     target.close()
   }, 60_000)
@@ -684,13 +708,14 @@ describe('after the move', () => {
     await a2.node.start()
     await b.node.setPaused(false)
     a2.node.schedule(true)
-    await waitFor(() => b.node.contact(a.node.ik)?.notice?.kind === 'moved', 'move notice')
+    await waitFor(() => b.node.contact(a.node.ik)?.notice?.kind === 'moved', 'move notice', SLOW)
     const moved = b.node.contact(a.node.ik)!
     expect(moved.revocations.some(r => r.dk === a.node.dk)).toBe(true)
     // The message the old device signed before the move arrives, vouched for by the new device.
     await eventually(
       async () => (await bodies(b, a.node.ik)).includes('sent while Bob was away'),
-      'pre-move message'
+      'pre-move message',
+      SLOW
     )
     expect(await bodies(b, a.node.ik)).toEqual([
       'hello there Bob',
@@ -699,13 +724,18 @@ describe('after the move', () => {
       'sent while Bob was away',
     ])
     // Bob writes to the new device; it answers.
-    await waitFor(() => linked(a2, b), 'new link')
+    await waitFor(() => linked(a2, b), 'new link', SLOW)
     await b.dms.send(room, { body: 'welcome back' })
-    await eventually(async () => (await bodies(a2, b.node.ik)).includes('welcome back'), 'to A2')
+    await eventually(
+      async () => (await bodies(a2, b.node.ik)).includes('welcome back'),
+      'to A2',
+      SLOW
+    )
     await a2.dms.send(room, { body: 'from the new device' })
     await eventually(
       async () => (await bodies(b, a.node.ik)).includes('from the new device'),
-      'from A2'
+      'from A2',
+      SLOW
     )
 
     // An event the old key signs after the revocation is refused; one from before is valid.
@@ -725,7 +755,7 @@ describe('after the move', () => {
     // The old browser comes back: Bob tells it, and it stops for good.
     await a.node.start()
     a.node.schedule(true)
-    await waitFor(() => a.node.status === 'moved', 'old device told')
+    await waitFor(() => a.node.status === 'moved', 'old device told', SLOW)
     expect(a.node.author()).toBeNull()
     expect(a.node.view().movedAt).toBe(rev.revoked_at)
     expect((await selfOf(a.store)).moved).toEqual({ at: rev.revoked_at, successor: a2.node.dk })
@@ -757,7 +787,7 @@ describe('after the move', () => {
     a.node.stop()
     await a.node.start()
     expect(a.node.status).toBe('moved')
-  }, 60_000)
+  }, 120_000)
 })
 
 // Rewrites the JSON lines of a dump (the header stays), at the level of the tagged JSON.

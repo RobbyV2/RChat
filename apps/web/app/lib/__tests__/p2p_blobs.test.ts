@@ -289,7 +289,7 @@ describe('hashing', () => {
 describe('storage', () => {
   test('schema v3 adds the file stores and the attachment index to a v2 database', async () => {
     const { openDB } = await import('idb')
-    const { UPGRADES, P2pStore: Store } = await import('../p2p/db')
+    const { UPGRADES, P2pStore: Store, DB_VERSION } = await import('../p2p/db')
     const name = `upgrade-v3-${Math.random()}`
     const v2 = await openDB(name, 2, {
       upgrade(db, _old, _new, tx) {
@@ -301,12 +301,12 @@ describe('storage', () => {
     await v2.put('meta', 2, 'schema')
     v2.close()
     const store = await Store.open(name)
-    expect(store.db.version).toBe(3)
+    expect(store.db.version).toBe(DB_VERSION)
     expect(store.db.objectStoreNames.contains('blobs')).toBe(true)
     expect(store.db.objectStoreNames.contains('blob_parts')).toBe(true)
     expect((await store.event('e1'))?.room).toBe('r')
     expect(await store.db.countFromIndex('events', 'att', 'x')).toBe(0)
-    expect(await store.meta('schema')).toBe(3)
+    expect(await store.meta('schema')).toBe(DB_VERSION)
     store.close()
     const again = await Store.open(name)
     expect((await again.event('e1'))?.room).toBe('r')

@@ -30,6 +30,9 @@ export type NotifyScope =
   | { kind: 'channel'; id: number; server: string | null }
   | { kind: 'dm'; id: number }
   | { kind: 'p2p'; room: string }
+  // A P2P server, and one of its channels (which uses the server's level unless it has its own).
+  | { kind: 'p2ps'; room: string }
+  | { kind: 'p2pc'; room: string; ch: string }
 
 export interface Resolved {
   level: Level
@@ -117,7 +120,8 @@ const rulesOf = (x: unknown, now: number, key: (k: string) => boolean) => {
 const isServerName = (k: string) => k.length > 0 && k.length <= 64 && k !== '__proto__'
 const isIdKey = (k: string) => /^[1-9]\d{0,15}$/.test(k)
 // A P2P room id: base64url of 32 bytes.
-const isRoomKey = (k: string) => /^[A-Za-z0-9_-]{43}$/.test(k)
+// A P2P room ("{room}") or a P2P server channel ("{room}/{channel}").
+const isRoomKey = (k: string) => /^[A-Za-z0-9_-]{43}(\/[A-Za-z0-9_-]{11})?$/.test(k)
 
 export const parseNotify = (raw: string | null, now = Date.now()): NotifyPrefs => {
   let data: unknown
@@ -152,7 +156,10 @@ const tableOf = (scope: NotifyScope): [Table, string] => {
     case 'dm':
       return ['dms', String(scope.id)]
     case 'p2p':
+    case 'p2ps':
       return ['p2p', scope.room]
+    case 'p2pc':
+      return ['p2p', `${scope.room}/${scope.ch}`]
   }
 }
 
@@ -161,14 +168,26 @@ export const ownRule = (p: NotifyPrefs, scope: NotifyScope): Rule | undefined =>
   return ruleIn(p[t], key)
 }
 
+// The server a channel scope belongs to (it inherits its level and mute), if any.
+export const parentScope = (scope: NotifyScope): NotifyScope | null =>
+  scope.kind === 'channel' && scope.server !== null
+    ? { kind: 'server', name: scope.server }
+    : scope.kind === 'p2pc'
+      ? { kind: 'p2ps', room: scope.room }
+      : null
+
 const serverRule = (p: NotifyPrefs, scope: NotifyScope) =>
-  scope.kind === 'channel' && scope.server !== null ? ruleIn(p.servers, scope.server) : undefined
+  scope.kind === 'channel' && scope.server !== null
+    ? ruleIn(p.servers, scope.server)
+    : scope.kind === 'p2pc'
+      ? ruleIn(p.p2p, scope.room)
+      : undefined
 
 // The level that applies when the scope has none of its own.
 export const inheritedLevel = (p: NotifyPrefs, scope: NotifyScope): Level =>
   scope.kind === 'dm' || scope.kind === 'p2p'
     ? DEFAULT_LEVEL.dm
-    : scope.kind === 'channel'
+    : scope.kind === 'channel' || scope.kind === 'p2pc'
       ? (serverRule(p, scope)?.level ?? DEFAULT_LEVEL.server)
       : DEFAULT_LEVEL.server
 
@@ -218,7 +237,7 @@ export const setLevel = (p: NotifyPrefs, scope: NotifyScope, level: Level | null
   const cur = ownRule(p, scope) ?? {}
   const plain =
     level === null ||
-    (scope.kind === 'server' && level === DEFAULT_LEVEL.server) ||
+    ((scope.kind === 'server' || scope.kind === 'p2ps') && level === DEFAULT_LEVEL.server) ||
     ((scope.kind === 'dm' || scope.kind === 'p2p') && level === DEFAULT_LEVEL.dm)
   return putRule(p, scope, { ...cur, level: plain ? undefined : level })
 }

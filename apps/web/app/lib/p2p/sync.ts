@@ -5,6 +5,36 @@ import { claimedId, isEventId, redacted, validate, type Devices, type Wire } fro
 import type { Message } from './frames'
 import type { Clock, Session } from './session'
 
+// The outcome of checking an event from a peer: stored next, refused (a strike), or not stored
+// for now (`later`: no strike, it may be fine once we know more).
+export type Check =
+  | { ok: true; id: string; wire: Wire; revoked: boolean }
+  | { ok: false; later: boolean; id: string | null }
+
+export interface Walked {
+  events: EventRecord[]
+  more: boolean
+  // Not now: the requester isn't let in (yet). It asks again when it hears our heads.
+  denied?: boolean
+}
+
+// How a room kind serves its events. Each is asked for every request, so a gate always applies to
+// what is current.
+export interface Serving {
+  // A walk back over `prev` links (or over `pstate`, for `state`), oldest first.
+  walk: (
+    link: Link,
+    from: string[],
+    have: string[],
+    limit: number,
+    bytes: number,
+    state: boolean
+  ) => Promise<Walked>
+  get: (link: Link, ids: string[]) => Promise<EventRecord[]>
+  // Whether a live event of ours may go to this link.
+  push?: (link: Link, wire: Wire) => boolean
+}
+
 // Room sync over a session (note section 5): `heads` announces the frontier, `want` and `get`
 // pull what is missing, `push` carries live events, `ack` confirms what was stored (delivery).
 // Flow control is credit based on both sides: we keep at most `requests` pulls outstanding, each
@@ -27,6 +57,10 @@ export const SYNC = {
   pushPerMin: 600,
   // Events pulled per session before older history waits for "Load older".
   horizon: 2000,
+  // State comes whole (it is what everything else is checked against), but within its own
+  // horizon per link (a room's state cap) and rate, so a peer can't flood us through pulls.
+  stateHorizon: 20_000,
+  statePerMin: 2000,
   headsDebounceMs: 250,
   typingMs: 8000,
   // Delivery checks against the peer's heads walk at most this far.
@@ -43,7 +77,23 @@ export interface SyncDeps {
   me: () => string
   devices: (ik: string) => Devices | null
   contact: (ik: string) => Contact | undefined
-  roomOf: (ik: string) => string
+  // DMs: the room a ready session with a mutual contact links at once. Servers link rooms one by
+  // one (gossip.ts) and leave it out.
+  roomOf?: (ik: string) => string
+  // Message types get this prefix ('' for DMs), so two kinds of rooms share a session.
+  prefix?: string
+  // Whether the peer of a link may still talk about its room (DMs: a mutual contact).
+  allowed?: (link: Link) => boolean
+  // DMs strike messages about a room the link isn't for; servers ignore them (a link may have
+  // just closed on one side, or the other side's state may lag).
+  strict?: boolean
+  // Checks an event from a peer (DMs: the two members and their devices).
+  check?: (link: Link, raw: unknown) => Promise<Check>
+  // Stores a checked event (DMs: insertEvent with the conversation's caps).
+  insert?: (link: Link, id: string, wire: Wire, receivedAt: number) => Promise<Inserted>
+  serving?: Serving
+  // Servers: the state heads, sent with `heads` and pulled first.
+  stateHeads?: (room: string) => Promise<string[]>
   // Events stored from a peer (new ones only).
   onStored: (room: string, from: string, added: Inserted[]) => void
   onDelivered: (room: string, ids: string[]) => void
@@ -70,6 +120,8 @@ interface Request {
   room: string
   from: string[]
   limit: number
+  // A walk over the state DAG.
+  state: boolean
   // The answer came and waits to be stored; the credit returns once it is.
   answered: boolean
 }
@@ -92,8 +144,13 @@ export class Link {
   theirPushBytes = 0
   pushTimes: number[] = []
   pulled = 0
+  statePulled = 0
+  stateTimes: { at: number; n: number }[] = []
   unavailable = new Set<string>()
   peerHeads: string[] = []
+  peerState: string[] = []
+  // The peer said no to history until it sends heads again.
+  held = false
   headsQueued = false
   rid = 0
   headsTimer: unknown = null
@@ -123,51 +180,94 @@ const wireSize = (w: unknown) => {
 
 export class Sync {
   readonly limits: SyncLimits
-  private links = new Map<Session, Link>()
+  // Links per session, one per room the session syncs.
+  private links = new Map<Session, Map<string, Link>>()
   private headsTimers = new Map<string, unknown>()
+  private t: (name: string) => string
 
   constructor(private deps: SyncDeps) {
     this.limits = { ...SYNC, ...deps.limits }
+    const prefix = deps.prefix ?? ''
+    this.t = name => prefix + name
   }
 
   // ----- Sessions -----
 
   attach(s: Session) {
-    s.on('heads', m => this.onHeads(m, s))
-    s.on('want', m => this.onWant(m, s))
-    s.on('get', m => this.onGet(m, s))
-    s.on('events', m => this.onEvents(m, s))
-    s.on('push', m => this.onPush(m, s))
-    s.on('ack', m => this.onAck(m, s))
-    s.on('typing', m => this.onTypingMsg(m, s))
+    s.on(this.t('heads'), m => this.onHeads(m, s))
+    s.on(this.t('want'), m => this.onWant(m, s))
+    s.on(this.t('get'), m => this.onGet(m, s))
+    s.on(this.t('events'), m => this.onEvents(m, s))
+    s.on(this.t('push'), m => this.onPush(m, s))
+    s.on(this.t('ack'), m => this.onAck(m, s))
+    s.on(this.t('typing'), m => this.onTypingMsg(m, s))
   }
 
   ready(s: Session) {
     const ik = s.remote?.ik
-    if (!ik || !this.mutual(ik)) return
-    const link = new Link(s, ik, this.deps.roomOf(ik))
-    this.links.set(s, link)
-    s.onClose(() => this.drop(s))
-    void this.sendHeads(link)
+    const { roomOf } = this.deps
+    if (!ik || !roomOf || !this.mutual(ik)) return
+    this.link(s, roomOf(ik))
   }
 
-  private drop(s: Session) {
-    const link = this.links.get(s)
-    if (!link) return
+  // Starts syncing `room` over a ready session.
+  link(s: Session, room: string) {
+    const ik = s.remote?.ik
+    if (!ik || s.state !== 'ready') return null
+    let byRoom = this.links.get(s)
+    if (!byRoom) {
+      byRoom = new Map()
+      this.links.set(s, byRoom)
+      s.onClose(() => this.drop(s))
+    }
+    const have = byRoom.get(room)
+    if (have) return have
+    const link = new Link(s, ik, room)
+    byRoom.set(room, link)
+    void this.sendHeads(link)
+    return link
+  }
+
+  unlink(s: Session, room: string) {
+    const link = this.links.get(s)?.get(room)
+    if (link) this.close(link)
+  }
+
+  private close(link: Link) {
+    if (link.closed) return
     link.closed = true
     if (link.headsTimer !== null) this.deps.clock.clear(link.headsTimer)
     if (link.peerFull !== null) this.deps.clock.clear(link.peerFull)
-    this.links.delete(s)
+    const byRoom = this.links.get(link.session)
+    byRoom?.delete(link.room)
+    if (byRoom && !byRoom.size) this.links.delete(link.session)
     this.deps.onTyping(link.room, link.ik, false)
     this.deps.onState?.(link.room)
   }
 
-  linksOf(room: string) {
-    return [...this.links.values()].filter(l => l.room === room && !l.closed)
+  private drop(s: Session) {
+    for (const link of [...(this.links.get(s)?.values() ?? [])]) this.close(link)
+    this.links.delete(s)
   }
 
-  linkOf(s: Session) {
-    return this.links.get(s)
+  linksOf(room: string) {
+    const out: Link[] = []
+    for (const byRoom of this.links.values()) {
+      const l = byRoom.get(room)
+      if (l && !l.closed) out.push(l)
+    }
+    return out
+  }
+
+  // The links of a session.
+  linksOn(s: Session) {
+    return [...(this.links.get(s)?.values() ?? [])].filter(l => !l.closed)
+  }
+
+  linkOf(s: Session, room?: string) {
+    const byRoom = this.links.get(s)
+    if (!byRoom) return undefined
+    return room === undefined ? byRoom.values().next().value : byRoom.get(room)
   }
 
   online(room: string) {
@@ -178,12 +278,22 @@ export class Sync {
     return this.deps.contact(ik)?.state === 'mutual'
   }
 
-  // The link for a message from `s`, or null (and a strike) when it may not talk about `room`.
+  private allowed(link: Link) {
+    return this.deps.allowed ? this.deps.allowed(link) : this.mutual(link.ik)
+  }
+
+  private strict() {
+    return this.deps.strict ?? true
+  }
+
+  // The link for a message from `s`, or null when it may not talk about `room` (a strike for
+  // DMs).
   private linkFor(s: Session, room: unknown): Link | null {
-    const link = this.links.get(s)
-    if (!link || link.closed) return null
-    if (room !== link.room || !this.mutual(link.ik)) {
-      s.strike()
+    const byRoom = this.links.get(s)
+    if (!byRoom) return null
+    const link = typeof room === 'string' ? byRoom.get(room) : undefined
+    if (!link || link.closed || !this.allowed(link)) {
+      if (this.strict()) s.strike()
       return null
     }
     return link
@@ -209,11 +319,14 @@ export class Sync {
 
   private async sendHeads(link: Link) {
     const room = await this.deps.store.room(link.room)
-    this.send(link, {
-      t: 'heads',
+    const msg: Message = {
+      t: this.t('heads'),
       room: link.room,
       heads: (room?.heads ?? []).map(h => h.id).slice(0, this.limits.headsMax),
-    })
+    }
+    if (this.deps.stateHeads)
+      msg.state = (await this.deps.stateHeads(link.room)).slice(0, this.limits.headsMax)
+    this.send(link, msg)
   }
 
   // After new events, every session of the room hears the new frontier (debounced).
@@ -232,8 +345,11 @@ export class Sync {
     const link = this.linkFor(s, m.room)
     if (!link) return
     const heads = strArray(m.heads, this.limits.headsMax, isEventId)
-    if (!heads) return s.strike()
+    const state = m.state === undefined ? [] : strArray(m.state, this.limits.headsMax, isEventId)
+    if (!heads || !state) return s.strike()
     link.peerHeads = heads
+    link.peerState = state
+    link.held = false
     // One check at a time: a burst of heads frames costs one walk, with the newest heads.
     if (link.headsQueued) return
     link.headsQueued = true
@@ -277,25 +393,42 @@ export class Sync {
 
   // One walk back at a time: the next one starts from what is still missing, so answers don't
   // overlap.
-  private pull(link: Link, from: string[]) {
+  private pull(link: Link, from: string[], state = false) {
     if (link.closed || link.requests.size >= this.limits.requests) return
     if ([...link.requests.values()].some(r => r.kind === 'want')) return
-    if (link.pulled >= this.limits.horizon) return this.deps.onState?.(link.room)
+    if (!state && link.pulled >= this.limits.horizon) return this.deps.onState?.(link.room)
+    if (state && link.statePulled >= this.limits.stateHorizon) return this.deps.onState?.(link.room)
     const ids = from.slice(0, this.limits.fromMax)
     if (!ids.length) return
     const rid = ++link.rid
-    const limit = Math.min(this.limits.wantLimit, this.limits.horizon - link.pulled)
-    link.requests.set(rid, { kind: 'want', room: link.room, from: ids, limit, answered: false })
-    void this.deps.store.room(link.room).then(room =>
-      this.send(link, {
-        t: 'want',
+    const limit = state
+      ? Math.min(this.limits.wantLimit, this.limits.stateHorizon - link.statePulled)
+      : Math.min(this.limits.wantLimit, this.limits.horizon - link.pulled)
+    link.requests.set(rid, {
+      kind: 'want',
+      room: link.room,
+      from: ids,
+      limit,
+      answered: false,
+      state,
+    })
+    const send = async () => {
+      const room = await this.deps.store.room(link.room)
+      const have = state
+        ? ((await this.deps.stateHeads?.(link.room)) ?? [])
+        : (room?.heads ?? []).map(h => h.id)
+      const msg: Message = {
+        t: this.t('want'),
         rid,
         room: link.room,
         from: ids,
-        have: (room?.heads ?? []).map(h => h.id).slice(0, this.limits.fromMax),
+        have: have.slice(0, this.limits.fromMax),
         limit,
-      })
-    )
+      }
+      if (state) msg.state = true
+      this.send(link, msg)
+    }
+    void send().catch(() => {})
     this.deps.onState?.(link.room)
   }
 
@@ -305,6 +438,14 @@ export class Sync {
     const room = await this.deps.store.room(link.room)
     // Nothing more can be stored: asking would only bring refusals.
     if (room?.full || this.deps.quotaFull?.()) return
+    if (this.deps.stateHeads && link.peerState.length) {
+      const have = new Set(
+        (await getEvents(this.deps.store.db, link.room, link.peerState)).map(r => r.id)
+      )
+      const state = link.peerState.filter(h => !have.has(h) && !link.unavailable.has(h))
+      if (state.length) return this.pull(link, state, true)
+    }
+    if (link.held) return
     const known = new Set(
       (await getEvents(this.deps.store.db, link.room, link.peerHeads)).map(r => r.id)
     )
@@ -313,7 +454,10 @@ export class Sync {
     )
     if (want.length) this.pull(link, [...new Set(want)])
     // Caught up: the horizon counts history again from here, not live catch-ups.
-    else if (!room?.missing.length) link.pulled = 0
+    else if (!room?.missing.length) {
+      link.pulled = 0
+      link.statePulled = 0
+    }
   }
 
   // "Load older": one more horizon of history from whoever is online.
@@ -335,8 +479,8 @@ export class Sync {
   }
 
   private onEvents(m: Message, s: Session) {
-    const link = this.links.get(s)
-    if (!link || link.closed) return
+    const link = typeof m.room === 'string' ? this.links.get(s)?.get(m.room) : undefined
+    if (!link || link.closed) return this.strict() ? s.strike() : undefined
     const rid = m.rid
     const req = isRid(rid) ? link.requests.get(rid) : undefined
     const evs = Array.isArray(m.evs) ? m.evs : null
@@ -346,12 +490,16 @@ export class Sync {
     const bytes = wireSize(evs)
     if (bytes > this.limits.responseBytes + 4096) return s.strike()
     req.answered = true
-    link.pulled += evs.length
+    if (!req.state) link.pulled += evs.length
+    else link.statePulled += evs.length
     const more = m.more === true
+    const denied = m.denied === true && evs.length === 0
+    if (denied) link.held = true
     this.queue(link, bytes, async () => {
       try {
+        if (req.state) await this.stateRate(link, evs.length)
         const added = await this.ingest(link, evs)
-        if (evs.length === 0 || (!more && added === 0))
+        if (!denied && (evs.length === 0 || (!more && added === 0)))
           for (const id of req.from) link.unavailable.add(id)
       } finally {
         link.requests.delete(rid as number)
@@ -361,16 +509,36 @@ export class Sync {
     })
   }
 
+  // DMs: the two members and their devices.
+  private async checkDm(link: Link, r: unknown): Promise<Check> {
+    const v = validate(r, {
+      room: link.room,
+      members: [this.deps.me(), link.ik],
+      devices: (ik: string) => this.deps.devices(ik),
+    })
+    if (v.ok) return v
+    const id = claimedId(r)
+    const sender = (r as { ev?: { sender?: unknown } }).ev?.sender
+    // A device of the contact we don't know yet (a move whose cert hasn't reached us): not their
+    // fault, and it may be fine once we know it.
+    return { ok: false, later: v.why === 'device' && sender === link.ik, id }
+  }
+
+  private insertDm(link: Link, id: string, wire: Wire, now: number) {
+    return insertEvent(this.deps.store.db, id, wire, now, {
+      me: this.deps.me(),
+      peer: link.ik,
+      roomCap: this.deps.roomCap,
+      totalCap: this.deps.totalCap,
+      roomBytes: this.deps.roomBytes,
+      totalBytes: this.deps.totalBytes,
+    })
+  }
+
   // Validates and stores events from a peer. Every invalid one is a strike. The ack says what
   // was stored (`ids`), refused for good (`drop`), refused for lack of space (`full`), and not
   // stored for now (`later`); all of them leave the sender's push window.
   private async ingest(link: Link, raw: unknown[]): Promise<number> {
-    const me = this.deps.me()
-    const auth = {
-      room: link.room,
-      members: [me, link.ik],
-      devices: (ik: string) => this.deps.devices(ik),
-    }
     await this.deps.pace?.()
     const added: Inserted[] = []
     const acks: string[] = []
@@ -382,20 +550,21 @@ export class Sync {
     const db = this.deps.store.db
     for (const r of raw) {
       if (link.closed) break
-      const v = validate(r, auth)
+      let v: Check
+      try {
+        v = this.deps.check ? await this.deps.check(link, r) : await this.checkDm(link, r)
+      } catch {
+        v = { ok: false, later: true, id: claimedId(r) }
+      }
       if (!v.ok) {
-        const id = claimedId(r)
-        const sender = (r as { ev?: { sender?: unknown } }).ev?.sender
-        // A device of the contact we don't know yet (a move whose cert hasn't reached us):
-        // not their fault, and it may be fine once we know it.
-        if (v.why === 'device' && sender === link.ik) {
-          if (id) later.push(id)
+        if (v.later) {
+          if (v.id) later.push(v.id)
           continue
         }
         link.session.strike()
-        if (id) {
-          refused.push(id)
-          link.unavailable.add(id)
+        if (v.id) {
+          refused.push(v.id)
+          link.unavailable.add(v.id)
         }
         continue
       }
@@ -415,14 +584,9 @@ export class Sync {
       }
       let res: Inserted
       try {
-        res = await insertEvent(db, v.id, v.wire, now, {
-          me,
-          peer: link.ik,
-          roomCap: this.deps.roomCap,
-          totalCap: this.deps.totalCap,
-          roomBytes: this.deps.roomBytes,
-          totalBytes: this.deps.totalBytes,
-        })
+        res = this.deps.insert
+          ? await this.deps.insert(link, v.id, v.wire, now)
+          : await this.insertDm(link, v.id, v.wire, now)
       } catch (e) {
         if (!isQuotaError(e)) {
           later.push(v.id)
@@ -440,6 +604,9 @@ export class Sync {
       } else if (res.status === 'full') {
         full.push(v.id)
         this.deps.onState?.(link.room)
+      } else if (res.status === 'quota') {
+        // Past its sender's share here: not this peer's fault, and no reason to stop pushing.
+        later.push(v.id)
       } else {
         acks.push(v.id)
         if (res.status === 'new') added.push(res)
@@ -448,9 +615,9 @@ export class Sync {
     if (added.length && !quota) this.deps.onQuota?.(false)
     const max = this.limits.acksMax
     for (let i = 0; i < acks.length; i += max)
-      this.send(link, { t: 'ack', room: link.room, ids: acks.slice(i, i + max) })
+      this.send(link, { t: this.t('ack'), room: link.room, ids: acks.slice(i, i + max) })
     if (refused.length || full.length || later.length) {
-      const msg: Message = { t: 'ack', room: link.room, ids: [] }
+      const msg: Message = { t: this.t('ack'), room: link.room, ids: [] }
       if (refused.length) msg.drop = refused.slice(0, max)
       if (full.length) msg.full = full.slice(0, max)
       if (later.length) msg.later = later.slice(0, max)
@@ -466,23 +633,20 @@ export class Sync {
 
   // ----- Serving -----
 
-  private serve(
-    link: Link,
-    rid: unknown,
-    fn: () => Promise<{ events: EventRecord[]; more: boolean }>
-  ) {
+  private serve(link: Link, rid: unknown, fn: () => Promise<Walked>) {
     if (!isRid(rid)) return link.session.strike()
     if (link.serving >= this.limits.requests) return link.session.strike()
     link.serving += 1
     this.queue(link, 256, async () => {
       try {
-        const { events, more } = await fn()
+        const { events, more, denied } = await fn()
         this.send(link, {
-          t: 'events',
+          t: this.t('events'),
           rid,
           room: link.room,
           evs: events.map(e => e.wire),
           more,
+          ...(denied ? { denied: true } : {}),
         })
         if (events.length) link.session.useful()
       } finally {
@@ -500,8 +664,12 @@ export class Sync {
       ? Math.min(m.limit as number, this.limits.wantLimit)
       : -1
     if (!from || !have || limit < 1) return s.strike()
+    const state = m.state === true
+    const bytes = this.limits.responseBytes
     this.serve(link, m.rid, () =>
-      walkBack(this.deps.store.db, link.room, from, have, limit, this.limits.responseBytes)
+      this.deps.serving
+        ? this.deps.serving.walk(link, from, have, limit, bytes, state)
+        : walkBack(this.deps.store.db, link.room, from, have, limit, bytes)
     )
   }
 
@@ -511,7 +679,9 @@ export class Sync {
     const ids = strArray(m.ids, this.limits.getIds, isEventId)
     if (!ids) return s.strike()
     this.serve(link, m.rid, async () => {
-      const found = await getEvents(this.deps.store.db, link.room, ids)
+      const found = this.deps.serving
+        ? await this.deps.serving.get(link, ids)
+        : await getEvents(this.deps.store.db, link.room, ids)
       const out: EventRecord[] = []
       let size = 0
       for (const r of found) {
@@ -529,6 +699,7 @@ export class Sync {
   // A new event of ours: to every session of its room, as far as their windows allow.
   push(room: string, id: string, wire: Wire) {
     for (const link of this.linksOf(room)) {
+      if (this.deps.serving?.push && !this.deps.serving.push(link, wire)) continue
       link.waiting.push({ id, wire })
       this.pump(link)
     }
@@ -565,7 +736,7 @@ export class Sync {
         return
       link.waiting.shift()
       link.inFlight.push({ id: next.id, bytes: size })
-      this.send(link, { t: 'push', room: link.room, ev: next.wire })
+      this.send(link, { t: this.t('push'), room: link.room, ev: next.wire })
     }
   }
 
@@ -590,6 +761,20 @@ export class Sync {
         link.theirPushBytes -= bytes
       }
     })
+  }
+
+  // Past statePerMin pulled state events a minute, the next answer waits.
+  private async stateRate(link: Link, n: number) {
+    const { clock } = this.deps
+    for (;;) {
+      const now = clock.now()
+      link.stateTimes = link.stateTimes.filter(t => now - t.at < 60_000)
+      const used = link.stateTimes.reduce((a, t) => a + t.n, 0)
+      if (used + n <= this.limits.statePerMin || !link.stateTimes.length || link.closed) break
+      const wait = 60_000 - (now - link.stateTimes[0].at) + 1
+      await new Promise<void>(resolve => clock.set(resolve, wait))
+    }
+    link.stateTimes.push({ at: clock.now(), n })
   }
 
   // Past pushPerMin live events a minute, the next one waits; its ack (and so the sender's
@@ -661,7 +846,7 @@ export class Sync {
   // ----- Typing -----
 
   typing(room: string, on: boolean) {
-    for (const link of this.linksOf(room)) this.send(link, { t: 'typing', room, on })
+    for (const link of this.linksOf(room)) this.send(link, { t: this.t('typing'), room, on })
   }
 
   private onTypingMsg(m: Message, s: Session) {
@@ -675,5 +860,6 @@ export class Sync {
     for (const t of this.headsTimers.values()) this.deps.clock.clear(t)
     this.headsTimers.clear()
     for (const s of [...this.links.keys()]) this.drop(s)
+    this.links.clear()
   }
 }

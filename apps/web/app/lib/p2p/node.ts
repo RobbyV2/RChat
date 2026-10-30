@@ -41,6 +41,7 @@ import {
   verifySuccession,
   withSuffix,
   type Cert,
+  type Profile,
   type Revocation,
 } from './keys'
 import type { Message } from './frames'
@@ -81,6 +82,9 @@ export interface Visibility {
 
 export const LIMITS = {
   sessions: 48,
+  // Of those, sessions with identities that aren't mutual contacts (P2P server members): they
+  // never push out a contact's session.
+  memberSessions: 32,
   // Incoming connections still in their handshake (unauthenticated): a pool of their own, so
   // they never push out established sessions.
   handshakes: 8,
@@ -186,13 +190,25 @@ interface DialState {
 }
 
 // Features that ride on sessions (room sync): handlers go on every session before it is up,
-// `ready` runs once it is an established session with a mutual contact.
+// `ready` runs once it is an established session with a mutual contact (or someone an extension
+// wants a session with, such as a fellow P2P server member).
 export interface NodeExt {
   attach: (s: Session) => void
   ready: (s: Session) => void
   // A bulk pipe a ready session's peer opened to us.
   bulk?: (pipe: Pipe, s: Session) => void
+  // Identities to keep sessions with besides contacts, with their devices, most wanted first.
+  targets?: () => { ik: string; certs: Cert[] }[]
+  // Whether a session with an identity that isn't a mutual contact is wanted, given its hello.
+  wanted?: (ik: string, hello: Message) => boolean
+  // Signed devices and profile of a session peer that isn't a contact.
+  learn?: (ik: string, certs: Cert[], revs: Revocation[], profile: Profile | null) => void
+  // Devices of an identity that isn't a contact (fellow server members).
+  devices?: (ik: string) => { certs: Cert[]; revocations: Revocation[] } | null
 }
+
+// What a dial to a peer id we only know from an invite code says in its hello.
+export type Purpose = Record<string, unknown>
 
 export class P2pNode {
   status: Status = 'starting'
@@ -202,6 +218,9 @@ export class P2pNode {
   private pending = new Set<Session>()
   private dialing = new Set<string>()
   private dials = new Map<string, DialState>()
+  // Peer ids dialed for a purpose (an invite code): our hello says it, and the session is let
+  // through whoever answers.
+  private purposes = new Map<string, Purpose>()
   private failed = new Map<string, number[]>()
   private banned = new Map<string, number>()
   private verifyNonces = new Map<string, string[]>()
@@ -291,6 +310,28 @@ export class P2pNode {
     if (ik === this.ik) return { certs: this.self.certs, revocations: this.self.revocations }
     const c = this.contacts.get(ik)
     return c ? { certs: c.certs, revocations: c.revocations } : null
+  }
+
+  // The same, also for fellow members of our P2P servers.
+  anyDevicesOf(ik: string) {
+    const own = this.devicesOf(ik)
+    let more: { certs: Cert[]; revocations: Revocation[] } | null = null
+    for (const x of this.exts) more ??= x.devices?.(ik) ?? null
+    if (!own) return more
+    if (!more) return own
+    return {
+      certs: [...own.certs, ...more.certs],
+      revocations: [...own.revocations, ...more.revocations],
+    }
+  }
+
+  // Our signed profile and devices, for server member events.
+  get profile(): Profile {
+    return this.self.profile
+  }
+
+  get cert(): Cert {
+    return this.self.cert
   }
 
   onChange(fn: () => void) {
@@ -545,7 +586,7 @@ export class P2pNode {
           (expect === null || r.ik === expect)
         )
       },
-      hello: (r: { ik: string; dk: string }) => this.helloFor(r),
+      hello: (r: { ik: string; dk: string }) => this.helloFor(r, pipe.remote),
       onHello: (m: Message, s: Session) => this.onHello(m, s),
     }
   }
@@ -573,8 +614,9 @@ export class P2pNode {
       this.sessions.delete(dk)
       other.close('replaced')
     }
-    // Only an authenticated mutual contact gets here, so only it may push out another session.
-    if (!this.sessions.has(dk)) this.makeRoom(s)
+    // Past the budget, someone makes room; a server member's session never pushes out a
+    // contact's (and is closed itself when nothing else can go).
+    if (!this.sessions.has(dk) && !this.makeRoom(s)) return s.close('closed')
     this.sessions.set(dk, s)
     const ik = s.remote?.ik as string
     this.dialing.delete(ik)
@@ -616,13 +658,42 @@ export class P2pNode {
     ).catch(() => {})
   }
 
-  // Past the budget, the least recently useful established session makes room.
+  private isContactSession(s: Session) {
+    const ik = s.remote?.ik
+    return !!ik && this.contacts.get(ik)?.state === 'mutual'
+  }
+
+  // Past the budget, the least recently useful established session makes room: any session
+  // for a contact, only another member's session for a server member (which also has a budget
+  // of its own). False when nothing may go.
   private makeRoom(keep: Session) {
-    if (this.sessions.size < LIMITS.sessions) return
-    const victim = [...this.sessions.values()]
-      .filter(x => x !== keep)
-      .sort((a, b) => a.lastUseful - b.lastUseful)[0]
-    victim?.close('closed')
+    const contact = this.isContactSession(keep)
+    const others = [...this.sessions.values()].filter(x => x !== keep)
+    const members = others.filter(x => !this.isContactSession(x))
+    const over =
+      this.sessions.size >= LIMITS.sessions || (!contact && members.length >= LIMITS.memberSessions)
+    if (!over) return true
+    const pool = contact && this.sessions.size >= LIMITS.sessions ? others : members
+    const victim = pool.sort((a, b) => a.lastUseful - b.lastUseful)[0]
+    if (!victim) return false
+    victim.close('closed')
+    return true
+  }
+
+  // Whether a dial to `ik` is under way, and whether one may start now.
+  isDialing(ik: string) {
+    return this.dialing.has(ik)
+  }
+
+  canDial(ik: string) {
+    const d = this.dials.get(ik)
+    return (
+      ik !== this.ik &&
+      !this.dialing.has(ik) &&
+      !this.isBanned(ik) &&
+      this.contacts.get(ik)?.state !== 'blocked' &&
+      !(d && d.nextAt > this.clock.now())
+    )
   }
 
   private relOf(ik: string): Rel {
@@ -642,9 +713,10 @@ export class P2pNode {
     }
   }
 
-  private helloFor({ ik, dk }: { ik: string; dk: string }): Message {
+  private helloFor({ ik, dk }: { ik: string; dk: string }, peer: string): Message {
     const moved = movedFrom(this.contacts.get(ik), dk)
     if (moved) return { t: 'hello', v: 1, rel: 'none', moved }
+    const purpose = this.purposes.get(peer)
     const msg: Message = {
       t: 'hello',
       v: 1,
@@ -658,7 +730,12 @@ export class P2pNode {
     if (this.self.succession) msg.succ = this.self.succession
     const yours = this.yoursFor(ik)
     if (yours) msg.yours = yours
+    if (purpose) Object.assign(msg, purpose)
     return msg
+  }
+
+  private extWants(ik: string, m: Message) {
+    return this.exts.some(x => x.wanted?.(ik, m) === true)
   }
 
   // What we know of a contact's devices, echoed back to them: their device can tell when a copy
@@ -739,6 +816,14 @@ export class P2pNode {
     }
 
     const asks = rel === 'request' || rel === 'mutual'
+    // Someone who isn't a contact and doesn't ask to be one: a fellow server member, or the
+    // other side of an invite code. Only an extension that wants the session keeps it.
+    const dialedFor = this.purposes.has(s.peer)
+    if (!this.contacts.has(r.ik) && (!asks || dialedFor)) {
+      if (!dialedFor && !this.extWants(r.ik, m)) return false
+      for (const x of this.exts) x.learn?.(r.ik, certs, revs, profile)
+      return true
+    }
     // The slot is taken before any await, so concurrent hellos can't all pass the limit.
     const slot = asks && !this.contacts.has(r.ik)
     if (slot) {
@@ -774,7 +859,7 @@ export class P2pNode {
       const i = this.requestTimes.lastIndexOf(now)
       if (i >= 0) this.requestTimes.splice(i, 1)
     }
-    if (!ok || !c) return false
+    if (!ok || !c) return this.contacts.get(r.ik)?.state !== 'blocked' && this.extWants(r.ik, m)
     // A hello from a new device may carry revocations for one still connected; the others hear
     // what we now know of their devices.
     const yours = this.yoursFor(r.ik)
@@ -782,8 +867,11 @@ export class P2pNode {
       if (x !== s && x.remote && isRevoked(c, x.remote.dk)) x.close('refused')
       else if (x !== s && yours) void x.send({ t: 'yours', ...yours }).catch(() => {})
     if (created) await this.pruneRequests()
-    // Presence and messages flow only between mutual contacts.
-    return c.state === 'mutual' && asks
+    // Presence and messages flow only between mutual contacts, and server members.
+    if (c.state === 'mutual' && asks) return true
+    if (c.state === 'blocked' || !this.extWants(r.ik, m)) return false
+    for (const x of this.exts) x.learn?.(r.ik, certs, revs, profile)
+    return true
   }
 
   private isOurMove(x: unknown): x is Revocation {
@@ -863,6 +951,10 @@ export class P2pNode {
   private async onProfile(m: Message, s: Session) {
     const r = s.remote
     const c = r && this.contacts.get(r.ik)
+    if (r && !c && verifyProfile(m.profile, r.ik)) {
+      for (const x of this.exts) x.learn?.(r.ik, [], [], m.profile)
+      return
+    }
     if (!c || !verifyProfile(m.profile, c.ik)) return s.strike()
     const p = m.profile
     await this.update(c.ik, cur => {
@@ -926,12 +1018,32 @@ export class P2pNode {
       if (!now && d && d.nextAt > t) continue
       void this.dial(c)
     }
+    for (const x of this.exts)
+      for (const target of x.targets?.() ?? []) {
+        if (this.dialing.size >= LIMITS.inFlight) return
+        if (this.sessions.size + this.dialing.size >= LIMITS.sessions) return
+        const { ik } = target
+        if (ik === this.ik || this.dialing.has(ik) || this.sessionsOf(ik).length > 0) continue
+        const c = this.contacts.get(ik)
+        if (c?.state === 'blocked' || this.isBanned(ik)) continue
+        const d = this.dials.get(ik)
+        if (!now && d && d.nextAt > t) continue
+        const revs = c?.revocations ?? []
+        void this.dialTo(
+          ik,
+          target.certs.filter(x => !revs.some(r => r.dk === x.dk)),
+          true
+        )
+      }
   }
 
-  private async dial(c: Contact) {
-    const devices = dialable(c)
+  private dial(c: Contact) {
+    return this.dialTo(c.ik, dialable(c))
+  }
+
+  private async dialTo(ik: string, devices: Cert[], member = false) {
     if (devices.length === 0) return
-    this.dialing.add(c.ik)
+    this.dialing.add(ik)
     this.changed()
     let ok = false
     for (const cert of devices) {
@@ -951,20 +1063,47 @@ export class P2pNode {
           pipe.close()
           break
         }
-        ok = await this.handshakeWith(pipe, c.ik)
+        ok = await this.handshakeWith(pipe, ik)
         if (ok) break
       }
       if (ok) break
     }
-    this.dialing.delete(c.ik)
-    const prev = this.dials.get(c.ik)
+    this.dialing.delete(ik)
+    const prev = this.dials.get(ik)
     // Outgoing requests back off even when they got through: the other side decides.
-    if (!ok || this.contacts.get(c.ik)?.state !== 'mutual') {
+    if (!ok || (!member && this.contacts.get(ik)?.state !== 'mutual')) {
       const attempt = Math.min((prev?.attempt ?? -1) + 1, LIMITS.backoff.length - 1)
-      this.dials.set(c.ik, { attempt, nextAt: this.clock.now() + LIMITS.backoff[attempt] })
+      this.dials.set(ik, { attempt, nextAt: this.clock.now() + LIMITS.backoff[attempt] })
     }
     this.changed()
     this.schedule()
+  }
+
+  // Dials a peer id we only know from an invite code, whoever answers. Resolves with the ready
+  // session, or null when nobody answered or the other side refused.
+  async dialPeer(peer: string, purpose: Purpose): Promise<Session | null> {
+    if (this.stopped || this.isPaused() || !this.listener) return null
+    const have = [...this.sessions.values()].find(s => s.peer === peer && s.state === 'ready')
+    if (have) return have
+    let pipe: Pipe
+    try {
+      pipe = await this.deps.transport.dial(this.peerId, peer)
+    } catch {
+      return null
+    }
+    this.purposes.set(peer, purpose)
+    return new Promise<Session | null>(resolve => {
+      const s = new Session(this.sessionOpts('initiator', pipe, null))
+      s.onReady(() => {
+        this.purposes.delete(peer)
+        resolve(s)
+      })
+      s.onClose(() => {
+        this.purposes.delete(peer)
+        resolve(null)
+      })
+      this.run(s)
+    })
   }
 
   private handshakeWith(pipe: Pipe, ik: string) {

@@ -37,6 +37,7 @@ import { InvitePage } from '../components/invite_card'
 import { ConfigLinkPage } from '../components/config_sync'
 import { useEscape } from '../components/ui'
 import { P2pDialogs, P2pHome, useP2pPings } from '../components/p2p/p2p_home'
+import { P2pChannelPane, P2pMemberList, P2pServerSidebar } from '../components/p2p/p2p_server_view'
 import { p2p, p2pHost, useP2p } from '../lib/p2p/app'
 
 // P2P conversations notify through the same settings, toasts and read state as the rest.
@@ -83,10 +84,14 @@ export default function AppShell() {
   const bootstrap = useStore(s => s.bootstrap)
   const pings = useStore(allPings) + useP2pPings()
   const p2pHome = useP2p(s => s.home) && me !== null
+  const p2pServer = useP2p(s => s.server !== null) && me !== null
+  const p2pChannel = useP2p(s => (s.server ? `${s.server.room}/${s.server.ch}` : null))
   const booted = useRef(false)
   const [leftOpen, setLeftOpen] = useState(false)
   const [rightOpen, setRightOpen] = useState(false)
   useHomeSync()
+  // The member list of a P2P server on wide screens (on by default, like instance servers).
+  const [p2pMembers, setP2pMembers] = useState(true)
 
   useEscape(() => {
     setLeftOpen(false)
@@ -170,7 +175,7 @@ export default function AppShell() {
   useEffect(() => {
     setLeftOpen(false)
     setRightOpen(false)
-  }, [p2pHome])
+  }, [p2pHome, p2pServer, p2pChannel])
 
   const paletteOpen = usePaletteUi(s => s.open)
   useEffect(() => {
@@ -206,9 +211,21 @@ export default function AppShell() {
       <div className="flex h-app overflow-hidden px-safe">
         <div className="hidden h-full md:flex">
           <ServerRail />
-          {!p2pHome && <ChannelSidebar />}
+          {p2pServer ? <P2pServerSidebar /> : !p2pHome && <ChannelSidebar />}
         </div>
-        {p2pHome ? (
+        {p2pServer ? (
+          <P2pChannelPane
+            onMenu={openLeft}
+            onMembers={() => {
+              if (window.matchMedia('(min-width: 64rem)').matches) setP2pMembers(o => !o)
+              else {
+                setLeftOpen(false)
+                setRightOpen(o => !o)
+              }
+            }}
+            membersOpen={p2pMembers}
+          />
+        ) : p2pHome ? (
           <P2pHome onMenu={openLeft} />
         ) : view === null && atHome ? (
           <HomePage onMenu={openLeft} />
@@ -221,9 +238,14 @@ export default function AppShell() {
             }}
           />
         )}
-        {isChannel && !panel && !p2pHome && (
+        {isChannel && !panel && !p2pHome && !p2pServer && (
           <div className="hidden h-full lg:block">
             <MemberSidebar />
+          </div>
+        )}
+        {p2pServer && p2pMembers && (
+          <div className="hidden h-full lg:block">
+            <P2pMemberList />
           </div>
         )}
         {panel && (
@@ -241,19 +263,19 @@ export default function AppShell() {
           <div data-drawer className="fixed inset-x-0 top-app z-40 flex h-app md:hidden">
             <div className="flex h-full bg-surface-container-lowest pl-[env(safe-area-inset-left)] shadow-elevation-3">
               <ServerRail />
-              {!p2pHome && <ChannelSidebar />}
+              {p2pServer ? <P2pServerSidebar /> : !p2pHome && <ChannelSidebar />}
             </div>
             <div className="flex-1 bg-scrim/50" onClick={() => setLeftOpen(false)} />
           </div>
         )}
-        {rightOpen && isChannel && (
+        {rightOpen && (isChannel || p2pServer) && (
           <div
             data-drawer
             className="fixed inset-x-0 top-app z-40 flex h-app justify-end lg:hidden"
           >
             <div className="flex-1 bg-scrim/50" onClick={() => setRightOpen(false)} />
             <div className="h-full bg-surface-container-low pr-[env(safe-area-inset-right)] shadow-elevation-3">
-              <MemberSidebar />
+              {p2pServer ? <P2pMemberList /> : <MemberSidebar />}
             </div>
           </div>
         )}

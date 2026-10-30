@@ -2,6 +2,7 @@ import { deleteDB, openDB, type DBSchema, type IDBPDatabase, type IDBPTransactio
 import type { Contact } from './contacts'
 import type { Core, Wire } from './event'
 import type { Cert, KeyPair, Profile, Revocation, Succession } from './keys'
+import type { Membership } from './state'
 
 // P2P data lives only in this browser, in one IndexedDB database per instance and account. Each
 // schema version adds its stores in UPGRADES; later tasks append theirs (rooms, events, ...).
@@ -43,12 +44,39 @@ export const withoutSecrets = (s: SelfRecord): SelfRecord => ({
 
 export const hasSecrets = (s: SelfRecord) => s.ik.sk.length > 0 && s.dk.sk.length > 0
 
-// A conversation. Its events are the source of truth; this record caches the DAG frontier and
-// the counters the room list shows.
+// What resolution last made of a server's state events (resolve.ts), so it isn't replayed on
+// every start: the state as (state key, event id) pairs, the state heads, the rejected events
+// (all of them: later events are checked against them), events lost in merges, and accepted
+// membership events with the membership before them. `count` is the number of state events it
+// covers and `rules` the version of the rules it was made under; a different one means it is
+// stale.
+export interface ServerCache {
+  rules?: number
+  count: number
+  entries: [string, string][]
+  heads: string[]
+  rejected: string[]
+  lost?: string[]
+  transitions: [string, Membership | null][]
+  joins: [string, string][]
+  gaps?: number
+  flagged?: [string, number][]
+  power?: [string, string][]
+}
+
+// Unread messages and pings of one server channel.
+export interface ChanCounts {
+  unread: number
+  pings: number
+  readSeq: number
+}
+
+// A conversation (DM) or a P2P server. Its events are the source of truth; this record caches the
+// DAG frontier and the counters the room list shows.
 export interface RoomRecord {
   id: string
-  kind: 'dm'
-  // The other member of a DM.
+  kind: 'dm' | 'server'
+  // The other member of a DM ('' for a server).
   peer: string
   // Events without known children, deepest first.
   heads: { id: string; depth: number }[]
@@ -71,6 +99,34 @@ export interface RoomRecord {
   // When the other side last said its storage is full (cleared once it stores again).
   peerFull?: number | null
   created: number
+  // P2P servers: the name to show before the state arrives, the resolution cache, counters per
+  // channel, and when we were let in or are still joining (redeemed a code, accepted an invite).
+  name?: string
+  server?: ServerCache | null
+  chans?: Record<string, ChanCounts>
+  // `ev`: the invite an admitting member signed for us when we redeemed a code. It enters the
+  // room (ours to store) once we have the room's state, and we join right after.
+  joining?: { at: number; via: 'code' | 'invite'; ev?: Wire } | null
+  // When we joined: older history that arrives later isn't counted as unread.
+  since?: number
+  // An invite from a contact we haven't answered: who sent it and their invite event.
+  invite?: { from: string; at: number; wire: Wire } | null
+  // Our own chain in the room (note section 6): our latest event, its number and window count,
+  // and our latest state event.
+  mine?: {
+    last: string
+    dseq: number
+    ts: number
+    dwin: number
+    sprev?: string
+    sseq?: number
+  } | null
+  // Members seen equivocating here (two events with one number), and the first such number:
+  // their messages from there on aren't shown.
+  flagged?: Record<string, number>
+  // Bans in the resolved state: since when (by our clock) each has stood, and whether what the
+  // banned member wrote and never showed has been purged.
+  bans?: Record<string, { ban: string; since: number; purged?: true }>
 }
 
 export interface EventRecord {
@@ -89,6 +145,24 @@ export interface EventRecord {
   seq: number
   // Content removed by a redaction (or never received).
   redacted: boolean
+  // P2P servers: the channel of a message, state events (`state: 1`, with their state key), and
+  // a redaction made with Manage messages.
+  chan?: string
+  state?: 1
+  skey?: string
+  mod?: true
+  // P2P servers: a message from someone who wasn't a member when it arrived and isn't an
+  // ancestor of their removal (soft-failed): the removal (`true` from older builds). It stays
+  // hidden even if they come back, unless that removal is overturned.
+  soft?: true | string
+  // P2P servers: the content of a banned member's hidden event was purged here (only the header
+  // the DAG needs is left). Never served: a peer asks someone else.
+  purged?: true
+  // P2P servers: the sender's chain number, and along their state events the hourly count and
+  // whether they left since they last joined (note section 6).
+  dseq?: number
+  cw?: number
+  cl?: true
   // Root hashes of the files a live message carries (dropped when it is redacted), and the same
   // as `fileKey`s, so the serving gate is one index lookup whatever else is stored.
   atts?: string[]
@@ -139,6 +213,26 @@ export interface PartRecord {
   data: Blob
 }
 
+// What we know of a P2P server member who isn't a contact: devices and profile, all signed by
+// their identity key (from member events and their hello).
+export interface IdentRecord {
+  ik: string
+  certs: Cert[]
+  revocations: Revocation[]
+  profile: Profile | null
+  updated: number
+}
+
+// An invite code we issued: the secret stays on this device (the room only holds its hash).
+export interface CodeRecord {
+  hash: string
+  room: string
+  secret: string
+  exp: number
+  label: string
+  created: number
+}
+
 export interface OutboxRecord {
   id: string
   room: string
@@ -166,6 +260,9 @@ export interface P2pSchema extends DBSchema {
       room_seq: [string, number]
       att: string
       file: string
+      room_chan_sort: [string, string, string]
+      room_state: [string, number]
+      room_dseq: [string, string, number]
     }
   }
   children: { key: [string, string]; value: { parent: string; child: string } }
@@ -173,6 +270,8 @@ export interface P2pSchema extends DBSchema {
   blobs: { key: string; value: BlobRecord; indexes: { created: number } }
   blob_parts: { key: [string, number]; value: PartRecord }
   blob_hashes: { key: [string, number]; value: HashPage }
+  idents: { key: string; value: IdentRecord }
+  codes: { key: string; value: CodeRecord; indexes: { room: string } }
 }
 
 export type P2pDatabase = IDBPDatabase<P2pSchema>
@@ -188,6 +287,8 @@ export type StoreName =
   | 'blobs'
   | 'blob_parts'
   | 'blob_hashes'
+  | 'idents'
+  | 'codes'
 
 type Upgrade = (
   db: P2pDatabase,
@@ -218,6 +319,13 @@ export const UPGRADES: Upgrade[] = [
     db.createObjectStore('blobs', { keyPath: 'h' }).createIndex('created', 'created')
     db.createObjectStore('blob_parts', { keyPath: ['h', 'block'] })
     db.createObjectStore('blob_hashes', { keyPath: ['h', 'page'] })
+  },
+  (db, tx) => {
+    tx.objectStore('events').createIndex('room_chan_sort', ['room', 'chan', 'sortKey'])
+    tx.objectStore('events').createIndex('room_state', ['room', 'state'])
+    tx.objectStore('events').createIndex('room_dseq', ['room', 'sender', 'dseq'])
+    db.createObjectStore('idents', { keyPath: 'ik' })
+    db.createObjectStore('codes', { keyPath: 'hash' }).createIndex('room', 'room')
   },
 ]
 

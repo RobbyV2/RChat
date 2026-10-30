@@ -31,7 +31,16 @@ import {
   visibleContacts,
   type Contact,
 } from './contacts'
-import { blankRoom, insertInto, storedSize, TOTAL, TOTAL_BYTES, type InsertTx } from './dag'
+import {
+  blankRoom,
+  insertInto,
+  SERVER_TOTAL,
+  SERVER_TOTAL_BYTES,
+  storedSize,
+  TOTAL,
+  TOTAL_BYTES,
+  type InsertTx,
+} from './dag'
 import type {
   BlobRecord,
   EventRecord,
@@ -416,7 +425,7 @@ const isEventRow = (x: unknown): x is EventRecord =>
   Number.isSafeInteger(x.depth) &&
   isRecord(x.wire) &&
   isRecord(x.wire.ev) &&
-  x.wire.ev.room === x.room &&
+  (x.wire.ev.room === x.room || (x.wire.ev.type === 'create' && x.id === x.room)) &&
   x.wire.ev.depth === x.depth &&
   claimedId(x.wire) === x.id
 
@@ -428,8 +437,7 @@ const isHead = (h: unknown) =>
 const isRoomRow = (x: unknown): x is RoomRecord =>
   isRecord(x) &&
   typeof x.id === 'string' &&
-  x.kind === 'dm' &&
-  isKeyId(x.peer) &&
+  ((x.kind === 'dm' && isKeyId(x.peer)) || (x.kind === 'server' && x.peer === '')) &&
   Array.isArray(x.heads) &&
   x.heads.length <= HEADS_MAX &&
   x.heads.every(isHead) &&
@@ -470,7 +478,34 @@ const ROW_CHECKS: Record<string, (x: unknown) => boolean> = {
 // What a stored event says about its files is derived from its content, never taken from a file.
 const cleanEvent = (e: EventRecord): EventRecord => {
   const atts = e.redacted || e.wire.ev.type !== 'msg' ? [] : attsOf(e.wire.c)
-  return withFiles(e, atts)
+  const out = withFiles(e, atts)
+  const marks = serverMarks(e)
+  for (const k of ['chan', 'state', 'skey', 'mod', 'soft', 'dseq', 'cw', 'cl'] as const)
+    if (marks[k] === undefined) delete out[k]
+    else Object.assign(out, { [k]: marks[k] })
+  return out
+}
+
+type Marks = Pick<EventRecord, 'chan' | 'state' | 'skey' | 'mod' | 'soft' | 'dseq' | 'cw' | 'cl'>
+
+// What a server event is indexed by (its channel, whether it is state, its chain number), from
+// the event itself, and what this device decided about it (soft-failed, the window counters
+// along its sender's state events).
+const serverMarks = (e: EventRecord): Marks => {
+  const ev = e.wire.ev
+  const out: Marks = {}
+  if (typeof ev.skey === 'string') {
+    out.state = 1
+    out.skey = ev.skey
+    if (typeof e.cw === 'number') out.cw = e.cw
+    if (e.cl === true) out.cl = true
+  }
+  if (typeof ev.dseq === 'number') out.dseq = ev.dseq
+  if (e.soft === true || typeof e.soft === 'string') out.soft = e.soft
+  const ch = (e.wire.c as { ch?: unknown } | null)?.ch
+  if (ev.type === 'msg' && typeof ch === 'string' && ev.skey === undefined) out.chan = ch
+  if (ev.type === 'redact' && e.mod === true) out.mod = true
+  return out
 }
 
 // Reads the inflated lines one at a time, so memory goes to the records, never to one huge
@@ -737,8 +772,13 @@ const load = async (
   fire(meta.put(DB_VERSION, 'schema'))
   const ik = keyId(dump.self.ik.pk)
   const oldDk = keyId(dump.self.dk.pk)
-  let events = 0
-  let bytes = 0
+  // Events and bytes per room: DMs and servers are counted apart (purged server events count as
+  // nothing).
+  const perRoom = new Map<string, { n: number; bytes: number }>()
+  const count = (m: Map<string, { n: number; bytes: number }>, k: string, size: number) => {
+    const u = m.get(k) ?? { n: 0, bytes: 0 }
+    m.set(k, { n: u.n + 1, bytes: u.bytes + size })
+  }
   let skipped = dump.skipped
   let latest = now
   const rooms: RoomRecord[] = []
@@ -757,8 +797,7 @@ const load = async (
       }
       if (name === 'events') {
         const e = v as EventRecord
-        events += 1
-        bytes += storedSize(e.wire)
+        if (!e.purged) count(perRoom, e.room, storedSize(e.wire))
         const ev = (e.wire as Wire).ev
         if (ev.sender === ik && ev.dev === oldDk) {
           latest = Math.max(latest, ev.ts)
@@ -770,8 +809,18 @@ const load = async (
       fire(inline ? st.put(v) : st.put(v, r.key))
     }
   }
-  fire(meta.put(events, TOTAL))
-  fire(meta.put(bytes, TOTAL_BYTES))
+  const servers = new Set(rooms.filter(r => r.kind === 'server').map(r => r.id))
+  const dms = { n: 0, bytes: 0 }
+  const srv = { n: 0, bytes: 0 }
+  for (const [room, u] of perRoom) {
+    const t = servers.has(room) ? srv : dms
+    t.n += u.n
+    t.bytes += u.bytes
+  }
+  fire(meta.put(dms.n, TOTAL))
+  fire(meta.put(dms.bytes, TOTAL_BYTES))
+  fire(meta.put(srv.n, SERVER_TOTAL))
+  fire(meta.put(srv.bytes, SERVER_TOTAL_BYTES))
   const revokedAt = Math.min(latest, now + EV.futureMs)
   // Events the old device dated after the revocation would be refused: they stay unsent.
   if (names.includes('outbox'))
@@ -782,8 +831,9 @@ const load = async (
     }
   const self = moveSelf(dump.self, revokedAt, label, dump.id)
   await tx.objectStore('self').put(self)
-  for (const room of rooms) await vouch(tx, self, room, now)
-  return { kind: 'new', contacts, rooms: rooms.length, events, skipped }
+  // Servers vouch differently: the new device posts its member event again on start.
+  for (const room of rooms) if (room.kind !== 'server') await vouch(tx, self, room, now)
+  return { kind: 'new', contacts, rooms: rooms.length, events: dms.n + srv.n, skipped }
 }
 
 const merge = async (
@@ -833,7 +883,18 @@ const merge = async (
     }
     before.set(room.id, cur)
     theirs.set(room.id, room)
-    if (!cur) await roomStore.put(blankRoom(room.id, room.peer, room.created))
+    // A server room comes as it is: state events are resolved again when P2P starts.
+    if (!cur)
+      await roomStore.put(
+        room.kind === 'server'
+          ? {
+              ...blankRoom(room.id, '', room.created),
+              kind: 'server',
+              name: room.name,
+              server: null,
+            }
+          : blankRoom(room.id, room.peer, room.created)
+      )
   }
 
   const evStore = tx.objectStore('events')
@@ -849,7 +910,11 @@ const merge = async (
   for (const e of list) {
     if (await evStore.get(e.id)) continue
     const room = theirs.get(e.room) as RoomRecord
-    const res = await insertInto(asTx(tx), e.id, e.wire, e.receivedAt, { me: ik, peer: room.peer })
+    const res = await insertInto(asTx(tx), e.id, e.wire, e.receivedAt, {
+      me: ik,
+      peer: room.peer,
+      mark: serverMarks(e),
+    })
     if (res.status === 'new') events += 1
     else if (res.status !== 'dup') skipped += 1
   }

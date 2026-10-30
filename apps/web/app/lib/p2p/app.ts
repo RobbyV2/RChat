@@ -1,5 +1,19 @@
 import { create } from 'zustand'
 import { home, writeLocal } from '../instances'
+import {
+  addToFolder,
+  emptyLayout,
+  mergeServers,
+  moveFolder,
+  moveIntoFolder,
+  moveServer,
+  newFolderId,
+  parseLayout,
+  renameFolder,
+  toggleFolder,
+  ungroupFolder,
+  type Layout,
+} from '../nav_layout'
 import type { AlertInput } from '../notices'
 import { EMPTY_NOTIFY, resolve as resolveNotify, type NotifyPrefs } from '../notify'
 import { applySed, parseSed } from '../sed'
@@ -70,6 +84,16 @@ import { PeerTransport } from './transport'
 import { RtcManager } from '../rtc'
 import { hidesIp, relayBook } from '../relays'
 import { Calls, type CallView, type PendingCall } from './calls'
+import {
+  CODE_TTLS,
+  NEEDS_INVITER,
+  parseCode,
+  Servers,
+  ServerError,
+  type ServerArrival,
+  type ServerView,
+} from './server'
+import type { HistoryVis } from './state'
 
 // The P2P view model. IndexedDB (through the node) is the source of truth; this store only
 // mirrors what the UI shows. One node per signed-in account; guests never get one.
@@ -80,6 +104,13 @@ export type P2pDialog =
   | { kind: 'rename'; ik: string }
   | { kind: 'contact'; ik: string }
   | { kind: 'enable' }
+  | { kind: 'server_new'; tab?: 'create' | 'join'; code?: string }
+  | { kind: 'server_invite'; room: string }
+  | { kind: 'server_settings'; room: string; tab?: ServerTab }
+  | { kind: 'p2p_folder'; id: string }
+
+export type ServerTab =
+  'overview' | 'channels' | 'invites' | 'system' | 'history' | 'members' | 'bans' | 'leave'
 
 // One conversation in the list.
 export interface RoomSummary {
@@ -96,10 +127,12 @@ export interface RoomSummary {
   gap: boolean
 }
 
-// The open conversation: the newest messages (older pages load on scroll).
+// The open conversation: the newest messages (older pages load on scroll). A P2P server channel
+// is one too: its room is the server, `ch` the channel, and `peer` is empty.
 export interface P2pChat {
   room: string
   peer: string
+  ch?: string
   messages: P2pMessage[]
   more: boolean
   loading: boolean
@@ -164,7 +197,20 @@ export interface P2pState {
   callAccepting: boolean
   // A call going on in the tab that runs P2P (this tab only reads).
   callElsewhere: { room: string; peer: string } | null
+  // P2P servers on this device, invites from contacts not answered yet, and the open server
+  // (it replaces the instance sidebar and pane, like the P2P home).
+  servers: Record<string, ServerView>
+  serverInvites: { room: string; name: string; from: string; at: number }[]
+  server: { room: string; ch: string | null } | null
+  // Who types in each server channel ("{room}/{channel}").
+  serverTyping: Record<string, string[]>
+  // Order and folders of P2P servers in the rail (their own, apart from instance servers).
+  layout: Layout
 }
+
+// Drafts and files being attached are kept per conversation and per server channel.
+export const chatKey = (c: { room: string; ch?: string | null }) =>
+  c.ch ? `${c.room}/${c.ch}` : c.room
 
 export interface PendingFile {
   id: number
@@ -225,6 +271,11 @@ const initial: P2pState = {
   callQuiet: false,
   callAccepting: false,
   callElsewhere: null,
+  servers: {},
+  serverInvites: [],
+  server: null,
+  serverTyping: {},
+  layout: emptyLayout,
 }
 
 export const useP2p = create<P2pState>()(() => initial)
@@ -300,6 +351,7 @@ const pageVisibility: Visibility = {
 let node: P2pNode | null = null
 let store: P2pStore | null = null
 let dms: Dms | null = null
+let servers: Servers | null = null
 let calls: Calls | null = null
 let leader: TabLeader | null = null
 let unwatch: (() => void) | null = null
@@ -376,7 +428,8 @@ export const readAuto = (username: string | null) => {
   }
 }
 
-export const chatScope = (room: string) => `p2p:${room}`
+export const chatScope = (room: string, ch?: string | null) =>
+  ch ? `p2p:${room}/${ch}` : `p2p:${room}`
 
 // The open P2P home survives a reload of this tab.
 const HOME_KEY = 'rchat_p2p_home'
@@ -446,6 +499,8 @@ const stopNode = () => {
     data?.postMessage({ call: null })
   }
   if (useP2p.getState().call) useP2p.setState({ call: null, callQuiet: false })
+  servers?.stop()
+  servers = null
   dms?.stop()
   dms = null
   node?.stop()
@@ -473,7 +528,7 @@ const shutdown = () => {
 
 // The view fields a node fills in; cleared when this tab hands P2P to another one.
 const nodeless = () => {
-  const { account, enabled, home: h, dialog, chat, drafts } = useP2p.getState()
+  const { account, enabled, home: h, dialog, chat, drafts, server, layout } = useP2p.getState()
   return {
     ...initial,
     account,
@@ -481,6 +536,8 @@ const nodeless = () => {
     home: h,
     dialog,
     drafts,
+    server,
+    layout,
     chat: chat && { ...chat, messages: [], loading: true },
   }
 }
@@ -599,6 +656,20 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
       autoDaily: () => readAuto(username).daily,
     })
     dms = d
+    const sv = new Servers({
+      node: n,
+      store: s,
+      dms: d,
+      autoMax: () => readAuto(username).server,
+      attachments: () => !p2pHost.textOnly(),
+    })
+    servers = sv
+    sv.onChange(room => {
+      data?.postMessage({ room })
+      scheduleServer(room)
+    })
+    sv.onArrive(a => serverArrived(a))
+    sv.onTyping(room => scheduleServer(room))
     const c = new Calls({
       me: () => n.ik,
       sessions: ik => n.readySessions(ik),
@@ -643,7 +714,10 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
     useP2p.setState({ enabled: true, loading: false, reader: false, me: n.ik })
     await mirror()
     if (node !== n) return
+    await sv.start()
+    if (node !== n) return
     await refreshRooms()
+    refreshServers()
     const chat = useP2p.getState().chat
     if (chat) await loadChat(chat.room, chat.peer)
     await n.start()
@@ -663,7 +737,7 @@ export const p2pAccount = async (username: string | null) => {
   const was = useP2p.getState()
   const keepHome =
     username !== null && ((was.account === username && was.home) || readHome(username))
-  useP2p.setState({ ...initial, account: username, home: keepHome })
+  useP2p.setState({ ...initial, account: username, home: keepHome, layout: readLayout(username) })
   if (username === null || !readOn(username)) return
   useP2p.setState({ enabled: true })
   run(username, null)
@@ -690,7 +764,15 @@ const refreshRooms = async () => {
   const s = dbNow()
   if (!s) return
   const list = await s.rooms().catch(() => [])
-  useP2p.setState({ rooms: Object.fromEntries(list.map(r => [r.id, summary(r)])) })
+  useP2p.setState({
+    rooms: Object.fromEntries(list.filter(r => r.kind !== 'server').map(r => [r.id, summary(r)])),
+  })
+  if (!servers) {
+    // A tab that only reads lists the servers stored here by name.
+    const names: Record<string, ServerView> = {}
+    for (const r of list) if (r.kind === 'server' && !r.invite) names[r.id] = readerView(r)
+    useP2p.setState({ servers: names })
+  }
 }
 
 const loadChat = async (room: string, peer: string, keep = false) => {
@@ -698,6 +780,7 @@ const loadChat = async (room: string, peer: string, keep = false) => {
   const me = meNow()
   if (!s || !me) return
   const cur = useP2p.getState().chat
+  if (cur?.ch && cur.room === room) return loadChannel(room, cur.ch, keep)
   const limit = keep && cur?.room === room ? Math.max(PAGE, cur.messages.length) : PAGE
   try {
     const { messages, more } = await loadMessages(s.db, room, me, peer, { limit })
@@ -713,6 +796,7 @@ const loadChat = async (room: string, peer: string, keep = false) => {
 const refreshRoom = async (room: string) => {
   const s = dbNow()
   if (!s) return
+  if (servers?.isServer(room)) return refreshServer(room)
   const r = await s.room(room).catch(() => undefined)
   if (r) useP2p.setState(st => ({ rooms: { ...st.rooms, [room]: summary(r) } }))
   if (dms && useP2p.getState().storageFull !== dms.storageFull)
@@ -729,6 +813,345 @@ const refreshRoom = async (room: string) => {
 }
 
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
+
+// ----- Servers -----
+
+const readerView = (r: RoomRecord): ServerView => ({
+  id: r.id,
+  name: r.name ?? 'P2P server',
+  color: null,
+  me: null,
+  joining: false,
+  owner: null,
+  perms: 0,
+  history: 'shared',
+  system: { ch: null, join: true, leave: true },
+  channels: [],
+  members: [],
+  online: 0,
+  joined: 0,
+  chans: r.chans ?? {},
+  gap: false,
+  full: r.full,
+})
+
+const refreshServers = () => {
+  const sv = servers
+  if (!sv) return
+  const out: Record<string, ServerView> = {}
+  for (const r of sv.serverRooms()) {
+    if (r.invite) continue
+    const v = sv.view(r.id)
+    if (v) out[r.id] = v
+  }
+  useP2p.setState({
+    servers: out,
+    serverInvites: sv.invites().map(r => ({
+      room: r.id,
+      name: r.name ?? 'P2P server',
+      from: r.invite?.from ?? '',
+      at: r.invite?.at ?? 0,
+    })),
+  })
+}
+
+const refreshServer = async (room: string) => {
+  const sv = servers
+  if (!sv) return
+  const v = sv.view(room)
+  const st = useP2p.getState()
+  const servs = { ...st.servers }
+  if (v && !sv.serverRooms().find(r => r.id === room)?.invite) servs[room] = v
+  else delete servs[room]
+  const typing = { ...st.serverTyping }
+  for (const c of v?.channels ?? []) {
+    const k = `${room}/${c.id}`
+    const list = sv.typingIn(room, c.id)
+    if (list.length) typing[k] = list
+    else delete typing[k]
+  }
+  useP2p.setState({
+    servers: servs,
+    serverTyping: typing,
+    serverInvites: sv.invites().map(r => ({
+      room: r.id,
+      name: r.name ?? 'P2P server',
+      from: r.invite?.from ?? '',
+      at: r.invite?.at ?? 0,
+    })),
+    storageFull: (dms?.storageFull ?? false) || sv.storageFull,
+  })
+  const now = useP2p.getState()
+  // The open channel went away (deleted, or we left): fall back to the first one.
+  if (now.server?.room === room && v) {
+    const ch = now.server.ch
+    if (ch && !v.channels.some(c => c.id === ch)) p2pServer.openChannel(v.channels[0]?.id ?? null)
+    else if (!ch && v.channels[0]) p2pServer.openChannel(v.channels[0].id)
+  }
+  if (now.chat?.ch && now.chat.room === room) {
+    await loadChannel(room, now.chat.ch, true)
+    useP2p.setState({ pulling: sv.pulling(room) })
+  }
+  if (now.pins?.room === room) await loadPinList(room)
+}
+
+const serverTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+const scheduleServer = (room: string) => {
+  if (serverTimers.has(room)) return
+  serverTimers.set(
+    room,
+    setTimeout(() => {
+      serverTimers.delete(room)
+      void refreshServer(room)
+    }, 30)
+  )
+}
+
+const loadChannel = async (room: string, ch: string, keep = false) => {
+  const sv = servers
+  if (!sv) return
+  const cur = useP2p.getState().chat
+  const limit =
+    keep && cur?.room === room && cur.ch === ch ? Math.max(PAGE, cur.messages.length) : PAGE
+  try {
+    const { messages, more } = await sv.loadChannel(room, ch, { limit })
+    const now = useP2p.getState().chat
+    if (now?.room !== room || now.ch !== ch) return
+    useP2p.setState({ chat: { ...now, messages, more, loading: false } })
+  } catch {
+    // Storage went away.
+  }
+}
+
+// What a member calls themselves (our petname for contacts first).
+export const memberName = (room: string, ik: string) =>
+  servers?.nameOf(ik, room) ??
+  useP2p.getState().servers[room]?.members.find(m => m.ik === ik)?.name ??
+  'Member'
+
+export const serverScope = (room: string) => ({ kind: 'p2ps', room }) as const
+export const channelScope = (room: string, ch: string) => ({ kind: 'p2pc', room, ch }) as const
+
+const SERVER_PING: Record<NonNullable<ServerArrival['ping']>, string> = {
+  mention: 'mentioned you',
+  reply: 'replied to you',
+  reaction: 'reacted to your message',
+  everyone: 'mentioned @everyone',
+}
+
+// A new message in a server channel: toasts and desktop notifications follow the channel's
+// level (Only @mentions by default), like an instance server.
+const serverArrived = (a: ServerArrival) => {
+  const st = useP2p.getState()
+  const watched =
+    st.server?.room === a.room &&
+    st.chat?.ch === a.ch &&
+    p2pHost.following(chatScope(a.room, a.ch)) &&
+    (typeof document === 'undefined' || document.visibilityState === 'visible')
+  if (watched) {
+    void servers?.markRead(a.room, a.ch)
+    return
+  }
+  const rule = resolveNotify(p2pHost.prefs(), channelScope(a.room, a.ch), Date.now())
+  if (rule.muted || rule.level === 'nothing') return
+  if (!a.ping && rule.level !== 'all') return
+  const v = st.servers[a.room]
+  const c = a.rec.wire.c as { body?: string; key?: string } | null
+  p2pHost.alert({
+    key: `p2p:${a.room}/${a.ch}`,
+    actor: p2pUser(a.rec.sender, memberName(a.room, a.rec.sender)),
+    action: a.ping
+      ? a.ping === 'reaction' && c?.key
+        ? `reacted ${c.key} to your message`
+        : SERVER_PING[a.ping]
+      : '',
+    body: a.ping === 'reaction' ? '' : (c?.body ?? ''),
+    server: v?.name ?? 'P2P server',
+    channel: v?.channels.find(x => x.id === a.ch)?.name ?? null,
+    dm: false,
+    message: a.ping !== 'reaction',
+    name: memberName(a.room, a.rec.sender),
+    generic: a.ping ? 'New notification' : 'New message',
+    go: () => p2pServer.open(a.room, a.ch),
+  })
+}
+
+const withServers = async <T>(fn: (s: Servers) => Promise<T>): Promise<T | null> => {
+  const sv = servers
+  if (!sv) {
+    p2pHost.toast(ELSEWHERE_TEXT)
+    return null
+  }
+  try {
+    return await fn(sv)
+  } catch (e) {
+    p2pHost.toast(e instanceof Error ? e.message : String(e))
+    return null
+  }
+}
+
+// The channel opened last in each server, for this tab.
+const lastChannel = new Map<string, string>()
+
+export const p2pServer = {
+  // Opens a server (its last channel, or the first one); the P2P home closes.
+  open(room: string, ch?: string | null) {
+    const v = useP2p.getState().servers[room]
+    const pick = ch ?? lastChannel.get(room) ?? v?.channels.find(c => c.kind === 'text')?.id ?? null
+    writeHome(null)
+    useP2p.setState({ home: false, server: { room, ch: null }, dialog: null })
+    p2pServer.openChannel(pick)
+  },
+
+  openChannel(ch: string | null) {
+    const cur = useP2p.getState().server
+    if (!cur) return
+    if (ch) lastChannel.set(cur.room, ch)
+    useP2p.setState(st => ({
+      server: { room: cur.room, ch },
+      chat: ch
+        ? {
+            room: cur.room,
+            peer: '',
+            ch,
+            messages: st.chat?.room === cur.room && st.chat.ch === ch ? st.chat.messages : [],
+            more: false,
+            loading: !(st.chat?.room === cur.room && st.chat.ch === ch),
+            readSeq: st.servers[cur.room]?.chans[ch]?.readSeq ?? 0,
+            missed: [],
+          }
+        : null,
+      pins: null,
+      editing: null,
+      replying: null,
+      pulling: false,
+    }))
+    if (ch) void loadChannel(cur.room, ch)
+  },
+
+  close: () =>
+    useP2p.setState(st => ({
+      server: null,
+      chat: st.chat?.ch ? null : st.chat,
+      pins: st.chat?.ch ? null : st.pins,
+    })),
+
+  async create(name: string) {
+    const room = await withServers(s => s.create(name))
+    if (room) {
+      refreshServers()
+      p2pServer.open(room)
+    }
+    return room
+  },
+
+  async join(code: string) {
+    const room = await withServers(s => s.redeem(code))
+    if (room) {
+      refreshServers()
+      p2pServer.open(room)
+    }
+    return room
+  },
+
+  async acceptInvite(room: string) {
+    await withServers(s => s.acceptInvite(room))
+    refreshServers()
+    p2pServer.open(room)
+  },
+
+  declineInvite: (room: string) => withServers(s => s.declineInvite(room)).then(refreshServers),
+
+  async leave(room: string) {
+    await withServers(s => s.leave(room))
+    refreshServers()
+  },
+
+  async forget(room: string) {
+    const ok = await withServers(s => s.forget(room).then(() => true))
+    if (!ok) return
+    if (useP2p.getState().server?.room === room) p2pServer.close()
+    refreshServers()
+  },
+
+  invite: (room: string, ik: string) => withServers(s => s.invite(room, ik)),
+  issueCode: (room: string, ttl: number, label = '') =>
+    withServers(s => s.issueCode(room, ttl, label)),
+  revokeCode: (room: string, hash: string) => withServers(s => s.revokeCode(room, hash)),
+  codes: (room: string) => withServers(s => s.codes(room)),
+  rename: (room: string, name: string) => withServers(s => s.setName(room, name)),
+  setHistory: (room: string, vis: HistoryVis) => withServers(s => s.setHistory(room, vis)),
+  setSystem: (room: string, sys: { ch: string | null; join: boolean; leave: boolean }) =>
+    withServers(s => s.setSystem(room, sys)),
+  addChannel: (room: string, name: string) => withServers(s => s.addChannel(room, name)),
+  editChannel: (room: string, id: string, patch: { name?: string; topic?: string }) =>
+    withServers(s => s.editChannel(room, id, patch)),
+  removeChannel: (room: string, id: string) =>
+    withServers(s => s.editChannel(room, id, { gone: true })),
+  kick: (room: string, ik: string) => withServers(s => s.kick(room, ik)),
+  ban: (room: string, ik: string) => withServers(s => s.ban(room, ik)),
+  unban: (room: string, ik: string) => withServers(s => s.unban(room, ik)),
+
+  markRead(room: string, ch: string) {
+    const c = useP2p.getState().servers[room]?.chans[ch]
+    if (!c || (!c.unread && !c.pings)) return
+    void servers?.markRead(room, ch)
+  },
+
+  markAllRead(room: string) {
+    for (const [ch, c] of Object.entries(useP2p.getState().servers[room]?.chans ?? {}))
+      if (c.unread || c.pings) void servers?.markRead(room, ch)
+  },
+
+  // What a code says (the server's name), for the join screen, without joining.
+  peek: (code: string) => parseCode(code),
+}
+
+export { CODE_TTLS, NEEDS_INVITER, ServerError }
+
+// ----- Rail layout -----
+
+// P2P servers' order and folders in the rail, per account in this browser (the instance layout's
+// shape, only its server list used). { v: 2, servers, ... } as nav_layout parses it.
+export const p2pLayoutKey = (username: string) => `rchat_p2p_layout:${username}`
+
+const readLayout = (username: string | null) => {
+  if (!username) return emptyLayout
+  try {
+    return parseLayout(localStorage.getItem(home.scoped(p2pLayoutKey(username))))
+  } catch {
+    return emptyLayout
+  }
+}
+
+const saveLayout = (layout: Layout) => {
+  const user = useP2p.getState().account
+  useP2p.setState({ layout })
+  if (user) writeLocal(home.scoped(p2pLayoutKey(user)), JSON.stringify(layout))
+}
+
+const railRooms = () => Object.keys(useP2p.getState().servers).sort()
+
+export const p2pRail = {
+  move: (room: string, index: number) =>
+    saveLayout(moveServer(useP2p.getState().layout, railRooms(), room, index)),
+  moveFolder: (id: string, index: number) =>
+    saveLayout(moveFolder(useP2p.getState().layout, railRooms(), id, index)),
+  moveIntoFolder: (room: string, id: string, index: number) =>
+    saveLayout(moveIntoFolder(useP2p.getState().layout, railRooms(), room, id, index)),
+  addToFolder: (room: string, id: string) =>
+    saveLayout(addToFolder(useP2p.getState().layout, railRooms(), room, id)),
+  merge: (room: string, target: string) => {
+    const layout = useP2p.getState().layout
+    saveLayout(mergeServers(layout, railRooms(), room, target, newFolderId(layout.servers)))
+  },
+  toggleFolder: (id: string) => saveLayout(toggleFolder(useP2p.getState().layout, id)),
+  rename: (id: string, name: string) =>
+    saveLayout(renameFolder(useP2p.getState().layout, id, name)),
+  ungroup: (id: string) => saveLayout(ungroupFolder(useP2p.getState().layout, id)),
+  reload: () => useP2p.setState({ layout: readLayout(useP2p.getState().account) }),
+}
 
 // ----- Calls -----
 
@@ -1124,6 +1547,12 @@ export const p2pFiles = {
 }
 
 const loadPinList = async (room: string) => {
+  const chat = useP2p.getState().chat
+  if (chat?.ch && chat.room === room) {
+    const list = servers ? await servers.loadPins(room, chat.ch).catch(() => null) : null
+    if (useP2p.getState().pins?.room === room) useP2p.setState({ pins: { room, list } })
+    return
+  }
   const s = dbNow()
   const me = meNow()
   const peer = useP2p.getState().rooms[room]?.peer ?? useP2p.getState().chat?.peer
@@ -1178,6 +1607,32 @@ const withDms = async <T>(fn: (d: Dms) => Promise<T>): Promise<T | null> => {
 
 const chatRoom = () => useP2p.getState().chat?.room ?? null
 
+// Where a draft key ("{room}" or "{room}/{channel}") sends to.
+type Target = { kind: 'dm'; room: string } | { kind: 'server'; room: string; ch: string }
+
+const targetOf = (key: string): Target => {
+  const i = key.indexOf('/')
+  return i < 0
+    ? { kind: 'dm', room: key }
+    : { kind: 'server', room: key.slice(0, i), ch: key.slice(i + 1) }
+}
+
+// The open conversation or channel, as a draft key.
+const openKey = () => {
+  const c = useP2p.getState().chat
+  return c ? chatKey(c) : null
+}
+
+// Runs a DM action or a server one for a draft key.
+const onTarget = <T>(
+  key: string,
+  dm: (d: Dms, room: string) => Promise<T>,
+  server: (s: Servers, room: string, ch: string) => Promise<T>
+): Promise<T | null> => {
+  const t = targetOf(key)
+  return t.kind === 'dm' ? withDms(d => dm(d, t.room)) : withServers(s => server(s, t.room, t.ch))
+}
+
 const findMessage = (id: string) => useP2p.getState().chat?.messages.find(m => m.id === id)
 
 // The newest message of ours that can be edited.
@@ -1203,6 +1658,7 @@ export const p2pDm = {
       .catch(() => undefined)
     useP2p.setState(st => ({
       home: true,
+      server: null,
       dialog: null,
       chat: {
         room,
@@ -1240,11 +1696,16 @@ export const p2pDm = {
     if (!s || !me || !chat || !chat.more || chat.loading) return
     useP2p.setState({ chat: { ...chat, loading: true } })
     const first = chat.messages[0]
-    const page = await loadMessages(s.db, chat.room, me, chat.peer, {
-      before: first?.sortKey,
-    }).catch(() => null)
+    const sv = servers
+    const page = await (
+      chat.ch
+        ? sv
+          ? sv.loadChannel(chat.room, chat.ch, { before: first?.sortKey })
+          : Promise.resolve(null)
+        : loadMessages(s.db, chat.room, me, chat.peer, { before: first?.sortKey })
+    ).catch(() => null)
     const now = useP2p.getState().chat
-    if (now?.room !== chat.room) return
+    if (now?.room !== chat.room || now.ch !== chat.ch) return
     useP2p.setState({
       chat: page
         ? { ...now, messages: [...page.messages, ...now.messages], more: page.more, loading: false }
@@ -1254,11 +1715,11 @@ export const p2pDm = {
 
   // Older history from the other side (past the backfill horizon).
   loadOlderHistory() {
-    const room = chatRoom()
-    if (room && dms) {
-      dms.loadOlder(room)
-      useP2p.setState({ pulling: true })
-    }
+    const chat = useP2p.getState().chat
+    if (!chat) return
+    if (chat.ch) servers?.loadOlder(chat.room)
+    else dms?.loadOlder(chat.room)
+    useP2p.setState({ pulling: true })
   },
 
   async jumpTo(id: string) {
@@ -1268,10 +1729,17 @@ export const p2pDm = {
     const chat = st.chat
     if (!s || !me || !chat) return
     if (!chat.messages.some(m => m.id === id)) {
-      const around = await loadAround(s.db, chat.room, me, chat.peer, id).catch(() => null)
+      const sv = servers
+      const around = await (
+        chat.ch
+          ? sv
+            ? sv.loadAround(chat.room, chat.ch, id)
+            : Promise.resolve(null)
+          : loadAround(s.db, chat.room, me, chat.peer, id)
+      ).catch(() => null)
       if (!around) return
       const now = useP2p.getState().chat
-      if (now?.room !== chat.room) return
+      if (now?.room !== chat.room || now.ch !== chat.ch) return
       useP2p.setState({ chat: { ...now, messages: around.messages, more: around.more } })
     }
     useP2p.setState(x => ({ focus: { room: chat.room, id, n: (x.focus?.n ?? 0) + 1 } }))
@@ -1298,27 +1766,50 @@ export const p2pDm = {
         p2pHost.toast(TOO_LONG_TEXT)
         return false
       }
-      return (await withDms(d => d.edit(room, last.id, next))) !== null
+      return (
+        (await onTarget(
+          room,
+          (d, r) => d.edit(r, last.id, next),
+          (sv, r) => sv.edit(r, last.id, next)
+        )) !== null
+      )
     }
     const att = files ? await p2pFiles.stage(room, text) : []
     if (att === null) return false
     const st = useP2p.getState()
     const reply = st.replying?.room === room ? st.replying.id : undefined
     useP2p.setState({ replying: null })
-    const id = await withDms(d => d.send(room, { body: text, reply, att }))
+    const id = await onTarget(
+      room,
+      (d, r) => d.send(r, { body: text, reply, att }),
+      (sv, r, ch) => sv.send(r, { ch, body: text, reply, att })
+    )
     if (id !== null && files) p2pFiles.clear(room)
     return id !== null
   },
 
+  // `room` is a draft key: a conversation, or a server channel.
   async forward(room: string, fwd: Fwd) {
     const clipped = { ...fwd, name: clipName(fwd.name) }
-    return (await withDms(d => d.send(room, { body: '', fwd: clipped }))) !== null
+    return (
+      (await onTarget(
+        room,
+        (d, r) => d.send(r, { body: '', fwd: clipped }),
+        (sv, r, ch) => sv.send(r, { ch, body: '', fwd: clipped })
+      )) !== null
+    )
   },
 
   // A failed message: send it again, or say why it can't be.
   retry(id: string) {
-    const room = chatRoom()
-    return room ? withDms(d => d.retry(room, id)) : Promise.resolve(null)
+    const key = openKey()
+    return key
+      ? onTarget(
+          key,
+          (d, r) => d.retry(r, id),
+          (sv, r) => sv.retry(r, id)
+        )
+      : Promise.resolve(null)
   },
 
   startReply(room: string, id: string) {
@@ -1356,25 +1847,45 @@ export const p2pDm = {
     if (body && bodyTooLong(e.text)) return p2pHost.toast(TOO_LONG_TEXT)
     useP2p.setState({ editing: null })
     if (!m || !body || body === m.body.trim()) return
-    await withDms(d => d.edit(e.room, e.id, e.text))
+    await onTarget(
+      e.room,
+      (d, r) => d.edit(r, e.id, e.text),
+      (sv, r) => sv.edit(r, e.id, e.text)
+    )
   },
 
   remove: (id: string) => {
-    const room = chatRoom()
-    return room ? withDms(d => d.redact(room, id)) : Promise.resolve(null)
+    const key = openKey()
+    return key
+      ? onTarget(
+          key,
+          (d, r) => d.redact(r, id),
+          (sv, r) => sv.redact(r, id)
+        )
+      : Promise.resolve(null)
   },
 
-  react(id: string, key: string, on?: boolean) {
-    const room = chatRoom()
+  react(id: string, emoji: string, on?: boolean) {
+    const key = openKey()
     const m = findMessage(id)
-    if (!room || !m) return Promise.resolve(null)
-    const mine = m.reactions.find(r => r.key === key)?.me === true
-    return withDms(d => d.react(room, id, key, on ?? !mine))
+    if (!key || !m) return Promise.resolve(null)
+    const mine = m.reactions.find(r => r.key === emoji)?.me === true
+    return onTarget(
+      key,
+      (d, r) => d.react(r, id, emoji, on ?? !mine),
+      (sv, r) => sv.react(r, id, emoji, on ?? !mine)
+    )
   },
 
   pin(id: string, on: boolean) {
-    const room = chatRoom()
-    return room ? withDms(d => d.pin(room, id, on)) : Promise.resolve(null)
+    const key = openKey()
+    return key
+      ? onTarget(
+          key,
+          (d, r) => d.pin(r, id, on),
+          (sv, r) => sv.pin(r, id, on)
+        )
+      : Promise.resolve(null)
   },
 
   async openPins() {
@@ -1386,7 +1897,10 @@ export const p2pDm = {
 
   closePins: () => useP2p.setState({ pins: null }),
 
+  // `room` is a draft key.
   markRead(room: string) {
+    const t = targetOf(room)
+    if (t.kind === 'server') return p2pServer.markRead(t.room, t.ch)
     const r = useP2p.getState().rooms[room]
     if (!r || (!r.unread && !r.pings)) return
     void withDms(d => d.markRead(room))
@@ -1394,7 +1908,9 @@ export const p2pDm = {
 
   typing(room: string, on: boolean) {
     if (!p2pHost.typingOn()) return
-    dms?.typing(room, on)
+    const t = targetOf(room)
+    if (t.kind === 'server') servers?.typing(t.room, t.ch, on)
+    else dms?.typing(room, on)
   },
 }
 
@@ -1437,7 +1953,7 @@ export const p2p = {
     } catch {
       useP2p.setState({ error: "Couldn't remove P2P data" })
     }
-    useP2p.setState({ ...initial, account: username })
+    useP2p.setState({ ...initial, account: username, layout: readLayout(username) })
   },
 
   setPaused: (on: boolean) => withNode(n => n.setPaused(on)),
@@ -1462,10 +1978,16 @@ export const p2p = {
 
   openHome: () => {
     writeHome(useP2p.getState().account)
-    useP2p.setState({ home: true })
+    useP2p.setState(st => ({
+      home: true,
+      server: null,
+      chat: st.chat?.ch ? null : st.chat,
+      pins: st.chat?.ch ? null : st.pins,
+    }))
   },
   closeHome: () => {
     writeHome(null)
+    if (useP2p.getState().server) p2pServer.close()
     useP2p.setState({ home: false })
   },
   clearError: () => useP2p.setState({ error: null }),

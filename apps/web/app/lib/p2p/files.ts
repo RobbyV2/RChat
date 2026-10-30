@@ -15,7 +15,7 @@ const jobs = new Map<number, Job>()
 
 const hashWorker = () => {
   if (worker) return worker
-  const w = new Worker(new URL('./hash.worker.ts', import.meta.url), { type: 'module' })
+  const w = new Worker(new URL('./p2p.worker.ts', import.meta.url), { type: 'module' })
   w.onmessage = (e: MessageEvent) => {
     const m = e.data as { id: number; progress?: [number, number]; ok?: Hashed; err?: string }
     const job = jobs.get(m.id)

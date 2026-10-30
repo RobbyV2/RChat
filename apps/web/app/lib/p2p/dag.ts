@@ -5,8 +5,10 @@ import {
   isLate,
   LIMITS as EV,
   redacted,
+  roomOf,
   sortKeyOf,
   targetOf,
+  type Core,
   type Wire,
 } from './event'
 import type { IDBPTransaction } from 'idb'
@@ -31,6 +33,10 @@ export const DAG = {
   totalCap: 500_000,
   roomBytes: 200 * 1024 * 1024,
   totalBytes: 1024 * 1024 * 1024,
+  // P2P servers have a budget of their own, so a server can never crowd out DMs. (Each member's
+  // share of a server room is a window along their chain: server.ts, note section 6.)
+  serverCap: 400_000,
+  serverBytes: 768 * 1024 * 1024,
   // Steps of any walk over prev links.
   walk: 5000,
 }
@@ -43,6 +49,9 @@ export type Inserted =
   | { status: 'dup'; rec: EventRecord }
   | { status: 'invalid'; why: 'depth' | 'auth' }
   | { status: 'full'; why: FullWhy }
+  // P2P servers: past the sender's window (or a link of their chain we lack): not stored, no
+  // strike, the room isn't full for others.
+  | { status: 'quota' }
 
 export type FullWhy = 'events' | 'bytes'
 
@@ -55,7 +64,22 @@ export interface InsertCtx {
   totalBytes?: number
   // Our own new event: its display time doesn't follow parents shown in the future.
   own?: boolean
+  // P2P servers: the target rule (the DM one by default), whether a stored redaction removes a
+  // target (only its own sender's, by default), and fields to store with the record.
+  target?: (ev: Core, target: EventRecord) => boolean
+  mayRedact?: (redaction: EventRecord, target: Pick<EventRecord, 'sender'>) => boolean
+  mark?: Pick<EventRecord, 'chan' | 'state' | 'skey' | 'mod' | 'soft' | 'dseq' | 'cw' | 'cl'>
+  // P2P servers: stored past every cap (owner and moderation events, our own membership).
+  exempt?: boolean
+  serverCap?: number
+  serverBytes?: number
 }
+
+// Server rooms count against their own totals.
+export const SERVER_TOTAL = 'sevents'
+export const SERVER_TOTAL_BYTES = 'sbytes'
+
+const sameSender = (r: EventRecord, t: Pick<EventRecord, 'sender'>) => r.sender === t.sender
 
 export const blankRoom = (id: string, peer: string, now: number): RoomRecord => ({
   id,
@@ -138,19 +162,30 @@ export const insertInto = async (
   const events = tx.objectStore('events')
   const refuse = (why: 'depth' | 'auth'): Inserted => ({ status: 'invalid', why })
   const ev = wire.ev
+  const rid = roomOf(id, ev)
   const have = await events.get(id)
   if (have) return { status: 'dup', rec: have }
-  const room =
-    (await tx.objectStore('rooms').get(ev.room)) ?? blankRoom(ev.room, ctx.peer, receivedAt)
-  const total = ((await tx.objectStore('meta').get(TOTAL)) as number | undefined) ?? 0
-  const totalBytes = ((await tx.objectStore('meta').get(TOTAL_BYTES)) as number | undefined) ?? 0
+  const room = (await tx.objectStore('rooms').get(rid)) ?? blankRoom(rid, ctx.peer, receivedAt)
+  const mayRedact = ctx.mayRedact ?? sameSender
+  const server = room.kind === 'server'
+  const meta = tx.objectStore('meta')
+  const totalKey = server ? SERVER_TOTAL : TOTAL
+  const bytesKey = server ? SERVER_TOTAL_BYTES : TOTAL_BYTES
+  const total = ((await meta.get(totalKey)) as number | undefined) ?? 0
+  const totalBytes = ((await meta.get(bytesKey)) as number | undefined) ?? 0
   const roomBytes = room.bytes ?? 0
   const size = storedSize(wire)
-  const why: FullWhy | null =
-    room.count >= (ctx.roomCap ?? DAG.roomCap) || total >= (ctx.totalCap ?? DAG.totalCap)
+  const totalCap = server ? (ctx.serverCap ?? DAG.serverCap) : (ctx.totalCap ?? DAG.totalCap)
+  const totalMax = server
+    ? (ctx.serverBytes ?? DAG.serverBytes)
+    : (ctx.totalBytes ?? DAG.totalBytes)
+  const roomCap = ctx.roomCap ?? DAG.roomCap
+  const roomMax = ctx.roomBytes ?? DAG.roomBytes
+  const why: FullWhy | null = ctx.exempt
+    ? null
+    : room.count >= roomCap || total >= totalCap
       ? 'events'
-      : roomBytes + size > (ctx.roomBytes ?? DAG.roomBytes) ||
-          totalBytes + size > (ctx.totalBytes ?? DAG.totalBytes)
+      : roomBytes + size > roomMax || totalBytes + size > totalMax
         ? 'bytes'
         : null
   if (why) {
@@ -160,7 +195,7 @@ export const insertInto = async (
   const parents: EventRecord[] = []
   for (const p of ev.prev) {
     const r = await events.get(p)
-    if (r && r.room === ev.room) parents.push(r)
+    if (r && r.room === rid) parents.push(r)
   }
   const deepest = Math.max(-1, ...parents.map(r => r.depth))
   // With parents we haven't seen, the depth can't be checked exactly. It must stay well below
@@ -174,7 +209,11 @@ export const insertInto = async (
     return refuse('depth')
   const tid = targetOf(wire)
   const target = tid ? await events.get(tid) : undefined
-  if (target && (target.room !== ev.room || !authorizeTarget(ev, target.wire)))
+  if (
+    target &&
+    (target.room !== rid ||
+      !(ctx.target ? ctx.target(ev, target) : authorizeTarget(ev, target.wire)))
+  )
     return refuse('auth')
   const reply =
     ev.type === 'msg' && wire.c && 'body' in wire.c
@@ -190,21 +229,21 @@ export const insertInto = async (
   let isRedacted = wire.c === null
   // A redaction that arrived first: the event is born redacted, and so are its edits. An edit of
   // a redacted message is stored without its text too.
-  const pointing =
-    ev.type === 'redact' ? [] : await events.index('room_target').getAll([ev.room, id])
-  const gone = pointing.some(r => r.type === 'redact' && r.sender === ev.sender)
+  const pointing = ev.type === 'redact' ? [] : await events.index('room_target').getAll([rid, id])
+  const gone = pointing.some(r => r.type === 'redact' && mayRedact(r, ev))
   if (gone) {
     isRedacted = true
     for (const r of pointing) if (r.type === 'edit' && !r.redacted) await events.put(stripped(r))
   }
   if (ev.type === 'edit' && target?.redacted) {
-    const marks = await events.index('room_target').getAll([ev.room, target.id])
-    if (marks.some(r => r.type === 'redact' && r.sender === target.sender)) isRedacted = true
+    const marks = await events.index('room_target').getAll([rid, target.id])
+    if (marks.some(r => r.type === 'redact' && mayRedact(r, target))) isRedacted = true
   }
   if (isRedacted) stored = redacted(wire)
   const rec: EventRecord = {
+    ...ctx.mark,
     id,
-    room: ev.room,
+    room: rid,
     type: ev.type,
     sender: ev.sender,
     wire: stored,
@@ -221,10 +260,11 @@ export const insertInto = async (
   if (atts.length) Object.assign(rec, withFiles(rec, atts))
   await events.put(rec)
   let freed: string[] = []
-  if (ev.type === 'redact' && target && !target.redacted) {
+  // A redaction takes effect when it is allowed now, not just by what its sender cited.
+  if (ev.type === 'redact' && target && !target.redacted && mayRedact(rec, target)) {
     freed = target.atts ?? []
     await events.put(stripped(target))
-    for (const r of await events.index('room_target').getAll([ev.room, target.id]))
+    for (const r of await events.index('room_target').getAll([rid, target.id]))
       if (r.type === 'edit' && !r.redacted) await events.put(stripped(r))
   }
   const children = tx.objectStore('children')
@@ -236,14 +276,15 @@ export const insertInto = async (
   let ping: PingKind | null = null
   let unread = false
   const c = rec.wire.c
-  if (ev.sender !== ctx.me) {
+  // Servers count per channel, once they know the message is shown (server.ts).
+  if (ev.sender !== ctx.me && room.kind !== 'server') {
     if (ev.type === 'msg' && c) {
       unread = true
       const m = c as { mentions?: string[]; fwd?: unknown } | null
       if (m && !m.fwd && m.mentions?.includes(ctx.me)) ping = 'mention'
       else if (reply) {
         const r = await events.get(reply)
-        if (r && r.room === ev.room && r.type === 'msg' && r.sender === ctx.me) ping = 'reply'
+        if (r && r.room === rid && r.type === 'msg' && r.sender === ctx.me) ping = 'reply'
       }
     } else if (ev.type === 'react' && c && 'on' in c && c.on && target?.sender === ctx.me)
       ping = 'reaction'
@@ -261,8 +302,8 @@ export const insertInto = async (
     bytes: roomBytes + size,
   }
   await tx.objectStore('rooms').put(next)
-  await tx.objectStore('meta').put(total + 1, TOTAL)
-  await tx.objectStore('meta').put(totalBytes + size, TOTAL_BYTES)
+  await meta.put(total + 1, totalKey)
+  await meta.put(totalBytes + size, bytesKey)
   return { status: 'new', rec, ping, unread, freed }
 }
 

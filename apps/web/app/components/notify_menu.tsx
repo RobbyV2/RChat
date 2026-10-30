@@ -12,6 +12,7 @@ import {
   muteUntilFor,
   mutedText,
   ownRule,
+  parentScope,
   untilText,
   SUPPRESS_LABELS,
   suppressedOf,
@@ -32,49 +33,44 @@ export const notifyMenuItems = (scope: NotifyScope, noun: string): ContextMenuIt
   const prefs = s.notifyPrefs
   const now = Date.now()
   const end = muteEnd(prefs, scope, now)
-  const serverEnd =
-    scope.kind === 'channel' && scope.server !== null
-      ? muteEnd(prefs, { kind: 'server', name: scope.server }, now)
-      : null
+  const parent = parentScope(scope)
+  const child = scope.kind === 'channel' || scope.kind === 'p2pc'
+  const serverEnd = parent ? muteEnd(prefs, parent, now) : null
   const own = ownRule(prefs, scope)?.level
   const level = levelOf(prefs, scope)
   const radios: ContextMenuItem[] = LEVELS.map(({ level: l, label }) => ({
     label,
     radio: true,
-    checked: scope.kind === 'channel' ? own === l : level === l,
+    checked: child ? own === l : level === l,
     action: () => s.setNotifyLevel(scope, l),
   }))
   const settings: ContextMenuItem = {
     label: 'Notification settings',
-    subtitle:
-      scope.kind === 'channel' && !own
-        ? `Server default (${levelLabel(level)})`
-        : levelLabel(level),
-    submenu:
-      scope.kind === 'channel'
+    subtitle: child && !own ? `Server default (${levelLabel(level)})` : levelLabel(level),
+    submenu: child
+      ? [
+          {
+            label: 'Use server default',
+            subtitle: levelLabel(inheritedLevel(prefs, scope)),
+            radio: true,
+            checked: !own,
+            action: () => s.setNotifyLevel(scope, null),
+          },
+          ...radios,
+        ]
+      : scope.kind === 'server'
         ? [
-            {
-              label: 'Use server default',
-              subtitle: levelLabel(inheritedLevel(prefs, scope)),
-              radio: true,
-              checked: !own,
-              action: () => s.setNotifyLevel(scope, null),
-            },
             ...radios,
+            ...(['everyone', 'roles'] as Suppress[]).map(which => {
+              const on = suppressedOf(prefs, scope.name, which)
+              return {
+                label: SUPPRESS_LABELS[which],
+                checked: on,
+                action: () => s.setNotifySuppress(scope.name, which, !on),
+              }
+            }),
           ]
-        : scope.kind === 'server'
-          ? [
-              ...radios,
-              ...(['everyone', 'roles'] as Suppress[]).map(which => {
-                const on = suppressedOf(prefs, scope.name, which)
-                return {
-                  label: SUPPRESS_LABELS[which],
-                  checked: on,
-                  action: () => s.setNotifySuppress(scope.name, which, !on),
-                }
-              }),
-            ]
-          : radios,
+        : radios,
   }
   const mute: ContextMenuItem =
     end !== null
@@ -134,8 +130,9 @@ export function MutedIcon({
     const now = Date.now()
     const own = muteEnd(s.notifyPrefs, scope, now)
     if (own !== null) return mutedText(own, now)
-    if (scope.kind !== 'channel' || scope.server === null) return 'Muted'
-    const server = muteEnd(s.notifyPrefs, { kind: 'server', name: scope.server }, now)
+    const parent = parentScope(scope)
+    if (!parent) return 'Muted'
+    const server = muteEnd(s.notifyPrefs, parent, now)
     return server !== null ? `Server muted ${untilText(server, now)}` : 'Muted'
   })
   if (!muted) return null
