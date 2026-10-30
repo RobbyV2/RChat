@@ -35,7 +35,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
-use rustrict::CensorStr;
+pub(crate) use rchat_profanity::is_profane;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tower_governor::key_extractor::KeyExtractor;
@@ -1313,172 +1313,6 @@ pub fn valid_color(color: &str) -> bool {
     color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
-const URL_PUNCT: &str = "-._~:/?#[]@!$&'()*+,;=%";
-const URL_DELIMS: [char; 7] = ['/', '?', '#', '&', '=', ':', '@'];
-
-fn url_len(text: &str, at: usize) -> Option<usize> {
-    let rest = &text[at..];
-    let scheme = ["http://", "https://"].iter().any(|s| {
-        rest.get(..s.len())
-            .is_some_and(|p| p.eq_ignore_ascii_case(s))
-    });
-    let bounded = !text[..at]
-        .chars()
-        .next_back()
-        .is_some_and(|c| c.is_alphanumeric() || c == '_');
-    match scheme && bounded {
-        true => Some(
-            rest.find(|c: char| !c.is_ascii_alphanumeric() && !URL_PUNCT.contains(c))
-                .unwrap_or(rest.len()),
-        ),
-        false => None,
-    }
-}
-
-fn words(text: &str) -> impl DoubleEndedIterator<Item = &str> {
-    text.split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-}
-
-fn push_words(phrases: &mut Vec<String>, phrase: &mut String, text: &str, gap: &str) {
-    let short = |w: &str| w.chars().count() <= 2;
-    let before = words(phrase).next_back().map(short);
-    let after = words(text).next().map(short);
-    match (before, after) {
-        (Some(a), Some(b)) if a != b => phrases.push(std::mem::take(phrase)),
-        _ => phrase.push_str(gap),
-    }
-    phrase.push_str(text);
-}
-
-fn issue_refs(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut prev = None;
-    for (i, c) in text.char_indices() {
-        let rest = &text[i + c.len_utf8()..];
-        let digits = rest.len() - rest.trim_start_matches(|d: char| d.is_ascii_digit()).len();
-        let reference = c == '#'
-            && !prev.is_some_and(|p: char| p.is_alphanumeric())
-            && digits > 0
-            && !rest[digits..].starts_with(|n: char| n.is_alphanumeric());
-        out.push(if reference { ' ' } else { c });
-        prev = Some(c);
-    }
-    out
-}
-
-const NUMBER_RUN: usize = 5;
-const NUMBER_KEEP: usize = 3;
-const NUMBER_WORDS: [&str; 6] = ["58008", "80085", "800855", "5318008", "8008135", "55378008"];
-
-fn long_numbers(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    let mut prev = None;
-    while let Some(c) = rest.chars().next() {
-        let digits = rest.len() - rest.trim_start_matches(|d: char| d.is_ascii_digit()).len();
-        if digits == 0 {
-            out.push(c);
-            prev = Some(c);
-            rest = &rest[c.len_utf8()..];
-            continue;
-        }
-        let run = &rest[..digits];
-        let number = digits >= NUMBER_RUN
-            && !rest[digits..].starts_with(|n: char| n.is_alphanumeric())
-            && !NUMBER_WORDS.contains(&run);
-        let keep = match (number, prev.is_some_and(|p: char| p.is_alphanumeric())) {
-            (false, _) => digits,
-            (true, true) => NUMBER_KEEP,
-            (true, false) => 0,
-        };
-        out.push_str(&run[..keep]);
-        out.extend(std::iter::repeat_n(' ', digits - keep));
-        prev = run.chars().next_back();
-        rest = &rest[digits..];
-    }
-    out
-}
-
-fn phrases(text: &str, bridge: bool, links: bool) -> Vec<String> {
-    let mut phrases = Vec::new();
-    let mut phrase = String::with_capacity(text.len());
-    let mut at = 0;
-    for (i, _) in text.char_indices() {
-        if i < at {
-            continue;
-        }
-        let Some(len) = url_len(text, i) else {
-            continue;
-        };
-        push_words(&mut phrases, &mut phrase, &text[at..i], "");
-        let span = &text[i..i + len];
-        let skip_host = bridge || (!links && skips_host(span));
-        let url = percent_encoding::percent_decode_str(span).decode_utf8_lossy();
-        for (n, part) in url.split(URL_DELIMS).filter(|p| !p.is_empty()).enumerate() {
-            match (skip_host, n) {
-                (true, 0 | 1) => {}
-                (false, 0) => push_words(&mut phrases, &mut phrase, part, ""),
-                (false, 1) => push_words(&mut phrases, &mut phrase, &part.replace('.', " "), " "),
-                _ => push_words(&mut phrases, &mut phrase, part, " "),
-            }
-        }
-        at = i + len;
-    }
-    push_words(&mut phrases, &mut phrase, &text[at..], "");
-    phrases.push(phrase);
-    phrases
-}
-
-const URL_TRAILING: &str = ".,;:!?)'\"";
-
-fn plausible_host(authority: &str) -> bool {
-    let host = match authority.rsplit_once(':') {
-        Some((host, port))
-            if !port.is_empty() && port.len() <= 5 && port.bytes().all(|b| b.is_ascii_digit()) =>
-        {
-            host
-        }
-        Some(_) => return false,
-        None => authority,
-    };
-    let labels: Vec<&str> = host.split('.').collect();
-    let label_ok = |l: &&str| {
-        !l.is_empty()
-            && l.len() <= 63
-            && !l.starts_with('-')
-            && !l.ends_with('-')
-            && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-    };
-    let ipv4 = labels.len() == 4
-        && labels
-            .iter()
-            .all(|l| !l.is_empty() && l.len() <= 3 && l.parse::<u8>().is_ok());
-    let tld = labels
-        .last()
-        .is_some_and(|t| t.len() >= 2 && t.bytes().all(|b| b.is_ascii_alphabetic()));
-    host.eq_ignore_ascii_case("localhost")
-        || ipv4
-        || (labels.len() >= 2 && host.len() <= 253 && labels.iter().all(label_ok) && tld)
-}
-
-fn skips_host(span: &str) -> bool {
-    let span = span.trim_end_matches(|c| URL_TRAILING.contains(c));
-    let after_scheme = &span[span.find("://").map_or(span.len(), |n| n + 3)..];
-    let end = after_scheme
-        .find(['/', '?', '#'])
-        .unwrap_or(after_scheme.len());
-    plausible_host(&after_scheme[..end])
-}
-
-pub(crate) fn is_profane(text: &str, links: bool) -> bool {
-    let text = long_numbers(&issue_refs(text));
-    [false, true]
-        .into_iter()
-        .flat_map(|bridge| phrases(&text, bridge, links))
-        .any(|p| p.is_inappropriate())
-}
-
 impl Settings {
     pub fn blocks(&self, target: ProfanityTarget, text: &str) -> bool {
         let targets = self.profanity_targets;
@@ -2336,7 +2170,8 @@ mod tests {
         assert!(blocked(
             send(json!({"content": "see https://x.co/fuck"})).await
         ));
-        assert!(blocked(send(p2p("fuck.png")).await));
+        // P2P files are never checked by the instance filter, in channels too.
+        assert!(send(p2p("fuck.png")).await.is_ok());
         assert!(blocked(send(upload("fuck.png").await).await));
         assert!(blocked(reply(upload("shit.png").await).await));
         assert!(send(upload("cat.png").await).await.is_ok());
@@ -2395,7 +2230,7 @@ mod tests {
         assert!(blocked(
             send(json!({"content": "fuck https://x.co/"})).await
         ));
-        assert!(blocked(send(p2p("fuck.png")).await));
+        assert!(send(p2p("fuck.png")).await.is_ok());
         assert!(blocked(send(upload("fuck.png").await).await));
         patch(json!({"profanity_targets": {"file_names": false}})).await;
         assert!(send(p2p("fuck.png")).await.is_ok());
@@ -2494,6 +2329,27 @@ mod tests {
             for links in [true, false] {
                 assert!(is_profane(text, links), "{text} links={links}");
             }
+        }
+    }
+
+    #[test]
+    fn client_matcher_agrees_with_the_server_filter() {
+        let all = settings_with(true, ProfanityTargets::ALL);
+        for text in rchat_profanity::SAMPLES.lines() {
+            let profane = rust_next_wasm::is_profane(text);
+            assert_eq!(
+                all.blocks(ProfanityTarget::ServerNames, text),
+                profane,
+                "{text}"
+            );
+            assert_eq!(
+                all.blocks(ProfanityTarget::Messages, text),
+                profane,
+                "{text}"
+            );
+            let masked = rust_next_wasm::mask_profanity(text);
+            assert_eq!(masked.chars().count(), text.chars().count(), "{text}");
+            assert_eq!(masked != text, profane, "{text:?} -> {masked:?}");
         }
     }
 

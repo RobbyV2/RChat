@@ -50,6 +50,7 @@ const source = (over: Partial<ConfigSource> = {}): ConfigSource => {
     emoji,
     calls: 'p2p',
     typing: false,
+    profanity: true,
     ...over,
   }
 }
@@ -334,6 +335,7 @@ describe('building', () => {
         'streamer',
         'theme',
         'typing',
+        'profanity',
         'v',
       ].sort()
     )
@@ -359,6 +361,7 @@ describe('preview', () => {
       'emoji',
       'calls',
       'typing',
+      'profanity',
     ])
     expect([by.theme.now, by.theme.next, by.theme.same]).toEqual(['Dark', 'Light', false])
     expect([by.streamer.now, by.streamer.next, by.streamer.same]).toEqual(['On', 'On', true])
@@ -384,6 +387,22 @@ describe('preview', () => {
     const rows = describeChanges({ v: 1, typing: true }, source({ typing: false }))
     expect(rows).toEqual([
       { key: 'typing', label: 'Typing indicators', now: 'Off', next: 'On', same: false },
+    ])
+  })
+
+  test('the profanity filter travels as a plain switch', async () => {
+    const doc = buildConfig(source({ profanity: true }), new Set<SectionKey>(['profanity']))
+    expect(doc).toEqual({ v: 1, profanity: true })
+    expect(buildConfig(source({ profanity: null }), ALL).profanity).toBeUndefined()
+    const decoded = await decodeConfig(await encodeConfig(doc))
+    expect(decoded).toEqual({ ok: true, doc: { v: 1, profanity: true } })
+    for (const profanity of ['yes', 1, null, {}]) {
+      const out = sanitizeConfig({ v: 1, profanity })
+      expect(out.ok && out.doc.profanity).toBeUndefined()
+    }
+    const rows = describeChanges({ v: 1, profanity: true }, source({ profanity: false }))
+    expect(rows).toEqual([
+      { key: 'profanity', label: 'Filter profanity', now: 'Off', next: 'On', same: false },
     ])
   })
 

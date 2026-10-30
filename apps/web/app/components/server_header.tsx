@@ -3,6 +3,7 @@
 import type { CSSProperties } from 'react'
 import { Settings } from 'lucide-react'
 import { THEME_BACKDROP_CSS, headerColors } from '../lib/server_colors'
+import { Masked } from './ui'
 
 const gearCls = 'group relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full'
 
@@ -66,7 +67,7 @@ export function ServerHeader({
           style={colors?.fg ? { color: colors.fg } : undefined}
           className="streamer truncate font-medium"
         >
-          {displayName}
+          <Masked text={displayName} />
         </span>
       )}
       {preview

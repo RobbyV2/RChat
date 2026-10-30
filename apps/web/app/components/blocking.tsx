@@ -6,7 +6,7 @@ import { useStore, type ContextMenuItem } from '../lib/store'
 import { blockedLabel, blockedRuns, type BlockedRun } from '../lib/blocks'
 import type { Message, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
-import { FieldError, Sentinel, fieldCls, filledBtn, textBtn } from './ui'
+import { fieldCls, FieldError, filledBtn, Masked, Sentinel, textBtn } from './ui'
 
 // "Block" (with a short confirm) or "Unblock" for a user menu; null for yourself and guests.
 export const blockMenuItem = (user: UserRef): ContextMenuItem | null => {
@@ -253,7 +253,9 @@ export function BlockedUsersSection() {
               size={28}
             />
             <span className="min-w-0 flex-1 truncate text-sm">
-              <span className="streamer">{user.display_name}</span>{' '}
+              <span className="streamer">
+                <Masked text={user.display_name} />
+              </span>{' '}
               <span className="streamer text-on-surface-variant">@{user.username}</span>
             </span>
             <button onClick={() => void unblockUser(user.username)} className={textBtn}>

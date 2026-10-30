@@ -43,7 +43,7 @@ import { plainStamps } from '../lib/timestamps'
 import { serverInitial } from '../lib/rules'
 import type { InstanceInfo, Invite, InviteStatus, Message } from '../lib/types'
 import { ServerGlyph } from './server_rail'
-import { Dialog, FieldError, LinkPage, fieldCls, filledBtn, textBtn } from './ui'
+import { Dialog, fieldCls, FieldError, filledBtn, LinkPage, Masked, textBtn } from './ui'
 import { InstanceChip } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
@@ -372,7 +372,7 @@ function PreviewLine({ message, big, host }: { message: Message; big: boolean; h
           title={host && !streamer ? formatQualified(author.username, host) : undefined}
           className={`streamer font-medium text-on-surface ${host ? '' : 'cursor-pointer hover:underline'}`}
         >
-          {author.display_name}
+          <Masked text={author.display_name} />
         </span>{' '}
         <span className="text-on-surface-variant">
           {text}
@@ -743,7 +743,9 @@ export function InviteCard({
       icon: <ServerTile name={name} displayName={display_name} big={big} />,
       title: (
         <>
-          <span className={`streamer min-w-0 ${fit}`}>{display_name}</span>
+          <span className={`streamer min-w-0 ${fit}`}>
+            <Masked text={display_name} />
+          </span>
           {has_password && status !== 'member' && (
             <span title="Password protected" className="shrink-0 text-on-surface-variant">
               <Lock size={big ? 18 : 13} />
@@ -1024,7 +1026,9 @@ export function RemoteInviteCard({
       ),
       title: (
         <>
-          <span className="streamer min-w-0 truncate">{display_name}</span>
+          <span className="streamer min-w-0 truncate">
+            <Masked text={display_name} />
+          </span>
           {has_password && (
             <span title="Password protected" className="shrink-0 text-on-surface-variant">
               <Lock size={13} />

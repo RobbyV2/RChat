@@ -68,6 +68,15 @@ import {
 } from './notify'
 import { notifications } from './platform'
 import {
+  maskOutsideCode,
+  maskProfanity,
+  parseProfanity,
+  profanityKey,
+  profanityValue,
+  setMasking,
+  showText,
+} from './profanity'
+import {
   IDLE,
   TYPING_TTL_MS,
   hideTypers,
@@ -645,6 +654,26 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const readTyping = (owner: string | null) => readScoped(typingKey(owner), parseTyping, true)
 
+  const readProfanity = (owner: string | null) =>
+    readScoped(profanityKey(owner), parseProfanity, false)
+
+  const useProfanity = (on: boolean) => {
+    const s = get()
+    if (on !== s.profanityOn || (!on && (s.profanityReady || s.profanityFailed)))
+      set({ profanityOn: on, profanityReady: false, profanityFailed: false })
+    void setMasking(on).then(ok => {
+      if (!on || !get().profanityOn) return
+      set({ profanityReady: ok, profanityFailed: !ok })
+    })
+  }
+
+  const saveProfanityOn = (on: boolean) => {
+    const owner = notifyOwner()
+    if (owner === undefined) return
+    useProfanity(on)
+    writeLocal(home.scoped(profanityKey(owner)), profanityValue(on))
+  }
+
   let outgoing: TypingOut = IDLE
   let typingTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -903,6 +932,7 @@ export const useStore = create<RChatState>()((set, get) => {
     if (want.has('emoji') && doc.emoji && me) saveEmoji(doc.emoji)
     if (want.has('calls') && doc.calls && me) saveCallRoute(doc.calls)
     if (want.has('typing') && doc.typing !== undefined) saveTypingOn(doc.typing)
+    if (want.has('profanity') && doc.profanity !== undefined) saveProfanityOn(doc.profanity)
     return failed.length ? `Couldn't apply: ${failed.join(', ')}` : null
   }
 
@@ -939,6 +969,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const loadGuestLayout = () => {
     set({ layout: readLayout(null), typingOn: readTyping(null) })
+    useProfanity(readProfanity(null))
     useNotify(readNotify(null))
     saveLayout(pruneLayout(get().layout, get().guestServers, null))
     notifySynced = true
@@ -1021,6 +1052,7 @@ export const useStore = create<RChatState>()((set, get) => {
           }),
     })
     if (!same) {
+      useProfanity(readProfanity(fresh.username))
       notifySynced = false
       armExpiry()
       armIce(fresh.username, true)
@@ -3013,7 +3045,13 @@ export const useStore = create<RChatState>()((set, get) => {
     if (typeof document === 'undefined') return
     if (document.visibilityState === 'visible' && document.hasFocus()) return
     const { title, body } = desktopText(notice, get().streamer)
-    system.show({ title, body, tag: notice.key, renotify: true, onClick: notice.go })
+    system.show({
+      title: maskProfanity(title),
+      body: maskOutsideCode(body, maskProfanity),
+      tag: notice.key,
+      renotify: true,
+      onClick: notice.go,
+    })
   }
 
   const alertUser = (alert: AlertInput) => {
@@ -3303,6 +3341,9 @@ export const useStore = create<RChatState>()((set, get) => {
     notifyPrefs: EMPTY_NOTIFY,
     typingOn: true,
     typing: {},
+    profanityOn: false,
+    profanityReady: false,
+    profanityFailed: false,
     voice: null,
     call: null,
     callRoute: DEFAULT_ROUTE,
@@ -3567,6 +3608,7 @@ export const useStore = create<RChatState>()((set, get) => {
           .catch(() => {})
       home.ws.stop()
       forgetTyping(false)
+      useProfanity(false)
       rtc.leave()
       p2p.signOut()
       writeLocal(LS.token, null)
@@ -4107,6 +4149,7 @@ export const useStore = create<RChatState>()((set, get) => {
       armExpiry()
     },
     setTypingOn: saveTypingOn,
+    setProfanityOn: saveProfanityOn,
     reloadTyping: () => {
       const owner = notifyOwner()
       if (owner === undefined) return
@@ -6080,3 +6123,8 @@ export const useStore = create<RChatState>()((set, get) => {
     setError: message => set({ error: message }),
   }
 })
+
+// What every display path masks names and text with: the personal profanity filter once it is
+// on and loaded, else the text as it is.
+export const maskOf = (s: RChatState) => (s.profanityReady ? maskProfanity : showText)
+export const useMask = () => useStore(maskOf)

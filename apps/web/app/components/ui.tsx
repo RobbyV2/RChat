@@ -2,7 +2,8 @@
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { X, type LucideIcon } from 'lucide-react'
-import { useStore } from '../lib/store'
+import { maskOutsideCode } from '../lib/profanity'
+import { useMask, useStore } from '../lib/store'
 import { ThemeToggle } from './status_clock'
 
 export const fieldCls =
@@ -246,4 +247,11 @@ export function LinkPage({
       <main className="my-auto flex w-full justify-center py-6">{children}</main>
     </div>
   )
+}
+
+// Text as the personal profanity filter shows it. `code`: plain text that may hold markdown
+// code, which stays as written.
+export function Masked({ text, code = false }: { text: string; code?: boolean }) {
+  const mask = useMask()
+  return <>{code ? maskOutsideCode(text, mask) : mask(text)}</>
 }

@@ -4,6 +4,7 @@ members = [
   "apps/server",
   "apps/desktop/src-tauri",
   "apps/desktop/plugins/share",
+  "crates/profanity",
   "crates/wasm",
 ]
 default-members = ["apps/server"]

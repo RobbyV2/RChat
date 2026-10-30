@@ -43,7 +43,7 @@ jobs:
       - run: echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: android
@@ -56,6 +56,14 @@ jobs:
           key: tauri-cli-${{ runner.os }}-2.12.2
       - if: steps.tauri-cli.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version 2.12.2 --locked
+      # The profanity filter's wasm, built by the Tauri beforeBuildCommand (`bun run build:tauri`).
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: wasm-pack
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-${{ runner.os }}-0.15.0
+      - if: steps.wasm-pack.outputs.cache-hit != 'true'
+        run: cargo install wasm-pack --version 0.15.0 --locked
       - run: bun apps/desktop/scripts/mobile.ts init android
       - name: Build debug APK
         if: ${{ !inputs.release }}
@@ -144,7 +152,7 @@ jobs:
       - if: steps.run.outputs.build == 'true'
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,wasm32-unknown-unknown
       - if: steps.run.outputs.build == 'true'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -163,6 +171,14 @@ jobs:
           key: tauri-cli-${{ runner.os }}-2.12.2
       - if: steps.run.outputs.build == 'true' && steps.tauri-cli.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version 2.12.2 --locked
+      - if: steps.run.outputs.build == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: wasm-pack
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-${{ runner.os }}-0.15.0
+      - if: steps.run.outputs.build == 'true' && steps.wasm-pack.outputs.cache-hit != 'true'
+        run: cargo install wasm-pack --version 0.15.0 --locked
       - if: steps.run.outputs.build == 'true'
         run: bun apps/desktop/scripts/mobile.ts init ios
       - name: Build unsigned IPA

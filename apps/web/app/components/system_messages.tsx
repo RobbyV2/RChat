@@ -11,7 +11,7 @@ import { longPress } from './context_menu'
 import { nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { profileTrigger } from './profile_card'
-import { FieldError, fieldCls, sectionCls, textBtn } from './ui'
+import { fieldCls, FieldError, Masked, sectionCls, textBtn } from './ui'
 
 // "alice joined the party." with a green arrow, "alice left the server." with a red one.
 export function SystemNotice({
@@ -47,7 +47,7 @@ export function SystemNotice({
             {...profileTrigger(m.author, server)}
             className={`streamer font-medium text-on-surface ${nameTriggerCls}`}
           >
-            {m.author.display_name}
+            <Masked text={m.author.display_name} />
           </span>
           {after}
           <MessageTime ts={m.created_at} className="ml-2 text-xs opacity-70" />

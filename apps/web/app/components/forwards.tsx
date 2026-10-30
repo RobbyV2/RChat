@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import { Forward, Image as ImageIcon, SendHorizontal } from 'lucide-react'
-import { useStore, type ContextMenuItem } from '../lib/store'
+import { maskOutsideCode } from '../lib/profanity'
+import { useMask, useStore, type ContextMenuItem } from '../lib/store'
 import { forwardOrigin, forwardPending } from '../lib/forward'
 import type { Message } from '../lib/types'
 import type { ToolbarAction } from './message_toolbar'
@@ -14,6 +15,7 @@ import { BlockedQuote } from './blocking'
 import { MessageTime } from './timestamp'
 import { PollCard } from './poll_card'
 import { fullTimeOf, messageTime, plainStamps } from '../lib/timestamps'
+import { Masked } from './ui'
 
 const DELETED_USER = 'Deleted user'
 
@@ -37,6 +39,7 @@ export function ForwardBar({ draftKey }: { draftKey: string }) {
   const busy = useStore(s => (clip ? forwardPending(s.outbox[draftKey], clip.id) : false))
   const sendForward = useStore(s => s.sendForward)
   const clearForward = useStore(s => s.clearForward)
+  const mask = useMask()
   if (!clip) return null
   return (
     <ComposerBar
@@ -61,7 +64,7 @@ export function ForwardBar({ draftKey }: { draftKey: string }) {
           Forward{' '}
           {clip.author ? (
             <span className="streamer font-semibold text-on-surface">
-              {clip.author.display_name}
+              {mask(clip.author.display_name)}
             </span>
           ) : (
             <span className="font-semibold text-on-surface">{DELETED_USER}</span>
@@ -69,7 +72,7 @@ export function ForwardBar({ draftKey }: { draftKey: string }) {
           &apos;s message
         </span>
         <span className="flex min-w-0 items-center gap-1 text-xs">
-          <span className="truncate">{plainStamps(clip.snippet)}</span>
+          <span className="truncate">{maskOutsideCode(plainStamps(clip.snippet), mask)}</span>
           {clip.has_media && <ImageIcon size={12} className="shrink-0" aria-label="Attachment" />}
         </span>
       </span>
@@ -134,7 +137,7 @@ export function ForwardCard({
                 {...profileTrigger(author, null)}
                 className="streamer min-w-0 cursor-pointer truncate rounded-sm text-sm font-medium outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary"
               >
-                {author.display_name}
+                <Masked text={author.display_name} />
               </span>
             </>
           ) : (
@@ -173,7 +176,7 @@ export function ForwardCard({
           {origin && (
             <>
               <span className={`truncate ${origin.isServer ? 'streamer' : ''}`}>
-                {origin.label}
+                <Masked text={origin.label} />
               </span>
               <span aria-hidden>·</span>
             </>

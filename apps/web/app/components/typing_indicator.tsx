@@ -2,6 +2,7 @@
 
 import { useStore } from '../lib/store'
 import { typerNames, typingParts } from '../lib/typing'
+import { Masked } from './ui'
 
 const DELAYS = ['0ms', '150ms', '300ms']
 
@@ -29,7 +30,7 @@ export function TypingIndicator({ scope, bg }: { scope: string | null; bg: strin
         {parts.map((p, i) =>
           p.name ? (
             <span key={i} className="streamer font-semibold text-on-surface">
-              {p.text}
+              <Masked text={p.text} />
             </span>
           ) : (
             <span key={i}>{p.text}</span>

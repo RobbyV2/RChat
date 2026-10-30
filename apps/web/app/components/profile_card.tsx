@@ -35,9 +35,10 @@ import {
   myPerms,
   myRolePerms,
   noteTimeout,
-  revokeAdminFor,
-  useStore,
   type ProfileTarget,
+  revokeAdminFor,
+  useMask,
+  useStore,
 } from '../lib/store'
 import {
   SHEET_QUERY,
@@ -62,7 +63,7 @@ import { MESSAGE_MAX, memberPerms, rolePerms } from '../lib/rules'
 import { sendKey } from '../lib/keys'
 import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
-import { useCopied } from './ui'
+import { Masked, useCopied } from './ui'
 import { ProfileFriendButton } from './friends'
 import { COARSE_QUERY, useMedia } from './context_menu'
 import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
@@ -329,12 +330,13 @@ function Card({ target }: { target: ProfileTarget }) {
   const user: UserRef = self && me ? me : (live ?? target.user)
   const banner = bannerColor(user, self ? me?.banner_color : profile?.banner_color)
   const bio = self ? (me?.bio ?? null) : (profile?.bio ?? null)
+  const mask = useMask()
   const fetched = profile?.member ?? null
   const known = server === null || live !== undefined || profile !== null || missing
   const member = server === null ? null : live !== undefined ? live : fetched
   const join = serverJoinLine(
     server,
-    serverName,
+    serverName === null ? null : mask(serverName),
     joinedServer(member !== null, profile, missing || failed),
     fetched?.joined_at
   )
@@ -472,7 +474,7 @@ function Card({ target }: { target: ProfileTarget }) {
             id={titleId}
             className="streamer line-clamp-2 text-xl leading-7 font-semibold break-words text-on-surface"
           >
-            {user.display_name}
+            <Masked text={user.display_name} />
           </p>
           <p className="streamer truncate text-sm text-on-surface-variant">
             @{remote ? formatQualified(user.username, remote) : user.username}
@@ -480,7 +482,7 @@ function Card({ target }: { target: ProfileTarget }) {
           {remote && <InstanceChip host={remote} className="mt-1" />}
           {bio && !missing && (
             <p className="streamer mt-2 text-sm break-words whitespace-pre-wrap text-on-surface">
-              {bio}
+              <Masked text={bio} />
             </p>
           )}
           {self && me && !guest && (
@@ -549,7 +551,7 @@ function Card({ target }: { target: ProfileTarget }) {
                       <span
                         className={`truncate ${editRoles && roleEditable(input, r, true) ? '' : 'pr-1'}`}
                       >
-                        {r.name}
+                        <Masked text={r.name} />
                       </span>
                       {editRoles && roleEditable(input, r, true) && (
                         <button
@@ -588,7 +590,9 @@ function Card({ target }: { target: ProfileTarget }) {
                           style={{ background: r.color }}
                           className="h-2.5 w-2.5 shrink-0 rounded-full"
                         />
-                        <span className="truncate">{r.name}</span>
+                        <span className="truncate">
+                          <Masked text={r.name} />
+                        </span>
                       </button>
                     ))}
                   </div>

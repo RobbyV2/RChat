@@ -51,6 +51,7 @@ beforeEach(() => {
     typing: {},
     typingOn: true,
     toast: null,
+    confirm: null,
   })
 })
 

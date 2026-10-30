@@ -62,6 +62,12 @@ export const profanityTargetOn = (settings: ProfanitySettings, key: ProfanityTar
 export const profanityTargetLocked = (settings: ProfanitySettings, key: ProfanityTarget) =>
   !settings.profanity_filter || (key === 'links' && !profanityTargetOn(settings, 'messages'))
 
+// The site filter blocks server content before it is posted; it never applies to P2P content.
+export const siteFilterOn = (settings: ProfanitySettings) =>
+  PROFANITY_TARGETS.some(
+    t => profanityTargetOn(settings, t.key) && !profanityTargetLocked(settings, t.key)
+  )
+
 export const NAME_MAX = 100
 export const MESSAGE_MAX = 4000
 export const SLOWMODE_MAX = 21600

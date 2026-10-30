@@ -88,7 +88,7 @@ import {
   useFocusMessage,
   useScrollAnchor,
 } from './viewport_height'
-import { useEscape } from './ui'
+import { Masked, useEscape } from './ui'
 import { PingBadge, pingLabel } from './ping_badge'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { QuickReactions, ReactionBar, rowAt } from './reactions'
@@ -142,7 +142,9 @@ function CallLogRow({ message }: { message: Message }) {
   const caller = userRefFor(useStore.getState(), call.from)
   const other = dms.find(d => d.id === message.dm_id)?.other
   const name = (u: UserRef | undefined) => (
-    <span className="streamer font-medium text-on-surface">{u?.display_name ?? 'Someone'}</span>
+    <span className="streamer font-medium text-on-surface">
+      {u ? <Masked text={u.display_name} /> : 'Someone'}
+    </span>
   )
   const Icon = callIcon(tone, info.video, incoming)
   const live = tone === 'ringing' || tone === 'active'
@@ -265,7 +267,7 @@ export function AuthorRow({
             style={{ color }}
             className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
           >
-            {author.display_name}
+            <Masked text={author.display_name} />
           </span>
           {meta}
         </div>
@@ -894,7 +896,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
               ) : (
                 <Hash size={18} className="shrink-0 text-on-surface-variant" />
               )}
-              <span className="truncate">{channelName}</span>
+              <span className="truncate">{channelName && <Masked text={channelName} />}</span>
               {channel?.restrict_view && (
                 <span
                   title="Private channel"
@@ -935,7 +937,9 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                 avatarColor={dm.other.avatar_color}
                 size={24}
               />
-              <span className="streamer truncate">{dm.other.display_name}</span>
+              <span className="streamer truncate">
+                <Masked text={dm.other.display_name} />
+              </span>
             </span>
             {dm.is_self && (
               <span className="shrink-0 rounded-full bg-secondary-container px-2 py-0.5 text-xs text-on-secondary-container">

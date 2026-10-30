@@ -1071,7 +1071,10 @@ async fn insert_message(
         (None, Some(p2p)) => Some(p2p_media(&mut tx, p2p, user, spoiler).await?),
         (None, None) => None,
     };
-    if let (Some(_), Some(media)) = (channel_id, &media) {
+    // P2P files are never checked by the instance filter, even when offered in a channel.
+    if let (Some(_), Some(media)) = (channel_id, &media)
+        && media.kind == MediaKind::Server
+    {
         settings.check_profanity(ProfanityTarget::FileNames, &media.filename)?;
     }
     if content.trim().is_empty() && media.is_none() {
@@ -1290,7 +1293,7 @@ async fn insert_forward(
     if channel_id.is_some() {
         let settings = Settings::cached(db).await;
         settings.check_profanity(ProfanityTarget::Messages, &content)?;
-        if let Some(media) = &media {
+        if let Some(media) = media.as_ref().filter(|m| m.kind == MediaKind::Server) {
             settings.check_profanity(ProfanityTarget::FileNames, &media.filename)?;
         }
         if let Some(data) = &snapshot {
@@ -1678,7 +1681,7 @@ pub(crate) async fn channel_messages(
 /// channel. With `mention_reply` (default), its author gets one `reply` ping instead. With
 /// `forward_of`, the message is a copy of a message you can read (see `SendReq`). Forwards never
 /// ping. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or attachment file name), voice channel, text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), voice channel, text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_channel_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1738,7 +1741,7 @@ pub(crate) async fn thread_messages(
 /// of the thread. With `mention_reply` (default), its author gets a `reply` ping instead of a
 /// mention ping. With `forward_of`, the reply is a copy of a message you can read (see `SendReq`)
 /// and pings nobody. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or attachment file name), text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_thread_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -3161,6 +3164,40 @@ mod tests {
 
     fn refused(res: Result<Message, ApiError>, text: &str) -> bool {
         matches!(res, Err(ApiError(StatusCode::FORBIDDEN, ref m)) if m == text)
+    }
+
+    // P2P files are never checked by the instance filter; uploads to the instance are.
+    #[tokio::test]
+    async fn p2p_file_names_skip_the_site_filter() {
+        let (state, path) = temp_state("p2p_file_names").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, now()).await;
+        set_switch(db, "profanity_filter", true).await;
+        for switch in crate::api::ProfanitySwitch::ALL {
+            set_switch(db, switch.key(), true).await;
+        }
+        let mut req = p2p_req(&"d4".repeat(16), 10, None);
+        if let Some(p2p) = req.p2p.as_mut() {
+            p2p.filename = "fuck.txt".to_string();
+        }
+        let sent = send_req(&state, cid, req).await.expect("P2P file posts");
+        assert_eq!(sent.media.expect("media").filename, "fuck.txt");
+        add_media(db, "m1", Some("alice")).await;
+        sqlx::query("UPDATE media SET filename = 'fuck.txt' WHERE id = 'm1'")
+            .execute(db)
+            .await
+            .expect("rename");
+        let upload = SendReq {
+            media_id: Some("m1".to_string()),
+            p2p: None,
+            ..p2p_req(&"e5".repeat(16), 10, None)
+        };
+        assert!(matches!(
+            send_req(&state, cid, upload).await,
+            Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == "Content blocked by profanity filter"
+        ));
+        done(state, path).await;
     }
 
     #[tokio::test]

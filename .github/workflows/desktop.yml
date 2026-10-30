@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          targets: ${{ matrix.os == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.os == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin,wasm32-unknown-unknown' || 'wasm32-unknown-unknown' }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: desktop-${{ matrix.os }}
@@ -73,6 +73,14 @@ jobs:
           key: tauri-cli-${{ runner.os }}-2.12.2
       - if: steps.tauri-cli.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version 2.12.2 --locked
+      # The profanity filter's wasm, built by the Tauri beforeBuildCommand (`bun run build:tauri`).
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: wasm-pack
+        with:
+          path: ~/.cargo/bin/wasm-pack${{ runner.os == 'Windows' && '.exe' || '' }}
+          key: wasm-pack-${{ runner.os }}-0.15.0
+      - if: steps.wasm-pack.outputs.cache-hit != 'true'
+        run: cargo install wasm-pack --version 0.15.0 --locked
 
       # Signing runs after every third-party setup action. Their post steps (cache saves) still
       # run after the build, so the steps after Collect remove the certificate and key files

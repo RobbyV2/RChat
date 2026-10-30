@@ -228,6 +228,10 @@ export interface RChatState {
   notifyPrefs: NotifyPrefs
   typingOn: boolean
   typing: TypingMap
+  // The personal profanity filter: on, loaded and masking, or failed to load.
+  profanityOn: boolean
+  profanityReady: boolean
+  profanityFailed: boolean
   voice: VoiceSession | null
   call: CallSession | null
   callRoute: CallRoute
@@ -401,6 +405,7 @@ export interface RChatState {
   reloadNotify: () => void
   pruneNotify: () => void
   setTypingOn: (on: boolean) => void
+  setProfanityOn: (on: boolean) => void
   reloadTyping: () => void
   noteTyping: (scope: string, active: boolean) => void
   sendForward: (key: string) => void

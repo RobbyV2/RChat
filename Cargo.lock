@@ -4474,6 +4474,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rchat-profanity"
+version = "0.2.2"
+dependencies = [
+ "percent-encoding",
+ "rustrict",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "redis"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4735,11 +4744,12 @@ dependencies = [
  "percent-encoding",
  "rand 0.10.3",
  "rand_chacha 0.10.0",
+ "rchat-profanity",
  "redis",
  "regex",
  "reqwest 0.13.5",
+ "rust-next-wasm",
  "rust-s3",
- "rustrict",
  "serde",
  "serde_json",
  "sha1 0.11.0",
@@ -4767,6 +4777,8 @@ dependencies = [
  "console_log",
  "js-sys",
  "log",
+ "rchat-profanity",
+ "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

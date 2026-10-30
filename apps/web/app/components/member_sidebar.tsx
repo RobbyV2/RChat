@@ -31,7 +31,7 @@ import { longPress } from './context_menu'
 import { blockMenuItem } from './blocking'
 import { friendMenuItem } from './friends'
 import { Badge, profileTrigger } from './profile_card'
-import { Sentinel } from './ui'
+import { Masked, Sentinel } from './ui'
 import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
 
 const byName = (a: Member, b: Member) => a.display_name.localeCompare(b.display_name)
@@ -253,7 +253,7 @@ export default function MemberSidebar() {
           style={{ color: roleColor(detail.roles, m.role_ids) }}
           className="streamer min-w-0 flex-1 truncate text-sm"
         >
-          {m.display_name}
+          <Masked text={m.display_name} />
         </span>
         <MemberTimeout server={detail.name} username={m.username} />
         {m.is_creator && <Badge tone="tertiary">Creator</Badge>}
@@ -289,7 +289,9 @@ export default function MemberSidebar() {
         avatarColor={u.avatar_color}
         size={28}
       />
-      <span className="streamer min-w-0 flex-1 truncate text-sm">{u.display_name}</span>
+      <span className="streamer min-w-0 flex-1 truncate text-sm">
+        <Masked text={u.display_name} />
+      </span>
     </div>
   )
 

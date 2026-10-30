@@ -1,0 +1,232 @@
+[
+  {
+    "masked": "hello",
+    "profane": false,
+    "text": "hello"
+  },
+  {
+    "masked": "I love cats",
+    "profane": false,
+    "text": "I love cats"
+  },
+  {
+    "masked": "push it",
+    "profane": false,
+    "text": "push it"
+  },
+  {
+    "masked": "assassin",
+    "profane": false,
+    "text": "assassin"
+  },
+  {
+    "masked": "Scunthorpe",
+    "profane": false,
+    "text": "Scunthorpe"
+  },
+  {
+    "masked": "Club Night 1802167024629",
+    "profane": false,
+    "text": "Club Night 1802167024629"
+  },
+  {
+    "masked": "order 40056 shipped",
+    "profane": false,
+    "text": "order 40056 shipped"
+  },
+  {
+    "masked": "club1793",
+    "profane": false,
+    "text": "club1793"
+  },
+  {
+    "masked": "room42",
+    "profane": false,
+    "text": "room42"
+  },
+  {
+    "masked": "see #55 and #12",
+    "profane": false,
+    "text": "see #55 and #12"
+  },
+  {
+    "masked": "****",
+    "profane": true,
+    "text": "fuck"
+  },
+  {
+    "masked": "**** you",
+    "profane": true,
+    "text": "Fuck you"
+  },
+  {
+    "masked": "****",
+    "profane": true,
+    "text": "FUCK"
+  },
+  {
+    "masked": "********",
+    "profane": true,
+    "text": "fuuuuuck"
+  },
+  {
+    "masked": "* * * *",
+    "profane": true,
+    "text": "f u c k"
+  },
+  {
+    "masked": "*.*.*.* off",
+    "profane": true,
+    "text": "f.u.c.k off"
+  },
+  {
+    "masked": "****",
+    "profane": true,
+    "text": "fučk"
+  },
+  {
+    "masked": "****",
+    "profane": true,
+    "text": "ｆｕｃｋ"
+  },
+  {
+    "masked": "what the ****.",
+    "profane": true,
+    "text": "what the shit."
+  },
+  {
+    "masked": "****",
+    "profane": true,
+    "text": "sh1t"
+  },
+  {
+    "masked": "****",
+    "profane": true,
+    "text": "5h1t"
+  },
+  {
+    "masked": "****",
+    "profane": true,
+    "text": "f4ck"
+  },
+  {
+    "masked": "you are an *******!!",
+    "profane": true,
+    "text": "you are an asshole!!"
+  },
+  {
+    "masked": "*****",
+    "profane": true,
+    "text": "bitch"
+  },
+  {
+    "masked": "***",
+    "profane": true,
+    "text": "a55"
+  },
+  {
+    "masked": "#******",
+    "profane": true,
+    "text": "#55hole"
+  },
+  {
+    "masked": "****",
+    "profane": true,
+    "text": "8008"
+  },
+  {
+    "masked": "****",
+    "profane": true,
+    "text": "1488"
+  },
+  {
+    "masked": "****5",
+    "profane": true,
+    "text": "80085"
+  },
+  {
+    "masked": "*****",
+    "profane": true,
+    "text": "pu55y"
+  },
+  {
+    "masked": "**** 1793012345678",
+    "profane": true,
+    "text": "fuck 1793012345678"
+  },
+  {
+    "masked": "https://****.co/x",
+    "profane": true,
+    "text": "https://fuck.co/x"
+  },
+  {
+    "masked": "see https://example.com/****",
+    "profane": true,
+    "text": "see https://example.com/fuck"
+  },
+  {
+    "masked": "`****` in code",
+    "profane": true,
+    "text": "`fuck` in code"
+  },
+  {
+    "masked": "**bold ****** text",
+    "profane": true,
+    "text": "**bold shit** text"
+  },
+  {
+    "masked": "@someone **** off",
+    "profane": true,
+    "text": "@someone fuck off"
+  },
+  {
+    "masked": "Is this **** good",
+    "profane": true,
+    "text": "Is this shit good"
+  },
+  {
+    "masked": "**** club",
+    "profane": true,
+    "text": "fuck club"
+  },
+  {
+    "masked": "go **** yourself",
+    "profane": true,
+    "text": "go fuck yourself"
+  },
+  {
+    "masked": "bad *** *****",
+    "profane": true,
+    "text": "bad ass bitch"
+  },
+  {
+    "masked": "****club",
+    "profane": true,
+    "text": "fuckclub"
+  },
+  {
+    "masked": "it's ****",
+    "profane": true,
+    "text": "it's shit"
+  },
+  {
+    "masked": "⁦****⁩",
+    "profane": true,
+    "text": "⁦fuck⁩"
+  },
+  {
+    "masked": "**‮**",
+    "profane": true,
+    "text": "fu‮ck"
+  },
+  {
+    "masked": "‮‮‮‮****",
+    "profane": true,
+    "text": "‮‮‮‮fuck"
+  },
+  {
+    "masked": "**** you",
+    "profane": true,
+    "text": "shit you"
+  }
+]

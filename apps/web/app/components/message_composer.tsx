@@ -17,7 +17,7 @@ import {
   Timer,
   X,
 } from 'lucide-react'
-import { errorText, MAX_UPLOAD, useStore, viewKey, type UploadMode } from '../lib/store'
+import { errorText, MAX_UPLOAD, type UploadMode, useMask, useStore, viewKey } from '../lib/store'
 import { MESSAGE_MAX, charCount } from '../lib/rules'
 import { composing, sendKey } from '../lib/keys'
 import { runJoinStep, type JoinStep } from '../lib/join_flow'
@@ -221,6 +221,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
   const streamer = useStore(s => s.streamer)
+  const mask = useMask()
   const rootId = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.id : null))
   const member = useStore(s => {
     const v = s.view
@@ -354,10 +355,10 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const placeholder = thread
     ? 'Message thread'
     : view?.kind === 'channel'
-      ? `Message #${servers[view.server]?.channels.find(c => c.id === view.channelId)?.name ?? ''}`
+      ? `Message #${mask(servers[view.server]?.channels.find(c => c.id === view.channelId)?.name ?? '')}`
       : streamer
         ? 'Send a direct message'
-        : `Message ${dms.find(d => d.id === view?.dmId)?.other.display_name ?? ''}`
+        : `Message ${mask(dms.find(d => d.id === view?.dmId)?.other.display_name ?? '')}`
 
   const setText = (value: string) => {
     if (draftKey) setDraft(draftKey, value)

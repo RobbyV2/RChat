@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, type FocusEvent } from 'react'
 import { User, X } from 'lucide-react'
-import { useStore } from '../lib/store'
+import { maskOutsideCode } from '../lib/profanity'
+import { useMask, useStore } from '../lib/store'
 import {
   alertBody,
   context,
@@ -15,13 +16,14 @@ import {
 import { UserAvatar } from './user_avatar'
 
 function Pieces({ pieces }: { pieces: Piece[] }) {
+  const mask = useMask()
   return pieces.map((p, i) =>
     p.blur ? (
       <span key={i} className="streamer">
-        {p.text}
+        {mask(p.text)}
       </span>
     ) : (
-      <span key={i}>{p.text}</span>
+      <span key={i}>{mask(p.text)}</span>
     )
   )
 }
@@ -47,7 +49,8 @@ function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
   const streamer = useStore(s => s.streamer)
   const dismiss = useStore(s => s.dismissNotice)
   const where = context(notice)
-  const body = alertBody(notice.body, streamer)
+  const mask = useMask()
+  const body = maskOutsideCode(alertBody(notice.body, streamer), mask)
   const { actor } = notice
   const card = useRef<HTMLDivElement>(null)
   // A removed element takes its focus with it, so focus moves to a neighbouring toast first.

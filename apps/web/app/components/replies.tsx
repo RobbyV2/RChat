@@ -2,11 +2,13 @@
 
 import type { ReactNode } from 'react'
 import { Forward, Image as ImageIcon, X } from 'lucide-react'
-import { useStore } from '../lib/store'
+import { maskOutsideCode } from '../lib/profanity'
+import { useMask, useStore } from '../lib/store'
 import { snippetParts } from '../lib/replies'
 import { plainStamps } from '../lib/timestamps'
 import type { ReplyRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
+import { Masked } from './ui'
 
 // A small marker for forwarded messages where only a line of them is shown (search, quotes).
 export function ForwardedTag() {
@@ -22,6 +24,7 @@ export function ForwardedTag() {
 }
 
 export function Snippet({ quote }: { quote: Pick<ReplyRef, 'content' | 'has_media'> }) {
+  const mask = useMask()
   if (!quote.content)
     return (
       <span className="flex min-w-0 items-center gap-1 italic">
@@ -41,10 +44,10 @@ export function Snippet({ quote }: { quote: Pick<ReplyRef, 'content' | 'has_medi
               data-reply-spoiler
               className="rounded-sm bg-on-surface-variant/70 text-transparent select-none"
             >
-              {p.text}
+              {maskOutsideCode(p.text, mask)}
             </span>
           ) : (
-            <span key={i}>{p.text}</span>
+            <span key={i}>{maskOutsideCode(p.text, mask)}</span>
           )
         )}
       </span>
@@ -133,7 +136,7 @@ export function ReplyPreview({
         />
         <span style={{ color }} className="streamer shrink-0 font-medium text-on-surface">
           {quote.mention ? '@' : ''}
-          {author.display_name}
+          <Masked text={author.display_name} />
         </span>
         {quote.forwarded && <ForwardedTag />}
         <Snippet quote={quote} />
@@ -207,7 +210,9 @@ export function ReplyBar({ draftKey, onClose }: { draftKey: string; onClose: () 
       }
     >
       Replying to{' '}
-      <span className="streamer font-semibold text-on-surface">{author.display_name}</span>
+      <span className="streamer font-semibold text-on-surface">
+        <Masked text={author.display_name} />
+      </span>
     </ComposerBar>
   )
 }

@@ -7,7 +7,7 @@ import { errorText, useStore } from '../lib/store'
 import { iceOffer } from '../lib/ice'
 import { defaultBanner } from '../lib/profile'
 import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
-import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio } from '../lib/rules'
+import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio, siteFilterOn } from '../lib/rules'
 import type { AvatarKind } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
 import { ColorField } from './color_field'
@@ -469,7 +469,34 @@ function ChatSection() {
       <p className="mt-2 px-2 text-xs text-on-surface-variant">
         Show when others are typing and let them see when you type. Off hides both.
       </p>
+      <ProfanitySwitch />
     </section>
+  )
+}
+
+function ProfanitySwitch() {
+  const on = useStore(s => s.profanityOn)
+  const setOn = useStore(s => s.setProfanityOn)
+  const failed = useStore(s => s.profanityFailed)
+  const site = useStore(s => siteFilterOn(s.settings))
+  return (
+    <div className="mt-4">
+      <SettingSwitch label="Filter profanity" value={on} onChange={setOn} />
+      <p className="mt-2 px-2 text-xs text-on-surface-variant">
+        Masks profanity in messages and names you see, including P2P chats. P2P content is never
+        filtered by the instance.
+      </p>
+      {site && (
+        <p className="mt-1 px-2 text-xs text-on-surface-variant">
+          This instance also blocks profanity in server content before it is posted.
+        </p>
+      )}
+      {on && failed && (
+        <p role="alert" className="mt-1 px-2 text-xs text-error">
+          Couldn&apos;t load the filter. Turn it off and on to try again.
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -567,6 +594,25 @@ function Info({ title, children }: { title: string; children: React.ReactNode })
   )
 }
 
+function ModerationText() {
+  const site = useStore(s => siteFilterOn(s.settings))
+  return (
+    <>
+      <p>
+        {site
+          ? 'This instance blocks profanity in server content before it is posted: names, channel topics, profile descriptions, file names and channel messages, as the admin set it up.'
+          : 'This instance does not filter profanity in server content.'}{' '}
+        DMs, passwords and P2P content are never filtered by the instance.
+      </p>
+      <p>
+        Filter profanity in the Chat settings masks profanity in messages and names you see,
+        including P2P chats. It only changes what you see, never what is stored or sent.
+      </p>
+      <p>Rate limits apply per IP across the API.</p>
+    </>
+  )
+}
+
 function InformationSection() {
   return (
     <div className="flex flex-col gap-8">
@@ -633,11 +679,7 @@ function InformationSection() {
         </p>
       </Info>
       <Info title="Moderation">
-        <p>
-          Profanity filtering runs server-side on usernames, server names, channel names, profile
-          descriptions and channel messages; DMs and passwords are exempt. Rate limits apply per IP
-          across the API.
-        </p>
+        <ModerationText />
       </Info>
     </div>
   )

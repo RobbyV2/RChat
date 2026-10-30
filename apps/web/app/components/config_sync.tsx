@@ -93,6 +93,7 @@ const useConfigSource = (): ConfigSource =>
       emoji: s.me ? s.emoji : null,
       calls: s.me ? s.callRoute : null,
       typing: s.me || s.guest ? s.typingOn : null,
+      profanity: s.me || s.guest ? s.profanityOn : null,
     }))
   )
 

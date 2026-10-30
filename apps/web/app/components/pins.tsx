@@ -12,7 +12,7 @@ import { SHEET_QUERY } from './emoji_picker'
 import { IMAGE_EXT, MarkdownMessage } from './markdown_message'
 import { profileTrigger } from './profile_card'
 import { UserAvatar } from './user_avatar'
-import { CloseButton, SheetGrip } from './ui'
+import { CloseButton, Masked, SheetGrip } from './ui'
 import { nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { useMyTimeoutEnds } from './timeout_dialog'
@@ -108,7 +108,7 @@ export function PinNotice({
             {...profileTrigger(m.author, server)}
             className={`streamer font-medium text-on-surface ${nameTriggerCls}`}
           >
-            {m.author.display_name}
+            <Masked text={m.author.display_name} />
           </span>{' '}
           pinned{' '}
           {target !== null ? (
@@ -198,7 +198,7 @@ function PinEntry({
           {...profileTrigger(m.author, server)}
           className={`streamer min-w-0 truncate text-sm font-medium text-on-surface ${nameTriggerCls}`}
         >
-          {m.author.display_name}
+          <Masked text={m.author.display_name} />
         </span>
         <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
       </div>

@@ -42,7 +42,7 @@ import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
 import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, useMedia } from './context_menu'
-import { useEscape } from './ui'
+import { Masked, useEscape } from './ui'
 import { ChannelTopic } from './channel_topic'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { shownMedia, TIMED_OUT_CAMERA, TIMED_OUT_MIC, TIMED_OUT_SHARE } from '../lib/timeouts'
@@ -376,7 +376,9 @@ function Tile({
         ) : (
           <StateIcons muted={muted} deafened={deafened} size={compact ? 10 : 12} />
         )}
-        <span className="streamer truncate">{user.display_name}</span>
+        <span className="streamer truncate">
+          <Masked text={user.display_name} />
+        </span>
         {pending && <span className="shrink-0 opacity-75">Ringing…</span>}
       </span>
     </div>
@@ -518,11 +520,15 @@ export function VoiceDock() {
             }}
             className="flex max-w-full min-w-0 items-center gap-1 rounded-sm text-left text-xs leading-tight text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
           >
-            <span className="streamer truncate">{place}</span>
+            <span className="streamer truncate">
+              <Masked text={place} />
+            </span>
             {voice && detail && (
               <>
                 <span className="shrink-0">/</span>
-                <span className="streamer truncate">{detail.display_name}</span>
+                <span className="streamer truncate">
+                  <Masked text={detail.display_name} />
+                </span>
               </>
             )}
           </button>
@@ -851,7 +857,7 @@ export function VoiceGrid({ channelId, dmId }: { channelId?: number; dmId?: numb
           <span className="flex min-w-0 items-center gap-1">
             {forDm.state === 'active' ? 'In call with' : 'Calling'}
             <span className="streamer truncate font-medium text-on-surface">
-              {dm?.other.display_name ?? pendingOther ?? ''}
+              <Masked text={dm?.other.display_name ?? pendingOther ?? ''} />
               {forDm.state === 'ringing' && '…'}
             </span>
           </span>
@@ -991,7 +997,10 @@ export function CallBanner() {
             <span className="flex min-w-0 flex-col text-left">
               <span className="flex min-w-0 items-center gap-1 text-sm">
                 Calling
-                <span className="streamer truncate font-medium">{other.display_name}</span>…
+                <span className="streamer truncate font-medium">
+                  <Masked text={other.display_name} />
+                </span>
+                …
               </span>
               <CallType video={call.video} p2p={p2pCall} />
             </span>
@@ -1016,7 +1025,7 @@ export function CallBanner() {
         <span className="sm:hidden">{avatar(40)}</span>
         <div className="flex min-w-0 flex-col items-center gap-0.5 max-sm:flex-1 max-sm:items-start">
           <span className="streamer w-full truncate text-base font-semibold">
-            {other.display_name}
+            <Masked text={other.display_name} />
           </span>
           <CallType video={call.video} p2p={p2pCall} incoming />
           <button
@@ -1027,7 +1036,7 @@ export function CallBanner() {
             <MessageCircle size={12} aria-hidden className="shrink-0" />
             <span className="shrink-0">DM with</span>
             <span className="streamer truncate">
-              {dm?.other.display_name ?? other.display_name}
+              <Masked text={dm?.other.display_name ?? other.display_name} />
             </span>
           </button>
         </div>

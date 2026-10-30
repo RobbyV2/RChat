@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FileText, Hash, Search } from 'lucide-react'
-import { useStore } from '../lib/store'
+import { useMask, useStore } from '../lib/store'
 import { dayEndTs, dayStartTs, type SearchArgs } from '../lib/search'
 import { UserAvatar } from './user_avatar'
-import { PanelHeader, Sentinel, fieldCls, useEscape } from './ui'
+import { fieldCls, Masked, PanelHeader, Sentinel, useEscape } from './ui'
 import { avatarTriggerCls, nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { plainStamps } from '../lib/timestamps'
@@ -24,6 +24,7 @@ export default function SearchPanel() {
     s.view?.kind === 'channel' ? s.servers[s.view.server]?.channels : undefined
   )
   const search = useStore(s => s.search)
+  const mask = useMask()
   const searchRun = useStore(s => s.searchRun)
   const closePanel = useStore(s => s.closePanel)
   const openResult = useStore(s => s.openResult)
@@ -106,7 +107,7 @@ export default function SearchPanel() {
               <option value="">in: any channel</option>
               {channels.map(c => (
                 <option key={c.id} value={c.id}>
-                  in: #{c.name}
+                  in: #{mask(c.name)}
                 </option>
               ))}
             </select>
@@ -160,7 +161,7 @@ export default function SearchPanel() {
                 {...profileTrigger(r.message.author, r.server)}
                 className={`streamer truncate text-sm font-medium ${nameTriggerCls}`}
               >
-                {r.message.author.display_name}
+                <Masked text={r.message.author.display_name} />
               </span>
               <MessageTime
                 ts={r.message.created_at}
@@ -173,7 +174,11 @@ export default function SearchPanel() {
               )}
             </div>
             <p className="mt-0.5 line-clamp-2 text-sm break-words text-on-surface">
-              {plainStamps(r.message.content) || r.message.media?.filename}
+              {r.message.content ? (
+                <Masked text={plainStamps(r.message.content)} code />
+              ) : (
+                r.message.media?.filename
+              )}
             </p>
             {r.message.media && (
               <p className="mt-0.5 flex items-center gap-1 text-xs text-on-surface-variant">

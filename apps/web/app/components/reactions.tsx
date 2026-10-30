@@ -18,7 +18,7 @@ import {
 import { EmojiPicker, useEmojiData, useTopEmojis } from './emoji_picker'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { UserAvatar } from './user_avatar'
-import { CloseButton, SheetGrip } from './ui'
+import { CloseButton, Masked, SheetGrip } from './ui'
 
 const EMPTY: Reaction[] = []
 
@@ -116,7 +116,9 @@ function ReactionTooltip({
         {streamer || names === null ? (
           peopleText(r.count)
         ) : (
-          <span className="streamer">{reactorsText(names, r.count)}</span>
+          <span className="streamer">
+            <Masked text={reactorsText(names, r.count)} />
+          </span>
         )}
       </span>
     </div>,
@@ -357,7 +359,7 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
               />
               <span className="min-w-0 flex-1">
                 <span className="streamer block truncate text-sm font-medium text-on-surface">
-                  {u.display_name}
+                  <Masked text={u.display_name} />
                 </span>
                 <span className="streamer block truncate text-xs text-on-surface-variant">
                   {u.username}

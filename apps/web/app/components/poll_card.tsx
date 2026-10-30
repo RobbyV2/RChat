@@ -39,7 +39,7 @@ import {
 import { messageServer, myPerms, myTimeoutEnds, useStore, type ContextMenuItem } from '../lib/store'
 import { Perm, hasPerm, type Message, type Poll, type PollVoter } from '../lib/types'
 import { EmojiPicker } from './emoji_picker'
-import { Dialog, FieldError, Sentinel, fieldCls, filledBtn, textBtn } from './ui'
+import { Dialog, fieldCls, FieldError, filledBtn, Masked, Sentinel, textBtn } from './ui'
 import { UserAvatar } from './user_avatar'
 import { MessageTime } from './timestamp'
 
@@ -157,7 +157,9 @@ function ChoiceList({
                 ) : (
                   <Mark on={sel} square={poll.kind === 'multiple'} />
                 ))}
-              <span className="min-w-0 flex-1 break-words">{optionLabel(o)}</span>
+              <span className="min-w-0 flex-1 break-words">
+                <Masked text={optionLabel(o)} />
+              </span>
               {winner === o.id && (
                 <Trophy size={14} className="shrink-0 text-primary" aria-label="Winner" />
               )}
@@ -228,7 +230,9 @@ function RankOrder({
             <span className="w-5 shrink-0 text-center text-xs font-medium text-primary tabular-nums">
               {i + 1}
             </span>
-            <span className="min-w-0 flex-1 truncate">{optionLabel(o)}</span>
+            <span className="min-w-0 flex-1 truncate">
+              <Masked text={optionLabel(o)} />
+            </span>
             <button
               type="button"
               title="Move up"
@@ -281,7 +285,7 @@ function Rounds({ poll }: { poll: Poll }) {
                     lead={round.eliminated === null && poll.results?.winner === row.option.id}
                   />
                   <span className="relative min-w-0 flex-1 truncate">
-                    {optionLabel(row.option)}
+                    <Masked text={optionLabel(row.option)} />
                   </span>
                   <span className="relative shrink-0 tabular-nums">
                     {row.count} · {row.share}%
@@ -305,8 +309,10 @@ function RunoffSummary({ poll, closed }: { poll: Poll; closed: boolean }) {
     <p className="mt-2 flex items-center gap-1.5 text-xs text-on-surface">
       <Trophy size={12} className="shrink-0 text-primary" />
       <span className="min-w-0 break-words">
-        <span className="font-medium">{optionLabel(winner)}</span> {closed ? 'won' : 'leads'} after{' '}
-        {n} {n === 1 ? 'round' : 'rounds'}
+        <span className="font-medium">
+          <Masked text={optionLabel(winner)} />
+        </span>{' '}
+        {closed ? 'won' : 'leads'} after {n} {n === 1 ? 'round' : 'rounds'}
       </span>
     </p>
   )
@@ -499,7 +505,9 @@ function VoterList({ id, option }: { id: number; option: number | null }) {
               avatarColor={v.user.avatar_color}
               size={28}
             />
-            <span className="streamer min-w-0 flex-1 truncate text-sm">{v.user.display_name}</span>
+            <span className="streamer min-w-0 flex-1 truncate text-sm">
+              <Masked text={v.user.display_name} />
+            </span>
             <MessageTime ts={v.voted_at} className="shrink-0 text-xs text-on-surface-variant" />
           </li>
         ))}
@@ -526,7 +534,9 @@ function PollVoters({ m, onClose }: { m: Message; onClose: () => void }) {
   ]
   return (
     <Dialog title="Votes" onClose={onClose} full>
-      <p className="text-sm break-words text-on-surface-variant">{poll.question}</p>
+      <p className="text-sm break-words text-on-surface-variant">
+        <Masked text={poll.question} />
+      </p>
       <div className="mt-3 flex flex-wrap gap-1.5" role="tablist" aria-label="Filter by option">
         {chips.map(c => (
           <button
@@ -540,7 +550,7 @@ function PollVoters({ m, onClose }: { m: Message; onClose: () => void }) {
                 : 'border-outline-variant text-on-surface-variant hover:bg-surface-container-highest'
             }`}
           >
-            {c.label}
+            <Masked text={c.label} />
           </button>
         ))}
       </div>
@@ -630,7 +640,9 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
           {closed ? 'Closed' : static_ ? null : (left ?? 'Open')}
         </span>
       </div>
-      <p className="mt-1.5 text-base font-medium break-words text-on-surface">{poll.question}</p>
+      <p className="mt-1.5 text-base font-medium break-words text-on-surface">
+        <Masked text={poll.question} />
+      </p>
       {live && <p className="text-xs text-on-surface-variant">{hint}</p>}
       {poll.kind === 'rating' ? (
         <Rating

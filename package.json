@@ -13,6 +13,8 @@
     "dev:desktop": "bun run --cwd apps/web dev:desktop",
     "build": "dotenvx run --convention=nextjs --quiet -- bun run --cwd apps/web build",
     "build:desktop": "bun run --cwd apps/web build:desktop",
+    "build:wasm": "wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --release",
+    "build:tauri": "bun run build:wasm && bun run build:desktop",
     "start": "dotenvx run --convention=nextjs --quiet -- bun run --cwd apps/web start",
     "test:ui": "bun run --cwd apps/web test:ui",
     "lint": "eslint .",

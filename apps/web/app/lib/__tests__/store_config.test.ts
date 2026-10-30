@@ -163,6 +163,7 @@ describe('export never carries secrets', () => {
         'streamer',
         'theme',
         'typing',
+        'profanity',
         'v',
       ].sort()
     )
@@ -174,6 +175,7 @@ describe('export never carries secrets', () => {
     expect(Object.keys(doc).sort()).toEqual([
       'layout',
       'notify',
+      'profanity',
       'streamer',
       'theme',
       'typing',

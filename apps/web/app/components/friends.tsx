@@ -37,12 +37,13 @@ import { profileTrigger } from './profile_card'
 import { PingBadge } from './ping_badge'
 import {
   Dialog,
-  FieldError,
-  PanelHeader,
-  Sentinel,
   fieldCls,
+  FieldError,
   filledBtn,
   iconBtn,
+  Masked,
+  PanelHeader,
+  Sentinel,
   textBtn,
   useEscape,
 } from './ui'
@@ -93,7 +94,9 @@ function Avatar({ user, online, size = 32 }: { user: UserRef; online?: boolean; 
 function Name({ user, sub }: { user: UserRef; sub?: string }) {
   return (
     <span className="flex min-w-0 flex-1 flex-col">
-      <span className="streamer truncate text-sm text-on-surface">{user.display_name}</span>
+      <span className="streamer truncate text-sm text-on-surface">
+        <Masked text={user.display_name} />
+      </span>
       <span className="truncate text-xs text-on-surface-variant">
         <span className="streamer">@{user.username}</span>
         {sub ? ` · ${sub}` : ''}

@@ -10,6 +10,7 @@ import { MessageTime } from './timestamp'
 import { Snippet } from './replies'
 import { UserAvatar } from './user_avatar'
 import { BlockedQuote } from './blocking'
+import { Masked } from './ui'
 
 // A pasted link to a message on this instance. Shown only once the gated lookup says the viewer
 // can read the message; otherwise the link stays a plain link.
@@ -58,7 +59,7 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
             size={20}
           />
           <span className="streamer min-w-0 truncate text-sm font-medium">
-            {author.display_name}
+            <Masked text={author.display_name} />
           </span>
           <MessageTime ts={created_at} className="shrink-0 text-xs text-on-surface-variant" />
         </div>
@@ -83,7 +84,9 @@ function Label({ icon, text }: { icon: React.ReactNode; text: string }) {
   return (
     <span className="flex min-w-0 items-center gap-1 italic">
       {icon}
-      <span className="truncate">{text}</span>
+      <span className="truncate">
+        <Masked text={text} />
+      </span>
     </span>
   )
 }

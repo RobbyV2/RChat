@@ -3,11 +3,12 @@ import "../common.just"
 # Desktop app (Tauri): needs `cargo install tauri-cli --version "^2" --locked`
 
 # Run the desktop app against the Next dev server on 127.0.0.1:1430, with hot reload
-desktop:
+desktop: build-wasm-dev
   cd {{DESKTOP}} && cargo tauri dev
 
 # Usage: just src desktop-build, or just src desktop-build --bundles deb
-# Build the desktop app bundles for this OS (release, in target/release/bundle)
+# Build the desktop app bundles for this OS (release, in target/release/bundle; the Tauri
+# beforeBuildCommand builds the wasm and the static export)
 desktop-build *args:
   #!/usr/bin/env bash
   set -euo pipefail

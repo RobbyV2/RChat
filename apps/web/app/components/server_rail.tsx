@@ -17,13 +17,14 @@ import {
   folderLabel,
   myPerms,
   previewServer,
+  type RailServer,
   railServers,
   scopeMuted,
   serverPingCount,
-  serverUnread,
   serversMarkTargets,
+  serverUnread,
+  useMask,
   useStore,
-  type RailServer,
 } from '../lib/store'
 import { folderKey, railItems, serverKey, type Folder } from '../lib/nav_layout'
 import type { DropTarget } from '../lib/drag'
@@ -63,6 +64,7 @@ const dropServer = (name: string, { zone, index, onto }: DropTarget) => {
 }
 
 export function ServerGlyph({ name, displayName }: { name: string; displayName: string }) {
+  const mask = useMask()
   return name === 'rchat' ? (
     <img
       src="/rchat_r.png"
@@ -71,7 +73,7 @@ export function ServerGlyph({ name, displayName }: { name: string; displayName: 
       className="h-full w-full object-contain p-1"
     />
   ) : (
-    <span className="streamer">{serverInitial(displayName)}</span>
+    <span className="streamer">{serverInitial(mask(displayName))}</span>
   )
 }
 
@@ -107,10 +109,12 @@ function ServerTile({
   const openDialog = useStore(s => s.openDialog)
   const muted = useStore(s => scopeMuted(s, { kind: 'server', name }))
   const mine = me !== null && creator === me.username
+  const mask = useMask()
+  const shown = mask(display_name)
   const parent = folder === null ? null : folderKey(folder)
   return (
     <button
-      title={`${mine ? `${display_name} (Creator)` : display_name}${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}`}
+      title={`${mine ? `${shown} (Creator)` : shown}${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}`}
       onClick={() => void openServer(name)}
       {...longPress(
         (x, y) =>
@@ -200,8 +204,9 @@ function PreviewTile() {
   const openServer = useStore(s => s.openServer)
   const joinPreview = useStore(s => s.joinPreview)
   const openContextMenu = useStore(s => s.openContextMenu)
+  const mask = useMask()
   if (!name) return null
-  const label = `Previewing ${display}`
+  const label = `Previewing ${mask(display)}`
   return (
     <button
       data-preview-tile={name}
@@ -238,6 +243,7 @@ function PreviewTile() {
 
 function MiniIcon({ server: { name, display_name } }: { server: RailServer }) {
   const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name)
+  const mask = useMask()
   return (
     <span
       className={`flex min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md text-[9px] leading-none font-semibold ${
@@ -247,7 +253,7 @@ function MiniIcon({ server: { name, display_name } }: { server: RailServer }) {
       {name === 'rchat' ? (
         <img src="/rchat_r.png" alt="" draggable={false} className="h-full w-full object-contain" />
       ) : (
-        <span className="streamer">{serverInitial(display_name)}</span>
+        <span className="streamer">{serverInitial(mask(display_name))}</span>
       )}
     </span>
   )

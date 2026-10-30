@@ -70,6 +70,35 @@ describe('release meta', () => {
   })
 })
 
+// The profanity filter's wasm is git-ignored, so every app build makes it before the web build.
+describe('app builds', () => {
+  const read = (path: string) => readFileSync(join(import.meta.dir, '..', path), 'utf8')
+
+  test('the Tauri build command builds the wasm before the static export', () => {
+    const scripts = JSON.parse(read('package.json')).scripts as Record<string, string>
+    const tauri = JSON.parse(read('apps/desktop/src-tauri/tauri.conf.json'))
+    const run = (tauri.build.beforeBuildCommand.script as string).match(/^bun run ([\w:]+)$/)?.[1]
+    const steps = (scripts[run ?? ''] ?? '').split(' && ')
+    expect(steps).toEqual(['bun run build:wasm', 'bun run build:desktop'])
+    expect(scripts['build:wasm']).toContain(
+      'wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --release'
+    )
+  })
+
+  test('every desktop and mobile job has wasm-pack and the wasm target', () => {
+    for (const file of ['desktop.yml', 'mobile.yml']) {
+      const jobs = read(`.github/workflows/${file}`)
+        .split(/\n {2}(?=[\w-]+:\n)/)
+        .slice(1)
+      expect(jobs.length).toBeGreaterThan(0)
+      for (const job of jobs.filter(j => j.includes('cargo tauri'))) {
+        expect(job).toContain('cargo install wasm-pack')
+        expect(job).toContain('wasm32-unknown-unknown')
+      }
+    }
+  })
+})
+
 describe('tauri config', () => {
   test('no secrets: no updater files, no signing', () => {
     expect(tauriConfig({})).toEqual({ bundle: { createUpdaterArtifacts: false, windows: {} } })

@@ -53,7 +53,7 @@ import { FriendsEntry, friendMenuItem } from './friends'
 import { dragScope, useDrag, type DragSpec } from './drag'
 import { profileTrigger } from './profile_card'
 import { LiveBadge, VoiceDock } from './voice_grid'
-import { Sentinel } from './ui'
+import { Masked, Sentinel } from './ui'
 import { useAuthorMembers } from './message_pane'
 import { PingBadge } from './ping_badge'
 import { scopePings } from '../lib/pings'
@@ -135,7 +135,9 @@ function DmRow({
         avatarColor={other.avatar_color}
         size={28}
       />
-      <span className="streamer truncate">{other.display_name}</span>
+      <span className="streamer truncate">
+        <Masked text={other.display_name} />
+      </span>
       <MutedIcon scope={{ kind: 'dm', id }} />
       {unread && !pings && (
         <span title="Unread" aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-error" />
@@ -190,7 +192,9 @@ function VoiceChannelRow({
       }`}
     >
       <Volume2 size={16} className={`shrink-0 ${connected ? 'text-status-green' : ''}`} />
-      <span className="truncate">{channel.name}</span>
+      <span className="truncate">
+        <Masked text={channel.name} />
+      </span>
       {channel.restrict_view && <PrivateIcon />}
       {count > 0 && (
         <span
@@ -242,7 +246,7 @@ function VoiceMemberRow({
         />
       </span>
       <span className={`streamer min-w-0 flex-1 truncate ${speaking ? 'text-on-surface' : ''}`}>
-        {user.display_name}
+        <Masked text={user.display_name} />
       </span>
       {live && (
         <LiveBadge size="sm" title={self ? "You're sharing your screen" : 'Sharing their screen'} />
@@ -650,7 +654,9 @@ export function ChannelSidebar() {
       }`}
     >
       <Hash size={16} className="shrink-0" />
-      <span className="truncate">{c.name}</span>
+      <span className="truncate">
+        <Masked text={c.name} />
+      </span>
       {c.restrict_view && <PrivateIcon />}
       <MutedIcon scope={{ kind: 'channel', id: c.id, server }} />
       {pingsOf(`c${c.id}`) > 0 ? (
@@ -723,7 +729,9 @@ export function ChannelSidebar() {
             ) : (
               <ChevronRight size={14} className="shrink-0" />
             )}
-            <span className="truncate">{category.name}</span>
+            <span className="truncate">
+              <Masked text={category.name} />
+            </span>
             {hiddenPings > 0 ? (
               <PingBadge count={hiddenPings} className="ml-auto" />
             ) : (

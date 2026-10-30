@@ -65,7 +65,15 @@ import { postedUrl } from '../lib/embed_links'
 import { findMessageLinks, parseMessageLink } from '../lib/message_links'
 import { saveGuestMedia, useMediaSrc } from '../lib/media_src'
 import { expiryText, sameOriginImage } from '../lib/rules'
-import { groupPills, knownMentions, userRefFor, useStore, type ContextMenuItem } from '../lib/store'
+import { remarkMask } from '../lib/profanity'
+import {
+  groupPills,
+  knownMentions,
+  useMask,
+  userRefFor,
+  useStore,
+  type ContextMenuItem,
+} from '../lib/store'
 import type { Embed, Message, MessageMedia } from '../lib/types'
 import { longPress } from './context_menu'
 import { InviteCard, RemoteInviteCard } from './invite_card'
@@ -85,6 +93,7 @@ import {
 } from './code_block'
 import { Stamp } from './timestamp'
 import { splitStamps, type StampStyle } from '../lib/timestamps'
+import { Masked } from './ui'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -252,6 +261,7 @@ function Mention({ username }: { username: string }) {
   const user = useStore(s => userRefFor(s, username))
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const mine = useStore(s => s.me?.username === username)
+  const mask = useMask()
   return (
     <span
       {...profileTrigger(user, server)}
@@ -260,7 +270,7 @@ function Mention({ username }: { username: string }) {
         mine ? 'bg-primary-container text-on-primary-container' : 'bg-primary/15 text-primary'
       }`}
     >
-      @{user.display_name}
+      @{mask(user.display_name)}
     </span>
   )
 }
@@ -283,6 +293,7 @@ function GroupPill({ group, text }: { group: string; text: string }) {
     }
     return null
   })
+  const mask = useMask()
   if (role)
     return (
       <span
@@ -290,7 +301,7 @@ function GroupPill({ group, text }: { group: string; text: string }) {
         style={{ color: role.color, backgroundColor: `${role.color}26` }}
         className="rounded px-0.5 font-medium"
       >
-        @{role.name}
+        @{mask(role.name)}
       </span>
     )
   return (
@@ -569,7 +580,9 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
         <Share2 size={10} />
         P2P
       </span>
-      <span className="streamer truncate">{hosterName}</span>
+      <span className="streamer truncate">
+        <Masked text={hosterName} />
+      </span>
       <span>·</span>
       <span>{fmtExpiry(expires_at)}</span>
       {unverified && (
@@ -864,6 +877,7 @@ function EmbedCard({
   const deleteEmbed = useStore(s => s.deleteEmbed)
   const openContextMenu = useStore(s => s.openContextMenu)
   const { ord, site_name, title, description, image_url, banner_removed } = embed
+  const mask = useMask()
   const url = useMemo(() => postedUrl(message.content, embed.url), [message.content, embed.url])
 
   const menu = (x: number, y: number) => {
@@ -892,18 +906,20 @@ function EmbedCard({
       {...(canDelete ? longPress(menu) : {})}
       className="group/embed relative mt-1 w-fit max-w-md rounded-lg border-l-4 border-primary bg-surface-container py-2 pr-8 pl-3"
     >
-      {site_name !== null && <div className="text-xs text-on-surface-variant">{site_name}</div>}
+      {site_name !== null && (
+        <div className="text-xs text-on-surface-variant">{mask(site_name)}</div>
+      )}
       <a
         href={url}
         target="_blank"
         rel="noreferrer"
         className="block text-sm font-medium break-words text-primary hover:underline"
       >
-        {title ?? url}
+        {title === null ? url : mask(title)}
       </a>
       {description !== null && (
         <p className="mt-0.5 line-clamp-3 text-xs break-words text-on-surface-variant">
-          {description}
+          {mask(description)}
         </p>
       )}
       {image_url !== null && !banner_removed && (
@@ -948,6 +964,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   )
   const known = useStore(s => knownMentions(s, message, candidates))
   const pills = useStore(s => groupPills(s, message))
+  const mask = useMask()
   const plugins = useMemo(
     () => [
       remarkGfm,
@@ -958,8 +975,9 @@ export const MarkdownMessage = memo(function MarkdownMessage({
         new Map(pills ? pills.split('\n').map(line => line.split('\t') as [string, string]) : [])
       ),
       ...(edited ? [remarkEdited(edited)] : []),
+      remarkMask(mask),
     ],
-    [known, pills, edited]
+    [known, pills, edited, mask]
   )
   const homePublic = useStore(s => s.instance?.public_url ?? null)
   const local = useMemo(() => localOrigins(homePublic), [homePublic])
