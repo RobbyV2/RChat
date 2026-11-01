@@ -105,6 +105,7 @@ describe('the message view', () => {
     expect(html).toContain('role="button"')
     expect(html).toContain('tabindex="0"')
     expect(html).toContain('aria-label="Spoiler, press to reveal"')
+    expect(html).toContain('<span class="invisible" aria-hidden="true">one</span>')
     expect(html.includes('||')).toBe(false)
   })
 

@@ -77,6 +77,7 @@ describe('ci flags', () => {
     })
     expect(flags({ MESSAGE: 'x', CHANGED: 'src/db.rs\napps/web/app/page.tsx' })).toEqual(all)
     expect(flags({ MESSAGE: 'x', CHANGED: 'Cargo.lock' })).toEqual(all)
+    expect(flags({ MESSAGE: 'x', CHANGED: 'crates/profanity/src/lib.rs' })).toEqual(all)
     expect(flags({ MESSAGE: 'x' })).toEqual(all)
     expect(flags({ EVENT: 'workflow_dispatch', CHANGED: 'src/db.rs' })).toEqual(all)
     expect(flags({ EVENT: 'pull_request', CHANGED: 'src/db.rs' })).toEqual(all)

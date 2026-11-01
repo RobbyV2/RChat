@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "next-rust",
+      "name": "rchat",
       "devDependencies": {
         "@dotenvx/dotenvx": "^2.38.2",
         "@eslint/js": "^10.0.1",

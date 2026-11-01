@@ -79,10 +79,12 @@ type ConfigInput = {
   pubkey?: string
   hasKey?: boolean
   thumbprint?: string
+  channel?: string
 }
 
 // Merged over tauri.conf.json with `--config`. Updater files are only made when both halves of
-// the signing key are present, so builds without secrets still pass.
+// the signing key are present, so test and weekly builds without secrets still pass. A stable
+// release without them is refused: installed apps update from its latest.json.
 export const tauriConfig = ({
   version,
   wixVersion,
@@ -90,8 +92,11 @@ export const tauriConfig = ({
   pubkey,
   hasKey,
   thumbprint,
+  channel,
 }: ConfigInput) => {
   const sign = Boolean(pubkey && hasKey)
+  if (channel === 'stable' && !sign)
+    throw new Error('a stable release needs TAURI_SIGNING_PRIVATE_KEY and TAURI_UPDATER_PUBKEY')
   const windows: Record<string, unknown> = {}
   if (wixVersion) windows.wix = { version: wixVersion }
   if (thumbprint) {
@@ -266,6 +271,7 @@ const main = (args: string[]) => {
       pubkey: process.env.UPDATER_PUBKEY,
       hasKey: Boolean(process.env.TAURI_SIGNING_PRIVATE_KEY),
       thumbprint: process.env.WINDOWS_THUMBPRINT,
+      channel: process.env.CHANNEL,
     })
     console.log(
       config.bundle.createUpdaterArtifacts

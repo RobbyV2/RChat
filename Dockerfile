@@ -2,6 +2,7 @@
 FROM rust:1.99.1-slim-trixie@sha256:1a939748a7cbab172de91a014e3804a97af1394a8c844faa67fce9401c4e40fb AS chef
 RUN cargo install cargo-chef --version 0.1.78 --locked
 RUN cargo install wasm-pack --version 0.15.0 --locked
+RUN cargo install wasm-bindgen-cli --version 0.2.129 --locked
 WORKDIR /app
 
 # Stage 2: Generate recipe from workspace
@@ -16,7 +17,8 @@ RUN cargo chef cook --release --recipe-path recipe.json --bin server
 
 COPY . .
 RUN cargo build --release --bin server
-RUN wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --release
+# no-install: the wasm-bindgen above, and no unchecked wasm-opt download (the module is ~6% larger).
+RUN wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release
 
 # Stage 4: Build Next.js
 FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS js-builder

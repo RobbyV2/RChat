@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import {
   ballotBody,
@@ -24,7 +24,7 @@ import { canPin } from '../pins'
 import { canQuote } from '../replies'
 import type { Message, Poll, ServerDetail, WsEvent } from '../types'
 import { canManagePoll } from '../../components/poll_card'
-import { me, msg, serverDetail } from './fixtures'
+import { advance, me, msg, serverDetail } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -228,11 +228,6 @@ describe('poll store', () => {
   let requests: { method: string; url: string; body: unknown }[] = []
   let respond: (method: string, url: string) => Response = () =>
     new Response(JSON.stringify({}), { status: 200 })
-  const tick = async () => {
-    for (let i = 0; i < 10; i += 1) await Promise.resolve()
-    await new Promise(r => setTimeout(r, 0))
-    for (let i = 0; i < 10; i += 1) await Promise.resolve()
-  }
   const pollMsg = (p: Poll): Message => msg(10, { kind: 'poll', content: p.question, poll: p })
   const event = (p: Poll): WsEvent => ({
     type: 'poll_updated',
@@ -272,6 +267,7 @@ describe('poll store', () => {
   })
 
   afterEach(() => {
+    jest.useRealTimers()
     globalThis.fetch = realFetch
     ;(globalThis as { window?: unknown }).window = realWindow
   })
@@ -287,6 +283,7 @@ describe('poll store', () => {
   })
 
   test('updates never make a voter fetch the poll', async () => {
+    jest.useFakeTimers()
     useStore.setState({
       messages: { c1: [pollMsg(poll({ show_results: 'after_vote', mine: [2] }))] },
     })
@@ -302,8 +299,7 @@ describe('poll store', () => {
     )
     expect(shown()?.results?.counts).toEqual(counts)
     expect(shown()?.mine).toEqual([2])
-    await new Promise(r => setTimeout(r, POLL_FETCH_MS + 50))
-    await tick()
+    await advance(POLL_FETCH_MS + 50)
     expect(requests).toHaveLength(0)
   })
 
@@ -346,12 +342,12 @@ describe('poll store', () => {
   })
 
   test('my vote from another tab reloads the poll', async () => {
+    jest.useFakeTimers()
     respond = () => new Response(JSON.stringify(poll({ mine: [2], voters: 1 })), { status: 200 })
     st().applyWsEvent({ type: 'poll_voted', username: 'carol', message_id: 10 })
     st().applyWsEvent({ type: 'poll_voted', username: 'bob', message_id: 99 })
     st().applyWsEvent({ type: 'poll_voted', username: 'bob', message_id: 10 })
-    await new Promise(r => setTimeout(r, POLL_FETCH_MS + 50))
-    await tick()
+    await advance(POLL_FETCH_MS + 50)
     expect(requests.map(r => new URL(r.url, 'http://x').pathname)).toEqual(['/api/polls/10'])
     expect(shown()?.mine).toEqual([2])
   })

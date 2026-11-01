@@ -618,7 +618,8 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// 15: `preview_images` (the cache of link preview images served by the instance).
 /// 16: `media.charged_to` and `media.charged_server` (webhook uploads count against the
 /// webhook's owner and its server's webhooks).
-pub const SCHEMA_VERSION: i64 = 16;
+/// 17: stored names of uploaded files cleaned like new uploads (`messages.media_filename`).
+pub const SCHEMA_VERSION: i64 = 17;
 
 /// A temp database path no other test in any process uses at the same time: the process id,
 /// the test's name and a counter.
@@ -1298,6 +1299,9 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
             tracing::info!("gave {n} admins with every permission the Manage webhooks permission");
         }
     }
+    if version < 17 {
+        clean_file_names(conn).await?;
+    }
     let t = now();
     sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
         .bind(t)
@@ -1331,6 +1335,40 @@ async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Resul
         seed_setting(conn, key, &value).await?;
     }
     store_setting(conn, "schema_version", &SCHEMA_VERSION.to_string()).await?;
+    Ok(())
+}
+
+/// Names of files uploaded before 0.3.0 were stored as sent. Cleans them like new uploads
+/// (`media::clean_filename`: no control or bidi override characters, at most 255 bytes). P2P
+/// file names stay as their sender wrote them.
+async fn clean_file_names(conn: &mut AnyConnection) -> anyhow::Result<()> {
+    let mut after = 0i64;
+    let mut cleaned = 0u64;
+    loop {
+        let rows = sqlx::query("SELECT id, media_filename FROM messages WHERE id > $1 AND media_filename IS NOT NULL AND media_filename <> '' AND media_kind = 'server' ORDER BY id LIMIT 500")
+            .bind(after)
+            .fetch_all(&mut *conn)
+            .await?;
+        let Some(last) = rows.last() else {
+            break;
+        };
+        after = last.try_get(0)?;
+        for row in &rows {
+            let (id, name): (i64, String) = (row.try_get(0)?, row.try_get(1)?);
+            let clean = crate::api::media::clean_filename(&name);
+            if clean != name {
+                sqlx::query("UPDATE messages SET media_filename = $1 WHERE id = $2")
+                    .bind(clean)
+                    .bind(id)
+                    .execute(&mut *conn)
+                    .await?;
+                cleaned += 1;
+            }
+        }
+    }
+    if cleaned > 0 {
+        tracing::info!("cleaned {cleaned} stored file names");
+    }
     Ok(())
 }
 
@@ -4864,6 +4902,60 @@ mod tests {
             .map(|_| ())
             .expect_err("older build");
         assert!(refused.to_string().contains("schema version"), "{refused}");
+        wipe();
+    }
+
+    #[tokio::test]
+    async fn file_names_stored_before_the_upload_limits_are_cleaned_once() {
+        let path = crate::db::temp_db_path("file_name_upgrade");
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        let long = format!("{}\u{202e}gnp.exe", "a".repeat(300));
+        for (name, kind) in [
+            (long.as_str(), "server"),
+            ("evil\u{202e}gnp.exe", "server"),
+            ("fine.txt", "server"),
+            (long.as_str(), "p2p"),
+        ] {
+            sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, media_kind, created_at) VALUES((SELECT id FROM channels WHERE server = 'rchat'), 'alice', '', 'm', $1, $2, 1)")
+                .bind(name)
+                .bind(kind)
+                .execute(&db)
+                .await
+                .expect("message");
+        }
+        sqlx::query("UPDATE settings SET value = '16' WHERE key = 'schema_version'")
+            .execute(&db)
+            .await
+            .expect("old version");
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            let names: Vec<String> =
+                sqlx::query_scalar("SELECT media_filename FROM messages ORDER BY id")
+                    .fetch_all(&db)
+                    .await
+                    .expect("names");
+            assert_eq!(names[0].len(), 255);
+            assert_eq!(names[0], format!("{}.exe", "a".repeat(251)));
+            assert_eq!(names[1], "evilgnp.exe");
+            assert_eq!(names[2], "fine.txt");
+            assert_eq!(names[3], long, "P2P names stay as sent");
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+                )
+                .await,
+                SCHEMA_VERSION
+            );
+            close(&db).await;
+        }
         wipe();
     }
 

@@ -37,6 +37,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # The emoji dataset test reads node_modules.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
       - run: cargo test --workspace --exclude rchat-desktop --exclude tauri-plugin-rchat-share
 
   # The desktop crates need the WebKitGTK headers and the static web build (Tauri embeds it).
@@ -83,7 +86,15 @@ jobs:
           key: wasm-pack-${{ runner.os }}-0.15.0
       - if: steps.wasm-pack.outputs.cache-hit != 'true'
         run: cargo install wasm-pack --version 0.15.0 --locked
-      - run: wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --release
+      # wasm-pack would download wasm-bindgen (and wasm-opt) unchecked; no-install uses this one.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: wasm-bindgen
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-${{ runner.os }}-0.2.129
+      - if: steps.wasm-bindgen.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - run: wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release
       # The compiled matcher against the Rust fixture (the lint job has no wasm and skips it).
       - run: bun test app/lib/__tests__/profanity.test.tsx
         working-directory: apps/web

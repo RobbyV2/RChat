@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'b
 import { useStore, resetSessionCaches } from '../store'
 import type { MessageLocation, WsEvent } from '../types'
 import { home } from '../instances'
-import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { advance, me, memoryStorage, msg, serverDetail, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -18,20 +18,6 @@ let hold: Promise<void> | null = null
 let pages: string[] = []
 let replaced: string[] = []
 let path = '/'
-
-// Link card tests run on fake timers: `wait` moves the clock 5 ms at a time and lets every
-// pending callback and response run in between, so a busy machine can't change the outcome,
-// only how long the test takes.
-const settle = async () => {
-  for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r))
-}
-const wait = async (ms: number) => {
-  for (let at = 0; at < ms; at += 5) {
-    await settle()
-    jest.advanceTimersByTime(5)
-  }
-  await settle()
-}
 
 const card = (over: Partial<MessageLocation> = {}): MessageLocation => ({
   id: 40,
@@ -192,10 +178,10 @@ describe('link cards', () => {
     st().resolveLinkCard(41)
     st().resolveLinkCard(42)
     expect(batches).toEqual([])
-    await wait(80)
+    await advance(80)
     st().resolveLinkCard(40)
     st().resolveLinkCard(41)
-    await wait(80)
+    await advance(80)
     expect(batches).toEqual([[40, 41, 42]])
     expect(lookups).toEqual([])
     expect(st().linkCards[40]?.content).toBe('old news')
@@ -211,11 +197,11 @@ describe('link cards', () => {
     const ids = Array.from({ length: 160 }, (_, i) => 1000 + i)
     for (const id of ids) readable[id] = card({ id })
     for (const id of ids) st().resolveLinkCard(id)
-    await wait(80)
+    await advance(80)
     expect(batches.map(b => b.length)).toEqual([50, 50])
     open()
     hold = null
-    await wait(300)
+    await advance(300)
     expect(batches.map(b => b.length)).toEqual([50, 50, 50, 10])
     expect(batches.flat()).toEqual(ids)
     expect(maxFlying).toBe(2)
@@ -226,10 +212,10 @@ describe('link cards', () => {
     const ids = Array.from({ length: 501 }, (_, i) => 2000 + i)
     for (const id of ids) readable[id] = card({ id })
     for (const id of ids.slice(0, 500)) st().resolveLinkCard(id)
-    await wait(400)
+    await advance(400)
     expect(Object.keys(st().linkCards).length).toBe(500)
     st().resolveLinkCard(2500)
-    await wait(100)
+    await advance(100)
     expect(Object.keys(st().linkCards).length).toBe(500)
     expect(2000 in st().linkCards).toBe(false)
     expect(st().linkCards[2001]?.id).toBe(2001)
@@ -249,7 +235,7 @@ describe('link cards', () => {
     readable[43] = card({ id: 43, author: user('dave') })
     st().resolveLinkCard(40)
     st().resolveLinkCard(43)
-    await wait(80)
+    await advance(80)
     const renamed = { ...user('carol'), display_name: 'Caroline', avatar_color: '#123456' }
     st().applyWsEvent({ type: 'user_updated', user: renamed } as WsEvent)
     expect(st().linkCards[40]?.author).toEqual(renamed)
@@ -260,7 +246,7 @@ describe('link cards', () => {
     readable[40] = card()
     st().resolveLinkCard(40)
     st().resolveLinkCard(41)
-    await wait(80)
+    await advance(80)
     expect(41 in st().linkCards).toBe(true)
     const g = globalThis as { document?: unknown }
     const realDocument = g.document
@@ -279,12 +265,12 @@ describe('link cards', () => {
   test('edits and deletes drop the cached card', async () => {
     readable[40] = card()
     st().resolveLinkCard(40)
-    await wait(80)
+    await advance(80)
     st().applyWsEvent({ type: 'message_updated', stub: true, id: 40 } as unknown as WsEvent)
     expect(40 in st().linkCards).toBe(false)
     readable[40] = card({ content: 'new news' })
     st().resolveLinkCard(40)
-    await wait(80)
+    await advance(80)
     expect(st().linkCards[40]?.content).toBe('new news')
     st().applyWsEvent({
       type: 'message_deleted',
@@ -304,12 +290,12 @@ describe('link cards', () => {
     })
     readable[40] = card()
     st().resolveLinkCard(40)
-    await wait(80)
+    await advance(80)
     st().applyWsEvent({ type: 'message_updated', stub: true, id: 40 } as unknown as WsEvent)
     readable[40] = card({ content: 'new news' })
     open()
     hold = null
-    await wait(150)
+    await advance(150)
     expect(st().linkCards[40]?.content).toBe('new news')
     expect(batches).toEqual([[40], [40]])
   })

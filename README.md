@@ -166,10 +166,11 @@ Build the image locally with `docker compose up`.
 
 `apps/desktop` is a Tauri 2 shell for Windows, macOS and Linux. It bundles the static client and connects to the instance you pick on first start, like the web app does. It adds system notifications, an unread badge, a tray, deep links, start on login and updates.
 
-You need the Tauri CLI and the [Tauri system dependencies](https://tauri.app/start/prerequisites/) for your OS. On Linux these are webkit2gtk 4.1, libsoup 3 and libayatana-appindicator.
+You need the Tauri CLI, the wasm-bindgen CLI pinned in `Cargo.lock` (app builds never download one) and the [Tauri system dependencies](https://tauri.app/start/prerequisites/) for your OS. On Linux these are webkit2gtk 4.1, libsoup 3 and libayatana-appindicator.
 
 ```bash
 cargo install tauri-cli --version "^2" --locked
+cargo install wasm-bindgen-cli --version 0.2.129 --locked
 ```
 
 Run it against the Next dev server, with hot reload:
@@ -277,7 +278,7 @@ A release holds:
 - `SHA256SUMS`, the updater manifest `latest.json` with `.sig` files when updater signing is set, and `rchat-packaging_<version>.tar.gz`.
 - Docker images on GHCR: `latest` and the version for stable, `weekly`, `nightly` and `weekly-YYYY-MM-DD` for weekly, plus the commit SHA.
 
-Signing uses repository secrets when they exist. Without them the builds are unsigned: Windows shows SmartScreen, macOS asks you to allow the app under System Settings, Privacy & Security (ad hoc signature, no notarization), and the Android APK uses a key made for that build, so it cannot update an older install.
+Signing uses repository secrets when they exist. Without them the builds are unsigned: Windows shows SmartScreen, macOS asks you to allow the app under System Settings, Privacy & Security (ad hoc signature, no notarization), and the Android APK uses a key made for that build, so it cannot update an older install. A stable release needs the updater key (`TAURI_SIGNING_PRIVATE_KEY` and the `TAURI_UPDATER_PUBKEY` variable) and fails without it, since installed apps update from its `latest.json`; weekly builds without it ship no updater files.
 
 | Secret or variable                                                                                                            | Used for                        |
 | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
@@ -310,6 +311,8 @@ kubectl apply -k deploy/k8s
 ```
 
 Keep Redis on a private network. Anything that can write to Redis can send events to all users.
+
+Upgrade all copies together. A copy on an older version skips the live events and shared state it does not know, so users can miss updates until every copy runs the same version, and once a newer copy has upgraded the database an older one refuses to start.
 
 ## Configuration
 

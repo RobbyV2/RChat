@@ -206,6 +206,11 @@ function AddServerDialog({
 export function ServerDialogs() {
   const dialog = useStore(s => s.activeDialog)
   return dialog?.kind === 'add_server' ? (
-    <AddServerDialog join={dialog.join} locked={dialog.locked} initial={dialog.tab} />
+    <AddServerDialog
+      key={`${dialog.join ?? ''}:${dialog.locked ? 1 : 0}:${dialog.tab ?? ''}`}
+      join={dialog.join}
+      locked={dialog.locked}
+      initial={dialog.tab}
+    />
   ) : null
 }

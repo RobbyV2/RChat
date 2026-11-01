@@ -284,15 +284,26 @@ const useSpoilersOpen = () => useStore(s => s.showSpoilers === 'always' && !s.st
 function SpoilerText({ children }: { children?: ReactNode }) {
   const always = useSpoilersOpen()
   const [revealed, setRevealed] = useState(false)
+  const shown = useRef<HTMLSpanElement>(null)
+  const focused = useRef(false)
+  useEffect(() => {
+    if (revealed && focused.current) shown.current?.focus()
+  }, [revealed])
   if (revealed || always)
     return (
-      <span data-spoiler="shown" className="rounded bg-on-surface/10 px-0.5">
+      <span
+        ref={shown}
+        tabIndex={revealed ? -1 : undefined}
+        data-spoiler="shown"
+        className="rounded bg-on-surface/10 px-0.5 focus-visible:outline-2 focus-visible:outline-primary"
+      >
         {children}
       </span>
     )
   const reveal = (e: React.SyntheticEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    focused.current = document.activeElement === e.currentTarget
     setRevealed(true)
   }
   return (
@@ -308,7 +319,9 @@ function SpoilerText({ children }: { children?: ReactNode }) {
       }}
       className="cursor-pointer rounded bg-spoiler px-0.5 select-none hover:bg-spoiler/85 focus-visible:outline-2 focus-visible:outline-primary"
     >
-      <span className="invisible">{children}</span>
+      <span className="invisible" aria-hidden>
+        {children}
+      </span>
     </span>
   )
 }

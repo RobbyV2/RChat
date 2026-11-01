@@ -194,6 +194,25 @@ describe('unread summary', () => {
     ])
     expect(summary.dms).toEqual({ pings: 0, unread: true })
   })
+
+  test('counts the text channels the dot counts, once the server is loaded', () => {
+    const channel = (id: number, kind: Channel['kind']): Channel =>
+      ({ id, name: `c${id}`, kind, slowmode_seconds: 0 }) as Channel
+    useStore.setState({
+      me: me('alice', {
+        servers: [{ name: 'a', display_name: 'A', creator: null, is_admin: false }],
+      }),
+      servers: { a: serverDetail('a', { channels: [channel(1, 'text'), channel(2, 'voice')] }) },
+      reads: {
+        c1: { lastRead: 1, latest: 2, server: 'a' },
+        c2: { lastRead: 1, latest: 5, server: 'a' },
+        c9: { lastRead: 1, latest: 5, server: 'a' },
+      },
+    })
+    expect(parseSummary(unreadSummaryKey(st())).servers).toEqual([
+      { name: 'a', pings: 0, channels: 1 },
+    ])
+  })
 })
 
 describe('home markup', () => {

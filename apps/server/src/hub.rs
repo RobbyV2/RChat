@@ -2042,6 +2042,8 @@ pub const DM_CALL_BURST: u32 = 3;
 pub const DM_CALL_EVERY: Duration = Duration::from_secs(10);
 pub const SIGNAL_BURST: usize = 512 * 1024;
 pub const SIGNAL_BYTES_PER_SEC: u32 = 64 * 1024;
+pub const ACCEPT_BURST: u32 = 5;
+pub const ACCEPT_EVERY: Duration = Duration::from_secs(3);
 pub const TYPING_USER_BURST: u32 = 8;
 pub const TYPING_USER_EVERY: Duration = Duration::from_millis(500);
 
@@ -2051,8 +2053,24 @@ struct Pacing {
     voice: Pacer,
     calls: Pacer,
     dm_calls: Pacer,
+    accepts: Pacer,
     signals: Pacer,
     typing: Pacer,
+}
+
+/// Signalling bytes one account may send at once: at least enough to negotiate with a full voice
+/// room twice (joining, then turning on a camera or screen share). Rooms without a limit get the
+/// budget of a default-sized room.
+pub fn signal_burst() -> usize {
+    signal_burst_for(crate::ws::voice_room_max())
+}
+
+fn signal_burst_for(room_max: usize) -> usize {
+    let room = match room_max {
+        0 => crate::ws::VOICE_ROOM_MAX,
+        n => n,
+    };
+    SIGNAL_BURST.max(2 * room * crate::ws::SIGNAL_MAX)
 }
 
 impl Default for Pacing {
@@ -2061,8 +2079,9 @@ impl Default for Pacing {
             voice: Pacer::new(f64::from(VOICE_BURST), VOICE_EVERY),
             calls: Pacer::new(f64::from(CALL_BURST), CALL_EVERY),
             dm_calls: Pacer::new(f64::from(DM_CALL_BURST), DM_CALL_EVERY),
+            accepts: Pacer::new(f64::from(ACCEPT_BURST), ACCEPT_EVERY),
             signals: Pacer::new(
-                SIGNAL_BURST as f64,
+                signal_burst() as f64,
                 Duration::from_secs(1) / SIGNAL_BYTES_PER_SEC,
             ),
             typing: Pacer::new(f64::from(TYPING_USER_BURST), TYPING_USER_EVERY),
@@ -3051,12 +3070,12 @@ impl Hub {
         self.inner.guests.load(Ordering::Relaxed) >= self.limits().guests_max
     }
 
-    /// Whether `user` may join or leave voice (or answer a call) now.
+    /// Whether `user` may join or leave voice now.
     pub fn voice_ok(&self, user: &str) -> bool {
         self.voice_ok_at(user, Instant::now())
     }
 
-    /// Whether `user` may join or leave voice (or answer a call) at `now`.
+    /// Whether `user` may join or leave voice at `now`.
     pub fn voice_ok_at(&self, user: &str, now: Instant) -> bool {
         self.inner.pacing.voice.take_at(user, 1.0, now)
     }
@@ -3085,10 +3104,16 @@ impl Hub {
             voice: _,
             calls,
             dm_calls,
+            accepts: _,
             signals: _,
             typing: _,
         } = &self.inner.pacing;
         dm_calls.take(&format!("{user}\0{dm_id}"), 1.0) && calls.take(user, 1.0)
+    }
+
+    /// Whether `user` may answer a call now, apart from their voice hops.
+    pub fn accept_ok(&self, user: &str) -> bool {
+        self.inner.pacing.accepts.take(user, 1.0)
     }
 
     /// Whether `user` may send `bytes` more of RTC signalling now.
@@ -3267,6 +3292,15 @@ pub(crate) mod tests {
     use crate::ws::to_bus_json;
 
     const T0: i64 = 1_700_000_000_000;
+
+    #[test]
+    fn an_unlimited_voice_room_gets_the_default_signal_budget() {
+        let default = signal_burst_for(crate::ws::VOICE_ROOM_MAX);
+        assert_eq!(signal_burst_for(0), default);
+        assert!(default > SIGNAL_BURST);
+        assert_eq!(signal_burst_for(4), SIGNAL_BURST);
+        assert_eq!(signal_burst_for(100), 2 * 100 * crate::ws::SIGNAL_MAX);
+    }
 
     #[derive(Clone)]
     pub(crate) struct MemBus {

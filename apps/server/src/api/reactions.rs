@@ -712,6 +712,11 @@ mod tests {
             "/../../node_modules/emojibase-data/en/data.json"
         );
         let Ok(raw) = std::fs::read_to_string(file) else {
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "{file} is missing: run bun install first"
+            );
+            eprintln!("skipped: {file} is missing (run bun install)");
             return;
         };
         let data: Vec<serde_json::Value> = serde_json::from_str(&raw).expect("dataset");

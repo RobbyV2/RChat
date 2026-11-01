@@ -32,7 +32,7 @@ if [ "$honored" = true ]; then
   if has 'skip e2e'; then e2e=false; fi
 fi
 
-mobile_paths='^(apps/desktop/|apps/web/|assets/|Cargo\.toml$|Cargo\.lock$|package\.json$|bun\.lock$|\.github/workflows/mobile\.yml$|scripts/release\.ts$)'
+mobile_paths='^(apps/desktop/|apps/web/|assets/|crates/|Cargo\.toml$|Cargo\.lock$|package\.json$|bun\.lock$|\.github/workflows/mobile\.yml$|scripts/release\.ts$)'
 if [ "$honored" = true ] && [ "${EVENT:-}" = push ] && [ -n "${CHANGED+set}" ] && ! grep -qE -- "$mobile_paths" <<<"$CHANGED"; then
   mobile=false
 fi

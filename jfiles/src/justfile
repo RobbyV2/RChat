@@ -14,6 +14,7 @@ install:
   cd {{ROOT}} && bun install
   cargo install taplo-cli
   cargo install wasm-pack
+  cargo install wasm-bindgen-cli --version 0.2.129 --locked
   cargo install tauri-cli --version "^2" --locked
 
 # Amend no edit

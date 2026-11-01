@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import {
   allMarkTargets,
   dmsMarkTargets,
@@ -12,7 +12,7 @@ import { READ_BATCH_MAX, chunked, markTargets, markedRead, withThreads } from '.
 import type { Pings } from '../pings'
 import { EMPTY_NOTIFY } from '../notify'
 import type { ReadMark } from '../lists'
-import { me, serverDetail, user } from './fixtures'
+import { advance, me, serverDetail, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -93,6 +93,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  jest.useRealTimers()
   globalThis.fetch = realFetch
   ;(globalThis as { window?: unknown }).window = realWindow
 })
@@ -247,6 +248,7 @@ describe('mark as read actions', () => {
   })
 
   test('a failed batch queues the reads again', async () => {
+    jest.useFakeTimers()
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
       requests.push({ url, body: (init?.body as string | undefined) ?? null })
@@ -258,7 +260,7 @@ describe('mark as read actions', () => {
     await st().markScopesRead(['c11'])
     expect(st().reads.c11.lastRead).toBe(4)
     expect(requests.filter(r => r.url.endsWith('/read'))).toEqual([])
-    await new Promise(r => setTimeout(r, 2200))
+    await advance(2200)
     const single = requests.filter(r => r.url.endsWith('/read'))
     expect(single.map(r => JSON.parse(r.body ?? '{}'))).toEqual([
       { scope: 'c11', last_read: 4, pings_until: 0 },

@@ -81,7 +81,7 @@ describe('app builds', () => {
     const steps = (scripts[run ?? ''] ?? '').split(' && ')
     expect(steps).toEqual(['bun run build:wasm', 'bun run build:desktop'])
     expect(scripts['build:wasm']).toContain(
-      'wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --release'
+      'wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release'
     )
   })
 
@@ -106,6 +106,25 @@ describe('tauri config', () => {
 
   test('a key without the public key does not sign', () => {
     expect(tauriConfig({ hasKey: true }).bundle.createUpdaterArtifacts).toBe(false)
+  })
+
+  test('a stable release without the updater key is refused, a weekly one is not', () => {
+    expect(() => tauriConfig({ channel: 'stable', hasKey: true })).toThrow('stable release')
+    expect(() => tauriConfig({ channel: 'stable', pubkey: 'PUB' })).toThrow('stable release')
+    expect(tauriConfig({ channel: 'stable', pubkey: 'PUB', hasKey: true }).bundle).toMatchObject({
+      createUpdaterArtifacts: true,
+    })
+    expect(tauriConfig({ channel: 'weekly' }).bundle.createUpdaterArtifacts).toBe(false)
+  })
+
+  test('the desktop builds pass their channel, and a stable re-run keeps the release', () => {
+    const read = (path: string) => readFileSync(join(import.meta.dir, '..', path), 'utf8')
+    const desktop = read('.github/workflows/desktop.yml')
+    expect(desktop).toContain('CHANNEL: ${{ inputs.channel }}')
+    const stable = read('.github/workflows/release.yml').split('- name: Stable release')[1]
+    const step = stable.split('- name:')[0]
+    expect(step).toContain('gh release upload "$TAG" dist/* --clobber')
+    expect(step).not.toContain('gh release delete')
   })
 
   test('everything set', () => {

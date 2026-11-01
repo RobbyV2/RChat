@@ -80,7 +80,7 @@ describe('unread divider when reads arrive late', () => {
     unreads[0]({ items: [{ scope: 'c1', server: 's', last_read: 12, latest: 20 }], more: false })
     await tick()
     expect(st().unreadAnchor.c1).toBe(12)
-    expect(st().reads.c1.lastRead >= 20).toBe(true)
+    expect(st().reads.c1.lastRead).toBe(20)
   })
 
   test('a view left before /unreads answers gets no divider', async () => {

@@ -67,12 +67,12 @@ const SUB_CHECKS_RATE: f64 = 20.0;
 const GUEST_SUB_CHECKS_BURST: f64 = 100.0;
 const GUEST_SUB_CHECKS_RATE: f64 = 5.0;
 const FRAME_MAX: usize = 64 * 1024;
-const SIGNAL_MAX: usize = 20 * 1024;
+pub(crate) const SIGNAL_MAX: usize = 20 * 1024;
 const OUT_FRAMES: usize = 256;
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 const MSG_RATE: f64 = 50.0;
 const MSG_BURST: f64 = 200.0;
-const VOICE_ROOM_MAX: usize = 25;
+pub(crate) const VOICE_ROOM_MAX: usize = 25;
 pub const PURGE_CHUNK: usize = 500;
 const PING_EVERY: Duration = Duration::from_secs(30);
 const SILENT_LIMIT: Duration = Duration::from_secs(90);
@@ -168,6 +168,12 @@ static REAUTH_FAILED: LogGate = LogGate::new(LOG_EVERY, |n| {
 static REAUTH_GAVE_UP: LogGate = LogGate::new(LOG_EVERY, |n| {
     warn!(
         "closed {n} more realtime connection(s) in the last {}s whose re-authorization kept failing",
+        LOG_EVERY.as_secs()
+    )
+});
+static ADDR_FULL: LogGate = LogGate::new(LOG_EVERY, |n| {
+    warn!(
+        "refused {n} more realtime connection(s) in the last {}s from addresses at WS_SOCKETS_PER_IP",
         LOG_EVERY.as_secs()
     )
 });
@@ -1451,7 +1457,7 @@ pub fn announce_purge(hub: &Hub, server: &str, usernames: &[String]) {
     }
 }
 
-fn voice_room_max() -> usize {
+pub(crate) fn voice_room_max() -> usize {
     static MAX: OnceLock<usize> = OnceLock::new();
     *MAX.get_or_init(|| {
         std::env::var("VOICE_ROOM_MAX")
@@ -1520,7 +1526,12 @@ pub async fn handler(
     let slot = match state.hub.addr_slot(addr) {
         Some(slot) => slot,
         None => {
-            debug!("refused a realtime connection from an address with too many open");
+            match ADDR_FULL.admit(Instant::now()) {
+                true => warn!(
+                    "refused a realtime connection from an address with WS_SOCKETS_PER_IP connections open; raise it if many people share one address (carrier NAT, offices)"
+                ),
+                false => debug!("refused a realtime connection from an address with too many open"),
+            }
             return (StatusCode::TOO_MANY_REQUESTS, CLOSE_TOO_MANY_ADDR.1).into_response();
         }
     };
@@ -1650,7 +1661,7 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
         }
         ClientMsg::CallAccept { dm_id, peer_id } => {
             let peer_id = call_peer_id(peer_id)?;
-            if !state.hub.voice_ok(user) {
+            if !state.hub.accept_ok(user) {
                 return Err(TOO_FAST.to_string());
             }
             crate::api::blocks::check_dm_id(&state.db, user, dm_id)
@@ -10590,14 +10601,71 @@ mod tests {
             }
         }
         let each = 15 * 1024 + 10;
-        assert_eq!(
-            sent,
-            crate::hub::SIGNAL_BURST / each,
-            "{sent} signals passed"
+        let burst = crate::hub::signal_burst() / each;
+        assert!(
+            (burst..=burst + 1).contains(&sent),
+            "{sent} signals passed (the budget refills while they are sent)"
         );
         voice_msg(&state, "bob", 1, signal("alice", 4 * 1024))
             .await
             .expect("the other account signals as usual");
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_full_voice_room_can_be_negotiated_twice_at_once() {
+        let (state, path) = crate::api::test_util::temp_state("ws_signal_room").await;
+        for name in ["alice", "bob"] {
+            add_user_row(&state.db, name).await;
+            crate::api::test_util::add_member(&state.db, "rchat", name, 0, 0, 0).await;
+        }
+        let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+        for name in ["alice", "bob"] {
+            voice_msg(&state, name, 1, ClientMsg::VoiceJoin { channel_id: cid })
+                .await
+                .expect("join");
+        }
+        for n in 0..2 * (voice_room_max() - 1) {
+            let offer = ClientMsg::RtcSignal {
+                to: s("bob"),
+                channel_id: Some(cid),
+                dm_id: None,
+                payload: serde_json::json!({ "sdp": "x".repeat(11 * 1024) }),
+            };
+            assert_eq!(
+                voice_msg(&state, "alice", 1, offer).await,
+                Ok(()),
+                "offer {n}"
+            );
+        }
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn answering_a_call_is_paced_apart_from_voice_hops() {
+        let (state, path) = crate::api::test_util::temp_state("ws_accept_pace").await;
+        let db = &state.db;
+        for name in ["alice", "bob"] {
+            add_user_row(db, name).await;
+        }
+        let ab = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
+        )
+        .await;
+        let start = ClientMsg::CallStart {
+            dm_id: ab,
+            p2p: false,
+            video: false,
+            peer_id: None,
+        };
+        voice_msg(&state, "alice", 1, start).await.expect("call");
+        while state.hub.voice_ok("bob") {}
+        let accept = ClientMsg::CallAccept {
+            dm_id: ab,
+            peer_id: None,
+        };
+        assert_eq!(voice_msg(&state, "bob", 2, accept).await, Ok(()));
         crate::api::test_util::done(state, path).await;
     }
 

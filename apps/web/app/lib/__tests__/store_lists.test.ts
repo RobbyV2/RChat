@@ -1,7 +1,7 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { dmsUnread, serverUnread, useStore, resetSessionCaches } from '../store'
 import type { DmSummary, Message, ServerSummary, WsEvent } from '../types'
-import { me, member, msg, paged, serverDetail, user } from './fixtures'
+import { advance, me, member, msg, paged, serverDetail, user } from './fixtures'
 import { emptyLayout, layoutServers } from '../nav_layout'
 
 afterAll(resetSessionCaches)
@@ -438,19 +438,21 @@ describe('older history', () => {
 describe('resync after the socket lagged', () => {
   const realRandom = Math.random
   beforeEach(() => {
+    jest.useFakeTimers()
     Math.random = () => 0
   })
   afterEach(() => {
     Math.random = realRandom
+    jest.useRealTimers()
   })
 
   test('waits a random jitter of up to ten seconds before catching up', async () => {
     Math.random = () => 0.15
     serve({ items: [] })
     dispatch({ type: 'resync' })
-    await new Promise(r => setTimeout(r, 1500))
+    await advance(1500)
     expect(requests).toHaveLength(0)
-    await new Promise(r => setTimeout(r, 300))
+    await advance(300)
     expect(requests.length > 0).toBe(true)
   })
 
@@ -491,11 +493,10 @@ describe('resync after the socket lagged', () => {
       return json(url.pathname.includes('/messages') ? [] : { items: [] })
     }) as typeof fetch
     dispatch({ type: 'resync' })
-    await new Promise(r => setTimeout(r, 300))
-    await tick()
+    await advance(300)
     expect(serverNames()).toEqual(['rchat'])
     releaseNames()
-    await new Promise(r => setTimeout(r, 20))
+    await advance(20)
     expect(st().view).toEqual({ kind: 'channel', server: 'rchat', channelId: 1 })
     expect(st().servers.club).toBeUndefined()
     expect(st().members.club).toBeUndefined()
@@ -530,7 +531,7 @@ describe('resync after the socket lagged', () => {
       return new Response(JSON.stringify(body), { status: 200 })
     }) as typeof fetch
     dispatch({ type: 'resync' })
-    await new Promise(r => setTimeout(r, 320))
+    await advance(320)
     expect(serverNames()).toEqual(['rchat'])
     expect(st().servers.gone).toBeUndefined()
     expect(st().notices).toHaveLength(0)
@@ -560,10 +561,10 @@ describe('resync after the socket lagged', () => {
       return new Response(JSON.stringify(body), { status: 200 })
     }) as typeof fetch
     dispatch({ type: 'resync' })
-    await new Promise(r => setTimeout(r, 300))
+    await advance(300)
     dispatch({ type: 'member_kicked', server: 'club', username: 'alice', banned: false })
     releaseNames()
-    await new Promise(r => setTimeout(r, 20))
+    await advance(20)
     expect(serverNames()).toEqual(['rchat'])
     expect(st().notices).toHaveLength(1)
   })
@@ -593,8 +594,7 @@ describe('resync after the socket lagged', () => {
     dispatch({ type: 'resync' })
     dispatch({ type: 'resync' })
     expect(requests).toHaveLength(0)
-    await new Promise(r => setTimeout(r, 300))
-    await tick()
+    await advance(300)
     expect(requests.filter(r => r.includes('names='))).toHaveLength(1)
     expect(serverNames()).toHaveLength(50)
     expect(serverNames().some(n => gone.has(n))).toBe(false)

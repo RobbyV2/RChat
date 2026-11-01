@@ -356,6 +356,49 @@ describe('edit fixes', () => {
     expect(st().error).toBe('Finish your other edit first')
   })
 
+  test('Up keeps a changed edit whose view was evicted, and going back resumes it', () => {
+    const other = msg(12, { author: bob, channel_id: 2 })
+    useStore.setState({ messages: { c1: [mine], c2: [other] } })
+    st().startEdit('c1', mine)
+    st().setEditText('half done')
+    useStore.setState({
+      view: { kind: 'channel', server: 's', channelId: 2 },
+      messages: { c2: [other] },
+    })
+    expect(st().editLast('c2')).toBe(true)
+    expect(st().editing).toEqual({ key: 'c1', id: 10, text: 'half done' })
+    expect(st().error).toBe('Finish your other edit first')
+    useStore.setState({
+      view: { kind: 'channel', server: 's', channelId: 1 },
+      messages: { c1: [mine], c2: [other] },
+    })
+    expect(st().editLast('c1')).toBe(true)
+    expect(st().editing).toEqual({ key: 'c1', id: 10, text: 'half done', focus: 1 })
+  })
+
+  test('an edit in a deleted channel or a left server is dropped', () => {
+    const general = { id: 1, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
+    const other = msg(12, { author: bob, channel_id: 2 })
+    const away = { kind: 'channel' as const, server: 't', channelId: 2 }
+    useStore.setState({ view: away, messages: { c1: [mine], c2: [other] } })
+    st().startEdit('c1', mine)
+    st().setEditText('half done')
+    dispatch({ type: 'channel_deleted', server: 's', channel_id: 1 })
+    expect(st().editing).toBeNull()
+    expect(st().editLast('c2')).toBe(true)
+    expect(st().editing?.id).toBe(12)
+    useStore.setState({
+      view: { kind: 'channel', server: 's', channelId: 1 },
+      servers: { s: serverDetail('s', { channels: [general] }), t: serverDetail('t') },
+      messages: { c1: [mine], c2: [other] },
+    })
+    st().startEdit('c1', mine)
+    st().setEditText('half done')
+    useStore.setState({ view: away })
+    dispatch({ type: 'member_left', server: 's', username: 'bob' })
+    expect(st().editing).toBeNull()
+  })
+
   test('saving an edit of a message that is gone tells you', () => {
     st().startEdit('c1', mine)
     st().setEditText('x')

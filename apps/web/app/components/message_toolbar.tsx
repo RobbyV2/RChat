@@ -29,7 +29,7 @@ const scrollParent = (el: HTMLElement | null) => {
 
 // Keeps the row toolbar inside the scroll area. It overlaps the previous row by 12 px and moves
 // down if the top would be clipped.
-function useClampedToolbar(ref: RefObject<HTMLDivElement | null>) {
+function useClampedToolbar(ref: RefObject<HTMLDivElement | null>, shown: boolean) {
   useEffect(() => {
     const bar = ref.current
     const row = bar?.parentElement
@@ -61,7 +61,7 @@ function useClampedToolbar(ref: RefObject<HTMLDivElement | null>) {
       row.removeEventListener('focusout', leave)
       scroller?.removeEventListener('scroll', place)
     }
-  }, [ref])
+  }, [ref, shown])
 }
 const messageToolCls =
   'flex h-8 w-8 items-center justify-center rounded-md text-on-surface-variant hover:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-primary'
@@ -91,8 +91,9 @@ export function MessageToolbar({
   const keyboard = useRef(false)
   const [open, setOpen] = useState(false)
   const barRef = useRef<HTMLDivElement>(null)
-  useClampedToolbar(barRef)
-  if (!react && !actions.length && !onMore) return null
+  const shown = react || actions.length > 0 || !!onMore
+  useClampedToolbar(barRef, shown)
+  if (!shown) return null
   const full = reactionsFull(m)
   return (
     <div

@@ -158,7 +158,11 @@ describe('the command registry', () => {
 
 describe('sections', () => {
   const g = globalThis as { window?: unknown; document?: unknown }
-  const real = { window: g.window, document: g.document }
+  const real = {
+    window: g.window,
+    document: g.document,
+    askAddFriends: useStore.getState().askAddFriends,
+  }
   let asked: string[][] = []
   const general = [
     msg(1, { content: 'hello rockets', author: user('bob') }),
@@ -218,6 +222,7 @@ describe('sections', () => {
     g.window = real.window
     g.document = real.document
     useStore.setState({
+      askAddFriends: real.askAddFriends,
       token: null,
       me: null,
       selection: null,

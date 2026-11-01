@@ -1,3 +1,4 @@
+import { jest } from 'bun:test'
 import type {
   Embed,
   Me,
@@ -18,6 +19,26 @@ export const memoryStorage = {
   clear: () => memory.clear(),
 }
 if (!('localStorage' in globalThis)) Object.assign(globalThis, { localStorage: memoryStorage })
+
+// Lets every pending callback and response run, without waiting on any timer.
+export const drain = async () => {
+  for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r))
+}
+
+// Moves the fake clock (jest.useFakeTimers) `ms` forward one due timer at a time and runs `idle`
+// after each, stopping early once `done` holds. A busy machine can't change the outcome, and
+// the work is per timer, not per millisecond. A timer that keeps re-arming fails the test.
+export const advance = async (ms: number, done = () => false, idle = drain) => {
+  let reached = false
+  const end = setTimeout(() => (reached = true), ms)
+  await idle()
+  for (let fired = 0; !reached && !done(); fired += 1) {
+    if (fired === 10_000) throw new Error(`advance(${ms}): more than 10000 timers`)
+    jest.advanceTimersToNextTimer()
+    await idle()
+  }
+  clearTimeout(end)
+}
 
 export const user = (username: string, over: Partial<UserRef> = {}): UserRef => ({
   username,

@@ -1012,7 +1012,8 @@ impl ResolvedChannel {
 
     /// Refuses a viewer who is timed out in this channel's server. Every write in a server
     /// channel (sending, replies, threads, forwards, edits, reactions, pins, typing, voice and
-    /// polls) goes through this; reading never does.
+    /// polls) goes through this; reading never does. Site admins are not exempt, so a timeout
+    /// never shows who is one.
     pub async fn timeout_gate(&self, db: &Db) -> Result<(), ApiError> {
         let Some(user) = &self.server.user else {
             return Ok(());

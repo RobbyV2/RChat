@@ -1,7 +1,7 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { Message, WsEvent } from '../types'
-import { me, msg, serverDetail, user } from './fixtures'
+import { advance, drain, me, msg, serverDetail, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -156,6 +156,7 @@ describe('opening a pinned message from a notice', () => {
 
 describe('resync with the window open', () => {
   test('reloads the open list, and does nothing while it is closed', async () => {
+    jest.useFakeTimers()
     const realRandom = Math.random
     Math.random = () => 0
     const baseFetch = globalThis.fetch
@@ -167,20 +168,21 @@ describe('resync with the window open', () => {
     const pinReads = () => requests.filter(r => r.url.endsWith('/pins')).length
     try {
       dispatch({ type: 'resync' })
-      await new Promise(r => setTimeout(r, 400))
+      await advance(400)
       expect(pinReads()).toBe(0)
       pinsReply = [msg(10, { pinned_at: 100 })]
       st().openPins()
-      await tick()
+      await drain()
       expect(pinReads()).toBe(1)
       pinsReply = [msg(10, { pinned_at: 100 }), msg(9, { pinned_at: 90 })]
       dispatch({ type: 'resync' })
-      await new Promise(r => setTimeout(r, 400))
+      await advance(400)
       expect(pinReads()).toBe(2)
       expect(st().pins?.list?.map(m => m.id)).toEqual([10, 9])
     } finally {
       globalThis.fetch = baseFetch
       Math.random = realRandom
+      jest.useRealTimers()
     }
   })
 })

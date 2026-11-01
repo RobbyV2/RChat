@@ -186,8 +186,13 @@ jobs:
         if: needs.meta.outputs.channel == 'stable'
         run: |
           if [ "$PRERELEASE" = true ]; then flags=(--prerelease --latest=false); else flags=(--latest); fi
-          gh release delete "$TAG" --yes 2>/dev/null || true
-          gh release create "$TAG" dist/* --verify-tag --title "$TITLE" --generate-notes "${flags[@]}"
+          # A re-run updates the release in place, so latest.json never disappears.
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --title "$TITLE" "${flags[@]}"
+          else
+            gh release create "$TAG" dist/* --verify-tag --title "$TITLE" --generate-notes "${flags[@]}"
+          fi
       - name: Weekly release
         if: needs.meta.outputs.channel == 'weekly'
         run: |

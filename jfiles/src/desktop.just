@@ -1,6 +1,7 @@
 import "../common.just"
 
-# Desktop app (Tauri): needs `cargo install tauri-cli --version "^2" --locked`
+# Desktop app (Tauri): needs `cargo install tauri-cli --version "^2" --locked` and the
+# wasm-bindgen CLI pinned in Cargo.lock (`just src install`)
 
 # Run the desktop app against the Next dev server on 127.0.0.1:1430, with hot reload
 desktop: build-wasm-dev

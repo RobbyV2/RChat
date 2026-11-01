@@ -104,7 +104,11 @@ let summaryMemo: {
 export const unreadSummaryKey = (s: RChatState): string => {
   const key = [s.reads, s.pings, s.groupPings, s.notifyPrefs, s.me?.servers, s.servers, s.layout]
   if (summaryMemo && summaryMemo.key.every((k, i) => k === key[i])) return summaryMemo.value
-  const counts = unreadChannels(s.reads, scope => scopeUnread(s, scope))
+  const text = (scope: string) => {
+    const detail = s.servers[s.reads[scope]?.server ?? '']
+    return !detail || detail.channels.some(c => c.kind === 'text' && `c${c.id}` === scope)
+  }
+  const counts = unreadChannels(s.reads, scope => scopeUnread(s, scope) && text(scope))
   const names = new Map((s.me?.servers ?? []).map(x => [x.name, x]))
   const order = railOrder(s).filter(n => names.has(n))
   const rows = unreadRows(

@@ -1836,6 +1836,13 @@ export const useStore = create<RChatState>()((set, get) => {
     startWs()
   }
 
+  // An edit in a channel that is gone for good can never be saved; an evicted view keeps it.
+  const dropEditIn = (scopes: Set<string>) => {
+    const ed = get().editing
+    const channel = ed && findMessage(ed.id)?.channel_id
+    if (ed && (scopes.has(ed.key) || (channel && scopes.has(`c${channel}`)))) set({ editing: null })
+  }
+
   const dropServer = (name: string) => {
     if (get().voice?.server === name) get().leaveVoice()
     serverGen += 1
@@ -1843,6 +1850,7 @@ export const useStore = create<RChatState>()((set, get) => {
     dropLinkCards()
     const reload = serverPager.removed()
     const scopes = new Set((get().servers[name]?.channels ?? []).map(c => `c${c.id}`))
+    dropEditIn(scopes)
     for (const scope of scopes) tails.delete(scope)
     forgetViews(views.keys().filter(k => scopes.has(k) && !liveKey(k)))
     forgetPending((_, upload) => !scopes.has(upload.scope))
@@ -2435,6 +2443,7 @@ export const useStore = create<RChatState>()((set, get) => {
       panel?.kind === 'thread' && scopes.has(`c${panel.root.channel_id}`)
         ? [threadKey(panel.root.id)]
         : []
+    dropEditIn(new Set([...scopes, ...thread]))
     forgetViews([...scopes, ...thread])
     forgetPending((_, upload) => !scopes.has(upload.scope))
     forgetReads(scope => !scopes.has(scope))
@@ -3417,6 +3426,7 @@ export const useStore = create<RChatState>()((set, get) => {
     notifySynced = false
     readQueue.clear()
     unreadsMore = false
+    unreadsReady = Promise.resolve()
     stopCatchUp()
     joins.reset()
     dmPager.reset(null)
@@ -5469,6 +5479,7 @@ export const useStore = create<RChatState>()((set, get) => {
           forgetReads(scope => scope !== `c${ev.channel_id}`)
           forgetPending((_, upload) => upload.scope !== `c${ev.channel_id}`)
           tails.delete(`c${ev.channel_id}`)
+          dropEditIn(new Set([`c${ev.channel_id}`]))
           if (!liveKey(`c${ev.channel_id}`)) forgetViews([`c${ev.channel_id}`])
           const { view, servers } = get()
           if (view?.kind === 'channel' && view.channelId === ev.channel_id) {

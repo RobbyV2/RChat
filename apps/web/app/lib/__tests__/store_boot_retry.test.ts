@@ -1,19 +1,19 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { BOOT_RETRY_MS, useStore, resetSessionCaches } from '../store'
-import { me, memoryStorage, msg, serverDetail } from './fixtures'
+import { advance, me, memoryStorage, msg, serverDetail } from './fixtures'
 
 afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const realFetch = globalThis.fetch
 const realWindow = (globalThis as { window?: unknown }).window
-const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
 const chan = { id: 77, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
 let limited = 0
 let limitedS = false
 let path = '/'
 
 beforeEach(() => {
+  jest.useFakeTimers()
   memoryStorage.clear()
   Object.assign(globalThis, { localStorage: memoryStorage })
   limited = 0
@@ -73,6 +73,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  jest.useRealTimers()
   globalThis.fetch = realFetch
   ;(globalThis as { window?: unknown }).window = realWindow
 })
@@ -82,7 +83,7 @@ describe('boot under rate limits', () => {
     limited = 1
     await st().bootstrap()
     expect(st().view).toBeNull()
-    for (let i = 0; i < 40 && !st().view; i += 1) await wait(50)
+    await advance(2000, () => !!st().view)
     expect(st().view).toEqual({ kind: 'channel', server: 's', channelId: 77 })
     expect(path).toBe('/s/s/77/')
   })
@@ -93,7 +94,7 @@ describe('boot under rate limits', () => {
     try {
       limitedS = true
       await st().bootstrap()
-      for (let i = 0; i < 40 && !st().view; i += 1) await wait(25)
+      await advance(1000, () => !!st().view)
       expect(st().view).toEqual({ kind: 'channel', server: 'rchat', channelId: 78 })
     } finally {
       BOOT_RETRY_MS.splice(0, BOOT_RETRY_MS.length, ...waits)
@@ -104,7 +105,7 @@ describe('boot under rate limits', () => {
     path = '/dm/999/'
     await st().bootstrap()
     const view = st().view
-    await wait(1200)
+    await advance(20_000)
     expect(st().view).toEqual(view)
   })
 })

@@ -81,6 +81,14 @@ jobs:
           key: wasm-pack-${{ runner.os }}-0.15.0
       - if: steps.wasm-pack.outputs.cache-hit != 'true'
         run: cargo install wasm-pack --version 0.15.0 --locked
+      # The wasm-bindgen Cargo.lock pins, so wasm-pack does not download one.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: wasm-bindgen
+        with:
+          path: ~/.cargo/bin/wasm-bindgen${{ runner.os == 'Windows' && '.exe' || '' }}
+          key: wasm-bindgen-${{ runner.os }}-0.2.129
+      - if: steps.wasm-bindgen.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
 
       # Signing runs after every third-party setup action. Their post steps (cache saves) still
       # run after the build, so the steps after Collect remove the certificate and key files
@@ -107,6 +115,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           WIX_VERSION: ${{ inputs.wix-version }}
+          CHANNEL: ${{ inputs.channel }}
           UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |

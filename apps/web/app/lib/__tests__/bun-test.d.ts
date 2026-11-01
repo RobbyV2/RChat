@@ -18,5 +18,7 @@ declare module 'bun:test' {
     useFakeTimers(): void
     useRealTimers(): void
     advanceTimersByTime(ms: number): void
+    advanceTimersToNextTimer(): void
+    clearAllTimers(): void
   }
 }

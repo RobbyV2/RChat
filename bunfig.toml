@@ -1,2 +1,3 @@
 [install]
+# Next standalone tracing, the Rust emoji dataset test and `bunx peer` need the root node_modules.
 linker = "hoisted"

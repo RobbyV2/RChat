@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { setBlobs, type BlobStore } from '../platform'
 import { webBlobs } from '../platform/web_blobs'
 import { PaletteIndex, parseDoc, parseManifest, tokenize, type IndexDoc } from '../palette_index'
@@ -15,7 +15,7 @@ import {
 } from '../palette_sync'
 import { resetSessionCaches, useStore } from '../store'
 import type { Message, WsEvent } from '../types'
-import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { advance, me, memoryStorage, msg, serverDetail, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -222,6 +222,7 @@ describe('following the app', () => {
   })
 
   afterEach(() => {
+    jest.useRealTimers()
     stop?.()
     stop = null
     setBlobs(webBlobs)
@@ -312,6 +313,7 @@ describe('following the app', () => {
   })
 
   test('full: kept on the device, checked on start against the server, removed when off', async () => {
+    jest.useFakeTimers()
     const saved = new PaletteIndex(1e9)
     saved.add([
       doc(10, { text: 'kept words', bucket: 'c1' }),
@@ -322,17 +324,17 @@ describe('following the app', () => {
     for (const b of ['c1', 'c2', 'c5', 'd9']) saved.filled[b] = Date.now()
     await saved.save(blobs.store, 'palette:alice:')
     start('full')
-    for (let i = 0; i < 20 && fetched.every(u => !u.includes('/servers/gone')); i++) await tick()
-    await tick()
+    await advance(200, () => fetched.some(u => u.includes('/servers/gone')))
+    await advance(10)
     expect(ids('words')).toEqual(['m10'])
     expect(fetched).toContain('/api/servers/gone')
     expect(ids('rockets')).toEqual(['m1'])
-    await new Promise(r => setTimeout(r, 1700))
+    await advance(1700)
     const manifest = await blobs.data.get('palette:alice:manifest')?.text()
     expect(manifest).toContain('"c1"')
     expect(blobs.data.has('palette:alice:c50')).toBe(false)
     setIndexModeNow('off')
-    await tick()
+    await advance(10)
     expect(paletteIndex()).toBeNull()
     expect([...blobs.data.keys()].some(k => k.startsWith('palette:alice:'))).toBe(false)
   })

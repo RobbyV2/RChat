@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { JoinAborted, RtcManager } from '../rtc'
 import type { RtcPayload, VoiceMsg } from '../types'
+import { advance, drain } from './fixtures'
 
 let ids = 0
 
@@ -297,18 +298,27 @@ class FakePC {
   }
 }
 
-// Tests on fake timers (`virtual`) move the clock themselves; the fake connection then yields
-// through the real event loop, so awaiting it never waits on a timer nobody advances.
-let virtual = false
-const tick = () => new Promise(r => (virtual ? setImmediate(r) : setTimeout(r, 0)))
-const sleep = async (ms: number) => {
-  if (!virtual) return new Promise(r => setTimeout(r, ms))
-  for (let at = 0; at < ms; at += 1) {
-    for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r))
-    jest.advanceTimersByTime(1)
-  }
-  for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r))
+// Every test runs on fake timers. The fake connection yields through the real event loop and
+// counts its calls, so `idle` returns once everything due now has run and the clock may move.
+let inFlight = 0
+let landed = 0
+const tick = () => {
+  inFlight += 1
+  return new Promise<void>(r =>
+    setImmediate(() => {
+      inFlight -= 1
+      landed += 1
+      r()
+    })
+  )
 }
+const idle = async () => {
+  for (let seen = -1; inFlight > 0 || seen !== landed;) {
+    seen = landed
+    await drain()
+  }
+}
+const sleep = (ms: number) => advance(ms, () => false, idle)
 
 interface Wire {
   from: string
@@ -366,13 +376,18 @@ async function pump() {
   }
 }
 
-// Delivers signals for `ms` steps of at least 1 ms each, then until the wire is empty. On fake
-// timers each step is exactly 1 ms of the clock, so a busy CPU can't change the outcome.
-async function settle(ms = 30) {
-  for (let step = 0; step < ms || wire.length; step += 1) {
+// Hands every signal over as soon as it is sent, for `ms` of the fake clock, then once more
+// for the timers the last delivery set.
+const deliver = async () => {
+  await idle()
+  while (wire.length) {
     await pump()
-    await sleep(1)
+    await idle()
   }
+}
+async function settle(ms = 30) {
+  await advance(ms, () => false, deliver)
+  await advance(0, () => false, deliver)
 }
 
 const pcOf = (m: RtcManager, user: string) =>
@@ -382,6 +397,7 @@ const offersFrom = (name: string) =>
 const rollbacks = () => FakePC.all.reduce((n, pc) => n + pc.rollbacks, 0)
 
 beforeEach(() => {
+  jest.useFakeTimers()
   ids = 0
   wire = []
   sent = []
@@ -405,6 +421,8 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const m of managers.values()) m.leave()
+  jest.clearAllTimers()
+  jest.useRealTimers()
   g.RTCPeerConnection = saved.RTCPeerConnection
   g.MediaStream = saved.MediaStream
   g.navigator = saved.navigator
@@ -465,8 +483,7 @@ describe('first negotiation', () => {
   test('candidates that arrive before the offer are held, then added', async () => {
     const { alice, bob } = await room()
     bob.sync(['alice', 'bob'])
-    // wait for both, since a loaded machine can delay the chained timers past any fixed sleep
-    for (let i = 0; i < 500 && !wire.some(w => w.payload.candidate); i += 1) await sleep(1)
+    await advance(30, () => wire.some(w => w.payload.candidate), idle)
     // swap bob's offer and candidate on the wire
     const offer = wire.findIndex(w => w.payload.description)
     const cand = wire.findIndex(w => w.payload.candidate)
@@ -525,15 +542,6 @@ describe('closed peers', () => {
 })
 
 describe('recovery', () => {
-  beforeEach(() => {
-    jest.useFakeTimers()
-    virtual = true
-  })
-  afterEach(() => {
-    virtual = false
-    jest.useRealTimers()
-  })
-
   test('a lost first offer is re-sent with an ICE restart', async () => {
     const { alice, bob } = await room({ alice: 40, bob: 40 })
     let dropped = 0

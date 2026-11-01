@@ -64,6 +64,14 @@ jobs:
           key: wasm-pack-${{ runner.os }}-0.15.0
       - if: steps.wasm-pack.outputs.cache-hit != 'true'
         run: cargo install wasm-pack --version 0.15.0 --locked
+      # The wasm-bindgen Cargo.lock pins, so wasm-pack does not download one.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: wasm-bindgen
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-${{ runner.os }}-0.2.129
+      - if: steps.wasm-bindgen.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
       - run: bun apps/desktop/scripts/mobile.ts init android
       - name: Build debug APK
         if: ${{ !inputs.release }}
@@ -179,6 +187,15 @@ jobs:
           key: wasm-pack-${{ runner.os }}-0.15.0
       - if: steps.run.outputs.build == 'true' && steps.wasm-pack.outputs.cache-hit != 'true'
         run: cargo install wasm-pack --version 0.15.0 --locked
+      # The wasm-bindgen Cargo.lock pins, so wasm-pack does not download one.
+      - if: steps.run.outputs.build == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: wasm-bindgen
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-${{ runner.os }}-0.2.129
+      - if: steps.run.outputs.build == 'true' && steps.wasm-bindgen.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
       - if: steps.run.outputs.build == 'true'
         run: bun apps/desktop/scripts/mobile.ts init ios
       - name: Build unsigned IPA
