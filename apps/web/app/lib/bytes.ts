@@ -1,6 +1,8 @@
 export const isRecord = (x: unknown): x is Record<string, unknown> =>
   typeof x === 'object' && x !== null && !Array.isArray(x)
 
+export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+
 export const randomHex = (bytes: number) => {
   const buf = new Uint8Array(bytes)
   crypto.getRandomValues(buf)

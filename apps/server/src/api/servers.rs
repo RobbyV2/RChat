@@ -8,8 +8,8 @@ use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::{
-    BANNED, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, resolve_channel,
-    resolve_invite, resolve_server,
+    BANNED, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, forbidden,
+    resolve_channel, resolve_invite, resolve_server,
 };
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
 use crate::api::audit::{self, ChannelRef, Details, Entry, Target, TargetKind};
@@ -584,10 +584,6 @@ async fn count_rows(db: &Db, sql: &'static str, key: &str) -> Result<i64, ApiErr
 
 fn not_found(msg: &str) -> ApiError {
     ApiError(StatusCode::NOT_FOUND, msg.to_string())
-}
-
-fn forbidden(msg: &str) -> ApiError {
-    ApiError(StatusCode::FORBIDDEN, msg.to_string())
 }
 
 pub(crate) async fn check_name(

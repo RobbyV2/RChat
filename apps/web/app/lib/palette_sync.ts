@@ -41,8 +41,6 @@ export const registerIndexSource = (source: IndexSource) => {
   return () => void sources.delete(source.id)
 }
 
-export const sourceOf = (id: string) => sources.get(id)
-
 // Lets other sources add and drop their documents.
 export const indexDocs = (docs: IndexDoc[]) => {
   if (index && docs.length) {

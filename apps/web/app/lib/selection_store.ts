@@ -7,6 +7,7 @@ import { api } from './instances'
 import { canForward } from './forward'
 import { messageLinkUrl } from './message_links'
 import { canPin, isPinned } from './pins'
+import { chunked } from './reads'
 import { sharing } from './platform'
 import { messageServer, myPerms } from './selectors'
 import {
@@ -147,12 +148,6 @@ const fetchAfter = async (scope: string, after: number) => {
   }
 }
 
-const chunks = <T>(list: T[], size: number): T[][] => {
-  const out: T[][] = []
-  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size))
-  return out
-}
-
 const plural = (n: number, word: string) =>
   `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`
 
@@ -196,7 +191,7 @@ export const selectionSlice = (d: SelectionDeps) => {
 
   const deletePicked = async (scope: string, ids: number[], threadRootId: number | null) => {
     let deleted = 0
-    for (const part of chunks(ids, IDS_MAX)) {
+    for (const part of chunked(ids, IDS_MAX)) {
       const r = await api.bulkDelete({ scope, ids: part })
       d.dropDeleted(r.ids, threadRootId, scopePlace(get(), scope).server)
       deleted += r.deleted

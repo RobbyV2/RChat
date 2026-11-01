@@ -12,8 +12,6 @@ export const usePalette = create<PaletteState>(() => ({ open: null }))
 
 export const registerPalette = (open: (() => void) | null) => usePalette.setState({ open })
 
-export const usePaletteAvailable = () => usePalette(s => s.open !== null)
-
 export const paletteShortcut = (mac: boolean) => (mac ? '⌘K' : 'Ctrl+K')
 
 export const isMac = () =>
@@ -44,8 +42,6 @@ export const parseQuery = (text: string): { mode: PaletteMode; q: string } => {
   const hit = PREFIXES.find(p => t.startsWith(p.prefix))
   return hit ? { mode: hit.mode, q: t.slice(1).trim() } : { mode: 'all', q: t.trim() }
 }
-
-export const prefixOf = (mode: PaletteMode) => PREFIXES.find(p => p.mode === mode)?.prefix ?? ''
 
 // A command's argument: free text (checked by `check`) or a pick from `choices`.
 export interface ArgChoice {

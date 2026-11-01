@@ -1,4 +1,4 @@
-import { charCount, cleanBio } from './rules'
+import { charCount, charsLeft, cleanBio } from './rules'
 
 export const TOPIC_MAX = 1024
 
@@ -9,15 +9,8 @@ export const cleanTopic = cleanBio
 export const topicError = (text: string) =>
   charCount(cleanTopic(text)) > TOPIC_MAX ? `Topic must be at most ${TOPIC_MAX} characters` : null
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
-
-export const topicAnnouncement = (count: number, saved: boolean) => {
-  if (saved) return 'Topic saved'
-  const left = TOPIC_MAX - count
-  if (left < 0) return `${plural(-left, 'character')} over the limit`
-  if (left <= TOPIC_WARN) return `${plural(left, 'character')} left`
-  return ''
-}
+export const topicAnnouncement = (count: number, saved: boolean) =>
+  saved ? 'Topic saved' : charsLeft(TOPIC_MAX - count, TOPIC_WARN)
 
 // One line for the channel header: every run of whitespace, newlines included, becomes a space.
 export const topicLine = (topic: string) => topic.replace(/\s+/g, ' ').trim()

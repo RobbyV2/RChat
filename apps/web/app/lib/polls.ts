@@ -1,6 +1,7 @@
 // Polls: drafts for the create dialog, ballots, counts and the merge rules for live updates.
 
 import type { PollReq } from './api'
+import { plural } from './bytes'
 import type { Poll, PollKind, PollOption, ShowResults } from './types'
 
 export const POLL_QUESTION_MAX = 300
@@ -139,8 +140,6 @@ export function draftRequest(d: PollDraft): PollReq {
 export const percent = (count: number, total: number) =>
   total > 0 ? Math.round((count * 100) / total) : 0
 
-const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
-
 // "3 hours left" style text for an open poll with a deadline; null without one.
 export function timeLeft(closesAt: number | null, now: number): string | null {
   if (closesAt === null) return null
@@ -247,6 +246,3 @@ export function runoffRows(poll: Poll) {
     }
   })
 }
-
-// One line describing a poll, for previews and notifications.
-export const pollLine = (question: string) => `Poll: ${question}`

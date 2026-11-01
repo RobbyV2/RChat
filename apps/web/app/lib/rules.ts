@@ -11,6 +11,7 @@ import {
   type RoleLimits,
   type SiteSettings,
 } from './types'
+import { plural } from './bytes'
 
 export const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
   { label: 'Manage channels', bit: Perm.ManageChannels },
@@ -92,15 +93,15 @@ export const cleanBio = (text: string) =>
 export const bioError = (text: string) =>
   charCount(cleanBio(text)) > BIO_MAX ? `Description must be at most ${BIO_MAX} characters` : null
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
-
-export const bioAnnouncement = (count: number, saved: boolean) => {
-  if (saved) return 'Description saved'
-  const left = BIO_MAX - count
+// A character counter's announcement: nothing until at most `warn` characters are left.
+export const charsLeft = (left: number, warn: number) => {
   if (left < 0) return `${plural(-left, 'character')} over the limit`
-  if (left <= BIO_WARN) return `${plural(left, 'character')} left`
+  if (left <= warn) return `${plural(left, 'character')} left`
   return ''
 }
+
+export const bioAnnouncement = (count: number, saved: boolean) =>
+  saved ? 'Description saved' : charsLeft(BIO_MAX - count, BIO_WARN)
 
 export const canDeleteChannel = (channels: Channel[], channel: Channel) =>
   channels.length > 1 &&

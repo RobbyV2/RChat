@@ -163,8 +163,6 @@ export const spoilerParts = (text: string, cut = false): SpoilerPart[] => {
   return out
 }
 
-export const hasSpoilers = (text: string) => spoilerSpans(text).length > 0
-
 // Whether [from, to) touches a spoiler, markers included.
 export const overlapsSpoiler = (spans: SpoilerSpan[], from: number, to: number) =>
   spans.some(s => from < s.end && to > s.start)

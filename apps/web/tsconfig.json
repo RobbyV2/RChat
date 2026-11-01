@@ -24,7 +24,6 @@
   },
   "include": [
     "next-env.d.ts",
-    "wasm.d.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",

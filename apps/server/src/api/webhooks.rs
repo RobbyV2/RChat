@@ -20,8 +20,8 @@ use url::Url;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::{
-    Proof, ResolvedChannel, ServerAccess, Via, denied, plain_member_perms, resolve_channel,
-    resolve_message, resolve_server, timed_out_error, webhook_channel,
+    Proof, ResolvedChannel, ServerAccess, Via, denied, forbidden, plain_member_perms,
+    resolve_channel, resolve_message, resolve_server, timed_out_error, webhook_channel,
 };
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
 use crate::api::budget::{Budget, slow_down};
@@ -371,10 +371,6 @@ fn unknown() -> ApiError {
 
 fn unknown_message() -> ApiError {
     ApiError(StatusCode::NOT_FOUND, UNKNOWN_MESSAGE.to_string())
-}
-
-fn forbidden(msg: &str) -> ApiError {
-    ApiError(StatusCode::FORBIDDEN, msg.to_string())
 }
 
 /// An incoming webhook as stored.
@@ -3357,6 +3353,7 @@ async fn dispatch(
 
 /// Sends every delivery due at `at` and waits for them, at most `CONCURRENCY` at once and
 /// one per hook at a time. Returns how many requests were sent.
+#[cfg(test)]
 pub async fn run_due(state: &AppState, policy: &Policy, at: i64) -> Result<usize, ApiError> {
     let pool = Pool::new(CONCURRENCY);
     let mut done = 0;

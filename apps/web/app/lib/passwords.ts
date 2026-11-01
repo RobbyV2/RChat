@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { isRecord } from './bytes'
+import { isRecord, plural } from './bytes'
 import { expiryText } from './rules'
 import type { PasswordStatus, ServerPassword, ServerPasswords } from './types'
 
@@ -39,8 +39,6 @@ export const statusAt = (p: ServerPassword, now: number): PasswordStatus =>
 
 export const isClosed = (s: ServerPasswords, now: number) =>
   s.protected && !s.permanent && !s.passwords.some(p => statusAt(p, now) === 'live')
-
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
 export const usesText = (uses: number, max: number | null) =>
   max === null ? plural(uses, 'use') : `${uses}/${max}`

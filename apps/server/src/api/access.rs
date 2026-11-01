@@ -79,7 +79,7 @@ fn banned() -> ApiError {
     ApiError(StatusCode::FORBIDDEN, BANNED.to_string())
 }
 
-fn forbidden(msg: &str) -> ApiError {
+pub(crate) fn forbidden(msg: &str) -> ApiError {
     ApiError(StatusCode::FORBIDDEN, msg.to_string())
 }
 

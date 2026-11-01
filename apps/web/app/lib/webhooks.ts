@@ -1,4 +1,4 @@
-import type { AvatarKind, Message, RichEmbed, UserRef } from './types'
+import type { AvatarKind, Message, UserRef } from './types'
 
 // Author keys of incoming webhooks start with `@`, which usernames cannot contain.
 const PREFIX = '@webhook:'
@@ -83,8 +83,6 @@ export const eventLabel = (key: string) =>
   OUTGOING_EVENTS.find(e => e.key === key)?.label ?? (key === 'ping' ? 'Test' : key)
 
 export const WEBHOOK_NAME_MAX = 80
-export const CHANNEL_WEBHOOKS_MAX = 15
-export const SERVER_WEBHOOKS_MAX = 100
 export const OUTGOING_MAX = 10
 
 // The full URL to post to, from the path the server returns once.
@@ -164,11 +162,6 @@ export const safeLink = (url: string | null | undefined): string | null => {
     return null
   }
 }
-
-export const hasEmbeds = (
-  m: Pick<Message, 'webhook'>
-): m is { webhook: { id: number; embeds: RichEmbed[] } } =>
-  !!m.webhook && m.webhook.embeds.length > 0
 
 // Inline fields sit side by side, up to three per row; others take a full row.
 export function fieldRows<T extends { inline?: boolean }>(fields: T[]): T[][] {
