@@ -1496,6 +1496,7 @@ pub fn routes(state: AppState, roles: &Roles, key: ClientIp) -> Router<AppState>
                 post(passwords::create_password),
             )
             .route("/servers/{name}/available", get(servers::server_available))
+            .route("/identity/p2p_binding", post(instance::p2p_binding))
             .route(
                 "/config_shares",
                 get(config_shares::list_shares).post(config_shares::create_share),
@@ -2537,6 +2538,7 @@ mod tests {
             (false, "/auth/words/nobody", 20),
             (false, "/settings", 40),
             (true, "/config_shares", 40),
+            (true, "/identity/p2p_binding", 40),
         ] {
             let mut count = 0;
             for n in 0..tries {
@@ -2571,6 +2573,7 @@ mod tests {
         assert_eq!(other.status(), StatusCode::OK);
         assert!(limited["/invites/rchat"] >= 5, "{limited:?}");
         assert!(limited["/config_shares"] >= 5, "{limited:?}");
+        assert!(limited["/identity/p2p_binding"] >= 5, "{limited:?}");
         assert_eq!(limited["/auth/words/nobody"], 0, "{limited:?}");
         assert_eq!(limited["/settings"], 0, "{limited:?}");
         done(state, path).await;

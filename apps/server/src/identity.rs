@@ -13,6 +13,10 @@ use sha2::{Digest, Sha256};
 use url::{Host, Url};
 
 pub const ASSERTION_TTL_SECS: i64 = 300;
+pub const BINDING_AUD: &str = "rchat-p2p-bind";
+pub const BINDING_TTL_SECS: i64 = 7 * 24 * 60 * 60;
+pub const BINDING_SKEW_SECS: u64 = 300;
+const BINDING_TAG: &[u8] = b"rchat-p2p-bind1\0";
 pub const JWKS_PATH: &str = "/.well-known/jwks.json";
 pub const ALG: &str = "EdDSA";
 const TYP: &str = "JWT";
@@ -193,7 +197,7 @@ impl Keyring {
         }
     }
 
-    pub fn sign(&self, claims: &Claims) -> anyhow::Result<String> {
+    pub fn sign<T: Serialize>(&self, claims: &T) -> anyhow::Result<String> {
         let key = self.active();
         let header = Header {
             alg: ALG.to_string(),
@@ -219,6 +223,55 @@ pub struct Claims {
     pub jti: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nonce: Option<String>,
+}
+
+/// Claims of a P2P identity binding: the instance vouches that the account `sub` holds the P2P
+/// identity key `ik`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BindingClaims {
+    pub iss: String,
+    pub sub: String,
+    pub aud: String,
+    pub ik: String,
+    pub iat: i64,
+    pub exp: i64,
+}
+
+/// What a binding proof signs: the domain tag, the account, a zero byte and the time in decimal.
+pub fn binding_message(sub: &str, ts: i64) -> Vec<u8> {
+    [
+        BINDING_TAG,
+        sub.as_bytes(),
+        b"\0",
+        ts.to_string().as_bytes(),
+    ]
+    .concat()
+}
+
+/// A P2P identity key: base64url Ed25519, a canonical encoding and not of small order.
+pub fn p2p_key(ik: &str) -> Option<VerifyingKey> {
+    let bytes: [u8; 32] = URL_SAFE_NO_PAD.decode(ik).ok()?.try_into().ok()?;
+    let key = VerifyingKey::from_bytes(&bytes).ok()?;
+    match key.is_weak() || URL_SAFE_NO_PAD.encode(key.to_bytes()) != ik {
+        true => None,
+        false => Some(key),
+    }
+}
+
+/// Whether `proof` is a signature by the key `ik` over the binding of `sub` at `ts`.
+pub fn binding_proof_ok(key: &VerifyingKey, sub: &str, ts: i64, proof: &str) -> bool {
+    let Some(signature) = URL_SAFE_NO_PAD
+        .decode(proof)
+        .ok()
+        .and_then(|b| <[u8; 64]>::try_from(b).ok())
+    else {
+        return false;
+    };
+    key.verify_strict(
+        &binding_message(sub, ts),
+        &Signature::from_bytes(&signature),
+    )
+    .is_ok()
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -724,6 +777,86 @@ mod tests {
             header,
             serde_json::json!({"alg": "EdDSA", "kid": ring.active().kid, "typ": "JWT"})
         );
+    }
+
+    // The same vectors are in the TS tests (identity.test.ts, p2p_badge.test.ts): the proof
+    // format and the binding token agree across the two implementations.
+    const BIND_IK: &str = "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw";
+    const BIND_PROOF: &str =
+        "8U4Mtq2GXpao_qppPrPJ0hRcVcGtMYUcmpNk-KubIef9gx8k0kdgWwhUw8QN60CtMhcnbNL09X7RJ3TLJn0xAA";
+    const BIND_TOKEN: &str = "eyJhbGciOiJFZERTQSIsImtpZCI6ImtQcktfcW14VldhWVZBOXd3QkY2SXVvM3ZWeno3VHhIQ1R3WEJ5Z3JTNGsiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjM4MjEiLCJzdWIiOiJhbGljZUAxMjcuMC4wLjE6MzgyMSIsImF1ZCI6InJjaGF0LXAycC1iaW5kIiwiaWsiOiI2a3BzWS1LY1VncS05VkI3RXk3Ri1aVkhkcTYtdm51U1FoN3FhUlJHMGl3IiwiaWF0IjoxNzkzMDU2MzA2LCJleHAiOjE3OTM2NjExMDZ9.fc47iS6ATl5Vb9s-ZMHAemFri8l87vnGKjCsw7yWG5kR5S892h3A9LFLEUczeCC1xQ6LqPJ8_qHxznRAHMi7AA";
+
+    #[test]
+    fn binding_proofs_and_tokens_match_the_fixed_vectors() {
+        let signer = SigningKey::from_bytes(&[7u8; 32]);
+        assert_eq!(
+            URL_SAFE_NO_PAD.encode(signer.verifying_key().to_bytes()),
+            BIND_IK
+        );
+        assert_eq!(
+            binding_message("alice@chat.example", 1793056306),
+            b"rchat-p2p-bind1\0alice@chat.example\x001793056306"
+        );
+        let key = p2p_key(BIND_IK).unwrap();
+        assert!(binding_proof_ok(
+            &key,
+            "alice@chat.example",
+            1793056306,
+            BIND_PROOF
+        ));
+        assert!(!binding_proof_ok(
+            &key,
+            "alice@chat.example",
+            1793056307,
+            BIND_PROOF
+        ));
+        assert!(!binding_proof_ok(
+            &key,
+            "bob@chat.example",
+            1793056306,
+            BIND_PROOF
+        ));
+        let other = p2p_key(
+            &URL_SAFE_NO_PAD.encode(
+                SigningKey::from_bytes(&[9u8; 32])
+                    .verifying_key()
+                    .to_bytes(),
+            ),
+        )
+        .unwrap();
+        assert!(!binding_proof_ok(
+            &other,
+            "alice@chat.example",
+            1793056306,
+            BIND_PROOF
+        ));
+        assert!(!binding_proof_ok(
+            &key,
+            "alice@chat.example",
+            1793056306,
+            "AAAA"
+        ));
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        let mut order_two = [0xffu8; 32];
+        order_two[0] = 0xec;
+        order_two[31] = 0x7f;
+        for weak in [[0u8; 32], identity, order_two] {
+            assert!(p2p_key(&URL_SAFE_NO_PAD.encode(weak)).is_none());
+        }
+        assert!(p2p_key("short").is_none());
+        let ring = Keyring::parse("nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A").unwrap();
+        let token = ring
+            .sign(&BindingClaims {
+                iss: "http://127.0.0.1:3821".to_string(),
+                sub: "alice@127.0.0.1:3821".to_string(),
+                aud: BINDING_AUD.to_string(),
+                ik: BIND_IK.to_string(),
+                iat: 1793056306,
+                exp: 1793056306 + BINDING_TTL_SECS,
+            })
+            .unwrap();
+        assert_eq!(token, BIND_TOKEN);
     }
 
     #[test]

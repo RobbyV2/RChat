@@ -111,6 +111,7 @@ export interface MemberContent {
   m: Membership
   cert?: Cert
   profile?: Profile
+  binding?: string
   reason?: string
   // An invite signed for someone who redeemed a code: the code, and when the invite lapses.
   code?: string

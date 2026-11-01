@@ -17,7 +17,14 @@ import {
 import { DAG } from '../../lib/p2p/dag'
 import { PinsButton } from '../pins'
 import { PingBadge, pingLabel } from '../ping_badge'
-import { ContactShield, KeyAvatar, P2pBadge, PresenceDot } from './p2p_badge'
+import {
+  AccountChip,
+  ContactShield,
+  KeyAvatar,
+  P2pBadge,
+  PresenceDot,
+  useHasChip,
+} from './p2p_badge'
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { useRoomCallShare, VoiceGrid } from '../voice_grid'
 import { IncomingCallBar, P2pCallButtons } from './p2p_call'
@@ -106,6 +113,7 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
     [raw, missed, more]
   )
   const peerIk = chat?.peer ?? ''
+  const chip = useHasChip(peerIk)
   const peerName = peer ? displayName(peer) : 'Contact'
   const online = presence === 'online'
   const canAct = !reader && !elsewhere && peer?.state === 'mutual' && status !== 'moved'
@@ -187,14 +195,27 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
         </span>
         <span className="flex min-w-0 flex-col text-left">
           <span className="flex min-w-0 items-center gap-1.5">
-            <span className="streamer truncate text-sm font-medium">{peerName}</span>
+            <span
+              className={`streamer min-w-0 truncate text-sm font-medium ${chip ? 'sm:max-w-[60%] sm:shrink-0' : ''}`}
+            >
+              {peerName}
+            </span>
             {peer && <ContactShield kind={shieldOf(peer)} size={14} />}
+            <span className="flex min-w-0 max-sm:hidden">
+              <AccountChip ik={peerIk} />
+            </span>
           </span>
-          <span
-            data-p2p-online={online ? 'yes' : 'no'}
-            className="truncate text-xs text-on-surface-variant"
-          >
-            {statusLine(online, peerName)}
+          {/* A phone's header has no room next to the name: the badge leads the status line. */}
+          <span className="flex min-w-0 items-center gap-1">
+            <span className="flex shrink-0 sm:hidden">
+              <AccountChip ik={peerIk} size="icon" />
+            </span>
+            <span
+              data-p2p-online={online ? 'yes' : 'no'}
+              className="truncate text-xs text-on-surface-variant"
+            >
+              {statusLine(online, peerName)}
+            </span>
           </span>
         </span>
       </button>

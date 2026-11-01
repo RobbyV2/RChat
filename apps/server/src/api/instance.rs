@@ -11,7 +11,10 @@ use utoipa::ToSchema;
 
 use super::{ApiError, ApiErrorBody, Authed, Settings};
 use crate::db::now;
-use crate::identity::{ASSERTION_TTL_SECS, Claims, random_id};
+use crate::identity::{
+    ASSERTION_TTL_SECS, BINDING_AUD, BINDING_SKEW_SECS, BINDING_TTL_SECS, BindingClaims, Claims,
+    binding_proof_ok, p2p_key, random_id,
+};
 use crate::instance::{Features, InstanceInfo};
 use crate::relay::IceServer;
 use crate::state::AppState;
@@ -100,10 +103,10 @@ pub(crate) async fn well_known(state: State<AppState>, peer: Peer, headers: Head
 
 /// Get the instance signing keys
 ///
-/// The public Ed25519 keys this instance signs identity assertions with, as a JSON Web Key
-/// Set. Verify an assertion from `POST /api/identity/assertion` against the key whose `kid`
-/// matches the JWT header. No authentication. Cached for 300 seconds. General rate-limit
-/// bucket.
+/// The public Ed25519 keys this instance signs identity assertions and P2P bindings with, as a
+/// JSON Web Key Set. Verify a token from `POST /api/identity/assertion` or
+/// `POST /api/identity/p2p_binding` against the key whose `kid` matches the JWT header. No
+/// authentication. Cached for 300 seconds. General rate-limit bucket.
 #[utoipa::path(get, path = "/.well-known/jwks.json", tag = "Instance", responses((status = 200, description = "Public signing keys of this instance as a JSON Web Key Set (RFC 7517); kid is the RFC 7638 thumbprint, the first key signs", body = Object), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn jwks(State(state): State<AppState>) -> Response {
     discovery_response(&state, state.instance.keys.jwks(), 300)
@@ -186,6 +189,92 @@ pub(crate) async fn assertion(
         token,
         iss,
         sub,
+        expires_at: claims.exp,
+    }))
+}
+
+/// Request for a P2P identity binding.
+#[derive(Deserialize, ToSchema)]
+pub struct BindingRequest {
+    /// The P2P identity key: an Ed25519 public key, base64url without padding (43 characters).
+    #[schema(example = "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo")]
+    pub ik: String,
+    /// Unix seconds when the proof was made. It must be within 5 minutes of the server clock.
+    pub ts: i64,
+    /// Ed25519 signature by `ik`, base64url without padding (86 characters), over the bytes
+    /// `rchat-p2p-bind1`, a zero byte, `sub`, a zero byte and `ts` in decimal. `sub` is the
+    /// caller as `username@host`, with `host` from `GET /api/instance`.
+    pub proof: String,
+}
+
+/// A signed P2P identity binding.
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct Binding {
+    /// Compact EdDSA JWT with claims `iss`, `sub`, `aud` (`rchat-p2p-bind`), `ik`, `iat` and
+    /// `exp`.
+    pub token: String,
+    /// Issuer: this instance's origin.
+    #[schema(example = "https://chat.example.com")]
+    pub iss: String,
+    /// Subject: the caller as `username@host`.
+    #[schema(example = "alice@chat.example.com")]
+    pub sub: String,
+    /// The P2P identity key the binding is for, as sent.
+    pub ik: String,
+    /// Unix seconds when the token expires, 7 days after issue.
+    pub expires_at: i64,
+}
+
+/// Bind a P2P identity key to your account
+///
+/// Signs a JWT (7 days) stating that the caller, `username@host` on this instance, holds the P2P
+/// identity key `ik`. Peers show it as an account badge after checking it against the keys at
+/// `/.well-known/jwks.json`. The proof is a signature by `ik` itself, so nobody can bind a key
+/// they don't hold. Stateless: nothing is stored, and a binding can't be revoked before it
+/// expires (clients ask for a new one every day while the badge is on). Requires a bearer token;
+/// guests can't call it. Strict rate-limit bucket.
+#[utoipa::path(post, path = "/api/identity/p2p_binding", tag = "Instance", request_body = BindingRequest, responses((status = 200, description = "EdDSA JWT binding ik to sub = user@host for 7 days", body = Binding), (status = 400, description = "ik is not a valid Ed25519 key, ts is more than 5 minutes from the server clock, or proof is not a signature by ik over this account and ts", body = ApiErrorBody), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+pub(crate) async fn p2p_binding(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Peer(peer): Peer,
+    headers: HeaderMap,
+    Json(req): Json<BindingRequest>,
+) -> Result<Json<Binding>, ApiError> {
+    let BindingRequest { ik, ts, proof } = req;
+    if user.username.contains('@') {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "The badge isn't available for usernames with @".to_string(),
+        ));
+    }
+    let bad = |m: &str| ApiError(StatusCode::BAD_REQUEST, m.to_string());
+    let key = p2p_key(&ik).ok_or_else(|| bad("ik must be a base64url Ed25519 public key"))?;
+    let iat = now();
+    if ts.abs_diff(iat) > BINDING_SKEW_SECS {
+        return Err(bad("ts must be within 5 minutes of the server clock"));
+    }
+    let iss = state.instance.origin(peer, &headers);
+    let sub = format!("{}@{}", user.username, state.instance.host(&iss));
+    if !binding_proof_ok(&key, &sub, ts, &proof) {
+        return Err(bad(
+            "proof is not a signature by ik over this account and ts",
+        ));
+    }
+    let claims = BindingClaims {
+        iss: iss.clone(),
+        sub: sub.clone(),
+        aud: BINDING_AUD.to_string(),
+        ik: ik.clone(),
+        iat,
+        exp: iat + BINDING_TTL_SECS,
+    };
+    let token = state.instance.keys.sign(&claims)?;
+    Ok(Json(Binding {
+        token,
+        iss,
+        sub,
+        ik,
         expires_at: claims.exp,
     }))
 }
@@ -483,6 +572,270 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(legacy.status(), StatusCode::FORBIDDEN);
+        server.abort();
+        done(state, path).await;
+    }
+
+    fn b64url(bytes: &[u8]) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    }
+
+    fn unb64url(text: &str) -> Vec<u8> {
+        use base64::Engine;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(text)
+            .unwrap()
+    }
+
+    fn bind_body(signer: &ed25519_dalek::SigningKey, ik: &str, sub: &str, ts: i64) -> String {
+        use ed25519_dalek::Signer;
+        let proof = signer.sign(&crate::identity::binding_message(sub, ts));
+        serde_json::json!({"ik": ik, "ts": ts, "proof": b64url(&proof.to_bytes())}).to_string()
+    }
+
+    // Checks the JWT against the instance's published JWKS by hand: header, kid, signature.
+    fn verified_payload(jwt: &str, jwks: &serde_json::Value) -> serde_json::Value {
+        let parts: Vec<&str> = jwt.split('.').collect();
+        assert_eq!(parts.len(), 3);
+        let header: serde_json::Value = serde_json::from_slice(&unb64url(parts[0])).unwrap();
+        assert_eq!(header["alg"], "EdDSA");
+        assert_eq!(header["typ"], "JWT");
+        let key = jwks["keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|k| k["kid"] == header["kid"])
+            .expect("kid in the JWKS");
+        let x: [u8; 32] = unb64url(key["x"].as_str().unwrap()).try_into().unwrap();
+        let sig: [u8; 64] = unb64url(parts[2]).try_into().unwrap();
+        ed25519_dalek::VerifyingKey::from_bytes(&x)
+            .unwrap()
+            .verify_strict(
+                format!("{}.{}", parts[0], parts[1]).as_bytes(),
+                &ed25519_dalek::Signature::from_bytes(&sig),
+            )
+            .expect("signed by the instance key");
+        serde_json::from_slice(&unb64url(parts[1])).unwrap()
+    }
+
+    #[tokio::test]
+    async fn p2p_binding_needs_the_identity_key_a_fresh_ts_and_an_account() {
+        let (state, path) = temp_state("instance_binding").await;
+        let (addr, server) = serve(state.clone()).await;
+        let base = format!("http://{addr}");
+        let client = reqwest::Client::new();
+        let token = register(&client, &base, "Alice").await;
+        let sub = format!("alice@{addr}");
+        let signer = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let ik = b64url(signer.verifying_key().as_bytes());
+        let bind = |body: String, bearer: Option<&str>| {
+            let mut req = client
+                .post(format!("{base}/api/identity/p2p_binding"))
+                .header("content-type", "application/json")
+                .body(body);
+            if let Some(t) = bearer {
+                req = req.bearer_auth(t);
+            }
+            req.send()
+        };
+
+        let before = now();
+        let res = bind(bind_body(&signer, &ik, &sub, now()), Some(&token))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let Binding {
+            token: jwt,
+            iss,
+            sub: got,
+            ik: bound,
+            expires_at,
+        } = serde_json::from_slice(&res.bytes().await.unwrap()).unwrap();
+        assert_eq!(
+            (iss.as_str(), got.as_str(), bound.as_str()),
+            (base.as_str(), sub.as_str(), ik.as_str())
+        );
+        let jwks = json(
+            client
+                .get(format!("{base}/.well-known/jwks.json"))
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+        let claims = verified_payload(&jwt, &jwks);
+        let iat = claims["iat"].as_i64().unwrap();
+        assert!((before..=now()).contains(&iat));
+        assert_eq!(
+            claims,
+            serde_json::json!({
+                "iss": base,
+                "sub": sub,
+                "aud": "rchat-p2p-bind",
+                "ik": ik,
+                "iat": iat,
+                "exp": iat + 7 * 24 * 60 * 60,
+            })
+        );
+        assert_eq!(expires_at, iat + 7 * 24 * 60 * 60);
+        let rotated = crate::identity::Keyring::parse(&crate::identity::new_seed()).unwrap();
+        let other = serde_json::to_value(rotated.jwks()).unwrap();
+        assert!(
+            std::panic::catch_unwind(|| verified_payload(&jwt, &other)).is_err(),
+            "another instance's keys don't verify it"
+        );
+
+        let refused = |res: reqwest::Response, status: StatusCode, what: &'static str| async move {
+            assert_eq!(res.status(), status, "{what}");
+            if status == StatusCode::BAD_REQUEST {
+                let body = json(res).await;
+                assert!(
+                    body["error"].as_str().is_some_and(|e| e.is_ascii()),
+                    "{what}"
+                );
+            }
+        };
+        let intruder = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+        refused(
+            bind(bind_body(&intruder, &ik, &sub, now()), Some(&token))
+                .await
+                .unwrap(),
+            StatusCode::BAD_REQUEST,
+            "a proof by another key than ik",
+        )
+        .await;
+        refused(
+            bind(
+                bind_body(&signer, &ik, &format!("bob@{addr}"), now()),
+                Some(&token),
+            )
+            .await
+            .unwrap(),
+            StatusCode::BAD_REQUEST,
+            "a proof for another account",
+        )
+        .await;
+        let t = now();
+        let mut shifted: serde_json::Value =
+            serde_json::from_str(&bind_body(&signer, &ik, &sub, t)).unwrap();
+        shifted["ts"] = serde_json::json!(t - 1);
+        refused(
+            bind(shifted.to_string(), Some(&token)).await.unwrap(),
+            StatusCode::BAD_REQUEST,
+            "a proof made for another ts",
+        )
+        .await;
+        for ts in [now() - 301, now() + 301, i64::MIN, i64::MAX] {
+            refused(
+                bind(bind_body(&signer, &ik, &sub, ts), Some(&token))
+                    .await
+                    .unwrap(),
+                StatusCode::BAD_REQUEST,
+                "a stale or future ts",
+            )
+            .await;
+        }
+        assert_eq!(
+            bind(bind_body(&signer, &ik, &sub, now() - 290), Some(&token))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK,
+            "a clock a little behind is fine"
+        );
+        let zero = ed25519_dalek::SigningKey::from_bytes(&[0u8; 32]);
+        for bad_ik in [
+            String::new(),
+            "not a key".to_string(),
+            b64url(&[0u8; 32]),
+            b64url(&[[1u8].as_slice(), &[0u8; 31]].concat()),
+            format!("{ik}="),
+        ] {
+            refused(
+                bind(bind_body(&zero, &bad_ik, &sub, now()), Some(&token))
+                    .await
+                    .unwrap(),
+                StatusCode::BAD_REQUEST,
+                "an invalid or weak ik",
+            )
+            .await;
+        }
+        let mut short: serde_json::Value =
+            serde_json::from_str(&bind_body(&signer, &ik, &sub, now())).unwrap();
+        short["proof"] = serde_json::json!("AAAA");
+        refused(
+            bind(short.to_string(), Some(&token)).await.unwrap(),
+            StatusCode::BAD_REQUEST,
+            "a proof that isn't a signature",
+        )
+        .await;
+
+        refused(
+            bind(bind_body(&signer, &ik, &sub, now()), None)
+                .await
+                .unwrap(),
+            StatusCode::UNAUTHORIZED,
+            "no token",
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO servers(name, display_name, created_at) VALUES('lobby', 'Lobby', 1)",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, 'lobby', 0, 4000000000)")
+            .bind(crate::db::secret_key(&crate::api::test_util::test_grant("g1")))
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let reads = client
+            .get(format!("{base}/api/servers/lobby"))
+            .header("x-guest-grant", crate::api::test_util::test_grant("g1"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(reads.status(), StatusCode::OK, "the guest grant is live");
+        let guest = client
+            .post(format!("{base}/api/identity/p2p_binding"))
+            .header("content-type", "application/json")
+            .header("x-guest-grant", crate::api::test_util::test_grant("g1"))
+            .body(bind_body(&signer, &ik, &sub, now()))
+            .send()
+            .await
+            .unwrap();
+        refused(guest, StatusCode::UNAUTHORIZED, "a guest").await;
+        refused(
+            bind(bind_body(&signer, &ik, &sub, now()), Some("not-a-token"))
+                .await
+                .unwrap(),
+            StatusCode::UNAUTHORIZED,
+            "an unknown token",
+        )
+        .await;
+
+        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('old@name', 'old@name', 'x', 'text', 'identicon', 0)")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO tokens(token, username, created_at) VALUES('h:c49fea7425fa7f8699897a97c159c6690267d9003bb78c53fafa8fc15c325d84', 'old@name', 0)",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+        refused(
+            bind(
+                bind_body(&signer, &ik, &format!("old@name@{addr}"), now()),
+                Some("legacy"),
+            )
+            .await
+            .unwrap(),
+            StatusCode::FORBIDDEN,
+            "a username with @",
+        )
+        .await;
         server.abort();
         done(state, path).await;
     }

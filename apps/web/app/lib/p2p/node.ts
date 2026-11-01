@@ -23,9 +23,10 @@ import {
   type AddResult,
   type Contact,
 } from './contacts'
-import { hasSecrets, withoutSecrets, type P2pStore, type SelfRecord } from './db'
+import { hasSecrets, withoutSecrets, type OwnBadge, type P2pStore, type SelfRecord } from './db'
 import type { Me } from './handshake'
 import {
+  bindingProof,
   cleanName,
   keyId,
   newKeyPair,
@@ -123,6 +124,7 @@ export interface NodeView {
   movingAt: number | null
   // When we saw signs that another device uses this identity.
   alertAt: number | null
+  badge: OwnBadge | null
 }
 
 export interface NodeDeps {
@@ -203,6 +205,8 @@ export interface NodeExt {
   wanted?: (ik: string, hello: Message) => boolean
   // Signed devices and profile of a session peer that isn't a contact.
   learn?: (ik: string, certs: Cert[], revs: Revocation[], profile: Profile | null) => void
+  // Whether `ik` is a fellow member of a server we are in.
+  member?: (ik: string) => boolean
   // Devices of an identity that isn't a contact (fellow server members).
   devices?: (ik: string) => { certs: Cert[]; revocations: Revocation[] } | null
 }
@@ -234,6 +238,7 @@ export class P2pNode {
   private hiddenPaused = false
   private stopped = false
   private fns = new Set<() => void>()
+  private bindingFns = new Set<(ik: string, token: unknown) => void>()
   private exts: NodeExt[] = []
   private clock: Clock
 
@@ -334,6 +339,79 @@ export class P2pNode {
     return this.self.cert
   }
 
+  // ----- Account badge -----
+
+  get badge(): OwnBadge | null {
+    return this.self.badge ?? null
+  }
+
+  // The binding we hand out: while the badge is on, for this identity key, not expired.
+  get binding(): string | null {
+    const b = this.self.badge
+    return b?.on &&
+      typeof b.token === 'string' &&
+      b.ik === this.ik &&
+      b.exp * 1000 > this.clock.now() &&
+      !this.self.moved
+      ? b.token
+      : null
+  }
+
+  async setBadge(badge: OwnBadge | null) {
+    await this.writeSelf(cur => ({ ...cur, badge }))
+    this.broadcastProfile()
+    this.changed()
+  }
+
+  // The identity key's signature the instance wants before it binds the key to `sub`.
+  bindingProof(sub: string, ts: number): string | null {
+    return this.self.moved || !hasSecrets(this.self) ? null : bindingProof(this.self.ik, sub, ts)
+  }
+
+  // Bindings peers send for themselves (hello, profile) or that member events carry; unchecked.
+  onBinding(fn: (ik: string, token: unknown) => void) {
+    this.bindingFns.add(fn)
+    return () => void this.bindingFns.delete(fn)
+  }
+
+  heardBinding(ik: string, token: unknown) {
+    if (ik === this.ik) return
+    for (const fn of this.bindingFns) fn(ik, token)
+  }
+
+  // A contact confirmed as the account another contact was confirmed as: the identity warning,
+  // unless they were verified.
+  async warnAccount(ik: string, other: string) {
+    await this.update(ik, cur =>
+      cur && cur.warning === null && !cur.verified && cur.state !== 'blocked'
+        ? { ...cur, warning: other }
+        : null
+    )
+  }
+
+  // The binding goes only to who the opt-in names: mutual contacts, contacts we asked, and
+  // fellow server members (or the peer of an invite code we dialed).
+  private bindingFor(ik: string, peer: string): string | null {
+    const binding = this.binding
+    if (!binding || this.contacts.get(ik)?.state === 'blocked') return null
+    const rel = this.relOf(ik)
+    if (rel === 'mutual' || rel === 'request') return binding
+    if (this.purposes.has(peer) || this.exts.some(x => x.member?.(ik) === true)) return binding
+    return null
+  }
+
+  private profileMsg(ik: string, peer: string): Message {
+    const binding = this.bindingFor(ik, peer)
+    return binding
+      ? { t: 'profile', profile: this.self.profile, binding }
+      : { t: 'profile', profile: this.self.profile }
+  }
+
+  private broadcastProfile() {
+    for (const s of this.sessions.values())
+      if (s.remote) void s.send(this.profileMsg(s.remote.ik, s.peer)).catch(() => {})
+  }
+
   onChange(fn: () => void) {
     this.fns.add(fn)
     return () => void this.fns.delete(fn)
@@ -356,6 +434,7 @@ export class P2pNode {
       movedAt: this.self.moved?.at ?? null,
       movingAt: this.self.moving?.at ?? null,
       alertAt: this.self.alert ?? null,
+      badge: this.self.badge ?? null,
     }
   }
 
@@ -366,6 +445,10 @@ export class P2pNode {
 
   contact(ik: string) {
     return this.contacts.get(ik)
+  }
+
+  contactList() {
+    return [...this.contacts.values()]
   }
 
   // ----- Lifecycle -----
@@ -587,7 +670,7 @@ export class P2pNode {
         )
       },
       hello: (r: { ik: string; dk: string }) => this.helloFor(r, pipe.remote),
-      onHello: (m: Message, s: Session) => this.onHello(m, s),
+      onHello: (m: Message, s: Session) => this.hello(m, s),
     }
   }
 
@@ -725,6 +808,8 @@ export class P2pNode {
       certs: this.self.certs.slice(0, HELLO_CERTS),
       revs: this.self.revocations.slice(-HELLO_CERTS),
     }
+    const binding = this.bindingFor(ik, peer)
+    if (binding) msg.binding = binding
     const intro = this.contacts.get(ik)?.intros[0]
     if (intro && msg.rel === 'request') msg.intro = intro
     if (this.self.succession) msg.succ = this.self.succession
@@ -770,6 +855,16 @@ export class P2pNode {
     const now = this.clock.now()
     await this.writeSelf(cur => ({ ...cur, alert: cur.alert ?? now })).catch(() => {})
     this.changed()
+  }
+
+  // A hello, then the binding it carries: from a session peer we keep, or a request we hold.
+  private async hello(m: Message, s: Session): Promise<boolean> {
+    const ok = await this.onHello(m, s)
+    const ik = s.remote?.ik
+    const c = ik ? this.contacts.get(ik) : undefined
+    if (ik && m.binding !== undefined && m.moved === undefined && c?.state !== 'blocked')
+      if (ok || c) this.heardBinding(ik, m.binding)
+    return ok
   }
 
   private async onHello(m: Message, s: Session): Promise<boolean> {
@@ -953,6 +1048,7 @@ export class P2pNode {
     const c = r && this.contacts.get(r.ik)
     if (r && !c && verifyProfile(m.profile, r.ik)) {
       for (const x of this.exts) x.learn?.(r.ik, [], [], m.profile)
+      if (m.binding !== undefined) this.heardBinding(r.ik, m.binding)
       return
     }
     if (!c || !verifyProfile(m.profile, c.ik)) return s.strike()
@@ -962,6 +1058,7 @@ export class P2pNode {
       const next = withProfile(cur, p)
       return next === cur ? null : recheckName(this.others(cur.ik), cur, next)
     })
+    if (m.binding !== undefined && c.state !== 'blocked') this.heardBinding(c.ik, m.binding)
   }
 
   private async onDevices(m: Message, s: Session) {
@@ -995,10 +1092,6 @@ export class P2pNode {
 
   private sessionsOf(ik: string) {
     return [...this.sessions.values()].filter(s => s.remote?.ik === ik)
-  }
-
-  private broadcast(msg: Message) {
-    for (const s of this.sessions.values()) void s.send(msg).catch(() => {})
   }
 
   // ----- Dialing -----
@@ -1178,6 +1271,8 @@ export class P2pNode {
     if (!(await this.update(ik, cur => (cur ? accept(cur) : null)))) return
     this.dials.delete(ik)
     this.schedule(true)
+    if (this.binding)
+      for (const s of this.sessionsOf(ik)) void s.send(this.profileMsg(ik, s.peer)).catch(() => {})
   }
 
   async ignore(ik: string) {
@@ -1232,7 +1327,24 @@ export class P2pNode {
       ...cur,
       profile: signProfile(cur.ik, clean, Math.max(now, cur.profile.updated + 1)),
     }))
-    this.broadcast({ t: 'profile', profile: this.self.profile })
+    this.broadcastProfile()
+    this.changed()
+  }
+
+  // The same profile signed again with a newer date (servers.refreshBadge).
+  async touchProfile() {
+    if (this.self.moved) return
+    const now = this.clock.now()
+    await this.writeSelf(cur => ({
+      ...cur,
+      profile: signProfile(
+        cur.ik,
+        cur.profile.name,
+        Math.max(now, cur.profile.updated + 1),
+        cur.profile.color
+      ),
+    }))
+    this.broadcastProfile()
     this.changed()
   }
 
@@ -1262,6 +1374,8 @@ export class P2pNode {
       exported: null,
       alert: null,
       imports: [],
+      // The binding names the old key: a new one is fetched for this one.
+      badge: cur.badge ? { ...cur.badge, token: null } : (cur.badge ?? null),
     }))
     this.halt('closed')
     this.dials.clear()

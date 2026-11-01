@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { home, writeLocal } from '../instances'
+import { api, home, writeLocal } from '../instances'
+import { verifyBinding } from '../identity'
 import {
   addToFolder,
   emptyLayout,
@@ -18,7 +19,8 @@ import type { AlertInput } from '../notices'
 import { EMPTY_NOTIFY, resolve as resolveNotify, type NotifyPrefs } from '../notify'
 import { applySed, parseSed } from '../sed'
 import type { UserRef } from '../types'
-import { dbName, P2pStore, removeP2pDb, type RoomRecord } from './db'
+import { dbName, P2pStore, removeP2pDb, type OwnBadge, type RoomRecord } from './db'
+import { BadgeKeeper, Badges, readSlots, type BadgeSlot } from './badge'
 import { fingerprint, keyId } from './keys'
 import { displayName, type AddResult, type Contact } from './contacts'
 import { p2pAlert } from './alerts'
@@ -206,6 +208,11 @@ export interface P2pState {
   serverTyping: Record<string, string[]>
   // Order and folders of P2P servers in the rail (their own, apart from instance servers).
   layout: Layout
+  // Account badges of contacts and server members, by identity key, and our own.
+  badges: Record<string, BadgeSlot>
+  badge: OwnBadge | null
+  badgeBusy: boolean
+  badgeError: string | null
 }
 
 // Drafts and files being attached are kept per conversation and per server channel.
@@ -276,6 +283,10 @@ const initial: P2pState = {
   server: null,
   serverTyping: {},
   layout: emptyLayout,
+  badges: {},
+  badge: null,
+  badgeBusy: false,
+  badgeError: null,
 }
 
 export const useP2p = create<P2pState>()(() => initial)
@@ -353,6 +364,8 @@ let store: P2pStore | null = null
 let dms: Dms | null = null
 let servers: Servers | null = null
 let calls: Calls | null = null
+let badges: Badges | null = null
+let keeper: BadgeKeeper | null = null
 let leader: TabLeader | null = null
 let unwatch: (() => void) | null = null
 let gen = 0
@@ -466,6 +479,60 @@ if (typeof window !== 'undefined') {
 
 const dbFor = (username: string) => dbName(home.host, username)
 
+// Test hook: `?badge=local` lets this tab check badges issued by an instance on this machine or
+// the local network (only ever the one it runs on), like `?ice=relay` in ice.ts.
+const localBadges = (): boolean => {
+  if (typeof window === 'undefined') return false
+  try {
+    if (new URLSearchParams(window.location.search).get('badge') === 'local')
+      sessionStorage.setItem('rchat_badge_local', '1')
+    return sessionStorage.getItem('rchat_badge_local') === '1'
+  } catch {
+    return false
+  }
+}
+const badgeLocal = localBadges()
+
+// Bindings are accepted only from this client's own instance: P2P across instances isn't
+// supported, and a peer can't make us fetch keys from a host it picks.
+const instanceHost = () => home.info?.host ?? home.host
+
+const checkBinding = (token: string, ik: string) =>
+  verifyBinding(token, { ik, host: instanceHost(), allowLocal: badgeLocal })
+
+// This account as the instance names it in bindings.
+const accountSub = () => {
+  const username = useP2p.getState().account
+  return username ? `${username}@${instanceHost()}` : null
+}
+
+let badgeTimer: ReturnType<typeof setTimeout> | null = null
+let expiryTimer: ReturnType<typeof setTimeout> | null = null
+
+// The badges into the view, and again when the next one expires ("Confirmation expired").
+const mirrorBadges = (all: Record<string, BadgeSlot>) => {
+  useP2p.setState({ badges: all })
+  if (expiryTimer !== null) clearTimeout(expiryTimer)
+  expiryTimer = null
+  const now = Date.now()
+  const next = Math.min(
+    ...Object.values(all).flatMap(b => (b.ok && b.ok.exp * 1000 > now ? [b.ok.exp * 1000] : []))
+  )
+  if (Number.isFinite(next))
+    expiryTimer = setTimeout(
+      () => mirrorBadges({ ...useP2p.getState().badges }),
+      Math.min(next - now + 1000, 2 ** 31 - 1)
+    )
+}
+
+const scheduleBadges = () => {
+  if (badgeTimer !== null) return
+  badgeTimer = setTimeout(() => {
+    badgeTimer = null
+    if (badges) mirrorBadges(badges.all())
+  }, 30)
+}
+
 const mirror = async () => {
   const n = node
   if (!n) return
@@ -483,6 +550,7 @@ const mirror = async () => {
     movedAt: v.movedAt,
     movingAt: v.movingAt,
     alertAt: v.alertAt,
+    badge: v.badge,
     elsewhere: false,
     error: v.status === 'squatted' ? SQUATTED : null,
   })
@@ -501,6 +569,10 @@ const stopNode = () => {
   if (useP2p.getState().call) useP2p.setState({ call: null, callQuiet: false })
   servers?.stop()
   servers = null
+  keeper?.stop()
+  keeper = null
+  badges?.stop()
+  badges = null
   dms?.stop()
   dms = null
   node?.stop()
@@ -556,8 +628,13 @@ const read = async (username: string, live: () => boolean) => {
     const ch = dataChannel(username)
     if (ch) {
       ch.onmessage = e => {
-        const msg = e.data as { room?: unknown; call?: unknown } | null
+        const msg = e.data as { room?: unknown; call?: unknown; badges?: unknown } | null
         if (msg && 'call' in msg) return useP2p.setState({ callElsewhere: elsewhereCall(msg.call) })
+        if (msg && 'badges' in msg)
+          return void readSlots(s).then(
+            slots => reader?.store === s && mirrorBadges(Object.fromEntries(slots)),
+            () => {}
+          )
         const room = msg?.room
         if (typeof room !== 'string') return
         void refreshRoom(room)
@@ -577,7 +654,9 @@ const read = async (username: string, live: () => boolean) => {
       ik: reader.me,
       name: self.profile.name,
       fingerprint: fingerprint(reader.me),
+      badge: self.badge ?? null,
     })
+    mirrorBadges(Object.fromEntries(await readSlots(s)))
     await refreshRooms()
     const chat = useP2p.getState().chat
     if (chat) await loadChat(chat.room, chat.peer)
@@ -692,6 +771,25 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
     })
     calls = c
     n.use({ attach: x => c.attach(x), ready: x => c.ready(x) })
+    const bs = new Badges({
+      store: s,
+      verify: checkBinding,
+      contacts: () => n.contactList(),
+      warn: (ik, other) => n.warnAccount(ik, other),
+    })
+    badges = bs
+    n.onBinding((ik, token) => bs.offer(ik, token))
+    bs.onChange(() => {
+      data?.postMessage({ badges: true })
+      scheduleBadges()
+    })
+    const k = new BadgeKeeper({
+      node: n,
+      request: (ik, ts, proof) => api.p2pBinding(ik, ts, proof),
+      sub: accountSub,
+      onIssued: () => void sv.refreshBadge().catch(() => {}),
+    })
+    keeper = k
     c.onChange(() => publishCall(c))
     c.onRing(v => ringing(v))
     d.blobs.onChange(h => scheduleFile(h))
@@ -714,6 +812,9 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
     useP2p.setState({ enabled: true, loading: false, reader: false, me: n.ik })
     await mirror()
     if (node !== n) return
+    await bs.start()
+    mirrorBadges(bs.all())
+    if (node !== n) return
     await sv.start()
     if (node !== n) return
     await refreshRooms()
@@ -721,6 +822,7 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
     const chat = useP2p.getState().chat
     if (chat) await loadChat(chat.room, chat.peer)
     await n.start()
+    k.start()
     void d.blobs.resume().catch(() => {})
   } catch {
     if (live())
@@ -1969,7 +2071,10 @@ export const p2p = {
   verifyCode: (ik: string) => node?.verifyCodeFor(ik) ?? null,
   scanVerify: (ik: string, text: string) => withNode(n => n.scanVerifyCode(ik, text)),
   setName: (name: string) => withNode(n => n.setName(name)),
-  resetIdentity: () => withNode(n => n.resetIdentity()),
+  async resetIdentity() {
+    await withNode(n => n.resetIdentity())
+    void keeper?.refresh().catch(() => {})
+  },
   resumeSending: () => withNode(n => n.resumeSending()),
   clearAlert: () => withNode(n => n.clearAlert()),
   clearDropped: () => withNode(n => n.clearDropped()),
@@ -2002,6 +2107,36 @@ export const p2p = {
       useP2p.setState({ storage: null })
     }
   },
+}
+
+// ----- Account badge -----
+
+export const p2pBadge = {
+  // Turns the badge on once the instance signed a binding; the error says why it didn't.
+  async enable() {
+    const k = keeper
+    if (!k) return useP2p.setState({ badgeError: ELSEWHERE_TEXT })
+    useP2p.setState({ badgeBusy: true, badgeError: null })
+    try {
+      await k.enable()
+    } catch (e) {
+      useP2p.setState({ badgeError: e instanceof Error ? e.message : String(e) })
+    } finally {
+      useP2p.setState({ badgeBusy: false })
+    }
+  },
+  async disable() {
+    const k = keeper
+    if (!k) return useP2p.setState({ badgeError: ELSEWHERE_TEXT })
+    useP2p.setState({ badgeError: null })
+    try {
+      await k.disable()
+    } catch (e) {
+      useP2p.setState({ badgeError: e instanceof Error ? e.message : String(e) })
+    }
+  },
+  // Couldn't check: ask the issuer again now.
+  recheck: (ik: string) => badges?.recheck(ik),
 }
 
 // ----- Device move -----

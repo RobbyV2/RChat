@@ -43,13 +43,17 @@ import { P2pFolderDialog, ServerInviteDialog, ServerNewDialog } from './p2p_invi
 import { ServerSettingsDialog } from './p2p_server_settings'
 import { allServerPings, ServerInviteRows, serverUnread } from './p2p_server_view'
 import {
+  AccountChip,
+  badgeDate,
   ContactShield,
   KeyAvatar,
   P2pBadge,
+  useHasChip,
   PresenceDot,
   presenceText,
   shieldText,
 } from './p2p_badge'
+import { badgeState } from '../../lib/p2p/badge'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 
@@ -375,6 +379,7 @@ function ContactRow({
   const unread = !!summary && !!scope && summary.unread > 0 && !mutedOf(prefs, scope, Date.now())
   const notice = noticeText(c)
   const shield = shieldOf(c)
+  const chip = useHasChip(c.ik)
   return (
     <li>
       <button
@@ -398,11 +403,12 @@ function ContactRow({
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
             <span
-              className={`streamer truncate text-sm ${unread || pings ? 'font-bold text-on-surface' : 'font-medium'}`}
+              className={`streamer ${chip ? 'max-w-[60%] shrink-0' : ''} truncate text-sm ${unread || pings ? 'font-bold text-on-surface' : 'font-medium'}`}
             >
               {displayName(c)}
             </span>
             <ContactShield kind={shield} size={14} />
+            <AccountChip ik={c.ik} />
             {scope && <MutedIcon scope={scope} size={12} className="text-on-surface-variant" />}
           </span>
           <span className="block truncate text-xs text-on-surface-variant">
@@ -431,14 +437,20 @@ function ContactRow({
 
 function RequestRow({ c }: { c: Contact }) {
   const shield = shieldOf(c)
+  const chip = useHasChip(c.ik)
   return (
     <li data-request={c.ik} className="rounded-xl bg-surface-container px-3 py-2">
       <div className="flex items-center gap-3">
         <KeyAvatar ik={c.ik} />
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-1.5">
-            <span className="streamer truncate text-sm font-medium">{displayName(c)}</span>
+            <span
+              className={`streamer truncate text-sm font-medium ${chip ? 'max-w-[60%] shrink-0' : ''}`}
+            >
+              {displayName(c)}
+            </span>
             <ContactShield kind={shield} size={14} />
+            <AccountChip ik={c.ik} />
           </p>
           <p className="streamer truncate font-mono text-[11px] text-on-surface-variant">
             {fingerprint(c.ik)}
@@ -470,7 +482,9 @@ function RequestRow({ c }: { c: Contact }) {
         </button>
       </div>
       {shield === 'warning' && (
-        <p className="mt-1 text-xs text-error">Uses the same name as one of your contacts.</p>
+        <p className="mt-1 text-xs text-error">
+          Uses the same name or account as one of your contacts.
+        </p>
       )}
       {c.intros.map((t, i) => (
         <p key={i} className="streamer mt-1 text-sm break-words whitespace-pre-wrap">
@@ -727,6 +741,7 @@ function ContactDialog({ ik }: { ik: string }) {
           </span>
           <span className="text-primary">Verify</span>
         </button>
+        <BadgeRow ik={c.ik} />
         {notice && <p className="text-sm text-on-surface-variant">{notice}</p>}
         <p className="streamer font-mono text-xs text-on-surface-variant">{fingerprint(c.ik)}</p>
         <div className="flex flex-wrap justify-end gap-2">
@@ -748,6 +763,28 @@ function ContactDialog({ ik }: { ik: string }) {
         </div>
       </div>
     </Dialog>
+  )
+}
+
+// The account badge on the contact's card: the chip, when it was checked, and what it means.
+function BadgeRow({ ik }: { ik: string }) {
+  const slot = useP2p(s => s.badges[ik])
+  const state = badgeState(slot, Date.now())
+  if (!slot || !state) return null
+  const ok = slot.ok
+  return (
+    <div data-badge-row className="flex flex-col gap-1 rounded-xl bg-surface-container px-3 py-2">
+      <span className="flex min-w-0">
+        <AccountChip ik={ik} />
+      </span>
+      <p className="text-xs text-on-surface-variant">
+        {state === 'confirmed' && ok
+          ? `The instance says this P2P identity belongs to that account. Checked ${badgeDate(ok.checked)}.`
+          : state === 'expired' && ok
+            ? `It expired on ${badgeDate(ok.exp * 1000)}. They may have turned their badge off.`
+            : "The instance couldn't be asked about it yet. Trying again later."}
+      </p>
+    </div>
   )
 }
 

@@ -2,14 +2,22 @@
 
 import { useEffect, useId, useState } from 'react'
 import { useStore } from '../../lib/store'
-import { AUTO_DAILY_OPTIONS, AUTO_DM, AUTO_SERVER, p2p, p2pFiles, useP2p } from '../../lib/p2p/app'
+import {
+  AUTO_DAILY_OPTIONS,
+  AUTO_DM,
+  AUTO_SERVER,
+  p2p,
+  p2pBadge,
+  p2pFiles,
+  useP2p,
+} from '../../lib/p2p/app'
 import { cleanName } from '../../lib/p2p/keys'
 import { iceOffer } from '../../lib/ice'
 import { fmtSize } from '../../lib/bytes'
 import { SettingSwitch } from '../admin_panel'
 import { dangerBtn, fieldCls, filledBtn, sectionCls, textBtn } from '../ui'
 import { MyCode } from './add_contact'
-import { P2pBadge } from './p2p_badge'
+import { badgeDate, P2pBadge } from './p2p_badge'
 import { confirmReset, ElsewhereNotice, IdentityAlert, MovedBanner, MovingBanner } from './p2p_home'
 
 function NameField() {
@@ -33,6 +41,65 @@ function NameField() {
       >
         Save
       </button>
+    </div>
+  )
+}
+
+export const BADGE_ON_BODY =
+  'Contacts and server members see "Confirmed as" and your account name next to your P2P name. The instance learns your P2P identity key, which links your P2P activity to your account. While this is on, it renews the confirmation every day.'
+
+export const badgeOffBody = (until: number | null) =>
+  `Peers who already have your confirmation keep showing it until it expires${
+    until ? `, on ${badgeDate(until)}` : ''
+  }, at most 7 days from now. They may then show it as expired for up to 30 days. P2P servers you joined keep the old confirmation in their history.`
+
+// Settings > Peer-to-peer > Account badge (opt-in, note section 2).
+function BadgeSetting() {
+  const badge = useP2p(s => s.badge)
+  const busy = useP2p(s => s.badgeBusy)
+  const error = useP2p(s => s.badgeError)
+  const ik = useP2p(s => s.ik)
+  const ask = useStore(s => s.askConfirm)
+  const on = !!badge?.on
+  const live = on && !!badge?.token && badge.ik === ik
+  const tail = !on && badge && badge.exp * 1000 > Date.now() ? badge.exp * 1000 : null
+  const change = (next: boolean) =>
+    next
+      ? ask({
+          title: 'Show your account badge?',
+          body: BADGE_ON_BODY,
+          confirm: 'Turn on',
+          action: () => void p2pBadge.enable(),
+        })
+      : ask({
+          title: 'Turn off your account badge?',
+          body: badgeOffBody(badge?.token ? badge.exp * 1000 : null),
+          confirm: 'Turn off',
+          action: () => void p2pBadge.disable(),
+        })
+  return (
+    <div data-p2p-badge-setting>
+      <SettingSwitch label="Account badge" value={on} onChange={change} disabled={busy} />
+      <p className="mt-1 px-2 text-xs text-on-surface-variant">
+        {busy ? (
+          'Asking the instance…'
+        ) : live && badge ? (
+          <>
+            Shown as <span className="streamer">{badge.sub}</span>. Renewed every day.
+          </>
+        ) : on ? (
+          'On. Waiting for the instance to confirm it.'
+        ) : tail ? (
+          `Off. Peers who have it may show it until ${badgeDate(tail)}.`
+        ) : (
+          'Lets contacts see which account on this instance holds your P2P identity. Off by default.'
+        )}
+      </p>
+      {error && (
+        <p role="alert" className="mt-1 px-2 text-xs text-error">
+          {error}
+        </p>
+      )}
     </div>
   )
 }
@@ -239,6 +306,7 @@ export function P2pSection() {
             <NameField />
             <p className="streamer font-mono text-[11px] text-on-surface-variant">Key {fp}</p>
           </div>
+          <BadgeSetting />
           <div>
             <SettingSwitch
               label="Pause P2P"

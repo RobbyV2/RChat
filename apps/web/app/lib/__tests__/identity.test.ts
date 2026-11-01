@@ -12,9 +12,12 @@ import {
 import {
   ASSERTION_MAX_TTL,
   AssertionError,
+  BINDING_AUD,
+  BINDING_MAX_TTL,
   forgetIssuerKeys,
   jwksUrl,
   verifyAssertion,
+  verifyBinding,
 } from '../identity'
 
 const ISS = 'https://chat.example.com'
@@ -217,6 +220,192 @@ describe('verifyAssertion against the issuer JWKS', () => {
     expect(fetched).toEqual(['http://127.0.0.1:3821/.well-known/jwks.json'])
   })
 })
+
+const IK = 'AbjK1pmVnQ8bYf5NvO1z1Re2mUQu8jF5qX3VhH2s0nM'
+const OTHER_IK = 'BmT3gqGqUyN2wJ1yQd2eK0a3mH8wYd7cS1pZ9xVq4Lk'
+
+const bind = (
+  key: Key,
+  claims: Record<string, unknown> = {},
+  opts: { ttl?: number; iat?: number; kid?: string; aud?: string | string[] } = {}
+) => {
+  const iat = opts.iat ?? Math.floor(Date.now() / 1000)
+  return new SignJWT({ sub: 'alice@chat.example.com', ik: IK, ...claims })
+    .setProtectedHeader({ alg: 'EdDSA', typ: 'JWT', kid: opts.kid ?? key.jwk.kid })
+    .setIssuer(typeof claims.iss === 'string' ? claims.iss : ISS)
+    .setAudience(opts.aud ?? BINDING_AUD)
+    .setIssuedAt(iat)
+    .setExpirationTime(iat + (opts.ttl ?? BINDING_MAX_TTL))
+    .sign(key.priv)
+}
+
+describe('verifyBinding', () => {
+  test('accepts a binding for the identity key and returns its claims', async () => {
+    const key = await newKey()
+    const keys: JSONWebKeySet = { keys: [key.jwk] }
+    const claims = await verifyBinding(await bind(key), { ik: IK, keys })
+    expect(claims.sub).toBe('alice@chat.example.com')
+    expect(claims.ik).toBe(IK)
+    expect(claims.aud).toBe(BINDING_AUD)
+    expect(claims.exp - claims.iat).toBe(BINDING_MAX_TTL)
+    expect(
+      (await verifyBinding(await bind(key), { ik: IK, keys, host: 'chat.example.com' })).iss
+    ).toBe(ISS)
+  })
+
+  test('rejects another identity key, audience, issuer key, expiry, issuer and subject', async () => {
+    const key = await newKey()
+    const other = await newKey()
+    const keys: JSONWebKeySet = { keys: [key.jwk] }
+    const token = await bind(key)
+    expect(await code(verifyBinding(token, { ik: OTHER_IK, keys }))).toBe('ik')
+    expect(await code(verifyBinding(await bind(key, { ik: 7 }), { ik: IK, keys }))).toBe('ik')
+    expect(await code(verifyBinding(await bind(key, { ik: undefined }), { ik: IK, keys }))).toBe(
+      'malformed'
+    )
+    // An identity assertion is no binding, and the reverse.
+    expect(await code(verifyBinding(await bind(key, {}, { aud: AUD }), { ik: IK, keys }))).toBe(
+      'audience'
+    )
+    expect(
+      await code(verifyBinding(await bind(key, {}, { aud: [BINDING_AUD, AUD] }), { ik: IK, keys }))
+    ).toBe('audience')
+    expect(await code(verifyAssertion(token, { aud: BINDING_AUD, keys }))).toBe('malformed')
+    // Signed by a key the issuer doesn't publish, or claiming one of its kids.
+    expect(await code(verifyBinding(token, { ik: IK, keys: { keys: [other.jwk] } }))).toBe(
+      'unknown_key'
+    )
+    const swapped = { ...other.jwk, kid: key.jwk.kid }
+    expect(await code(verifyBinding(token, { ik: IK, keys: { keys: [swapped] } }))).toBe(
+      'signature'
+    )
+    const forged = await bind(other, {}, { kid: key.jwk.kid })
+    expect(await code(verifyBinding(forged, { ik: IK, keys }))).toBe('signature')
+    const old = Math.floor(Date.now() / 1000) - BINDING_MAX_TTL - 100
+    expect(await code(verifyBinding(await bind(key, {}, { iat: old }), { ik: IK, keys }))).toBe(
+      'expired'
+    )
+    expect(
+      await code(verifyBinding(token, { ik: IK, keys, now: new Date(Date.now() + 8 * 86_400_000) }))
+    ).toBe('expired')
+    expect(
+      await code(
+        verifyBinding(await bind(key, {}, { ttl: BINDING_MAX_TTL + 60 }), { ik: IK, keys })
+      )
+    ).toBe('lifetime')
+    const later = Math.floor(Date.now() / 1000) + 3600
+    expect(await code(verifyBinding(await bind(key, {}, { iat: later }), { ik: IK, keys }))).toBe(
+      'lifetime'
+    )
+    // Only from the instance it is checked against, and only for an account there.
+    expect(await code(verifyBinding(token, { ik: IK, keys, host: 'other.example' }))).toBe('issuer')
+    for (const sub of ['alice@evil.example', 'alice', 'a@b@chat.example.com'])
+      expect(await code(verifyBinding(await bind(key, { sub }), { ik: IK, keys }))).toBe('subject')
+    expect(await code(verifyBinding('not.a.jwt', { ik: IK, keys }))).toBe('malformed')
+  })
+})
+
+describe('verifyBinding against the issuer JWKS', () => {
+  const real = globalThis.fetch
+  let served: JSONWebKeySet = { keys: [] }
+  let status = 200
+  let fetched: string[] = []
+
+  beforeEach(() => {
+    forgetIssuerKeys()
+    fetched = []
+    status = 200
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      fetched.push(String(input instanceof Request ? input.url : input))
+      return new Response(JSON.stringify(served), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }) as typeof fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = real
+  })
+
+  test('uses the issuer keys, cached apart from assertions, and needs allowLocal for local ones', async () => {
+    const key = await newKey()
+    served = { keys: [key.jwk] }
+    await verifyBinding(await bind(key), { ik: IK })
+    await verifyBinding(await bind(key), { ik: IK })
+    expect(fetched).toEqual(['https://chat.example.com/.well-known/jwks.json'])
+    await verifyAssertion(await sign(key), { aud: AUD })
+    expect(fetched.length).toBe(2)
+    const local = await bind(key, { iss: 'http://127.0.0.1:3821', sub: 'alice@127.0.0.1:3821' })
+    expect(await code(verifyBinding(local, { ik: IK }))).toBe('issuer')
+    expect(fetched.length).toBe(2)
+    expect((await verifyBinding(local, { ik: IK, allowLocal: true })).sub).toBe(
+      'alice@127.0.0.1:3821'
+    )
+    expect(
+      await code(verifyBinding(local, { ik: IK, allowLocal: true, host: 'chat.example.com' }))
+    ).toBe('issuer')
+  })
+
+  test('an issuer that answers with an error, or not at all, is "fetch", never a verdict', async () => {
+    const key = await newKey()
+    served = { keys: [key.jwk] }
+    status = 502
+    expect(await code(verifyBinding(await bind(key), { ik: IK }))).toBe('fetch')
+    forgetIssuerKeys()
+    globalThis.fetch = (async () => {
+      throw new TypeError('Failed to fetch')
+    }) as unknown as typeof fetch
+    expect(await code(verifyBinding(await bind(key), { ik: IK }))).toBe('fetch')
+    expect(await code(verifyAssertion(await sign(key), { aud: AUD }))).toBe('fetch')
+  })
+})
+
+describe('Rust-issued binding', () => {
+  test('verifies with the TS helper at its issue time, for its identity key only', async () => {
+    const jwk: JWK = {
+      kty: 'OKP',
+      crv: 'Ed25519',
+      x: '11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo',
+      kid: 'kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k',
+      alg: 'EdDSA',
+      use: 'sig',
+    }
+    const at = new Date(RUST_BIND_IAT * 1000)
+    const claims = await verifyBinding(RUST_BIND_TOKEN, {
+      ik: RUST_BIND_IK,
+      keys: { keys: [jwk] },
+      now: at,
+      host: '127.0.0.1:3821',
+    })
+    expect(claims).toEqual({
+      iss: 'http://127.0.0.1:3821',
+      sub: 'alice@127.0.0.1:3821',
+      aud: BINDING_AUD,
+      ik: RUST_BIND_IK,
+      iat: RUST_BIND_IAT,
+      exp: RUST_BIND_IAT + BINDING_MAX_TTL,
+    })
+    expect(
+      await code(verifyBinding(RUST_BIND_TOKEN, { ik: IK, keys: { keys: [jwk] }, now: at }))
+    ).toBe('ik')
+    expect(
+      await code(
+        verifyBinding(RUST_BIND_TOKEN, {
+          ik: RUST_BIND_IK,
+          keys: { keys: [jwk] },
+          now: new Date((RUST_BIND_IAT + BINDING_MAX_TTL + 60) * 1000),
+        })
+      )
+    ).toBe('expired')
+  })
+})
+
+// The fixed vectors of the Rust test `binding_proofs_and_tokens_match_the_fixed_vectors`.
+const RUST_BIND_IAT = 1793056306
+const RUST_BIND_IK = '6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw'
+const RUST_BIND_TOKEN =
+  'eyJhbGciOiJFZERTQSIsImtpZCI6ImtQcktfcW14VldhWVZBOXd3QkY2SXVvM3ZWeno3VHhIQ1R3WEJ5Z3JTNGsiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjM4MjEiLCJzdWIiOiJhbGljZUAxMjcuMC4wLjE6MzgyMSIsImF1ZCI6InJjaGF0LXAycC1iaW5kIiwiaWsiOiI2a3BzWS1LY1VncS05VkI3RXk3Ri1aVkhkcTYtdm51U1FoN3FhUlJHMGl3IiwiaWF0IjoxNzkzMDU2MzA2LCJleHAiOjE3OTM2NjExMDZ9.fc47iS6ATl5Vb9s-ZMHAemFri8l87vnGKjCsw7yWG5kR5S892h3A9LFLEUczeCC1xQ6LqPJ8_qHxznRAHMi7AA'
 
 describe('Rust-issued assertion', () => {
   test('verifies with the TS helper at its issue time', async () => {

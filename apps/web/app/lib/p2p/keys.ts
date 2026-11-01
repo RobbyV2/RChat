@@ -14,6 +14,7 @@ export const TAG = {
   profile: 'rchat-p2p-profile1\0',
   succession: 'rchat-p2p-succ1\0',
   peer: 'rchat-p2p-peer\0',
+  bind: 'rchat-p2p-bind1\0',
 } as const
 
 export interface KeyPair {
@@ -279,6 +280,17 @@ export const verifySuccession = (x: unknown): x is Succession => {
     return false
   }
 }
+
+// ----- Account binding proof -----
+
+// What POST /api/identity/p2p_binding wants signed by the identity key: the tag, the account
+// (`user@host`), a zero byte and the time (unix seconds, decimal). The instance only vouches for
+// a key that signed this, so nobody binds someone else's key to their account.
+export const bindingMessage = (sub: string, ts: number) =>
+  concat(utf8(TAG.bind), utf8(sub), utf8('\0'), utf8(String(ts)))
+
+export const bindingProof = (ik: KeyPair, sub: string, ts: number) =>
+  b64u(ed25519.sign(bindingMessage(sub, ts), ik.sk))
 
 // ----- Fingerprint and peer ids -----
 

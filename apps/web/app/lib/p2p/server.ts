@@ -49,6 +49,7 @@ import {
   type Wire,
 } from './event'
 import type { Message } from './frames'
+import { memberBindingDue } from './badge'
 import { Gossip, type GossipLimits, type LinkKind } from './gossip'
 import { isKeyId, peerId, verifyCert, verifyProfile, type Cert, type Profile } from './keys'
 import { liveCerts } from './keys'
@@ -484,6 +485,7 @@ export class Servers {
       },
       targets: () => this.gossip.targets(),
       wanted: (ik, hello) => this.wanted(ik, hello),
+      member: ik => this.coMember(ik),
       learn: (ik, certs, revs, profile) => void this.learn(ik, certs, revs, profile),
       devices: ik => {
         const r = this.idents.get(ik)
@@ -686,6 +688,21 @@ export class Servers {
     let n = 0
     for (const id of this.rooms.keys()) if (membershipOf(this.stateOf(id), ik) === 'join') n += 1
     return n
+  }
+
+  // A member (or invitee) of a server we are in; nothing for one we have left or lost.
+  private coMember(ik: string) {
+    for (const room of this.rooms.keys()) {
+      const s = this.stateOf(room)
+      const mine = membershipOf(s, this.me)
+      if (mine !== 'join' && mine !== 'invite') {
+        if (this.may(room, ik) === 'full') return true
+        continue
+      }
+      const m = membershipOf(s, ik)
+      if (m === 'join' || m === 'invite') return true
+    }
+    return false
   }
 
   // Whether we link `room` with `ik`, and what we may serve them there.
@@ -1038,6 +1055,21 @@ export class Servers {
     const cert = this.deps.node.cert
     if (m.cert?.dk === cert.dk && m.profile?.updated === this.deps.node.profile.updated) return
     await this.memberEvent(room, this.me, 'join')
+  }
+
+  // Our account badge was turned on or renewed. Members we never connect to see it only in our
+  // member event; once that one is due (badge.ts), the profile is signed again (the room rules
+  // take a new member event of ours only for a newer profile or device) and every server gets one.
+  async refreshBadge() {
+    const binding = this.deps.node.binding
+    const now = this.clock.now()
+    const due = [...this.rooms.keys()].some(id => {
+      const m = memberOf(this.stateOf(id), this.me)
+      return m?.m === 'join' && memberBindingDue(m.binding, binding, now)
+    })
+    if (!due || !this.deps.node.author()) return
+    await this.deps.node.touchProfile()
+    for (const id of this.rooms.keys()) await this.refreshMe(id).catch(() => {})
   }
 
   // ----- Checking incoming events -----
@@ -1433,6 +1465,8 @@ export class Servers {
     const certs = verifyCert(c.cert, ik) ? [c.cert as Cert] : []
     const profile = verifyProfile(c.profile, ik) ? (c.profile as Profile) : null
     if (certs.length || profile) await this.learn(ik, certs, [], profile)
+    // The member's account badge, from their own events, checked like one from a hello.
+    if (c.binding !== undefined && rec.sender === ik) this.deps.node.heardBinding(ik, c.binding)
   }
 
   // Counts, pings and alerts for stored messages (only those shown), and files.
@@ -1924,6 +1958,8 @@ export class Servers {
     if (target === this.me && m === 'join') {
       content.cert = this.deps.node.cert
       content.profile = this.deps.node.profile
+      const binding = this.deps.node.binding
+      if (binding) content.binding = binding
     }
     if (extra.cert) content.cert = extra.cert
     if (extra.profile) content.profile = extra.profile

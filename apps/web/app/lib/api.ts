@@ -722,6 +722,8 @@ export const endpoints = (c: ApiClient) => ({
   identityAssertion: (aud: string, nonce?: string) =>
     c.req<Assertion>('POST', '/identity/assertion', { aud, nonce }),
   p2pIce: () => c.req<IceServers>('GET', '/p2p/ice'),
+  p2pBinding: (ik: string, ts: number, proof: string) =>
+    c.req<P2pBinding>('POST', '/identity/p2p_binding', { ik, ts, proof }),
 })
 
 export type Api = ApiClient & ReturnType<typeof endpoints>
@@ -747,6 +749,14 @@ export const localSummary = (s: ServerSummary, now = Date.now()): ServerSummary 
 const localMe = (me: Me): Me => ({ ...me, servers: me.servers.map(s => localSummary(s)) })
 
 const localAuth = (res: AuthResponse): AuthResponse => ({ ...res, user: localMe(res.user) })
+
+export interface P2pBinding {
+  token: string
+  iss: string
+  sub: string
+  ik: string
+  expires_at: number
+}
 
 function pageQuery(page: PageOpts) {
   const parts = Object.entries(page)

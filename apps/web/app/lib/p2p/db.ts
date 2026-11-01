@@ -32,6 +32,20 @@ export interface SelfRecord {
   alert?: number | null
   // Transfer files already imported into this identity (their ids).
   imports?: string[]
+  // The account badge, when the user turned it on: the binding the instance signed for this
+  // identity key (`token`, null until the first one arrives) and when it was fetched. `exp` is
+  // when the newest one handed out expires: peers may show the badge until then, also after it
+  // is turned off.
+  badge?: OwnBadge | null
+}
+
+export interface OwnBadge {
+  on: boolean
+  token: string | null
+  ik: string
+  sub: string
+  at: number
+  exp: number
 }
 
 // A browser whose identity moved keeps the public halves (its history stays readable), never

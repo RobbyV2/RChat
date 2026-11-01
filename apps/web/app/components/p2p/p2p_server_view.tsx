@@ -46,7 +46,7 @@ import { MutedIcon, notifyMenuItems } from '../notify_menu'
 import { markReadItem } from '../mark_read'
 import { PinsButton } from '../pins'
 import { iconBtn } from '../ui'
-import { ContactShield, KeyAvatar, P2pBadge, PresenceDot } from './p2p_badge'
+import { AccountChip, ContactShield, KeyAvatar, P2pBadge, PresenceDot } from './p2p_badge'
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { noteBarCls, P2pChatBody, type Mentionable } from './p2p_chat'
 
@@ -599,7 +599,14 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
             <PresenceDot presence={m.online || m.ik === me ? 'online' : 'offline'} />
           )}
         </span>
-        <span className="streamer min-w-0 flex-1 truncate text-sm">{m.name}</span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="streamer truncate text-sm">{m.name}</span>
+          {m.ik !== me && (
+            <span className="flex min-w-0 empty:hidden">
+              <AccountChip ik={m.ik} size="short" />
+            </span>
+          )}
+        </span>
         {m.owner && (
           <span title="Owner" aria-label="Owner" role="img" className="flex shrink-0 text-tertiary">
             <Crown size={14} />

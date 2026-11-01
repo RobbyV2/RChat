@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
+import { p2p } from '../p2p'
 import type { Message, WsEvent } from '../types'
 import { me, media, msg, result, serverDetail, user } from './fixtures'
 
@@ -334,7 +335,7 @@ describe('unread anchor', () => {
 })
 
 describe('pending uploads', () => {
-  test('an attachment stays with the conversation it was added to', () => {
+  test('an attachment stays with the conversation it was added to', async () => {
     hang()
     const file = new File(['x'], 'notes.txt')
     useStore.setState({ view: { kind: 'dm', dmId: 5 } })
@@ -349,9 +350,21 @@ describe('pending uploads', () => {
     expect(st().pending.d5?.spoiler).toBe(true)
     expect(st().pending.d5?.mode).toBe('p2p')
     useStore.setState({ view: { kind: 'dm', dmId: 5 } })
-    st().sendMessage('')
-    expect(st().outbox.d5[0].pending?.file.name).toBe('notes.txt')
-    expect(st().pending.d5).toBeUndefined()
+    // The P2P send goes on in the background: staging is stubbed out and the test waits for the
+    // send to fail, so none of it lands in a later test (with IndexedDB around, a real staging
+    // would post the message and start a peer there).
+    const stage = p2p.stage
+    p2p.stage = () => Promise.reject(new Error('Not in this test'))
+    try {
+      st().sendMessage('')
+      expect(st().outbox.d5[0].pending?.file.name).toBe('notes.txt')
+      expect(st().pending.d5).toBeUndefined()
+      for (let i = 0; i < 1000 && st().outbox.d5?.[0]?.status !== 'failed'; i += 1)
+        await new Promise(r => setTimeout(r, 2))
+      expect(st().outbox.d5?.[0]?.status).toBe('failed')
+    } finally {
+      p2p.stage = stage
+    }
   })
 
   test('attachments go away with their server, channel, dm or thread', () => {
