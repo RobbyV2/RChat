@@ -19,11 +19,12 @@ import type { AlertInput } from '../notices'
 import { EMPTY_NOTIFY, resolve as resolveNotify, type NotifyPrefs } from '../notify'
 import { applySed, parseSed } from '../sed'
 import type { UserRef } from '../types'
+import type { MarkAllExtra } from '../store_types'
 import { dbName, P2pStore, removeP2pDb, type OwnBadge, type RoomRecord } from './db'
 import { BadgeKeeper, Badges, readSlots, type BadgeSlot } from './badge'
 import { fingerprint, keyId } from './keys'
 import { displayName, type AddResult, type Contact } from './contacts'
-import { p2pAlert } from './alerts'
+import { p2pAlert, p2pUnread } from './alerts'
 import {
   bodyTooLong,
   clipName,
@@ -43,6 +44,8 @@ import {
   type P2pMessage,
 } from './dm'
 import { contentMax, LIMITS as EV, sizeOf, type Attachment, type Fwd } from './event'
+import type { PingRec, PingText } from './inbox'
+import { PingLog, pingAlive, pingText, readPings } from './ping_log'
 import { assemble, EMPTY_VIEW, type BlobView, type Usage } from './blobs'
 import type { Hashed } from './hashing'
 import {
@@ -118,6 +121,8 @@ export type ServerTab =
 export interface RoomSummary {
   id: string
   peer: string
+  // Arrival number of the newest stored event: it moves only when stored content changes.
+  seq: number
   unread: number
   pings: number
   lastTs: number
@@ -213,6 +218,8 @@ export interface P2pState {
   badge: OwnBadge | null
   badgeBusy: boolean
   badgeError: string | null
+  // Goes up whenever the inbox's noted pings change (in this tab or the one that runs P2P).
+  pingLog: number
 }
 
 // Drafts and files being attached are kept per conversation and per server channel.
@@ -287,6 +294,7 @@ const initial: P2pState = {
   badge: null,
   badgeBusy: false,
   badgeError: null,
+  pingLog: 0,
 }
 
 export const useP2p = create<P2pState>()(() => initial)
@@ -364,6 +372,7 @@ let store: P2pStore | null = null
 let dms: Dms | null = null
 let servers: Servers | null = null
 let calls: Calls | null = null
+let pingLog: PingLog | null = null
 let badges: Badges | null = null
 let keeper: BadgeKeeper | null = null
 let leader: TabLeader | null = null
@@ -569,6 +578,8 @@ const stopNode = () => {
   if (useP2p.getState().call) useP2p.setState({ call: null, callQuiet: false })
   servers?.stop()
   servers = null
+  pingLog?.stop()
+  pingLog = null
   keeper?.stop()
   keeper = null
   badges?.stop()
@@ -628,8 +639,14 @@ const read = async (username: string, live: () => boolean) => {
     const ch = dataChannel(username)
     if (ch) {
       ch.onmessage = e => {
-        const msg = e.data as { room?: unknown; call?: unknown; badges?: unknown } | null
+        const msg = e.data as {
+          room?: unknown
+          call?: unknown
+          badges?: unknown
+          inbox?: unknown
+        } | null
         if (msg && 'call' in msg) return useP2p.setState({ callElsewhere: elsewhereCall(msg.call) })
+        if (msg && 'inbox' in msg) return useP2p.setState(st => ({ pingLog: st.pingLog + 1 }))
         if (msg && 'badges' in msg)
           return void readSlots(s).then(
             slots => reader?.store === s && mirrorBadges(Object.fromEntries(slots)),
@@ -743,6 +760,7 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
       attachments: () => !p2pHost.textOnly(),
     })
     servers = sv
+    pingLog = new PingLog({ store: s, dms: d, servers: sv, onWrite: pingLogged })
     sv.onChange(room => {
       data?.postMessage({ room })
       scheduleServer(room)
@@ -853,6 +871,7 @@ const meNow = () => node?.ik ?? reader?.me ?? null
 const summary = (r: RoomRecord): RoomSummary => ({
   id: r.id,
   peer: r.peer,
+  seq: r.lastSeq,
   unread: r.unread,
   pings: r.pings,
   lastTs: r.lastTs,
@@ -933,6 +952,7 @@ const readerView = (r: RoomRecord): ServerView => ({
   online: 0,
   joined: 0,
   chans: r.chans ?? {},
+  seq: r.lastSeq,
   gap: false,
   full: r.full,
 })
@@ -1045,6 +1065,7 @@ const SERVER_PING: Record<NonNullable<ServerArrival['ping']>, string> = {
 // A new message in a server channel: toasts and desktop notifications follow the channel's
 // level (Only @mentions by default), like an instance server.
 const serverArrived = (a: ServerArrival) => {
+  if (a.ping) pingLog?.note(a.room, a.ch, a.ping, a.rec)
   const st = useP2p.getState()
   const watched =
     st.server?.room === a.room &&
@@ -1678,6 +1699,7 @@ export const p2pUser = (ik: string, name = contactName(ik)): UserRef => ({
 // A new event from the other side: toasts and desktop notifications follow the conversation's
 // notification level, like an instance DM. Reading the conversation at the bottom marks it read.
 const arrived = (a: Arrival) => {
+  if (a.ping) pingLog?.note(a.room, null, a.ping, a.rec)
   const st = useP2p.getState()
   const watched =
     st.home &&
@@ -2008,6 +2030,12 @@ export const p2pDm = {
     void withDms(d => d.markRead(room))
   },
 
+  // Every conversation with unread messages or pings.
+  markAllRead() {
+    for (const r of Object.values(useP2p.getState().rooms))
+      if (r.unread || r.pings) p2pDm.markRead(r.id)
+  },
+
   typing(room: string, on: boolean) {
     if (!p2pHost.typingOn()) return
     const t = targetOf(room)
@@ -2107,6 +2135,105 @@ export const p2p = {
       useP2p.setState({ storage: null })
     }
   },
+}
+
+// ----- Inbox -----
+
+const pingLogged = () => {
+  data?.postMessage({ inbox: true })
+  useP2p.setState(st => ({ pingLog: st.pingLog + 1 }))
+}
+
+export const p2pPings = {
+  // The noted pings and the read positions, from the running node's database or the stored one.
+  async read(): Promise<{ list: PingRec[]; readSeq: Map<string, number> } | null> {
+    const s = dbNow()
+    if (!s) return null
+    try {
+      return pingLog && store === s ? await pingLog.read() : await readPings(s)
+    } catch {
+      return null
+    }
+  },
+
+  async text(p: PingRec): Promise<PingText | null> {
+    const s = dbNow()
+    return s ? pingText(s, p) : null
+  },
+
+  async alive(p: PingRec) {
+    const s = dbNow()
+    return s ? pingAlive(s, p) : false
+  },
+
+  // Marks pings read. Only the tab that runs P2P writes.
+  async mark(ids: string[]) {
+    if (!ids.length) return
+    if (!pingLog) {
+      if (useP2p.getState().enabled) p2pHost.toast(ELSEWHERE_TEXT)
+      return
+    }
+    await pingLog.mark(ids)
+  },
+}
+
+// What "Mark all as read" adds for P2P: conversations and joined servers that show unread, as
+// Home's Unread card lists them.
+export const p2pMarkAll = (): MarkAllExtra => {
+  const u = p2pUnread(useP2p.getState(), p2pHost.prefs(), Date.now())
+  return {
+    pending: u.dms.unread || u.dms.pings > 0 || u.servers.length > 0,
+    mark: () => {
+      p2pDm.markAllRead()
+      for (const v of Object.values(useP2p.getState().servers))
+        if (v.me === 'join') p2pServer.markAllRead(v.id)
+    },
+  }
+}
+
+// Opens a conversation or server channel at a message.
+export const p2pOpenAt = async (room: string, ch: string | null, id: string) => {
+  if (ch === null) {
+    const peer = useP2p.getState().rooms[room]?.peer
+    if (!peer) return
+    p2p.openHome()
+    await p2pDm.openDm(peer)
+  } else {
+    p2pServer.open(room, ch)
+    await channelLoaded(room, ch)
+  }
+  const chat = useP2p.getState().chat
+  if (chat?.room === room && (chat.ch ?? null) === ch) await p2pDm.jumpTo(id)
+}
+
+const channelLoaded = (room: string, ch: string) =>
+  new Promise<void>(resolve => {
+    const done = (st: P2pState) => st.chat?.room !== room || st.chat.ch !== ch || !st.chat.loading
+    if (done(useP2p.getState())) return resolve()
+    const stop = () => {
+      clearTimeout(timer)
+      off()
+      resolve()
+    }
+    const off = useP2p.subscribe(st => {
+      if (done(st)) stop()
+    })
+    const timer = setTimeout(stop, 5000)
+  })
+
+// The newest page of a conversation or channel as stored here (the palette's index).
+export const p2pRecent = async (room: string, ch: string | null): Promise<P2pMessage[] | null> => {
+  const s = dbNow()
+  const me = meNow()
+  if (!s || !me) return null
+  try {
+    if (ch !== null)
+      return servers ? (await servers.loadChannel(room, ch, { limit: PAGE })).messages : null
+    const peer = useP2p.getState().rooms[room]?.peer
+    return peer ? (await loadMessages(s.db, room, me, peer, { limit: PAGE })).messages : null
+  } catch {
+    return null
+  }
 }
 
 // ----- Account badge -----

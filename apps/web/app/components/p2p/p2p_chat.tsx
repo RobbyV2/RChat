@@ -19,7 +19,7 @@ import {
   Smile,
   Trash2,
 } from 'lucide-react'
-import { useStore, type ContextMenuItem } from '../../lib/store'
+import { maskOf, useStore, type ContextMenuItem } from '../../lib/store'
 import {
   chatKey,
   chatScope,
@@ -58,10 +58,11 @@ import { useTextAssist } from '../text_assist'
 import { MessageTime } from '../timestamp'
 import { PresentBar, useChatScroll, useFocusMessage } from '../viewport_height'
 import { mentionRowCls } from '../message_pane'
-import { textBtn } from '../ui'
+import { Masked, textBtn } from '../ui'
 import { KeyAvatar } from './p2p_badge'
 import { AttachmentList, attachmentMenu, PendingFiles } from './p2p_files'
 import { namePasted } from '../message_composer'
+import { FormatToolbar, useFormatting } from '../format_toolbar'
 import { P2pCallRow } from './p2p_call'
 
 // The message list and composer of a P2P conversation, shared by direct messages and P2P server
@@ -113,7 +114,7 @@ export const asMessage = (
     ? {
         id: replyNum,
         author: m.reply.sender ? user(m.reply.sender) : null,
-        content: m.reply.body ?? '',
+        content: m.reply.body === null ? '' : plainLine(m.reply.body),
         has_media: false,
         deleted: m.reply.body === null,
         mention: m.reply.sender === me && m.sender !== me,
@@ -256,7 +257,7 @@ const P2pRow = memo(function P2pRow({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-baseline gap-2">
               <span className="streamer min-w-0 truncate text-sm font-medium">
-                {m.author.display_name}
+                <Masked text={m.author.display_name} />
               </span>
               <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
               {p.late && (
@@ -315,7 +316,9 @@ function P2pSystemRow({ m, divider }: { m: Message; divider: boolean }) {
         </span>
         <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
           {before}
-          <span className="streamer font-medium text-on-surface">{m.author.display_name}</span>
+          <span className="streamer font-medium text-on-surface">
+            <Masked text={m.author.display_name} />
+          </span>
           {after}
           <MessageTime ts={m.created_at} className="ml-2 text-xs opacity-70" />
         </p>
@@ -364,7 +367,8 @@ export const forwardTo = async (ik: string, p: P2pMessage, author: string) => {
   const target = await p2pDm.ensureRoom(ik)
   if (target && (await p2pDm.forward(target, fwd))) {
     const c = useP2p.getState().contacts.find(x => x.ik === ik)
-    useStore.getState().showToast(`Forwarded to ${c ? displayName(c) : 'contact'}`)
+    const s = useStore.getState()
+    s.showToast(`Forwarded to ${c ? maskOf(s)(displayName(c)) : 'contact'}`)
   }
 }
 
@@ -416,6 +420,7 @@ function P2pComposer({
     paused: pickerOpen,
     maxHeight: 160,
   })
+  const formatting = useFormatting({ inputRef, getText, setText })
 
   const typing = focused && text.trim() !== ''
   useEffect(() => {
@@ -446,7 +451,9 @@ function P2pComposer({
   const bar = replyTo ? (
     <ComposerBar onClose={p2pDm.cancelReply} closeLabel="Cancel reply">
       Replying to{' '}
-      <span className="streamer font-semibold text-on-surface">{nameOf(replyTo.sender)}</span>
+      <span className="streamer font-semibold text-on-surface">
+        <Masked text={nameOf(replyTo.sender)} />
+      </span>
     </ComposerBar>
   ) : forwarding ? (
     <ForwardBar
@@ -495,6 +502,7 @@ function P2pComposer({
         className={`relative flex items-end gap-2 bg-surface-container-high px-3 py-2 ${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}
       >
         {assist.popups}
+        <FormatToolbar open={formatting.selected} onFormat={formatting.apply} />
         {!textOnly && (
           <>
             <button
@@ -530,6 +538,7 @@ function P2pComposer({
           }}
           onKeyDown={e => {
             if (assist.popupKey(e)) return
+            if (formatting.onKeyDown(e)) return
             if (
               e.key === 'ArrowUp' &&
               !text &&
@@ -826,7 +835,7 @@ export function P2pChatBody(props: ChatBodyProps) {
       icon: Forward,
       submenu: [
         ...others.map(c => ({
-          label: displayName(c),
+          label: maskOf(useStore.getState())(displayName(c)),
           action: () => void forwardTo(c.ik, p, m.author.display_name),
         })),
         { label: 'Copy for forwarding', icon: Copy, action: () => copyForP2p(p, m) },

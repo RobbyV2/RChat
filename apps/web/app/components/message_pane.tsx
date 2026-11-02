@@ -121,6 +121,7 @@ import {
   selectMenuItem,
   useSelectionKeys,
 } from './selection'
+import { p2pMarkAll } from '../lib/p2p/app'
 
 const EMPTY: Message[] = []
 
@@ -718,7 +719,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       return
     }
     if (guest || !escapeMarksRead(e)) return
-    if (e.shiftKey) askMarkAllRead()
+    if (e.shiftKey) askMarkAllRead(p2pMarkAll())
     else if (scope) dismissUnread(scope)
   }, 'stage')
 

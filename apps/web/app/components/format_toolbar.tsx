@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import {
   Bold,
   Code,
@@ -35,10 +35,13 @@ export function useFormatting({
   setText: (text: string) => void
 }) {
   const [selected, setSelected] = useState(false)
+  // A format is being applied: the new text collapses the selection until it is restored.
+  const applying = useRef(false)
 
   useEffect(() => {
     const check = () => {
       const el = inputRef.current
+      if (applying.current) return
       setSelected(
         el !== null && document.activeElement === el && el.selectionStart !== el.selectionEnd
       )
@@ -47,16 +50,26 @@ export function useFormatting({
     return () => document.removeEventListener('selectionchange', check)
   }, [inputRef])
 
+  // Text set from code (sending clears the box) moves the caret without a selectionchange.
+  useLayoutEffect(() => {
+    const el = inputRef.current
+    if (applying.current) return
+    if (selected && (el === null || el.selectionStart === el.selectionEnd)) setSelected(false)
+  })
+
   const apply = (format: Format) => {
     const el = inputRef.current
     if (!el) return
     const out = applyFormat(getText(), el.selectionStart, el.selectionEnd, format)
+    applying.current = true
     setText(out.text)
     requestAnimationFrame(() => {
+      applying.current = false
       const now = inputRef.current
-      if (!now) return
+      if (!now) return setSelected(false)
       now.focus({ preventScroll: true })
       now.setSelectionRange(out.start, out.end)
+      setSelected(out.start !== out.end)
     })
   }
 

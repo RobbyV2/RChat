@@ -1255,7 +1255,10 @@ function ContactCallBanner() {
           <span className="flex min-w-0 flex-col text-left">
             <span className="flex min-w-0 items-center gap-1 text-sm">
               Calling
-              <span className="streamer truncate font-medium">{name}</span>…
+              <span className="streamer truncate font-medium">
+                <Masked text={name} />
+              </span>
+              …
             </span>
             <CallType video={c.video} p2p chip={<P2pBadge />} />
           </span>
@@ -1280,7 +1283,9 @@ function ContactCallBanner() {
       <span className="max-sm:hidden">{avatar(72)}</span>
       <span className="sm:hidden">{avatar(40)}</span>
       <div className="flex min-w-0 flex-col items-center gap-0.5 max-sm:flex-1 max-sm:items-start">
-        <span className="streamer w-full truncate text-base font-semibold">{name}</span>
+        <span className="streamer w-full truncate text-base font-semibold">
+          <Masked text={name} />
+        </span>
         <CallType video={c.video} p2p incoming chip={<P2pBadge />} />
         <button
           title="Go to conversation"
@@ -1289,7 +1294,9 @@ function ContactCallBanner() {
         >
           <MessageCircle size={12} aria-hidden className="shrink-0" />
           <span className="shrink-0">Conversation with</span>
-          <span className="streamer truncate">{name}</span>
+          <span className="streamer truncate">
+            <Masked text={name} />
+          </span>
         </button>
       </div>
       <div className="flex shrink-0 items-center gap-4 max-sm:gap-2 sm:mt-1">

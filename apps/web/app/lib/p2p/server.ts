@@ -330,6 +330,8 @@ export interface ServerView {
   online: number
   joined: number
   chans: Record<string, ChanCounts>
+  // Arrival number of the newest stored event: it moves only when stored content changes.
+  seq: number
   gap: boolean
   full: boolean
 }
@@ -1310,6 +1312,9 @@ export class Servers {
         return this.insertNow(room, id, wire, receivedAt, own)
     }
     if (res.status !== 'new') return res
+    const cached = this.rooms.get(room)
+    if (cached && cached.lastSeq < res.rec.seq)
+      this.rooms.set(room, { ...cached, lastSeq: res.rec.seq })
     rt.needed.delete(id)
     if (ev.sender === this.me && ev.dseq !== undefined) await this.noteMine(room, id, ev)
     // Hidden, from someone whose ban stood long enough to purge them: purged on arrival.
@@ -2545,6 +2550,19 @@ export class Servers {
     this.changed(room)
   }
 
+  // Pings marked read one by one (the inbox): off the channel's counter, the read position stays.
+  async unping(room: string, ch: string, n: number) {
+    await this.updateRoom(room, cur => {
+      const old = cur.chans?.[ch]
+      if (!old?.pings) return null
+      return {
+        ...cur,
+        chans: { ...cur.chans, [ch]: { ...old, pings: Math.max(0, old.pings - n) } },
+      }
+    })
+    this.changed(room)
+  }
+
   typing(room: string, ch: string, on: boolean) {
     this.gossip.typing(room, ch, on)
   }
@@ -2592,6 +2610,7 @@ export class Servers {
       online: joined.filter(m => m.online).length,
       joined: joined.length,
       chans: r.chans ?? {},
+      seq: r.lastSeq,
       gap: r.missing.length > 0,
       full: r.full,
     }

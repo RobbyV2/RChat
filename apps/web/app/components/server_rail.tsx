@@ -374,7 +374,6 @@ export function ServerRail() {
   const guestNames = useStore(s => s.guestNames)
   const servers = useStore(s => (s.me ? NO_DETAILS : s.servers))
   const view = useStore(s => s.view)
-  const atHome = useStore(s => s.home && s.view === null)
   const dmUnread = useStore(dmsUnread)
   const dmPings = useStore(dmPingCount)
   const openLastDm = useStore(s => s.openLastDm)
@@ -386,6 +385,7 @@ export function ServerRail() {
   const logout = useStore(s => s.logout)
   const saved = useStore(s => s.layout.servers)
   const p2pHome = useP2p(s => s.home || s.server !== null)
+  const atHome = useStore(s => s.home && s.view === null) && !p2pHome
 
   const items = railItems(
     railServers({ me, guestServers, guestNames, servers }),

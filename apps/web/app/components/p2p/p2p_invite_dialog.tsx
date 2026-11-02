@@ -7,7 +7,7 @@ import { CODE_TTLS, NEEDS_INVITER, p2p, p2pRail, p2pServer, useP2p } from '../..
 import { displayName } from '../../lib/p2p/contacts'
 import { P } from '../../lib/p2p/state'
 import { CopyButton, QrCode } from '../config_sync'
-import { Dialog, FieldError, fieldCls, filledBtn, textBtn } from '../ui'
+import { Dialog, FieldError, fieldCls, filledBtn, Masked, textBtn } from '../ui'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { QrScan } from './qr_scan'
 
@@ -190,8 +190,11 @@ export function ServerInviteDialog({ room }: { room: string }) {
       <div className="flex flex-col gap-6">
         <section className="flex flex-col gap-3">
           <p className="text-sm text-on-surface-variant">
-            To <span className="streamer font-medium text-on-surface">{v.name}</span>. Make a code
-            and share it. {NEEDS_INVITER} when someone uses it.
+            To{' '}
+            <span className="streamer font-medium text-on-surface">
+              <Masked text={v.name} />
+            </span>
+            . Make a code and share it. {NEEDS_INVITER} when someone uses it.
           </p>
           <div className="flex flex-wrap items-end gap-2">
             <label className="flex flex-col gap-1 text-xs text-on-surface-variant">
@@ -242,7 +245,7 @@ export function ServerInviteDialog({ room }: { room: string }) {
                   <li key={c.ik} className="flex items-center gap-3 rounded-xl px-2 py-1.5">
                     <KeyAvatar ik={c.ik} size={32} />
                     <span className="streamer min-w-0 flex-1 truncate text-sm">
-                      {displayName(c)}
+                      <Masked text={displayName(c)} />
                     </span>
                     <button
                       disabled={pending}
@@ -415,7 +418,9 @@ export function ServerNewDialog({
                     <Waypoints size={18} className="text-tertiary" />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="streamer truncate text-sm font-medium">{peek.name}</p>
+                    <p className="streamer truncate text-sm font-medium">
+                      <Masked text={peek.name} />
+                    </p>
                     <p className="text-xs text-on-surface-variant">{NEEDS_INVITER}</p>
                   </div>
                   <P2pBadge />

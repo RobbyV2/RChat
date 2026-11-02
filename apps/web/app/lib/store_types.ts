@@ -64,6 +64,12 @@ import type { SelfAudio } from './voice_layout'
 
 // A menu row. `submenu` opens a nested menu (a flyout on desktop, a sheet with Back on touch)
 // instead of running `action`. `checked` makes it a radio (`radio: true`) or check item.
+// More that "Mark all as read" marks (P2P): whether it has anything unread, and marking it.
+export interface MarkAllExtra {
+  pending: boolean
+  mark: () => void
+}
+
 export interface ContextMenuItem {
   label: string
   subtitle?: string
@@ -488,8 +494,9 @@ export interface RChatState {
   markDmsRead: () => Promise<void>
   // Every server channel and DM, muted ones included.
   markAllRead: () => Promise<void>
-  // Asks first (a short confirm), then `markAllRead`. Does nothing when everything is read.
-  askMarkAllRead: () => void
+  // Asks first (a short confirm), then `markAllRead` and `extra`. Does nothing when everything
+  // is read.
+  askMarkAllRead: (extra?: MarkAllExtra) => void
   seeThread: (rootId: number) => void
   setAtBottom: (key: string, v: boolean) => void
   retryOutgoing: (key: string, tempId: number) => void

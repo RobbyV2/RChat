@@ -1,9 +1,17 @@
 import type { AlertInput } from '../notices'
-import { levelOf, messageAlert, pingToast, type NotifyPrefs, type Resolved } from '../notify'
+import {
+  levelOf,
+  messageAlert,
+  mutedOf,
+  pingToast,
+  type NotifyPrefs,
+  type Resolved,
+} from '../notify'
 import type { UserRef } from '../types'
 import type { PingKind } from './dag'
 import type { Arrival } from './dm'
 import type { MsgContent } from './event'
+import type { ServerView } from './server'
 
 // How a new event in a P2P conversation notifies, by the conversation's Task 9 rule: pings
 // (mentions, replies to you, reactions to your messages) toast unless muted or "Nothing"; other
@@ -64,3 +72,57 @@ export const badgePings = (
     (n, r) => n + (levelOf(prefs, { kind: 'p2p', room: r.id }) === 'nothing' ? 0 : r.pings),
     0
   )
+
+// Pings in a server's channels that badge (channels set to "Nothing" don't).
+export const serverPings = (
+  v: { id: string; chans: Record<string, { pings: number }> },
+  prefs: NotifyPrefs
+) =>
+  Object.entries(v.chans).reduce(
+    (n, [ch, c]) =>
+      n + (levelOf(prefs, { kind: 'p2pc', room: v.id, ch }) === 'nothing' ? 0 : c.pings),
+    0
+  )
+
+export interface P2pUnreadRow {
+  v: ServerView
+  pings: number
+  // Unread channels that show it (not muted).
+  channels: number
+}
+
+// What Home's Unread card lists of P2P: joined servers with pings or unread channels (pinging
+// ones first, then by name), and whether conversations have pings or unread messages.
+export const p2pUnread = (
+  st: {
+    servers: Record<string, ServerView>
+    rooms: Record<string, { id: string; unread: number; pings: number }>
+  },
+  prefs: NotifyPrefs,
+  now: number
+) => {
+  const servers: P2pUnreadRow[] = Object.values(st.servers)
+    .filter(v => v.me === 'join')
+    .map(v => ({
+      v,
+      pings: serverPings(v, prefs),
+      channels: mutedOf(prefs, { kind: 'p2ps', room: v.id }, now)
+        ? 0
+        : v.channels.filter(
+            c =>
+              (v.chans[c.id]?.unread ?? 0) > 0 &&
+              !mutedOf(prefs, { kind: 'p2pc', room: v.id, ch: c.id }, now)
+          ).length,
+    }))
+    .filter(r => r.pings > 0 || r.channels > 0)
+    .sort((a, b) => b.pings - a.pings || a.v.name.localeCompare(b.v.name))
+  return {
+    servers,
+    dms: {
+      pings: badgePings(st.rooms, prefs),
+      unread: Object.values(st.rooms).some(
+        r => r.unread > 0 && !mutedOf(prefs, { kind: 'p2p', room: r.id }, now)
+      ),
+    },
+  }
+}

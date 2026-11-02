@@ -33,6 +33,7 @@ import {
   type UsageMap,
 } from './palette'
 import type { IndexDoc, PaletteIndex } from './palette_index'
+import { indexSource } from './palette_sync'
 import { openPalette, setPaletteView } from './palette_store'
 import { SHORTCUTS, shortcutLabel } from './shortcuts'
 import { useStore } from './store'
@@ -172,6 +173,7 @@ export const threadItems = (s: RChatState, mask: (t: string) => string): Palette
 
 export const recentItems = (s: RChatState, recents: Recent[]): PaletteItem[] =>
   recents.flatMap((r): PaletteItem[] => {
+    if (r.kind === 'p2p') return []
     const v = s.view
     if (
       v &&
@@ -264,8 +266,10 @@ export const messageItems = (
   return ctx.index
     .search(q, { kind: 'message', limit, visible: ctx.visible })
     .map(({ doc, score }) => {
-      const place =
-        doc.dm !== null
+      const source = doc.source === 'instance' ? null : indexSource(doc.source)
+      const place = source
+        ? (source.place?.(doc) ?? '')
+        : doc.dm !== null
           ? 'Direct message'
           : doc.server !== null && doc.channel !== null
             ? `#${channelName(s, doc.server, doc.channel) ?? 'channel'}${doc.thread !== null ? ' thread' : ''}`
@@ -281,7 +285,8 @@ export const messageItems = (
         name: s.streamer,
         subtitleName: true,
         run: () => {
-          if (id !== null) void get().openMessage(id)
+          if (source) source.open(doc)
+          else if (id !== null) void get().openMessage(id)
         },
       }
       return { item, score, hits: [] }

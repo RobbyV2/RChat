@@ -16,7 +16,7 @@ import {
   Waypoints,
   X,
 } from 'lucide-react'
-import { useStore, type ContextMenuItem } from '../../lib/store'
+import { maskOf, useMask, useStore, type ContextMenuItem } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
 import { home, writeLocal } from '../../lib/instances'
 import {
@@ -29,11 +29,11 @@ import {
   p2pServer,
   serverScope,
   useP2p,
-  type P2pState,
 } from '../../lib/p2p/app'
 import { displayName, shieldOf } from '../../lib/p2p/contacts'
 import { movedText, type P2pMessage } from '../../lib/p2p/dm'
 import { P } from '../../lib/p2p/state'
+import { serverPings } from '../../lib/p2p/alerts'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { levelOf, mutedOf, type NotifyPrefs } from '../../lib/notify'
 import { folderKey, railItems, serverKey, type Folder } from '../../lib/nav_layout'
@@ -45,7 +45,7 @@ import { PingBadge, RailPingBadge, pingLabel } from '../ping_badge'
 import { MutedIcon, notifyMenuItems } from '../notify_menu'
 import { markReadItem } from '../mark_read'
 import { PinsButton } from '../pins'
-import { iconBtn } from '../ui'
+import { iconBtn, Masked } from '../ui'
 import { AccountChip, ContactShield, KeyAvatar, P2pBadge, PresenceDot } from './p2p_badge'
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { noteBarCls, P2pChatBody, type Mentionable } from './p2p_chat'
@@ -60,12 +60,7 @@ const idle =
 
 // ----- Counts -----
 
-// Pings in a server's channels that badge (channels set to "Nothing" don't).
-export const serverPings = (v: ServerView, prefs: NotifyPrefs) =>
-  Object.entries(v.chans).reduce(
-    (n, [ch, c]) => n + (levelOf(prefs, channelScope(v.id, ch)) === 'nothing' ? 0 : c.pings),
-    0
-  )
+export { serverPings }
 
 // Unread channels that show it: muted channels (or a muted server) don't.
 export const serverUnread = (v: ServerView, prefs: NotifyPrefs, now = Date.now()) =>
@@ -76,9 +71,6 @@ export const serverUnread = (v: ServerView, prefs: NotifyPrefs, now = Date.now()
       v.channels.some(x => x.id === ch) &&
       !mutedOf(prefs, channelScope(v.id, ch), now)
   )
-
-export const allServerPings = (servers: P2pState['servers'], prefs: NotifyPrefs) =>
-  Object.values(servers).reduce((n, v) => n + serverPings(v, prefs), 0)
 
 const can = (v: ServerView | undefined, bit: number) =>
   !!v && v.me === 'join' && (v.perms & bit) !== 0
@@ -172,12 +164,13 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
   const unread = serverUnread(v, prefs)
   const muted = mutedOf(prefs, serverScope(v.id), Date.now())
   const parent = folder === null ? null : zoneOfFolder(folder)
+  const mask = useMask()
   return (
     <button
       data-p2p-tile
       data-p2p-server={v.id}
-      title={`${v.name}, peer-to-peer${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}`}
-      aria-label={`${v.name}, peer-to-peer`}
+      title={`${mask(v.name)}, peer-to-peer${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}`}
+      aria-label={`${mask(v.name)}, peer-to-peer`}
       aria-current={active ? 'page' : undefined}
       onClick={() => p2pServer.open(v.id)}
       {...longPress((x, y) => openContextMenu(x, y, serverMenu(v, folder, at)), {
@@ -195,7 +188,7 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
       <span
         className={`streamer flex h-full w-full items-center justify-center ${muted && !active ? 'opacity-50' : ''}`}
       >
-        {serverInitial(v.name)}
+        {serverInitial(mask(v.name))}
       </span>
       <span
         aria-hidden
@@ -229,8 +222,9 @@ function P2pFolderEntry({ folder, list, at }: { folder: Folder; list: ServerView
   const unread = !folder.open && list.some(v => serverUnread(v, prefs))
   const pings = folder.open ? 0 : list.reduce((n, v) => n + serverPings(v, prefs), 0)
   const streamer = useStore(s => s.streamer)
+  const mask = useMask()
   const label =
-    folder.name && !streamer ? folder.name : `P2P folder: ${list.map(v => v.name).join(', ')}`
+    folder.name && !streamer ? folder.name : `P2P folder: ${list.map(v => mask(v.name)).join(', ')}`
   const header = {
     title: streamer ? folder.name || 'Folder' : label,
     'aria-expanded': folder.open,
@@ -266,7 +260,7 @@ function P2pFolderEntry({ folder, list, at }: { folder: Folder; list: ServerView
               key={v.id}
               className="folder-mini streamer flex min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md text-[9px] leading-none font-semibold"
             >
-              {serverInitial(v.name)}
+              {serverInitial(mask(v.name))}
             </span>
           ))}
         </span>
@@ -382,7 +376,7 @@ function ServerHead({ v }: { v: ServerView }) {
       >
         <span className="flex w-full min-w-0 items-center gap-1.5">
           <span data-p2p-server-name className="streamer truncate font-medium">
-            {v.name}
+            <Masked text={v.name} />
           </span>
           <P2pBadge />
         </span>
@@ -488,7 +482,9 @@ export function P2pServerSidebar() {
               }`}
             >
               <Hash size={16} className="shrink-0" />
-              <span className="truncate">{c.name}</span>
+              <span className="truncate">
+                <Masked text={c.name} />
+              </span>
               <MutedIcon scope={scope} />
               {pings > 0 ? (
                 <PingBadge count={pings} className="ml-auto" />
@@ -530,8 +526,9 @@ export function P2pServerSidebar() {
   )
 }
 
-const memberMenu = (v: ServerView, m: MemberView): ContextMenuItem[] => {
+export const memberMenu = (v: ServerView, m: MemberView): ContextMenuItem[] => {
   const s = useStore.getState()
+  const mask = maskOf(s)
   const me = useP2p.getState().me
   const items: ContextMenuItem[] = []
   const contact = useP2p.getState().contacts.find(c => c.ik === m.ik)
@@ -551,7 +548,7 @@ const memberMenu = (v: ServerView, m: MemberView): ContextMenuItem[] => {
   const owner = v.owner === me
   if (owner && m.ik !== me && m.m === 'join') {
     items.push({
-      label: s.streamer ? 'Kick Member' : `Kick ${m.name}`,
+      label: s.streamer ? 'Kick Member' : `Kick ${mask(m.name)}`,
       danger: true,
       action: () =>
         s.askConfirm({
@@ -564,7 +561,7 @@ const memberMenu = (v: ServerView, m: MemberView): ContextMenuItem[] => {
   }
   if (owner && m.ik !== me && m.m !== 'ban')
     items.push({
-      label: s.streamer ? 'Ban Member' : `Ban ${m.name}`,
+      label: s.streamer ? 'Ban Member' : `Ban ${mask(m.name)}`,
       danger: true,
       action: () =>
         s.askConfirm({
@@ -600,7 +597,9 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
           )}
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="streamer truncate text-sm">{m.name}</span>
+          <span className="streamer truncate text-sm">
+            <Masked text={m.name} />
+          </span>
           {m.ik !== me && (
             <span className="flex min-w-0 empty:hidden">
               <AccountChip ik={m.ik} size="short" />
@@ -715,7 +714,8 @@ export function P2pChannelPane({
   const menuPings = useStore(allPings)
   const channel = v?.channels.find(c => c.id === chat?.ch)
   const room = v?.id ?? ''
-  const nameOf = useCallback((ik: string) => memberName(room, ik), [room])
+  const mask = useMask()
+  const nameOf = useCallback((ik: string) => mask(memberName(room, ik)), [room, mask])
   const members = v?.members
   const people = useMemo<Mentionable[]>(
     () =>
@@ -745,10 +745,12 @@ export function P2pChannelPane({
         />
       </button>
       <Hash size={20} className="shrink-0 text-on-surface-variant" />
-      <span className="min-w-0 truncate font-medium">{channel?.name ?? v.name}</span>
+      <span className="min-w-0 truncate font-medium">
+        <Masked text={channel?.name ?? v.name} />
+      </span>
       {channel?.topic && (
         <span className="min-w-0 truncate text-sm text-on-surface-variant max-md:hidden">
-          {channel.topic}
+          <Masked text={channel.topic} />
         </span>
       )}
       <span className="max-sm:hidden">
@@ -795,7 +797,7 @@ export function P2pChannelPane({
           {waiting ? (
             <>
               <span data-p2p-joining className="text-lg font-medium text-on-surface">
-                Joining {v.name}…
+                Joining <Masked text={v.name} />…
               </span>
               <span className="text-sm">
                 Waiting for a member to send the server. Someone who can invite must be online.
@@ -853,8 +855,8 @@ export function P2pChannelPane({
       canAct={!disabled}
       nameOf={nameOf}
       people={people}
-      title={`#${channel.name}`}
-      placeholder={`Message #${channel.name}`}
+      title={`#${mask(channel.name)}`}
+      placeholder={`Message #${mask(channel.name)}`}
       pendingTip="Waiting for a member to come online"
       peerFull={false}
       gap={v.gap}
@@ -862,7 +864,9 @@ export function P2pChannelPane({
       gapOffline="Older messages unavailable until a member who has them is online"
       empty={
         <>
-          <span className="text-2xl font-semibold">Welcome to #{channel.name}</span>
+          <span className="text-2xl font-semibold">
+            Welcome to #<Masked text={channel.name} />
+          </span>
           <span className="text-sm">
             This is the start of the channel. Messages are stored on members&apos; devices.
           </span>
@@ -883,6 +887,7 @@ export function P2pChannelPane({
 export function ServerInviteRows() {
   const invites = useP2p(s => s.serverInvites)
   const contacts = useP2p(s => s.contacts)
+  const mask = useMask()
   if (!invites.length) return null
   return (
     <section aria-label="P2P server invites">
@@ -899,13 +904,15 @@ export function ServerInviteRows() {
               className="flex items-center gap-3 rounded-2xl border border-dashed border-tertiary bg-surface-container px-3 py-2"
             >
               <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border-2 border-dashed border-tertiary font-semibold">
-                <span className="streamer">{serverInitial(i.name)}</span>
+                <span className="streamer">{serverInitial(mask(i.name))}</span>
               </span>
               <div className="min-w-0 flex-1">
-                <p className="streamer truncate text-sm font-medium">{i.name}</p>
+                <p className="streamer truncate text-sm font-medium">
+                  <Masked text={i.name} />
+                </p>
                 <p className="truncate text-xs text-on-surface-variant">
-                  From <span className="streamer">{c ? displayName(c) : 'a contact'}</span>. Someone
-                  in it must be online to let you in.
+                  From <span className="streamer">{c ? mask(displayName(c)) : 'a contact'}</span>.
+                  Someone in it must be online to let you in.
                 </p>
               </div>
               <button

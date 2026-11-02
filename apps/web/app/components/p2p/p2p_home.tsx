@@ -14,7 +14,7 @@ import {
   Waypoints,
   X,
 } from 'lucide-react'
-import { useStore } from '../../lib/store'
+import { useMask, useStore } from '../../lib/store'
 import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
 import { badgePings } from '../../lib/p2p/alerts'
 import { dmRoomId, movedText, MOVING_TEXT, RESUME_TEXT } from '../../lib/p2p/dm'
@@ -36,12 +36,12 @@ import { PingBadge, RailPingBadge } from '../ping_badge'
 import { MutedIcon, notifyMenuItems } from '../notify_menu'
 import { P2pDmPane } from './p2p_dm_pane'
 import { VoiceDock } from '../voice_grid'
-import { dangerBtn, Dialog, fieldCls, filledBtn, iconBtn, textBtn } from '../ui'
+import { dangerBtn, Dialog, fieldCls, filledBtn, iconBtn, Masked, textBtn } from '../ui'
 import { AddContactDialog } from './add_contact'
 import { VerifyDialog } from './verify_dialog'
 import { P2pFolderDialog, ServerInviteDialog, ServerNewDialog } from './p2p_invite_dialog'
 import { ServerSettingsDialog } from './p2p_server_settings'
-import { allServerPings, ServerInviteRows, serverUnread } from './p2p_server_view'
+import { ServerInviteRows, serverUnread } from './p2p_server_view'
 import {
   AccountChip,
   badgeDate,
@@ -56,14 +56,6 @@ import {
 import { badgeState } from '../../lib/p2p/badge'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
-
-// Pings of P2P conversations and P2P server channels (the tab title counts both).
-export const useP2pPings = () => {
-  const rooms = useP2p(s => s.rooms)
-  const servers = useP2p(s => s.servers)
-  const prefs = useStore(s => s.notifyPrefs)
-  return badgePings(rooms, prefs) + allServerPings(servers, prefs)
-}
 
 // Only conversations: the P2P tile badges these, server tiles badge their own.
 const useDmPings = () => {
@@ -380,6 +372,7 @@ function ContactRow({
   const notice = noticeText(c)
   const shield = shieldOf(c)
   const chip = useHasChip(c.ik)
+  const mask = useMask()
   return (
     <li>
       <button
@@ -405,7 +398,7 @@ function ContactRow({
             <span
               className={`streamer ${chip ? 'max-w-[60%] shrink-0' : ''} truncate text-sm ${unread || pings ? 'font-bold text-on-surface' : 'font-medium'}`}
             >
-              {displayName(c)}
+              <Masked text={displayName(c)} />
             </span>
             <ContactShield kind={shield} size={14} />
             <AccountChip ik={c.ik} />
@@ -414,7 +407,7 @@ function ContactRow({
           <span className="block truncate text-xs text-on-surface-variant">
             {shield === 'warning'
               ? 'New key: verify before you trust it'
-              : (notice ??
+              : ((notice && mask(notice)) ??
                 (c.state === 'outgoing'
                   ? 'Request sent'
                   : c.state === 'blocked'
@@ -447,7 +440,7 @@ function RequestRow({ c }: { c: Contact }) {
             <span
               className={`streamer truncate text-sm font-medium ${chip ? 'max-w-[60%] shrink-0' : ''}`}
             >
-              {displayName(c)}
+              <Masked text={displayName(c)} />
             </span>
             <ContactShield kind={shield} size={14} />
             <AccountChip ik={c.ik} />
@@ -488,7 +481,7 @@ function RequestRow({ c }: { c: Contact }) {
       )}
       {c.intros.map((t, i) => (
         <p key={i} className="streamer mt-1 text-sm break-words whitespace-pre-wrap">
-          {t}
+          <Masked text={t} />
         </p>
       ))}
     </li>
@@ -710,10 +703,12 @@ function ContactDialog({ ik }: { ik: string }) {
             <PresenceDot presence={presence} />
           </span>
           <div className="min-w-0">
-            <p className="streamer truncate text-lg font-medium">{displayName(c)}</p>
+            <p className="streamer truncate text-lg font-medium">
+              <Masked text={displayName(c)} />
+            </p>
             {c.petname && c.name && (
               <p className="streamer truncate text-xs text-on-surface-variant">
-                Calls themselves {c.name}
+                Calls themselves <Masked text={c.name} />
               </p>
             )}
             <p className="text-xs text-on-surface-variant">
@@ -742,7 +737,11 @@ function ContactDialog({ ik }: { ik: string }) {
           <span className="text-primary">Verify</span>
         </button>
         <BadgeRow ik={c.ik} />
-        {notice && <p className="text-sm text-on-surface-variant">{notice}</p>}
+        {notice && (
+          <p className="text-sm text-on-surface-variant">
+            <Masked text={notice} />
+          </p>
+        )}
         <p className="streamer font-mono text-xs text-on-surface-variant">{fingerprint(c.ik)}</p>
         <div className="flex flex-wrap justify-end gap-2">
           {contactMenu(c, useP2p.getState().me)

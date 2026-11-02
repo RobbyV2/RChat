@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { Eye } from 'lucide-react'
-import { useStore } from '../../lib/store'
+import { useMask, useStore } from '../../lib/store'
 import { p2p, useP2p } from '../../lib/p2p/app'
 import { displayName, shieldOf, warningText } from '../../lib/p2p/contacts'
 import { fingerprint } from '../../lib/p2p/keys'
@@ -25,8 +25,9 @@ export function VerifyDialog({ ik }: { ik: string }) {
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
   const code = useMemo(() => (mode === 'show' ? p2p.verifyCode(ik) : null), [mode, ik])
   const groups = useMemo(() => (me ? safetyGroups(me, ik) : []), [me, ik])
+  const mask = useMask()
   if (!contact || !me) return null
-  const name = displayName(contact)
+  const name = mask(displayName(contact))
   const shield = shieldOf(contact)
   const lookalike = contact.warning ? all.find(c => c.ik === contact.warning) : undefined
   const hidden = streamer && !shown
@@ -49,7 +50,7 @@ export function VerifyDialog({ ik }: { ik: string }) {
             role="alert"
             className="rounded-xl bg-error-container px-3 py-2 text-sm text-on-error-container"
           >
-            {warningText(lookalike ? displayName(lookalike) : 'a contact')} Compare the safety
+            {warningText(lookalike ? mask(displayName(lookalike)) : 'a contact')} Compare the safety
             number in person before you trust it.
           </p>
         )}

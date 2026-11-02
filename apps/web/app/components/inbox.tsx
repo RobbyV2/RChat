@@ -1,6 +1,15 @@
 'use client'
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type KeyboardEvent,
+} from 'react'
 import {
   AtSign,
   Bell,
@@ -60,6 +69,17 @@ const freshSources = (): Record<string, SourceState> =>
   Object.fromEntries(inboxAdapters().map(a => [a.id, freshSource()]))
 
 const adapterOf = (id: string) => inboxAdapters().find(a => a.id === id)
+
+const subscribeCounts = (onChange: () => void) => {
+  const offs = inboxAdapters().flatMap(a => (a.subscribe ? [a.subscribe(onChange)] : []))
+  return () => offs.forEach(off => off())
+}
+
+const adapterCounts = () => inboxAdapters().reduce((n, a) => n + (a.count?.() ?? 0), 0)
+
+// Notifications that badge, from the store and from sources that count their own (P2P).
+export const useInboxCount = () =>
+  useStore(allPings) + useSyncExternalStore(subscribeCounts, adapterCounts, adapterCounts)
 
 // Loads the inbox for a view from every source, merged by time. When the badge count changes it
 // fetches the first page again and merges it in front of what is loaded, so new and cleared
@@ -121,7 +141,7 @@ function useInbox(view: InboxView) {
   const markedHere = useCallback(() => {
     own.current = Date.now() + OWN_MARK_MS
   }, [])
-  const count = useStore(allPings)
+  const count = useInboxCount()
   const lastCount = useRef(count)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
@@ -542,7 +562,7 @@ export function InboxPreview({ max = 5 }: { max?: number }) {
 
 // The bell: opens the inbox. Its badge is the same count as the tab title.
 export function InboxButton({ className = '' }: { className?: string }) {
-  const count = useStore(allPings)
+  const count = useInboxCount()
   const open = useStore(s => s.inboxOpen)
   const setOpen = useStore(s => s.setInboxOpen)
   const label = count ? `Inbox, ${pingLabel(count)}` : 'Inbox'

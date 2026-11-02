@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { ArrowLeft, Menu, X } from 'lucide-react'
-import { useStore } from '../../lib/store'
+import { useMask, useStore } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
 import { home, writeLocal } from '../../lib/instances'
 import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
@@ -114,12 +114,13 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
   )
   const peerIk = chat?.peer ?? ''
   const chip = useHasChip(peerIk)
-  const peerName = peer ? displayName(peer) : 'Contact'
+  const mask = useMask()
+  const peerName = peer ? mask(displayName(peer)) : 'Contact'
   const online = presence === 'online'
   const canAct = !reader && !elsewhere && peer?.state === 'mutual' && status !== 'moved'
   const nameOf = useCallback(
-    (ik: string) => (ik === me ? myName || 'You' : peerName),
-    [me, myName, peerName]
+    (ik: string) => (ik === me ? mask(myName) || 'You' : peerName),
+    [me, myName, peerName, mask]
   )
   const people = useMemo<Mentionable[]>(() => {
     const out: Mentionable[] = []

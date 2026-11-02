@@ -2,11 +2,11 @@
 
 import { useState, type ReactNode } from 'react'
 import { Crown, Hash, Trash2 } from 'lucide-react'
-import { useStore } from '../../lib/store'
+import { useMask, useStore } from '../../lib/store'
 import { p2p, p2pServer, useP2p, type ServerTab } from '../../lib/p2p/app'
 import { P } from '../../lib/p2p/state'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
-import { Dialog, fieldCls, filledBtn, sectionCls, textBtn } from '../ui'
+import { Dialog, fieldCls, filledBtn, Masked, sectionCls, textBtn } from '../ui'
 import { KeyAvatar } from './p2p_badge'
 import { CodeList } from './p2p_invite_dialog'
 
@@ -71,6 +71,7 @@ function Overview({ v }: { v: ServerView }) {
 
 function Channels({ v }: { v: ServerView }) {
   const edit = can(v, P.ManageChannels)
+  const mask = useMask()
   const [names, setNames] = useState<Record<string, string>>({})
   const [topics, setTopics] = useState<Record<string, string>>({})
   const [fresh, setFresh] = useState('')
@@ -95,7 +96,7 @@ function Channels({ v }: { v: ServerView }) {
               />
               {edit && texts.length > 1 && (
                 <button
-                  title={`Delete #${c.name}`}
+                  title={`Delete #${mask(c.name)}`}
                   aria-label={`Delete #${c.name}`}
                   onClick={() =>
                     useStore.getState().askConfirm({
@@ -165,6 +166,7 @@ function Channels({ v }: { v: ServerView }) {
 function System({ v }: { v: ServerView }) {
   const edit = can(v, P.ManageServer)
   const texts = v.channels.filter(c => c.kind === 'text')
+  const mask = useMask()
   const set = (patch: Partial<ServerView['system']>) =>
     void p2pServer.setSystem(v.id, { ...v.system, ...patch })
   return (
@@ -179,7 +181,7 @@ function System({ v }: { v: ServerView }) {
         >
           {texts.map(c => (
             <option key={c.id} value={c.id}>
-              #{c.name}
+              #{mask(c.name)}
             </option>
           ))}
         </select>
@@ -250,7 +252,9 @@ function MemberLine({ m, children }: { m: MemberView; children?: ReactNode }) {
   return (
     <li className="flex items-center gap-3 rounded-xl px-2 py-1.5">
       <KeyAvatar ik={m.ik} size={32} />
-      <span className="streamer min-w-0 flex-1 truncate text-sm">{m.name}</span>
+      <span className="streamer min-w-0 flex-1 truncate text-sm">
+        <Masked text={m.name} />
+      </span>
       {m.owner && (
         <span title="Owner" aria-label="Owner" role="img" className="flex text-tertiary">
           <Crown size={14} />

@@ -4,7 +4,7 @@
 // backfills recent history there in the background, within the size cap.
 //
 // Sources: this instance's channels and DMs are the built-in source. Other sources (P2P chats)
-// can register an adapter with `registerIndexSource`; nothing else registers one yet.
+// register an adapter with `registerIndexSource` and feed their own documents.
 
 import { create } from 'zustand'
 import { ApiError } from './api'
@@ -32,6 +32,8 @@ export interface IndexSource {
   visible: (doc: IndexDoc, s: RChatState) => boolean
   // Opens the place a document points to.
   open: (doc: IndexDoc) => void
+  // Where a message document is, for its result row.
+  place?: (doc: IndexDoc) => string
 }
 
 const sources = new Map<string, IndexSource>()
@@ -40,6 +42,8 @@ export const registerIndexSource = (source: IndexSource) => {
   sources.set(source.id, source)
   return () => void sources.delete(source.id)
 }
+
+export const indexSource = (id: string) => sources.get(id)
 
 // Lets other sources add and drop their documents.
 export const indexDocs = (docs: IndexDoc[]) => {
@@ -53,6 +57,14 @@ export const dropIndexBucket = (bucket: string) => {
   if (!index) return
   index.dropBucket(bucket)
   changed()
+}
+
+export const dropIndexWhere = (pred: (d: IndexDoc) => boolean) => {
+  if (index?.dropWhere(pred)) changed()
+}
+
+export const dropIndexIn = (bucket: string, pred: (d: IndexDoc) => boolean) => {
+  if (index?.dropIn(bucket, pred)) changed()
 }
 
 export type IndexState = 'idle' | 'loading' | 'backfilling' | 'error'

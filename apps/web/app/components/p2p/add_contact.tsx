@@ -8,7 +8,7 @@ import { looksLikeCard, type Card } from '../../lib/p2p/card'
 import { INTRO_MAX } from '../../lib/p2p/contacts'
 import { fingerprint } from '../../lib/p2p/keys'
 import { CopyButton, QrCode } from '../config_sync'
-import { Dialog, FieldError, fieldCls, filledBtn, textBtn } from '../ui'
+import { Dialog, FieldError, fieldCls, filledBtn, Masked, textBtn } from '../ui'
 import { KeyAvatar } from './p2p_badge'
 import { QrScan } from './qr_scan'
 
@@ -63,7 +63,9 @@ function Preview({ card }: { card: Card }) {
     <div className="flex items-center gap-3 rounded-xl bg-surface-container px-3 py-2">
       <KeyAvatar ik={card.ik} />
       <div className="min-w-0">
-        <p className="streamer truncate text-sm font-medium">{card.name || 'Unnamed'}</p>
+        <p className="streamer truncate text-sm font-medium">
+          <Masked text={card.name || 'Unnamed'} />
+        </p>
         <p className="streamer truncate font-mono text-[11px] text-on-surface-variant">
           {fingerprint(card.ik)}
         </p>

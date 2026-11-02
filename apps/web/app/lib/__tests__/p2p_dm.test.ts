@@ -593,6 +593,12 @@ describe('P2P DMs', () => {
     // Alice's own counters stay at zero.
     expect((await roomOf(a, room)).pings).toBe(0)
     expect((await view(b, a))[1].mentions).toEqual([b.node.ik])
+    // The inbox marks pings one by one: off the counter, the read position stays.
+    await b.dms.unping(room, 1)
+    const one = await roomOf(b, room)
+    expect([one.pings, one.unread, one.readSeq]).toEqual([2, 3, r.readSeq])
+    await b.dms.unping(room, 5)
+    expect((await roomOf(b, room)).pings).toBe(0)
     await b.dms.markRead(room)
     const read = await roomOf(b, room)
     expect([read.pings, read.unread, read.readSeq]).toEqual([0, 0, read.lastSeq])

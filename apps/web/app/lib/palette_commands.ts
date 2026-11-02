@@ -41,6 +41,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { parseAddCommand, parseNames } from './friends'
+import { p2pMarkAll } from './p2p/app'
 import { api, shareOrigin } from './instances'
 import { LEVELS, MUTE_CHOICES, muteUntilFor, ownRule, type Level, type NotifyScope } from './notify'
 import { registerCommands, type ArgChoice, type PaletteCommand } from './palette'
@@ -467,7 +468,7 @@ const coreCommands = (s: RChatState): PaletteCommand[] => {
       group: 'commands',
       icon: CheckCheck,
       hint: 'Shift+Escape',
-      run: () => get().askMarkAllRead(),
+      run: () => get().askMarkAllRead(p2pMarkAll()),
     })
     add({
       id: 'mark_dms_read',

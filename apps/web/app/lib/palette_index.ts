@@ -251,6 +251,13 @@ export class PaletteIndex {
     delete this.filled[bucket]
   }
 
+  // Documents of one bucket matching `pred`.
+  dropIn(bucket: string, pred: (d: IndexDoc) => boolean) {
+    const gone = this.docsIn(bucket).filter(pred)
+    for (const d of gone) this.unlink(d.id)
+    return gone.length
+  }
+
   // Every document matching `pred` (access lost to a server, a channel, a person).
   dropWhere(pred: (d: IndexDoc) => boolean) {
     const gone = [...this.docs.values()].filter(pred)

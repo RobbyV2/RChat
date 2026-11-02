@@ -14,7 +14,7 @@ import {
   Waypoints,
   X,
 } from 'lucide-react'
-import { useStore, type ContextMenuItem } from '../../lib/store'
+import { maskOf, useMask, useStore, type ContextMenuItem } from '../../lib/store'
 import { fmtSize } from '../../lib/bytes'
 import { downloadName, kindOf } from '../../lib/sniff'
 import { BIG_FILE, p2pFiles, useP2p, type FileView, type PendingFile } from '../../lib/p2p/app'
@@ -78,9 +78,10 @@ const startDownload = (att: Attachment) => {
 
 // The message menu's way to the per-file buttons: save what is here, download what isn't.
 export const attachmentMenu = (list: Attachment[], canFetch: boolean): ContextMenuItem | null => {
+  const mask = maskOf(useStore.getState())
   const items: ContextMenuItem[] = list.map(att => {
     const v = useP2p.getState().files[att.h]
-    const name = downloadName(att.name)
+    const name = mask(downloadName(att.name))
     if (v?.state === 'done')
       return {
         label: name,
@@ -130,7 +131,7 @@ function useFileUrl(h: string, ready: boolean) {
 
 function Tile({ att, canFetch }: { att: Attachment; canFetch: boolean }) {
   // Shown cleaned like the saved name: no direction overrides or control characters.
-  const name = downloadName(att.name)
+  const name = useMask()(downloadName(att.name))
   const v = useP2p(s => s.files[att.h])
   const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
   const [revealed, setRevealed] = useState(false)
@@ -333,6 +334,7 @@ export function AttachmentList({ att, canFetch }: { att: Attachment[]; canFetch:
 function PendingChip({ room, p }: { room: string; p: PendingFile }) {
   const ready = p.hashed !== null && p.preview !== null
   const thumb = useThumb(p.preview?.thumb)
+  const mask = useMask()
   return (
     <div
       data-pending-file
@@ -367,7 +369,7 @@ function PendingChip({ room, p }: { room: string; p: PendingFile }) {
       </div>
       <span className="truncate text-xs">
         {p.spoiler ? 'Spoiler · ' : ''}
-        {downloadName(p.file.name)}
+        {mask(downloadName(p.file.name))}
       </span>
       <span
         className={`flex items-center gap-1 text-[11px] tabular-nums ${p.error ? 'text-error' : 'text-on-surface-variant'}`}

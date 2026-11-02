@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import {
   allPings,
+  dmsMarkTargets,
   scopeMarkTargets,
   scopePingCount,
   scopeUnread,
@@ -50,7 +51,7 @@ import { enterKey } from '../lib/keys'
 import type { DmSummary } from '../lib/types'
 import { longPress } from './context_menu'
 import { dragScope, useDrag } from './drag'
-import { InboxButton, InboxPreview } from './inbox'
+import { InboxButton, InboxPreview, useInboxCount } from './inbox'
 import { PaletteButton } from './palette'
 import { FriendsSection } from './friends'
 import { PingBadge, pingLabel } from './ping_badge'
@@ -59,6 +60,13 @@ import StatusClock from './status_clock'
 import { UserAvatar } from './user_avatar'
 import { Masked, SkeletonRows, fieldCls, filledBtn, textBtn } from './ui'
 import { markReadItem } from './mark_read'
+import { p2p, p2pDm, p2pMarkAll, p2pServer, useP2p, type P2pState } from '../lib/p2p/app'
+import { p2pUnread, type P2pUnreadRow } from '../lib/p2p/alerts'
+import { displayName } from '../lib/p2p/contacts'
+import { placesOf } from '../lib/p2p/palette_source'
+import { mutedOf, levelOf } from '../lib/notify'
+import { serverInitial } from '../lib/rules'
+import { KeyAvatar, P2pBadge } from './p2p/p2p_badge'
 
 const card = 'flex min-w-0 flex-col gap-1 rounded-3xl bg-surface-container-low p-4'
 
@@ -113,7 +121,7 @@ function UnreadMark({ unread, pings }: { unread: boolean; pings: number }) {
 function Greeting() {
   const me = useStore(s => s.me)
   const streamer = useStore(s => s.streamer)
-  const pings = useStore(allPings)
+  const pings = useInboxCount()
   const [hour] = useState(() => new Date().getHours())
   return (
     <div className="flex flex-col gap-1 px-1">
@@ -251,7 +259,69 @@ function QuickActions() {
   )
 }
 
-function RecentRow({ recent }: { recent: Recent }) {
+// A box for a place's icon; P2P places get a dashed outline.
+function PlaceGlyph({ p2p = false, children }: { p2p?: boolean; children: ReactNode }) {
+  return (
+    <span
+      className={`flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-container-highest text-sm font-semibold text-on-surface-variant ${p2p ? 'border border-dashed border-tertiary' : ''}`}
+    >
+      {children}
+    </span>
+  )
+}
+
+// One Jump back in row, instance or P2P.
+function RecentItem({
+  id,
+  title,
+  glyph,
+  label,
+  where,
+  p2p = false,
+  unread,
+  pings,
+  open,
+  menu,
+}: {
+  id: string
+  title: string
+  glyph: ReactNode
+  label: string
+  where: ReactNode
+  p2p?: boolean
+  unread: boolean
+  pings: number
+  open: () => void
+  menu: () => ContextMenuItem[]
+}) {
+  const openContextMenu = useStore(s => s.openContextMenu)
+  return (
+    <button
+      type="button"
+      data-recent={id}
+      onClick={open}
+      title={title}
+      {...longPress((x, y) => openContextMenu(x, y, menu()))}
+      className={rowCls}
+    >
+      {glyph}
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span
+          className={`streamer truncate text-sm ${unread || pings ? 'font-semibold text-on-surface' : 'text-on-surface'}`}
+        >
+          <Masked text={label} />
+        </span>
+        <span className="flex min-w-0 items-center gap-1.5 text-xs text-on-surface-variant">
+          <span className="streamer truncate">{where}</span>
+          {p2p && <P2pBadge />}
+        </span>
+      </span>
+      <UnreadMark unread={unread} pings={pings} />
+    </button>
+  )
+}
+
+function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
   const key = recentKey(recent)
   const dm = useStore(s =>
     recent.kind === 'dm' ? s.dms.find(d => d.id === recent.dmId) : undefined
@@ -271,27 +341,19 @@ function RecentRow({ recent }: { recent: Recent }) {
   )
   const unread = useStore(s => scopeUnread(s, key))
   const pings = useStore(s => scopePingCount(s, key))
-  const openContextMenu = useStore(s => s.openContextMenu)
   const markScopesRead = useStore(s => s.markScopesRead)
+  const streamer = useStore(s => s.streamer)
   const mask = useMask()
   const open = () => {
     const s = useStore.getState()
     if (recent.kind === 'dm') void s.openDm(recent.dmId)
     else void s.openServer(recent.server, recent.channelId)
   }
-  const streamer = useStore(s => s.streamer)
   const label =
     recent.kind === 'dm' ? (dm?.other.display_name ?? '') : (channel?.name ?? recent.channel ?? '')
-  const items = (): ContextMenuItem[] => [
-    { label: 'Open', icon: ExternalLink, action: open },
-    markReadItem(scopeMarkTargets(useStore.getState(), key), () => void markScopesRead([key])),
-    { label: 'Remove from Jump back in', icon: Trash2, action: () => forgetRecent(key) },
-  ]
   return (
-    <button
-      type="button"
-      data-recent={key}
-      onClick={open}
+    <RecentItem
+      id={key}
       title={
         streamer
           ? recent.kind === 'dm'
@@ -301,49 +363,121 @@ function RecentRow({ recent }: { recent: Recent }) {
             ? mask(label)
             : `${mask(label)}, ${mask(serverName)}`
       }
-      {...longPress((x, y) => openContextMenu(x, y, items()))}
-      className={rowCls}
-    >
-      {recent.kind === 'dm' && dm ? (
-        <UserAvatar
-          username={dm.other.username}
-          avatarKind={dm.other.avatar_kind}
-          avatarColor={dm.other.avatar_color}
-          size={32}
-        />
-      ) : (
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-surface-container-highest text-on-surface-variant">
-          {channel?.kind === 'voice' ? <Volume2 size={16} /> : <Hash size={16} />}
-        </span>
-      )}
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span
-          className={`streamer truncate text-sm ${unread || pings ? 'font-semibold text-on-surface' : 'text-on-surface'}`}
-        >
-          <Masked text={label} />
-        </span>
-        <span className="streamer truncate text-xs text-on-surface-variant">
-          {recent.kind === 'dm' ? (
-            dm?.is_self ? (
-              'Notes to yourself'
-            ) : (
-              'Direct message'
-            )
+      glyph={
+        recent.kind === 'dm' && dm ? (
+          <UserAvatar
+            username={dm.other.username}
+            avatarKind={dm.other.avatar_kind}
+            avatarColor={dm.other.avatar_color}
+            size={32}
+          />
+        ) : (
+          <PlaceGlyph>
+            {channel?.kind === 'voice' ? <Volume2 size={16} /> : <Hash size={16} />}
+          </PlaceGlyph>
+        )
+      }
+      label={label}
+      where={
+        recent.kind === 'dm' ? (
+          dm?.is_self ? (
+            'Notes to yourself'
           ) : (
-            <Masked text={serverName} />
-          )}
-        </span>
-      </span>
-      <UnreadMark unread={unread} pings={pings} />
-    </button>
+            'Direct message'
+          )
+        ) : (
+          <Masked text={serverName} />
+        )
+      }
+      unread={unread}
+      pings={pings}
+      open={open}
+      menu={() => [
+        { label: 'Open', icon: ExternalLink, action: open },
+        markReadItem(scopeMarkTargets(useStore.getState(), key), () => void markScopesRead([key])),
+        { label: 'Remove from Jump back in', icon: Trash2, action: () => forgetRecent(key) },
+      ]}
+    />
   )
 }
+
+// A P2P conversation or channel visited: names, counts and actions come from P2P.
+function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) {
+  const key = recentKey(recent)
+  const { room, ch } = recent
+  const peer = useP2p(s =>
+    ch === null ? s.contacts.find(c => c.ik === s.rooms[room]?.peer) : null
+  )
+  const server = useP2p(s => (ch === null ? undefined : s.servers[room]))
+  const counts = useP2p(s => (ch === null ? s.rooms[room] : s.servers[room]?.chans[ch]))
+  const prefs = useStore(s => s.notifyPrefs)
+  const streamer = useStore(s => s.streamer)
+  const mask = useMask()
+  const scope =
+    ch === null ? ({ kind: 'p2p', room } as const) : ({ kind: 'p2pc', room, ch } as const)
+  const pings = counts && levelOf(prefs, scope) !== 'nothing' ? counts.pings : 0
+  const unread = !!counts?.unread && !mutedOf(prefs, scope, Date.now())
+  const label =
+    ch === null
+      ? peer
+        ? displayName(peer)
+        : ''
+      : (server?.channels.find(c => c.id === ch)?.name ?? '')
+  const open = () => {
+    if (ch !== null) return p2pServer.open(room, ch)
+    if (!peer) return
+    p2p.openHome()
+    void p2pDm.openDm(peer.ik)
+  }
+  return (
+    <RecentItem
+      id={key}
+      title={
+        streamer
+          ? ch === null
+            ? 'P2P direct message'
+            : 'Channel'
+          : ch === null
+            ? mask(label)
+            : `${mask(label)}, ${mask(server?.name ?? '')}`
+      }
+      glyph={
+        ch === null && peer ? (
+          <KeyAvatar ik={peer.ik} size={32} />
+        ) : (
+          <PlaceGlyph p2p>
+            <Hash size={16} />
+          </PlaceGlyph>
+        )
+      }
+      label={label}
+      where={ch === null ? 'P2P direct message' : <Masked text={server?.name ?? ''} />}
+      p2p={ch !== null}
+      unread={unread}
+      pings={pings}
+      open={open}
+      menu={() => [
+        { label: 'Open', icon: ExternalLink, action: open },
+        markReadItem(unread || pings ? [key] : [], () =>
+          p2pDm.markRead(ch === null ? room : `${room}/${ch}`)
+        ),
+        { label: 'Remove from Jump back in', icon: Trash2, action: () => forgetRecent(key) },
+      ]}
+    />
+  )
+}
+
+const p2pPlaceKeys = (st: Pick<P2pState, 'rooms' | 'servers' | 'contacts'>) =>
+  new Set(placesOf(st).map(p => recentKey({ kind: 'p2p', room: p.room, ch: p.ch, at: 0 })))
 
 function JumpBackIn({ recents }: { recents: Recent[] }) {
   const joined = useStore(s => s.me?.servers)
   const serversMore = useStore(s => s.serversMore)
   const dms = useStore(s => s.dms)
   const details = useStore(s => s.servers)
+  const p2pRooms = useP2p(s => s.rooms)
+  const p2pServers = useP2p(s => s.servers)
+  const contacts = useP2p(s => s.contacts)
   const shown = useMemo(() => {
     const at = {
       servers: new Set((joined ?? []).map(x => x.name)),
@@ -352,23 +486,96 @@ function JumpBackIn({ recents }: { recents: Recent[] }) {
       channels: Object.fromEntries(
         Object.entries(details).map(([name, d]) => [name, d.channels.map(c => c.id)])
       ),
+      p2p: p2pPlaceKeys({ rooms: p2pRooms, servers: p2pServers, contacts }),
     }
     return recents.filter(r => recentShown(r, at)).slice(0, RECENTS_SHOWN)
-  }, [recents, joined, serversMore, dms, details])
+  }, [recents, joined, serversMore, dms, details, p2pRooms, p2pServers, contacts])
   return (
     <Card title="Jump back in" icon={<House size={18} />}>
       {shown.length === 0 ? (
         <Empty>Channels and DMs you open show up here.</Empty>
       ) : (
         <div className="flex flex-col">
-          {shown.map(r => (
-            <RecentRow key={recentKey(r)} recent={r} />
-          ))}
+          {shown.map(r =>
+            r.kind === 'p2p' ? (
+              <P2pRecentRow key={recentKey(r)} recent={r} />
+            ) : (
+              <RecentRow key={recentKey(r)} recent={r} />
+            )
+          )}
         </div>
       )}
     </Card>
   )
 }
+
+// One Unread row, instance or P2P: a place, what is unread there, open and mark as read.
+function UnreadRow({
+  id,
+  glyph,
+  name,
+  streamer = false,
+  p2p = false,
+  detail,
+  pings,
+  open,
+  mark,
+  markLabel,
+  menu,
+}: {
+  id: string
+  glyph: ReactNode
+  name: string
+  streamer?: boolean
+  p2p?: boolean
+  detail: string
+  pings: number
+  open: () => void
+  mark: () => void
+  markLabel: string
+  menu: () => ContextMenuItem[]
+}) {
+  const openContextMenu = useStore(s => s.openContextMenu)
+  return (
+    <div
+      data-unread-server={id}
+      {...longPress((x, y) => openContextMenu(x, y, menu()))}
+      className="flex min-w-0 items-center gap-1 rounded-xl hover:bg-surface-container-high"
+    >
+      <button
+        type="button"
+        onClick={open}
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-1.5 text-left focus-visible:outline-2 focus-visible:outline-primary"
+      >
+        {glyph}
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span
+              className={`truncate text-sm font-semibold text-on-surface ${streamer ? 'streamer' : ''}`}
+            >
+              {name}
+            </span>
+            {p2p && <P2pBadge />}
+          </span>
+          <span className="truncate text-xs text-on-surface-variant">{detail}</span>
+        </span>
+        <PingBadge count={pings} className="ml-auto" />
+      </button>
+      <button
+        type="button"
+        title="Mark as read"
+        aria-label={markLabel}
+        onClick={mark}
+        className="shrink-0 rounded-full p-2 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+      >
+        <CheckCheck size={18} />
+      </button>
+    </div>
+  )
+}
+
+const serverDetail = (channels: number, pings: number) =>
+  channels > 0 ? `${channels} unread ${channels === 1 ? 'channel' : 'channels'}` : pingLabel(pings)
 
 function ServerUnreadRow({
   name,
@@ -387,51 +594,33 @@ function ServerUnreadRow({
   )
   const openServer = useStore(s => s.openServer)
   const markServerRead = useStore(s => s.markServerRead)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const mask = useMask()
   const shown = mask(display)
-  const detail =
-    channels > 0
-      ? `${channels} unread ${channels === 1 ? 'channel' : 'channels'}`
-      : pingLabel(pings)
   return (
-    <div
-      data-unread-server={name}
-      {...longPress((x, y) =>
-        openContextMenu(x, y, [
-          { label: 'Open', icon: ExternalLink, action: () => void openServer(name) },
-          markReadItem(
-            serversMarkTargets(useStore.getState(), [name]),
-            () => void markServerRead(name)
-          ),
-        ])
-      )}
-      className="flex min-w-0 items-center gap-1 rounded-xl hover:bg-surface-container-high"
-    >
-      <button
-        type="button"
-        onClick={() => void openServer(name)}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-1.5 text-left focus-visible:outline-2 focus-visible:outline-primary"
-      >
-        <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-container-highest text-sm font-semibold text-on-surface">
-          <ServerGlyph name={name} displayName={display} />
-        </span>
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="streamer truncate text-sm font-semibold text-on-surface">{shown}</span>
-          <span className="truncate text-xs text-on-surface-variant">{detail}</span>
-        </span>
-        <PingBadge count={pings} className="ml-auto" />
-      </button>
-      <button
-        type="button"
-        title="Mark as read"
-        aria-label={`Mark ${shown} as read`}
-        onClick={() => void markServerRead(name)}
-        className="shrink-0 rounded-full p-2 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
-      >
-        <CheckCheck size={18} />
-      </button>
-    </div>
+    <UnreadRow
+      id={name}
+      glyph={
+        <PlaceGlyph>
+          <span className="text-on-surface">
+            <ServerGlyph name={name} displayName={display} />
+          </span>
+        </PlaceGlyph>
+      }
+      name={shown}
+      streamer
+      detail={serverDetail(channels, pings)}
+      pings={pings}
+      open={() => void openServer(name)}
+      mark={() => void markServerRead(name)}
+      markLabel={`Mark ${shown} as read`}
+      menu={() => [
+        { label: 'Open', icon: ExternalLink, action: () => void openServer(name) },
+        markReadItem(
+          serversMarkTargets(useStore.getState(), [name]),
+          () => void markServerRead(name)
+        ),
+      ]}
+    />
   )
 }
 
@@ -439,36 +628,82 @@ function DmUnreadRow({ pings }: { pings: number }) {
   const markDmsRead = useStore(s => s.markDmsRead)
   const openLastDm = useStore(s => s.openLastDm)
   return (
-    <div
-      data-unread-server="dms"
-      className="flex min-w-0 items-center gap-1 rounded-xl hover:bg-surface-container-high"
-    >
-      <button
-        type="button"
-        onClick={openLastDm}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-1.5 text-left focus-visible:outline-2 focus-visible:outline-primary"
-      >
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-surface-container-highest text-on-surface">
-          <MessageCircle size={16} />
-        </span>
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-sm font-semibold text-on-surface">Direct messages</span>
-          <span className="truncate text-xs text-on-surface-variant">
-            {pings > 0 ? pingLabel(pings) : 'Unread messages'}
-          </span>
-        </span>
-        <PingBadge count={pings} className="ml-auto" />
-      </button>
-      <button
-        type="button"
-        title="Mark as read"
-        aria-label="Mark direct messages as read"
-        onClick={() => void markDmsRead()}
-        className="shrink-0 rounded-full p-2 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
-      >
-        <CheckCheck size={18} />
-      </button>
-    </div>
+    <UnreadRow
+      id="dms"
+      glyph={
+        <PlaceGlyph>
+          <MessageCircle size={16} className="text-on-surface" />
+        </PlaceGlyph>
+      }
+      name="Direct messages"
+      detail={pings > 0 ? pingLabel(pings) : 'Unread messages'}
+      pings={pings}
+      open={openLastDm}
+      mark={() => void markDmsRead()}
+      markLabel="Mark direct messages as read"
+      menu={() => [
+        { label: 'Open', icon: ExternalLink, action: openLastDm },
+        markReadItem(dmsMarkTargets(useStore.getState()), () => void markDmsRead()),
+      ]}
+    />
+  )
+}
+
+const useP2pUnread = () => {
+  const servers = useP2p(s => s.servers)
+  const rooms = useP2p(s => s.rooms)
+  const prefs = useStore(s => s.notifyPrefs)
+  return useMemo(() => p2pUnread({ servers, rooms }, prefs, Date.now()), [servers, rooms, prefs])
+}
+
+function P2pServerUnreadRow({ v, pings, channels }: P2pUnreadRow) {
+  const mask = useMask()
+  const shown = mask(v.name)
+  return (
+    <UnreadRow
+      id={`p2p:${v.id}`}
+      glyph={
+        <PlaceGlyph p2p>
+          <span className="streamer text-on-surface">{serverInitial(shown)}</span>
+        </PlaceGlyph>
+      }
+      name={shown}
+      streamer
+      p2p
+      detail={serverDetail(channels, pings)}
+      pings={pings}
+      open={() => p2pServer.open(v.id)}
+      mark={() => p2pServer.markAllRead(v.id)}
+      markLabel={`Mark ${shown} as read`}
+      menu={() => [
+        { label: 'Open', icon: ExternalLink, action: () => p2pServer.open(v.id) },
+        markReadItem([v.id], () => p2pServer.markAllRead(v.id)),
+      ]}
+    />
+  )
+}
+
+function P2pDmUnreadRow({ pings }: { pings: number }) {
+  return (
+    <UnreadRow
+      id="p2p_dms"
+      glyph={
+        <PlaceGlyph p2p>
+          <MessageCircle size={16} className="text-on-surface" />
+        </PlaceGlyph>
+      }
+      name="P2P direct messages"
+      p2p
+      detail={pings > 0 ? pingLabel(pings) : 'Unread messages'}
+      pings={pings}
+      open={p2p.openHome}
+      mark={p2pDm.markAllRead}
+      markLabel="Mark P2P direct messages as read"
+      menu={() => [
+        { label: 'Open', icon: ExternalLink, action: p2p.openHome },
+        markReadItem(['p2p_dms'], p2pDm.markAllRead),
+      ]}
+    />
   )
 }
 
@@ -480,9 +715,15 @@ function UnreadSummary() {
   const askMarkAllRead = useStore(s => s.askMarkAllRead)
   const [all, setAll] = useState(false)
   const summary = useMemo(() => parseSummary(key), [key])
+  const p2pRows = useP2pUnread()
   const dms = summary.dms.unread || summary.dms.pings > 0
-  const rows = all ? summary.servers : summary.servers.slice(0, UNREAD_SHOWN)
-  const any = dms || summary.servers.length > 0
+  const p2pDms = p2pRows.dms.unread || p2pRows.dms.pings > 0
+  const servers = [
+    ...summary.servers.map(r => <ServerUnreadRow key={r.name} {...r} />),
+    ...p2pRows.servers.map(r => <P2pServerUnreadRow key={`p2p:${r.v.id}`} {...r} />),
+  ]
+  const rows = all ? servers : servers.slice(0, UNREAD_SHOWN)
+  const any = dms || p2pDms || servers.length > 0
   return (
     <Card
       title="Unread"
@@ -493,7 +734,7 @@ function UnreadSummary() {
             type="button"
             title="Mark all as read"
             aria-label="Mark all as read"
-            onClick={askMarkAllRead}
+            onClick={() => askMarkAllRead(p2pMarkAll())}
             className="rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
           >
             <CheckCheck size={18} />
@@ -508,16 +749,15 @@ function UnreadSummary() {
       ) : (
         <div className="flex flex-col">
           {dms && <DmUnreadRow pings={summary.dms.pings} />}
-          {rows.map(r => (
-            <ServerUnreadRow key={r.name} {...r} />
-          ))}
-          {summary.servers.length > UNREAD_SHOWN && (
+          {p2pDms && <P2pDmUnreadRow pings={p2pRows.dms.pings} />}
+          {rows}
+          {servers.length > UNREAD_SHOWN && (
             <button
               type="button"
               onClick={() => setAll(a => !a)}
               className={`${textBtn} self-start`}
             >
-              {all ? 'Show less' : `Show ${summary.servers.length - UNREAD_SHOWN} more`}
+              {all ? 'Show less' : `Show ${servers.length - UNREAD_SHOWN} more`}
             </button>
           )}
         </div>
@@ -688,10 +928,15 @@ function MemberHome() {
   const recents = useHome(s => s.prefs.recents)
   const otherDms = useStore(s => s.dms.filter(d => !d.is_self).length)
   const servers = useStore(s => s.me?.servers.length ?? 0)
-  const unread = useStore(s => {
-    const { dms, servers } = parseSummary(unreadSummaryKey(s))
-    return dms.unread || dms.pings > 0 || servers.length > 0
-  })
+  const p2pRows = useP2pUnread()
+  const unread =
+    useStore(s => {
+      const { dms, servers } = parseSummary(unreadSummaryKey(s))
+      return dms.unread || dms.pings > 0 || servers.length > 0
+    }) ||
+    p2pRows.dms.unread ||
+    p2pRows.dms.pings > 0 ||
+    p2pRows.servers.length > 0
   const fresh = isNewAccount(recents.length, otherDms, servers)
   return (
     <div className="flex flex-col gap-4">

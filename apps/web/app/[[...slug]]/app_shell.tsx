@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { allPings, useStore } from '../lib/store'
+import { useStore } from '../lib/store'
 import { notifications } from '../lib/platform'
 import { home } from '../lib/instances'
 import { ContextMenu } from '../components/context_menu'
@@ -27,7 +27,7 @@ import SettingsMenu from '../components/settings_menu'
 import ThreadPanel from '../components/thread_panel'
 import SearchPanel from '../components/search_panel'
 import FriendsPanel, { AddFriendsDialog } from '../components/friends'
-import { InboxHost } from '../components/inbox'
+import { InboxHost, useInboxCount } from '../components/inbox'
 import { PaletteHost } from '../components/palette'
 import { reloadPalettePrefs, usePaletteUi } from '../lib/palette_store'
 import { PollVotersDialog } from '../components/poll_card'
@@ -36,9 +36,12 @@ import { NoticeStack } from '../components/notice_stack'
 import { InvitePage } from '../components/invite_card'
 import { ConfigLinkPage } from '../components/config_sync'
 import { useEscape } from '../components/ui'
-import { P2pDialogs, P2pHome, useP2pPings } from '../components/p2p/p2p_home'
+import { P2pDialogs, P2pHome } from '../components/p2p/p2p_home'
 import { P2pChannelPane, P2pMemberList, P2pServerSidebar } from '../components/p2p/p2p_server_view'
 import { p2p, p2pHost, useP2p } from '../lib/p2p/app'
+import { addInboxAdapter } from '../lib/inbox_source'
+import { p2pInbox, startP2pPings } from '../lib/p2p/inbox_source'
+import { startP2pIndex } from '../lib/p2p/palette_source'
 
 // P2P conversations notify through the same settings, toasts and read state as the rest.
 p2pHost.prefs = () => useStore.getState().notifyPrefs
@@ -63,6 +66,7 @@ p2pHost.leaveInstanceCalls = () => {
   }
 }
 p2pHost.muted = () => useStore.getState().selfAudio.muted
+addInboxAdapter(p2pInbox)
 
 const bannerCls =
   'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2'
@@ -82,7 +86,7 @@ export default function AppShell() {
   const error = useStore(s => s.error)
   const bootError = useStore(s => s.bootError)
   const bootstrap = useStore(s => s.bootstrap)
-  const pings = useStore(allPings) + useP2pPings()
+  const pings = useInboxCount()
   const p2pHome = useP2p(s => s.home) && me !== null
   const p2pServer = useP2p(s => s.server !== null) && me !== null
   const p2pChannel = useP2p(s => (s.server ? `${s.server.room}/${s.server.ch}` : null))
@@ -90,6 +94,8 @@ export default function AppShell() {
   const [leftOpen, setLeftOpen] = useState(false)
   const [rightOpen, setRightOpen] = useState(false)
   useHomeSync()
+  useEffect(() => startP2pIndex(), [])
+  useEffect(() => startP2pPings(), [])
   // The member list of a P2P server on wide screens (on by default, like instance servers).
   const [p2pMembers, setP2pMembers] = useState(true)
 

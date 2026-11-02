@@ -834,6 +834,14 @@ export class Dms {
     this.changed(room)
   }
 
+  // Pings marked read one by one (the inbox): off the counter, the read position stays.
+  async unping(room: string, n: number) {
+    await this.deps.store.updateRoom(room, cur =>
+      cur && cur.pings > 0 ? { ...cur, pings: Math.max(0, cur.pings - n) } : null
+    )
+    this.changed(room)
+  }
+
   typing(room: string, on: boolean) {
     this.sync.typing(room, on)
   }

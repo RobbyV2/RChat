@@ -394,6 +394,10 @@ describe('pings, presence and typing', () => {
     const view = b.servers.view(room)!
     expect(view.chans[ch].pings).toBe(3)
     expect(view.chans[ch].unread).toBe(3)
+    const before = view.chans[ch].readSeq
+    await b.servers.unping(room, ch, 1)
+    expect(b.servers.view(room)!.chans[ch]).toMatchObject({ unread: 3, pings: 2, readSeq: before })
+    expect((await b.store.room(room))?.chans?.[ch]).toMatchObject({ pings: 2, readSeq: before })
     await b.servers.markRead(room, ch)
     expect(b.servers.view(room)!.chans[ch]).toMatchObject({ unread: 0, pings: 0 })
     const rows = (await a.servers.loadChannel(room, ch)).messages

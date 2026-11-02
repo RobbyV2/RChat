@@ -14,6 +14,8 @@ export type Recent =
       at: number
     }
   | { kind: 'dm'; dmId: number; at: number }
+  // A P2P conversation (`ch` null) or P2P server channel; names come from P2P when shown.
+  | { kind: 'p2p'; room: string; ch: string | null; at: number }
 
 export interface HomePrefs {
   v: 1
@@ -37,13 +39,24 @@ const isId = (x: unknown): x is number => Number.isSafeInteger(x) && (x as numbe
 const nameOf = (x: unknown) => (typeof x === 'string' && x ? x.slice(0, NAME_MAX) : null)
 
 export const recentKey = (r: Recent | View) =>
-  r.kind === 'channel' ? `c${r.channelId}` : `d${r.dmId}`
+  r.kind === 'channel'
+    ? `c${r.channelId}`
+    : r.kind === 'dm'
+      ? `d${r.dmId}`
+      : `p${r.ch === null ? r.room : `${r.room}/${r.ch}`}`
+
+const P2P_ID_MAX = 200
+
+const p2pId = (x: unknown) =>
+  typeof x === 'string' && x && x.length <= P2P_ID_MAX && !x.includes('/') ? x : null
 
 const recentOf = (x: unknown): Recent | null => {
   if (typeof x !== 'object' || x === null) return null
   const o = x as Record<string, unknown>
   const at = typeof o.at === 'number' && Number.isFinite(o.at) ? o.at : 0
   if (o.kind === 'dm' && isId(o.dmId)) return { kind: 'dm', dmId: o.dmId, at }
+  if (o.kind === 'p2p' && p2pId(o.room) && (o.ch === null || p2pId(o.ch)))
+    return { kind: 'p2p', room: o.room as string, ch: o.ch === null ? null : (o.ch as string), at }
   if (o.kind === 'channel' && isId(o.channelId) && typeof o.server === 'string' && o.server)
     return {
       kind: 'channel',
@@ -110,6 +123,19 @@ export const pushRecent = (
   return { ...prefs, recents: [entry, ...rest].slice(0, RECENTS_MAX) }
 }
 
+// Puts a P2P visit first.
+export const pushP2pRecent = (
+  prefs: HomePrefs,
+  room: string,
+  ch: string | null,
+  at: number
+): HomePrefs => {
+  const entry: Recent = { kind: 'p2p', room, ch, at }
+  const key = recentKey(entry)
+  const rest = prefs.recents.filter(r => recentKey(r) !== key)
+  return { ...prefs, recents: [entry, ...rest].slice(0, RECENTS_MAX) }
+}
+
 export const dropRecent = (prefs: HomePrefs, key: string): HomePrefs =>
   prefs.recents.some(r => recentKey(r) === key)
     ? { ...prefs, recents: prefs.recents.filter(r => recentKey(r) !== key) }
@@ -150,12 +176,15 @@ export interface RecentPlaces {
   dmIds: Set<number>
   // channel ids of servers whose details are loaded
   channels: Record<string, number[]>
+  // keys of P2P places still open: conversations with contacts, channels of joined servers
+  p2p?: ReadonlySet<string>
 }
 
 // Whether a recent place is still open to the user: a DM they have, or a channel of a server they
 // joined that still lists it (once the server's details are loaded).
 export const recentShown = (r: Recent, at: RecentPlaces) => {
   if (r.kind === 'dm') return at.dmIds.has(r.dmId)
+  if (r.kind === 'p2p') return at.p2p?.has(recentKey(r)) ?? false
   if (!at.servers.has(r.server) && !(at.serversMore && !!r.channel)) return false
   const loaded = at.channels[r.server]
   return !loaded || loaded.includes(r.channelId)

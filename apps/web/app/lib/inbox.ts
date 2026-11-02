@@ -56,6 +56,10 @@ export interface InboxAdapter {
   // first), so notifications that arrive meanwhile stay unread.
   markAll: (view: InboxView, shown: InboxEntry[]) => Promise<void>
   open: (entry: InboxEntry) => void | Promise<void>
+  // Its notifications that badge, when the store doesn't count them, and how to hear that the
+  // count may have changed: the bell counts them and the list reloads when the count moves.
+  count?: () => number
+  subscribe?: (onChange: () => void) => () => void
 }
 
 // Paging state of one source.

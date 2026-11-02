@@ -4670,14 +4670,18 @@ export const useStore = create<RChatState>()((set, get) => {
       }
     },
 
-    askMarkAllRead: () => {
+    askMarkAllRead: extra => {
       const s = get()
-      if (!s.me || !allMarkTargets(s).length) return
+      const more = extra?.pending === true
+      if (!s.me || (!allMarkTargets(s).length && !more)) return
       s.askConfirm({
         title: 'Mark all as read',
         body: 'Mark every channel and DM as read?',
         confirm: 'Mark as read',
-        action: () => void get().markAllRead(),
+        action: () => {
+          void get().markAllRead()
+          if (more) extra?.mark()
+        },
       })
     },
 

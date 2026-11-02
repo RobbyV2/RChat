@@ -8,6 +8,7 @@ import {
   homeKey,
   homeValue,
   parseHome,
+  pushP2pRecent,
   pushRecent,
   unreadChannels,
   unreadRows,
@@ -15,6 +16,7 @@ import {
   type UnreadRow,
 } from './home'
 import { dmPings } from './pings'
+import { useP2p, type P2pState } from './p2p/app'
 import {
   badgePings,
   dmsUnread,
@@ -77,6 +79,15 @@ export const noteVisit = (s: RChatState, now = Date.now()) => {
   save(pushRecent(useHome.getState().prefs, view, names, now))
 }
 
+// Records a P2P conversation or channel when it opens.
+export const noteP2pVisit = (st: P2pState, prev: P2pState, now = Date.now()) => {
+  const c = st.chat
+  if (!c || (c.room === prev.chat?.room && (c.ch ?? null) === (prev.chat?.ch ?? null))) return
+  const owner = useStore.getState().me?.username
+  if (!owner || useHome.getState().owner !== owner || st.account !== owner) return
+  save(pushP2pRecent(useHome.getState().prefs, c.room, c.ch ?? null, now))
+}
+
 // Keeps Home's state on the signed-in account and records every view it opens.
 export function useHomeSync() {
   useEffect(() => {
@@ -86,7 +97,12 @@ export function useHomeSync() {
       if (s.view && (s.view !== prev?.view || s.me?.username !== prev?.me?.username)) noteVisit(s)
     }
     sync(useStore.getState(), null)
-    return useStore.subscribe(sync)
+    const off = useStore.subscribe(sync)
+    const offP2p = useP2p.subscribe((st, prev) => noteP2pVisit(st, prev))
+    return () => {
+      off()
+      offP2p()
+    }
   }, [])
 }
 
