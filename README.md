@@ -167,7 +167,7 @@ Build the image locally with `docker compose up`.
 
 `apps/desktop` is a Tauri 2 shell for Windows, macOS and Linux. It bundles the static client and connects to the instance you pick on first start, like the web app does. It adds system notifications, an unread badge, a tray, deep links, start on login and updates.
 
-You need the Tauri CLI, the wasm-bindgen CLI pinned in `Cargo.lock` (app builds never download one) and the [Tauri system dependencies](https://tauri.app/start/prerequisites/) for your OS. On Linux these are webkit2gtk 4.1, libsoup 3 and libayatana-appindicator.
+You need the Tauri CLI, the wasm-bindgen CLI pinned in `Cargo.lock` and the [Tauri system dependencies](https://tauri.app/start/prerequisites/) for your OS. On Linux these are webkit2gtk 4.1, libsoup 3 and libayatana-appindicator.
 
 ```bash
 cargo install tauri-cli --version "^2" --locked
@@ -192,9 +192,9 @@ Run the Linux smoke test against a running instance. It needs `xvfb-run` or KDE'
 apps/desktop/scripts/smoke.sh http://localhost:3000
 ```
 
-`rchat://chat.example.com/invite/lobby/` opens `/invite/lobby/` on that instance. Any client path works, such as channels, DMs and config links. Hosts like `localhost:3000` use http, all others https. Before signing in, a link to another instance asks before switching to it; once signed in, it opens in the browser.
+`rchat://chat.example.com/invite/lobby/` opens `/invite/lobby/` on that instance. Any client path works, such as channels, DMs and config links. Hosts like `localhost:3000` use http, all others https.
 
-The content security policy only runs the app's own scripts. The app may connect to any https and wss address, because you can pick any instance, and to http and ws on `localhost` and `127.0.0.1`. To lock a build to fixed instances, write the narrower sources to a file and pass it at build time. Keys you leave out keep their values:
+The content security policy only runs the app's own scripts. The app may connect to any https and wss address, and to http and ws on `localhost` and `127.0.0.1`. To lock a build to fixed instances, write the narrower sources to a file and pass it at build time. Keys you leave out keep their values:
 
 ```json
 {
@@ -214,7 +214,7 @@ The content security policy only runs the app's own scripts. The app may connect
 just src desktop-build --config /path/to/csp.json
 ```
 
-Updates come from GitHub Releases. Stable reads `latest.json` from the latest release, weekly reads it from the release under the `weekly` tag. The app checks when you ask in Settings, or at start if you turn that on. Builds with `RCHAT_CHANNEL=weekly` follow the weekly channel by default. Update files must be signed:
+Updates come from GitHub Releases. The app checks when you ask in Settings, or at start if you turn that on. Builds with `RCHAT_CHANNEL=weekly` follow the weekly channel by default. Update files must be signed:
 
 1. Make a key pair once with `cargo tauri signer generate -w ~/.tauri/rchat.key`. Never commit the private key.
 2. Put the public key in `apps/desktop/src-tauri/tauri.conf.json` under `plugins.updater.pubkey`.
@@ -251,7 +251,7 @@ CI builds a debug APK and an unsigned iOS build on every push to main and keeps 
 GitHub Actions has two channels:
 
 - Stable: pushing a version tag (`0.3.0`, or `0.3.0-rc.1` for a pre-release; no `v` prefix) publishes a GitHub Release. Pre-releases get no package manager files.
-- Weekly: every Monday, `main` is built as a pre-release named `weekly-YYYY-MM-DD` with version `<next patch>-weekly.YYYYMMDD`. The `weekly` and `nightly` tags move to it, the `weekly` release (updated in place) holds the updater manifest, and dated weekly releases beyond the newest 8 are deleted. It is skipped when nothing changed. Run the `release` workflow by hand to build one now.
+- Weekly: every Monday, `main` is built as a pre-release named `weekly-YYYY-MM-DD` with version `<next patch>-weekly.YYYYMMDD`. The `weekly` and `nightly` tags move to it, and dated weekly releases beyond the newest 8 are deleted. It is skipped when nothing changed. Run the `release` workflow by hand to build one now.
 
 | Workflow      | When                               | What                                                                 |
 | ------------- | ---------------------------------- | -------------------------------------------------------------------- |
@@ -260,7 +260,7 @@ GitHub Actions has two channels:
 | `ci.yml`      | Pushes to main, manual runs        | Also desktop builds, desktop smoke run, mobile builds, Docker build  |
 | `release.yml` | Version tags, Mondays, manual runs | All of the above, then the release                                   |
 
-To skip heavy parts of `ci.yml` on a push, put a tag in the commit message, or give the pull request the label of the same words without brackets (a push to main reads the labels of the pull request it came from). Version tags, the weekly schedule and manual runs ignore them. A push to main that changes nothing under `apps/desktop`, `apps/web`, `assets` or the Cargo and bun manifests skips the mobile builds too, and changes to Markdown or `docs/` alone run no CI.
+To skip heavy parts of `ci.yml` on a push, put a tag in the commit message, or give the pull request the label of the same words without brackets. Version tags, the weekly schedule and manual runs ignore them.
 
 | Tag              | Skips                                    |
 | ---------------- | ---------------------------------------- |
@@ -273,13 +273,13 @@ To skip heavy parts of `ci.yml` on a push, put a tag in the commit message, or g
 
 A release holds:
 
-- Windows: MSI and NSIS installers. macOS: a universal DMG. Linux: .deb, .rpm and AppImage (when it builds). Weekly and `-rc` versions get no .rpm (RPM refuses the hyphen), and Debian sorts `0.2.3-weekly.YYYYMMDD` above `0.2.3`, so going from a weekly .deb back to the stable one of the same version needs `apt install --allow-downgrades`.
-- Android: an APK, plus an AAB when the release key is set. The versionCode is the release run number. iOS: an IPA, only when the signing secrets are set.
-- Server binaries (`rchat-server`) for Linux x86_64 and aarch64 (glibc 2.35 or newer), macOS (universal) and Windows x86_64. The aarch64 server and Docker builds use GitHub's `ubuntu-22.04-arm` runner, which is free for public repositories; private ones need an arm64 larger runner.
+- Windows: MSI and NSIS installers. macOS: a universal DMG. Linux: .deb, .rpm and AppImage (when it builds). Weekly and `-rc` versions get no .rpm. Going from a weekly .deb back to the stable one of the same version needs `apt install --allow-downgrades`.
+- Android: an APK, plus an AAB when the release key is set. iOS: an IPA, only when the signing secrets are set.
+- Server binaries (`rchat-server`) for Linux x86_64 and aarch64 (glibc 2.35 or newer), macOS (universal) and Windows x86_64. The aarch64 server and Docker builds use GitHub's `ubuntu-22.04-arm` runner.
 - `SHA256SUMS`, the updater manifest `latest.json` with `.sig` files when updater signing is set, and `rchat-packaging_<version>.tar.gz`.
 - Docker images on GHCR: `latest` and the version for stable, `weekly`, `nightly` and `weekly-YYYY-MM-DD` for weekly, plus the commit SHA.
 
-Signing uses repository secrets when they exist. Without them the builds are unsigned: Windows shows SmartScreen, macOS asks you to allow the app under System Settings, Privacy & Security (ad hoc signature, no notarization), and the Android APK uses a key made for that build, so it cannot update an older install. A stable release needs the updater key (`TAURI_SIGNING_PRIVATE_KEY` and the `TAURI_UPDATER_PUBKEY` variable) and fails without it, since installed apps update from its `latest.json`; weekly builds without it ship no updater files.
+Signing uses repository secrets when they exist. Without them the builds are unsigned: Windows shows SmartScreen, macOS asks you to allow the app under System Settings, Privacy & Security, and the Android APK uses a key made for that build, so it cannot update an older install. A stable release needs the updater key (`TAURI_SIGNING_PRIVATE_KEY` and the `TAURI_UPDATER_PUBKEY` variable) and fails without it; weekly builds without it ship no updater files.
 
 | Secret or variable                                                                                                            | Used for                        |
 | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
@@ -292,7 +292,7 @@ Signing uses repository secrets when they exist. Without them the builds are uns
 
 ### Package managers
 
-`packaging/` holds templates for winget, Scoop, a Homebrew cask and the AUR packages `rchat-bin` and `rchat-weekly-bin`. Each release fills them in with its version, URLs and checksums and attaches them as `rchat-packaging_<version>.tar.gz`. Publishing them is manual: open a pull request to `microsoft/winget-pkgs` with the three winget files, put `rchat.json` in a Scoop bucket and `rchat.rb` in a Homebrew tap (the official cask tap wants a notarized app, so use your own tap until the macOS notarization secrets are set), and push a `PKGBUILD` to the AUR after running `makepkg --printsrcinfo > .SRCINFO`. `scripts/release.ts` makes these files and the updater manifest; `bun test scripts` tests it.
+`packaging/` holds templates for winget, Scoop, a Homebrew cask and the AUR packages `rchat-bin` and `rchat-weekly-bin`. Each release attaches them, filled in, as `rchat-packaging_<version>.tar.gz`. Publishing them is manual: open a pull request to `microsoft/winget-pkgs` with the three winget files, put `rchat.json` in a Scoop bucket and `rchat.rb` in a Homebrew tap, and push a `PKGBUILD` to the AUR after running `makepkg --printsrcinfo > .SRCINFO`.
 
 ## Scaling
 
@@ -311,9 +311,9 @@ POSTGRES_PASSWORD=$(openssl rand -hex 24) VALKEY_PASSWORD=$(openssl rand -hex 24
 kubectl apply -k deploy/k8s
 ```
 
-Keep Redis on a private network. Anything that can write to Redis can send events to all users.
+Keep Redis on a private network.
 
-Upgrade all copies together. A copy on an older version skips the live events and shared state it does not know, so users can miss updates until every copy runs the same version, and once a newer copy has upgraded the database an older one refuses to start.
+Upgrade all copies together. An older copy refuses to start once a newer one has upgraded the database.
 
 ## Configuration
 
@@ -340,9 +340,9 @@ Put settings in `.env.local`. Refer to `.env.local.example` for all settings. Th
 
 The relay uses UDP ports 49160 to 49415. Open them in the firewall. Reserve them so no other program uses them (`sysctl -w net.ipv4.ip_local_reserved_ports=49160-49415`).
 
-Data is not encrypted at rest. Anyone with the database file can read all messages and files.
+Data is not encrypted at rest.
 
-Rate limits and server password budgets count per client address, and password attempts also per network (IPv4 /24, IPv6 /48). People behind one shared address, like carrier NAT or a school, share them. Behind a proxy, set `TRUSTED_PROXIES`. See `.env.local.example`.
+Rate limits and server password budgets count per client address, and password attempts also per network (IPv4 /24, IPv6 /48). Behind a proxy, set `TRUSTED_PROXIES`. See `.env.local.example`.
 
 ## License
 

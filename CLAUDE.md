@@ -53,6 +53,11 @@ Build output goes where the machine's own user-level instructions say. Without s
 - Every endpoint that touches a server, channel or message resolves access only through the access gate. Denials are uniform 404s.
 - API text is plain ASCII: OpenAPI docs, error messages, and server-generated strings in responses and WS payloads.
 
+## Docs
+
+- Docs (README, CLAUDE.md, env example comments) keep only what the reader needs to use, set up, run or deploy the app: versions, paths, commands, settings, limits, defaults.
+- Cut reasons, consequences, implementation details, edge cases, history and side notes, unless the reader needs them to act or to avoid a mistake.
+
 ## Product rules
 
 - No external network APIs at runtime (package dependencies are fine).
