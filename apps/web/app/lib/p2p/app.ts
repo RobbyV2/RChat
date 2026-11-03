@@ -86,9 +86,10 @@ import {
 } from './transfer'
 import { P2pNode, SQUATTED, type Presence, type Status, type Visibility } from './node'
 import { PeerTransport } from './transport'
-import { RtcManager } from '../rtc'
+import { JoinAborted, RtcManager } from '../rtc'
 import { hidesIp, relayBook } from '../relays'
 import { Calls, type CallView, type PendingCall } from './calls'
+import { relayDenied } from './voice'
 import {
   CODE_TTLS,
   NEEDS_INVITER,
@@ -237,6 +238,8 @@ export interface P2pState {
   callAccepting: boolean
   // A call going on in the tab that runs P2P (this tab only reads).
   callElsewhere: { room: string; peer: string } | null
+  // The voice channel of a P2P server we are in.
+  voice: { room: string; ch: string } | null
   // P2P servers on this device, invites from contacts not answered yet, and the open server
   // (it replaces the instance sidebar and pane, like the P2P home).
   servers: Record<string, ServerView>
@@ -324,6 +327,7 @@ const initial: P2pState = {
   callQuiet: false,
   callAccepting: false,
   callElsewhere: null,
+  voice: null,
   servers: {},
   serverInvites: [],
   server: null,
@@ -517,9 +521,21 @@ const writeHome = (username: string | null) => {
 // Leaving the page says goodbye to every contact, so they see us go offline at once. A page
 // restored from the back-forward cache starts again.
 if (typeof window !== 'undefined') {
+  // Frames are sealed asynchronously and a page that unloads doesn't wait for that, so what
+  // pagehide sends is best effort (a contact call's `end` usually doesn't get out). A voice
+  // channel's leave goes out on beforeunload instead, while there is still time; a page that
+  // stays after all says it is back as soon as it is used again.
+  window.addEventListener('beforeunload', () => servers?.voice.goodbye())
+  const back = () => servers?.voice.back()
+  window.addEventListener('pointerdown', back, true)
+  window.addEventListener('keydown', back, true)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') back()
+  })
   window.addEventListener('pagehide', () => {
-    // The other side of a call hears `end` before the sessions close.
+    // Session.close still sends what was queued first, when the page lives long enough.
     calls?.stop()
+    servers?.voice.leave()
     node?.stop()
   })
   window.addEventListener('pageshow', e => {
@@ -618,6 +634,7 @@ const stopNode = () => {
   }
   if (useP2p.getState().call) useP2p.setState({ call: null, callQuiet: false })
   servers?.stop()
+  if (useP2p.getState().voice) useP2p.setState({ voice: null })
   servers = null
   pingLog?.stop()
   pingLog = null
@@ -801,6 +818,17 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
       attachments: () => !p2pHost.textOnly(),
     })
     servers = sv
+    sv.voice.media = callRtc
+    sv.voice.consent = hosts => relayBook.consent(hosts)
+    sv.voice.denied = ik => {
+      const at = sv.voice.current()
+      p2pHost.toast(relayDenied(at ? memberName(at.room, ik) : 'a member'))
+    }
+    sv.voice.onChange(() => {
+      const cur = sv.voice.current()
+      const was = useP2p.getState().voice
+      if (cur?.room !== was?.room || cur?.ch !== was?.ch) useP2p.setState({ voice: cur })
+    })
     pingLog = new PingLog({ store: s, dms: d, servers: sv, onWrite: pingLogged })
     sv.onChange(room => {
       data?.postMessage({ room })
@@ -822,11 +850,14 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
         if (await s.room(room)) await d.logCall(room, call)
       },
       missed: (room, m) => void noteMissed(s, room, m).catch(() => {}),
-      busy: () => p2pHost.inCall(),
+      busy: () => p2pHost.inCall() || sv.voice.current() !== null,
       muted: () => p2pHost.muted(),
       save: p => void s.setMeta(PENDING_CALL, p).catch(() => {}),
       notice: text => p2pHost.toast(text),
-      leaveOthers: () => p2pHost.leaveInstanceCalls(),
+      leaveOthers: () => {
+        p2pHost.leaveInstanceCalls()
+        sv.voice.leave()
+      },
     })
     calls = c
     n.use({ attach: x => c.attach(x), ready: x => c.ready(x) })
@@ -1002,6 +1033,7 @@ const readerView = (r: RoomRecord): ServerView => ({
   gap: false,
   full: r.full,
   readOnly: null,
+  voice: {},
 })
 
 const refreshServers = () => {
@@ -1062,8 +1094,9 @@ const refreshServer = async (room: string) => {
   // The open channel went away (deleted, or we left): fall back to the first one.
   if (now.server?.room === room && v) {
     const ch = now.server.ch
-    if (ch && !v.channels.some(c => c.id === ch)) p2pServer.openChannel(v.channels[0]?.id ?? null)
-    else if (!ch && v.channels[0]) p2pServer.openChannel(v.channels[0].id)
+    const first = v.channels.find(c => c.kind === 'text')?.id ?? null
+    if (ch && !v.channels.some(c => c.id === ch)) p2pServer.openChannel(first)
+    else if (!ch && first) p2pServer.openChannel(first)
   }
   if (now.chat?.ch && now.chat.room === room) {
     await loadChannel(room, now.chat.ch, true)
@@ -1475,24 +1508,28 @@ export const p2pServer = {
     p2pServer.openChannel(pick)
   },
 
+  // A voice channel opens its stage, without a conversation.
   openChannel(ch: string | null) {
     const cur = useP2p.getState().server
     if (!cur) return
-    if (ch) lastChannel.set(cur.room, ch)
+    const kind = useP2p.getState().servers[cur.room]?.channels.find(c => c.id === ch)?.kind
+    const text = !!ch && kind !== 'voice'
+    if (ch && text) lastChannel.set(cur.room, ch)
     useP2p.setState(st => ({
       server: { room: cur.room, ch },
-      chat: ch
-        ? {
-            room: cur.room,
-            peer: '',
-            ch,
-            messages: st.chat?.room === cur.room && st.chat.ch === ch ? st.chat.messages : [],
-            more: false,
-            loading: !(st.chat?.room === cur.room && st.chat.ch === ch),
-            readSeq: st.servers[cur.room]?.chans[ch]?.readSeq ?? 0,
-            missed: [],
-          }
-        : null,
+      chat:
+        ch && text
+          ? {
+              room: cur.room,
+              peer: '',
+              ch,
+              messages: st.chat?.room === cur.room && st.chat.ch === ch ? st.chat.messages : [],
+              more: false,
+              loading: !(st.chat?.room === cur.room && st.chat.ch === ch),
+              readSeq: st.servers[cur.room]?.chans[ch]?.readSeq ?? 0,
+              missed: [],
+            }
+          : null,
       pins: null,
       editing: null,
       replying: null,
@@ -1503,7 +1540,7 @@ export const p2pServer = {
           ? null
           : st.panel,
     }))
-    if (ch) void loadChannel(cur.room, ch)
+    if (ch && text) void loadChannel(cur.room, ch)
   },
 
   close: () =>
@@ -1562,7 +1599,8 @@ export const p2pServer = {
   setHistory: (room: string, vis: HistoryVis) => withServers(s => s.setHistory(room, vis)),
   setSystem: (room: string, sys: { ch: string | null; join: boolean; leave: boolean }) =>
     withServers(s => s.setSystem(room, sys)),
-  addChannel: (room: string, name: string) => withServers(s => s.addChannel(room, name)),
+  addChannel: (room: string, name: string, kind: 'text' | 'voice' = 'text') =>
+    withServers(s => s.addChannel(room, name, { kind })),
   editChannel: (room: string, id: string, patch: { name?: string; topic?: string }) =>
     withServers(s => s.editChannel(room, id, patch)),
   removeChannel: (room: string, id: string) =>
@@ -1700,17 +1738,74 @@ const ringing = (v: CallView) => {
   })
 }
 
-// The media of calls with contacts: rtc.ts, signaled over the session and with the ICE plan of
-// the call (relays.ts), so relay only and the relay prompt work as in instance P2P calls.
+// The media of calls with contacts and of voice channels in P2P servers (one at a time): rtc.ts,
+// signaled over the sessions and with the ICE plan of the call or channel (relays.ts), so relay
+// only and the relay prompt work as in instance P2P calls.
 export const callRtc = new RtcManager({
-  signaler: { send: (to, target, payload) => calls?.signaler.send(to, target, payload) },
-  ice: () => calls?.config() ?? { iceServers: [], iceTransportPolicy: 'relay' },
+  signaler: {
+    send: (to, target, payload) =>
+      target.ch !== undefined
+        ? servers?.voice.send(to, target, payload)
+        : calls?.signaler.send(to, target, payload),
+  },
+  ice: () =>
+    servers?.voice.current()
+      ? servers.voice.config()
+      : (calls?.config() ?? { iceServers: [], iceTransportPolicy: 'relay' }),
 })
 
 export const CALL_ELSEWHERE = 'Call in another tab.'
 const ELSEWHERE_TEXT = 'P2P is open in another tab.'
 
 const callFailed = (e: unknown) => p2pHost.toast(e instanceof Error ? e.message : String(e))
+
+const mediaVideo = () => callRtc.videoTrack !== null || callRtc.sharing
+
+// Voice channels of P2P servers: joining leaves any other call or voice channel first.
+export const p2pVoice = {
+  active: () => !!servers?.voice.current() && callRtc.active(),
+  async join(room: string, ch: string) {
+    const sv = servers
+    if (!sv) return p2pHost.toast(ELSEWHERE_TEXT)
+    const cur = sv.voice.current()
+    if (cur?.room === room && cur.ch === ch) return
+    try {
+      // Other calls end only once this join may go ahead.
+      await sv.voice.join(room, ch, {
+        plan: async () => {
+          const plan = await relayBook.check(relayBook.prefs.choice)
+          return { config: plan.config, declared: plan.declared, hidesIp: hidesIp(plan) }
+        },
+        muted: () => p2pHost.muted(),
+        leaveOthers: () => {
+          calls?.hangup()
+          p2pHost.leaveInstanceCalls()
+        },
+      })
+    } catch (e) {
+      if (!(e instanceof JoinAborted)) callFailed(e)
+    }
+  },
+  leave: () => servers?.voice.leave(),
+  // A camera or a screen share went on or off (the others show the notice for video).
+  videoChanged: () => servers?.voice.setVideo(mediaVideo()),
+  async camera() {
+    try {
+      await callRtc.camera(callRtc.videoTrack === null)
+    } catch (e) {
+      callFailed(e)
+    }
+    p2pVoice.videoChanged()
+  },
+  async share() {
+    try {
+      await callRtc.share(!callRtc.sharing)
+    } catch (e) {
+      callFailed(e)
+    }
+    p2pVoice.videoChanged()
+  },
+}
 
 export const p2pCall = {
   async start(ik: string, video: boolean, choice?: string) {

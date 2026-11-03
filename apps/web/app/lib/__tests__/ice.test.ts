@@ -78,15 +78,23 @@ describe('ICE config', () => {
     const files = sources()
     const app = files.find(({ f }) => f.endsWith('/p2p/app.ts'))?.src ?? ''
     const calls = files.find(({ f }) => f.endsWith('/p2p/calls.ts'))?.src ?? ''
+    const voice = files.find(({ f }) => f.endsWith('/p2p/voice.ts'))?.src ?? ''
     const rtc = files.find(({ f }) => f.endsWith('/rtc.ts'))?.src ?? ''
     // rtc.ts builds every connection: the instance config, or the one its owner passes.
     expect(/new RTCPeerConnection\(this\.ice\(\)\)/.test(rtc)).toBe(true)
-    // The contact call manager passes the call's plan, which relays.ts resolved (relay only,
-    // manual relays); without a call there is no path at all.
-    expect(/ice:\s*\(\)\s*=>\s*calls\?\.config\(\)/.test(app)).toBe(true)
+    // The P2P media manager passes the plan of the voice channel it is in, else the call's;
+    // relays.ts resolved both (relay only, manual relays). Without either there is no path.
+    expect(
+      /ice:\s*\(\)\s*=>\s*servers\?\.voice\.current\(\)\s*\?\s*servers\.voice\.config\(\)\s*:\s*\(calls\?\.config\(\)/.test(
+        app
+      )
+    ).toBe(true)
     expect(/plan:\s*choice\s*=>\s*relayBook\.check\(/.test(app)).toBe(true)
     expect(/consent:\s*hosts\s*=>\s*relayBook\.consent\(hosts\)/.test(app)).toBe(true)
+    expect(/const plan = await relayBook\.check\(/.test(app)).toBe(true)
+    expect(/voice\.consent\s*=\s*hosts\s*=>\s*relayBook\.consent\(hosts\)/.test(app)).toBe(true)
     expect(/iceTransportPolicy:\s*'relay'/.test(calls)).toBe(true)
+    expect(/iceTransportPolicy:\s*'relay'/.test(voice)).toBe(true)
   })
 })
 

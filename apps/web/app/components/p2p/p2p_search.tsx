@@ -13,7 +13,8 @@ export function P2pSearchPanel() {
   const search = useP2p(s => s.search)
   const servers = useP2p(s => s.servers)
   const room = useP2p(s => s.server?.room ?? null)
-  const channels = room ? servers[room]?.channels : undefined
+  const all = room ? servers[room]?.channels : undefined
+  const channels = useMemo(() => all?.filter(c => c.kind === 'text'), [all])
   const mask = useMask()
   const hits = useMemo<SearchHitView[]>(
     () =>

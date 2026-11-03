@@ -265,6 +265,30 @@ describe('session', () => {
     expect(got.a[0]).toHaveLength(40_000)
   })
 
+  test('what was sent right before a close of ours still goes out, ahead of the goodbye', async () => {
+    const { sa, sb, got } = pair()
+    await settle()
+    void sa.send({ t: 'text', body: 'last words' })
+    void sa.send({ t: 'text', body: 'x'.repeat(40_000) })
+    sa.close()
+    void sa.send({ t: 'text', body: 'after' })
+    await settle()
+    expect(got.b.map(b => b.slice(0, 10))).toEqual(['last words', 'xxxxxxxxxx'])
+    expect(sb.state).toBe('closed')
+    expect(sb.reason).toBe('remote')
+  })
+
+  test('what is left after the other side closes is read only within the rate limit', async () => {
+    const { sa, sb, got } = pair({ limits: { framesPerSec: 5, frameBurst: 5 } })
+    await settle()
+    for (let n = 0; n < 20; n += 1) void sa.send({ t: 'text', body: `m${n}` })
+    sa.close()
+    await settle(60)
+    expect(sb.state).toBe('closed')
+    expect(got.b.length).toBeGreaterThan(0)
+    expect(got.b.length).toBeLessThanOrEqual(5)
+  })
+
   test('admit can refuse a remote', async () => {
     const { sa, sb } = pair({ admit: () => false })
     await settle()

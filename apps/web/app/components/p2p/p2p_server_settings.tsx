@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, type ReactNode } from 'react'
-import { Crown, Hash, Trash2 } from 'lucide-react'
+import { Crown, Hash, Trash2, Volume2 } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { banRequest, p2p, p2pServer, useP2p, type ServerTab } from '../../lib/p2p/app'
 import { P } from '../../lib/p2p/state'
+import { VOICE_NOTICE } from '../../lib/p2p/voice'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { Dialog, fieldCls, filledBtn, Masked, sectionCls, textBtn } from '../ui'
 import { KeyAvatar } from './p2p_badge'
@@ -75,33 +76,43 @@ function Channels({ v }: { v: ServerView }) {
   const [names, setNames] = useState<Record<string, string>>({})
   const [topics, setTopics] = useState<Record<string, string>>({})
   const [fresh, setFresh] = useState('')
+  const [kind, setKind] = useState<'text' | 'voice'>('text')
   const texts = v.channels.filter(c => c.kind === 'text')
+  const shown = v.channels.filter(c => c.kind === 'text' || c.kind === 'voice')
   return (
     <div className="flex flex-col gap-3">
-      {texts.map(c => {
+      {shown.map(c => {
+        const voice = c.kind === 'voice'
+        const label = voice ? c.name : `#${c.name}`
         const name = names[c.id] ?? c.name
         const topic = topics[c.id] ?? c.topic ?? ''
         const dirty = (name.trim() && name.trim() !== c.name) || topic !== (c.topic ?? '')
         return (
           <div key={c.id} className="flex flex-col gap-2 rounded-xl bg-surface-container px-3 py-2">
             <div className="flex items-center gap-2">
-              <Hash size={16} className="shrink-0 text-on-surface-variant" />
+              {voice ? (
+                <Volume2 size={16} className="shrink-0 text-on-surface-variant" />
+              ) : (
+                <Hash size={16} className="shrink-0 text-on-surface-variant" />
+              )}
               <input
                 value={name}
                 disabled={!edit}
                 maxLength={100}
                 onChange={e => setNames(n => ({ ...n, [c.id]: e.target.value }))}
-                aria-label={`Name of #${c.name}`}
+                aria-label={`Name of ${label}`}
                 className={`${fieldCls} min-w-0 flex-1`}
               />
-              {edit && texts.length > 1 && (
+              {edit && (voice || texts.length > 1) && (
                 <button
-                  title={`Delete #${mask(c.name)}`}
-                  aria-label={`Delete #${c.name}`}
+                  title={`Delete ${voice ? mask(c.name) : `#${mask(c.name)}`}`}
+                  aria-label={`Delete ${label}`}
                   onClick={() =>
                     useStore.getState().askConfirm({
                       title: 'Delete Channel',
-                      body: `Delete #${c.name}? Its messages stay on members' devices but can't be opened.`,
+                      body: voice
+                        ? `Delete ${c.name}?`
+                        : `Delete #${c.name}? Its messages stay on members' devices but can't be opened.`,
                       confirm: 'Delete',
                       action: () => void p2pServer.removeChannel(v.id, c.id),
                     })
@@ -118,7 +129,7 @@ function Channels({ v }: { v: ServerView }) {
               maxLength={1024}
               onChange={e => setTopics(t => ({ ...t, [c.id]: e.target.value }))}
               placeholder="Topic"
-              aria-label={`Topic of #${c.name}`}
+              aria-label={`Topic of ${label}`}
               className={fieldCls}
             />
             {edit && dirty && (
@@ -136,6 +147,15 @@ function Channels({ v }: { v: ServerView }) {
       })}
       {edit ? (
         <div className="flex gap-2">
+          <select
+            value={kind}
+            onChange={e => setKind(e.target.value === 'voice' ? 'voice' : 'text')}
+            aria-label="New channel type"
+            className={fieldCls}
+          >
+            <option value="text">Text</option>
+            <option value="voice">Voice</option>
+          </select>
           <input
             value={fresh}
             maxLength={100}
@@ -147,7 +167,7 @@ function Channels({ v }: { v: ServerView }) {
           <button
             disabled={!fresh.trim()}
             onClick={() => {
-              void p2pServer.addChannel(v.id, fresh)
+              void p2pServer.addChannel(v.id, fresh, kind)
               setFresh('')
             }}
             className={filledBtn}
@@ -158,7 +178,7 @@ function Channels({ v }: { v: ServerView }) {
       ) : (
         <Note>Only the owner can change channels.</Note>
       )}
-      <Note>Voice channels in P2P servers come later.</Note>
+      <Note>{VOICE_NOTICE}</Note>
     </div>
   )
 }

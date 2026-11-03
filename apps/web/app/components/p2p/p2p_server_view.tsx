@@ -14,6 +14,7 @@ import {
   Settings,
   UserPlus,
   Users,
+  Volume2,
   Waypoints,
   X,
 } from 'lucide-react'
@@ -30,6 +31,7 @@ import {
   banRequest,
   p2pSearch,
   p2pServer,
+  p2pVoice,
   serverScope,
   useP2p,
 } from '../../lib/p2p/app'
@@ -52,6 +54,8 @@ import { iconBtn, Masked } from '../ui'
 import { AccountChip, ContactShield, KeyAvatar, P2pBadge, PresenceDot } from './p2p_badge'
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { noteBarCls, P2pChatBody, type Mentionable } from './p2p_chat'
+import { P2pVoiceRow } from './p2p_voice'
+import { VoiceDock, VoiceGrid } from '../voice_grid'
 
 // P2P servers in the app: their group at the bottom of the rail (dashed rings, the Waypoints
 // badge, folders of their own), and the open server: channels, the channel's messages and the
@@ -401,13 +405,33 @@ function ServerHead({ v }: { v: ServerView }) {
   )
 }
 
-const channelMenu = (v: ServerView, ch: { id: string; name: string }): ContextMenuItem[] => {
+const channelMenu = (
+  v: ServerView,
+  ch: { id: string; name: string; kind?: string }
+): ContextMenuItem[] => {
   const s = useStore.getState()
   const c = v.chans[ch.id]
-  const items: ContextMenuItem[] = [
-    markReadItem(c && (c.unread || c.pings) ? [ch.id] : [], () => p2pServer.markRead(v.id, ch.id)),
-    ...notifyMenuItems(channelScope(v.id, ch.id), 'Channel'),
-  ]
+  const voice = ch.kind === 'voice'
+  const here = useP2p.getState().voice
+  const items: ContextMenuItem[] = voice
+    ? [
+        here?.room === v.id && here.ch === ch.id
+          ? { label: 'Leave Voice', icon: Volume2, action: () => p2pVoice.leave() }
+          : {
+              label: 'Join Voice',
+              icon: Volume2,
+              action: () => {
+                p2pServer.openChannel(ch.id)
+                void p2pVoice.join(v.id, ch.id)
+              },
+            },
+      ]
+    : [
+        markReadItem(c && (c.unread || c.pings) ? [ch.id] : [], () =>
+          p2pServer.markRead(v.id, ch.id)
+        ),
+        ...notifyMenuItems(channelScope(v.id, ch.id), 'Channel'),
+      ]
   if (can(v, P.ManageChannels))
     items.push(
       {
@@ -420,7 +444,9 @@ const channelMenu = (v: ServerView, ch: { id: string; name: string }): ContextMe
         action: () =>
           s.askConfirm({
             title: 'Delete Channel',
-            body: `Delete #${ch.name}? Its messages stay on members' devices but can't be opened.`,
+            body: voice
+              ? `Delete ${ch.name}?`
+              : `Delete #${ch.name}? Its messages stay on members' devices but can't be opened.`,
             confirm: 'Delete',
             action: () => void p2pServer.removeChannel(v.id, ch.id),
           }),
@@ -436,12 +462,36 @@ export function P2pServerSidebar() {
   const prefs = useStore(s => s.notifyPrefs)
   const openContextMenu = useStore(s => s.openContextMenu)
   const [adding, setAdding] = useState<string | null>(null)
+  const [kind, setKind] = useState<'text' | 'voice'>('text')
   if (!v) return <aside className="flex h-full w-60 shrink-0 flex-col bg-surface-container-low" />
-  const texts = v.channels.filter(c => c.kind === 'text')
+  const shown = v.channels.filter(c => c.kind === 'text' || c.kind === 'voice')
   const submit = () => {
     const name = (adding ?? '').trim()
     setAdding(null)
-    if (name) void p2pServer.addChannel(v.id, name).then(id => id && p2pServer.openChannel(id))
+    if (!name) return
+    void p2pServer
+      .addChannel(v.id, name, kind)
+      .then(id => id && kind === 'text' && p2pServer.openChannel(id))
+  }
+  const kindBtn = (k: 'text' | 'voice') => {
+    const label = k === 'text' ? 'Text channel' : 'Voice channel'
+    const Icon = k === 'text' ? Hash : Volume2
+    return (
+      <button
+        title={label}
+        aria-label={label}
+        aria-pressed={kind === k}
+        onMouseDown={e => e.preventDefault()}
+        onClick={() => setKind(k)}
+        className={`rounded-lg p-1.5 ${
+          kind === k
+            ? 'bg-secondary-container text-on-secondary-container'
+            : 'text-on-surface-variant hover:bg-surface-container'
+        }`}
+      >
+        <Icon size={14} />
+      </button>
+    )
   }
   return (
     <aside
@@ -457,7 +507,10 @@ export function P2pServerSidebar() {
           <button
             title="Create channel"
             aria-label="Create channel"
-            onClick={() => setAdding('')}
+            onClick={() => {
+              setKind('text')
+              setAdding('')
+            }}
             className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
           >
             <Plus size={16} />
@@ -465,7 +518,18 @@ export function P2pServerSidebar() {
         )}
       </div>
       <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto pb-3">
-        {texts.map(c => {
+        {shown.map(c => {
+          if (c.kind === 'voice')
+            return (
+              <P2pVoiceRow
+                key={c.id}
+                v={v}
+                c={c}
+                active={active === c.id}
+                menu={(x, y) => openContextMenu(x, y, channelMenu(v, c))}
+                memberMenu={m => (x, y) => openContextMenu(x, y, memberMenu(v, m))}
+              />
+            )
           const counts = v.chans[c.id]
           const scope = channelScope(v.id, c.id)
           const muted =
@@ -504,27 +568,34 @@ export function P2pServerSidebar() {
           )
         })}
         {adding !== null && (
-          <input
-            autoFocus
-            value={adding}
-            maxLength={100}
-            onChange={e => setAdding(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') submit()
-              if (e.key === 'Escape') setAdding(null)
-            }}
-            onBlur={submit}
-            placeholder="channel name"
-            aria-label="New channel name"
-            className="mx-2 my-0.5 min-w-0 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
-          />
+          <span className="flex items-center">
+            <span className="flex shrink-0 gap-0.5 pl-2">
+              {kindBtn('text')}
+              {kindBtn('voice')}
+            </span>
+            <input
+              autoFocus
+              value={adding}
+              maxLength={100}
+              onChange={e => setAdding(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') submit()
+                if (e.key === 'Escape') setAdding(null)
+              }}
+              onBlur={submit}
+              placeholder="channel name"
+              aria-label="New channel name"
+              className="mx-2 my-0.5 min-w-0 flex-1 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
+            />
+          </span>
         )}
-        {texts.length === 0 && (
+        {shown.length === 0 && (
           <p className="px-4 py-2 text-sm text-on-surface-variant">
             {v.me === null ? 'Waiting for the server to arrive from a member…' : 'No channels yet.'}
           </p>
         )}
       </nav>
+      <VoiceDock />
     </aside>
   )
 }
@@ -746,6 +817,7 @@ export function P2pChannelPane({
 }) {
   const { v } = useOpen()
   const chat = useP2p(s => (s.chat?.ch ? s.chat : null))
+  const openCh = useP2p(s => s.server?.ch ?? null)
   const me = useP2p(s => s.me)
   const reader = useP2p(s => s.reader)
   const elsewhere = useP2p(s => s.elsewhere)
@@ -756,7 +828,8 @@ export function P2pChannelPane({
   const searchOpen = useP2p(s => s.panel === 'search')
   const typingIks = useP2p(s => (s.chat?.ch ? (s.serverTyping[chatKey(s.chat)] ?? NONE) : NONE))
   const menuPings = useStore(allPings)
-  const channel = v?.channels.find(c => c.id === chat?.ch)
+  const voiceCh = v?.channels.find(c => c.id === openCh && c.kind === 'voice')
+  const channel = voiceCh ?? v?.channels.find(c => c.id === chat?.ch)
   const room = v?.id ?? ''
   const mask = useMask()
   const nameOf = useCallback((ik: string) => mask(memberName(room, ik)), [room, mask])
@@ -788,7 +861,11 @@ export function P2pChannelPane({
           className="absolute -top-1 -right-1.5 border-2 border-surface"
         />
       </button>
-      <Hash size={20} className="shrink-0 text-on-surface-variant" />
+      {voiceCh ? (
+        <Volume2 size={20} className="shrink-0 text-on-surface-variant" />
+      ) : (
+        <Hash size={20} className="shrink-0 text-on-surface-variant" />
+      )}
       <span className="min-w-0 truncate font-medium">
         <Masked text={channel?.name ?? v.name} />
       </span>
@@ -797,11 +874,11 @@ export function P2pChannelPane({
           <Masked text={channel.topic} />
         </span>
       )}
-      <span className="max-sm:hidden">
+      <span className={voiceCh ? 'flex' : 'max-sm:hidden'}>
         <P2pBadge />
       </span>
       <div className="ml-auto flex shrink-0 items-center gap-1">
-        {chat && (
+        {chat && !voiceCh && (
           <PinsButton
             toggle={{
               open: pinsOpen,
@@ -832,6 +909,18 @@ export function P2pChannelPane({
       </div>
     </header>
   )
+
+  if (voiceCh && !v.readOnly && v.me === 'join')
+    return (
+      <main
+        data-p2p-channel-pane
+        data-p2p-voice-pane
+        className="flex min-w-0 flex-1 flex-col bg-surface"
+      >
+        {header}
+        <VoiceGrid key={`v${v.id}${voiceCh.id}`} p2pRoom={v.id} p2pCh={voiceCh.id} />
+      </main>
+    )
 
   if ((reader || elsewhere) && !chat)
     return (

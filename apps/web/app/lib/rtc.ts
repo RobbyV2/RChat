@@ -37,9 +37,9 @@ import {
 import type { RtcPayload, VoiceMsg } from './types'
 
 export type RtcTarget =
-  | { channelId: number; dmId?: undefined; p2pRoom?: undefined }
-  | { dmId: number; channelId?: undefined; p2pRoom?: undefined }
-  | { p2pRoom: string; channelId?: undefined; dmId?: undefined }
+  | { channelId: number; dmId?: undefined; p2pRoom?: undefined; ch?: undefined }
+  | { dmId: number; channelId?: undefined; p2pRoom?: undefined; ch?: undefined }
+  | { p2pRoom: string; ch?: string; channelId?: undefined; dmId?: undefined }
 
 // How a call's negotiation reaches the other side: `send` delivers one payload to `to` for the
 // session `target`; the receiving side hands it to onSignal with the scope it arrived for. The
@@ -191,7 +191,8 @@ export class RtcManager {
     this.leave()
     const gen = this.gen
     const local = await navigator.mediaDevices.getUserMedia({ audio: true }).catch((e: unknown) => {
-      throw mediaError(e, 'microphone', target.channelId !== undefined ? 'join voice' : 'call')
+      const voice = target.channelId !== undefined || target.ch !== undefined
+      throw mediaError(e, 'microphone', voice ? 'join voice' : 'call')
     })
     if (gen !== this.gen) {
       for (const track of local.getTracks()) track.stop()

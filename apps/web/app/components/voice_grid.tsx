@@ -26,13 +26,17 @@ import { rtc } from '../lib/rtc'
 import { p2p } from '../lib/p2p'
 import {
   callRtc,
+  memberName,
   p2p as p2pApp,
   p2pCall,
   p2pDm,
+  p2pServer,
   p2pUser,
+  p2pVoice,
   useP2p,
   type P2pState,
 } from '../lib/p2p/app'
+import { pastFit, VOICE_NOTICE, type VoiceUser } from '../lib/p2p/voice'
 import { displayName } from '../lib/p2p/contacts'
 import type { CallView } from '../lib/p2p/calls'
 import { P2pBadge } from './p2p/p2p_badge'
@@ -85,13 +89,18 @@ function useCallMedia() {
   const voice = useStore(s => s.voice)
   const call = useStore(s => s.call)
   const contactCall = useP2p(s => s.call)
+  const serverVoice = useP2p(s => s.voice)
   const { muted, deafened } = useStore(s => s.selfAudio)
-  const roomCall = mediaCall(contactCall, voice !== null || call !== null)
+  const instance = voice !== null || call !== null
+  // A voice channel of a P2P server, and calls with P2P contacts, use callRtc.
+  const roomVoice = !instance ? serverVoice : null
+  const roomCall = roomVoice ? null : mediaCall(contactCall, instance)
+  const own = roomCall !== null || roomVoice !== null
   const p2pCall = !voice && call?.kind === 'p2p'
-  const connected = roomCall
+  const connected = own
     ? callRtc.active()
-    : (p2pCall ? p2p.mediaActive() : rtc.active()) && (voice !== null || call !== null)
-  const quality: LinkQuality = roomCall
+    : (p2pCall ? p2p.mediaActive() : rtc.active()) && instance
+  const quality: LinkQuality = own
     ? callRtc.quality()
     : p2pCall
       ? p2p.remote
@@ -102,13 +111,14 @@ function useCallMedia() {
     voice,
     call,
     roomCall,
+    roomVoice,
     p2pCall,
     connected,
     deafened,
     muted,
-    camera: roomCall ? callRtc.videoTrack !== null : p2pCall ? p2p.camOn : rtc.videoTrack !== null,
-    sharing: roomCall ? callRtc.sharing : p2pCall ? p2p.shareOn : rtc.sharing,
-    audioNote: roomCall ? callRtc.audioNote : p2pCall ? p2p.audioNote : rtc.audioNote,
+    camera: own ? callRtc.videoTrack !== null : p2pCall ? p2p.camOn : rtc.videoTrack !== null,
+    sharing: own ? callRtc.sharing : p2pCall ? p2p.shareOn : rtc.sharing,
+    audioNote: own ? callRtc.audioNote : p2pCall ? p2p.audioNote : rtc.audioNote,
     quality,
   }
 }
@@ -207,22 +217,23 @@ function useForcedMute(): boolean {
 }
 
 function VoiceAudio() {
-  const { connected, p2pCall, roomCall, deafened, voice } = useCallMedia()
+  const { connected, p2pCall, roomCall, roomVoice, deafened, voice } = useCallMedia()
   const silenced = useStore(s => voiceMutedIn(s, voice?.channelId ?? null))
   useEffect(() => {
     if (!connected) useAudioGate.setState({ blocked: false })
   }, [connected])
   if (!connected) return null
-  const streams: [string, MediaStream][] = roomCall
-    ? callRtc.remoteStreams()
-    : p2pCall
-      ? [
-          ...(p2p.remote ? [['remote', p2p.remote] as [string, MediaStream]] : []),
-          ...(p2p.remoteScreen && p2p.remoteScreenOn
-            ? [['remote:screen', p2p.remoteScreen] as [string, MediaStream]]
-            : []),
-        ]
-      : rtc.remoteStreams()
+  const streams: [string, MediaStream][] =
+    roomCall || roomVoice
+      ? callRtc.remoteStreams()
+      : p2pCall
+        ? [
+            ...(p2p.remote ? [['remote', p2p.remote] as [string, MediaStream]] : []),
+            ...(p2p.remoteScreen && p2p.remoteScreenOn
+              ? [['remote:screen', p2p.remoteScreen] as [string, MediaStream]]
+              : []),
+          ]
+        : rtc.remoteStreams()
   return (
     <>
       <div hidden>
@@ -432,7 +443,16 @@ const ctlBase =
   'flex shrink-0 items-center justify-center rounded-full outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-primary'
 
 function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
-  const { voice, roomCall, connected, muted: selfMuted, deafened, camera, sharing } = useCallMedia()
+  const {
+    voice,
+    roomCall,
+    roomVoice,
+    connected,
+    muted: selfMuted,
+    deafened,
+    camera,
+    sharing,
+  } = useCallMedia()
   const forced = useForcedMute() && voice !== null
   const muted = selfMuted || forced
   const toggleMute = useStore(s => s.toggleMute)
@@ -453,7 +473,9 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
         : 'bg-surface-container-highest text-on-surface hover:bg-surface-bright'
   const btn = (state: 'idle' | 'on' | 'off') =>
     `${ctlBase} ${dim} ${lg ? tone(state) : smallTone(state)}`
-  const leave = () => (voice ? leaveVoice() : roomCall ? p2pCall.hangup() : hangupCall())
+  const leave = () =>
+    voice ? leaveVoice() : roomVoice ? p2pVoice.leave() : roomCall ? p2pCall.hangup() : hangupCall()
+  const inVoice = voice !== null || roomVoice !== null
   return (
     <div className={`flex items-center ${lg ? 'gap-2 sm:gap-3' : 'w-full gap-1.5'}`}>
       <button
@@ -499,8 +521,8 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
       )}
       {lg && (
         <button
-          title={voice ? 'Leave voice' : 'Leave call'}
-          aria-label={voice ? 'Leave voice' : 'Leave call'}
+          title={inVoice ? 'Leave voice' : 'Leave call'}
+          aria-label={inVoice ? 'Leave voice' : 'Leave call'}
           onClick={leave}
           className={`${ctlBase} h-11 w-16 bg-danger text-on-danger hover:brightness-110 sm:h-12 sm:w-18`}
         >
@@ -567,9 +589,33 @@ const QUALITY: Record<LinkQuality, { label: string; cls: string; Icon: typeof Si
   bad: { label: 'Connection lost', cls: 'text-status-red', Icon: SignalLow },
 }
 
+// How far a P2P voice mesh goes, past VOICE_FIT people (fewer with video). Joining is never
+// blocked.
+export function MeshNotice({ users, className }: { users: VoiceUser[]; className?: string }) {
+  if (
+    !pastFit(
+      users.length,
+      users.some(u => u.video)
+    )
+  )
+    return null
+  return (
+    <p
+      role="note"
+      data-p2p-voice-notice
+      className={`rounded-lg border border-dashed border-tertiary bg-tertiary-container/40 px-2.5 py-1.5 text-xs text-on-surface ${className ?? ''}`}
+    >
+      {VOICE_NOTICE}
+    </p>
+  )
+}
+
+const NO_USERS: VoiceUser[] = []
+
 export function VoiceDock() {
-  const { voice, call, roomCall, connected, quality } = useCallMedia()
+  const { voice, call, roomCall, roomVoice, connected, quality } = useCallMedia()
   const contactName = useP2p(s => (roomCall ? contactNameOf(s, roomCall.peer) : ''))
+  const sv = useP2p(s => (roomVoice ? s.servers[roomVoice.room] : undefined))
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
   const me = useStore(s => s.me)
@@ -579,14 +625,18 @@ export function VoiceDock() {
   const hangupCall = useStore(s => s.hangupCall)
   if (!connected) return null
   const detail = voice ? servers[voice.server] : undefined
+  const users = (roomVoice && sv?.voice[roomVoice.ch]) || NO_USERS
   const place = voice
     ? (detail?.channels.find(c => c.id === voice.channelId)?.name ?? 'voice')
-    : roomCall
-      ? contactName
-      : (dms.find(d => d.id === call?.dmId)?.other.display_name ??
-        call?.dmUsers.find(u => u !== me?.username) ??
-        'call')
-  const ringing = !voice && (roomCall ? roomCall.state === 'ringing' : call?.state === 'ringing')
+    : roomVoice
+      ? (sv?.channels.find(c => c.id === roomVoice.ch)?.name ?? 'voice')
+      : roomCall
+        ? contactName
+        : (dms.find(d => d.id === call?.dmId)?.other.display_name ??
+          call?.dmUsers.find(u => u !== me?.username) ??
+          'call')
+  const inVoice = voice !== null || roomVoice !== null
+  const ringing = !inVoice && (roomCall ? roomCall.state === 'ringing' : call?.state === 'ringing')
   const status = ringing
     ? { label: 'Calling…', cls: 'text-status-yellow', Icon: SignalMedium }
     : QUALITY[quality]
@@ -602,9 +652,10 @@ export function VoiceDock() {
             {status.label}
           </p>
           <button
-            title={`Go to ${voice ? 'voice channel' : 'call'}`}
+            title={`Go to ${inVoice ? 'voice channel' : 'call'}`}
             onClick={() => {
               if (voice) void openChannel(voice.server, voice.channelId)
+              else if (roomVoice) p2pServer.open(roomVoice.room, roomVoice.ch)
               else if (roomCall) {
                 p2pApp.openHome()
                 void p2pDm.openDm(roomCall.peer)
@@ -612,7 +663,8 @@ export function VoiceDock() {
             }}
             className="flex max-w-full min-w-0 items-center gap-1 rounded-sm text-left text-xs leading-tight text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
           >
-            <span className="streamer truncate">
+            {roomVoice && <P2pBadge />}
+            <span className={`streamer truncate ${roomVoice ? 'max-w-[60%] shrink-0' : ''}`}>
               <Masked text={place} />
             </span>
             {roomCall && <P2pBadge />}
@@ -624,17 +676,34 @@ export function VoiceDock() {
                 </span>
               </>
             )}
+            {roomVoice && sv && (
+              <>
+                <span className="shrink-0">/</span>
+                <span className="streamer min-w-0 truncate">
+                  <Masked text={sv.name} />
+                </span>
+              </>
+            )}
           </button>
         </div>
         <button
-          title={voice ? 'Disconnect' : 'Leave call'}
-          aria-label={voice ? 'Disconnect' : 'Leave call'}
-          onClick={() => (voice ? leaveVoice() : roomCall ? p2pCall.hangup() : hangupCall())}
+          title={inVoice ? 'Disconnect' : 'Leave call'}
+          aria-label={inVoice ? 'Disconnect' : 'Leave call'}
+          onClick={() =>
+            voice
+              ? leaveVoice()
+              : roomVoice
+                ? p2pVoice.leave()
+                : roomCall
+                  ? p2pCall.hangup()
+                  : hangupCall()
+          }
           className={`${ctlBase} h-8 w-8 text-on-surface-variant hover:bg-error/15 hover:text-error`}
         >
           <PhoneOff size={18} />
         </button>
       </div>
+      {roomVoice && <MeshNotice users={users} className="mx-1 mt-2" />}
       <div className="mt-2">
         <CallControls size="sm" />
       </div>
@@ -744,10 +813,13 @@ export function VoiceGrid({
   channelId,
   dmId,
   p2pRoom,
+  p2pCh,
 }: {
   channelId?: number
   dmId?: number
   p2pRoom?: string
+  // A voice channel of the P2P server `p2pRoom`.
+  p2pCh?: string
 }) {
   useStore(s => s.rtcTick)
   useStore(s => s.members)
@@ -775,33 +847,51 @@ export function VoiceGrid({
   const peerName = useP2p(s =>
     p2pRoom !== undefined && s.call?.room === p2pRoom ? contactNameOf(s, s.call.peer) : ''
   )
+  const serverVoice = useP2p(s => s.voice)
+  const p2pElsewhere = useP2p(s => s.reader || s.elsewhere)
+  const sv = useP2p(s =>
+    p2pRoom !== undefined && p2pCh !== undefined ? s.servers[p2pRoom] : undefined
+  )
+  const forVoice =
+    p2pRoom !== undefined && p2pCh !== undefined ? { room: p2pRoom, ch: p2pCh } : null
+  const voiceUsers = (p2pCh !== undefined && sv?.voice[p2pCh]) || NO_USERS
 
   const forRoom =
-    p2pRoom !== undefined && contactCall?.room === p2pRoom && !voice && !call ? contactCall : null
+    !forVoice && p2pRoom !== undefined && contactCall?.room === p2pRoom && !voice && !call
+      ? contactCall
+      : null
   const forDm = dmId !== undefined && call?.dmId === dmId ? call : null
   const p2pKind = forDm?.kind === 'p2p'
-  const mgr = forRoom ? callRtc : rtc
-  const self = forRoom ? (myIk ?? '') : me?.username
+  const mgr = forRoom || forVoice ? callRtc : rtc
+  const self = forRoom || forVoice ? (myIk ?? '') : me?.username
   const joined =
     channelId !== undefined
       ? voice?.channelId === channelId
-      : forRoom
-        ? callRtc.active() && (forRoom.dir === 'out' || forRoom.state === 'active')
-        : (p2pKind ? p2p.mediaActive() : rtc.active()) && call?.dmId === dmId && !voice
+      : forVoice
+        ? !voice &&
+          !call &&
+          serverVoice?.room === forVoice.room &&
+          serverVoice.ch === forVoice.ch &&
+          callRtc.active()
+        : forRoom
+          ? callRtc.active() && (forRoom.dir === 'out' || forRoom.state === 'active')
+          : (p2pKind ? p2p.mediaActive() : rtc.active()) && call?.dmId === dmId && !voice
   const users =
     channelId !== undefined
       ? (roomUsers ?? [])
-      : forRoom
-        ? forRoom.state === 'active'
-          ? [self ?? '', forRoom.peer]
-          : forRoom.dir === 'out'
-            ? [self ?? '']
+      : forVoice
+        ? voiceUsers.map(u => u.ik)
+        : forRoom
+          ? forRoom.state === 'active'
+            ? [self ?? '', forRoom.peer]
+            : forRoom.dir === 'out'
+              ? [self ?? '']
+              : []
+          : forDm
+            ? forDm.state === 'active'
+              ? forDm.dmUsers
+              : forDm.dmUsers.filter(u => u === me?.username)
             : []
-        : forDm
-          ? forDm.state === 'active'
-            ? forDm.dmUsers
-            : forDm.dmUsers.filter(u => u === me?.username)
-          : []
   const pendingOther = forRoom
     ? forRoom.state === 'ringing' && forRoom.dir === 'out'
       ? forRoom.peer
@@ -811,7 +901,11 @@ export function VoiceGrid({
       : undefined
   const state = useStore.getState()
   const refFor = (u: string): UserRef =>
-    forRoom ? p2pUser(u, u === self ? myP2pName || 'You' : peerName) : userRefFor(state, u)
+    forVoice
+      ? p2pUser(u, u === self ? myP2pName || 'You' : memberName(forVoice.room, u))
+      : forRoom
+        ? p2pUser(u, u === self ? myP2pName || 'You' : peerName)
+        : userRefFor(state, u)
 
   const tint = (user: UserRef) =>
     bannerColor(
@@ -830,7 +924,7 @@ export function VoiceGrid({
       tint: tint(user),
       screen: false,
       shareId: null,
-      local: forRoom !== null,
+      local: forRoom !== null || forVoice !== null,
     }
     if (joined && u === self)
       return {
@@ -1023,11 +1117,12 @@ export function VoiceGrid({
           <ChannelTopic channel={channel} variant="voice" />
         </div>
       )}
+      {forVoice && <MeshNotice users={voiceUsers} className="mx-4 mt-3 self-start" />}
       {joined && <SharePill />}
       <div
         ref={area}
         className={`min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 ${
-          joined || channelId !== undefined ? 'pb-20 sm:pb-22' : ''
+          joined || channelId !== undefined || forVoice ? 'pb-20 sm:pb-22' : ''
         }`}
       >
         {focused ? (
@@ -1050,7 +1145,11 @@ export function VoiceGrid({
           <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
             <p className="text-lg font-semibold text-on-surface">No one is here yet</p>
             <p className="text-sm text-on-surface-variant">
-              {guest ? 'Create an account to join voice.' : 'Join to start talking.'}
+              {guest && !forVoice
+                ? 'Create an account to join voice.'
+                : forVoice && p2pElsewhere
+                  ? 'P2P is open in another tab.'
+                  : 'Join to start talking.'}
             </p>
           </div>
         )}
@@ -1063,6 +1162,17 @@ export function VoiceGrid({
         <div ref={bar} className="pointer-events-auto" onFocus={wake}>
           {joined ? (
             <CallControls />
+          ) : forVoice ? (
+            !p2pElsewhere && (
+              <button
+                data-p2p-voice-join
+                onClick={() => void p2pVoice.join(forVoice.room, forVoice.ch)}
+                className={`${ctlBase} h-11 gap-2 bg-status-green px-6 text-sm font-semibold text-surface hover:brightness-110`}
+              >
+                <Phone size={18} />
+                Join voice
+              </button>
+            )
           ) : (
             channelId !== undefined &&
             !guest && (

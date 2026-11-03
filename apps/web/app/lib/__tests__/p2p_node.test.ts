@@ -483,6 +483,59 @@ describe('P2P node', () => {
     }
   })
 
+  test('voice participants are dialed past the cap while a session can make room for them', async () => {
+    const saved = { ...LIMITS }
+    LIMITS.sessions = 1
+    try {
+      const { out, clock, hub } = await setup(['Alice', 'Bob', 'Carol'])
+      const [a, b, c] = out.map(x => x.node)
+      await befriend(a, b, clock)
+      c.use({ attach: () => {}, ready: () => {}, wanted: () => true })
+      let keepBob = true
+      a.use({
+        attach: () => {},
+        ready: () => {},
+        urgent: () => [{ ik: c.ik, certs: [c.cert] }],
+        keep: s => (keepBob && s.remote?.ik === b.ik) || s.remote?.ik === c.ik,
+        wanted: () => true,
+      })
+      // At the cap and Bob's session is in voice too: nothing may make room, nobody is dialed.
+      const before = hub.dialCount
+      a.schedule(true)
+      await settle()
+      expect(hub.dialCount).toBe(before)
+      // Bob's isn't: Carol is dialed past the cap and Bob's session makes room.
+      keepBob = false
+      a.schedule(true)
+      await waitFor(() => a.readySessions(c.ik).length === 1, 'the session with Carol')
+      expect(a.readySessions(b.ik)).toEqual([])
+    } finally {
+      Object.assign(LIMITS, saved)
+    }
+  })
+
+  test("a voice participant's device is dialed though a session with another of its devices is up", async () => {
+    const { out, hub } = await setup(['Alice', 'Bob'])
+    const [a, b] = out.map(x => x.node)
+    // Bob's other device, as the participant's voice device would be named.
+    const other = newKeyPair()
+    const cert = signCert(newKeyPair(), other.pk, 1, 'test')
+    let urgent = [{ ik: b.ik, certs: [b.cert] }]
+    a.use({ attach: () => {}, ready: () => {}, urgent: () => urgent, wanted: () => true })
+    b.use({ attach: () => {}, ready: () => {}, wanted: () => true })
+    a.schedule(true)
+    await waitFor(() => a.readySessions(b.ik).length === 1, 'the session with Bob')
+    // A session with Bob's device is up: that device isn't dialed again, another one is.
+    const before = hub.dialCount
+    a.schedule(true)
+    await settle()
+    expect(hub.dialCount).toBe(before)
+    urgent = [{ ik: b.ik, certs: [{ ...cert, ik: b.ik }] }]
+    a.schedule(true)
+    await settle()
+    expect(hub.dialCount).toBeGreaterThan(before)
+  })
+
   test('unauthenticated connections never push out established sessions', async () => {
     const saved = { ...LIMITS }
     LIMITS.sessions = 1

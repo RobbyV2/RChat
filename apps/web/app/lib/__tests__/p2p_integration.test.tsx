@@ -132,6 +132,7 @@ const server = (over: Partial<ServerView> = {}): ServerView => ({
   gap: false,
   full: false,
   readOnly: null,
+  voice: {},
   ...over,
 })
 

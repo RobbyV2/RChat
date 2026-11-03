@@ -101,6 +101,7 @@ import {
 } from './state'
 import { isQuotaError, Sync, type Check, type Link, type SyncLimits, type Walked } from './sync'
 import { candidates, matches, rebuildStep, SEARCH, unindexRoom, words } from './search'
+import { Voice, type VoiceLimits, type VoiceUser } from './voice'
 import {
   dmRoomId,
   DmError,
@@ -315,6 +316,8 @@ export interface ServerView {
   full: boolean
   // Shown read-only, with this text (a server of old or unknown rules).
   readOnly: string | null
+  // Who is in each voice channel.
+  voice: Record<string, VoiceUser[]>
 }
 
 interface Parked {
@@ -382,6 +385,7 @@ export interface ServerDeps {
   random?: () => number
   limits?: Partial<SyncLimits>
   gossip?: Partial<GossipLimits>
+  voice?: Partial<VoiceLimits>
   roomCap?: number
   totalCap?: number
   roomBytes?: number
@@ -447,6 +451,7 @@ const lessPings = (old: ChanCounts, n: number, thread: string | null): ChanCount
 export class Servers {
   readonly sync: Sync
   readonly gossip: Gossip
+  readonly voice: Voice
   private clock: Clock
   private rts = new Map<string, Rt>()
   private idents = new Map<string, IdentRecord>()
@@ -548,10 +553,37 @@ export class Servers {
       onTyping: room => this.typingChanged(room),
       limits: deps.gossip,
     })
+    this.voice = new Voice({
+      clock: this.clock,
+      me: () => node.ik,
+      sessions: room => node.allReady().filter(s => this.voiceMember(room, s.remote?.ik)),
+      links: room =>
+        this.sync
+          .linksOf(room)
+          .filter(l => this.voiceMember(room, l.ik))
+          .map(l => l.session),
+      sessionsOf: ik => node.readySessions(ik),
+      member: (room, ik) => this.voiceMember(room, ik),
+      isVoice: (room, ch) => this.isVoiceChannel(room, ch),
+      device: (room, ik, dk) => memberOf(this.sumOf(room), ik)?.devs.includes(dk) === true,
+      signer: () => {
+        const a = node.author()
+        return a ? { dk: keyId(a.dk.pk), sk: a.dk.sk } : null
+      },
+      allowed: (room, ch, ik) => this.voiceAllowed(room, ch, ik),
+      certs: ik => {
+        const d = node.anyDevicesOf(ik)
+        return d ? { ik, certs: liveCerts(d.certs, d.revocations) } : null
+      },
+      onChange: room => this.changed(room),
+      wake: () => node.schedule(),
+      limits: deps.voice,
+    })
     node.use({
       attach: s => {
         this.sync.attach(s)
         this.gossip.attach(s)
+        this.voice.attach(s)
         s.on('gredeem', m => this.onRedeem(m, s))
         s.on('gredeemed', m => this.onRedeemed(m, s))
         s.on('ginvite', m => this.onInvite(m, s))
@@ -561,10 +593,13 @@ export class Servers {
       },
       ready: s => {
         this.gossip.ready(s)
+        this.voice.ready(s)
         this.offerInvites(s)
         this.farewell(s)
       },
       targets: () => this.gossip.targets(),
+      urgent: () => this.voice.targets(),
+      keep: s => this.voice.keeps(s.remote?.ik, s.remote?.dk),
       wanted: (ik, hello) => this.wantedPeer(ik, hello),
       member: ik => this.coMember(ik),
       learn: (ik, certs, revs, profile) => void this.learn(ik, certs, revs, profile),
@@ -595,6 +630,7 @@ export class Servers {
       await this.load(r)
     }
     this.gossip.start()
+    this.voice.start()
     for (const id of this.rooms.keys()) void this.refreshMe(id).catch(() => {})
     this.indexing = this.indexPass()
   }
@@ -621,6 +657,8 @@ export class Servers {
 
   stop() {
     this.stopped = true
+    this.voice.leave()
+    this.voice.stop()
     this.gossip.stop()
     this.sync.stop()
     if (this.host instanceof WorkerHost) this.host.stop()
@@ -917,6 +955,7 @@ export class Servers {
     if (!ik || this.deps.node.contact(ik)) return
     this.clock.set(() => {
       if (s.state !== 'ready' || this.sync.linksOn(s).length || this.deps.node.contact(ik)) return
+      if (this.voice.keeps(ik, s.remote?.dk)) return
       if ([...this.rooms.keys()].some(room => this.redeeming(room, ik))) return
       if (this.clock.now() - s.lastUseful < SERVER.idleMs) return this.idle(s)
       s.close('closed')
@@ -1201,8 +1240,10 @@ export class Servers {
     this.sync.announce(room)
     if (was === 'join' && now !== 'join') {
       this.gossip.leave(room)
+      this.voice.forget(room)
       this.ensureRt(room).joinPosted = false
     }
+    this.checkVoice(room)
     // Those someone else removed hear it from us.
     const s = this.sumOf(room)
     for (const ik of changed ?? Object.keys(s.members)) {
@@ -2487,13 +2528,17 @@ export class Servers {
 
   // `restrictView`: only owners, Manage channels and overwrites that allow it may view it (spec
   // 1.4; the editor for overwrites is Task 23's).
-  addChannel(room: string, name: string, opts: { restrictView?: boolean } = {}) {
+  addChannel(
+    room: string,
+    name: string,
+    opts: { restrictView?: boolean; kind?: 'text' | 'voice' } = {}
+  ) {
     const pos = Math.max(-1, ...channelsOf(this.sumOf(room)).map(c => c.pos)) + 1
     const id = newShortId()
     return this.emit(room, 'channel', () => ({
       id,
       name: name.trim().slice(0, 100),
-      kind: 'text',
+      kind: opts.kind ?? 'text',
       pos,
       ...(opts.restrictView ? { restrict_view: true } : {}),
     })).then(() => id)
@@ -3235,6 +3280,7 @@ export class Servers {
       gap: r.missing.length > 0 || (this.rt(room)?.waits.size ?? 0) > 0,
       full: r.full,
       readOnly,
+      voice: readOnly || me !== 'join' ? {} : this.voice.channels(room),
     }
   }
 
@@ -3731,6 +3777,46 @@ export class Servers {
     if (!isShortId(ch)) return false
     const c = channelOf(this.sumOf(room), ch)
     return !!c && (c.kind === undefined || c.kind === 'text')
+  }
+
+  isVoiceChannel(room: string, ch: string) {
+    if (!isShortId(ch) || this.readOnly(room)) return false
+    return channelOf(this.sumOf(room), ch)?.kind === 'voice'
+  }
+
+  // A joined member of a room we are joined in (voice frames come and go only between them).
+  private voiceMember(room: string, ik: string | undefined) {
+    return !!ik && this.myMembership(room) === 'join' && this.may(room, ik) === 'full'
+  }
+
+  // Who may be in a voice channel, and hear who is: a joined member who may view it.
+  // At once when the answer is cached.
+  voiceAllowed(room: string, ch: string, ik: string): boolean | Promise<boolean> {
+    if (!this.isVoiceChannel(room, ch) || this.myMembership(room) !== 'join') return false
+    if (ik !== this.me && this.may(room, ik) !== 'full') return false
+    const rt = this.ensureRt(room)
+    const key = `${ik}\n${ch}`
+    const hit = rt.views.get(key)
+    if (hit !== undefined) return hit
+    // An answer for a state that changed meanwhile is stale: asked again.
+    const sum = rt.sum
+    return this.host.viewable(room, ik, [ch]).then(([ok]) => {
+      if (rt.sum !== sum) return this.voiceAllowed(room, ch, ik)
+      rt.views.set(key, ok === true)
+      return ok === true
+    })
+  }
+
+  // The voice channel we are in went away, or we may no longer view it; others who may not are
+  // gone from the lists.
+  private checkVoice(room: string) {
+    void this.voice.recheck(room).catch(() => {})
+    const cur = this.voice.current()
+    if (cur?.room !== room) return
+    void Promise.resolve(this.voiceAllowed(room, cur.ch, this.me)).then(ok => {
+      const now = this.voice.current()
+      if (!ok && now?.room === room && now.ch === cur.ch) this.voice.leave()
+    })
   }
 
   // The admission record of a stored ACL event (tests).

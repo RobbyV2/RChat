@@ -201,6 +201,10 @@ export interface NodeExt {
   bulk?: (pipe: Pipe, s: Session) => void
   // Identities to keep sessions with besides contacts, with their devices, most wanted first.
   targets?: () => { ik: string; certs: Cert[] }[]
+  // Identities to dial before anyone else, past the session budget (voice participants).
+  urgent?: () => { ik: string; certs: Cert[] }[]
+  // Sessions that never make room for others.
+  keep?: (s: Session) => boolean
   // Whether a session with an identity that isn't a mutual contact is wanted, given its hello.
   wanted?: (ik: string, hello: Message) => boolean
   // Signed devices and profile of a session peer that isn't a contact.
@@ -213,6 +217,34 @@ export interface NodeExt {
 
 // What a dial to a peer id we only know from an invite code says in its hello.
 export type Purpose = Record<string, unknown>
+
+export interface Held {
+  contact: boolean
+  kept: boolean
+  lastUseful: number
+}
+
+// Which held session makes room for a new one past the budget (LIMITS): -1 when none has to,
+// null when none may. The least recently useful goes first; a kept session (a voice participant)
+// never goes. At the total cap, a contact's or a kept session may push out anyone else, a
+// member's only another member's. Members have a budget of their own: a kept newcomer is let in
+// past it, while kept member sessions still count towards it for anyone else.
+export const victimFor = (
+  held: Held[],
+  s: { contact: boolean; kept: boolean },
+  limits: { sessions: number; memberSessions: number } = LIMITS
+): number | null => {
+  const members = held.filter(x => !x.contact).length
+  const full = held.length >= limits.sessions
+  if (!full && (s.contact || s.kept || members < limits.memberSessions)) return -1
+  const any = full && (s.contact || s.kept)
+  let best: number | null = null
+  held.forEach((x, i) => {
+    if (x.kept || (!any && x.contact)) return
+    if (best === null || x.lastUseful < held[best].lastUseful) best = i
+  })
+  return best
+}
 
 export class P2pNode {
   status: Status = 'starting'
@@ -646,6 +678,10 @@ export class P2pNode {
     return this.deps.transport.dial(this.peerId, s.peer, 'bulk')
   }
 
+  allReady() {
+    return [...this.sessions.values()].filter(s => s.state === 'ready')
+  }
+
   // Ready sessions with the devices of an identity.
   readySessions(ik: string) {
     return [...this.sessions.values()].filter(s => s.remote?.ik === ik && s.state === 'ready')
@@ -750,17 +786,20 @@ export class P2pNode {
   // for a contact, only another member's session for a server member (which also has a budget
   // of its own). False when nothing may go.
   private makeRoom(keep: Session) {
-    const contact = this.isContactSession(keep)
     const others = [...this.sessions.values()].filter(x => x !== keep)
-    const members = others.filter(x => !this.isContactSession(x))
-    const over =
-      this.sessions.size >= LIMITS.sessions || (!contact && members.length >= LIMITS.memberSessions)
-    if (!over) return true
-    const pool = contact && this.sessions.size >= LIMITS.sessions ? others : members
-    const victim = pool.sort((a, b) => a.lastUseful - b.lastUseful)[0]
-    if (!victim) return false
-    victim.close('closed')
+    const held = others.map(x => ({
+      contact: this.isContactSession(x),
+      kept: this.isKept(x),
+      lastUseful: x.lastUseful,
+    }))
+    const i = victimFor(held, { contact: this.isContactSession(keep), kept: this.isKept(keep) })
+    if (i === null) return false
+    if (i >= 0) others[i].close('closed')
     return true
+  }
+
+  private isKept(s: Session) {
+    return this.exts.some(x => x.keep?.(s) === true)
   }
 
   // Whether a dial to `ik` is under way, and whether one may start now.
@@ -1101,6 +1140,31 @@ export class P2pNode {
   schedule(now = false) {
     if (this.stopped || this.isPaused() || !this.listener) return
     const t = this.clock.now()
+    // Voice participants first, also past the budget while a session may make room for them.
+    for (const x of this.exts)
+      for (const target of x.urgent?.() ?? []) {
+        if (this.dialing.size >= LIMITS.inFlight) return
+        const { ik } = target
+        // Only the devices named (the one a participant is in voice on), with or without a
+        // session with another device of theirs.
+        if (
+          ik === this.ik ||
+          this.dialing.has(ik) ||
+          target.certs.some(c => this.sessions.has(c.dk))
+        )
+          continue
+        if (this.sessions.size + this.dialing.size >= LIMITS.sessions && !this.evictable()) break
+        const c = this.contacts.get(ik)
+        if (c?.state === 'blocked' || this.isBanned(ik)) continue
+        const d = this.dials.get(ik)
+        if (!now && d && d.nextAt > t) continue
+        const revs = c?.revocations ?? []
+        void this.dialTo(
+          ik,
+          target.certs.filter(x => !revs.some(r => r.dk === x.dk)),
+          true
+        )
+      }
     for (const c of this.contacts.values()) {
       if (this.dialing.size >= LIMITS.inFlight) return
       if (this.sessions.size + this.dialing.size >= LIMITS.sessions) return
@@ -1128,6 +1192,11 @@ export class P2pNode {
           true
         )
       }
+  }
+
+  // A held session that may make room for a voice participant.
+  private evictable() {
+    return [...this.sessions.values()].some(x => !this.isKept(x))
   }
 
   private dial(c: Contact) {

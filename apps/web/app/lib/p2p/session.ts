@@ -117,6 +117,11 @@ export class Session {
   private keyedAt = 0
   private reasm = new Reassembler()
   private txChain: Promise<unknown> = Promise.resolve()
+  // Sends queued so far, and those queued before a close of ours (still sent); the pipe closed
+  // under us (what came before is still read).
+  private queuedSends = 0
+  private flushTo = 0
+  private ending = false
   private rxChain: Promise<unknown> = Promise.resolve()
   private handlers = new Map<string, Handler>()
   private openFns = new Set<(s: Session) => void>()
@@ -154,7 +159,12 @@ export class Session {
           this.queued -= cost
         })
     })
-    opts.pipe.onClose(() => this.finish('remote'))
+    // Frames already in arrive first (a goodbye among them).
+    opts.pipe.onClose(() => {
+      this.ending = true
+      this.wake?.()
+      void this.rxChain.then(() => this.finish('remote'))
+    })
   }
 
   get peer() {
@@ -246,6 +256,8 @@ export class Session {
     }
     refill()
     while (this.tokens < 1 && this.state !== 'closed') {
+      // Closed under us: what is left is read only within the bucket, the rest is dropped.
+      if (this.ending) return false
       const wait = Math.ceil(((1 - this.tokens) * 1000) / rate)
       await new Promise<void>(resolve => {
         const h = this.clock.set(() => {
@@ -422,11 +434,13 @@ export class Session {
       return Promise.reject(new FrameError('message too large'))
     }
     const tx = this.tx
+    const seq = ++this.queuedSends
     const sealed = parts.map(p => tx.cipher.seal(p).then(s => ({ ...s, epoch: tx.epoch })))
     const run = this.txChain.then(async () => {
       for (const p of sealed) {
         const { epoch, counter, ct } = await p
-        if (this.state === 'closed') return
+        // Closed by us: what was sent before still goes out, ahead of the goodbye.
+        if (this.state === 'closed' && seq > this.flushTo) return
         this.raw(FrameType.Data, dataPayload(epoch, counter, ct))
       }
     })
@@ -499,6 +513,7 @@ export class Session {
 
   close(reason: CloseReason = 'closed') {
     if (this.state === 'closed') return
+    this.flushTo = this.queuedSends
     const tx = this.tx
     // A goodbye, so the other side sees us leave at once instead of after the ping timeout.
     if (tx && (this.state === 'ready' || this.state === 'open')) {

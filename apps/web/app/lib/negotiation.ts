@@ -5,8 +5,9 @@ import { randomHex } from './bytes'
 export interface SignalScope {
   channelId?: number | null
   dmId?: number | null
-  // A call in a P2P conversation (the room id).
+  // A call in a P2P conversation (the room id), or a voice channel of a P2P server.
   p2pRoom?: string | null
+  ch?: string | null
 }
 
 // A signal belongs to the session it was sent for. Ones tagged with another
@@ -17,7 +18,8 @@ export function sameScope(target: SignalScope | null, sig: SignalScope): boolean
   return (
     (target.channelId ?? null) === (sig.channelId ?? null) &&
     (target.dmId ?? null) === (sig.dmId ?? null) &&
-    (target.p2pRoom ?? null) === (sig.p2pRoom ?? null)
+    (target.p2pRoom ?? null) === (sig.p2pRoom ?? null) &&
+    (target.ch ?? null) === (sig.ch ?? null)
   )
 }
 

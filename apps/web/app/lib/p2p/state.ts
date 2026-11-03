@@ -24,7 +24,7 @@ export const LIMITS = {
   codesPerMember: 20,
 }
 
-export const CHANNEL_KINDS: readonly string[] = ['text']
+export const CHANNEL_KINDS: readonly string[] = ['text', 'voice']
 
 export interface ChannelContent {
   name: string
@@ -99,7 +99,7 @@ export const channelOf = (s: Summary, id: string) => {
 
 export const systemOf = (s: Summary): SystemContent => {
   const sys = s.settings?.system as Partial<SystemContent> | undefined
-  const texts = channelsOf(s)
+  const texts = channelsOf(s).filter(c => c.kind === 'text')
   const pick = typeof sys?.ch === 'string' ? texts.find(c => c.id === sys.ch) : undefined
   return {
     ch: (pick ?? texts[0])?.id ?? null,
