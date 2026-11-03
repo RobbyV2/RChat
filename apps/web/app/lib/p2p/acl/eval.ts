@@ -1057,7 +1057,7 @@ export class FastEval extends Equiv {
             const p = prefOf(ci)
             m |= (p[ts[t + 2]] ^ p[ts[t + 1]]) & (bit(base[ri] + K[ri][ts[t + 3]]) - B1)
           }
-          out.set(o, m)
+          if (m !== B0) out.set(o, m)
         }
         return out
       },

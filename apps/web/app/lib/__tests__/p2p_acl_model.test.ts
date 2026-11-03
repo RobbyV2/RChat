@@ -37,6 +37,10 @@ test('equivocation-heavy and long runs: production equals the model', () => {
   expect(run(range(1, 100), gen)).toEqual([])
 }, 600_000)
 
+test('seed 5019136: a range term that cuts nothing is no direct cut', () => {
+  expect(run([5_019_136], s => genCase(s).w)).toEqual([])
+})
+
 // The saved universes behind the failures of §7.7 (revision-2 format converted as the model's
 // fixtures test does).
 const toR3 = (events: Ev[]): Ev[] => {
