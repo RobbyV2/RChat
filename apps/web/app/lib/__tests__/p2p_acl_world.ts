@@ -209,6 +209,7 @@ export function toModel(e: AclEv): M.Ev {
   if (typeof c.role === 'string') c.role = roleM(c.role)
   switch (e.t) {
     case 'channel':
+    case 'role_meta':
       return { ...base(e), t: 'x_future', c: {} } as M.Ev
     case 'genesis':
       return {

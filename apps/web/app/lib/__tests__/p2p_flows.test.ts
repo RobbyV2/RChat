@@ -215,7 +215,8 @@ describe('P2P server flows: what a lost device removal signs again', () => {
         dan: { m: 'join', via: 'me', roles: ['r1'] },
         eve: { m: 'leave', rem: 'k9', by: 'zed' },
       }),
-      roles: { r1: { pos: 2, bits: 4 } },
+      roles: { r1: { pos: 2, bits: 4, name: 'Mods', color: 7 } },
+      overwrites: { c1: { 'u:dan': { allow: 256, deny: 0 } } },
       everyone: 1,
       channels: { c1: { id: 'c1', name: 'general' } as unknown as AclContent },
       settings: { name: 'Club' } as unknown as AclContent,
@@ -240,8 +241,14 @@ describe('P2P server flows: what a lost device removal signs again', () => {
     expect(holds('channel', { id: 'c1', name: 'old name' }, s)).toBe(false)
     expect(holds('settings', { name: 'Club' }, s)).toBe(true)
     expect(holds('profile', { name: 'Me' }, s)).toBe(true)
+    expect(holds('chperm', { ch: 'c1', subj: 'u:dan', allow: 256, deny: 0 }, s)).toBe(true)
+    expect(holds('chperm', { ch: 'c1', subj: 'u:dan', allow: 512, deny: 0 }, s)).toBe(false)
+    expect(holds('chperm', { ch: 'c1', subj: 'u:bob', allow: 0, deny: 0 }, s)).toBe(true)
+    expect(holds('chperm', { ch: 'c1', subj: 'u:bob', allow: 256, deny: 0 }, s)).toBe(false)
+    expect(holds('role_meta', { role: 'r1', name: 'Mods', color: 7 }, s)).toBe(true)
+    expect(holds('role_meta', { role: 'r1', name: 'Staff', color: 7 }, s)).toBe(false)
+    expect(holds('role_meta', { role: 'gone', name: 'Mods' }, s)).toBe(false)
     // What the summary can't show is never signed again.
-    expect(holds('chperm', { ch: 'c1', subj: 'u:bob' }, s)).toBe(false)
     expect(holds('mark', {}, s)).toBe(false)
   })
 

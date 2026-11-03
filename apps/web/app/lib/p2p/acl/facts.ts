@@ -8,6 +8,8 @@ import {
   INVITE,
   introduces,
   NEG,
+  roleMetaOk,
+  ROLES,
   TOP,
   type AclContent,
   type Ctx,
@@ -87,6 +89,8 @@ export interface Facts extends FactsQ {
   setting: AclContent | undefined
   channels: RMap<string, AclContent>
   overwrites: RMap<string, ReadonlyMap<string, AclContent>>
+  // A role's name and color (`role_meta`, a cosmetic register).
+  roleMeta: RMap<string, AclContent>
   addsTo: RMap<string, readonly Pend[]>
   consumed: RSet<string>
   codeOk: RSet<string>
@@ -719,6 +723,49 @@ export abstract class View {
     if (slow > 0) out.slow = slow
     return out
   }
+  // RoleMeta(R) (§1.5): the register over the live writes whose Authority holds in their own
+  // admission state and still holds after the effective denies concurrent with them that act on
+  // their author's roles (a demoted moderator's concurrent rename doesn't count). Neither test
+  // cuts anything: the writes are live or cut by the generic rule (§1.4).
+  roleMetaOf(R: string): AclContent | undefined {
+    const ix = this.ix
+    const ws = (ix.roleMetaEv.get(R) ?? EMPTY).filter(
+      x => roleMetaOk(ix.ev[x], ix.rec[x].local.facts) && !this.metaDenied(x)
+    )
+    const r = this.register(ws)
+    return r && ix.ev[r.win].c
+  }
+  private metaDenied(w: number): boolean {
+    const ix = this.ix
+    const e = ix.ev[w]
+    const St = ix.rec[w].local.facts
+    if (St.owners.has(e.a)) return false
+    const conc = (d: number) => this.effIn(d) && !ix.before(d, w) && !ix.before(w, d)
+    const held = [...(St.holds.get(e.a) ?? [])]
+    const lost = new Set<string>()
+    const off = new Map<string, number>()
+    const down = new Map<string, number>()
+    for (const X of [...held, EVERYONE]) {
+      for (const d of ix.roleNamed.get(X) ?? EMPTY) {
+        if (!conc(d)) continue
+        const de = ix.ev[d]
+        if (de.t === 'role_del') lost.add(X)
+        else if (de.t === 'role_bits' && !de.c.on) off.set(X, (off.get(X) ?? 0) | de.c.bit)
+        else if (de.t === 'role_move' && ix.isD[d])
+          down.set(X, Math.min(down.get(X) ?? Infinity, de.c.pos))
+      }
+      for (const d of ix.revokeEv.get(`${e.a}|${X}`) ?? EMPTY) if (conc(d)) lost.add(X)
+    }
+    const kept = held.filter(X => !lost.has(X))
+    let perms = (St.bits.get(EVERYONE) ?? 0) & ~(off.get(EVERYONE) ?? 0)
+    let me: Rank = BOT
+    for (const X of kept) {
+      perms |= (St.bits.get(X) ?? 0) & ~(off.get(X) ?? 0)
+      const r: Rank = [Math.min(St.pos.get(X) ?? -1, down.get(X) ?? Infinity), X]
+      if (gt(r, me)) me = r
+    }
+    return (perms & ROLES) === 0 || !gt(me, [St.pos.get(e.c.role) ?? -1, e.c.role])
+  }
   overwrite(ch: string, subj: string): AclContent | undefined {
     const r = this.register(this.ix.chpermEv.get(`${ch}|${subj}`) ?? EMPTY)
     if (!r) return undefined
@@ -844,6 +891,11 @@ export function fullFacts(V: View): Facts {
     const ch = V.channel(id)
     if (ch) channels.set(id, ch)
   }
+  const roleMeta = new Map<string, AclContent>()
+  for (const R of ix.roleMetaEv.keys()) {
+    const m = V.roleMetaOf(R)
+    if (m) roleMeta.set(R, m)
+  }
   const overwrites = new Map<string, Map<string, AclContent>>()
   for (const [key, xs] of ix.chpermEv) {
     const { ch, subj } = ix.ev[xs[0]].c
@@ -873,6 +925,7 @@ export function fullFacts(V: View): Facts {
     setting: V.setting(),
     channels,
     overwrites,
+    roleMeta,
     addsTo,
     consumed,
     codeOk,
@@ -939,6 +992,7 @@ const EMPTY_FACTS: Facts = {
   setting: undefined,
   channels: new Map(),
   overwrites: new Map(),
+  roleMeta: new Map(),
   addsTo: new Map(),
   consumed: new Set(),
   codeOk: new Set(),

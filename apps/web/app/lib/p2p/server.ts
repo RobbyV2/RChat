@@ -13,6 +13,7 @@ import {
   type AclItem,
   type Carried,
   type Disowned,
+  type OverSum,
   type PackedRec,
   type Plan,
   type Reapply,
@@ -89,6 +90,7 @@ import {
   effectHolds,
   refusalText,
   signedAgain,
+  slowText,
   syncedSince,
   TOO_OFTEN_TEXT,
   type HeadsReport,
@@ -105,7 +107,9 @@ import { LocalHost, WorkerHost, type AclHost, type WorkerLike } from './resolve_
 import { realClock, type Clock, type Session } from './session'
 import {
   can,
+  chanFactsOf,
   channelOf,
+  channelPermsOf,
   channelsOf,
   historyOf,
   isOwner,
@@ -114,12 +118,17 @@ import {
   memberOf,
   membershipOf,
   membersOf,
+  EVERYONE,
   MOD_BITS,
   nameOf,
   outranks,
   P,
   permsOf,
+  rankOf,
+  roleRank,
+  rolesOf,
   systemOf,
+  topRoleOf,
   type ChannelContent,
   type HistoryVis,
   type Membership,
@@ -329,7 +338,29 @@ export interface MemberView {
   myInvite: boolean
   // Banned, and our rank is at least that of every ban of them (spec 8.2 unban).
   unban: boolean
+  // Their roles, the highest first, and the highest (the member list groups by it).
+  roles: string[]
+  top: string | null
 }
+
+// A role (spec 1.4, 1.6), and whether we outrank it: we may change, give and take it.
+export interface RoleView {
+  id: string
+  name: string
+  color: number | null
+  pos: number
+  bits: number
+  holders: number
+  below: boolean
+}
+
+// A channel we may view, what we may do there (spec 1.4, Discord order), whether slow mode leaves
+// us out (spec 3.5), and its overwrites by subject.
+export type ChannelView = { id: string } & ChannelContent & {
+    send: boolean
+    exempt: boolean
+    over: Record<string, OverSum>
+  }
 
 // A moderation action waiting for a fresh heads exchange (spec 8.2).
 export interface ModView {
@@ -354,9 +385,12 @@ export interface ServerView {
   owner: string | null
   owners: string[]
   perms: number
+  rank: Rank
   history: HistoryVis
   system: SystemContent
-  channels: ({ id: string } & ChannelContent)[]
+  channels: ChannelView[]
+  roles: RoleView[]
+  everyone: number
   members: MemberView[]
   online: number
   joined: number
@@ -588,6 +622,7 @@ const RESIGN_ACL = [
   'channel',
   'chperm',
   'settings',
+  'role_meta',
   'code',
   'code_revoke',
 ]
@@ -631,6 +666,44 @@ const lessPings = (old: ChanCounts, n: number, thread: string | null): ChanCount
   }
   return next
 }
+
+export type ChannelPatch = {
+  name?: string
+  topic?: string
+  gone?: true
+  restrict_view?: boolean
+  restrict_send?: boolean
+  slow?: number
+}
+
+export const ROLE_NAME_MAX = 32
+
+// Positions are absolute (spec 1.6): a new role goes below the lowest, leaving room between, else
+// into a gap below `cap` (our own top role's position), else (owners) above every role; never onto a
+// position a role has. Null: no room below `cap`.
+export const ROLE_STEP = 1024
+export const NO_ROOM_TEXT = 'No room for a new role below your highest role. Move a role first.'
+export const newRolePos = (positions: number[], cap = Infinity): number | null => {
+  const s = [...new Set(positions)].sort((a, b) => a - b)
+  if (!s.length) return Number.isFinite(cap) ? null : ROLE_STEP * ROLE_STEP
+  if (s[0] > 0) {
+    const p = s[0] > ROLE_STEP ? s[0] - ROLE_STEP : Math.floor(s[0] / 2)
+    return p < cap ? p : null
+  }
+  for (let i = 0; i < s.length; i++) {
+    const hi = Math.min(s[i + 1] ?? Infinity, cap)
+    if (hi === Infinity) return s[i] + ROLE_STEP
+    if (hi - s[i] >= 2) return Math.floor((s[i] + hi) / 2)
+    if (hi === cap) break
+  }
+  return null
+}
+
+const roleName = (x: unknown) =>
+  typeof x === 'string' && x.trim() ? Array.from(x.trim()).slice(0, ROLE_NAME_MAX).join('') : 'Role'
+
+const sortRoles = (ids: string[], at: Map<string, number>) =>
+  ids.filter(id => at.has(id)).sort((a, b) => at.get(a)! - at.get(b)!)
 
 export class Servers {
   readonly sync: Sync
@@ -1485,6 +1558,14 @@ export class Servers {
     const rt = this.ensureRt(room)
     rt.storeDirty = true
     rt.views.clear()
+    // A channel we may view now that we couldn't (spec 3.7): what peers held back can come.
+    const seen = (s: Summary) => {
+      const F = chanFactsOf(s)
+      return channelsOf(s).filter(c => channelPermsOf(s, this.me, c.id, F) & P.ViewChannel)
+    }
+    const had = new Set(seen(before).map(c => c.id))
+    if (now === 'join' && seen(this.sumOf(room)).some(c => !had.has(c.id)))
+      this.sync.retryGaps(room)
     // In once a join of ours from after we set out is (not an old one the backfill brings
     // first); our own join clears it in postJoin.
     const mine = memberOf(this.sumOf(room), this.me)
@@ -2359,6 +2440,7 @@ export class Servers {
     )
     const counts: Record<string, ChanCounts> = {}
     const arrivals: ServerArrival[] = []
+    let F: ReturnType<typeof chanFactsOf> | undefined
     for (let i = 0; i < news.length; i++) {
       const rec = news[i]
       const sh = shown[i]
@@ -2391,6 +2473,7 @@ export class Servers {
         }
       }
       if (!ch || rec.effTs < since || membershipOf(s, this.me) !== 'join') continue
+      if (!(channelPermsOf(s, this.me, ch, (F ??= chanFactsOf(s))) & P.ViewChannel)) continue
       const cur = counts[ch] ?? { unread: 0, pings: 0, readSeq: 0 }
       const next: ChanCounts = {
         ...cur,
@@ -2948,13 +3031,93 @@ export class Servers {
     })).then(() => id)
   }
 
-  editChannel(room: string, id: string, patch: { name?: string; topic?: string; gone?: true }) {
+  // Restrictions and slow mode (seconds) too; a restriction off or slow mode 0 is left out.
+  editChannel(room: string, id: string, patch: ChannelPatch) {
     const cur = channelOf(this.sumOf(room), id)
     if (!cur) throw new ServerError('Unknown channel')
     const next: Record<string, unknown> = { ...cur, ...patch, id }
     if (patch.name !== undefined) next.name = patch.name.trim().slice(0, 100)
     if (next.topic === '') delete next.topic
+    for (const k of ['restrict_view', 'restrict_send']) if (next[k] !== true) delete next[k]
+    if (!Number.isSafeInteger(next.slow) || (next.slow as number) <= 0) delete next.slow
     return this.emit(room, 'channel', () => next)
+  }
+
+  // A channel overwrite (spec 1.4 `chperm`): `subj` is `r:<role>` or `u:<ik>`; allow and deny 0
+  // clear it.
+  setOverwrite(room: string, ch: string, subj: string, allow: number, deny: number) {
+    return this.emit(room, 'chperm', () => ({ ch, subj, allow, deny }))
+  }
+
+  // ----- Roles (spec 1.4, 1.6) -----
+
+  // A new role goes to the bottom of the list.
+  async createRole(room: string, role: { name: string; color: number | null; bits: number }) {
+    const s = this.sumOf(room)
+    const me = rankOf(s, this.me)
+    const pos = newRolePos(
+      Object.values(s.roles).map(r => r.pos),
+      me[0] === Infinity ? Infinity : me[0]
+    )
+    if (pos === null) throw new ServerError(NO_ROOM_TEXT)
+    const name = Array.from(role.name.trim()).slice(0, ROLE_NAME_MAX).join('')
+    return this.emit(room, 'role_create', () => ({
+      pos,
+      bits: role.bits,
+      ...(name ? { name } : {}),
+      ...(role.color !== null ? { color: role.color } : {}),
+    }))
+  }
+
+  // A role's name and color (spec 1.4 `role_meta`).
+  async editRole(room: string, role: string, meta: { name: string; color: number | null }) {
+    // Admitted by the generic rule (spec 1.4): one we may not make would show nothing.
+    const s = this.sumOf(room)
+    if (
+      !can(s, this.me, P.ManageRoles) ||
+      !s.roles[role] ||
+      !gt(rankOf(s, this.me), roleRank(s, role))
+    )
+      throw new ServerError(CANT_TEXT)
+    const name = Array.from(meta.name.trim()).slice(0, ROLE_NAME_MAX).join('')
+    return this.emit(room, 'role_meta', () => ({
+      role,
+      ...(name ? { name } : {}),
+      ...(meta.color !== null ? { color: meta.color } : {}),
+    }))
+  }
+
+  moveRole(room: string, role: string, pos: number) {
+    return this.emit(room, 'role_move', () => ({ role, pos }))
+  }
+
+  // `role` may be `everyone`.
+  setRoleBit(room: string, role: string, bit: number, on: boolean) {
+    return this.emit(room, 'role_bits', () => ({ role, bit, on }))
+  }
+
+  deleteRole(room: string, role: string) {
+    return this.emit(room, 'role_del', () => ({ role }))
+  }
+
+  assignRole(room: string, ik: string, role: string) {
+    return this.emit(room, 'assign', () => ({ to: ik, role }))
+  }
+
+  // Taking a role from someone else carries the watermark of a removal (spec 3.5).
+  revokeRole(room: string, ik: string, role: string) {
+    if (ik === this.me) return this.emit(room, 'revoke', () => ({ to: ik, role }))
+    return this.emit(room, 'revoke', plan => ({ to: ik, role, seen: plan.seen ?? {} }), { to: ik })
+  }
+
+  // How long until we may post in `ch` again (slow mode, spec 3.5): 0 when it's off or leaves us
+  // out.
+  async slowLeft(room: string, ch: string) {
+    const s = this.sumOf(room)
+    const c = channelsOf(s).find(x => x.id === ch)
+    if (!c?.slow || channelPermsOf(s, this.me, ch) & (P.ManageChannels | P.ManageMessages)) return 0
+    const last = await this.host.lastSent(room, this.me, ch)
+    return last === null ? 0 : Math.max(0, last + c.slow * 1000 - this.clock.now())
   }
 
   // Kicking someone invited withdraws the invite.
@@ -3760,6 +3923,25 @@ export class Servers {
             await save({ roles: { ...carry.roles, [id]: made } })
           },
         ])
+      // Overwrites, their role subjects mapped to the new roles.
+      for (const [ch, ov] of Object.entries(s.overwrites ?? {}))
+        for (const [subj, o] of Object.entries(ov))
+          steps.push([
+            `o:${ch}|${subj}`,
+            async () => {
+              const old = subj.startsWith('r:') && subj !== `r:${EVERYONE}` ? subj.slice(2) : null
+              if (old !== null && !carry.roles[old]) return
+              const target = old !== null ? `r:${carry.roles[old]}` : subj
+              const now = cur().overwrites?.[ch]?.[target]
+              if (now?.allow === o.allow && now?.deny === o.deny) return
+              await this.emit(to, 'chperm', () => ({
+                ch,
+                subj: target,
+                allow: o.allow,
+                deny: o.deny,
+              }))
+            },
+          ])
       for (const ik of s.bans)
         steps.push([
           `b:${ik}`,
@@ -4426,8 +4608,15 @@ export class Servers {
     return out
   }
 
+  // A message inside our slow-mode interval would be hidden (spec 3.5): it isn't signed.
   private content(room: string, t: string, c: Record<string, unknown>) {
-    return this.emit(room, t, () => c, { L: 'c' })
+    const ch = c.ch
+    if (t !== 'msg' || typeof ch !== 'string') return this.emit(room, t, () => c, { L: 'c' })
+    return this.locked(room, async () => {
+      const wait = await this.slowLeft(room, ch)
+      if (wait > 0) throw new ServerError(slowText(wait))
+      return this.emitNow(room, t, () => c, { L: 'c' })
+    })
   }
 
   async send(
@@ -4676,6 +4865,8 @@ export class Servers {
     const owners = s.owners
     const meRank = memberOf(s, this.me)?.rank
     const banner = membershipOf(s, this.me) === 'join' && can(s, this.me, P.Ban)
+    const order = rolesOf(s)
+    const at = new Map(order.map((r, i) => [r.id, i]))
     const members: MemberView[] = membersOf(s)
       .filter(m => m.m === 'join' || m.m === 'invite' || m.m === 'ban')
       .map(m => ({
@@ -4694,6 +4885,8 @@ export class Servers {
           (this.redeeming(room, m.ik) || this.sync.linksOf(room).some(l => l.ik === m.ik)),
         myInvite: m.m === 'invite' && !!m.inviters?.length && m.inviters.every(x => x === this.me),
         unban: m.m === 'ban' && banner && !!meRank && (!m.banRank || !gt(m.banRank, meRank)),
+        roles: m.m === 'join' ? sortRoles(m.roles, at) : [],
+        top: m.m === 'join' ? topRoleOf(s, m.ik) : null,
       }))
     const joined = members.filter(m => m.m === 'join')
     const n = nameOf(s)
@@ -4708,9 +4901,25 @@ export class Servers {
       owner: s.creator,
       owners,
       perms: me === 'join' ? permsOf(s, this.me) : 0,
+      rank: meRank ?? [-Infinity, ''],
       history: historyOf(s),
       system: systemOf(s),
-      channels: readOnly ? [] : channelsOf(s),
+      channels: readOnly ? [] : this.channelViews(s, me),
+      roles: readOnly
+        ? []
+        : order.map(r => ({
+            id: r.id,
+            name: roleName(r.name),
+            color:
+              Number.isSafeInteger(r.color) && r.color! >= 0 && r.color! <= 0xffffff
+                ? r.color!
+                : null,
+            pos: r.pos,
+            bits: r.bits,
+            holders: joined.filter(m => m.roles.includes(r.id)).length,
+            below: me === 'join' && !!meRank && gt(meRank, roleRank(s, r.id)),
+          })),
+      everyone: s.everyone,
       members: readOnly ? [] : members,
       online: joined.filter(m => m.online).length,
       joined: joined.length,
@@ -4738,6 +4947,29 @@ export class Servers {
     }
   }
 
+  // The channels we may view, with what we may do there.
+  private channelViews(s: Summary, me: Membership | null): ChannelView[] {
+    const F = chanFactsOf(s)
+    const out: ChannelView[] = []
+    for (const c of channelsOf(s)) {
+      const p = channelPermsOf(s, this.me, c.id, F)
+      if (!(p & P.ViewChannel)) continue
+      out.push({
+        ...c,
+        send: me === 'join' && (p & P.SendMessages) !== 0,
+        exempt: (p & (P.ManageChannels | P.ManageMessages)) !== 0,
+        over: s.overwrites?.[c.id] ?? {},
+      })
+    }
+    return out
+  }
+
+  // Whether we may view `ch` (spec 1.4).
+  private canViewCh(room: string, ch: string) {
+    const s = this.sumOf(room)
+    return (channelPermsOf(s, this.me, ch) & P.ViewChannel) !== 0
+  }
+
   online(room: string) {
     return this.sync.online(room)
   }
@@ -4759,6 +4991,7 @@ export class Servers {
   ): Promise<{ messages: P2pMessage[]; more: boolean }> {
     const limit = opts.limit ?? 100
     if (this.readOnly(room)) return { messages: [], more: false }
+    if (!opts.keep && !this.canViewCh(room, ch)) return { messages: [], more: false }
     const range = IDBKeyRange.bound(
       [room, ch, opts.after ?? ''],
       [room, ch, opts.before ?? '￿'],
@@ -4897,7 +5130,7 @@ export class Servers {
     const limit = opts.limit ?? 100
     const r = await this.db.get('events', root)
     if (this.readOnly(room) || !r || r.room !== room || r.type !== 'msg' || !r.chan) return null
-    if (await this.rootOf(r)) return null
+    if (!this.canViewCh(room, r.chan) || (await this.rootOf(r))) return null
     const range = IDBKeyRange.bound(
       [room, root, opts.after ?? ''],
       [room, root, opts.before ?? '￿'],
@@ -5098,6 +5331,7 @@ export class Servers {
   // Pinned messages of a channel, newest pin first (spec 3.5: the latest visible pin by someone
   // with Manage messages in its admission state decides).
   async loadPins(room: string, ch: string) {
+    if (!this.canViewCh(room, ch)) return []
     const seen = new Set<string>()
     const targets: string[] = []
     let steps = 0
@@ -5154,7 +5388,8 @@ export class Servers {
         if (q.hasFile && !r.atts?.length) continue
         if (q.beforeTs !== null && r.effTs >= q.beforeTs * 1000) continue
         if (q.afterTs !== null && r.effTs <= q.afterTs * 1000) continue
-        if (!this.isChannel(r.room, r.chan)) continue
+        // A channel we may no longer view (spec 1.4) isn't searched either.
+        if (!this.isChannel(r.room, r.chan) || !this.canViewCh(r.room, r.chan)) continue
         recs.set(r.id, r)
       }
       const shown = new Map<string, P2pMessage>()

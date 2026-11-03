@@ -213,7 +213,7 @@ export function rank(F: FactsQ, P: string): Rank {
   for (const R of F.holds.get(P) ?? []) if (gt(rankOf(F, R), r)) r = rankOf(F, R)
   return r
 }
-export function permsQ(F: FactsQ, P: string): number {
+export function permsQ(F: Pick<FactsQ, 'owners' | 'bits' | 'holds'>, P: string): number {
   if (F.owners.has(P)) return ALL
   let m = F.bits.get(EVERYONE) ?? 0
   for (const R of F.holds.get(P) ?? []) m |= F.bits.get(R) ?? 0
@@ -446,11 +446,15 @@ export function guards(e: AclEv, F: Facts): boolean {
   }
 }
 
-// P's permissions in channel `ch`, in Discord order (Task 23 builds the editor): owners and holders
-// of Manage channels have every bit; else P's permissions, the @everyone overwrite, the channel's
-// restrictions (restrict_view and restrict_send clear ViewChannel and SendMessages from that
-// baseline), the denies then the allows of P's roles' overwrites, and P's own overwrite.
-export function channelPerms(F: Facts, P: string, ch: string): number {
+// What channel permissions read (the page reads them from its summary too).
+export type ChanFacts = Pick<FactsQ, 'owners' | 'bits' | 'holds'> &
+  Pick<Facts, 'overwrites' | 'channels'>
+
+// P's permissions in channel `ch`, in Discord order: owners and holders of Manage channels have
+// every bit; else P's permissions, the @everyone overwrite, the channel's restrictions
+// (restrict_view and restrict_send clear ViewChannel and SendMessages from that baseline), the
+// denies then the allows of P's roles' overwrites, and P's own overwrite.
+export function channelPerms(F: ChanFacts, P: string, ch: string): number {
   if (F.owners.has(P)) return ALL
   let m = permsQ(F, P)
   if (m & CHANNELS) return ALL
@@ -473,9 +477,10 @@ export function channelPerms(F: Facts, P: string, ch: string): number {
   apply(ov?.get(`u:${P}`))
   return m
 }
-export const canView = (F: Facts, P: string, ch: string) => (channelPerms(F, P, ch) & VIEW) !== 0
+export const canView = (F: ChanFacts, P: string, ch: string) =>
+  (channelPerms(F, P, ch) & VIEW) !== 0
 // Sending needs ViewChannel and SendMessages.
-export const canSend = (F: Facts, P: string, ch: string) =>
+export const canSend = (F: ChanFacts, P: string, ch: string) =>
   (channelPerms(F, P, ch) & (VIEW | SEND)) === (VIEW | SEND)
 
 // The signing device is live for its identity (a relayer's, for a relayed record); join,
@@ -487,7 +492,22 @@ export function deviceOk(e: AclEv, F: FactsQ): boolean {
   return F.devs.get(e.a)?.has(e.dev) ?? false
 }
 export const authorizeFull = (e: AclEv, F: FactsQ) => deviceOk(e, F) && authority(e, F)
+
 export const admissible = (e: AclEv, F: Facts) => authorizeFull(e, F) && guards(e, F)
+
+// role_meta (added within rules version 2, §1.4 common rules) has no case in authCore, guards or
+// classify: it is admitted, cut and live by the generic rule, as a client that doesn't know the
+// type reads it, so every version holds the same events and agrees on their liveness. Its
+// Authority is read only inside RoleMeta(R) (§1.5): a write counts when it is well formed and its
+// author, in St(w), has Manage roles, Role(R) holds and the author outranks R.
+export const roleMetaOk = (e: AclEv, St: FactsQ) =>
+  typeof e.c.role === 'string' &&
+  (e.c.name === undefined || typeof e.c.name === 'string') &&
+  (e.c.color === undefined ||
+    (isInt(e.c.color) && (e.c.color as number) >= 0 && (e.c.color as number) <= 0xffffff)) &&
+  St.roles.has(e.c.role) &&
+  (St.owners.has(e.a) ||
+    (St.mem.has(e.a) && (permsQ(St, e.a) & ROLES) !== 0 && gt(rank(St, e.a), rankOf(St, e.c.role))))
 
 export function classify(e: AclEv, F: FactsQ): { cls: Cls; self: boolean } {
   switch (e.t) {

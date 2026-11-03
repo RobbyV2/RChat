@@ -1,6 +1,6 @@
 'use client'
 
-import { HeadphoneOff, MicOff, Volume2 } from 'lucide-react'
+import { HeadphoneOff, Lock, MicOff, Volume2 } from 'lucide-react'
 import { useStore } from '../../lib/store'
 import { callRtc, p2pServer, p2pVoice, useP2p } from '../../lib/p2p/app'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
@@ -91,7 +91,7 @@ export function P2pVoiceRow({
   memberMenu,
 }: {
   v: ServerView
-  c: { id: string; name: string }
+  c: { id: string; name: string; restrict_view?: true }
   active: boolean
   menu: (x: number, y: number) => void
   memberMenu: (m: MemberView) => (x: number, y: number) => void
@@ -124,6 +124,16 @@ export function P2pVoiceRow({
         <span className="truncate">
           <Masked text={c.name} />
         </span>
+        {c.restrict_view && (
+          <span
+            title="Private channel"
+            aria-label="Private channel"
+            role="img"
+            className="flex shrink-0"
+          >
+            <Lock size={12} />
+          </span>
+        )}
         {count > 0 && (
           <span
             title={`${count} in voice`}

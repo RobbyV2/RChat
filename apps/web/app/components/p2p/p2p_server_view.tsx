@@ -2,11 +2,13 @@
 
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import {
+  Clock,
   Crown,
   Folder as FolderIcon,
   FolderOpen,
   Hash,
   Link2,
+  Lock,
   LogOut,
   Menu,
   Plus,
@@ -50,7 +52,8 @@ import { PingBadge, RailPingBadge, pingLabel } from '../ping_badge'
 import { MutedIcon, notifyMenuItems } from '../notify_menu'
 import { markReadItem } from '../mark_read'
 import { PinsButton } from '../pins'
-import { iconBtn, Masked } from '../ui'
+import { iconBtn, Masked, Sentinel } from '../ui'
+import { PAGE, pageGroups } from '../../lib/paging'
 import { AccountChip, ContactShield, KeyAvatar, P2pBadge, PresenceDot } from './p2p_badge'
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { ServerNotices } from './p2p_server_flows'
@@ -65,6 +68,9 @@ import {
 import { noteBarCls, P2pChatBody, type Mentionable } from './p2p_chat'
 import { P2pVoiceRow } from './p2p_voice'
 import { VoiceDock, VoiceGrid } from '../voice_grid'
+import { MemberCard, roleMenuItems } from './p2p_server_roles'
+import { hex, memberGroups, nameColor } from '../../lib/p2p/roles'
+import { slowTitle } from '../../lib/slowmode'
 
 // P2P servers in the app: their group at the bottom of the rail (dashed rings, the Waypoints
 // badge, folders of their own), and the open server: channels, the channel's messages and the
@@ -561,6 +567,16 @@ export function P2pServerSidebar() {
               <span className="truncate">
                 <Masked text={c.name} />
               </span>
+              {c.restrict_view && (
+                <span
+                  title="Private channel"
+                  aria-label="Private channel"
+                  role="img"
+                  className="flex shrink-0"
+                >
+                  <Lock size={12} />
+                </span>
+              )}
               <MutedIcon scope={scope} />
               {pings > 0 ? (
                 <PingBadge count={pings} className="ml-auto" />
@@ -647,6 +663,8 @@ export const memberMenu = (v: ServerView, m: MemberView): ContextMenuItem[] => {
       label: 'Contact details',
       action: () => p2p.openDialog({ kind: 'contact', ik: m.ik }),
     })
+  const roles = m.m === 'join' ? roleMenuItems(v, m) : []
+  if (roles.length) items.push({ label: 'Roles', submenu: roles })
   if (can(v, P.Kick) && m.below && m.ik !== me && m.m === 'join') {
     items.push({
       label: s.streamer ? 'Kick Member' : `Kick ${mask(m.name)}`,
@@ -689,18 +707,23 @@ export const memberMenu = (v: ServerView, m: MemberView): ContextMenuItem[] => {
   return items
 }
 
+// A member's menu with their card on top (roles, removable where we may).
+export const openMemberMenu = (v: ServerView, m: MemberView, x: number, y: number) =>
+  useStore
+    .getState()
+    .openContextMenu(x, y, memberMenu(v, m), { header: <MemberCard room={v.id} ik={m.ik} /> })
+
 function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
-  const openContextMenu = useStore(s => s.openContextMenu)
   const contact = useP2p(s => s.contacts.find(c => c.ik === m.ik))
   const me = useP2p(s => s.me)
   return (
     <li>
       <button
         data-p2p-member={m.name}
-        {...longPress((x, y) => openContextMenu(x, y, memberMenu(v, m)))}
+        {...longPress((x, y) => openMemberMenu(v, m, x, y))}
         onClick={e => {
           const r = e.currentTarget.getBoundingClientRect()
-          openContextMenu(r.left + 24, r.bottom, memberMenu(v, m))
+          openMemberMenu(v, m, r.left + 24, r.bottom)
         }}
         className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface-container ${m.online || m.ik === me ? '' : 'opacity-60'}`}
       >
@@ -711,7 +734,7 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
           )}
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="streamer truncate text-sm">
+          <span className="streamer truncate text-sm" style={{ color: hex(nameColor(m, v.roles)) }}>
             <Masked text={m.name} />
           </span>
           {m.ik !== me && (
@@ -740,33 +763,46 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
 
 export function P2pMemberList() {
   const { v } = useOpen()
+  const me = useP2p(s => s.me)
+  const [shown, setShown] = useState(PAGE)
+  const room = v?.id
+  const more = useCallback(() => setShown(n => n + PAGE), [])
+  const [at, setAt] = useState(room)
+  if (at !== room) {
+    setAt(room)
+    setShown(PAGE)
+  }
   if (!v) return null
-  const joined = v.members.filter(m => m.m === 'join')
-  const online = joined.filter(m => m.online).sort((a, b) => a.name.localeCompare(b.name))
-  const offline = joined.filter(m => !m.online).sort((a, b) => a.name.localeCompare(b.name))
-  const invited = v.members.filter(m => m.m === 'invite')
-  const group = (label: string, list: MemberView[]) =>
-    list.length > 0 && (
-      <section key={label}>
-        <p className="px-3 pt-4 pb-1 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-          {label} — {list.length}
-        </p>
-        <ul className="flex flex-col px-1">
-          {list.map(m => (
-            <MemberRow key={m.ik} v={v} m={m} />
-          ))}
-        </ul>
-      </section>
-    )
+  const paged = pageGroups(memberGroups(v.members, v.roles, me), shown)
   return (
     <aside
       data-p2p-members
       aria-label="Members"
       className="flex h-full w-60 shrink-0 flex-col overflow-y-auto bg-surface-container-low pb-3"
     >
-      {group('Online', online)}
-      {group('Offline', offline)}
-      {group('Invited', invited)}
+      {paged.groups.map(g => (
+        <section key={g.key} data-p2p-member-group={g.label}>
+          <p className="flex items-center gap-1.5 px-3 pt-4 pb-1 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+            {g.key.startsWith('r:') && (
+              <span
+                aria-hidden
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ backgroundColor: hex(g.color) ?? 'var(--color-outline)' }}
+              />
+            )}
+            <span className="min-w-0 truncate">
+              <Masked text={g.label} />
+            </span>
+            <span className="shrink-0">— {g.total}</span>
+          </p>
+          <ul className="flex flex-col px-1">
+            {g.list.map(m => (
+              <MemberRow key={m.ik} v={v} m={m} />
+            ))}
+          </ul>
+        </section>
+      ))}
+      {paged.more && <Sentinel key={shown} onVisible={more} />}
     </aside>
   )
 }
@@ -811,6 +847,8 @@ function ServerIntro() {
 
 const NONE: string[] = []
 
+const NO_SEND_TEXT = 'You do not have permission to send messages in this channel.'
+
 // Why this device can't send in a server's channels (in place of the composer), or null.
 export const sendBlock = (
   v: ServerView,
@@ -820,7 +858,9 @@ export const sendBlock = (
     status: string
     movedAt: number | null
     movingAt: number | null
-  }
+  },
+  // The channel: may we send there (spec 1.4)?
+  channel?: { send: boolean }
 ): ReactNode => {
   const out = v.readOnly
     ? v.readOnly
@@ -860,6 +900,13 @@ export const sendBlock = (
           Remove from this device
         </button>
       )}
+    </div>
+  ) : channel && !channel.send ? (
+    <div data-no-send className={noteBarCls}>
+      <span className="flex min-w-0 items-center gap-2">
+        <Lock size={16} className="shrink-0" />
+        <span>{NO_SEND_TEXT}</span>
+      </span>
     </div>
   ) : v.full ? (
     <div className={noteBarCls} role="status">
@@ -931,6 +978,27 @@ export function P2pChannelPane({
       <span className="min-w-0 truncate font-medium">
         <Masked text={channel?.name ?? v.name} />
       </span>
+      {channel?.restrict_view && (
+        <span
+          title="Private channel"
+          aria-label="Private channel"
+          role="img"
+          className="flex shrink-0 text-on-surface-variant"
+        >
+          <Lock size={14} />
+        </span>
+      )}
+      {!!channel?.slow && (
+        <span
+          data-p2p-slow
+          title={slowTitle(channel.slow)}
+          aria-label={slowTitle(channel.slow)}
+          role="img"
+          className="flex shrink-0 text-on-surface-variant"
+        >
+          <Clock size={16} />
+        </span>
+      )}
       {channel?.topic && (
         <span className="min-w-0 truncate text-sm text-on-surface-variant max-md:hidden">
           <Masked text={channel.topic} />
@@ -1031,7 +1099,7 @@ export function P2pChannelPane({
     )
   }
 
-  const disabled = sendBlock(v, { reader, elsewhere, status, movedAt, movingAt })
+  const disabled = sendBlock(v, { reader, elsewhere, status, movedAt, movingAt }, channel)
 
   return (
     <P2pChatBody

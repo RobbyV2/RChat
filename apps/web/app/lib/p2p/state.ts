@@ -1,6 +1,14 @@
 import { bytesOf } from './canonical'
-import { cmp, P as ACL_P, type Rank } from './acl/rules'
-import type { Membership, MemberSum, Summary } from './acl_room'
+import {
+  channelPerms,
+  cmp,
+  EVERYONE,
+  P as ACL_P,
+  type AclContent,
+  type ChanFacts,
+  type Rank,
+} from './acl/rules'
+import type { Membership, MemberSum, RoleSum, Summary } from './acl_room'
 
 // The current state of a P2P server as the page reads it: the mirror of the evaluator's facts
 // (acl_room.ts Summary), with the readers the views, gates and gossip use. Values members write
@@ -32,6 +40,10 @@ export interface ChannelContent {
   pos: number
   topic?: string
   gone?: true
+  restrict_view?: true
+  restrict_send?: true
+  // Slow mode, in seconds (spec 3.5).
+  slow?: number
 }
 
 export interface SystemContent {
@@ -87,6 +99,10 @@ export const channelsOf = (s: Summary) => {
     const ch: { id: string } & ChannelContent = { id, name, kind, pos: int(c.pos) ?? 0 }
     const topic = text(c.topic, LIMITS.topic)
     if (topic) ch.topic = topic
+    if (c.restrict_view === true) ch.restrict_view = true
+    if (c.restrict_send === true) ch.restrict_send = true
+    const slow = int(c.slow)
+    if (slow !== null && slow > 0) ch.slow = slow
     out.push(ch)
   }
   return out.sort((a, b) => a.pos - b.pos || (a.id < b.id ? -1 : 1))
@@ -110,3 +126,38 @@ export const systemOf = (s: Summary): SystemContent => {
 
 // Members who can moderate (gossip weighs them up).
 export const MOD_BITS = P.Kick | P.Ban | P.ManageMessages
+
+// The summary as channel permissions read it (acl/rules.ts channelPerms, spec 1.4).
+export const chanFactsOf = (s: Summary): ChanFacts => ({
+  owners: new Set(s.owners),
+  bits: { get: (R: string) => (R === EVERYONE ? s.everyone : s.roles[R]?.bits) },
+  holds: { get: (ik: string) => (s.members[ik]?.m === 'join' ? s.members[ik].roles : undefined) },
+  overwrites: new Map(
+    Object.entries(s.overwrites ?? {}).map(([ch, o]) => [
+      ch,
+      new Map(Object.entries(o).map(([subj, x]) => [subj, x as unknown as AclContent])),
+    ])
+  ),
+  channels: new Map(Object.entries(s.channels)),
+})
+
+// `ik`'s permissions in channel `ch` (owners and Manage channels have every bit).
+export const channelPermsOf = (s: Summary, ik: string, ch: string, F = chanFactsOf(s)) =>
+  channelPerms(F, ik, ch)
+
+// Roles, the highest first (rank order, spec 1.6: position, then id).
+export const rolesOf = (s: Summary): ({ id: string } & RoleSum)[] =>
+  Object.entries(s.roles)
+    .map(([id, r]) => ({ id, ...r }))
+    .sort((a, b) => b.pos - a.pos || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+
+// A role's rank (spec 1.6).
+export const roleRank = (s: Summary, id: string): Rank => [s.roles[id]?.pos ?? -1, id]
+
+// The highest of `ik`'s roles, or null.
+export const topRoleOf = (s: Summary, ik: string): string | null => {
+  let best: string | null = null
+  for (const R of s.members[ik]?.roles ?? [])
+    if (s.roles[R] && (best === null || cmp(roleRank(s, R), roleRank(s, best)) > 0)) best = R
+  return best
+}

@@ -27,6 +27,7 @@ import { hasInviteCode, INVITE_POST_TEXT } from '../lib/p2p/flows'
 import { parseSed } from '../lib/sed'
 import { readOnly } from '../lib/reactions'
 import { clock } from '../lib/slowmode'
+import { useCountdown } from '../lib/countdown'
 import { Dialog, FieldError, fieldCls, filledBtn } from './ui'
 import { EmojiPicker, SHEET_QUERY } from './emoji_picker'
 import { useMedia } from './context_menu'
@@ -139,21 +140,8 @@ function TimedOutBar({ ends }: { ends: number }) {
   )
 }
 
-const useSlowLeft = (channelId: number | null): number => {
-  const until = useStore(s => (channelId === null ? 0 : (s.slowUntil[channelId] ?? 0)))
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    setNow(Date.now())
-    if (until <= Date.now()) return
-    const timer = setInterval(() => {
-      const t = Date.now()
-      setNow(t)
-      if (t >= until) clearInterval(timer)
-    }, 250)
-    return () => clearInterval(timer)
-  }, [until])
-  return Math.max(0, until - now)
-}
+const useSlowLeft = (channelId: number | null): number =>
+  useCountdown(useStore(s => (channelId === null ? 0 : (s.slowUntil[channelId] ?? 0))))
 
 function JoinBar({ server }: { server: string }) {
   const detail = useStore(s => s.servers[server])

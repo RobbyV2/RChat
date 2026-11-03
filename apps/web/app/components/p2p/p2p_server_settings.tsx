@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, type ReactNode } from 'react'
-import { Crown, Hash, Trash2, Volume2 } from 'lucide-react'
+import { useCallback, useState, type ReactNode } from 'react'
+import { Clock, Crown, Hash, Lock, Trash2, Volume2 } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { banRequest, memberName, p2p, p2pServer, useP2p, type ServerTab } from '../../lib/p2p/app'
 import {
@@ -15,17 +15,22 @@ import {
 import { P } from '../../lib/p2p/state'
 import { VOICE_NOTICE } from '../../lib/p2p/voice'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
-import { Dialog, fieldCls, filledBtn, Masked, sectionCls, textBtn } from '../ui'
+import { Dialog, fieldCls, filledBtn, Masked, sectionCls, Sentinel, textBtn } from '../ui'
+import { page, PAGE } from '../../lib/paging'
 import { KeyAvatar } from './p2p_badge'
 import { CodeList } from './p2p_invite_dialog'
 import { ServerNotices } from './p2p_server_flows'
 import { withdrawRequest } from './p2p_server_view'
+import { ChannelAccess, MemberCard, roleMenuItems, RolesTab } from './p2p_server_roles'
+import { slowTitle } from '../../lib/slowmode'
+import { hex, nameColor } from '../../lib/p2p/roles'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
 // the server's rules; what someone may not change shows read-only.
 
 const TABS: { tab: ServerTab; label: string }[] = [
   { tab: 'overview', label: 'Overview' },
+  { tab: 'roles', label: 'Roles' },
   { tab: 'channels', label: 'Channels' },
   { tab: 'invites', label: 'Invites' },
   { tab: 'system', label: 'System messages' },
@@ -70,7 +75,7 @@ function Overview({ v }: { v: ServerView }) {
           Save
         </button>
       ) : (
-        <Note>Only the owner can rename the server.</Note>
+        <Note>Only members with Manage server can rename the server.</Note>
       )}
       <Note>
         This server is stored on its members&apos; devices. {v.joined}{' '}
@@ -102,6 +107,7 @@ function Channels({ v }: { v: ServerView }) {
   const [topics, setTopics] = useState<Record<string, string>>({})
   const [fresh, setFresh] = useState('')
   const [kind, setKind] = useState<'text' | 'voice'>('text')
+  const [open, setOpen] = useState<string | null>(null)
   const texts = v.channels.filter(c => c.kind === 'text')
   const shown = v.channels.filter(c => c.kind === 'text' || c.kind === 'voice')
   return (
@@ -113,12 +119,36 @@ function Channels({ v }: { v: ServerView }) {
         const topic = topics[c.id] ?? c.topic ?? ''
         const dirty = (name.trim() && name.trim() !== c.name) || topic !== (c.topic ?? '')
         return (
-          <div key={c.id} className="flex flex-col gap-2 rounded-xl bg-surface-container px-3 py-2">
+          <div
+            key={c.id}
+            data-p2p-channel-row={c.name}
+            className="flex flex-col gap-2 rounded-xl bg-surface-container px-3 py-2"
+          >
             <div className="flex items-center gap-2">
               {voice ? (
                 <Volume2 size={16} className="shrink-0 text-on-surface-variant" />
               ) : (
                 <Hash size={16} className="shrink-0 text-on-surface-variant" />
+              )}
+              {c.restrict_view && (
+                <span
+                  title="Private channel"
+                  aria-label="Private channel"
+                  role="img"
+                  className="flex shrink-0 text-on-surface-variant"
+                >
+                  <Lock size={14} />
+                </span>
+              )}
+              {!!c.slow && !voice && (
+                <span
+                  title={slowTitle(c.slow)}
+                  aria-label={slowTitle(c.slow)}
+                  role="img"
+                  className="flex shrink-0 text-on-surface-variant"
+                >
+                  <Clock size={14} />
+                </span>
               )}
               <input
                 value={name}
@@ -157,16 +187,28 @@ function Channels({ v }: { v: ServerView }) {
               aria-label={`Topic of ${label}`}
               className={fieldCls}
             />
-            {edit && dirty && (
-              <button
-                onClick={() =>
-                  void p2pServer.editChannel(v.id, c.id, { name: name.trim() || c.name, topic })
-                }
-                className={`${textBtn} self-end`}
-              >
-                Save
-              </button>
-            )}
+            <div className="flex flex-wrap justify-end gap-2">
+              {edit && (
+                <button
+                  onClick={() => setOpen(open === c.id ? null : c.id)}
+                  aria-expanded={open === c.id}
+                  className={textBtn}
+                >
+                  Permissions
+                </button>
+              )}
+              {edit && dirty && (
+                <button
+                  onClick={() =>
+                    void p2pServer.editChannel(v.id, c.id, { name: name.trim() || c.name, topic })
+                  }
+                  className={textBtn}
+                >
+                  Save
+                </button>
+              )}
+            </div>
+            {edit && open === c.id && <ChannelAccess v={v} c={c} />}
           </div>
         )
       })}
@@ -201,7 +243,7 @@ function Channels({ v }: { v: ServerView }) {
           </button>
         </div>
       ) : (
-        <Note>Only the owner can change channels.</Note>
+        <Note>Only members with Manage channels can change channels.</Note>
       )}
       <Note>{VOICE_NOTICE}</Note>
     </div>
@@ -293,11 +335,17 @@ function History({ v }: { v: ServerView }) {
   )
 }
 
-function MemberLine({ m, children }: { m: MemberView; children?: ReactNode }) {
+function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children?: ReactNode }) {
   return (
-    <li className="flex items-center gap-3 rounded-xl px-2 py-1.5">
+    <li
+      data-p2p-member-line={m.name}
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-2 py-1.5"
+    >
       <KeyAvatar ik={m.ik} size={32} />
-      <span className="streamer min-w-0 flex-1 truncate text-sm">
+      <span
+        className="streamer min-w-0 flex-1 truncate text-sm"
+        style={{ color: hex(nameColor(m, v.roles)) }}
+      >
         <Masked text={m.name} />
       </span>
       {m.owner && (
@@ -313,16 +361,32 @@ function MemberLine({ m, children }: { m: MemberView; children?: ReactNode }) {
 function Members({ v }: { v: ServerView }) {
   const me = useP2p(s => s.me)
   const ask = useStore(s => s.askConfirm)
+  const openContextMenu = useStore(s => s.openContextMenu)
   const kick = can(v, P.Kick)
   const ban = can(v, P.Ban)
   const list = v.members
     .filter(m => m.m === 'join' || m.m === 'invite')
     .sort((a, b) => a.name.localeCompare(b.name))
+  const [shown, setShown] = useState(PAGE)
+  const more = useCallback(() => setShown(n => n + PAGE), [])
+  const paged = page(list, shown)
   return (
     <div className="flex flex-col gap-3">
-      <ul className="flex flex-col">
-        {list.map(m => (
-          <MemberLine key={m.ik} m={m}>
+      <ul data-p2p-members-tab className="flex flex-col">
+        {paged.items.map(m => (
+          <MemberLine key={m.ik} v={v} m={m}>
+            {m.m === 'join' && roleMenuItems(v, m).length > 0 && (
+              <button
+                onClick={e =>
+                  openContextMenu(e.clientX, e.clientY, roleMenuItems(v, m), {
+                    header: <MemberCard room={v.id} ik={m.ik} />,
+                  })
+                }
+                className={textBtn}
+              >
+                Roles
+              </button>
+            )}
             {m.m === 'invite' && (
               <span className="text-xs text-on-surface-variant">
                 {m.waits ? VOUCH_INVITER_TEXT : 'Invited'}
@@ -359,6 +423,7 @@ function Members({ v }: { v: ServerView }) {
           </MemberLine>
         ))}
       </ul>
+      {paged.more && <Sentinel key={shown} onVisible={more} />}
       {(kick || ban) && (
         <div className="flex flex-col gap-1">
           <Note>{EQUAL_ROLES_TEXT}</Note>
@@ -372,13 +437,16 @@ function Members({ v }: { v: ServerView }) {
 
 function Bans({ v }: { v: ServerView }) {
   const lift = can(v, P.Ban)
-  const list = v.members.filter(m => m.m === 'ban')
+  const list = v.members.filter(m => m.m === 'ban').sort((a, b) => a.name.localeCompare(b.name))
+  const [shown, setShown] = useState(PAGE)
+  const more = useCallback(() => setShown(n => n + PAGE), [])
   if (!list.length) return <Note>Nobody is banned.</Note>
+  const paged = page(list, shown)
   return (
     <div className="flex flex-col gap-3">
-      <ul className="flex flex-col">
-        {list.map(m => (
-          <MemberLine key={m.ik} m={m}>
+      <ul data-p2p-bans-tab className="flex flex-col">
+        {paged.items.map(m => (
+          <MemberLine key={m.ik} v={v} m={m}>
             {m.unban && (
               <button onClick={() => void p2pServer.unban(v.id, m.ik)} className={textBtn}>
                 Lift ban
@@ -387,6 +455,7 @@ function Bans({ v }: { v: ServerView }) {
           </MemberLine>
         ))}
       </ul>
+      {paged.more && <Sentinel key={shown} onVisible={more} />}
       {lift && <Note>{UNBAN_TEXT}</Note>}
     </div>
   )
@@ -481,6 +550,7 @@ export function ServerSettingsDialog({ room, tab: first }: { room: string; tab?:
       <p className={sectionCls}>{TABS.find(t => t.tab === tab)?.label}</p>
       <div className="px-1">
         {tab === 'overview' && <Overview key={v.name} v={v} />}
+        {tab === 'roles' && <RolesTab v={v} />}
         {tab === 'channels' && <Channels v={v} />}
         {tab === 'invites' && <CodeList room={room} version={0} />}
         {tab === 'system' && <System v={v} />}

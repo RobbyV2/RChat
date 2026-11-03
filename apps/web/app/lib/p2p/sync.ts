@@ -494,6 +494,14 @@ export class Sync {
     return false
   }
 
+  // We may be sent more now (a channel we may view): ask again for what peers didn't send.
+  retryGaps(room: string) {
+    for (const link of this.linksOf(room)) {
+      link.unavailable.clear()
+      void this.fillGaps(link)
+    }
+  }
+
   // "Load older": one more horizon of history from whoever is online.
   loadOlder(room: string) {
     for (const link of this.linksOf(room)) {

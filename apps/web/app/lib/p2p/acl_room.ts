@@ -56,7 +56,7 @@ export const IMPL = 3
 const HEADER_IMPLS: readonly number[] = [2, 3]
 
 // The shape of the page's summary: a cached one of another shape is not used.
-export const SUM_SHAPE = 3
+export const SUM_SHAPE = 4
 
 // The persisted admission record of an ACL event: its Rec without St(e), and St(e) as a delta
 // against the recorded state of one of its parents (`b`), so a cold start admits nothing again.
@@ -149,6 +149,12 @@ export interface RoleSum {
   color?: number
 }
 
+// A channel overwrite (spec 1.4 `chperm`) that allows or denies something.
+export interface OverSum {
+  allow: number
+  deny: number
+}
+
 export interface CodeSum {
   a: string
   h: string
@@ -165,6 +171,8 @@ export interface Summary {
   roles: Record<string, RoleSum>
   everyone: number
   channels: Record<string, AclContent>
+  // Overwrites by channel, then subject (`r:<role>`, `u:<ik>`).
+  overwrites: Record<string, Record<string, OverSum>>
   settings: AclContent | null
   codes: Record<string, CodeSum>
   upgraded: boolean
@@ -177,8 +185,8 @@ export interface Summary {
   ownerCount: number
 }
 
-type Keyed = 'members' | 'roles' | 'channels' | 'codes'
-const KEYED: readonly Keyed[] = ['members', 'roles', 'channels', 'codes']
+type Keyed = 'members' | 'roles' | 'channels' | 'overwrites' | 'codes'
+const KEYED: readonly Keyed[] = ['members', 'roles', 'channels', 'overwrites', 'codes']
 
 export interface SumDelta {
   top?: Partial<Omit<Summary, Keyed>>
@@ -194,6 +202,7 @@ export const emptySummary = (): Summary => ({
   roles: {},
   everyone: 0,
   channels: {},
+  overwrites: {},
   settings: null,
   codes: {},
   upgraded: false,
@@ -221,6 +230,10 @@ const json = (x: unknown) =>
     typeof v === 'number' && !Number.isFinite(v) ? `#${String(v)}` : v
   )
 
+// Records keyed by ids and strings members pick (channel ids, overwrite subjects, ban targets):
+// without a prototype, so a key like `__proto__` is only a key.
+const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>
+
 export const diffSummary = (a: Summary, b: Summary): SumDelta | null => {
   const out: SumDelta = {}
   const top: Record<string, unknown> = {}
@@ -232,10 +245,10 @@ export const diffSummary = (a: Summary, b: Summary): SumDelta | null => {
   for (const k of KEYED) {
     const x = a[k] as Record<string, unknown>
     const y = b[k] as Record<string, unknown>
-    const put: Record<string, unknown> = {}
+    const put = dict<unknown>()
     // an entry the kept summary shares (the same object) is unchanged
     for (const [id, v] of Object.entries(y))
-      if (!(id in x) || (x[id] !== v && json(x[id]) !== json(v))) put[id] = v
+      if (!Object.hasOwn(x, id) || (x[id] !== v && json(x[id]) !== json(v))) put[id] = v
     const del = Object.keys(x).filter(id => !(id in y))
     if (Object.keys(put).length) (out.put ??= {})[k] = put as never
     if (del.length) (out.del ??= {})[k] = del
@@ -250,7 +263,7 @@ export const applySummary = (s: Summary, d: SumDelta | null | undefined): Summar
     const put = d.put?.[k]
     const del = d.del?.[k]
     if (!put && !del) continue
-    const m = { ...(s[k] as Record<string, unknown>), ...(put ?? {}) }
+    const m = Object.assign(dict<unknown>(), s[k] as Record<string, unknown>, put ?? {})
     for (const id of del ?? []) delete m[id]
     ;(next as unknown as Record<string, unknown>)[k] = m
   }
@@ -459,6 +472,7 @@ export interface Carried {
   holds: Record<string, string[]>
   roles: Record<string, RoleSum>
   channels: Record<string, AclContent>
+  overwrites?: Record<string, Record<string, OverSum>>
   settings: AclContent | null
 }
 
@@ -468,6 +482,35 @@ export interface Purgeable {
   causes: Cause[]
   // Hidden bodies with no such cause (cut): evicted only under pressure.
   other: string[]
+}
+
+// The roles: position, bits, and the name and color of their latest `role_meta` (spec 1.5), else
+// of their creation.
+const rolesOf = (F: EvalResult['facts'], ix: Ix) => {
+  const roles = dict<RoleSum>()
+  for (const R of F.roles) {
+    const c = ix.ev[ix.roleCreate.get(R)!]?.c
+    const m = F.roleMeta.get(R)
+    const r: RoleSum = { pos: F.pos.get(R) ?? 0, bits: F.bits.get(R) ?? 0 }
+    const name = typeof m?.name === 'string' ? m.name : c?.name
+    const color = typeof m?.color === 'number' ? m.color : c?.color
+    if (typeof name === 'string') r.name = name
+    if (typeof color === 'number') r.color = color
+    roles[R] = r
+  }
+  return roles
+}
+
+// The overwrites that allow or deny something, by channel and subject.
+const overwritesOf = (F: EvalResult['facts']) => {
+  const out = dict<Record<string, OverSum>>()
+  for (const [ch, ov] of F.overwrites)
+    for (const [subj, c] of ov) {
+      const allow = typeof c.allow === 'number' ? c.allow : 0
+      const deny = typeof c.deny === 'number' ? c.deny : 0
+      if (allow || deny) (out[ch] ??= dict<OverSum>())[subj] = { allow, deny }
+    }
+  return out
 }
 
 // A stored admission record, its St(e) built when first read.
@@ -939,7 +982,7 @@ export class AclRoom {
     const S = this.r.state()
     const F = S.facts
     const fe = this.r.acl.evaluation()
-    const codes: Record<string, CodeSum> = {}
+    const codes = dict<CodeSum>()
     for (const [id, cf] of F.codes) {
       const c = ix.ev[ix.codeEv.get(id)!].c
       const x: CodeSum = { a: cf.a, h: c.h }
@@ -982,7 +1025,7 @@ export class AclRoom {
         for (const l of ix.codeAdds.values())
           for (const g of l) if (typeof ix.ev[g].c.to === 'string') touched.add(ix.ev[g].c.to)
     }
-    const members: Record<string, MemberSum> = all ? {} : { ...memo!.members }
+    const members = Object.assign(dict<MemberSum>(), all ? {} : memo!.members)
     const who = all
       ? new Set<string>([
           ...ix.byAuthor.keys(),
@@ -997,16 +1040,10 @@ export class AclRoom {
       if (sum) members[ik] = sum
     }
     if (!fresh) this.sumMemo = { ix, codes: status, members, usable }
-    const roles: Record<string, RoleSum> = {}
-    for (const R of F.roles) {
-      const c = ix.ev[ix.roleCreate.get(R)!]?.c
-      const r: RoleSum = { pos: F.pos.get(R) ?? 0, bits: F.bits.get(R) ?? 0 }
-      if (typeof c?.name === 'string') r.name = c.name
-      if (typeof c?.color === 'number') r.color = c.color
-      roles[R] = r
-    }
-    const channels: Record<string, AclContent> = {}
+    const roles = rolesOf(F, ix)
+    const channels = dict<AclContent>()
     for (const [id, c] of F.channels) channels[id] = c
+    const overwrites = overwritesOf(F)
     return {
       rules: RULES_VERSION,
       owners: [...F.owners],
@@ -1015,6 +1052,7 @@ export class AclRoom {
       roles,
       everyone: F.bits.get(EVERYONE) ?? 0,
       channels,
+      overwrites,
       settings: F.setting ?? null,
       codes,
       upgraded: F.upgraded.length > 0,
@@ -1367,17 +1405,10 @@ export class AclRoom {
     const i = ix.at.get(up)
     if (i === undefined || !this.r.admitted(up) || ix.ev[i].t !== 'upgrade') return null
     const F = this.r.acl.stateOf(ix.ev[i].ap).facts
-    const holds: Record<string, string[]> = {}
+    const holds = dict<string[]>()
     for (const ik of F.mem) holds[ik] = [...(F.holds.get(ik) ?? [])]
-    const roles: Record<string, RoleSum> = {}
-    for (const R of F.roles) {
-      const c = ix.ev[ix.roleCreate.get(R)!]?.c
-      const r: RoleSum = { pos: F.pos.get(R) ?? 0, bits: F.bits.get(R) ?? 0 }
-      if (typeof c?.name === 'string') r.name = c.name
-      if (typeof c?.color === 'number') r.color = c.color
-      roles[R] = r
-    }
-    const channels: Record<string, AclContent> = {}
+    const roles = rolesOf(F, ix)
+    const channels = dict<AclContent>()
     for (const [id, c] of F.channels) channels[id] = c
     return {
       members: [...F.mem],
@@ -1385,6 +1416,7 @@ export class AclRoom {
       holds,
       roles,
       channels,
+      overwrites: overwritesOf(F),
       settings: F.setting ?? null,
     }
   }
@@ -1776,6 +1808,12 @@ export class AclRoom {
       if (out.length >= 10) break
     }
     return out
+  }
+
+  // The time of `a`'s latest held message in `ch` (slow mode, spec 3.5), or null.
+  lastSent(a: string, ch: string): number | null {
+    if (this.r.acl.ix.genesis < 0 || this.r.unknownRules !== undefined) return null
+    return this.view().lastIn(a, ch)
   }
 
   // Whether `ik` may be sent content of these channels (spec 3.7, Discord order: owners and

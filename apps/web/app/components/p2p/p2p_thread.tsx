@@ -64,7 +64,11 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
   )
   const moderator = v.me === 'join' && (v.perms & P.ManageMessages) !== 0
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
-  const disabled = sendBlock(v, { reader, elsewhere, status, movedAt, movingAt })
+  const disabled = sendBlock(
+    v,
+    { reader, elsewhere, status, movedAt, movingAt },
+    v.channels.find(c => c.id === t.ch)
+  )
   const canAct = !disabled
   const replies = t.messages ?? EMPTY
   const all = useMemo(() => (t.head ? [t.head, ...replies] : replies), [t.head, replies])

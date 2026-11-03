@@ -122,6 +122,7 @@ export class Ix {
   introEv = new Map<string, number[]>()
   introBy = new Map<string, number[]>()
   roleNamed = new Map<string, number[]>()
+  roleMetaEv = new Map<string, number[]>()
   profileBy = new Map<string, number[]>()
   settingsEv: number[] = []
   upgradeEv: number[] = []
@@ -224,6 +225,9 @@ export class Ix {
       case 'role_del':
         pushM(this.roleDel, c.role, i)
         pushM(this.roleNamed, c.role, i)
+        break
+      case 'role_meta':
+        if (typeof c.role === 'string') pushM(this.roleMetaEv, c.role, i)
         break
       case 'assign':
         pushM(this.assignEv, `${c.to}|${c.role}`, i)

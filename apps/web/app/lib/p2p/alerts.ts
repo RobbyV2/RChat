@@ -73,14 +73,19 @@ export const badgePings = (
     0
   )
 
-// Pings in a server's channels that badge (channels set to "Nothing" don't).
+// Pings in a server's channels that badge: channels set to "Nothing" don't, nor channels that
+// don't show (deleted, or we may no longer view them: they couldn't be cleared).
 export const serverPings = (
-  v: { id: string; chans: Record<string, { pings: number }> },
+  v: { id: string; chans: Record<string, { pings: number }>; channels: readonly { id: string }[] },
   prefs: NotifyPrefs
 ) =>
   Object.entries(v.chans).reduce(
     (n, [ch, c]) =>
-      n + (levelOf(prefs, { kind: 'p2pc', room: v.id, ch }) === 'nothing' ? 0 : c.pings),
+      n +
+      (!v.channels.some(x => x.id === ch) ||
+      levelOf(prefs, { kind: 'p2pc', room: v.id, ch }) === 'nothing'
+        ? 0
+        : c.pings),
     0
   )
 

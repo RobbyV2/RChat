@@ -16,7 +16,6 @@ import {
 import {
   NAME_MAX,
   PERM_ITEMS,
-  SLOWMODE_MAX,
   adminMask,
   canGrant,
   canPromote,
@@ -33,7 +32,7 @@ import {
 } from '../lib/rules'
 import { inviteUrl } from '../lib/invite'
 import { enterKey } from '../lib/keys'
-import { CUSTOM, SLOWMODE_PRESETS, customSeconds, isPreset, slowLabel } from '../lib/slowmode'
+import { allowListTitle, emptyAllowText } from '../lib/channel_access'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
 import type {
   Channel,
@@ -45,6 +44,14 @@ import type {
   ServerDetail,
 } from '../lib/types'
 import { UserAvatar } from './user_avatar'
+import {
+  ColorSwatch,
+  PermChecks,
+  RestrictionToggles,
+  RoleCreateForm,
+  RoleNameForm,
+  SlowmodeField,
+} from './settings_fields'
 import { ServerAccessSection, passwordName } from './server_access'
 import { ColorField } from './color_field'
 import { ServerHeader } from './server_header'
@@ -225,76 +232,12 @@ function MemberPicker({
   )
 }
 
-const GRANT_NOTE = 'You can only give permissions you have.'
-
-function PermChecks({
-  value,
-  onChange,
-  allowed,
-  locked,
-}: {
-  value: number
-  onChange: (v: number) => void
-  allowed?: (v: number) => boolean
-  locked?: string | null
-}) {
-  return (
-    <div className="flex flex-wrap gap-x-3 gap-y-1">
-      {PERM_ITEMS.map(({ label, bit, hint }) => {
-        const off = !!locked || (allowed !== undefined && !allowed(value ^ bit))
-        return (
-          <label
-            key={bit}
-            title={off ? (locked ?? GRANT_NOTE) : hint}
-            className={`flex items-center gap-1.5 text-sm ${off ? 'opacity-60' : ''}`}
-          >
-            <input
-              type="checkbox"
-              checked={hasPerm(value, bit)}
-              disabled={off}
-              onChange={() => onChange(value ^ bit)}
-              className="accent-primary"
-            />
-            {label}
-          </label>
-        )
-      })}
-    </div>
-  )
-}
-
 function LockedNote() {
   return (
     <p className="pt-1.5 text-xs text-on-surface-variant">
       This admin has permissions you don&apos;t have. You can take permissions away, but you can
       only give permissions you have.
     </p>
-  )
-}
-
-function ColorSwatch({
-  initial,
-  onCommit,
-  locked,
-}: {
-  initial: string
-  onCommit: (color: string) => void
-  locked?: string | null
-}) {
-  const [color, setColor] = useState(initial)
-  useEffect(() => setColor(initial), [initial])
-  return (
-    <input
-      type="color"
-      value={color}
-      title={locked ?? 'Role color'}
-      disabled={!!locked}
-      onChange={e => setColor(e.target.value)}
-      onBlur={() => {
-        if (color !== initial) onCommit(color)
-      }}
-      className="h-9 w-9 shrink-0 cursor-pointer rounded-lg border border-outline bg-transparent p-0.5 disabled:cursor-not-allowed disabled:opacity-60"
-    />
   )
 }
 
@@ -313,8 +256,6 @@ function RoleRow({
 }) {
   const updateRole = useStore(s => s.updateRole)
   const deleteRole = useStore(s => s.deleteRole)
-  const [name, setName] = useState(role.name)
-  useEffect(() => setName(role.name), [role.name])
   const after = () => refresh?.()
   const locked = limit === undefined ? null : roleEditBlock(limit, false, role, limits)
   const noDelete = limit === undefined ? null : roleDeleteBlock(limit, false, role, limits)
@@ -328,30 +269,11 @@ function RoleRow({
           locked={locked}
           onCommit={color => void updateRole(server, role.id, { color }).then(after)}
         />
-        <form
-          onSubmit={e => {
-            e.preventDefault()
-            const trimmed = name.trim()
-            if (!locked && trimmed && trimmed !== role.name)
-              void updateRole(server, role.id, { name: trimmed }).then(after)
-          }}
-          title={locked ?? undefined}
-          className="flex min-w-0 flex-1 gap-2"
-        >
-          <input
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="Role name"
-            disabled={!!locked}
-            className={`${fieldCls} disabled:opacity-60`}
-          />
-          <button
-            disabled={!!locked}
-            className={`${textBtn} disabled:opacity-60 disabled:hover:bg-transparent`}
-          >
-            Rename
-          </button>
-        </form>
+        <RoleNameForm
+          initial={role.name}
+          locked={locked}
+          onRename={name => void updateRole(server, role.id, { name }).then(after)}
+        />
         <span title={noDelete ?? `Delete ${role.name}`} className="shrink-0">
           <button
             onClick={() => void deleteRole(server, role.id).then(after)}
@@ -365,6 +287,7 @@ function RoleRow({
         </span>
       </div>
       <PermChecks
+        items={PERM_ITEMS}
         value={role.perms}
         locked={locked}
         allowed={limit === undefined ? undefined : v => canGrant(limit, false, v)}
@@ -429,51 +352,14 @@ export function RolesEditor({
 
 function RoleCreate({ server, refresh }: { server: string; refresh?: () => void }) {
   const createRole = useStore(s => s.createRole)
-  const [name, setName] = useState('')
-  const [color, setColor] = useState('#7c4dff')
   return (
-    <form
-      onSubmit={e => {
-        e.preventDefault()
-        const trimmed = name.trim()
-        if (!trimmed) return
-        void createRole(server, { name: trimmed, color, perms: 0 }).then(() => {
-          setName('')
-          refresh?.()
-        })
-      }}
-      className="flex items-center gap-2"
-    >
-      <input
-        type="color"
-        value={color}
-        title="Role color"
-        onChange={e => setColor(e.target.value)}
-        className="h-9 w-9 shrink-0 cursor-pointer rounded-lg border border-outline bg-transparent p-0.5"
-      />
-      <input
-        value={name}
-        onChange={e => setName(e.target.value)}
-        placeholder="New role"
-        className={fieldCls}
-      />
-      <button className={textBtn}>Add</button>
-    </form>
+    <RoleCreateForm
+      onCreate={(name, color) =>
+        createRole(server, { name, color, perms: 0 }).then(() => refresh?.())
+      }
+    />
   )
 }
-
-const RESTRICTIONS = [
-  {
-    key: 'restrict_view',
-    label: 'Require roles to view',
-    detail: 'Only the roles and members below can see this channel. Leave empty for admins only.',
-  },
-  {
-    key: 'restrict_send',
-    label: 'Require roles to send',
-    detail: 'Only the roles and members below can send. Leave empty for admins only.',
-  },
-] as const
 
 function ChannelPermsEditor({
   channel,
@@ -538,34 +424,20 @@ function ChannelPermsEditor({
 
   return (
     <div className="mt-1.5 space-y-2 rounded-xl bg-surface-container-low p-2">
-      {RESTRICTIONS.filter(r => r.key === 'restrict_view' || channel.kind === 'text').map(r => (
-        <label key={r.key} className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={!!channel[r.key]}
-            onChange={() =>
-              void setChannelRestrict(channelId, { [r.key]: !channel[r.key] }).then(() =>
-                refresh?.()
-              )
-            }
-            className="mt-0.5 accent-primary"
-          />
-          <span className="min-w-0">
-            <span className="block">{r.label}</span>
-            <span className="block text-xs text-on-surface-variant">{r.detail}</span>
-          </span>
-        </label>
-      ))}
+      <RestrictionToggles
+        nobody="admins"
+        value={channel}
+        send={channel.kind === 'text'}
+        onToggle={key =>
+          void setChannelRestrict(channelId, { [key]: !channel[key] }).then(() => refresh?.())
+        }
+      />
       <p className="pt-1 text-xs font-medium text-on-surface-variant">
-        {restricted ? 'Allowed roles and members' : 'Role and member overrides'}
+        {allowListTitle(restricted)}
       </p>
       {rows.length === 0 && (
         <p className="text-xs text-on-surface-variant">
-          {channel.restrict_view
-            ? 'Nobody added. Only admins can see this channel.'
-            : channel.restrict_send
-              ? 'Nobody added. Only admins can send.'
-              : 'No overrides. The channel is open to everyone.'}
+          {emptyAllowText(!!channel.restrict_view, !!channel.restrict_send, 'admins')}
         </p>
       )}
       {rows.map(perm => (
@@ -632,69 +504,13 @@ function ChannelPermsEditor({
   )
 }
 
-function SlowmodeField({ channel, refresh }: { channel: Channel; refresh?: () => void }) {
+function ChannelSlowmode({ channel, refresh }: { channel: Channel; refresh?: () => void }) {
   const setSlowmode = useStore(s => s.setSlowmode)
-  const current = channel.slowmode_seconds
-  const [custom, setCustom] = useState(!isPreset(current))
-  const [text, setText] = useState(isPreset(current) ? '' : String(current))
-  const [error, setError] = useState<string | null>(null)
-  useEffect(() => {
-    setCustom(!isPreset(current))
-    setText(isPreset(current) ? '' : String(current))
-  }, [current])
-  const apply = (n: number) => {
-    setError(null)
-    if (n !== current) void setSlowmode(channel.id, n).then(() => refresh?.())
-  }
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <label className="flex items-center gap-1.5 text-xs text-on-surface-variant">
-        Slow mode
-        <select
-          value={custom ? CUSTOM : String(current)}
-          onChange={e => {
-            if (e.target.value === CUSTOM) {
-              setCustom(true)
-              setText(current > 0 ? String(current) : '')
-              return
-            }
-            setCustom(false)
-            apply(Number(e.target.value))
-          }}
-          className="rounded-lg border border-outline bg-surface-container-high px-2 py-1 text-base text-on-surface outline-none focus:border-primary md:text-sm"
-        >
-          {SLOWMODE_PRESETS.map(n => (
-            <option key={n} value={n}>
-              {slowLabel(n)}
-            </option>
-          ))}
-          <option value={CUSTOM}>Custom</option>
-        </select>
-      </label>
-      {custom && (
-        <form
-          onSubmit={e => {
-            e.preventDefault()
-            const n = customSeconds(text)
-            if (n === null) setError(`Enter 1 to ${SLOWMODE_MAX} seconds`)
-            else apply(n)
-          }}
-          className="flex items-center gap-1.5"
-        >
-          <input
-            value={text}
-            onChange={e => setText(e.target.value)}
-            inputMode="numeric"
-            placeholder="Seconds"
-            aria-label="Slow mode seconds"
-            title={`1 to ${SLOWMODE_MAX} seconds`}
-            className="w-20 rounded-lg border border-outline bg-transparent px-2 py-1 text-base text-on-surface outline-none focus:border-primary md:text-sm"
-          />
-          <button className={textBtn}>Set</button>
-        </form>
-      )}
-      {error && <p className="basis-full text-xs text-error">{error}</p>}
-    </div>
+    <SlowmodeField
+      current={channel.slowmode_seconds}
+      onApply={n => void setSlowmode(channel.id, n).then(() => refresh?.())}
+    />
   )
 }
 
@@ -765,7 +581,7 @@ export function ChannelControls({
             )}
           </span>
         )}
-        {channel.kind === 'text' && <SlowmodeField channel={channel} refresh={refresh} />}
+        {channel.kind === 'text' && <ChannelSlowmode channel={channel} refresh={refresh} />}
         <button
           onClick={() => setTopicOpen(!topicOpen)}
           aria-expanded={topicOpen}
@@ -1107,6 +923,7 @@ export function AdminPermsEditor({
   return (
     <>
       <PermChecks
+        items={PERM_ITEMS}
         value={value}
         allowed={
           limit === undefined ? undefined : v => v === 0 || canSetAdminPerms(limit, false, perms, v)

@@ -51,6 +51,7 @@ export interface AclHost {
   unhold(room: string, ids: string[]): Promise<null>
   restorable(room: string, ids: string[], viewed: boolean): Promise<boolean[]>
   viewable(room: string, ik: string, chs: (string | null)[]): Promise<boolean[]>
+  lastSent(room: string, a: string, ch: string): Promise<number | null>
   // Flows (spec 3.9, 9 rule 18): our denies to re-apply, and what a lost device did after `t`.
   reapply(room: string, me: string, exclude?: string[]): Promise<Reapply[]>
   counted(room: string, ids: string[]): Promise<boolean[]>
@@ -99,6 +100,7 @@ export type HostRequest =
   | { id: number; op: 'unhold'; room: string; ids: string[] }
   | { id: number; op: 'restorable'; room: string; ids: string[]; viewed: boolean }
   | { id: number; op: 'viewable'; room: string; ik: string; chs: (string | null)[] }
+  | { id: number; op: 'last'; room: string; a: string; ch: string }
   | { id: number; op: 'reapply'; room: string; me: string; exclude?: string[] }
   | { id: number; op: 'counted'; room: string; ids: string[] }
   | { id: number; op: 'stopped'; room: string; ids: string[] }
@@ -172,6 +174,8 @@ export const runRequest = (rooms: Map<string, AclRoom>, m: HostRequest): unknown
       return roomOf(rooms, m.room).restorable(m.ids, m.viewed)
     case 'viewable':
       return roomOf(rooms, m.room).viewable(m.ik, m.chs)
+    case 'last':
+      return roomOf(rooms, m.room).lastSent(m.a, m.ch)
     case 'reapply':
       return roomOf(rooms, m.room).reapply(m.me, m.exclude)
     case 'counted':
@@ -268,6 +272,9 @@ abstract class Base implements AclHost {
   }
   viewable(room: string, ik: string, chs: (string | null)[]) {
     return this.call<boolean[]>({ op: 'viewable', room, ik, chs })
+  }
+  lastSent(room: string, a: string, ch: string) {
+    return this.call<number | null>({ op: 'last', room, a, ch })
   }
   reapply(room: string, me: string, exclude?: string[]) {
     return this.call<Reapply[]>({

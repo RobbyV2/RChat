@@ -22,6 +22,8 @@ export const hiddenRemovedText = (name: string) =>
 export const ROLE_DOWN_TEXT =
   "Members with this role lose its rank at once, including for anything they're doing right now."
 export const SYNC_WAIT_TEXT = 'Waiting to sync before applying…'
+// The instance's slow mode wording (lib/slowmode.ts slowWait reads it).
+export const slowText = (ms: number) => `Slow mode: wait ${Math.ceil(ms / 1000)}s`
 export const APPLY_ANYWAY = 'Apply anyway'
 export const reachedText = (name: string, n: number) =>
   `Removing ${name} also removed ${n === 1 ? '1 person' : `${n} people`} who joined through ${name}'s invites at the same time.`
@@ -237,6 +239,19 @@ export const effectHolds = (
     }
     case 'channel':
       return typeof c.id === 'string' && same(s.channels[c.id], c)
+    case 'chperm': {
+      if (typeof c.ch !== 'string' || typeof c.subj !== 'string') return false
+      const o = s.overwrites?.[c.ch]?.[c.subj] ?? { allow: 0, deny: 0 }
+      return o.allow === (c.allow ?? 0) && o.deny === (c.deny ?? 0)
+    }
+    case 'role_meta': {
+      const r = s.roles[role]
+      return (
+        !!r &&
+        (c.name === undefined || r.name === c.name) &&
+        (c.color === undefined || r.color === c.color)
+      )
+    }
     case 'settings':
       return same(s.settings, c)
     case 'profile':

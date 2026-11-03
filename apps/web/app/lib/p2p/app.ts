@@ -91,12 +91,14 @@ import { JoinAborted, RtcManager } from '../rtc'
 import { hidesIp, relayBook } from '../relays'
 import { Calls, type CallView, type PendingCall } from './calls'
 import { relayDenied } from './voice'
+import { slowChanged } from './roles'
 import {
   CODE_TTLS,
   NEEDS_INVITER,
   parseCode,
   Servers,
   ServerError,
+  type ChannelPatch,
   type SearchHit,
   type SearchQuery,
   type ServerArrival,
@@ -122,7 +124,15 @@ export type P2pDialog =
   | { kind: 'recover' }
 
 export type ServerTab =
-  'overview' | 'channels' | 'invites' | 'system' | 'history' | 'members' | 'bans' | 'leave'
+  | 'overview'
+  | 'roles'
+  | 'channels'
+  | 'invites'
+  | 'system'
+  | 'history'
+  | 'members'
+  | 'bans'
+  | 'leave'
 
 // One conversation in the list.
 export interface RoomSummary {
@@ -217,6 +227,8 @@ export interface P2pState {
   thread: P2pThread | null
   search: P2pSearch
   drafts: Record<string, string>
+  // When we may post again in a slow-mode channel (spec 3.5), by draft key.
+  slowUntil: Record<string, number>
   replying: { room: string; id: string } | null
   editing: { room: string; id: string; text: string; focus: number } | null
   focus: { room: string; id: string; n: number } | null
@@ -327,6 +339,7 @@ const initial: P2pState = {
   thread: null,
   search: emptySearch(),
   drafts: {},
+  slowUntil: {},
   replying: null,
   editing: null,
   focus: null,
@@ -1039,9 +1052,12 @@ const readerView = (r: RoomRecord): ServerView => ({
   owner: null,
   owners: [],
   perms: 0,
+  rank: [-Infinity, ''],
   history: 'shared',
   system: { ch: null, join: true, leave: true },
   channels: [],
+  roles: [],
+  everyone: 0,
   members: [],
   online: 0,
   joined: 0,
@@ -1132,8 +1148,13 @@ const refreshServer = async (room: string) => {
     else if (!ch && first) p2pServer.openChannel(first)
   }
   if (now.chat?.ch && now.chat.room === room) {
-    await loadChannel(room, now.chat.ch, true)
+    const ch = now.chat.ch
+    await loadChannel(room, ch, true)
     useP2p.setState({ pulling: sv.pulling(room) })
+    // Slow mode changed, or leaves us out now: the countdown follows.
+    const was = st.servers[room]?.channels.find(c => c.id === ch)
+    const is = v?.channels.find(c => c.id === ch)
+    if (slowChanged(was, is)) await readSlow(room, ch)
   }
   if (now.thread?.room === room) await loadThread(true)
   if (now.pins?.room === room) await loadPinList(room)
@@ -1164,6 +1185,7 @@ const loadChannel = async (room: string, ch: string, keep = false) => {
     const now = useP2p.getState().chat
     if (now?.room !== room || now.ch !== ch || gen !== jumpGen) return
     useP2p.setState({ chat: { ...now, messages, more, loading: false } })
+    if (!keep) await readSlow(room, ch)
   } catch {
     // Storage went away.
   }
@@ -1379,6 +1401,16 @@ export const p2pSearch = {
     p2pSearch.close()
     await p2pOpenAt(hit.room, hit.ch, hit.m.id)
   },
+}
+
+// How long until we may post in a slow-mode channel again.
+const readSlow = async (room: string, ch: string) => {
+  const left = await servers?.slowLeft(room, ch).catch(() => 0)
+  if (left === undefined) return
+  const key = chatKey({ room, ch })
+  const until = left > 0 ? Date.now() + left : 0
+  if ((useP2p.getState().slowUntil[key] ?? 0) === until) return
+  useP2p.setState(st => ({ slowUntil: { ...st.slowUntil, [key]: until } }))
 }
 
 // What a member calls themselves (our petname for contacts first).
@@ -1634,8 +1666,30 @@ export const p2pServer = {
     withServers(s => s.setSystem(room, sys)),
   addChannel: (room: string, name: string, kind: 'text' | 'voice' = 'text') =>
     withServers(s => s.addChannel(room, name, { kind })),
-  editChannel: (room: string, id: string, patch: { name?: string; topic?: string }) =>
+  editChannel: (room: string, id: string, patch: ChannelPatch) =>
     withServers(s => s.editChannel(room, id, patch)),
+  setOverwrite: (room: string, ch: string, subj: string, o: { allow: number; deny: number }) =>
+    withServers(s => s.setOverwrite(room, ch, subj, o.allow, o.deny)),
+  // Roles (spec 1.4, 1.6). Taking a role from someone is a removal: it waits for sync too.
+  createRole: (room: string, role: { name: string; color: number | null; bits: number }) =>
+    withServers(s => s.createRole(room, role)),
+  async moveRoles(room: string, moves: { role: string; pos: number }[]) {
+    for (const m of moves)
+      if ((await withServers(s => s.moveRole(room, m.role, m.pos))) === null) return
+  },
+  editRole: (room: string, role: string, meta: { name: string; color: number | null }) =>
+    withServers(s => s.editRole(room, role, meta)),
+  setRoleBit: (room: string, role: string, bit: number, on: boolean) =>
+    withServers(s => s.setRoleBit(room, role, bit, on)),
+  deleteRole: (room: string, role: string) => withServers(s => s.deleteRole(room, role)),
+  assignRole: (room: string, ik: string, role: string) =>
+    withServers(s => s.assignRole(room, ik, role)),
+  revokeRole: (room: string, ik: string, role: string) =>
+    withServers(s =>
+      ik === useP2p.getState().me
+        ? s.revokeRole(room, ik, role)
+        : s.moderate(room, { act: 'Take a role from', who: ik }, () => s.revokeRole(room, ik, role))
+    ),
   removeChannel: (room: string, id: string) =>
     withServers(s => s.editChannel(room, id, { gone: true })),
   // Moderation waits for sync (spec 8.2): signed after a fresh heads exchange with a member, or
@@ -2494,20 +2548,23 @@ export const p2pDm = {
         sv.send(r, { ch, body: text, reply, att, ...(thread ? { thread } : {}) })
     )
     if (id !== null && files) p2pFiles.clear(room)
+    const t = targetOf(room)
+    if (t.kind === 'server') await readSlow(t.room, t.ch)
     return id !== null
   },
 
   // `room` is a draft key: a conversation, or a server channel.
   async forward(room: string, fwd: Fwd) {
     const clipped = { ...fwd, name: clipName(fwd.name) }
-    return (
-      (await onTarget(
-        room,
-        (d, r) => d.send(r, { body: '', fwd: clipped }),
-        (sv, r, ch, thread) =>
-          sv.send(r, { ch, body: '', fwd: clipped, ...(thread ? { thread } : {}) })
-      )) !== null
+    const id = await onTarget(
+      room,
+      (d, r) => d.send(r, { body: '', fwd: clipped }),
+      (sv, r, ch, thread) =>
+        sv.send(r, { ch, body: '', fwd: clipped, ...(thread ? { thread } : {}) })
     )
+    const t = targetOf(room)
+    if (t.kind === 'server') await readSlow(t.room, t.ch)
+    return id !== null
   },
 
   // A failed message: send it again, or say why it can't be.

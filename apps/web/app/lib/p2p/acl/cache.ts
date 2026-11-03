@@ -327,6 +327,15 @@ class SnapFacts implements Facts {
       )
     )
   }
+  get roleMeta() {
+    return this.one('roleMeta', () =>
+      lazyMap(
+        R => this.V.roleMetaOf(R) !== undefined,
+        R => this.V.roleMetaOf(R),
+        () => this.full().roleMeta as ReadonlyMap<string, AclContent>
+      )
+    )
+  }
   get overwrites() {
     return this.one('overwrites', () => {
       const of = (ch: string) => this.full().overwrites.get(ch)

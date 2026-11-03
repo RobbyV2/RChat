@@ -5,6 +5,8 @@ import type { EvalResult } from './facts'
 import { EMPTY, type Ix } from './reach'
 import { uncontested, witnessed } from './storage'
 import {
+  channelPerms,
+  CHANNELS,
   cmp,
   CONTENT_PIN,
   CONTENT_REDACT,
@@ -43,6 +45,7 @@ export type Hidden =
   | { why: 'removed'; by: string }
   | { why: 'wipe'; by: string }
   | { why: 'redacted'; by: string }
+  | { why: 'slow' }
 
 // An evidence pair against one device, across both layers (§2.3 E1, E2, E3), with the fork point
 // it gives (`f`), as a proof carries it.
@@ -59,6 +62,19 @@ const target = (m: ContentEv) => (typeof m.c?.target === 'string' ? (m.c.target 
 const later = (x: ContentEv, y: ContentEv) => x.ts > y.ts || (x.ts === y.ts && x.id > y.id)
 // A targeting event acts only in its target's channel (admission checked its own `ch`).
 const sameCh = (t: ContentEv, r: ContentEv) => typeof t.c?.ch === 'string' && r.c?.ch === t.c.ch
+const msgKey = (m: ContentEv) =>
+  m.t === 'msg' && typeof m.c?.ch === 'string' ? `${m.a}\u0001${m.c.ch}` : null
+// Where m goes in a list by (ts, id): the first entry not before it.
+const slot = (l: readonly ContentEv[], m: ContentEv) => {
+  let lo = 0
+  let hi = l.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (later(m, l[mid])) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
 
 export class ContentView {
   private fe: FastEval
@@ -67,6 +83,8 @@ export class ContentView {
   private byId = new Map<string, ContentEv>()
   private byDev = new Map<string, ContentEv[]>()
   private byAuthor = new Map<string, ContentEv[]>()
+  // Messages by author and channel, by (ts, id) (slow mode).
+  private msgs = new Map<string, ContentEv[]>()
   private aimed = new Map<string, ContentEv[]>()
   private marks = new Map<string, { r: number; seen: number }[]>()
   private memo = new Map<string, Hidden | null>()
@@ -94,6 +112,12 @@ export class ContentView {
     const la = this.byAuthor.get(m.a)
     if (la) la.push(m)
     else this.byAuthor.set(m.a, [m])
+    const k = msgKey(m)
+    if (k !== null) {
+      const l = this.msgs.get(k)
+      if (l) l.splice(slot(l, m), 0, m)
+      else this.msgs.set(k, [m])
+    }
     const t = target(m)
     if (t !== null) {
       const a = this.aimed.get(t)
@@ -116,6 +140,7 @@ export class ContentView {
     this.S = this.acl.state()
     this.fe = this.acl.evaluation()
     this.memo.clear()
+    this.baseMemo.clear()
     this.fcMemo.clear()
     this.aclM.clear()
     this.anchors.clear()
@@ -139,9 +164,23 @@ export class ContentView {
         id = x ? target(x) : null
       }
     }
-    if (before !== undefined && this.forkPoint(m.dev) !== before)
-      for (const y of this.byDev.get(m.dev) ?? []) up(y.id)
+    if (before !== undefined && this.forkPoint(m.dev) !== before) {
+      for (const y of this.byDev.get(m.dev) ?? []) {
+        this.baseMemo.delete(y.id)
+        up(y.id)
+      }
+      for (const y of this.byAuthor.get(m.a) ?? []) this.memo.delete(y.id)
+    }
     up(target(m))
+    // Slow mode: the author's next messages in its channel, up to the first that counts as a
+    // previous message, measure from it now.
+    const k = msgKey(m)
+    const l = k === null ? undefined : this.msgs.get(k)
+    if (l)
+      for (let i = slot(l, m) + 1; i < l.length; i++) {
+        this.memo.delete(l[i].id)
+        if (!this.base(l[i])) break
+      }
   }
 
   // C(ap) as a bitset over the index, and one past its highest index.
@@ -271,19 +310,70 @@ export class ContentView {
   }
 
   private decide(m: ContentEv): Hidden | null {
-    const ix = this.ix
-    if (m.seq >= this.forkPoint(m.dev)) return { why: 'fork' }
-    for (const { r, seen } of this.marks.get(m.dev) ?? [])
-      if (m.seq > seen) return { why: 'revoked', by: ix.ids[r] }
-    const cut = this.cascadeCut(m)
-    if (cut) return { why: 'cut', at: cut }
-    const removed = this.removedBy(m)
-    if (removed !== null) return { why: 'removed', by: ix.ids[removed] }
-    const wipe = this.wipedBy(m.a)
-    if (wipe !== null) return { why: 'wipe', by: ix.ids[wipe] }
+    const b = this.base(m)
+    if (b) return b
     const r = this.redactedBy(m)
     if (r) return { why: 'redacted', by: r.id }
+    if (this.slowed(m)) return { why: 'slow' }
     return null
+  }
+
+  // The time of P's latest held message in `ch` that counts for slow mode (not hidden for its
+  // device or membership, as `slowed` reads it).
+  lastIn(P: string, ch: string): number | null {
+    const l = this.msgs.get(`${P}\u0001${ch}`) ?? []
+    for (let i = l.length - 1; i >= 0; i--) if (!this.base(l[i])) return l[i].ts
+    return null
+  }
+
+  // Whether m is hidden for what its author's device and membership say (a fork, a revocation, a
+  // cut, a removal, a wiping ban), apart from redactions and slow mode.
+  private baseMemo = new Map<string, Hidden | null>()
+  private base(m: ContentEv): Hidden | null {
+    const memo = this.baseMemo.get(m.id)
+    if (memo !== undefined) return memo
+    const ix = this.ix
+    let h: Hidden | null = null
+    if (m.seq >= this.forkPoint(m.dev)) h = { why: 'fork' }
+    else {
+      for (const { r, seen } of this.marks.get(m.dev) ?? [])
+        if (m.seq > seen) {
+          h = { why: 'revoked', by: ix.ids[r] }
+          break
+        }
+    }
+    if (!h) {
+      const cut = this.cascadeCut(m)
+      if (cut) h = { why: 'cut', at: cut }
+    }
+    if (!h) {
+      const removed = this.removedBy(m)
+      if (removed !== null) h = { why: 'removed', by: ix.ids[removed] }
+    }
+    if (!h) {
+      const wipe = this.wipedBy(m.a)
+      if (wipe !== null) h = { why: 'wipe', by: ix.ids[wipe] }
+    }
+    this.baseMemo.set(m.id, h)
+    return h
+  }
+
+  // Slow mode (§3.5, a display rule): a message sent inside its channel's slow-mode interval at its
+  // position (`slow`, in seconds), measured by ts from its author's previous held message in that
+  // channel, is hidden. Owners, Manage channels and Manage messages there are exempt. A previous
+  // message counts unless it is hidden for its device or membership (`base`): a stolen or forked
+  // device's hidden messages never hide its identity's own.
+  private slowed(m: ContentEv): boolean {
+    const ch = m.c?.ch
+    if (m.t !== 'msg' || typeof ch !== 'string') return false
+    const F = this.stateOf(m).facts
+    const slow = F.channels.get(ch)?.slow
+    if (!Number.isSafeInteger(slow) || (slow as number) <= 0) return false
+    if ((channelPerms(F, m.a, ch) & (CHANNELS | MESSAGES)) !== 0) return false
+    const l = this.msgs.get(msgKey(m)!) ?? []
+    let prev: ContentEv | undefined
+    for (let i = slot(l, m) - 1; i >= 0 && !prev; i--) if (!this.base(l[i])) prev = l[i]
+    return prev !== undefined && m.ts - prev.ts < (slow as number) * 1000
   }
 
   // The step-4 rule of §3.1 applied to m after Eval: at a stratum with cuts in C(m.ap), the cuts

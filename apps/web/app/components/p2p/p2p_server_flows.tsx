@@ -29,6 +29,7 @@ import {
 import type { ServerView } from '../../lib/p2p/server'
 import { Dialog, dangerBtn, filledBtn, Masked, textBtn } from '../ui'
 import { KeyAvatar } from './p2p_badge'
+import { andMore, fewOf, nextPage, page, PAGE } from '../../lib/paging'
 
 // The flows of P2P servers the user takes part in (spec 8.2): actions waiting for sync, removals
 // that took others along, moderation to apply again, a device that conflicts with a copy of
@@ -41,6 +42,69 @@ const noteCls =
 function Who({ room, ik }: { room: string; ik: string }) {
   const mask = useMask()
   return <span className="streamer font-medium text-on-surface">{mask(memberName(room, ik))}</span>
+}
+
+// Names inline: a few, then "and N more", which shows the rest 50 at a time.
+function NameList({ room, iks }: { room: string; iks: string[] }) {
+  const [open, setOpen] = useState(false)
+  const [shown, setShown] = useState(PAGE)
+  const { first, more } = fewOf(iks)
+  const list = open ? page(iks, shown) : { items: first, more: false }
+  return (
+    <span data-p2p-names>
+      {list.items.map((ik, i) => (
+        <span key={ik}>
+          {i > 0 && ', '}
+          <Who room={room} ik={ik} />
+        </span>
+      ))}
+      {!open && more > 0 && (
+        <>
+          {' '}
+          <button
+            onClick={() => setOpen(true)}
+            className="font-medium text-primary hover:underline"
+          >
+            {andMore(more)}
+          </button>
+        </>
+      )}
+      {list.more && (
+        <>
+          {' '}
+          <button
+            onClick={() => setShown(n => nextPage(n, iks.length))}
+            className="font-medium text-primary hover:underline"
+          >
+            Show more
+          </button>
+        </>
+      )}
+    </span>
+  )
+}
+
+// List entries: a few, then "and N more", which shows the rest 50 at a time.
+function Capped({ items }: { items: ReactNode[] }) {
+  const [open, setOpen] = useState(false)
+  const [shown, setShown] = useState(PAGE)
+  const { first, more } = fewOf(items, 5)
+  const list = open ? page(items, shown) : { items: first, more: false }
+  return (
+    <>
+      {list.items}
+      {((!open && more > 0) || list.more) && (
+        <li>
+          <button
+            onClick={() => (open ? setShown(n => nextPage(n, items.length)) : setOpen(true))}
+            className="font-medium text-primary hover:underline"
+          >
+            {open ? 'Show more' : andMore(more)}
+          </button>
+        </li>
+      )}
+    </>
+  )
 }
 
 // A sentence of the spec's copy, written with a marker for the name, with the name put in.
@@ -82,12 +146,7 @@ function ReachedNote({ v, r }: { v: ServerView; r: ServerView['reached'][number]
     <div role="status" data-p2p-reached className={noteCls}>
       <span className="min-w-48 flex-1">
         {withNames(reachedText('\u0000', r.lost.length), <Who room={v.id} ik={r.by} />)}{' '}
-        {r.lost.map((ik, i) => (
-          <span key={ik}>
-            {i > 0 && ', '}
-            <Who room={v.id} ik={ik} />
-          </span>
-        ))}
+        <NameList room={v.id} iks={r.lost} />
       </span>
       <span className="flex items-center gap-1">
         <button onClick={() => void p2pServer.inviteAgain(v.id, r.by)} className={filledBtn}>
@@ -112,20 +171,22 @@ function ReapplyNote({ v }: { v: ServerView }) {
       <span className="flex min-w-48 flex-1 flex-col gap-1">
         <span className="font-medium text-on-surface">{REAPPLY_TEXT}</span>
         <ul className="flex flex-col">
-          {v.reapply.map(r => {
-            const { act, who } = actParts(r.t, typeof r.c.to === 'string' ? r.c.to : undefined)
-            return (
-              <li key={r.id}>
-                {act}
-                {who && (
-                  <>
-                    {' '}
-                    <Who room={v.id} ik={who} />
-                  </>
-                )}
-              </li>
-            )
-          })}
+          <Capped
+            items={v.reapply.map(r => {
+              const { act, who } = actParts(r.t, typeof r.c.to === 'string' ? r.c.to : undefined)
+              return (
+                <li key={r.id}>
+                  {act}
+                  {who && (
+                    <>
+                      {' '}
+                      <Who room={v.id} ik={who} />
+                    </>
+                  )}
+                </li>
+              )
+            })}
+          />
         </ul>
       </span>
       <button onClick={() => void p2pServer.reapply(v.id)} className={filledBtn}>
@@ -216,13 +277,7 @@ function CarryNote({ v }: { v: ServerView }) {
 function MigrateDiffNote({ v }: { v: ServerView }) {
   const d = v.migrateDiff
   if (!d) return null
-  const names = (list: string[]) =>
-    list.map((ik, i) => (
-      <span key={ik}>
-        {i > 0 && ', '}
-        <Who room={v.id} ik={ik} />
-      </span>
-    ))
+  const names = (list: string[]) => <NameList room={v.id} iks={list} />
   return (
     <div role="status" data-p2p-migrate-diff className={noteCls}>
       <span className="flex min-w-48 flex-1 flex-col gap-0.5">
@@ -569,21 +624,26 @@ export function LostDeviceDialog({ dk }: { dk: string }) {
                   <p className="text-xs text-on-surface-variant">Nothing since then.</p>
                 ) : (
                   <ul className="mt-1 flex flex-col text-xs text-on-surface-variant">
-                    {p.acts.map(x => {
-                      const { act, who } = actParts(x.t, x.to)
-                      return (
-                        <li key={x.id}>
-                          {act}
-                          {who && (
-                            <>
+                    <Capped
+                      items={p.acts.map(x => {
+                        const { act, who } = actParts(x.t, x.to)
+                        return (
+                          <li key={x.id}>
+                            {act}
+                            {who && (
+                              <>
+                                {' '}
+                                <Who room={p.room} ik={who} />
+                              </>
+                            )}
+                            <span className="opacity-70">
                               {' '}
-                              <Who room={p.room} ik={who} />
-                            </>
-                          )}
-                          <span className="opacity-70"> · received {when(p.at[x.id] ?? x.ts)}</span>
-                        </li>
-                      )
-                    })}
+                              · received {when(p.at[x.id] ?? x.ts)}
+                            </span>
+                          </li>
+                        )
+                      })}
+                    />
                     {p.content > 0 && (
                       <li>
                         {p.content} {p.content === 1 ? 'message' : 'messages'}
@@ -595,20 +655,22 @@ export function LostDeviceDialog({ dk }: { dk: string }) {
                   <div data-p2p-lost-own className="mt-2 text-xs text-on-surface-variant">
                     <p>{OWN_RESIGN_TEXT}</p>
                     <ul className="mt-1 text-on-surface">
-                      {p.resign.map(x => {
-                        const { act, who } = actParts(x.t, x.to)
-                        return (
-                          <li key={x.id}>
-                            {act}
-                            {who && (
-                              <>
-                                {' '}
-                                <Who room={p.room} ik={who} />
-                              </>
-                            )}
-                          </li>
-                        )
-                      })}
+                      <Capped
+                        items={p.resign.map(x => {
+                          const { act, who } = actParts(x.t, x.to)
+                          return (
+                            <li key={x.id}>
+                              {act}
+                              {who && (
+                                <>
+                                  {' '}
+                                  <Who room={p.room} ik={who} />
+                                </>
+                              )}
+                            </li>
+                          )
+                        })}
+                      />
                     </ul>
                   </div>
                 )}
@@ -620,13 +682,7 @@ export function LostDeviceDialog({ dk }: { dk: string }) {
                 )}
                 {p.lose.length > 0 && (
                   <p className="mt-2 text-xs">
-                    Lose access:{' '}
-                    {p.lose.map((ik, i) => (
-                      <span key={ik}>
-                        {i > 0 && ', '}
-                        <Who room={p.room} ik={ik} />
-                      </span>
-                    ))}
+                    Lose access: <NameList room={p.room} iks={p.lose} />
                   </p>
                 )}
               </li>

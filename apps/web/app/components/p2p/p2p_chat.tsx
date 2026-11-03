@@ -52,6 +52,8 @@ import {
 } from '../../lib/p2p/dm'
 import { emojiBase } from '../../lib/reactions'
 import { MESSAGE_MAX, charCount } from '../../lib/rules'
+import { clock } from '../../lib/slowmode'
+import { useCountdown } from '../../lib/countdown'
 import { composing, sendKey } from '../../lib/keys'
 import { spliceText } from '../../lib/autocomplete'
 import { loadEmojiData } from '../../lib/emoji'
@@ -579,6 +581,8 @@ export function P2pComposer({
   const emojiRef = useRef<HTMLButtonElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const files = useP2p(s => s.attaching[key]?.length ?? 0)
+  // A thread's replies count in its channel's slow mode (spec 3.5): the channel's countdown.
+  const slowLeft = useCountdown(useP2p(s => s.slowUntil[key.split('#')[0]] ?? 0))
   const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
   const sel = useRef({ start: 0, end: 0 })
   const typedAt = useRef(0)
@@ -613,7 +617,7 @@ export function P2pComposer({
   const count = charCount(text)
   const tooLong = count > MESSAGE_MAX || bodyTooLong(text)
   const send = () => {
-    if ((!text.trim() && !files) || tooLong) return
+    if ((!text.trim() && !files) || tooLong || slowLeft > 0) return
     const sent = text
     void p2pDm.send(key, sent).then(ok => {
       if (ok && getText() === sent) setText('')
@@ -670,6 +674,16 @@ export function P2pComposer({
         />
       )}
       {!textOnly && <PendingFiles room={key} />}
+      {slowLeft > 0 && (
+        <p
+          role="status"
+          data-p2p-slow-left
+          className="mb-1 flex items-center justify-end gap-1 px-3 text-xs text-on-surface-variant tabular-nums"
+        >
+          <Clock size={12} className="shrink-0" />
+          Slow mode: {clock(slowLeft)}
+        </p>
+      )}
       {bar}
       <div
         className={`relative flex items-end gap-2 bg-surface-container-high px-3 py-2 ${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}
@@ -787,10 +801,16 @@ export function P2pComposer({
           <Smile size={20} />
         </button>
         <button
-          title={tooLong ? 'Message is too long' : 'Send'}
+          title={
+            tooLong
+              ? 'Message is too long'
+              : slowLeft > 0
+                ? `Slow mode: ${clock(slowLeft)}`
+                : 'Send'
+          }
           aria-label="Send"
           onClick={send}
-          disabled={tooLong}
+          disabled={tooLong || slowLeft > 0}
           className="shrink-0 rounded-full bg-primary p-2 text-on-primary hover:opacity-90 disabled:opacity-40"
         >
           <SendHorizontal size={16} />

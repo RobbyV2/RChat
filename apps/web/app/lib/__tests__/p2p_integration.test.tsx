@@ -121,9 +121,14 @@ const server = (over: Partial<ServerView> = {}): ServerView => ({
   owner: ALICE,
   owners: [ALICE],
   perms: 0,
+  rank: [Infinity, ''],
+  roles: [],
+  everyone: 0,
   history: 'shared',
   system: { ch: CH, join: true, leave: true },
-  channels: [{ id: CH, name: 'general', kind: 'text', pos: 0 }],
+  channels: [
+    { id: CH, name: 'general', kind: 'text', pos: 0, send: true, exempt: false, over: {} },
+  ],
   members: [],
   online: 0,
   joined: 2,
@@ -449,7 +454,18 @@ describe('personal filter on P2P names', () => {
     const c = contact(ALICE, 'Shitlord')
     const v = server({
       name: 'shit club',
-      channels: [{ id: CH, name: 'shit-talk', kind: 'text', pos: 0, topic: 'no shit topics' }],
+      channels: [
+        {
+          id: CH,
+          name: 'shit-talk',
+          kind: 'text',
+          pos: 0,
+          topic: 'no shit topics',
+          send: true,
+          exempt: false,
+          over: {},
+        },
+      ],
       members: [
         {
           ik: ALICE,
@@ -462,6 +478,8 @@ describe('personal filter on P2P names', () => {
           waits: false,
           myInvite: false,
           unban: false,
+          roles: [],
+          top: null,
         },
       ],
     })
@@ -568,8 +586,8 @@ describe('personal filter on P2P names', () => {
       perms: 0xffff_ffff,
       owner: BOB,
       channels: [
-        { id: CH, name: 'shit-talk', kind: 'text', pos: 0 },
-        { id: 'c2', name: 'general', kind: 'text', pos: 1 },
+        { id: CH, name: 'shit-talk', kind: 'text', pos: 0, send: true, exempt: false, over: {} },
+        { id: 'c2', name: 'general', kind: 'text', pos: 1, send: true, exempt: false, over: {} },
       ],
     })
     const member = {
@@ -583,6 +601,8 @@ describe('personal filter on P2P names', () => {
       waits: false,
       myInvite: false,
       unban: false,
+      roles: [],
+      top: null,
     }
     p2pState({ enabled: true, account: 'bob', me: BOB, servers: { [SRV]: v } })
     await setMasking(true, () => Promise.resolve(stub))
@@ -811,8 +831,8 @@ describe('P2P in the palette index', () => {
     const CH2 = 'chan2'
     const v = server({
       channels: [
-        { id: CH, name: 'general', kind: 'text', pos: 0 },
-        { id: CH2, name: 'random', kind: 'text', pos: 1 },
+        { id: CH, name: 'general', kind: 'text', pos: 0, send: true, exempt: false, over: {} },
+        { id: CH2, name: 'random', kind: 'text', pos: 1, send: true, exempt: false, over: {} },
       ],
       seq: 7,
     })
