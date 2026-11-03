@@ -98,7 +98,7 @@ class BenchWorld {
       ts,
       c: {
         rules: 2,
-        nonce: 'n',
+        nonce: 'AAAAAAAAAAAAAAAAAAAAAA',
         owners: owners.map(ik => ({ ik })),
         everyone_bits: everyone,
         name: 'S',

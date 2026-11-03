@@ -19,7 +19,7 @@ import {
 import { b64u, concat, utf8 } from '../p2p/canonical'
 import { keyId, newKeyPair, sign } from '../p2p/keys'
 import { P } from '../p2p/acl/rules'
-import { genesisBundle, signDeviceCert2 } from '../p2p/acl/binding'
+import { genesisBundle, genesisSrv, signDeviceCert2 } from '../p2p/acl/binding'
 
 // The v2 event format of P2P servers (ACL spec §1.2): cores, ids, signatures, schemas, and the
 // way into the ACL core.
@@ -33,14 +33,22 @@ const idbOf = (x: Author, s = srv, iprev?: string) => ({
 })
 const O = author()
 const U = author()
-const owner = genesisBundle(O.ik, keyId(O.dk.pk), 'AAAA')
-const genesisContent = {
-  rules: 2,
-  nonce: 'AAAA',
-  owners: [owner],
-  everyone_bits: P.Invite | P.ViewChannel | P.SendMessages,
-  name: 'S',
+const NONCE = b64u(new Uint8Array(16).fill(7))
+const entry = (x: Author) => ({ ik: keyId(x.ik.pk), dk: keyId(x.dk.pk) })
+// A genesis content whose owners `xs` each sign their own bundle over it.
+const genesisOf = (xs: Author[], extra: Record<string, unknown> = {}) => {
+  const skel = {
+    rules: 2,
+    nonce: NONCE,
+    owners: xs.map(entry),
+    everyone_bits: P.Invite | P.ViewChannel | P.SendMessages,
+    name: 'S',
+    ...extra,
+  }
+  return { ...skel, owners: xs.map(x => genesisBundle(x.ik, keyId(x.dk.pk), skel)) }
 }
+const genesisContent = genesisOf([O])
+const owner = genesisContent.owners[0]
 const g = buildEvent2(O, null, 'genesis', 'a', genesisContent, { seq: 0 }, 1)
 const srv = g.id
 
@@ -257,28 +265,53 @@ describe('v2 events', () => {
     const O_ = keyId(O.ik.pk)
     const U_ = keyId(U.ik.pk)
     // genesis: the author's owner bundle certifies the posting device
-    const gen = (owners: unknown[]) => {
-      const x = buildEvent2(O, null, 'genesis', 'a', { ...genesisContent, owners }, { seq: 0 }, 1)
-      return new AclReplica().receive(aclEvOf(x.id, x.wire))
+    const genBy = (x: Author, c: Record<string, unknown>) => {
+      const e = buildEvent2(x, null, 'genesis', 'a', c, { seq: 0 }, 1)
+      const v = validate2(e.wire, null)
+      return v.ok ? new AclReplica().receive(aclEvOf(v.id, v.wire)) : { s: 'M', why: v.why }
     }
+    const gen = (c: Record<string, unknown>) => genBy(O, c)
     const genesisRefused = { s: 'R' as const, why: 'genesis' }
-    expect(gen([{ ik: O_ }])).toEqual(genesisRefused)
-    expect(gen([genesisBundle(O.ik, keyId(thief.dk.pk), 'AAAA')])).toEqual(genesisRefused)
-    expect(gen([genesisBundle(O.ik, keyId(O.dk.pk), 'BBBB')])).toEqual(genesisRefused)
+    const other = b64u(new Uint8Array(16).fill(8))
+    const O1 = genesisContent
+    expect(gen({ ...O1, owners: [{ ik: O_ }] })).toEqual(genesisRefused)
+    expect(gen(genesisOf([{ ik: O.ik, dk: thief.dk }]))).toEqual(genesisRefused)
+    expect(gen({ ...O1, owners: genesisOf([O], { nonce: other }).owners })).toEqual(genesisRefused)
+    const thiefCert = signDeviceCert2(thief.ik, genesisSrv(O1), O_, owner.dk)
+    expect(gen({ ...O1, owners: [{ ...owner, dcert: thiefCert }] })).toEqual(genesisRefused)
     // co-owners: each one's own bundle for this genesis, verified to its identity
     const C = author()
-    const cb = genesisBundle(C.ik, keyId(C.dk.pk), 'AAAA')
-    expect(gen([owner, { ik: cb.ik }])).toEqual(genesisRefused)
-    const byCreator = genesisBundle(O.ik, keyId(C.dk.pk), 'AAAA')
-    expect(gen([owner, { ...byCreator, ik: cb.ik }])).toEqual(genesisRefused)
-    expect(
-      gen([owner, { ...cb, dcert: signDeviceCert2(O.ik, 'genesis:AAAA', cb.ik, cb.dk) }])
-    ).toEqual(genesisRefused)
-    expect(gen([owner, genesisBundle(C.ik, keyId(C.dk.pk), 'BBBB')])).toEqual(genesisRefused)
-    expect(gen([owner, cb])).toEqual({ s: 'A' })
-    expect(gen([{ ik: O_, dcert: signDeviceCert2(thief.ik, '', O_, keyId(O.dk.pk)) }])).toEqual(
+    const OC = genesisOf([O, C])
+    const [ob, cb] = OC.owners
+    const withC = (c: Record<string, unknown>) => gen({ ...OC, owners: [ob, c] })
+    expect(withC(entry(C))).toEqual(genesisRefused)
+    expect(withC({ ...cb, dcert: genesisBundle(O.ik, cb.dk, OC).dcert })).toEqual(genesisRefused)
+    expect(withC({ ...cb, dcert: signDeviceCert2(O.ik, genesisSrv(OC), cb.ik, cb.dk) })).toEqual(
       genesisRefused
     )
+    expect(withC(genesisOf([O, C], { nonce: other }).owners[1])).toEqual(genesisRefused)
+    expect(gen(OC)).toEqual({ s: 'A' })
+    // a bundle binds the one genesis it was made for: another server's nonce and owner bundles
+    // copied into a new genesis, or any other field changed, are refused (re-review probe)
+    const M = author()
+    const skelM = { ...OC, owners: [entry(M), entry(C), entry(O)] }
+    const copycat = { ...skelM, owners: [genesisBundle(M.ik, keyId(M.dk.pk), skelM), cb, ob] }
+    expect(genBy(M, copycat)).toEqual(genesisRefused)
+    expect(genBy(M, { ...copycat, owners: [copycat.owners[0], cb] })).toEqual(genesisRefused)
+    for (const f of [
+      { name: 'T' },
+      { everyone_bits: P.ViewChannel },
+      { from: { srv } },
+      { nonce: other },
+      { x_newer: 1 },
+    ])
+      expect(gen({ ...OC, ...f })).toEqual(genesisRefused)
+    expect(withC({ ...cb, dk: keyId(thief.dk.pk) })).toEqual(genesisRefused)
+    expect(gen({ ...OC, owners: [cb, ob] })).toEqual(genesisRefused)
+    // the nonce is 16 bytes
+    for (const nonce of ['AAAA', b64u(new Uint8Array(32))])
+      expect(gen(genesisOf([O], { nonce }))).toEqual({ s: 'M', why: 'content' })
+    expect(gen(genesisOf([O], { nonce: other })).s).toBe('A')
     expect(recv(g.wire).s).toBe('A')
     const add = buildEvent2(O, srv, 'add', 'a', { to: U_ }, { seq: 1, ap: [srv], aprev: srv }, 2)
     expect(recv(add.wire).s).toBe('A')
@@ -406,8 +439,7 @@ describe('v2 events', () => {
 
   test("an upgrade carries every other genesis owner's countersignature, verified on the wire", () => {
     const B = author()
-    const owners = [owner, genesisBundle(B.ik, keyId(B.dk.pk), 'AAAA')]
-    const g2 = buildEvent2(O, null, 'genesis', 'a', { ...genesisContent, owners }, { seq: 0 }, 1)
+    const g2 = buildEvent2(O, null, 'genesis', 'a', genesisOf([O, B]), { seq: 0 }, 1)
     const s2 = g2.id
     const r = new AclReplica()
     r.receive(aclEvOf(g2.id, g2.wire))

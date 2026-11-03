@@ -17,7 +17,14 @@ import {
   setLimits,
   type AclEv,
 } from '../p2p/acl/rules'
-import { AclWorld, devOwner, MODEL_LIMITS, modelDiffAfterEach, testBinds } from './p2p_acl_world'
+import {
+  AclWorld,
+  devOwner,
+  MODEL_LIMITS,
+  modelDiffAfterEach,
+  NONCE,
+  testBinds,
+} from './p2p_acl_world'
 
 // Implementation vectors of the P2P ACL spec (§7.6 "Impl"): content visibility (§3.5), content
 // admission, history (§3.6), proofs (§2.3) and registers, which the reference model leaves out.
@@ -628,11 +635,13 @@ describe('production-only types (not in the model)', () => {
     expect(w.act('A2', 'mark').v).toEqual({ s: 'R', why: 'auth' })
     const old = w.content('A2', 'msg', { body: 'old copy' }, { ap: P })
     expect(w.view().hidden(old)?.why).toBe('revoked')
-    // the relay is in no identity's pool, and it acknowledges none of the relayer's own events
+    // the relay is in its relayer's pool, acknowledges none of the relayer's own events, and is in
+    // no pool of the record's identity
     const m2 = w.ok('R1', 'mark')
-    expect([rec.pool?.includes(m1.id), rec.pool?.includes(rel.id)]).toEqual([true, false])
-    expect(w.ref.rec(m2.id).pool).not.toContain(rel.id)
+    expect([rec.pool?.includes(m1.id), rec.pool?.includes(rel.id)]).toEqual([true, true])
+    expect(w.ref.rec(m2.id).pool).toContain(rel.id)
     expect(w.ref.rec(m2.id).pool).toContain(m1.id)
+    expect(w.ref.rec(w.ok('A1', 'mark', {}, { ap: [rel.id] }).id).pool).not.toContain(rel.id)
     // a relay of a record the position already holds is a duplicate
     expect(w.act('Vch1', 'device_revoke', { dk: 'A2', seen: s }, { actor: 'A' }).v).toEqual({
       s: 'R',
@@ -662,7 +671,7 @@ describe('production-only types (not in the model)', () => {
   })
 
   // forked copies of one identity's revocation record, posted by another member from one old
-  // position: they are events of the relayer's device, in nobody's pool and nobody's W3(f) keys
+  // position: they are the relayer's events, in its pool, not in the record's identity's
   const copies = (w: AclWorld, n: number, P: string[], s: number) => {
     const y = w.latestOwn('Y1')!
     for (let k = 0; k < n; k++)
@@ -694,6 +703,9 @@ describe('production-only types (not in the model)', () => {
       false,
       false,
     ])
+    // past poolU, the copies are pool candidates of their relayer
+    const ys = w.ref.order.filter(id => w.ref.ev(id).relay === 'Y')
+    expect([ys.length, ys.every(id => S.PC.has(id))]).toEqual([32, true])
     expect(w.act('A1', 'mark').v).toEqual({ s: 'A' })
   })
 
@@ -729,6 +741,294 @@ describe('production-only types (not in the model)', () => {
     const c1 = w2.ref.order.find(id => w2.ref.ev(id).relay === 'Y')!
     w2.ok('Y2', 'mark', {}, { ap: [c1] })
     expect(w2.state().X.has(c1)).toBe(true)
+  })
+
+  test("forked relays layered over the relayer's devices pin it (W3(f)): a held event keeps one chain of them, a kicked relayer's too", () => {
+    setLimits({})
+    try {
+      for (const kicked of [false, true]) {
+        const w = base(INVITE, false)
+        join(w, 'A1')
+        w.ok('A2', 'device_add')
+        join(w, 'B1')
+        w.ok('B2', 'device_add')
+        join(w, 'Y1')
+        w.ok('Y2', 'device_add')
+        w.ok('O1', 'mark')
+        w.ok('Y3', 'device_add')
+        const P = w.heads()
+        const sA = w.latestOwn('A2')!.seq
+        const sB = w.latestOwn('B2')!.seq
+        w.ok('A1', 'device_revoke', { dk: 'A2', seen: sA })
+        w.ok('B1', 'device_revoke', { dk: 'B2', seen: sB })
+        if (kicked) w.ok('O1', 'kick', { to: 'Y' })
+        const relay = (dev: string, ik: string, ap: string[]) =>
+          w.act(
+            dev,
+            'device_revoke',
+            { dk: `${ik}2`, seen: ik === 'A' ? sA : sB },
+            { actor: ik, ap, keepOwn: false }
+          )
+        const L1 = Array.from({ length: 100 }, () => {
+          const r = relay('Y1', 'A', P)
+          expect(r.v).toEqual({ s: 'A' })
+          return r.e.id
+        })
+        const w3f = { s: 'R' as const, why: 'W3f' }
+        expect(relay('Y2', 'B', L1.slice(0, 10)).v).toEqual(w3f)
+        expect(relay('Y2', 'B', L1.slice(0, 2)).v).toEqual(w3f)
+        expect(w.act('Y2', 'mark', {}, { ap: L1.slice(0, 2), keepOwn: false }).v).toEqual(w3f)
+        const L2 = L1.slice(0, 10).map(p => {
+          const r = relay('Y2', 'B', [p])
+          expect(r.v).toEqual({ s: 'A' })
+          return r.e.id
+        })
+        expect(w.act('Y3', 'mark', {}, { ap: L2 }).v).toEqual(w3f)
+        expect(w.act('Y3', 'mark', {}, { ap: L2.slice(0, 2) }).v).toEqual(w3f)
+        const m = w.ok('Y3', 'mark', {}, { ap: [L2[0]] })
+        const S = w.state()
+        expect([...L1, ...L2].every(id => S.X.has(id))).toBe(true)
+        expect(S.X.has(m.id)).toBe(false)
+        const drops = orphanDrops(w.ref.order, S, w.ref)
+        const keptY = w.ref.order.filter(id => devOwner(w.ref.ev(id).dev) === 'Y' && !drops.has(id))
+        expect(keptY.filter(id => w.ref.ev(id).relay === 'Y')).toEqual([L1[0], L2[0]])
+        expect(keptY.length).toBeLessThanOrEqual(LIM.poolU)
+        if (kicked) continue
+        // an acknowledged relay pins nothing
+        const ack = w.ok('O1', 'mark', {}, { ap: [L1[0]] })
+        expect(w.act('Y2', 'mark', {}, { ap: [ack.id, L1[1]], keepOwn: false }).v).toEqual({
+          s: 'A',
+        })
+      }
+    } finally {
+      setLimits(MODEL_LIMITS)
+    }
+  })
+
+  test("forked relays beside the relayer's acknowledged events count in its W3(g) pool: gathering them stops at the cap, a kicked relayer's too", () => {
+    setLimits({})
+    try {
+      for (const kicked of [false, true]) {
+        const w = base(INVITE, false)
+        join(w, 'A1')
+        w.ok('A2', 'device_add')
+        join(w, 'B1')
+        w.ok('B2', 'device_add')
+        join(w, 'Y1')
+        w.ok('Y2', 'device_add')
+        w.ok('O1', 'mark')
+        w.ok('Y3', 'device_add')
+        const sA = w.latestOwn('A2')!.seq
+        const sB = w.latestOwn('B2')!.seq
+        let ack = w.ok('O1', 'mark')
+        let ts = ack.ts
+        const ys: AclEv[] = []
+        for (let k = 0; k < 400; k++) {
+          ys.push(w.ok('Y1', 'mark', {}, { ap: [ack.id], ts: (ts += 61_000) }))
+          if (k % 20 === 19) ack = w.ok('O1', 'mark', {}, { ap: [ys[k].id] })
+        }
+        const L = ys.map(y => {
+          const r = w.act(
+            'Y1',
+            'device_revoke',
+            { dk: 'A2', seen: sA },
+            { actor: 'A', ap: y.ap, seq: y.seq, ts: y.ts }
+          )
+          expect(r.v).toEqual({ s: 'A' })
+          return r.e.id
+        })
+        if (kicked) w.ok('O1', 'kick', { to: 'Y' }, { ap: [ack.id] })
+        let held = ack.id
+        let n = 0
+        let total = 0
+        let refused = false
+        const gathered: string[] = []
+        const gather = (dev: string, r: number) => {
+          const v = w.act(dev, 'mark', {}, { ap: [held, ...L.slice(n, n + r)] })
+          const over = total + 1 + r > LIM.poolU
+          expect(v.v).toEqual(over ? { s: 'R', why: 'W3g' } : { s: 'A' })
+          if (over) return false
+          held = v.e.id
+          gathered.push(held)
+          n += r
+          total += 1 + r
+          return true
+        }
+        for (let j = 0; j < 24; j++) expect(gather('Y2', 8)).toBe(true)
+        for (let j = 0; j < 23 && !refused; j++) refused = !gather('Y3', j ? 9 : 8)
+        expect([refused, n < L.length]).toEqual([true, true])
+        expect(gather('Y3', LIM.poolU - total - 1)).toBe(true)
+        expect(total).toBe(LIM.poolU)
+        expect(gather('Y3', 0)).toBe(false)
+        const rB = { dk: 'B2', seen: sB }
+        expect(w.act('Y3', 'device_revoke', rB, { actor: 'B', ap: [held] }).v).toEqual({
+          s: 'R',
+          why: 'W3g',
+        })
+        // the relays it left out are concurrent with the held head: past the pool, it is a candidate
+        const S = w.state()
+        expect([L.every(id => S.X.has(id)), S.PC.has(held), S.X.has(held)]).toEqual([
+          true,
+          true,
+          true,
+        ])
+        expect(w.act('A1', 'mark', {}, { ap: [held] }).v).toEqual({ s: 'A' })
+        if (kicked) continue
+        // acknowledged relays count nothing: the rest of them can be gathered
+        held = w.ok('O1', 'mark', {}, { ap: [held] }).id
+        total = 0
+        while (n < L.length) expect(gather('Y3', Math.min(9, L.length - n))).toBe(true)
+      }
+    } finally {
+      setLimits(MODEL_LIMITS)
+    }
+  })
+
+  // A relayer's forked relays beside its acknowledged marks, gathered by its other devices in
+  // separate views (W3(b) stops each at 24 marks): its relays are its own events across devices
+  const gatherViews = (devs: string[], kicked: boolean) => {
+    const w = base(INVITE, false)
+    join(w, 'A1')
+    w.ok('A2', 'device_add')
+    join(w, 'Y1')
+    for (const d of devs) {
+      w.ok(d, 'device_add')
+      w.ok('O1', 'mark')
+    }
+    const sA = w.latestOwn('A2')!.seq
+    // O acknowledges each of Y1's marks, so a relay beside one has only itself in its pool
+    let ack = w.ok('O1', 'mark')
+    let ts = ack.ts
+    const ys: AclEv[] = []
+    for (let k = 0; k < 360; k++) {
+      ys.push(w.ok('Y1', 'mark', {}, { ap: [ack.id], ts: (ts += 61_000) }))
+      ack = w.ok('O1', 'mark', {}, { ap: [ys[k].id] })
+    }
+    if (kicked) w.ok('O1', 'kick', { to: 'Y' }, { ap: [ack.id] })
+    const heads = new Map(devs.map(d => [d, ack.id]))
+    // Y4, revoked afterwards, gathers at old positions (its events past the watermark are kept)
+    const rv = { dk: 'Y4', seen: w.latestOwn('Y4')?.seq }
+    if (devs.includes('Y4')) heads.set('Y2', w.ok('Y2', 'device_revoke', rv, { ap: [ack.id] }).id)
+    const rel: string[] = []
+    const marks: string[] = []
+    const gather = (dev: string, k: number) => {
+      for (let j = 0; j < k; j++) {
+        const rs = ys.slice(rel.length, rel.length + 9).map(y => {
+          const c = { dk: 'A2', seen: sA }
+          const r = w.act('Y1', 'device_revoke', c, { actor: 'A', ap: y.ap, seq: y.seq, ts: y.ts })
+          expect(r.v).toEqual({ s: 'A' })
+          return r.e.id
+        })
+        rel.push(...rs)
+        const m = w.ok(dev, 'mark', {}, { ap: [heads.get(dev)!, ...rs] })
+        heads.set(dev, m.id)
+        marks.push(m.id)
+      }
+    }
+    const state = () => {
+      const S = w.state()
+      const drops = orphanDrops(w.ref.order, S, w.ref)
+      const h = [...heads.values()]
+      return {
+        heads: [h.some(x => S.PC.has(x)), h.every(x => S.PC.has(x) && S.X.has(x))],
+        rel: rel.every(x => S.PC.has(x)),
+        kept: [...rel, ...marks].filter(x => !drops.has(x)).length,
+      }
+    }
+    const ik = () => {
+      const a = w.ok('A1', 'mark', {}, { ap: [...heads.values()] })
+      return w.state().PC.has(a.id)
+    }
+    return { gather, state, ik, all: () => rel.length + marks.length }
+  }
+  test("a relayer's relays share its pool across devices: two views past poolU make the heads pool candidates the orphan rule drops; a kicked relayer's too", () => {
+    setLimits({})
+    try {
+      for (const kicked of [false, true]) {
+        const v = gatherViews(['Y2', 'Y3'], kicked)
+        v.gather('Y2', 24)
+        v.gather('Y3', 13)
+        expect(v.state()).toMatchObject({ heads: [false, false], kept: 370 })
+        v.gather('Y3', 3)
+        const S = v.state()
+        expect([S.heads, S.rel]).toEqual([[true, true], true])
+        expect([S.kept < v.all(), S.kept <= LIM.poolU]).toEqual([true, true])
+        expect(v.ik()).toBe(false)
+      }
+    } finally {
+      setLimits(MODEL_LIMITS)
+    }
+  }, 120_000)
+
+  test("a relayer's relays share its pool across devices: three views, one on a device revoked later, past poolU make the heads pool candidates the orphan rule drops; a kicked relayer's too", () => {
+    setLimits({})
+    try {
+      for (const kicked of [false, true]) {
+        const v = gatherViews(['Y2', 'Y3', 'Y4'], kicked)
+        for (const d of ['Y2', 'Y3', 'Y4']) v.gather(d, 12)
+        expect(v.state()).toMatchObject({ heads: [false, false], kept: 360 })
+        v.gather('Y4', 4)
+        const S = v.state()
+        expect([S.heads, S.rel]).toEqual([[true, true], true])
+        expect([S.kept < v.all(), S.kept <= LIM.poolU]).toEqual([true, true])
+        expect(v.ik()).toBe(false)
+      }
+    } finally {
+      setLimits(MODEL_LIMITS)
+    }
+  }, 120_000)
+
+  test('a relay of a record whose forked, unwitnessed copy is in its past is a duplicate, though the void copy left the device live', () => {
+    const w = base(INVITE, false)
+    join(w, 'A1')
+    w.ok('A2', 'device_add')
+    join(w, 'Y1')
+    join(w, 'R1')
+    const s = w.latestOwn('A2')!.seq
+    const P = w.heads()
+    const rec = { dk: 'A2', seen: s }
+    const copy = w.ok('Y1', 'device_revoke', rec, { actor: 'A', ap: P, keepOwn: false })
+    const twin = w.ok('Y1', 'mark', {}, { ap: P, keepOwn: false })
+    const ap = [copy.id, twin.id]
+    const St = w.ref.acl.stateOf(ap)
+    expect([St.X.has(copy.id), St.facts.devs.get('A')?.has('A2')]).toEqual([true, true])
+    expect(w.act('R1', 'device_revoke', rec, { actor: 'A', ap }).v).toEqual({ s: 'R', why: 'dup' })
+    expect(w.act('R1', 'device_revoke', { ...rec, seen: s + 1 }, { actor: 'A', ap }).v).toEqual({
+      s: 'A',
+    })
+  })
+
+  test("a relay counts in its relayer's W3(a) hour: at the cap, the relayer's next relay is refused; an identity's own revocation is exempt", () => {
+    const w = base(INVITE, false)
+    join(w, 'A1')
+    w.ok('A2', 'device_add')
+    join(w, 'B1')
+    w.ok('B2', 'device_add')
+    join(w, 'Y1')
+    const sA = w.latestOwn('A2')!.seq
+    const sB = w.latestOwn('B2')!.seq
+    let ts = 1000
+    for (let k = 0; k < LIM.w3 - 1; k++) w.ok('Y1', 'mark', {}, { ts: (ts += 1) })
+    w.ok('Y1', 'device_revoke', { dk: 'A2', seen: sA }, { actor: 'A', ts: (ts += 1) })
+    const rB = { dk: 'B2', seen: sB }
+    expect(w.act('Y1', 'device_revoke', rB, { actor: 'B', ts: ts + 1 }).v).toEqual({
+      s: 'R',
+      why: 'W3',
+    })
+    for (let k = 0; k < LIM.w3; k++) w.ok('B1', 'mark', {}, { ts: ts + 1 + k })
+    expect(w.act('B1', 'device_revoke', rB, { ts: ts + 1 + LIM.w3 }).v).toEqual({ s: 'A' })
+    const w2 = base(INVITE, false)
+    join(w2, 'A1')
+    w2.ok('A2', 'device_add')
+    join(w2, 'Y1')
+    for (let k = 0; k < LIM.w3; k++) w2.ok('Y1', 'mark', {}, { ts: 1000 + k })
+    const r = { dk: 'A2', seen: w2.latestOwn('A2')!.seq }
+    const last = 1000 + LIM.w3 - 1
+    expect(w2.act('Y1', 'device_revoke', r, { actor: 'A', ts: last + 1 }).v).toEqual({
+      s: 'R',
+      why: 'W3',
+    })
+    expect(w2.act('Y1', 'device_revoke', r, { actor: 'A', ts: last + LIM.win }).v.s).toBe('A')
   })
 
   test("relaying needs a member's live device; a forged relayer is refused", () => {
@@ -813,7 +1113,7 @@ describe('production-only types (not in the model)', () => {
     expect(w.ref.receive({ ...w.build('X1', 'mark'), a: 'U' })).toEqual({ s: 'R', why: 'dev' })
   })
 
-  test('a malformed known field is refused with a strike; a second genesis is refused', () => {
+  test('a malformed known field (a genesis nonce of other than 16 bytes, a kick target) is refused with a strike; a second genesis is refused', () => {
     const r = new AclReplica({ binds: testBinds })
     const g = {
       id: 'g',
@@ -823,8 +1123,15 @@ describe('production-only types (not in the model)', () => {
       seq: 0,
       ap: [],
       ts: 0,
-      c: { rules: 2, nonce: 'n', owners: [{ ik: 'O' }], everyone_bits: 0, name: 'S' },
+      c: { rules: 2, nonce: NONCE, owners: [{ ik: 'O' }], everyone_bits: 0, name: 'S' },
     }
+    for (const nonce of [undefined, 'n', 'AAAAAAAAAAAAAAAAAAAAAAAA', 16])
+      expect(
+        new AclReplica({ binds: testBinds }).receive({ ...g, c: { ...g.c, nonce } } as never)
+      ).toEqual({
+        s: 'M',
+        why: 'content',
+      })
     expect(r.receive(g as never).s).toBe('A')
     expect(r.receive({ ...g, id: 'g2' } as never)).toEqual({ s: 'R', why: 'genesis' })
     const bad = {
@@ -937,7 +1244,7 @@ describe('production-only types (not in the model)', () => {
       seq: 0,
       ap: [],
       ts: 0,
-      c: { rules: 2, nonce: 'n', owners: [{ ik: 'O' }], everyone_bits: 0, name: 'S' },
+      c: { rules: 2, nonce: NONCE, owners: [{ ik: 'O' }], everyone_bits: 0, name: 'S' },
     }
     expect(r.receive(g as never)).toEqual({ s: 'R', why: 'genesis' })
   })

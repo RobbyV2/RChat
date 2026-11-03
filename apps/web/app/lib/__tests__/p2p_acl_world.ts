@@ -37,6 +37,8 @@ import type { World as ModelWorld } from './acl_model/world'
 // admission record and state, and the final state.
 
 export const devOwner = (dev: string) => dev.replace(/[0-9]+$/, '')
+// A genesis nonce (16 bytes, b64u).
+export const NONCE = 'AAAAAAAAAAAAAAAAAAAAAA'
 // The model's device certificates: a device belongs to the identity its name starts with; a
 // relayed record's device to its relayer.
 export const testBinds = (e: AclEv) => devOwner(e.dev) === (e.relay ?? e.a)
@@ -133,7 +135,7 @@ export function toProd(e: M.Ev, mref: M.Replica): AclEv {
         ...base(e),
         c: {
           rules: 2,
-          nonce: 'n',
+          nonce: NONCE,
           owners: (e.c.owners as string[]).map(ik => ({ ik })),
           everyone_bits: m2p(e.c.everyone ?? 0) | VIEW | SEND,
           name: 'S',
@@ -478,7 +480,7 @@ export class AclWorld {
       ts,
       c: {
         rules: 2,
-        nonce: 'n',
+        nonce: NONCE,
         owners: owners.map(ik => ({ ik })),
         everyone_bits: everyone | VIEW | SEND,
         name: 'S',

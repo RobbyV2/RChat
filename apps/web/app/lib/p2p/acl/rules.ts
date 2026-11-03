@@ -1,5 +1,5 @@
 import { isRecord } from '../../bytes'
-import { canonical } from '../canonical'
+import { bytesOf, canonical } from '../canonical'
 import type { EvalResult, Facts, FactsQ } from './facts'
 
 // The rules of P2P server ACL events (spec §1.4, §1.6): event classes, the Authority column (what
@@ -165,7 +165,7 @@ export interface Rec {
   depth: number
   epoch: string
   local: EvalResult
-  // U(e) (§4.1); for a relayed revocation, its relayer's pool there (the relay is in no pool)
+  // U(e) (§4.1), by poster: a relayed revocation is in its relayer's
   pool?: string[]
 }
 
@@ -649,6 +649,9 @@ const REQUIRED: Record<string, string[]> = {
   proof: ['x', 'y'],
 }
 
+// A genesis nonce: 16 random bytes, b64u (§1.2).
+export const NONCE_LEN = 16
+
 // The fields an ACL type reads have their types; fields a newer version adds are kept, unread. A
 // genesis of another rules version needs only an integer `rules` (§1.2: shown read-only).
 export function aclContentOk(t: string, c: unknown): c is AclContent {
@@ -657,7 +660,8 @@ export function aclContentOk(t: string, c: unknown): c is AclContent {
     return (
       isInt(c.rules) &&
       (c.rules !== RULES_VERSION ||
-        (Array.isArray(c.owners) &&
+        (bytesOf(c.nonce, NONCE_LEN) !== null &&
+          Array.isArray(c.owners) &&
           c.owners.length > 0 &&
           c.owners.every(o => isRecord(o) && isStr(o.ik)) &&
           isMask(c.everyone_bits) &&

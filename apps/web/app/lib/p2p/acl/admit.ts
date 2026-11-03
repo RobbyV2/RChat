@@ -71,21 +71,25 @@ function primaryOf(a: string, B: Past): string {
 }
 
 // A1 for introductions (§1.1, §1.4): every genesis owner's bundle verifies to its identity over
-// the genesis nonce, and the author's names the posting device; an introducing join's `idb` and a
-// device_add's `dcert` certify the posting device for the author, signed by its primary over the
-// server and the event's identity-chain position. A rotation's binding is its recovery signature
-// (event.ts). Every other event's device must be live for its poster in St(e) (deviceOk).
+// the digest of the genesis content (binding.ts), and the author's names the posting device; an
+// introducing join's `idb` and a device_add's `dcert` certify the posting device for the author,
+// signed by its primary over the server and the event's identity-chain position. A rotation's
+// binding is its recovery signature (event.ts). Every other event's device must be live for its
+// poster in St(e) (deviceOk).
 export function certBinds(e: AclEv, B?: Past, S?: EvalResult): boolean {
   const c = e.c
   if (e.t === 'genesis') {
     const owners = c.owners ?? []
-    const nonce = c.nonce
+    let srv: string
+    try {
+      srv = genesisSrv(c)
+    } catch {
+      return false
+    }
     return (
-      typeof nonce === 'string' &&
       owners.some(o => o.ik === e.a && o.dk === e.dev) &&
       owners.every(
-        o =>
-          typeof o.dk === 'string' && deviceCertOk(o.ik, genesisSrv(nonce), o.ik, o.dk, '', o.dcert)
+        o => typeof o.dk === 'string' && deviceCertOk(o.ik, srv, o.ik, o.dk, '', o.dcert)
       )
     )
   }
@@ -230,9 +234,9 @@ export function decide(
   if (e.t === 'proof' && !proofOk(e, B, S)) return { ok: false, why: 'proof' }
   // A2 timestamps: a causal lower bound only
   for (const p of e.ap) if (e.ts < ix.ev[ix.at.get(p)!].ts) return { ok: false, why: 'ts' }
-  // A relayed revocation (§1.6) acts for its `ik` only in facts, k, self-deny and protection: it is
-  // an event of its relayer's device chain (W3(a), W3(b), W3(f), acknowledgements) and in no
-  // identity's pool. A relay of a record that B(e) already holds is a duplicate.
+  // A relayed revocation (§1.6) acts for its `ik` only in facts, k, self-deny and protection;
+  // otherwise it is its relayer's event (device chain, W3, pool, acknowledgements) and never `ik`'s.
+  // A relay of a record whose revocation B(e) already holds is a duplicate.
   const relay = relayed(e)
   if (
     relay &&
@@ -245,9 +249,8 @@ export function decide(
   const A = poster(e)
   const exempt = !relay && exemptOf(e, cls, B)
   const owner = F.owners.has(A)
-  // W3(g) identity pool: U(e) = the events of e's identity in B(e) ∪ {e} that no event of another
-  // identity in B(e) has in its past, computed from the parents' recorded pools; a relay
-  // acknowledges as its relayer and records the relayer's pool without itself.
+  // W3(g) identity pool: U(e) = the events of e's poster in B(e) ∪ {e} that no event of another
+  // poster in B(e) has in its past, computed from the parents' recorded pools.
   const ap = [...new Set(e.ap)]
   const poolFor = (X: string) => {
     const poolOf = new Map<string, Set<string>>()
@@ -267,7 +270,7 @@ export function decide(
       })
     )
   }
-  const pool = (relay ? poolFor(A) : [...poolFor(A), e.id]).sort()
+  const pool = [...poolFor(A), e.id].sort()
   const unacked = new Set(pool.filter(x => x !== e.id))
   const unackedIdx = [...unacked].map(x => ix.at.get(x)!)
   // A4 deterministic windows (§4.1)
@@ -280,10 +283,7 @@ export function decide(
   if (w3bCounted(e)) {
     const mine = own.filter(x => w3bCounted(ix.ev[x]))
     if (mine.length + 1 > LIM.totU) {
-      // a relay is in no pool: acknowledged when an event of another poster in B(e) has it
-      const un = mine.filter(
-        x => unacked.has(ix.ids[x]) || (relayed(ix.ev[x]) && !thirdAck(x, A, A, B))
-      )
+      const un = mine.filter(x => unacked.has(ix.ids[x]))
       if (un.length + 1 > LIM.totU) return { ok: false, why: 'W3b' }
     }
   }
@@ -311,11 +311,11 @@ export function decide(
     const n = unackedIdx.filter(i => ix.ev[i].a === e.a && ix.ev[i].t === 'device_add').length
     if (n + 1 > LIM.freshCap) return { ok: false, why: 'W3d' }
   }
-  // W3(f) no pinning (non-owners): no unacknowledged evidence pair of the identity's own in B(e),
-  // outside the past of its rotations; a rotation may see one pair per key
+  // W3(f) no pinning (non-owners): no unacknowledged evidence pair of the poster's own (its relays
+  // included) in B(e), outside the past of its rotations; a rotation may see one pair per key
   if (!owner) {
     const rotsB = inPast(B, ix.rotBy.get(A))
-    const mineU = unackedIdx.filter(i => ix.ev[i].a === A && !rotsB.some(r => ix.has(r, i)))
+    const mineU = unackedIdx.filter(i => poster(ix.ev[i]) === A && !rotsB.some(r => ix.has(r, i)))
     const seenK = new Map<string, number>()
     const rotPrevU = new Set(
       mineU.filter(i => ix.ev[i].t === 'primary_rotate').map(i => ix.ev[i].iprev ?? '')
@@ -364,7 +364,7 @@ export function decide(
     if (n + 1 > (perms(F, e.a) & SERVER ? LIM.codesPerDevServer : LIM.codesPerDev))
       return { ok: false, why: 'W5' }
   }
-  if (!relay && !owner && pool.length > LIM.poolU) return { ok: false, why: 'W3g' }
+  if (!owner && pool.length > LIM.poolU) return { ok: false, why: 'W3g' }
   return { ok: true, rec: { k: rank(F, e.a), cls, self, exempt, depth, epoch, local: S, pool } }
 }
 

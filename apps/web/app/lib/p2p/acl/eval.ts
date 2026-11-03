@@ -15,8 +15,8 @@ import {
   minR,
   NEG,
   permsQ,
+  poster,
   protectedTarget,
-  relayed,
   rkey,
   target,
   TOP,
@@ -1470,13 +1470,7 @@ export class FastEval extends Equiv {
     this.maxPos.clear()
     const e = ix.ev[i]
     const pl = ix.rec[i].pool
-    if (
-      pl &&
-      !ix.owners.has(e.a) &&
-      e.t !== 'primary_rotate' &&
-      !relayed(e) &&
-      pl.length > LIM.poolU
-    )
+    if (pl && !ix.owners.has(poster(e)) && e.t !== 'primary_rotate' && pl.length > LIM.poolU)
       this.PC.add(ix.ids[i])
     if (this.candidateIn(i, this.F, this.FI, this.RF, this.PC)) {
       this.X[i] = 1

@@ -1,6 +1,6 @@
 import { fiOf, type EvalResult } from './facts'
 import { EMPTY, Ix, pushM } from './reach'
-import { introduces, LIM, poster, relayed, type AclEv, type Ctx } from './rules'
+import { introduces, LIM, poster, type AclEv, type Ctx } from './rules'
 
 // Equivocation (spec §2.3): device and identity fork points (FI per epoch), rotation and race
 // evidence, pool candidates (W3(g)), candidates, the void set X, and the revocation tails of §3.1.
@@ -139,15 +139,17 @@ export class Equiv {
   }
 
   // Pool candidates (W3(g)): a non-owner's event x other than a rotation whose pool
-  // P(x) = U(x) ∪ ⋃ U(y) over the events y of its identity concurrent with x exceeds poolU.
+  // P(x) = U(x) ∪ ⋃ U(y) over the events y of its poster concurrent with x exceeds poolU (a relay
+  // is its relayer's event here, §1.6).
   poolCands(): Set<string> {
     const ix = this.ix
     const lim = LIM.poolU
     const PC = new Set<string>()
     const byA = new Map<string, number[]>()
-    for (let i = 0; i < ix.n; i++)
-      if (this.inEv(i) && ix.rec[i].pool && !ix.owners.has(ix.ev[i].a) && !relayed(ix.ev[i]))
-        pushM(byA, ix.ev[i].a, i)
+    for (let i = 0; i < ix.n; i++) {
+      const a = poster(ix.ev[i])
+      if (this.inEv(i) && ix.rec[i].pool && !ix.owners.has(a)) pushM(byA, a, i)
+    }
     let stamp: Int32Array | undefined
     let cur = 0
     let cnt = 0
