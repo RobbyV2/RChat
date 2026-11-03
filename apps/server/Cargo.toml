@@ -56,14 +56,14 @@ redis = { version = "1.8", default-features = false, features = [
   "streams",
   "connection-manager",
 ] }
-ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
-base64 = "0.22"
+ed25519-dalek = { version = "3", features = ["pkcs8", "pem"] }
+base64 = "0.23"
 regex = "1"
 emojis = "0.9.1"
 unicode-security = "=0.1.2"
 caseless = "=0.2.2"
 unicode-normalization = "=0.1.26"
-unicode-properties = "=0.1.4"
+unicode-properties = "=0.1.5"
 turn = "0.17.2"
 sha1 = "0.11"
 async-trait = "0.1"
@@ -74,7 +74,7 @@ webrtc-util = { version = "0.17.2", default-features = false, features = [
 
 [dev-dependencies]
 rust-next-wasm = { path = "../../crates/wasm" }
-tokio-tungstenite = { version = "=0.29.0", default-features = false, features = [
+tokio-tungstenite = { version = "=0.30.0", default-features = false, features = [
   "connect",
 ] }
 tokio = { version = "1", features = ["full", "test-util"] }
