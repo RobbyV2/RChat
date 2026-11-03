@@ -2,6 +2,7 @@ import { Hdrs } from './equivocation'
 import { FastEval } from './eval'
 import {
   emptyResult,
+  factsInScope,
   fromOf,
   fullFacts,
   View,
@@ -43,11 +44,11 @@ class SnapView extends View {
   fresh() {
     return new SnapView(this.ix, this.fe, this.len)
   }
-  inE(x: number) {
-    return x < this.len && this.fe.inS(x)
-  }
   hiE() {
     return this.len
+  }
+  inE(x: number) {
+    return x < this.len && this.fe.inS(x)
   }
   isXv(x: number) {
     return this.fe.X[x] === 1
@@ -75,11 +76,11 @@ class SubView extends View {
   fresh() {
     return new SubView(this.ix, this.setBits, this.XB, this.VB, this.EB, this.len)
   }
-  inE(x: number) {
-    return x < this.len && bitOf(this.setBits, x)
-  }
   hiE() {
     return this.len
+  }
+  inE(x: number) {
+    return x < this.len && bitOf(this.setBits, x)
   }
   isXv(x: number) {
     return bitOf(this.XB, x)
@@ -92,9 +93,17 @@ class SubView extends View {
   }
 }
 
-const lru = new Map<object, unknown>()
+// Bounded caches per index (a replica's), so a dropped replica takes its entries along: whole
+// enumerations (16), and the facts of recorded states (FACTS_CAP; a state's facts are built again
+// when read after they left, its statuses stay packed).
+const lrus = new WeakMap<Ix, Map<string, Map<object, unknown>>>()
 const LRU_CAP = 16
-function lruGet<T>(k: object, make: () => T): T {
+export const FACTS_CAP = 1024
+function lruGet<T>(ix: Ix, k: object, make: () => T, kind = 'all', cap = LRU_CAP): T {
+  let byKind = lrus.get(ix)
+  if (!byKind) lrus.set(ix, (byKind = new Map()))
+  let lru = byKind.get(kind)
+  if (!lru) byKind.set(kind, (lru = new Map()))
   if (lru.has(k)) {
     const v = lru.get(k) as T
     lru.delete(k)
@@ -103,7 +112,7 @@ function lruGet<T>(k: object, make: () => T): T {
   }
   const v = make()
   lru.set(k, v)
-  if (lru.size > LRU_CAP) lru.delete(lru.keys().next().value!)
+  if (lru.size > cap) lru.delete(lru.keys().next().value!)
   return v
 }
 
@@ -134,218 +143,404 @@ function lazyMap<K, V>(
   }
 }
 
-function snapFacts(V: SnapView | SubView): Facts {
-  const ix = V.ix
-  const full = () => lruGet(V, () => fullFacts(V.fresh()))
-  const inv = (T: string) => {
-    const l = V.invited(T)
+// The facts of a recorded state as keyed views over it, each member built on first read (an
+// evaluation reads one to three of a deny's or a cause's admission state).
+class SnapFacts implements Facts {
+  private m: Partial<Record<keyof Facts, unknown>> = {}
+  constructor(private V: SnapView | SubView) {}
+  private get ix() {
+    return this.V.ix
+  }
+  private full() {
+    return lruGet(this.ix, this.V, () => fullFacts(this.V.fresh()))
+  }
+  private one<K extends keyof Facts>(k: K, make: () => Facts[K]): Facts[K] {
+    const m = this.m as Partial<Facts>
+    return (m[k] ??= make()) as Facts[K]
+  }
+  private inv(T: string) {
+    const l = this.V.invited(T)
     return l.length ? l : undefined
   }
-  const devsOf = (a: string) => {
-    const s = new Set<string>()
-    for (const x of ix.introBy.get(a) ?? EMPTY)
-      if (V.live(x)) for (const v of introduces(ix.ev[x])) if (!V.revoked(v)) s.add(v)
-    return s.size ? s : undefined
+  get owners() {
+    return this.ix.owners
   }
-  const codeLive = (c: string) => {
-    const x = ix.codeEv.get(c)
-    return x !== undefined && V.inE(x)
+  get upgraded() {
+    return this.ix.upgradeEv.filter(x => this.V.inE(x)).map(x => this.ix.ids[x])
   }
-  const codeOf = (c: string): CodeFact | undefined => {
-    const x = ix.codeEv.get(c)
-    if (x === undefined || !V.inE(x) || !V.codeOk(c) || V.codeDead(c)) return undefined
-    return { id: c, a: ix.ev[x].a, dev: ix.ev[x].dev, k: ix.k(x) }
+  get mem() {
+    return this.one('mem', () =>
+      lazySet(
+        T => this.V.mem(T),
+        () => this.full().mem as ReadonlySet<string>
+      )
+    )
   }
-  const bitsOf = (R: string) =>
-    R === EVERYONE ? (V.bits(EVERYONE) ?? 0) : V.role(R) ? (V.bits(R) ?? 0) : undefined
-  const pend = (T: string): readonly Pend[] | undefined => {
-    const l = inv(T)
-    return l && !V.mem(T) && !V.ban(T) ? l : undefined
+  get ban() {
+    return this.one('ban', () =>
+      lazySet(
+        T => this.V.ban(T),
+        () => this.full().ban as ReadonlySet<string>
+      )
+    )
   }
-  const consumed = (g: string) => {
-    const i = ix.at.get(g)
-    if (i === undefined || !V.inE(i) || ix.ev[i].t !== 'add') return false
-    return V.consumedIdx(i)
+  get effBanK() {
+    return this.one('effBanK', () =>
+      lazyMap(
+        T => this.V.effBanK(T) !== undefined,
+        T => this.V.effBanK(T),
+        () => this.full().effBanK as ReadonlyMap<string, readonly Rank[]>
+      )
+    )
   }
-  const holdsOf = (T: string) => {
-    const h = V.holds(T)
-    return h.size ? h : undefined
+  get invited() {
+    return this.one('invited', () =>
+      lazyMap(
+        T => this.inv(T) !== undefined,
+        T => this.inv(T),
+        () => this.full().invited as ReadonlyMap<string, readonly Pend[]>
+      )
+    )
   }
-  const addsOf = (T: string) => {
-    const l = V.addsTo(T)
-    return l.length ? l : undefined
+  get pending() {
+    return this.one('pending', () => {
+      const V = this.V
+      const pend = (T: string): readonly Pend[] | undefined => {
+        const l = this.inv(T)
+        return l && !V.mem(T) && !V.ban(T) ? l : undefined
+      }
+      return lazyMap(
+        T => pend(T) !== undefined,
+        pend,
+        () => this.full().pending as ReadonlyMap<string, readonly Pend[]>
+      )
+    })
   }
-  const overwritesOf = (ch: string) => full().overwrites.get(ch)
-  return {
-    owners: ix.owners,
-    get upgraded() {
-      return ix.upgradeEv.filter(x => V.inE(x)).map(x => ix.ids[x])
-    },
-    mem: lazySet(
-      T => V.mem(T),
-      () => full().mem as ReadonlySet<string>
-    ),
-    ban: lazySet(
-      T => V.ban(T),
-      () => full().ban as ReadonlySet<string>
-    ),
-    effBanK: lazyMap(
-      T => V.effBanK(T) !== undefined,
-      T => V.effBanK(T),
-      () => full().effBanK as ReadonlyMap<string, readonly Rank[]>
-    ),
-    invited: lazyMap(
-      T => inv(T) !== undefined,
-      inv,
-      () => full().invited as ReadonlyMap<string, readonly Pend[]>
-    ),
-    pending: lazyMap(
-      T => pend(T) !== undefined,
-      pend,
-      () => full().pending as ReadonlyMap<string, readonly Pend[]>
-    ),
-    roles: lazySet(
-      R => V.role(R),
-      () => full().roles as ReadonlySet<string>
-    ),
-    pos: lazyMap(
-      R => V.pos(R) !== undefined,
-      R => V.pos(R),
-      () => full().pos as ReadonlyMap<string, number>
-    ),
-    bits: lazyMap(
-      R => bitsOf(R) !== undefined,
-      bitsOf,
-      () => full().bits as ReadonlyMap<string, number>
-    ),
-    holds: lazyMap(
-      T => holdsOf(T) !== undefined,
-      holdsOf,
-      () => full().holds as ReadonlyMap<string, ReadonlySet<string>>
-    ),
-    devs: lazyMap(
-      a => devsOf(a) !== undefined,
-      devsOf,
-      () => full().devs as ReadonlyMap<string, ReadonlySet<string>>
-    ),
-    revoked: lazySet(
-      v => V.revoked(v),
-      () => full().revoked as ReadonlySet<string>
-    ),
-    codes: lazyMap(
-      c => codeOf(c) !== undefined,
-      codeOf,
-      () => full().codes as ReadonlyMap<string, CodeFact>
-    ),
-    codeIssuer: lazyMap(
-      c => V.codeIssuer(c) !== undefined,
-      c => V.codeIssuer(c),
-      () => full().codeIssuer as ReadonlyMap<string, string>
-    ),
-    profile: lazyMap(
-      T => V.profileOf(T) !== undefined,
-      T => V.profileOf(T),
-      () => full().profile as ReadonlyMap<string, AclContent>
-    ),
-    get setting() {
-      return V.setting()
-    },
-    channels: lazyMap(
-      id => V.channel(id) !== undefined,
-      id => V.channel(id),
-      () => full().channels as ReadonlyMap<string, AclContent>
-    ),
-    overwrites: lazyMap(
-      ch => overwritesOf(ch) !== undefined,
-      overwritesOf,
-      () => full().overwrites as ReadonlyMap<string, ReadonlyMap<string, AclContent>>
-    ),
-    addsTo: lazyMap(
-      T => addsOf(T) !== undefined,
-      addsOf,
-      () => full().addsTo as ReadonlyMap<string, readonly Pend[]>
-    ),
-    consumed: lazySet(consumed, () => full().consumed as ReadonlySet<string>),
-    codeOk: lazySet(
-      c => codeLive(c) && V.codeOk(c),
-      () => full().codeOk as ReadonlySet<string>
-    ),
-    codeDead: lazySet(
-      c => codeLive(c) && V.codeDead(c),
-      () => full().codeDead as ReadonlySet<string>
-    ),
-    from: fromOf(ix),
+  get roles() {
+    return this.one('roles', () =>
+      lazySet(
+        R => this.V.role(R),
+        () => this.full().roles as ReadonlySet<string>
+      )
+    )
+  }
+  get pos() {
+    return this.one('pos', () =>
+      lazyMap(
+        R => this.V.pos(R) !== undefined,
+        R => this.V.pos(R),
+        () => this.full().pos as ReadonlyMap<string, number>
+      )
+    )
+  }
+  get bits() {
+    return this.one('bits', () => {
+      const V = this.V
+      const bitsOf = (R: string) =>
+        R === EVERYONE ? (V.bits(EVERYONE) ?? 0) : V.role(R) ? (V.bits(R) ?? 0) : undefined
+      return lazyMap(
+        R => bitsOf(R) !== undefined,
+        bitsOf,
+        () => this.full().bits as ReadonlyMap<string, number>
+      )
+    })
+  }
+  get holds() {
+    return this.one('holds', () => {
+      const holdsOf = (T: string) => {
+        const h = this.V.holds(T)
+        return h.size ? h : undefined
+      }
+      return lazyMap(
+        T => holdsOf(T) !== undefined,
+        holdsOf,
+        () => this.full().holds as ReadonlyMap<string, ReadonlySet<string>>
+      )
+    })
+  }
+  get devs() {
+    return this.one('devs', () => {
+      const { V, ix } = this
+      const devsOf = (a: string) => {
+        const s = new Set<string>()
+        for (const x of ix.introBy.get(a) ?? EMPTY)
+          if (V.live(x)) for (const v of introduces(ix.ev[x])) if (!V.revoked(v)) s.add(v)
+        return s.size ? s : undefined
+      }
+      return lazyMap(
+        a => devsOf(a) !== undefined,
+        devsOf,
+        () => this.full().devs as ReadonlyMap<string, ReadonlySet<string>>
+      )
+    })
+  }
+  get revoked() {
+    return this.one('revoked', () =>
+      lazySet(
+        v => this.V.revoked(v),
+        () => this.full().revoked as ReadonlySet<string>
+      )
+    )
+  }
+  get codes() {
+    return this.one('codes', () => {
+      const { V, ix } = this
+      const codeOf = (c: string): CodeFact | undefined => {
+        const x = ix.codeEv.get(c)
+        if (x === undefined || !V.inE(x) || !V.codeOk(c) || V.codeDead(c)) return undefined
+        return { id: c, a: ix.ev[x].a, dev: ix.ev[x].dev, k: ix.k(x) }
+      }
+      return lazyMap(
+        c => codeOf(c) !== undefined,
+        codeOf,
+        () => this.full().codes as ReadonlyMap<string, CodeFact>
+      )
+    })
+  }
+  get codeIssuer() {
+    return this.one('codeIssuer', () =>
+      lazyMap(
+        c => this.V.codeIssuer(c) !== undefined,
+        c => this.V.codeIssuer(c),
+        () => this.full().codeIssuer as ReadonlyMap<string, string>
+      )
+    )
+  }
+  get profile() {
+    return this.one('profile', () =>
+      lazyMap(
+        T => this.V.profileOf(T) !== undefined,
+        T => this.V.profileOf(T),
+        () => this.full().profile as ReadonlyMap<string, AclContent>
+      )
+    )
+  }
+  get setting() {
+    return this.V.setting()
+  }
+  get channels() {
+    return this.one('channels', () =>
+      lazyMap(
+        id => this.V.channel(id) !== undefined,
+        id => this.V.channel(id),
+        () => this.full().channels as ReadonlyMap<string, AclContent>
+      )
+    )
+  }
+  get overwrites() {
+    return this.one('overwrites', () => {
+      const of = (ch: string) => this.full().overwrites.get(ch)
+      return lazyMap(
+        ch => of(ch) !== undefined,
+        of,
+        () => this.full().overwrites as ReadonlyMap<string, ReadonlyMap<string, AclContent>>
+      )
+    })
+  }
+  get addsTo() {
+    return this.one('addsTo', () => {
+      const addsOf = (T: string) => {
+        const l = this.V.addsTo(T)
+        return l.length ? l : undefined
+      }
+      return lazyMap(
+        T => addsOf(T) !== undefined,
+        addsOf,
+        () => this.full().addsTo as ReadonlyMap<string, readonly Pend[]>
+      )
+    })
+  }
+  get consumed() {
+    return this.one('consumed', () => {
+      const { V, ix } = this
+      const consumed = (g: string) => {
+        const i = ix.at.get(g)
+        if (i === undefined || !V.inE(i) || ix.ev[i].t !== 'add') return false
+        return V.consumedIdx(i)
+      }
+      return lazySet(consumed, () => this.full().consumed as ReadonlySet<string>)
+    })
+  }
+  private codeLive(c: string) {
+    const x = this.ix.codeEv.get(c)
+    return x !== undefined && this.V.inE(x)
+  }
+  get codeOk() {
+    return this.one('codeOk', () =>
+      lazySet(
+        c => this.codeLive(c) && this.V.codeOk(c),
+        () => this.full().codeOk as ReadonlySet<string>
+      )
+    )
+  }
+  get codeDead() {
+    return this.one('codeDead', () =>
+      lazySet(
+        c => this.codeLive(c) && this.V.codeDead(c),
+        () => this.full().codeDead as ReadonlySet<string>
+      )
+    )
+  }
+  get from() {
+    return fromOf(this.ix)
   }
 }
+const snapFacts = (V: SnapView | SubView): Facts => new SnapFacts(V)
 
-// EvalResult of `fe` after its first `len` events, sharing fe's arrays.
-export function snapResult(fe: FastEval, len: number): EvalResult {
-  const ix = fe.ix
-  const V = new SnapView(ix, fe, len)
-  const at = (id: string) => {
-    const i = ix.at.get(id)
-    return i !== undefined && i < len && fe.inS(i) ? i : -1
+// EvalResult of `fe` after its first `len` events, sharing fe's arrays. Its views, id sets and
+// facts are built on first read: most recorded states are read only for their fork points, pools
+// and statuses, if at all.
+class SnapResult implements EvalResult {
+  constructor(
+    readonly fe: FastEval,
+    readonly len: number
+  ) {}
+  get F() {
+    return this.fe.F
   }
-  const list = (p: (i: number) => boolean) => () =>
-    lruGet(p, () => {
-      const s = new Set<string>()
-      for (const i of fe.order) {
-        if (i >= len) break
-        if (p(i)) s.add(ix.ids[i])
-      }
-      return s
-    })
-  const pX = (i: number) => fe.X[i] === 1
-  const pT = (i: number) => fe.tail[i] === 1
-  const pC = (i: number) => fe.cutOrd[i] >= 0
-  const pE = (i: number) => fe.isEffI(i)
-  const pV = (i: number) => pX(i) || pT(i) || pC(i)
-  const set = (p: (i: number) => boolean) =>
-    lazySet((id: string) => {
-      const i = at(id)
-      return i >= 0 && p(i)
-    }, list(p))
-  const cutAll = () =>
-    lruGet(pC, () => {
-      const m = new Map<string, Rank>()
-      for (const i of fe.order) {
-        if (i >= len) break
-        if (pC(i)) m.set(ix.ids[i], fe.cutRank[i]!)
-      }
-      return m
-    })
-  const idx: StIdx = {
-    ix,
-    X: i => i < len && fe.inS(i) && pX(i),
-    void: i => i < len && fe.inS(i) && pV(i),
-    eff: i => i < len && fe.inS(i) && pE(i),
-    ep: fe.epoch(),
+  get FI() {
+    return this.fe.FI
   }
-  return {
-    facts: snapFacts(V),
-    X: set(pX),
-    tail: set(pT),
-    eff: set(pE),
-    void: set(pV),
-    cut: lazyMap(
+  get RF() {
+    return this.fe.RF
+  }
+  get PC() {
+    return this.fe.PC
+  }
+  get src() {
+    return { fe: this.fe, len: this.len }
+  }
+  private at(id: string) {
+    const i = this.fe.ix.at.get(id)
+    return i !== undefined && i < this.len && this.fe.inS(i) ? i : -1
+  }
+  private set(p: (i: number) => boolean): RSet<string> {
+    const out: RSet<string> = lazySet(
       (id: string) => {
-        const i = at(id)
-        return i >= 0 && pC(i)
+        const i = this.at(id)
+        return i >= 0 && p(i)
+      },
+      () =>
+        lruGet(this.fe.ix, out, () => {
+          const s = new Set<string>()
+          for (const i of this.fe.order) {
+            if (i >= this.len) break
+            if (p(i)) s.add(this.fe.ix.ids[i])
+          }
+          return s
+        })
+    )
+    return out
+  }
+  private pX(i: number) {
+    return this.fe.X[i] === 1
+  }
+  private pT(i: number) {
+    return this.fe.tail[i] === 1
+  }
+  private pC(i: number) {
+    return this.fe.cutOrd[i] >= 0
+  }
+  private pE(i: number) {
+    return this.fe.isEffI(i)
+  }
+  private pV(i: number) {
+    return this.pX(i) || this.pT(i) || this.pC(i)
+  }
+  private m?: {
+    X?: RSet<string>
+    tail?: RSet<string>
+    eff?: RSet<string>
+    void?: RSet<string>
+    cut?: RMap<string, Rank>
+    idx?: StIdx
+  }
+  private get memo() {
+    return (this.m ??= {})
+  }
+  get facts() {
+    return factsInScope(this, () =>
+      lruGet(
+        this.fe.ix,
+        this,
+        () => snapFacts(new SnapView(this.fe.ix, this.fe, this.len)),
+        'facts',
+        FACTS_CAP
+      )
+    )
+  }
+  get X() {
+    return (this.memo.X ??= this.set(i => this.pX(i)))
+  }
+  get tail() {
+    return (this.memo.tail ??= this.set(i => this.pT(i)))
+  }
+  get eff() {
+    return (this.memo.eff ??= this.set(i => this.pE(i)))
+  }
+  get void() {
+    return (this.memo.void ??= this.set(i => this.pV(i)))
+  }
+  get cut(): RMap<string, Rank> {
+    if (this.memo.cut) return this.memo.cut
+    const fe = this.fe
+    const out: RMap<string, Rank> = lazyMap(
+      (id: string) => {
+        const i = this.at(id)
+        return i >= 0 && this.pC(i)
       },
       (id: string) => {
-        const i = at(id)
-        return i >= 0 && pC(i) ? fe.cutRank[i] : undefined
+        const i = this.at(id)
+        return i >= 0 && this.pC(i) ? fe.cutRank[i] : undefined
       },
-      cutAll
-    ),
-    F: fe.F,
-    FI: fe.FI,
-    RF: fe.RF,
-    PC: fe.PC,
-    idx,
-    src: { fe, len },
+      () =>
+        lruGet(fe.ix, out, () => {
+          const m = new Map<string, Rank>()
+          for (const i of fe.order) {
+            if (i >= this.len) break
+            if (this.pC(i)) m.set(fe.ix.ids[i], fe.cutRank[i]!)
+          }
+          return m
+        })
+    )
+    return (this.memo.cut ??= out)
+  }
+  get idx(): StIdx {
+    return (this.memo.idx ??= new SnapIdx(this))
+  }
+  // The statuses of index i in this state (the head-path snapshot's arrays, read below len).
+  has(i: number) {
+    return i < this.len && this.fe.inS(i)
+  }
+  isX(i: number) {
+    return this.has(i) && this.pX(i)
+  }
+  isVoid(i: number) {
+    return this.has(i) && this.pV(i)
+  }
+  isEff(i: number) {
+    return this.has(i) && this.pE(i)
   }
 }
+class SnapIdx implements StIdx {
+  constructor(private r: SnapResult) {}
+  get ix() {
+    return this.r.fe.ix
+  }
+  get ep() {
+    return this.r.fe.epoch()
+  }
+  X(i: number) {
+    return this.r.isX(i)
+  }
+  void(i: number) {
+    return this.r.isVoid(i)
+  }
+  eff(i: number) {
+    return this.r.isEff(i)
+  }
+}
+export const snapResult = (fe: FastEval, len: number): EvalResult => new SnapResult(fe, len)
 
 // Packed statuses of a downset, in chunked bitsets: chunk k holds indices [k*CB, (k+1)*CB). A
 // state built from another shares the chunks it doesn't change, so the recorded states of a
@@ -504,59 +699,125 @@ export function* ordsIn(o: Ords) {
   }
 }
 
-// An EvalResult over packed statuses: the id sets are built only when enumerated (tests, the
-// persisted form), and its facts are keyed views.
-export function packedResult(ix: Ix, p: Packed): EvalResult {
-  const V = new SubView(ix, p.set, p.X, p.V, p.E, p.len)
-  const at = (id: string) => {
-    const i = ix.at.get(id)
+// An EvalResult over packed statuses, built on first read: the id sets only when enumerated
+// (tests, the persisted form), and its facts as keyed views.
+class PackedResult implements EvalResult {
+  constructor(
+    readonly ix: Ix,
+    readonly pk: Packed
+  ) {}
+  get F() {
+    return this.pk.F
+  }
+  get FI() {
+    return this.pk.FI
+  }
+  get RF() {
+    return this.pk.RF
+  }
+  get PC() {
+    return this.pk.PC
+  }
+  private at(id: string) {
+    const i = this.ix.at.get(id)
+    const p = this.pk
     return i !== undefined && i < p.len && bitOf(p.set, i) ? i : -1
   }
-  const ids = (b: Bits) => () => {
-    const s = new Set<string>()
-    for (const i of bitsIn(b)) if (i < p.len && bitOf(p.set, i)) s.add(ix.ids[i])
-    return s
-  }
-  const set = (b: Bits) =>
-    lazySet((id: string) => {
-      const i = at(id)
-      return i >= 0 && bitOf(b, i)
-    }, ids(b))
-  let kept = p.cut
-  const cuts = () => (kept ??= p.recut!())
-  const idx: StIdx = {
-    ix,
-    X: i => bitOf(p.X, i),
-    void: i => bitOf(p.V, i),
-    eff: i => bitOf(p.E, i),
-    ep: { key: p.E, eff: i => bitOf(p.E, i) },
-  }
-  return {
-    facts: snapFacts(V),
-    X: set(p.X),
-    tail: set(p.T),
-    eff: set(p.E),
-    void: set(p.V),
-    cut: lazyMap(
+  private set(b: Bits): RSet<string> {
+    const p = this.pk
+    return lazySet(
       (id: string) => {
-        const i = at(id)
-        return i >= 0 && ordOf(cuts(), i) > 0
+        const i = this.at(id)
+        return i >= 0 && bitOf(b, i)
+      },
+      () => {
+        const s = new Set<string>()
+        for (const i of bitsIn(b)) if (i < p.len && bitOf(p.set, i)) s.add(this.ix.ids[i])
+        return s
+      }
+    )
+  }
+  private cuts() {
+    const p = this.pk
+    return (p.cut ??= p.recut!())
+  }
+  private m?: {
+    X?: RSet<string>
+    tail?: RSet<string>
+    eff?: RSet<string>
+    void?: RSet<string>
+    cut?: RMap<string, Rank>
+    idx?: StIdx
+  }
+  private get memo() {
+    return (this.m ??= {})
+  }
+  get facts() {
+    const p = this.pk
+    return factsInScope(this, () =>
+      lruGet(
+        this.ix,
+        this,
+        () => snapFacts(new SubView(this.ix, p.set, p.X, p.V, p.E, p.len)),
+        'facts',
+        FACTS_CAP
+      )
+    )
+  }
+  get X() {
+    return (this.memo.X ??= this.set(this.pk.X))
+  }
+  get tail() {
+    return (this.memo.tail ??= this.set(this.pk.T))
+  }
+  get eff() {
+    return (this.memo.eff ??= this.set(this.pk.E))
+  }
+  get void() {
+    return (this.memo.void ??= this.set(this.pk.V))
+  }
+  get cut(): RMap<string, Rank> {
+    return (this.memo.cut ??= lazyMap(
+      (id: string) => {
+        const i = this.at(id)
+        return i >= 0 && ordOf(this.cuts(), i) > 0
       },
       (id: string) => {
-        const i = at(id)
-        const o = i >= 0 ? ordOf(cuts(), i) : 0
+        const i = this.at(id)
+        const o = i >= 0 ? ordOf(this.cuts(), i) : 0
         return o ? ordRank(o) : undefined
       },
-      () => new Map(Array.from(ordsIn(cuts()), ([i, o]) => [ix.ids[i], ordRank(o)] as const))
-    ),
-    F: p.F,
-    FI: p.FI,
-    RF: p.RF,
-    PC: p.PC,
-    idx,
-    pk: p,
+      () =>
+        new Map(Array.from(ordsIn(this.cuts()), ([i, o]) => [this.ix.ids[i], ordRank(o)] as const))
+    ))
+  }
+  get idx(): StIdx {
+    return (this.memo.idx ??= new PackedIdx(this.ix, this.pk))
   }
 }
+// A packed state's statuses by index; it is its own epoch key (its effective denies).
+class PackedIdx implements StIdx {
+  constructor(
+    readonly ix: Ix,
+    private p: Packed
+  ) {}
+  get ep() {
+    return this
+  }
+  get key() {
+    return this.p.E
+  }
+  X(i: number) {
+    return bitOf(this.p.X, i)
+  }
+  void(i: number) {
+    return bitOf(this.p.V, i)
+  }
+  eff(i: number) {
+    return bitOf(this.p.E, i)
+  }
+}
+export const packedResult = (ix: Ix, p: Packed): EvalResult => new PackedResult(ix, p)
 
 const words = (n: number) => new Uint32Array((n + 31) >>> 5)
 const setBit = (b: Uint32Array, x: number) => {

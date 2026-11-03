@@ -26,10 +26,21 @@ export const addS = <K, V>(m: Map<K, Set<V>>, k: K, v: V) => {
 }
 export const EMPTY: readonly number[] = []
 
-// The writes of one bit of one role (setters and clears) in index order, with coverage flags.
+// The writes of one bit of one role (setters and clears) in index order, with their chains.
 export interface BitW {
   w: number[]
   cov: boolean[]
+  ch?: WChains
+}
+
+// A register's writes as causal chains (§5.4 A): per (author, device), split by the chain cover;
+// `of` gives each write's chain. Extended as the writes grow.
+export interface WChains {
+  k: number
+  runs: number[][]
+  byKey: Map<string, number[][]>
+  id: Map<number[], number>
+  of: Map<number, number>
 }
 
 export const popcount = (w: number) => {
@@ -61,6 +72,14 @@ export function firstTrue(lo: number, hi: number, p: (j: number) => boolean): nu
   }
   return lo
 }
+
+const newChains = (): WChains => ({
+  k: 0,
+  runs: [],
+  byKey: new Map(),
+  id: new Map(),
+  of: new Map(),
+})
 
 export class Ix {
   n = 0
@@ -328,9 +347,36 @@ export class Ix {
     if (!c) this.cov.set(R, (c = []))
     return this.extendCov(this.posW.get(R) ?? EMPTY, c)
   }
-  // The same flags over the writes of one bit of a role (§5.4 A).
+  // The same flags over the writes of one bit of a role.
   bitCov(l: BitW): boolean[] {
     return this.extendCov(l.w, l.cov)
+  }
+  // The chains of a register's writes `ws` (§5.4 A), extended lazily.
+  chainsOf(ws: readonly number[], c: WChains): WChains {
+    for (; c.k < ws.length; c.k++) {
+      const x = ws[c.k]
+      const key = `${this.ev[x].a}\u0001${this.ev[x].dev}`
+      let mine = c.byKey.get(key)
+      if (!mine) c.byKey.set(key, (mine = []))
+      const n = mine.length
+      chainCover(this, x, mine)
+      if (mine.length > n) {
+        c.id.set(mine[n], c.runs.length)
+        c.runs.push(mine[n])
+      }
+      const run = mine.length > n ? mine[n] : mine.find(r => r[r.length - 1] === x)!
+      c.of.set(x, c.id.get(run)!)
+    }
+    return c
+  }
+  bitChains(l: BitW): WChains {
+    return this.chainsOf(l.w, (l.ch ??= newChains()))
+  }
+  private posCh = new Map<string, WChains>()
+  posChains(R: string): WChains {
+    let c = this.posCh.get(R)
+    if (!c) this.posCh.set(R, (c = newChains()))
+    return this.chainsOf(this.posW.get(R) ?? EMPTY, c)
   }
   private extendCov(ws: readonly number[], c: boolean[]): boolean[] {
     for (let k = c.length; k < ws.length; k++) {

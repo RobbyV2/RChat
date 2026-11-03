@@ -1,7 +1,20 @@
-import { describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { genCase } from './acl_model/gen'
 import type { EvalResult } from '../p2p/acl/facts'
 import { P, rkey } from '../p2p/acl/rules'
-import { applySummary, emptySummary, IMPL, KEEP, type SumDelta } from '../p2p/acl_room'
+import {
+  AclRoom,
+  applySummary,
+  diffSummary,
+  emptySummary,
+  IMPL,
+  KEEP,
+  toStored,
+  type MemberSum,
+  type Summary,
+  type SumDelta,
+} from '../p2p/acl_room'
+import { testBinds, toProd, useModelLimits, useProductionLimits } from './p2p_acl_world'
 import { buildEvent2 } from '../p2p/event'
 import { signRevocation2 } from '../p2p/event'
 import { HOLD_MS } from '../p2p/acl_room'
@@ -391,4 +404,58 @@ describe('visibility through the host (spec 3.5, 3.6)', () => {
     const b = w.who('B').a
     expect(w.room.history(b, [before.id, after.id, react.id])).toEqual([false, true, false])
   })
+})
+
+describe('the page’s summary (incremental)', () => {
+  beforeAll(useModelLimits)
+  afterAll(useProductionLimits)
+  // Members in key order: the kept summary moves an entry it works out again to the end.
+  const norm = (x: Summary) =>
+    JSON.stringify(
+      toStored({ ...x, members: Object.fromEntries(Object.entries(x.members).sort()) })
+    )
+  test('a delta passes over the entries the kept summary shares, without comparing them value by value', () => {
+    const shared = {
+      toJSON() {
+        throw new Error('compared value by value')
+      },
+    } as unknown as MemberSum
+    const fresh: MemberSum = {
+      m: 'join',
+      rank: [1, 'r'],
+      perms: 0,
+      roles: [],
+      devs: [],
+      profile: null,
+    }
+    const a = { ...emptySummary(), members: { x: shared } }
+    const b = { ...emptySummary(), members: { x: shared, y: fresh } }
+    expect(diffSummary(a, b)).toEqual({ put: { members: { y: fresh } } })
+    // and a room's deltas share what no event touched
+    const w = ServerWorld.create('O')
+    w.join('O', 'Y')
+    const before = w.room.summary()
+    w.ok('O', 'mark')
+    expect(w.room.summary().members[w.who('Y').a]).toBe(before.members[w.who('Y').a])
+  })
+  test('the summary kept between events equals one worked out from scratch after every event of the model universes', () => {
+    let events = 0
+    for (const gen of [
+      ...Array.from({ length: 300 }, (_, i) => () => genCase(i + 1).w),
+      ...Array.from(
+        { length: 100 },
+        (_, i) => () => genCase(1_000_001 + i, { equivocation: true, maxAdv: 14 }).w
+      ),
+    ]) {
+      const mw = gen()
+      const room = new AclRoom('t', { binds: testBinds })
+      for (const e of mw.all) {
+        if (room.r.receive(toProd(e, mw.ref)).s !== 'A') continue
+        events++
+        const kept = norm(room.summary())
+        expect(kept).toBe(norm(room.freshSummary()))
+      }
+    }
+    expect(events).toBeGreaterThan(10_000)
+  }, 600_000)
 })

@@ -8,7 +8,9 @@
 // the `tree` universe: every content event admitted (decideContent in St(m), which the bounded
 // content-position cache keeps), then visibility per rendered message (windows of 50 consecutive
 // messages, first render).
-import { loadavg } from 'node:os'
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { loadavg, tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   AclReplica,
   decideContent,
@@ -17,6 +19,9 @@ import {
   type Verdict,
 } from '../app/lib/p2p/acl/admit'
 import { AclState } from '../app/lib/p2p/acl/cache'
+import { Hdrs } from '../app/lib/p2p/acl/equivocation'
+import { FastEval } from '../app/lib/p2p/acl/eval'
+import { Ix } from '../app/lib/p2p/acl/reach'
 import { ContentView, type ContentEv } from '../app/lib/p2p/acl/visibility'
 import {
   BAN,
@@ -124,7 +129,11 @@ class BenchWorld {
       const i = ix.at.get(id)!
       return ap.some(p => p === id || ix.has(ix.at.get(p)!, i))
     }
-    let ap = o.ap ? [...o.ap] : this.heads()
+    let ap = o.ap
+      ? [...o.ap]
+      : this.clientRule
+        ? this.defaultParents(dev)
+        : this.capped(dev, this.heads())
     if (o.ap && (o.keepOwn ?? (o.seq === undefined && o.aprev === undefined))) {
       const own = this.latestOwn(dev)
       if (own && !inC(ap, own.id)) ap.push(own.id)
@@ -166,6 +175,60 @@ class BenchWorld {
       if (ip) e.iprev = ip
     }
     return e
+  }
+  // At most LIM.ap parents (§1.2): the most recently admitted, with the device's own latest event
+  // in their closure.
+  private capped(dev: string, hs: string[]): string[] {
+    const ix = this.ref.acl.ix
+    let ap = hs
+    if (ap.length > LIM.ap)
+      ap = [...ap].sort((x, y) => ix.at.get(y)! - ix.at.get(x)!).slice(0, LIM.ap)
+    const own = this.latestOwn(dev)
+    if (own && !ap.some(p => p === own.id || ix.has(ix.at.get(p)!, ix.at.get(own.id)!))) {
+      if (ap.length >= LIM.ap) ap[ap.length - 1] = own.id
+      else ap.push(own.id)
+    }
+    return ap
+  }
+  // The client rule (§1.2), for the measured honest events: the maximal events that are no
+  // candidate, X or Tail event (upgrades excepted), walking down from excluded heads.
+  clientRule = false
+  defaultParents(dev: string): string[] {
+    const st = this.ref.state()
+    const fe = this.ref.acl.evaluation()
+    const ix = this.ref.acl.ix
+    const forked =
+      st.F.size > 0 ||
+      [...st.FI.values()].some(d => d < Infinity) ||
+      st.RF.size > 0 ||
+      st.PC.size > 0
+    const bad = (id: string) => {
+      const i = ix.at.get(id)!
+      return (
+        ix.ev[i].t !== 'upgrade' &&
+        (fe.X[i] === 1 ||
+          fe.tail[i] === 1 ||
+          (forked && fe.candidateIn(i, st.F, st.FI, st.RF, st.PC)))
+      )
+    }
+    const hs = this.heads()
+    if (!hs.some(bad)) return this.capped(dev, hs)
+    const out = new Set<string>()
+    const seen = new Set<string>()
+    const todo = [...hs]
+    while (todo.length) {
+      const x = todo.pop()!
+      if (seen.has(x)) continue
+      seen.add(x)
+      if (!bad(x)) out.add(x)
+      else for (const q of this.ref.ev(x).ap) todo.push(q)
+    }
+    const l = [...out]
+    const at = (id: string) => ix.at.get(id)!
+    return this.capped(
+      dev,
+      l.filter(x => !l.some(y => y !== x && ix.has(at(y), at(x))))
+    )
   }
   act(dev: string, t: string, c: Obj = {}, o: Opts = {}): { e: AclEv; v: Verdict } {
     const e = this.build(dev, t, c, o)
@@ -622,7 +685,25 @@ const growth: Shape = (w, N, rng) => {
         )
           post++
       }
-  while (w.ref.order.length < N - 2) ok(`${rng.pick(honest)}1`, 'mark')
+  // revision 7 (client rule, §4.1): honest members cite only the heads of the honest events
+  const isRem = new Set(rem)
+  const hh = new Set(w.ref.order.filter(id => !isRem.has(w.ref.ev(id).a)))
+  for (const id of [...hh]) for (const q of w.ref.ev(id).ap) hh.delete(q)
+  while (w.ref.order.length < N - 2) {
+    const x = rng.pick(honest)
+    const own = w.latestOwn(`${x}1`)?.id
+    const recent = [...hh].slice(-LIM.ap)
+    const ix = w.ref.acl.ix
+    const ap =
+      own && !recent.some(q => q === own || ix.has(ix.at.get(q)!, ix.at.get(own)!))
+        ? [...recent.slice(1), own]
+        : recent
+    const e = ok(`${x}1`, 'mark', {}, { ap })
+    if (e) {
+      for (const q of e.ap) hh.delete(q)
+      hh.add(e.id)
+    }
+  }
   const t = rng.pick(honest)
   probe = { dev: 'O2', to: t, ap: [ack.id] }
   return {
@@ -741,18 +822,21 @@ const collude: Shape = (w, N, rng) => {
  * all (no class). A path from the top down through A or B at each layer reaches Z's assignments in each of the 2^6
  * worlds ALL minus C, C ⊆ {γ1..γ6}. Lattices fill 85% of the events; two filler members acknowledge the promotions.
  */
+const benchClasses = () => Number(process.env.BENCH_CLASSES || LIM.classes)
 const exact6: Shape = (w, N) => {
   const ok = okF(w)
+  const C = benchClasses()
+  const CS = Array.from({ length: C }, (_, c) => c + 1)
   w.genesis('O1', ['O'], 0)
   ok('O2', 'device_add')
   ok('O3', 'device_add') // idle: the backdated deny's author
-  const PR = ['O1', 'O2', 'O4', 'O5', 'O6', 'O7'] // class c's promoter device
+  const PR = ['O1', 'O2', 'O4', 'O5', 'O6', 'O7', 'O8', 'O9'].slice(0, Math.max(2, C)) // class c's promoter device
   for (const d of PR.slice(2)) ok(d, 'device_add')
   const MOD = ok('O1', 'role_create', { pos: 20, bits: KICK | BAN })!.id
   const HIGH = ok('O1', 'role_create', { pos: 30, bits: 0 })!.id
   const GV = ok('O1', 'role_create', { pos: 19, bits: ROLES })!.id
   const Rs = Array.from(
-    { length: 8 },
+    { length: C + 2 },
     (_, c) => ok('O1', 'role_create', { pos: 18 - c, bits: ROLES })!.id
   )
   const member = (x: string) => {
@@ -772,16 +856,12 @@ const exact6: Shape = (w, N) => {
   ok('O1', 'assign', { to: 'v7x', role: GV }, { ts: tick() })
   // every lattice member joins first, on the heads (one evaluation for all their recorded states); everything after P0
   // cites chosen parents
-  const per = 59,
+  const per = 9 * C + 5,
     lattices = Math.max(1, Math.floor((N * 0.85) / per))
   const joinsOf: Map<string, string>[] = []
   for (let L = 0; L < lattices; L++) {
     const joins = new Map<string, string>()
-    for (const x of [
-      `z${L}x`,
-      ...[1, 2, 3, 4, 5, 6].flatMap(c => [`a${L}c${c}x`, `b${L}c${c}x`]),
-      `y${L}x`,
-    ])
+    for (const x of [`z${L}x`, ...CS.flatMap(c => [`a${L}c${c}x`, `b${L}c${c}x`]), `y${L}x`])
       joins.set(x, member(x))
     joinsOf.push(joins)
   }
@@ -811,8 +891,8 @@ const exact6: Shape = (w, N) => {
     ])
     const last = new Map<string, string>()
     let layer = [z]
-    for (let c = 1; c <= 7; c++) {
-      const next = c <= 6 ? [nm(c, 'a'), nm(c, 'b')] : [`y${L}x`]
+    for (let c = 1; c <= C + 1; c++) {
+      const next = c <= C ? [nm(c, 'a'), nm(c, 'b')] : [`y${L}x`]
       for (const m of layer)
         for (const T of next) {
           const ap = last.has(m)
@@ -829,7 +909,7 @@ const exact6: Shape = (w, N) => {
           if (!got.has(T)) got.set(T, [])
           got.get(T)!.push(g)
         }
-      if (c <= 6) promos.push({ who: nm(c, 'a'), join: joins.get(nm(c, 'a'))!, c })
+      if (c <= C) promos.push({ who: nm(c, 'a'), join: joins.get(nm(c, 'a'))!, c })
       layer = next
     }
     made++
@@ -837,7 +917,7 @@ const exact6: Shape = (w, N) => {
   // the kicks from P0 (Q's stratum), then the promotions citing every kick but Vc's: class c's promotions are one
   // owner device's chain, acknowledged by one member that cites nothing else (so no promotion has γc in its past)
   const kicks = V.map((v, i) => ok(`Q${i + 1}`, 'kick', { to: v }, { ap: P0, ts: tick() })!.id)
-  const nP = new Array(6).fill(0)
+  const nP = new Array(PR.length).fill(0)
   let fill = 0
   const fm = (c: number) => {
     const f = w.latestOwn(`${FL[c - 1]}1`)!.id,
@@ -862,7 +942,322 @@ const exact6: Shape = (w, N) => {
     if (ok(d, 'mark', {}, { ap: [w.latestOwn(d)!.id, o], ts: tick() })) fill++
   }
   probe = { dev: 'O3', to: 'Hx', ap: P0 }
-  return { lattices: made, promotions: promos.length, fillerMarks: fill }
+  return { lattices: made, promotions: promos.length, fillerMarks: fill, benchClasses: C }
+}
+
+/**
+ * Revision 6 (r5 review I3 (a)): a bit storm from two toggle lanes that never see each other. Moderators Ma and Mb
+ * toggle Invite on role R (300 holders); each lane cites only its own chain and its acknowledger's latest mark, so
+ * W3(a) alone binds. Holders post rank-reading bans on the heads; Q kicks Ma and Mb from before the storm. Only the
+ * per-chain read of §5.4 A bounds it.
+ */
+const bitlanes: Shape = (w, N, rng) => {
+  const ok = okF(w)
+  w.genesis('O1', ['O'], 0)
+  ok('O2', 'device_add')
+  ok('O3', 'device_add') // idle: the backdated deny's author
+  const R = ok('O1', 'role_create', { pos: 1, bits: KICK | BAN | INVITE })!.id
+  const MV = ok('O1', 'role_create', { pos: 10, bits: ROLES | INVITE })!.id
+  const QV = ok('O1', 'role_create', { pos: 20, bits: KICK | BAN })!.id
+  for (const x of ['Ma', 'Mb', 'Ca', 'Cb', 'Q']) {
+    ok('O1', 'add', { to: x }, { ts: tick(2) })
+    ok(`${x}1`, 'join')
+    if (x[0] !== 'C') ok('O1', 'assign', { to: x, role: x === 'Q' ? QV : MV }, { ts: tick(2) })
+  }
+  const P0 = w.heads()
+  const holders: string[] = []
+  for (let i = 0; i < 300; i++) {
+    const id = `h${i}x`
+    ok('O1', 'add', { to: id }, { ts: tick(2) })
+    if (ok(`${id}1`, 'join') && ok('O1', 'assign', { to: id, role: R }, { ts: tick(2) }))
+      holders.push(id)
+  }
+  const H1 = w.heads()
+  const lane = [
+    { m: 'Ma1', c: 'Ca1', inv: true },
+    { m: 'Mb1', c: 'Cb1', inv: true },
+  ]
+  let toggles = 0
+  let ops = 0
+  let k = 0
+  while (w.ref.order.length < N - 10) {
+    const L = lane[k % 2]
+    if (k++ % 6 < 2) {
+      const own = w.latestOwn(L.m)?.id
+      const ack = w.latestOwn(L.c)?.id
+      const ap = [...new Set([...(own ? [own] : []), ...(ack ? [ack] : []), ...H1])].slice(0, 10)
+      if (ok(L.m, 'role_bits', { role: R, bit: INVITE, on: !L.inv }, { ap })) {
+        L.inv = !L.inv
+        toggles++
+      }
+      ok(
+        L.c,
+        'mark',
+        {},
+        { ap: [...new Set([w.latestOwn(L.c)?.id ?? H1[0], w.latestOwn(L.m)!.id])] }
+      )
+    } else if (ok(`${rng.pick(holders)}1`, 'ban', { to: `s${rng.int(1e9)}` })) ops++
+  }
+  ok('Q1', 'kick', { to: 'Ma' }, { ap: P0, ts: tick() })
+  ok('Q1', 'kick', { to: 'Mb' }, { ap: P0, ts: tick() })
+  probe = { dev: 'O3', to: 'Q', ap: P0 }
+  return { holders: holders.length, toggles, holderOps: ops }
+}
+
+/**
+ * Revision 6 (r5 review C1 (b)): one member device's same-seq siblings at one position until the universe has N
+ * events; honest members don't cite them (orphans). §5.2 step 2 counts per-device concurrency by popcount.
+ */
+const siblings: Shape = (w, N) => {
+  const ok = okF(w)
+  w.genesis('O1', ['O'], INVITE)
+  ok('O2', 'device_add')
+  ok('O3', 'device_add') // idle: the backdated deny's author
+  ok('O1', 'add', { to: 'A' })
+  ok('A1', 'join')
+  for (let i = 0; i < 50; i++) {
+    ok('O1', 'add', { to: `h${i}x` })
+    ok(`h${i}x1`, 'join')
+  }
+  ok('A2', 'device_add')
+  const m0 = ok('O1', 'mark')!
+  const last = w.latestOwn('A2')!
+  let n = 0
+  while (w.ref.order.length < N - 2) {
+    if (!ok('A2', 'mark', {}, { ap: [m0.id], seq: last.seq + 1, aprev: last.id, ts: m0.ts + 1 }))
+      break
+    n++
+  }
+  probe = { dev: 'O3', to: 'h0x', ap: [m0.id] }
+  return { siblings: n }
+}
+
+/**
+ * Revision 6 (r5 review I3 (b)): exact6 with multi-cause root supports and a deep ancestor chain (§5.4 C's worst case):
+ * Z's ManageRoles role R0 comes from the removed V7 through a chain of D grants, and Z also holds C rank roles, P_c
+ * granted by V_c, so every test of Z's ops consults C + 1 supports and neither memo of §5.4 C saves a test.
+ */
+const exact6m: Shape = (w, N) => {
+  const ok = okF(w)
+  const D = 4
+  const C = benchClasses()
+  const CS = Array.from({ length: C }, (_, c) => c + 1)
+  w.genesis('O1', ['O'], 0)
+  ok('O2', 'device_add')
+  ok('O3', 'device_add') // idle: the backdated deny's author
+  const PR = ['O1', 'O2', 'O4', 'O5', 'O6', 'O7', 'O8', 'O9'].slice(0, Math.max(2, C))
+  for (const d of PR.slice(2)) ok(d, 'device_add')
+  const MOD = ok('O1', 'role_create', { pos: 40 + D, bits: KICK | BAN })!.id
+  const HIGH = ok('O1', 'role_create', { pos: 50 + D, bits: 0 })!.id
+  const GV = ok('O1', 'role_create', { pos: 30 + D, bits: ROLES })!.id
+  const Cs = Array.from(
+    { length: D },
+    (_, j) => ok('O1', 'role_create', { pos: 29 + D - j, bits: ROLES })!.id
+  )
+  const Ps = Array.from(
+    { length: C },
+    // the model's 22 + c/10; production positions are integers (between R0 and the chain roles)
+    (_, c) => ok('O1', 'role_create', { pos: 22 + c, bits: 0 })!.id
+  )
+  const Rs = Array.from(
+    { length: C + 2 },
+    (_, c) => ok('O1', 'role_create', { pos: 18 - c, bits: ROLES })!.id
+  )
+  const member = (x: string) => {
+    ok('O1', 'add', { to: x }, { ts: tick() })
+    return ok(`${x}1`, 'join', {}, { ts: tick() })!.id
+  }
+  member('Q')
+  ok('O1', 'assign', { to: 'Q', role: MOD }, { ts: tick() })
+  for (let k = 2; k <= 7; k++) {
+    ok(`Q${k}`, 'device_add', {}, { ts: tick() })
+    ok('O1', 'mark', {}, { ts: tick() })
+  }
+  const V = ['v1x', 'v2x', 'v3x', 'v4x', 'v5x', 'v6x', 'v7x']
+  const FL = PR.map((_, c) => `f${c + 1}x`)
+  for (const x of [...V, ...FL, 'Hx']) member(x)
+  for (const v of V) ok('O1', 'assign', { to: v, role: GV }, { ts: tick() })
+  const per = 9 * C + 5 + C + 3 * D,
+    lattices = Math.max(1, Math.floor((N * 0.85) / per))
+  const joinsOf: Map<string, string>[] = []
+  for (let L = 0; L < lattices; L++) {
+    const joins = new Map<string, string>()
+    const names = [`z${L}x`, ...CS.flatMap(c => [`a${L}c${c}x`, `b${L}c${c}x`]), `y${L}x`]
+    for (let j = 1; j <= D; j++) names.push(`w${L}d${j}x`)
+    for (const x of names) joins.set(x, member(x))
+    joinsOf.push(joins)
+  }
+  const P0 = w.heads()
+  const promos: { who: string; join: string; c: number }[] = []
+  let made = 0
+  // each grantor's assignment cites an event of another identity that has its previous one in its past (W3(b))
+  const vLast = new Map<string, string>()
+  const vAck = new Map<string, string>()
+  const vAssign = (v: string, T: string, role: string, extra: string[]) => {
+    const prior = vLast.has(v) ? [vLast.get(v)!, ...(vAck.has(v) ? [vAck.get(v)!] : [])] : P0
+    const r = w.act(`${v}1`, 'assign', { to: T, role }, { ap: [...prior, ...extra], ts: tick() })
+    if (r.v.s !== 'A') throw new Error(`exact6m: ${v} assign ${JSON.stringify(r.v)}`)
+    vLast.set(v, r.e.id)
+    return r.e.id
+  }
+  for (let L = 0; L < lattices; L++) {
+    const nm = (c: number, s: string) => `${s}${L}c${c}x`
+    const z = `z${L}x`
+    const joins = joinsOf[L]
+    let prev = vAssign('v7x', `w${L}d1x`, Cs[0], [joins.get(`w${L}d1x`)!])
+    for (let j = 1; j < D; j++) {
+      const T = `w${L}d${j + 1}x`
+      const from = `w${L}d${j}x`
+      prev = ok(
+        `${from}1`,
+        'assign',
+        { to: T, role: Cs[j] },
+        { ap: [prev, joins.get(from)!, joins.get(T)!], ts: tick() }
+      )!.id
+      if (j === 1) vAck.set('v7x', prev)
+    }
+    const r0 = ok(
+      `w${L}d${D}x1`,
+      'assign',
+      { to: z, role: Rs[0] },
+      { ap: [prev, joins.get(`w${L}d${D}x`)!, joins.get(z)!], ts: tick() }
+    )!.id
+    const pz = CS.map(c => vAssign(V[c - 1], z, Ps[c - 1], [joins.get(z)!]))
+    const got = new Map<string, string[]>([[z, [r0, ...pz]]])
+    const last = new Map<string, string>()
+    let layer = [z]
+    for (let c = 1; c <= C + 1; c++) {
+      const next = c <= C ? [nm(c, 'a'), nm(c, 'b')] : [`y${L}x`]
+      for (const m of layer)
+        for (const T of next) {
+          const ap = last.has(m) ? [last.get(m)!] : [...got.get(m)!, joins.get(m)!]
+          const g = ok(
+            `${m}1`,
+            'assign',
+            { to: T, role: Rs[c] },
+            { ap: [...ap, joins.get(T)!], ts: tick() }
+          )!.id
+          if (m === z && !last.has(m)) for (const v of V.slice(0, C)) vAck.set(v, g)
+          last.set(m, g)
+          if (!got.has(T)) got.set(T, [])
+          got.get(T)!.push(g)
+        }
+      if (c <= C) promos.push({ who: nm(c, 'a'), join: joins.get(nm(c, 'a'))!, c })
+      layer = next
+    }
+    made++
+  }
+  const kicks = V.map((v, i) => ok(`Q${i + 1}`, 'kick', { to: v }, { ap: P0, ts: tick() })!.id)
+  const nP = new Array(PR.length).fill(0)
+  let fill = 0
+  const fm = (c: number) => {
+    const f = w.latestOwn(`${FL[c - 1]}1`)!.id,
+      o = w.latestOwn(PR[c - 1])!.id
+    if (ok(`${FL[c - 1]}1`, 'mark', {}, { ap: [f, o], ts: tick() })) fill++
+  }
+  for (const p of promos) {
+    const d = PR[p.c - 1],
+      f = w.latestOwn(`${FL[p.c - 1]}1`)!.id
+    ok(
+      d,
+      'assign',
+      { to: p.who, role: HIGH },
+      { ap: [p.join, f, ...kicks.filter((_, i) => i !== p.c - 1)], ts: tick() }
+    )
+    if (++nP[p.c - 1] % 16 === 0) fm(p.c)
+  }
+  for (let k = 0; w.ref.order.length < N - 2; k++) {
+    const d = `${FL[k % 2]}1`,
+      o = w.latestOwn(`${FL[(k + 1) % 2]}1`)!.id
+    if (ok(d, 'mark', {}, { ap: [w.latestOwn(d)!.id, o], ts: tick() })) fill++
+  }
+  probe = { dev: 'O3', to: 'Hx', ap: P0 }
+  return {
+    lattices: made,
+    chainDepth: D,
+    promotions: promos.length,
+    fillerMarks: fill,
+    benchClasses: C,
+  }
+}
+
+/**
+ * Revision 7c (r7 re-review I1 (a)): a kicked member X posts concurrent device_adds over one iprev, positioned before
+ * its kick, each followed by 23 marks on its fresh device; all admitted and in X, held. §5.2 step 2's linear branch
+ * stops once the lower bound passes poolU.
+ */
+const idbench: Shape = (w, N) => {
+  const ok = okF(w)
+  w.genesis('O1', ['O'], INVITE)
+  ok('O2', 'device_add')
+  ok('O3', 'device_add') // idle: the backdated deny's author
+  ok('O1', 'add', { to: 'X' })
+  ok('X1', 'join')
+  for (let i = 0; i < 50; i++) {
+    ok('O1', 'add', { to: `h${i}x` })
+    ok(`h${i}x1`, 'join')
+  }
+  const P = ok('O1', 'mark')!
+  ok('O1', 'kick', { to: 'X' })
+  for (let i = 0; i < 3; i++) ok('O1', 'mark')
+  let n = 0
+  while (w.ref.order.length <= N - LIM.totU - 2) {
+    let t = P.ts + 1
+    const d = ok(`X${10 + n}`, 'device_add', {}, { ap: [P.id], ts: t })
+    if (!d) break
+    let prev = d.id
+    for (let j = 0; j < LIM.totU - 1; j++) {
+      const m = ok(`X${10 + n}`, 'mark', {}, { ap: [prev], ts: (t += 2) })
+      if (!m) break
+      prev = m.id
+    }
+    n++
+  }
+  probe = { dev: 'O3', to: 'h0x', ap: [P.id] }
+  return { introductions: n }
+}
+
+/**
+ * Revision 7c (r7 re-review I1 (b)): an honest server of N held events and a kicked member's sibling introductions
+ * (24 counted events each), dropped with their headers: BENCH_HDRS headers (default 48,000). The full evaluation is
+ * of the held set with the headers, read only against their own identity's events (§5.2 step 1); the honest event and
+ * the backdated deny are not measured here.
+ */
+let benchGhosts: string[] | undefined
+const hdrbench: Shape = (w, N) => {
+  const ok = okF(w)
+  const H = Number(process.env.BENCH_HDRS ?? 48000)
+  w.genesis('O1', ['O'], INVITE)
+  ok('O2', 'device_add')
+  ok('O3', 'device_add')
+  ok('O1', 'add', { to: 'X' })
+  ok('X1', 'join')
+  for (let i = 0; i < 50; i++) {
+    ok('O1', 'add', { to: `h${i}x` })
+    ok(`h${i}x1`, 'join')
+  }
+  const P = ok('O1', 'mark')!
+  ok('O1', 'kick', { to: 'X' })
+  for (let i = 0; w.ref.order.length < N; i++) ok(`h${i % 50}x1`, 'mark', {}, { ts: tick(2) })
+  const flood: string[] = []
+  let n = 0
+  while (flood.length < H) {
+    let t = P.ts + 1
+    const d = ok(`X${10 + n}`, 'device_add', {}, { ap: [P.id], ts: t })
+    if (!d) break
+    flood.push(d.id)
+    let prev = d.id
+    for (let j = 0; j < LIM.totU - 1 && flood.length < H; j++) {
+      const m = ok(`X${10 + n}`, 'mark', {}, { ap: [prev], ts: (t += 2) })
+      if (!m) break
+      prev = m.id
+      flood.push(m.id)
+    }
+    n++
+  }
+  benchGhosts = flood
+  probe = undefined
+  return { introductions: n, headers: flood.length }
 }
 
 const SHAPES: Record<string, Shape> = {
@@ -877,6 +1272,11 @@ const SHAPES: Record<string, Shape> = {
   movestorm,
   collude,
   exact6,
+  bitlanes,
+  siblings,
+  exact6m,
+  idbench,
+  hdrbench,
 }
 
 /** each shape names its adversarial arrival: a deny by `dev` (an idle senior device) positioned at `ap` */
@@ -1065,6 +1465,14 @@ function visibilityBench(N: number, seed: number, nContent: number, cacheMiB: nu
 function coldBench(shape: string, N: number, seed: number) {
   const gc = () => (globalThis as { Bun?: { gc: (f: boolean) => void } }).Bun?.gc(true)
   const rss = () => Math.round(process.memoryUsage().rss / 2 ** 20)
+  // the JS heap and the typed arrays it holds, MB
+  const heap = () => {
+    const m = process.memoryUsage()
+    return Math.round((m.heapUsed + m.arrayBuffers) / 2 ** 20)
+  }
+  gc()
+  const rssStart = rss()
+  const heapStart = heap()
   const binds = (e: AclEv) => devOwner(e.dev) === e.a
   const live = () => {
     clock = 1
@@ -1086,15 +1494,25 @@ function coldBench(shape: string, N: number, seed: number) {
     const packMs = performance.now() - tP
     const sum = JSON.stringify(toStored(room.summary()))
     const cut = w.state().cut.size
-    return { items, buildS, packMs, sum, cut, liveRss: rss() }
+    gc()
+    return { items, buildS, packMs, sum, cut, liveRss: rss(), liveHeap: heap() }
   }
   const L = live()
+  const nEvents = L.items.length
   const recMb = JSON.stringify(L.items.map(i => i.rec)).length / 2 ** 20
+  // what a store holds, written out and let go, so the cold replica's own copies of its events and
+  // records count in its heap (as read from storage)
+  const file = join(tmpdir(), `acl-bench-cold-${process.pid}.json`)
+  writeFileSync(file, JSON.stringify(L.items))
+  L.items = []
   gc()
   const rss0 = rss()
+  const heap0 = heap()
   const t0 = performance.now()
+  const stored = JSON.parse(readFileSync(file, 'utf8')) as typeof L.items
+  unlinkSync(file)
   const cold = new AclRoom('bench', { binds })
-  const out = cold.restoreEvs(L.items)
+  const out = cold.restoreEvs(stored)
   const restoreMs = performance.now() - t0
   const t1 = performance.now()
   cold.r.state()
@@ -1102,10 +1520,11 @@ function coldBench(shape: string, N: number, seed: number) {
   const same = JSON.stringify(toStored(cold.summary())) === L.sum
   gc()
   const rss1 = rss()
+  const heap1 = heap()
   console.log(
     JSON.stringify({
       shape: `coldstart:${shape}`,
-      events: L.items.length,
+      events: nEvents,
       cut: L.cut,
       build_s: f1(L.buildS),
       pack_ms: f1(L.packMs),
@@ -1117,10 +1536,14 @@ function coldBench(shape: string, N: number, seed: number) {
       first_eval_ms: f1(evalMs),
       cold_start_ms: f1(restoreMs + evalMs),
       same_state: same,
+      rss_start_mb: rssStart,
       rss_live_mb: L.liveRss,
+      live_mb: L.liveRss - rssStart,
       rss_before_mb: rss0,
       rss_after_mb: rss1,
       cold_mb: rss1 - rss0,
+      heap_live_mb: L.liveHeap - heapStart,
+      heap_cold_mb: heap1 - heap0,
       load1: f1(loadavg()[0]),
     })
   )
@@ -1147,33 +1570,54 @@ for (const name of shapeArg === 'all'
   const tB = performance.now()
   const info = SHAPES[name](w, N, rng)
   const buildS = (performance.now() - tB) / 1000
-  const ids = [...w.ref.order]
+  // hdrbench: the held set evaluated with the dropped flood as headers
+  const gh = benchGhosts
+  benchGhosts = undefined
+  const ghSet = new Set(gh ?? [])
+  const ids = gh ? w.ref.order.filter(x => !ghSet.has(x)) : [...w.ref.order]
   const full: number[] = []
   let S = w.state()
   let fe = w.ref.acl.evaluation()
   for (let r = 0; r < reps; r++) {
     const t0 = performance.now()
-    const st = new AclState(w.ref)
-    for (const id of ids) st.ix.add(id)
-    S = st.state()
+    if (gh) {
+      fe = new FastEval(Ix.of(ids, w.ref))
+      fe.hdrs = new Hdrs(
+        fe.ix,
+        gh.map(id => ({ ev: w.ref.ev(id), rec: w.ref.rec(id) }))
+      )
+      S = fe.run()
+    } else {
+      const st = new AclState(w.ref)
+      for (const id of ids) st.ix.add(id)
+      S = st.state()
+      fe = st.evaluation()
+    }
     full.push(performance.now() - t0)
-    fe = st.evaluation()
   }
   const heads: number[] = []
+  const headsBefore = w.heads().length
+  const head0 = w.ref.acl.stats.head
   w.state()
   const bdDev = probeOf()?.dev
   const maxTs = () => Math.max(...w.ref.order.map(x => w.ref.ev(x).ts))
-  for (let r = 0; r < reps; r++) {
-    const h0 = performance.now()
+  // the measured honest event follows the client rule (§1.2); the client picks its parents before
+  // the timed admission and evaluation
+  w.clientRule = true
+  for (let r = 0; r < reps && !gh; r++) {
+    let h0 = 0
     let h: { e: AclEv; v: Verdict } | undefined
     for (const dv of ['O1', 'O2', 'O3'].filter(x => x !== bdDev && w.latestOwn(x))) {
-      h = w.act(dv, 'mark', {}, { ts: maxTs() + 1 })
+      const ap = w.defaultParents(dv)
+      h0 = performance.now()
+      h = w.act(dv, 'mark', {}, { ap, ts: maxTs() + 1 })
       if (h.v.s === 'A') break
     }
     w.state()
     heads.push(performance.now() - h0)
     if (!h || h.v.s !== 'A') throw new Error(`head event not admitted: ${JSON.stringify(h?.v)}`)
   }
+  const headPath = `${w.ref.acl.stats.head - head0}/${heads.length}`
   const bd = probeOf()
   let denyMs = NaN
   let denyCuts = 0
@@ -1222,8 +1666,10 @@ for (const name of shapeArg === 'all'
       build_s: f1(buildS),
       full_ms: f1(med(full)),
       full_all: full.map(f1),
-      head_ms: f1(med(heads)),
+      head_ms: heads.length ? f1(med(heads)) : NaN,
       head_all: heads.map(f1),
+      headsBefore,
+      headPath,
       deny_ms: f1(denyMs),
       rerun_ms: rerun.length ? f1(med(rerun)) : NaN,
       rerun_all: rerun.map(f1),

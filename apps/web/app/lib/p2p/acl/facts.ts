@@ -125,7 +125,38 @@ export interface EvalResult {
 export const fiOf = (FI: ReadonlyMap<string, number>, a: string, epoch: string) =>
   FI.get(`${a}|${epoch}`) ?? Infinity
 
+// Facts of recorded states read during one evaluation, kept until it ends (it reads each cause's
+// and deny's admission state many times); outside an evaluation a bounded cache holds them.
+let scope: Map<object, Facts> | null = null
+export const factsInScope = (k: object, make: () => Facts): Facts => {
+  if (!scope) return make()
+  let f = scope.get(k)
+  if (!f) scope.set(k, (f = make()))
+  return f
+}
+export function inFactsScope<T>(f: () => T): T {
+  const outer = scope !== null
+  scope ??= new Map()
+  try {
+    return f()
+  } finally {
+    if (!outer) scope = null
+  }
+}
+
 const NOBITS: ReadonlyMap<number, BitW> = new Map()
+
+// Two exact computations of one value, each giving up (undefined) past a number of steps: the
+// first, then the second, with budgets growing fourfold, so the cost is within a constant of the
+// cheaper one's.
+function race<T>(a: (limit: number) => T | undefined, b: (limit: number) => T | undefined): T {
+  for (let limit = 16; ; limit *= 4) {
+    const x = a(limit)
+    if (x !== undefined) return x
+    const y = b(limit)
+    if (y !== undefined) return y
+  }
+}
 
 // A view: (event set E, void set, effective denies) as predicates over event indices. Every fact
 // is computed from its key's event list and memoized for the view's life.
@@ -267,11 +298,58 @@ export abstract class View {
     this.mBits.set(R, v)
     return v
   }
-  // Bit(R, b) from the top down over its writes (§5.4 A). Before the newest effective clear, the
-  // live setters, stopping at a covering one (the bit is set); from that clear on, the maximal
-  // effective clears, stopping at a covering one. The bit holds iff a collected setter has every
-  // collected clear in its past.
+  // Bit(R, b) (§3.2): the bit holds iff a live setter has every effective clear in its past. Two
+  // exact reads run step by step and the first to finish answers: per chain (§5.4 A; a register
+  // with chains that never see each other) and from the top with the coverage stop (a register
+  // whose newest counted write covers the rest, though whole chains are void).
   private bit(l: BitW): boolean {
+    return race(
+      n => this.bitTop(l, n),
+      n => this.bitChains(l, n)
+    )
+  }
+  // Per chain: on each chain of its writes the latest live setter s and the latest effective
+  // clear c in E (E's downset part is a prefix of the chain, found by one binary search; the
+  // extra writes come after it); the bit holds iff some s has every c in its past.
+  private bitChains(l: BitW, limit: number): boolean | undefined {
+    const ix = this.ix
+    const { runs, of } = ix.bitChains(l)
+    const s = new Int32Array(runs.length).fill(-1)
+    const c = new Int32Array(runs.length).fill(-1)
+    const clear = (x: number) => ix.ev[x].t === 'role_bits' && !ix.ev[x].c.on
+    for (let r = 0; r < runs.length; r++) {
+      const run = runs[r]
+      const p = firstTrue(0, run.length, j => !this.inD(run[j]))
+      for (let k = p - 1; k >= 0 && (s[r] < 0 || c[r] < 0); k--) {
+        const x = run[k]
+        if (clear(x)) {
+          if (c[r] < 0 && this.isEff(x)) c[r] = x
+        } else if (s[r] < 0 && (x === ix.genesis || !this.isVoid(x))) s[r] = x
+        if (--limit < 0) return undefined
+      }
+      if (p === 0 && run[0] === ix.genesis && s[r] < 0) s[r] = ix.genesis
+    }
+    for (const x of this.extraE()) {
+      const r = of.get(x)
+      if (r === undefined || this.inD(x)) continue
+      if (clear(x)) {
+        if (this.isEff(x) && x > c[r]) c[r] = x
+      } else if (!this.isVoid(x) && x > s[r]) s[r] = x
+    }
+    for (let k = 0; k < runs.length; k++) {
+      const sk = s[k]
+      if (sk < 0) continue
+      let all = true
+      for (let r = 0; r < runs.length && all; r++) if (c[r] >= 0 && !ix.has(sk, c[r])) all = false
+      if (all) return true
+    }
+    return false
+  }
+  // From the top down: before the newest effective clear, the live setters, stopping at a
+  // covering one (the bit is set); from that clear on, the maximal effective clears, stopping at
+  // a covering one; then the bit holds iff a collected setter has every collected clear in its
+  // past. A covering write has every earlier write of (R, b) in its past.
+  private bitTop(l: BitW, limit: number): boolean | undefined {
     const ix = this.ix
     const ws = l.w
     const cov = ix.bitCov(l)
@@ -320,7 +398,10 @@ export abstract class View {
         if (stop) break
       }
     }
-    for (let k = a - 1; k >= 0 && !stop; k--) visit(ws[k], k)
+    for (let k = a - 1; k >= 0 && !stop; k--) {
+      visit(ws[k], k)
+      if (--limit < 0 && !stop) return undefined
+    }
     if (!stop && a === 0 && ws.length && ws[0] === ix.genesis) visit(ws[0], 0)
     if (res !== undefined) return res
     if (!late) return sets.length > 0
@@ -333,65 +414,98 @@ export abstract class View {
     if (e.t === 'role_create') return e.id === R && !this.isVoid(x)
     return this.isEff(x) || (!this.isVoid(x) && this.ix.rec[x].cls === 'G')
   }
-  // E holds no event indexed at or above hiE() other than those of extraE().
+  // E's downset part (every event's past in it); the rest of E is extraE().
+  inD(x: number): boolean {
+    return this.inE(x)
+  }
+  // E holds no event of its downset part at or above hiE().
   hiE(): number {
     return this.ix.n
   }
   extraE(): Iterable<number> {
     return EMPTY
   }
-  // Pos(R): the register read from the top down, stopping at the first maximal write that has
-  // every lower write of R in its past.
+  // Pos(R) (§1.5): the best of the register's maximal counted writes. Raced as Bit is.
   pos(R: string): number | undefined {
     if (this.mPos.has(R)) return this.mPos.get(R)
     const ix = this.ix
-    const ws = ix.posW.get(R) ?? EMPTY
     let v: number | undefined
-    if (ws.length) {
-      const cov = ix.posCov(R)
-      const hi = this.hiE()
-      const maxes: number[] = []
-      let best = -1
-      const consider = (w: number) => {
-        for (const m of maxes) if (ix.has(m, w)) return false
-        maxes.push(w)
-        if (best < 0 || this.beats(w, best)) best = w
-        return true
-      }
-      let a = 0
-      let b = ws.length
-      while (a < b) {
-        const m = (a + b) >> 1
-        if (ws[m] < hi) a = m + 1
-        else b = m
-      }
-      let stop = false
-      if (a < ws.length) {
-        const ex: number[] = []
-        for (const x of this.extraE()) if (x >= hi) ex.push(x)
-        if (ex.length) {
-          ex.sort((p, q) => q - p)
-          for (const x of ex) {
-            let lo = a
-            let hi2 = ws.length
-            while (lo < hi2) {
-              const m = (lo + hi2) >> 1
-              if (ws[m] < x) lo = m + 1
-              else hi2 = m
-            }
-            if (lo < ws.length && ws[lo] === x && this.isPosWrite(x, R) && consider(x) && cov[lo]) {
-              stop = true
-              break
-            }
-          }
-        }
-      }
-      for (let k = a - 1; k >= 0 && !stop; k--)
-        if (this.isPosWrite(ws[k], R) && consider(ws[k]) && cov[k]) stop = true
+    if (ix.posW.get(R)?.length) {
+      const best = race(
+        n => this.posTop(R, n),
+        n => this.posChains(R, n)
+      )
       v = best < 0 ? undefined : this.posAt(best)
     }
     this.mPos.set(R, v)
     return v
+  }
+  // Per chain (§5.4 A): on each chain of R's position writes the latest one counted in this view;
+  // the maximal of those are the register's maximal writes.
+  private posChains(R: string, limit: number): number | undefined {
+    const ix = this.ix
+    const { runs, of } = ix.posChains(R)
+    const m = new Int32Array(runs.length).fill(-1)
+    for (let r = 0; r < runs.length; r++) {
+      const run = runs[r]
+      const p = firstTrue(0, run.length, j => !this.inD(run[j]))
+      for (let k = p - 1; k >= 0; k--) {
+        if (this.isPosWrite(run[k], R)) {
+          m[r] = run[k]
+          break
+        }
+        if (--limit < 0) return undefined
+      }
+    }
+    for (const x of this.extraE()) {
+      const r = of.get(x)
+      if (r !== undefined && !this.inD(x) && x > m[r] && this.isPosWrite(x, R)) m[r] = x
+    }
+    let best = -1
+    for (let r = 0; r < runs.length; r++) {
+      const w = m[r]
+      if (w < 0) continue
+      let max = true
+      for (let q = 0; q < runs.length && max; q++)
+        if (q !== r && m[q] >= 0 && ix.has(m[q], w)) max = false
+      if (max && (best < 0 || this.beats(w, best))) best = w
+    }
+    return best
+  }
+  // From the top down, stopping at the first maximal write that has every earlier write of R in
+  // its past.
+  private posTop(R: string, limit: number): number | undefined {
+    const ix = this.ix
+    const ws = ix.posW.get(R) ?? EMPTY
+    const cov = ix.posCov(R)
+    const hi = this.hiE()
+    const maxes: number[] = []
+    let best = -1
+    const consider = (w: number) => {
+      for (const m of maxes) if (ix.has(m, w)) return false
+      maxes.push(w)
+      if (best < 0 || this.beats(w, best)) best = w
+      return true
+    }
+    const a = firstTrue(0, ws.length, j => ws[j] >= hi)
+    let stop = false
+    if (a < ws.length) {
+      const ex: number[] = []
+      for (const x of this.extraE()) if (x >= hi) ex.push(x)
+      ex.sort((p, q) => q - p)
+      for (const x of ex) {
+        const k = firstTrue(a, ws.length, j => ws[j] >= x)
+        if (k < ws.length && ws[k] === x && this.isPosWrite(x, R) && consider(x) && cov[k]) {
+          stop = true
+          break
+        }
+      }
+    }
+    for (let k = a - 1; k >= 0 && !stop; k--) {
+      if (this.isPosWrite(ws[k], R) && consider(ws[k]) && cov[k]) stop = true
+      if (--limit < 0 && !stop) return undefined
+    }
+    return best
   }
   posAt(x: number): number {
     return this.ix.ev[x].c.pos

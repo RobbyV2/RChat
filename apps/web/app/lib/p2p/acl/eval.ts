@@ -1,5 +1,5 @@
 import { Equiv, Hdrs, seenOf } from './equivocation'
-import { fullFacts, View, type EvalResult, type FactsQ, type StIdx } from './facts'
+import { fullFacts, inFactsScope, View, type EvalResult, type FactsQ, type StIdx } from './facts'
 import { chainCover, EMPTY, firstTrue, Ix, pushM } from './reach'
 import {
   BOT,
@@ -66,14 +66,29 @@ export function anchorOf(ix: Ix, o: number): Anchor {
   let m = anchors.get(ix)
   if (!m) anchors.set(ix, (m = new Map()))
   let a = m.get(o)
-  if (!a) {
-    const lo = ix.rec[o].local
-    const li = lo.idx
-    const ok = li && li.ix.ids[o] === ix.ids[o] && (o === 0 || li.ix.ids[o - 1] === ix.ids[o - 1])
-    a = { e: ix.ev[o], inB: x => ix.has(o, x), hi: o, lo, li: ok ? li : undefined }
-    m.set(o, a)
-  }
+  if (!a) m.set(o, (a = new OpAnchor(ix, o)))
   return a
+}
+// An op's anchor: B(o) by its ancestor bitset, its admission state's statuses by index.
+class OpAnchor implements Anchor {
+  e: AclEv
+  hi: number
+  lo: EvalResult
+  li?: StIdx
+  constructor(
+    private ix: Ix,
+    o: number
+  ) {
+    this.e = ix.ev[o]
+    this.hi = o
+    this.lo = ix.rec[o].local
+    const li = this.lo.idx
+    if (li && li.ix.ids[o] === ix.ids[o] && (o === 0 || li.ix.ids[o - 1] === ix.ids[o - 1]))
+      this.li = li
+  }
+  inB(x: number) {
+    return this.ix.has(this.hi, x)
+  }
 }
 
 // V_o(K ∪ N, +D) (mode R, resources) and V°_o(K, N) (mode O, obstacles) of §3.1.
@@ -108,11 +123,14 @@ export class OpView extends View {
   inE(x: number) {
     return this.an.inB(x) || this.extra.has(x)
   }
-  hiE() {
-    return this.an.hi
+  inD(x: number) {
+    return this.an.inB(x)
   }
   extraE() {
     return this.extra
+  }
+  hiE() {
+    return this.an.hi
   }
   isXv(x: number) {
     const li = this.recorded(x)
@@ -499,6 +517,9 @@ export class FastEval extends Equiv {
   }
 
   compute() {
+    inFactsScope(() => this.computeIn())
+  }
+  private computeIn() {
     const ix = this.ix
     const n = ix.n
     this.forkPoints()
@@ -581,7 +602,9 @@ export class FastEval extends Equiv {
     }
     const floorK = (o: number) => {
       authorizedK(o)
-      return authKMono.get(o)!.floorAuthorized()
+      let M = authKMono.get(o)
+      if (!M) authKMono.set(o, (M = new Mono(ix, anchorOf(ix, o), st, null, EMPTYSET)))
+      return M.floorAuthorized()
     }
     const usesExact = (o: number, d: number) =>
       !new Mono(ix, anchorOf(ix, o), st, null, new Set([d])).authorized()
@@ -779,7 +802,7 @@ export class FastEval extends Equiv {
     this.stats.causes += causes.length
     this.stats.maxCauses = Math.max(this.stats.maxCauses, causes.length)
     if (causes.length) {
-      const inW = this.cascade(
+      const { inW, drop } = this.cascade(
         st,
         causes,
         direct,
@@ -801,6 +824,14 @@ export class FastEval extends Equiv {
       }
       this.strataInfo.push(info)
       this.onStratum?.(info)
+      // what the stratum kept for content visibility (§3.5) holds only results; its caches are
+      // built again by what asks
+      drop()
+      authKMono.clear()
+      vMemo.clear()
+      sigMemo.clear()
+      ivl.clear()
+      mxMemo.clear()
     }
     for (const d of [...selves, ...effNS]) {
       effOrd[d] = s
@@ -1236,7 +1267,7 @@ export class FastEval extends Equiv {
     Vfor: (g: number, p: number) => View,
     termDc: Map<number, bigint>,
     floorK: (o: number) => boolean
-  ): (x: number, W: bigint) => boolean {
+  ): { inW: (x: number, W: bigint) => boolean; drop: () => void } {
     const ix = this.ix
     const n = ix.n
     const s = st.s
@@ -1362,8 +1393,11 @@ export class FastEval extends Equiv {
         cascTop.set(q, ct)
         if (Dc.has(q) || ct) cutQ(q)
       }
-      return (x, W) =>
-        ((Dc.get(x) ?? B0) & W) !== B0 || (cascTop.get(x) === true && (U(x) & G(x) & ~W) === B0)
+      return {
+        inW: (x, W) =>
+          ((Dc.get(x) ?? B0) & W) !== B0 || (cascTop.get(x) === true && (U(x) & G(x) & ~W) === B0),
+        drop: () => {},
+      }
     }
     const casc = new Map<number, Map<bigint, boolean>>()
     const worlds = new Set<bigint>()
@@ -1452,7 +1486,14 @@ export class FastEval extends Equiv {
       if (isCut) cutQ(q)
     }
     this.stats.worlds += worlds.size
-    return (x, W) => cutOrd[x] === s && inW(x, W)
+    return {
+      inW: (x, W) => cutOrd[x] === s && inW(x, W),
+      drop: () => {
+        casc.clear()
+        wm.clear()
+        worlds.clear()
+      },
+    }
   }
 
   // An event on the heads (C(ap) = S): Eval(S ∪ {e}) = Eval(S) ⊕ e (§5). What is left: whether e

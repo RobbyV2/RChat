@@ -16,6 +16,7 @@ import {
   type StDelta,
 } from './acl/cache'
 import type { EvalResult } from './acl/facts'
+import type { Ix } from './acl/reach'
 import { orphanDrops, stableDeny, underDroppable, type Drop } from './acl/storage'
 import {
   canView,
@@ -203,7 +204,9 @@ export const diffSummary = (a: Summary, b: Summary): SumDelta | null => {
     const x = a[k] as Record<string, unknown>
     const y = b[k] as Record<string, unknown>
     const put: Record<string, unknown> = {}
-    for (const [id, v] of Object.entries(y)) if (!(id in x) || json(x[id]) !== json(v)) put[id] = v
+    // an entry the kept summary shares (the same object) is unchanged
+    for (const [id, v] of Object.entries(y))
+      if (!(id in x) || (x[id] !== v && json(x[id]) !== json(v))) put[id] = v
     const del = Object.keys(x).filter(id => !(id in y))
     if (Object.keys(put).length) (out.put ??= {})[k] = put as never
     if (del.length) (out.del ??= {})[k] = del
@@ -406,6 +409,36 @@ export interface Purgeable {
   other: string[]
 }
 
+// A stored admission record, its St(e) built when first read.
+class StoredRec implements Rec {
+  k: Rank
+  cls: Cls
+  self: boolean
+  exempt: boolean
+  depth: number
+  epoch: string
+  pool?: string[]
+  private st?: EvalResult
+  constructor(
+    private room: AclRoom,
+    private e: AclEv,
+    p: PackedRec,
+    private header: boolean
+  ) {
+    this.k = rankIn(p.k)
+    this.cls = p.cls
+    this.self = p.self
+    this.exempt = p.exempt
+    this.depth = p.depth
+    this.epoch = p.epoch
+    const pool = room.poolOfStored(p)
+    if (pool) this.pool = pool
+  }
+  get local(): EvalResult {
+    return (this.st ??= this.room.stateOfStored(this.e, this.header))
+  }
+}
+
 export class AclRoom {
   r: AclReplica
   private contents = new Map<string, ContentEv>()
@@ -592,54 +625,25 @@ export class AclRoom {
     if (st.C) st.C = st.C.map(([id, r]) => [id, rankIn(r)])
     this.packed.set(e.id, st)
     this.restoredIds.add(e.id)
-    let local: EvalResult | undefined
-    const rec = {
-      k: rankIn(p.k),
-      cls: p.cls,
-      self: p.self,
-      exempt: p.exempt,
-      depth: p.depth,
-      epoch: p.epoch,
-    } as Rec
-    if (p.pool) {
-      const base = p.pool.b !== undefined ? (this.r.recs.get(p.pool.b)?.pool ?? []) : []
-      const del = new Set(p.pool.del ?? [])
-      rec.pool = [...base.filter(x => !del.has(x)), ...(p.pool.add ?? [])].sort()
-    }
-    Object.defineProperty(rec, 'local', {
-      enumerable: false,
-      get: () => {
-        if (!local) {
-          local = this.built.get(e.id) ?? this.rebuild(e.id)
-          this.built.delete(e.id)
-        }
-        return local
-      },
-    })
-    return rec
+    return new StoredRec(this, e, p, false)
+  }
+  // St(e) of a restored record, when first read: from its delta, or (a header's) worked out again.
+  stateOfStored(e: AclEv, header: boolean): EvalResult {
+    if (header) return this.r.acl.stateOf(e.ap)
+    const out = this.built.get(e.id) ?? this.rebuild(e.id)
+    this.built.delete(e.id)
+    return out
+  }
+  poolOfStored(p: PackedRec): string[] | undefined {
+    if (!p.pool) return undefined
+    const base = p.pool.b !== undefined ? (this.r.recs.get(p.pool.b)?.pool ?? []) : []
+    const del = new Set(p.pool.del ?? [])
+    return [...base.filter(x => !del.has(x)), ...(p.pool.add ?? [])].sort()
   }
 
   // A header's record: its admission fields; St(e) is worked out if it is ever indexed again.
   private headerRec(e: AclEv, p: PackedRec): Rec {
-    const rec = {
-      k: rankIn(p.k),
-      cls: p.cls,
-      self: p.self,
-      exempt: p.exempt,
-      depth: p.depth,
-      epoch: p.epoch,
-    } as Rec
-    if (p.pool) {
-      const base = p.pool.b !== undefined ? (this.r.recs.get(p.pool.b)?.pool ?? []) : []
-      const del = new Set(p.pool.del ?? [])
-      rec.pool = [...base.filter(x => !del.has(x)), ...(p.pool.add ?? [])].sort()
-    }
-    let local: EvalResult | undefined
-    Object.defineProperty(rec, 'local', {
-      enumerable: false,
-      get: () => (local ??= this.r.acl.stateOf(e.ap)),
-    })
-    return rec
+    return new StoredRec(this, e, p, true)
   }
 
   // States rebuilt as the base of another before their own record was read.
@@ -848,7 +852,25 @@ export class AclRoom {
 
   // ----- The current state, for the page -----
 
+  // The page's summary. Kept between calls: an identity's entry is worked out again only when an
+  // event whose status changed (or a new one) touches it (its author, target or revoked device's
+  // identity; every holder of a role it writes; everyone for @everyone's bits or the genesis),
+  // or a code it was invited with changed. Roles, channels, codes and the rest are small and
+  // built each time.
+  private sumMemo?: {
+    ix: Ix
+    codes: Uint8Array
+    members: Record<string, MemberSum>
+    usable: string
+  }
   summary(): Summary {
+    return this.buildSummary(false)
+  }
+  // The same, worked out from scratch (tests).
+  freshSummary(): Summary {
+    return this.buildSummary(true)
+  }
+  private buildSummary(fresh: boolean): Summary {
     const ix = this.r.acl.ix
     if (this.r.unknownRules !== undefined)
       return { ...emptySummary(), rules: this.r.unknownRules, count: this.unknownCount }
@@ -856,48 +878,58 @@ export class AclRoom {
     const S = this.r.state()
     const F = S.facts
     const fe = this.r.acl.evaluation()
-    const who = new Set<string>([
-      ...ix.byAuthor.keys(),
-      ...ix.addEv.keys(),
-      ...ix.banEv.keys(),
-      ...ix.remEv.keys(),
-    ])
-    const members: Record<string, MemberSum> = {}
-    for (const ik of who) {
-      const m: Membership = F.mem.has(ik)
-        ? 'join'
-        : F.ban.has(ik)
-          ? 'ban'
-          : F.pending.has(ik)
-            ? 'invite'
-            : 'leave'
-      if (m === 'leave' && !(ix.memEv.get(ik)?.length || ix.addEv.get(ik)?.length)) continue
-      const sum: MemberSum = {
-        m,
-        rank: rank(F, ik),
-        perms: m === 'join' ? permsQ(F, ik) : 0,
-        roles: [...(F.holds.get(ik) ?? [])],
-        devs: [...(F.devs.get(ik) ?? [])],
-        profile: F.profile.get(ik) ?? null,
-      }
-      if (m === 'leave' || m === 'ban') {
-        let last = -1
-        for (const d of ix.remEv.get(ik) ?? []) if (fe.isEffI(d) && d > last) last = d
-        if (last >= 0) {
-          sum.rem = ix.ids[last]
-          sum.by = ix.ev[last].a
-        }
-      }
-      if (m === 'invite') sum.adds = (F.pending.get(ik) ?? []).map(p => p.id)
-      if (m === 'join') {
-        let j = -1
-        for (const g of ix.memEv.get(ik) ?? []) if (fe.inS(g) && !fe.isVoidI(g) && g > j) j = g
-        if (j >= 0) sum.joinTs = ix.ev[j].ts
-        const b = sum.profile?.binding ?? (j >= 0 ? ix.ev[j].c.binding : undefined)
-        if (typeof b === 'string') sum.binding = b
-      }
-      members[ik] = sum
+    const codes: Record<string, CodeSum> = {}
+    for (const [id, cf] of F.codes) {
+      const c = ix.ev[ix.codeEv.get(id)!].c
+      const x: CodeSum = { a: cf.a, h: c.h }
+      if (typeof c.label === 'string') x.label = c.label
+      if (typeof c.exp === 'number') x.exp = c.exp
+      codes[id] = x
     }
+    const usable = [...F.codeOk]
+      .filter(c => !F.codeDead.has(c))
+      .sort()
+      .join(',')
+    const status = new Uint8Array(ix.n)
+    for (let i = 0; i < ix.n; i++)
+      status[i] =
+        (fe.inS(i) ? 1 : 0) | (fe.isVoidI(i) ? 2 : 0) | (fe.isEffI(i) ? 4 : 0) | (fe.X[i] ? 8 : 0)
+    const memo = fresh || this.sumMemo?.ix !== ix ? undefined : this.sumMemo
+    let all = !memo
+    const touched = new Set<string>()
+    const touch = (i: number) => {
+      const e = ix.ev[i]
+      const c = e.c
+      touched.add(e.a)
+      if (typeof c.to === 'string') touched.add(c.to)
+      if (typeof c.ik === 'string') touched.add(c.ik)
+      const R = e.t === 'role_create' ? e.id : typeof c.role === 'string' ? c.role : undefined
+      if (e.t === 'genesis' || R === EVERYONE) all = true
+      else if (R !== undefined && e.t.startsWith('role_'))
+        for (const T of ix.heldBy.get(R) ?? []) touched.add(T)
+    }
+    if (memo) {
+      for (let i = 0; i < ix.n && !all; i++)
+        if (i >= memo.codes.length || status[i] !== memo.codes[i]) touch(i)
+      if (memo.usable !== usable)
+        for (const l of ix.codeAdds.values())
+          for (const g of l) if (typeof ix.ev[g].c.to === 'string') touched.add(ix.ev[g].c.to)
+    }
+    const members: Record<string, MemberSum> = all ? {} : { ...memo!.members }
+    const who = all
+      ? new Set<string>([
+          ...ix.byAuthor.keys(),
+          ...ix.addEv.keys(),
+          ...ix.banEv.keys(),
+          ...ix.remEv.keys(),
+        ])
+      : touched
+    for (const ik of who) {
+      delete members[ik]
+      const sum = this.memberSum(ik)
+      if (sum) members[ik] = sum
+    }
+    if (!fresh) this.sumMemo = { ix, codes: status, members, usable }
     const roles: Record<string, RoleSum> = {}
     for (const R of F.roles) {
       const c = ix.ev[ix.roleCreate.get(R)!]?.c
@@ -908,14 +940,6 @@ export class AclRoom {
     }
     const channels: Record<string, AclContent> = {}
     for (const [id, c] of F.channels) channels[id] = c
-    const codes: Record<string, CodeSum> = {}
-    for (const [id, cf] of F.codes) {
-      const c = ix.ev[ix.codeEv.get(id)!].c
-      const x: CodeSum = { a: cf.a, h: c.h }
-      if (typeof c.label === 'string') x.label = c.label
-      if (typeof c.exp === 'number') x.exp = c.exp
-      codes[id] = x
-    }
     return {
       rules: RULES_VERSION,
       owners: [...F.owners],
@@ -930,6 +954,48 @@ export class AclRoom {
       heads: this.heads(i => !this.gone.has(ix.ids[i])),
       count: ix.n - this.gone.size,
     }
+  }
+
+  // One identity's entry of the summary (none for someone who was never let in).
+  private memberSum(ik: string): MemberSum | undefined {
+    const ix = this.r.acl.ix
+    const F = this.r.state().facts
+    const fe = this.r.acl.evaluation()
+    const m: Membership = F.mem.has(ik)
+      ? 'join'
+      : F.ban.has(ik)
+        ? 'ban'
+        : F.pending.has(ik)
+          ? 'invite'
+          : 'leave'
+    if (m === 'leave' && !(ix.memEv.get(ik)?.length || ix.addEv.get(ik)?.length)) return undefined
+    if (!ix.byAuthor.has(ik) && !ix.addEv.has(ik) && !ix.banEv.has(ik) && !ix.remEv.has(ik))
+      return undefined
+    const sum: MemberSum = {
+      m,
+      rank: rank(F, ik),
+      perms: m === 'join' ? permsQ(F, ik) : 0,
+      roles: [...(F.holds.get(ik) ?? [])],
+      devs: [...(F.devs.get(ik) ?? [])],
+      profile: F.profile.get(ik) ?? null,
+    }
+    if (m === 'leave' || m === 'ban') {
+      let last = -1
+      for (const d of ix.remEv.get(ik) ?? []) if (fe.isEffI(d) && d > last) last = d
+      if (last >= 0) {
+        sum.rem = ix.ids[last]
+        sum.by = ix.ev[last].a
+      }
+    }
+    if (m === 'invite') sum.adds = (F.pending.get(ik) ?? []).map(p => p.id)
+    if (m === 'join') {
+      let j = -1
+      for (const g of ix.memEv.get(ik) ?? []) if (fe.inS(g) && !fe.isVoidI(g) && g > j) j = g
+      if (j >= 0) sum.joinTs = ix.ev[j].ts
+      const b = sum.profile?.binding ?? (j >= 0 ? ix.ev[j].c.binding : undefined)
+      if (typeof b === 'string') sum.binding = b
+    }
+    return sum
   }
 
   // What changed since the page's copy (all of it the first time).
