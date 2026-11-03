@@ -83,7 +83,7 @@ jobs:
           path: ~/.cargo/bin/cargo-tauri
           key: tauri-cli-${{ runner.os }}-2.12.2
       - if: steps.tauri-cli.outputs.cache-hit != 'true'
-        run: cargo install tauri-cli --version 2.12.2 --locked
+        run: cargo install tauri-cli --version 2.12.2 --locked --force
       - run: cargo build --bin server
       - name: Headless smoke run
         env:
