@@ -23,6 +23,7 @@ import {
   EVERYONE,
   gt,
   idOp,
+  MESSAGES,
   permsQ,
   poster,
   rank,
@@ -236,6 +237,8 @@ export interface Shown {
   reactions: { id: string; a: string; key: string }[]
   pin: { id: string; on: boolean } | null
   everyone: boolean
+  // A pin: its author held Manage messages where it was posted (it counts, spec 3.5).
+  pins?: boolean
 }
 
 export interface PlanReq {
@@ -1121,13 +1124,15 @@ export class AclRoom {
       const hidden = v.hidden(m)
       if (hidden) return { hidden, edit: null, reactions: [], pin: null, everyone: false }
       const pin = v.pinOf(m)
-      return {
+      const out: Shown = {
         hidden: null,
         edit: v.editOf(m)?.id ?? null,
         reactions: v.reactions(m).map(r => ({ id: r.id, a: r.a, key: String(r.c?.key) })),
         pin: pin ? { id: pin.id, on: pin.c?.on === true } : null,
         everyone: v.mentionsEveryone(m),
       }
+      if (m.t === 'pin') out.pins = (permsQ(v.stateOf(m).facts, m.a) & MESSAGES) !== 0
+      return out
     })
   }
 

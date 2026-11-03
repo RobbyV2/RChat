@@ -1,6 +1,15 @@
 'use client'
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -11,6 +20,7 @@ import {
   Forward,
   Hash,
   History,
+  MessageSquareText,
   Pin,
   PinOff,
   Plus,
@@ -25,6 +35,7 @@ import {
   chatScope,
   p2pDm,
   p2pFiles,
+  p2pThread,
   p2pUser,
   useP2p,
   type P2pChat,
@@ -56,7 +67,7 @@ import { MessageToolbar, type ToolbarAction } from '../message_toolbar'
 import { QuickReactions, ReactionBar, rowAt } from '../reactions'
 import { ComposerBar, ReplyPreview } from '../replies'
 import { ForwardBar, ForwardCard, forwardAction } from '../forwards'
-import { PinsPanel, confirmUnpin } from '../pins'
+import { PinLine, PinsPanel, confirmUnpin } from '../pins'
 import { TypingIndicator } from '../typing_indicator'
 import { EmojiPicker, SHEET_QUERY } from '../emoji_picker'
 import { longPress, useMedia } from '../context_menu'
@@ -105,7 +116,7 @@ export const asMessage = (
   author: user(m.sender),
   content: m.unavailable ? '_Message unavailable_' : m.fwd ? m.fwd.body : m.body,
   created_at: seconds(m.ts),
-  reply_count: 0,
+  reply_count: m.replies ?? 0,
   media: null,
   embeds: [],
   kind: m.system ? m.system.kind : 'user',
@@ -144,12 +155,6 @@ export const asMessage = (
   pinned_at: m.pinned !== null ? seconds(m.pinned) : null,
 })
 
-// The draft key of the open conversation or channel.
-const keyNow = () => {
-  const c = useP2p.getState().chat
-  return c ? chatKey(c) : ''
-}
-
 export const noteBarCls =
   'mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] flex shrink-0 flex-wrap items-center gap-2 rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant keyboard:mb-3'
 
@@ -164,11 +169,27 @@ interface RowProps {
   canAct: boolean
   canDelete: boolean
   editing: EditBinding | null
+  // Where replies and edits of this row are written (the conversation, channel or thread).
+  draftKey: string
+  // A top-level message of a server channel: its thread can be made or opened.
+  threads: boolean
   onMenu: (p: P2pMessage, m: Message, x: number, y: number) => void
   onJump: (num: number) => void
 }
 
-const P2pRow = memo(function P2pRow({
+// "Create thread" on a message without replies that we may answer, "View thread" once it has
+// some.
+// A message whose body isn't here ("Message unavailable") keeps its thread reachable.
+export const threadAct = (p: P2pMessage, canAct: boolean) =>
+  p.system || p.call || p.thread || p.noThread
+    ? null
+    : p.replies
+      ? 'View thread'
+      : canAct && !p.unavailable
+        ? 'Create thread'
+        : null
+
+export const P2pRow = memo(function P2pRow({
   p,
   m,
   mine,
@@ -179,20 +200,30 @@ const P2pRow = memo(function P2pRow({
   canAct,
   canDelete,
   editing,
+  draftKey,
+  threads,
   onMenu,
   onJump,
 }: RowProps) {
   const actions: ToolbarAction[] = []
   const can = messageActs(p, canAct, mine)
-  if (can.edit && !editing) actions.push(editAction(() => p2pDm.startEdit(keyNow(), p.id)))
+  const thread = threads ? threadAct(p, canAct) : null
+  if (can.edit && !editing) actions.push(editAction(() => p2pDm.startEdit(draftKey, p.id)))
   if (can.reply)
     actions.push({
       key: 'reply',
       label: 'Reply',
       icon: Reply,
-      onClick: () => p2pDm.startReply(keyNow(), p.id),
+      onClick: () => p2pDm.startReply(draftKey, p.id),
     })
   if (can.forward) actions.push(forwardAction(() => copyForP2p(p, m)))
+  if (thread)
+    actions.push({
+      key: 'thread',
+      label: thread,
+      icon: MessageSquareText,
+      onClick: () => void p2pThread.open(p.id),
+    })
   if (canAct && canDelete)
     actions.push({
       key: 'delete',
@@ -289,6 +320,17 @@ const P2pRow = memo(function P2pRow({
             )}
             <AttachmentList att={p.fwd?.att ?? p.att} canFetch={canAct} />
             <ReactionBar m={m} canReact={canAct} canRemove={canAct} />
+            {threads && !!p.replies && (
+              <button
+                title="Open thread"
+                data-p2p-thread-chip
+                onClick={() => void p2pThread.open(p.id)}
+                className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
+              >
+                <MessageSquareText size={12} />
+                {p.replies} {p.replies === 1 ? 'reply' : 'replies'}
+              </button>
+            )}
           </div>
         </div>
         <MessageToolbar
@@ -331,6 +373,88 @@ function P2pSystemRow({ m, divider }: { m: Message; divider: boolean }) {
       </div>
     </div>
   )
+}
+
+// "alice pinned a message to this channel. See all pinned messages."
+function P2pPinRow({
+  p,
+  m,
+  divider,
+  place,
+  onMenu,
+}: {
+  p: P2pMessage
+  m: Message
+  divider: boolean
+  place: 'conversation' | 'channel'
+  onMenu: (p: P2pMessage, x: number, y: number) => void
+}) {
+  const target = p.system?.target ?? null
+  return (
+    <PinLine
+      row={{ 'data-row': '', 'data-mid': m.id, 'data-event': p.id }}
+      inner={{ 'data-system': 'pin' }}
+      divider={
+        divider && (
+          <div data-divider className="px-4 py-1" aria-hidden>
+            <div className="h-0.5 rounded-full bg-error" />
+          </div>
+        )
+      }
+      press={longPress((x, y) => onMenu(p, x, y))}
+      name={
+        <span className="streamer font-medium text-on-surface">
+          <Masked text={m.author.display_name} />
+        </span>
+      }
+      place={place}
+      ts={m.created_at}
+      onMessage={target ? () => void p2pDm.jumpTo(target) : null}
+      onPins={() => void p2pDm.openPins()}
+    />
+  )
+}
+
+// Whether a row pings us: it mentions us, answers us, or mentions everyone.
+export const pingsMe = (p: P2pMessage, me: string | null) =>
+  p.sender !== me &&
+  ((me !== null && p.mentions.includes(me)) || p.reply?.sender === me || p.everyone === true)
+
+// The row a jump focused (`focus`), flashed once it shows; the focus is cleared then.
+export function useP2pFlash(
+  listRef: RefObject<HTMLDivElement | null>,
+  scope: string,
+  focus: { id: string } | null,
+  num: Map<string, number>,
+  shared: Message[],
+  settle: Parameters<typeof useFocusMessage>[4]
+) {
+  const focusNum = focus ? (num.get(focus.id) ?? null) : null
+  const focusObj = useMemo(
+    () => (focus && focusNum !== null ? { id: focusNum, flash: true } : undefined),
+    [focus, focusNum]
+  )
+  const flash = useFocusMessage(listRef, scope, focusObj, shared, settle)
+  useEffect(() => {
+    if (focus && focusNum !== null) p2pDm.clearFocus()
+  }, [focus, focusNum])
+  return flash
+}
+
+const pinLineMenu = (p: P2pMessage, m: Message): ContextMenuItem[] => {
+  const target = p.system?.target ?? null
+  return [
+    ...(target
+      ? [{ label: 'Jump to Message', icon: ArrowRight, action: () => void p2pDm.jumpTo(target) }]
+      : []),
+    { label: 'Pinned Messages', icon: Pin, action: () => void p2pDm.openPins() },
+    {
+      label: 'Copy Timestamp',
+      icon: Clock,
+      action: () => void sharing().copyText(messageStampToken(m.created_at)),
+    },
+    { label: 'Copy Message ID', icon: Hash, action: () => void sharing().copyText(p.id) },
+  ]
 }
 
 const confirmDelete = (id: string, skip = false) => {
@@ -385,24 +509,35 @@ export interface Mentionable {
   handle: string
 }
 
-function P2pComposer({
-  chat,
+// A row shown in the open conversation or thread.
+const shownRow = (
+  s: { chat: P2pChat | null; thread: { head: P2pMessage | null; messages: P2pMessage[] } | null },
+  id: string | null
+) =>
+  id === null
+    ? undefined
+    : (s.chat?.messages.find(m => m.id === id) ??
+      (s.thread?.head?.id === id ? s.thread.head : s.thread?.messages.find(m => m.id === id)))
+
+export function P2pComposer({
+  draftKey: key,
+  scope,
   title,
   placeholder,
   nameOf,
   disabled,
 }: {
-  chat: P2pChat
+  // Where the draft, files, reply and sends go (a conversation, channel or thread).
+  draftKey: string
+  scope: string
   title: string
   placeholder: string
   nameOf: (ik: string) => string
   disabled: ReactNode
 }) {
-  const key = chatKey(chat)
-  const scope = chatScope(chat.room, chat.ch)
   const text = useP2p(s => s.drafts[key] ?? '')
   const replying = useP2p(s => (s.replying?.room === key ? s.replying.id : null))
-  const replyTo = useP2p(s => s.chat?.messages.find(m => m.id === replying))
+  const replyTo = useP2p(s => shownRow(s, replying))
   const forwarding = useStore(s => s.forwardClip !== null)
   const streamer = useStore(s => s.streamer)
   const sheet = useMedia(SHEET_QUERY)
@@ -633,62 +768,38 @@ function P2pComposer({
   )
 }
 
-export interface ChatBodyProps {
-  chat: P2pChat
-  // The header row, and what goes between it and the list (call bars, the stage).
-  header: ReactNode
-  above?: ReactNode
-  intro?: ReactNode
-  // In place of the composer, with the reason; null when sending works.
-  disabled: ReactNode
-  canAct: boolean
-  // Display names, and who a message may mention.
+// The rows of a conversation, channel or thread for the shared message components: numbered
+// messages, the reaction and mention source, the edit binding and the row menu.
+export interface ListOpts {
+  messages: P2pMessage[]
   nameOf: (ik: string) => string
   people: Mentionable[]
-  // "Forwarded to {title}", and the composer placeholder.
-  title: string
-  placeholder: string
-  pendingTip: string
-  peerFull: boolean
-  gap: boolean
-  online: boolean
-  // What the gap note says while nobody who has older history is online.
-  gapOffline: ReactNode
-  empty: ReactNode
-  typingNames: string[]
-  // Others' messages a moderator may delete, and whether pins may change.
-  mayDelete: (p: P2pMessage) => boolean
+  draftKey: string
+  scope: string
+  canAct: boolean
   mayPin: boolean
-  // Forward targets other than this conversation (contacts).
+  mayDelete: (p: P2pMessage) => boolean
   forwardSkip: string | null
-  pinsEmpty: string
-  pinsPlace: 'conversation' | 'channel'
-  dataAttr: Record<string, string>
+  // A server channel's own list: its messages can start threads.
+  threads: boolean
 }
 
-export function P2pChatBody(props: ChatBodyProps) {
-  const { chat, canAct, nameOf, people, mayDelete, mayPin, disabled, forwardSkip, typingNames } =
-    props
-  const key = chatKey(chat)
+export function useP2pList({
+  messages,
+  nameOf,
+  people,
+  draftKey,
+  scope,
+  canAct,
+  mayPin,
+  mayDelete,
+  forwardSkip,
+  threads,
+}: ListOpts) {
   const me = useP2p(s => s.me)
-  const movingAt = useP2p(s => s.movingAt)
-  const pins = useP2p(s => (s.pins && s.pins.room === s.chat?.room ? s.pins : null))
-  const editingState = useP2p(s => (s.editing?.room === key ? s.editing : null))
-  const focus = useP2p(s => (s.focus && s.focus.room === s.chat?.room ? s.focus : null))
-  const pulling = useP2p(s => s.pulling)
-  const storageFull = useP2p(s => s.storageFull)
+  const editingState = useP2p(s => (s.editing?.room === draftKey ? s.editing : null))
   const openContextMenu = useStore(s => s.openContextMenu)
-  const listRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
   const [picker, setPicker] = useState<{ m: Message; anchor: HTMLElement | null } | null>(null)
-  const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
-  const [dragging, setDragging] = useState(false)
-  const dragDepth = useRef(0)
-
-  const messages = chat.messages ?? EMPTY
-  const scope = chatScope(chat.room, chat.ch)
-  const canDrop = canAct && !textOnly && movingAt === null
-
   const user = useCallback((ik: string) => p2pUser(ik, nameOf(ik)), [nameOf])
   // Names the markdown recognizes as mentions, lowercased.
   const names = useMemo(() => {
@@ -777,39 +888,6 @@ export function P2pChatBody(props: ChatBodyProps) {
     [idOf, rows, user, names, me, people]
   )
 
-  const lastNum = shared[shared.length - 1]?.id
-  const ownCount = useMemo(() => messages.filter(m => m.sender === me).length, [messages, me])
-  const scroll = useChatScroll({
-    list: listRef,
-    content: contentRef,
-    scope,
-    count: shared.length,
-    lastId: lastNum,
-    stale: chat.loading === true && messages.length === 0,
-    focus: focus !== null,
-    detached: false,
-    outCount: ownCount,
-    onBottom: () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible')
-        p2pDm.markRead(key)
-    },
-  })
-  const fresh = newSince(shared, scroll.leftAt, me ?? undefined)
-  const focusNum = focus ? (num.get(focus.id) ?? null) : null
-  const focusObj = useMemo(
-    () => (focus && focusNum !== null ? { id: focusNum, flash: true } : undefined),
-    [focus, focusNum]
-  )
-  const flash = useFocusMessage(listRef, scope, focusObj, shared, scroll.settle)
-  useEffect(() => {
-    if (focus && focusNum !== null) p2pDm.clearFocus()
-  }, [focus, focusNum])
-
-  const divider = useMemo(() => {
-    if (!chat.readSeq) return -1
-    return messages.findIndex(m => m.sender !== me && m.seq > chat.readSeq)
-  }, [chat, messages, me])
-
   const editing = useMemo<EditBinding | null>(
     () =>
       editingState
@@ -827,12 +905,13 @@ export function P2pChatBody(props: ChatBodyProps) {
   )
 
   const menu = (p: P2pMessage, m: Message, x: number, y: number) => {
+    if (p.system?.kind === 'pin') return openContextMenu(x, y, pinLineMenu(p, m))
     const mine = p.sender === me
     const items: ContextMenuItem[] = []
     const can = messageActs(p, canAct, mine)
     if (can.reply)
-      items.push({ label: 'Reply', icon: Reply, action: () => p2pDm.startReply(keyNow(), p.id) })
-    if (can.edit) items.push(editMenuItem(() => p2pDm.startEdit(keyNow(), p.id)))
+      items.push({ label: 'Reply', icon: Reply, action: () => p2pDm.startReply(draftKey, p.id) })
+    if (can.edit) items.push(editMenuItem(() => p2pDm.startEdit(draftKey, p.id)))
     const others = useP2p
       .getState()
       .contacts.filter(c => c.state === 'mutual' && c.ik !== forwardSkip)
@@ -848,7 +927,14 @@ export function P2pChatBody(props: ChatBodyProps) {
           { label: 'Copy for forwarding', icon: Copy, action: () => copyForP2p(p, m) },
         ],
       })
-    if (canAct && mayPin)
+    const thread = threads ? threadAct(p, canAct) : null
+    if (thread)
+      items.push({
+        label: thread,
+        icon: MessageSquareText,
+        action: () => void p2pThread.open(p.id),
+      })
+    if (canAct && mayPin && !p.thread)
       items.push(
         p.pinned !== null
           ? {
@@ -905,6 +991,125 @@ export function P2pChatBody(props: ChatBodyProps) {
     (p: P2pMessage, m: Message, x: number, y: number) => menuRef.current(p, m, x, y),
     []
   )
+  return {
+    me,
+    user,
+    rows,
+    shared,
+    num,
+    idOf,
+    source,
+    editing,
+    editingState,
+    rowMenu,
+    picker,
+    setPicker,
+  }
+}
+
+export interface ChatBodyProps {
+  chat: P2pChat
+  // The header row, and what goes between it and the list (call bars, the stage).
+  header: ReactNode
+  above?: ReactNode
+  intro?: ReactNode
+  // In place of the composer, with the reason; null when sending works.
+  disabled: ReactNode
+  canAct: boolean
+  // Display names, and who a message may mention.
+  nameOf: (ik: string) => string
+  people: Mentionable[]
+  // "Forwarded to {title}", and the composer placeholder.
+  title: string
+  placeholder: string
+  pendingTip: string
+  peerFull: boolean
+  gap: boolean
+  online: boolean
+  // What the gap note says while nobody who has older history is online.
+  gapOffline: ReactNode
+  empty: ReactNode
+  typingNames: string[]
+  // Others' messages a moderator may delete, and whether pins may change.
+  mayDelete: (p: P2pMessage) => boolean
+  mayPin: boolean
+  // Forward targets other than this conversation (contacts).
+  forwardSkip: string | null
+  pinsEmpty: string
+  pinsPlace: 'conversation' | 'channel'
+  dataAttr: Record<string, string>
+}
+
+export function P2pChatBody(props: ChatBodyProps) {
+  const { chat, canAct, nameOf, people, mayDelete, mayPin, disabled, forwardSkip, typingNames } =
+    props
+  const key = chatKey(chat)
+  const me = useP2p(s => s.me)
+  const movingAt = useP2p(s => s.movingAt)
+  const pins = useP2p(s => (s.pins && s.pins.room === s.chat?.room ? s.pins : null))
+  const focus = useP2p(s => (s.focus && s.focus.room === s.chat?.room ? s.focus : null))
+  const pulling = useP2p(s => s.pulling)
+  const storageFull = useP2p(s => s.storageFull)
+  const listRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
+  const [dragging, setDragging] = useState(false)
+  const dragDepth = useRef(0)
+
+  const messages = chat.messages ?? EMPTY
+  const scope = chatScope(chat.room, chat.ch)
+  const canDrop = canAct && !textOnly && movingAt === null
+
+  const {
+    user,
+    rows,
+    shared,
+    num,
+    idOf,
+    source,
+    editing,
+    editingState,
+    rowMenu,
+    picker,
+    setPicker,
+  } = useP2pList({
+    messages,
+    nameOf,
+    people,
+    draftKey: key,
+    scope,
+    canAct,
+    mayPin,
+    mayDelete,
+    forwardSkip,
+    threads: !!chat.ch,
+  })
+
+  const lastNum = shared[shared.length - 1]?.id
+  const ownCount = useMemo(() => messages.filter(m => m.sender === me).length, [messages, me])
+  const scroll = useChatScroll({
+    list: listRef,
+    content: contentRef,
+    scope,
+    count: shared.length,
+    lastId: lastNum,
+    stale: chat.loading === true && messages.length === 0,
+    focus: focus !== null,
+    detached: false,
+    outCount: ownCount,
+    onBottom: () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible')
+        p2pDm.markRead(key)
+    },
+  })
+  const fresh = newSince(shared, scroll.leftAt, me ?? undefined)
+  const flash = useP2pFlash(listRef, scope, focus, num, shared, scroll.settle)
+
+  const divider = useMemo(() => {
+    if (!chat.readSeq) return -1
+    return messages.findIndex(m => m.sender !== me && m.seq > chat.readSeq)
+  }, [chat, messages, me])
+
   const rowJump = useCallback(
     (n: number) => {
       const id = idOf(n)
@@ -976,7 +1181,16 @@ export function P2pChatBody(props: ChatBodyProps) {
               )}
               {gapNote}
               {rows.map(({ p, m }, i) =>
-                p.system ? (
+                p.system?.kind === 'pin' ? (
+                  <P2pPinRow
+                    key={p.id}
+                    p={p}
+                    m={m}
+                    divider={i === divider}
+                    place={props.pinsPlace}
+                    onMenu={(row, x, y) => rowMenu(row, m, x, y)}
+                  />
+                ) : p.system ? (
                   <P2pSystemRow key={p.id} m={m} divider={i === divider} />
                 ) : p.call ? (
                   <P2pCallRow key={p.id} p={p} me={me} />
@@ -987,17 +1201,14 @@ export function P2pChatBody(props: ChatBodyProps) {
                     m={m}
                     mine={p.sender === me}
                     pendingTip={props.peerFull ? 'Their storage is full' : props.pendingTip}
-                    mentioned={
-                      p.sender !== me &&
-                      ((me !== null && p.mentions.includes(me)) ||
-                        p.reply?.sender === me ||
-                        p.everyone === true)
-                    }
+                    mentioned={pingsMe(p, me)}
                     divider={i === divider}
                     flash={flash === m.id}
                     canAct={canAct}
                     canDelete={mayDelete(p)}
                     editing={editing && editingState?.id === p.id ? editing : null}
+                    draftKey={key}
+                    threads={!!chat.ch}
                     onMenu={rowMenu}
                     onJump={rowJump}
                   />
@@ -1015,7 +1226,8 @@ export function P2pChatBody(props: ChatBodyProps) {
             </div>
           )}
           <P2pComposer
-            chat={chat}
+            draftKey={key}
+            scope={scope}
             title={props.title}
             placeholder={props.placeholder}
             nameOf={nameOf}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react'
 import { MessageSquareText, Trash2 } from 'lucide-react'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { ReactionBar } from './reactions'
@@ -62,6 +62,66 @@ import {
 } from './selection'
 
 const EMPTY: Message[] = []
+
+// The thread panel, whichever source fills it (instance messages, or a P2P server's): the header,
+// bars above the list, the list (`head`, the root, its reply count, the replies, `tail`) and the
+// composer below.
+export function ThreadPanelView({
+  onClose,
+  bars,
+  overlays,
+  listRef,
+  contentRef,
+  onScroll,
+  head,
+  root,
+  count,
+  replies,
+  tail,
+  footer,
+}: {
+  onClose: () => void
+  bars?: ReactNode
+  overlays?: ReactNode
+  listRef: RefObject<HTMLDivElement | null>
+  contentRef: RefObject<HTMLDivElement | null>
+  onScroll: () => void
+  head?: ReactNode
+  root: ReactNode
+  count: number
+  replies: ReactNode
+  tail?: ReactNode
+  footer: ReactNode
+}) {
+  return (
+    <div data-thread-panel className="flex h-full w-full flex-col bg-surface-container-low">
+      <PanelHeader
+        icon={MessageSquareText}
+        title="Thread"
+        closeTitle="Close thread"
+        onClose={onClose}
+      />
+      {bars}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {overlays}
+        <div ref={listRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-3">
+          <div ref={contentRef}>
+            {head}
+            {root}
+            <div className="my-2 flex items-center gap-2 px-4 text-xs text-on-surface-variant">
+              <span className="h-px flex-1 bg-outline-variant" />
+              {count} {count === 1 ? 'reply' : 'replies'}
+              <span className="h-px flex-1 bg-outline-variant" />
+            </div>
+            {replies}
+            {tail}
+          </div>
+        </div>
+      </div>
+      <div className="relative shrink-0">{footer}</div>
+    </div>
+  )
+}
 
 export default function ThreadPanel() {
   const root = useStore(s => {
@@ -282,62 +342,70 @@ export default function ThreadPanel() {
   }
 
   return (
-    <div data-thread-panel className="flex h-full w-full flex-col bg-surface-container-low">
-      <PanelHeader
-        icon={MessageSquareText}
-        title="Thread"
-        closeTitle="Close thread"
-        onClose={closePanel}
-      />
-      {wide && <SelectionBar scope={key} sheet={false} compact />}
-      <BulkJobBar scope={key} />
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        {older?.loading && <OlderLoading />}
-        {newer?.loading && <OlderLoading newer />}
-        {detached && !newer?.loading && <PresentBar onJump={() => void jumpToPresent(key)} />}
-        {!detached && positioned && fresh > 0 && (
-          <PresentBar count={fresh} onJump={scroll.toBottom} />
-        )}
-        <div ref={listRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-3">
-          <div ref={contentRef}>
-            {positioned && replies.length > 0 && older?.more !== false && (
-              <EdgeSentinel key={replies[0].id} root={listRef} edge="top" onVisible={onTop} />
-            )}
-            {row(root)}
-            <div className="my-2 flex items-center gap-2 px-4 text-xs text-on-surface-variant">
-              <span className="h-px flex-1 bg-outline-variant" />
-              {root.reply_count} {root.reply_count === 1 ? 'reply' : 'replies'}
-              <span className="h-px flex-1 bg-outline-variant" />
-            </div>
-            <BlockedList
-              messages={replies}
-              focusId={focus?.id ?? null}
-              row={m => (
-                <Selectable key={m.id} m={m} scope={key}>
-                  {row(m)}
-                </Selectable>
-              )}
+    <ThreadPanelView
+      onClose={closePanel}
+      bars={
+        <>
+          {wide && <SelectionBar scope={key} sheet={false} compact />}
+          <BulkJobBar scope={key} />
+        </>
+      }
+      overlays={
+        <>
+          {older?.loading && <OlderLoading />}
+          {newer?.loading && <OlderLoading newer />}
+          {detached && !newer?.loading && <PresentBar onJump={() => void jumpToPresent(key)} />}
+          {!detached && positioned && fresh > 0 && (
+            <PresentBar count={fresh} onJump={scroll.toBottom} />
+          )}
+        </>
+      }
+      listRef={listRef}
+      contentRef={contentRef}
+      onScroll={onScroll}
+      head={
+        positioned &&
+        replies.length > 0 &&
+        older?.more !== false && (
+          <EdgeSentinel key={replies[0].id} root={listRef} edge="top" onVisible={onTop} />
+        )
+      }
+      root={row(root)}
+      count={root.reply_count}
+      replies={
+        <BlockedList
+          messages={replies}
+          focusId={focus?.id ?? null}
+          row={m => (
+            <Selectable key={m.id} m={m} scope={key}>
+              {row(m)}
+            </Selectable>
+          )}
+        />
+      }
+      tail={
+        <>
+          {positioned && detached && replies.length > 0 && (
+            <EdgeSentinel
+              key={`n${replies[replies.length - 1].id}`}
+              root={listRef}
+              edge="bottom"
+              onVisible={() => {
+                if (newer?.loading) return
+                snapEdge()
+                void loadNewerThread()
+              }}
             />
-            {positioned && detached && replies.length > 0 && (
-              <EdgeSentinel
-                key={`n${replies[replies.length - 1].id}`}
-                root={listRef}
-                edge="bottom"
-                onVisible={() => {
-                  if (newer?.loading) return
-                  snapEdge()
-                  void loadNewerThread()
-                }}
-              />
-            )}
-            <OutboxRows msgKey={key} size={30} />
-          </div>
-        </div>
-      </div>
-      <div className="relative shrink-0">
-        <TypingIndicator scope={key} bg="bg-surface-container-low" />
-        {selecting && !wide ? <SelectionBar scope={key} sheet /> : <MessageComposer thread />}
-      </div>
-    </div>
+          )}
+          <OutboxRows msgKey={key} size={30} />
+        </>
+      }
+      footer={
+        <>
+          <TypingIndicator scope={key} bg="bg-surface-container-low" />
+          {selecting && !wide ? <SelectionBar scope={key} sheet /> : <MessageComposer thread />}
+        </>
+      }
+    />
   )
 }

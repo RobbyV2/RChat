@@ -38,6 +38,8 @@ import { ConfigLinkPage } from '../components/config_sync'
 import { useEscape } from '../components/ui'
 import { P2pDialogs, P2pHome } from '../components/p2p/p2p_home'
 import { P2pChannelPane, P2pMemberList, P2pServerSidebar } from '../components/p2p/p2p_server_view'
+import { P2pThreadPanel } from '../components/p2p/p2p_thread'
+import { P2pSearchPanel } from '../components/p2p/p2p_search'
 import { p2p, p2pHost, useP2p } from '../lib/p2p/app'
 import { addInboxAdapter } from '../lib/inbox_source'
 import { p2pInbox, startP2pPings } from '../lib/p2p/inbox_source'
@@ -90,6 +92,8 @@ export default function AppShell() {
   const p2pHome = useP2p(s => s.home) && me !== null
   const p2pServer = useP2p(s => s.server !== null) && me !== null
   const p2pChannel = useP2p(s => (s.server ? `${s.server.room}/${s.server.ch}` : null))
+  const p2pPanelKind = useP2p(s => (s.server ? s.panel : null))
+  const p2pPanel = me !== null ? p2pPanelKind : null
   const booted = useRef(false)
   const [leftOpen, setLeftOpen] = useState(false)
   const [rightOpen, setRightOpen] = useState(false)
@@ -183,6 +187,13 @@ export default function AppShell() {
     setRightOpen(false)
   }, [p2pHome, p2pServer, p2pChannel])
 
+  // A P2P server's thread or search takes the panel's place.
+  useEffect(() => {
+    if (!p2pPanel) return
+    const kind = useStore.getState().panel?.kind
+    if (kind === 'thread' || kind === 'search') useStore.getState().closePanel()
+  }, [p2pPanel])
+
   const paletteOpen = usePaletteUi(s => s.open)
   useEffect(() => {
     if (dialog || confirming || paletteOpen) {
@@ -249,12 +260,17 @@ export default function AppShell() {
             <MemberSidebar />
           </div>
         )}
-        {p2pServer && p2pMembers && (
+        {p2pServer && p2pMembers && !p2pPanel && (
           <div className="hidden h-full lg:block">
             <P2pMemberList />
           </div>
         )}
-        {panel && (
+        {p2pServer && p2pPanel && (
+          <div className="fixed inset-x-0 top-app z-40 h-app bg-surface max-md:px-safe md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
+            {p2pPanel === 'thread' ? <P2pThreadPanel /> : <P2pSearchPanel />}
+          </div>
+        )}
+        {panel && !(p2pServer && p2pPanel) && (
           <div className="fixed inset-x-0 top-app z-40 h-app bg-surface max-md:px-safe md:static md:z-auto md:w-80 md:shrink-0 md:border-l md:border-outline-variant">
             {panel.kind === 'thread' ? (
               <ThreadPanel />

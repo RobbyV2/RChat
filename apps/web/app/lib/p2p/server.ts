@@ -24,6 +24,7 @@ import {
   DAG,
   dropServer,
   getEvents,
+  unindexAll,
   insertServer,
   evictionOrder,
   oldestBodies,
@@ -40,6 +41,7 @@ import {
 } from './dag'
 import {
   serverWire,
+  type ChanCounts,
   type CodeRecord,
   type EventRecord,
   type IdentRecord,
@@ -98,6 +100,7 @@ import {
   type SystemContent,
 } from './state'
 import { isQuotaError, Sync, type Check, type Link, type SyncLimits, type Walked } from './sync'
+import { candidates, matches, rebuildStep, SEARCH, unindexRoom, words } from './search'
 import {
   dmRoomId,
   DmError,
@@ -252,6 +255,31 @@ export interface ServerArrival {
   rec: EventRecord
   ping: 'mention' | 'reply' | 'reaction' | 'everyone' | null
   unread: boolean
+  // A thread reply (or a reaction to one): the thread's root.
+  thread: string | null
+}
+
+export const THREAD_ROOT_TEXT = 'Threads only start on channel messages'
+export const PIN_TEXT = "You can't pin messages here"
+export const PIN_THREAD_TEXT = "Messages in threads can't be pinned"
+
+// What to search P2P servers for (search panel): words, authors, a channel, files, and times
+// (unix seconds, exclusive).
+export interface SearchQuery {
+  q: string
+  from: readonly string[] | null
+  room: string | null
+  ch: string | null
+  hasFile: boolean
+  beforeTs: number | null
+  afterTs: number | null
+}
+
+export interface SearchHit {
+  room: string
+  ch: string
+  thread: string | null
+  m: P2pMessage
 }
 
 export interface MemberView {
@@ -379,6 +407,42 @@ const webLocks = (): LockLike | null =>
     : null
 
 const sizeOfWire = (w: WireV2) => storedSize(w as unknown as Wire)
+
+// A line made from an event (join, leave, pin), about `ik`.
+const systemRow = (rec: EventRecord, ik: string): P2pMessage => ({
+  id: rec.id,
+  sender: ik,
+  ts: rec.effTs,
+  sentTs: serverWire(rec).ev.ts,
+  sortKey: rec.sortKey,
+  seq: rec.seq,
+  body: '',
+  reply: null,
+  mentions: [],
+  fwd: null,
+  att: [],
+  edited: null,
+  reactions: [],
+  pinned: null,
+  late: false,
+  pending: false,
+  failed: false,
+  call: null,
+})
+
+// A channel's counters with `n` pings taken off (of `thread`'s, when given).
+const lessPings = (old: ChanCounts, n: number, thread: string | null): ChanCounts => {
+  const next: ChanCounts = { ...old, pings: Math.max(0, old.pings - n) }
+  if (thread && old.threads?.[thread]) {
+    const threads = { ...old.threads }
+    const left = threads[thread] - n
+    if (left > 0) threads[thread] = left
+    else delete threads[thread]
+    if (Object.keys(threads).length) next.threads = threads
+    else delete next.threads
+  }
+  return next
+}
 
 export class Servers {
   readonly sync: Sync
@@ -532,9 +596,31 @@ export class Servers {
     }
     this.gossip.start()
     for (const id of this.rooms.keys()) void this.refreshMe(id).catch(() => {})
+    this.indexing = this.indexPass()
+  }
+
+  // Search index: built again from the stored events step by step until it is complete (the
+  // first start on this schema, after an import).
+  indexed = false
+  indexing: Promise<void> = Promise.resolve()
+  private stopped = false
+
+  private async indexPass() {
+    try {
+      while (!this.stopped && !this.deps.store.closed) {
+        if (await rebuildStep(this.db, SEARCH.step, room => this.readOnly(room) !== null)) {
+          this.indexed = true
+          return
+        }
+        await new Promise(r => setTimeout(r, 0))
+      }
+    } catch {
+      // Storage went away.
+    }
   }
 
   stop() {
+    this.stopped = true
     this.gossip.stop()
     this.sync.stop()
     if (this.host instanceof WorkerHost) this.host.stop()
@@ -1051,10 +1137,12 @@ export class Servers {
   // Stored events that turned out not to be admitted (an import): deleted, their space back.
   private async dropRows(room: string, ids: string[]) {
     if (!ids.length) return
-    const tx = this.db.transaction(['events', 'rooms', 'meta'], 'readwrite')
+    const tx = this.db.transaction(['events', 'rooms', 'meta', 'search'], 'readwrite')
     const events = tx.objectStore('events')
     let n = 0
     let bytes = 0
+    // Out of the index first, while everything is still stored.
+    bytes += await unindexAll(tx.objectStore('search'), events, null, room, ids)
     for (const id of ids) {
       const e = await events.get(id)
       if (!e || e.room !== room) continue
@@ -1878,7 +1966,7 @@ export class Servers {
       room,
       news.map(x => x.id)
     )
-    const counts: Record<string, import('./db').ChanCounts> = {}
+    const counts: Record<string, ChanCounts> = {}
     const arrivals: ServerArrival[] = []
     for (let i = 0; i < news.length; i++) {
       const rec = news[i]
@@ -1888,11 +1976,14 @@ export class Servers {
       let ch: string | null = null
       let ping: ServerArrival['ping'] = null
       let unread = false
+      let thread: string | null = null
       if (rec.type === 'msg' && c && rec.chan) {
         ch = rec.chan
-        unread = true
+        // Thread replies aren't unread in the channel; their pings count, per thread too.
+        thread = await this.rootOf(rec)
+        unread = thread === null
         const m = c as unknown as MsgContent
-        this.gossip.stopTyping(room, ch, rec.sender)
+        this.gossip.stopTyping(room, ch, rec.sender, thread)
         if (!m.fwd && m.mentions?.includes(this.me)) ping = 'mention'
         else if (m.everyone && sh.everyone) ping = 'everyone'
         else if (m.reply) {
@@ -1905,23 +1996,37 @@ export class Servers {
         if (t && t.room === room && t.sender === this.me && t.chan) {
           ch = t.chan
           ping = 'reaction'
+          thread = await this.rootOf(t)
         }
       }
       if (!ch || rec.effTs < since || membershipOf(s, this.me) !== 'join') continue
       const cur = counts[ch] ?? { unread: 0, pings: 0, readSeq: 0 }
-      counts[ch] = {
+      const next: ChanCounts = {
         ...cur,
         unread: cur.unread + (unread ? 1 : 0),
         pings: cur.pings + (ping ? 1 : 0),
       }
-      arrivals.push({ room, ch, rec, ping, unread })
+      if (ping && thread)
+        next.threads = { ...cur.threads, [thread]: (cur.threads?.[thread] ?? 0) + 1 }
+      counts[ch] = next
+      arrivals.push({ room, ch, rec, ping, unread, thread })
     }
     if (Object.keys(counts).length)
       await this.updateRoom(room, cur => {
         const chans = { ...cur.chans }
         for (const [ch, n] of Object.entries(counts)) {
           const old = chans[ch] ?? { unread: 0, pings: 0, readSeq: 0 }
-          chans[ch] = { ...old, unread: old.unread + n.unread, pings: old.pings + n.pings }
+          const next: ChanCounts = {
+            ...old,
+            unread: old.unread + n.unread,
+            pings: old.pings + n.pings,
+          }
+          if (n.threads) {
+            const threads = { ...old.threads }
+            for (const [t, k] of Object.entries(n.threads)) threads[t] = (threads[t] ?? 0) + k
+            next.threads = threads
+          }
+          chans[ch] = next
         }
         return { ...cur, chans }
       })
@@ -2446,12 +2551,12 @@ export class Servers {
     this.gossip.leave(room)
     for (const l of this.sync.linksOf(room)) this.sync.unlink(l.session, room)
     const tx = this.db.transaction(
-      ['rooms', 'events', 'children', 'outbox', 'codes', 'meta'],
+      ['rooms', 'events', 'children', 'outbox', 'codes', 'meta', 'search'],
       'readwrite'
     )
     const events = tx.objectStore('events')
     let n = 0
-    let bytes = 0
+    let bytes = await unindexRoom(tx.objectStore('search'), room)
     let cursor = await events
       .index('room_seq')
       .openCursor(IDBKeyRange.bound([room, -Infinity], [room, Infinity]))
@@ -2853,9 +2958,20 @@ export class Servers {
 
   async send(
     room: string,
-    msg: { ch: string; body: string; reply?: string; fwd?: Fwd; att?: Attachment[] }
+    msg: {
+      ch: string
+      body: string
+      reply?: string
+      fwd?: Fwd
+      att?: Attachment[]
+      thread?: string
+    }
   ) {
     const content: MsgContent = { body: msg.body, ch: msg.ch }
+    if (msg.thread) {
+      await this.threadRoot(room, msg.thread, msg.ch)
+      content.thread = msg.thread
+    }
     if (msg.reply) content.reply = msg.reply
     if (msg.att?.length) content.att = msg.att
     if (msg.fwd) content.fwd = msg.fwd
@@ -2869,6 +2985,38 @@ export class Servers {
         content.everyone = true
     }
     return this.content(room, 'msg', content as unknown as Record<string, unknown>)
+  }
+
+  // A thread reply's root, when it is one: a top-level message of the same channel held here.
+  // A reply that names anything else (or a root not here yet) shows in its channel.
+  private async rootOf(
+    rec: EventRecord,
+    get: (id: string) => Promise<EventRecord | undefined> = id => this.db.get('events', id)
+  ): Promise<string | null> {
+    if (!rec.thread) return null
+    const r = await get(rec.thread)
+    return r && r.room === rec.room && r.type === 'msg' && r.chan === rec.chan && !r.thread
+      ? rec.thread
+      : null
+  }
+
+  // The thread an event of ours belongs to (null: none, or not a server event).
+  async threadOf(id: string) {
+    const r = await this.db.get('events', id)
+    return r && this.rooms.has(r.room) ? this.rootOf(r) : null
+  }
+
+  // A thread's root: a top-level message of the channel that shows here.
+  private async threadRoot(room: string, id: string, ch?: string) {
+    const r = await this.db.get('events', id)
+    // A root whose body was evicted here for space still takes replies.
+    const gone = (r?.purged || r?.redacted) && !r?.evicted
+    if (!r || r.room !== room || r.type !== 'msg' || !r.chan || r.thread || gone)
+      throw new ServerError(THREAD_ROOT_TEXT)
+    if (ch !== undefined && r.chan !== ch) throw new ServerError(THREAD_ROOT_TEXT)
+    const sh = (await this.host.display(room, [id]))[0]
+    if (!sh || sh.hidden) throw new ServerError(THREAD_ROOT_TEXT)
+    return r
   }
 
   private async message(room: string, target: string) {
@@ -2908,10 +3056,11 @@ export class Servers {
     return this.content(room, 'react', { target, key, on, ch: r.chan })
   }
 
+  // Manage messages (owners have it), top-level messages only, at most PINS_MAX per channel.
   async pin(room: string, target: string, on: boolean) {
     const r = await this.message(room, target)
-    if (!can(this.sumOf(room), this.me, P.ManageMessages))
-      throw new ServerError('Only the owner can pin messages')
+    if (!can(this.sumOf(room), this.me, P.ManageMessages)) throw new ServerError(PIN_TEXT)
+    if (await this.rootOf(r)) throw new ServerError(PIN_THREAD_TEXT)
     if (on && r.chan) {
       const pins = await this.loadPins(room, r.chan)
       if (pins.length >= PINS_MAX) throw new ServerError(`You can pin up to ${PINS_MAX} messages`)
@@ -2932,37 +3081,110 @@ export class Servers {
     this.changed(room)
   }
 
-  async markRead(room: string, ch: string) {
+  // Reads the channel up to now; pings on thread replies stay until their thread is read.
+  // `drop`: thread pings to take off as well, per root.
+  async markRead(room: string, ch: string, drop: Readonly<Record<string, number>> = {}) {
     await this.updateRoom(room, cur => {
       const old = cur.chans?.[ch]
-      if (old && !old.unread && !old.pings && old.readSeq === cur.lastSeq) return null
-      return {
-        ...cur,
-        chans: { ...cur.chans, [ch]: { unread: 0, pings: 0, readSeq: cur.lastSeq } },
-      }
+      const threads: Record<string, number> = {}
+      for (const [t, n] of Object.entries(old?.threads ?? {}))
+        if (n - (drop[t] ?? 0) > 0) threads[t] = n - (drop[t] ?? 0)
+      const left = Object.values(threads).reduce((a, b) => a + b, 0)
+      if (old && !old.unread && old.pings === left && old.readSeq === cur.lastSeq) return null
+      const next: ChanCounts = { unread: 0, pings: left, readSeq: cur.lastSeq }
+      if (left) next.threads = threads
+      return { ...cur, chans: { ...cur.chans, [ch]: next } }
     })
     this.changed(room)
   }
 
-  // Pings marked read one by one (the inbox): off the channel's counter, the read position stays.
-  async unping(room: string, ch: string, n: number) {
+  // Reads a channel and takes off the thread pings that no longer count: their reply (or the
+  // reaction) doesn't show or left its thread, or the thread's root doesn't show; counted pings
+  // not among `pings` (the log's unread thread pings of the channel) go too. Returns the ids of
+  // `pings` that no longer count.
+  // `counts`: the thread counters as they were before `pings` was read (default: now).
+  async readChannel(
+    room: string,
+    ch: string,
+    pings: readonly { id: string; thread: string }[],
+    counts: Readonly<Record<string, number>> = this.threadCounts(room, ch)
+  ) {
+    const live = await this.livePings(room, pings)
+    const drop: Record<string, number> = {}
+    for (const [root, n] of Object.entries(counts)) {
+      const alive = pings.filter(p => p.thread === root && live.has(p.id)).length
+      if (n > alive) drop[root] = n - alive
+    }
+    await this.markRead(room, ch, drop)
+    return pings.filter(p => !live.has(p.id)).map(p => p.id)
+  }
+
+  threadCounts(room: string, ch: string): Record<string, number> {
+    return { ...this.rooms.get(room)?.chans?.[ch]?.threads }
+  }
+
+  private async livePings(room: string, pings: readonly { id: string; thread: string }[]) {
+    const recs = new Map<string, EventRecord>()
+    for (const r of await getEvents(this.db, room, [
+      ...new Set(pings.flatMap(p => [p.id, p.thread])),
+    ]))
+      recs.set(r.id, r)
+    const targets = new Map<string, EventRecord>()
+    for (const r of await getEvents(
+      this.db,
+      room,
+      [...recs.values()].flatMap(r => (r.type === 'react' && r.target ? [r.target] : []))
+    ))
+      targets.set(r.id, r)
+    // The message each ping is about (a reaction's target), in the thread it pinged in.
+    const about = new Map<string, EventRecord>()
+    for (const p of pings) {
+      const r = recs.get(p.id)
+      const m = r?.type === 'react' && r.target ? targets.get(r.target) : r
+      if (!r || !m || m.type !== 'msg' || r.purged || r.redacted || m.purged || m.redacted) continue
+      if ((await this.rootOf(m)) === p.thread && recs.get(p.thread)) about.set(p.id, m)
+    }
+    const ids = [
+      ...new Set([...about].flatMap(([id, m]) => [id, m.id, m.thread as string]).filter(x => x)),
+    ]
+    const shown = await this.host.display(room, ids)
+    const ok = new Set(ids.filter((_x, i) => shown[i] && !shown[i]?.hidden))
+    return new Set(
+      [...about]
+        .filter(([id, m]) => ok.has(id) && ok.has(m.id) && ok.has(m.thread as string))
+        .map(([id]) => id)
+    )
+  }
+
+  // Reads a thread: its pings come off the channel's counter.
+  async markThread(room: string, ch: string, root: string) {
+    await this.updateRoom(room, cur => {
+      const old = cur.chans?.[ch]
+      const n = old?.threads?.[root]
+      if (!old || !n) return null
+      return { ...cur, chans: { ...cur.chans, [ch]: lessPings(old, n, root) } }
+    })
+    this.changed(room)
+  }
+
+  // Pings marked read one by one (the inbox): off the channel's counter (and the thread's), the
+  // read position stays.
+  async unping(room: string, ch: string, n: number, thread: string | null = null) {
     await this.updateRoom(room, cur => {
       const old = cur.chans?.[ch]
       if (!old?.pings) return null
-      return {
-        ...cur,
-        chans: { ...cur.chans, [ch]: { ...old, pings: Math.max(0, old.pings - n) } },
-      }
+      return { ...cur, chans: { ...cur.chans, [ch]: lessPings(old, n, thread) } }
     })
     this.changed(room)
   }
 
-  typing(room: string, ch: string, on: boolean) {
-    this.gossip.typing(room, ch, on)
+  // In a channel, or in one of its threads (`root`).
+  typing(room: string, ch: string, on: boolean, root?: string) {
+    this.gossip.typing(room, ch, on, root)
   }
 
-  typingIn(room: string, ch: string) {
-    return this.gossip.typingIn(room, ch)
+  typingIn(room: string, ch: string, root: string | null = null) {
+    return this.gossip.typingIn(room, ch, root)
   }
 
   loadOlder(room: string) {
@@ -3039,24 +3261,146 @@ export class Servers {
       !!opts.before
     )
     const recs: EventRecord[] = []
-    let cursor = await this.db
-      .transaction('events')
-      .store.index('room_chan_sort')
-      .openCursor(range, 'prev')
+    const pins: EventRecord[] = []
+    const store = this.db.transaction('events').store
+    const roots = new Map<string, Promise<EventRecord | undefined>>()
+    const get = (id: string) => {
+      let r = roots.get(id)
+      if (!r) roots.set(id, (r = store.get(id)))
+      return r
+    }
+    let cursor = await store.index('room_chan_sort').openCursor(range, 'prev')
     while (cursor && recs.length < limit + 1) {
-      if (cursor.value.type === 'msg') recs.push(cursor.value)
+      const r = cursor.value
+      // Thread replies show in their thread only.
+      if (r.type === 'msg' && !(await this.rootOf(r, get))) recs.push(r)
+      else if (r.type === 'pin') pins.push(r)
       cursor = await cursor.continue()
     }
     const more = recs.length > limit
     const page = recs.slice(0, limit).reverse()
-    const rows = await this.rows(room, page)
+    const rows = await this.withReplies(room, ch, await this.rows(room, page))
+    const lo = more ? page[0]?.sortKey : opts.after
+    const pinRows = await this.pinRows(
+      room,
+      pins.filter(p => lo === undefined || p.sortKey > lo)
+    )
+    rows.push(...pinRows)
     const sys = systemOf(this.sumOf(room))
-    if (sys.ch === ch && (sys.join || sys.leave)) {
-      const lo = more ? page[0]?.sortKey : opts.after
+    if (sys.ch === ch && (sys.join || sys.leave))
       rows.push(...(await this.systemRows(room, lo, opts.before, sys)))
-      rows.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0))
-    }
+    rows.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0))
     return { messages: rows, more }
+  }
+
+  // "{name} pinned a message to this channel.": a pin that shows, by someone with Manage messages
+  // where it was posted, of a top-level message (a link to it while it shows).
+  private async pinRows(room: string, pins: EventRecord[]) {
+    const on = pins.filter(p => (serverWire(p).c as { on?: unknown } | null)?.on === true)
+    if (!on.length) return []
+    const shown = await this.host.display(
+      room,
+      on.map(p => p.id)
+    )
+    const ok = on.filter((_p, i) => shown[i] && !shown[i]?.hidden && shown[i]?.pins === true)
+    const targets = await getEvents(
+      this.db,
+      room,
+      ok.flatMap(p => (p.target ? [p.target] : []))
+    )
+    const byId = new Map(targets.map(t => [t.id, t]))
+    const top = new Set<string>()
+    for (const t of targets) if (!(await this.rootOf(t))) top.add(t.id)
+    const live = targets.filter(t => t.type === 'msg' && top.has(t.id) && !t.redacted)
+    const vis = await this.host.display(
+      room,
+      live.map(t => t.id)
+    )
+    const showing = new Set(live.filter((_t, i) => vis[i] && !vis[i]?.hidden).map(t => t.id))
+    const out: P2pMessage[] = []
+    for (const p of ok) {
+      const t = p.target ? byId.get(p.target) : undefined
+      if (t && (!top.has(t.id) || t.chan !== p.chan)) continue
+      out.push({
+        ...systemRow(p, p.sender),
+        system: {
+          kind: 'pin',
+          ik: p.sender,
+          target: t && showing.has(t.id) ? t.id : null,
+        },
+      })
+    }
+    return out
+  }
+
+  // Top-level rows of channel `ch` with their thread's reply count and last reply time (replies
+  // in the same channel that show).
+  private async withReplies(room: string, ch: string, rows: P2pMessage[]) {
+    const roots = rows.filter(m => !m.thread && !m.noThread && !m.system)
+    if (!roots.length) return rows
+    const ix = this.db.transaction('events').store.index('room_thread_sort')
+    const lists = await Promise.all(
+      roots.map(m => ix.getAll(IDBKeyRange.bound([room, m.id, ''], [room, m.id, '￿'])))
+    )
+    const replies = new Map<string, EventRecord[]>()
+    roots.forEach((m, i) => {
+      if (lists[i].length) replies.set(m.id, lists[i])
+    })
+    if (!replies.size) return rows
+    const all = [...replies.values()].flat().filter(r => r.type === 'msg' && r.chan === ch)
+    const shown = await this.host.display(
+      room,
+      all.map(r => r.id)
+    )
+    const vis = new Set(all.filter((_r, i) => shown[i] && !shown[i]?.hidden).map(r => r.id))
+    return rows.map(m => {
+      const list = replies.get(m.id)?.filter(r => vis.has(r.id) && !r.redacted)
+      if (!list?.length) return m
+      return { ...m, replies: list.length, lastReply: list[list.length - 1].effTs }
+    })
+  }
+
+  // A thread: its root and replies, oldest first, `limit` at most before `before`.
+  async loadThread(
+    room: string,
+    root: string,
+    opts: { before?: string; after?: string; limit?: number } = {}
+  ) {
+    const limit = opts.limit ?? 100
+    const r = await this.db.get('events', root)
+    if (this.readOnly(room) || !r || r.room !== room || r.type !== 'msg' || !r.chan) return null
+    if (await this.rootOf(r)) return null
+    const range = IDBKeyRange.bound(
+      [room, root, opts.after ?? ''],
+      [room, root, opts.before ?? '￿'],
+      !!opts.after,
+      !!opts.before
+    )
+    const recs: EventRecord[] = []
+    let cursor = await this.db
+      .transaction('events')
+      .store.index('room_thread_sort')
+      .openCursor(range, 'prev')
+    while (cursor && recs.length < limit + 1) {
+      const x = cursor.value
+      if (x.type === 'msg' && x.chan === r.chan) recs.push(x)
+      cursor = await cursor.continue()
+    }
+    const more = recs.length > limit
+    const page = recs.slice(0, limit).reverse()
+    const [head] = await this.withReplies(room, r.chan, await this.rows(room, [r]))
+    return { root: head ?? null, ch: r.chan, messages: await this.rows(room, page), more }
+  }
+
+  // A thread around one of its replies, for jumping to it.
+  async loadThreadAround(room: string, root: string, id: string) {
+    const r = await this.db.get('events', id)
+    if (!r || r.room !== room || (await this.rootOf(r)) !== root) return null
+    const older = await this.loadThread(room, root, { before: r.sortKey, limit: 50 })
+    const newer = await this.loadThread(room, root, { after: r.sortKey, limit: 1000 })
+    if (!older || !newer) return null
+    const self = await this.rows(room, [r])
+    return { ...older, messages: [...older.messages, ...self, ...newer.messages] }
   }
 
   // Join and leave lines from ACL events in a sort key range: the genesis (its creator) and a live
@@ -3095,24 +3439,7 @@ export class Servers {
       const ik = rec.type === 'kick' || rec.type === 'ban' ? (c?.to as string) : rec.sender
       if (typeof ik !== 'string') return
       out.push({
-        id: rec.id,
-        sender: ik,
-        ts: rec.effTs,
-        sentTs: serverWire(rec).ev.ts,
-        sortKey: rec.sortKey,
-        seq: rec.seq,
-        body: '',
-        reply: null,
-        mentions: [],
-        fwd: null,
-        att: [],
-        edited: null,
-        reactions: [],
-        pinned: null,
-        late: false,
-        pending: false,
-        failed: false,
-        call: null,
+        ...systemRow(rec, ik),
         system: { kind: rec.type === 'join' || rec.type === 'genesis' ? 'join' : 'leave', ik },
       })
     })
@@ -3132,9 +3459,16 @@ export class Servers {
     const out: P2pMessage[] = []
     const viewed: string[] = []
     const replies = new Map<string, Shown | null>()
+    const roots = new Map<string, Promise<EventRecord | undefined>>()
+    const getRoot = (id: string) => {
+      let x = roots.get(id)
+      if (!x) roots.set(id, (x = this.db.get('events', id)))
+      return x
+    }
     for (let i = 0; i < recs.length; i++) {
       const r = recs[i]
       const sh = shown[i]
+      const thread = await this.rootOf(r, getRoot)
       const c = serverWire(r).c as MsgContent | null
       // Shows, but its body was purged or evicted here: until a peer sends it back (spec 4.3);
       // an evicted one is asked for now that it is viewed (spec 4.2).
@@ -3160,6 +3494,8 @@ export class Servers {
           failed: false,
           call: null,
           unavailable: true,
+          thread,
+          ...(r.thread && !thread ? { noThread: true as const } : {}),
         })
         continue
       }
@@ -3209,12 +3545,14 @@ export class Servers {
         att: c.att ?? [],
         edited: edit ? edit.effTs : null,
         reactions: reactionsOf(reacts, this.me),
-        pinned: sh.pin?.on && pin ? pin.effTs : null,
+        pinned: sh.pin?.on && pin && !thread ? pin.effTs : null,
         late: r.sender !== this.me && r.receivedAt - r.effTs > EV.lateMs,
         pending,
         failed: pending && !!o?.failed,
         call: null,
         everyone: c.everyone === true && sh.everyone,
+        thread,
+        ...(r.thread && !thread ? { noThread: true as const } : {}),
       })
     }
     if (viewed.length) {
@@ -3230,10 +3568,10 @@ export class Servers {
 
   async loadAround(room: string, ch: string, id: string) {
     const r = await this.db.get('events', id)
-    if (!r || r.room !== room || r.chan !== ch) return null
+    if (!r || r.room !== room || r.chan !== ch || (await this.rootOf(r))) return null
     const older = await this.loadChannel(room, ch, { before: r.sortKey, limit: 50 })
     const newer = await this.loadChannel(room, ch, { after: r.sortKey, limit: 1000 })
-    const self = await this.rows(room, [r])
+    const self = await this.withReplies(room, ch, await this.rows(room, [r]))
     return { messages: [...older.messages, ...self, ...newer.messages], more: older.more }
   }
 
@@ -3259,10 +3597,133 @@ export class Servers {
     if (!targets.length) return []
     const shown = await this.host.display(room, targets)
     const on = targets.filter((_t, i) => shown[i]?.pin?.on && !shown[i]?.hidden)
-    const recs = (await getEvents(this.db, room, on.slice(0, PINS_MAX))).filter(
-      r => r.type === 'msg' && r.chan === ch
-    )
-    return this.rows(room, recs)
+    const recs: EventRecord[] = []
+    for (const r of await getEvents(this.db, room, on))
+      if (r.type === 'msg' && r.chan === ch && !(await this.rootOf(r))) recs.push(r)
+    return this.rows(room, recs.slice(0, PINS_MAX))
+  }
+
+  // ----- Search -----
+
+  // Messages stored here (thread replies too) that show and match, newest first: one page of at
+  // most SEARCH.page below `cursor` (a sort key). `next` when more may follow.
+  // A query without letters or digits ("!!!") looks for that text in what shows.
+  async search(q: SearchQuery, cursor: string | null = null, page: number = SEARCH.page) {
+    const query = words(q.q)
+    const literal = !query.length && q.q.trim() ? q.q.trim().toLowerCase() : null
+    const rooms = [...this.rooms.values()]
+      .filter(r => !r.invite && !this.readOnly(r.id) && (q.room === null || r.id === q.room))
+      .map(r => r.id)
+    const from = q.from ? new Set(q.from) : null
+    const { pool, capped: more0 } = await this.searchPool(q, query, rooms, cursor)
+    const scan = pool.slice(0, SEARCH.scan)
+    let capped = more0 || pool.length > scan.length
+    const hits: SearchHit[] = []
+    let last: string | null = null
+    let i = 0
+    while (i < scan.length && hits.length < page) {
+      const chunk = scan.slice(i, i + 50)
+      i += chunk.length
+      const recs = new Map<string, EventRecord>()
+      for (const x of chunk) {
+        const r = await this.db.get('events', x.id)
+        if (!r || r.room !== x.room || r.type !== 'msg' || !r.chan || r.purged || r.redacted)
+          continue
+        if (q.ch !== null && r.chan !== q.ch) continue
+        if (from && !from.has(r.sender)) continue
+        if (q.hasFile && !r.atts?.length) continue
+        if (q.beforeTs !== null && r.effTs >= q.beforeTs * 1000) continue
+        if (q.afterTs !== null && r.effTs <= q.afterTs * 1000) continue
+        if (!this.isChannel(r.room, r.chan)) continue
+        recs.set(r.id, r)
+      }
+      const shown = new Map<string, P2pMessage>()
+      for (const room of new Set([...recs.values()].map(r => r.room)))
+        for (const m of await this.rows(
+          room,
+          [...recs.values()].filter(r => r.room === room)
+        ))
+          shown.set(m.id, m)
+      for (const x of chunk) {
+        last = x.sk
+        const m = shown.get(x.id)
+        const r = recs.get(x.id)
+        const text = m ? (m.fwd ? m.fwd.body : m.body) : ''
+        if (!m || !r || m.unavailable) continue
+        if (literal ? !text.toLowerCase().includes(literal) : !matches(text, query)) continue
+        hits.push({ room: r.room, ch: r.chan as string, thread: m.thread ?? null, m })
+        if (hits.length >= page) break
+      }
+    }
+    capped ||= i < scan.length || hits.length >= page
+    return { hits, next: capped ? last : null }
+  }
+
+  // The candidates of a query, newest first below `cursor`. Words: from the index, kept for the
+  // query's next pages a minute (at most SEARCH.pool); else by a scan of recent messages.
+  private searchCache: {
+    key: string
+    at: number
+    pool: { room: string; id: string; sk: string }[]
+    capped: boolean
+  } | null = null
+
+  private async searchPool(
+    q: SearchQuery,
+    query: readonly string[],
+    rooms: readonly string[],
+    cursor: string | null
+  ) {
+    const now = this.clock.now()
+    const key = JSON.stringify([query, q.from, rooms])
+    const c = this.searchCache
+    if (query.length && cursor !== null && c?.key === key && now - c.at < SEARCH.poolMs) {
+      const pool = c.pool.filter(x => x.sk < cursor)
+      if (pool.length || !c.capped) return { pool, capped: c.capped }
+    }
+    const pool: { room: string; id: string; sk: string }[] = []
+    let capped = false
+    const max = query.length ? SEARCH.pool : SEARCH.scan
+    for (const room of rooms) {
+      const got = query.length
+        ? await candidates(this.db, room, query, cursor, max)
+        : await this.recent(room, q, cursor, max)
+      pool.push(...got.list)
+      capped ||= got.more
+    }
+    pool.sort((a, b) => (a.sk < b.sk ? 1 : a.sk > b.sk ? -1 : 0))
+    const kept = pool.slice(0, max)
+    capped ||= pool.length > kept.length
+    if (query.length) this.searchCache = { key, at: now, pool: kept, capped }
+    return { pool: kept, capped }
+  }
+
+  // Newest messages of a room below `before` without words to look for: by author when the query
+  // names authors, else every message.
+  private async recent(room: string, q: SearchQuery, before: string | null, max: number) {
+    const out: { room: string; id: string; sk: string }[] = []
+    const scan = async (index: 'room_type_sort' | 'room_sender_sort', key: string) => {
+      let cursor = await this.db
+        .transaction('events')
+        .store.index(index)
+        .openCursor(
+          IDBKeyRange.bound([room, key, ''], [room, key, before ?? '￿'], false, !!before),
+          'prev'
+        )
+      let n = 0
+      while (cursor && n < max + 1) {
+        const r = cursor.value
+        if (r.type === 'msg') {
+          out.push({ room, id: r.id, sk: r.sortKey })
+          n += 1
+        }
+        cursor = await cursor.continue()
+      }
+    }
+    if (q.from) for (const ik of q.from) await scan('room_sender_sort', ik)
+    else await scan('room_type_sort', 'msg')
+    out.sort((a, b) => (a.sk < b.sk ? 1 : -1))
+    return { list: out.slice(0, max), more: out.length > max }
   }
 
   // Whether a channel id is one of the room's live text channels.

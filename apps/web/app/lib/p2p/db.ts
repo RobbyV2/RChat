@@ -69,11 +69,14 @@ export interface ServerCache {
   sum: Summary
 }
 
-// Unread messages and pings of one server channel.
+// Unread messages and pings of one server channel. `threads`: the pings on thread replies, per
+// thread root (counted in `pings` too); reading the channel leaves them, reading the thread clears
+// them.
 export interface ChanCounts {
   unread: number
   pings: number
   readSeq: number
+  threads?: Record<string, number>
 }
 
 // A conversation (DM) or a P2P server. Its events are the source of truth; this record caches the
@@ -142,9 +145,10 @@ export interface EventRecord {
   seq: number
   // Content removed by a redaction (or never received).
   redacted: boolean
-  // P2P servers: the channel of a content event, the layer, the device and its seq, and for an
-  // admitted ACL event its admission order and record (acl_room.ts).
+  // P2P servers: the channel of a content event, the thread root of a thread reply, the layer, the
+  // device and its seq, and for an admitted ACL event its admission order and record (acl_room.ts).
   chan?: string
+  thread?: string
   layer?: 'a' | 'c'
   dev?: string
   dseq?: number
@@ -244,6 +248,11 @@ export interface CodeRecord {
   created: number
 }
 
+// A word of a P2P server message (search.ts): one row per word and message, keyed
+// `[room, word, message id]`; its value is the start of the message's sort key (time and depth;
+// the id ends it), so hits come newest first without reading the events.
+export type SearchKey = [string, string, string]
+
 export interface OutboxRecord {
   id: string
   room: string
@@ -276,6 +285,7 @@ export interface P2pSchema extends DBSchema {
       room_dseq: [string, string, number]
       room_aseq: [string, number]
       room_sender_sort: [string, string, string]
+      room_thread_sort: [string, string, string]
     }
   }
   children: { key: [string, string]; value: { parent: string; child: string } }
@@ -286,6 +296,7 @@ export interface P2pSchema extends DBSchema {
   idents: { key: string; value: IdentRecord }
   codes: { key: string; value: CodeRecord; indexes: { room: string } }
   dropped: { key: string; value: DroppedRecord; indexes: { room: string } }
+  search: { key: SearchKey; value: string }
 }
 
 export type P2pDatabase = IDBPDatabase<P2pSchema>
@@ -304,6 +315,22 @@ export type StoreName =
   | 'idents'
   | 'codes'
   | 'dropped'
+  | 'search'
+
+// Where the search index rebuild stands (search.ts): `at` is the last event id indexed; the index
+// is complete once `done`.
+export interface SearchMeta {
+  v: number
+  done: boolean
+  at: string
+}
+
+// Bytes stored for every P2P server together (dag.ts), the search index included.
+export const SERVER_TOTAL_BYTES = 'sbytes'
+
+export const SEARCH_META = 'search'
+export const SEARCH_V = 1
+export const SEARCH_STALE: SearchMeta = { v: SEARCH_V, done: false, at: '' }
 
 type Upgrade = (
   db: P2pDatabase,
@@ -350,6 +377,11 @@ export const UPGRADES: Upgrade[] = [
   },
   (_db, tx) => {
     tx.objectStore('events').createIndex('room_sender_sort', ['room', 'sender', 'sortKey'])
+  },
+  (db, tx) => {
+    tx.objectStore('events').createIndex('room_thread_sort', ['room', 'thread', 'sortKey'])
+    db.createObjectStore('search')
+    void tx.objectStore('meta').put(SEARCH_STALE, SEARCH_META)
   },
 ]
 

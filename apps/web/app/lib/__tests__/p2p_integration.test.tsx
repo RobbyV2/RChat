@@ -617,6 +617,22 @@ describe('P2P inbox in the app', () => {
     }
   })
 
+  test('a thread ping counts in the bell like a channel ping', () => {
+    const st = {
+      ...p2pSaved,
+      rooms: {},
+      servers: {
+        [SRV]: server({ chans: { [CH]: { unread: 0, pings: 2, readSeq: 0, threads: { r1: 1 } } } }),
+      },
+    } as unknown as P2pState
+    const listed = byCounter([
+      ping('a', { room: SRV, ch: CH }),
+      ping('b', { room: SRV, ch: CH, thread: 'r1' }),
+    ])
+    expect([...listed]).toEqual([[`${SRV}/${CH}`, 2]])
+    expect(p2pPingCount(st, EMPTY_NOTIFY, listed)).toBe(2)
+  })
+
   test('the world reflects contacts, blocks and servers', () => {
     const st = {
       ...p2pSaved,

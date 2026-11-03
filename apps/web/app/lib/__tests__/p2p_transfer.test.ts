@@ -150,7 +150,9 @@ const bodies = async (p: Peer, peerIk: string) =>
     await loadMessages(p.store.db, dmRoomId(p.node.ik, peerIk), p.node.ik, peerIk, {
       limit: 100_000,
     })
-  ).messages.map(m => m.body)
+  ).messages
+    .filter(m => !m.system)
+    .map(m => m.body)
 
 const text = (v: unknown) =>
   JSON.stringify(v, (_, x: unknown) => (x instanceof Uint8Array ? Array.from(x) : x))

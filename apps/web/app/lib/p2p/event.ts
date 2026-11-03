@@ -91,9 +91,11 @@ export interface MsgContent {
   mentions?: string[]
   fwd?: Fwd
   att?: Attachment[]
-  // P2P servers: the channel, and a mention of everyone (shown as one only when the sender may).
+  // P2P servers: the channel, a mention of everyone (shown as one only when the sender may), and
+  // the thread's root (a top-level message of the same channel).
   ch?: string
   everyone?: true
+  thread?: string
 }
 
 export interface EditContent {
@@ -314,6 +316,7 @@ export const checkContent = (type: string, c: unknown): c is Content => {
         (c.ch === undefined || isShortId(c.ch)) &&
         (c.everyone === undefined || c.everyone === true) &&
         (c.reply === undefined || isEventId(c.reply)) &&
+        (c.thread === undefined || isEventId(c.thread)) &&
         (c.mentions === undefined || isMentions(c.mentions)) &&
         (c.fwd === undefined || isFwd(c.fwd)) &&
         (c.att === undefined || (c.fwd === undefined && isAtts(c.att))) &&

@@ -87,12 +87,19 @@ export interface P2pMessage {
   // A call log row (written by the caller, `sender`), or a missed call this side noted itself
   // when the caller never wrote one (`local`).
   call: (CallContent & { local?: true }) | null
-  // P2P servers: a join or leave line made from a member event, and a mention of everyone by
-  // someone allowed to.
-  system?: { kind: 'join' | 'leave'; ik: string } | null
+  // A line made from an event: a pin (by `ik`, of `target` while it shows), and in P2P servers a
+  // join or leave line made from a member event. A mention of everyone by someone allowed to.
+  system?: { kind: 'join' | 'leave' | 'pin'; ik: string; target?: string | null } | null
   everyone?: boolean
   // P2P servers: it shows, but its body was purged here and is on its way back (spec 4.3).
   unavailable?: boolean
+  // P2P servers: a thread reply's root; on a top-level message, its thread's replies that show
+  // and when the last one was sent.
+  thread?: string | null
+  replies?: number
+  lastReply?: number
+  // Names a thread root that isn't one here: shown in the channel, and starts no thread.
+  noThread?: true
 }
 
 // What can be done with a shown message. One whose body isn't here ("Message unavailable") can't
@@ -169,6 +176,7 @@ export const deriveMessage = (
   peer: string
 ): P2pMessage | null => {
   if (msg.type === 'call') return callRow(msg, related, me, outbox, peer)
+  if (msg.type === 'pin') return pinRow(msg, replyTo, replyRelated)
   // A type from a newer version is stored but not shown.
   if (msg.type !== 'msg') return null
   const c = msg.wire.c as MsgContent | null
@@ -205,6 +213,28 @@ export const deriveMessage = (
     pending: msg.sender === me && o !== undefined && !o.deliveredTo.includes(peer),
     failed: msg.sender === me && o !== undefined && !o.deliveredTo.includes(peer) && !!o.failed,
     call: null,
+  }
+}
+
+// "{name} pinned a message to this conversation.": a pin on, linking its message while that
+// shows (`target`, `targetRelated`).
+const pinRow = (
+  msg: EventRecord,
+  target: EventRecord | null | undefined,
+  targetRelated: EventRecord[]
+): P2pMessage | null => {
+  const c = msg.wire.c as PinContent | null
+  if (!c?.on || msg.redacted) return null
+  const live =
+    !!target &&
+    target.type === 'msg' &&
+    !target.redacted &&
+    target.wire.c !== null &&
+    !isRedactedBy(target, targetRelated)
+  return {
+    ...blankRow(msg.id, msg.sender, msg.effTs, msg.sortKey, msg.seq),
+    sentTs: msg.wire.ev.ts,
+    system: { kind: 'pin', ik: msg.sender, target: live ? c.target : null },
   }
 }
 
@@ -303,7 +333,7 @@ export const viewOf = async (
   const out: P2pMessage[] = []
   for (const r of recs) {
     const rel = await related(db, room, r.id)
-    const reply = (r.wire.c as MsgContent | null)?.reply
+    const reply = r.type === 'pin' ? r.target : (r.wire.c as MsgContent | null)?.reply
     const target = reply ? await db.get('events', reply) : undefined
     const replyRel = target ? await related(db, room, target.id) : []
     const m = deriveMessage(r, rel, target?.room === room ? target : null, replyRel, me, box, peer)
@@ -326,8 +356,8 @@ export const loadMessages = async (
 ) => {
   const limit = opts.limit ?? PAGE
   const recs: EventRecord[] = []
-  // Messages and call rows, newest first.
-  for (const type of ['msg', 'call'] as const) {
+  // Messages, call rows and pin lines, newest first.
+  for (const type of ['msg', 'call', 'pin'] as const) {
     let cursor = await db
       .transaction('events')
       .store.index('room_type_sort')

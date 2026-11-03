@@ -3,6 +3,7 @@ import type { Message } from './frames'
 import type { Clock, Session } from './session'
 import type { Link } from './sync'
 import { isShortId } from './state'
+import { isEventId } from './event'
 
 // Which members a P2P server room syncs with (note section 5, "Connection budget"). Nobody
 // connects to everyone: each member links a room with at most `perRoom` sessions (a hard cap,
@@ -179,6 +180,7 @@ export class Gossip {
     s.on('grlink_drop', m => this.onDrop(m, s))
     s.on('gpresence', m => this.onPresenceMsg(m, s))
     s.on('gtyping', m => this.onTypingMsg(m, s))
+    s.on('ttyping', m => this.onTypingMsg(m, s))
   }
 
   // A session is up: ask it for the rooms we want it for.
@@ -589,20 +591,25 @@ export class Gossip {
 
   // ----- Typing -----
 
-  typing(room: string, ch: string, on: boolean) {
+  // Typing in a channel (`gtyping`), or in one of its threads (`ttyping`, with the root): its own
+  // op, so older clients ignore it and older relays don't pass it on as channel typing.
+  typing(room: string, ch: string, on: boolean, root?: string) {
+    const frame = root ? { t: 'ttyping', room, ch, root, on } : { t: 'gtyping', room, ch, on }
     for (const l of this.deps.links(room))
       if (this.full(room, l.ik) && this.allow(l.session, 'out'))
-        void l.session.send({ t: 'gtyping', room, ch, on }).catch(() => {})
+        void l.session.send(frame).catch(() => {})
   }
 
   private onTypingMsg(m: Message, s: Session) {
     const from = s.remote?.ik
     const { room, ch, on } = m
+    const thread = m.t === 'ttyping'
     if (
       !from ||
       typeof room !== 'string' ||
       !isShortId(ch) ||
       typeof on !== 'boolean' ||
+      (thread && !isEventId(m.root)) ||
       (m.ik !== undefined && !isKeyId(m.ik))
     )
       return s.strike()
@@ -610,12 +617,14 @@ export class Gossip {
     if (this.deps.channel && !this.deps.channel(room, ch)) return
     const ik = (m.ik as string | undefined) ?? from
     if (ik === this.deps.me() || !this.deps.members(room).includes(ik)) return
-    const changed = this.typed(room, ch, ik, on)
+    const root = thread ? (m.root as string) : null
+    const place = placeOf(ch, root)
+    const changed = this.typed(room, place, ik, on)
     // One hop: what a peer typed goes on to our other links of the room, and no further; at
     // most once per typingRelayMs per typer (a stop only when it changes something), within
     // each link's budget.
     if (m.ik !== undefined) return
-    const key = `${room}\n${ch}\n${ik}`
+    const key = `${room}\n${place}\n${ik}`
     const now = this.deps.clock.now()
     const last = this.relayed.get(key)
     if (on) {
@@ -625,39 +634,45 @@ export class Gossip {
       if (!changed || !last?.on) return
       this.relayed.set(key, { at: now, on: false })
     }
+    const frame = root
+      ? { t: 'ttyping', room, ch, root, on, ik }
+      : { t: 'gtyping', room, ch, on, ik }
     for (const l of this.deps.links(room))
       if (l.session !== s && l.ik !== ik && this.full(room, l.ik) && this.allow(l.session, 'out'))
-        void l.session.send({ t: 'gtyping', room, ch, on, ik }).catch(() => {})
+        void l.session.send(frame).catch(() => {})
   }
 
-  // Shows or stops showing a typer; true when that changed.
-  private typed(room: string, ch: string, ik: string, on: boolean) {
-    const key = `${room}\n${ch}\n${ik}`
+  // Shows or stops showing a typer in a place (a channel, or `{channel}#{root}`); true when that
+  // changed.
+  private typed(room: string, place: string, ik: string, on: boolean) {
+    const key = `${room}\n${place}\n${ik}`
     const cur = this.typers.get(key)
     if (cur) this.deps.clock.clear(cur.timer)
     if (!on) {
       if (cur) {
         this.typers.delete(key)
-        this.deps.onTyping(room, ch, ik, false)
+        this.deps.onTyping(room, place, ik, false)
       }
       return !!cur
     }
     const ttl = this.limits.typingMs
     this.typers.set(key, {
       until: this.deps.clock.now() + ttl,
-      timer: this.deps.clock.set(() => this.typed(room, ch, ik, false), ttl),
+      timer: this.deps.clock.set(() => this.typed(room, place, ik, false), ttl),
     })
-    if (!cur) this.deps.onTyping(room, ch, ik, true)
+    if (!cur) this.deps.onTyping(room, place, ik, true)
     return !cur
   }
 
   // Stops showing someone typing (their message arrived).
-  stopTyping(room: string, ch: string, ik: string) {
-    this.typed(room, ch, ik, false)
+  stopTyping(room: string, ch: string, ik: string, root: string | null = null) {
+    this.typed(room, placeOf(ch, root), ik, false)
   }
 
-  typingIn(room: string, ch: string) {
-    const prefix = `${room}\n${ch}\n`
+  typingIn(room: string, ch: string, root: string | null = null) {
+    const prefix = `${room}\n${placeOf(ch, root)}\n`
     return [...this.typers.keys()].filter(k => k.startsWith(prefix)).map(k => k.split('\n')[2])
   }
 }
+
+const placeOf = (ch: string, root: string | null) => (root ? `${ch}#${root}` : ch)

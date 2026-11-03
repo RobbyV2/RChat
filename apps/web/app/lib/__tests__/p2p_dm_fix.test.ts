@@ -76,7 +76,7 @@ const view = async (p: Peer, peer: Peer) =>
     await loadMessages(p.store.db, p.dms.roomFor(peer.node.ik), p.node.ik, peer.node.ik, {
       limit: 100_000,
     })
-  ).messages
+  ).messages.filter(m => !m.system)
 
 const bodies = async (p: Peer, peer: Peer) => (await view(p, peer)).map(m => m.body)
 

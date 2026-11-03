@@ -10,6 +10,7 @@ import {
   LogOut,
   Menu,
   Plus,
+  Search,
   Settings,
   UserPlus,
   Users,
@@ -27,6 +28,7 @@ import {
   p2pDm,
   p2pRail,
   banRequest,
+  p2pSearch,
   p2pServer,
   serverScope,
   useP2p,
@@ -686,6 +688,53 @@ function ServerIntro() {
 
 const NONE: string[] = []
 
+// Why this device can't send in a server's channels (in place of the composer), or null.
+export const sendBlock = (
+  v: ServerView,
+  st: {
+    reader: boolean
+    elsewhere: boolean
+    status: string
+    movedAt: number | null
+    movingAt: number | null
+  }
+): ReactNode => {
+  const out = v.readOnly
+    ? v.readOnly
+    : v.me === 'ban'
+      ? 'You are banned from this server.'
+      : v.me === 'leave'
+        ? 'You are no longer a member of this server.'
+        : v.me !== 'join'
+          ? 'Joining. You can write once a member has let you in.'
+          : null
+  return st.reader || st.elsewhere ? (
+    <div className={noteBarCls}>
+      <ElsewhereNotice />
+    </div>
+  ) : st.status === 'moved' ? (
+    <div className={noteBarCls}>{movedText(st.movedAt)}</div>
+  ) : st.movingAt !== null ? (
+    <MovingBanner className={noteBarCls} />
+  ) : out ? (
+    <div data-p2p-out className={noteBarCls}>
+      {out}
+      {v.me !== 'join' && v.me !== 'invite' && v.me !== null && (
+        <button
+          onClick={() => confirmForget(v)}
+          className="font-medium text-primary hover:underline"
+        >
+          Remove from this device
+        </button>
+      )}
+    </div>
+  ) : v.full ? (
+    <div className={noteBarCls} role="status">
+      This server reached its storage limit on this device.
+    </div>
+  ) : null
+}
+
 export function P2pChannelPane({
   onMenu,
   onMembers,
@@ -704,6 +753,7 @@ export function P2pChannelPane({
   const movedAt = useP2p(s => s.movedAt)
   const movingAt = useP2p(s => s.movingAt)
   const pinsOpen = useP2p(s => s.pins !== null && s.pins.room === s.chat?.room)
+  const searchOpen = useP2p(s => s.panel === 'search')
   const typingIks = useP2p(s => (s.chat?.ch ? (s.serverTyping[chatKey(s.chat)] ?? NONE) : NONE))
   const menuPings = useStore(allPings)
   const channel = v?.channels.find(c => c.id === chat?.ch)
@@ -758,6 +808,17 @@ export function P2pChannelPane({
               onClick: () => (pinsOpen ? p2pDm.closePins() : void p2pDm.openPins()),
             }}
           />
+        )}
+        {!v.readOnly && (
+          <button
+            title="Search"
+            aria-label="Search"
+            aria-pressed={searchOpen}
+            onClick={() => (searchOpen ? p2pSearch.close() : p2pSearch.open())}
+            className={`rounded-full p-1.5 ${searchOpen ? 'bg-secondary-container text-on-secondary-container' : 'hover:bg-surface-container-high'}`}
+          >
+            <Search size={20} />
+          </button>
         )}
         <button
           title={membersOpen ? 'Hide members' : 'Show members'}
@@ -817,41 +878,7 @@ export function P2pChannelPane({
     )
   }
 
-  const out = v.readOnly
-    ? v.readOnly
-    : v.me === 'ban'
-      ? 'You are banned from this server.'
-      : v.me === 'leave'
-        ? 'You are no longer a member of this server.'
-        : v.me !== 'join'
-          ? 'Joining. You can write once a member has let you in.'
-          : null
-  const disabled: ReactNode =
-    reader || elsewhere ? (
-      <div className={noteBarCls}>
-        <ElsewhereNotice />
-      </div>
-    ) : status === 'moved' ? (
-      <div className={noteBarCls}>{movedText(movedAt)}</div>
-    ) : movingAt !== null ? (
-      <MovingBanner className={noteBarCls} />
-    ) : out ? (
-      <div data-p2p-out className={noteBarCls}>
-        {out}
-        {v.me !== 'join' && v.me !== 'invite' && v.me !== null && (
-          <button
-            onClick={() => confirmForget(v)}
-            className="font-medium text-primary hover:underline"
-          >
-            Remove from this device
-          </button>
-        )}
-      </div>
-    ) : v.full ? (
-      <div className={noteBarCls} role="status">
-        This server reached its storage limit on this device.
-      </div>
-    ) : null
+  const disabled = sendBlock(v, { reader, elsewhere, status, movedAt, movingAt })
 
   return (
     <P2pChatBody

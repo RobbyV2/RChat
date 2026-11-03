@@ -5,6 +5,7 @@ import {
   attsOf,
   authorizeTarget,
   effTsOf,
+  isEventId,
   isLate,
   LIMITS as EV,
   redacted,
@@ -15,7 +16,16 @@ import {
 } from './event'
 import type { IDBPTransaction } from 'idb'
 import {
+  indexEstimate,
+  indexEvent,
+  unindex,
+  unindexEdit,
+  type EventRead,
+  type SearchWrite,
+} from './search'
+import {
   serverWire,
+  SERVER_TOTAL_BYTES,
   withFiles,
   type DroppedRecord,
   type EventRecord,
@@ -80,7 +90,7 @@ export interface InsertCtx {
 
 // Server rooms count against their own totals.
 export const SERVER_TOTAL = 'sevents'
-export const SERVER_TOTAL_BYTES = 'sbytes'
+export { SERVER_TOTAL_BYTES }
 
 export const blankRoom = (id: string, peer: string, now: number): RoomRecord => ({
   id,
@@ -333,8 +343,8 @@ export const UNKNOWN = { events: 20_000, bytes: 32 * 1024 * 1024 }
 
 export type ServerInserted = Inserted | { status: 'stale' }
 
-// Bytes of content bodies each sender has stored in a room (spec 4.2 eviction step 3 picks the
-// largest), in `meta`.
+// Bytes of content bodies (and their search rows) each sender has stored in a room (spec 4.2
+// eviction step 3 picks the largest), in `meta`.
 export const heldKey = (room: string, ik: string) => `held\n${room}\n${ik}`
 const heldAdd = async (
   meta: { get(k: string): Promise<unknown>; put(v: unknown, k: string): Promise<unknown> },
@@ -398,6 +408,37 @@ export const withinShareNow = async (
 
 const CONTENT_TARGETED: readonly string[] = ['edit', 'redact', 'react', 'pin']
 
+// A message's or an edit's search rows taken out (it is dropped or purged). Returns the bytes.
+const unindexOne = (st: SearchWrite, events: EventRead, r: EventRecord) =>
+  r.type === 'msg'
+    ? unindex(st, events, r)
+    : r.type === 'edit'
+      ? unindexEdit(st, events, r)
+      : Promise.resolve(0)
+
+// The same for content about to be deleted: messages first, then edits; held bytes come off their
+// authors.
+export const unindexAll = async (
+  st: SearchWrite,
+  events: EventRead,
+  meta: Parameters<typeof heldAdd>[0] | null,
+  room: string,
+  ids: readonly string[]
+) => {
+  const recs: EventRecord[] = []
+  for (const id of ids) {
+    const e = await events.get(id)
+    if (e?.room === room) recs.push(e)
+  }
+  let bytes = 0
+  for (const e of [...recs.filter(r => r.type === 'msg'), ...recs.filter(r => r.type !== 'msg')]) {
+    const n = await unindexOne(st, events, e)
+    if (meta) await heldAdd(meta, room, e.sender, -n)
+    bytes += n
+  }
+  return bytes
+}
+
 export const insertServer = async (
   db: P2pDatabase,
   room: string,
@@ -406,7 +447,10 @@ export const insertServer = async (
   receivedAt: number,
   ctx: ServerInsert
 ): Promise<ServerInserted> => {
-  const tx = db.transaction(['rooms', 'events', 'children', 'meta', 'dropped'], 'readwrite')
+  const tx = db.transaction(
+    ['rooms', 'events', 'children', 'meta', 'dropped', 'search'],
+    'readwrite'
+  )
   tx.done.catch(() => {})
   const events = tx.objectStore('events')
   const have = await events.get(id)
@@ -512,12 +556,15 @@ export const insertServer = async (
   if (gone && target?.evicted) rec.evicted = true
   const reply = !acl && ev.t === 'msg' && typeof c?.reply === 'string' ? c.reply : undefined
   if (reply) rec.reply = reply
+  if (!acl && ev.t === 'msg' && isEventId(c?.thread)) rec.thread = c.thread
   const atts = isRedacted || ev.t !== 'msg' ? [] : attsOf(stored.c as never)
   if (atts.length) Object.assign(rec, withFiles(rec, atts))
   await events.put(rec)
-  const storedBytes = gone ? storedSize(stored) : size
+  // The search index's rows count as the room's storage.
+  const indexed = !acl && !ctx.unknown ? await indexEvent(tx.objectStore('search'), events, rec) : 0
+  const storedBytes = (gone ? storedSize(stored) : size) + indexed
   // Only a body eviction can free counts (spec 4.2 step 3).
-  if (!acl && !ctx.unknown && !isRedacted) await heldAdd(meta, room, ev.a, size)
+  if (!acl && !ctx.unknown && !isRedacted) await heldAdd(meta, room, ev.a, size + indexed)
   const next: DevChain = { seq: Math.max(chain?.seq ?? -1, ev.seq) }
   const keep = (x: string | undefined, mine: boolean) => (mine ? id : x)
   const later = ev.seq >= (chain?.seq ?? -1)
@@ -527,8 +574,8 @@ export const insertServer = async (
   if (cp !== undefined) next.cprev = cp
   await meta.put(next, ck)
   if (share) {
-    await meta.put(shareAdd(share.room, receivedAt, size), shareKey(room, ev.a))
-    await meta.put(shareAdd(share.server, receivedAt, size), shareKey(null, ev.a))
+    await meta.put(shareAdd(share.room, receivedAt, size + indexed), shareKey(room, ev.a))
+    await meta.put(shareAdd(share.server, receivedAt, size + indexed), shareKey(null, ev.a))
   }
   const missing = r.missing.filter(m => m !== id)
   const known = new Set(parents.map(x => x.id))
@@ -561,7 +608,10 @@ export const insertServer = async (
 // anything else keeps only its id. The room's counts and space come back, and its gaps and heads
 // forget the dropped ids. Returns the files of dropped content (they may be deleted here now).
 export const dropServer = async (db: P2pDatabase, room: string, drops: Drops) => {
-  const tx = db.transaction(['events', 'dropped', 'rooms', 'meta', 'children'], 'readwrite')
+  const tx = db.transaction(
+    ['events', 'dropped', 'rooms', 'meta', 'children', 'search'],
+    'readwrite'
+  )
   const events = tx.objectStore('events')
   const dropped = tx.objectStore('dropped')
   const meta = tx.objectStore('meta')
@@ -570,6 +620,8 @@ export const dropServer = async (db: P2pDatabase, room: string, drops: Drops) =>
   let bytes = 0
   const freed: string[] = []
   const gone = new Set<string>()
+  // Messages, then edits, leave the index first, while everything is still stored.
+  bytes += await unindexAll(tx.objectStore('search'), events, meta, room, drops.content)
   for (const id of [...drops.acl.map(d => d.id), ...drops.content]) {
     const e = await events.get(id)
     if (!e || e.room !== room) continue
@@ -621,7 +673,7 @@ export const purgeServer = async (
   me: string,
   evict = false
 ) => {
-  const tx = db.transaction(['events', 'rooms', 'meta'], 'readwrite')
+  const tx = db.transaction(['events', 'rooms', 'meta', 'search'], 'readwrite')
   const events = tx.objectStore('events')
   const meta = tx.objectStore('meta')
   let saved = 0
@@ -641,6 +693,10 @@ export const purgeServer = async (
       ;(r.sender === me ? mine : freed).push(...(r.atts ?? []))
     }
     done.push(r.id)
+    // Out of the index before the record goes (an edit while its message's rows are there).
+    const ix = await unindexOne(tx.objectStore('search'), events, r)
+    await heldAdd(meta, room, r.sender, -ix)
+    saved += ix
     await events.put(next)
   }
   for (const id of ids) {
@@ -677,7 +733,7 @@ export const restoreBody = async (
   wire: WireV2,
   now: number
 ) => {
-  const tx = db.transaction(['events', 'rooms', 'meta'], 'readwrite')
+  const tx = db.transaction(['events', 'rooms', 'meta', 'search'], 'readwrite')
   const events = tx.objectStore('events')
   const meta = tx.objectStore('meta')
   const r = await events.get(id)
@@ -690,9 +746,10 @@ export const restoreBody = async (
   const atts = r.type === 'msg' ? attsOf(wire.c as never) : []
   next = withFiles(next, atts)
   const size = storedSize(next.wire)
-  const grown = size - storedSize(r.wire)
   await events.put(next)
-  await heldAdd(meta, room, r.sender, size)
+  const indexed = await indexEvent(tx.objectStore('search'), events, next)
+  const grown = size - storedSize(r.wire) + indexed
+  await heldAdd(meta, room, r.sender, size + indexed)
   const rec = await tx.objectStore('rooms').get(room)
   if (rec)
     await tx.objectStore('rooms').put({
@@ -785,7 +842,7 @@ export const resetHeld = async (db: P2pDatabase, room: string, recs: readonly Ev
   const held = new Map<string, number>()
   for (const r of recs)
     if (r.layer === 'c' && !r.purged && !r.redacted)
-      held.set(r.sender, (held.get(r.sender) ?? 0) + storedSize(r.wire))
+      held.set(r.sender, (held.get(r.sender) ?? 0) + storedSize(r.wire) + indexEstimate(r))
   const tx = db.transaction('meta', 'readwrite')
   const lo = `held\n${room}\n`
   for (const k of (await tx.store.getAllKeys(IDBKeyRange.bound(lo, `${lo}\uffff`))) as string[])

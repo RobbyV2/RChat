@@ -99,12 +99,15 @@ const pair = async (opts: Parameters<typeof makePeer>[3] = {}) => {
   return { clock, hub, a, b, room: dmRoomId(a.node.ik, b.node.ik) }
 }
 
-const view = async (p: Peer, peer: Peer) =>
+const timeline = async (p: Peer, peer: Peer) =>
   (
     await loadMessages(p.store.db, p.dms.roomFor(peer.node.ik), p.node.ik, peer.node.ik, {
       limit: 100_000,
     })
   ).messages
+
+// Messages without pin lines.
+const view = async (p: Peer, peer: Peer) => (await timeline(p, peer)).filter(m => !m.system)
 
 const bodies = async (p: Peer, peer: Peer) => (await view(p, peer)).map(m => m.body)
 
@@ -316,8 +319,8 @@ describe('storage', () => {
     await v1.put('meta', 1, 'schema')
     v1.close()
     const store = await Store.open(name)
-    expect(DB_VERSION).toBe(7)
-    expect(store.db.version).toBe(7)
+    expect(DB_VERSION).toBe(8)
+    expect(store.db.version).toBe(8)
     expect([...store.db.objectStoreNames].sort()).toEqual([
       'blob_hashes',
       'blob_parts',
@@ -331,11 +334,13 @@ describe('storage', () => {
       'meta',
       'outbox',
       'rooms',
+      'search',
       'self',
     ])
     expect([...store.db.transaction('events').store.indexNames]).toContain('room_sender_sort')
+    expect([...store.db.transaction('events').store.indexNames]).toContain('room_thread_sort')
     expect((await store.contact('kept'))?.state).toBe('mutual')
-    expect(await store.meta('schema')).toBe(7)
+    expect(await store.meta('schema')).toBe(8)
     expect(await store.rooms()).toEqual([])
     store.close()
     // Opening again changes nothing.
@@ -400,6 +405,9 @@ describe('P2P DMs', () => {
         ['👍', 1, p === b, [b.node.ik]],
       ])
       expect((await loadPins(p.store.db, room, p.node.ik, '')).map(m => m.id)).toEqual([m1])
+      // "Bob pinned a message to this conversation." after the messages, linking it.
+      const line = (await timeline(p, p === a ? b : a)).at(-1)
+      expect(line?.system).toEqual({ kind: 'pin', ik: b.node.ik, target: m1 })
     }
     // Only the author edits or deletes.
     expect(await failure(b.dms.edit(room, m1, 'mine now'))).toBe("You can't edit this message")

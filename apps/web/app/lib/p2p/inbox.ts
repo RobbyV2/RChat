@@ -26,6 +26,9 @@ export interface PingRec {
   // A reaction: the message it is on.
   target: string | null
   seen: boolean
+  // On a thread reply (or a reaction to one): the thread's root. Reading the channel leaves it;
+  // reading the thread marks it.
+  thread?: string | null
 }
 
 export const PING_LOG = 'inbox'
@@ -61,6 +64,7 @@ const recOf = (x: unknown): PingRec | null => {
     emoji: o.emoji === null ? null : text(o.emoji, 64),
     target: o.target === null ? null : text(o.target),
     seen: o.seen === true,
+    thread: typeof o.thread === 'string' ? text(o.thread) : null,
   }
 }
 
@@ -120,7 +124,7 @@ export const readSeqs = (rooms: readonly RoomRecord[]) => {
 }
 
 export const pingUnread = (p: PingRec, readSeq: ReadonlyMap<string, number>) =>
-  !p.seen && p.seq > (readSeq.get(counterKey(p)) ?? 0)
+  !p.seen && (!!p.thread || p.seq > (readSeq.get(counterKey(p)) ?? 0))
 
 // What the inbox needs to know of P2P right now.
 export interface PingWorld {
@@ -198,10 +202,20 @@ export const markAllTargets = (
   )
 }
 
-// How many of the pings sit in each counter.
+// How many of the pings sit in each counter (a thread's count in its channel's).
 export const byCounter = (list: readonly PingRec[]): Map<string, number> => {
   const out = new Map<string, number>()
   for (const p of list) out.set(counterKey(p), (out.get(counterKey(p)) ?? 0) + 1)
+  return out
+}
+
+// The same per thread too (`{room}/{channel}#{root}`), for taking marked pings off the counters.
+export const byThreadCounter = (list: readonly PingRec[]): Map<string, number> => {
+  const out = new Map<string, number>()
+  for (const p of list) {
+    const k = p.thread ? `${counterKey(p)}#${p.thread}` : counterKey(p)
+    out.set(k, (out.get(k) ?? 0) + 1)
+  }
   return out
 }
 
@@ -213,7 +227,7 @@ export const pingPlace = (p: PingRec, w: PingWorld): InboxPlace => {
     server: p.room,
     serverName: v?.name ?? 'P2P server',
     channel: v?.channels.find(c => c.id === p.ch)?.name ?? '',
-    thread: false,
+    thread: !!p.thread,
   }
 }
 

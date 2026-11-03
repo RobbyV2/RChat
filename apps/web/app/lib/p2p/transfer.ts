@@ -50,7 +50,15 @@ import type {
   SelfRecord,
   StoreName,
 } from './db'
-import { DB_VERSION, hasSecrets, serverWire, withFiles, withoutSecrets } from './db'
+import {
+  DB_VERSION,
+  hasSecrets,
+  SEARCH_META,
+  SEARCH_STALE,
+  serverWire,
+  withFiles,
+  withoutSecrets,
+} from './db'
 import {
   attsOf,
   buildEvent,
@@ -850,6 +858,11 @@ const load = async (
     }
   }
   const servers = new Set(rooms.filter(r => r.kind === 'server').map(r => r.id))
+  // A server room's bytes counted the exporter's search rows: here they are the events', and the
+  // index is built again on start (and counted then).
+  for (const r of rooms)
+    if (r.kind === 'server')
+      fire(tx.objectStore('rooms').put({ ...r, bytes: perRoom.get(r.id)?.bytes ?? 0 }))
   const dms = { n: 0, bytes: 0 }
   const srv = { n: 0, bytes: 0 }
   for (const [room, u] of perRoom) {
@@ -1043,6 +1056,8 @@ export const applyImport = async (
             ...(await load(tx, names, dump, now, opts.label ?? 'Browser')),
             kind,
           }
+    // The search index is built again from the events now stored (server.ts start).
+    await tx.objectStore('meta').put(SEARCH_STALE, SEARCH_META)
     await tx.done
     return res
   } catch (e) {

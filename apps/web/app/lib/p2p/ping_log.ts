@@ -3,7 +3,7 @@ import { editOf } from './dm'
 import type { EditContent, MsgContent } from './event'
 import {
   addPings,
-  byCounter,
+  byThreadCounter,
   logValue,
   markSeen,
   parseLog,
@@ -22,7 +22,8 @@ export const pingOf = (
   room: string,
   ch: string | null,
   kind: P2pPingKind,
-  rec: EventRecord
+  rec: EventRecord,
+  thread: string | null = null
 ): PingRec => {
   const c = rec.wire.c as { key?: unknown } | null
   return {
@@ -36,6 +37,7 @@ export const pingOf = (
     emoji: kind === 'reaction' && typeof c?.key === 'string' ? c.key : null,
     target: kind === 'reaction' ? (rec.target ?? null) : null,
     seen: false,
+    thread,
   }
 }
 
@@ -85,7 +87,9 @@ export const pingText = async (s: P2pStore, p: PingRec): Promise<PingText | null
 export interface PingLogDeps {
   store: P2pStore
   dms: { unping: (room: string, n: number) => Promise<void> }
-  servers: { unping: (room: string, ch: string, n: number) => Promise<void> }
+  servers: {
+    unping: (room: string, ch: string, n: number, thread?: string | null) => Promise<void>
+  }
   now?: () => number
   // The stored list changed.
   onWrite?: () => void
@@ -100,8 +104,14 @@ export class PingLog {
 
   constructor(private deps: PingLogDeps) {}
 
-  note(room: string, ch: string | null, kind: P2pPingKind, rec: EventRecord) {
-    this.batch.push(pingOf(room, ch, kind, rec))
+  note(
+    room: string,
+    ch: string | null,
+    kind: P2pPingKind,
+    rec: EventRecord,
+    thread: string | null = null
+  ) {
+    this.batch.push(pingOf(room, ch, kind, rec, thread))
     if (!this.timer) this.timer = setTimeout(() => void this.flush(), PING_BATCH_MS)
   }
 
@@ -149,6 +159,32 @@ export class PingLog {
     return readPings(this.deps.store)
   }
 
+  // Notes pings as seen without touching the counters (they were taken off already).
+  async seen(ids: readonly string[]) {
+    if (!ids.length) return
+    void this.flush()
+    const want = new Set(ids)
+    await this.write(list => markSeen(list, want), true)
+  }
+
+  // The unread thread pings of a channel, with their roots.
+  async threadPings(room: string, ch: string) {
+    const { list, readSeq } = await this.read()
+    return list.flatMap(p =>
+      p.room === room && p.ch === ch && p.thread && pingUnread(p, readSeq)
+        ? [{ id: p.id, thread: p.thread }]
+        : []
+    )
+  }
+
+  // The unread pings of a thread, to mark when it is read.
+  async ofThread(room: string, ch: string, root: string) {
+    const { list, readSeq } = await this.read()
+    return list
+      .filter(p => p.room === room && p.ch === ch && p.thread === root && pingUnread(p, readSeq))
+      .map(p => p.id)
+  }
+
   // Marks pings read: each unread one is noted as seen, and once that is stored, taken off its
   // counter. Returns how many were marked.
   async mark(ids: readonly string[]) {
@@ -161,12 +197,13 @@ export class PingLog {
       return cut.length ? markSeen(list, new Set(cut.map(p => p.id))) : list
     }, true)
     if (!ok) return 0
-    for (const [key, n] of byCounter(cut)) {
+    for (const [key, n] of byThreadCounter(cut)) {
       const i = key.indexOf('/')
+      const [ch, thread] = key.slice(i + 1).split('#')
       await (
         i < 0
           ? this.deps.dms.unping(key, n)
-          : this.deps.servers.unping(key.slice(0, i), key.slice(i + 1), n)
+          : this.deps.servers.unping(key.slice(0, i), ch, n, thread ?? null)
       ).catch(() => {})
     }
     return cut.length

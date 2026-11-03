@@ -79,7 +79,63 @@ export function PinsButton({ toggle }: { toggle?: { open: boolean; onClick: () =
   )
 }
 
-// "alice pinned a message to this channel. See all pinned messages."
+const pinLinkCls =
+  'cursor-pointer rounded-sm font-medium text-on-surface outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'
+
+// "alice pinned a message to this channel. See all pinned messages." for instance and P2P
+// messages: `name` as the source shows people, `onMessage` null when the message is gone.
+export function PinLine({
+  row,
+  inner,
+  divider,
+  press,
+  name,
+  place,
+  ts,
+  onMessage,
+  onPins,
+}: {
+  row: Record<string, string | number>
+  inner?: Record<string, string>
+  divider: ReactNode
+  press: ReturnType<typeof longPress>
+  name: ReactNode
+  place: 'conversation' | 'channel'
+  ts: number
+  onMessage: (() => void) | null
+  onPins: () => void
+}) {
+  return (
+    <div {...row}>
+      {divider}
+      <div
+        {...inner}
+        {...press}
+        className="flex items-start gap-3 px-4 py-1 hover:bg-surface-container-low"
+      >
+        <span className="flex w-9 shrink-0 justify-center pt-0.5 text-on-surface-variant">
+          <Pin size={16} />
+        </span>
+        <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
+          {name} pinned{' '}
+          {onMessage ? (
+            <button type="button" onClick={onMessage} className={pinLinkCls}>
+              a message
+            </button>
+          ) : (
+            'a message'
+          )}{' '}
+          to this {place}. See all{' '}
+          <button type="button" onClick={onPins} className={pinLinkCls}>
+            pinned messages
+          </button>
+          .<MessageTime ts={ts} className="ml-2 text-xs opacity-70" />
+        </p>
+      </div>
+    </div>
+  )
+}
+
 export function PinNotice({
   m,
   server,
@@ -95,45 +151,26 @@ export function PinNotice({
   const openPinned = useStore(s => s.openPinned)
   const scope = useStore(s => (s.view ? viewKey(s.view) : null))
   const target = m.pin_message_id ?? null
-  const linkCls =
-    'cursor-pointer rounded-sm font-medium text-on-surface outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'
   return (
-    <div data-row data-mid={m.id}>
-      {divider}
-      <div
-        {...longPress((x, y) => onMenu(m, x, y))}
-        className="flex items-start gap-3 px-4 py-1 hover:bg-surface-container-low"
-      >
-        <span className="flex w-9 shrink-0 justify-center pt-0.5 text-on-surface-variant">
-          <Pin size={16} />
+    <PinLine
+      row={{ 'data-row': '', 'data-mid': m.id }}
+      divider={divider}
+      press={longPress((x, y) => onMenu(m, x, y))}
+      name={
+        <span
+          {...profileTrigger(m.author, server)}
+          className={`streamer font-medium text-on-surface ${nameTriggerCls}`}
+        >
+          <Masked text={m.author.display_name} />
         </span>
-        <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
-          <span
-            {...profileTrigger(m.author, server)}
-            className={`streamer font-medium text-on-surface ${nameTriggerCls}`}
-          >
-            <Masked text={m.author.display_name} />
-          </span>{' '}
-          pinned{' '}
-          {target !== null ? (
-            <button
-              type="button"
-              onClick={() => (scope ? void openPinned(scope, target) : undefined)}
-              className={linkCls}
-            >
-              a message
-            </button>
-          ) : (
-            'a message'
-          )}{' '}
-          to this {m.dm_id !== null ? 'conversation' : 'channel'}. See all{' '}
-          <button type="button" onClick={openPins} className={linkCls}>
-            pinned messages
-          </button>
-          .<MessageTime ts={m.created_at} className="ml-2 text-xs opacity-70" />
-        </p>
-      </div>
-    </div>
+      }
+      place={m.dm_id !== null ? 'conversation' : 'channel'}
+      ts={m.created_at}
+      onMessage={
+        target !== null ? () => (scope ? void openPinned(scope, target) : undefined) : null
+      }
+      onPins={openPins}
+    />
   )
 }
 
