@@ -91,6 +91,20 @@ export interface P2pMessage {
   // someone allowed to.
   system?: { kind: 'join' | 'leave'; ik: string } | null
   everyone?: boolean
+  // P2P servers: it shows, but its body was purged here and is on its way back (spec 4.3).
+  unavailable?: boolean
+}
+
+// What can be done with a shown message. One whose body isn't here ("Message unavailable") can't
+// be edited, answered, forwarded or copied.
+export const messageActs = (p: P2pMessage, canAct: boolean, mine: boolean) => {
+  const live = !p.unavailable
+  return {
+    edit: canAct && live && mine && !p.fwd,
+    reply: canAct && live,
+    forward: live,
+    copy: live && (p.fwd ? p.fwd.body : p.body).trim() !== '',
+  }
 }
 
 const newer = (a: EventRecord, b: EventRecord) =>

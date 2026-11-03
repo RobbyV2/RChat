@@ -554,7 +554,7 @@ describe('forward compatibility', () => {
 })
 
 describe('storage', () => {
-  test('schema v5 adds the server indexes to a v3 database and keeps its data', async () => {
+  test('schemas v5 to v7 add the server indexes and the dropped store to a v3 database and keep its data', async () => {
     const { openDB } = await import('idb')
     const { UPGRADES, P2pStore: Store, DB_VERSION } = await import('../p2p/db')
     const name = `upgrade-v5-${Math.random()}`
@@ -568,10 +568,12 @@ describe('storage', () => {
     await v3.put('meta', 3, 'schema')
     v3.close()
     const store = await Store.open(name)
-    expect(DB_VERSION).toBe(5)
-    expect(store.db.version).toBe(5)
+    expect(DB_VERSION).toBe(7)
+    expect(store.db.version).toBe(7)
     expect(store.db.objectStoreNames.contains('idents')).toBe(true)
     expect(store.db.objectStoreNames.contains('codes')).toBe(true)
+    expect(store.db.objectStoreNames.contains('dropped')).toBe(true)
+    expect(await store.db.countFromIndex('dropped', 'room', 'r')).toBe(0)
     expect((await store.event('e1'))?.room).toBe('r')
     expect((await store.room('r'))?.kind).toBe('dm')
     expect(
@@ -588,7 +590,14 @@ describe('storage', () => {
         IDBKeyRange.bound(['r', '', ''], ['r', '\uffff', '\uffff'])
       )
     ).toBe(0)
-    expect(await store.meta('schema')).toBe(5)
+    expect(
+      await store.db.countFromIndex(
+        'events',
+        'room_sender_sort',
+        IDBKeyRange.bound(['r', '', ''], ['r', '\uffff', '\uffff'])
+      )
+    ).toBe(0)
+    expect(await store.meta('schema')).toBe(7)
     store.close()
     const again = await Store.open(name)
     expect((await again.event('e1'))?.room).toBe('r')

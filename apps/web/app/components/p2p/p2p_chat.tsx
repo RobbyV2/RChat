@@ -30,7 +30,13 @@ import {
   type P2pChat,
 } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
-import { bodyTooLong, STORAGE_FULL_TEXT, PEER_FULL_TEXT, type P2pMessage } from '../../lib/p2p/dm'
+import {
+  bodyTooLong,
+  messageActs,
+  STORAGE_FULL_TEXT,
+  PEER_FULL_TEXT,
+  type P2pMessage,
+} from '../../lib/p2p/dm'
 import { emojiBase } from '../../lib/reactions'
 import { MESSAGE_MAX, charCount } from '../../lib/rules'
 import { composing, sendKey } from '../../lib/keys'
@@ -97,7 +103,7 @@ export const asMessage = (
   dm_id: null,
   thread_root_id: null,
   author: user(m.sender),
-  content: m.fwd ? m.fwd.body : m.body,
+  content: m.unavailable ? '_Message unavailable_' : m.fwd ? m.fwd.body : m.body,
   created_at: seconds(m.ts),
   reply_count: 0,
   media: null,
@@ -177,16 +183,16 @@ const P2pRow = memo(function P2pRow({
   onJump,
 }: RowProps) {
   const actions: ToolbarAction[] = []
-  if (canAct && mine && !p.fwd && !editing)
-    actions.push(editAction(() => p2pDm.startEdit(keyNow(), p.id)))
-  if (canAct)
+  const can = messageActs(p, canAct, mine)
+  if (can.edit && !editing) actions.push(editAction(() => p2pDm.startEdit(keyNow(), p.id)))
+  if (can.reply)
     actions.push({
       key: 'reply',
       label: 'Reply',
       icon: Reply,
       onClick: () => p2pDm.startReply(keyNow(), p.id),
     })
-  actions.push(forwardAction(() => copyForP2p(p, m)))
+  if (can.forward) actions.push(forwardAction(() => copyForP2p(p, m)))
   if (canAct && canDelete)
     actions.push({
       key: 'delete',
@@ -823,24 +829,25 @@ export function P2pChatBody(props: ChatBodyProps) {
   const menu = (p: P2pMessage, m: Message, x: number, y: number) => {
     const mine = p.sender === me
     const items: ContextMenuItem[] = []
-    if (canAct) {
+    const can = messageActs(p, canAct, mine)
+    if (can.reply)
       items.push({ label: 'Reply', icon: Reply, action: () => p2pDm.startReply(keyNow(), p.id) })
-      if (mine && !p.fwd) items.push(editMenuItem(() => p2pDm.startEdit(keyNow(), p.id)))
-    }
+    if (can.edit) items.push(editMenuItem(() => p2pDm.startEdit(keyNow(), p.id)))
     const others = useP2p
       .getState()
       .contacts.filter(c => c.state === 'mutual' && c.ik !== forwardSkip)
-    items.push({
-      label: 'Forward',
-      icon: Forward,
-      submenu: [
-        ...others.map(c => ({
-          label: maskOf(useStore.getState())(displayName(c)),
-          action: () => void forwardTo(c.ik, p, m.author.display_name),
-        })),
-        { label: 'Copy for forwarding', icon: Copy, action: () => copyForP2p(p, m) },
-      ],
-    })
+    if (can.forward)
+      items.push({
+        label: 'Forward',
+        icon: Forward,
+        submenu: [
+          ...others.map(c => ({
+            label: maskOf(useStore.getState())(displayName(c)),
+            action: () => void forwardTo(c.ik, p, m.author.display_name),
+          })),
+          { label: 'Copy for forwarding', icon: Copy, action: () => copyForP2p(p, m) },
+        ],
+      })
     if (canAct && mayPin)
       items.push(
         p.pinned !== null
@@ -861,7 +868,7 @@ export function P2pChatBody(props: ChatBodyProps) {
     const files = attachmentMenu(p.fwd?.att ?? p.att, canAct)
     if (files) items.push(files)
     const body = p.fwd ? p.fwd.body : p.body
-    if (body.trim())
+    if (can.copy)
       items.push({
         label: 'Copy Text',
         icon: Copy,

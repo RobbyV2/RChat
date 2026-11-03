@@ -26,6 +26,7 @@ import {
   p2p,
   p2pDm,
   p2pRail,
+  banRequest,
   p2pServer,
   serverScope,
   useP2p,
@@ -562,13 +563,7 @@ export const memberMenu = (v: ServerView, m: MemberView): ContextMenuItem[] => {
     items.push({
       label: s.streamer ? 'Ban Member' : `Ban ${mask(m.name)}`,
       danger: true,
-      action: () =>
-        s.askConfirm({
-          title: 'Ban Member',
-          body: `Ban ${s.streamer ? 'this member' : m.name}? Nothing they post from now on is shown, and they can't come back.`,
-          confirm: 'Ban',
-          action: () => void p2pServer.ban(v.id, m.ik),
-        }),
+      action: () => s.askConfirm(banRequest(v, m.ik, s.streamer ? 'this member' : m.name)),
     })
   items.push({ label: 'Copy Identity Key', action: () => void sharing().copyText(m.ik) })
   return items

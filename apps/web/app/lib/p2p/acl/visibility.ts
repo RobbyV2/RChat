@@ -1,7 +1,9 @@
+import type { ProofHeader } from './admit'
 import type { AclState } from './cache'
 import { CauseView, Mono, type Anchor, type FastEval } from './eval'
 import type { EvalResult } from './facts'
 import { EMPTY, type Ix } from './reach'
+import { uncontested, witnessed } from './storage'
 import {
   cmp,
   CONTENT_PIN,
@@ -42,6 +44,14 @@ export type Hidden =
   | { why: 'wipe'; by: string }
   | { why: 'redacted'; by: string }
 
+// An evidence pair against one device, across both layers (§2.3 E1, E2, E3), with the fork point
+// it gives (`f`), as a proof carries it.
+export interface Evidence {
+  f: number
+  x: ProofHeader
+  y: ProofHeader
+}
+
 const B0 = BigInt(0)
 const B1 = BigInt(1)
 const EMPTYSET = new Set<number>()
@@ -56,6 +66,7 @@ export class ContentView {
   private S: EvalResult
   private byId = new Map<string, ContentEv>()
   private byDev = new Map<string, ContentEv[]>()
+  private byAuthor = new Map<string, ContentEv[]>()
   private aimed = new Map<string, ContentEv[]>()
   private marks = new Map<string, { r: number; seen: number }[]>()
   private memo = new Map<string, Hidden | null>()
@@ -80,6 +91,9 @@ export class ContentView {
     const l = this.byDev.get(m.dev)
     if (l) l.push(m)
     else this.byDev.set(m.dev, [m])
+    const la = this.byAuthor.get(m.a)
+    if (la) la.push(m)
+    else this.byAuthor.set(m.a, [m])
     const t = target(m)
     if (t !== null) {
       const a = this.aimed.get(t)
@@ -104,6 +118,7 @@ export class ContentView {
     this.memo.clear()
     this.fcMemo.clear()
     this.anchors.clear()
+    this.hideMemo.clear()
     this.indexMarks()
   }
 
@@ -417,6 +432,156 @@ export class ContentView {
 
   byIdOf(id: string): ContentEv | undefined {
     return this.byId.get(id)
+  }
+
+  // ----- Storage (§2.3, §4.2, §4.3) -----
+
+  // Why m goes from storage with its header (§4.2): at or past its device's fork point, or past
+  // the watermark of a revocation of its device in force.
+  dropKind(m: ContentEv): 'fork' | 'revoked' | null {
+    if (m.seq >= this.forkPoint(m.dev)) return 'fork'
+    for (const { seen } of this.marks.get(m.dev) ?? []) if (m.seq > seen) return 'revoked'
+    return null
+  }
+
+  // The held evidence pair against `dev` with the lowest fork point (ties: the lowest ids), from
+  // its ACL events and its content: two events at one seq, two ACL events with one aprev, two
+  // content events with one cprev, and a content event past an ACL event of the device that its
+  // position does not hold (the lowest such above the highest it holds).
+  evidence(dev: string): Evidence | null {
+    const ix = this.ix
+    let best: Evidence | null = null
+    const take = (f: number, a: ProofHeader, b: ProofHeader) => {
+      const [x, y] = a.id < b.id ? [a, b] : [b, a]
+      if (
+        !best ||
+        f < best.f ||
+        (f === best.f && (x.id < best.x.id || (x.id === best.x.id && y.id < best.y.id)))
+      )
+        best = { f, x, y }
+    }
+    const acl = (ix.byDev.get(dev) ?? EMPTY)
+      .filter(i => this.fe.inS(i))
+      .sort((p, q) => ix.ev[p].seq - ix.ev[q].seq)
+    const aclH = (i: number): ProofHeader => {
+      const e = ix.ev[i]
+      const h: ProofHeader = { id: ix.ids[i], dev, seq: e.seq, L: 'a', ap: e.ap }
+      if (e.aprev !== undefined) h.aprev = e.aprev
+      return h
+    }
+    const bySeq = new Map<number, ProofHeader>()
+    const byPrev = new Map<string, ProofHeader>()
+    for (const i of acl) {
+      const h = aclH(i)
+      const s = bySeq.get(h.seq)
+      if (s) take(h.seq, s, h)
+      else bySeq.set(h.seq, h)
+      const k = h.aprev ?? ''
+      const p = byPrev.get(k)
+      if (p) take(Math.min(p.seq, h.seq), p, h)
+      else byPrev.set(k, h)
+    }
+    const cSeq = new Map<number, ProofHeader>()
+    const cPrev = new Map<string, ProofHeader>()
+    for (const m of this.byDev.get(dev) ?? []) {
+      const h: ProofHeader = { id: m.id, dev, seq: m.seq, L: 'c', ap: m.ap }
+      if (m.cprev !== undefined) h.cprev = m.cprev
+      const a = bySeq.get(m.seq)
+      if (a) take(m.seq, a, h)
+      const s = cSeq.get(m.seq)
+      if (s) take(m.seq, s, h)
+      else cSeq.set(m.seq, h)
+      const k = m.cprev ?? ''
+      const p = cPrev.get(k)
+      if (p) take(Math.min(p.seq, m.seq), p, h)
+      else cPrev.set(k, h)
+      let low = -1
+      for (let j = acl.length - 1; j >= 0; j--) {
+        const x = acl[j]
+        if (ix.ev[x].seq >= m.seq) continue
+        if (this.inC(m, x)) break
+        low = x
+      }
+      if (low >= 0) take(ix.ev[low].seq, aclH(low), h)
+    }
+    return best
+  }
+
+  // The content of the evidence pair that defines Fc(dev) below the ACL fork point: kept with its
+  // header when the rest past Fc goes (§4.2).
+  fcPair(dev: string): Set<string> {
+    const out = new Set<string>()
+    const ev = this.evidence(dev)
+    if (!ev || !(ev.f < (this.S.F.get(dev) ?? Infinity))) return out
+    for (const h of [ev.x, ev.y]) if (h.L === 'c') out.add(h.id)
+    return out
+  }
+
+  // A visible redaction of t by t's own author, positioned at or after t, whatever else hides t
+  // (self-redactions purge at once, §4.3).
+  selfRedacted(t: ContentEv): boolean {
+    return (this.aimed.get(t.id) ?? []).some(
+      r => r.t === 'redact' && r.a === t.a && sameCh(t, r) && this.after(t, r) && this.visible(r)
+    )
+  }
+
+  // Content that a removal, a ban that hides everything, a cut or a redaction may hide: by an
+  // author with an effective removal, a wiping ban or a cut support, or targeted by a redaction.
+  private hideMemo = new Map<string, boolean>()
+  mayHide(m: ContentEv): boolean {
+    if (this.aimed.get(m.id)?.some(r => r.t === 'redact')) return true
+    const key = `${m.a}\u0001${m.dev}`
+    let h = this.hideMemo.get(key)
+    if (h === undefined) {
+      const fe = this.fe
+      const ix = this.ix
+      h = fe.againstMember(m.a).length > 0 || this.wipedBy(m.a) !== null
+      for (const l of [ix.memEv.get(m.a), ix.unbanEv.get(m.a), ix.introEv.get(m.dev)])
+        for (const x of l ?? EMPTY) if (fe.cutOrd[x] >= 0) h = true
+      this.hideMemo.set(key, h)
+    }
+    return h
+  }
+
+  // The held content `mayHide` picks, to look at for purges.
+  hideable(): ContentEv[] {
+    const out: ContentEv[] = []
+    for (const m of this.byId.values()) if (this.mayHide(m)) out.push(m)
+    return out
+  }
+
+  // S2 and S3 of a moderator's redaction r of t (§4.3): ACL events of others than r's and t's
+  // authors that hold r acknowledge it (controller ruling: an ACL event holds content only by
+  // naming it, `ack`, and must have r's whole position in its past), and no more senior deny
+  // concurrent with that position takes away its authority.
+  stableRedaction(r: ContentEv, t: ContentEv): boolean {
+    if (!this.redactionWitnessed(r, t)) return false
+    const ps = this.positionOf(r)!
+    const after = (i: number) => ps.every(p => this.ix.has(i, p))
+    const k = rank(this.stateOf(r).facts, r.a)
+    return uncontested(this.fe, this.anchor(r, true), k, i => !this.inC(r, i) && !after(i))
+  }
+
+  // S2 of a moderator's redaction r of t alone.
+  redactionWitnessed(r: ContentEv, t: ContentEv): boolean {
+    const ix = this.ix
+    const ps = this.positionOf(r)
+    if (!ps) return false
+    const holds = (i: number) => {
+      const ack = ix.ev[i].c.ack
+      return Array.isArray(ack) && ack.includes(r.id) && ps.every(p => ix.has(i, p))
+    }
+    return witnessed(this.fe, Math.max(...ps) + 1, holds, [r.a, t.a])
+  }
+
+  private positionOf(m: ContentEv): number[] | null {
+    const ps: number[] = []
+    for (const p of m.ap) {
+      const i = this.ix.at.get(p)
+      if (i === undefined) return null
+      ps.push(i)
+    }
+    return ps
   }
 }
 

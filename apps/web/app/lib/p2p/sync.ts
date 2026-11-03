@@ -455,6 +455,28 @@ export class Sync {
     else if (!room?.missing.length) link.pulled = 0
   }
 
+  // Asks one peer of the room for events by id that it hasn't said it lacks (bodies we want back,
+  // spec 4.3); what comes is checked and stored like any answer. False: no peer to ask now.
+  fetch(room: string, ids: string[]) {
+    for (const link of this.linksOf(room)) {
+      if (link.closed || link.requests.size >= this.limits.requests) continue
+      const want = ids.filter(id => !link.unavailable.has(id)).slice(0, this.limits.getIds)
+      if (!want.length) continue
+      const rid = ++link.rid
+      link.requests.set(rid, {
+        kind: 'get',
+        room,
+        from: want,
+        limit: want.length,
+        answered: false,
+        state: false,
+      })
+      this.send(link, { t: this.t('get'), rid, room, ids: want })
+      return true
+    }
+    return false
+  }
+
   // "Load older": one more horizon of history from whoever is online.
   loadOlder(room: string) {
     for (const link of this.linksOf(room)) {
@@ -711,6 +733,7 @@ export class Sync {
   // Retry: a failed event goes out again on every session of its room.
   resend(room: string, id: string, wire: Wire) {
     for (const link of this.linksOf(room)) {
+      if (this.deps.serving?.push && !this.deps.serving.push(link, wire)) continue
       if (link.waiting.some(w => w.id === id) || link.inFlight.some(p => p.id === id)) continue
       link.waiting.push({ id, wire })
       this.pump(link)

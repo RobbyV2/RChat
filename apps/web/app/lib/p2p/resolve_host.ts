@@ -1,6 +1,9 @@
 import {
   AclRoom,
   type AclItem,
+  type Drops,
+  type ProofCand,
+  type Purgeable,
   type Restored,
   type Plan,
   type PlanReq,
@@ -24,7 +27,9 @@ export interface AclHost {
     room: string,
     acl: AclItem[],
     contents: ContentEv[],
-    check?: { id: string; w: WireV2 }[]
+    check?: { id: string; w: WireV2 }[],
+    bodiless?: string[],
+    evicted?: string[]
   ): Promise<Loaded>
   acl(room: string, id: string, w: WireV2, now: number): Promise<Decided>
   content(room: string, id: string, w: WireV2, now: number): Promise<Received>
@@ -32,7 +37,23 @@ export interface AclHost {
   display(room: string, ids: string[]): Promise<(Shown | null)[]>
   history(room: string, ik: string, ids: string[]): Promise<boolean[]>
   diff(room: string, from: string[], have: string[], limit: number): Promise<string[]>
+  // Storage (acl_room.ts): what to drop, proofs worth posting, purgeable bodies, bodies wanted
+  // back, bodies purged or restored, and what a member may be sent.
+  drops(room: string, mine?: string): Promise<Dropped>
+  proofs(room: string, a: string, dev: string, devs?: string[]): Promise<ProofCand[]>
+  purgeable(room: string, only?: string[]): Promise<Purgeable>
+  wanted(room: string): Promise<string[]>
+  bodies(room: string, ids: string[], have: boolean, evicted?: boolean): Promise<null>
+  acks(room: string, me: string): Promise<string[]>
+  unhold(room: string, ids: string[]): Promise<null>
+  restorable(room: string, ids: string[], viewed: boolean): Promise<boolean[]>
+  viewable(room: string, ik: string, chs: (string | null)[]): Promise<boolean[]>
   drop(room: string): void
+}
+
+// What storage drops, and the change it makes to the state's heads.
+export interface Dropped extends Drops {
+  delta: SumDelta | null
 }
 
 export interface Decided {
@@ -52,12 +73,23 @@ export type HostRequest =
       acl: AclItem[]
       contents: ContentEv[]
       check?: { id: string; w: WireV2 }[]
+      bodiless?: string[]
+      evicted?: string[]
     }
   | { id: number; op: 'acl' | 'content'; room: string; ev: string; w: WireV2; now: number }
   | { id: number; op: 'plan'; room: string; q: PlanReq }
   | { id: number; op: 'display'; room: string; ids: string[] }
   | { id: number; op: 'history'; room: string; ik: string; ids: string[] }
   | { id: number; op: 'diff'; room: string; from: string[]; have: string[]; limit: number }
+  | { id: number; op: 'drops'; room: string; mine?: string }
+  | { id: number; op: 'proofs'; room: string; a: string; dev: string; devs?: string[] }
+  | { id: number; op: 'purgeable'; room: string; only?: string[] }
+  | { id: number; op: 'wanted'; room: string }
+  | { id: number; op: 'bodies'; room: string; ids: string[]; have: boolean; evicted?: boolean }
+  | { id: number; op: 'acks'; room: string; me: string }
+  | { id: number; op: 'unhold'; room: string; ids: string[] }
+  | { id: number; op: 'restorable'; room: string; ids: string[]; viewed: boolean }
+  | { id: number; op: 'viewable'; room: string; ik: string; chs: (string | null)[] }
   | { id: number; op: 'drop'; room: string }
 
 export type HostReply = { id: number; ok: unknown } | { id: number; err: string }
@@ -77,7 +109,7 @@ export const runRequest = (rooms: Map<string, AclRoom>, m: HostRequest): unknown
     case 'load': {
       const r = new AclRoom(m.room)
       rooms.set(m.room, r)
-      const out = r.restore(m.acl, m.contents, m.check)
+      const out = r.restore(m.acl, m.contents, m.check, m.bodiless, m.evicted)
       return { ...out, delta: r.delta() } satisfies Loaded
     }
     case 'acl': {
@@ -95,6 +127,29 @@ export const runRequest = (rooms: Map<string, AclRoom>, m: HostRequest): unknown
       return roomOf(rooms, m.room).history(m.ik, m.ids)
     case 'diff':
       return roomOf(rooms, m.room).aclDiff(m.from, m.have, m.limit)
+    case 'drops': {
+      const r = roomOf(rooms, m.room)
+      const d = r.drops(m.mine)
+      return { ...d, delta: d.acl.length ? r.delta() : null } satisfies Dropped
+    }
+    case 'proofs':
+      return roomOf(rooms, m.room).proofs({ a: m.a, dev: m.dev }, m.devs)
+    case 'purgeable':
+      return roomOf(rooms, m.room).purgeable(m.only)
+    case 'wanted':
+      return roomOf(rooms, m.room).wanted()
+    case 'bodies':
+      roomOf(rooms, m.room).bodies(m.ids, m.have, m.evicted)
+      return null
+    case 'acks':
+      return roomOf(rooms, m.room).acks(m.me)
+    case 'unhold':
+      roomOf(rooms, m.room).unhold(m.ids)
+      return null
+    case 'restorable':
+      return roomOf(rooms, m.room).restorable(m.ids, m.viewed)
+    case 'viewable':
+      return roomOf(rooms, m.room).viewable(m.ik, m.chs)
     case 'drop':
       rooms.delete(m.room)
       return null
@@ -119,8 +174,23 @@ type Body<T> = T extends unknown ? Omit<T, 'id'> : never
 
 abstract class Base implements AclHost {
   protected abstract call<T>(m: Body<HostRequest>): Promise<T>
-  load(room: string, acl: AclItem[], contents: ContentEv[], check?: { id: string; w: WireV2 }[]) {
-    return this.call<Loaded>({ op: 'load', room, acl, contents, ...(check ? { check } : {}) })
+  load(
+    room: string,
+    acl: AclItem[],
+    contents: ContentEv[],
+    check?: { id: string; w: WireV2 }[],
+    bodiless?: string[],
+    evicted?: string[]
+  ) {
+    return this.call<Loaded>({
+      op: 'load',
+      room,
+      acl,
+      contents,
+      ...(check ? { check } : {}),
+      ...(bodiless?.length ? { bodiless } : {}),
+      ...(evicted?.length ? { evicted } : {}),
+    })
   }
   acl(room: string, ev: string, w: WireV2, now: number) {
     return this.call<Decided>({ op: 'acl', room, ev, w, now })
@@ -139,6 +209,33 @@ abstract class Base implements AclHost {
   }
   diff(room: string, from: string[], have: string[], limit: number) {
     return this.call<string[]>({ op: 'diff', room, from, have, limit })
+  }
+  drops(room: string, mine?: string) {
+    return this.call<Dropped>({ op: 'drops', room, ...(mine ? { mine } : {}) })
+  }
+  proofs(room: string, a: string, dev: string, devs?: string[]) {
+    return this.call<ProofCand[]>({ op: 'proofs', room, a, dev, ...(devs ? { devs } : {}) })
+  }
+  purgeable(room: string, only?: string[]) {
+    return this.call<Purgeable>({ op: 'purgeable', room, ...(only ? { only } : {}) })
+  }
+  wanted(room: string) {
+    return this.call<string[]>({ op: 'wanted', room })
+  }
+  bodies(room: string, ids: string[], have: boolean, evicted?: boolean) {
+    return this.call<null>({ op: 'bodies', room, ids, have, ...(evicted ? { evicted } : {}) })
+  }
+  acks(room: string, me: string) {
+    return this.call<string[]>({ op: 'acks', room, me })
+  }
+  unhold(room: string, ids: string[]) {
+    return this.call<null>({ op: 'unhold', room, ids })
+  }
+  restorable(room: string, ids: string[], viewed: boolean) {
+    return this.call<boolean[]>({ op: 'restorable', room, ids, viewed })
+  }
+  viewable(room: string, ik: string, chs: (string | null)[]) {
+    return this.call<boolean[]>({ op: 'viewable', room, ik, chs })
   }
   abstract drop(room: string): void
 }

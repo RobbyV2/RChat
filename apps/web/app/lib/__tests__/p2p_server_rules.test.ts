@@ -219,7 +219,7 @@ describe('admission records (spec 4.2, the evaluation cache)', () => {
     const { w } = busy()
     const live = w.room
     const { r, out } = w.restore()
-    expect(out).toEqual({ fresh: [], refused: [], mismatch: false })
+    expect(out).toEqual({ fresh: [], refused: [], mismatch: false, lost: [] })
     expect(r.summary()).toEqual(live.summary())
     for (const it of w.acl) {
       expect(sets(r.r.rec(it.id).local)).toBe(sets(live.r.rec(it.id).local))

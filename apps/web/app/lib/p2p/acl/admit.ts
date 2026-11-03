@@ -571,6 +571,15 @@ export class AclReplica implements Ctx {
     this.admit(e)
   }
 
+  // The whole event of one restored from its header (storage dropped it, spec 2.3): the same id,
+  // so the same core; its index entries were made from the header's content and stay.
+  refill(e: AclEv) {
+    const i = this.acl.ix.at.get(e.id)
+    if (i === undefined || !this.admitted(e.id)) return
+    this.evs.set(e.id, e)
+    this.acl.ix.ev[i] = e
+  }
+
   // Forgets an event that is not admitted (a rejection, kept as its verdict unless `all`; a pending
   // event the caller holds).
   forget(id: string, keepVerdict = false) {

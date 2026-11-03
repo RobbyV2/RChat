@@ -22,14 +22,19 @@ import {
   blankRoom,
   chainKey,
   DAG,
+  dropServer,
   getEvents,
   insertServer,
+  evictionOrder,
+  oldestBodies,
+  purgeServer,
+  resetHeld,
+  restoreBody,
   SERVER_TOTAL,
   SERVER_TOTAL_BYTES,
   storedSize,
-  stripped,
-  stripServer,
   UNKNOWN,
+  withinShareNow,
   type DevChain,
   type Inserted,
 } from './dag'
@@ -49,6 +54,7 @@ import {
   buildEvent2,
   claimedId2,
   contentEvOf,
+  headerOk,
   LIMITS as EV,
   LIMITS2,
   sizeOf,
@@ -121,9 +127,24 @@ export const SERVER = {
   redeems: 3,
   redeemMs: 15_000,
   codePeers: 4,
-  // A banned member's events that are never shown are purged once the ban has stood this long
-  // (or at once when the room or the device runs out of space).
+  // Spec 4.3 S4: a hidden body is purged once its cause has stood this long here (and S1 to S3
+  // hold), or at once when the room or the device runs out of space.
   purgeAfter: 7 * 24 * 60 * 60_000,
+  // Storage passes (spec 2.3, 4.2, 4.3: drops, purges, bodies wanted back, proofs) run at most
+  // this often per room, and while causes stand at least once per `causesMs`.
+  storeMs: 5_000,
+  causesMs: 60_000,
+  // Proofs (spec 4.1): posted after a random delay up to this, at most proofsPerHour per room.
+  proofDelayMs: 30_000,
+  proofsPerHour: 6,
+  // A mark that acknowledges a moderator's redaction (spec 4.3 S2): within this of applying it,
+  // at most one per room per `ackMs`.
+  ackDelayMs: 60_000,
+  ackMs: 10 * 60_000,
+  // Evicted bodies someone viewed, wanted back at once (spec 4.2 step 3), and the least an
+  // eviction of the oldest bodies frees.
+  viewedMax: 500,
+  evictBytes: 64 * 1024,
   // A code redeemed with us: the redeemer may sync the ACL (to join) for this long, at most
   // this many at once per code and per room. An invite they don't use is withdrawn after it.
   redeemTtl: 10 * 60_000,
@@ -295,6 +316,26 @@ interface Rt {
   vouchedAt: number
   // Our own ACL events we must hold before we sign again.
   need: Set<string>
+  // Storage passes (SERVER.storeMs): due when the state or the held content changed.
+  storeDirty: boolean
+  storeAt: number
+  // Content held without its body (purged, evicted, stripped by its author), and those of them
+  // that show and are wanted back from peers.
+  bodiless: Set<string>
+  want: Set<string>
+  wantAt: number
+  // Bodies evicted for space that someone viewed: wanted back (spec 4.2 step 3).
+  viewed: Set<string>
+  // Proofs to post, by device: the fork point and when; the lowest one posted per device, and
+  // when we posted the last ones.
+  proofs: Map<string, { f: number; due: number }>
+  proofed: Map<string, number>
+  proofTimes: number[]
+  // A mark acknowledging a moderator's redaction: when due, and the last one.
+  ackDue: number | null
+  ackAt: number
+  // Who may be sent our content of which channel (`ik\nch`), in the current state (pushes).
+  views: Map<string, boolean>
 }
 
 // Someone who redeemed a code with us: they may sync the ACL until `until` to join; the invite
@@ -420,7 +461,14 @@ export class Servers {
         const d = node.anyDevicesOf(ik)
         return d ? { ik, certs: liveCerts(d.certs, d.revocations) } : null
       },
-      link: (s, room) => this.sync.link(s, room),
+      link: (s, room) => {
+        const l = this.sync.link(s, room)
+        // A peer that may hold bodies we want back.
+        const rt = this.rt(room)
+        if (l && (rt?.want.size || rt?.viewed.size))
+          this.sync.fetch(room, [...new Set([...rt.want, ...rt.viewed])])
+        return l
+      },
       unlink: (s, room) => this.sync.unlink(s, room),
       links: room => this.sync.linksOf(room),
       linksOn: s => this.sync.linksOn(s),
@@ -508,10 +556,20 @@ export class Servers {
       }
       void this.lapseRedeems(r.id).catch(() => {})
       if (rt?.vouch.size) this.vouch(r.id, rt, now)
-      const bans = Object.entries(r.bans ?? {})
-        .filter(([, b]) => !b.purged && now - b.since >= SERVER.purgeAfter)
-        .map(([ik]) => ik)
-      if (bans.length) void this.locked(r.id, () => this.purge(r.id, bans)).catch(() => {})
+      if (!rt || r.legacy) continue
+      const every = Object.keys(r.causes ?? {}).length ? SERVER.causesMs : Infinity
+      if ((rt.storeDirty && now - rt.storeAt >= SERVER.storeMs) || now - rt.storeAt >= every) {
+        rt.storeDirty = false
+        rt.storeAt = now
+        void this.locked(r.id, () => this.storePass(r.id)).catch(() => {})
+      }
+      // Bodies still wanted are asked for again while some are.
+      if ((rt.want.size || rt.viewed.size) && now - rt.wantAt >= SERVER.causesMs) {
+        rt.wantAt = now
+        void this.locked(r.id, () => this.wantPass(r.id)).catch(() => {})
+      }
+      if (rt.proofs.size) this.postProofs(r.id, rt, now)
+      if (rt.ackDue !== null && rt.ackDue <= now) this.ackRedactions(r.id, rt, now)
     }
   }
 
@@ -559,6 +617,18 @@ export class Servers {
         vouch: new Map(),
         vouchedAt: -Infinity,
         need: new Set(),
+        storeDirty: true,
+        storeAt: -Infinity,
+        bodiless: new Set(),
+        want: new Set(),
+        wantAt: -Infinity,
+        viewed: new Set(),
+        proofs: new Map(),
+        proofed: new Map(),
+        proofTimes: [],
+        ackDue: null,
+        ackAt: -Infinity,
+        views: new Map(),
       }
       this.rts.set(room, rt)
     }
@@ -851,6 +921,36 @@ export class Servers {
     const acl: (AclItem & { order: number })[] = []
     const contents: ContentEv[] = []
     const check: { id: string; w: WireV2 }[] = []
+    const bodiless: string[] = []
+    // Bodies evicted for space: wanted back only when viewed, after a start too.
+    const evicted: string[] = []
+    // Dropped events whose header stays (spec 2.3): evidence, restored from their records. A
+    // record of an event stored whole (a merged import) goes; an imported header must check out.
+    const held = new Set(recs.map(x => x.id))
+    const stale: string[] = []
+    const checked: string[] = []
+    for (const d of await this.db.getAllFromIndex('dropped', 'room', r.id)) {
+      if (held.has(d.id) || (d.imp && d.hdr && !headerOk(d.id, d.hdr, r.id))) {
+        stale.push(d.id)
+        continue
+      }
+      if (d.imp) checked.push(d.id)
+      if (d.layer === 'a' && d.hdr)
+        acl.push({ id: d.id, w: d.hdr, rec: d.acl, hdr: true, order: d.aseq ?? 1e15 })
+    }
+    if (stale.length || checked.length) {
+      const tx = this.db.transaction('dropped', 'readwrite')
+      for (const id of stale) await tx.store.delete(id)
+      for (const id of checked) {
+        const d = await tx.store.get(id)
+        if (d) {
+          const { imp: _i, ...rest } = d
+          await tx.store.put(rest)
+        }
+      }
+      await tx.done
+    }
+    await resetHeld(this.db, r.id, recs)
     for (const x of recs) {
       const w = serverWire(x)
       if (x.imp) {
@@ -862,7 +962,20 @@ export class Servers {
       }
       if (x.layer === 'c' || w.ev.L === 'c') {
         if (x.imp) check.push({ id: x.id, w })
-        else contents.push(contentEvOf(x.id, w))
+        else {
+          // Without its body, it keeps its channel and target (the record's).
+          const m = contentEvOf(x.id, w)
+          if (m.c === null) {
+            bodiless.push(x.id)
+            if (x.evicted) evicted.push(x.id)
+            if (x.chan !== undefined || x.target !== undefined)
+              m.c = {
+                ...(x.chan !== undefined ? { ch: x.chan } : {}),
+                ...(x.target !== undefined ? { target: x.target } : {}),
+              }
+          }
+          contents.push(m)
+        }
       } else
         acl.push({
           id: x.id,
@@ -877,8 +990,14 @@ export class Servers {
         r.id,
         acl.map(({ order: _o, ...it }) => it),
         contents,
-        check
+        check,
+        bodiless,
+        evicted
       )
+      rt.bodiless = new Set(bodiless)
+      rt.want.clear()
+      rt.views.clear()
+      rt.storeDirty = true
       const before = rt.sum
       rt.sum = applySummary(emptySummary(), out.delta)
       // A wrong restore shows in the state: the cache was written with these same events.
@@ -901,6 +1020,15 @@ export class Servers {
         await tx.done
       }
       await this.dropRows(r.id, [...bad, ...out.refused])
+      // Headers that can't be read any more: only their ids stay.
+      if (out.lost.length) {
+        const tx = this.db.transaction('dropped', 'readwrite')
+        for (const id of out.lost) {
+          const d = await tx.store.get(id)
+          if (d) await tx.store.put({ id: d.id, room: d.room, layer: d.layer })
+        }
+        await tx.done
+      }
       if (recs.some(x => x.imp)) {
         const tx = this.db.transaction('events', 'readwrite')
         for (const x of recs) {
@@ -968,7 +1096,9 @@ export class Servers {
     const now = this.myMembership(room)
     const r = this.rooms.get(room)
     this.maybeJoin(room)
-    await this.noteBans(room)
+    const rt = this.ensureRt(room)
+    rt.storeDirty = true
+    rt.views.clear()
     // In once a join of ours from after we set out is (not an old one the backfill brings
     // first); our own join clears it in postJoin.
     const mine = memberOf(this.sumOf(room), this.me)
@@ -1011,98 +1141,220 @@ export class Servers {
     void this.postJoin(room).catch(() => {})
   }
 
-  // Bans in the current state, and since when (by our clock) each has stood. What a banned
-  // member wrote is hidden at once; it is purged only once the ban has stood SERVER.purgeAfter,
-  // or at once when the room runs out of space here.
-  private async noteBans(room: string) {
-    const s = this.sumOf(room)
-    const now = this.clock.now()
-    const banned = new Map(
-      membersOf(s)
-        .filter(m => m.m === 'ban')
-        .map(m => [m.ik, m.rem ?? ''])
-    )
-    const cur = this.rooms.get(room)?.bans ?? {}
-    const same =
-      Object.keys(cur).length === banned.size &&
-      [...banned].every(([ik, id]) => cur[ik]?.ban === id)
-    if (same) return
-    await this.updateRoom(room, rec => {
-      const old = rec.bans ?? {}
-      const bans: NonNullable<RoomRecord['bans']> = {}
-      for (const [ik, id] of banned)
-        bans[ik] = old[ik]?.ban === id ? old[ik] : { ban: id, since: now }
-      return { ...rec, bans }
-    })
+  // ----- Storage (spec 2.3, 4.2, 4.3) -----
+
+  // What the state and the held content let storage do now: drop what the ACL core names, purge
+  // bodies whose cause is stable, ask for bodies that show again, and look for proofs to post.
+  private async storePass(room: string) {
+    if (!this.rooms.has(room) || this.sumOf(room).rules !== RULES_VERSION) return
+    await this.dropPass(room)
+    await this.purgePass(room, false)
+    await this.wantPass(room)
+    await this.proofPass(room)
   }
 
-  // Purges the content banned members `iks` wrote that is stored here and not shown: each such
-  // event keeps only its header (never served), its files go, and the room's space comes back.
-  private async purge(room: string, iks: string[], only?: EventRecord[]) {
-    const s = this.sumOf(room)
-    const targets = iks.filter(ik => membershipOf(s, ik) === 'ban')
-    const cands: EventRecord[] = []
-    if (only) for (const r of only) if (targets.includes(r.sender)) cands.push(r)
-    if (!only)
-      for (const ik of targets)
-        for (const r of await this.db.getAllFromIndex(
-          'events',
-          'room_dseq',
-          IDBKeyRange.bound([room, ik, -Infinity], [room, ik, Infinity])
-        ))
-          if (r.layer === 'c' && !r.purged) cands.push(r)
-    if (!cands.length) return 0
-    const shown = await this.host.display(
-      room,
-      cands.map(r => r.id)
-    )
-    const hidden = cands.filter((_r, i) => shown[i]?.hidden).map(r => r.id)
-    if (!hidden.length && only) return 0
-    const tx = this.db.transaction(['events', 'rooms', 'meta'], 'readwrite')
-    const events = tx.objectStore('events')
-    const meta = tx.objectStore('meta')
-    let saved = 0
-    let n = 0
-    const freed: string[] = []
-    for (const id of hidden) {
-      const r = await events.get(id)
-      if (!r || r.purged) continue
-      const next: EventRecord = { ...stripped(r), purged: true }
-      saved += storedSize(r.wire) - storedSize(next.wire)
-      n += 1
-      freed.push(...(r.atts ?? []))
-      await events.put(next)
+  private myDev() {
+    const author = this.deps.node.author()
+    return author ? keyId(author.dk.pk) : undefined
+  }
+
+  private async dropPass(room: string) {
+    const d = await this.host.drops(room, this.myDev())
+    if (!d.acl.length && !d.content.length) return
+    let freed: string[]
+    try {
+      freed = await dropServer(this.db, room, d)
+    } catch (e) {
+      // The evaluator let go of what is still stored: it starts again from storage.
+      await this.reload(room)
+      throw e
     }
-    const rec = await tx.objectStore('rooms').get(room)
-    if (rec) {
-      const bans = { ...(rec.bans ?? {}) }
-      if (!only) for (const ik of targets) if (bans[ik]) bans[ik] = { ...bans[ik], purged: true }
-      await tx.objectStore('rooms').put({
-        ...rec,
-        bans,
-        bytes: Math.max(0, (rec.bytes ?? 0) - saved),
-        count: Math.max(0, rec.count - n),
-        full: n || saved ? false : rec.full,
-      })
+    const rt = this.ensureRt(room)
+    for (const id of d.content) {
+      rt.bodiless.delete(id)
+      rt.want.delete(id)
     }
-    if (n) {
-      const total = ((await meta.get(SERVER_TOTAL)) as number | undefined) ?? 0
-      const totalBytes = ((await meta.get(SERVER_TOTAL_BYTES)) as number | undefined) ?? 0
-      await meta.put(Math.max(0, total - n), SERVER_TOTAL)
-      await meta.put(Math.max(0, totalBytes - saved), SERVER_TOTAL_BYTES)
-    }
-    await tx.done
+    await this.refreshRoom(room)
+    if (d.delta) await this.applyDelta(room, d.delta)
+    if (freed.length) void this.deps.dms.blobs.release([...new Set(freed)]).catch(() => {})
+    this.changed(room)
+  }
+
+  private async refreshRoom(room: string) {
     const after = await this.deps.store.room(room)
     if (after) this.rooms.set(room, after)
-    if (freed.length) void this.deps.dms.blobs.release([...new Set(freed)]).catch(() => {})
-    if (n) this.changed(room)
-    return n
   }
 
-  // Out of space: banned members' hidden content goes now, whatever their bans' age.
-  private async purgeForSpace(room: string) {
-    const due = Object.keys(this.rooms.get(room)?.bans ?? {})
-    return due.length ? this.purge(room, due) : 0
+  // Spec 4.3: a hidden body goes when its cause is stable (S1 to S4; S4 is the time it has stood
+  // here, kept per cause), or under `pressure` when S1 to S3 hold; a counted redaction by the
+  // content's own author at once. Under pressure with nothing stable, every hidden body goes
+  // (they can be fetched again), keeping its files as an eviction does. `only`: just these
+  // content events. Returns how many went.
+  private async purgePass(room: string, pressure: boolean, only?: string[]) {
+    const p = await this.host.purgeable(room, only)
+    const now = this.clock.now()
+    const old = this.rooms.get(room)?.causes ?? {}
+    const causes: Record<string, number> = only ? { ...old } : {}
+    for (const id of [...p.live, ...p.causes.filter(c => c.kind !== 'self').map(c => c.id)])
+      causes[id] = old[id] ?? now
+    const keys = (x: Record<string, number>) => Object.keys(x).sort().join()
+    if (keys(causes) !== keys(old)) await this.updateRoom(room, cur => ({ ...cur, causes }))
+    const due = (c: (typeof p.causes)[number]) =>
+      c.kind === 'self' || (c.stable && (pressure || now - causes[c.id] >= SERVER.purgeAfter))
+    const ids = p.causes.filter(due).flatMap(c => c.ids)
+    const n = await this.purge(room, ids)
+    if (!pressure || p.causes.some(c => c.kind !== 'self' && due(c))) return n
+    const rest = [...p.causes.filter(c => !due(c)).flatMap(c => c.ids), ...p.other]
+    return n + (await this.purge(room, rest, false, true))
+  }
+
+  // Purges the bodies of `ids` and their authors' edits of them: each keeps only its header
+  // (never served), its files go, and the room's space comes back. `evict`: bodies that show,
+  // evicted for space, fetched again only when viewed. `keepFiles`: bodies that can be fetched
+  // again free no file space the budget counts, so files of our own messages stay, and so does
+  // every file we sent (our uploads), until we delete them.
+  private async purge(room: string, ids: string[], evict = false, keepFiles = evict) {
+    if (!ids.length) return 0
+    const { done, freed, mine } = await purgeServer(this.db, room, ids, this.me, evict)
+    if (!done.length) return 0
+    const rt = this.ensureRt(room)
+    for (const id of done) rt.bodiless.add(id)
+    await this.host.bodies(room, done, false, evict)
+    await this.refreshRoom(room)
+    const blobs = this.deps.dms.blobs
+    if (freed.length) void blobs.release([...new Set(freed)], undefined, keepFiles).catch(() => {})
+    if (mine.length && !keepFiles)
+      void blobs
+        .release([...new Set(mine)], x => x.room !== room || x.sender === this.me)
+        .catch(() => {})
+    this.changed(room)
+    return done.length
+  }
+
+  // Bodies that show again after a purge (a later event overturned their cause), and evicted ones
+  // someone viewed: fetched by id from a peer that still holds them.
+  private async wantPass(room: string) {
+    const rt = this.ensureRt(room)
+    rt.wantAt = this.clock.now()
+    if (!rt.bodiless.size) return
+    // Viewed bodies that no longer show aren't asked for any more.
+    const viewed = [...rt.viewed]
+    const still = await this.host.restorable(room, viewed, true)
+    rt.viewed = new Set(viewed.filter((_id, i) => still[i]))
+    const w = [...new Set([...(await this.host.wanted(room)), ...rt.viewed])]
+    rt.want = new Set(w)
+    if (w.length) {
+      this.sync.fetch(room, w)
+      this.changed(room)
+    }
+  }
+
+  private async restoreBody(room: string, id: string, w: WireV2): Promise<Inserted> {
+    // Room for it first: just its size, from bodies not fetched back lately.
+    const full = await this.contentFull(room, w)
+    if (full) await this.evictForSpace(room, sizeOfWire(w), full === 'total', true)
+    const rec = await restoreBody(this.db, room, id, w, this.clock.now())
+    const rt = this.ensureRt(room)
+    if (!rec) return { status: 'dropped' }
+    rt.bodiless.delete(id)
+    rt.want.delete(id)
+    rt.viewed.delete(id)
+    // What waited on it (its author's edits) may be wanted now.
+    rt.storeDirty = true
+    await this.host.bodies(room, [id], true)
+    await this.refreshRoom(room)
+    this.changed(room)
+    return { status: 'dup', rec }
+  }
+
+  // Proofs (spec 2.3, 4.1): evidence that lowers a device's fork point below an ACL event of it
+  // is posted after a random delay, unless what arrived meanwhile already lowered it as far.
+  private async proofPass(room: string) {
+    const author = this.deps.node.author()
+    if (!author || this.myMembership(room) !== 'join' || this.readOnly(room)) return
+    const rt = this.ensureRt(room)
+    const now = this.clock.now()
+    for (const c of await this.host.proofs(room, this.me, keyId(author.dk.pk))) {
+      if ((rt.proofed.get(c.dev) ?? Infinity) <= c.f) continue
+      const q = rt.proofs.get(c.dev)
+      if (q && q.f <= c.f) continue
+      const rand = this.deps.random ?? Math.random
+      rt.proofs.set(c.dev, { f: c.f, due: now + Math.floor(rand() * SERVER.proofDelayMs) })
+    }
+  }
+
+  private postProofs(room: string, rt: Rt, now: number) {
+    rt.proofTimes = rt.proofTimes.filter(t => now - t < 60 * 60_000)
+    for (const [dev, q] of rt.proofs) {
+      if (q.due > now) continue
+      if (rt.proofTimes.length >= SERVER.proofsPerHour) return
+      rt.proofs.delete(dev)
+      rt.proofTimes.push(now)
+      void this.postProof(room, dev).catch(() => {})
+    }
+  }
+
+  private async postProof(room: string, dev: string) {
+    const author = this.deps.node.author()
+    if (!author || this.myMembership(room) !== 'join' || this.readOnly(room)) return
+    const [c] = await this.host.proofs(room, this.me, keyId(author.dk.pk), [dev])
+    if (!c) return
+    // A side is a stored event's core, or a dropped event's header; either must check out.
+    const side = async (id: string) => {
+      const e = await this.db.get('events', id)
+      const w = e?.room === room ? serverWire(e) : (await this.db.get('dropped', id))?.hdr
+      const x = w ? { ev: w.ev, sig: w.sig } : null
+      return x && headerOk(id, x, room) ? x : null
+    }
+    const x = await side(c.x)
+    const y = await side(c.y)
+    if (!x || !y) return
+    await this.emit(room, 'proof', () => ({ x, y }))
+    const rt = this.ensureRt(room)
+    rt.proofed.set(dev, Math.min(rt.proofed.get(dev) ?? Infinity, c.f))
+  }
+
+  // A moderator's redaction we applied: a mark naming it within a minute, so it can be
+  // acknowledged (spec 4.3 S2), at most one per room per SERVER.ackMs, and only while some
+  // redaction still needs it (ackRedactions).
+  private noteRedaction(room: string) {
+    const rt = this.ensureRt(room)
+    if (rt.ackDue !== null) return
+    const rand = this.deps.random ?? Math.random
+    const at = this.clock.now() + Math.floor(rand() * SERVER.ackDelayMs)
+    rt.ackDue = Math.max(at, rt.ackAt + SERVER.ackMs)
+  }
+
+  // Controller ruling: a mark only names redactions not yet acknowledged that can still be
+  // (at least 2 identities other than their authors, us among them); with none, no mark.
+  private ackRedactions(room: string, rt: Rt, now: number) {
+    rt.ackDue = null
+    if (this.myMembership(room) !== 'join' || this.readOnly(room)) return
+    void this.locked(room, async () => {
+      const ack = await this.host.acks(room, this.me)
+      if (!ack.length) return
+      rt.ackAt = now
+      await this.emitNow(room, 'mark', () => ({ ack }))
+    }).catch(() => {})
+  }
+
+  // Out of space (spec 4.2): purgeable bodies go first, then hidden ones that can be fetched
+  // again, then the oldest bodies of the sender whose bodies take the most here (`total`: in
+  // every server), until `size` more bytes fit, at least SERVER.evictBytes. Bodies fetched back
+  // lately go only when nothing else can. `restore`: making room for a body fetched back, which
+  // takes just its size and never one fetched back lately.
+  private async evictForSpace(room: string, size: number, total: boolean, restore = false) {
+    const n = await this.purgePass(room, true)
+    if (n) return n
+    const now = this.clock.now()
+    const need = restore ? size : Math.max(size, SERVER.evictBytes)
+    let late: { room: string; ids: string[] } | null = null
+    for (const c of await evictionOrder(this.db, total ? null : room, this.me)) {
+      const got = await oldestBodies(this.db, c.room, c.ik, need, now)
+      if (got.ids.length) return this.purge(c.room, got.ids, true)
+      if (!late && got.late.length) late = { room: c.room, ids: got.late }
+    }
+    return late && !restore ? this.purge(late.room, late.ids, true) : 0
   }
 
   private async postJoin(room: string) {
@@ -1224,7 +1476,29 @@ export class Servers {
     const rt = this.ensureRt(room)
     await rt.loading
     const have = await this.db.get('events', id)
-    if (have) return { status: 'dup', rec: have }
+    if (have) {
+      // A purged body that shows again, fetched back (spec 4.3).
+      if (
+        have.purged &&
+        (rt.want.has(id) || rt.viewed.has(id)) &&
+        w.c !== null &&
+        have.room === room
+      ) {
+        // Only while it still shows: what was hidden again stays purged.
+        const [ok] = await this.host.restorable(room, [id], rt.viewed.has(id))
+        if (ok) return this.restoreBody(room, id, w)
+        rt.want.delete(id)
+        rt.viewed.delete(id)
+      }
+      return { status: 'dup', rec: have }
+    }
+    // Dropped here (spec 2.3, 4.2): an ACL event is taken again only when something cites it.
+    const gone = await this.db.get('dropped', id)
+    if (gone?.room === room && !(gone.layer === 'a' && (rt.waits.has(id) || rt.need.has(id)))) {
+      if ((await this.deps.store.room(room))?.missing.includes(id))
+        await this.updateRoom(room, cur => ({ ...cur, missing: cur.missing.filter(m => m !== id) }))
+      return { status: 'dropped' }
+    }
     if (rt.rejected.has(id)) return { status: 'rejected', why: 'known' }
     const ap = w.ev.ap ?? []
     if (ap.some(p => rt.rejected.has(p))) return this.reject(room, id, 'parent')
@@ -1329,10 +1603,21 @@ export class Servers {
     retried = false
   ): Promise<Inserted> {
     const rt = this.ensureRt(room)
-    if (w.ev.L === 'c' && (await this.contentFull(room, w))) {
-      const why = (await this.deps.store.room(room))?.fullWhy ?? 'events'
-      if ((await this.purgeForSpace(room)) > 0) return this.decide(room, id, w, now)
-      return { status: 'full', why }
+    // Someone else's content past its share of the budgets (spec 4.2): not now, no strike.
+    if (
+      w.ev.L === 'c' &&
+      w.ev.a !== this.me &&
+      !(await withinShareNow(this.db, room, w.ev.a, sizeOfWire(w), now, this.caps()))
+    )
+      return { status: 'quota' }
+    if (w.ev.L === 'c') {
+      const full = await this.contentFull(room, w)
+      if (full) {
+        const why = (await this.deps.store.room(room))?.fullWhy ?? 'events'
+        if ((await this.evictForSpace(room, sizeOfWire(w), full === 'total')) > 0)
+          return this.decide(room, id, w, now)
+        return { status: 'full', why }
+      }
     }
     let out: Received
     let delta = null
@@ -1357,6 +1642,13 @@ export class Servers {
         return this.hold(room, id, w)
     }
     let res
+    // The evaluator took it but storage didn't: an ACL event (its state and the page's copy moved)
+    // makes both start again from what is stored; content is let go of. An unknown-rules event
+    // only counted.
+    const undo = async () => {
+      if (out.s === 'A') await this.reload(room)
+      else if (out.s === 'C') await this.host.unhold(room, [id])
+    }
     try {
       res = await insertServer(this.db, room, id, w, now, {
         me: this.me,
@@ -1368,34 +1660,36 @@ export class Servers {
         serverBytes: this.deps.serverBytes,
       })
     } catch (e) {
-      // The evaluator took it and the page's copy missed its delta: both start again from what
-      // is stored.
-      if (out.s === 'A' || out.s === 'U') await this.reload(room)
+      await undo()
       throw e
     }
-    if (res.status !== 'new' && res.status !== 'dup' && (out.s === 'A' || out.s === 'U'))
-      await this.reload(room)
+    if (res.status !== 'new' && res.status !== 'dup') await undo()
     if (res.status === 'stale') return { status: 'quota' }
     if (res.status !== 'new') return res
     const cached = this.rooms.get(room)
     if (cached && cached.lastSeq < res.rec.seq)
       this.rooms.set(room, { ...cached, lastSeq: res.rec.seq })
+    rt.storeDirty = true
+    // Stored without its body (an edit of a message purged here).
+    if (res.rec.purged) {
+      rt.bodiless.add(id)
+      await this.host.bodies(room, [id], false, !!res.rec.evicted)
+    }
     if (w.ev.L === 'a') {
+      await this.db.delete('dropped', id)
       await this.learnFrom(res.rec)
       const to = w.c?.to
       if (w.ev.t === 'add' && w.ev.a !== this.me && to !== this.me && !isOwner(rt.sum, w.ev.a))
         rt.vouch.set(id, w.ev.a)
       if (delta) await this.applyDelta(room, delta)
-    } else {
-      await this.purgeRedacted(room, res.rec)
-      if (this.rooms.get(room)?.bans?.[w.ev.a]?.purged) await this.purge(room, [w.ev.a], [res.rec])
-    }
+    } else await this.purgeRedacted(room, res.rec)
     return res
   }
 
-  // A redaction by its target's author that counts (visible, positioned after its target: the
-  // evaluator decides) purges the target here at once (spec 4.3). Asked when the redaction or the
-  // target arrives, whichever comes last.
+  // Purges at arrival (spec 4.3): a counted redaction by its target's author strips the target at
+  // once, asked when the redaction or the target arrives, whichever comes last (any such
+  // redaction, whatever else came first); content of someone out of the server whose cause is
+  // already due goes at once too. A moderator's redaction we applied gets acknowledged.
   private async purgeRedacted(room: string, rec: EventRecord) {
     const ids =
       rec.type === 'redact'
@@ -1403,22 +1697,26 @@ export class Servers {
           ? [rec.target]
           : []
         : (await this.db.getAllFromIndex('events', 'room_target', [room, rec.id])).some(
-              x => x.type === 'redact' && x.sender === rec.sender
+              x => x.type === 'redact'
             )
           ? [rec.id]
           : []
-    if (!ids.length) return
-    const [sh] = await this.host.display(room, ids)
-    const by = sh?.hidden?.why === 'redacted' ? sh.hidden.by : null
-    const r = by ? await this.db.get('events', by) : undefined
-    const t = await this.db.get('events', ids[0])
-    if (!r || !t || r.sender !== t.sender) return
-    const freed = await stripServer(this.db, room, t.id, t.sender)
-    if (freed.length) {
-      const mine = t.sender === this.me
-      void this.deps.dms.blobs
-        .release(freed, x => !mine || x.room !== room || x.sender === this.me)
-        .catch(() => {})
+    if (membershipOf(this.sumOf(room), rec.sender) !== 'join') ids.push(rec.id)
+    if (ids.length) await this.purgePass(room, false, ids)
+    if (rec.type === 'redact' && rec.target && rec.sender !== this.me) {
+      const t = await this.db.get('events', rec.target)
+      const [sh] = await this.host.display(room, [rec.target])
+      if (t && t.sender !== rec.sender && sh?.hidden?.why === 'redacted' && sh.hidden.by === rec.id)
+        this.noteRedaction(room)
+    }
+  }
+
+  private caps() {
+    return {
+      roomCap: this.deps.roomCap,
+      roomBytes: this.deps.roomBytes,
+      serverCap: this.deps.serverCap,
+      serverBytes: this.deps.serverBytes,
     }
   }
 
@@ -1446,19 +1744,25 @@ export class Servers {
     }, SAVE_MS)
   }
 
-  private async contentFull(room: string, w: WireV2) {
+  // Whether content of `w`'s size fits: no ('room' or 'total', the budget it doesn't fit) or yes.
+  private async contentFull(room: string, w: WireV2): Promise<'room' | 'total' | null> {
     const r = await this.deps.store.room(room)
-    if (!r) return true
+    if (!r) return 'room'
     const size = sizeOfWire(w)
     const meta = this.db
     const total = ((await meta.get('meta', SERVER_TOTAL)) as number | undefined) ?? 0
     const bytes = ((await meta.get('meta', SERVER_TOTAL_BYTES)) as number | undefined) ?? 0
-    return (
+    if (
       r.count >= (this.deps.roomCap ?? DAG.roomCap) ||
+      (r.bytes ?? 0) + size > (this.deps.roomBytes ?? DAG.roomBytes)
+    )
+      return 'room'
+    if (
       total >= (this.deps.serverCap ?? DAG.serverCap) ||
-      (r.bytes ?? 0) + size > (this.deps.roomBytes ?? DAG.roomBytes) ||
       bytes + size > (this.deps.serverBytes ?? DAG.serverBytes)
     )
+      return 'total'
+    return null
   }
 
   // The hold store (spec 2.1): admitted, dated more than 5 minutes ahead of our clock; kept
@@ -1717,10 +2021,11 @@ export class Servers {
           picked.map(r => r.id)
         )
       : picked.map(() => true)
+    const see = await this.viewable(room, link.ik, picked)
     const out: EventRecord[] = []
     let size = 0
     for (let i = 0; i < picked.length; i++) {
-      if (!ok[i]) continue
+      if (!ok[i] || !see[i]) continue
       const n = JSON.stringify(picked[i].wire).length
       if (out.length > 0 && size + n > bytes) {
         more = true
@@ -1738,7 +2043,9 @@ export class Servers {
     if (g === 'none') return []
     const found = (await getEvents(this.db, link.room, ids)).filter(r => !r.purged)
     const acl = found.filter(r => r.layer !== 'c')
-    const content = g === 'all' || g === 'joined' ? found.filter(r => r.layer === 'c') : []
+    let content = g === 'all' || g === 'joined' ? found.filter(r => r.layer === 'c') : []
+    const see = await this.viewable(link.room, link.ik, content)
+    content = content.filter((_r, i) => see[i])
     if (g !== 'joined') return [...acl, ...content]
     const ok = await this.host.history(
       link.room,
@@ -1748,17 +2055,46 @@ export class Servers {
     return [...acl, ...content.filter((_r, i) => ok[i])]
   }
 
-  // Our new events go out live to members who may have everything; members under history
-  // `joined` pull content (the gate checks each one); invitees get the ACL.
+  // Whether `ik` may be sent these content events: each one's channel must be one they may view
+  // (spec 3.7, Discord order); a copy without its body only to who may view every channel.
+  private viewable(room: string, ik: string, recs: EventRecord[]) {
+    if (!recs.length) return Promise.resolve([])
+    return this.host.viewable(
+      room,
+      ik,
+      recs.map(r => (serverWire(r).c === null ? null : (r.chan ?? '')))
+    )
+  }
+
+  // Our new events go out live to members who may have everything (content only of channels they
+  // may view: `views`, filled before the push); members under history `joined` pull content (the
+  // gate checks each one); invitees get the ACL.
   private pushable(link: Link, wire: Wire) {
     const g = this.gate(link.room, link.ik)
-    if (g === 'all') return true
     if (g === 'none') return false
-    return (wire as unknown as WireV2).ev.L === 'a'
+    const w = wire as unknown as WireV2
+    if (w.ev.L === 'a') return true
+    if (g !== 'all') return false
+    const ch = typeof w.c?.ch === 'string' ? w.c.ch : w.c === null ? null : ''
+    return this.rt(link.room)?.views.get(`${link.ik}\n${ch}`) === true
+  }
+
+  // Who of the room's links may be sent our content of `ch` (null: without its body).
+  private async fillViews(room: string, ch: string | null) {
+    const rt = this.ensureRt(room)
+    const iks = [...new Set(this.sync.linksOf(room).map(l => l.ik))].filter(
+      ik => !rt.views.has(`${ik}\n${ch}`)
+    )
+    if (!iks.length) return
+    for (const ik of iks) {
+      const [ok] = await this.host.viewable(room, ik, [ch])
+      rt.views.set(`${ik}\n${ch}`, ok)
+    }
   }
 
   // The file gate for server rooms: a joined member, a message they didn't write that carries
-  // the file and shows, and (history `joined`) belongs to their history.
+  // the file and shows in a channel they may view, and (history `joined`) belongs to their
+  // history.
   async entitled(ik: string, h: string) {
     for (const r of await this.db.getAllFromIndex('events', 'att', h)) {
       if (r.redacted || r.sender === ik || !this.rooms.has(r.room)) continue
@@ -1766,6 +2102,8 @@ export class Servers {
       if (g !== 'all' && g !== 'joined') continue
       const [sh] = await this.host.display(r.room, [r.id])
       if (!sh || sh.hidden) continue
+      const [see] = await this.viewable(r.room, ik, [r])
+      if (!see) continue
       if (g === 'all') return true
       const [ok] = await this.host.history(r.room, ik, [r.id])
       if (ok) return true
@@ -1862,6 +2200,11 @@ export class Servers {
     }
     const ts = Math.max(now, plan.ts)
     const { id, wire } = buildEvent2(author, room, t, L, content, fields, ts)
+    // Our own content needs room too (spec 4.2): evicted for in the stated order.
+    for (let full = L === 'c' ? await this.contentFull(room, wire) : null; full;) {
+      if (!(await this.evictForSpace(room, sizeOfWire(wire), full === 'total'))) break
+      full = await this.contentFull(room, wire)
+    }
     let out: Received
     let delta = null
     if (L === 'a') ({ out, delta } = await this.host.acl(room, id, wire, ts))
@@ -1898,7 +2241,10 @@ export class Servers {
     if (cached && cached.lastSeq < res.rec.seq)
       this.rooms.set(room, { ...cached, lastSeq: res.rec.seq })
     if (delta) await this.applyDelta(room, delta)
-    if (L === 'c') await this.purgeRedacted(room, res.rec)
+    if (L === 'c') {
+      await this.purgeRedacted(room, res.rec)
+      await this.fillViews(room, typeof wire.c?.ch === 'string' ? wire.c.ch : '')
+    }
     this.sync.push(room, id, wire as unknown as Wire)
     this.sync.announce(room)
     this.changed(room)
@@ -2034,7 +2380,9 @@ export class Servers {
     return this.settings(room, { system: sys })
   }
 
-  addChannel(room: string, name: string) {
+  // `restrictView`: only owners, Manage channels and overwrites that allow it may view it (spec
+  // 1.4; the editor for overwrites is Task 23's).
+  addChannel(room: string, name: string, opts: { restrictView?: boolean } = {}) {
     const pos = Math.max(-1, ...channelsOf(this.sumOf(room)).map(c => c.pos)) + 1
     const id = newShortId()
     return this.emit(room, 'channel', () => ({
@@ -2042,6 +2390,7 @@ export class Servers {
       name: name.trim().slice(0, 100),
       kind: 'text',
       pos,
+      ...(opts.restrictView ? { restrict_view: true } : {}),
     })).then(() => id)
   }
 
@@ -2061,7 +2410,8 @@ export class Servers {
     return this.emit(room, 'kick', plan => ({ to: ik, seen: plan.seen ?? {} }), { to: ik })
   }
 
-  ban(room: string, ik: string, reason?: string) {
+  // `wipe`: "Also hide all their messages" (spec 3.5, needs Manage messages).
+  ban(room: string, ik: string, reason?: string, wipe = false) {
     return this.emit(
       room,
       'ban',
@@ -2069,6 +2419,7 @@ export class Servers {
         to: ik,
         seen: plan.seen ?? {},
         ...(reason ? { reason: reason.slice(0, STATE_LIMITS.reason) } : {}),
+        ...(wipe ? { wipe: true } : {}),
       }),
       { to: ik }
     )
@@ -2575,6 +2926,8 @@ export class Servers {
     const v = await this.check(room, r.wire)
     if (!v.ok) throw new DmError("This message can't be sent. Delete it instead.")
     await this.db.put('outbox', { ...o, failed: false })
+    const w = serverWire(r)
+    if (w.ev.L === 'c') await this.fillViews(room, typeof w.c?.ch === 'string' ? w.c.ch : '')
     this.sync.resend(room, id, r.wire)
     this.changed(room)
   }
@@ -2777,11 +3130,39 @@ export class Servers {
       recs.map(r => r.id)
     )
     const out: P2pMessage[] = []
+    const viewed: string[] = []
     const replies = new Map<string, Shown | null>()
     for (let i = 0; i < recs.length; i++) {
       const r = recs[i]
       const sh = shown[i]
       const c = serverWire(r).c as MsgContent | null
+      // Shows, but its body was purged or evicted here: until a peer sends it back (spec 4.3);
+      // an evicted one is asked for now that it is viewed (spec 4.2).
+      if (sh && !sh.hidden && r.purged) {
+        if (r.evicted) viewed.push(r.id)
+        out.push({
+          id: r.id,
+          sender: r.sender,
+          ts: r.effTs,
+          sentTs: serverWire(r).ev.ts,
+          sortKey: r.sortKey,
+          seq: r.seq,
+          body: '',
+          reply: null,
+          mentions: [],
+          fwd: null,
+          att: [],
+          edited: null,
+          reactions: [],
+          pinned: null,
+          late: false,
+          pending: false,
+          failed: false,
+          call: null,
+          unavailable: true,
+        })
+        continue
+      }
       // Not decided here yet (our own message on its way in), or hidden.
       if (!sh || sh.hidden || !c || r.redacted) continue
       const edit = sh.edit && !c.fwd ? await this.db.get('events', sh.edit) : undefined
@@ -2835,6 +3216,14 @@ export class Servers {
         call: null,
         everyone: c.everyone === true && sh.everyone,
       })
+    }
+    if (viewed.length) {
+      const rt = this.ensureRt(room)
+      const fresh = viewed.filter(id => !rt.viewed.has(id))
+      for (const id of fresh) rt.viewed.add(id)
+      while (rt.viewed.size > SERVER.viewedMax)
+        rt.viewed.delete(rt.viewed.values().next().value as string)
+      if (fresh.length) this.sync.fetch(room, fresh)
     }
     return out
   }

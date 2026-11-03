@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from 'react'
 import { Crown, Hash, Trash2 } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
-import { p2p, p2pServer, useP2p, type ServerTab } from '../../lib/p2p/app'
+import { banRequest, p2p, p2pServer, useP2p, type ServerTab } from '../../lib/p2p/app'
 import { P } from '../../lib/p2p/state'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { Dialog, fieldCls, filledBtn, Masked, sectionCls, textBtn } from '../ui'
@@ -298,14 +298,7 @@ function Members({ v }: { v: ServerView }) {
           )}
           {m.ik !== me && !m.owner && ban && m.below && (
             <button
-              onClick={() =>
-                ask({
-                  title: 'Ban Member',
-                  body: `Ban ${who(m.name)}? Nothing they post from now on is shown, and they can't come back.`,
-                  confirm: 'Ban',
-                  action: () => void p2pServer.ban(v.id, m.ik),
-                })
-              }
+              onClick={() => ask(banRequest(v, m.ik, who(m.name)))}
               className="rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest"
             >
               Ban

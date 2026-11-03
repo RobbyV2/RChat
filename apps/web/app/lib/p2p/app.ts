@@ -19,7 +19,7 @@ import type { AlertInput } from '../notices'
 import { EMPTY_NOTIFY, resolve as resolveNotify, type NotifyPrefs } from '../notify'
 import { applySed, parseSed } from '../sed'
 import type { UserRef } from '../types'
-import type { MarkAllExtra } from '../store_types'
+import type { ConfirmRequest, MarkAllExtra } from '../store_types'
 import { dbName, P2pStore, removeP2pDb, type OwnBadge, type RoomRecord } from './db'
 import { BadgeKeeper, Badges, readSlots, type BadgeSlot } from './badge'
 import { fingerprint, keyId } from './keys'
@@ -98,7 +98,7 @@ import {
   type ServerArrival,
   type ServerView,
 } from './server'
-import type { HistoryVis } from './state'
+import { P, type HistoryVis } from './state'
 
 // The P2P view model. IndexedDB (through the node) is the source of truth; this store only
 // mirrors what the UI shows. One node per signed-in account; guests never get one.
@@ -1119,6 +1119,37 @@ const withServers = async <T>(fn: (s: Servers) => Promise<T>): Promise<T | null>
 // The channel opened last in each server, for this tab.
 const lastChannel = new Map<string, string>()
 
+// The ban confirmation: with Manage messages, "Also hide all their messages" (spec 3.5).
+export const banRequest = (v: ServerView, ik: string, name: string): ConfirmRequest => {
+  const wipe = (v.perms & P.ManageMessages) !== 0
+  return {
+    title: 'Ban Member',
+    body: wipe
+      ? `Ban ${name}? They can't come back.`
+      : `Ban ${name}? Nothing they post from now on is shown, and they can't come back.`,
+    confirm: 'Ban',
+    ...(wipe
+      ? {
+          choices: [
+            {
+              value: 'keep',
+              label: 'Hide what they post from now on',
+              detail: 'Their earlier messages stay.',
+              danger: true,
+            },
+            {
+              value: 'wipe',
+              label: 'Also hide all their messages',
+              detail: 'Everything they posted is hidden too.',
+              danger: true,
+            },
+          ],
+        }
+      : {}),
+    action: choice => void p2pServer.ban(v.id, ik, choice === 'wipe'),
+  }
+}
+
 export const p2pServer = {
   // Opens a server (its last channel, or the first one); the P2P home closes.
   open(room: string, ch?: string | null) {
@@ -1215,7 +1246,8 @@ export const p2pServer = {
   removeChannel: (room: string, id: string) =>
     withServers(s => s.editChannel(room, id, { gone: true })),
   kick: (room: string, ik: string) => withServers(s => s.kick(room, ik)),
-  ban: (room: string, ik: string) => withServers(s => s.ban(room, ik)),
+  ban: (room: string, ik: string, wipe = false) =>
+    withServers(s => s.ban(room, ik, undefined, wipe)),
   unban: (room: string, ik: string) => withServers(s => s.unban(room, ik)),
 
   markRead(room: string, ch: string) {

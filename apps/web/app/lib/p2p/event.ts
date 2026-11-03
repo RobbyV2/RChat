@@ -675,6 +675,17 @@ const signedHeader = (x: unknown, srv: string | null): x is { ev: CoreV2; sig: s
   }
 }
 
+// A dropped event's header or a proof side: the core of server `srv` with id `id`, signed by its
+// device (the signature covers the core, so content the header left out doesn't matter).
+export const headerOk = (id: string, x: unknown, srv: string): x is { ev: CoreV2; sig: string } => {
+  if (!signedHeader(x, srv)) return false
+  try {
+    return eventId2(x.ev) === id
+  } catch {
+    return false
+  }
+}
+
 export const TAG_UPGRADE = 'rchat-p2p-upgrade2\0'
 const upgradeInput = (srv: string, g: unknown) =>
   concat(utf8(TAG_UPGRADE), utf8(srv), utf8('\0'), canonicalBytes(g))

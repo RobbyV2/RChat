@@ -9,6 +9,7 @@ import { keyId } from '../p2p/keys'
 import { Gossip } from '../p2p/gossip'
 import type { Message } from '../p2p/frames'
 import { LEGACY_TEXT, SERVER, TOO_OFTEN_TEXT, UPDATE_TEXT } from '../p2p/server'
+import { SHARE } from '../p2p/shares'
 import type { Session } from '../p2p/session'
 import type { Link } from '../p2p/sync'
 import { Hub, ManualClock } from './p2p_net'
@@ -71,7 +72,19 @@ const run = async (m: Member, room: string, ap: string[], bodies_: string[], ch:
 }
 
 describe('storage (spec 4.2)', () => {
-  test('a full room still takes the owner’s ban; the banned member’s hidden content is purged at once, giving room back', async () => {
+  test('a full room still takes the owner’s ban; the banned member’s hidden content is evicted at once, giving room back', async () => {
+    // One sender fills the room here: no share limits this test.
+    const share = { ...SHARE }
+    SHARE.room = 2
+    SHARE.server = 2
+    try {
+      await fullRoom()
+    } finally {
+      Object.assign(SHARE, share)
+    }
+  }, 60_000)
+
+  const fullRoom = async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock, { servers: { roomCap: 40 } })
@@ -100,7 +113,8 @@ describe('storage (spec 4.2)', () => {
     const rec = (await a.store.room(room))!
     expect(n).toBeGreaterThan(40)
     expect(rec.count).toBeLessThanOrEqual(40)
-    expect(Object.values(rec.bans ?? {})[0]?.purged).toBe(true)
+    // Not stable (nobody else acknowledged the ban), but hidden: evicted under pressure.
+    expect((await a.store.db.getAll('events')).some(r => r.purged)).toBe(true)
     // The ACL always fits: the owner can still moderate in a full room.
     await a.servers.unban(room, b.node.ik)
     await a.servers.ban(room, b.node.ik)
@@ -110,7 +124,7 @@ describe('storage (spec 4.2)', () => {
     const purged = (await a.store.db.getAll('events')).filter(r => r.purged)
     expect(purged.length).toBeGreaterThan(0)
     expect(purged.every(r => r.sender === b.node.ik && r.wire.c === null)).toBe(true)
-  }, 60_000)
+  }
 
   test('what waits for its parents is bounded, and refusals take what waits on them along', async () => {
     const clock = new ManualClock()
@@ -238,6 +252,78 @@ describe('storage (spec 4.2)', () => {
     expect(membershipAt(a, room, b.node.ik)).toBe('join')
     expect(await deliver(a, room, leave.wire, clock.now())).toBe('new')
     expect(membershipAt(a, room, b.node.ik)).toBeNull()
+  }, 60_000)
+
+  test('content that fails to save is let go of by the evaluator, without reloading the room', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('Quota')
+    const ch = general(a, room)
+    await joinWithCode(clock, a, room, b)
+    const id = await b.servers.send(room, { ch, body: 'keep' })
+    await pump(clock, async () => (await bodies(a, room, ch)).includes('keep'), 'a has it')
+    await b.node.setPaused(true)
+    // Bob's redaction of it fails to save here: it must not hide the message.
+    const r = await signed(b, room, 'redact', { target: id, ch })
+    const host = (a.servers as unknown as { host: { load: (...x: unknown[]) => unknown } }).host
+    const load = host.load.bind(host)
+    let loads = 0
+    host.load = (...x: unknown[]) => {
+      loads += 1
+      return load(...x)
+    }
+    const db = a.store.db as unknown as { transaction: (...x: unknown[]) => unknown }
+    const real = db.transaction.bind(db)
+    let fail = true
+    db.transaction = (names: unknown, mode?: unknown) => {
+      if (fail && mode === 'readwrite' && Array.isArray(names) && names.includes('children')) {
+        fail = false
+        throw Object.assign(new Error('quota'), { name: 'QuotaExceededError' })
+      }
+      return real(names, mode)
+    }
+    expect(await failure(deliver(a, room, r.wire, clock.now()))).toBe('quota')
+    expect(await bodies(a, room, ch)).toEqual(['keep'])
+    expect(loads).toBe(0)
+    // Delivered again, it is stored and counts.
+    expect(await deliver(a, room, r.wire, clock.now())).toBe('new')
+    expect(await bodies(a, room, ch)).toEqual([])
+  }, 60_000)
+
+  test('content storage refuses after the evaluator took it raises no removal watermark: a later kick still hides what comes after what is held', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('Mark')
+    const other = await a.servers.create('Elsewhere')
+    const ch = general(a, room)
+    await joinWithCode(clock, a, room, b)
+    const away = await a.servers.send(other, { ch: general(a, other), body: 'elsewhere' })
+    const id = await b.servers.send(room, { ch, body: 'held' })
+    await pump(clock, async () => !!(await stored(a, id)), 'a has it')
+    await b.node.setPaused(true)
+    const at = (await planOf(b, room, 'msg', 'c')).ap
+    const held = (await stored(a, id))!.dseq!
+    const dev = keyId(b.node.author()!.dk.pk)
+    // A reaction far ahead on Bob's chain, aimed at a message of another room: the evaluator takes
+    // it, storage refuses it (a target elsewhere).
+    const far = await signed(
+      b,
+      room,
+      'react',
+      { target: away, key: 'x', on: true, ch },
+      { seq: held + 400 }
+    )
+    expect(await deliver(a, room, far.wire, clock.now())).toBe('invalid')
+    expect((await planOf(a, room, 'kick', 'a', b.node.ik)).seen?.[dev]).toBe(held)
+    // Alice kicks Bob; what Bob writes after what Alice held is hidden, whatever seq it takes.
+    await a.servers.kick(room, b.node.ik)
+    const late = await signed(b, room, 'msg', { body: 'after', ch }, { ap: at, seq: held + 10 })
+    expect(await deliver(a, room, late.wire, clock.now())).toBe('new')
+    expect(await bodies(a, room, ch)).toEqual(['held'])
   }, 60_000)
 
   test('an evaluator that lost a room gets it back from storage before deciding', async () => {
@@ -375,29 +461,51 @@ describe('storage (spec 4.2)', () => {
     expect((await a.store.db.getAll('events')).some(r => r.purged)).toBe(false)
   }, 90_000)
 
-  test('a ban that stands is purged after a week, not before', async () => {
+  test('a ban that stands is purged after a week once others acknowledged it (S1 to S4), not before', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
     const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const d = await makeMember(hub, 'Dan', clock)
+    const e = await makeMember(hub, 'Eve', clock)
     const room = await a.servers.create('Week')
     const ch = general(a, room)
-    await joinWithCode(clock, a, room, b)
+    for (const x of [b, c, d, e]) await joinWithCode(clock, a, room, x)
     await b.node.setPaused(true)
-    const at = (await planOf(b, room, 'msg', 'c')).ap
+    await e.node.setPaused(true)
+    const atB = (await planOf(b, room, 'msg', 'c')).ap
+    const atE = (await planOf(e, room, 'msg', 'c')).ap
     await a.servers.ban(room, b.node.ik)
-    const [late] = await run(b, room, at, ['late'], ch)
-    expect(await deliver(a, room, late.wire, clock.now())).toBe('new')
+    // Three ACL events of two others with Bob's ban in their past (S2).
+    for (const x of [c, c, d]) {
+      await pump(clock, () => membershipAt(x, room, b.node.ik) === 'ban', `${x.name} has the ban`)
+      await emit(x)(room, 'mark', () => ({}))
+    }
+    const marks = async () =>
+      (await a.store.db.getAll('events')).filter(r => r.type === 'mark' && r.room === room).length
+    await pump(clock, async () => (await marks()) >= 3, 'a has the marks')
+    // Eve's ban comes after them: nobody acknowledges it.
+    await a.servers.ban(room, e.node.ik)
+    const [lateB] = await run(b, room, atB, ['late'], ch)
+    const [lateE] = await run(e, room, atE, ['late too'], ch)
+    for (const ev of [lateB, lateE])
+      expect(await deliver(a, room, ev.wire, clock.now())).toBe('new')
     const count = (await a.store.room(room))!.count
     expect(await bodies(a, room, ch)).toEqual([])
     clock.t += 6 * DAY
-    await clock.advance(30_000)
-    expect((await stored(a, late.id))?.purged).toBeUndefined()
+    await clock.advance(70_000)
+    expect((await stored(a, lateB.id))?.purged).toBeUndefined()
     clock.t += 2 * DAY
-    await pump(clock, async () => (await stored(a, late.id))?.purged === true, 'purged')
-    expect((await stored(a, late.id))?.wire.c).toBe(null)
+    await pump(clock, async () => (await stored(a, lateB.id))?.purged === true, 'purged', 70_000)
+    expect((await stored(a, lateB.id))?.wire.c).toBe(null)
     expect((await a.store.room(room))!.count).toBe(count - 1)
-  }, 60_000)
+    // Eve's ban stood as long, but nobody but its author and target acknowledged it.
+    clock.t += 30 * DAY
+    await clock.advance(70_000)
+    expect((await stored(a, lateE.id))?.purged).toBeUndefined()
+    expect((await stored(a, lateE.id))?.wire.c).not.toBeNull()
+  }, 90_000)
 
   test('a cold start reads the stored records; a cache of another implementation is ignored', async () => {
     const clock = new ManualClock()

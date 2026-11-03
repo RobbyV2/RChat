@@ -198,6 +198,8 @@ const scene = async (opts: { server?: boolean } = {}) => {
       if (Date.now() > end) throw new Error('timed out waiting for Bob to join')
       await clock.advance(5_000)
     }
+    // Something storage dropped here (spec 4.2): only its id stays.
+    await a.store.db.put('dropped', { id: 'A'.repeat(43), room: server, layer: 'c' })
   }
   await b.node.setPaused(true)
   await waitFor(() => !a.dms.online(room), 'Bob away')

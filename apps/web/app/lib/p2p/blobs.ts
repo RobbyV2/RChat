@@ -1819,9 +1819,14 @@ export class Blobs {
   }
 
   // Files of a redacted message: deleted here unless another live message still carries them
-  // and `counts` says that message may keep it.
-  async release(hs: string[], counts: (r: EventRecord) => Promise<boolean> | boolean = () => true) {
+  // and `counts` says that message may keep it. `keepOwn`: files we sent stay whatever.
+  async release(
+    hs: string[],
+    counts: (r: EventRecord) => Promise<boolean> | boolean = () => true,
+    keepOwn = false
+  ) {
     for (const h of hs) {
+      if (keepOwn && (await this.db.get('blobs', h))?.own) continue
       let keep = false
       for (const r of await this.db.getAllFromIndex('events', 'att', h))
         if (!r.redacted && (await counts(r))) {

@@ -116,9 +116,9 @@ export interface RoomRecord {
   since?: number
   // An invite from a contact we haven't answered: who sent it and their invite (`add`) event.
   invite?: { from: string; at: number; wire: WireV2 } | null
-  // Bans in the current state: since when (by our clock) each has stood, and whether what the
-  // banned member wrote and never showed has been purged.
-  bans?: Record<string, { ban: string; since: number; purged?: true }>
+  // Causes that hide content (spec 4.3: removals, bans that hide everything, moderators'
+  // redactions): since when (by our clock) each has stood in the state here (S4).
+  causes?: Record<string, number>
   // A server made under rules this build no longer runs (test builds): shown read-only.
   legacy?: true
 }
@@ -152,13 +152,32 @@ export interface EventRecord {
   acl?: PackedRec
   // Imported from a transfer file: checked and decided on the next start.
   imp?: true
-  // P2P servers: the content of a banned member's hidden event was purged here (only its header
-  // is left). Never served: a peer asks someone else.
+  // P2P servers: the content of a hidden event was purged here, or evicted for space (only its
+  // header is left; spec 4.3). Never served: a peer asks someone else. `evicted`: a body that
+  // showed, evicted for space (spec 4.2 step 3): fetched again only when it is viewed.
   purged?: true
+  evicted?: true
+  // P2P servers: when a purged or evicted body came back (spec 4.2: not evicted again for
+  // DAG.backGraceMs).
+  back?: number
   // Root hashes of the files a live message carries (dropped when it is redacted), and the same
   // as `fileKey`s, so the serving gate is one index lookup whatever else is stored.
   atts?: string[]
   files?: string[]
+}
+
+// What storage keeps of a P2P server event it dropped (spec 2.3, 4.2): its id, and for an ACL
+// event whose header stays, the header (its core and signature, the content `acl/` keeps) with
+// its admission order and record. A dropped id is fetched again only when something cites it.
+export interface DroppedRecord {
+  id: string
+  room: string
+  layer: 'a' | 'c'
+  aseq?: number
+  hdr?: WireV2
+  acl?: PackedRec
+  // Imported from a transfer file: checked on the next start.
+  imp?: true
 }
 
 export const fileKey = (room: string, sender: string, h: string) => `${room}\n${sender}\n${h}`
@@ -256,6 +275,7 @@ export interface P2pSchema extends DBSchema {
       room_state: [string, number]
       room_dseq: [string, string, number]
       room_aseq: [string, number]
+      room_sender_sort: [string, string, string]
     }
   }
   children: { key: [string, string]; value: { parent: string; child: string } }
@@ -265,6 +285,7 @@ export interface P2pSchema extends DBSchema {
   blob_hashes: { key: [string, number]; value: HashPage }
   idents: { key: string; value: IdentRecord }
   codes: { key: string; value: CodeRecord; indexes: { room: string } }
+  dropped: { key: string; value: DroppedRecord; indexes: { room: string } }
 }
 
 export type P2pDatabase = IDBPDatabase<P2pSchema>
@@ -282,6 +303,7 @@ export type StoreName =
   | 'blob_hashes'
   | 'idents'
   | 'codes'
+  | 'dropped'
 
 type Upgrade = (
   db: P2pDatabase,
@@ -322,6 +344,12 @@ export const UPGRADES: Upgrade[] = [
   },
   (_db, tx) => {
     tx.objectStore('events').createIndex('room_aseq', ['room', 'aseq'])
+  },
+  db => {
+    db.createObjectStore('dropped', { keyPath: 'id' }).createIndex('room', 'room')
+  },
+  (_db, tx) => {
+    tx.objectStore('events').createIndex('room_sender_sort', ['room', 'sender', 'sortKey'])
   },
 ]
 

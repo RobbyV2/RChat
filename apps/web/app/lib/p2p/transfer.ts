@@ -842,6 +842,8 @@ const load = async (
           oldTs.set(e.id, ev.ts)
         }
       }
+      // Dropped events' headers are checked on the next start too (server.ts load).
+      if (name === 'dropped') v = { ...(v as object), imp: true }
       if (name === 'rooms') rooms.push(v as RoomRecord)
       if (name === 'contacts') contacts += 1
       fire(inline ? st.put(v) : st.put(v, r.key))
@@ -1000,8 +1002,8 @@ const merge = async (
       if (!inline && r.key === undefined) continue
       const key = inline ? keyOf(r.value, st.keyPath as string | string[]) : r.key
       if (key === undefined) continue
-      if ((await st.get(key)) === undefined)
-        await (inline ? st.put(r.value) : st.put(r.value, r.key))
+      const v = name === 'dropped' ? { ...(r.value as object), imp: true } : r.value
+      if ((await st.get(key)) === undefined) await (inline ? st.put(v) : st.put(v, r.key))
     }
   }
   return { kind: 'merge', contacts, rooms: theirs.size, events, skipped }

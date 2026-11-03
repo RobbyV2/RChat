@@ -16,7 +16,9 @@ import {
   type StDelta,
 } from './acl/cache'
 import type { EvalResult } from './acl/facts'
+import { orphanDrops, stableDeny, underDroppable, type Drop } from './acl/storage'
 import {
+  canView,
   EVERYONE,
   gt,
   idOp,
@@ -83,6 +85,8 @@ export interface AclItem {
   id: string
   w: WireV2
   rec?: PackedRec
+  // A dropped event's header (spec 2.3): restored from its record, never admitted again.
+  hdr?: true
 }
 
 export type Received =
@@ -310,6 +314,12 @@ export const recOk = (x: unknown): x is PackedRec => {
   )
 }
 
+// A record's references are to the event's own parents (restored before it), so a record can't
+// name an event that isn't there, or make a cycle.
+export const refsOk = (ap: readonly string[], r: PackedRec) =>
+  (r.st.b === undefined || ap.includes(r.st.b)) &&
+  (r.pool?.b === undefined || ap.includes(r.pool.b))
+
 // A record keeps the infinite ranks of owners and non-members as +-2^53 (as toStored does).
 const rankOut = (r: Rank): Rank => [
   r[0] === Infinity ? BIG : r[0] === -Infinity ? -BIG : r[0],
@@ -357,6 +367,41 @@ export interface Restored {
   refused: string[]
   // A recorded state that didn't match its evaluation: every event was admitted again.
   mismatch: boolean
+  // Headers whose record can't be read: they can't be admitted again (their content is gone).
+  lost: string[]
+}
+
+// What storage drops (spec 2.3, 4.2): ACL events (their headers kept as `acl/` decides), and
+// content with its header (only the id stays).
+export interface Drops {
+  acl: Drop[]
+  content: string[]
+}
+
+// Evidence a proof can carry now (spec 2.3, 4.1): the pair against `dev` with the lowest fork
+// point, which a proof posted from the asking device would have admitted.
+export interface ProofCand {
+  dev: string
+  f: number
+  x: string
+  y: string
+}
+
+// A cause hiding held content that still has its body (spec 4.3), with S2 and S3; S1 holds (it
+// hides that content now). `self`: a counted redaction by the content's own author.
+export interface Cause {
+  id: string
+  kind: 'deny' | 'wipe' | 'redact' | 'self'
+  stable: boolean
+  ids: string[]
+}
+
+export interface Purgeable {
+  // Every removal and wiping ban in effect, for the page's clock (S4).
+  live: string[]
+  causes: Cause[]
+  // Hidden bodies with no such cause (cut): evicted only under pressure.
+  other: string[]
 }
 
 export class AclRoom {
@@ -371,6 +416,18 @@ export class AclRoom {
   private packed = new Map<string, PackedSt>()
   private rejected = new Set<string>()
   private unknownCount = 0
+  // Storage: ACL events dropped from it (in the index whole, or from a header after a cold start),
+  // content held without its body, devices with new events since proofs were last looked for,
+  // and S2/S3 of causes in the current state.
+  private gone = new Set<string>()
+  private bare = new Set<string>()
+  private bodiless = new Set<string>()
+  private evicted = new Set<string>()
+  // Evicted edits by their target: they come back with it.
+  private evictedEdits = new Map<string, Set<string>>()
+  private dirty = new Set<string>()
+  private stab = new Map<string, boolean>()
+  private stabAt = -1
 
   constructor(
     readonly srv: string,
@@ -389,11 +446,17 @@ export class AclRoom {
   restore(
     items: readonly AclItem[],
     contents: readonly ContentEv[],
-    check: readonly { id: string; w: WireV2 }[] = []
+    check: readonly { id: string; w: WireV2 }[] = [],
+    bodiless: readonly string[] = [],
+    evicted: readonly string[] = []
   ): Restored {
-    const evs = items.map(it => ({ e: aclEvOf(it.id, it.w), rec: it.rec }))
+    const evs = items.map(it => ({ e: aclEvOf(it.id, it.w), rec: it.rec, hdr: it.hdr }))
     const out = this.restoreEvs(evs)
     for (const m of contents) this.noteContent(trimContent(m))
+    for (const id of bodiless) this.bodiless.add(id)
+    for (const id of evicted) if (this.bodiless.has(id)) this.evict(id, true)
+    for (const i of this.r.acl.ix.byDev.keys()) this.dirty.add(i)
+    for (const m of contents) this.dirty.add(m.dev)
     for (const c of check) {
       this.contents.delete(c.id)
       const v = this.receiveContent(c.id, c.w, Infinity)
@@ -404,7 +467,7 @@ export class AclRoom {
   }
 
   // The ACL part of a cold start, from events and their stored records.
-  restoreEvs(items: readonly { e: AclEv; rec?: PackedRec }[]): Restored {
+  restoreEvs(items: readonly { e: AclEv; rec?: PackedRec; hdr?: true }[]): Restored {
     let out = this.restoreAcl(items, true)
     if (this.verify(items)) return { ...out, mismatch: false }
     this.reset()
@@ -420,20 +483,40 @@ export class AclRoom {
     this.rejected.clear()
     this.unknownCount = 0
     this.cv = null
+    this.gone.clear()
+    this.bare.clear()
   }
 
-  private restoreAcl(items: readonly { e: AclEv; rec?: PackedRec }[], records: boolean) {
+  private restoreAcl(
+    items: readonly { e: AclEv; rec?: PackedRec; hdr?: true }[],
+    records: boolean
+  ) {
     const fresh: Fresh[] = []
     const refused: string[] = []
+    const lost: string[] = []
     for (const it of items) {
       const e = it.e
+      // A header is restored from its record whatever else is trusted: nothing can decide it again.
+      if (it.hdr) {
+        if (
+          this.r.unknownRules === undefined &&
+          recOk(it.rec) &&
+          refsOk(e.ap, it.rec) &&
+          e.ap.every(p => this.r.admitted(p))
+        ) {
+          this.r.restore(e, this.lazyRec(e, it.rec))
+          this.gone.add(e.id)
+          this.bare.add(e.id)
+        } else lost.push(e.id)
+        continue
+      }
       if (this.r.unknownRules !== undefined || (e.t === 'genesis' && e.c.rules !== RULES_VERSION)) {
         this.r.restoreUnknown(e, this.r.unknownRules ?? (e.c.rules as number))
         this.r.forget(e.id)
         this.unknownCount++
         continue
       }
-      if (records && recOk(it.rec) && e.ap.every(p => this.r.admitted(p))) {
+      if (records && recOk(it.rec) && refsOk(e.ap, it.rec) && e.ap.every(p => this.r.admitted(p))) {
         this.r.restore(e, this.lazyRec(e, it.rec))
         continue
       }
@@ -449,13 +532,13 @@ export class AclRoom {
     }
     // Still pending after every stored event: never admitted here.
     for (const it of items) if (this.r.status.get(it.e.id)?.s === 'P') refused.push(it.e.id)
-    return { fresh, refused }
+    return { fresh, refused, lost }
   }
 
   // The newest restored records and a sample of the others, against one evaluation each.
   private verify(items: readonly { e: AclEv }[]) {
     const ids = items.map(it => it.e.id).filter(id => this.r.recs.has(id))
-    const restored = ids.filter(id => this.restoredIds.has(id))
+    const restored = ids.filter(id => this.restoredIds.has(id) && !this.bare.has(id))
     if (!restored.length) return true
     const pick = new Set(restored.slice(-2))
     const same = (a: Rec, b: Rec) =>
@@ -613,6 +696,14 @@ export class AclRoom {
 
   receiveAcl(id: string, w: WireV2, now: number): Received {
     const e = aclEvOf(id, w)
+    // A dropped event fetched again: admitted as it was; one restored from its header gets its
+    // content back.
+    if (this.gone.has(id) && this.r.admitted(id)) {
+      if (this.bare.delete(id)) this.r.refill(e)
+      this.gone.delete(id)
+      return this.out(e, { s: 'A' })
+    }
+    this.dirty.add(e.dev)
     const unknown = this.r.unknownRules
     if (e.ts > now + HOLD_MS && unknown === undefined && e.t !== 'genesis') {
       const v = this.r.judge(e)
@@ -678,6 +769,7 @@ export class AclRoom {
     if (m.ts > now + HOLD_MS) return { s: 'H' }
     this.noteContent(trimContent(m))
     this.cv?.add(this.contents.get(id)!)
+    this.dirty.add(m.dev)
     return { s: 'C' }
   }
 
@@ -782,7 +874,7 @@ export class AclRoom {
       settings: F.setting ?? null,
       codes,
       upgraded: F.upgraded.length > 0,
-      heads: this.heads(() => true),
+      heads: this.heads(i => !this.gone.has(ix.ids[i])),
       count: ix.n,
     }
   }
@@ -969,5 +1061,273 @@ export class AclRoom {
   outranks(ik: string, other: string) {
     const F = this.r.state().facts
     return gt(rank(F, ik), rank(F, other))
+  }
+
+  // ----- Storage (spec 2.3, 4.2, 4.3) -----
+
+  // What storage drops now, beyond what it dropped before: the orphan rule's ACL events (held
+  // descendants: the ACL events that stay and visible content), and content with its header:
+  // past its device's fork point (but the pair defining it), past a revocation's watermark, or
+  // hidden and citing a dropped event (controller ruling). `mine`: this device, whose own events
+  // stay (it cites them).
+  drops(mine?: string): Drops {
+    const ix = this.r.acl.ix
+    if (ix.genesis < 0 || this.r.unknownRules !== undefined) return { acl: [], content: [] }
+    const fe = this.r.acl.evaluation()
+    const v = this.view()
+    const keep = (i: number) => ix.ev[i].dev === mine
+    const under = underDroppable(fe, keep)
+    const touching = new Set<ContentEv>()
+    const cited = new Uint8Array(ix.n)
+    for (const m of this.contents.values()) {
+      if (!m.ap.some(p => under[ix.at.get(p) ?? -1] === 1)) continue
+      touching.add(m)
+      if (v.visible(m)) for (const p of m.ap) cited[ix.at.get(p)!] = 1
+    }
+    const acl = orphanDrops(fe, i => cited[i] === 1, keep).filter(d => !this.gone.has(d.id))
+    for (const d of acl) this.gone.add(d.id)
+    const content: string[] = []
+    const pairs = new Map<string, Set<string>>()
+    for (const m of this.contents.values()) {
+      if (m.dev === mine) continue
+      const cites = touching.has(m) && m.ap.some(p => this.gone.has(p)) && !v.visible(m)
+      if (!cites && v.dropKind(m) === null) continue
+      let pair = pairs.get(m.dev)
+      if (!pair) pairs.set(m.dev, (pair = v.fcPair(m.dev)))
+      if (!pair.has(m.id)) content.push(m.id)
+    }
+    if (content.length) {
+      for (const id of content) {
+        this.evict(id, false)
+        this.contents.delete(id)
+        this.bodiless.delete(id)
+      }
+      this.cv = null
+    }
+    return { acl, content }
+  }
+
+  // Evidence worth a proof (spec 2.3, 4.1), for the devices with new events since the last call
+  // (or `devs`): the held pair with the lowest fork point against each, when a proof of it that
+  // `q` posts now would be admitted (it lowers F below an ACL event of the device there).
+  proofs(q: { a: string; dev: string }, devs?: readonly string[]): ProofCand[] {
+    const ix = this.r.acl.ix
+    if (ix.genesis < 0 || this.r.unknownRules !== undefined) return []
+    const list = devs ?? [...this.dirty]
+    const v = this.view()
+    const out: ProofCand[] = []
+    let plan: Plan | null = null
+    for (const d of list) {
+      const ev = d === q.dev ? null : v.evidence(d)
+      if (ev) plan ??= this.plan({ t: 'proof', L: 'a', a: q.a, dev: q.dev })
+      // Without a position to post from, the rest waits for the next call.
+      if (plan && !plan.ap.length) return out
+      if (!devs) this.dirty.delete(d)
+      if (!ev || !plan) continue
+      const e: AclEv = {
+        id: '',
+        t: 'proof',
+        a: q.a,
+        dev: q.dev,
+        seq: plan.seq + 1,
+        ap: plan.ap,
+        ts: plan.ts,
+        c: { x: ev.x, y: ev.y } as unknown as AclContent,
+      }
+      if (plan.aprev !== undefined) e.aprev = plan.aprev
+      const r = decide(e, pastOf(ix, plan.ap), this.r.acl.stateOf(plan.ap), this.r.opts)
+      if (r.ok) out.push({ dev: d, f: ev.f, x: ev.x.id, y: ev.y.id })
+    }
+    return out
+  }
+
+  // Spec 4.3: the causes hiding held content that still has its body (of `only`, when given),
+  // with S2 and S3 worked out once per state.
+  purgeable(only?: readonly string[]): Purgeable {
+    const ix = this.r.acl.ix
+    const out: Purgeable = { live: [], causes: [], other: [] }
+    if (ix.genesis < 0 || this.r.unknownRules !== undefined) return out
+    const fe = this.r.acl.evaluation()
+    const v = this.view()
+    if (this.stabAt !== this.evals) {
+      this.stab.clear()
+      this.stabAt = this.evals
+    }
+    const live = new Set<string>()
+    for (const P of new Set([...ix.remEv.keys(), ...ix.revokeEv.keys(), ...ix.byAuthor.keys()])) {
+      for (const d of fe.againstMember(P)) live.add(ix.ids[d])
+      const w = v.wipedBy(P)
+      if (w !== null) live.add(ix.ids[w])
+    }
+    out.live = [...live]
+    const pool = only
+      ? only.flatMap(id => {
+          const m = v.byIdOf(id)
+          return m ? [m] : []
+        })
+      : v.hideable()
+    const by = new Map<string, Cause>()
+    const stable = (key: string, f: () => boolean) => {
+      let x = this.stab.get(key)
+      if (x === undefined) this.stab.set(key, (x = f()))
+      return x
+    }
+    for (const m of pool) {
+      if (this.bodiless.has(m.id)) continue
+      if (v.selfRedacted(m)) {
+        const c = by.get('') ?? { id: '', kind: 'self' as const, stable: true, ids: [] }
+        c.ids.push(m.id)
+        by.set('', c)
+        continue
+      }
+      const h = v.hidden(m)
+      if (!h) continue
+      let c: Cause | undefined
+      if (h.why === 'removed' || h.why === 'wipe') {
+        const i = ix.at.get(h.by)!
+        c = by.get(h.by) ?? {
+          id: h.by,
+          kind: h.why === 'wipe' ? 'wipe' : 'deny',
+          stable: stable(h.by, () => stableDeny(fe, i)),
+          ids: [],
+        }
+      } else if (h.why === 'redacted') {
+        const r = v.byIdOf(h.by)!
+        c = by.get(h.by) ?? {
+          id: h.by,
+          kind: 'redact',
+          stable: stable(`${h.by}|${m.a}`, () => v.stableRedaction(r, m)),
+          ids: [],
+        }
+      }
+      if (!c) {
+        out.other.push(m.id)
+        continue
+      }
+      c.ids.push(m.id)
+      by.set(c.id, c)
+    }
+    out.causes = [...by.values()]
+    return out
+  }
+
+  // Content held without its body (purged, or evicted for space) that shows now: its body is
+  // wanted from peers (spec 4.3 restore).
+  // An edit is wanted only while its target shows; a body evicted for space only when viewed (the
+  // page asks for those itself).
+  wanted(): string[] {
+    if (!this.bodiless.size) return []
+    return [...this.bodiless].filter(id => !this.evicted.has(id) && this.shows(id))
+  }
+
+  // Whether these bodies may be taken back now (`viewed`: also evicted ones): each shows, and an
+  // edit only with its target.
+  restorable(ids: readonly string[], viewed: boolean): boolean[] {
+    return ids.map(
+      id => this.bodiless.has(id) && (viewed || !this.evicted.has(id)) && this.shows(id)
+    )
+  }
+
+  private shows(id: string) {
+    const v = this.view()
+    const m = v.byIdOf(id)
+    if (!m || !v.visible(m)) return false
+    const t = m.t === 'edit' && typeof m.c?.target === 'string' ? v.byIdOf(m.c.target) : null
+    return m.t !== 'edit' || (!!t && v.visible(t))
+  }
+
+  // Content storage didn't keep after all (refused after it was decided): it goes, and its
+  // device's highest held seq is what is held again (a removal's watermark covers no more).
+  unhold(ids: readonly string[]) {
+    const devs = new Set<string>()
+    for (const id of ids) {
+      const m = this.contents.get(id)
+      if (m) devs.add(m.dev)
+      this.evict(id, false)
+      this.contents.delete(id)
+      this.bodiless.delete(id)
+    }
+    if (!devs.size) return
+    this.cv = null
+    for (const d of devs) this.maxContent.delete(d)
+    for (const m of this.contents.values())
+      if (devs.has(m.dev))
+        this.maxContent.set(m.dev, Math.max(this.maxContent.get(m.dev) ?? -1, m.seq))
+  }
+
+  // Storage purged bodies (`have` false; `evicted`: for space) or got them back.
+  bodies(ids: readonly string[], have: boolean, evicted = false) {
+    for (const id of ids) {
+      if (have) {
+        this.bodiless.delete(id)
+        this.evict(id, false)
+        // Its author's edits that waited with it (evicted too) are wanted with it now.
+        for (const x of [...(this.evictedEdits.get(id) ?? [])]) this.evict(x, false)
+      } else if (this.contents.has(id)) {
+        this.bodiless.add(id)
+        if (evicted) this.evict(id, true)
+      }
+    }
+  }
+
+  private evict(id: string, on: boolean) {
+    const m = this.contents.get(id)
+    const t = m?.t === 'edit' && typeof m.c?.target === 'string' ? m.c.target : null
+    if (on) {
+      this.evicted.add(id)
+      if (t !== null) {
+        let s = this.evictedEdits.get(t)
+        if (!s) this.evictedEdits.set(t, (s = new Set()))
+        s.add(id)
+      }
+    } else if (this.evicted.delete(id) && t !== null) {
+      const s = this.evictedEdits.get(t)
+      s?.delete(id)
+      if (s && !s.size) this.evictedEdits.delete(t)
+    }
+  }
+
+  // Moderators' redactions `me` may acknowledge with a mark (spec 4.3 S2; controller ruling): each
+  // hides its target here, isn't acknowledged yet, isn't by `me` or of `me`'s message, `me` hasn't
+  // named it in a mark, and at least 2 members other than its two authors could acknowledge it.
+  acks(me: string): string[] {
+    const ix = this.r.acl.ix
+    if (ix.genesis < 0 || this.r.unknownRules !== undefined) return []
+    const v = this.view()
+    const F = this.r.state().facts
+    const named = new Set<string>()
+    for (const i of ix.byAuthor.get(me) ?? []) {
+      const ack = ix.ev[i].c.ack
+      if (Array.isArray(ack)) for (const x of ack) if (typeof x === 'string') named.add(x)
+    }
+    const out: string[] = []
+    for (const r of this.contents.values()) {
+      if (r.t !== 'redact' || r.a === me || named.has(r.id) || typeof r.c?.target !== 'string')
+        continue
+      const t = v.byIdOf(r.c.target)
+      if (!t || t.a === me || t.a === r.a) continue
+      const h = v.hidden(t)
+      if (h?.why !== 'redacted' || h.by !== r.id) continue
+      // S2 needs 3 acknowledging events of 2 identities, and each names it once: 3 members besides
+      // its two authors.
+      let others = 0
+      for (const P of F.mem) if (P !== r.a && P !== t.a) others += 1
+      if (others < 3 || v.redactionWitnessed(r, t)) continue
+      out.push(r.id)
+      if (out.length >= 10) break
+    }
+    return out
+  }
+
+  // Whether `ik` may be sent content of these channels (spec 3.7, Discord order: owners and
+  // Manage channels see every channel); '': content of no channel; null: a copy without its body,
+  // whose channel can't be read, goes only to those who can view every channel.
+  viewable(ik: string, chs: readonly (string | null)[]): boolean[] {
+    const ix = this.r.acl.ix
+    if (ix.genesis < 0 || this.r.unknownRules !== undefined) return chs.map(() => false)
+    const F = this.r.state().facts
+    let every: boolean | undefined
+    const all = () => [...F.channels].every(([id, c]) => c.gone === true || canView(F, ik, id))
+    return chs.map(ch => (ch === null ? (every ??= all()) : ch === '' || canView(F, ik, ch)))
   }
 }
