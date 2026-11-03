@@ -545,8 +545,7 @@ export const memberMenu = (v: ServerView, m: MemberView): ContextMenuItem[] => {
       label: 'Contact details',
       action: () => p2p.openDialog({ kind: 'contact', ik: m.ik }),
     })
-  const owner = v.owner === me
-  if (owner && m.ik !== me && m.m === 'join') {
+  if (can(v, P.Kick) && m.below && m.ik !== me && m.m === 'join') {
     items.push({
       label: s.streamer ? 'Kick Member' : `Kick ${mask(m.name)}`,
       danger: true,
@@ -559,7 +558,7 @@ export const memberMenu = (v: ServerView, m: MemberView): ContextMenuItem[] => {
         }),
     })
   }
-  if (owner && m.ik !== me && m.m !== 'ban')
+  if (can(v, P.Ban) && m.below && m.ik !== me && m.m !== 'ban')
     items.push({
       label: s.streamer ? 'Ban Member' : `Ban ${mask(m.name)}`,
       danger: true,
@@ -789,12 +788,24 @@ export function P2pChannelPane({
     )
 
   if (!chat || !channel) {
-    const waiting = v.me === null || v.joining
+    const waiting = !v.readOnly && (v.me === null || v.joining)
     return (
       <main data-p2p-channel-pane className="flex min-w-0 flex-1 flex-col bg-surface">
         {header}
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-on-surface-variant">
-          {waiting ? (
+          {v.readOnly ? (
+            <>
+              <span data-p2p-readonly className="text-sm">
+                {v.readOnly}
+              </span>
+              <button
+                onClick={() => confirmForget(v)}
+                className="text-sm font-medium text-primary hover:underline"
+              >
+                Remove from this device
+              </button>
+            </>
+          ) : waiting ? (
             <>
               <span data-p2p-joining className="text-lg font-medium text-on-surface">
                 Joining <Masked text={v.name} />…
@@ -811,8 +822,9 @@ export function P2pChannelPane({
     )
   }
 
-  const out =
-    v.me === 'ban'
+  const out = v.readOnly
+    ? v.readOnly
+    : v.me === 'ban'
       ? 'You are banned from this server.'
       : v.me === 'leave'
         ? 'You are no longer a member of this server.'

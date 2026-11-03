@@ -1,6 +1,11 @@
 import { Hub, makeNode, ManualClock, prng, waitFor } from './p2p_net'
+import { CHANNEL_CONTENT } from '../p2p/acl/admit'
+import { chainKey, type DevChain } from '../p2p/dag'
 import { Dms } from '../p2p/dm'
+import { buildEvent2, type ChainFields, type Wire } from '../p2p/event'
+import { keyId } from '../p2p/keys'
 import { Servers } from '../p2p/server'
+import type { AclHost } from '../p2p/resolve_host'
 import type { P2pNode } from '../p2p/node'
 import type { P2pStore } from '../p2p/db'
 
@@ -117,3 +122,50 @@ export const joinWithCode = async (
 }
 
 export { Hub, ManualClock, waitFor }
+
+// The evaluator's plan for an event of `m` (parents, chain fields, watermark).
+export const planOf = (m: Member, room: string, t: string, L: 'a' | 'c' = 'a', to?: string) =>
+  (m.servers as unknown as { host: AclHost }).host.plan(room, {
+    t,
+    L,
+    a: m.node.ik,
+    dev: keyId(m.node.author()!.dk.pk),
+    to,
+  })
+
+// An event `m` signs as an honest client would, with `over` replacing chain fields (a backdated
+// position, a reused seq), not yet received anywhere.
+export const signed = async (
+  m: Member,
+  room: string,
+  t: string,
+  content: Record<string, unknown>,
+  over: Partial<ChainFields> & { ts?: number } = {}
+) => {
+  const L = CHANNEL_CONTENT.includes(t) ? 'c' : 'a'
+  const plan = await planOf(m, room, t, L)
+  const fields: ChainFields = { seq: plan.seq + 1, ap: plan.ap }
+  const chain =
+    (await m.store.meta<DevChain>(chainKey(room, keyId(m.node.author()!.dk.pk)))) ?? null
+  if (L === 'c' && chain?.cprev) fields.cprev = chain.cprev
+  if (L === 'a' && plan.aprev) fields.aprev = plan.aprev
+  if (L === 'a' && plan.iprev) fields.iprev = plan.iprev
+  const { ts, ...rest } = over
+  const out = buildEvent2(
+    m.node.author()!,
+    room,
+    t,
+    L,
+    content,
+    { ...fields, ...rest },
+    ts ?? plan.ts + 1
+  )
+  return { id: out.id, wire: out.wire as unknown as Wire }
+}
+
+// Delivers an event to `m` as sync would: the wire checks, then admission and storage.
+export const deliver = async (m: Member, room: string, wire: Wire, now: number) => {
+  const v = await m.servers.check(room, wire)
+  if (!v.ok) return v.later ? 'later' : 'malformed'
+  return (await m.servers.insert(room, v.id, v.wire, now)).status
+}

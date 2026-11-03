@@ -1,84 +1,153 @@
-import { Resolver, type Resolved } from './resolve'
-import type { Membership, StateEvent } from './state'
+import {
+  AclRoom,
+  type AclItem,
+  type Restored,
+  type Plan,
+  type PlanReq,
+  type Received,
+  type Shown,
+  type SumDelta,
+} from './acl_room'
+import type { ContentEv } from './acl/visibility'
+import type { WireV2 } from './event'
 
-// Where state resolution runs. In the browser a Web Worker keeps a resolver per room (with its
-// incremental caches), so a replay of a large room never blocks the page; elsewhere (tests, or a
-// browser without workers) it runs in this thread. The page keeps the state events it sent, and
-// results come back as ids.
+// Where the ACL evaluator of P2P servers runs. In the browser a Web Worker keeps an AclRoom per
+// room (its index, evaluation and merge caches), so an evaluation never blocks the page; elsewhere
+// (tests, or a browser without workers) it runs in this thread. Replies that can change the
+// current state carry what changed since the last reply for that room (acl_room.ts SumDelta).
 
-export interface ResolveHost {
-  // Replaces what is known of a room with these events.
-  load(room: string, events: StateEvent[]): Promise<Resolved>
-  add(room: string, events: StateEvent[]): Promise<Resolved>
+export interface AclHost {
+  // Replaces what is known of a room with its stored events; the delta is the whole state, `fresh`
+  // the events admitted again (stored without a record this build reads), `refused` stored events
+  // that aren't admitted (an import). `check`: imported content to decide.
+  load(
+    room: string,
+    acl: AclItem[],
+    contents: ContentEv[],
+    check?: { id: string; w: WireV2 }[]
+  ): Promise<Loaded>
+  acl(room: string, id: string, w: WireV2, now: number): Promise<Decided>
+  content(room: string, id: string, w: WireV2, now: number): Promise<Received>
+  plan(room: string, q: PlanReq): Promise<Plan>
+  display(room: string, ids: string[]): Promise<(Shown | null)[]>
+  history(room: string, ik: string, ids: string[]): Promise<boolean[]>
+  diff(room: string, from: string[], have: string[], limit: number): Promise<string[]>
   drop(room: string): void
 }
 
-export interface Packed {
-  state: [string, string][]
-  heads: string[]
-  rejected: string[]
-  lost: string[]
-  transitions: [string, Membership | null][]
-  joins: [string, string][]
-  count: number
-  gaps: number
-  flagged: [string, number][]
-  power: [string, string][]
+export interface Decided {
+  out: Received
+  delta: SumDelta | null
 }
 
-export const pack = (r: Resolved): Packed => ({
-  state: [...r.state].map(([k, e]) => [k, e.id]),
-  heads: r.heads,
-  rejected: [...r.rejected],
-  lost: [...r.lost],
-  transitions: [...r.transitions],
-  joins: [...r.joins],
-  count: r.count,
-  gaps: r.gaps,
-  flagged: [...r.flagged],
-  power: [...r.power],
-})
-
-export const unpack = (p: Packed, byId: (id: string) => StateEvent | undefined): Resolved => {
-  const state = new Map<string, StateEvent>()
-  for (const [k, id] of p.state) {
-    const e = byId(id)
-    if (e) state.set(k, e)
-  }
-  return {
-    state,
-    heads: p.heads,
-    rejected: new Set(p.rejected),
-    lost: new Set(p.lost),
-    transitions: new Map(p.transitions),
-    joins: new Map(p.joins),
-    count: p.count,
-    gaps: p.gaps,
-    flagged: new Map(p.flagged),
-    power: new Map(p.power),
-  }
+export interface Loaded extends Restored {
+  delta: SumDelta | null
 }
 
-export class LocalHost implements ResolveHost {
-  private rooms = new Map<string, Resolver>()
-
-  async load(room: string, events: StateEvent[]) {
-    const r = new Resolver()
-    r.add(events)
-    this.rooms.set(room, r)
-    return r.resolved()
-  }
-
-  async add(room: string, events: StateEvent[]) {
-    let r = this.rooms.get(room)
-    if (!r) {
-      r = new Resolver()
-      this.rooms.set(room, r)
+export type HostRequest =
+  | {
+      id: number
+      op: 'load'
+      room: string
+      acl: AclItem[]
+      contents: ContentEv[]
+      check?: { id: string; w: WireV2 }[]
     }
-    r.add(events)
-    return r.resolved()
-  }
+  | { id: number; op: 'acl' | 'content'; room: string; ev: string; w: WireV2; now: number }
+  | { id: number; op: 'plan'; room: string; q: PlanReq }
+  | { id: number; op: 'display'; room: string; ids: string[] }
+  | { id: number; op: 'history'; room: string; ik: string; ids: string[] }
+  | { id: number; op: 'diff'; room: string; from: string[]; have: string[]; limit: number }
+  | { id: number; op: 'drop'; room: string }
 
+export type HostReply = { id: number; ok: unknown } | { id: number; err: string }
+
+const roomOf = (rooms: Map<string, AclRoom>, room: string) => {
+  let r = rooms.get(room)
+  if (!r) {
+    r = new AclRoom(room)
+    rooms.set(room, r)
+  }
+  return r
+}
+
+// One request against the rooms a host keeps.
+export const runRequest = (rooms: Map<string, AclRoom>, m: HostRequest): unknown => {
+  switch (m.op) {
+    case 'load': {
+      const r = new AclRoom(m.room)
+      rooms.set(m.room, r)
+      const out = r.restore(m.acl, m.contents, m.check)
+      return { ...out, delta: r.delta() } satisfies Loaded
+    }
+    case 'acl': {
+      const r = roomOf(rooms, m.room)
+      const out = r.receiveAcl(m.ev, m.w, m.now)
+      return { out, delta: out.s === 'A' || out.s === 'U' ? r.delta() : null } satisfies Decided
+    }
+    case 'content':
+      return roomOf(rooms, m.room).receiveContent(m.ev, m.w, m.now)
+    case 'plan':
+      return roomOf(rooms, m.room).plan(m.q)
+    case 'display':
+      return roomOf(rooms, m.room).display(m.ids)
+    case 'history':
+      return roomOf(rooms, m.room).history(m.ik, m.ids)
+    case 'diff':
+      return roomOf(rooms, m.room).aclDiff(m.from, m.have, m.limit)
+    case 'drop':
+      rooms.delete(m.room)
+      return null
+  }
+}
+
+// A request in the worker (p2p.worker.ts): an AclRoom per room, kept between requests.
+export const serveAcl = (
+  rooms: Map<string, AclRoom>,
+  m: HostRequest,
+  post: (r: HostReply) => void
+) => {
+  try {
+    const ok = runRequest(rooms, m)
+    if (m.op !== 'drop') post({ id: m.id, ok })
+  } catch (err) {
+    post({ id: m.id, err: err instanceof Error ? err.message : String(err) })
+  }
+}
+
+type Body<T> = T extends unknown ? Omit<T, 'id'> : never
+
+abstract class Base implements AclHost {
+  protected abstract call<T>(m: Body<HostRequest>): Promise<T>
+  load(room: string, acl: AclItem[], contents: ContentEv[], check?: { id: string; w: WireV2 }[]) {
+    return this.call<Loaded>({ op: 'load', room, acl, contents, ...(check ? { check } : {}) })
+  }
+  acl(room: string, ev: string, w: WireV2, now: number) {
+    return this.call<Decided>({ op: 'acl', room, ev, w, now })
+  }
+  content(room: string, ev: string, w: WireV2, now: number) {
+    return this.call<Received>({ op: 'content', room, ev, w, now })
+  }
+  plan(room: string, q: PlanReq) {
+    return this.call<Plan>({ op: 'plan', room, q })
+  }
+  display(room: string, ids: string[]) {
+    return this.call<(Shown | null)[]>({ op: 'display', room, ids })
+  }
+  history(room: string, ik: string, ids: string[]) {
+    return this.call<boolean[]>({ op: 'history', room, ik, ids })
+  }
+  diff(room: string, from: string[], have: string[], limit: number) {
+    return this.call<string[]>({ op: 'diff', room, from, have, limit })
+  }
+  abstract drop(room: string): void
+}
+
+export class LocalHost extends Base {
+  rooms = new Map<string, AclRoom>()
+  protected async call<T>(m: Body<HostRequest>) {
+    return runRequest(this.rooms, { ...m, id: 0 } as HostRequest) as T
+  }
   drop(room: string) {
     this.rooms.delete(room)
   }
@@ -91,69 +160,28 @@ export interface WorkerLike {
   terminate(): void
 }
 
-export type HostRequest =
-  | { id: number; op: 'load' | 'add'; room: string; events: StateEvent[] }
-  | { id: number; op: 'drop'; room: string }
-
-export type HostReply = { id: number; ok: Packed } | { id: number; err: string }
-
-// A resolution request, in the worker (p2p.worker.ts): a resolver per room, kept between requests.
-export const serveResolve = (
-  rooms: Map<string, Resolver>,
-  m: HostRequest,
-  post: (r: HostReply) => void
-) => {
-  if (m.op === 'drop') {
-    rooms.delete(m.room)
-    return
-  }
-  try {
-    let r = m.op === 'load' ? undefined : rooms.get(m.room)
-    if (!r) {
-      r = new Resolver()
-      rooms.set(m.room, r)
-    }
-    r.add(m.events)
-    post({ id: m.id, ok: pack(r.resolved()) })
-  } catch (err) {
-    post({ id: m.id, err: err instanceof Error ? err.message : String(err) })
-  }
-}
-
-// Resolution in a worker. Requests run in order; if the worker fails, the rooms it held are
-// resolved here instead from then on.
-export class WorkerHost implements ResolveHost {
+// The evaluator in a worker. Requests run in order; if the worker fails, its rooms are lost: the
+// owner reloads them (`onLost`) into this thread, which serves every request from then on.
+export class WorkerHost extends Base {
   private worker: WorkerLike | null
   private seq = 0
-  private jobs = new Map<
-    number,
-    { room: string; done: (r: Resolved) => void; fail: (e: Error) => void }
-  >()
-  private events = new Map<string, Map<string, StateEvent>>()
+  private jobs = new Map<number, { done: (r: unknown) => void; fail: (e: Error) => void }>()
   private local: LocalHost | null = null
+  onLost: (() => void) | null = null
 
   constructor(make: () => WorkerLike) {
+    super()
     this.worker = make()
     this.worker.onmessage = e => this.reply(e.data as HostReply)
     this.worker.onerror = () => this.fallBack()
-  }
-
-  private known(room: string) {
-    let m = this.events.get(room)
-    if (!m) {
-      m = new Map()
-      this.events.set(room, m)
-    }
-    return m
   }
 
   private reply(m: HostReply) {
     const job = this.jobs.get(m.id)
     if (!job) return
     this.jobs.delete(m.id)
-    if ('err' in m) return job.fail(new Error(m.err))
-    const known = this.events.get(job.room) ?? new Map<string, StateEvent>()
-    job.done(unpack(m.ok, id => known.get(id)))
+    if ('err' in m) job.fail(new Error(m.err))
+    else job.done(m.ok)
   }
 
   private fallBack() {
@@ -162,36 +190,20 @@ export class WorkerHost implements ResolveHost {
     this.local = new LocalHost()
     const jobs = [...this.jobs.values()]
     this.jobs.clear()
-    // Everything the worker held is resolved here again.
-    void (async () => {
-      for (const [room, m] of this.events)
-        await (this.local as LocalHost).load(room, [...m.values()])
-      for (const j of jobs) j.done(await (this.local as LocalHost).add(j.room, []))
-    })().catch(e => jobs.forEach(j => j.fail(e as Error)))
+    for (const j of jobs) j.fail(new Error('acl host lost'))
+    this.onLost?.()
   }
 
-  private send(room: string, op: 'load' | 'add', events: StateEvent[]): Promise<Resolved> {
-    const known = op === 'load' ? new Map<string, StateEvent>() : this.known(room)
-    for (const e of events) known.set(e.id, e)
-    this.events.set(room, known)
-    if (!this.worker) return (this.local as LocalHost)[op](room, events)
+  protected call<T>(m: Body<HostRequest>): Promise<T> {
+    if (!this.worker) return (this.local as LocalHost)['call']<T>(m)
     const id = ++this.seq
-    return new Promise((done, fail) => {
-      this.jobs.set(id, { room, done, fail })
-      ;(this.worker as WorkerLike).postMessage({ id, op, room, events } satisfies HostRequest)
+    return new Promise<T>((done, fail) => {
+      this.jobs.set(id, { done: done as (r: unknown) => void, fail })
+      ;(this.worker as WorkerLike).postMessage({ ...m, id } as HostRequest)
     })
   }
 
-  load(room: string, events: StateEvent[]) {
-    return this.send(room, 'load', events)
-  }
-
-  add(room: string, events: StateEvent[]) {
-    return this.send(room, 'add', events)
-  }
-
   drop(room: string) {
-    this.events.delete(room)
     if (this.worker)
       this.worker.postMessage({ id: ++this.seq, op: 'drop', room } satisfies HostRequest)
     else this.local?.drop(room)

@@ -49,7 +49,7 @@ export const readPings = async (s: P2pStore) => {
 const shownMessage = async (s: P2pStore, p: PingRec) => {
   const id = p.kind === 'reaction' ? p.target : p.id
   const rec = id ? await s.event(id) : undefined
-  if (!rec || rec.room !== p.room || rec.type !== 'msg' || rec.redacted || rec.soft) return null
+  if (!rec || rec.room !== p.room || rec.type !== 'msg' || rec.redacted) return null
   const c = rec.wire.c as MsgContent | null
   return c && !rec.purged ? { rec, c } : null
 }

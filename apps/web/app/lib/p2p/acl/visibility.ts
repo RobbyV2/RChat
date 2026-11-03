@@ -71,23 +71,61 @@ export class ContentView {
     this.S = acl.state()
     this.fe = acl.evaluation()
     this.ix = acl.ix
-    for (const m of contents) {
-      this.byId.set(m.id, m)
-      const l = this.byDev.get(m.dev)
-      if (l) l.push(m)
-      else this.byDev.set(m.dev, [m])
-      const t = target(m)
-      if (t !== null) {
-        const a = this.aimed.get(t)
-        if (a) a.push(m)
-        else this.aimed.set(t, [m])
-      }
+    for (const m of contents) this.index(m)
+    this.indexMarks()
+  }
+
+  private index(m: ContentEv) {
+    this.byId.set(m.id, m)
+    const l = this.byDev.get(m.dev)
+    if (l) l.push(m)
+    else this.byDev.set(m.dev, [m])
+    const t = target(m)
+    if (t !== null) {
+      const a = this.aimed.get(t)
+      if (a) a.push(m)
+      else this.aimed.set(t, [m])
     }
+  }
+
+  private indexMarks() {
+    this.marks.clear()
     for (const { r, dev, seen } of this.fe.marks) {
       const l = this.marks.get(dev)
       if (l) l.push({ r, seen })
       else this.marks.set(dev, [{ r, seen }])
     }
+  }
+
+  // The ACL state changed: what follows from it is worked out again; the content stays indexed.
+  rebase() {
+    this.S = this.acl.state()
+    this.fe = this.acl.evaluation()
+    this.memo.clear()
+    this.fcMemo.clear()
+    this.anchors.clear()
+    this.indexMarks()
+  }
+
+  // A content event held from now on. What its arrival can change is forgotten: the fork point of
+  // its device (and so its device's events), and its target's visibility up the target chain.
+  add(m: ContentEv) {
+    if (this.byId.has(m.id)) return
+    const before = this.fcMemo.get(m.dev)
+    this.index(m)
+    this.fcMemo.delete(m.dev)
+    const up = (id: string | null) => {
+      const seen = new Set<string>()
+      while (id !== null && !seen.has(id)) {
+        seen.add(id)
+        this.memo.delete(id)
+        const x = this.byId.get(id)
+        id = x ? target(x) : null
+      }
+    }
+    if (before !== undefined && this.forkPoint(m.dev) !== before)
+      for (const y of this.byDev.get(m.dev) ?? []) up(y.id)
+    up(target(m))
   }
 
   // C(ap) as a bitset over the index, and one past its highest index.
@@ -114,7 +152,7 @@ export class ContentView {
     })
   }
   stateOf(m: ContentEv): EvalResult {
-    return this.acl.stateOf(m.ap)
+    return this.acl.contentStateOf(m.ap)
   }
   // The authority anchor of a content event: its position C(m.ap), its admission state St(m), and
   // its authority: that of a mark (Mem and Dev), or with `typed` what a redaction or a pin of

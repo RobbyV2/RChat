@@ -441,8 +441,8 @@ export interface ContentHead {
 // Content admission (§2.2, §3.5): the same decide with B = C(m.ap) (content never introduces a
 // device, so its binding is Dev in St(m)): the device's chain (seq past
 // its last ACL event in B, at most W4 events past it), the causal ts bound, and the content
-// authority in St(m): Mem, Dev, the server not upgraded, and for the known kinds a channel `ch`
-// that exists and lets it send.
+// authority in St(m): Mem, Dev, the server not upgraded, and for the known kinds with content a
+// channel `ch` that exists and lets it send.
 export function decideContent(
   m: ContentHead,
   B: Past,
@@ -459,6 +459,12 @@ export function decideContent(
   for (const p of m.ap) if (m.ts < ix.ev[ix.at.get(p)!].ts) return { ok: false, why: 'ts' }
   if (F.upgraded.length) return { ok: false, why: 'auth' }
   if (!F.mem.has(m.a) || !(F.devs.get(m.a)?.has(m.dev) ?? false)) return { ok: false, why: 'auth' }
+  // A content event held without its content (redacted where it came from) shows nothing and its
+  // channel can't be read: its author must be able to send in some live channel.
+  if (CHANNEL_CONTENT.includes(m.t) && m.c === null) {
+    for (const [id, c] of F.channels) if (c.gone !== true && canSend(F, m.a, id)) return ok(m, F)
+    return { ok: false, why: 'send' }
+  }
   if (CHANNEL_CONTENT.includes(m.t)) {
     const ch = m.c?.ch
     if (typeof ch !== 'string') return { ok: false, why: 'channel' }
@@ -466,8 +472,10 @@ export function decideContent(
     if (!c || c.gone === true) return { ok: false, why: 'channel' }
     if (!canSend(F, m.a, ch)) return { ok: false, why: 'send' }
   }
-  return { ok: true, k: rank(F, m.a) }
+  return ok(m, F)
 }
+
+const ok = (m: ContentHead, F: EvalResult['facts']) => ({ ok: true as const, k: rank(F, m.a) })
 
 // The known content kinds, all posted in a channel (§1.4); other kinds are opaque.
 export const CHANNEL_CONTENT: readonly string[] = [
@@ -536,6 +544,51 @@ export class AclReplica implements Ctx {
     const v = this.try1(e)
     if (v.s !== 'P') this.settle(e.id)
     return v
+  }
+
+  // The verdict e would get now, without admitting it (an event to hold, §2.1): its parents are
+  // admitted; a rejection is recorded, since it never changes.
+  judge(e: AclEv): Verdict {
+    const known = this.status.get(e.id)
+    if (known && known.s !== 'P') return known
+    if (this.unknownRules !== undefined) return { s: 'U', rules: this.unknownRules }
+    if (!aclContentOk(e.t, e.c)) return { s: 'M', why: 'content' }
+    if (e.t === 'genesis' || !e.ap.length) return this.receive(e)
+    for (const p of e.ap) {
+      const st = this.status.get(p)
+      if (st?.s === 'R') return this.set(e.id, { s: 'R', why: 'parent' })
+      if (st?.s !== 'A') return { s: 'P', missing: e.ap.filter(x => !this.admitted(x)) }
+    }
+    const d = decide(e, pastOf(this.acl.ix, e.ap), this.acl.stateOf(e.ap), this.opts)
+    return d.ok ? { s: 'A' } : this.set(e.id, { s: 'R', why: d.why })
+  }
+
+  // An event admitted before, with its admission record (a cold start from storage).
+  restore(e: AclEv, rec: Rec) {
+    if (this.status.has(e.id)) return
+    this.evs.set(e.id, e)
+    this.recs.set(e.id, rec)
+    this.admit(e)
+  }
+
+  // Forgets an event that is not admitted (a rejection, kept as its verdict unless `all`; a pending
+  // event the caller holds).
+  forget(id: string, keepVerdict = false) {
+    if (this.status.get(id)?.s === 'A') return
+    this.evs.delete(id)
+    if (!keepVerdict) this.status.delete(id)
+    for (const [p, l] of this.waiting) {
+      const k = l.filter(w => w.id !== id)
+      if (k.length) this.waiting.set(p, k)
+      else this.waiting.delete(p)
+    }
+  }
+
+  // A stored event of a server whose rules version this client doesn't know.
+  restoreUnknown(e: AclEv, rules: number) {
+    this.unknownRules ??= rules
+    this.evs.set(e.id, e)
+    this.set(e.id, { s: 'U', rules: this.unknownRules })
   }
 
   private settle(id: string) {

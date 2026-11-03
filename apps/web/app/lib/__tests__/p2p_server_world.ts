@@ -1,197 +1,186 @@
-import { sha256 } from '@noble/hashes/sha2.js'
-import { authRefs } from '../p2p/auth'
-import { b64u, canonical, utf8 } from '../p2p/canonical'
-import { keyId, newKeyPair, signCert } from '../p2p/keys'
-import { EMPTY_RESOLVED, parentsOf, Resolver, type Resolved } from '../p2p/resolve'
-import {
-  EVERYONE,
-  EVERYONE_PERMS,
-  isPowerChain,
-  type StateEvent,
-  type StateMap,
-} from '../p2p/state'
+import { genesisBundle, signDeviceCert2 } from '../p2p/acl/binding'
+import { CHANNEL_CONTENT } from '../p2p/acl/admit'
+import { RULES_VERSION } from '../p2p/acl/rules'
+import type { ContentEv } from '../p2p/acl/visibility'
+import { AclRoom, type AclItem, type Plan, type Received } from '../p2p/acl_room'
+import { b64u, randomBytes } from '../p2p/canonical'
+import { buildEvent2, contentEvOf, validate2, type ChainFields, type WireV2 } from '../p2p/event'
+import { keyId, newKeyPair, type KeyPair } from '../p2p/keys'
+import { EVERYONE_BITS } from '../p2p/server'
 
-// What a member builds on: a state, its heads, and each member's latest power event there.
-export interface View {
-  state: StateMap
-  heads: string[]
-  power: (ik: string) => string | undefined
-}
-
-export const viewOf = (r: Resolved): View => ({
-  state: r.state,
-  heads: r.heads,
-  power: ik => r.power.get(ik),
-})
-
-// Pure state-resolution worlds for the server rules tests: events aren't signed (the rules
-// never look at signatures); everything else, chains included, is what members build.
-
-export const ik = () => keyId(newKeyPair().pk)
+// Server worlds for the rules tests: real signed v2 events (spec 1.2) received by the evaluator
+// the host serves (acl_room.ts), built as honest clients build them (its plan) unless a test
+// overrides the chain fields (a stale position, a reused seq, a future date).
 
 export const T0 = 1_700_000_000_000
+export const MIN = 60_000
 
-let tick = 0
-
-export interface Chain {
-  dseq: number
-  sprev?: string
+export interface Who {
+  name: string
+  ik: KeyPair
+  dk: KeyPair
+  a: string
+  dev: string
 }
 
-export const mk = (
-  sender: string,
-  type: string,
-  skey: string,
-  content: Record<string, unknown>,
-  pstate: string[],
-  auth: string[],
-  chain: Chain & { pprev?: string },
-  depth = 1,
-  ts?: number
-): StateEvent => {
-  tick += 1
-  const body = {
-    sender,
-    type,
-    skey,
-    content,
-    pstate,
-    auth,
-    tick,
-    chain,
-    ...(ts === undefined ? {} : { ts }),
-  }
-  const e: StateEvent = {
-    id: b64u(sha256(utf8(canonical(body)))),
-    type,
-    skey,
-    sender,
-    ts: ts ?? T0 + tick,
-    depth,
-    content,
-    pstate,
-    auth,
-    dseq: chain.dseq,
-  }
-  if (chain.sprev !== undefined) e.sprev = chain.sprev
-  if (chain.pprev !== undefined) e.pprev = chain.pprev
-  return e
+// Chain fields to use instead of the plan's, a date, and the member a watermark covers (when the
+// content is made from the plan).
+export type Over = Partial<ChainFields> & { ts?: number; to?: string }
+
+export interface Sent {
+  id: string
+  wire: WireV2
+  out: Received
 }
 
-export const cert = (() => {
-  const k = newKeyPair()
-  return signCert(k, newKeyPair().pk, 1, 'Browser')
-})()
-
-// A server built step by step through the rules, like members would. Each member's chain is
-// kept here (one device each).
-export class World {
-  events: StateEvent[] = []
-  ids = new Map<string, StateEvent>()
-  resolver = new Resolver()
-  private cached: Resolved | null = EMPTY_RESOLVED
+export class ServerWorld {
+  room!: AclRoom
+  srv = ''
   now = T0
-  // Each member's latest state event (whether accepted or not) and next number.
-  chains = new Map<string, Chain>()
+  people = new Map<string, Who>()
+  // What was received, in order, with the records of admitted ACL events (a store's view).
+  acl: AclItem[] = []
+  contents: ContentEv[] = []
+  wires = new Map<string, WireV2>()
 
-  chainOf(sender: string): Chain {
-    return this.chains.get(sender) ?? { dseq: 0 }
+  who(name: string): Who {
+    let w = this.people.get(name)
+    if (!w) {
+      const ik = newKeyPair()
+      const dk = newKeyPair()
+      w = { name, ik, dk, a: keyId(ik.pk), dev: keyId(dk.pk) }
+      this.people.set(name, w)
+    }
+    return w
   }
 
-  private note(e: StateEvent) {
-    const c = this.chainOf(e.sender)
-    if (e.dseq >= c.dseq) this.chains.set(e.sender, { dseq: e.dseq + 1, sprev: e.id })
+  // Another device of `name` (same identity).
+  device(name: string, as: string): Who {
+    const w = this.who(name)
+    const dk = newKeyPair()
+    const d = { ...w, name: as, dk, dev: keyId(dk.pk) }
+    this.people.set(as, d)
+    return d
   }
 
-  get res(): Resolved {
-    this.cached ??= this.resolver.resolved()
-    return this.cached
+  static create(owner: string, extra: Record<string, unknown> = {}) {
+    const w = new ServerWorld()
+    const o = w.who(owner)
+    const bare: Record<string, unknown> = {
+      rules: RULES_VERSION,
+      nonce: b64u(randomBytes(16)),
+      owners: [{ ik: o.a, dk: o.dev }],
+      everyone_bits: EVERYONE_BITS,
+      name: 'Test',
+      ...extra,
+    }
+    const content =
+      bare.rules === RULES_VERSION ? { ...bare, owners: [genesisBundle(o.ik, o.dev, bare)] } : bare
+    const g = buildEvent2(o, null, 'genesis', 'a', content, { seq: 0 }, w.now)
+    w.srv = g.id
+    w.room = new AclRoom(g.id)
+    w.receive(g.id, g.wire)
+    return w
   }
 
-  // The current view, without building a full result.
-  get view(): View {
-    return this.events.length ? this.resolver.view() : viewOf(EMPTY_RESOLVED)
+  plan(name: string, t: string, to?: string): Plan {
+    const w = this.who(name)
+    const L = CHANNEL_CONTENT.includes(t) ? 'c' : 'a'
+    return this.room.plan({ t, L, a: w.a, dev: w.dev, to })
   }
 
-  add(sender: string, type: string, skey: string, content: Record<string, unknown>) {
-    this.now += 1
-    const e = this.build(this.view, sender, type, skey, content, this.now)
-    this.hear(e)
-    return e
-  }
-
-  // An event built on `view` (a stale view, or a backdated one), on the sender's real chain
-  // unless `chain` says otherwise (an equivocation).
-  from(
-    view: Resolved | View,
-    sender: string,
-    type: string,
-    skey: string,
-    content: Record<string, unknown>,
-    ts: number,
-    chain?: Chain
-  ) {
-    return this.build(view, sender, type, skey, content, ts, chain)
-  }
-
+  // An event `name` signs as an honest client would (or with `over` replacing chain fields).
   build(
-    from: Resolved | View,
-    sender: string,
-    type: string,
-    skey: string,
-    content: Record<string, unknown>,
-    ts: number,
-    chain?: Chain
+    name: string,
+    t: string,
+    content: Record<string, unknown> | ((p: Plan) => Record<string, unknown>),
+    over: Over = {}
   ) {
-    const view = 'rejected' in from ? viewOf(from) : from
-    const auth = type === 'create' ? [] : authRefs(view.state, { type, sender, skey, content })
-    const c = chain ?? this.chainOf(sender)
-    const powerish = isPowerChain({ type, sender, skey, content })
-    const pprev = powerish ? view.power(sender) : undefined
-    const depth = 1 + Math.max(0, ...view.heads.map(h => this.byId(h)?.depth ?? 0))
-    return mk(
-      sender,
-      type,
-      skey,
-      content,
-      type === 'create' ? [] : parentsOf(view.heads),
-      auth,
-      { ...c, ...(pprev ? { pprev } : {}) },
-      depth,
-      ts
-    )
+    const w = this.who(name)
+    const L = CHANNEL_CONTENT.includes(t) ? 'c' : 'a'
+    const to = over.to ?? (content as { to?: string }).to
+    const p = this.room.plan({ t, L, a: w.a, dev: w.dev, to })
+    const fields: ChainFields = { seq: p.seq + 1, ap: p.ap }
+    if (L === 'a' && p.aprev) fields.aprev = p.aprev
+    if (L === 'a' && p.iprev) fields.iprev = p.iprev
+    if (L === 'c') {
+      const last = [...this.contents].reverse().find(m => m.dev === w.dev)
+      if (last) fields.cprev = last.id
+    }
+    const c = typeof content === 'function' ? content(p) : content
+    const { ts, to: _to, ...rest } = over
+    this.now += 1
+    return buildEvent2(w, this.srv, t, L, c, { ...fields, ...rest }, ts ?? Math.max(this.now, p.ts))
   }
 
-  byId(id: string) {
-    return this.ids.get(id)
+  // Receives an event as a replica does after the wire checks (validate2), recording it as stored
+  // when admitted.
+  receive(id: string, wire: WireV2): Received {
+    const v =
+      wire.ev.t === 'genesis'
+        ? validate2(wire, null)
+        : validate2(wire, this.srv, this.room.summary().rules ?? RULES_VERSION)
+    if (!v.ok) return { s: 'M', why: v.why }
+    this.wires.set(id, wire)
+    const out =
+      wire.ev.L === 'a'
+        ? this.room.receiveAcl(id, wire, this.now)
+        : this.room.receiveContent(id, wire, this.now)
+    if (out.s === 'A') this.acl.push({ id, w: wire, rec: out.rec })
+    if (out.s === 'U' && wire.ev.L === 'a') this.acl.push({ id, w: wire })
+    if (out.s === 'C') this.contents.push(contentEvOf(id, wire))
+    return out
   }
 
-  hear(e: StateEvent) {
-    if (this.ids.has(e.id)) return
-    this.events.push(e)
-    this.ids.set(e.id, e)
-    this.note(e)
-    this.resolver.add([e])
-    this.cached = null
+  post(
+    name: string,
+    t: string,
+    content: Record<string, unknown> | ((p: Plan) => Record<string, unknown>) = {},
+    over: Over = {}
+  ): Sent {
+    const { id, wire } = this.build(name, t, content, over)
+    return { id, wire, out: this.receive(id, wire) }
   }
 
-  // The chain a member had at some point (for equivocating from it).
-  snapshot(sender: string): Chain {
-    return { ...this.chainOf(sender) }
+  // `post` that must be admitted (ACL) or stored (content).
+  ok(name: string, t: string, content: Parameters<ServerWorld['post']>[2] = {}, over: Over = {}) {
+    const s = this.post(name, t, content, over)
+    if (s.out.s !== 'A' && s.out.s !== 'C')
+      throw new Error(`${name} ${t}: ${s.out.s} ${'why' in s.out ? s.out.why : ''}`)
+    return s
   }
 
-  get state() {
-    return this.res.state
+  // `who` joins through an add by `by` (an introducing join with its device certificate).
+  join(by: string, name: string) {
+    const w = this.who(name)
+    this.ok(by, 'add', { to: w.a })
+    return this.ok(name, 'join', p => ({
+      idb: { ik: w.a, dcert: signDeviceCert2(w.ik, this.srv, w.a, w.dev, p.iprev) },
+    }))
   }
-}
 
-export const base = (A: string, B: string) => {
-  const w = new World()
-  w.add(A, 'create', '', { kind: 'server', v: 1, creator: A, cert: { ...cert, ik: A } })
-  w.add(A, 'member', A, { m: 'join' })
-  w.add(A, 'role', EVERYONE, { name: '@everyone', color: null, perms: EVERYONE_PERMS, pos: 0 })
-  w.add(A, 'channel', 'AAAAAAAAAAA', { name: 'general', kind: 'text', pos: 0 })
-  w.add(A, 'member', B, { m: 'invite' })
-  w.add(B, 'member', B, { m: 'join' })
-  return w
+  // A device of a member introduces itself.
+  addDevice(name: string) {
+    const w = this.who(name)
+    return this.ok(name, 'device_add', p => ({
+      dcert: signDeviceCert2(w.ik, this.srv, w.a, w.dev, p.iprev),
+    }))
+  }
+
+  channel(by: string, id = 'AAAAAAAAAAA') {
+    this.ok(by, 'channel', { id, name: 'general', kind: 'text', pos: 0 })
+    return id
+  }
+
+  get sum() {
+    return this.room.summary()
+  }
+
+  // A cold start from what was stored: the records, no event decided again. `map` changes what
+  // was stored (a record dropped, of another version, tampered with).
+  restore(map: (it: AclItem) => AclItem = it => it) {
+    const r = new AclRoom(this.srv)
+    const out = r.restore(this.acl.map(map), this.contents)
+    return { r, out, fresh: out.fresh }
+  }
 }

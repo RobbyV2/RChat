@@ -14,7 +14,7 @@ import type { ProofHeader } from './acl/admit'
 import { aclContentOk, RULES_VERSION, type AclContent, type AclEv } from './acl/rules'
 import type { ContentEv } from './acl/visibility'
 import { blockCount, EMPTY_ROOT } from './hashing'
-import { checkState, isShortId, isStateType, STATE_LIMITS, type StateType } from './state'
+import { isShortId } from './state'
 import {
   isKeyId,
   keyBytes,
@@ -36,8 +36,7 @@ import {
 // `move`: written by a new device right after a device move, on top of the room heads it brought
 // along, so the old device's events before the move stay vouched for (see sync).
 // `call`: the log row of a call, written by the caller once it is over.
-// State types (state.ts) belong to P2P servers and carry `skey`.
-export type EvType = 'msg' | 'edit' | 'redact' | 'react' | 'pin' | 'move' | 'call' | StateType
+export type EvType = 'msg' | 'edit' | 'redact' | 'react' | 'pin' | 'move' | 'call'
 
 export const EV_TYPES: readonly string[] = ['msg', 'edit', 'redact', 'react', 'pin', 'move', 'call']
 
@@ -58,26 +57,7 @@ export interface Core {
   depth: number
   prev: string[]
   ch: string
-  // P2P servers (note section 6): the state events this one relies on (not on `create`), the
-  // state heads its sender knew (state events only, not on `create`), and the state key.
-  auth?: string[]
-  pstate?: string[]
-  skey?: string
-  // P2P servers: the sender's chain in the room (note section 6): the number of this event among
-  // theirs, their previous event, how many of theirs came earlier the same UTC day, their
-  // previous state event (state events), and their latest accepted power event where it sits
-  // (power events and leaving).
-  dseq?: number
-  dprev?: string
-  dwin?: number
-  sprev?: string
-  pprev?: string
 }
-
-// The room an event belongs to. A server's room id is the id of its `create` event, which can't
-// name itself: its own `room` is a random seed.
-export const roomOf = (id: string, ev: Pick<Core, 'type' | 'room'>) =>
-  ev.type === 'create' ? id : ev.room
 
 // A file in a message (note section 5): its root hash `h` over the 1 MiB block hashes, its
 // size and block count, and what the sender says about it. `name`, `mime` and the thumbnail are
@@ -219,18 +199,6 @@ export interface Author {
   dk: KeyPair
 }
 
-// The server fields of a new event.
-export interface ServerFields {
-  auth?: string[]
-  pstate?: string[]
-  skey?: string
-  dseq?: number
-  dprev?: string
-  dwin?: number
-  sprev?: string
-  pprev?: string
-}
-
 // Signs a new event. `prev` are the room heads (deepest first), `depth` one more than theirs.
 export const buildEvent = (
   author: Author,
@@ -239,8 +207,7 @@ export const buildEvent = (
   content: Content,
   prev: string[],
   depth: number,
-  ts: number,
-  extra: ServerFields = {}
+  ts: number
 ): { id: string; wire: Wire } => {
   const core: Core = {
     v: 1,
@@ -253,14 +220,6 @@ export const buildEvent = (
     prev: prev.slice(0, LIMITS.prev),
     ch: contentHash(content),
   }
-  if (extra.auth) core.auth = extra.auth.slice(0, STATE_LIMITS.auth)
-  if (extra.pstate) core.pstate = extra.pstate.slice(0, STATE_LIMITS.pstate)
-  if (extra.skey !== undefined) core.skey = extra.skey
-  if (extra.dseq !== undefined) core.dseq = extra.dseq
-  if (extra.dprev !== undefined) core.dprev = extra.dprev
-  if (extra.dwin !== undefined) core.dwin = extra.dwin
-  if (extra.sprev !== undefined) core.sprev = extra.sprev
-  if (extra.pprev !== undefined) core.pprev = extra.pprev
   const idBytes = eventIdBytes(core)
   const sig = b64u(sign(author.dk.sk, sigInput(idBytes)))
   return { id: b64u(idBytes), wire: { ev: core, c: content, sig } }
@@ -345,9 +304,8 @@ const isMentions = (x: unknown): x is string[] =>
 const reactKeyOk = (x: unknown): x is string =>
   typeof x === 'string' && x.length > 0 && utf8(x).length <= LIMITS.reactKey
 
-export const checkContent = (type: string, c: unknown, skey?: string): c is Content => {
+export const checkContent = (type: string, c: unknown): c is Content => {
   if (!isRecord(c)) return false
-  if (skey !== undefined || isStateType(type)) return checkState(type, skey ?? '', c)
   switch (type) {
     case 'msg':
       return (
@@ -408,7 +366,7 @@ export interface Devices {
 
 export interface RoomAuth {
   room: string
-  // The two identities of a DM; null in a server, whose auth rules decide membership.
+  // The two identities of a DM.
   members: readonly string[] | null
   devices: (ik: string) => Devices | null
 }
@@ -453,26 +411,9 @@ const isCore = (x: unknown): x is Core => {
     (depth as number) < LIMITS.depth &&
     Array.isArray(prev) &&
     typeof ch === 'string' &&
-    bytesOf(ch, 32) !== null &&
-    idList(x.auth, 0, STATE_LIMITS.auth) &&
-    idList(x.pstate, 1, STATE_LIMITS.pstate) &&
-    (x.skey === undefined || (typeof x.skey === 'string' && x.skey.length <= STATE_LIMITS.skey)) &&
-    (x.dseq === undefined || isInt(x.dseq)) &&
-    (x.dwin === undefined || isInt(x.dwin)) &&
-    (x.dprev === undefined || isEventId(x.dprev)) &&
-    (x.sprev === undefined || isEventId(x.sprev)) &&
-    (x.pprev === undefined || isEventId(x.pprev))
+    bytesOf(ch, 32) !== null
   )
 }
-
-// An optional list of distinct event ids.
-const idList = (x: unknown, min: number, max: number) =>
-  x === undefined ||
-  (Array.isArray(x) &&
-    x.length >= min &&
-    x.length <= max &&
-    new Set(x).size === x.length &&
-    x.every(isEventId))
 
 // Messages with files may be larger (names and thumbnails); everything else stays small.
 export const contentMax = (c: unknown) =>
@@ -496,9 +437,7 @@ export const validate = (raw: unknown, auth: RoomAuth): Checked => {
   const { ev, c, sig } = raw
   if (!isCore(ev)) return bad('shape')
   if (sizeOf(ev) > LIMITS.core || (c !== null && sizeOf(c) > contentMax(c))) return bad('size')
-  // A server's create event: its id is the room (checked below, once the id is known).
-  const create = ev.type === 'create'
-  if (!create && ev.room !== auth.room) return bad('room')
+  if (ev.room !== auth.room) return bad('room')
   if (
     ev.prev.length > LIMITS.prev ||
     new Set(ev.prev).size !== ev.prev.length ||
@@ -523,9 +462,8 @@ export const validate = (raw: unknown, auth: RoomAuth): Checked => {
     return bad('shape')
   }
   if (!s || !pk || !verify(pk, sigInput(idBytes), s)) return bad('signature')
-  if (create && b64u(idBytes) !== auth.room) return bad('room')
   if (c !== null) {
-    if (!checkContent(ev.type, c, ev.skey)) return bad('content')
+    if (!checkContent(ev.type, c)) return bad('content')
     let hash: string
     try {
       hash = contentHash(c)
@@ -713,6 +651,16 @@ const isCore2 = (x: unknown): x is CoreV2 => {
     (acl ? x.prev === undefined : ids(x.prev ?? [], 0, LIMITS2.prev)) &&
     (x.cprev === undefined || (!acl && isEventId(x.cprev)))
   )
+}
+
+// The id a v2 event claims, when its core is well formed.
+export const claimedId2 = (raw: unknown): string | null => {
+  if (!isRecord(raw) || !isCore2(raw.ev)) return null
+  try {
+    return eventId2(raw.ev)
+  } catch {
+    return null
+  }
 }
 
 // A signed core of the same server (one side of a proof), verified.

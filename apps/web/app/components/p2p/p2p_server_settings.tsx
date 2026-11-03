@@ -278,7 +278,7 @@ function Members({ v }: { v: ServerView }) {
       {list.map(m => (
         <MemberLine key={m.ik} m={m}>
           {m.m === 'invite' && <span className="text-xs text-on-surface-variant">Invited</span>}
-          {m.ik !== me && !m.owner && kick && (
+          {m.ik !== me && !m.owner && kick && (m.m === 'invite' || m.below) && (
             <button
               onClick={() =>
                 ask({
@@ -296,7 +296,7 @@ function Members({ v }: { v: ServerView }) {
               {m.m === 'invite' ? 'Take back' : 'Kick'}
             </button>
           )}
-          {m.ik !== me && !m.owner && ban && (
+          {m.ik !== me && !m.owner && ban && m.below && (
             <button
               onClick={() =>
                 ask({

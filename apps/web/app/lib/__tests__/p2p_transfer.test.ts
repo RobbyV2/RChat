@@ -266,7 +266,11 @@ describe('dump and encryption', () => {
     const after = await readStores(target.db)
     for (const n of names) {
       if (n === 'self' || n === 'rooms') continue
-      const got = (after.get(n) ?? []).map(r => text(r.value))
+      // Server events come marked to be checked on the next start (server.ts load).
+      const got = (after.get(n) ?? []).map(r => {
+        const { imp: _i, ...v } = r.value as { imp?: true }
+        return text(v)
+      })
       for (const r of before.get(n) ?? []) expect(got).toContain(text(r.value))
     }
     // DMs and servers are counted apart (servers have a budget of their own).

@@ -944,6 +944,7 @@ const readerView = (r: RoomRecord): ServerView => ({
   me: null,
   joining: false,
   owner: null,
+  owners: [],
   perms: 0,
   history: 'shared',
   system: { ch: null, join: true, leave: true },
@@ -955,6 +956,7 @@ const readerView = (r: RoomRecord): ServerView => ({
   seq: r.lastSeq,
   gap: false,
   full: r.full,
+  readOnly: null,
 })
 
 const refreshServers = () => {

@@ -4,10 +4,18 @@
 // heads (admission, append, new state), and a backdated deny (admission, append, re-run), then the
 // re-run alone. Production limits, with ts in minutes as in the model's benchmark.
 // Usage: bun apps/web/scripts/acl_bench.ts <shape|all> [events=20000] [seed=1] [reps=3]
-// `visibility [events=20000] [seed=1] [contents=1000000]`: §5.7's content target on the `tree`
-// universe: visibility per rendered message (windows of 50 consecutive messages, first render).
+// `visibility [events=20000] [seed=1] [contents=1000000] [cacheMiB=64]`: §5.7's content target on
+// the `tree` universe: every content event admitted (decideContent in St(m), which the bounded
+// content-position cache keeps), then visibility per rendered message (windows of 50 consecutive
+// messages, first render).
 import { loadavg } from 'node:os'
-import { AclReplica, identityHead, pastOf, type Verdict } from '../app/lib/p2p/acl/admit'
+import {
+  AclReplica,
+  decideContent,
+  identityHead,
+  pastOf,
+  type Verdict,
+} from '../app/lib/p2p/acl/admit'
 import { AclState } from '../app/lib/p2p/acl/cache'
 import { ContentView, type ContentEv } from '../app/lib/p2p/acl/visibility'
 import {
@@ -20,7 +28,9 @@ import {
   setLimits,
   type AclContent,
   type AclEv,
+  type Rec,
 } from '../app/lib/p2p/acl/rules'
+import { AclRoom, toStored, type PackedRec } from '../app/lib/p2p/acl_room'
 
 type Obj = Record<string, unknown>
 interface Opts {
@@ -931,7 +941,7 @@ function contentOf(w: W, n: number, rng: Rng): ContentEv[] {
   return out
 }
 
-function visibilityBench(N: number, seed: number, nContent: number) {
+function visibilityBench(N: number, seed: number, nContent: number, cacheMiB: number) {
   clock = 1
   probe = undefined
   const rng = new Rng(seed * 7919)
@@ -943,16 +953,29 @@ function visibilityBench(N: number, seed: number, nContent: number) {
   const t0 = performance.now()
   const contents = contentOf(w, nContent, rng)
   const genS = (performance.now() - t0) / 1000
+  const acl = w.ref.acl
+  acl.contentBytes = cacheMiB * 2 ** 20
+  acl.contentCap = Infinity
+  // Content admission: St(m) of each content position, kept by the content cache.
+  const tA = performance.now()
+  const subA = acl.stats.subsets
+  let refused = 0
+  const positions = new Set<string>()
+  for (const m of contents) {
+    positions.add([...new Set(m.ap)].sort().join(','))
+    if (!decideContent(m, pastOf(acl.ix, m.ap), acl.contentStateOf(m.ap)).ok) refused++
+  }
+  const admitS = (performance.now() - tA) / 1000
+  const admitSubsets = acl.stats.subsets - subA
   const t1 = performance.now()
-  const v = new ContentView(w.ref.acl, contents)
+  const v = new ContentView(acl, contents)
   const viewMs = performance.now() - t1
   const msgs = contents.filter(m => m.t === 'msg')
-  // St(m) of a position not seen before is a subset evaluation (content admission computes the
-  // same state); timed apart from the visibility decision
-  const acl = w.ref.acl
-  const stateOf0 = acl.stateOf.bind(acl)
+  // St(m) a render still has to work out (a position the cache no longer holds); timed apart
+  // from the visibility decision
+  const stateOf0 = acl.contentStateOf.bind(acl)
   let stMs = 0
-  acl.stateOf = (ap: readonly string[]) => {
+  acl.contentStateOf = (ap: readonly string[]) => {
     const q = performance.now()
     const r = stateOf0(ap)
     stMs += performance.now() - q
@@ -963,6 +986,7 @@ function visibilityBench(N: number, seed: number, nContent: number) {
   const windows = Math.min(2000, starts.length)
   const per: number[] = []
   const perX: number[] = []
+  const each: number[] = []
   let hidden = 0
   const why = new Map<string, number>()
   const t2 = performance.now()
@@ -971,6 +995,7 @@ function visibilityBench(N: number, seed: number, nContent: number) {
     const s0 = performance.now()
     const st0 = stMs
     for (let j = at; j < at + 50; j++) {
+      const q = performance.now()
       const h = v.hidden(msgs[j])
       if (h) {
         hidden++
@@ -980,6 +1005,7 @@ function visibilityBench(N: number, seed: number, nContent: number) {
       v.editOf(msgs[j])
       v.reactions(msgs[j])
       v.pinned(msgs[j])
+      each.push(performance.now() - q)
     }
     per.push((performance.now() - s0) / 50)
     perX.push((performance.now() - s0 - (stMs - st0)) / 50)
@@ -1006,8 +1032,16 @@ function visibilityBench(N: number, seed: number, nContent: number) {
       hiddenBy: Object.fromEntries(why),
       build_s: f1(buildS),
       content_gen_s: f1(genS),
+      admit_s: f1(admitS),
+      admit_refused: refused,
+      positions: positions.size,
+      admit_subset_evaluations: admitSubsets,
+      cache_mib: cacheMiB,
+      cache_kept: acl.content.size,
       view_ms: f1(viewMs),
       per_msg_ms: +(firstMs / (windows * 50)).toFixed(4),
+      per_msg_median_ms: +med(each).toFixed(4),
+      per_msg_p99_ms: +[...each].sort((p, q) => p - q)[Math.floor(each.length * 0.99)].toFixed(4),
       per_msg_window_median_ms: +med(per).toFixed(4),
       per_msg_window_p99_ms: +sorted[Math.floor(sorted.length * 0.99)].toFixed(4),
       per_msg_window_max_ms: +sorted[sorted.length - 1].toFixed(4),
@@ -1024,16 +1058,86 @@ function visibilityBench(N: number, seed: number, nContent: number) {
   )
 }
 
+// A cold start from stored records (§2.4, §4.2): the shape built with production admission, every
+// event's record packed as the live evaluator stores it (timed), the live replica dropped, then a
+// fresh evaluator restored from the records (index, sampled check), its first full evaluation,
+// and the state compared with the live one. RSS after a forced collection.
+function coldBench(shape: string, N: number, seed: number) {
+  const gc = () => (globalThis as { Bun?: { gc: (f: boolean) => void } }).Bun?.gc(true)
+  const rss = () => Math.round(process.memoryUsage().rss / 2 ** 20)
+  const binds = (e: AclEv) => devOwner(e.dev) === e.a
+  const live = () => {
+    clock = 1
+    probe = undefined
+    const rng = new Rng(seed * 7919)
+    const w = new BenchWorld()
+    const tB = performance.now()
+    SHAPES[shape](w, N, rng)
+    w.state()
+    const buildS = (performance.now() - tB) / 1000
+    const room = new AclRoom('bench', { binds })
+    room.r = w.ref
+    const pack = (room as unknown as { pack: (e: AclEv, r: Rec) => PackedRec }).pack.bind(room)
+    const tP = performance.now()
+    const items = w.ref.order.map(id => ({
+      e: w.ref.ev(id),
+      rec: pack(w.ref.ev(id), w.ref.rec(id)),
+    }))
+    const packMs = performance.now() - tP
+    const sum = JSON.stringify(toStored(room.summary()))
+    const cut = w.state().cut.size
+    return { items, buildS, packMs, sum, cut, liveRss: rss() }
+  }
+  const L = live()
+  const recMb = JSON.stringify(L.items.map(i => i.rec)).length / 2 ** 20
+  gc()
+  const rss0 = rss()
+  const t0 = performance.now()
+  const cold = new AclRoom('bench', { binds })
+  const out = cold.restoreEvs(L.items)
+  const restoreMs = performance.now() - t0
+  const t1 = performance.now()
+  cold.r.state()
+  const evalMs = performance.now() - t1
+  const same = JSON.stringify(toStored(cold.summary())) === L.sum
+  gc()
+  const rss1 = rss()
+  console.log(
+    JSON.stringify({
+      shape: `coldstart:${shape}`,
+      events: L.items.length,
+      cut: L.cut,
+      build_s: f1(L.buildS),
+      pack_ms: f1(L.packMs),
+      pack_per_event_ms: +(L.packMs / L.items.length).toFixed(3),
+      records_mb: f1(recMb),
+      restore_ms: f1(restoreMs),
+      mismatch: out.mismatch,
+      fresh: out.fresh.length,
+      first_eval_ms: f1(evalMs),
+      cold_start_ms: f1(restoreMs + evalMs),
+      same_state: same,
+      rss_live_mb: L.liveRss,
+      rss_before_mb: rss0,
+      rss_after_mb: rss1,
+      cold_mb: rss1 - rss0,
+      load1: f1(loadavg()[0]),
+    })
+  )
+}
+
 const args = process.argv.slice(2)
 const shapeArg = args[0] ?? 'all'
 const N = Number(args[1] ?? 20000)
 const seed = Number(args[2] ?? 1)
 const reps = Number(args[3] ?? 3)
 setLimits({ win: 60, day: 1440 })
-if (shapeArg === 'visibility') visibilityBench(N, seed, Number(args[3] ?? 1_000_000))
+if (shapeArg === 'visibility')
+  visibilityBench(N, seed, Number(args[3] ?? 1_000_000), Number(args[4] ?? 64))
+if (shapeArg.startsWith('coldstart:')) coldBench(shapeArg.slice(10), N, seed)
 for (const name of shapeArg === 'all'
   ? Object.keys(SHAPES)
-  : shapeArg === 'visibility'
+  : shapeArg === 'visibility' || shapeArg.startsWith('coldstart:')
     ? []
     : shapeArg.split(',')) {
   clock = 1

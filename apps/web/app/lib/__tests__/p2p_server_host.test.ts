@@ -1,74 +1,85 @@
 import { describe, expect, test } from 'bun:test'
-import { resolveState, type Resolved } from '../p2p/resolve'
-import { LocalHost, WorkerHost, type WorkerLike } from '../p2p/resolve_host'
-import { membershipOf } from '../p2p/state'
-import { base, ik } from './p2p_server_world'
+import { P } from '../p2p/acl/rules'
+import { applySummary, emptySummary, type Summary } from '../p2p/acl_room'
+import { LocalHost, WorkerHost, type AclHost, type WorkerLike } from '../p2p/resolve_host'
+import { ServerWorld } from './p2p_server_world'
 
-// Resolution off the page's thread (rulings: resolution runs in a Web Worker with incremental
-// caching, and the UI thread is never blocked by it). The same events give the same result in
-// the worker, here, and in a replay; a failing worker hands its rooms back to this thread.
-
-const A = ik()
-const B = ik()
-const C = ik()
-
-const fp = (r: Resolved) =>
-  JSON.stringify({
-    state: [...r.state].map(([k, e]) => [k, e.id]).sort(),
-    rejected: [...r.rejected].sort(),
-    lost: [...r.lost].sort(),
-    heads: r.heads,
-    transitions: [...r.transitions].sort(),
-    joins: [...r.joins].sort(),
-    flagged: [...r.flagged].sort(),
-    power: [...r.power].sort(),
-  })
+// The evaluator off the page's thread (spec 5.7: in a worker): the same events give the same
+// verdicts, records and state in the worker, in this thread and after a cold start from the
+// records; replies are deltas the page applies to its copy; a failing worker loses its rooms and
+// the page loads them again into this thread.
 
 const worker = () =>
   new Worker(new URL('../p2p/p2p.worker.ts', import.meta.url), {
     type: 'module',
   }) as unknown as WorkerLike
 
-describe('resolution host', () => {
-  test('the worker, this thread and a replay agree, event by event', async () => {
-    const w = base(A, B)
-    w.add(A, 'member', C, { m: 'invite' })
-    w.add(C, 'member', C, { m: 'join' })
-    const fork = w.res
-    w.add(A, 'member', C, { m: 'ban' })
-    w.hear(w.from(fork, C, 'member', ik(), { m: 'invite' }, w.now + 1))
+const universe = () => {
+  const w = ServerWorld.create('O')
+  const ch = w.channel('O')
+  for (const n of ['B', 'C', 'D']) w.join('O', n)
+  w.ok('O', 'role_create', { pos: 3, bits: P.Kick })
+  w.ok('O', 'assign', { to: w.who('B').a, role: w.acl.at(-1)!.id })
+  w.ok('C', 'msg', { body: 'c', ch })
+  w.ok('B', 'kick', p => ({ to: w.who('C').a, seen: p.seen ?? {} }), { to: w.who('C').a })
+  w.ok('D', 'msg', { body: 'd', ch })
+  w.ok('D', 'leave', p => ({ seen: p.seen ?? {} }))
+  return w
+}
+
+// Feeds a host the world's events in order; the page's copy follows the deltas.
+const feed = async (host: AclHost, w: ServerWorld, from: number) => {
+  const room = w.srv
+  let copy: Summary = emptySummary()
+  const outs: unknown[] = []
+  const all = [...w.wires]
+  const loaded = await host.load(room, [], [])
+  copy = applySummary(copy, loaded.delta)
+  for (const [id, wire] of all.slice(from)) {
+    if (wire.ev.L === 'a') {
+      const d = await host.acl(room, id, wire, w.now)
+      outs.push(d.out)
+      copy = applySummary(copy, d.delta)
+    } else outs.push(await host.content(room, id, wire, w.now))
+  }
+  return { outs, copy }
+}
+
+describe('evaluator host', () => {
+  test('the worker, this thread and a cold start agree, event by event', async () => {
+    const w = universe()
     const host = new WorkerHost(worker)
     const local = new LocalHost()
-    const room = 'R'
-    const half = w.events.length >> 1
-    let got = await host.load(room, w.events.slice(0, half))
-    let mine = await local.load(room, w.events.slice(0, half))
-    expect(fp(got)).toBe(fp(mine))
-    for (const e of w.events.slice(half)) {
-      got = await host.add(room, [e])
-      mine = await local.add(room, [e])
-      expect(fp(got)).toBe(fp(mine))
-    }
-    expect(fp(got)).toBe(fp(resolveState(w.events)))
-    expect(membershipOf(got.state, C)).toBe('ban')
-    // Results come back as the very events the page holds.
-    expect(got.state.get(`member\n${C}`)).toBe(
-      w.events.find(e => e.id === got.state.get(`member\n${C}`)?.id)
-    )
+    const a = await feed(host, w, 0)
+    const b = await feed(local, w, 0)
+    expect(a.outs).toEqual(b.outs)
+    expect(a.copy).toEqual(b.copy)
+    expect(a.copy).toEqual(w.sum)
+    expect(a.copy.members[w.who('C').a].m).toBe('leave')
+    // A cold start from the stored records gives the same state and decides nothing again.
+    const cold = await host.load(w.srv, w.acl, w.contents)
+    expect(cold.fresh).toEqual([])
+    expect(applySummary(emptySummary(), cold.delta)).toEqual(w.sum)
+    const ids = w.contents.map(m => m.id)
+    expect(await host.display(w.srv, ids)).toEqual(await local.display(w.srv, ids))
+    expect(await host.diff(w.srv, w.sum.heads, [], 1000)).toEqual(w.acl.map(x => x.id))
     host.stop()
   })
 
-  test('a worker that fails hands its rooms back to this thread', async () => {
-    const w = base(A, B)
-    let make: WorkerLike | null = null
+  test('a worker that fails loses its rooms; they are loaded again into this thread', async () => {
+    const w = universe()
+    let made: WorkerLike | null = null
     const host = new WorkerHost(() => {
-      make = worker()
-      return make
+      made = worker()
+      return made
     })
-    await host.load('R', w.events.slice(0, 3))
-    ;(make as unknown as WorkerLike).onerror?.(new Error('boom'))
-    const res = await host.add('R', w.events.slice(3))
-    expect(fp(res)).toBe(fp(resolveState(w.events)))
+    let lost = 0
+    host.onLost = () => void (lost += 1)
+    await host.load(w.srv, w.acl.slice(0, 3), [])
+    ;(made as unknown as WorkerLike).onerror?.(new Error('boom'))
+    expect(lost).toBe(1)
+    const again = await host.load(w.srv, w.acl, w.contents)
+    expect(applySummary(emptySummary(), again.delta)).toEqual(w.sum)
     host.stop()
   })
 })

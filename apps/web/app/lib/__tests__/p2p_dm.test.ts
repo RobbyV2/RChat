@@ -316,8 +316,8 @@ describe('storage', () => {
     await v1.put('meta', 1, 'schema')
     v1.close()
     const store = await Store.open(name)
-    expect(DB_VERSION).toBe(4)
-    expect(store.db.version).toBe(4)
+    expect(DB_VERSION).toBe(5)
+    expect(store.db.version).toBe(5)
     expect([...store.db.objectStoreNames].sort()).toEqual([
       'blob_hashes',
       'blob_parts',
@@ -333,7 +333,7 @@ describe('storage', () => {
       'self',
     ])
     expect((await store.contact('kept'))?.state).toBe('mutual')
-    expect(await store.meta('schema')).toBe(4)
+    expect(await store.meta('schema')).toBe(5)
     expect(await store.rooms()).toEqual([])
     store.close()
     // Opening again changes nothing.

@@ -555,12 +555,12 @@ describe('badges in P2P servers', () => {
     const token = await issue(key, a.node.ik, clock.now())
     await a.node.setBadge(own(token, a.node.ik, clock.now()))
     const room = await a.servers.create('Badges')
-    const joins = (await a.store.db.getAllFromIndex('events', 'room_state', [room, 1])).filter(
-      e => e.type === 'member' && e.skey === a.node.ik
-    )
-    expect(joins.map(e => (e.wire.c as { binding?: string }).binding)).toEqual([token])
+    const genesis = await a.store.event(room)
+    expect((genesis?.wire.c as { binding?: string }).binding).toBe(token)
     const b = await makeMember(hub, 'Bob', clock)
+    const d = await makeMember(hub, 'Dave', clock)
     await joinWithCode(clock, a, room, b)
+    await joinWithCode(clock, a, room, d)
     await a.node.setPaused(true)
     const c = await makeMember(hub, 'Carol', clock)
     const heard: [string, unknown][] = []
@@ -591,9 +591,14 @@ describe('badges in P2P server member events', () => {
     const a = await makeMember(hub, 'Alice', clock)
     const room = await a.servers.create('Later')
     const posted = async () =>
-      (await a.store.db.getAllFromIndex('events', 'room_state', [room, 1]))
-        .filter(e => e.type === 'member' && e.skey === a.node.ik)
-        .sort((x, y) => x.wire.ev.depth - y.wire.ev.depth)
+      (
+        await a.store.db.getAllFromIndex(
+          'events',
+          'room_aseq',
+          IDBKeyRange.bound([room, -Infinity], [room, Infinity])
+        )
+      )
+        .filter(e => (e.type === 'genesis' || e.type === 'profile') && e.sender === a.node.ik)
         .map(e => (e.wire.c as { binding?: string }).binding ?? null)
     expect(await posted()).toEqual([null])
     // Nothing to post while the badge is off.
@@ -604,7 +609,7 @@ describe('badges in P2P server member events', () => {
     const updated = a.node.profile.updated
     await a.servers.refreshBadge()
     expect(await posted()).toEqual([null, first])
-    // The room rules take a new member event of ours only with a newer profile.
+    // The profile is signed again with it.
     expect(a.node.profile.updated).toBeGreaterThan(updated)
     // A day later: the one posted has most of its life left.
     await jump(clock, DAY)

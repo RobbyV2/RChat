@@ -115,6 +115,10 @@ export interface EvalResult {
   RF: ReadonlySet<string>
   PC: ReadonlySet<string>
   idx?: StIdx
+  // cache.ts: the packed statuses of a recorded state, or the evaluation and length a head-path
+  // snapshot reads.
+  pk?: object
+  src?: { fe: object; len: number }
 }
 
 // FI of identity `a` in epoch `epoch` ('' = genesis epoch).

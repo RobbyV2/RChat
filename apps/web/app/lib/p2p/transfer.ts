@@ -50,8 +50,16 @@ import type {
   SelfRecord,
   StoreName,
 } from './db'
-import { DB_VERSION, hasSecrets, withFiles, withoutSecrets } from './db'
-import { attsOf, buildEvent, claimedId, isEventId, LIMITS as EV, type Wire } from './event'
+import { DB_VERSION, hasSecrets, serverWire, withFiles, withoutSecrets } from './db'
+import {
+  attsOf,
+  buildEvent,
+  claimedId,
+  claimedId2,
+  isEventId,
+  LIMITS as EV,
+  type Wire,
+} from './event'
 import { fingerprint } from './keys'
 import { hashPages, partRange, readBlock } from './blobs'
 import { BLOCK, blobRootOf, blockCount, digest } from './hashing'
@@ -417,17 +425,26 @@ export const isSelf = (x: unknown): x is SelfRecord => {
   )
 }
 
-const isEventRow = (x: unknown): x is EventRecord =>
-  isRecord(x) &&
-  typeof x.id === 'string' &&
-  typeof x.room === 'string' &&
-  Number.isSafeInteger(x.receivedAt) &&
-  Number.isSafeInteger(x.depth) &&
-  isRecord(x.wire) &&
-  isRecord(x.wire.ev) &&
-  (x.wire.ev.room === x.room || (x.wire.ev.type === 'create' && x.id === x.room)) &&
-  x.wire.ev.depth === x.depth &&
-  claimedId(x.wire) === x.id
+// A DM row holds a v1 event of its room; a server row a v2 event of its server (its genesis is
+// the server).
+const isEventRow = (x: unknown): x is EventRecord => {
+  if (
+    !isRecord(x) ||
+    typeof x.id !== 'string' ||
+    typeof x.room !== 'string' ||
+    !Number.isSafeInteger(x.receivedAt) ||
+    !Number.isSafeInteger(x.depth) ||
+    !isRecord(x.wire) ||
+    !isRecord(x.wire.ev)
+  )
+    return false
+  const ev = x.wire.ev
+  if (ev.v === 2)
+    return (
+      (ev.srv === x.room || (ev.t === 'genesis' && x.id === x.room)) && claimedId2(x.wire) === x.id
+    )
+  return ev.room === x.room && ev.depth === x.depth && claimedId(x.wire) === x.id
+}
 
 const HEADS_MAX = 1000
 
@@ -477,35 +494,54 @@ const ROW_CHECKS: Record<string, (x: unknown) => boolean> = {
 
 // What a stored event says about its files is derived from its content, never taken from a file.
 const cleanEvent = (e: EventRecord): EventRecord => {
-  const atts = e.redacted || e.wire.ev.type !== 'msg' ? [] : attsOf(e.wire.c)
+  const v2 = (e.wire.ev as { v?: unknown }).v === 2
+  const atts = e.redacted || e.type !== 'msg' ? [] : attsOf(e.wire.c)
   const out = withFiles(e, atts)
   const marks = serverMarks(e)
-  for (const k of ['chan', 'state', 'skey', 'mod', 'soft', 'dseq', 'cw', 'cl'] as const)
-    if (marks[k] === undefined) delete out[k]
-    else Object.assign(out, { [k]: marks[k] })
+  for (const k of ['chan', 'layer', 'dev', 'dseq', 'aseq', 'acl', 'imp'] as const) delete out[k]
+  if (v2) Object.assign(out, marks)
   return out
 }
 
-type Marks = Pick<EventRecord, 'chan' | 'state' | 'skey' | 'mod' | 'soft' | 'dseq' | 'cw' | 'cl'>
+type Marks = Pick<EventRecord, 'chan' | 'layer' | 'dev' | 'dseq' | 'aseq' | 'acl'>
 
-// What a server event is indexed by (its channel, whether it is state, its chain number), from
-// the event itself, and what this device decided about it (soft-failed, the window counters
-// along its sender's state events).
+// What a server event is indexed by (its layer, channel, device and seq), from the event itself,
+// and the admission record the exporting device stored (the importing evaluator reads it if its
+// version and shape check out and a sample of them matches their evaluation, acl_room.ts).
 const serverMarks = (e: EventRecord): Marks => {
-  const ev = e.wire.ev
+  const w = serverWire(e)
   const out: Marks = {}
-  if (typeof ev.skey === 'string') {
-    out.state = 1
-    out.skey = ev.skey
-    if (typeof e.cw === 'number') out.cw = e.cw
-    if (e.cl === true) out.cl = true
+  if ((w.ev as { v?: unknown }).v !== 2) return out
+  out.layer = w.ev.L === 'c' ? 'c' : 'a'
+  out.dev = w.ev.dev
+  out.dseq = w.ev.seq
+  const ch = (w.c as { ch?: unknown } | null)?.ch
+  if (out.layer === 'c' && typeof ch === 'string') out.chan = ch
+  if (out.layer === 'a' && Number.isSafeInteger(e.aseq) && isRecord(e.acl)) {
+    out.aseq = e.aseq
+    out.acl = e.acl
   }
-  if (typeof ev.dseq === 'number') out.dseq = ev.dseq
-  if (e.soft === true || typeof e.soft === 'string') out.soft = e.soft
-  const ch = (e.wire.c as { ch?: unknown } | null)?.ch
-  if (ev.type === 'msg' && typeof ch === 'string' && ev.skey === undefined) out.chan = ch
-  if (ev.type === 'redact' && e.mod === true) out.mod = true
   return out
+}
+
+// A server event merged into this device's copy of the server: stored as it came, without the
+// other device's admission order and record; on start it is checked and decided like one from a
+// peer (server.ts load).
+const putServerRow = async (tx: LooseTx, e: EventRecord) => {
+  const { aseq: _a, acl: _r, ...row } = { ...e, imp: true as const }
+  const rooms = tx.objectStore('rooms')
+  const r = (await rooms.get(e.room)) as RoomRecord | undefined
+  if (!r) return
+  const size = storedSize(e.wire)
+  const seq = r.lastSeq + 1
+  await tx.objectStore('events').put({ ...row, seq })
+  await rooms.put({ ...r, count: r.count + 1, lastSeq: seq, bytes: (r.bytes ?? 0) + size })
+  const meta = tx.objectStore('meta')
+  await meta.put((((await meta.get(SERVER_TOTAL)) as number | undefined) ?? 0) + 1, SERVER_TOTAL)
+  await meta.put(
+    (((await meta.get(SERVER_TOTAL_BYTES)) as number | undefined) ?? 0) + size,
+    SERVER_TOTAL_BYTES
+  )
 }
 
 // Reads the inflated lines one at a time, so memory goes to the records, never to one huge
@@ -790,13 +826,15 @@ const load = async (
     const st = tx.objectStore(name)
     const inline = st.keyPath !== null
     for (const r of rows) {
-      const v = r.value
+      let v = r.value
       if (!inline && r.key === undefined) {
         skipped += 1
         continue
       }
       if (name === 'events') {
         const e = v as EventRecord
+        // A server event is checked and decided on the next start (server.ts load).
+        if (e.layer) v = { ...e, imp: true }
         if (!e.purged) count(perRoom, e.room, storedSize(e.wire))
         const ev = (e.wire as Wire).ev
         if (ev.sender === ik && ev.dev === oldDk) {
@@ -883,7 +921,7 @@ const merge = async (
     }
     before.set(room.id, cur)
     theirs.set(room.id, room)
-    // A server room comes as it is: state events are resolved again when P2P starts.
+    // A server room comes as it is: its events are admitted again when P2P starts.
     if (!cur)
       await roomStore.put(
         room.kind === 'server'
@@ -910,10 +948,14 @@ const merge = async (
   for (const e of list) {
     if (await evStore.get(e.id)) continue
     const room = theirs.get(e.room) as RoomRecord
+    if (room.kind === 'server') {
+      await putServerRow(tx, e)
+      events += 1
+      continue
+    }
     const res = await insertInto(asTx(tx), e.id, e.wire, e.receivedAt, {
       me: ik,
       peer: room.peer,
-      mark: serverMarks(e),
     })
     if (res.status === 'new') events += 1
     else if (res.status !== 'dup') skipped += 1

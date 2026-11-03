@@ -119,6 +119,7 @@ const server = (over: Partial<ServerView> = {}): ServerView => ({
   me: 'join',
   joining: false,
   owner: ALICE,
+  owners: [ALICE],
   perms: 0,
   history: 'shared',
   system: { ch: CH, join: true, leave: true },
@@ -130,6 +131,7 @@ const server = (over: Partial<ServerView> = {}): ServerView => ({
   seq: 0,
   gap: false,
   full: false,
+  readOnly: null,
   ...over,
 })
 
@@ -436,7 +438,15 @@ describe('personal filter on P2P names', () => {
       name: 'shit club',
       channels: [{ id: CH, name: 'shit-talk', kind: 'text', pos: 0, topic: 'no shit topics' }],
       members: [
-        { ik: ALICE, m: 'join', name: 'Shitlord', owner: true, online: true, contact: true },
+        {
+          ik: ALICE,
+          m: 'join',
+          name: 'Shitlord',
+          owner: true,
+          online: true,
+          contact: true,
+          below: false,
+        },
       ],
     })
     Object.assign(initial, { me: me('bob') })
@@ -553,6 +563,7 @@ describe('personal filter on P2P names', () => {
       owner: false,
       online: true,
       contact: true,
+      below: true,
     }
     p2pState({ enabled: true, account: 'bob', me: BOB, servers: { [SRV]: v } })
     await setMasking(true, () => Promise.resolve(stub))

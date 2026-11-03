@@ -1,3 +1,4 @@
+import type { PackedRec } from './acl_room'
 import {
   attsOf,
   authorizeTarget,
@@ -5,11 +6,10 @@ import {
   isLate,
   LIMITS as EV,
   redacted,
-  roomOf,
   sortKeyOf,
   targetOf,
-  type Core,
   type Wire,
+  type WireV2,
 } from './event'
 import type { IDBPTransaction } from 'idb'
 import {
@@ -33,8 +33,8 @@ export const DAG = {
   totalCap: 500_000,
   roomBytes: 200 * 1024 * 1024,
   totalBytes: 1024 * 1024 * 1024,
-  // P2P servers have a budget of their own, so a server can never crowd out DMs. (Each member's
-  // share of a server room is a window along their chain: server.ts, note section 6.)
+  // P2P servers have a budget of their own, so a server can never crowd out DMs. It bounds their
+  // content; ACL events are always stored (spec 4.2).
   serverCap: 400_000,
   serverBytes: 768 * 1024 * 1024,
   // Steps of any walk over prev links.
@@ -49,9 +49,10 @@ export type Inserted =
   | { status: 'dup'; rec: EventRecord }
   | { status: 'invalid'; why: 'depth' | 'auth' }
   | { status: 'full'; why: FullWhy }
-  // P2P servers: past the sender's window (or a link of their chain we lack): not stored, no
-  // strike, the room isn't full for others.
+  // P2P servers: not stored for now (pending, held, or past a local limit): no strike.
   | { status: 'quota' }
+  // P2P servers: refused by the rules (spec 2.1 Reject): never stored or relayed, no strike.
+  | { status: 'rejected'; why: string }
 
 export type FullWhy = 'events' | 'bytes'
 
@@ -64,22 +65,13 @@ export interface InsertCtx {
   totalBytes?: number
   // Our own new event: its display time doesn't follow parents shown in the future.
   own?: boolean
-  // P2P servers: the target rule (the DM one by default), whether a stored redaction removes a
-  // target (only its own sender's, by default), and fields to store with the record.
-  target?: (ev: Core, target: EventRecord) => boolean
-  mayRedact?: (redaction: EventRecord, target: Pick<EventRecord, 'sender'>) => boolean
-  mark?: Pick<EventRecord, 'chan' | 'state' | 'skey' | 'mod' | 'soft' | 'dseq' | 'cw' | 'cl'>
-  // P2P servers: stored past every cap (owner and moderation events, our own membership).
-  exempt?: boolean
-  serverCap?: number
-  serverBytes?: number
+  // Fields to store with the record (an import keeps what the exporting device decided).
+  mark?: Pick<EventRecord, 'chan'>
 }
 
 // Server rooms count against their own totals.
 export const SERVER_TOTAL = 'sevents'
 export const SERVER_TOTAL_BYTES = 'sbytes'
-
-const sameSender = (r: EventRecord, t: Pick<EventRecord, 'sender'>) => r.sender === t.sender
 
 export const blankRoom = (id: string, peer: string, now: number): RoomRecord => ({
   id,
@@ -162,28 +154,23 @@ export const insertInto = async (
   const events = tx.objectStore('events')
   const refuse = (why: 'depth' | 'auth'): Inserted => ({ status: 'invalid', why })
   const ev = wire.ev
-  const rid = roomOf(id, ev)
+  const rid = ev.room
   const have = await events.get(id)
   if (have) return { status: 'dup', rec: have }
   const room = (await tx.objectStore('rooms').get(rid)) ?? blankRoom(rid, ctx.peer, receivedAt)
-  const mayRedact = ctx.mayRedact ?? sameSender
-  const server = room.kind === 'server'
+  if (room.kind === 'server') return { status: 'invalid', why: 'auth' }
+  const mayRedact = sameSender
   const meta = tx.objectStore('meta')
-  const totalKey = server ? SERVER_TOTAL : TOTAL
-  const bytesKey = server ? SERVER_TOTAL_BYTES : TOTAL_BYTES
-  const total = ((await meta.get(totalKey)) as number | undefined) ?? 0
-  const totalBytes = ((await meta.get(bytesKey)) as number | undefined) ?? 0
+  const total = ((await meta.get(TOTAL)) as number | undefined) ?? 0
+  const totalBytes = ((await meta.get(TOTAL_BYTES)) as number | undefined) ?? 0
   const roomBytes = room.bytes ?? 0
   const size = storedSize(wire)
-  const totalCap = server ? (ctx.serverCap ?? DAG.serverCap) : (ctx.totalCap ?? DAG.totalCap)
-  const totalMax = server
-    ? (ctx.serverBytes ?? DAG.serverBytes)
-    : (ctx.totalBytes ?? DAG.totalBytes)
+  const totalCap = ctx.totalCap ?? DAG.totalCap
+  const totalMax = ctx.totalBytes ?? DAG.totalBytes
   const roomCap = ctx.roomCap ?? DAG.roomCap
   const roomMax = ctx.roomBytes ?? DAG.roomBytes
-  const why: FullWhy | null = ctx.exempt
-    ? null
-    : room.count >= roomCap || total >= totalCap
+  const why: FullWhy | null =
+    room.count >= roomCap || total >= totalCap
       ? 'events'
       : roomBytes + size > roomMax || totalBytes + size > totalMax
         ? 'bytes'
@@ -209,12 +196,7 @@ export const insertInto = async (
     return refuse('depth')
   const tid = targetOf(wire)
   const target = tid ? await events.get(tid) : undefined
-  if (
-    target &&
-    (target.room !== rid ||
-      !(ctx.target ? ctx.target(ev, target) : authorizeTarget(ev, target.wire)))
-  )
-    return refuse('auth')
+  if (target && (target.room !== rid || !authorizeTarget(ev, target.wire))) return refuse('auth')
   const reply =
     ev.type === 'msg' && wire.c && 'body' in wire.c
       ? (wire.c as { reply?: string }).reply
@@ -276,8 +258,7 @@ export const insertInto = async (
   let ping: PingKind | null = null
   let unread = false
   const c = rec.wire.c
-  // Servers count per channel, once they know the message is shown (server.ts).
-  if (ev.sender !== ctx.me && room.kind !== 'server') {
+  if (ev.sender !== ctx.me) {
     if (ev.type === 'msg' && c) {
       unread = true
       const m = c as { mentions?: string[]; fwd?: unknown } | null
@@ -302,9 +283,201 @@ export const insertInto = async (
     bytes: roomBytes + size,
   }
   await tx.objectStore('rooms').put(next)
-  await meta.put(total + 1, totalKey)
-  await meta.put(totalBytes + size, bytesKey)
+  await meta.put(total + 1, TOTAL)
+  await meta.put(totalBytes + size, TOTAL_BYTES)
   return { status: 'new', rec, ping, unread, freed }
+}
+
+const sameSender = (r: EventRecord, t: Pick<EventRecord, 'sender'>) => r.sender === t.sender
+
+// ----- P2P servers (spec 1.3, 4.2): two layers in one store -----
+
+// A device's chain in a server as this device stored it (meta store): its highest seq and its
+// last ACL and content events. Read and written in the transaction that stores an event of it.
+export interface DevChain {
+  seq: number
+  aprev?: string
+  cprev?: string
+}
+
+export const chainKey = (room: string, dev: string) => `chain2\n${room}\n${dev}`
+
+export interface ServerInsert {
+  me: string
+  // An admitted ACL event: its admission order and record (absent: content, or a server of
+  // unknown rules, whose events are stored unchecked).
+  aseq?: number
+  acl?: PackedRec
+  // Our own event: the device chain must still be where it was read when the event was built.
+  chain?: DevChain | null
+  // Content caps (per room and for every server together); ACL events always fit, and so do the
+  // events of a server of unknown rules up to `unknownCap`.
+  roomCap?: number
+  roomBytes?: number
+  serverCap?: number
+  serverBytes?: number
+  unknown?: boolean
+}
+
+// Limits of a server whose rules this build doesn't know (stored unchecked, spec 1.2).
+export const UNKNOWN = { events: 20_000, bytes: 32 * 1024 * 1024 }
+
+export type ServerInserted = Inserted | { status: 'stale' }
+
+const CONTENT_TARGETED: readonly string[] = ['edit', 'redact', 'react', 'pin']
+
+export const insertServer = async (
+  db: P2pDatabase,
+  room: string,
+  id: string,
+  wire: WireV2,
+  receivedAt: number,
+  ctx: ServerInsert
+): Promise<ServerInserted> => {
+  const tx = db.transaction(['rooms', 'events', 'children', 'meta'], 'readwrite')
+  tx.done.catch(() => {})
+  const events = tx.objectStore('events')
+  const have = await events.get(id)
+  if (have) {
+    await tx.done
+    return { status: 'dup', rec: have }
+  }
+  const r = await tx.objectStore('rooms').get(room)
+  if (!r || r.kind !== 'server') {
+    tx.abort()
+    return { status: 'invalid', why: 'auth' }
+  }
+  const ev = wire.ev
+  const meta = tx.objectStore('meta')
+  const ck = chainKey(room, ev.dev)
+  const chain = ((await meta.get(ck)) as DevChain | undefined) ?? null
+  if (ctx.chain !== undefined && (chain?.seq ?? -1) !== (ctx.chain?.seq ?? -1)) {
+    tx.abort()
+    return { status: 'stale' }
+  }
+  const acl = ev.L === 'a'
+  const total = ((await meta.get(SERVER_TOTAL)) as number | undefined) ?? 0
+  const totalBytes = ((await meta.get(SERVER_TOTAL_BYTES)) as number | undefined) ?? 0
+  const size = storedSize(wire as unknown as Wire)
+  const roomBytes = r.bytes ?? 0
+  const full: FullWhy | null = ctx.unknown
+    ? r.count >= UNKNOWN.events || total >= (ctx.serverCap ?? DAG.serverCap)
+      ? 'events'
+      : roomBytes + size > UNKNOWN.bytes || totalBytes + size > (ctx.serverBytes ?? DAG.serverBytes)
+        ? 'bytes'
+        : null
+    : acl
+      ? null
+      : r.count >= (ctx.roomCap ?? DAG.roomCap) || total >= (ctx.serverCap ?? DAG.serverCap)
+        ? 'events'
+        : roomBytes + size > (ctx.roomBytes ?? DAG.roomBytes) ||
+            totalBytes + size > (ctx.serverBytes ?? DAG.serverBytes)
+          ? 'bytes'
+          : null
+  if (full) {
+    if (!r.full) await tx.objectStore('rooms').put({ ...r, full: true, fullWhy: full })
+    await tx.done
+    return { status: 'full', why: full }
+  }
+  const c = wire.c as Record<string, unknown> | null
+  const prev = acl ? [] : (ev.prev ?? [])
+  const parents: EventRecord[] = []
+  for (const p of prev) {
+    const x = await events.get(p)
+    if (x && x.room === room) parents.push(x)
+  }
+  const effTs = effTsOf(
+    ev.ts,
+    receivedAt,
+    parents.map(x => (ev.a === ctx.me ? Math.min(x.effTs, receivedAt) : x.effTs))
+  )
+  const seq = r.lastSeq + 1
+  // Display order among equal times follows the content parents, and for ACL events (join and
+  // leave lines) their admission order.
+  const depth = acl ? (ctx.aseq ?? 0) : 1 + Math.max(-1, ...parents.map(x => x.depth))
+  const tid =
+    !acl && c && CONTENT_TARGETED.includes(ev.t) && typeof c.target === 'string' ? c.target : null
+  const target = tid ? await events.get(tid) : undefined
+  const stored = wire
+  const isRedacted = c === null
+  const rec: EventRecord = {
+    id,
+    room,
+    type: ev.t,
+    sender: ev.a,
+    wire: stored as unknown as Wire,
+    depth,
+    effTs,
+    sortKey: sortKeyOf(effTs, depth, id),
+    receivedAt,
+    seq,
+    redacted: isRedacted,
+    layer: ev.L,
+    dev: ev.dev,
+    dseq: ev.seq,
+  }
+  if (acl && ctx.aseq !== undefined) rec.aseq = ctx.aseq
+  if (acl && ctx.acl) rec.acl = ctx.acl
+  if (!acl && typeof c?.ch === 'string') rec.chan = c.ch
+  if (tid && target?.room !== undefined && target.room !== room) {
+    tx.abort()
+    return { status: 'invalid', why: 'auth' }
+  }
+  if (tid) rec.target = tid
+  const reply = !acl && ev.t === 'msg' && typeof c?.reply === 'string' ? c.reply : undefined
+  if (reply) rec.reply = reply
+  const atts = isRedacted || ev.t !== 'msg' ? [] : attsOf(stored.c as never)
+  if (atts.length) Object.assign(rec, withFiles(rec, atts))
+  await events.put(rec)
+  const next: DevChain = { seq: Math.max(chain?.seq ?? -1, ev.seq) }
+  const keep = (x: string | undefined, mine: boolean) => (mine ? id : x)
+  const later = ev.seq >= (chain?.seq ?? -1)
+  const ap = keep(chain?.aprev, acl && later)
+  const cp = keep(chain?.cprev, !acl && later)
+  if (ap !== undefined) next.aprev = ap
+  if (cp !== undefined) next.cprev = cp
+  await meta.put(next, ck)
+  const missing = r.missing.filter(m => m !== id)
+  const known = new Set(parents.map(x => x.id))
+  for (const p of prev) if (!known.has(p) && !missing.includes(p)) missing.push(p)
+  let heads = r.heads
+  if (!acl) {
+    const children = tx.objectStore('children')
+    for (const p of prev) await children.put({ parent: p, child: id })
+    heads = nextHeads(r.heads, id, depth, prev, (await children.count(childRange(id))) > 0)
+  }
+  await tx.objectStore('rooms').put({
+    ...r,
+    heads,
+    missing: missing.slice(-DAG.missing),
+    count: r.count + 1,
+    lastSeq: seq,
+    lastTs: !acl && ev.t === 'msg' ? Math.max(r.lastTs, effTs) : r.lastTs,
+    bytes: roomBytes + size,
+  })
+  await meta.put(total + 1, SERVER_TOTAL)
+  await meta.put(totalBytes + size, SERVER_TOTAL_BYTES)
+  await tx.done
+  return { status: 'new', rec, ping: null, unread: false, freed: [] }
+}
+
+// Strips a content event a redaction by its own author hides (spec 4.3: self-redactions purge at
+// once), with that author's edits of it; returns the files it carried. The caller checks that the
+// redaction counts (visible, positioned after its target).
+export const stripServer = async (db: P2pDatabase, room: string, id: string, author: string) => {
+  const tx = db.transaction('events', 'readwrite')
+  const events = tx.store
+  const t = await events.get(id)
+  let freed: string[] = []
+  if (t && t.room === room && t.layer === 'c' && !t.redacted && t.sender === author) {
+    freed = t.atts ?? []
+    await events.put(stripped(t))
+    for (const x of await events.index('room_target').getAll([room, id]))
+      if (x.type === 'edit' && x.layer === 'c' && !x.redacted && x.sender === author)
+        await events.put(stripped(x))
+  }
+  await tx.done
+  return freed
 }
 
 // An event signed by a since-revoked device is kept only when a stored event signed by a device
@@ -347,6 +520,12 @@ export const vouched = async (
 export const lateMark = (rec: Pick<EventRecord, 'effTs' | 'receivedAt'>) =>
   isLate(rec.effTs, rec.receivedAt)
 
+// Parents of a stored event: `prev`, and for a server event its ACL parents too.
+export const parentsOf = (r: EventRecord): string[] => {
+  const ev = r.wire.ev as { prev?: string[]; ap?: string[] }
+  return [...(ev.prev ?? []), ...(ev.ap ?? [])]
+}
+
 // Which of `targets` are `from` or one of their ancestors, walking at most `limit` events.
 export const ancestorsAmong = async (
   db: P2pDatabase,
@@ -368,7 +547,7 @@ export const ancestorsAmong = async (
     steps += 1
     if (targets.has(id)) found.add(id)
     const r = await tx.store.get(id)
-    if (r && r.room === room) for (const p of r.wire.ev.prev) if (!seen.has(p)) queue.push(p)
+    if (r && r.room === room) for (const p of parentsOf(r)) if (!seen.has(p)) queue.push(p)
   }
   await tx.done
   return found

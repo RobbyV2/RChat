@@ -1,6 +1,19 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Hub, ManualClock } from './p2p_net'
-import { bodies, general, joinWithCode, makeMember, pump, stopAll } from './p2p_server_net'
+import { P2pStore } from '../p2p/db'
+import { keyId } from '../p2p/keys'
+import { applyImport, exportP2p, KDF_MIN, unlockP2p, type Kdf } from '../p2p/transfer'
+import {
+  bodies,
+  deliver,
+  general,
+  joinWithCode,
+  makeMember,
+  pump,
+  signed,
+  stopAll,
+  stopMember,
+} from './p2p_server_net'
 
 const failure = (p: Promise<unknown>) =>
   p.then(
@@ -33,29 +46,99 @@ describe('P2P servers', () => {
   }, 60_000)
 })
 
+describe('co-owners (spec 3.8)', () => {
+  test('two rounds: the content without certificates goes out, each co-owner certifies its digest', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    await a.node.addContact(await b.node.myCard())
+    await pump(clock, () => b.node.contact(a.node.ik)?.state === 'incoming', 'request')
+    await b.node.accept(a.node.ik)
+    await pump(clock, () => a.node.contact(b.node.ik)?.state === 'mutual', 'mutual')
+    // Bob hasn't agreed: no certificate, no server.
+    expect(await failure(a.servers.create('Shared', [b.node.ik]))).toBe(
+      "Bob didn't agree to be a co-owner"
+    )
+    b.servers.allowCoOwner(a.node.ik)
+    const room = await a.servers.create('Shared', [b.node.ik])
+    expect(a.servers.view(room)?.owners).toEqual([a.node.ik, b.node.ik])
+    const g = (await a.store.event(room))!.wire.c as { owners: { ik: string; dk: string }[] }
+    expect(g.owners.map(o => o.ik)).toEqual([a.node.ik, b.node.ik])
+    expect(g.owners[1].dk).toBe(b.node.cert.dk)
+    // An owner joins without an invite.
+    const ch = general(a, room)
+    await a.servers.send(room, { ch, body: 'ours' })
+    expect(await bodies(a, room, ch)).toEqual(['ours'])
+  }, 60_000)
+})
+
+describe('devices (spec 3.9)', () => {
+  test('a new device introduces itself over its own session: a peer that never met it takes it', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('Moves')
+    const ch = general(a, room)
+    await joinWithCode(clock, a, room, b)
+    expect(a.node.contact(b.node.ik)).toBeUndefined()
+    // Bob moves to a new browser: same identity, a new device key.
+    const kdf: Kdf = { alg: 'argon2id', m: KDF_MIN.m, t: KDF_MIN.t, p: 1 }
+    const sec = await exportP2p(b.store.db, 'correct horse battery', kdf)
+    await b.node.markExported(clock.now())
+    stopMember(b)
+    const dump = await unlockP2p(sec, 'correct horse battery')
+    const db = `test-server-move-${Math.random()}`
+    const store = await P2pStore.open(db)
+    await applyImport(store.db, dump, 'new', { now: clock.now() })
+    store.close()
+    const b2 = await makeMember(hub, 'Bob', clock, { db })
+    const dk2 = keyId(b2.node.author()!.dk.pk)
+    expect(dk2).not.toBe(keyId(b.node.author()!.dk.pk))
+    await pump(
+      clock,
+      () => a.servers.sumOf(room).members[b.node.ik]?.devs.includes(dk2) === true,
+      'alice takes the new device'
+    )
+    await b2.servers.send(room, { ch, body: 'from the new device' })
+    await pump(
+      clock,
+      async () => (await bodies(a, room, ch)).includes('from the new device'),
+      'a has it'
+    )
+  }, 90_000)
+})
+
 describe('gossip', () => {
   test('A and C are never online together; B bridges, so C’s messages reach A', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
     const b = await makeMember(hub, 'Bob', clock)
+    const d = await makeMember(hub, 'Dave', clock)
     const room = await a.servers.create('Bridge')
     const ch = general(a, room)
     await joinWithCode(clock, a, room, b)
+    await joinWithCode(clock, a, room, d)
     await a.node.setPaused(true)
     const c = await makeMember(hub, 'Carol', clock)
-    // Bob can invite (@everyone may), so Carol joins through him while Alice is away.
-    await joinWithCode(clock, b, room, c)
+    // Bob can invite (@everyone may), so Carol joins through him while Alice is away; Dave's
+    // client acknowledges Bob's invite (a third member, spec 4.1 W3(e)).
+    const code = await b.servers.issueCode(room, 60 * 60_000)
+    await c.servers.redeem(code)
+    await pump(clock, () => c.servers.myMembership(room) === 'join', 'Carol joined')
     for (const body of ['one', 'two', 'three'])
       await c.servers.send(room, { ch: general(c, room), body })
     await pump(clock, async () => (await bodies(b, room, ch)).length === 3, 'b has c messages')
     await c.node.setPaused(true)
+    await d.node.setPaused(true)
     await a.node.setPaused(false)
     await pump(clock, async () => (await bodies(a, room, ch)).length === 3, 'a has c messages')
     expect(await bodies(a, room, ch)).toEqual(['one', 'two', 'three'])
     expect(a.servers.view(room)?.members.find(m => m.ik === c.node.ik)?.m).toBe('join')
     expect(hub.online(c.node.peerId)).toBe(false)
-  }, 60_000)
+  }, 90_000)
 })
 
 describe('moderation and soft-fail', () => {
@@ -104,54 +187,39 @@ describe('moderation and soft-fail', () => {
     expect(await bodies(a, room, ch)).toEqual(['before'])
     expect(await bodies(b, room, ch)).toEqual(['before'])
 
-    // A message dated before the ban, on parents from before it, is hidden as well.
+    // A message on parents from before the ban, dated before it, is hidden as well: past the
+    // ban's watermark (a new seq), or equivocating (the seq of 'concurrent').
     const old = (
       await a.store.db.getAllFromIndex(
         'events',
         'room_chan_sort',
         IDBKeyRange.bound([room, ch, ''], [room, ch, '￿'])
       )
-    ).find(r => (r.wire.c as { body?: string }).body === 'before')!
-    const author = c.node.author()!
-    const s = c.servers.resolved(room).state
-    const { authRefs } = await import('../p2p/auth')
-    const { buildEvent } = await import('../p2p/event')
-    const auth = authRefs(s, { type: 'msg', sender: c.node.ik, content: { ch } })
-    // On Carol's chain it can't be dated before her last message: refused.
-    const chain = await c.servers.nextChain(room, clock.now())
-    const backdated = buildEvent(
-      author,
+    ).find(r => (r.wire.c as { body?: string } | null)?.body === 'before')!
+    const oldEv = old.wire.ev as unknown as { ap: string[]; ts: number; seq: number }
+    const concurrent = (
+      await b.store.db.getAllFromIndex(
+        'events',
+        'room_chan_sort',
+        IDBKeyRange.bound([room, ch, ''], [room, ch, '￿'])
+      )
+    ).find(r => (r.wire.c as { body?: string } | null)?.body === 'concurrent')!
+    const backdated = await signed(
+      c,
       room,
       'msg',
       { body: 'backdated', ch },
-      [old.id],
-      old.depth + 1,
-      old.wire.ev.ts + 1,
-      { auth, dseq: chain.dseq, dprev: chain.dprev, dwin: 0 }
+      { ap: oldEv.ap, ts: oldEv.ts + 1, prev: [old.id], cprev: concurrent.id }
     )
-    expect((await b.servers.check(room, backdated.wire)).ok).toBe(false)
-    // Following on from 'before' instead (an equivocation: 'concurrent' has that number): stored,
-    // and Carol is flagged, so it never shows.
-    const forked = buildEvent(
-      author,
+    expect(await deliver(b, room, backdated.wire, clock.now())).toBe('new')
+    const forked = await signed(
+      c,
       room,
       'msg',
-      { body: 'backdated', ch },
-      [old.id],
-      old.depth + 1,
-      old.wire.ev.ts + 1,
-      {
-        auth,
-        dseq: (old.wire.ev.dseq ?? 0) + 1,
-        dprev: old.id,
-        dwin: (old.wire.ev.dwin ?? 0) + 1,
-      }
+      { body: 'forked', ch },
+      { ap: oldEv.ap, ts: oldEv.ts + 1, seq: oldEv.seq + 1, prev: [old.id], cprev: old.id }
     )
-    const checked = await b.servers.check(room, forked.wire)
-    expect(checked.ok).toBe(true)
-    const res = await b.servers.insert(room, forked.id, forked.wire, clock.now())
-    expect(res.status).toBe('new')
-    expect((await b.store.room(room))!.flagged?.[c.node.ik]).toBe((old.wire.ev.dseq ?? 0) + 1)
+    expect(await deliver(b, room, forked.wire, clock.now())).toBe('new')
     expect(await bodies(b, room, ch)).toEqual(['before'])
     // And Carol can't come back with a code.
     await c.node.setPaused(false)
@@ -213,7 +281,6 @@ describe('moderation and soft-fail', () => {
     // And can come back later: their chain goes on from where it was (starting over would be an
     // equivocation).
     await joinWithCode(clock, a, room, b)
-    expect(a.servers.resolved(room).flagged.has(b.node.ik)).toBe(false)
     await b.servers.send(room, { ch: general(b, room), body: 'back again' })
     await pump(clock, async () => (await bodies(a, room, ch)).includes('back again'), 'a has it')
   }, 90_000)
@@ -471,11 +538,11 @@ describe('forward compatibility', () => {
     await joinWithCode(clock, a, room, b)
     const emit = (
       a.servers as unknown as {
-        emit: (r: string, t: string, c: unknown, o?: unknown) => Promise<string>
+        emit: (r: string, t: string, c: () => unknown, o?: unknown) => Promise<string>
       }
     ).emit.bind(a.servers)
-    const poll = await emit(room, 'poll' as never, { q: 'lunch?', ch })
-    const emoji = await emit(room, 'emoji' as never, { name: 'party' }, { skey: 'party' })
+    const poll = await emit(room, 'poll', () => ({ q: 'lunch?', ch }), { L: 'c' })
+    const emoji = await emit(room, 'emoji', () => ({ name: 'party' }))
     await a.servers.send(room, { ch, body: 'after' })
     await pump(clock, async () => (await bodies(b, room, ch)).includes('after'), 'b synced')
     expect(await b.store.event(poll)).not.toBeUndefined()
@@ -487,10 +554,10 @@ describe('forward compatibility', () => {
 })
 
 describe('storage', () => {
-  test('schema v4 adds the server stores and indexes to a v3 database and keeps its data', async () => {
+  test('schema v5 adds the server indexes to a v3 database and keeps its data', async () => {
     const { openDB } = await import('idb')
     const { UPGRADES, P2pStore: Store, DB_VERSION } = await import('../p2p/db')
-    const name = `upgrade-v4-${Math.random()}`
+    const name = `upgrade-v5-${Math.random()}`
     const v3 = await openDB(name, 3, {
       upgrade(db, _old, _new, tx) {
         for (const up of UPGRADES.slice(0, 3)) up(db as never, tx as never)
@@ -501,13 +568,19 @@ describe('storage', () => {
     await v3.put('meta', 3, 'schema')
     v3.close()
     const store = await Store.open(name)
-    expect(DB_VERSION).toBe(4)
-    expect(store.db.version).toBe(4)
+    expect(DB_VERSION).toBe(5)
+    expect(store.db.version).toBe(5)
     expect(store.db.objectStoreNames.contains('idents')).toBe(true)
     expect(store.db.objectStoreNames.contains('codes')).toBe(true)
     expect((await store.event('e1'))?.room).toBe('r')
     expect((await store.room('r'))?.kind).toBe('dm')
-    expect(await store.db.countFromIndex('events', 'room_state', ['r', 1])).toBe(0)
+    expect(
+      await store.db.countFromIndex(
+        'events',
+        'room_aseq',
+        IDBKeyRange.bound(['r', -Infinity], ['r', Infinity])
+      )
+    ).toBe(0)
     expect(
       await store.db.countFromIndex(
         'events',
@@ -515,7 +588,7 @@ describe('storage', () => {
         IDBKeyRange.bound(['r', '', ''], ['r', '\uffff', '\uffff'])
       )
     ).toBe(0)
-    expect(await store.meta('schema')).toBe(4)
+    expect(await store.meta('schema')).toBe(5)
     store.close()
     const again = await Store.open(name)
     expect((await again.event('e1'))?.room).toBe('r')
@@ -524,7 +597,7 @@ describe('storage', () => {
 })
 
 describe('checks before storage', () => {
-  test('forged or misplaced events are refused before they are stored', async () => {
+  test('malformed events cost a strike; refusals by the rules and missing parents do not', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
@@ -532,110 +605,32 @@ describe('checks before storage', () => {
     const room = await a.servers.create('Checks')
     const ch = general(a, room)
     await joinWithCode(clock, a, room, b)
-    const { authRefs } = await import('../p2p/auth')
-    const { buildEvent } = await import('../p2p/event')
-    const s = b.servers.resolved(room).state
-    const heads = (await b.store.room(room))!.heads
-    const prev = heads.map(h => h.id)
-    const depth = Math.max(...heads.map(h => h.depth)) + 1
-    const author = b.node.author()!
-    const chain = await b.servers.nextChain(room, clock.now())
-    const build = (
-      type: string,
-      content: Record<string, unknown>,
-      extra: Record<string, unknown>
-    ) =>
-      buildEvent(author, room, type as never, content, prev, depth, chain.ts, {
-        dseq: chain.dseq,
-        dwin: chain.dwin,
-        dprev: chain.dprev,
-        ...(extra.skey !== undefined ? { sprev: chain.sprev } : {}),
-        ...extra,
-      }).wire
-    const refused = async (wire: unknown) => {
-      const v = await a.servers.check(room, wire)
-      return !v.ok && !v.later
-    }
-    // Without its chain, or with a chain that doesn't follow on from the sender's last event.
-    const refs0 = authRefs(s, { type: 'msg', sender: b.node.ik, content: { ch } })
-    expect(
-      await refused(
-        buildEvent(author, room, 'msg', { body: 'x', ch }, prev, depth, chain.ts, { auth: refs0 })
-          .wire
-      )
-    ).toBe(true)
-    // Not stored (without a strike: a relayer may not have had the previous event).
-    const off = async (wire: unknown) => !(await a.servers.check(room, wire)).ok
-    expect(await off(build('msg', { body: 'x', ch }, { auth: refs0, dseq: chain.dseq + 1 }))).toBe(
-      true
+    const now = () => clock.now()
+    // Malformed (spec 2.1): a bad signature, another server, a known type's content wrong.
+    const ok = await signed(b, room, 'msg', { body: 'x', ch })
+    const forged = { ...ok.wire, sig: ok.wire.sig.replace(/^./, c => (c === 'A' ? 'B' : 'A')) }
+    expect(await deliver(a, room, forged, now())).toBe('malformed')
+    const other = await signed(b, room, 'msg', { body: 'x', ch })
+    const moved = JSON.parse(JSON.stringify(other.wire))
+    moved.ev.srv = 'A'.repeat(43)
+    expect(await deliver(a, room, moved, now())).toBe('malformed')
+    expect(await deliver(a, room, (await signed(b, room, 'kick', { to: 7 })).wire, now())).toBe(
+      'malformed'
     )
-    expect(await off(build('msg', { body: 'x', ch }, { auth: refs0, dwin: chain.dwin + 5 }))).toBe(
-      true
-    )
-    // A member renaming the server (only the owner may).
-    expect(
-      await refused(
-        build(
-          'name',
-          { name: 'Mine' },
-          {
-            skey: '',
-            pstate: b.servers.resolved(room).heads,
-            auth: authRefs(s, { type: 'name', sender: b.node.ik, skey: '' }),
-          }
-        )
-      )
-    ).toBe(true)
-    // A message with a state key, and a state event without its state heads.
-    expect(
-      await refused(
-        build(
-          'msg',
-          { body: 'x', ch },
-          { skey: 'x', auth: authRefs(s, { type: 'msg', sender: b.node.ik, content: { ch } }) }
-        )
-      )
-    ).toBe(true)
-    expect(
-      await refused(
-        build(
-          'channel',
-          { name: 'x', kind: 'text', pos: 1 },
-          { skey: 'AAAAAAAAAAA', auth: authRefs(s, { type: 'channel', sender: b.node.ik }) }
-        )
-      )
-    ).toBe(true)
-    // Auth references without the create event.
-    const refs = authRefs(s, { type: 'msg', sender: b.node.ik, content: { ch } })
-    expect(await refused(build('msg', { body: 'x', ch }, { auth: refs.slice(1) }))).toBe(true)
-    // A message to a channel that doesn't exist.
-    expect(await refused(build('msg', { body: 'x', ch: 'BBBBBBBBBBB' }, { auth: refs }))).toBe(true)
-    // Kicking the owner.
-    expect(
-      await refused(
-        build(
-          'member',
-          { m: 'leave' },
-          {
-            skey: a.node.ik,
-            pstate: b.servers.resolved(room).heads,
-            auth: authRefs(s, { type: 'member', sender: b.node.ik, skey: a.node.ik }),
-          }
-        )
-      )
-    ).toBe(true)
-    // An auth event we don't have yet: not refused, asked for.
-    const unknown = build(
-      'msg',
-      { body: 'x', ch },
-      { auth: [...refs.slice(0, -1), 'A'.repeat(43)] }
-    )
-    const v = await a.servers.check(room, unknown)
-    expect(!v.ok && v.later).toBe(true)
-    expect((await a.store.room(room))!.missing).toContain('A'.repeat(43))
-    // The real thing passes.
-    expect((await a.servers.check(room, build('msg', { body: 'ok', ch }, { auth: refs }))).ok).toBe(
-      true
-    )
+    // Refused by the rules, no strike: renaming the server without Manage server, kicking the
+    // owner, a message to a channel that doesn't exist.
+    const settings = await signed(b, room, 'settings', { name: 'Mine' })
+    expect(await deliver(a, room, settings.wire, now())).toBe('rejected')
+    const kick = await signed(b, room, 'kick', { to: a.node.ik, seen: {} })
+    expect(await deliver(a, room, kick.wire, now())).toBe('rejected')
+    const lost = await signed(b, room, 'msg', { body: 'x', ch: 'AAAAAAAAAAA' })
+    expect(await deliver(a, room, lost.wire, now())).toBe('rejected')
+    // An event that cites one we don't have: pending, and that parent is asked for.
+    const missing = 'A'.repeat(43)
+    const pend = await signed(b, room, 'msg', { body: 'later', ch }, { ap: [missing] })
+    expect(await deliver(a, room, pend.wire, now())).toBe('quota')
+    expect(a.servers.waiting(room).pending).toBe(1)
+    // The real thing is stored.
+    expect(await deliver(a, room, ok.wire, now())).toBe('new')
   }, 60_000)
 })

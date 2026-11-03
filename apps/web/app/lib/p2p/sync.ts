@@ -21,7 +21,7 @@ export interface Walked {
 // How a room kind serves its events. Each is asked for every request, so a gate always applies to
 // what is current.
 export interface Serving {
-  // A walk back over `prev` links (or over `pstate`, for `state`), oldest first.
+  // A walk back over `prev` links (servers: over the ACL DAG, for `state`), oldest first.
   walk: (
     link: Link,
     from: string[],
@@ -57,9 +57,8 @@ export const SYNC = {
   pushPerMin: 600,
   // Events pulled per session before older history waits for "Load older".
   horizon: 2000,
-  // State comes whole (it is what everything else is checked against), but within its own
-  // horizon per link (a room's state cap) and rate, so a peer can't flood us through pulls.
-  stateHorizon: 20_000,
+  // Servers: the ACL DAG comes whole (spec 4.2, no horizon), within a rate, so a peer can't flood
+  // us through pulls.
   statePerMin: 2000,
   headsDebounceMs: 250,
   typingMs: 8000,
@@ -92,8 +91,10 @@ export interface SyncDeps {
   // Stores a checked event (DMs: insertEvent with the conversation's caps).
   insert?: (link: Link, id: string, wire: Wire, receivedAt: number) => Promise<Inserted>
   serving?: Serving
-  // Servers: the state heads, sent with `heads` and pulled first.
+  // Servers: the ACL heads, sent with `heads` and pulled first, and ACL events we wait for (the
+  // missing parents of pending events).
   stateHeads?: (room: string) => Promise<string[]>
+  stateWanted?: (room: string) => string[]
   // Events stored from a peer (new ones only).
   onStored: (room: string, from: string, added: Inserted[]) => void
   onDelivered: (room: string, ids: string[]) => void
@@ -144,7 +145,6 @@ export class Link {
   theirPushBytes = 0
   pushTimes: number[] = []
   pulled = 0
-  statePulled = 0
   stateTimes: { at: number; n: number }[] = []
   unavailable = new Set<string>()
   peerHeads: string[] = []
@@ -355,7 +355,7 @@ export class Sync {
     link.headsQueued = true
     this.queue(link, 64 * heads.length, async () => {
       link.headsQueued = false
-      await this.checkDelivered(link, link.peerHeads)
+      await this.checkDelivered(link, [...link.peerHeads, ...link.peerState])
       await this.fillGaps(link)
     })
   }
@@ -397,12 +397,11 @@ export class Sync {
     if (link.closed || link.requests.size >= this.limits.requests) return
     if ([...link.requests.values()].some(r => r.kind === 'want')) return
     if (!state && link.pulled >= this.limits.horizon) return this.deps.onState?.(link.room)
-    if (state && link.statePulled >= this.limits.stateHorizon) return this.deps.onState?.(link.room)
     const ids = from.slice(0, this.limits.fromMax)
     if (!ids.length) return
     const rid = ++link.rid
     const limit = state
-      ? Math.min(this.limits.wantLimit, this.limits.stateHorizon - link.statePulled)
+      ? this.limits.wantLimit
       : Math.min(this.limits.wantLimit, this.limits.horizon - link.pulled)
     link.requests.set(rid, {
       kind: 'want',
@@ -438,11 +437,10 @@ export class Sync {
     const room = await this.deps.store.room(link.room)
     // Nothing more can be stored: asking would only bring refusals.
     if (room?.full || this.deps.quotaFull?.()) return
-    if (this.deps.stateHeads && link.peerState.length) {
-      const have = new Set(
-        (await getEvents(this.deps.store.db, link.room, link.peerState)).map(r => r.id)
-      )
-      const state = link.peerState.filter(h => !have.has(h) && !link.unavailable.has(h))
+    if (this.deps.stateHeads) {
+      const ask = [...new Set([...link.peerState, ...(this.deps.stateWanted?.(link.room) ?? [])])]
+      const have = new Set((await getEvents(this.deps.store.db, link.room, ask)).map(r => r.id))
+      const state = ask.filter(h => !have.has(h) && !link.unavailable.has(h))
       if (state.length) return this.pull(link, state, true)
     }
     if (link.held) return
@@ -454,10 +452,7 @@ export class Sync {
     )
     if (want.length) this.pull(link, [...new Set(want)])
     // Caught up: the horizon counts history again from here, not live catch-ups.
-    else if (!room?.missing.length) {
-      link.pulled = 0
-      link.statePulled = 0
-    }
+    else if (!room?.missing.length) link.pulled = 0
   }
 
   // "Load older": one more horizon of history from whoever is online.
@@ -491,7 +486,6 @@ export class Sync {
     if (bytes > this.limits.responseBytes + 4096) return s.strike()
     req.answered = true
     if (!req.state) link.pulled += evs.length
-    else link.statePulled += evs.length
     const more = m.more === true
     const denied = m.denied === true && evs.length === 0
     if (denied) link.held = true
@@ -599,6 +593,9 @@ export class Sync {
       }
       if (res.status === 'invalid') {
         link.session.strike()
+        refused.push(v.id)
+        link.unavailable.add(v.id)
+      } else if (res.status === 'rejected') {
         refused.push(v.id)
         link.unavailable.add(v.id)
       } else if (res.status === 'full') {

@@ -1,8 +1,8 @@
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb'
 import type { Contact } from './contacts'
-import type { Core, Wire } from './event'
+import type { PackedRec, Summary } from './acl_room'
+import type { Core, Wire, WireV2 } from './event'
 import type { Cert, KeyPair, Profile, Revocation, Succession } from './keys'
-import type { Membership } from './state'
 
 // P2P data lives only in this browser, in one IndexedDB database per instance and account. Each
 // schema version adds its stores in UPGRADES; later tasks append theirs (rooms, events, ...).
@@ -58,24 +58,15 @@ export const withoutSecrets = (s: SelfRecord): SelfRecord => ({
 
 export const hasSecrets = (s: SelfRecord) => s.ik.sk.length > 0 && s.dk.sk.length > 0
 
-// What resolution last made of a server's state events (resolve.ts), so it isn't replayed on
-// every start: the state as (state key, event id) pairs, the state heads, the rejected events
-// (all of them: later events are checked against them), events lost in merges, and accepted
-// membership events with the membership before them. `count` is the number of state events it
-// covers and `rules` the version of the rules it was made under; a different one means it is
-// stale.
+// What a server's evaluator last made of its ACL events (acl_room.ts Summary), shown at once on a
+// cold start while the evaluator rebuilds from the stored admission records. `impl` is the
+// version of the evaluator and record format, `rules` the server's rules version; a cache of
+// another implementation is ignored.
 export interface ServerCache {
-  rules?: number
+  impl: number
+  rules: number | null
   count: number
-  entries: [string, string][]
-  heads: string[]
-  rejected: string[]
-  lost?: string[]
-  transitions: [string, Membership | null][]
-  joins: [string, string][]
-  gaps?: number
-  flagged?: [string, number][]
-  power?: [string, string][]
+  sum: Summary
 }
 
 // Unread messages and pings of one server channel.
@@ -120,29 +111,21 @@ export interface RoomRecord {
   chans?: Record<string, ChanCounts>
   // `ev`: the invite an admitting member signed for us when we redeemed a code. It enters the
   // room (ours to store) once we have the room's state, and we join right after.
-  joining?: { at: number; via: 'code' | 'invite'; ev?: Wire } | null
+  joining?: { at: number; via: 'code' | 'invite'; ev?: WireV2 } | null
   // When we joined: older history that arrives later isn't counted as unread.
   since?: number
-  // An invite from a contact we haven't answered: who sent it and their invite event.
-  invite?: { from: string; at: number; wire: Wire } | null
-  // Our own chain in the room (note section 6): our latest event, its number and window count,
-  // and our latest state event.
-  mine?: {
-    last: string
-    dseq: number
-    ts: number
-    dwin: number
-    sprev?: string
-    sseq?: number
-  } | null
-  // Members seen equivocating here (two events with one number), and the first such number:
-  // their messages from there on aren't shown.
-  flagged?: Record<string, number>
-  // Bans in the resolved state: since when (by our clock) each has stood, and whether what the
+  // An invite from a contact we haven't answered: who sent it and their invite (`add`) event.
+  invite?: { from: string; at: number; wire: WireV2 } | null
+  // Bans in the current state: since when (by our clock) each has stood, and whether what the
   // banned member wrote and never showed has been purged.
   bans?: Record<string, { ban: string; since: number; purged?: true }>
+  // A server made under rules this build no longer runs (test builds): shown read-only.
+  legacy?: true
 }
 
+// A stored event. DMs hold v1 events (`wire` a Wire); P2P servers hold v2 events (spec 1.2), read
+// through `serverWire`, with `layer`, the signing device and its seq, and for an admitted ACL event
+// its admission order and record.
 export interface EventRecord {
   id: string
   room: string
@@ -159,24 +142,19 @@ export interface EventRecord {
   seq: number
   // Content removed by a redaction (or never received).
   redacted: boolean
-  // P2P servers: the channel of a message, state events (`state: 1`, with their state key), and
-  // a redaction made with Manage messages.
+  // P2P servers: the channel of a content event, the layer, the device and its seq, and for an
+  // admitted ACL event its admission order and record (acl_room.ts).
   chan?: string
-  state?: 1
-  skey?: string
-  mod?: true
-  // P2P servers: a message from someone who wasn't a member when it arrived and isn't an
-  // ancestor of their removal (soft-failed): the removal (`true` from older builds). It stays
-  // hidden even if they come back, unless that removal is overturned.
-  soft?: true | string
-  // P2P servers: the content of a banned member's hidden event was purged here (only the header
-  // the DAG needs is left). Never served: a peer asks someone else.
-  purged?: true
-  // P2P servers: the sender's chain number, and along their state events the hourly count and
-  // whether they left since they last joined (note section 6).
+  layer?: 'a' | 'c'
+  dev?: string
   dseq?: number
-  cw?: number
-  cl?: true
+  aseq?: number
+  acl?: PackedRec
+  // Imported from a transfer file: checked and decided on the next start.
+  imp?: true
+  // P2P servers: the content of a banned member's hidden event was purged here (only its header
+  // is left). Never served: a peer asks someone else.
+  purged?: true
   // Root hashes of the files a live message carries (dropped when it is redacted), and the same
   // as `fileKey`s, so the serving gate is one index lookup whatever else is stored.
   atts?: string[]
@@ -277,6 +255,7 @@ export interface P2pSchema extends DBSchema {
       room_chan_sort: [string, string, string]
       room_state: [string, number]
       room_dseq: [string, string, number]
+      room_aseq: [string, number]
     }
   }
   children: { key: [string, string]; value: { parent: string; child: string } }
@@ -340,6 +319,9 @@ export const UPGRADES: Upgrade[] = [
     tx.objectStore('events').createIndex('room_dseq', ['room', 'sender', 'dseq'])
     db.createObjectStore('idents', { keyPath: 'ik' })
     db.createObjectStore('codes', { keyPath: 'hash' }).createIndex('room', 'room')
+  },
+  (_db, tx) => {
+    tx.objectStore('events').createIndex('room_aseq', ['room', 'aseq'])
   },
 ]
 
@@ -502,3 +484,6 @@ export class P2pStore {
 }
 
 export const removeP2pDb = (name: string) => deleteDB(name)
+
+// The v2 event of a P2P server's stored record.
+export const serverWire = (r: Pick<EventRecord, 'wire'>) => r.wire as unknown as WireV2
