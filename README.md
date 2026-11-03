@@ -13,7 +13,7 @@
 
 # RChat
 
-RChat is an anonymous chat app with a layout like Discord. It runs on your own machine. It uses no external services, no email and no tracking.
+RChat is a semi-anonymous chat app with a layout like Discord. It runs on your own machine. It uses no external services, no email and no tracking.
 
 <p align="center">
   <img src="docs/screenshots/chat-dark.png" alt="A server channel in the dark theme with a join notice, mentions, replies, reactions, a forwarded message, a pin notice and online members" width="900">
