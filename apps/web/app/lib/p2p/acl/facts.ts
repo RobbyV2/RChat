@@ -1,4 +1,4 @@
-import { addS, EMPTY, Ix } from './reach'
+import { addS, EMPTY, firstTrue, Ix, type BitW } from './reach'
 import {
   ALL,
   BOT,
@@ -119,6 +119,8 @@ export interface EvalResult {
 // FI of identity `a` in epoch `epoch` ('' = genesis epoch).
 export const fiOf = (FI: ReadonlyMap<string, number>, a: string, epoch: string) =>
   FI.get(`${a}|${epoch}`) ?? Infinity
+
+const NOBITS: ReadonlyMap<number, BitW> = new Map()
 
 // A view: (event set E, void set, effective denies) as predicates over event indices. Every fact
 // is computed from its key's event list and memoized for the view's life.
@@ -254,48 +256,70 @@ export abstract class View {
     if (this.mBits.has(R)) return this.mBits.get(R)
     let v: number | undefined
     if (R === EVERYONE || this.role(R)) {
-      const ix = this.ix
-      const setters = ix.bitSet.get(R) ?? EMPTY
-      const clears = (ix.bitClr.get(R) ?? EMPTY).filter(c => this.effIn(c))
-      let any = 0
-      for (const s of setters) any |= maskOf(ix, s)
-      let m = 0
-      for (let i = 0; i <= 30; i++) {
-        const b = 1 << i
-        if (b > any) break
-        if (!(any & b)) continue
-        const mx: number[] = []
-        for (let k = clears.length - 1; k >= 0; k--) {
-          const c = clears[k]
-          if (ix.ev[c].c.bit !== b) continue
-          let below = false
-          for (const y of mx)
-            if (ix.before(c, y)) {
-              below = true
-              break
-            }
-          if (!below) mx.push(c)
-        }
-        for (let k = setters.length - 1; k >= 0; k--) {
-          const s = setters[k]
-          if (!(maskOf(ix, s) & b)) continue
-          if (ix.ev[s].t !== 'genesis' && !this.live(s)) continue
-          let ok = true
-          for (const c of mx)
-            if (!ix.before(c, s)) {
-              ok = false
-              break
-            }
-          if (ok) {
-            m |= b
-            break
-          }
-        }
-      }
-      v = m
+      v = 0
+      for (const [b, l] of this.ix.bitW.get(R) ?? NOBITS) if (this.bit(l)) v |= b
     }
     this.mBits.set(R, v)
     return v
+  }
+  // Bit(R, b) from the top down over its writes (§5.4 A). Before the newest effective clear, the
+  // live setters, stopping at a covering one (the bit is set); from that clear on, the maximal
+  // effective clears, stopping at a covering one. The bit holds iff a collected setter has every
+  // collected clear in its past.
+  private bit(l: BitW): boolean {
+    const ix = this.ix
+    const ws = l.w
+    const cov = ix.bitCov(l)
+    const hi = this.hiE()
+    const sets: number[] = []
+    const clrs: number[] = []
+    let late = false
+    let res: boolean | undefined
+    let stop = false
+    const visit = (x: number, k: number) => {
+      const e = ix.ev[x]
+      if (e.t === 'role_bits' && !e.c.on) {
+        if (!this.effIn(x)) return
+        if (!late) {
+          late = true
+          if (!sets.length) {
+            res = false
+            stop = true
+            return
+          }
+        }
+        let dom = false
+        for (const y of clrs)
+          if (ix.has(y, x)) {
+            dom = true
+            break
+          }
+        if (!dom) clrs.push(x)
+        if (cov[k]) stop = true
+      } else if (!late && (e.t === 'genesis' || this.live(x))) {
+        sets.push(x)
+        if (cov[k]) {
+          res = true
+          stop = true
+        }
+      }
+    }
+    const a = firstTrue(0, ws.length, j => ws[j] >= hi)
+    if (a < ws.length) {
+      const ex: number[] = []
+      for (const x of this.extraE()) if (x >= hi) ex.push(x)
+      ex.sort((p, q) => q - p)
+      for (const x of ex) {
+        const k = firstTrue(a, ws.length, j => ws[j] >= x)
+        if (k < ws.length && ws[k] === x) visit(x, k)
+        if (stop) break
+      }
+    }
+    for (let k = a - 1; k >= 0 && !stop; k--) visit(ws[k], k)
+    if (!stop && a === 0 && ws.length && ws[0] === ix.genesis) visit(ws[0], 0)
+    if (res !== undefined) return res
+    if (!late) return sets.length > 0
+    return sets.some(x => clrs.every(c => ix.has(x, c)))
   }
   // A position write of R in this view: a live create, a live G move, an effective move.
   isPosWrite(x: number, R: string): boolean {
@@ -627,11 +651,6 @@ export abstract class View {
     }
     return (this.lf = lf)
   }
-}
-
-const maskOf = (ix: Ix, s: number): number => {
-  const e = ix.ev[s]
-  return e.t === 'genesis' ? (e.c.everyone_bits ?? 0) : e.t === 'role_create' ? e.c.bits : e.c.bit
 }
 
 // The whole state of a view as a Facts object, key by key.

@@ -26,6 +26,12 @@ export const addS = <K, V>(m: Map<K, Set<V>>, k: K, v: V) => {
 }
 export const EMPTY: readonly number[] = []
 
+// The writes of one bit of one role (setters and clears) in index order, with coverage flags.
+export interface BitW {
+  w: number[]
+  cov: boolean[]
+}
+
 export const popcount = (w: number) => {
   w = w - ((w >>> 1) & 0x55555555)
   w = (w & 0x33333333) + ((w >>> 2) & 0x33333333)
@@ -81,8 +87,7 @@ export class Ix {
   unbanEv = new Map<string, number[]>()
   roleCreate = new Map<string, number>()
   roleDel = new Map<string, number[]>()
-  bitSet = new Map<string, number[]>()
-  bitClr = new Map<string, number[]>()
+  bitW = new Map<string, Map<number, BitW>>()
   posW = new Map<string, number[]>()
   assignEv = new Map<string, number[]>()
   revokeEv = new Map<string, number[]>()
@@ -165,7 +170,7 @@ export class Ix {
         this.genesis = i
         for (const o of ownersOf(c)) this.owners.add(o)
         pushM(this.memEv, e.a, i)
-        pushM(this.bitSet, EVERYONE, i)
+        this.addBits(EVERYONE, c.everyone_bits ?? 0, i)
         break
       case 'join':
         pushM(this.memEv, e.a, i)
@@ -186,7 +191,7 @@ export class Ix {
         break
       case 'role_create':
         this.roleCreate.set(id, i)
-        pushM(this.bitSet, id, i)
+        this.addBits(id, c.bits, i)
         pushM(this.posW, id, i)
         break
       case 'role_move':
@@ -194,7 +199,7 @@ export class Ix {
         pushM(this.roleNamed, c.role, i)
         break
       case 'role_bits':
-        pushM(c.on ? this.bitSet : this.bitClr, c.role, i)
+        this.addBits(c.role, c.bit, i)
         pushM(this.roleNamed, c.role, i)
         break
       case 'role_del':
@@ -289,6 +294,17 @@ export class Ix {
     return ix
   }
 
+  private addBits(R: string, mask: number, i: number) {
+    let m = this.bitW.get(R)
+    if (!m) this.bitW.set(R, (m = new Map()))
+    for (let b = 1; b > 0 && b <= mask; b <<= 1) {
+      if (!(mask & b)) continue
+      const l = m.get(b)
+      if (l) l.w.push(i)
+      else m.set(b, { w: [i], cov: [] })
+    }
+  }
+
   // C(ap) as a word bitset over the index, and its size.
   closure(ap: readonly string[]): { bits: Uint32Array; size: number } {
     const bits = new Uint32Array((this.n + 31) >>> 5)
@@ -308,9 +324,15 @@ export class Ix {
   // lazily). A register read from the top stops at the first maximal write with this flag.
   private cov = new Map<string, boolean[]>()
   posCov(R: string): boolean[] {
-    const ws = this.posW.get(R) ?? EMPTY
     let c = this.cov.get(R)
     if (!c) this.cov.set(R, (c = []))
+    return this.extendCov(this.posW.get(R) ?? EMPTY, c)
+  }
+  // The same flags over the writes of one bit of a role (§5.4 A).
+  bitCov(l: BitW): boolean[] {
+    return this.extendCov(l.w, l.cov)
+  }
+  private extendCov(ws: readonly number[], c: boolean[]): boolean[] {
     for (let k = c.length; k < ws.length; k++) {
       if (k === 0) {
         c.push(true)

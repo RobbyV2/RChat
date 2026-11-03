@@ -711,10 +711,15 @@ export class FastEval extends Equiv {
     // 3. frontier cuts over the readers of what the deny can take away
     const stamp = new Int32Array(ix.n).fill(-1)
     const byRoleMv = new Map<string, number[]>()
+    const byClr = new Map<string, number[]>()
     const order3: number[] = []
-    for (const d of effNS)
-      if (ix.ev[d].t === 'role_move') pushM(byRoleMv, ix.ev[d].c.role, d)
+    for (const d of effNS) {
+      const de = ix.ev[d]
+      if (de.t === 'role_move') pushM(byRoleMv, de.c.role, d)
+      else if (de.t === 'role_del') pushM(byClr, `d|${de.c.role}`, d)
+      else if (de.t === 'role_bits' && !de.c.on) pushM(byClr, `b|${de.c.role}|${de.c.bit}`, d)
       else order3.push(d)
+    }
     for (const d of order3) {
       const de = ix.ev[d]
       const tg = target(de, ix.rec[d].local.facts)
@@ -733,8 +738,9 @@ export class FastEval extends Equiv {
       authorizedK(o)
       return authKMono.get(o)!
     }
-    const mv = this.moveCuts(
+    const mv = this.chainCuts(
       byRoleMv,
+      byClr,
       st,
       alive,
       below,
@@ -788,11 +794,14 @@ export class FastEval extends Equiv {
     }
   }
 
-  // Step 3 for the effective moves at this stratum (§5 "Move storms"): per role, the moves are
-  // split into mover chains, and each holder op is matched against each chain by binary search;
-  // the cuts of a chain's covering range are a range term (chain, lo, hi, r) found by probes.
-  private moveCuts(
+  // Step 3 for the effective moves, bit clears and deletions at this stratum (§5.2, §5.4 B): per
+  // role (per role and bit, for clears) they are split into chains per author and device, and
+  // each reader is matched against each chain by binary search. The cuts of a mover chain's
+  // covering range are a range term (chain, lo, hi, r) found by probes; those of a clearer
+  // chain's concurrent range are one role-wide `uses` test, a term without threshold.
+  private chainCuts(
     byRoleMv: Map<string, number[]>,
+    byClr: Map<string, number[]>,
     st: Strat,
     alive: (i: number) => boolean,
     below: (o: number, N?: NPred) => boolean,
@@ -813,9 +822,7 @@ export class FastEval extends Equiv {
       role: number
     }
     interface Rl {
-      R: string
       gs: number[]
-      gpos: number[]
       terms: boolean
     }
     const chains: Ch[] = []
@@ -860,14 +867,10 @@ export class FastEval extends Equiv {
         return v
       }
     }
-    for (const [R, l] of byRoleMv) {
-      const ri = roles.length
-      const gs = [...l].sort((x, y) => ix.ev[x].c.pos - ix.ev[y].c.pos || x - y)
-      const gpos = gs.map(d => ix.ev[d].c.pos)
+    const chainsOf = (gs: number[], ri: number): number[] => {
       const rk = new Map<number, number>(gs.map((d, i) => [d, i]))
-      roles.push({ R, gs, gpos, terms: false })
       const runsBy = new Map<string, number[][]>()
-      for (const d of [...l].sort((x, y) => x - y)) {
+      for (const d of [...gs].sort((x, y) => x - y)) {
         const k = `${ix.ev[d].a}\u0001${ix.ev[d].dev}`
         runsBy.set(k, chainCover(ix, d, runsBy.get(k) ?? []))
       }
@@ -877,6 +880,36 @@ export class FastEval extends Equiv {
           chs.push(chains.length)
           chains.push({ c, rk: Int32Array.from(c, d => rk.get(d)!), role: ri })
         }
+      return chs
+    }
+    // fr: per chain, the range concurrent with o (all frontier); seen: the chain's events in B(o)
+    // that o's admission state does not hold effective
+    const fr: number[] = []
+    const seen: number[] = []
+    const frontierOf = (o: number, chs: number[]) => {
+      fr.length = 0
+      seen.length = 0
+      for (const ci of chs) {
+        const c = chains[ci].c
+        const m = c.length
+        const pa = firstTrue(0, m, j => !ix.has(o, c[j]))
+        const pb = firstTrue(pa, m, j => ix.has(c[j], o))
+        if (pa < pb && c[pa] !== o) fr.push(ci, pa, pb)
+        if (pa > 0) {
+          const L = neList(o, ci)
+          if (L) {
+            for (let t = 0; t < L.length && L[t] < pa; t++) seen.push(c[L[t]])
+          } else for (let j = 0; j < pa; j++) if (this.frontier(o, c[j])) seen.push(c[j])
+        }
+      }
+      return fr.length > 0 || seen.length > 0
+    }
+    for (const [R, l] of byRoleMv) {
+      const ri = roles.length
+      const gs = [...l].sort((x, y) => ix.ev[x].c.pos - ix.ev[y].c.pos || x - y)
+      const gpos = gs.map(d => ix.ev[d].c.pos)
+      roles.push({ gs, terms: false })
+      const chs = chainsOf(gs, ri)
       let guess = gs.length >> 1
       const thr = (o: number, dS: number): number => {
         let m = ivl.get(o)
@@ -913,26 +946,8 @@ export class FastEval extends Equiv {
         }
         return (guess = lo)
       }
-      const fr: number[] = []
-      const seen: number[] = []
       const moveOp = (o: number) => {
-        if (!alive(o)) return
-        fr.length = 0
-        seen.length = 0
-        for (const ci of chs) {
-          const c = chains[ci].c
-          const m = c.length
-          const pa = firstTrue(0, m, j => !ix.has(o, c[j]))
-          const pb = firstTrue(pa, m, j => ix.has(c[j], o))
-          if (pa < pb && c[pa] !== o) fr.push(ci, pa, pb)
-          if (pa > 0) {
-            const L = neList(o, ci)
-            if (L) {
-              for (let t = 0; t < L.length && L[t] < pa; t++) seen.push(c[L[t]])
-            } else for (let j = 0; j < pa; j++) if (this.frontier(o, c[j])) seen.push(c[j])
-          }
-        }
-        if (!fr.length && !seen.length) return
+        if (!alive(o) || !frontierOf(o, chs)) return
         if (!below(o) || !authorizedK(o)) return
         const pe = ix.ev[o]
         const ub = this.rankBound(pe.a)
@@ -972,6 +987,45 @@ export class FastEval extends Equiv {
             for (let j = 0; j < nS; j++) moveOp(run[j])
           }
       }
+    }
+    // a concurrent clear of (R, b) or deletion of R changes uses(o, ·) the same way whichever it
+    // is (the role-wide memo of uses), so an exposed reader is a direct cut of the whole range or
+    // of none of it; every reader of one group is a reader of each of its denies
+    for (const l of byClr.values()) {
+      const ri = roles.length
+      const gs = [...l].sort((x, y) => x - y)
+      roles.push({ gs, terms: false })
+      const chs = chainsOf(gs, ri)
+      const clearOp = (o: number) => {
+        if (!alive(o) || ix.owners.has(ix.ev[o].a) || !frontierOf(o, chs)) return
+        if (!below(o) || !authorizedK(o)) return
+        const pe = ix.ev[o]
+        const ub = this.rankBound(pe.a)
+        const allExp = pe.t === 'join' ? cmp(ub, kk) < 0 : !gt(ub, kk)
+        const pair = (d: number) => {
+          if ((allExp || exposed(o, d, () => Vfor(d, o))) && uses(o, d)) addD(d, o)
+        }
+        for (const d of seen) pair(d)
+        for (let t = 0; t < fr.length; t += 3) {
+          const ci = fr[t]
+          const c = chains[ci].c
+          const a = fr[t + 1]
+          const b = fr[t + 2]
+          if (!allExp) for (let j = a; j < b; j++) pair(c[j])
+          else if (uses(o, c[a])) {
+            pushM(terms, o, ci)
+            terms.get(o)!.push(a, b, gs.length)
+            roles[ri].terms = true
+            this.stats.terms++
+          }
+        }
+      }
+      const vis = new Uint8Array(ix.n)
+      this.readers(gs[0], o => {
+        if (vis[o]) return
+        vis[o] = 1
+        clearOp(o)
+      })
     }
     const cutBy = new Set<number>()
     const byChain = new Map<number, number[]>()
@@ -1283,6 +1337,42 @@ export class FastEval extends Equiv {
       const Wx = W & U(x)
       return Wx !== B0 && cascadeIn(x, Wx)
     }
+    // (§5.4 C) per op, the minimal worlds known to break it and the maximal ones known not to
+    // (cascadeIn is monotone in the world), and what each broken test asked of the world: the
+    // events N was consulted on, with the answers, in order. A test is a deterministic function
+    // of those answers, so a world that gives the same ones gets the same result.
+    interface Trace {
+      xs: number[]
+      as: boolean[]
+      v: boolean
+    }
+    interface WMemo {
+      t: bigint[]
+      f: bigint[]
+      tr: Trace[]
+    }
+    const wm = new Map<number, WMemo>()
+    const replays = (r: Trace, W: bigint) => {
+      for (let i = 0; i < r.xs.length; i++) if (inW(r.xs[i], W) !== r.as[i]) return false
+      return true
+    }
+    const known = (m: WMemo, W: bigint): boolean | undefined => {
+      for (const T of m.t) if ((T & ~W) === B0) return true
+      for (const F of m.f) if ((W & ~F) === B0) return false
+      for (const r of m.tr) if (replays(r, W)) return r.v
+      return undefined
+    }
+    const note = (m: WMemo, W: bigint, v: boolean) => {
+      if (v) {
+        if (m.t.some(T => (T & ~W) === B0)) return
+        m.t = m.t.filter(T => (W & ~T) !== B0)
+        m.t.push(W)
+      } else {
+        if (m.f.some(F => (W & ~F) === B0)) return
+        m.f = m.f.filter(F => (F & ~W) !== B0)
+        m.f.push(W)
+      }
+    }
     const cascadeIn = (q: number, Wq: bigint): boolean => {
       let mq = casc.get(q)
       if (!mq) casc.set(q, (mq = new Map()))
@@ -1291,9 +1381,29 @@ export class FastEval extends Equiv {
       worlds.add(Wq)
       let v = false
       if (authorizedK(q)) {
-        const N = (x: number) => ix.has(q, x) && cutOrd[x] === s && inW(x, Wq)
-        this.stats.brokenTests++
-        v = below(q, N) && !new Mono(ix, anchorOf(ix, q), st, N, EMPTYSET).authorized()
+        let m = wm.get(q)
+        if (!m) wm.set(q, (m = { t: [], f: [], tr: [] }))
+        const k = known(m, Wq)
+        if (k !== undefined) v = k
+        else {
+          const xs: number[] = []
+          const as: boolean[] = []
+          const asked = new Map<number, boolean>()
+          const N = (x: number) => {
+            if (!ix.has(q, x) || cutOrd[x] !== s) return false
+            let a = asked.get(x)
+            if (a === undefined) {
+              asked.set(x, (a = inW(x, Wq)))
+              xs.push(x)
+              as.push(a)
+            }
+            return a
+          }
+          this.stats.brokenTests++
+          v = below(q, N) && !new Mono(ix, anchorOf(ix, q), st, N, EMPTYSET).authorized()
+          m.tr.push({ xs, as, v })
+        }
+        note(m, Wq, v)
       }
       mq.set(Wq, v)
       return v
