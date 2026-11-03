@@ -8,7 +8,8 @@ import { b64u, randomBytes } from '../p2p/canonical'
 import { keyId } from '../p2p/keys'
 import { Gossip } from '../p2p/gossip'
 import type { Message } from '../p2p/frames'
-import { LEGACY_TEXT, SERVER, TOO_OFTEN_TEXT, UPDATE_TEXT } from '../p2p/server'
+import { LONE_TEXT } from '../p2p/flows'
+import { LEGACY_TEXT, SERVER, UPDATE_TEXT } from '../p2p/server'
 import { SHARE } from '../p2p/shares'
 import type { Session } from '../p2p/session'
 import type { Link } from '../p2p/sync'
@@ -209,7 +210,7 @@ describe('storage (spec 4.2)', () => {
       why = await failure(emit(b)(room, 'mark', () => ({})))
       if (why === 'ok') n += 1
     }
-    expect(why).toBe(TOO_OFTEN_TEXT)
+    expect(why).toBe(LONE_TEXT)
     expect(n).toBeLessThan(24)
     // The owner sees them and acknowledges them; Bob can go on.
     await a.node.setPaused(false)

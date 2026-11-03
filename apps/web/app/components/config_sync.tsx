@@ -120,7 +120,18 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
   )
 }
 
-const useConfigSource = (): ConfigSource =>
+// The P2P rail's order and folders go along with the layout (their own store).
+const useConfigSource = (): ConfigSource => {
+  const src = useInstanceSource()
+  const p2pRail = useP2p(s => s.layout.servers)
+  return useMemo(
+    () =>
+      src.layout && p2pRail.length ? { ...src, layout: { ...src.layout, p2p: p2pRail } } : src,
+    [src, p2pRail]
+  )
+}
+
+const useInstanceSource = (): ConfigSource =>
   useStore(
     useShallow(s => ({
       theme: s.theme,

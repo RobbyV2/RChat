@@ -34,6 +34,15 @@ import {
   type PingRec,
 } from '../p2p/inbox'
 
+// Signs and stores an event at `m` past the checks its own UI makes, as a modified client would
+// (on its own device chain: delivered to itself, it would look like another copy of its device).
+const forge = (m: Member, room: string, t: string, c: Record<string, unknown>) =>
+  (
+    m.servers as unknown as {
+      emit: (room: string, t: string, make: () => unknown, opts: { L: 'c' }) => Promise<string>
+    }
+  ).emit(room, t, () => c, { L: 'c' })
+
 // Threads, pins and local search in P2P servers (Task 24).
 
 afterEach(stopAll)
@@ -435,10 +444,7 @@ describe('threads', () => {
       { body: 'nested', ch, thread: reply },
     ]
     // Signed and stored at Bob as a modified client would; Alice gets them by sync.
-    for (const c of forged) {
-      const ev = await signed(b, room, 'msg', c)
-      expect(await deliver(b, room, ev.wire, clock.now())).toBe('new')
-    }
+    for (const c of forged) await forge(b, room, 'msg', c)
     // Bob's next message cites them, so Alice fetches them.
     await b.servers.send(room, { ch, body: 'after' })
     await pump(
@@ -471,6 +477,8 @@ describe('threads', () => {
         true
       )
     ).toBe('View thread')
+    // From the copy a server was transferred from (spec 3.8): no thread here.
+    expect(threadAct({ ...main.find(m => m.id === root)!, archived: true }, true)).toBeNull()
     expect((await a.servers.loadChannel(room, other)).messages.map(m => m.body)).toEqual(['cross'])
     expect((await a.servers.loadThread(room, root))?.messages.map(m => m.body)).toEqual([
       'real reply',
@@ -702,8 +710,7 @@ describe('pins', () => {
     await joinWithCode(clock, a, room, b)
     const m = await a.servers.send(room, { ch, body: 'pin me' })
     await pump(clock, async () => (await b.servers.loadThread(room, m)) !== null, 'at b')
-    const ev = await signed(b, room, 'pin', { target: m, on: true, ch })
-    expect(await deliver(b, room, ev.wire, clock.now())).toBe('new')
+    const ev = { id: await forge(b, room, 'pin', { target: m, on: true, ch }) }
     await b.servers.send(room, { ch, body: 'after' })
     await pump(
       clock,

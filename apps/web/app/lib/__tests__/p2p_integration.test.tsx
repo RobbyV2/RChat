@@ -133,6 +133,18 @@ const server = (over: Partial<ServerView> = {}): ServerView => ({
   full: false,
   readOnly: null,
   voice: {},
+  mods: [],
+  reached: [],
+  reapply: [],
+  joinWait: null,
+  conflict: false,
+  syncing: null,
+  upgraded: false,
+  disputed: false,
+  next: null,
+  prev: null,
+  carry: null,
+  migrateDiff: null,
   ...over,
 })
 
@@ -447,6 +459,9 @@ describe('personal filter on P2P names', () => {
           online: true,
           contact: true,
           below: false,
+          waits: false,
+          myInvite: false,
+          unban: false,
         },
       ],
     })
@@ -565,6 +580,9 @@ describe('personal filter on P2P names', () => {
       online: true,
       contact: true,
       below: true,
+      waits: false,
+      myInvite: false,
+      unban: false,
     }
     p2pState({ enabled: true, account: 'bob', me: BOB, servers: { [SRV]: v } })
     await setMasking(true, () => Promise.resolve(stub))

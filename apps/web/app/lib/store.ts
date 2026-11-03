@@ -22,7 +22,7 @@ import { JoinTracker } from './negotiation'
 import { newP2pId, p2p } from './p2p'
 import { hashBlob } from './sha256'
 import { ice, iceKey, iceValue, parseIce } from './ice'
-import { callRtc, p2pAccount, p2pCall, p2pVoice } from './p2p/app'
+import { callRtc, p2pAccount, p2pCall, p2pRail, p2pVoice } from './p2p/app'
 import { DENIED_CALL, hidesIp, mergeRelays, relayBook, relaysKey, type Decision } from './relays'
 import { mentionsUser } from './mentions'
 import {
@@ -930,6 +930,7 @@ export const useStore = create<RChatState>()((set, get) => {
         await get().ensureDms([...l.dmPinned, ...l.dmOrder])
         if (!still()) return SWITCHED
         const s = get()
+        if (l.p2p) p2pRail.apply(l.p2p)
         saveLayout(
           pruneLayout(
             {
@@ -6395,4 +6396,5 @@ export const tapWs = (tap: (ev: WsEvent) => void) => {
 // What every display path masks names and text with: the personal profanity filter once it is
 // on and loaded, else the text as it is.
 export const maskOf = (s: RChatState) => (s.profanityReady ? maskProfanity : showText)
+
 export const useMask = () => useStore(maskOf)

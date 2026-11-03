@@ -13,6 +13,8 @@ import {
   ignore,
   isRevoked,
   markVerified,
+  mergeCerts,
+  mergeRevocations,
   overflowRequests,
   receiveRequest,
   recheckName,
@@ -34,6 +36,7 @@ import {
   peerIds,
   signCert,
   signProfile,
+  signRevocation,
   signSuccession,
   SUFFIX_MAX,
   verifyCert,
@@ -141,6 +144,8 @@ type Rel = 'request' | 'mutual' | 'none' | 'pending'
 
 const REL = ['request', 'mutual', 'none', 'pending']
 const HELLO_CERTS = 4
+// Devices of ours recorded as no longer ours (lost, stolen or signed out by recovery).
+const LOST_KEPT = 256
 
 // The revocation that moved this device of a contact to a new one, if any.
 const movedFrom = (c: Contact | undefined, dk: string) =>
@@ -1454,6 +1459,65 @@ export class P2pNode {
     }
     if (!this.isPaused() && !this.stopped) await this.listen()
     this.changed()
+  }
+
+  // A new device key for this browser, under the same identity (spec 3.9). A copy whose history
+  // conflicts with another copy of it becomes a new device: the old key stays the other copy's.
+  // `moved`: this browser leaves its old key (it is revoked, a move to the new one); `lost`:
+  // other devices of ours revoked too.
+  async rekey(opts: { moved?: boolean; lost?: string[] } = {}) {
+    if (!hasSecrets(this.self) || this.self.moved) return
+    const now = this.clock.now()
+    const dk = newKeyPair()
+    const cert = signCert(this.self.ik, dk.pk, now, this.self.cert.label)
+    const ik = keyId(this.self.ik.pk)
+    const old = keyId(this.self.dk.pk)
+    const revs = [
+      ...(opts.moved ? [signRevocation(this.self.ik, old, now, keyId(dk.pk))] : []),
+      ...(opts.lost ?? []).map(v => signRevocation(this.self.ik, v, now)),
+    ]
+    await this.writeSelf(cur => {
+      const revocations = mergeRevocations(cur.revocations, revs, ik)
+      const lost = [...new Set([...(cur.lost ?? []), ...(opts.lost ?? [])])].slice(-LOST_KEPT)
+      return {
+        ...cur,
+        dk,
+        cert,
+        certs: mergeCerts([cert], cur.certs, ik, revocations),
+        revocations,
+        suffix: 0,
+        ...(lost.length ? { lost } : {}),
+      }
+    })
+    this.halt('closed')
+    this.dials.clear()
+    if (!this.isPaused() && !this.stopped) await this.listen()
+    this.changed()
+  }
+
+  // The device keys this identity moved away from (Task 19 moves and imports).
+  movedFrom() {
+    return this.self.revocations.filter(r => r.successor !== undefined).map(r => r.dk)
+  }
+
+  // Devices of ours we disowned as lost or stolen (revoked without moving to them), or that
+  // recovery signed out.
+  lostDevices() {
+    const gone = this.self.revocations.filter(r => r.successor === undefined).map(r => r.dk)
+    return [...new Set([...gone, ...(this.self.lost ?? [])])]
+  }
+
+  // Records devices of ours that are not ours any more (recovery signed them out).
+  async disowned(dks: string[]) {
+    await this.writeSelf(cur => ({
+      ...cur,
+      lost: [...new Set([...(cur.lost ?? []), ...dks])].slice(-LOST_KEPT),
+    }))
+  }
+
+  // Our certified devices: key, label and when each was made.
+  ownDevices() {
+    return this.self.certs.map(c => ({ dk: c.dk, label: c.label, created: c.created }))
   }
 
   // ----- Device move -----

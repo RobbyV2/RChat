@@ -23,6 +23,7 @@ import { composing, sendKey } from '../lib/keys'
 import { runJoinStep, type JoinStep } from '../lib/join_flow'
 import { spliceText } from '../lib/autocomplete'
 import { loadEmojiData } from '../lib/emoji'
+import { hasInviteCode, INVITE_POST_TEXT } from '../lib/p2p/flows'
 import { parseSed } from '../lib/sed'
 import { readOnly } from '../lib/reactions'
 import { clock } from '../lib/slowmode'
@@ -424,8 +425,16 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       return
     }
     if (slowLeft > 0) return
-    if (pending?.mode === 'p2p') setExpiryOpen(true)
-    else doSend()
+    const go = () => (pending?.mode === 'p2p' ? setExpiryOpen(true) : doSend())
+    // A P2P server invite code posted here can be read by the instance (note section 6).
+    if (hasInviteCode(text))
+      return useStore.getState().askConfirm({
+        title: 'Post Invite Code',
+        body: INVITE_POST_TEXT,
+        confirm: 'Post',
+        action: go,
+      })
+    go()
   }
 
   return (

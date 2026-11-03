@@ -1,9 +1,12 @@
 import {
   AclRoom,
   type AclItem,
+  type Carried,
+  type Disowned,
   type Drops,
   type ProofCand,
   type Purgeable,
+  type Reapply,
   type Restored,
   type Plan,
   type PlanReq,
@@ -48,6 +51,12 @@ export interface AclHost {
   unhold(room: string, ids: string[]): Promise<null>
   restorable(room: string, ids: string[], viewed: boolean): Promise<boolean[]>
   viewable(room: string, ik: string, chs: (string | null)[]): Promise<boolean[]>
+  // Flows (spec 3.9, 9 rule 18): our denies to re-apply, and what a lost device did after `t`.
+  reapply(room: string, me: string, exclude?: string[]): Promise<Reapply[]>
+  counted(room: string, ids: string[]): Promise<boolean[]>
+  stopped(room: string, ids: string[]): Promise<boolean[]>
+  carried(room: string, up: string): Promise<Carried | null>
+  disown(room: string, ik: string, dk: string, witnesses: string[], own?: number): Promise<Disowned>
   drop(room: string): void
 }
 
@@ -90,6 +99,19 @@ export type HostRequest =
   | { id: number; op: 'unhold'; room: string; ids: string[] }
   | { id: number; op: 'restorable'; room: string; ids: string[]; viewed: boolean }
   | { id: number; op: 'viewable'; room: string; ik: string; chs: (string | null)[] }
+  | { id: number; op: 'reapply'; room: string; me: string; exclude?: string[] }
+  | { id: number; op: 'counted'; room: string; ids: string[] }
+  | { id: number; op: 'stopped'; room: string; ids: string[] }
+  | { id: number; op: 'carried'; room: string; up: string }
+  | {
+      id: number
+      op: 'disown'
+      room: string
+      ik: string
+      dk: string
+      witnesses: string[]
+      own?: number
+    }
   | { id: number; op: 'drop'; room: string }
 
 export type HostReply = { id: number; ok: unknown } | { id: number; err: string }
@@ -150,6 +172,16 @@ export const runRequest = (rooms: Map<string, AclRoom>, m: HostRequest): unknown
       return roomOf(rooms, m.room).restorable(m.ids, m.viewed)
     case 'viewable':
       return roomOf(rooms, m.room).viewable(m.ik, m.chs)
+    case 'reapply':
+      return roomOf(rooms, m.room).reapply(m.me, m.exclude)
+    case 'counted':
+      return roomOf(rooms, m.room).counted(m.ids)
+    case 'stopped':
+      return roomOf(rooms, m.room).stopped(m.ids)
+    case 'carried':
+      return roomOf(rooms, m.room).carried(m.up)
+    case 'disown':
+      return roomOf(rooms, m.room).disown(m.ik, m.dk, m.witnesses, m.own)
     case 'drop':
       rooms.delete(m.room)
       return null
@@ -236,6 +268,28 @@ abstract class Base implements AclHost {
   }
   viewable(room: string, ik: string, chs: (string | null)[]) {
     return this.call<boolean[]>({ op: 'viewable', room, ik, chs })
+  }
+  reapply(room: string, me: string, exclude?: string[]) {
+    return this.call<Reapply[]>({
+      op: 'reapply',
+      room,
+      me,
+      ...(exclude?.length ? { exclude } : {}),
+    })
+  }
+  stopped(room: string, ids: string[]) {
+    return this.call<boolean[]>({ op: 'stopped', room, ids })
+  }
+
+  carried(room: string, up: string) {
+    return this.call<Carried | null>({ op: 'carried', room, up })
+  }
+
+  counted(room: string, ids: string[]) {
+    return this.call<boolean[]>({ op: 'counted', room, ids })
+  }
+  disown(room: string, ik: string, dk: string, witnesses: string[], own = -1) {
+    return this.call<Disowned>({ op: 'disown', room, ik, dk, witnesses, own })
   }
   abstract drop(room: string): void
 }

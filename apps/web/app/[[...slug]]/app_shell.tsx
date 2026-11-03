@@ -170,12 +170,18 @@ export default function AppShell() {
     }
   }, [])
 
+  // The place the address restores on load keeps the P2P home open (it comes back from its
+  // session key); a change of view after that closes it.
+  const settled = useRef(false)
   useEffect(() => {
     setLeftOpen(false)
     setRightOpen(false)
     if (useStore.getState().panel?.kind === 'thread') useStore.getState().closePanel()
-    p2p.closeHome()
+    if (settled.current) p2p.closeHome()
   }, [view])
+  useEffect(() => {
+    if (view !== null || atHome) settled.current = true
+  }, [view, atHome])
 
   const friendsOpen = panel?.kind === 'friends'
   useEffect(() => {

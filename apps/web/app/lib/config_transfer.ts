@@ -94,6 +94,8 @@ export interface ConfigLayout {
   dmPinned: number[]
   selfPin: SelfPin
   collapsed?: Collapsed
+  // P2P servers' order and folders in their rail group (room ids).
+  p2p?: RailEntry[]
 }
 
 export interface ConfigDoc {
@@ -170,6 +172,7 @@ export interface ConfigSource {
     dmPinned: number[]
     selfPin: SelfPin
     collapsed?: Collapsed
+    p2p?: RailEntry[]
   } | null
   notify: NotifyPrefs | null
   emoji: EmojiPrefs | null
@@ -189,6 +192,7 @@ const pickLayout = (l: NonNullable<ConfigSource['layout']>): ConfigLayout => ({
   dmPinned: [...l.dmPinned],
   selfPin: l.selfPin,
   ...(l.collapsed && collapsedCount(l.collapsed) ? { collapsed: collapsedOf(l.collapsed) } : {}),
+  ...(l.p2p?.length ? { p2p: l.p2p.map(copyEntry) } : {}),
 })
 
 const pickNotify = (p: NotifyPrefs): NotifyPrefs => JSON.parse(notifyValue(p)) as NotifyPrefs
@@ -231,23 +235,19 @@ export const presentSections = (doc: ConfigDoc): SectionKey[] =>
 
 const validName = (n: string) => n.length > 0 && n.length <= NAME_MAX
 
-const cleanLayout = (x: unknown): ConfigLayout | undefined => {
-  if (!isRecord(x)) return undefined
-  const { servers, dmOrder, dmPinned, selfPin, collapsed } = x
-  const parsed = parseLayout(
-    JSON.stringify({ v: 2, servers, dmOrder, dmPinned, selfPin, collapsed })
-  )
+// Rail entries with names `ok` keeps, at most SERVERS_MAX names; folders of fewer than two go flat.
+const cleanEntries = (list: RailEntry[], ok: (n: string) => boolean) => {
   let budget = SERVERS_MAX
   const entries: RailEntry[] = []
-  for (const e of parsed.servers) {
+  for (const e of list) {
     if (budget <= 0) break
     if (typeof e === 'string') {
-      if (!validName(e)) continue
+      if (!ok(e)) continue
       entries.push(e)
       budget -= 1
       continue
     }
-    const names = e.servers.filter(validName).slice(0, budget)
+    const names = e.servers.filter(ok).slice(0, budget)
     budget -= names.length
     const folder: Folder = {
       id: e.id,
@@ -258,6 +258,22 @@ const cleanLayout = (x: unknown): ConfigLayout | undefined => {
     if (names.length >= 2 && e.id.length <= FOLDER_ID_MAX) entries.push(folder)
     else entries.push(...names)
   }
+  return entries
+}
+
+// A P2P server's room id: 32 bytes in base64url.
+const isRoomId = (n: string) => /^[A-Za-z0-9_-]{43}$/.test(n)
+
+const cleanLayout = (x: unknown): ConfigLayout | undefined => {
+  if (!isRecord(x)) return undefined
+  const { servers, dmOrder, dmPinned, selfPin, collapsed, p2p } = x
+  const parsed = parseLayout(
+    JSON.stringify({ v: 2, servers, dmOrder, dmPinned, selfPin, collapsed })
+  )
+  const entries = cleanEntries(parsed.servers, validName)
+  const rail = Array.isArray(p2p)
+    ? cleanEntries(parseLayout(JSON.stringify({ v: 2, servers: p2p })).servers, isRoomId)
+    : []
   return {
     servers: entries,
     dmOrder: parsed.dmOrder.slice(0, DMS_MAX),
@@ -270,6 +286,7 @@ const cleanLayout = (x: unknown): ConfigLayout | undefined => {
           ),
         }
       : {}),
+    ...(rail.length ? { p2p: rail } : {}),
   }
 }
 
@@ -474,6 +491,14 @@ const layoutText = (l: ConfigLayout) => {
     plural(l.dmPinned.length, 'pinned DM'),
     ...(l.collapsed && collapsedCount(l.collapsed)
       ? [plural(collapsedCount(l.collapsed), 'collapsed category', 'collapsed categories')]
+      : []),
+    ...(l.p2p?.length
+      ? [
+          plural(
+            l.p2p.reduce((n, e) => n + (typeof e === 'string' ? 1 : e.servers.length), 0),
+            'P2P server'
+          ),
+        ]
       : []),
   ].join(', ')
 }

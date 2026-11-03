@@ -10,6 +10,8 @@ import { CopyButton, QrCode } from '../config_sync'
 import { Dialog, FieldError, fieldCls, filledBtn, Masked, textBtn } from '../ui'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { QrScan } from './qr_scan'
+import { CoOwnerAsks, CoOwnerPicker } from './p2p_server_flows'
+import { CODE_DEATH_TEXT, CODE_RETRY_TEXT, CODE_REVOKE_TEXT, OWNER_TEXT } from '../../lib/p2p/flows'
 
 const IP_NOTE =
   'Members you connect with can see your IP address unless you use relay only (Settings, Voice and P2P).'
@@ -129,7 +131,7 @@ export function CodeList({ room, version }: { room: string; version: number }) {
                   onClick={() =>
                     useStore.getState().askConfirm({
                       title: 'Revoke Invite',
-                      body: 'Revoke this invite? Members stop letting people in with it as they hear of it.',
+                      body: `Revoke this invite? ${CODE_REVOKE_TEXT}`,
                       confirm: 'Revoke',
                       action: () =>
                         void p2pServer
@@ -226,6 +228,7 @@ export function ServerInviteDialog({ room }: { room: string }) {
               Create invite
             </button>
           </div>
+          <p className="text-xs text-on-surface-variant">{CODE_DEATH_TEXT}</p>
           {code && <CodeBox text={code} />}
         </section>
         <section className="flex flex-col gap-2">
@@ -286,6 +289,7 @@ export function ServerNewDialog({
 }) {
   const [tab, setTab] = useState<NewTab>(given ? 'join' : first)
   const [name, setName] = useState('')
+  const [coOwners, setCoOwners] = useState<string[]>([])
   const [code, setCode] = useState(given)
   const [scan, setScan] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -296,9 +300,9 @@ export function ServerNewDialog({
   const create = async () => {
     setBusy(true)
     setError(null)
-    const room = await p2pServer.create(name)
+    const room = await p2pServer.create(name, coOwners)
     setBusy(false)
-    if (!room) setError("Couldn't create the server")
+    if (!room) setError(useStore.getState().toast?.text ?? "Couldn't create the server")
   }
   const join = async () => {
     setBusy(true)
@@ -345,6 +349,7 @@ export function ServerNewDialog({
               </button>
             ))}
           </div>
+          <CoOwnerAsks />
           {tab === 'create' ? (
             <div className="flex flex-col gap-3">
               <div className="flex items-start gap-3 rounded-xl border border-dashed border-tertiary px-3 py-2 text-sm text-on-surface-variant">
@@ -368,6 +373,13 @@ export function ServerNewDialog({
                 aria-label="Server name"
                 className={`${fieldCls} streamer w-full`}
               />
+              <p className="text-xs text-on-surface-variant">{OWNER_TEXT}</p>
+              <CoOwnerPicker value={coOwners} onChange={setCoOwners} />
+              {busy && coOwners.length > 0 && (
+                <p role="status" className="text-xs text-on-surface-variant">
+                  Waiting for co-owners to agree…
+                </p>
+              )}
               <FieldError message={error} />
               <div className="flex justify-end gap-2">
                 <button onClick={p2p.closeDialog} className={textBtn}>
@@ -427,7 +439,8 @@ export function ServerNewDialog({
                 </div>
               )}
               <p data-p2p-needs-inviter className="text-xs text-on-surface-variant">
-                {NEEDS_INVITER}. Your contact code and name go to whoever lets you in.
+                {NEEDS_INVITER}. Your contact code and name go to whoever lets you in.{' '}
+                {CODE_RETRY_TEXT}
               </p>
               <p className="text-xs text-on-surface-variant">{IP_NOTE}</p>
               <FieldError message={error} />

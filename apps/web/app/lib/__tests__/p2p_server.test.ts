@@ -56,13 +56,34 @@ describe('co-owners (spec 3.8)', () => {
     await pump(clock, () => b.node.contact(a.node.ik)?.state === 'incoming', 'request')
     await b.node.accept(a.node.ik)
     await pump(clock, () => a.node.contact(b.node.ik)?.state === 'mutual', 'mutual')
-    // Bob hasn't agreed: no certificate, no server.
-    expect(await failure(a.servers.create('Shared', [b.node.ik]))).toBe(
-      "Bob didn't agree to be a co-owner"
-    )
-    b.servers.allowCoOwner(a.node.ik)
-    const room = await a.servers.create('Shared', [b.node.ik])
+    // Bob is asked and declines: no certificate, no server.
+    const asked = async () => {
+      await pump(clock, () => b.servers.coOwnerAsks().length === 1, 'bob is asked', 1_000)
+      const [q] = b.servers.coOwnerAsks()
+      expect(q.from).toBe(a.node.ik)
+      expect(q.name).toBe('Shared')
+      return q.key
+    }
+    const declined = failure(a.servers.create('Shared', [b.node.ik]))
+    b.servers.answerCoOwner(await asked(), false)
+    expect(await declined).toBe("Bob didn't agree to be a co-owner")
+    expect(b.servers.coOwnerAsks()).toEqual([])
+    // No answer in time: the same.
+    const late = failure(a.servers.create('Shared', [b.node.ik]))
+    await asked()
+    await clock.advance(2 * 60_000)
+    expect(await late).toBe("Bob didn't agree to be a co-owner")
+    expect(b.servers.coOwnerAsks()).toEqual([])
+    // He agrees.
+    const made = a.servers.create('Shared', [b.node.ik])
+    b.servers.answerCoOwner(await asked(), true)
+    const room = await made
     expect(a.servers.view(room)?.owners).toEqual([a.node.ik, b.node.ik])
+    // Agreed beforehand: nobody is asked.
+    b.servers.allowCoOwner(a.node.ik)
+    const again = await a.servers.create('Shared too', [b.node.ik])
+    expect(b.servers.coOwnerAsks()).toEqual([])
+    expect(a.servers.view(again)?.owners).toEqual([a.node.ik, b.node.ik])
     const g = (await a.store.event(room))!.wire.c as { owners: { ik: string; dk: string }[] }
     expect(g.owners.map(o => o.ik)).toEqual([a.node.ik, b.node.ik])
     expect(g.owners[1].dk).toBe(b.node.cert.dk)
@@ -107,6 +128,15 @@ describe('devices (spec 3.9)', () => {
       async () => (await bodies(a, room, ch)).includes('from the new device'),
       'a has it'
     )
+    // The device it moved from is revoked (spec 3.9): only the new one is Bob's in the server.
+    const dk1 = keyId(b.node.author()!.dk.pk)
+    await pump(
+      clock,
+      () => a.servers.sumOf(room).members[b.node.ik]?.devs.includes(dk1) === false,
+      'the old device is revoked'
+    )
+    expect(a.servers.sumOf(room).members[b.node.ik]?.devs).toEqual([dk2])
+    expect(b2.servers.myDevices().map(d => d.dk)).toEqual([dk2])
   }, 90_000)
 })
 
@@ -163,7 +193,12 @@ describe('moderation and soft-fail', () => {
     await b.node.setPaused(false)
     await c.node.setPaused(false)
     await c.servers.send(room, { ch, body: 'concurrent' })
-    await pump(clock, async () => (await bodies(b, room, ch)).includes('concurrent'), 'b got it')
+    await c.servers.send(room, { ch, body: 'concurrent two' })
+    await pump(
+      clock,
+      async () => (await bodies(b, room, ch)).includes('concurrent two'),
+      'b got them'
+    )
     await c.node.setPaused(true)
     await a.node.setPaused(false)
     await pump(
@@ -181,11 +216,16 @@ describe('moderation and soft-fail', () => {
             'room_chan_sort',
             IDBKeyRange.bound([room, ch, ''], [room, ch, '￿'])
           )
-        ).length >= 2,
-      'a stored it'
+        ).length >= 3,
+      'a stored them'
     )
     expect(await bodies(a, room, ch)).toEqual(['before'])
     expect(await bodies(b, room, ch)).toEqual(['before'])
+    // In their place: one "Hidden: sent around the time Carol was removed" (spec 8.2), no body.
+    for (const m of [a, b]) {
+      const rows = (await m.servers.loadChannel(room, ch)).messages.filter(x => x.removed)
+      expect(rows.map(x => [x.sender, x.body])).toEqual([[c.node.ik, '']])
+    }
 
     // A message on parents from before the ban, dated before it, is hidden as well: past the
     // ban's watermark (a new seq), or equivocating (the seq of 'concurrent').
@@ -326,7 +366,9 @@ describe('invite codes', () => {
     const code = await a.servers.issueCode(room, 60_000)
     const { parseCode } = await import('../p2p/server')
     const parsed = parseCode(code)!
-    expect(Object.keys(parsed).sort()).toEqual(['name', 'peers', 'room', 'secret', 'v'])
+    // The code's id and its secret (spec 8.2).
+    expect(Object.keys(parsed).sort()).toEqual(['code', 'name', 'peers', 'room', 'secret', 'v'])
+    expect(Object.keys(a.servers.sumOf(room).codes)).toEqual([parsed.code as string])
     expect(parsed.peers).toEqual([a.node.peerId])
     expect(code).not.toContain(a.node.ik)
   })

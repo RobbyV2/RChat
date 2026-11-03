@@ -17,6 +17,7 @@ import {
   Check,
   Clock,
   Copy,
+  EyeOff,
   Forward,
   Hash,
   History,
@@ -41,6 +42,7 @@ import {
   type P2pChat,
 } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
+import { hiddenRemovedText } from '../../lib/p2p/flows'
 import {
   bodyTooLong,
   messageActs,
@@ -179,9 +181,10 @@ interface RowProps {
 
 // "Create thread" on a message without replies that we may answer, "View thread" once it has
 // some.
-// A message whose body isn't here ("Message unavailable") keeps its thread reachable.
+// A message whose body isn't here ("Message unavailable") keeps its thread reachable; one from
+// the copy a server was transferred from (spec 3.8) has none here.
 export const threadAct = (p: P2pMessage, canAct: boolean) =>
-  p.system || p.call || p.thread || p.noThread
+  p.system || p.call || p.thread || p.noThread || p.archived
     ? null
     : p.replies
       ? 'View thread'
@@ -206,8 +209,10 @@ export const P2pRow = memo(function P2pRow({
   onJump,
 }: RowProps) {
   const actions: ToolbarAction[] = []
-  const can = messageActs(p, canAct, mine)
-  const thread = threads ? threadAct(p, canAct) : null
+  // From the old copy (spec 3.8): read-only here.
+  const act = canAct && !p.archived
+  const can = messageActs(p, act, mine)
+  const thread = threads ? threadAct(p, act) : null
   if (can.edit && !editing) actions.push(editAction(() => p2pDm.startEdit(draftKey, p.id)))
   if (can.reply)
     actions.push({
@@ -224,7 +229,7 @@ export const P2pRow = memo(function P2pRow({
       icon: MessageSquareText,
       onClick: () => void p2pThread.open(p.id),
     })
-  if (canAct && canDelete)
+  if (act && canDelete)
     actions.push({
       key: 'delete',
       label: 'Delete message (hold Shift to skip confirmation)',
@@ -319,8 +324,8 @@ export const P2pRow = memo(function P2pRow({
               )
             )}
             <AttachmentList att={p.fwd?.att ?? p.att} canFetch={canAct} />
-            <ReactionBar m={m} canReact={canAct} canRemove={canAct} />
-            {threads && !!p.replies && (
+            <ReactionBar m={m} canReact={act} canRemove={act} />
+            {threads && !!p.replies && !p.archived && (
               <button
                 title="Open thread"
                 data-p2p-thread-chip
@@ -455,6 +460,33 @@ const pinLineMenu = (p: P2pMessage, m: Message): ContextMenuItem[] => {
     },
     { label: 'Copy Message ID', icon: Hash, action: () => void sharing().copyText(p.id) },
   ]
+}
+
+// In place of a message sent around the time its author was removed (spec 8.2).
+function P2pHiddenRow({ m, divider }: { m: Message; divider: boolean }) {
+  const [before, after] = hiddenRemovedText('\u0000').split('\u0000')
+  return (
+    <div data-row data-mid={m.id}>
+      {divider && (
+        <div data-divider className="px-4 py-1" aria-hidden>
+          <div className="h-0.5 rounded-full bg-error" />
+        </div>
+      )}
+      <div data-p2p-hidden className="flex items-start gap-3 px-4 py-1">
+        <span className="flex w-9 shrink-0 justify-center pt-0.5 text-on-surface-variant">
+          <EyeOff size={16} aria-hidden />
+        </span>
+        <p className="min-w-0 flex-1 text-sm text-on-surface-variant italic">
+          {before}
+          <span className="streamer">
+            <Masked text={m.author.display_name} />
+          </span>
+          {after}
+          <MessageTime ts={m.created_at} className="ml-2 text-xs not-italic opacity-70" />
+        </p>
+      </div>
+    </div>
+  )
 }
 
 const confirmDelete = (id: string, skip = false) => {
@@ -846,7 +878,7 @@ export function useP2pList({
       })),
     [messages, num, replyNumOf, user, me]
   )
-  const shared = useMemo(() => rows.filter(r => !r.p.system).map(r => r.m), [rows])
+  const shared = useMemo(() => rows.filter(r => !r.p.system && !r.p.removed).map(r => r.m), [rows])
   const idOf = useCallback(
     (n: number) => rows.find(r => r.m.id === n)?.p.id ?? replyNums.get(n) ?? null,
     [rows, replyNums]
@@ -908,7 +940,8 @@ export function useP2pList({
     if (p.system?.kind === 'pin') return openContextMenu(x, y, pinLineMenu(p, m))
     const mine = p.sender === me
     const items: ContextMenuItem[] = []
-    const can = messageActs(p, canAct, mine)
+    const act = canAct && !p.archived
+    const can = messageActs(p, act, mine)
     if (can.reply)
       items.push({ label: 'Reply', icon: Reply, action: () => p2pDm.startReply(draftKey, p.id) })
     if (can.edit) items.push(editMenuItem(() => p2pDm.startEdit(draftKey, p.id)))
@@ -927,14 +960,14 @@ export function useP2pList({
           { label: 'Copy for forwarding', icon: Copy, action: () => copyForP2p(p, m) },
         ],
       })
-    const thread = threads ? threadAct(p, canAct) : null
+    const thread = threads ? threadAct(p, act) : null
     if (thread)
       items.push({
         label: thread,
         icon: MessageSquareText,
         action: () => void p2pThread.open(p.id),
       })
-    if (canAct && mayPin && !p.thread)
+    if (act && mayPin && !p.thread)
       items.push(
         p.pinned !== null
           ? {
@@ -944,7 +977,7 @@ export function useP2pList({
             }
           : { label: 'Pin Message', icon: Pin, action: () => void p2pDm.pin(p.id, true) }
       )
-    if (canAct && mayDelete(p))
+    if (act && mayDelete(p))
       items.push({
         label: 'Delete Message',
         danger: true,
@@ -972,7 +1005,7 @@ export function useP2pList({
       x,
       y,
       items,
-      canAct
+      act
         ? {
             header: (
               <ChatSourceProvider value={source}>
@@ -1192,6 +1225,8 @@ export function P2pChatBody(props: ChatBodyProps) {
                   />
                 ) : p.system ? (
                   <P2pSystemRow key={p.id} m={m} divider={i === divider} />
+                ) : p.removed ? (
+                  <P2pHiddenRow key={p.id} m={m} divider={i === divider} />
                 ) : p.call ? (
                   <P2pCallRow key={p.id} p={p} me={me} />
                 ) : (
@@ -1204,7 +1239,7 @@ export function P2pChatBody(props: ChatBodyProps) {
                     mentioned={pingsMe(p, me)}
                     divider={i === divider}
                     flash={flash === m.id}
-                    canAct={canAct}
+                    canAct={canAct && !p.archived}
                     canDelete={mayDelete(p)}
                     editing={editing && editingState?.id === p.id ? editing : null}
                     draftKey={key}

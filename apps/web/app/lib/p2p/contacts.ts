@@ -143,11 +143,13 @@ export const mergeCerts = (have: Cert[], add: Cert[], ik: string, revs: Revocati
 export const mergeRevocations = (have: Revocation[], add: Revocation[], ik: string) => {
   const out = [...have]
   // The first revocation of a device counts. A second one with another successor is kept as
-  // evidence that two copies of the identity moved the same device (see identityConflict).
+  // evidence that two copies of the identity moved the same device (see identityConflict), and
+  // one without a successor (lost or stolen) is kept next to a move.
   for (const r of add) {
     const same = out.filter(o => o.dk === r.dk)
-    if (same.length >= 2 || same.some(o => o.successor === r.successor)) continue
-    if (same.length === 1 && r.successor === undefined) continue
+    if (same.some(o => o.successor === r.successor)) continue
+    if (r.successor !== undefined && same.filter(o => o.successor !== undefined).length >= 2)
+      continue
     if (!verifyRevocation(r, ik)) continue
     out.push(r)
   }

@@ -694,8 +694,18 @@ const upgradeInput = (srv: string, g: unknown) =>
   concat(utf8(TAG_UPGRADE), utf8(srv), utf8('\0'), canonicalBytes(g))
 
 // A co-owner's countersignature of an upgrade of server `srv` to the new genesis `g` (§3.8).
-export const signUpgrade = (ik: KeyPair, srv: string, g: Record<string, unknown>) =>
+export const signUpgrade = (ik: KeyPair, srv: string, g: unknown) =>
   b64u(sign(ik.sk, upgradeInput(srv, g)))
+
+export const upgradeSigOk = (ik: string, srv: string, g: unknown, sig: unknown) => {
+  const pk = keyBytes(ik)
+  const sb = bytesOf(sig, 64)
+  try {
+    return !!pk && !!sb && verify(pk, upgradeInput(srv, g), sb)
+  } catch {
+    return false
+  }
+}
 
 // Identity records (§1.1): a device revocation is signed by the identity's primary or recovery
 // key over (srv, dk, seen), any member may relay it; a rotation by its recovery key over the

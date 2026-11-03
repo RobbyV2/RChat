@@ -53,6 +53,15 @@ import { PinsButton } from '../pins'
 import { iconBtn, Masked } from '../ui'
 import { AccountChip, ContactShield, KeyAvatar, P2pBadge, PresenceDot } from './p2p_badge'
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
+import { ServerNotices } from './p2p_server_flows'
+import {
+  SYNCING_TEXT,
+  TRANSFER_CO_OWNERS_TEXT,
+  TRANSFERRED_TEXT,
+  transferText,
+  VOUCH_INVITER_TEXT,
+  WITHDRAW_TEXT,
+} from '../../lib/p2p/flows'
 import { noteBarCls, P2pChatBody, type Mentionable } from './p2p_chat'
 import { P2pVoiceRow } from './p2p_voice'
 import { VoiceDock, VoiceGrid } from '../voice_grid'
@@ -319,7 +328,7 @@ export function P2pServerRail() {
   const enabled = useP2p(s => s.enabled)
   const servers = useP2p(s => s.servers)
   const layout = useP2p(s => s.layout)
-  const invites = useP2p(s => s.serverInvites.length)
+  const invites = useP2p(s => s.serverInvites.length + s.coOwnerAsks.length + s.transferAsks.length)
   const list = useMemo(
     () => Object.values(servers).sort((a, b) => (a.name < b.name ? -1 : 1)),
     [servers]
@@ -600,6 +609,25 @@ export function P2pServerSidebar() {
   )
 }
 
+// Withdrawing an invite (spec 8.2): the inviter, or a moderator who may kick.
+export const withdrawRequest = (v: ServerView, m: MemberView) => ({
+  title: 'Withdraw Invite',
+  body: WITHDRAW_TEXT,
+  confirm: 'Withdraw',
+  action: () => void p2pServer.withdraw(v.id, m.ik),
+})
+
+// Spec 3.8: the member takes the new copy; every other owner must approve.
+export const transferRequest = (v: ServerView, m: MemberView) => {
+  const who = useStore.getState().streamer ? 'this member' : m.name
+  return {
+    title: 'Transfer Ownership',
+    body: `${transferText(who)}${v.owners.length > 1 ? ` ${TRANSFER_CO_OWNERS_TEXT}` : ''}`,
+    confirm: 'Transfer',
+    action: () => void p2pServer.transfer(v.id, m.ik),
+  }
+}
+
 export const memberMenu = (v: ServerView, m: MemberView): ContextMenuItem[] => {
   const s = useStore.getState()
   const mask = maskOf(s)
@@ -632,6 +660,25 @@ export const memberMenu = (v: ServerView, m: MemberView): ContextMenuItem[] => {
         }),
     })
   }
+  if (m.m === 'invite' && m.ik !== me && (can(v, P.Kick) || m.myInvite))
+    items.push({
+      label: s.streamer ? 'Withdraw Invite' : `Withdraw invite of ${mask(m.name)}`,
+      danger: true,
+      action: () => s.askConfirm(withdrawRequest(v, m)),
+    })
+  if (
+    me &&
+    v.owners.includes(me) &&
+    v.me === 'join' &&
+    m.m === 'join' &&
+    m.ik !== me &&
+    !v.upgraded
+  )
+    items.push({
+      label: 'Transfer Ownership',
+      icon: Crown,
+      action: () => s.askConfirm(transferRequest(v, m)),
+    })
   if (can(v, P.Ban) && m.below && m.ik !== me && m.m !== 'ban')
     items.push({
       label: s.streamer ? 'Ban Member' : `Ban ${mask(m.name)}`,
@@ -670,6 +717,11 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
           {m.ik !== me && (
             <span className="flex min-w-0 empty:hidden">
               <AccountChip ik={m.ik} size="short" />
+            </span>
+          )}
+          {m.waits && (
+            <span data-p2p-vouch-wait className="truncate text-xs text-on-surface-variant">
+              {VOUCH_INVITER_TEXT}
             </span>
           )}
         </span>
@@ -772,13 +824,15 @@ export const sendBlock = (
 ): ReactNode => {
   const out = v.readOnly
     ? v.readOnly
-    : v.me === 'ban'
-      ? 'You are banned from this server.'
-      : v.me === 'leave'
-        ? 'You are no longer a member of this server.'
-        : v.me !== 'join'
-          ? 'Joining. You can write once a member has let you in.'
-          : null
+    : v.upgraded
+      ? TRANSFERRED_TEXT
+      : v.me === 'ban'
+        ? 'You are banned from this server.'
+        : v.me === 'leave'
+          ? 'You are no longer a member of this server.'
+          : v.me !== 'join'
+            ? (v.joinWait ?? 'Joining. You can write once a member has let you in.')
+            : null
   return st.reader || st.elsewhere ? (
     <div className={noteBarCls}>
       <ElsewhereNotice />
@@ -789,7 +843,15 @@ export const sendBlock = (
     <MovingBanner className={noteBarCls} />
   ) : out ? (
     <div data-p2p-out className={noteBarCls}>
-      {out}
+      {v.joinWait && v.me !== 'join' ? <span data-p2p-join-wait>{out}</span> : out}
+      {v.upgraded && v.next && (
+        <button
+          onClick={() => p2pServer.open(v.next as string)}
+          className="font-medium text-primary hover:underline"
+        >
+          Open the new copy
+        </button>
+      )}
       {v.me !== 'join' && v.me !== 'invite' && v.me !== null && (
         <button
           onClick={() => confirmForget(v)}
@@ -910,7 +972,7 @@ export function P2pChannelPane({
     </header>
   )
 
-  if (voiceCh && !v.readOnly && v.me === 'join')
+  if (voiceCh && !v.readOnly && !v.upgraded && v.me === 'join')
     return (
       <main
         data-p2p-channel-pane
@@ -955,9 +1017,11 @@ export function P2pChannelPane({
               <span data-p2p-joining className="text-lg font-medium text-on-surface">
                 Joining <Masked text={v.name} />…
               </span>
-              <span className="text-sm">
-                Waiting for a member to send the server. Someone who can invite must be online.
+              <span data-p2p-join-wait className="max-w-md text-sm">
+                {v.joinWait ??
+                  'Waiting for a member to send the server. Someone who can invite must be online.'}
               </span>
+              {v.syncing !== null && <span className="text-xs">{SYNCING_TEXT(v.syncing)}</span>}
             </>
           ) : (
             <span>No channel open.</span>
@@ -973,6 +1037,7 @@ export function P2pChannelPane({
     <P2pChatBody
       chat={chat}
       header={header}
+      above={<ServerNotices v={v} />}
       intro={<ServerIntro />}
       disabled={disabled}
       canAct={!disabled}

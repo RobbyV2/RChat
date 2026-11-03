@@ -16,6 +16,7 @@ import { iceOffer } from '../../lib/ice'
 import { fmtSize } from '../../lib/bytes'
 import { SettingSwitch } from '../admin_panel'
 import { dangerBtn, fieldCls, filledBtn, sectionCls, textBtn } from '../ui'
+import { DevicesSection } from './p2p_server_flows'
 import { MyCode } from './add_contact'
 import { badgeDate, P2pBadge } from './p2p_badge'
 import { confirmReset, ElsewhereNotice, IdentityAlert, MovedBanner, MovingBanner } from './p2p_home'
@@ -344,9 +345,10 @@ export function P2pSection() {
             <p data-p2p-lost className="mt-1">
               Lost or stolen device? Moving can&apos;t lock it out, because every device holds your
               identity key. Use Reset identity instead: contacts see that your key changed and have
-              to verify you again.
+              to verify you again. Remove it from your P2P servers below.
             </p>
           </div>
+          <DevicesSection />
           <div className="flex flex-wrap gap-2 px-1">
             <button onClick={() => confirmReset(ask)} className={textBtn}>
               Reset identity

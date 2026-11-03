@@ -42,6 +42,7 @@ import { VerifyDialog } from './verify_dialog'
 import { P2pFolderDialog, ServerInviteDialog, ServerNewDialog } from './p2p_invite_dialog'
 import { ServerSettingsDialog } from './p2p_server_settings'
 import { ServerInviteRows, serverUnread } from './p2p_server_view'
+import { CoOwnerAsks, LostDeviceDialog, RecoverDialog, TransferAsks } from './p2p_server_flows'
 import {
   AccountChip,
   badgeDate,
@@ -622,6 +623,8 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
             {status === 'moved' && !elsewhere && <MovedBanner />}
             {!elsewhere && <MovingBanner />}
             {dropped > 0 && <DroppedNote n={dropped} />}
+            <CoOwnerAsks />
+            <TransferAsks />
             <ServerInviteRows />
             {pending.length > 0 && (
               <section aria-label="Message requests">
@@ -847,5 +850,9 @@ export function P2pDialogs() {
       return <ServerSettingsDialog key={dialog.room} room={dialog.room} tab={dialog.tab} />
     case 'p2p_folder':
       return <P2pFolderDialog key={dialog.id} id={dialog.id} />
+    case 'lost_device':
+      return <LostDeviceDialog key={dialog.dk} dk={dialog.dk} />
+    case 'recover':
+      return <RecoverDialog />
   }
 }

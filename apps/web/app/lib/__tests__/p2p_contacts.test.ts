@@ -10,6 +10,7 @@ import {
   ignore,
   INTRO_MAX,
   markVerified,
+  mergeRevocations,
   overflowRequests,
   receiveRequest,
   recheckName,
@@ -223,5 +224,21 @@ describe('contacts state machine', () => {
     expect(after?.state).toBe('mutual')
     // Unknown old identity: nothing to move.
     expect(applySuccession([], succ, [], null, 10)).toBeNull()
+  })
+})
+
+describe('revocations', () => {
+  test('a device disowned as lost after we moved from it keeps both revocations', () => {
+    const me = person('Me')
+    const dk = keyId(newKeyPair().pk)
+    const next = keyId(newKeyPair().pk)
+    const moved = signRevocation(me.ik, dk, 1, next)
+    const lost = signRevocation(me.ik, dk, 2)
+    const out = mergeRevocations([moved], [lost], me.id)
+    expect(out).toEqual([moved, lost])
+    // Twice the same is once; a second move with another successor is still kept as evidence.
+    expect(mergeRevocations(out, [lost], me.id)).toEqual([moved, lost])
+    const other = signRevocation(me.ik, dk, 3, keyId(newKeyPair().pk))
+    expect(mergeRevocations(out, [other], me.id)).toEqual([moved, lost, other])
   })
 })

@@ -32,6 +32,9 @@ export interface SelfRecord {
   alert?: number | null
   // Transfer files already imported into this identity (their ids).
   imports?: string[]
+  // Devices of ours that are not ours any more: disowned as lost or stolen, or signed out by
+  // recovery. What they signed is never offered to re-apply.
+  lost?: string[]
   // The account badge, when the user turned it on: the binding the instance signed for this
   // identity key (`token`, null until the first one arrives) and when it was fetched. `exp` is
   // when the newest one handed out expires: peers may show the badge until then, also after it
@@ -62,8 +65,23 @@ export const hasSecrets = (s: SelfRecord) => s.ik.sk.length > 0 && s.dk.sk.lengt
 // cold start while the evaluator rebuilds from the stored admission records. `impl` is the
 // version of the evaluator and record format, `rules` the server's rules version; a cache of
 // another implementation is ignored.
+export interface Carry {
+  from: string
+  roles: Record<string, string>
+  state: 'running' | 'waiting' | 'failed' | 'done'
+  why?: string
+  // The upgrade it carries, its `migrate` chunks, the finished steps, and the roles given back
+  // (member and old role id).
+  up?: string
+  chunks?: Record<string, unknown>[]
+  done?: string[]
+  given?: string[]
+}
+
 export interface ServerCache {
   impl: number
+  // The summary's shape (acl_room.ts SUM_SHAPE): a cache of another shape isn't shown.
+  shape?: number
   rules: number | null
   count: number
   sum: Summary
@@ -117,6 +135,18 @@ export interface RoomRecord {
   joining?: { at: number; via: 'code' | 'invite'; ev?: WireV2 } | null
   // When we joined: older history that arrives later isn't counted as unread.
   since?: number
+  // When a cascade took our membership (no removal of ours): an invite brings us back in.
+  cascade?: number | null
+  // Spec 3.8 transfer: the new copy this server was transferred to, and the copy a new one
+  // follows (its messages show above this one's).
+  next?: string
+  prev?: string
+  // The new owner's carry-over of the copy it follows (server.ts carryOver): role ids old to new,
+  // and how far it got.
+  carry?: Carry
+  // A member's acknowledgements of the carry-over into this copy (server.ts ackCarry): the
+  // owners' ACL count at the last one, and how many.
+  acks?: { base: number; n: number }
   // An invite from a contact we haven't answered: who sent it and their invite (`add`) event.
   invite?: { from: string; at: number; wire: WireV2 } | null
   // Causes that hide content (spec 4.3: removals, bans that hide everything, moderators'

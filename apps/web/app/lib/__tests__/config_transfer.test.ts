@@ -494,3 +494,49 @@ describe('links and stash', () => {
     expect(JSON.parse(await inflateRaw(await encodeConfig(doc)))).toEqual(doc)
   })
 })
+
+describe('the P2P rail (Task 22 leftover)', () => {
+  const R1 = 'A'.repeat(43)
+  const R2 = 'B'.repeat(42) + '_'
+  const R3 = 'C'.repeat(42) + '-'
+  const p2p = [R1, { id: 'pf', name: 'Clubs', servers: [R2, R3], open: false }]
+  const withRail = () => {
+    const src = source()
+    return source({ layout: { ...src.layout!, p2p } })
+  }
+
+  test("the layout section carries P2P servers' order and folders, also in a share link", async () => {
+    const doc = buildConfig(withRail(), new Set<SectionKey>(['layout']))
+    expect(doc.layout?.p2p).toEqual(p2p)
+    const back = await decodeConfig(await encodeConfig(doc), NOW)
+    if (!back.ok) throw new Error(back.error)
+    expect(back.doc.layout?.p2p).toEqual(p2p)
+    expect(linkDoc(back.doc).layout?.p2p).toEqual(p2p)
+    expect(describeChanges(back.doc, source()).find(c => c.key === 'layout')?.next).toContain(
+      '3 P2P servers'
+    )
+  })
+
+  test('only room ids are kept; a folder of one goes flat; none means no field', () => {
+    const out = sanitizeConfig(
+      {
+        v: 1,
+        layout: {
+          servers: [],
+          p2p: [
+            'club',
+            R1,
+            { id: 'x', name: 'One', servers: [R2, 'not-an-id'], open: true },
+            { id: 'y'.repeat(40), name: 'Long', servers: [R3, R1], open: true },
+            42,
+          ],
+        },
+      },
+      NOW
+    )
+    if (!out.ok) throw new Error(out.error)
+    expect(out.doc.layout?.p2p).toEqual([R1, R2, R3])
+    const none = sanitizeConfig({ v: 1, layout: { servers: [], p2p: ['nope'] } }, NOW)
+    expect(none.ok && none.doc.layout && 'p2p' in none.doc.layout).toBe(false)
+  })
+})

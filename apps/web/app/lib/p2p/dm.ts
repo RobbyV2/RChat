@@ -100,15 +100,20 @@ export interface P2pMessage {
   lastReply?: number
   // Names a thread root that isn't one here: shown in the channel, and starts no thread.
   noThread?: true
+  // P2P servers: hidden, sent around the time its author was removed (spec 3.5, 8.2).
+  removed?: boolean
+  // P2P servers: from the copy this one was transferred from (spec 3.8), shown read-only.
+  archived?: boolean
 }
 
 // What can be done with a shown message. One whose body isn't here ("Message unavailable") can't
 // be edited, answered, forwarded or copied.
 export const messageActs = (p: P2pMessage, canAct: boolean, mine: boolean) => {
-  const live = !p.unavailable
+  const live = !p.unavailable && !p.removed
+  const here = canAct && !p.archived
   return {
-    edit: canAct && live && mine && !p.fwd,
-    reply: canAct && live,
+    edit: here && live && mine && !p.fwd,
+    reply: here && live,
     forward: live,
     copy: live && (p.fwd ? p.fwd.body : p.body).trim() !== '',
   }

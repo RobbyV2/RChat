@@ -95,9 +95,10 @@ export const pump = async (
   }
 }
 
+// What shows: messages, not join and leave lines or the line in place of a hidden message.
 export const bodies = async (m: Member, room: string, ch: string) =>
   (await m.servers.loadChannel(room, ch, { limit: 10_000 })).messages
-    .filter(x => !x.system)
+    .filter(x => !x.system && !x.removed)
     .map(x => x.body)
 
 export const general = (m: Member, room: string) => m.servers.view(room)?.channels[0]?.id as string

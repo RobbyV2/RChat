@@ -95,6 +95,8 @@ export interface SyncDeps {
   // missing parents of pending events).
   stateHeads?: (room: string) => Promise<string[]>
   stateWanted?: (room: string) => string[]
+  // A peer sent its heads (servers: moderation waits for a fresh exchange, spec 8.2).
+  onHeads?: (link: Link) => void
   // Events stored from a peer (new ones only).
   onStored: (room: string, from: string, added: Inserted[]) => void
   onDelivered: (room: string, ids: string[]) => void
@@ -152,6 +154,8 @@ export class Link {
   // The peer said no to history until it sends heads again.
   held = false
   headsQueued = false
+  // When we last answered the peer's request for our heads.
+  answeredAt = -Infinity
   rid = 0
   headsTimer: unknown = null
   // The other side said its storage is full: no live pushes until peerFullMs passed.
@@ -317,13 +321,14 @@ export class Sync {
 
   // ----- Heads -----
 
-  private async sendHeads(link: Link) {
+  private async sendHeads(link: Link, ask = false) {
     const room = await this.deps.store.room(link.room)
     const msg: Message = {
       t: this.t('heads'),
       room: link.room,
       heads: (room?.heads ?? []).map(h => h.id).slice(0, this.limits.headsMax),
     }
+    if (ask) msg.ask = true
     if (this.deps.stateHeads)
       msg.state = (await this.deps.stateHeads(link.room)).slice(0, this.limits.headsMax)
     this.send(link, msg)
@@ -341,6 +346,11 @@ export class Sync {
     )
   }
 
+  // Asks every peer of the room for its heads now (a fresh exchange), sending ours.
+  exchange(room: string) {
+    for (const l of this.linksOf(room)) void this.sendHeads(l, true)
+  }
+
   private onHeads(m: Message, s: Session) {
     const link = this.linkFor(s, m.room)
     if (!link) return
@@ -350,6 +360,13 @@ export class Sync {
     link.peerHeads = heads
     link.peerState = state
     link.held = false
+    // Asked for ours: answered at most once a second per link.
+    const now = this.deps.clock.now()
+    if (m.ask === true && now - link.answeredAt >= 1_000) {
+      link.answeredAt = now
+      void this.sendHeads(link)
+    }
+    this.deps.onHeads?.(link)
     // One check at a time: a burst of heads frames costs one walk, with the newest heads.
     if (link.headsQueued) return
     link.headsQueued = true
@@ -488,6 +505,11 @@ export class Sync {
 
   pulling(room: string) {
     return this.linksOf(room).some(l => l.requests.size > 0)
+  }
+
+  // A walk over the ACL DAG is under way (servers: sync progress, spec 9 rule 19).
+  pullingState(room: string) {
+    return this.linksOf(room).some(l => [...l.requests.values()].some(r => r.state))
   }
 
   // Missing history that a peer could still send if asked.

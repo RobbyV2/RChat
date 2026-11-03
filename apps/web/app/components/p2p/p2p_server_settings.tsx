@@ -3,13 +3,23 @@
 import { useState, type ReactNode } from 'react'
 import { Crown, Hash, Trash2, Volume2 } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
-import { banRequest, p2p, p2pServer, useP2p, type ServerTab } from '../../lib/p2p/app'
+import { banRequest, memberName, p2p, p2pServer, useP2p, type ServerTab } from '../../lib/p2p/app'
+import {
+  EQUAL_ROLES_TEXT,
+  HIGHER_ROLES_TEXT,
+  OFFLINE_TEXT,
+  OWNER_TEXT,
+  UNBAN_TEXT,
+  VOUCH_INVITER_TEXT,
+} from '../../lib/p2p/flows'
 import { P } from '../../lib/p2p/state'
 import { VOICE_NOTICE } from '../../lib/p2p/voice'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { Dialog, fieldCls, filledBtn, Masked, sectionCls, textBtn } from '../ui'
 import { KeyAvatar } from './p2p_badge'
 import { CodeList } from './p2p_invite_dialog'
+import { ServerNotices } from './p2p_server_flows'
+import { withdrawRequest } from './p2p_server_view'
 
 // Settings of a P2P server. Every change is a signed state event that members check against
 // the server's rules; what someone may not change shows read-only.
@@ -66,6 +76,21 @@ function Overview({ v }: { v: ServerView }) {
         This server is stored on its members&apos; devices. {v.joined}{' '}
         {v.joined === 1 ? 'member' : 'members'}, {v.online} online now.
       </Note>
+      <div className="flex flex-col gap-1">
+        <p className="text-sm">{v.owners.length > 1 ? 'Owners' : 'Owner'}</p>
+        <ul className="flex flex-col">
+          {v.owners.map(ik => (
+            <li key={ik} className="flex items-center gap-2 py-1">
+              <KeyAvatar ik={ik} size={24} />
+              <span className="streamer min-w-0 truncate text-sm">
+                <Masked text={memberName(v.id, ik)} />
+              </span>
+              <Crown size={14} className="shrink-0 text-tertiary" aria-hidden />
+            </li>
+          ))}
+        </ul>
+        <Note>{OWNER_TEXT}</Note>
+      </div>
     </div>
   )
 }
@@ -294,39 +319,54 @@ function Members({ v }: { v: ServerView }) {
     .filter(m => m.m === 'join' || m.m === 'invite')
     .sort((a, b) => a.name.localeCompare(b.name))
   return (
-    <ul className="flex flex-col">
-      {list.map(m => (
-        <MemberLine key={m.ik} m={m}>
-          {m.m === 'invite' && <span className="text-xs text-on-surface-variant">Invited</span>}
-          {m.ik !== me && !m.owner && kick && (m.m === 'invite' || m.below) && (
-            <button
-              onClick={() =>
-                ask({
-                  title: m.m === 'invite' ? 'Take Back Invite' : 'Kick Member',
-                  body:
-                    m.m === 'invite'
-                      ? `Take back the invite of ${who(m.name)}?`
-                      : `Kick ${who(m.name)}? They can come back with a new invite.`,
-                  confirm: m.m === 'invite' ? 'Take back' : 'Kick',
-                  action: () => void p2pServer.kick(v.id, m.ik),
-                })
-              }
-              className={textBtn}
-            >
-              {m.m === 'invite' ? 'Take back' : 'Kick'}
-            </button>
-          )}
-          {m.ik !== me && !m.owner && ban && m.below && (
-            <button
-              onClick={() => ask(banRequest(v, m.ik, who(m.name)))}
-              className="rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest"
-            >
-              Ban
-            </button>
-          )}
-        </MemberLine>
-      ))}
-    </ul>
+    <div className="flex flex-col gap-3">
+      <ul className="flex flex-col">
+        {list.map(m => (
+          <MemberLine key={m.ik} m={m}>
+            {m.m === 'invite' && (
+              <span className="text-xs text-on-surface-variant">
+                {m.waits ? VOUCH_INVITER_TEXT : 'Invited'}
+              </span>
+            )}
+            {m.ik !== me && m.m === 'invite' && (kick || m.myInvite) && (
+              <button onClick={() => ask(withdrawRequest(v, m))} className={textBtn}>
+                Withdraw
+              </button>
+            )}
+            {m.ik !== me && !m.owner && kick && m.m === 'join' && m.below && (
+              <button
+                onClick={() =>
+                  ask({
+                    title: 'Kick Member',
+                    body: `Kick ${who(m.name)}? They can come back with a new invite.`,
+                    confirm: 'Kick',
+                    action: () => void p2pServer.kick(v.id, m.ik),
+                  })
+                }
+                className={textBtn}
+              >
+                Kick
+              </button>
+            )}
+            {m.ik !== me && !m.owner && ban && m.below && (
+              <button
+                onClick={() => ask(banRequest(v, m.ik, who(m.name)))}
+                className="rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest"
+              >
+                Ban
+              </button>
+            )}
+          </MemberLine>
+        ))}
+      </ul>
+      {(kick || ban) && (
+        <div className="flex flex-col gap-1">
+          <Note>{EQUAL_ROLES_TEXT}</Note>
+          <Note>{HIGHER_ROLES_TEXT}</Note>
+          <Note>{OFFLINE_TEXT}</Note>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -335,17 +375,20 @@ function Bans({ v }: { v: ServerView }) {
   const list = v.members.filter(m => m.m === 'ban')
   if (!list.length) return <Note>Nobody is banned.</Note>
   return (
-    <ul className="flex flex-col">
-      {list.map(m => (
-        <MemberLine key={m.ik} m={m}>
-          {lift && (
-            <button onClick={() => void p2pServer.unban(v.id, m.ik)} className={textBtn}>
-              Lift ban
-            </button>
-          )}
-        </MemberLine>
-      ))}
-    </ul>
+    <div className="flex flex-col gap-3">
+      <ul className="flex flex-col">
+        {list.map(m => (
+          <MemberLine key={m.ik} m={m}>
+            {m.unban && (
+              <button onClick={() => void p2pServer.unban(v.id, m.ik)} className={textBtn}>
+                Lift ban
+              </button>
+            )}
+          </MemberLine>
+        ))}
+      </ul>
+      {lift && <Note>{UNBAN_TEXT}</Note>}
+    </div>
   )
 }
 
@@ -431,6 +474,9 @@ export function ServerSettingsDialog({ room, tab: first }: { room: string; tab?:
             {t.label}
           </button>
         ))}
+      </div>
+      <div className="-mx-3 mb-3 empty:hidden">
+        <ServerNotices v={v} />
       </div>
       <p className={sectionCls}>{TABS.find(t => t.tab === tab)?.label}</p>
       <div className="px-1">

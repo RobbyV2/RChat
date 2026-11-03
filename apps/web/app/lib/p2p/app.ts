@@ -14,6 +14,7 @@ import {
   toggleFolder,
   ungroupFolder,
   type Layout,
+  type RailEntry,
 } from '../nav_layout'
 import type { AlertInput } from '../notices'
 import { EMPTY_NOTIFY, resolve as resolveNotify, type NotifyPrefs } from '../notify'
@@ -43,7 +44,7 @@ import {
   MISSED_MAX,
   type P2pMessage,
 } from './dm'
-import { contentMax, LIMITS as EV, sizeOf, type Attachment, type Fwd } from './event'
+import { contentMax, LIMITS as EV, sizeOf, type Attachment, type Fwd, type WireV2 } from './event'
 import type { PingRec, PingText } from './inbox'
 import { PingLog, pingAlive, pingText, readPings } from './ping_log'
 import { assemble, EMPTY_VIEW, type BlobView, type Usage } from './blobs'
@@ -101,6 +102,7 @@ import {
   type ServerArrival,
   type ServerView,
 } from './server'
+import { WIPE_TEXT } from './flows'
 import { P, type HistoryVis } from './state'
 
 // The P2P view model. IndexedDB (through the node) is the source of truth; this store only
@@ -116,6 +118,8 @@ export type P2pDialog =
   | { kind: 'server_invite'; room: string }
   | { kind: 'server_settings'; room: string; tab?: ServerTab }
   | { kind: 'p2p_folder'; id: string }
+  | { kind: 'lost_device'; dk: string }
+  | { kind: 'recover' }
 
 export type ServerTab =
   'overview' | 'channels' | 'invites' | 'system' | 'history' | 'members' | 'bans' | 'leave'
@@ -244,6 +248,17 @@ export interface P2pState {
   // (it replaces the instance sidebar and pane, like the P2P home).
   servers: Record<string, ServerView>
   serverInvites: { room: string; name: string; from: string; at: number }[]
+  // Contacts asking to list us as co-owner of a server they are creating, and owners asking us
+  // to take a server over or to approve its transfer (spec 8.2).
+  coOwnerAsks: { key: string; from: string; name: string }[]
+  transferAsks: {
+    key: string
+    kind: 'take' | 'cosign'
+    from: string
+    room: string
+    to: string
+    name: string
+  }[]
   server: { room: string; ch: string | null } | null
   // Who types in each server channel ("{room}/{channel}").
   serverTyping: Record<string, string[]>
@@ -330,6 +345,8 @@ const initial: P2pState = {
   voice: null,
   servers: {},
   serverInvites: [],
+  coOwnerAsks: [],
+  transferAsks: [],
   server: null,
   serverTyping: {},
   layout: emptyLayout,
@@ -1034,6 +1051,18 @@ const readerView = (r: RoomRecord): ServerView => ({
   full: r.full,
   readOnly: null,
   voice: {},
+  mods: [],
+  reached: [],
+  reapply: [],
+  joinWait: null,
+  conflict: false,
+  syncing: null,
+  upgraded: false,
+  disputed: false,
+  next: null,
+  prev: null,
+  carry: null,
+  migrateDiff: null,
 })
 
 const refreshServers = () => {
@@ -1047,6 +1076,8 @@ const refreshServers = () => {
   }
   useP2p.setState({
     servers: out,
+    coOwnerAsks: sv.coOwnerAsks(),
+    transferAsks: sv.transferAsks(),
     serverInvites: sv.invites().map(r => ({
       room: r.id,
       name: r.name ?? 'P2P server',
@@ -1082,6 +1113,8 @@ const refreshServer = async (room: string) => {
   useP2p.setState({
     servers: servs,
     serverTyping: typing,
+    coOwnerAsks: sv.coOwnerAsks(),
+    transferAsks: sv.transferAsks(),
     serverInvites: sv.invites().map(r => ({
       room: r.id,
       name: r.name ?? 'P2P server',
@@ -1451,7 +1484,7 @@ export const banRequest = (v: ServerView, ik: string, name: string): ConfirmRequ
             },
             {
               value: 'wipe',
-              label: 'Also hide all their messages',
+              label: WIPE_TEXT,
               detail: 'Everything they posted is hidden too.',
               danger: true,
             },
@@ -1552,8 +1585,8 @@ export const p2pServer = {
       thread: null,
     })),
 
-  async create(name: string) {
-    const room = await withServers(s => s.create(name))
+  async create(name: string, coOwners: string[] = []) {
+    const room = await withServers(s => s.create(name, coOwners))
     if (room) {
       refreshServers()
       p2pServer.open(room)
@@ -1593,7 +1626,7 @@ export const p2pServer = {
   invite: (room: string, ik: string) => withServers(s => s.invite(room, ik)),
   issueCode: (room: string, ttl: number, label = '') =>
     withServers(s => s.issueCode(room, ttl, label)),
-  revokeCode: (room: string, hash: string) => withServers(s => s.revokeCode(room, hash)),
+  revokeCode: (room: string, hash: string) => withServers(s => s.revokeCodeSynced(room, hash)),
   codes: (room: string) => withServers(s => s.codes(room)),
   rename: (room: string, name: string) => withServers(s => s.setName(room, name)),
   setHistory: (room: string, vis: HistoryVis) => withServers(s => s.setHistory(room, vis)),
@@ -1605,10 +1638,52 @@ export const p2pServer = {
     withServers(s => s.editChannel(room, id, patch)),
   removeChannel: (room: string, id: string) =>
     withServers(s => s.editChannel(room, id, { gone: true })),
-  kick: (room: string, ik: string) => withServers(s => s.kick(room, ik)),
+  // Moderation waits for sync (spec 8.2): signed after a fresh heads exchange with a member, or
+  // once Apply anyway is chosen.
+  kick: (room: string, ik: string) =>
+    withServers(s => s.moderate(room, { act: 'Kick', who: ik }, () => s.kick(room, ik))),
+  withdraw: (room: string, ik: string) =>
+    withServers(s =>
+      s.moderate(room, { act: 'Withdraw the invite of', who: ik }, () => s.kick(room, ik))
+    ),
   ban: (room: string, ik: string, wipe = false) =>
-    withServers(s => s.ban(room, ik, undefined, wipe)),
-  unban: (room: string, ik: string) => withServers(s => s.unban(room, ik)),
+    withServers(s =>
+      s.moderate(room, { act: 'Ban', who: ik }, () => s.ban(room, ik, undefined, wipe))
+    ),
+  unban: (room: string, ik: string) =>
+    withServers(s =>
+      s.moderate(room, { act: 'Lift the ban of', who: ik }, () => s.unban(room, ik))
+    ),
+  applyAnyway: (room: string, id: number) => servers?.applyAnyway(room, id),
+  cancelMod: (room: string, id: number) => servers?.cancelMod(room, id),
+  inviteAgain: (room: string, by: string) => withServers(s => s.inviteAgain(room, by)),
+  dismissReached: (room: string, by: string) => servers?.dismissReached(room, by),
+  reapply: (room: string) =>
+    withServers(s =>
+      s.moderate(room, { act: 'Re-apply moderation actions' }, () => s.reapplyAll(room))
+    ),
+  answerCoOwner: (key: string, yes: boolean) => servers?.answerCoOwner(key, yes),
+  retryCarry: (room: string) => servers?.retryCarry(room),
+  // Transfer by upgrade (spec 3.8).
+  async transfer(room: string, ik: string) {
+    const co = (useP2p.getState().servers[room]?.owners.length ?? 1) > 1
+    p2pHost.toast(
+      co
+        ? 'Waiting for them to take it, and for every co-owner to approve…'
+        : 'Waiting for them to take it…'
+    )
+    const ok = await withServers(s => s.transfer(room, ik).then(() => true))
+    if (ok) p2pHost.toast('Transferred. Everyone moves to the new copy.')
+  },
+  answerTransfer: (key: string, yes: boolean) => withServers(s => s.answerTransfer(key, yes)),
+  successors: (room: string) => withServers(s => s.successors(room)),
+  async followTo(room: string, g: WireV2) {
+    await withServers(s => s.followTo(room, g))
+    const next = servers?.view(room)?.next
+    refreshServers()
+    if (next) p2pServer.open(next)
+  },
+  newDevice: () => withServers(s => s.newDevice()),
 
   // Pings on thread replies stay until their thread is read, unless they no longer count.
   markRead(room: string, ch: string) {
@@ -1629,6 +1704,34 @@ export const p2pServer = {
 }
 
 export { CODE_TTLS, NEEDS_INVITER, ServerError }
+
+// Our devices in P2P servers (spec 3.9, 8.2): the list, a lost or stolen one, and recovery.
+export const p2pDevices = {
+  list: () => servers?.myDevices() ?? [],
+  current: () => {
+    const a = node?.author()
+    return a ? keyId(a.dk.pk) : null
+  },
+  preview: async (dk: string, t: number) => (await withServers(s => s.lostPreview(dk, t))) ?? [],
+  async disown(dk: string, t: number) {
+    const out = await withServers(s => s.disownDevice(dk, t))
+    if (out?.failed.length) p2pHost.toast(failedText(out.failed))
+    else if (out?.late.length)
+      p2pHost.toast(
+        'Removed. Where it made the server, what it did stays; nothing it signs from now on counts.'
+      )
+    refreshServers()
+  },
+  async recover(keep: string[]) {
+    const failed = await withServers(s => s.recover(keep))
+    if (failed?.length) p2pHost.toast(failedText(failed))
+    refreshServers()
+  },
+}
+
+// Servers where a device flow didn't go through, and why (the first reason).
+const failedText = (failed: { why: string }[]) =>
+  `Not done in ${failed.length === 1 ? 'one server' : `${failed.length} servers`}: ${failed[0].why}`
 
 // ----- Rail layout -----
 
@@ -1670,6 +1773,8 @@ export const p2pRail = {
   rename: (id: string, name: string) =>
     saveLayout(renameFolder(useP2p.getState().layout, id, name)),
   ungroup: (id: string) => saveLayout(ungroupFolder(useP2p.getState().layout, id)),
+  // From an imported config (its layout section).
+  apply: (servers: RailEntry[]) => saveLayout({ ...useP2p.getState().layout, servers }),
   reload: () => useP2p.setState({ layout: readLayout(useP2p.getState().account) }),
 }
 

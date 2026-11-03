@@ -21,9 +21,12 @@ import { orphanDrops, stableDeny, underDroppable, type Drop } from './acl/storag
 import {
   canView,
   EVERYONE,
+  authority,
   gt,
+  guards,
   idOp,
   MESSAGES,
+  introduces,
   permsQ,
   poster,
   rank,
@@ -51,6 +54,9 @@ export const MAX_PARENTS = 10
 // be admitted again) is read from these versions too: its admission fields never changed.
 export const IMPL = 3
 const HEADER_IMPLS: readonly number[] = [2, 3]
+
+// The shape of the page's summary: a cached one of another shape is not used.
+export const SUM_SHAPE = 3
 
 // The persisted admission record of an ACL event: its Rec without St(e), and St(e) as a delta
 // against the recorded state of one of its parents (`b`), so a cold start admits nothing again.
@@ -111,15 +117,29 @@ export interface MemberSum {
   roles: string[]
   devs: string[]
   profile: AclContent | null
-  // The effective removal of someone who is out (kick, ban, leave) and who made it.
+  // The effective removal of someone who is out (kick, ban, leave), who made it, its type and
+  // time.
   rem?: string
   by?: string
-  // Pending invites (add event ids).
+  remT?: string
+  remTs?: number
+  // Pending invites (add event ids), and who made them.
   adds?: string[]
+  inviters?: string[]
   // The time of the live join (or genesis) that started a member's membership.
   joinTs?: number
   // The account binding a member posted last: its profile's, else its join's (badge.ts).
   binding?: string
+  // Who let a member in: the author of the invite its live join used (for one out with no removal
+  // of its own, its latest join), and the issuer of the code that invite named (removals that
+  // reach invitees, spec 8.2).
+  via?: string
+  code?: string
+  // The highest rank among the effective bans of a banned member (unban needs at least it).
+  banRank?: Rank
+  // An invitee whose invites are all a non-owner's that no third member acknowledged yet: its
+  // join waits (spec 4.1 W3(e), 9 rule 14).
+  waits?: true
 }
 
 export interface RoleSum {
@@ -148,8 +168,13 @@ export interface Summary {
   settings: AclContent | null
   codes: Record<string, CodeSum>
   upgraded: boolean
+  // Admitted upgrades (spec 3.8), and devices with a fork point (evidence against them).
+  upgrades: string[]
+  forks: string[]
   heads: string[]
   count: number
+  // ACL events an owner posted (a new copy's members acknowledge its carry-over by them).
+  ownerCount: number
 }
 
 type Keyed = 'members' | 'roles' | 'channels' | 'codes'
@@ -172,8 +197,11 @@ export const emptySummary = (): Summary => ({
   settings: null,
   codes: {},
   upgraded: false,
+  upgrades: [],
+  forks: [],
   heads: [],
   count: 0,
+  ownerCount: 0,
 })
 
 // Ranks hold the infinities of owners and non-members; what is stored (and exported as JSON)
@@ -248,6 +276,9 @@ export interface PlanReq {
   dev: string
   // kick, ban, revoke: the member the watermark covers
   to?: string
+  // A position to sign at instead of the heads (a revocation positioned at the last trusted
+  // point, spec 3.9); this device's last ACL event is kept in its closure.
+  ap?: string[]
 }
 
 export interface Plan {
@@ -402,6 +433,33 @@ export interface Cause {
   kind: 'deny' | 'wipe' | 'redact' | 'self'
   stable: boolean
   ids: string[]
+}
+
+export interface Reapply {
+  id: string
+  t: string
+  c: AclContent
+}
+
+export interface Disowned {
+  seq: number
+  acts: { id: string; t: string; ts: number; to?: string }[]
+  content: number
+  lose: string[]
+  ap: string[] | null
+  live: boolean
+  devs: string[]
+  seen: Record<string, number>
+}
+
+// Spec 3.8 step 4: what an upgrade carries over, the old copy's state at the upgrade's parents.
+export interface Carried {
+  members: string[]
+  bans: string[]
+  holds: Record<string, string[]>
+  roles: Record<string, RoleSum>
+  channels: Record<string, AclContent>
+  settings: AclContent | null
 }
 
 export interface Purgeable {
@@ -912,8 +970,14 @@ export class AclRoom {
         for (const T of ix.heldBy.get(R) ?? []) touched.add(T)
     }
     if (memo) {
+      let any = false
       for (let i = 0; i < ix.n && !all; i++)
-        if (i >= memo.codes.length || status[i] !== memo.codes[i]) touch(i)
+        if (i >= memo.codes.length || status[i] !== memo.codes[i]) {
+          touch(i)
+          any = true
+        }
+      // Any event of a third member may vouch for a pending invite, or stop doing so (W3(e)).
+      if (any) for (const ik of F.pending.keys()) touched.add(ik)
       if (memo.usable !== usable)
         for (const l of ix.codeAdds.values())
           for (const g of l) if (typeof ix.ev[g].c.to === 'string') touched.add(ix.ev[g].c.to)
@@ -954,8 +1018,11 @@ export class AclRoom {
       settings: F.setting ?? null,
       codes,
       upgraded: F.upgraded.length > 0,
+      upgrades: [...F.upgraded],
+      forks: [...S.F].filter(([, f]) => f < Infinity).map(([v]) => v),
       heads: this.heads(i => !this.gone.has(ix.ids[i])),
       count: ix.n - this.gone.size,
+      ownerCount: [...F.owners].reduce((n, o) => n + (ix.byAuthor.get(o)?.length ?? 0), 0),
     }
   }
 
@@ -988,17 +1055,71 @@ export class AclRoom {
       if (last >= 0) {
         sum.rem = ix.ids[last]
         sum.by = ix.ev[last].a
+        sum.remT = ix.ev[last].t
+        sum.remTs = ix.ev[last].ts
       }
     }
-    if (m === 'invite') sum.adds = (F.pending.get(ik) ?? []).map(p => p.id)
+    // Out with no removal of their own: who let them in, read from their latest join (cut).
+    if (m === 'leave' && !sum.rem) {
+      let j = -1
+      for (const g of ix.memEv.get(ik) ?? []) if (g > j && fe.inS(g) && ix.ev[g].t === 'join') j = g
+      if (j >= 0) this.letIn(sum, ik, j)
+    }
+    if (m === 'invite') {
+      sum.adds = (F.pending.get(ik) ?? []).map(p => p.id)
+      sum.inviters = [...new Set((F.pending.get(ik) ?? []).map(p => p.a))]
+      if (!sum.adds.some(id => this.vouched(id, ik))) sum.waits = true
+    }
+    if (m === 'ban') {
+      let k: Rank | undefined
+      for (const r of F.effBanK.get(ik) ?? []) if (!k || gt(r, k)) k = r
+      if (k) sum.banRank = k
+    }
     if (m === 'join') {
       let j = -1
       for (const g of ix.memEv.get(ik) ?? []) if (fe.inS(g) && !fe.isVoidI(g) && g > j) j = g
       if (j >= 0) sum.joinTs = ix.ev[j].ts
+      if (j >= 0 && ix.ev[j].t === 'join') this.letIn(sum, ik, j)
       const b = sum.profile?.binding ?? (j >= 0 ? ix.ev[j].c.binding : undefined)
       if (typeof b === 'string') sum.binding = b
     }
     return sum
+  }
+
+  // Who let `ik` in by its join `j`: the author of the latest invite of it in j's past, and the
+  // issuer of the code that invite named.
+  private letIn(sum: MemberSum, ik: string, j: number) {
+    const ix = this.r.acl.ix
+    const fe = this.r.acl.evaluation()
+    let add = -1
+    for (const a of ix.addEv.get(ik) ?? []) if (a > add && fe.inS(a) && ix.has(j, a)) add = a
+    if (add < 0) return
+    sum.via = poster(ix.ev[add])
+    const code = ix.ev[add].c.code
+    const ci = code === undefined ? undefined : ix.codeEv.get(code)
+    if (ci !== undefined) sum.code = ix.ev[ci].a
+  }
+
+  // Whether the invite `add` of `to` lets a join in by W3(e): an owner's, or one that an admitted
+  // ACL event of a third identity has in its past (looked for among its descendants).
+  private vouched(add: string, to: string) {
+    const ix = this.r.acl.ix
+    const fe = this.r.acl.evaluation()
+    const p = ix.at.get(add)
+    if (p === undefined) return true
+    const by = poster(ix.ev[p])
+    if (this.r.state().facts.owners.has(by)) return true
+    const seen = new Set<number>([p])
+    const queue = [...ix.kids[p]]
+    for (let at = 0; at < queue.length && seen.size < 4096; at++) {
+      const q = queue[at]
+      if (seen.has(q)) continue
+      seen.add(q)
+      const a = poster(ix.ev[q])
+      if (fe.inS(q) && !fe.X[q] && a !== by && a !== to) return true
+      for (const k of ix.kids[q]) if (!seen.has(k)) queue.push(k)
+    }
+    return seen.size >= 4096
   }
 
   // What changed since the page's copy (all of it the first time).
@@ -1052,7 +1173,9 @@ export class AclRoom {
       // A member's own effective leave is the last event of a member, not a non-member's.
       return F.mem.has(e.a) || i === ix.genesis || (e.t === 'leave' && fe.isEffI(i))
     }
-    let ap = this.heads(citable).slice(0, MAX_PARENTS)
+    let ap = q.ap
+      ? q.ap.filter(id => this.r.admitted(id)).slice(0, MAX_PARENTS)
+      : this.heads(citable).slice(0, MAX_PARENTS)
     if (mine >= 0) {
       const { bits } = ix.closure(ap)
       if (!((bits[mine >>> 5] >>> (mine & 31)) & 1)) {
@@ -1082,6 +1205,17 @@ export class AclRoom {
     if (target !== undefined) {
       const seen: Record<string, number> = {}
       for (const v of St.facts.devs.get(target) ?? []) seen[v] = this.maxSeq(v)
+      plan.seen = seen
+    }
+    // A device revocation's watermark: the highest seq of that device held here.
+    if (q.t === 'device_revoke' && q.to) plan.seen = { [q.to]: this.maxSeq(q.to) }
+    // A rotation's watermark covers every device of its identity that its past introduces.
+    if (q.t === 'primary_rotate') {
+      const seen: Record<string, number> = {}
+      const { bits } = ix.closure(ap)
+      for (const x of ix.introBy.get(q.a) ?? [])
+        if ((bits[x >>> 5] >>> (x & 31)) & 1)
+          for (const v of introduces(ix.ev[x])) if (v !== q.dev) seen[v] = this.maxSeq(v)
       plan.seen = seen
     }
     return plan
@@ -1192,6 +1326,195 @@ export class AclRoom {
   outranks(ik: string, other: string) {
     const F = this.r.state().facts
     return gt(rank(F, ik), rank(F, other))
+  }
+
+  // ----- Flows (spec 3.9, 9 rule 18) -----
+
+  // Whether each event still counts: content that shows; an ACL event in force (a deny effective,
+  // anything else not void, cut or past a watermark).
+  counted(ids: readonly string[]): boolean[] {
+    const v = this.view()
+    const S = this.r.state()
+    const ix = this.r.acl.ix
+    return ids.map(id => {
+      const m = v.byIdOf(id)
+      if (m) return !v.hidden(m)
+      const i = ix.at.get(id)
+      if (i === undefined || !this.r.admitted(id)) return false
+      if (ix.isD[i]) return S.eff.has(id)
+      return !S.X.has(id) && !S.cut.has(id) && !S.tail.has(id)
+    })
+  }
+
+  // Whether each event stopped counting because of a device's removal: content hidden past its
+  // device's fork point or a revocation's watermark (not redacted, wiped, removed or cut); an
+  // ACL event no longer in force.
+  stopped(ids: readonly string[]): boolean[] {
+    const v = this.view()
+    const now = this.counted(ids)
+    return ids.map((id, n) => {
+      const m = v.byIdOf(id)
+      if (!m) return !now[n]
+      const why = v.hidden(m)?.why
+      return why === 'revoked' || why === 'fork'
+    })
+  }
+
+  // Spec 3.8 step 4: project(Eval_S(B(u))) for the upgrade `up`: the members, bans, roles (and
+  // who holds them), channels and settings at its parents. Null when it isn't admitted here.
+  carried(up: string): Carried | null {
+    const ix = this.r.acl.ix
+    const i = ix.at.get(up)
+    if (i === undefined || !this.r.admitted(up) || ix.ev[i].t !== 'upgrade') return null
+    const F = this.r.acl.stateOf(ix.ev[i].ap).facts
+    const holds: Record<string, string[]> = {}
+    for (const ik of F.mem) holds[ik] = [...(F.holds.get(ik) ?? [])]
+    const roles: Record<string, RoleSum> = {}
+    for (const R of F.roles) {
+      const c = ix.ev[ix.roleCreate.get(R)!]?.c
+      const r: RoleSum = { pos: F.pos.get(R) ?? 0, bits: F.bits.get(R) ?? 0 }
+      if (typeof c?.name === 'string') r.name = c.name
+      if (typeof c?.color === 'number') r.color = c.color
+      roles[R] = r
+    }
+    const channels: Record<string, AclContent> = {}
+    for (const [id, c] of F.channels) channels[id] = c
+    return {
+      members: [...F.mem],
+      bans: [...F.ban],
+      holds,
+      roles,
+      channels,
+      settings: F.setting ?? null,
+    }
+  }
+
+  // I2: our own denies the current state doesn't count (cut, void by a fork, past a revocation's
+  // watermark) that we may still make at the heads: the same act, checked against the current
+  // state's authority and guards. One per act, newest first.
+  reapply(me: string, exclude: readonly string[] = []): Reapply[] {
+    const ix = this.r.acl.ix
+    if (ix.genesis < 0 || this.r.unknownRules !== undefined) return []
+    const fe = this.r.acl.evaluation()
+    const F = this.r.state().facts
+    const out: Reapply[] = []
+    const acts = new Set<string>()
+    const own = [...(ix.byAuthor.get(me) ?? [])].sort((x, y) => y - x)
+    for (const i of own) {
+      const e = ix.ev[i]
+      if (!ix.isD[i] || ix.isSelfD[i] || e.relay || !fe.inS(i) || fe.isEffI(i)) continue
+      // Not a device we disowned as lost or stolen, or signed out: not ours to re-apply. Past a
+      // revocation's or rotation's watermark (the evaluation's tail: devices it dropped, those
+      // introduced concurrently with it too) the room itself says so, on every device of ours.
+      if (exclude.includes(e.dev) || fe.tail[i]) continue
+      const { seen: _s, ...c } = e.c as AclContent & { seen?: unknown }
+      const { reason: _r, ...act } = c as AclContent & { reason?: unknown }
+      const key = `${e.t}\n${JSON.stringify(act)}`
+      if (acts.has(key)) continue
+      acts.add(key)
+      const probe = { id: '', t: e.t, a: me, dev: e.dev, seq: 0, ap: [], ts: 0, c } as AclEv
+      if (authority(probe, F) && guards(probe, F)) out.push({ id: ix.ids[i], t: e.t, c })
+    }
+    return out
+  }
+
+  // Spec 3.9, 8.2 lost or stolen device: what device `dk` of `ik` did after its last trusted event
+  // (its ACL events with a higher seq, and how much content; `witnesses`: the ACL events received
+  // here by the cut-off; `own`: the highest seq this browser itself signed with it by then), who
+  // joined
+  // through its invites from then on and goes with them, and where a rotation that disowns them
+  // can sit: the newest admitted events that have none of them in their past (null: none, its
+  // first changes can't be undone). There, `devs` are ik's live devices and `seen` the watermark
+  // of each device of ik its past introduces: `dk` up to its last trusted seq, the others up to
+  // their last event that has none of them in its past.
+  disown(ik: string, dk: string, witnesses: readonly string[], own = -1): Disowned {
+    const ix = this.r.acl.ix
+    const none: Disowned = {
+      seq: -1,
+      acts: [],
+      content: 0,
+      lose: [],
+      ap: null,
+      live: false,
+      devs: [],
+      seen: {},
+    }
+    if (ix.genesis < 0 || this.r.unknownRules !== undefined) return none
+    const fe = this.r.acl.evaluation()
+    const F = this.r.state().facts
+    // Its last trusted event: the newest of its ACL events that an ACL event of someone else, or of
+    // another device of ours, received here by the cut-off has in its past. Its own dates are not
+    // evidence: a thief can backdate them.
+    const known = witnesses.filter(id => this.r.admitted(id) && ix.ev[ix.at.get(id)!].dev !== dk)
+    const { bits: wb } = ix.closure(known)
+    let seq = own
+    for (const i of ix.byDev.get(dk) ?? [])
+      if ((wb[i >>> 5] >>> (i & 31)) & 1) seq = Math.max(seq, ix.ev[i].seq)
+    // Below its fork point known here: what forks we already saw is undone too.
+    seq = Math.min(seq, (this.r.state().F.get(dk) ?? Infinity) - 1)
+    const held = [...this.contents.values()].filter(m => m.dev === dk)
+    const D = (ix.byDev.get(dk) ?? []).filter(i => ix.ev[i].seq > seq)
+    const Dset = new Set(D)
+    const Db = new Uint32Array((ix.n + 31) >>> 5)
+    for (const i of D) Db[i >>> 5] |= 1 << (i & 31)
+    const tainted = (i: number) => {
+      if (Dset.has(i)) return true
+      const a = ix.anc[i]
+      for (let w = 0; w < a.length; w++) if (a[w] & Db[w]) return true
+      return false
+    }
+    const ok = (i: number) => {
+      if (!fe.inS(i) || tainted(i) || fe.X[i] || fe.tail[i]) return false
+      const e = ix.ev[i]
+      return F.mem.has(e.a) || i === ix.genesis || (e.t === 'leave' && fe.isEffI(i))
+    }
+    const heads = this.heads(ok).slice(0, MAX_PARENTS)
+    const ap = heads.length ? heads : null
+    const at = ap ?? this.heads(i => fe.inS(i)).slice(0, MAX_PARENTS)
+    const St = this.r.acl.stateOf(at).facts
+    const live = St.devs.get(ik)?.has(dk) ?? false
+    const seen: Record<string, number> = {}
+    if (ap) {
+      const { bits } = ix.closure(ap)
+      const inC = (i: number) => ((bits[i >>> 5] >>> (i & 31)) & 1) === 1
+      for (const x of ix.introBy.get(ik) ?? [])
+        if (inC(x))
+          for (const v of introduces(ix.ev[x])) {
+            let m = -1
+            for (const i of ix.byDev.get(v) ?? []) if (inC(i)) m = Math.max(m, ix.ev[i].seq)
+            for (const c of this.contents.values())
+              if (c.dev === v && c.ap.every(p => !tainted(ix.at.get(p) ?? 0)))
+                m = Math.max(m, c.seq)
+            seen[v] = v === dk ? Math.max(seq, m) : m
+          }
+      seen[dk] = seq
+    }
+    const lose: string[] = []
+    for (const X of F.mem) {
+      let j = -1
+      for (const g of ix.memEv.get(X) ?? []) if (fe.inS(g) && !fe.isVoidI(g) && g > j) j = g
+      if (j < 0 || ix.ev[j].t !== 'join') continue
+      let add = -1
+      for (const a of ix.addEv.get(X) ?? []) if (a > add && fe.inS(a) && ix.has(j, a)) add = a
+      if (add < 0) continue
+      const code = ix.ev[add].c.code
+      const ci = code === undefined ? undefined : ix.codeEv.get(code)
+      if (Dset.has(add) || (ci !== undefined && Dset.has(ci))) lose.push(X)
+    }
+    return {
+      seq,
+      acts: D.map(i => {
+        const e = ix.ev[i]
+        const to = typeof e.c.to === 'string' ? e.c.to : undefined
+        return { id: ix.ids[i], t: e.t, ts: e.ts, ...(to ? { to } : {}) }
+      }),
+      content: held.filter(m => m.seq > seq).length,
+      lose,
+      ap,
+      live,
+      devs: [...(St.devs.get(ik) ?? [])],
+      seen,
+    }
   }
 
   // ----- Storage (spec 2.3, 4.2, 4.3) -----
