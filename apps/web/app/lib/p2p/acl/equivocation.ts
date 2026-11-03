@@ -1,6 +1,6 @@
 import { fiOf, type EvalResult } from './facts'
-import { EMPTY, Ix, pushM } from './reach'
-import { introduces, LIM, poster, type AclEv, type Ctx } from './rules'
+import { EMPTY, firstTrue, Ix, popcount, pushM } from './reach'
+import { introduces, LIM, poster, relayed, type AclEv, type Ctx, type Rec } from './rules'
 
 // Equivocation (spec §2.3): device and identity fork points (FI per epoch), rotation and race
 // evidence, pool candidates (W3(g)), candidates, the void set X, and the revocation tails of §3.1.
@@ -16,6 +16,106 @@ export interface Header {
 export const evidencePair = (x: Header, y: Header) =>
   x.dev === y.dev && (x.seq === y.seq || (x.aprev ?? '') === (y.aprev ?? ''))
 
+// The headers of dropped events (orphan rule, §2.3), outside the index. They count as every kind
+// of evidence and set no fact. A header is read only against events of its own identity: an
+// indexed x is in its past when x is in C(f) for one of its maximal indexed ancestors `fr`, and
+// headers are ordered by their header parents `hp`. No held event has a header in its past.
+export interface Hdr {
+  ev: AclEv
+  rec: Rec
+  fr: number[]
+  hp: number[]
+}
+export class Hdrs {
+  list: Hdr[] = []
+  at = new Map<string, number>()
+  byDev = new Map<string, number[]>()
+  byPoster = new Map<string, number[]>()
+  idOps: number[] = []
+  private anc = new Map<number, Set<number>>()
+
+  // `evs`: the headers, in any order; each parent is indexed or one of them. The list is in
+  // causal order (a header after its header parents).
+  constructor(
+    public ix: Ix,
+    evs: readonly { ev: AclEv; rec: Rec }[]
+  ) {
+    const byId = new Map(evs.map(x => [x.ev.id, x]))
+    for (const root of evs) {
+      if (this.at.has(root.ev.id)) continue
+      const st: { x: { ev: AclEv; rec: Rec }; k: number }[] = [{ x: root, k: 0 }]
+      while (st.length) {
+        const top = st[st.length - 1]
+        const ap = top.x.ev.ap
+        if (top.k < ap.length) {
+          const pid = ap[top.k++]
+          if (ix.at.has(pid) || this.at.has(pid)) continue
+          const pg = byId.get(pid)
+          if (!pg) throw new Error(`acl: parent ${pid} of header ${top.x.ev.id} not held`)
+          st.push({ x: pg, k: 0 })
+          continue
+        }
+        st.pop()
+        if (!this.at.has(top.x.ev.id)) this.push(top.x.ev, top.x.rec)
+      }
+    }
+  }
+  private push(ev: AclEv, rec: Rec) {
+    const ix = this.ix
+    const cand: number[] = []
+    const hp: number[] = []
+    for (const pid of ev.ap) {
+      const p = ix.at.get(pid)
+      if (p !== undefined) cand.push(p)
+      else {
+        const q = this.at.get(pid)!
+        if (!hp.includes(q)) hp.push(q)
+        for (const f of this.list[q].fr) cand.push(f)
+      }
+    }
+    cand.sort((a, b) => b - a)
+    const fr: number[] = []
+    for (const f of cand) if (!fr.some(h => h === f || ix.has(h, f))) fr.push(f)
+    const k = this.list.length
+    this.list.push({ ev, rec, fr, hp })
+    this.at.set(ev.id, k)
+    pushM(this.byDev, ev.dev, k)
+    if (rec.pool) pushM(this.byPoster, poster(ev), k)
+    if (rec.depth >= 0) this.idOps.push(k)
+  }
+  // indexed x ∈ B(header k)
+  has(k: number, x: number): boolean {
+    for (const f of this.list[k].fr) if (f === x || this.ix.has(f, x)) return true
+    return false
+  }
+  // header u ∈ B(header v)
+  before(u: number, v: number): boolean {
+    let a = this.anc.get(v)
+    if (!a) {
+      a = new Set()
+      const st = [...this.list[v].hp]
+      while (st.length) {
+        const h = st.pop()!
+        if (a.has(h)) continue
+        a.add(h)
+        for (const g of this.list[h].hp) st.push(g)
+      }
+      this.anc.set(v, a)
+    }
+    return a.has(u)
+  }
+}
+
+// An identity op among the held events (`i`) or the headers (`g`).
+interface IdRef {
+  i: number
+  g: number
+  e: AclEv
+  depth: number
+  epoch: string
+  id: string
+}
+
 export class Equiv {
   F = new Map<string, number>()
   FI = new Map<string, number>()
@@ -25,6 +125,8 @@ export class Equiv {
   tail!: Uint8Array
   tailBy = new Map<number, number[]>()
   order: number[]
+  // Headers of dropped events: evidence only (§2.3).
+  hdrs: Hdrs | null = null
 
   constructor(
     public ix: Ix,
@@ -39,28 +141,20 @@ export class Equiv {
     return this.mS === null || this.mS[i] === 1
   }
 
-  // Dropped events (orphan rule): indexed, not in S, and still counted as every kind of evidence.
-  ghost: Uint8Array | null = null
-  inEv(i: number) {
-    return this.inS(i) || (this.ghost !== null && this.ghost[i] === 1)
-  }
-
   forkPoints() {
     const ix = this.ix
     const F = this.F
     const FI = this.FI
+    const H = this.hdrs
     const low = (dev: string, m: number) => {
       if (m < (F.get(dev) ?? Infinity)) F.set(dev, m)
     }
-    for (const [dev, es] of ix.byDev) {
-      const bySeq = new Map<number, number>()
+    const devEvidence = (dev: string, es: readonly number[], hs: readonly number[]) => {
+      const bySeq = new Set<number>()
       const byPrev = new Map<string, number>()
-      for (const i of es) {
-        if (!this.inEv(i)) continue
-        const e = ix.ev[i]
-        const s1 = bySeq.get(e.seq)
-        if (s1 !== undefined) low(dev, Math.min(e.seq, s1))
-        else bySeq.set(e.seq, e.seq)
+      const one = (e: AclEv) => {
+        if (bySeq.has(e.seq)) low(dev, e.seq)
+        else bySeq.add(e.seq)
         const pk = e.aprev ?? ''
         const s2 = byPrev.get(pk)
         if (s2 !== undefined) {
@@ -68,87 +162,109 @@ export class Equiv {
           byPrev.set(pk, Math.min(s2, e.seq))
         } else byPrev.set(pk, e.seq)
       }
+      for (const k of hs) one(H!.list[k].ev)
+      for (const i of es) if (this.inS(i)) one(ix.ev[i])
     }
+    for (const [dev, es] of ix.byDev) devEvidence(dev, es, H?.byDev.get(dev) ?? EMPTY)
+    if (H) for (const [dev, hs] of H.byDev) if (!ix.byDev.has(dev)) devEvidence(dev, EMPTY, hs)
     for (const p of ix.proofEv) {
       if (!this.inS(p)) continue
       const { x, y } = ix.ev[p].c as unknown as { x: Header; y: Header }
       low(x.dev, Math.min(x.seq, y.seq))
     }
+    // identity ops: the held ones in index order, then the headers in causal order (a held event
+    // never has a header in its past)
+    const refs: IdRef[] = []
+    for (const i of ix.idOps)
+      if (this.inS(i))
+        refs.push({
+          i,
+          g: -1,
+          e: ix.ev[i],
+          depth: ix.rec[i].depth,
+          epoch: ix.rec[i].epoch,
+          id: ix.ids[i],
+        })
+    if (H)
+      for (const k of H.idOps) {
+        const h = H.list[k]
+        refs.push({ i: -1, g: k, e: h.ev, depth: h.rec.depth, epoch: h.rec.epoch, id: h.ev.id })
+      }
+    // u ∈ B(v)
+    const before = (u: IdRef, v: IdRef) =>
+      v.g < 0 ? u.g < 0 && ix.has(v.i, u.i) : u.g < 0 ? H!.has(v.g, u.i) : H!.before(u.g, v.g)
     const byIdn = new Map<string, Map<string, number>>()
-    for (const i of ix.idOps) {
-      const e = ix.ev[i]
-      const r = ix.rec[i]
-      if (e.t === 'primary_rotate' || !this.inEv(i)) continue
-      const key = `${e.a}|${r.epoch}`
+    for (const x of refs) {
+      if (x.e.t === 'primary_rotate') continue
+      const key = `${x.e.a}|${x.epoch}`
       let m = byIdn.get(key)
       if (!m) byIdn.set(key, (m = new Map()))
-      const pk = e.iprev ?? ''
+      const pk = x.e.iprev ?? ''
       const d0 = m.get(pk)
       if (d0 !== undefined) {
-        const d = Math.min(d0, r.depth)
+        const d = Math.min(d0, x.depth)
         if (d < (FI.get(key) ?? Infinity)) FI.set(key, d)
-      } else m.set(pk, r.depth)
+      } else m.set(pk, x.depth)
     }
     // rotation evidence: any two concurrent rotations of one identity; race evidence: a
     // non-rotation identity op over the iprev of a rotation of its identity
-    const byRot = new Map<string, number[]>()
+    const byRot = new Map<string, IdRef[]>()
     const rotPrev = new Set<string>()
-    for (const i of ix.idOps)
-      if (this.inEv(i) && ix.ev[i].t === 'primary_rotate') {
-        pushM(byRot, ix.ev[i].a, i)
-        rotPrev.add(`${ix.ev[i].a}|${ix.ev[i].iprev ?? ''}`)
+    for (const x of refs)
+      if (x.e.t === 'primary_rotate') {
+        pushM(byRot, x.e.a, x)
+        rotPrev.add(`${x.e.a}|${x.e.iprev ?? ''}`)
       }
     if (rotPrev.size)
-      for (const i of ix.idOps) {
-        const e = ix.ev[i]
-        const r = ix.rec[i]
-        if (e.t === 'primary_rotate' || !this.inEv(i) || !rotPrev.has(`${e.a}|${e.iprev ?? ''}`))
-          continue
-        const key = `${e.a}|${r.epoch}`
-        if (r.depth < (FI.get(key) ?? Infinity)) FI.set(key, r.depth)
+      for (const x of refs) {
+        if (x.e.t === 'primary_rotate' || !rotPrev.has(`${x.e.a}|${x.e.iprev ?? ''}`)) continue
+        const key = `${x.e.a}|${x.epoch}`
+        if (x.depth < (FI.get(key) ?? Infinity)) FI.set(key, x.depth)
       }
-    const sib: number[] = []
-    const sibS = new Set<number>()
+    const sib: IdRef[] = []
     for (const rs of byRot.values())
-      for (let x = 0; x < rs.length; x++)
-        for (let y = x + 1; y < rs.length; y++)
-          if (!ix.has(rs[x], rs[y]) && !ix.has(rs[y], rs[x])) {
-            sibS.add(rs[x])
-            sibS.add(rs[y])
+      for (let p = 0; p < rs.length; p++)
+        for (let q = p + 1; q < rs.length; q++)
+          if (!before(rs[p], rs[q]) && !before(rs[q], rs[p])) {
+            this.RF.add(rs[p].id)
+            this.RF.add(rs[q].id)
           }
-    for (const r of sibS) {
-      this.RF.add(ix.ids[r])
-      sib.push(r)
-    }
+    for (const rs of byRot.values()) for (const r of rs) if (this.RF.has(r.id)) sib.push(r)
     if (sib.length)
-      for (const i of ix.idOps) {
-        if (!this.inEv(i)) continue
-        const e = ix.ev[i]
-        const id = ix.ids[i]
-        if (this.RF.has(id)) continue
-        if (e.t === 'primary_rotate') {
+      for (const x of refs) {
+        if (this.RF.has(x.id)) continue
+        if (x.e.t === 'primary_rotate') {
           if (
-            e.iprev !== undefined &&
-            this.RF.has(e.iprev) &&
-            sib.some(q => ix.ev[q].a === e.a && !ix.has(i, q) && !ix.has(q, i))
+            x.e.iprev !== undefined &&
+            this.RF.has(x.e.iprev) &&
+            sib.some(q => q.e.a === x.e.a && !before(q, x) && !before(x, q))
           )
-            this.RF.add(id)
-        } else if (ix.rec[i].epoch !== '' && this.RF.has(ix.rec[i].epoch)) this.RF.add(id)
+            this.RF.add(x.id)
+        } else if (x.epoch !== '' && this.RF.has(x.epoch)) this.RF.add(x.id)
       }
     this.PC = this.poolCands()
   }
 
-  // Pool candidates (W3(g)): a non-owner's event x other than a rotation whose pool
-  // P(x) = U(x) ∪ ⋃ U(y) over the events y of its poster concurrent with x exceeds poolU (a relay
-  // is its relayer's event here, §1.6).
+  // Pool candidates (W3(g)): a non-owner's event x other than a rotation or its identity's own
+  // device_revoke whose pool P(x) = U(x) ∪ ⋃ U(y) over the events y of its poster concurrent with
+  // x, held or headers, before their device's fork point (revision 7), exceeds poolU (a relay is
+  // its relayer's event here, §1.6). Per poster and device chain: on a linear chain the events
+  // concurrent with x are one segment (two binary searches); prefix sums of |U| bound the union
+  // from above, U(x) ∪ conc(x) from below, and the union is formed only between the bounds. A
+  // chain that isn't linear is counted by popcount below x and one by one above it.
   poolCands(): Set<string> {
     const ix = this.ix
     const lim = LIM.poolU
+    const n = ix.n
+    const F = this.F
+    const H = this.hdrs
+    const ng = H?.list.length ?? 0
     const PC = new Set<string>()
+    const preF = (e: AclEv) => e.seq < (F.get(e.dev) ?? Infinity)
     const byA = new Map<string, number[]>()
-    for (let i = 0; i < ix.n; i++) {
+    for (let i = 0; i < n; i++) {
       const a = poster(ix.ev[i])
-      if (this.inEv(i) && ix.rec[i].pool && !ix.owners.has(a)) pushM(byA, a, i)
+      if (this.inS(i) && ix.rec[i].pool && !ix.owners.has(a)) pushM(byA, a, i)
     }
     let stamp: Int32Array | undefined
     let cur = 0
@@ -167,71 +283,133 @@ export class Equiv {
         cnt++
       }
     }
+    const hslot = (id: string) => {
+      const k = H?.at.get(id)
+      return k === undefined ? -1 : n + k
+    }
     const addPool = (y: number) => {
       const p = poolIx(y)
-      for (let k = 0; k < p.length; k++) add(p[k])
+      for (let k = 0; k < p.length; k++)
+        if (p[k] >= 0) add(p[k])
+        else if (ng) add(hslot(ix.rec[y].pool![k]))
     }
-    for (const es of byA.values()) {
-      if (es.length <= 1) continue
-      let chain = true
-      for (let k = 1; k < es.length && chain; k++) if (!ix.has(es[k], es[k - 1])) chain = false
-      if (chain) continue
+    const addHPool = (k: number) => {
+      for (const id of H!.list[k].rec.pool!) add(ix.at.get(id) ?? hslot(id))
+    }
+    for (const [a, es] of byA) {
+      const gl = (H?.byPoster.get(a) ?? EMPTY).filter(k => preF(H!.list[k].ev))
+      if (es.length + gl.length <= 1) continue
+      if (!gl.length) {
+        let chain = true
+        for (let k = 1; k < es.length && chain; k++) if (!ix.has(es[k], es[k - 1])) chain = false
+        if (chain) continue
+      }
       const byD = new Map<string, number[]>()
-      for (const i of es) pushM(byD, ix.ev[i].dev, i)
-      const segs: { l: number[]; lin: boolean; pre: number[] }[] = []
+      for (const i of es) if (preF(ix.ev[i])) pushM(byD, ix.ev[i].dev, i)
+      const segs: { l: number[]; lin: boolean; pre: number[]; bits?: Uint32Array }[] = []
       for (const l of byD.values()) {
         let lin = true
         for (let k = 1; k < l.length && lin; k++) if (!ix.has(l[k], l[k - 1])) lin = false
         const pre = [0]
         for (const y of l) pre.push(pre[pre.length - 1] + ix.rec[y].pool!.length)
-        segs.push({ l, lin, pre })
+        let bits: Uint32Array | undefined
+        if (!lin) {
+          bits = new Uint32Array((n + 31) >>> 5)
+          for (const y of l) bits[y >>> 5] |= 1 << (y & 31)
+        }
+        segs.push({ l, lin, pre, bits })
       }
       const sp: number[] = []
       const sq: number[] = []
+      const conc: number[][] = []
       for (const x of es) {
-        if (ix.ev[x].t === 'primary_rotate') continue
+        const xe = ix.ev[x]
+        if (xe.t === 'primary_rotate' || (xe.t === 'device_revoke' && !relayed(xe))) continue
         const ux = ix.rec[x].pool!.length
         let lo = ux
         let hi = ux
-        for (let si = 0; si < segs.length; si++) {
-          const { l, lin, pre } = segs[si]
+        let over = false
+        const ax = ix.anc[x]
+        for (let si = 0; si < segs.length && !over; si++) {
+          const { l, lin, pre, bits } = segs[si]
           let p = 0
           let q = 0
           if (lin) {
-            let a = 0
+            let a0 = 0
             let b = l.length
-            while (a < b) {
-              const m = (a + b) >> 1
-              if (ix.has(x, l[m])) a = m + 1
+            while (a0 < b) {
+              const m = (a0 + b) >> 1
+              if (ix.has(x, l[m])) a0 = m + 1
               else b = m
             }
-            p = a
+            p = a0
             b = l.length
-            while (a < b) {
-              const m = (a + b) >> 1
+            while (a0 < b) {
+              const m = (a0 + b) >> 1
               if (l[m] === x || ix.has(l[m], x)) b = m
-              else a = m + 1
+              else a0 = m + 1
             }
-            q = a
+            q = a0
             if (q > p) {
               lo += q - p
               hi += pre[q] - pre[p]
             }
-          } else
-            for (const y of l)
-              if (y !== x && !ix.has(x, y) && !ix.has(y, x)) {
-                lo++
-                hi += ix.rec[y].pool!.length
+            if (lo > lim) over = true
+          } else {
+            const xw = x >>> 5
+            let c = 0
+            for (let w = 0; w < xw; w++) c += popcount(bits![w] & ~ax[w])
+            c += popcount(bits![xw] & ~(ax[xw] ?? 0) & ((1 << (x & 31)) - 1))
+            lo += c
+            if (lo > lim) {
+              over = true
+              break
+            }
+            const cl: number[] = []
+            for (let w = 0; w <= xw; w++) {
+              let m = bits![w] & ~(ax[w] ?? 0)
+              if (w === xw) m &= (1 << (x & 31)) - 1
+              while (m) {
+                const t = m & -m
+                cl.push((w << 5) + (31 - Math.clz32(t)))
+                m ^= t
               }
+            }
+            for (const y of cl) hi += ix.rec[y].pool!.length
+            for (let k = firstTrue(0, l.length, j => l[j] > x); k < l.length; k++) {
+              const y = l[k]
+              if (ix.has(y, x)) continue
+              cl.push(y)
+              lo++
+              hi += ix.rec[y].pool!.length
+              if (lo > lim) {
+                over = true
+                break
+              }
+            }
+            conc[si] = cl
+          }
           sp[si] = p
           sq[si] = q
         }
-        if (lo > lim) {
+        const gc: number[] = []
+        if (!over)
+          for (const k of gl) {
+            if (H!.has(k, x)) continue
+            gc.push(k)
+            lo++
+            hi += H!.list[k].rec.pool!.length
+            if (lo > lim) {
+              over = true
+              break
+            }
+          }
+        if (over) {
           PC.add(ix.ids[x])
           continue
         }
         if (hi <= lim) continue
-        if (!stamp) stamp = new Int32Array(ix.n)
+        if (!stamp) stamp = new Int32Array(n + ng)
         cur++
         cnt = 0
         addPool(x)
@@ -240,8 +418,9 @@ export class Equiv {
           if (lin) {
             for (let k = sp[si]; k < sq[si]; k++) add(l[k])
             if (sq[si] > sp[si]) addPool(l[sq[si] - 1])
-          } else for (const y of l) if (y !== x && !ix.has(x, y) && !ix.has(y, x)) addPool(y)
+          } else for (const y of conc[si]) addPool(y)
         }
+        for (let k = 0; k < gc.length && cnt <= lim; k++) addHPool(gc[k])
         for (let si = 0; si < segs.length && cnt <= lim; si++) {
           const { l, lin } = segs[si]
           if (lin) for (let k = sp[si]; k < sq[si] - 1 && cnt <= lim; k++) addPool(l[k])
@@ -368,9 +547,11 @@ export class Equiv {
     const seen = new Int32Array(n).fill(-1)
     for (const i of this.order) {
       if (!this.candidateIn(i, F, FI, this.RF, this.PC)) continue
-      // witnessed: a descendant by another identity, clean, in good faith; candidacy only grows
-      // with the set, so the search stops at a w in whose St(w) i is a candidate
-      // a witness is of another identity than the candidate's, and than its relayer's
+      // witnessed: a descendant by another identity, clean, in good faith. Structural candidacy
+      // only grows with the set, so the search stops at a w in whose St(w) i is a structural
+      // candidate; a pool candidacy there makes w no witness but can end later (revision 7), so
+      // the search goes on past it. A witness is of another identity than the candidate's, and
+      // than its relayer's.
       const a = ix.ev[i].a
       const pa = poster(ix.ev[i])
       let wit = false
@@ -381,7 +562,10 @@ export class Equiv {
           if (seen[w] === i || !this.inS(w)) continue
           seen[w] = i
           const lo = ix.rec[w].local
-          if (this.candidateIn(i, lo.F, lo.FI, lo.RF, lo.PC)) continue
+          if (this.candidateIn(i, lo.F, lo.FI, lo.RF, lo.PC)) {
+            if (!this.candidateIn(i, lo.F, lo.FI, lo.RF)) st.push(w)
+            continue
+          }
           const we = ix.ev[w]
           const wp = poster(we)
           if (we.a !== a && we.a !== pa && wp !== a && wp !== pa && isClean(w)) {
@@ -441,26 +625,31 @@ export const seenOf = (e: AclEv, v: string): number => {
 
 // The orphan rule of §2.3 (storage only) on the held set `ids` with state `st`: X events with no
 // held descendant, other than the genesis, upgrades and proofs (a kept header doesn't hold the
-// pair a proof carries, so dropping one could raise F), whose drop leaves FI (on the genesis
-// epoch and every epoch whose rotation is not contested) and the contested identity ops among the
-// held events unchanged; tried in descending id order until nothing more can go. Returns the
-// dropped ids; their headers stay as evidence (`ghosts`).
+// pair a proof carries, so dropping one could raise F), that are structural candidates (a
+// candidate only by pool evidence can stop being one, revision 7), and whose drop leaves FI (on
+// the genesis epoch and every epoch whose rotation is not contested) and the contested identity
+// ops among the held events unchanged; tried in descending id order until nothing more can go.
+// Returns the dropped ids; their headers stay as evidence (`ghosts`), except those `bare` gets
+// (revision 7): past their device's fork point, no identity op, in no kept header's past, and
+// with F, FI and the contested ops unchanged without the header.
 export function orphanDrops(
   ids: readonly string[],
   st: EvalResult,
   cx: Ctx,
-  ghosts: readonly string[] = []
+  ghosts: readonly string[] = [],
+  bare?: Set<string>
 ): Set<string> {
   const out = new Set<string>()
+  const gone = new Set<string>()
   if (!st.X.size) return out
   const fp = (E: readonly string[], G: readonly string[]) => {
-    const ix = Ix.of([...E, ...G], cx)
-    const mS = new Uint8Array(ix.n)
-    const gm = new Uint8Array(ix.n)
-    for (const id of E) mS[ix.at.get(id)!] = 1
-    for (const id of G) gm[ix.at.get(id)!] = 1
-    const q = new Equiv(ix, mS)
-    q.ghost = gm
+    const ix = Ix.of(E, cx)
+    const q = new Equiv(ix)
+    if (G.length)
+      q.hdrs = new Hdrs(
+        ix,
+        G.map(id => ({ ev: cx.ev(id), rec: cx.rec(id) }))
+      )
     q.forkPoints()
     return q
   }
@@ -475,13 +664,43 @@ export function orphanDrops(
       .map(([k, v]) => `${k},${v}`)
       .sort()
       .join(';')
+  const keyF = (m: ReadonlyMap<string, number>) =>
+    [...m]
+      .map(([k, v]) => `${k},${v}`)
+      .sort()
+      .join(';')
   const fiFull = keyFI(full.FI)
+  const fFull = keyF(full.F)
+  const rfSame = (q: Equiv, rest: readonly string[], skip?: string) =>
+    ![...full.RF].some(x => x !== skip && rest.includes(x) && !q.RF.has(x)) &&
+    ![...q.RF].some(x => !full.RF.has(x))
   let kept = [...ids]
   const anc = Ix.of(ids, cx)
+  const S = new Equiv(anc)
   const cands = [...st.X]
     .filter(x => anc.at.has(x))
     .sort()
     .reverse()
+  const hdrs = () => [...ghosts, ...[...out].filter(x => !gone.has(x))]
+  const pastHas = (x: string, id: string) => {
+    const xi = anc.at.get(x)
+    if (xi !== undefined) return anc.has(xi, anc.at.get(id)!)
+    const seen = new Set<string>()
+    const st = [...cx.ev(x).ap]
+    while (st.length) {
+      const p = st.pop()!
+      if (p === id) return true
+      if (seen.has(p)) continue
+      seen.add(p)
+      const pi = anc.at.get(p)
+      if (pi !== undefined) {
+        if (anc.has(pi, anc.at.get(id)!)) return true
+        continue
+      }
+      st.push(...cx.ev(p).ap)
+    }
+    return false
+  }
   for (let changed = true; changed;) {
     changed = false
     for (const id of cands) {
@@ -489,19 +708,22 @@ export function orphanDrops(
       const e = cx.ev(id)
       if (e.t === 'upgrade' || e.t === 'genesis' || e.t === 'proof') continue
       const xi = anc.at.get(id)!
+      if (!S.candidateIn(xi, st.F, st.FI, st.RF)) continue
       if (kept.some(x => x !== id && anc.has(anc.at.get(x)!, xi))) continue
       const rest = kept.filter(x => x !== id)
-      const f2 = fp(rest, [...ghosts, ...out, id])
-      if (keyFI(f2.FI) !== fiFull) continue
-      if (
-        [...full.RF].some(x => x !== id && rest.includes(x) && !f2.RF.has(x)) ||
-        [...f2.RF].some(x => !full.RF.has(x))
-      )
-        continue
+      const h = hdrs()
+      const f2 = fp(rest, [...h, id])
+      if (keyFI(f2.FI) !== fiFull || !rfSame(f2, rest, id)) continue
       kept = rest
       out.add(id)
       changed = true
+      if (e.seq < (full.F.get(e.dev) ?? Infinity) || cx.rec(id).depth >= 0) continue
+      if (h.some(x => pastHas(x, id))) continue
+      const f3 = fp(rest, h)
+      if (keyF(f3.F) !== fFull || keyFI(f3.FI) !== fiFull || !rfSame(f3, rest)) continue
+      gone.add(id)
     }
   }
+  if (bare) for (const x of gone) bare.add(x)
   return out
 }

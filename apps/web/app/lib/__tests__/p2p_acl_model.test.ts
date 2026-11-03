@@ -46,6 +46,12 @@ test('seed 8414: a stray content field of a profile write is not part of the mod
   expect(run([8414], s => genCase(s).w)).toEqual([])
 })
 
+// Revision 7b's final-fuzz findings (O5-senior, O6-join, O11-growth (d)), regenerated.
+for (const s of [9_043_909, 8_868_407, 10_016_903])
+  test(`seed ${s} (revision 7b): production equals the model`, () => {
+    expect(run([s], x => genCase(x).w)).toEqual([])
+  })
+
 // The saved universes behind the failures of §7.7 (revision-2 format converted as the model's
 // fixtures test does).
 const toR3 = (events: Ev[]): Ev[] => {

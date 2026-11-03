@@ -59,6 +59,7 @@ export interface Limits {
   totU: number
   rotTot: number
   poolU: number
+  ap: number
   channels: number
   overwrites: number
   w4: number
@@ -74,7 +75,7 @@ export const PRODUCTION_LIMITS: Readonly<Limits> = {
   freshCap: 2,
   idCap: 8,
   rotCap: 4,
-  classes: 6,
+  classes: 3,
   pendingPerDev: 20,
   codesPerDev: 20,
   codesPerDevServer: 100,
@@ -82,6 +83,7 @@ export const PRODUCTION_LIMITS: Readonly<Limits> = {
   totU: 24,
   rotTot: 4,
   poolU: 384,
+  ap: 10,
   channels: 500,
   overwrites: 100,
   w4: 500,

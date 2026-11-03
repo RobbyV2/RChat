@@ -1,3 +1,4 @@
+import { Hdrs } from './equivocation'
 import { FastEval } from './eval'
 import {
   emptyResult,
@@ -13,7 +14,16 @@ import {
   type StIdx,
 } from './facts'
 import { EMPTY, Ix } from './reach'
-import { EVERYONE, introduces, rkey, type AclContent, type Ctx, type Rank } from './rules'
+import {
+  EVERYONE,
+  introduces,
+  poster,
+  rkey,
+  type AclContent,
+  type AclEv,
+  type Ctx,
+  type Rank,
+} from './rules'
 
 // Recorded states and the client's incremental evaluator (spec §5). Every admitted event records
 // St(e). On the head path St(e) is the current state, and an event on the heads changes no
@@ -829,10 +839,49 @@ export class AclState {
   constructor(public cx: Ctx) {
     this.ix = new Ix(cx)
   }
+  // Headers of events storage dropped (spec 2.3), outside the index: evidence for the current
+  // state only (no held event has one in its past, so no St(e) reads them).
+  private hdrIds = new Set<string>()
+  private hdrSet: Hdrs | null = null
+  isHeader(id: string) {
+    return this.hdrIds.has(id)
+  }
+  headerIds(): ReadonlySet<string> {
+    return this.hdrIds
+  }
+  addHeader(id: string) {
+    this.hdrIds.add(id)
+    this.hdrSet = null
+    this.invalidate()
+  }
+  dropHeader(id: string) {
+    if (!this.hdrIds.delete(id)) return
+    this.hdrSet = null
+    this.ix.poolIx = []
+    this.invalidate()
+  }
+  headers(): Hdrs | null {
+    if (!this.hdrIds.size) return null
+    this.hdrSet ??= new Hdrs(
+      this.ix,
+      [...this.hdrIds].map(id => ({ ev: this.cx.ev(id), rec: this.cx.rec(id) }))
+    )
+    return this.hdrSet
+  }
+  // An event next to which headers are evidence (its device, poster or identity has some): it
+  // can't take the head path, which reads none.
+  private nearHeaders(e: AclEv) {
+    const H = this.headers()
+    if (!H) return false
+    return (
+      H.byDev.has(e.dev) || H.byPoster.has(poster(e)) || H.idOps.some(k => H.list[k].ev.a === e.a)
+    )
+  }
   // The current Eval(S) of every indexed event.
   state(): EvalResult {
     if (!this.cur) {
       this.fe = new FastEval(this.ix)
+      this.fe.hdrs = this.headers()
       this.cur = { ...this.fe.run(), src: { fe: this.fe, len: this.ix.n } }
     }
     return this.cur
@@ -942,7 +991,8 @@ export class AclState {
       this.cur !== undefined &&
       ev.ap.length > 0 &&
       ev.t !== 'proof' &&
-      this.ix.closure(ev.ap).size === this.ix.n
+      this.ix.closure(ev.ap).size === this.ix.n &&
+      !this.nearHeaders(ev)
     const i = this.ix.add(id)
     if (onHeads && this.fe) {
       this.fe.appendHead(i)

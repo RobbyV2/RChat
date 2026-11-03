@@ -117,6 +117,7 @@ export const TEMPLATES = [
   'g-intro',
   'g-tree',
   'g-pool',
+  'g-sib',
 ] as const
 
 export function genCase(
@@ -264,6 +265,10 @@ export function genCase(
       'g-pool',
       'g-pool',
       'g-pool',
+      // revision 6 (r5 review C1, M2): same-seq sibling floods past poolU, from a removed member and from a stolen device
+      'g-sib',
+      'g-sib',
+      'g-sib',
     ])
   const mem = members()
   let replayed = false // the thief template's identity-chain replay is deliberate equivocation
@@ -764,14 +769,19 @@ export function genCase(
         : undefined
       const sv = ladder ? okId(setup('O1', 'role_create', { pos: 9, bits: ROLES })) : undefined
       if (!qr || !hr) break
-      const nm = 6 + rng.int(9)
+      // revision 6 (r5 review M2): half the cases have 13-16 moderators, so the stratum has more than 12 causes (the
+      // owner's assignments are acknowledged every few, else W3(b) stops them at 12 and no stratum passed 12 causes)
+      const nm = rng.chance(0.5) ? 13 + rng.int(4) : 6 + rng.int(9)
       const mods = Array.from({ length: nm }, (_, i) => `q${i}x`)
       const vic = Array.from({ length: nm }, (_, i) => `v${i}x`)
       for (const x of [...mods, ...vic]) {
         setup('O1', 'add', { to: x })
         act(`${x}1`, 'join')
       }
-      for (const m of mods) setup('O1', 'assign', { to: m, role: qr })
+      mods.forEach((m, i) => {
+        setup('O1', 'assign', { to: m, role: qr })
+        if (i % 4 === 3) setup('Vb1', 'mark')
+      })
       if (ladder && sv) {
         setup('O1', 'add', { to: 'Ll' })
         act('Ll1', 'join')
@@ -1165,6 +1175,75 @@ export function genCase(
           {},
           { ap: [w.latestOwn(rng.pick(olds).dev)!.id], ts: (ts += 11) }
         )
+      break
+    }
+    case 'g-sib': {
+      replayed = true // deliberate evidence: same-seq siblings
+      // revision 6 (r5 review C1, M2): one device posts more than poolU siblings (same seq, same aprev) at one position.
+      // Either a member kicked after its position (the removed member's flood: admitted, void, orphans), or a member's
+      // second device stolen (the thief floods at the device's tip; the victim then acts from heads without the
+      // siblings: a moderation act, a device_revoke of the stolen device, a leave). Honest members cite up to 10 heads,
+      // so some siblings may be absorbed; the victim's events may be pool candidates (revision 5's pool, §10.16).
+      if (!mem.length) break
+      const x = rng.pick(mem)
+      let ts = Math.max(...w.ref.order.map(id => w.ref.ev(id).ts)) + 1
+      const flood = (dev: string, ap: string[], n: number) => {
+        const last = w.latestOwn(dev)
+        if (!last) return [] as string[]
+        const out: string[] = []
+        for (let i = 0; i < n; i++) {
+          const t: T = rng.chance(0.7) ? 'mark' : 'profile'
+          const r = act(
+            dev,
+            t,
+            { name: i % 3 },
+            { ap, seq: last.seq + 1, aprev: last.id, ts: (ts += 1) }
+          )
+          if (r.v.s === 'A') out.push(r.e.id)
+        }
+        return out
+      }
+      const n = LIM.poolU + 1 + rng.int(6)
+      if (rng.chance(0.5) || devsOf.get(x)!.length < 2 || !w.latestOwn(`${x}2`)) {
+        const P = w.heads()
+        setup('O1', 'kick', { to: x })
+        setup('O1', 'mark')
+        const sibs = flood(`${x}1`, P, n)
+        const wit = mem.filter(i => i !== x)
+        if (sibs.length && wit.length && rng.chance(0.4))
+          act(
+            `${rng.pick(wit)}1`,
+            'mark',
+            {},
+            { ap: rng.shuffle(sibs).slice(0, 1 + rng.int(3)), ts: (ts += 11) }
+          )
+        break
+      }
+      const m0 = okId(setup('O1', 'mark'))
+      if (!m0) break
+      const stolen = `${x}2`
+      const sibs = flood(stolen, [m0], n)
+      const noSib = () => w.heads(w.ref.order.filter(id => !sibs.includes(id))).slice(0, LIM.ap)
+      const tg = mem.filter(i => i !== x)
+      if (tg.length && rng.chance(0.6))
+        act(
+          `${x}1`,
+          rng.pick(['kick', 'ban'] as T[]),
+          { to: rng.pick(tg) },
+          { ap: noSib(), ts: (ts += 11) }
+        )
+      if (rng.chance(0.6)) {
+        const ap = noSib()
+        let seen = -1
+        for (const id of w.closure(ap)) {
+          const e = w.ref.ev(id)
+          if (e.dev === stolen) seen = Math.max(seen, e.seq)
+        }
+        act(`${x}1`, 'device_revoke', { dev: stolen, seen }, { ap, ts: (ts += 11) })
+      }
+      if (tg.length && rng.chance(0.5)) act(`${rng.pick(tg)}1`, 'mark', {}, { ts: (ts += 11) })
+      if (rng.chance(0.3)) act(`${x}1`, 'leave', {}, { ap: noSib(), ts: (ts += 11) })
+      act('O1', 'mark', {}, { ts: (ts += 11) })
       break
     }
     case 'i3-flood': {

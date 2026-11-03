@@ -2,11 +2,12 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { genCase } from './acl_model/gen'
 import { orphanDrops as referenceDrops } from '../p2p/acl/equivocation'
 import type { EvalResult } from '../p2p/acl/facts'
-import { AclReplica } from '../p2p/acl/admit'
+import { AclReplica, totCounted } from '../p2p/acl/admit'
 import { headerContent, headerOf, orphanDrops } from '../p2p/acl/storage'
 import { LIM, P, rkey } from '../p2p/acl/rules'
 import { AclRoom, IMPL, type AclItem } from '../p2p/acl_room'
-import { signRevocation2 } from '../p2p/event'
+import { signDeviceCert2 } from '../p2p/acl/binding'
+import { contentEvOf, signRevocation2 } from '../p2p/event'
 import { SHARE, shareAdd, shareLive, shareTotal, withinShare } from '../p2p/shares'
 import { prodReplica, testBinds, useModelLimits, useProductionLimits } from './p2p_acl_world'
 import { headerOk } from '../p2p/event'
@@ -19,33 +20,117 @@ import { ServerWorld, type Sent } from './p2p_server_world'
 // 4.1 proofs and shares, 4.2 dropped headers, 4.3 stability), on the host's evaluator with real
 // signed events.
 
-const sets = (s: EvalResult) =>
-  JSON.stringify([
-    [...s.X].sort(),
-    [...s.tail].sort(),
-    [...s.void].sort(),
-    [...s.eff].sort(),
-    [...s.cut].map(([id, r]) => `${id}:${rkey(r)}`).sort(),
+// `gone`: dropped events, left out of the statuses (a cold store holds only their headers).
+const sets = (s: EvalResult, gone: ReadonlySet<string> = new Set()) => {
+  const held = (id: string) => !gone.has(id)
+  return JSON.stringify([
+    [...s.X].filter(held).sort(),
+    [...s.tail].filter(held).sort(),
+    [...s.void].filter(held).sort(),
+    [...s.eff].filter(held).sort(),
+    [...s.cut]
+      .filter(([id]) => held(id))
+      .map(([id, r]) => `${id}:${rkey(r)}`)
+      .sort(),
     [...s.F].sort(),
     [...s.FI].sort(),
     [...s.RF].sort(),
-    [...s.PC].sort(),
+    [...s.PC].filter(held).sort(),
   ])
+}
 
 // What a store holds after applying drops: kept events whole, dropped ACL events as headers (their
-// core with the content `acl/` keeps, and their record), dropped content not at all.
-const stored = (w: ServerWorld, gone: Set<string>, contentGone: Set<string>) => {
-  const acl: AclItem[] = w.acl.map(it =>
-    gone.has(it.id)
-      ? {
-          id: it.id,
-          w: { ev: it.w.ev, c: headerContent(it.w.c), sig: it.w.sig },
-          rec: it.rec,
-          hdr: true,
-        }
-      : it
-  )
+// core with the content `acl/` keeps, and their record) when `acl/` keeps the header, otherwise
+// not at all, and dropped content not at all.
+const stored = (
+  w: ServerWorld,
+  gone: ReadonlySet<string> | ReadonlyMap<string, boolean>,
+  contentGone: Set<string>
+) => {
+  const hdr = (id: string) => (gone instanceof Map ? gone.get(id) : gone.has(id) || undefined)
+  const acl: AclItem[] = []
+  for (const it of w.acl) {
+    const h = hdr(it.id)
+    if (h === undefined) acl.push(it)
+    else if (h)
+      acl.push({
+        id: it.id,
+        w: { ev: it.w.ev, c: headerContent(it.w.c), sig: it.w.sig },
+        rec: it.rec,
+        hdr: true,
+      })
+  }
   return { acl, contents: w.contents.filter(m => !contentGone.has(m.id)) }
+}
+
+// The growth bound of spec 4.1 as revision 7 restates it (the model's O11-growth), over what
+// storage keeps of a replica after its drop list: per non-owner identity, over its events nobody
+// else acknowledged, stored whole or as headers, (a) every maximal stored one is no structural
+// candidate, at most one per device chain plus one rotation; (b) every stored one lies in the
+// recorded pool of a maximal one; (c) per device chain, its counted events before its fork point
+// are at most totU; (d) per device chain, at most 2 kept headers at or past its fork point that
+// are no identity ops, in no other chain's kept event's past and in no kept identity-op header's
+// of the same chain. Returns the failures and the most headers below a kept identity op.
+function growthBound(pr: AclReplica, drops: ReadonlyMap<string, boolean>) {
+  const fe = pr.acl.evaluation()
+  const ix = fe.ix
+  const S = pr.state()
+  const fails: string[] = []
+  const has = (x: string, id: string) => ix.has(ix.at.get(x)!, ix.at.get(id)!)
+  const order = [...pr.order]
+  const hdrs = order.filter(id => drops.get(id) === true)
+  const kept = order.filter(id => !drops.has(id))
+  const ackd = (id: string) => order.some(f => pr.ev(f).a !== pr.ev(id).a && has(f, id))
+  const structural = (id: string) => fe.candidateIn(ix.at.get(id)!, S.F, S.FI, S.RF)
+  const keptOther = (id: string) =>
+    [...hdrs, ...kept].some(x => pr.ev(x).dev !== pr.ev(id).dev && has(x, id))
+  const keptIdSame = (id: string) =>
+    hdrs.some(x => x !== id && pr.ev(x).dev === pr.ev(id).dev && pr.rec(x).depth >= 0 && has(x, id))
+  const byA = new Map<string, string[]>()
+  const hdrA = new Map<string, string[]>()
+  for (const id of order) {
+    const e = pr.ev(id)
+    if (e.t === 'genesis' || S.facts.owners.has(e.a) || drops.get(id) === false || ackd(id))
+      continue
+    const m = drops.get(id) ? hdrA : byA
+    if (!m.has(e.a)) m.set(e.a, [])
+    m.get(e.a)!.push(id)
+  }
+  let maxBelowId = 0
+  for (const a of new Set([...byA.keys(), ...hdrA.keys()])) {
+    const st = byA.get(a) ?? []
+    const hd = hdrA.get(a) ?? []
+    const max = st.filter(x => !st.some(y => y !== x && has(y, x)))
+    for (const m of max)
+      if (structural(m)) fails.push(`${a}: maximal ${m} is a structural candidate`)
+    const perDev = new Map<string, number>()
+    for (const m of max)
+      if (pr.ev(m).t !== 'primary_rotate')
+        perDev.set(pr.ev(m).dev, (perDev.get(pr.ev(m).dev) ?? 0) + 1)
+    for (const [v, n] of perDev) if (n > 1) fails.push(`${a}: ${n} maximal stored events on ${v}`)
+    if (max.filter(m => pr.ev(m).t === 'primary_rotate').length > 1)
+      fails.push(`${a}: two maximal stored rotations`)
+    const stSet = new Set(st)
+    const cover = new Set<string>()
+    for (const m of max) for (const z of pr.rec(m).pool ?? [m]) if (stSet.has(z)) cover.add(z)
+    if (cover.size < st.length) fails.push(`${a}: ${st.length - cover.size} outside the pools`)
+    const pre = new Map<string, number>()
+    const past = new Map<string, number>()
+    const below = new Map<string, number>()
+    for (const id of [...st, ...hd]) {
+      const e = pr.ev(id)
+      if (e.seq < (S.F.get(e.dev) ?? Infinity)) {
+        if (totCounted(e.t)) pre.set(e.dev, (pre.get(e.dev) ?? 0) + 1)
+      } else if (drops.get(id) && pr.rec(id).depth < 0 && !keptOther(id)) {
+        const m = keptIdSame(id) ? below : past
+        m.set(e.dev, (m.get(e.dev) ?? 0) + 1)
+      }
+    }
+    for (const [v, n] of pre) if (n > LIM.totU) fails.push(`${a}: ${n} counted before F(${v})`)
+    for (const [v, n] of past) if (n > 2) fails.push(`${a}: ${n} kept headers past F(${v})`)
+    for (const n of below.values()) maxBelowId = Math.max(maxBelowId, n)
+  }
+  return { fails, maxBelowId, headers: hdrs.length }
 }
 
 // O's server with members Y (devices Y and Y2) and Z, and a channel.
@@ -78,33 +163,67 @@ describe('the orphan rule in storage (spec 2.3)', () => {
   beforeAll(useModelLimits)
   afterAll(useProductionLimits)
 
-  test('the drop list storage applies equals the reference rule on equivocation-heavy universes', () => {
+  test('the drop list storage applies equals the reference rule on equivocation-heavy universes, headers included', () => {
     let some = 0
+    let bare = 0
     for (let s = 1; s <= 120; s++) {
       const pr = prodReplica(genCase(1_000_000 + s, { equivocation: true, maxAdv: 14 }).w)
-      const ref = [...referenceDrops([...pr.order], pr.state(), pr)].sort()
+      const noHdr = new Set<string>()
+      const ref = [...referenceDrops([...pr.order], pr.state(), pr, [], noHdr)]
+        .sort()
+        .map(id => `${id}:${!noHdr.has(id)}`)
       const fe = pr.acl.evaluation()
       const mine = orphanDrops(fe, () => false)
-      expect([s, mine.map(d => d.id).sort()]).toEqual([s, ref])
-      expect(mine.every(d => d.header)).toBe(true)
+      expect([s, mine.map(d => `${d.id}:${d.header}`).sort()]).toEqual([s, ref])
       if (ref.length) some += 1
+      bare += noHdr.size
     }
     expect(some).toBeGreaterThan(10)
+    expect(bare).toBeGreaterThan(10)
   }, 300_000)
 
-  test('a cold start with the dropped events restored from their headers evaluates as before, on the same universes (identity ops, rotations and joins among them)', () => {
+  test('what storage keeps after the drop list stays within the restated growth bound (O11-growth, revision 7) on the model universes', () => {
+    let headers = 0
+    let below = 0
+    const gens = [
+      ...Array.from({ length: 2000 }, (_, i) => () => genCase(i + 1).w),
+      ...Array.from(
+        { length: 120 },
+        (_, i) => () => genCase(1_000_001 + i, { equivocation: true, maxAdv: 14 }).w
+      ),
+    ]
+    for (const [k, gen] of gens.entries()) {
+      const pr = prodReplica(gen())
+      const drops = new Map(
+        orphanDrops(pr.acl.evaluation(), () => false).map(d => [d.id, d.header])
+      )
+      const g = growthBound(pr, drops)
+      expect([k, g.fails]).toEqual([k, []])
+      headers += g.headers
+      below = Math.max(below, g.maxBelowId)
+    }
+    expect(headers).toBeGreaterThan(100)
+    // headers below a kept identity-op header of their chain: bounded by W3(b) on that branch
+    expect(below).toBeLessThanOrEqual(LIM.totU)
+  }, 600_000)
+
+  test('a cold start with the dropped events restored from their headers (outside the index) or gone evaluates as before, on the same universes (identity ops, rotations and joins among them)', () => {
     const kinds = new Set<string>()
     for (let s = 1; s <= 120; s++) {
       const pr = prodReplica(genCase(1_000_000 + s, { equivocation: true, maxAdv: 14 }).w)
-      const gone = new Set(orphanDrops(pr.acl.evaluation(), () => false).map(d => d.id))
-      if (!gone.size) continue
+      const drops = new Map(
+        orphanDrops(pr.acl.evaluation(), () => false).map(d => [d.id, d.header])
+      )
+      if (!drops.size) continue
       const r = new AclReplica({ binds: testBinds })
       for (const id of pr.order) {
         const e = pr.ev(id)
-        if (gone.has(id)) kinds.add(e.t)
-        r.restore(gone.has(id) ? headerOf(e) : e, pr.rec(id))
+        const h = drops.get(id)
+        if (h) kinds.add(e.t)
+        if (h === undefined) r.restore(e, pr.rec(id))
+        else if (h) r.restoreHeader(headerOf(e), pr.rec(id))
       }
-      expect([s, sets(r.state())]).toEqual([s, sets(pr.state())])
+      expect([s, sets(r.state())]).toEqual([s, sets(pr.state(), new Set(drops.keys()))])
     }
     expect([...kinds].some(t => ['device_add', 'join', 'primary_rotate'].includes(t))).toBe(true)
   }, 300_000)
@@ -138,28 +257,45 @@ describe('the reviewer’s probe: void relays cited by a removed member’s hidd
     )
     const d = w.room.drops()
     expect(d.acl.map(x => x.id).sort()).toEqual(relays.map(r => r.id).sort())
-    expect(d.acl.every(x => x.header)).toBe(true)
+    // Revision 7: siblings past the fork point go without their headers, but the two that keep
+    // the device's fork point where it is (one seq and one aprev for all of them).
+    const hdrs = d.acl.filter(x => x.header).map(x => x.id)
+    expect(hdrs).toEqual(
+      relays
+        .map(r => r.id)
+        .sort()
+        .slice(0, 2)
+        .sort((a, b) => w.room.r.acl.ix.at.get(a)! - w.room.r.acl.ix.at.get(b)!)
+    )
     expect(d.content.sort()).toEqual(msgs.map(m => m.id).sort())
     // Nothing more the next time.
     expect(w.room.drops()).toEqual({ acl: [], content: [] })
-    // Stored void events (whole): none of the relays, within §4.1's bound.
-    const gone = new Set(d.acl.map(x => x.id))
+    // Stored void events (whole): none of the relays, within §4.1's bound; 2 headers.
+    const gone = new Map(d.acl.map(x => [x.id, x.header]))
+    expect(growthBound(w.room.r, gone).fails).toEqual([])
     const kept = w.acl.filter(it => !gone.has(it.id) && S0.X.has(it.id))
     expect(kept.length).toBeLessThanOrEqual(LIM.poolU)
     expect(kept.length).toBe(0)
     // A cold start from what is stored: the headers are evidence, the state is the same.
     const live = w.room.r.state()
     const st = stored(w, gone, new Set(d.content))
+    expect(st.acl.filter(it => it.hdr).length).toBe(2)
     const r = new AclRoom(w.srv)
     const out = r.restore(st.acl, st.contents)
     expect([out.lost, out.refused, out.mismatch]).toEqual([[], [], false])
-    expect(sets(r.r.state())).toBe(sets(live))
+    const dropped = new Set(gone.keys())
+    expect(sets(r.r.state())).toBe(sets(live, dropped))
     expect(r.summary()).toEqual(w.room.summary())
-    // A dropped relay fetched again (something cites it) is admitted as it was, whole.
-    const back = r.receiveAcl(relays[0].id, relays[0].wire, w.now)
-    expect(back.s).toBe('A')
-    expect(r.r.ev(relays[0].id).c.rec).toBe(relays[0].wire.c?.rec)
-    expect(sets(r.r.state())).toBe(sets(live))
+    // A dropped relay fetched again (something cites it) is admitted as it was, whole: one that
+    // kept its header, and one that went without it.
+    for (const id of [hdrs[0], d.acl.find(x => !x.header)!.id]) {
+      const x = relays.find(y => y.id === id)!
+      const back = r.receiveAcl(x.id, x.wire, w.now)
+      expect(back.s).toBe('A')
+      expect(r.r.ev(x.id).c.rec).toBe(x.wire.c?.rec)
+      dropped.delete(x.id)
+      expect(sets(r.r.state())).toBe(sets(live, dropped))
+    }
   }, 120_000)
 
   test('visible content holds what it cites; the device’s own events always stay', () => {
@@ -188,6 +324,105 @@ describe('the reviewer’s probe: void relays cited by a removed member’s hidd
     expect(w2.room.drops(w2.who('Y').dev).acl).toEqual([])
     expect(w2.room.drops().acl.length).toBe(r2.length)
   }, 60_000)
+})
+
+// Y's three concurrent device_adds over one identity position (identity siblings: void, kept as
+// headers) and a mark of one of those fresh devices (void, kept as a header whose parent is a
+// header), then honest activity; storage applies the drops. `note` goes in the mark (a header
+// keeps no long string); `msg`, that device's message citing the mark, is only signed.
+const siblingDevices = (note?: string) => {
+  const w = ServerWorld.create('O')
+  const ch = w.channel('O')
+  w.join('O', 'Y')
+  w.ok('O', 'mark')
+  const y = w.who('Y')
+  const built = ['Y5', 'Y6', 'Y7'].map(d => {
+    const dv = w.device('Y', d)
+    return w.build(d, 'device_add', p => ({
+      dcert: signDeviceCert2(y.ik, w.srv, y.a, dv.dev, p.iprev),
+    }))
+  })
+  for (const b of built) expect(w.receive(b.id, b.wire).s).toBe('A')
+  const mark = w.ok('Y7', 'mark', note ? { note } : {})
+  // signed, not delivered here: an import, or content another store kept
+  const msg = w.build('Y7', 'msg', { body: 'from a void device', ch })
+  w.ok('O', 'mark')
+  const add7 = built[2]
+  const d = w.room.drops()
+  const gone = new Map(d.acl.map(x => [x.id, x.header]))
+  expect([gone.get(add7.id), gone.get(mark.id)]).toEqual([true, true])
+  return { w, ch, mark, msg, add7, gone, contentGone: new Set(d.content) }
+}
+
+describe('headers outside the index (port fix round 1)', () => {
+  test('a cold replica serves ACL state to a peer whose heads or wants name an event it holds only as a header, and decides an import citing one', () => {
+    const { w, mark, msg, gone, contentGone } = siblingDevices()
+    const st = stored(w, gone, contentGone)
+    const r = new AclRoom(w.srv)
+    const out = r.restore(st.acl, st.contents)
+    expect([out.lost, out.refused]).toEqual([[], []])
+    expect(r.r.acl.isHeader(mark.id)).toBe(true)
+    const held = r.summary().heads
+    // a peer at the header: nothing it holds is sent again; wanting it gives nothing (not held)
+    const toPeer = r.aclDiff(held, [mark.id], 1000)
+    expect(toPeer.length).toBeGreaterThan(0)
+    expect(
+      toPeer.some(id =>
+        w.room.r.acl.ix.has(w.room.r.acl.ix.at.get(mark.id)!, w.room.r.acl.ix.at.get(id)!)
+      )
+    ).toBe(false)
+    expect(r.aclDiff([mark.id], held, 1000)).toEqual([])
+    expect(r.aclDiff([mark.id], [], 1000)).toEqual([])
+    // an imported copy of content citing the header (restore's check)
+    const r2 = new AclRoom(w.srv)
+    const out2 = r2.restore(st.acl, st.contents, [{ id: msg.id, w: msg.wire }])
+    expect(out2.lost).toEqual([])
+    expect(r2.r.acl.isHeader(mark.id)).toBe(false)
+  })
+
+  test('a header fetched again while its parent is still a header waits for that parent; both come back whole and survive the next cold start', () => {
+    const { w, mark, add7, gone, contentGone } = siblingDevices()
+    const st = stored(w, gone, contentGone)
+    const r = new AclRoom(w.srv)
+    r.restore(st.acl, st.contents)
+    // as the page would: what the replica waits for comes first
+    const whole = new Map<string, AclItem>()
+    const deliver = (id: string): void => {
+      const wire = w.wires.get(id)!
+      const v = r.receiveAcl(id, wire, w.now)
+      if (v.s === 'P') {
+        for (const p of v.missing) deliver(p)
+        deliver(id)
+        return
+      }
+      expect(v.s).toBe('A')
+      if (v.s === 'A') whole.set(id, { id, w: wire, rec: v.rec })
+    }
+    deliver(mark.id)
+    expect([...whole.keys()].sort()).toEqual([add7.id, mark.id].sort())
+    for (const id of whole.keys()) expect(r.r.acl.isHeader(id)).toBe(false)
+    // the store now holds both whole; a cold start from it decides nothing again and refuses nothing
+    const after = st.acl.map(it => whole.get(it.id) ?? it)
+    for (const it of whole.values()) if (!after.some(x => x.id === it.id)) after.push(it)
+    const r2 = new AclRoom(w.srv)
+    const out = r2.restore(after, st.contents)
+    expect([out.refused, out.lost, out.mismatch]).toEqual([[], [], false])
+    for (const id of whole.keys()) expect(r2.r.indexed(id)).toBe(true)
+  })
+
+  test('a header indexed for content that cites it gets its whole content back when the event is fetched again', () => {
+    const note = 'n'.repeat(300)
+    const { w, mark, msg, gone, contentGone } = siblingDevices(note)
+    const st = stored(w, gone, contentGone)
+    const r = new AclRoom(w.srv)
+    // storage still holds the content that cites the mark (the pair defining a fork point)
+    r.restore(st.acl, [...st.contents, contentEvOf(msg.id, msg.wire)])
+    expect(r.r.indexed(mark.id)).toBe(true)
+    expect(r.r.ev(mark.id).c.note).toBeUndefined()
+    expect(r.receiveAcl(mark.id, mark.wire, w.now).s).toBe('A')
+    const ix = r.r.acl.ix
+    expect([r.r.ev(mark.id).c.note, ix.ev[ix.at.get(mark.id)!].c.note]).toEqual([note, note])
+  })
 })
 
 describe('stored records and headers (spec 2.4)', () => {
@@ -221,20 +456,29 @@ describe('stored records and headers (spec 2.4)', () => {
     expect(sets(cycle.r.r.state())).toBe(sets(live))
   })
 
-  test('a header whose record can’t be read is lost (its content is gone), the rest restores', () => {
+  test('a header whose record can’t be read is lost (its content is gone), the rest restores; one of the previous version is read', () => {
     const { w } = probeWorld()
-    const relays = voidRelays(w, 3)
+    voidRelays(w, 3)
     const d = w.room.drops()
-    const gone = new Set(d.acl.map(x => x.id))
+    const gone = new Map(d.acl.map(x => [x.id, x.header]))
     const st = stored(w, gone, new Set())
+    const [h0, h1] = st.acl.filter(it => it.hdr).map(it => it.id)
+    expect(typeof h1).toBe('string')
     const r = new AclRoom(w.srv)
     const out = r.restore(
-      st.acl.map(it => (it.id === relays[0].id ? { ...it, rec: { ...it.rec!, v: IMPL - 1 } } : it)),
+      st.acl.map(it =>
+        it.id === h0
+          ? { ...it, rec: { ...it.rec!, v: 1 } }
+          : it.id === h1
+            ? { ...it, rec: { ...it.rec!, v: IMPL - 1 } }
+            : it
+      ),
       st.contents
     )
-    expect(out.lost).toEqual([relays[0].id])
+    expect(out.lost).toEqual([h0])
     expect(out.mismatch).toBe(false)
-    expect(r.r.admitted(relays[1].id)).toBe(true)
+    expect(r.r.admitted(h1)).toBe(true)
+    expect(r.r.acl.isHeader(h1)).toBe(true)
   })
 })
 

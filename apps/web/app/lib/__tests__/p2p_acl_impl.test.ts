@@ -703,9 +703,14 @@ describe('production-only types (not in the model)', () => {
       false,
       false,
     ])
-    // past poolU, the copies are pool candidates of their relayer
+    // the copies are past their relayer's device fork point: void whatever the pool, and in no
+    // P(x) (revision 7), so none is a pool candidate
     const ys = w.ref.order.filter(id => w.ref.ev(id).relay === 'Y')
-    expect([ys.length, ys.every(id => S.PC.has(id))]).toEqual([32, true])
+    expect([ys.length, ys.every(id => S.X.has(id)), ys.some(id => S.PC.has(id))]).toEqual([
+      32,
+      true,
+      false,
+    ])
     expect(w.act('A1', 'mark').v).toEqual({ s: 'A' })
   })
 
@@ -865,12 +870,13 @@ describe('production-only types (not in the model)', () => {
           s: 'R',
           why: 'W3g',
         })
-        // the relays it left out are concurrent with the held head: past the pool, it is a candidate
+        // the relays it left out are concurrent with the held head, but past Y1's fork point: they
+        // count in no pool (revision 7), so the head is no candidate; they are void and dropped
         const S = w.state()
         expect([L.every(id => S.X.has(id)), S.PC.has(held), S.X.has(held)]).toEqual([
           true,
-          true,
-          true,
+          false,
+          false,
         ])
         expect(w.act('A1', 'mark', {}, { ap: [held] }).v).toEqual({ s: 'A' })
         if (kicked) continue
@@ -931,7 +937,8 @@ describe('production-only types (not in the model)', () => {
       const h = [...heads.values()]
       return {
         heads: [h.some(x => S.PC.has(x)), h.every(x => S.PC.has(x) && S.X.has(x))],
-        rel: rel.every(x => S.PC.has(x)),
+        // forked relays: past their device's fork point, void whatever the pool (revision 7)
+        rel: rel.every(x => S.X.has(x)),
         kept: [...rel, ...marks].filter(x => !drops.has(x)).length,
       }
     }
@@ -941,7 +948,7 @@ describe('production-only types (not in the model)', () => {
     }
     return { gather, state, ik, all: () => rel.length + marks.length }
   }
-  test("a relayer's relays share its pool across devices: two views past poolU make the heads pool candidates the orphan rule drops; a kicked relayer's too", () => {
+  test("a relayer's relays share its pool across devices: two views past poolU make the heads pool candidates, which stay stored (revision 7); a kicked relayer's too", () => {
     setLimits({})
     try {
       for (const kicked of [false, true]) {
@@ -952,7 +959,9 @@ describe('production-only types (not in the model)', () => {
         v.gather('Y3', 3)
         const S = v.state()
         expect([S.heads, S.rel]).toEqual([[true, true], true])
-        expect([S.kept < v.all(), S.kept <= LIM.poolU]).toEqual([true, true])
+        // revision 7: a candidate only by pool evidence stays stored, with its past; each view is
+        // bounded by W3(g) at admission (spec 4.1 growth bound, per device chain)
+        expect([S.kept, S.kept <= 2 * LIM.poolU]).toEqual([v.all(), true])
         expect(v.ik()).toBe(false)
       }
     } finally {
@@ -960,7 +969,7 @@ describe('production-only types (not in the model)', () => {
     }
   }, 120_000)
 
-  test("a relayer's relays share its pool across devices: three views, one on a device revoked later, past poolU make the heads pool candidates the orphan rule drops; a kicked relayer's too", () => {
+  test("a relayer's relays share its pool across devices: three views, one on a device revoked later, past poolU make the heads pool candidates, which stay stored (revision 7); a kicked relayer's too", () => {
     setLimits({})
     try {
       for (const kicked of [false, true]) {
@@ -970,7 +979,7 @@ describe('production-only types (not in the model)', () => {
         v.gather('Y4', 4)
         const S = v.state()
         expect([S.heads, S.rel]).toEqual([[true, true], true])
-        expect([S.kept < v.all(), S.kept <= LIM.poolU]).toEqual([true, true])
+        expect([S.kept, S.kept <= 3 * LIM.poolU]).toEqual([v.all(), true])
         expect(v.ik()).toBe(false)
       }
     } finally {

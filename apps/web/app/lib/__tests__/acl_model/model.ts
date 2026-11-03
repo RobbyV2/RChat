@@ -8,6 +8,8 @@
 export const MODEL_REV = 5
 /** dispatch 5b of revision 5 (growth totals, [H17] rotation evidence and drops, class projection) */
 export const MODEL_5B = true
+/** revision 7c: protection classes on Γ⁺ for the whole stratum (r7 re-review C1; vectors.test.ts reads it) */
+export const MODEL_7C = true
 
 export type Rank = readonly [number, string]
 export const TOP: Rank = [Infinity, ''] // owners
@@ -33,7 +35,7 @@ export const EVERYONE = '@e'
 // Limits (model scale; the spec's production values are in §4.1).
 // Production: DEV 8, W3 60 per hour (600 for moderators and owners) and 4 × that per day for events no other identity
 // acknowledged within the hour, device_adds 8 per identity per day per epoch, primary_rotates 4 per identity per day,
-// protection classes per stratum for the exact cascade 6 (§3.1 step 4),
+// protection classes per stratum for the exact cascade 3 (revision 7, controller ruling on r6.2; 6 before; §3.1 step 4),
 // pending invites 20 per device, live codes 20 per device (100 with ManageServer), roles 250.
 // Revision 5 ([R4V I2]): the unacknowledged day budget is `dayU` per device for every author (no moderator multiplier;
 // production 24 per day, one per hour on average), a device introduced by a device_add or a primary_rotate that no other
@@ -50,6 +52,9 @@ export const EVERYONE = '@e'
 // is a candidate (§2.3) when the union of U(x) and of U(y) over the events y of its identity concurrent with x has more
 // than poolU events (production 384; model 30). Every device chain of the identity, revoked or not, draws on that pool,
 // and a removed identity alone keeps at most poolU unacknowledged events (§4.1).
+// Revision 6 (r5 review M2, C1): at most `ap` ACL parents per event (§1.2; production 10, model 10). `work`: the ruled
+// work bound of r5 review I3 (b), not adopted (it lets a junior switch a senior stratum, §10.16; revision 7 lowers the
+// production class cap to 3 instead, §10.17); mutant `work-bound`.
 export const LIM = {
   devCap: 2,
   w3: 4,
@@ -70,6 +75,8 @@ export const LIM = {
   totU: 12,
   rotTot: 3,
   poolU: 30,
+  ap: 10,
+  work: 30,
 }
 /** "Moderator" for W3 (§4.1): any moderation bit. Owners hold every bit. */
 export const MODBITS = KICK | BAN | ROLES | SERVER
@@ -888,20 +895,30 @@ export function forkPoints(ids: string[], cx: Ctx, ghosts: string[] = []) {
           if (d < (FI.get(key) ?? Infinity)) FI.set(key, d)
         }
   }
-  return { F, FI, RF, PC: poolCands(ids, cx, ghosts) }
+  return { F, FI, RF, PC: poolCands(ids, cx, ghosts, F) }
 }
 
 /**
  * Pool evidence (§2.3, W3(g); revision 5, dispatch 5b-ii, [H20]): a non-owner's event x other than a rotation is a pool
  * candidate when P(x) = U(x) ∪ ⋃ { U(y) : y of x's identity, concurrent with x } has more than poolU events, U the
- * pools recorded at admission. Structural and monotone: U is fixed per event and the concurrent set only grows with the
- * set, so P(x) only grows. Dropped events (ghosts) keep their headers and recorded pools, so a replica's drops never
- * change P. Every event lies in its own U, so P(x) holds every event of the identity concurrent with x; for x maximal
- * among the non-candidate unacknowledged events of an identity, P(x) holds all of them and their unacknowledged
- * ancestors, so an identity keeps at most poolU such events whatever number of device chains it posts from.
- * Rotations are never pool candidates (recovery; a thief can't void one). Mutant `pool-off`.
+ * pools recorded at admission. U is fixed per event. Dropped events (ghosts) keep their headers and recorded pools,
+ * except events past their device's fork point (revision 7: they count in no P, and only their ids stay in the recorded
+ * pools), so a replica's drops never change P. Every event lies in its own U, so P(x) holds every event of the identity
+ * concurrent with x before its device's fork point; for x maximal among the non-candidate unacknowledged events of an
+ * identity (all before their fork points), P(x) holds all of them and their unacknowledged ancestors.
+ * Rotations are never pool candidates (recovery; a thief can't void one). Mutant `pool-off`. Revision 6 (r5 review C1
+ * (c)): a device_revoke is never one either (a thief's sibling flood must not void the revocation of the stolen device;
+ * mutant `revoke-pool`). Revision 7 (controller ruling on r6.1, C1 option 2): only concurrent events before their
+ * device's fork point count (y.seq < F(y.dev)); events past it are candidates anyway and make no other event one. This is
+ * not monotone (an event stops counting when its device forks below it), so the orphan rule never drops an event that
+ * is a candidate only by pool evidence (props.ts orphanDrops). Mutant `pool-all`: revision 6's rule (every concurrent event).
  */
-export function poolCands(ids: string[], cx: Ctx, ghosts: string[] = []): Set<string> {
+export function poolCands(
+  ids: string[],
+  cx: Ctx,
+  ghosts: string[] = [],
+  Fd?: Map<string, number>
+): Set<string> {
   const PC = new Set<string>()
   if (MUT === 'pool-off') return PC
   const g = ids.find(id => cx.ev(id).t === 'genesis')
@@ -917,10 +934,15 @@ export function poolCands(ids: string[], cx: Ctx, ghosts: string[] = []): Set<st
   for (const es of byA.values()) {
     if (es.length <= 1) continue
     for (const x of es) {
-      if (cx.ev(x).t === 'primary_rotate') continue
+      if (
+        cx.ev(x).t === 'primary_rotate' ||
+        (cx.ev(x).t === 'device_revoke' && MUT !== 'revoke-pool')
+      )
+        continue
       const P = new Set(cx.rec(x).pool!)
       for (const y of es) {
         if (y === x || cx.anc(x).has(y) || cx.anc(y).has(x)) continue
+        if (MUT !== 'pool-all' && Fd && cx.ev(y).seq >= (Fd.get(cx.ev(y).dev) ?? Infinity)) continue
         for (const z of cx.rec(y).pool!) P.add(z)
       }
       if (P.size > LIM.poolU) PC.add(x)
@@ -1383,7 +1405,7 @@ export function protectedTarget(e: Ev, St: Facts, V: Facts, kk: Rank) {
  * exposed to a deny only if V_γ ranks the joiner strictly below kk, and to a withdrawal (uninvite, code_revoke) only if
  * also the withdrawer held Kick in St(γ) ([R2V C2]).
  */
-export function exposedTo(p: Ev, g: Ev, gRec: Rec, V: Facts, kk: Rank): boolean {
+export function exposedTo(p: Ev, g: Ev, gRec: Rec, V: Facts, kk: Rank, duel = false): boolean {
   const P = p.a
   if (V.owners.has(P)) return false
   const r = rank(V, P)
@@ -1391,6 +1413,10 @@ export function exposedTo(p: Ev, g: Ev, gRec: Rec, V: Facts, kk: Rank): boolean 
   if (p.t === 'join' && MUT !== 'equal-join') {
     if (isWithdrawal(g) && MUT !== 'kickless-withdraw' && !(perms(gRec.local.facts, g.a) & KICK))
       return false
+    // r7b, not adopted (mutant `duel-join`): the racing join of a deny's own target that was a member in St(d) is
+    // exposed at the threshold that let the deny take effect (a duel, rank <= kk); it changes what users see after a
+    // later unban (the add the join consumed, the device it introduced), §10.17
+    if (duel && MUT === 'duel-join') return !gt(r, kk)
     return cmp(r, kk) < 0
   }
   return !gt(r, kk)
@@ -1405,12 +1431,20 @@ export const stats = {
   maxCauses: 0,
   maxClasses: 0,
   fallbacks: 0,
+  workFallbacks: 0,
+  maxWork: 0,
   factsCalls: 0,
   factsScanned: 0,
   msForks: 0,
   msSteps03: 0,
   msStep4: 0,
   msFacts: 0,
+  // revision 7c: the most distinct worlds one op is tested in, projected onto G(q) (what its cut depends on); strata of
+  // the exact branch where some op exceeds 2^classes + 1, and those among them whose flat closure holds no X op (the
+  // bound's argument covers exactly these, §3.1.1; property O5-worlds)
+  maxOpWorlds: 0,
+  worldsOver: 0,
+  worldsOverClean: 0,
 }
 
 /** Topological order of a set (anc sizes grow along causality; ids break ties). */
@@ -1433,7 +1467,8 @@ function cascadeExact(
   Kf: Set<string>,
   below: (o: string, N?: string[]) => boolean,
   st: typeof stats,
-  Xs: Set<string> = new Set()
+  Xs: Set<string> = new Set(),
+  Ts: Set<string> = new Set()
 ): Set<string> {
   const idx = new Map(causes.map((g, i) => [g, i]))
   const bit = (g: string) => 1n << BigInt(idx.get(g)!)
@@ -1455,11 +1490,20 @@ function cascadeExact(
   const casc = new Map<string, boolean>() // `${q}|${world}` → q newly broken in that world (world ⊆ U(q))
   const worlds = new Set<bigint>()
   const brokenAt = new Map<string, boolean>()
+  // worlds are recorded under top-level tests of flat ops only: a region op outside Fl is never cut (lemma), and
+  // fast.ts tests only Fl (§5.2 step 4)
+  const opWorlds = new Map<string, Set<bigint>>()
+  let topFlat = false
   const cascadeIn = (q: string, Wq: bigint): boolean => {
     const key = `${q}|${Wq}`
     let v = casc.get(key)
     if (v !== undefined) return v
     worlds.add(Wq)
+    if (topFlat) {
+      let ow = opWorlds.get(q)
+      if (!ow) opWorlds.set(q, (ow = new Set()))
+      ow.add(Wq & G(q))
+    }
     v = false
     let bk = brokenK.get(q)
     if (bk === undefined) brokenK.set(q, (bk = broken(q, cx, Kf)))
@@ -1523,11 +1567,11 @@ function cascadeExact(
       }
     }
   // Revision 5, dispatch 5b ([H17] latent defect (c)): an op's cut in a world W depends only on W ∩ G(q), G(q) = the
-  // causes with a direct cut in C(q) = {q} ∪ B(q). Classes are counted over flat ops that are not X, each projected
-  // onto G(q) (∅ and G(q) itself are no class), and the fallback's subset test is projected the same way. So an X event
-  // without descendants (an orphan the storage rule may drop, §2.3) and a cause whose only direct cuts are such events
-  // can't switch the branch or the fallback's result: dropping them leaves Eval unchanged. Before, such an orphan's
-  // exposure set was a class of its own, and such a cause's bit split other ops' classes. Mutant `class-proj-off`.
+  // causes with a direct cut in C(q) = {q} ∪ B(q). Classes are counted over flat ops that are not X (revision 7c: on
+  // Γ⁺, below), and the fallback's subset test is projected onto G(q). So an X event without descendants (an orphan the
+  // storage rule may drop, §2.3) and a cause whose only direct cuts are such events can't switch the branch or the
+  // fallback's result: dropping them leaves Eval unchanged. Before, such an orphan's exposure set was a class of its
+  // own, and such a cause's bit split other ops' classes. Mutant `class-proj-off`.
   const projOff = MUT === 'class-proj-off' || MUT === 'class-region'
   const Gm = new Map<string, bigint>()
   if (!projOff)
@@ -1539,14 +1583,31 @@ function cascadeExact(
   const G = (q: string): bigint => Gm.get(q) ?? 0n
   const counted =
     MUT === 'class-region' ? region : region.filter(q => flat.has(q) && (projOff || !Xs.has(q)))
+  // Revision 7c (r7 re-review C1, controller ruling "cap, final spec revision r7c"): classes are distinct U(q) ∩ Γ⁺,
+  // Γ⁺ = the causes with a direct cut on an event outside X. Γ⁺ is one set for the whole stratum, so what q cites can't
+  // split q's exposure into several classes (revisions 5–7 projected onto G(q), which q's author chooses with its
+  // parents: vectors "r7c pclass", "r7c jclass"; mutant `class-proj-g`). An orphan (an X event without descendants) is
+  // not counted and adds no cause to Γ⁺, so dropping it leaves the count unchanged ([H17]).
+  let Gp = 0n
+  for (const [x, m] of Dc) if (!Xs.has(x)) Gp |= m
+  const projG = MUT === 'class-proj-g'
   const classes = new Set(
     counted
-      .map(q => (projOff ? U(q) : U(q) & G(q)))
-      .filter((m, i) => m !== 0n && m !== (projOff ? ALLm : G(counted[i])))
+      .map(q => (projOff ? U(q) : projG ? U(q) & G(q) : U(q) & Gp))
+      .filter((m, i) => m !== 0n && m !== (projOff ? ALLm : projG ? G(counted[i]) : Gp))
   ).size
   st.maxClasses = Math.max(st.maxClasses, classes)
-  if (classes > LIM.classes && MUT !== 'no-cap') {
+  // The ruled work bound of r5 review I3 (b), not adopted (mutant `work-bound`): above (2^classes + 1) worlds × the ops
+  // of Fl outside X and Tail the stratum would take the fallback. Fl holds junior ops, so a junior's backdated ops
+  // switch a senior stratum and revive an op it had cut (vector "I3 (b): ...", O3-revive, G5; §10.16).
+  const flatN =
+    MUT === 'class-region' ? 0 : region.filter(q => flat.has(q) && !Xs.has(q) && !Ts.has(q)).length
+  const work = (2 ** classes + 1) * flatN
+  st.maxWork = Math.max(st.maxWork, work)
+  const overWork = work > LIM.work && MUT === 'work-bound'
+  if ((classes > LIM.classes || overWork) && MUT !== 'no-cap') {
     st.fallbacks++
+    if (classes <= LIM.classes) st.workFallbacks++
     const cascTop = new Map<string, boolean>()
     for (const q of region) {
       const Wq = U(q)
@@ -1581,6 +1642,7 @@ function cascadeExact(
     let isCut = Dc.has(q)
     if (!isCut && topList.some(x => cx.anc(q).has(x))) {
       const Wq = U(q)
+      topFlat = flat.has(q)
       isCut = Wq !== 0n && cascadeIn(q, Wq)
     }
     if (isCut) {
@@ -1590,6 +1652,15 @@ function cascadeExact(
   }
   st.worlds += worlds.size
   st.maxWorlds = Math.max(st.maxWorlds, worlds.size)
+  if (!projOff) {
+    let mx = 0
+    for (const ow of opWorlds.values()) mx = Math.max(mx, ow.size)
+    st.maxOpWorlds = Math.max(st.maxOpWorlds, mx)
+    if (mx > 2 ** classes + 1) {
+      st.worldsOver++
+      if (![...flat].some(q => Xs.has(q))) st.worldsOverClean++
+    }
+  }
   return top
 }
 
@@ -1845,7 +1916,17 @@ export function evaluate(
           MUT !== 'no-same-target' && !isD(o) && tg.kind === 'member' && oe.a === tg.who
         if (!(sameTarget ? atOrBelow(o) : below(o))) continue
         // the deny's own target is judged in V_d, the view that decided the deny's effectiveness (G6); others in V_d^o
-        if (!exposedTo(oe, de, dr, sameTarget ? V : Vfor(d, o), kk)) continue
+        if (
+          !exposedTo(
+            oe,
+            de,
+            dr,
+            sameTarget ? V : Vfor(d, o),
+            kk,
+            sameTarget && dr.local.facts.mem.has(oe.a)
+          )
+        )
+          continue
         if (uses(o, d, cx, Kf)) addD(d, o)
       }
     }
@@ -1890,7 +1971,7 @@ export function evaluate(
     const newCuts = causes.length
       ? MUT === 'attrib-r3'
         ? cascadeR3(ids, cx, direct, Uof, alive, Kf, below)
-        : cascadeExact(ids, cx, causes, direct, Uof, alive, Kf, below, stats, X)
+        : cascadeExact(ids, cx, causes, direct, Uof, alive, Kf, below, stats, X, tail)
       : new Set<string>()
     for (const o of newCuts) cut.set(o, kk)
     for (const d of [...selves, ...effNS]) eff.add(d)
@@ -1985,9 +2066,19 @@ export function decide(
   S: EvalResult
 ): { ok: true; rec: Rec } | { ok: false; why: string } {
   const F = S.facts
+  // §1.2: `ap` lists 1..10 parents (revision 6, r5 review M2: enforced here; mutant `ap-uncapped`)
+  if (e.ap.length > LIM.ap && MUT !== 'ap-uncapped') return { ok: false, why: 'ap' }
   if (devOwner(e.dev) !== e.a) return { ok: false, why: 'dev' }
   // A1 device, device chain, identity chain
   if ((S.F.get(e.dev) ?? Infinity) < Infinity) return { ok: false, why: 'forked' }
+  // revision 7 (r7.6, controller's proposal from the production re-review, not adopted): refuse an event one of whose
+  // parents is a device-fork candidate in St(e). It refuses honest clients citing an upgrade or a rotation past its
+  // device's fork point, and a tree over distinct devices still layers siblings (vector "r7.6"); mutant `fork-parent`
+  if (MUT === 'fork-parent')
+    for (const p of e.ap) {
+      const pe = cx.ev(p)
+      if (pe.seq >= (S.F.get(pe.dev) ?? Infinity)) return { ok: false, why: 'fork-parent' }
+    }
   const own = B.map(id => cx.ev(id))
     .filter(x => x.dev === e.dev)
     .sort((x, y) => x.seq - y.seq)
@@ -2127,7 +2218,8 @@ export function decide(
   // W3(e) vouched invites (revision 5, dispatch 5b, [H18]): a join of a non-owner needs a live add for it that an owner
   // posted, or that an ACL event f in B(e) of an identity other than the add's author and the joiner has in its past.
   // Good faith needs no separate test: a live add is not in X of St(e), so it is either no candidate in St(e), and then
-  // in no St(f) for f in B(e) (candidacy is structural and only grows with the set), or a candidate witnessed in good
+  // no structural candidate in any St(f) for f in B(e) (structural candidacy only grows with the set; revision 7: a pool
+  // candidacy can end, and is no fork evidence, so an acknowledgement in a view where the add was one vouches), or a candidate witnessed in good
   // faith by a clean event of a third identity in B(e), which then vouches (an explicit good-faith test was an
   // equivalent mutant). Without it a member that holds Invite in St(e) (a removed one at its old position, or a live
   // one) invites sybils on each branch of a fork of its own device: each sybil's join witnesses its branch, so every branch keeps its own budgets and its sybils, and the sybils acknowledge the inviter's

@@ -117,6 +117,7 @@ export class ContentView {
     this.fe = this.acl.evaluation()
     this.memo.clear()
     this.fcMemo.clear()
+    this.aclM.clear()
     this.anchors.clear()
     this.hideMemo.clear()
     this.indexMarks()
@@ -209,10 +210,9 @@ export class ContentView {
   forkPoint(dev: string): number {
     let f = this.fcMemo.get(dev)
     if (f !== undefined) return f
-    const ix = this.ix
     f = this.S.F.get(dev) ?? Infinity
-    const acl = [...(ix.byDev.get(dev) ?? EMPTY)].sort((x, y) => ix.ev[x].seq - ix.ev[y].seq)
-    const aclSeqs = new Set(acl.map(x => ix.ev[x].seq))
+    const acl = this.aclOf(dev)
+    const aclSeqs = new Set(acl.map(x => x.e.seq))
     const bySeq = new Set<number>()
     const byPrev = new Map<string, number>()
     for (const y of this.byDev.get(dev) ?? []) {
@@ -226,13 +226,33 @@ export class ContentView {
       } else byPrev.set(pk, y.seq)
       for (let k = acl.length - 1; k >= 0; k--) {
         const x = acl[k]
-        if (ix.ev[x].seq >= y.seq) continue
-        if (this.inC(y, x)) break
-        f = Math.min(f, ix.ev[x].seq)
+        if (x.e.seq >= y.seq) continue
+        if (x.i >= 0 && this.inC(y, x.i)) break
+        f = Math.min(f, x.e.seq)
       }
     }
     this.fcMemo.set(dev, f)
     return f
+  }
+
+  // The ACL events of a device as evidence, by seq: those of S (`i`), and the headers of dropped
+  // ones outside the index (i = -1; no held position has one in its past).
+  private aclM = new Map<string, { i: number; id: string; e: AclEv }[]>()
+  private aclOf(dev: string) {
+    let l = this.aclM.get(dev)
+    if (l) return l
+    const ix = this.ix
+    const H = this.acl.headers()
+    l = (ix.byDev.get(dev) ?? EMPTY)
+      .filter(i => this.fe.inS(i))
+      .map(i => ({ i, id: ix.ids[i], e: ix.ev[i] }))
+    for (const k of H?.byDev.get(dev) ?? EMPTY) {
+      const e = H!.list[k].ev
+      l.push({ i: -1, id: e.id, e })
+    }
+    l.sort((x, y) => x.e.seq - y.e.seq)
+    this.aclM.set(dev, l)
+    return l
   }
 
   visible(m: ContentEv): boolean {
@@ -449,7 +469,6 @@ export class ContentView {
   // content events with one cprev, and a content event past an ACL event of the device that its
   // position does not hold (the lowest such above the highest it holds).
   evidence(dev: string): Evidence | null {
-    const ix = this.ix
     let best: Evidence | null = null
     const take = (f: number, a: ProofHeader, b: ProofHeader) => {
       const [x, y] = a.id < b.id ? [a, b] : [b, a]
@@ -460,19 +479,16 @@ export class ContentView {
       )
         best = { f, x, y }
     }
-    const acl = (ix.byDev.get(dev) ?? EMPTY)
-      .filter(i => this.fe.inS(i))
-      .sort((p, q) => ix.ev[p].seq - ix.ev[q].seq)
-    const aclH = (i: number): ProofHeader => {
-      const e = ix.ev[i]
-      const h: ProofHeader = { id: ix.ids[i], dev, seq: e.seq, L: 'a', ap: e.ap }
-      if (e.aprev !== undefined) h.aprev = e.aprev
+    const acl = this.aclOf(dev)
+    const aclH = (x: { id: string; e: AclEv }): ProofHeader => {
+      const h: ProofHeader = { id: x.id, dev, seq: x.e.seq, L: 'a', ap: x.e.ap }
+      if (x.e.aprev !== undefined) h.aprev = x.e.aprev
       return h
     }
     const bySeq = new Map<number, ProofHeader>()
     const byPrev = new Map<string, ProofHeader>()
-    for (const i of acl) {
-      const h = aclH(i)
+    for (const x of acl) {
+      const h = aclH(x)
       const s = bySeq.get(h.seq)
       if (s) take(h.seq, s, h)
       else bySeq.set(h.seq, h)
@@ -498,11 +514,11 @@ export class ContentView {
       let low = -1
       for (let j = acl.length - 1; j >= 0; j--) {
         const x = acl[j]
-        if (ix.ev[x].seq >= m.seq) continue
-        if (this.inC(m, x)) break
-        low = x
+        if (x.e.seq >= m.seq) continue
+        if (x.i >= 0 && this.inC(m, x.i)) break
+        low = j
       }
-      if (low >= 0) take(ix.ev[low].seq, aclH(low), h)
+      if (low >= 0) take(acl[low].e.seq, aclH(acl[low]), h)
     }
     return best
   }

@@ -45,8 +45,10 @@ export const HOLD_MS = 5 * 60_000
 export const MAX_PARENTS = 10
 
 // The version of the evaluator and of the records it stores (spec 2.4): a record or cache of
-// another version is not read; its events are admitted again.
-export const IMPL = 2
+// another version is not read; its events are admitted again. A header's record (its event can't
+// be admitted again) is read from these versions too: its admission fields never changed.
+export const IMPL = 3
+const HEADER_IMPLS: readonly number[] = [2, 3]
 
 // The persisted admission record of an ACL event: its Rec without St(e), and St(e) as a delta
 // against the recorded state of one of its parents (`b`), so a cold start admits nothing again.
@@ -281,12 +283,12 @@ const isPairs = (x: unknown, v: (y: unknown) => boolean) =>
 
 // A record this build reads: its version and the types of every field (one from an import or an
 // older build is admitted again instead).
-export const recOk = (x: unknown): x is PackedRec => {
+export const recOk = (x: unknown, versions: readonly number[] = [IMPL]): x is PackedRec => {
   if (typeof x !== 'object' || x === null) return false
   const r = x as Record<string, unknown>
   const st = r.st as Record<string, unknown> | undefined
   return (
-    r.v === IMPL &&
+    versions.includes(r.v as number) &&
     isRank(r.k) &&
     ['G', 'D', 'R', 'A'].includes(r.cls as string) &&
     typeof r.self === 'boolean' &&
@@ -416,11 +418,13 @@ export class AclRoom {
   private packed = new Map<string, PackedSt>()
   private rejected = new Set<string>()
   private unknownCount = 0
-  // Storage: ACL events dropped from it (in the index whole, or from a header after a cold start),
-  // content held without its body, devices with new events since proofs were last looked for,
-  // and S2/S3 of causes in the current state.
-  private gone = new Set<string>()
-  private bare = new Set<string>()
+  // Storage: ACL events dropped from it that the index still holds whole (whether each kept its
+  // header; after a cold start headers are outside the index), content held without its body,
+  // devices with new events since proofs were last looked for, and S2/S3 of causes in the current
+  // state.
+  private gone = new Map<string, boolean>()
+  // Indexed from their headers (content cites them): their whole events replace them on arrival.
+  private trimmed = new Set<string>()
   private bodiless = new Set<string>()
   private evicted = new Set<string>()
   // Evicted edits by their target: they come back with it.
@@ -452,6 +456,7 @@ export class AclRoom {
   ): Restored {
     const evs = items.map(it => ({ e: aclEvOf(it.id, it.w), rec: it.rec, hdr: it.hdr }))
     const out = this.restoreEvs(evs)
+    for (const m of contents) this.indexCited(m.ap)
     for (const m of contents) this.noteContent(trimContent(m))
     for (const id of bodiless) this.bodiless.add(id)
     for (const id of evicted) if (this.bodiless.has(id)) this.evict(id, true)
@@ -459,11 +464,29 @@ export class AclRoom {
     for (const m of contents) this.dirty.add(m.dev)
     for (const c of check) {
       this.contents.delete(c.id)
+      this.indexCited(c.w.ev.ap ?? [])
       const v = this.receiveContent(c.id, c.w, Infinity)
       if (v.s !== 'C' && v.s !== 'U') out.refused.push(c.id)
     }
     this.changed()
     return out
+  }
+
+  // Content citing a header (hidden content storage keeps, or an import) needs it indexed for its
+  // position: from its header, with the headers among its parents; they stay dropped in storage.
+  private indexCited(ap: readonly string[]) {
+    for (const p of ap)
+      if (this.r.acl.isHeader(p)) {
+        const up = [p]
+        while (up.length) {
+          const h = up.pop()!
+          if (this.gone.has(h)) continue
+          this.gone.set(h, true)
+          this.trimmed.add(h)
+          for (const q of this.r.ev(h).ap) if (this.r.acl.isHeader(q)) up.push(q)
+        }
+        this.r.indexHeader(p)
+      }
   }
 
   // The ACL part of a cold start, from events and their stored records.
@@ -484,7 +507,7 @@ export class AclRoom {
     this.unknownCount = 0
     this.cv = null
     this.gone.clear()
-    this.bare.clear()
+    this.trimmed.clear()
   }
 
   private restoreAcl(
@@ -500,14 +523,12 @@ export class AclRoom {
       if (it.hdr) {
         if (
           this.r.unknownRules === undefined &&
-          recOk(it.rec) &&
+          recOk(it.rec, HEADER_IMPLS) &&
           refsOk(e.ap, it.rec) &&
           e.ap.every(p => this.r.admitted(p))
-        ) {
-          this.r.restore(e, this.lazyRec(e, it.rec))
-          this.gone.add(e.id)
-          this.bare.add(e.id)
-        } else lost.push(e.id)
+        )
+          this.r.restoreHeader(e, this.headerRec(e, it.rec))
+        else lost.push(e.id)
         continue
       }
       if (this.r.unknownRules !== undefined || (e.t === 'genesis' && e.c.rules !== RULES_VERSION)) {
@@ -516,7 +537,7 @@ export class AclRoom {
         this.unknownCount++
         continue
       }
-      if (records && recOk(it.rec) && refsOk(e.ap, it.rec) && e.ap.every(p => this.r.admitted(p))) {
+      if (records && recOk(it.rec) && refsOk(e.ap, it.rec) && e.ap.every(p => this.r.indexed(p))) {
         this.r.restore(e, this.lazyRec(e, it.rec))
         continue
       }
@@ -538,7 +559,7 @@ export class AclRoom {
   // The newest restored records and a sample of the others, against one evaluation each.
   private verify(items: readonly { e: AclEv }[]) {
     const ids = items.map(it => it.e.id).filter(id => this.r.recs.has(id))
-    const restored = ids.filter(id => this.restoredIds.has(id) && !this.bare.has(id))
+    const restored = ids.filter(id => this.restoredIds.has(id))
     if (!restored.length) return true
     const pick = new Set(restored.slice(-2))
     const same = (a: Rec, b: Rec) =>
@@ -594,6 +615,29 @@ export class AclRoom {
         }
         return local
       },
+    })
+    return rec
+  }
+
+  // A header's record: its admission fields; St(e) is worked out if it is ever indexed again.
+  private headerRec(e: AclEv, p: PackedRec): Rec {
+    const rec = {
+      k: rankIn(p.k),
+      cls: p.cls,
+      self: p.self,
+      exempt: p.exempt,
+      depth: p.depth,
+      epoch: p.epoch,
+    } as Rec
+    if (p.pool) {
+      const base = p.pool.b !== undefined ? (this.r.recs.get(p.pool.b)?.pool ?? []) : []
+      const del = new Set(p.pool.del ?? [])
+      rec.pool = [...base.filter(x => !del.has(x)), ...(p.pool.add ?? [])].sort()
+    }
+    let local: EvalResult | undefined
+    Object.defineProperty(rec, 'local', {
+      enumerable: false,
+      get: () => (local ??= this.r.acl.stateOf(e.ap)),
     })
     return rec
   }
@@ -696,11 +740,20 @@ export class AclRoom {
 
   receiveAcl(id: string, w: WireV2, now: number): Received {
     const e = aclEvOf(id, w)
-    // A dropped event fetched again: admitted as it was; one restored from its header gets its
-    // content back.
+    // A dropped event fetched again: admitted as it was (a header is indexed again, whole, once
+    // no parent is only a header; one indexed from its header gets its content back).
+    if (this.r.acl.isHeader(id)) {
+      const missing = e.ap.filter(p => this.r.acl.isHeader(p))
+      if (missing.length || !this.r.refill(e)) return { s: 'P', missing }
+      this.changed()
+      return this.out(e, { s: 'A' })
+    }
     if (this.gone.has(id) && this.r.admitted(id)) {
-      if (this.bare.delete(id)) this.r.refill(e)
       this.gone.delete(id)
+      if (this.trimmed.delete(id)) {
+        this.r.replace(e)
+        this.changed()
+      }
       return this.out(e, { s: 'A' })
     }
     this.dirty.add(e.dev)
@@ -760,7 +813,7 @@ export class AclRoom {
     if (this.r.unknownRules !== undefined) return { s: 'U', rules: this.r.unknownRules }
     const m = contentEvOf(id, w)
     if (this.contents.has(id)) return { s: 'C' }
-    const missing = m.ap.filter(p => !this.r.admitted(p))
+    const missing = m.ap.filter(p => !this.r.indexed(p))
     if (missing.some(p => this.r.status.get(p)?.s === 'R')) return { s: 'R', why: 'parent' }
     if (missing.length) return { s: 'P', missing }
     const ix = this.r.acl.ix
@@ -875,7 +928,7 @@ export class AclRoom {
       codes,
       upgraded: F.upgraded.length > 0,
       heads: this.heads(i => !this.gone.has(ix.ids[i])),
-      count: ix.n,
+      count: ix.n - this.gone.size,
     }
   }
 
@@ -924,7 +977,8 @@ export class AclRoom {
     const citable = (i: number) => {
       if (!fe.inS(i)) return false
       const e = ix.ev[i]
-      if (e.dev === q.dev) return true
+      // our own chain, and an upgrade even in X (it freezes the old server, spec 1.5, 3.8)
+      if (e.dev === q.dev || e.t === 'upgrade') return true
       if (fe.X[i] || fe.tail[i] || fe.candidateIn(i, fe.F, fe.FI, fe.RF, fe.PC)) return false
       // A member's own effective leave is the last event of a member, not a non-member's.
       return F.mem.has(e.a) || i === ix.genesis || (e.t === 'leave' && fe.isEffI(i))
@@ -1043,11 +1097,17 @@ export class AclRoom {
   // ACL backfill: the admitted events in C(from) that are not in C(have), oldest first.
   aclDiff(from: readonly string[], have: readonly string[], limit: number): string[] {
     const ix = this.r.acl.ix
-    const known = (l: readonly string[]) => l.filter(id => this.r.admitted(id))
-    const f = known(from)
+    const H = this.r.acl.headers()
+    // held events; a header the peer has stands for the held events in its past
+    const f = from.filter(id => this.r.indexed(id))
     if (!f.length) return []
+    const h = have.flatMap(id => {
+      if (this.r.indexed(id)) return [id]
+      const k = H?.at.get(id)
+      return k === undefined ? [] : H!.list[k].fr.map(x => ix.ids[x])
+    })
     const want = ix.closure(f).bits
-    const got = ix.closure(known(have)).bits
+    const got = ix.closure(h).bits
     const out: string[] = []
     for (let i = 0; i < ix.n && out.length < limit; i++) {
       const w = i >>> 5
@@ -1084,13 +1144,18 @@ export class AclRoom {
       touching.add(m)
       if (v.visible(m)) for (const p of m.ap) cited[ix.at.get(p)!] = 1
     }
-    const acl = orphanDrops(fe, i => cited[i] === 1, keep).filter(d => !this.gone.has(d.id))
-    for (const d of acl) this.gone.add(d.id)
+    const acl = orphanDrops(fe, i => cited[i] === 1, keep, this.gone).filter(
+      d => !this.gone.has(d.id)
+    )
+    for (const d of acl) this.gone.set(d.id, d.header)
     const content: string[] = []
     const pairs = new Map<string, Set<string>>()
     for (const m of this.contents.values()) {
       if (m.dev === mine) continue
-      const cites = touching.has(m) && m.ap.some(p => this.gone.has(p)) && !v.visible(m)
+      const cites =
+        touching.has(m) &&
+        m.ap.some(p => this.gone.has(p) || this.r.acl.isHeader(p)) &&
+        !v.visible(m)
       if (!cites && v.dropKind(m) === null) continue
       let pair = pairs.get(m.dev)
       if (!pair) pairs.set(m.dev, (pair = v.fcPair(m.dev)))

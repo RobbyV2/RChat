@@ -2,10 +2,33 @@
 // their names, against the production modules. After each test every world it built is replayed
 // through the reference model, which must give the same verdicts, records and states.
 import { describe, expect, setDefaultTimeout, test } from 'bun:test'
-import { evaluate } from '../p2p/acl/eval'
+import { evaluate, FastEval } from '../p2p/acl/eval'
+import { Ix } from '../p2p/acl/reach'
 import { orphanDrops } from '../p2p/acl/equivocation'
-import { BAN, EVERYONE, INVITE, KICK, LIM, rank, rankOf, ROLES, SERVER } from '../p2p/acl/rules'
-import { AclWorld, devOwner, evalSummary, modelDiffAfterEach, TestReplica } from './p2p_acl_world'
+import type { EvalResult } from '../p2p/acl/facts'
+import {
+  BAN,
+  EVERYONE,
+  gt,
+  INVITE,
+  KICK,
+  LIM,
+  rank,
+  rankOf,
+  ROLES,
+  SERVER,
+  setLimits,
+} from '../p2p/acl/rules'
+import * as M from './acl_model/model'
+import {
+  AclWorld,
+  devOwner,
+  evalSummary,
+  MODEL_LIMITS,
+  modelDiffAfterEach,
+  TestReplica,
+  toModel,
+} from './p2p_acl_world'
 
 modelDiffAfterEach()
 setDefaultTimeout(300_000)
@@ -170,9 +193,13 @@ describe('review Criticals', () => {
     const S = w.state()
     expect([...S.facts.devs.get('A')!]).toEqual(['A1'])
     for (const x of [...adds, ...marks]) expect(S.X.has(x.id)).toBe(true)
-    // no further identity ops for A, and the void devices can't post
-    expect(w.act('A5', 'device_add').v).toEqual({ s: 'R', why: 'identity-forked' })
-    expect(w.act('A2', 'mark').v.s).toBe('R')
+    // no further identity ops for A, and the void devices can't post (revision 7: citing the fork
+    // explicitly, since an honest client's default parents leave the void events out)
+    expect(w.act('A5', 'device_add', {}, { ap: w.heads() }).v).toEqual({
+      s: 'R',
+      why: 'identity-forked',
+    })
+    expect(w.act('A2', 'mark', {}, { ap: w.heads() }).v.s).toBe('R')
   })
 
   test('C5: W3 is per device and deterministic', () => {
@@ -1193,18 +1220,20 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
   // invite stays: the documented residual (fail-open for an author a senior protected against some cause of the stratum;
   // N19). The fallback never cuts what the exact rule keeps. (Revision 5, dispatch 5b, [H16]: classes are counted among
   // the ops the causes could cut; K's and L's invites are such ops, the marks of the revision-4 version were not.)
-  // Revision 5, dispatch 5b ([H17] (c), class projection): an op's cut depends only on the causes with a direct cut in
-  // its causal past, G(q), so its exposure counts as a class only projected onto G(q). In the "extra" shape each of
-  // P's, K's and L's invites depends on one cause only, the one its author is exposed to: projected, nobody is protected,
-  // there is no class, and the exact rule cuts P's invite (mutant class-proj-off keeps it). In the "multi" shape the
-  // invites and X's grant cite the other removed members' grants too, so each depends on all three causes: P's, K's and
-  // L's projected exposures are three classes and the fallback keeps P's invite (N19).
+  // Revision 5, dispatch 5b ([H17] (c)): the fallback's subset test is projected onto G(x), the causes with a direct cut
+  // in x's causal past (an op's cut in a world depends only on that part). Revision 7c (r7 re-review C1): classes are
+  // U ∩ Γ⁺ for the whole stratum, no longer U ∩ G(q) per op (which an author picks with its parents, vectors "r7c"). In
+  // the "extra" shape P, K and L are each protected against two of the three kicks: three classes, the fallback, which
+  // still cuts P's invite because X's grant, cut in its own world {Q's kick}, lies inside P's (mutant class-proj-off,
+  // whose fallback test is unprojected, keeps it; revisions 5–7 counted no class here and ran the exact rule). In the
+  // "multi" shape the invites and X's grant cite the other removed members' grants too: X's world is all three kicks, not
+  // inside P's, and the fallback keeps P's invite (N19).
   for (const [extra, multi] of [
     [false, false],
     [true, false],
     [true, true],
   ]) {
-    test(`C1 class cap (${multi ? "3 classes: fallback keeps P's invite" : extra ? "protections against causes an invite does not depend on are no class: exact rule cuts P's invite" : "1 class: exact rule cuts P's invite"})`, () => {
+    test(`C1 class cap (${multi ? "3 classes: fallback keeps P's invite" : extra ? "3 classes: the projected fallback still cuts P's invite" : "1 class: exact rule cuts P's invite"})`, () => {
       const w = base(INVITE)
       w.ok('O2', 'device_add')
       const QR = role(w, 3, KICK | BAN)
@@ -1236,6 +1265,9 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
       expect(S.cut.has(g1.id) && S.cut.has(x.id)).toBe(true)
       expect(S.cut.has(k.id) && S.cut.has(l.id)).toBe(true) // K's and L's invites relied on the removed members' grants
       expect(S.cut.has(p.id)).toBe(!extra || !LIM.classes || (TOT && !multi))
+      const fe = new FastEval(Ix.of(w.ref.order, w.ref))
+      fe.run()
+      expect([fe.stats.maxClasses, fe.stats.fallbacks]).toEqual(extra ? [3, 1] : [1, 0])
       orderIndependent(w)
     })
   }
@@ -2064,7 +2096,10 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       w.act(d.dev, 'mark', {}, { ap: [w.latestOwn(d.dev)!.id, d.ack], ts: (ts += 11) })
     return { w, olds, post, start: w.ref.order.length }
   }
-  test("H20: devices revoked before the removal share the identity's pool (at most poolU stored, whatever their number)", () => {
+  // Revision 7 (controller ruling on r6.1, C1 option 2): a candidate only by pool evidence is never dropped, so the
+  // pool no longer caps what a removed member stores: each old device keeps its own W3(b) total (about 24 per old device
+  // at production values; revision 6: poolU in total). Mutant pool-drop (drop pool candidates) keeps poolU.
+  test("H20 (revision 7): a removed member's old devices each keep their W3(b) total stored (totU per old device, cut)", () => {
     const { w, olds, post, start } = oldDevices(6)
     let admitted = 0
     for (const d of olds) for (let k = 0; k < 30; k++) if (post(d).v.s === 'A') admitted++
@@ -2072,20 +2107,22 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     const S = w.state()
     expect(admitted).toBe(6 * LIM.totU) // each chain keeps its own W3(b) budget at admission
     expect(stored.every(id => S.cut.has(id))).toBe(true)
-    expect(stored.length).toBeLessThanOrEqual(LIM.poolU) // dispatch 5b-i: 6 × totU = 72
+    expect(stored.length).toBe(6 * LIM.totU) // revision 6: at most poolU; dispatch 5b-i: 6 × totU = 72
+    expect(stored.filter(x => S.PC.has(x)).length).toBeGreaterThan(0)
   })
   // The boundary, restated independently from the recorded pools: x is a pool candidate iff |U(x) ∪ ⋃ U(y)| > poolU over
   // the events y of its identity concurrent with x. A backdated chain is also concurrent with the identity's own later
   // events before the removal (here the revocations and the later devices), which count too. Posting round-robin, the
   // first overflow voids only maximal events, and the stored events never exceed poolU.
-  test('H20: the pool boundary: an event is a pool candidate iff its concurrent pool exceeds poolU; stored ≤ poolU throughout', () => {
+  test('H20: the pool boundary: an event is a pool candidate iff its concurrent pool exceeds poolU; stored ≤ totU per old device throughout', () => {
     const { w, olds, post, start } = oldDevices(3)
     let firstPC = -1
     for (let k = 0; k < LIM.totU; k++)
       for (const d of olds) {
         post(d)
         const S = w.state()
-        expect(storedOf(w, start).length).toBeLessThanOrEqual(LIM.poolU)
+        // revision 7: pool candidates stay stored (revision 6: stored ≤ poolU)
+        expect(storedOf(w, start).length).toBeLessThanOrEqual(olds.length * LIM.totU)
         if (firstPC < 0 && S.PC?.size) {
           firstPC = w.ref.order.length
           // only events with no later event of their own chain can overflow first
@@ -2097,10 +2134,13 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       ref = w.ref
     const xs = ref.order.filter(id => ref.ev(id).a === 'X' && ref.rec(id).pool)
     for (const x of xs) {
-      if (ref.ev(x).t === 'primary_rotate') continue
+      // revision 6 (r5 review C1 (c)): device_revokes are never pool candidates, as rotations
+      if (ref.ev(x).t === 'primary_rotate' || ref.ev(x).t === 'device_revoke') continue
       const P = new Set(ref.rec(x).pool)
+      // revision 7: only concurrent events before their device's fork point count
+      const pre = (y: string) => ref.ev(y).seq < (S.F.get(ref.ev(y).dev) ?? Infinity)
       for (const y of xs)
-        if (y !== x && !ref.anc(x).has(y) && !ref.anc(y).has(x))
+        if (y !== x && pre(y) && !ref.anc(x).has(y) && !ref.anc(y).has(x))
           for (const z of ref.rec(y).pool!) P.add(z)
       expect(S.PC?.has(x) ?? false).toBe(P.size > LIM.poolU)
     }
@@ -2258,4 +2298,872 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       expect(w.state().facts.mem.has('X')).toBe(false)
     })
   }
+})
+
+// The vectors of revisions 6, 7, 7b and 7c (notes/acl-model vectors.test.ts, same names). The
+// model's own property checks (checkCase) stay in the model; here every world is replayed
+// through the model after each test, and header evaluations are compared with it directly.
+const modelOf = (w: AclWorld) => {
+  const mr = new M.Replica()
+  for (const e of w.all) mr.receive(toModel(e))
+  return mr
+}
+const withHeaders = (w: AclWorld, kept: string[], hdrs: string[]) => {
+  const p = evaluate(kept, w.ref, hdrs)
+  const m = M.evaluate(kept, modelOf(w), { ghosts: hdrs })
+  return { p, m }
+}
+const classStats = (w: AclWorld) => {
+  const fe = new FastEval(Ix.of(w.ref.order, w.ref))
+  const S = fe.run()
+  return { S, st: [fe.stats.maxClasses, fe.stats.fallbacks] }
+}
+
+// Revision 6: the r5 review. C1 (c) [device_revoke], M2 [ap cap] and I1 fail on revision 5 and
+// pass here; I2 pins today's outcome (N21); "I3 (b)" pins why the ruled work bound is not adopted.
+describe('r5 review (revision 6)', () => {
+  test('C1 (c): a thief’s sibling flood does not void the revocation of the stolen device (device_revoke is no pool candidate)', () => {
+    const w = base(INVITE)
+    const MOD = role(w, 3, KICK | BAN)
+    for (const d of ['A1', 'B1', 'C1']) join(w, d)
+    w.ok('A2', 'device_add')
+    give(w, 'A', MOD)
+    const m0 = w.ok('O1', 'mark')
+    const a2 = w.latestOwn('A2')!
+    const sibs: string[] = []
+    for (let i = 0; i < LIM.poolU + 1; i++)
+      sibs.push(
+        w.ok('A2', 'mark', {}, { ap: [m0.id], seq: a2.seq + 1, aprev: a2.id, ts: m0.ts + 1 + i }).id
+      )
+    const noSib = () => w.heads(w.ref.order.filter(x => !sibs.includes(x))).slice(0, LIM.ap)
+    w.ok('A1', 'ban', { to: 'B' }, { ap: noSib() })
+    const rev = w.ok('A1', 'device_revoke', { dk: 'A2', seen: a2.seq }, { ap: noSib() })
+    w.ok('C1', 'mark', {}, { ap: w.heads().slice(0, LIM.ap) })
+    w.ok('O1', 'mark')
+    const S = w.state()
+    expect(S.PC.has(rev.id)).toBe(false)
+    expect(S.X.has(rev.id)).toBe(false)
+    expect(S.facts.devs.get('A')?.has('A2') ?? false).toBe(false)
+    for (const x of sibs) expect(S.tail.has(x)).toBe(true)
+    orderIndependent(w)
+  })
+
+  test('M2 (C1 b): at most 10 ACL parents; an honest client caps its heads and keeps its own chain', () => {
+    const w = base(INVITE)
+    for (const d of ['A1', 'B1']) join(w, d)
+    for (let i = 0; i < 12; i++) join(w, `m${i}x1`)
+    const P0 = w.heads()
+    const a = w.ok('A1', 'mark', {}, { ap: P0 })
+    const ms: string[] = []
+    for (let i = 0; i < 12; i++) ms.push(w.ok(`m${i}x1`, 'mark', {}, { ap: P0 }).id)
+    expect(w.heads().length).toBeGreaterThan(LIM.ap)
+    const e = w.ok('A1', 'mark')
+    expect(e.ap.length).toBeLessThanOrEqual(LIM.ap)
+    expect(e.aprev).toBe(a.id)
+    expect(w.state().F.get('A1') ?? Infinity).toBe(Infinity)
+    const r = w.act('B1', 'mark', {}, { ap: ms.slice(0, 11) })
+    expect(r.v).toEqual({ s: 'R', why: 'ap' })
+    expect(w.act('B1', 'mark', {}, { ap: ms.slice(0, 10) }).v.s).toBe('A')
+  })
+
+  test('poolmono (revision 7): pool candidacy can end, so a candidate only by pool evidence is never dropped and replicas agree', () => {
+    const w = base(INVITE)
+    join(w, 'A1')
+    const a2 = w.ok('A2', 'device_add')
+    w.ok('O1', 'mark')
+    const preRev = w.heads()
+    w.ok('A1', 'device_revoke', { dk: 'A2', seen: a2.seq })
+    w.ok('O1', 'mark')
+    const a3 = w.ok('A3', 'device_add')
+    w.ok('O1', 'mark')
+    const P0 = w.heads()
+    let ts = 1000
+    const chain = (dev: string, start: string[], profileLast = false) => {
+      const ids: string[] = []
+      let ap = start
+      for (let i = 0; i < LIM.totU - 1; i++) {
+        const prof = profileLast && i === LIM.totU - 2
+        const e = w.ok(dev, prof ? 'profile' : 'mark', prof ? { name: 9 } : {}, {
+          ap,
+          ts: (ts += 11),
+        })
+        ids.push(e.id)
+        ap = [e.id]
+      }
+      return ids
+    }
+    const c1 = chain('A1', P0, true)
+    const c3 = chain('A3', P0)
+    chain('A2', preRev)
+    const S1 = w.ref.order.slice()
+    const st1 = evaluate(S1, w.ref)
+    const prof = c1[c1.length - 1]
+    expect(st1.PC.has(prof) && st1.X.has(prof)).toBe(true)
+    const bare = new Set<string>()
+    const drops = orphanDrops(S1, st1, w.ref, [], bare)
+    expect(drops.has(prof)).toBe(false)
+    w.ok('A3', 'mark', {}, { ap: P0, seq: w.ref.ev(c3[0]).seq, aprev: a3.id, ts: (ts += 11) })
+    const S2 = w.ref.order.slice()
+    const st2 = evaluate(S2, w.ref)
+    expect(st2.X.has(prof)).toBe(false)
+    expect(st2.facts.profile.get('A')?.name).toBe(9)
+    const kept = S2.filter(x => !drops.has(x))
+    const st3 = evaluate(
+      kept,
+      w.ref,
+      [...drops].filter(x => !bare.has(x))
+    )
+    expect(st3.facts.profile.get('A')?.name).toBe(9)
+    for (const x of [...st2.X].filter(x => !drops.has(x))) expect(st3.X.has(x)).toBe(true)
+    orderIndependent(w)
+  })
+
+  for (const kicked of [false, true]) {
+    test(`I1 (GH${kicked ? ', kicked' : ''}): kept headers count as identity, rotation and pool evidence, as the reference does`, () => {
+      const w = base(INVITE)
+      join(w, 'X1')
+      w.ok('O1', 'mark')
+      if (kicked) w.ok('O1', 'kick', { to: 'X' })
+      let ts = 1000
+      for (let k = 0; k < 3; k++)
+        w.ok('X1', 'mark', {}, { ap: [w.latestOwn('X1')!.id], ts: (ts += 11) })
+      const tip = w.latestOwn('X1')!.id
+      for (const d of ['X5', 'X6', 'X7']) w.ok(d, 'device_add', {}, { ap: [tip], ts: (ts += 11) })
+      const m7 = w.ok('X7', 'mark', {}, { ap: [w.latestOwn('X7')!.id], ts: (ts += 11) })
+      w.act('X1', 'mark', {}, { ap: [m7.id], ts: ts + 11 })
+      const S = w.state()
+      const drops = orphanDrops(w.ref.order, S, w.ref)
+      expect(drops.size).toBeGreaterThan(0)
+      const kept = w.ref.order.filter(x => !drops.has(x))
+      const { p, m } = withHeaders(w, kept, [...drops])
+      expect(evalSummary(p)).toBe(M.evalSummary(m))
+      if (!kicked) expect([...(p.facts.devs.get('X') ?? [])]).toEqual(['X1'])
+    })
+  }
+
+  test('I2 (N21-ban): a senior’s stale-device leave undoes a ban that relied on its promotions; the moderator re-applies it (N21: fail-open for denies)', () => {
+    const w = base(INVITE)
+    const RS = role(w, 20, ROLES)
+    const R15 = role(w, 15, 0)
+    const R10 = role(w, 10, 0)
+    const RK = role(w, 2, BAN | KICK)
+    for (const d of ['S1', 'P1', 'T1']) join(w, d)
+    w.ok('S2', 'device_add')
+    give(w, 'S', RS)
+    give(w, 'P', RK)
+    const H0 = w.heads()
+    const gP = w.ok('S1', 'assign', { to: 'P', role: R15 })
+    const gT = w.ok('S1', 'assign', { to: 'T', role: R10 })
+    const ban = w.ok('P1', 'ban', { to: 'T' })
+    w.ok('O1', 'mark')
+    w.ok('S2', 'leave', {}, { ap: H0 })
+    w.ok('O1', 'mark')
+    const S = w.state()
+    expect(S.cut.has(gP.id) && S.cut.has(gT.id) && S.cut.has(ban.id)).toBe(true)
+    expect(S.eff.has(ban.id)).toBe(false)
+    expect(S.facts.ban.has('T')).toBe(false)
+    expect(S.facts.mem.has('T')).toBe(true)
+    expect(gt(rank(S.facts, 'P'), rank(S.facts, 'T'))).toBe(true)
+    const again = w.ok('P1', 'ban', { to: 'T' })
+    const S2 = w.state()
+    expect(S2.eff.has(again.id)).toBe(true)
+    expect(S2.facts.ban.has('T') && !S2.facts.mem.has('T')).toBe(true)
+    orderIndependent(w)
+  })
+
+  test('I3 (b): a junior’s ops never switch a senior stratum to the fallback (no work bound on the flat closure)', () => {
+    const w = base(INVITE)
+    w.ok('O2', 'device_add')
+    const QR = role(w, 3, KICK | BAN)
+    const AR = role(w, 2, ROLES)
+    const R1 = role(w, 1, ROLES)
+    const R3 = role(w, 0, INVITE)
+    const HR = role(w, 5, 0)
+    for (const d of 'Q1 R1 S1 A1 X1 P1 Z1 Y1 K1 L1 E1 F1 G1 H1 I1 J1'.split(' ')) join(w, d)
+    for (const m of ['Q', 'R', 'S']) give(w, m, QR)
+    for (const m of ['A', 'Z', 'Y']) give(w, m, AR)
+    w.ok('O1', 'role_bits', { role: EVERYONE, bit: INVITE, on: false })
+    const P0 = w.heads()
+    const z = w.ok('Z1', 'assign', { to: 'K', role: R3 }, { ap: P0 })
+    const y = w.ok('Y1', 'assign', { to: 'L', role: R3 }, { ap: P0 })
+    const g1 = w.ok('A1', 'assign', { to: 'X', role: R1 }, { ap: P0 })
+    const x = w.ok('X1', 'assign', { to: 'P', role: R3 }, { ap: [g1.id, z.id] })
+    const p = w.ok('P1', 'add', { to: 'N' }, { ap: [x.id, y.id] })
+    w.ok('K1', 'add', { to: 'N2' }, { ap: [z.id, g1.id] })
+    w.ok('L1', 'add', { to: 'N3' }, { ap: [y.id, g1.id] })
+    const c1 = w.ok('Q1', 'kick', { to: 'A' }, { ap: P0 })
+    w.ok('R1', 'kick', { to: 'Z' }, { ap: P0 })
+    w.ok('S1', 'kick', { to: 'Y' }, { ap: P0 })
+    w.ok('O1', 'assign', { to: 'P', role: HR }, { ap: [p.id, c1.id] })
+    expect(w.state().cut.has(p.id)).toBe(true)
+    let last = x.id
+    for (let i = 0; i < 6; i++)
+      last = w.ok(
+        'X1',
+        'assign',
+        { to: 'EFGHIJ'[i], role: R3 },
+        { ap: [last], ts: 1000 + i * 11 }
+      ).id
+    const S = w.state()
+    expect(S.cut.has(p.id)).toBe(true)
+    expect(w.ref.rec(last).k[0]).toBeLessThan(w.ref.rec(c1.id).k[0])
+    orderIndependent(w)
+  })
+})
+
+// Revision 7: P(x) counts only concurrent events before their device's fork point, a candidate
+// only by pool evidence is never dropped, events past their device's fork point that are not
+// identity ops go without their headers, and honest clients never cite a candidate, X or Tail
+// event (§2.3, §1.2, §4.1).
+describe('revision 7 (C1, option 2)', () => {
+  test('r7 C1 (a): a removed member’s sibling flood is dropped with at most two headers; honest clients don’t cite it', () => {
+    const w = base(INVITE)
+    w.ok('O1', 'add', { to: 'X' })
+    w.ok('X1', 'join')
+    w.ok('O1', 'mark')
+    const P = w.heads()
+    w.ok('O1', 'kick', { to: 'X' })
+    for (let i = 0; i < 5; i++) w.ok('O1', 'mark', {}, { ts: 100 + 20 * i })
+    const last = w.latestOwn('X1')!
+    const sibs: string[] = []
+    for (let k = 0; k < 200; k++) {
+      const r = w.act(
+        'X1',
+        'profile',
+        { name: k },
+        { ap: P, seq: last.seq + 1, aprev: last.id, ts: 1000 + k }
+      )
+      if (r.v.s === 'A') sibs.push(r.e.id)
+    }
+    expect(sibs.length).toBe(200)
+    const marks = [0, 1, 2].map(i => w.ok('O1', 'mark', {}, { ts: 3000 + 20 * i }))
+    for (const m of marks) for (const x of sibs) expect(w.closure(m.ap).has(x)).toBe(false)
+    const S = w.state()
+    for (const x of sibs) expect(S.X.has(x)).toBe(true)
+    const bare = new Set<string>()
+    const drops = orphanDrops(w.ref.order, S, w.ref, [], bare)
+    for (const x of sibs) expect(drops.has(x)).toBe(true)
+    expect(sibs.filter(x => !bare.has(x)).length).toBeLessThanOrEqual(2)
+    orderIndependent(w)
+  })
+
+  for (const cite of ['all heads', 'client rule'] as const) {
+    test(`r7 C1 (c): a thief’s sibling flood no longer voids the victim’s ACL events (honest marks cite ${cite})`, () => {
+      const w = base(INVITE)
+      const MOD = role(w, 3, KICK | BAN)
+      for (const d of ['A1', 'B1', 'C1']) join(w, d)
+      w.ok('A2', 'device_add')
+      give(w, 'A', MOD)
+      const m0 = w.ok('O1', 'mark')
+      const a2 = w.latestOwn('A2')!
+      const sibs: string[] = []
+      for (let i = 0; i < LIM.poolU + 1; i++)
+        sibs.push(
+          w.ok('A2', 'mark', {}, { ap: [m0.id], seq: a2.seq + 1, aprev: a2.id, ts: m0.ts + 1 + i })
+            .id
+        )
+      const noSib = () => w.heads(w.ref.order.filter(x => !sibs.includes(x))).slice(0, LIM.ap)
+      const ban = w.ok('A1', 'ban', { to: 'B' }, { ap: noSib() })
+      const rev = w.ok('A1', 'device_revoke', { dk: 'A2', seen: a2.seq }, { ap: noSib() })
+      const o = () => (cite === 'all heads' ? { ap: w.heads().slice(-LIM.ap) } : {})
+      w.ok('C1', 'mark', {}, o())
+      w.ok('O1', 'mark', {}, o())
+      const S = w.state()
+      expect(S.PC.has(ban.id)).toBe(false)
+      expect(S.X.has(ban.id) || S.X.has(rev.id)).toBe(false)
+      expect(S.facts.ban.has('B')).toBe(true)
+      expect(S.facts.devs.get('A')?.has('A2') ?? false).toBe(false)
+      orderIndependent(w)
+    })
+  }
+
+  test('r7 C1 (c), after a rotation: a batch positioned before it voids neither the new primary’s kick nor the leave', () => {
+    const w = base(INVITE)
+    const MOD = role(w, 3, KICK | BAN)
+    for (const d of ['A1', 'B1', 'C1', 'D1', 'E1']) join(w, d)
+    w.ok('A2', 'device_add')
+    give(w, 'A', MOD)
+    const m0 = w.ok('O1', 'mark')
+    const a2 = w.latestOwn('A2')!
+    w.ok('A3', 'primary_rotate', { keep: ['A1'], seen: { A2: a2.seq }, pcert: 'p2' })
+    w.ok('O1', 'mark')
+    const sibs: string[] = []
+    const batch = () => {
+      for (let i = 0; i < LIM.poolU + 1; i++)
+        sibs.push(
+          w.ok('A2', 'mark', {}, { ap: [m0.id], seq: a2.seq + 1, aprev: a2.id, ts: m0.ts + 1 }).id
+        )
+    }
+    const noSib = () => w.heads(w.ref.order.filter(x => !sibs.includes(x))).slice(0, LIM.ap)
+    batch()
+    w.ok('C1', 'mark')
+    w.ok('O1', 'mark')
+    const ban = w.ok('A3', 'ban', { to: 'B' }, { ap: noSib() })
+    w.ok('D1', 'mark')
+    w.ok('O1', 'mark')
+    batch()
+    const kick = w.ok('A3', 'kick', { to: 'D' }, { ap: noSib() })
+    const lv = w.ok('A1', 'leave', {}, { ap: noSib() })
+    w.ok('E1', 'mark')
+    w.ok('O1', 'mark')
+    const S = w.state()
+    for (const x of [ban.id, kick.id, lv.id]) expect(S.X.has(x)).toBe(false)
+    expect(S.facts.ban.has('B')).toBe(true)
+    expect(S.facts.mem.has('D')).toBe(false)
+    expect(S.facts.mem.has('A')).toBe(false)
+  })
+
+  test('r7: a dropped identity op keeps its header (a later rotation concurrent with it is contested on every replica)', () => {
+    const w = base(INVITE)
+    join(w, 'X1')
+    w.ok('O1', 'mark')
+    const P = w.heads()
+    const rs = [0, 1, 2].map(i =>
+      w.ok(
+        'X9',
+        'primary_rotate',
+        { keep: ['X1'], seen: {}, pcert: `q${i}` },
+        { ap: P, seq: 1, aprev: null, ts: 50 + i }
+      )
+    )
+    const S1 = w.state()
+    for (const r of rs) expect(S1.X.has(r.id)).toBe(true)
+    const bare = new Set<string>()
+    const drops = orphanDrops(w.ref.order, S1, w.ref, [], bare)
+    for (const r of rs) expect(drops.has(r.id)).toBe(true)
+    expect(rs.some(r => bare.has(r.id))).toBe(false)
+    const lo = rs
+      .map(r => r.id)
+      .sort()
+      .slice(0, 2)
+    const r4 = w.ok(
+      'X10',
+      'primary_rotate',
+      { keep: ['X1'], seen: { X9: 1 }, pcert: 'q9' },
+      { ap: lo }
+    )
+    const full = w.state()
+    const kept = w.ref.order.filter(x => !drops.has(x) || lo.includes(x))
+    const hdr = [...drops].filter(x => !bare.has(x) && !lo.includes(x))
+    const { p, m } = withHeaders(w, kept, hdr)
+    expect(full.RF.has(r4.id)).toBe(true)
+    expect(p.RF.has(r4.id)).toBe(true)
+    expect(p.X.has(r4.id)).toBe(full.X.has(r4.id))
+    expect(evalSummary(p)).toBe(M.evalSummary(m))
+  })
+})
+
+// r7.6: colluding identities layer their forked events; the proposed admission rule is not
+// adopted. This pins today's outcome (spec §2.3, §6.2 N22).
+describe('r7.6 (colluders layering forked events)', () => {
+  test('r7.6: one held event keeps 110 void siblings of two colluders (10 per parent, two layers)', () => {
+    const w = base(INVITE)
+    let ts = 10
+    for (const x of ['Y', 'Z']) {
+      w.ok('O1', 'add', { to: x }, { ts: (ts += 3) })
+      w.ok(`${x}1`, 'join', {}, { ts: (ts += 3) })
+      w.ok(`${x}2`, 'device_add', {}, { ts: (ts += 3) })
+    }
+    const m0 = w.ok('O1', 'mark', {}, { ts: (ts += 3) })
+    ts = 1000
+    const sib = (dev: string, n: number, parents: (k: number) => string[]) => {
+      const last = w.latestOwn(dev)!
+      return Array.from({ length: n }, (_, k) => {
+        const ap = parents(k)
+        const full = w.closure(ap).has(last.id) ? ap : [...ap, last.id]
+        return w.ok(dev, 'mark', {}, { ap: full, seq: last.seq + 1, aprev: last.id, ts: (ts += 1) })
+          .id
+      })
+    }
+    const y = sib('Y1', 100, () => [m0.id])
+    const z = sib('Z1', 10, k => y.slice(10 * k, 10 * k + 10))
+    const top = w.ok('Y2', 'mark', {}, { ap: z, ts: (ts += 1) })
+    const S = w.state()
+    expect(S.X.has(top.id)).toBe(false)
+    const drops = orphanDrops(w.ref.order, S, w.ref)
+    expect([...y, ...z].filter(x => S.X.has(x) && !drops.has(x)).length).toBe(110)
+  })
+})
+
+// r7.9: the witness search may stop only at a structural candidacy (a pool candidacy can end).
+describe('r7.9 (witness search)', () => {
+  test('r7.9: a witness in good faith after an event where the candidate was only a pool candidate counts', () => {
+    const w = base(INVITE)
+    for (const d of ['A1', 'B1', 'C1']) join(w, d)
+    const a2 = w.ok('A2', 'device_add')
+    w.ok('O1', 'mark')
+    const preRev = w.heads()
+    w.ok('A1', 'device_revoke', { dk: 'A2', seen: a2.seq })
+    w.ok('O1', 'mark')
+    const a3 = w.ok('A3', 'device_add')
+    w.ok('O1', 'mark')
+    const P0 = w.heads()
+    let ts = 1000
+    const chain = (dev: string, start: string[]) => {
+      const ids: string[] = []
+      let ap = start
+      for (let i = 0; i < LIM.totU - 1; i++) {
+        const e = w.ok(dev, 'mark', {}, { ap, ts: (ts += 11) })
+        ids.push(e.id)
+        ap = [e.id]
+      }
+      return ids
+    }
+    const c1 = chain('A1', P0)
+    const c3 = chain('A3', P0)
+    const c2 = chain('A2', preRev)
+    const x = c1[c1.length - 1]
+    const wv = w.ok(
+      'B1',
+      'mark',
+      {},
+      { ap: [x, c2[c2.length - 1], c3[c3.length - 1]], ts: (ts += 11) }
+    )
+    const s1 = w.ok(
+      'A3',
+      'mark',
+      {},
+      { ap: P0, seq: w.ref.ev(c3[0]).seq, aprev: a3.id, ts: (ts += 11) }
+    )
+    const wp = w.ok('C1', 'mark', {}, { ap: [wv.id, s1.id], ts: (ts += 11) })
+    const f0 = w.ref.ev(c1[0])
+    w.ok('A1', 'mark', {}, { ap: P0, seq: f0.seq, aprev: f0.aprev ?? null, ts: (ts += 11) })
+    expect(w.ref.rec(wv.id).local.PC.has(x)).toBe(true)
+    expect(w.ref.rec(wp.id).local.PC.has(x)).toBe(false)
+    const S = w.state()
+    expect(S.X.has(x)).toBe(false)
+    expect(evalSummary(evaluate(w.ref.order, w.ref))).toBe(evalSummary(S))
+  })
+})
+
+// r7.3's shape keeps the device_revoke exemption necessary: concurrent introductions of fresh
+// devices fill the pool.
+describe('r7.3 (concurrent introductions)', () => {
+  test('r7.3: a device_revoke stays out of pool candidacy when concurrent introductions fill the pool', () => {
+    const w = base(INVITE)
+    for (const d of ['A1', 'B1', 'C1']) join(w, d)
+    const m0 = w.ok('O1', 'mark')
+    let ts = 500
+    const fresh: string[] = []
+    for (let i = 0; i < 20; i++) {
+      const d = w.ok(`A${10 + i}`, 'device_add', {}, { ap: [m0.id], ts: (ts += 1) })
+      fresh.push(w.ok(`A${10 + i}`, 'mark', {}, { ap: [d.id], ts: (ts += 1) }).id)
+    }
+    const ap = [...w.heads().filter(h => !/^A[1-9][0-9]$/.test(w.ref.ev(h).dev)), fresh[0]].slice(
+      -LIM.ap
+    )
+    const rev = w.ok(
+      'A1',
+      'device_revoke',
+      { dk: 'A10', seen: w.ref.ev(fresh[0]).seq },
+      { ap, ts: ts + 1 }
+    )
+    w.ok('C1', 'mark')
+    const S = w.state()
+    expect(S.PC.has(rev.id)).toBe(false)
+    expect(S.X.has(rev.id)).toBe(false)
+    expect(S.facts.devs.get('A')?.has('A10') ?? false).toBe(false)
+  })
+})
+
+// r7b: the two older oracle findings of revision 7's final fuzz, and two readings.
+describe('r7b (older oracle findings, readings)', () => {
+  for (const via of ['revoke', 'kick'] as const) {
+    test(`r7b O5-senior (seed 9043909, ${via}): removing the grant that protected C lets a junior ban cut C’s stratum-9 profile`, () => {
+      const w = base()
+      const RA = role(w, 7, ROLES | INVITE)
+      const RC = role(w, 4, INVITE)
+      const RB = role(w, 3, KICK | BAN)
+      const RD = role(w, 8, KICK | BAN)
+      join(w, 'A1')
+      const a2 = w.ok('A2', 'device_add')
+      for (const d of ['B1', 'C1', 'D1']) join(w, d)
+      give(w, 'A', RA)
+      give(w, 'B', RB)
+      give(w, 'D', RD)
+      const P = w.heads()
+      const g = w.ok('A1', 'assign', { to: 'C', role: RC }, { ap: P })
+      const ban = w.ok('B1', 'ban', { to: 'C' }, { ap: P })
+      const mv = w.ok('O1', 'role_move', { role: RC, pos: 9 }, { ap: [ban.id] })
+      const prof = w.ok('C1', 'profile', { name: 1 }, { ap: [g.id, ban.id, mv.id] })
+      expect(w.ref.rec(prof.id).k[0]).toBe(9)
+      expect(w.state().eff.has(ban.id)).toBe(false)
+      if (via === 'revoke')
+        w.ok('A2', 'device_revoke', { dk: 'A1', seen: w.latestOwn('A1')!.seq - 1 }, { ap: [a2.id] })
+      else w.ok('D1', 'kick', { to: 'A' }, { ap: P })
+      const S = w.state()
+      expect(S.cut.get(g.id)?.[0]).toBe(via === 'revoke' ? 7 : 8)
+      expect(S.tail.has(g.id)).toBe(via === 'revoke')
+      expect(S.eff.has(ban.id)).toBe(true)
+      expect(S.cut.get(prof.id)?.[0]).toBe(3)
+      expect(S.facts.ban.has('C')).toBe(true)
+      expect(S.facts.mem.has('C')).toBe(false)
+    })
+  }
+  for (const shape of ['rejoin', 'fork'] as const) {
+    test(`r7b O6-join (seed 8868407, ${shape}): a duel ban keeps its target’s racing join uncut; it gives no membership and keeps its add consumed`, () => {
+      const w = base()
+      const o2 = w.ok('O2', 'device_add')
+      const R = role(w, 8, KICK | BAN | ROLES | INVITE)
+      join(w, 'A1')
+      w.ok('O1', 'add', { to: 'T' })
+      const addT = w.latestOwn('O1')!
+      w.ok('T1', 'join')
+      give(w, 'A', R)
+      let ban: { id: string }
+      let racing: { id: string }
+      if (shape === 'rejoin') {
+        const P = w.heads()
+        ban = w.ok('A1', 'ban', { to: 'T' }, { ap: P })
+        const lv = w.ok('T1', 'leave', {}, { ap: P })
+        const add2 = w.ok('O1', 'add', { to: 'T' }, { ap: [lv.id] })
+        racing = w.ok('T1', 'join', {}, { ap: [add2.id] })
+        give(w, 'T', R, 'O1', { ap: [racing.id] })
+      } else {
+        give(w, 'T', R)
+        const sr = w.ok('T1', 'revoke', { to: 'T', role: R })
+        ban = w.ok('A1', 'ban', { to: 'T' }, { ap: [sr.id] })
+        racing = w.ok('T2', 'join', {}, { ap: [addT.id] })
+        w.ok('O2', 'mark', {}, { ap: [racing.id, o2.id] })
+      }
+      let S = w.state()
+      expect(S.eff.has(ban.id)).toBe(true)
+      expect(S.cut.has(racing.id) || S.X.has(racing.id)).toBe(false)
+      expect(S.facts.ban.has('T')).toBe(true)
+      expect(S.facts.mem.has('T')).toBe(false)
+      w.ok('A1', 'unban', { to: 'T' })
+      S = w.state()
+      expect(S.facts.ban.has('T')).toBe(false)
+      expect(S.facts.mem.has('T')).toBe(false)
+      if (shape === 'rejoin') expect(w.act('T1', 'join').v).toEqual({ s: 'R', why: 'auth' })
+      else expect(S.facts.devs.get('T')?.has('T2') ?? false).toBe(true)
+    })
+  }
+  test('r7b reading 1: the client rule’s upgrade exception (honest clients cite an upgrade in X, so the old server freezes)', () => {
+    const w = base()
+    join(w, 'R1')
+    join(w, 'Q1')
+    const P = w.heads()
+    const u = w.ok('O1', 'upgrade', { next: 'G2' })
+    const sib = w.ok('O1', 'mark', {}, { ap: P, seq: u.seq, aprev: u.aprev ?? null })
+    expect(w.state().X.has(u.id)).toBe(true)
+    expect(w.excluded().has(u.id)).toBe(false)
+    expect(w.excluded().has(sib.id)).toBe(true)
+    const m = w.act('R1', 'mark')
+    expect(m.e.ap).toContain(u.id)
+    expect(m.v).toEqual({ s: 'R', why: 'auth' })
+    const lv = w.ok('R1', 'leave')
+    expect(lv.ap).toContain(u.id)
+    expect(w.ref.anc(lv.id).has(sib.id)).toBe(false)
+    const S = w.state()
+    expect(S.X.has(sib.id)).toBe(true)
+    expect(S.facts.upgraded).toEqual([u.id])
+    expect(w.act('Q1', 'mark').v).toEqual({ s: 'R', why: 'auth' })
+  })
+  test('r7b reading 2: W3(e) counts a vouch made where the add was a pool candidate; structural fork evidence still blocks', () => {
+    {
+      const w = base(INVITE)
+      join(w, 'A1')
+      join(w, 'V1')
+      const a2 = w.ok('A2', 'device_add')
+      w.ok('O1', 'mark')
+      const preRev = w.heads()
+      w.ok('A1', 'device_revoke', { dk: 'A2', seen: a2.seq })
+      w.ok('O1', 'mark')
+      const a3 = w.ok('A3', 'device_add')
+      w.ok('O1', 'mark')
+      const P0 = w.heads()
+      let ts = 1000
+      const chain = (dev: string, start: string[], addLast = false) => {
+        const ids: string[] = []
+        let ap = start
+        for (let i = 0; i < LIM.totU - 1; i++) {
+          const last = addLast && i === LIM.totU - 2
+          const e = w.ok(dev, last ? 'add' : 'mark', last ? { to: 'Z' } : {}, {
+            ap,
+            ts: (ts += 11),
+          })
+          ids.push(e.id)
+          ap = [e.id]
+        }
+        return ids
+      }
+      const c1 = chain('A1', P0, true)
+      const c3 = chain('A3', P0)
+      const c2 = chain('A2', preRev)
+      const add = c1[c1.length - 1]
+      const f = w.ok(
+        'V1',
+        'mark',
+        {},
+        { ap: [add, c3[c3.length - 1], c2[c2.length - 1]], ts: (ts += 11) }
+      )
+      expect(w.ref.rec(f.id).local.PC.has(add)).toBe(true)
+      const sib = w.ok(
+        'A3',
+        'mark',
+        {},
+        { ap: P0, seq: w.ref.ev(c3[0]).seq, aprev: a3.id, ts: (ts += 11) }
+      )
+      const j = w.act('Z1', 'join', {}, { ap: [f.id, sib.id] })
+      expect(j.v.s).toBe('A')
+      expect(w.ref.rec(j.e.id).local.PC.has(add)).toBe(false)
+      const S = w.state()
+      expect(S.X.has(add)).toBe(false)
+      expect(S.facts.mem.has('Z')).toBe(true)
+    }
+    {
+      const w = base(INVITE)
+      join(w, 'A1')
+      join(w, 'V1')
+      const P = w.heads()
+      const add = w.ok('A1', 'add', { to: 'Z' }, { ap: P })
+      const sib = w.ok('A1', 'mark', {}, { ap: P, seq: add.seq, aprev: add.aprev ?? null })
+      const f = w.ok('V1', 'mark', {}, { ap: [add.id, sib.id] })
+      expect(w.act('Z1', 'join', {}, { ap: [f.id] }).v.s).toBe('R')
+      expect(w.state().X.has(add.id)).toBe(true)
+    }
+  })
+})
+
+// r7c: protection classes are distinct U(p) ∩ Γ⁺ over Fl \ X, Γ⁺ = the causes with a direct cut
+// on an event outside X (the r7 re-review's C1). Revisions 5–7 projected each op's exposure onto
+// G(p), which its author picks with its parents.
+describe('r7c (class count from senior-made data)', () => {
+  for (const cap of [2, 3]) {
+    test(`r7c pclass (cap ${cap}): a protected author’s extra invites citing other cut grants make no class; the exact rule still cuts P’s invite`, () => {
+      setLimits({ ...MODEL_LIMITS, classes: cap })
+      try {
+        const w = base(0)
+        const QR = role(w, 3, KICK | BAN)
+        const AR = role(w, 2, ROLES)
+        const R1 = role(w, 1, ROLES)
+        const R3 = role(w, 0, INVITE)
+        const HR = role(w, 5, 0)
+        for (const d of 'Q1 R1 S1 T1 A1 Z1 Y1 W1 X1 P1 K1 L1 M1'.split(' ')) join(w, d)
+        w.ok('P2', 'device_add')
+        for (const m of ['Q', 'R', 'S', 'T']) give(w, m, QR)
+        for (const m of ['A', 'Z', 'Y', 'W']) give(w, m, AR)
+        const P0 = w.heads()
+        const g1 = w.ok('A1', 'assign', { to: 'X', role: R1 }, { ap: P0 })
+        const z = w.ok('Z1', 'assign', { to: 'K', role: R3 }, { ap: P0 })
+        const y = w.ok('Y1', 'assign', { to: 'L', role: R3 }, { ap: P0 })
+        const wv = w.ok('W1', 'assign', { to: 'M', role: R3 }, { ap: P0 })
+        const x = w.ok('X1', 'assign', { to: 'P', role: R3 }, { ap: [g1.id, wv.id] })
+        const p = w.ok('P1', 'add', { to: 'N' }, { ap: [x.id] })
+        const cs = (['Q1', 'R1', 'S1', 'T1'] as const).map((d, i) =>
+          w.ok(d, 'kick', { to: ['A', 'Z', 'Y', 'W'][i] }, { ap: P0 })
+        )
+        w.ok('O1', 'assign', { to: 'P', role: HR }, { ap: [p.id, cs[0].id, cs[1].id, cs[2].id] })
+        expect(w.state().cut.has(p.id)).toBe(true)
+        const plan = [
+          ['P1', [p.id, z.id]],
+          ['P2', [x.id, y.id]],
+          ['P2', [x.id, y.id, z.id]],
+        ] as const
+        const ex: string[] = []
+        for (let i = 0; i < cap; i++) {
+          const [dev, ap] = plan[i]
+          const own = w.latestOwn(dev)
+          const full = own && !ap.includes(own.id) ? [...ap, own.id] : [...ap]
+          ex.push(w.ok(dev, 'add', { to: `E${'abc'[i]}` }, { ap: full, ts: 2000 + 20 * i }).id)
+        }
+        const { S, st } = classStats(w)
+        expect(st).toEqual([1, 0])
+        expect(S.cut.has(g1.id) && S.cut.has(x.id) && S.cut.has(p.id)).toBe(true)
+        expect(ex.map(e => S.cut.has(e))).toEqual(ex.map(() => true))
+      } finally {
+        setLimits(MODEL_LIMITS)
+      }
+    })
+  }
+  test('r7c jclass: three juniors’ revoked devices give their two-hop invitees’ joins one class at ⊥; the exact rule cuts them all', () => {
+    const w = base(INVITE)
+    join(w, 'L1')
+    w.ok('L2', 'device_add')
+    const before = w.ok('O1', 'mark')
+    const ids = ['b', 'c', 'd']
+    for (const i of ids) {
+      join(w, `J${i}1`)
+      w.ok(`J${i}2`, 'device_add')
+    }
+    w.ok('O1', 'mark')
+    w.ok('Vch1', 'mark')
+    const pL = w.ok('L1', 'profile', { name: 'l' })
+    const out: Record<string, string[]> = {}
+    for (const i of ids) {
+      const j2 = w.latestOwn(`J${i}2`)!
+      const a1 = w.ok(`J${i}2`, 'add', { to: `M${i}` })
+      const jm = w.ok(`M${i}1`, 'join', {}, { ap: [vouch(w, a1).id] })
+      const a2 = w.ok(`M${i}1`, 'add', { to: `N${i}` }, { ap: [jm.id, pL.id] })
+      const jn = w.ok(`N${i}1`, 'join', {}, { ap: [vouch(w, a2).id] })
+      w.ok(
+        `J${i}1`,
+        'device_revoke',
+        { dk: `J${i}2`, seen: j2.seq },
+        { ap: [w.latestOwn(`J${i}1`)!.id, j2.id] }
+      )
+      out[i] = [a1.id, jm.id, a2.id, jn.id]
+    }
+    const lv = w.ok('L2', 'leave', {}, { ap: [before.id] })
+    w.ok('O1', 'mark')
+    const { st } = classStats(w)
+    expect([st[0] <= 1, st[1]]).toEqual([true, 0])
+    const S = w.state()
+    expect(S.eff.has(lv.id) && S.cut.has(pL.id)).toBe(true)
+    for (const i of ids) {
+      const [a1, jm, a2, jn] = out[i]
+      expect([
+        S.cut.has(a1) || S.tail.has(a1),
+        S.cut.has(jm),
+        S.cut.has(a2),
+        S.cut.has(jn),
+      ]).toEqual([true, true, true, true])
+      expect(S.facts.mem.has(`M${i}`) || S.facts.mem.has(`N${i}`)).toBe(false)
+    }
+  })
+  test('r7c header read: a header is read only against its own identity’s events, through its maximal held ancestors, equal to the reference', () => {
+    const w = base(INVITE)
+    join(w, 'X1')
+    join(w, 'Y1')
+    for (let i = 0; i < 3; i++) w.ok('X1', 'mark')
+    const P = w.ok('O1', 'mark')
+    w.ok('O1', 'kick', { to: 'X' })
+    for (let i = 0; i < 3; i++) {
+      w.ok('O1', 'mark')
+      w.ok('Y1', 'mark')
+    }
+    let ts = P.ts + 1
+    for (let i = 0; i < 6; i++) {
+      const d = w.act(`X${10 + i}`, 'device_add', {}, { ap: [P.id], ts: (ts += 20) })
+      if (d.v.s !== 'A') continue
+      let prev = d.e.id
+      for (let j = 0; j < 4; j++) {
+        const m = w.act(`X${10 + i}`, 'mark', {}, { ap: [prev], ts: (ts += 20) })
+        if (m.v.s !== 'A') break
+        prev = m.e.id
+      }
+    }
+    const R0 = w.ok(
+      'X1',
+      'primary_rotate',
+      { keep: [], seen: {}, pcert: 'p0' },
+      { ap: [P.id], ts: (ts += 20) }
+    )
+    const m0 = w.ok('X1', 'mark', {}, { ap: [R0.id], ts: (ts += 20) })
+    for (let b = 0; b < 3; b++) {
+      let prev = m0
+      let ap = [m0.id]
+      for (let k = 0; k < 3; k++) {
+        const r = w.act(
+          'X1',
+          'mark',
+          {},
+          { ap: [...ap], seq: prev.seq + 1, aprev: prev.id, ts: (ts += 20) }
+        )
+        if (r.v.s !== 'A') break
+        prev = r.e
+        ap = [r.e.id]
+      }
+      w.act(
+        'X1',
+        'primary_rotate',
+        { keep: [], seen: {}, pcert: `p${b}` },
+        { ap: [...ap], seq: prev.seq + 1, aprev: prev.id, ts: (ts += 20) }
+      )
+    }
+    w.ok('Y1', 'mark')
+    const S = w.state()
+    const bare = new Set<string>()
+    const drops = orphanDrops(w.ref.order, S, w.ref, [], bare)
+    const hdrs = [...drops].filter(x => !bare.has(x))
+    expect(hdrs.length).toBeGreaterThan(20)
+    expect(hdrs.filter(x => w.ref.rec(x).depth >= 0).length).toBeGreaterThan(5)
+    const rest = w.ref.order.filter(x => !drops.has(x))
+    expect(rest.includes(R0.id) && rest.includes(m0.id) && !S.X.has(R0.id)).toBe(true)
+    expect(hdrs.filter(x => w.ref.ev(x).t === 'primary_rotate').length).toBeGreaterThanOrEqual(2)
+    const held = (id: string) => !drops.has(id)
+    const { p, m } = withHeaders(w, rest, hdrs)
+    const sum = (r: EvalResult | M.EvalResult, s: string) => [
+      s,
+      [...r.F].sort().join(';'),
+      [...r.FI].sort().join(';'),
+      [...(r.RF ?? [])].sort().join(),
+      [...(r.PC ?? [])].filter(held).sort().join(),
+    ]
+    expect(sum(p, evalSummary(p))).toEqual(sum(m, M.evalSummary(m)))
+    const RF = [...p.RF]
+    expect(RF.length).toBeGreaterThanOrEqual(2)
+    expect(RF.includes(R0.id)).toBe(false)
+  })
+  test('r7c N19 residual (realization): above the cap, a protected author’s backdated op that adds a senior-made class switches the stratum', () => {
+    const w = base(INVITE)
+    w.ok('O2', 'device_add')
+    const QR = role(w, 3, KICK | BAN)
+    const AR = role(w, 2, ROLES)
+    const R1 = role(w, 1, ROLES)
+    const R3 = role(w, 0, INVITE)
+    const HR = role(w, 5, 0)
+    for (const d of 'Q1 R1 S1 A1 X1 P1 Z1 Y1 K1 L1'.split(' ')) join(w, d)
+    for (const m of ['Q', 'R', 'S']) give(w, m, QR)
+    for (const m of ['A', 'Z', 'Y']) give(w, m, AR)
+    w.ok('O1', 'role_bits', { role: EVERYONE, bit: INVITE, on: false })
+    const P0 = w.heads()
+    const z = w.ok('Z1', 'assign', { to: 'K', role: R3 }, { ap: P0 })
+    const y = w.ok('Y1', 'assign', { to: 'L', role: R3 }, { ap: P0 })
+    const g1 = w.ok('A1', 'assign', { to: 'X', role: R1 }, { ap: P0 })
+    const x = w.ok('X1', 'assign', { to: 'P', role: R3 }, { ap: [g1.id, z.id] })
+    const p = w.ok('P1', 'add', { to: 'N' }, { ap: [x.id, y.id] })
+    const k = w.ok('K1', 'add', { to: 'N2' }, { ap: [z.id, g1.id] })
+    const cs = (['Q1', 'R1', 'S1'] as const).map((d, i) =>
+      w.ok(d, 'kick', { to: ['A', 'Z', 'Y'][i] }, { ap: P0 })
+    )
+    w.ok('O1', 'assign', { to: 'P', role: HR }, { ap: [p.id, cs[0].id] })
+    w.ok('O2', 'assign', { to: 'K', role: HR }, { ap: [k.id, cs[1].id] })
+    w.ok('O2', 'assign', { to: 'L', role: HR }, { ap: [y.id, cs[2].id] })
+    expect(w.state().cut.has(p.id)).toBe(true)
+    const l = w.ok('L1', 'add', { to: 'N3' }, { ap: [y.id, g1.id] })
+    const { S, st } = classStats(w)
+    expect(st).toEqual([3, 1])
+    expect(S.cut.has(p.id)).toBe(false)
+    expect(S.cut.has(l.id)).toBe(true)
+  })
+  test('r7c N19 residual (refinement): above the cap, a junior’s op that a quiet cause cuts makes the cause count and switches the stratum', () => {
+    const w = new AclWorld()
+    w.genesis('O1', ['O', 'B'], 0)
+    w.ok('O1', 'add', { to: 'Vch' })
+    w.ok('Vch1', 'join')
+    w.ok('O2', 'device_add')
+    w.ok('B1', 'join')
+    const QR = role(w, 3, KICK | BAN)
+    const AR = role(w, 2, ROLES)
+    const R1 = role(w, 1, ROLES)
+    const R3 = role(w, 0, INVITE)
+    const HR = role(w, 5, 0)
+    for (const d of 'Q1 R1 V1 A1 Z1 J1 X1 P1 Pq1 K1'.split(' ')) join(w, d)
+    for (const m of ['Q', 'R', 'V']) give(w, m, QR)
+    for (const m of ['A', 'Z']) give(w, m, AR)
+    const P0 = w.heads()
+    const g1 = w.ok('A1', 'assign', { to: 'X', role: R1 }, { ap: P0 })
+    const gq = w.ok('A1', 'assign', { to: 'Pq', role: R3 })
+    const z = w.ok('Z1', 'assign', { to: 'K', role: R3 }, { ap: P0 })
+    const x = w.ok('X1', 'assign', { to: 'P', role: R3 }, { ap: [g1.id, z.id] })
+    const p = w.ok('P1', 'add', { to: 'N' }, { ap: [x.id] })
+    const pq = w.ok('Pq1', 'add', { to: 'Nq' }, { ap: [gq.id] })
+    const k = w.ok('K1', 'add', { to: 'Nk' }, { ap: [z.id] })
+    const c1 = w.ok('Q1', 'kick', { to: 'A' }, { ap: P0 })
+    const c2 = w.ok('R1', 'kick', { to: 'Z' }, { ap: P0 })
+    const g5 = w.ok('V1', 'kick', { to: 'J' }, { ap: P0 })
+    w.ok('O1', 'assign', { to: 'P', role: HR }, { ap: [p.id, c1.id] })
+    w.ok('O2', 'assign', { to: 'Pq', role: HR }, { ap: [pq.id, c1.id, g5.id] })
+    w.ok('B1', 'assign', { to: 'K', role: HR }, { ap: [k.id, c2.id] })
+    const a = classStats(w)
+    expect(a.S.cut.has(p.id)).toBe(true)
+    expect(a.st).toEqual([2, 0])
+    const j = w.ok('J1', 'profile', { name: 'j' }, { ap: P0 })
+    const { S, st } = classStats(w)
+    expect(st).toEqual([3, 1])
+    expect(S.cut.has(j.id) && S.cut.has(x.id) && S.cut.has(pq.id) && S.cut.has(k.id)).toBe(true)
+    expect(S.cut.has(p.id)).toBe(false)
+  })
 })

@@ -17,6 +17,7 @@ import {
   idOp,
   INVITE,
   KICK,
+  LIM,
   PRODUCTION_LIMITS,
   rkey,
   ROLES,
@@ -29,6 +30,8 @@ import {
   type Limits,
 } from '../p2p/acl/rules'
 import * as M from './acl_model/model'
+// the model's orphan rule (props.ts, vendored with the model)
+import { orphanDrops as modelOrphanDrops } from './acl_model/props'
 import type { World as ModelWorld } from './acl_model/world'
 
 // Test bridge between the executable reference model (acl_model/, a copy of notes/acl-model) and
@@ -62,6 +65,7 @@ export const MODEL_LIMITS: Limits = {
   totU: M.LIM.totU,
   rotTot: M.LIM.rotTot,
   poolU: M.LIM.poolU,
+  ap: M.LIM.ap,
 }
 export const useModelLimits = () => setLimits(MODEL_LIMITS)
 export const useProductionLimits = () => setLimits({})
@@ -325,64 +329,28 @@ export function prodReplica(mw: ModelWorld): AclReplica {
   return pr
 }
 
-// The model's orphan rule (notes/acl-model/props.ts `orphanDrops`).
-function modelOrphanDrops(ids: string[], st: M.EvalResult, cx: M.Replica): Set<string> {
-  const out = new Set<string>()
-  if (!st.X.size) return out
-  const full = M.forkPoints(ids, cx)
-  const liveKey = (k: string) => {
-    const ep = k.slice(k.indexOf('|') + 1)
-    return ep === '' || !full.RF.has(ep)
-  }
-  const keyFI = (m: Map<string, number>) =>
-    [...m]
-      .filter(([k]) => liveKey(k))
-      .sort()
-      .join(';')
-  const fiFull = keyFI(full.FI)
-  let kept = [...ids]
-  const cands = [...st.X]
-    .filter(x => ids.includes(x))
-    .sort()
-    .reverse()
-  for (let changed = true; changed;) {
-    changed = false
-    for (const id of cands) {
-      if (out.has(id)) continue
-      const t = cx.ev(id).t as string
-      if (t === 'upgrade' || t === 'genesis' || t === 'proof') continue
-      if (kept.some(x => x !== id && cx.anc(x).has(id))) continue
-      const rest = kept.filter(x => x !== id)
-      const f2 = M.forkPoints(rest, cx, [...out, id])
-      if (keyFI(f2.FI) !== fiFull) continue
-      if (
-        [...full.RF].some(x => x !== id && rest.includes(x) && !f2.RF.has(x)) ||
-        [...f2.RF].some(x => !full.RF.has(x))
-      )
-        continue
-      kept = rest
-      out.add(id)
-      changed = true
-    }
-  }
-  return out
-}
-
-// The orphan rule on the final state (§2.3), through both: the same drops, and the kept events
-// with the dropped ones' headers as ghosts evaluate alike.
+// The orphan rule on the final state (§2.3), through both: the same drops and the same drops
+// without headers, and the kept events with the kept headers as ghosts evaluate alike.
 function compareOrphans(pr: AclReplica, mr: M.Replica, out: string[]) {
   const order = [...pr.order]
-  const drops = orphanDrops(order, pr.state(), pr)
-  const mDrops = modelOrphanDrops(order, mr.state(), mr)
+  const bare = new Set<string>()
+  const drops = orphanDrops(order, pr.state(), pr, [], bare)
+  const mBare = new Set<string>()
+  const mDrops = modelOrphanDrops(order, mr.state(), mr, [], mBare)
   const key = (d: Set<string>) => [...d].sort().join(',')
   if (key(drops) !== key(mDrops)) {
     out.push(`orphan drops differ: ${key(drops)} model ${key(mDrops)}`)
     return
   }
+  if (key(bare) !== key(mBare)) {
+    out.push(`drops without headers differ: ${key(bare)} model ${key(mBare)}`)
+    return
+  }
   if (!drops.size) return
   const kept = order.filter(id => !drops.has(id))
-  const p = evalSummary(evaluate(kept, pr, [...drops]))
-  const m = M.evalSummary(M.evaluate(kept, mr, { ghosts: [...drops] }))
+  const hdrs = [...drops].filter(id => !bare.has(id))
+  const p = evalSummary(evaluate(kept, pr, hdrs))
+  const m = M.evalSummary(M.evaluate(kept, mr, { ghosts: hdrs }))
   if (p !== m) out.push(`evaluation without the orphans differs: ${p} model ${m}`)
 }
 
@@ -461,6 +429,43 @@ export class AclWorld {
     }
     return B
   }
+  // The events an honest client never cites in its own state (revision 7, §1.2): candidates, X
+  // and Tail events, other than upgrades.
+  excluded(): Set<string> {
+    const st = this.ref.state()
+    const out = new Set<string>([...st.X, ...st.tail])
+    const forked =
+      st.F.size > 0 ||
+      [...st.FI.values()].some(d => d < Infinity) ||
+      st.RF.size > 0 ||
+      st.PC.size > 0
+    if (forked) {
+      const fe = this.ref.acl.evaluation()
+      const ix = this.ref.acl.ix
+      for (let i = 0; i < ix.n; i++)
+        if (!out.has(ix.ids[i]) && fe.candidateIn(i, st.F, st.FI, st.RF, st.PC)) out.add(ix.ids[i])
+    }
+    for (const id of out) if (this.ref.ev(id).t === 'upgrade') out.delete(id)
+    return out
+  }
+  // An honest client's parents (§1.2): the heads of the events it may cite, at most LIM.ap of
+  // them (the most recently admitted), with its device's own latest event in their closure.
+  capHeads(dev: string): string[] {
+    let hs = this.heads()
+    const ex = this.excluded()
+    if (hs.some(h => ex.has(h))) hs = this.heads(this.ref.order.filter(id => !ex.has(id)))
+    let ap = hs
+    if (hs.length > LIM.ap) {
+      const at = new Map(this.ref.order.map((id, i) => [id, i]))
+      ap = [...hs].sort((x, y) => at.get(y)! - at.get(x)!).slice(0, LIM.ap)
+    }
+    const own = this.latestOwn(dev)
+    if (own && !this.closure(ap).has(own.id)) {
+      if (ap.length >= LIM.ap) ap[ap.length - 1] = own.id
+      else ap.push(own.id)
+    }
+    return ap
+  }
   latestOwn(dev: string): AclEv | undefined {
     let best: AclEv | undefined
     for (const id of this.ref.order) {
@@ -498,7 +503,7 @@ export class AclWorld {
   }
   build(dev: string, t: string, c: Obj = {}, o: Opts = {}): AclEv {
     const a = o.actor ?? devOwner(dev)
-    let ap = o.ap ? [...o.ap] : this.heads()
+    let ap = o.ap ? [...o.ap] : this.capHeads(dev)
     if (o.ap && (o.keepOwn ?? (o.seq === undefined && o.aprev === undefined))) {
       const own = this.latestOwn(dev)
       if (own && !this.closure(ap).has(own.id)) ap.push(own.id)

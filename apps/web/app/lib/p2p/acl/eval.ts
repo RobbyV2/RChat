@@ -1,4 +1,4 @@
-import { Equiv, seenOf } from './equivocation'
+import { Equiv, Hdrs, seenOf } from './equivocation'
 import { fullFacts, View, type EvalResult, type FactsQ, type StIdx } from './facts'
 import { chainCover, EMPTY, firstTrue, Ix, pushM } from './reach'
 import {
@@ -17,6 +17,7 @@ import {
   permsQ,
   poster,
   protectedTarget,
+  relayed,
   rkey,
   target,
   TOP,
@@ -1325,12 +1326,16 @@ export class FastEval extends Equiv {
       if (g !== B0) Gm.set(i, g)
     }
     const G = (q: number) => Gm.get(q) ?? B0
+    // Protection classes (revision 7c): distinct U(q) ∩ Γ⁺ over the flat ops outside X, Γ⁺ the
+    // causes with a direct cut on an event outside X (one set for the stratum, so what q cites
+    // can't split q's exposure).
+    let Gp = B0
+    for (const [o, m] of Dc) if (!this.X[o]) Gp |= m
     const classSet = new Set<bigint>()
     for (const q of flat) {
       if (this.X[q]) continue
-      const g = G(q)
-      const m = U(q) & g
-      if (m !== B0 && m !== g) classSet.add(m)
+      const m = U(q) & Gp
+      if (m !== B0 && m !== Gp) classSet.add(m)
     }
     const cutQ = (q: number) => {
       cutOrd[q] = s
@@ -1470,7 +1475,13 @@ export class FastEval extends Equiv {
     this.maxPos.clear()
     const e = ix.ev[i]
     const pl = ix.rec[i].pool
-    if (pl && !ix.owners.has(poster(e)) && e.t !== 'primary_rotate' && pl.length > LIM.poolU)
+    if (
+      pl &&
+      !ix.owners.has(poster(e)) &&
+      e.t !== 'primary_rotate' &&
+      !(e.t === 'device_revoke' && !relayed(e)) &&
+      pl.length > LIM.poolU
+    )
       this.PC.add(ix.ids[i])
     if (this.candidateIn(i, this.F, this.FI, this.RF, this.PC)) {
       this.X[i] = 1
@@ -1580,21 +1591,18 @@ export class FastEval extends Equiv {
 }
 
 // Eval(S) by the production algorithm: the equivalent of the model's `evaluate(ids, cx)`.
-// `ghosts`: events dropped by the orphan rule, whose headers still count as evidence.
+// `ghosts`: events dropped by the orphan rule whose headers stay: evidence only.
 export function evaluate(
   ids: Iterable<string>,
   cx: Ctx,
   ghosts: readonly string[] = []
 ): EvalResult {
-  if (!ghosts.length) return new FastEval(Ix.of(ids, cx)).run()
-  const list = [...ids]
-  const ix = Ix.of([...list, ...ghosts], cx)
-  const mS = new Uint8Array(ix.n)
-  const gm = new Uint8Array(ix.n)
-  for (const id of list) mS[ix.at.get(id)!] = 1
-  for (const id of ghosts) gm[ix.at.get(id)!] = 1
-  const fe = new FastEval(ix, mS)
-  fe.ghost = gm
+  const fe = new FastEval(Ix.of(ids, cx))
+  if (ghosts.length)
+    fe.hdrs = new Hdrs(
+      fe.ix,
+      ghosts.map(id => ({ ev: cx.ev(id), rec: cx.rec(id) }))
+    )
   return fe.run()
 }
 

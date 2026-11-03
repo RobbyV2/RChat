@@ -95,7 +95,7 @@ const extJoin = async (o: Member, room: string, x: Ext, clock: ManualClock) => {
 }
 
 describe('orphan drops in storage (spec 2.3, controller ruling)', () => {
-  test('a kicked member’s second device posts content at an old position, each citing 10 void relays: all of it is dropped, headers stay as evidence, and a cold start keeps the state', async () => {
+  test('a kicked member’s second device posts content at an old position, each citing 10 void relays: all of it is dropped, the two headers that keep the fork point stay as evidence, and a cold start keeps the state', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const o = await makeMember(hub, 'Olive', clock)
@@ -168,17 +168,27 @@ describe('orphan drops in storage (spec 2.3, controller ruling)', () => {
     expect(await bodies(o, room, ch)).toEqual(['w 1'])
     const count = (await o.store.room(room))!.count
     await pump(clock, async () => !(await stored(o, relays[0].id)), 'relays dropped')
+    // Revision 7: siblings past the fork point go without their headers, but the two that keep
+    // Y's fork point where it is.
+    const hdrIds: string[] = []
     for (const r of relays) {
       expect(await stored(o, r.id)).toBeUndefined()
       const d = await droppedRec(o, r.id)
-      expect([d?.layer, d?.hdr?.ev.dev, d?.hdr?.c?.dk, typeof d?.acl?.v]).toEqual([
-        'a',
-        y.dev,
-        z.dev,
-        'number',
-      ])
-      expect(d?.hdr?.c?.rec).toBe(rec.rec)
+      expect(d?.layer).toBe('a')
+      if (!d?.hdr) {
+        expect(d).toEqual({ id: r.id, room, layer: 'a' })
+        continue
+      }
+      hdrIds.push(r.id)
+      expect([d.hdr.ev.dev, d.hdr.c?.dk, typeof d.acl?.v]).toEqual([y.dev, z.dev, 'number'])
+      expect(d.hdr.c?.rec).toBe(rec.rec)
     }
+    expect(hdrIds.sort()).toEqual(
+      relays
+        .map(r => r.id)
+        .sort()
+        .slice(0, 2)
+    )
     for (const id of msgs) {
       expect(await stored(o, id)).toBeUndefined()
       expect(await droppedRec(o, id)).toEqual({ id, room, layer: 'c' })
@@ -216,14 +226,17 @@ describe('orphan drops in storage (spec 2.3, controller ruling)', () => {
     await pump(clock, async () => !!(await stored(o, cite.id)), 'the citing event')
     expect(await droppedRec(o, relays[1].id)).toBeUndefined()
     expect((await stored(o, relays[1].id))?.wire.c).toEqual(relays[1].wire.c)
-    // A cold start: the dropped headers are evidence again; the same state.
+    // A cold start: the dropped headers are evidence again; the same state over what is stored.
     const before = JSON.stringify(evaluator(o, room).summary())
+    const gone = new Set(relays.filter(r => r.id !== relays[1].id).map(r => r.id))
+    const held = (x: Iterable<string>) => [...x].filter(id => !gone.has(id)).sort()
     const sets = (s: ReturnType<AclRoom['r']['state']>) =>
-      JSON.stringify([[...s.X].sort(), [...s.F].sort(), [...s.eff].sort(), [...s.void].sort()])
+      JSON.stringify([held(s.X), [...s.F].sort(), held(s.eff), held(s.void)])
     const live = sets(evaluator(o, room).r.state())
     // Imported dropped records (a transfer file) are checked at the next start: one naming an
     // event stored whole goes, one whose header doesn't check out goes, a good one is kept.
-    const good = (await droppedRec(o, relays[2].id))!
+    const goodId = hdrIds.find(id => id !== relays[1].id)!
+    const good = (await droppedRec(o, goodId))!
     await o.store.db.put('dropped', { ...good, imp: true })
     const whole = (await stored(o, wJoin))!
     await o.store.db.put('dropped', {
@@ -246,7 +259,7 @@ describe('orphan drops in storage (spec 2.3, controller ruling)', () => {
       undefined,
       undefined,
     ])
-    expect((await droppedRec(again, relays[2].id))?.imp).toBeUndefined()
+    expect((await droppedRec(again, goodId))?.imp).toBeUndefined()
     expect((await stored(again, wJoin))?.wire.c).toEqual(serverWire(whole).c)
   }, 120_000)
 })

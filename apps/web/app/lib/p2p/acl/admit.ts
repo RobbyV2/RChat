@@ -185,6 +185,8 @@ export function decide(
 ): { ok: true; rec: Rec } | { ok: false; why: string } {
   const ix = B.ix
   const F = S.facts
+  // §1.2: at most `ap` (10) ACL parents
+  if (e.ap.length > LIM.ap) return { ok: false, why: 'ap' }
   if (!opts.binds(e, B, S)) return { ok: false, why: 'dev' }
   // A1 device, device chain, identity chain
   if ((S.F.get(e.dev) ?? Infinity) < Infinity) return { ok: false, why: 'forked' }
@@ -557,7 +559,7 @@ export class AclReplica implements Ctx {
     for (const p of e.ap) {
       const st = this.status.get(p)
       if (st?.s === 'R') return this.set(e.id, { s: 'R', why: 'parent' })
-      if (st?.s !== 'A') return { s: 'P', missing: e.ap.filter(x => !this.admitted(x)) }
+      if (!this.indexed(p)) return { s: 'P', missing: e.ap.filter(x => !this.indexed(x)) }
     }
     const d = decide(e, pastOf(this.acl.ix, e.ap), this.acl.stateOf(e.ap), this.opts)
     return d.ok ? { s: 'A' } : this.set(e.id, { s: 'R', why: d.why })
@@ -571,13 +573,46 @@ export class AclReplica implements Ctx {
     this.admit(e)
   }
 
-  // The whole event of one restored from its header (storage dropped it, spec 2.3): the same id,
-  // so the same core; its index entries were made from the header's content and stay.
-  refill(e: AclEv) {
+  // A dropped event's header from storage (spec 2.3): admitted before, evidence only, outside the
+  // index until the whole event is fetched again.
+  restoreHeader(e: AclEv, rec: Rec) {
+    if (this.status.has(e.id)) return
+    this.evs.set(e.id, e)
+    this.recs.set(e.id, rec)
+    this.status.set(e.id, { s: 'A' })
+    this.acl.addHeader(e.id)
+  }
+  // Held in the index (a header is admitted, but nothing can build on it until it is fetched).
+  indexed(id: string) {
+    return this.admitted(id) && !this.acl.isHeader(id)
+  }
+
+  // The whole event of a header, fetched again (the same id, so the same core): indexed as it was
+  // admitted. Not while a parent is still only a header (false): that parent comes first, whole.
+  refill(e: AclEv): boolean {
+    if (!this.acl.isHeader(e.id)) return true
+    if (e.ap.some(p => this.acl.isHeader(p))) return false
+    this.evs.set(e.id, e)
+    this.acl.dropHeader(e.id)
+    this.admit(e)
+    this.settle(e.id)
+    return true
+  }
+  // A header indexed from what it holds (content cites it, for that content's position), after any
+  // header among its parents.
+  indexHeader(id: string) {
+    if (!this.acl.isHeader(id)) return
+    for (const p of this.ev(id).ap) this.indexHeader(p)
+    this.acl.dropHeader(id)
+    this.admit(this.ev(id))
+  }
+  // The whole event of one indexed from its header: the same id and core, its content back.
+  replace(e: AclEv) {
     const i = this.acl.ix.at.get(e.id)
     if (i === undefined || !this.admitted(e.id)) return
     this.evs.set(e.id, e)
     this.acl.ix.ev[i] = e
+    this.acl.invalidate()
   }
 
   // Forgets an event that is not admitted (a rejection, kept as its verdict unless `all`; a pending
@@ -639,7 +674,7 @@ export class AclReplica implements Ctx {
     for (const p of e.ap) {
       const st = this.status.get(p)
       if (st?.s === 'R') return this.set(e.id, { s: 'R', why: 'parent' })
-      if (st?.s !== 'A') missing.push(p)
+      if (!this.indexed(p)) missing.push(p)
     }
     if (missing.length) {
       for (const p of new Set(missing)) {

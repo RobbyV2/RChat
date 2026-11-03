@@ -13,22 +13,30 @@ export interface Drop {
 
 const NEVER: readonly string[] = ['genesis', 'upgrade', 'proof']
 
-// Whether an event the orphan rule drops keeps its header. Revision 6: every one does (§2.3).
-export const keepsHeader = () => true
+// Events dropped from storage before that the index still holds whole (the live replica), and
+// whether each kept its header.
+export type Gone = ReadonlyMap<string, boolean>
 
 // The orphan rule (§2.3) on everything held: an X event other than the genesis, an upgrade or a
-// proof may go when nothing held is built on it. Held descendants are the ACL events that stay
-// and the content that holds its position (`cited`: visible content cites the event; hidden
-// content holds nothing, controller ruling). `keep`: events storage keeps whatever (this device's
-// own chain, which it cites). Linear in the index: events are visited children first.
+// proof, a candidate by structural evidence (not only pool evidence: that can end, revision 7),
+// may go when nothing held is built on it. Held descendants are the ACL events that stay and the
+// content that holds its position (`cited`: visible content cites the event; hidden content holds
+// nothing, controller ruling). `keep`: events storage keeps whatever (this device's own chain,
+// which it cites). Its header stays unless it is past its device's fork point, no identity op, in
+// no kept header's past, and the device's fork point stays the same without it (revision 7). The
+// drops are decided in the reference's order (`equivocation.ts` orphanDrops: rounds over the
+// candidates in descending id order), so the same headers stay. `gone`: what earlier drops
+// decided (an event dropped without its header is no evidence any more).
 export function orphanDrops(
   fe: FastEval,
   cited: (i: number) => boolean,
-  keep: (i: number) => boolean = () => false
+  keep: (i: number) => boolean = () => false,
+  gone: Gone = new Map()
 ): Drop[] {
   const ix = fe.ix
-  const held = new Uint8Array(ix.n)
-  for (let i = ix.n - 1; i >= 0; i--) {
+  const n = ix.n
+  const held = new Uint8Array(n)
+  for (let i = n - 1; i >= 0; i--) {
     if (!fe.inS(i)) continue
     if (!droppable(fe, i, keep) || cited(i)) {
       held[i] = 1
@@ -40,14 +48,141 @@ export function orphanDrops(
         break
       }
   }
+  // the round of each drop: after every descendant, a round later when that one has a lower id
+  const round = new Int32Array(n)
+  const list: number[] = []
+  for (let i = n - 1; i >= 0; i--) {
+    if (!fe.inS(i) || held[i]) continue
+    let r = 1
+    for (const k of ix.kids[i])
+      if (fe.inS(k)) r = Math.max(r, round[k] + (ix.ids[k] > ix.ids[i] ? 0 : 1))
+    round[i] = r
+    list.push(i)
+  }
+  list.sort((x, y) => round[x] - round[y] || (ix.ids[x] < ix.ids[y] ? 1 : -1))
+  const ev = new ForkEvidence(fe, gone)
+  // in a kept header's past: below a header outside the index, or below a drop that kept its own
+  const below = new Uint8Array(n)
+  const H = fe.hdrs
+  if (H) {
+    const marked = new Uint8Array(n)
+    for (const h of H.list)
+      for (const f of h.fr) {
+        if (marked[f]) continue
+        marked[f] = 1
+        below[f] = 1
+        const a = ix.anc[f]
+        for (let w = 0; w < a.length; w++) {
+          let m = a[w]
+          while (m) {
+            const t = m & -m
+            below[(w << 5) + (31 - Math.clz32(t))] = 1
+            m ^= t
+          }
+        }
+      }
+  }
+  const header = new Uint8Array(n)
   const out: Drop[] = []
-  for (let i = 0; i < ix.n; i++)
-    if (fe.inS(i) && !held[i]) out.push({ id: ix.ids[i], header: keepsHeader() })
+  for (const i of list) {
+    const id = ix.ids[i]
+    for (const k of ix.kids[i]) if (fe.inS(k) && (header[k] || below[k])) below[i] = 1
+    const was = gone.get(id)
+    const e = ix.ev[i]
+    const h =
+      was ??
+      !(
+        e.seq >= (fe.F.get(e.dev) ?? Infinity) &&
+        ix.rec[i].depth < 0 &&
+        !below[i] &&
+        ev.removable(i)
+      )
+    if (h) header[i] = 1
+    else if (was === undefined) ev.remove(i)
+    out.push({ id, header: h })
+  }
+  out.sort((x, y) => ix.at.get(x.id)! - ix.at.get(y.id)!)
   return out
 }
 
+// The evidence behind each device's fork point (§2.3 E1, E2, proofs): which events may go
+// without their header and leave it where it is.
+class ForkEvidence {
+  private seqN = new Map<string, number>()
+  private prevN = new Map<string, number>()
+  private prevAtF = new Map<string, number>()
+  private hits = new Map<string, number>()
+  private dev = new Set<string>()
+  constructor(
+    private fe: FastEval,
+    gone: Gone
+  ) {
+    const ix = fe.ix
+    const add = (e: { dev: string; seq: number; aprev?: string }) => {
+      const f = fe.F.get(e.dev)
+      if (f === undefined) return
+      this.dev.add(e.dev)
+      this.inc(this.seqN, `${e.dev}\u0001${e.seq}`, 1)
+      const pk = `${e.dev}\u0001${e.aprev ?? ''}`
+      this.inc(this.prevN, pk, 1)
+      if (e.seq === f) this.inc(this.prevAtF, pk, 1)
+    }
+    for (const [dev, es] of ix.byDev) {
+      if (!fe.F.has(dev)) continue
+      for (const i of es) if (fe.inS(i) && gone.get(ix.ids[i]) !== false) add(ix.ev[i])
+    }
+    for (const h of fe.hdrs?.list ?? []) add(h.ev)
+    for (const dev of this.dev) this.hits.set(dev, 0)
+    for (const [k, c] of this.seqN) {
+      const [dev, sq] = k.split('\u0001')
+      if (c >= 2 && Number(sq) === fe.F.get(dev)) this.inc(this.hits, dev, 1)
+    }
+    for (const [k, c] of this.prevN)
+      if (c >= 2 && (this.prevAtF.get(k) ?? 0) > 0) this.inc(this.hits, k.split('\u0001')[0], 1)
+    for (const p of ix.proofEv) {
+      if (!fe.inS(p)) continue
+      const { x, y } = ix.ev[p].c as unknown as {
+        x: { dev: string; seq: number }
+        y: { seq: number }
+      }
+      if (Math.min(x.seq, y.seq) === fe.F.get(x.dev)) this.inc(this.hits, x.dev, 1)
+    }
+  }
+  private inc(m: Map<string, number>, k: string, d: number) {
+    m.set(k, (m.get(k) ?? 0) + d)
+  }
+  // The groups (same seq, same aprev) that give F(dev) and lose that without i.
+  private lost(i: number) {
+    const e = this.fe.ix.ev[i]
+    const f = this.fe.F.get(e.dev)!
+    let l = 0
+    if (e.seq === f && this.seqN.get(`${e.dev}\u0001${e.seq}`) === 2) l++
+    const pk = `${e.dev}\u0001${e.aprev ?? ''}`
+    const c = this.prevN.get(pk) ?? 0
+    const atF = this.prevAtF.get(pk) ?? 0
+    if (c >= 2 && atF > 0 && (c === 2 || (e.seq === f && atF === 1))) l++
+    return l
+  }
+  removable(i: number) {
+    const dev = this.fe.ix.ev[i].dev
+    return this.dev.has(dev) && this.hits.get(dev)! - this.lost(i) >= 1
+  }
+  remove(i: number) {
+    const e = this.fe.ix.ev[i]
+    const f = this.fe.F.get(e.dev)!
+    this.inc(this.hits, e.dev, -this.lost(i))
+    this.inc(this.seqN, `${e.dev}\u0001${e.seq}`, -1)
+    const pk = `${e.dev}\u0001${e.aprev ?? ''}`
+    this.inc(this.prevN, pk, -1)
+    if (e.seq === f) this.inc(this.prevAtF, pk, -1)
+  }
+}
+
 export const droppable = (fe: FastEval, i: number, keep: (i: number) => boolean) =>
-  fe.X[i] === 1 && !NEVER.includes(fe.ix.ev[i].t) && !keep(i)
+  fe.X[i] === 1 &&
+  !NEVER.includes(fe.ix.ev[i].t) &&
+  !keep(i) &&
+  fe.candidateIn(i, fe.F, fe.FI, fe.RF)
 
 // Events that are droppable or have a droppable event in their past: content citing one of them
 // may be all that holds it.
