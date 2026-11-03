@@ -1,3 +1,5 @@
+import { isKeyId } from '../keys'
+import { deviceCertOk, genesisSrv } from './binding'
 import { AclState } from './cache'
 import { evidencePair, seenOf, type Header } from './equivocation'
 import { emptyResult, fiOf, type EvalResult } from './facts'
@@ -10,6 +12,8 @@ import {
   idOp,
   introduces,
   LIM,
+  poster,
+  relayed,
   MODBITS,
   ownersOf,
   perms,
@@ -28,8 +32,14 @@ import {
 // the model's; `AclReplica.receive` is §2.1 without the wire checks (signatures, sizes) and the
 // local hold, which the caller does.
 
+// U: the server's genesis has a rules version this client doesn't know (§1.2): stored, no strike,
+// shown read-only.
 export type Verdict =
-  { s: 'A' } | { s: 'R'; why: string } | { s: 'P'; missing: string[] } | { s: 'M'; why: string }
+  | { s: 'A' }
+  | { s: 'R'; why: string }
+  | { s: 'P'; missing: string[] }
+  | { s: 'M'; why: string }
+  | { s: 'U'; rules: number }
 
 // B(e) over an index: the closure of e's parents.
 export interface Past {
@@ -45,9 +55,46 @@ const inBId = (B: Past, id: string) => {
 const inPast = (B: Past, l: readonly number[] | undefined) => (l ?? EMPTY).filter(i => inB(B, i))
 
 export interface AdmitOpts {
-  // The signing device belongs to the author (its certificate names the author). Required: an
-  // event whose device isn't bound to its author is refused (A1).
-  binds: (e: { a: string; dev: string }) => boolean
+  // A1 device binding, a pure function of the event and its causal past (B(e), St(e); none for a
+  // genesis): an event whose device isn't bound to its poster is refused. Default `certBinds`.
+  binds: (e: AclEv, B?: Past, S?: EvalResult) => boolean
+}
+
+// The primary key of a's current epoch in B (§1.5 Primary): the `pcert` of the epoch's rotation
+// when it names a key, else the identity key, which plays primary until Task 17 (§1.1).
+function primaryOf(a: string, B: Past): string {
+  const ix = B.ix
+  const rots = inPast(B, ix.rotBy.get(a))
+  const maxRot = rots.filter(r => !rots.some(r2 => r2 !== r && ix.has(r2, r)))
+  const pc = maxRot.length === 1 ? ix.ev[maxRot[0]].c.pcert : undefined
+  return isKeyId(pc) ? pc : a
+}
+
+// A1 for introductions (§1.1, §1.4): every genesis owner's bundle verifies to its identity over
+// the genesis nonce, and the author's names the posting device; an introducing join's `idb` and a
+// device_add's `dcert` certify the posting device for the author, signed by its primary over the
+// server and the event's identity-chain position. A rotation's binding is its recovery signature
+// (event.ts). Every other event's device must be live for its poster in St(e) (deviceOk).
+export function certBinds(e: AclEv, B?: Past, S?: EvalResult): boolean {
+  const c = e.c
+  if (e.t === 'genesis') {
+    const owners = c.owners ?? []
+    const nonce = c.nonce
+    return (
+      typeof nonce === 'string' &&
+      owners.some(o => o.ik === e.a && o.dk === e.dev) &&
+      owners.every(
+        o =>
+          typeof o.dk === 'string' && deviceCertOk(o.ik, genesisSrv(nonce), o.ik, o.dk, '', o.dcert)
+      )
+    )
+  }
+  const intro = e.t === 'device_add' || (e.t === 'join' && S !== undefined && idOp(e, S.facts))
+  if (!intro) return true
+  if (!B || B.ix.genesis < 0 || !inB(B, B.ix.genesis)) return false
+  const cert = e.t === 'join' ? (c.idb?.ik === e.a ? c.idb.dcert : undefined) : c.dcert
+  const srv = B.ix.ids[B.ix.genesis]
+  return deviceCertOk(primaryOf(e.a, B), srv, e.a, e.dev, e.iprev ?? '', cert)
 }
 
 // The identity-chain position for a new identity op of `a` with causal past B (§2.2, §2.3).
@@ -97,13 +144,14 @@ const exemptOf = (e: AclEv, cls: Cls, B: Past) =>
   (cls === 'D' && !chargedDeny(e, B)) || e.t === 'upgrade'
 
 // Events the W3(b) total counts: every ACL event except leave, device_revoke, primary_rotate,
-// upgrade (and genesis).
+// upgrade (and genesis); a relayed revocation counts on its relayer's device chain.
 export const totCounted = (t: string) =>
   t !== 'leave' &&
   t !== 'device_revoke' &&
   t !== 'primary_rotate' &&
   t !== 'upgrade' &&
   t !== 'genesis'
+const w3bCounted = (e: AclEv) => totCounted(e.t) || relayed(e)
 
 // The primary certificate of a's current epoch in B, and whether the epoch is split or forked.
 function epochState(a: string, B: Past, FI: ReadonlyMap<string, number>) {
@@ -129,11 +177,11 @@ export function decide(
   e: AclEv,
   B: Past,
   S: EvalResult,
-  opts: AdmitOpts
+  opts: AdmitOpts = { binds: certBinds }
 ): { ok: true; rec: Rec } | { ok: false; why: string } {
   const ix = B.ix
   const F = S.facts
-  if (!opts.binds(e)) return { ok: false, why: 'dev' }
+  if (!opts.binds(e, B, S)) return { ok: false, why: 'dev' }
   // A1 device, device chain, identity chain
   if ((S.F.get(e.dev) ?? Infinity) < Infinity) return { ok: false, why: 'forked' }
   const own = inPast(B, ix.byDev.get(e.dev)).sort((x, y) => ix.ev[x].seq - ix.ev[y].seq)
@@ -159,7 +207,7 @@ export function decide(
       return { ok: false, why: 'seen' }
   }
   if (e.t === 'primary_rotate') {
-    const keep = new Set<string>([e.dev, ...(e.c.keep ?? [])])
+    const keep = new Set<string>(introduces(e))
     const dropped = new Set<string>()
     for (const x of inPast(B, ix.introBy.get(e.a)))
       for (const v of introduces(ix.ev[x])) if (!keep.has(v)) dropped.add(v)
@@ -182,23 +230,34 @@ export function decide(
   if (e.t === 'proof' && !proofOk(e, B, S)) return { ok: false, why: 'proof' }
   // A2 timestamps: a causal lower bound only
   for (const p of e.ap) if (e.ts < ix.ev[ix.at.get(p)!].ts) return { ok: false, why: 'ts' }
+  // A relayed revocation (§1.6) acts for its `ik` only in facts, k, self-deny and protection: it is
+  // an event of its relayer's device chain (W3(a), W3(b), W3(f), acknowledgements) and in no
+  // identity's pool. A relay of a record that B(e) already holds is a duplicate.
+  const relay = relayed(e)
+  if (
+    relay &&
+    inPast(B, ix.devRevEv.get(e.c.dk)).some(x => ix.ev[x].a === e.a && ix.ev[x].c.seen === e.c.seen)
+  )
+    return { ok: false, why: 'dup' }
   // A3 authority and guards
   if (!admissible(e, F)) return { ok: false, why: 'auth' }
   const { cls, self } = classify(e, F)
-  const exempt = exemptOf(e, cls, B)
-  const owner = F.owners.has(e.a)
+  const A = poster(e)
+  const exempt = !relay && exemptOf(e, cls, B)
+  const owner = F.owners.has(A)
   // W3(g) identity pool: U(e) = the events of e's identity in B(e) ∪ {e} that no event of another
-  // identity in B(e) has in its past, computed from the parents' recorded pools
+  // identity in B(e) has in its past, computed from the parents' recorded pools; a relay
+  // acknowledges as its relayer and records the relayer's pool without itself.
   const ap = [...new Set(e.ap)]
-  const poolOf = new Map<string, Set<string>>()
-  for (const p of ap) {
-    const pi = ix.at.get(p)!
-    if (ix.ev[pi].a === e.a) poolOf.set(p, new Set(ix.rec[pi].pool ?? []))
-  }
-  const cand = new Set<string>()
-  for (const P of poolOf.values()) for (const x of P) cand.add(x)
-  const pool = [
-    ...[...cand].filter(x =>
+  const poolFor = (X: string) => {
+    const poolOf = new Map<string, Set<string>>()
+    for (const p of ap) {
+      const pi = ix.at.get(p)!
+      if (poster(ix.ev[pi]) === X) poolOf.set(p, new Set(ix.rec[pi].pool ?? []))
+    }
+    const cand = new Set<string>()
+    for (const P of poolOf.values()) for (const x of P) cand.add(x)
+    return [...cand].filter(x =>
       ap.every(p => {
         const xi = ix.at.get(x)
         const pi = ix.at.get(p)!
@@ -206,22 +265,25 @@ export function decide(
         const P = poolOf.get(p)
         return P !== undefined && P.has(x)
       })
-    ),
-    e.id,
-  ].sort()
+    )
+  }
+  const pool = (relay ? poolFor(A) : [...poolFor(A), e.id]).sort()
   const unacked = new Set(pool.filter(x => x !== e.id))
   const unackedIdx = [...unacked].map(x => ix.at.get(x)!)
   // A4 deterministic windows (§4.1)
   if (!exempt) {
-    const cap = perms(F, e.a) & MODBITS ? LIM.w3mod : LIM.w3
+    const cap = perms(F, A) & MODBITS ? LIM.w3mod : LIM.w3
     let n = 0
     for (const x of own) if (!ix.rec[x].exempt && ix.ev[x].ts > e.ts - LIM.win) n++
     if (n + 1 > cap) return { ok: false, why: 'W3' }
   }
-  if (totCounted(e.t)) {
-    const mine = own.filter(x => totCounted(ix.ev[x].t))
+  if (w3bCounted(e)) {
+    const mine = own.filter(x => w3bCounted(ix.ev[x]))
     if (mine.length + 1 > LIM.totU) {
-      const un = mine.filter(x => unacked.has(ix.ids[x]))
+      // a relay is in no pool: acknowledged when an event of another poster in B(e) has it
+      const un = mine.filter(
+        x => unacked.has(ix.ids[x]) || (relayed(ix.ev[x]) && !thirdAck(x, A, A, B))
+      )
       if (un.length + 1 > LIM.totU) return { ok: false, why: 'W3b' }
     }
   }
@@ -252,8 +314,8 @@ export function decide(
   // W3(f) no pinning (non-owners): no unacknowledged evidence pair of the identity's own in B(e),
   // outside the past of its rotations; a rotation may see one pair per key
   if (!owner) {
-    const rotsB = inPast(B, ix.rotBy.get(e.a))
-    const mineU = unackedIdx.filter(i => ix.ev[i].a === e.a && !rotsB.some(r => ix.has(r, i)))
+    const rotsB = inPast(B, ix.rotBy.get(A))
+    const mineU = unackedIdx.filter(i => ix.ev[i].a === A && !rotsB.some(r => ix.has(r, i)))
     const seenK = new Map<string, number>()
     const rotPrevU = new Set(
       mineU.filter(i => ix.ev[i].t === 'primary_rotate').map(i => ix.ev[i].iprev ?? '')
@@ -280,7 +342,7 @@ export function decide(
   // W6 for primary_rotate: a rotation must change a fact
   if (e.t === 'primary_rotate') {
     const live = F.devs.get(e.a) ?? new Set<string>()
-    const keepR = new Set<string>([e.dev, ...(e.c.keep ?? [])])
+    const keepR = new Set<string>(introduces(e))
     const es = epochState(e.a, B, S.FI)
     const changes =
       [...live].some(v => !keepR.has(v)) ||
@@ -302,7 +364,7 @@ export function decide(
     if (n + 1 > (perms(F, e.a) & SERVER ? LIM.codesPerDevServer : LIM.codesPerDev))
       return { ok: false, why: 'W5' }
   }
-  if (!owner && pool.length > LIM.poolU) return { ok: false, why: 'W3g' }
+  if (!relay && !owner && pool.length > LIM.poolU) return { ok: false, why: 'W3g' }
   return { ok: true, rec: { k: rank(F, e.a), cls, self, exempt, depth, epoch, local: S, pool } }
 }
 
@@ -316,8 +378,8 @@ function thirdAck(g: number, a1: string, a2: string, B: Past) {
     for (const z of ix.kids[y]) {
       if (seen.has(z) || !inB(B, z)) continue
       seen.add(z)
-      const za = ix.ev[z].a
-      if (za !== a1 && za !== a2) return true
+      const zp = poster(ix.ev[z])
+      if (zp !== a1 && zp !== a2) return true
       st.push(z)
     }
   }
@@ -376,18 +438,18 @@ export interface ContentHead {
   c: Record<string, unknown> | null
 }
 
-// Content admission (§2.2, §3.5): the same decide with B = C(m.ap): the device's chain (seq past
+// Content admission (§2.2, §3.5): the same decide with B = C(m.ap) (content never introduces a
+// device, so its binding is Dev in St(m)): the device's chain (seq past
 // its last ACL event in B, at most W4 events past it), the causal ts bound, and the content
-// authority in St(m): Mem, Dev, the server not upgraded, the channel exists and lets it send.
+// authority in St(m): Mem, Dev, the server not upgraded, and for the known kinds a channel `ch`
+// that exists and lets it send.
 export function decideContent(
   m: ContentHead,
   B: Past,
-  S: EvalResult,
-  opts: AdmitOpts
+  S: EvalResult
 ): { ok: true; k: Rank } | { ok: false; why: string } {
   const ix = B.ix
   const F = S.facts
-  if (!opts.binds(m)) return { ok: false, why: 'dev' }
   if (!m.ap.length) return { ok: false, why: 'no-parents' }
   if ((S.F.get(m.dev) ?? Infinity) < Infinity) return { ok: false, why: 'forked' }
   let last = -1
@@ -397,14 +459,26 @@ export function decideContent(
   for (const p of m.ap) if (m.ts < ix.ev[ix.at.get(p)!].ts) return { ok: false, why: 'ts' }
   if (F.upgraded.length) return { ok: false, why: 'auth' }
   if (!F.mem.has(m.a) || !(F.devs.get(m.a)?.has(m.dev) ?? false)) return { ok: false, why: 'auth' }
-  const ch = m.c?.ch
-  if (typeof ch === 'string') {
+  if (CHANNEL_CONTENT.includes(m.t)) {
+    const ch = m.c?.ch
+    if (typeof ch !== 'string') return { ok: false, why: 'channel' }
     const c = F.channels.get(ch)
     if (!c || c.gone === true) return { ok: false, why: 'channel' }
     if (!canSend(F, m.a, ch)) return { ok: false, why: 'send' }
   }
   return { ok: true, k: rank(F, m.a) }
 }
+
+// The known content kinds, all posted in a channel (§1.4); other kinds are opaque.
+export const CHANNEL_CONTENT: readonly string[] = [
+  'msg',
+  'edit',
+  'redact',
+  'react',
+  'pin',
+  'call',
+  'move',
+]
 
 // A genesis: seq 0, no parents, the author among the owners, rules version 2.
 export const genesisOk = (e: AclEv) =>
@@ -423,7 +497,9 @@ export class AclReplica implements Ctx {
   order: string[] = []
   acl: AclState
   private waiting = new Map<string, AclEv[]>()
-  constructor(public opts: AdmitOpts) {
+  opts: AdmitOpts
+  constructor(opts: Partial<AdmitOpts> = {}) {
+    this.opts = { binds: opts.binds ?? certBinds }
     this.acl = new AclState(this)
   }
   ev(id: string) {
@@ -440,10 +516,22 @@ export class AclReplica implements Ctx {
     return this.acl.state()
   }
 
+  // The rules version of an unknown-rules genesis received (§1.2).
+  unknownRules?: number
+
   receive(e: AclEv): Verdict {
     const known = this.status.get(e.id)
     if (known && known.s !== 'P') return known
+    if (this.unknownRules !== undefined) {
+      this.evs.set(e.id, e)
+      return this.set(e.id, { s: 'U', rules: this.unknownRules })
+    }
     if (!aclContentOk(e.t, e.c)) return { s: 'M', why: 'content' }
+    if (e.t === 'genesis' && e.c.rules !== RULES_VERSION && !this.order.length) {
+      this.unknownRules = e.c.rules
+      this.evs.set(e.id, e)
+      return this.set(e.id, { s: 'U', rules: e.c.rules as number })
+    }
     this.evs.set(e.id, e)
     const v = this.try1(e)
     if (v.s !== 'P') this.settle(e.id)

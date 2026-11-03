@@ -11,7 +11,7 @@ import {
   utf8,
 } from './canonical'
 import type { ProofHeader } from './acl/admit'
-import { aclContentOk, type AclContent, type AclEv } from './acl/rules'
+import { aclContentOk, RULES_VERSION, type AclContent, type AclEv } from './acl/rules'
 import type { ContentEv } from './acl/visibility'
 import { blockCount, EMPTY_ROOT } from './hashing'
 import { checkState, isShortId, isStateType, STATE_LIMITS, type StateType } from './state'
@@ -736,9 +736,10 @@ export const signUpgrade = (ik: KeyPair, srv: string, g: Record<string, unknown>
   b64u(sign(ik.sk, upgradeInput(srv, g)))
 
 // Identity records (§1.1): a device revocation is signed by the identity's primary or recovery
-// key over (srv, dk, seen), a rotation by its recovery key over the record, its position (iprev)
-// and the device that posts it. Until identities have separate recovery and primary keys, the
-// identity key plays both.
+// key over (srv, dk, seen), any member may relay it; a rotation by its recovery key over the
+// record, its position (iprev) and the device that posts it, which must be the identity's (two
+// relayed copies of one record would contest it, §2.3). Until identities have separate recovery
+// and primary keys, the identity key plays both.
 export const TAG_REVOKE = 'rchat-p2p-revoke2\0'
 export const TAG_ROTATE = 'rchat-p2p-rotate2\0'
 const revokeInput = (srv: string, c: { ik: unknown; dk: unknown; seen: unknown }) =>
@@ -786,7 +787,8 @@ const signedBy = (ik: unknown, msg: () => Uint8Array, sig: unknown) => {
   }
 }
 
-const contentOk2 = (ev: CoreV2, c: Record<string, unknown>) => {
+const contentOk2 = (ev: CoreV2, c: Record<string, unknown>, rules: number) => {
+  if (rules !== RULES_VERSION) return true
   if (ev.L === 'c') return checkContent(ev.t, c)
   if (!KNOWN_ACL.includes(ev.t)) return true
   if (!aclContentOk(ev.t, c)) return false
@@ -794,7 +796,6 @@ const contentOk2 = (ev: CoreV2, c: Record<string, unknown>) => {
   if (ev.t === 'device_revoke')
     return (
       srv !== null &&
-      c.ik === ev.a &&
       signedBy(
         c.ik,
         () => revokeInput(srv, c as { ik: unknown; dk: unknown; seen: unknown }),
@@ -832,8 +833,13 @@ const contentOk2 = (ev: CoreV2, c: Record<string, unknown>) => {
 
 // Schema, sizes, id, `ch` and the device's signature: everything that needs no other event. The
 // device's binding to its identity, the chains and authority are admission (acl/admit.ts).
-// `srv`: the server the event must belong to; null to check a genesis on its own.
-export const validate2 = (raw: unknown, srv: string | null): Checked2 => {
+// `srv`: the server the event must belong to; null to check a genesis on its own. `rules`: the
+// server's rules version; content of a version this client doesn't know is not checked.
+export const validate2 = (
+  raw: unknown,
+  srv: string | null,
+  rules: number = RULES_VERSION
+): Checked2 => {
   if (!isRecord(raw) || !hasKeys(raw, ['ev', 'c', 'sig'])) return { ok: false, why: 'shape' }
   const { ev, c, sig } = raw
   if (!isCore2(ev) || (c !== null && !isRecord(c))) return { ok: false, why: 'shape' }
@@ -856,7 +862,7 @@ export const validate2 = (raw: unknown, srv: string | null): Checked2 => {
   const pk = keyBytes(ev.dev)
   if (!s || !pk || !verify(pk, sigInput2(idBytes), s)) return { ok: false, why: 'signature' }
   if (c !== null) {
-    if (!contentOk2(ev, c)) return { ok: false, why: 'content' }
+    if (!contentOk2(ev, c, rules)) return { ok: false, why: 'content' }
     let hash: string
     try {
       hash = contentHash(c as Content)
@@ -908,12 +914,15 @@ const proofHeaderOf = (x: { ev: CoreV2 }): ProofHeader => {
   return h
 }
 
-// A validated v2 ACL event as the ACL core reads it (a proof's sides as headers).
+// A validated v2 ACL event as the ACL core reads it (a proof's sides as headers; a relayed
+// device revocation acting for its `ik`, §1.6).
 export const aclEvOf = (id: string, w: WireV2): AclEv => {
+  const ik = w.c?.ik
+  const relay = w.ev.t === 'device_revoke' && typeof ik === 'string' && ik !== w.ev.a
   const e: AclEv = {
     id,
     t: w.ev.t,
-    a: w.ev.a,
+    a: relay ? ik : w.ev.a,
     dev: w.ev.dev,
     seq: w.ev.seq,
     ap: w.ev.ap ?? [],
@@ -926,6 +935,7 @@ export const aclEvOf = (id: string, w: WireV2): AclEv => {
       x: proofHeaderOf(w.c.x as { ev: CoreV2 }),
       y: proofHeaderOf(w.c.y as { ev: CoreV2 }),
     } as unknown as AclContent
+  if (relay) e.relay = w.ev.a
   if (w.ev.aprev !== undefined) e.aprev = w.ev.aprev
   if (w.ev.iprev !== undefined) e.iprev = w.ev.iprev
   return e

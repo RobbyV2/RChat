@@ -47,6 +47,8 @@ const B1 = BigInt(1)
 const EMPTYSET = new Set<number>()
 const target = (m: ContentEv) => (typeof m.c?.target === 'string' ? (m.c.target as string) : null)
 const later = (x: ContentEv, y: ContentEv) => x.ts > y.ts || (x.ts === y.ts && x.id > y.id)
+// A targeting event acts only in its target's channel (admission checked its own `ch`).
+const sameCh = (t: ContentEv, r: ContentEv) => typeof t.c?.ch === 'string' && r.c?.ch === t.c.ch
 
 export class ContentView {
   private fe: FastEval
@@ -115,9 +117,11 @@ export class ContentView {
     return this.acl.stateOf(m.ap)
   }
   // The authority anchor of a content event: its position C(m.ap), its admission state St(m), and
-  // its authority (rules.ts CONTENT_REDACT, CONTENT_PIN; otherwise that of a mark: Mem and Dev).
-  private anchor(m: ContentEv): Anchor {
-    let a = this.anchors.get(m.id)
+  // its authority: that of a mark (Mem and Dev), or with `typed` what a redaction or a pin of
+  // another member's message relies on (rules.ts CONTENT_REDACT, CONTENT_PIN).
+  private anchor(m: ContentEv, typed: boolean): Anchor {
+    const key = `${typed ? 't' : 'm'}|${m.id}`
+    let a = this.anchors.get(key)
     if (!a) {
       const lo = this.stateOf(m)
       const { hi } = this.closure(m.ap)
@@ -125,7 +129,13 @@ export class ContentView {
       const tm = t === null ? undefined : this.byId.get(t)
       const e: AclEv = {
         id: m.id,
-        t: m.t === 'redact' && tm ? CONTENT_REDACT : m.t === 'pin' ? CONTENT_PIN : 'mark',
+        t: !typed
+          ? 'mark'
+          : m.t === 'redact' && tm
+            ? CONTENT_REDACT
+            : m.t === 'pin'
+              ? CONTENT_PIN
+              : 'mark',
         a: m.a,
         dev: m.dev,
         seq: m.seq,
@@ -135,7 +145,7 @@ export class ContentView {
       }
       const li = lo.idx && lo.idx.ix === this.ix ? lo.idx : undefined
       a = { e, inB: x => this.inC(m, x), hi, lo, li }
-      this.anchors.set(m.id, a)
+      this.anchors.set(key, a)
     }
     return a
   }
@@ -204,8 +214,9 @@ export class ContentView {
   }
 
   // The step-4 rule of §3.1 applied to m after Eval: at a stratum with cuts in C(m.ap), the cuts
-  // that the causes m's author is exposed to make on their own break m's authority (Mem, Dev),
-  // which the cuts above left intact, at an effective stratum below the stratum's.
+  // that the causes m's author is exposed to make on their own break m's authority (Mem, Dev;
+  // a redaction's or pin's Manage messages is read in St(m), §3.5), which the cuts above left
+  // intact, at an effective stratum below the stratum's.
   private cascadeCut(m: ContentEv): Rank | null {
     const fe = this.fe
     const ix = this.ix
@@ -215,7 +226,7 @@ export class ContentView {
       ...(ix.introEv.get(m.dev) ?? EMPTY),
     ]
     if (!supports.some(x => fe.cutOrd[x] >= 0)) return null
-    const an = this.anchor(m)
+    const an = this.anchor(m, false)
     const km = rank(an.lo.facts, m.a)
     for (const info of fe.strataInfo) {
       const s = info.s
@@ -228,9 +239,9 @@ export class ContentView {
       const st = fe.above(info.kk)
       if (!new Mono(ix, an, st, null, EMPTYSET).authorized()) continue
       const N = (x: number) => fe.cutOrd[x] === s && this.inC(m, x) && info.inW(x, Um)
-      const M = new Mono(ix, an, st, N, this.highs(m, st.high))
-      if (M.authorized()) continue
-      if (cmp(minR(km, M.me()), info.kk) < 0) return info.kk
+      if (new Mono(ix, an, st, N, EMPTYSET).authorized()) continue
+      const ks = minR(km, new Mono(ix, an, st, N, this.highs(m, st.high)).me())
+      if (cmp(ks, info.kk) < 0) return info.kk
     }
     return null
   }
@@ -257,7 +268,7 @@ export class ContentView {
     const fe = this.fe
     const ds = fe.againstMember(m.a)
     if (!ds.length) return null
-    const an = this.anchor(m)
+    const an = this.anchor(m, true)
     const km = rank(an.lo.facts, m.a)
     for (const d of ds) {
       const de = ix.ev[d]
@@ -298,7 +309,7 @@ export class ContentView {
   // Manage messages ranked above t's author in the redaction's admission state.
   redactedBy(t: ContentEv): ContentEv | null {
     for (const r of this.aimed.get(t.id) ?? []) {
-      if (r.t !== 'redact' || !this.after(t, r) || !this.visible(r)) continue
+      if (r.t !== 'redact' || !sameCh(t, r) || !this.after(t, r) || !this.visible(r)) continue
       if (r.a === t.a || this.ix.owners.has(r.a)) return r
       const F = this.stateOf(r).facts
       if (permsQ(F, r.a) & MESSAGES && gt(rank(F, r.a), rank(F, t.a))) return r
@@ -312,7 +323,7 @@ export class ContentView {
     if (!this.visible(t)) return null
     let best: ContentEv | null = null
     for (const p of this.aimed.get(t.id) ?? []) {
-      if (p.t !== 'pin' || !this.after(t, p) || !this.visible(p)) continue
+      if (p.t !== 'pin' || !sameCh(t, p) || !this.after(t, p) || !this.visible(p)) continue
       if (!(permsQ(this.stateOf(p).facts, p.a) & MESSAGES)) continue
       if (!best || later(p, best)) best = p
     }
@@ -326,7 +337,8 @@ export class ContentView {
   editOf(t: ContentEv): ContentEv | null {
     let best: ContentEv | null = null
     for (const e of this.aimed.get(t.id) ?? []) {
-      if (e.t !== 'edit' || e.a !== t.a || !this.after(t, e) || !this.visible(e)) continue
+      if (e.t !== 'edit' || e.a !== t.a || !sameCh(t, e) || !this.after(t, e) || !this.visible(e))
+        continue
       if (!best || later(e, best)) best = e
     }
     return best
@@ -336,7 +348,8 @@ export class ContentView {
   reactions(t: ContentEv): ContentEv[] {
     const best = new Map<string, ContentEv>()
     for (const r of this.aimed.get(t.id) ?? []) {
-      if (r.t !== 'react' || typeof r.c?.key !== 'string' || !this.visible(r)) continue
+      if (r.t !== 'react' || typeof r.c?.key !== 'string' || !sameCh(t, r) || !this.visible(r))
+        continue
       const k = `${r.a}\u0001${r.c.key}`
       const b = best.get(k)
       if (!b || later(r, b)) best.set(k, r)

@@ -141,7 +141,13 @@ test('Bit(R, b) from the top down equals its definition on random DAGs and views
           for (const b of BITS) if (bitDef(v, ix, role, b)) want |= b
           if (want) set++
         }
-        expect(v.bits(role)).toBe(want)
+        if (v.bits(role) !== want)
+          expect({ universe: u, view: k, role, bits: v.bits(role) }).toEqual({
+            universe: u,
+            view: k,
+            role,
+            bits: want,
+          })
         checked++
       }
     }

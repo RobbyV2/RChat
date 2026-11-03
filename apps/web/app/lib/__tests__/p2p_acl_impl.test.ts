@@ -1,8 +1,23 @@
 import { describe, expect, test } from 'bun:test'
-import { AclReplica, pastOf } from '../p2p/acl/admit'
+import { AclReplica } from '../p2p/acl/admit'
+import { evaluate, FastEval } from '../p2p/acl/eval'
+import { orphanDrops } from '../p2p/acl/equivocation'
 import type { ProofHeader } from '../p2p/acl/admit'
-import { BAN, CHANNELS, EVERYONE, INVITE, KICK, MESSAGES, P, ROLES } from '../p2p/acl/rules'
-import { AclWorld, devOwner, modelDiffAfterEach } from './p2p_acl_world'
+import {
+  BAN,
+  canView,
+  CHANNELS,
+  EVERYONE,
+  INVITE,
+  KICK,
+  LIM,
+  MESSAGES,
+  P,
+  ROLES,
+  setLimits,
+  type AclEv,
+} from '../p2p/acl/rules'
+import { AclWorld, devOwner, MODEL_LIMITS, modelDiffAfterEach, testBinds } from './p2p_acl_world'
 
 // Implementation vectors of the P2P ACL spec (§7.6 "Impl"): content visibility (§3.5), content
 // admission, history (§3.6), proofs (§2.3) and registers, which the reference model leaves out.
@@ -14,6 +29,7 @@ modelDiffAfterEach()
 function base(everyone = 0, model = true) {
   const w = new AclWorld({ model })
   w.genesis('O1', ['O'], everyone)
+  w.channel('O1')
   w.ok('O1', 'add', { to: 'Vch' })
   w.ok('Vch1', 'join')
   return w
@@ -96,6 +112,33 @@ describe('content visibility (§3.5)', () => {
     const r2 = w.content('M1', 'redact', { target: t.id })
     expect(w.admitContent(r2).ok).toBe(true)
     expect(w.view().visible(t)).toBe(true)
+  })
+
+  test("a cascade never takes a redaction's Manage messages, which is read in its admission state, whatever else the cascade cuts", () => {
+    const w = base(INVITE)
+    const MOD = role(w, 5, MESSAGES)
+    const PR = role(w, 7, ROLES)
+    w.ok('O2', 'device_add')
+    join(w, 'P1')
+    give(w, 'P', PR)
+    join(w, 'V1')
+    join(w, 'U1')
+    const P0 = w.heads()
+    w.ok('V1', 'add', { to: 'M' })
+    w.ok('Vch1', 'mark')
+    w.ok('M1', 'join')
+    w.ok('M1', 'leave')
+    w.ok('O1', 'add', { to: 'M' })
+    w.ok('M2', 'join')
+    give(w, 'M', MOD, 'P1')
+    const t = w.content('U1')
+    const r = w.content('M2', 'redact', { target: t.id })
+    // the owner's stale device removes V (cutting M's first join) and P (cutting M's role)
+    w.ok('O2', 'kick', { to: 'V' }, { ap: P0 })
+    w.ok('O2', 'kick', { to: 'P' }, { ap: P0 })
+    const v = w.view()
+    expect(v.visible(r)).toBe(true)
+    expect(v.hidden(t)).toEqual({ why: 'redacted', by: r.id })
   })
 
   test('I6: a demoted ex-moderator backdates a redaction and a pin of a message posted after the demotion: no effect', () => {
@@ -225,6 +268,61 @@ describe('content visibility (§3.5)', () => {
     expect(w.view().hidden(t4)?.why).toBe('fork')
   })
 
+  test("a re-invited member's message inside a senior remover's watermark stays visible though a cascade cut its first join", () => {
+    const w = base(INVITE)
+    const MOD = role(w, 5, BAN)
+    join(w, 'Q1')
+    give(w, 'Q', MOD)
+    join(w, 'V1')
+    const P = w.heads()
+    w.ok('V1', 'add', { to: 'U' })
+    w.ok('Vch1', 'mark')
+    const j1 = w.ok('U1', 'join')
+    w.ok('U1', 'leave')
+    w.ok('O1', 'add', { to: 'U' })
+    w.ok('U2', 'join')
+    const m = w.content('U2')
+    w.ok('Q1', 'ban', { to: 'V' }, { ap: P })
+    w.ok('O1', 'kick', { to: 'U' })
+    expect(w.state().cut.has(j1.id)).toBe(true)
+    expect(w.view().visible(m)).toBe(true)
+  })
+
+  test("a stratum's in(x, W) asked after evaluation (content worlds) reads only higher strata in k*", () => {
+    const w = base()
+    const R5 = role(w, 5, KICK)
+    const RB = role(w, 1, ROLES | INVITE)
+    join(w, 'Q1')
+    join(w, 'A1')
+    join(w, 'B1')
+    give(w, 'Q', R5)
+    give(w, 'A', R5)
+    give(w, 'B', RB)
+    w.ok('A2', 'device_add')
+    const P0 = w.heads()
+    w.ok('B1', 'role_bits', { role: EVERYONE, bit: INVITE, on: true })
+    const x = w.ok('A1', 'add', { to: 'M' })
+    const leave = w.ok('A2', 'leave', {}, { ap: P0 })
+    const kick = w.ok('Q1', 'kick', { to: 'B' }, { ap: P0 })
+    const ix = w.ref.acl.ix
+    const xi = ix.at.get(x.id)!
+    const asked = (fe: FastEval) => {
+      const info = fe.strataInfo.find(i => i.causes.includes(ix.at.get(kick.id)!))!
+      expect(info.causes).toContain(ix.at.get(leave.id)!)
+      return info.inW(xi, BigInt(1) << BigInt(info.causes.indexOf(ix.at.get(kick.id)!)))
+    }
+    let inside: boolean | undefined
+    const a = new FastEval(ix)
+    a.onStratum = () => {
+      if (inside === undefined && a.cutOrd[xi] >= 0) inside = asked(a)
+    }
+    a.run()
+    expect(inside).toBe(false)
+    const fe = w.ref.acl.evaluation()
+    expect(fe.cutOrd[xi]).toBeGreaterThanOrEqual(0)
+    expect(asked(fe)).toBe(false)
+  })
+
   test('R2-S-I3: a ban by a moderator whose role the owner revoked concurrently is ineffective; the message stays visible', () => {
     const w = base()
     const MOD = role(w, 5, BAN | KICK)
@@ -242,14 +340,85 @@ describe('content visibility (§3.5)', () => {
   })
 })
 
+describe('production evaluator (§5.4)', () => {
+  test("B: a concurrent bit clear cuts a reader whose rank bound is above the stratum when the reader's author is exposed to it", () => {
+    const w = base()
+    const MOD = role(w, 5, ROLES)
+    const R = role(w, 2, INVITE)
+    const HI = role(w, 8, 0)
+    join(w, 'M1')
+    give(w, 'M', MOD)
+    join(w, 'H1')
+    give(w, 'H', R)
+    give(w, 'H', HI)
+    w.ok('O1', 'revoke', { to: 'H', role: HI })
+    const P = w.heads()
+    const o = w.ok('H1', 'add', { to: 'N' })
+    const clr = w.ok('M1', 'role_bits', { role: R, bit: INVITE, on: false }, { ap: P })
+    const S = w.state()
+    expect(S.eff.has(clr.id)).toBe(true)
+    expect(S.cut.get(o.id)).toEqual([5, MOD])
+  })
+
+  test('C: the world memo answers "not broken" only for subsets of a world known not to break', () => {
+    const w = base()
+    const MOD = role(w, 5, KICK)
+    const VA = role(w, 3, ROLES)
+    const VB = role(w, 4, ROLES)
+    const RA = role(w, 1, INVITE)
+    const RB = role(w, 2, INVITE)
+    for (const d of ['Q1', 'S1', 'T1']) {
+      join(w, d)
+      give(w, devOwner(d), MOD)
+    }
+    join(w, 'A1')
+    join(w, 'B1')
+    join(w, 'Z1')
+    join(w, 'P1')
+    give(w, 'A', VA)
+    give(w, 'B', VB)
+    const P0 = w.heads()
+    w.ok('A1', 'assign', { to: 'P', role: RA })
+    w.ok('B1', 'assign', { to: 'P', role: RB })
+    w.ok('Z1', 'mark')
+    const x = w.ok('P1', 'add', { to: 'N' })
+    const g1 = w.ok('Q1', 'kick', { to: 'A' }, { ap: P0 })
+    const g2 = w.ok('S1', 'kick', { to: 'B' }, { ap: P0 })
+    const g3 = w.ok('T1', 'kick', { to: 'Z' }, { ap: P0 })
+    const ix = w.ref.acl.ix
+    const xi = ix.at.get(x.id)!
+    // in(x, W) of the stratum of the three kicks, for the world of the kicks `gs`
+    const asker = (fe: FastEval) => {
+      const info = fe.strataInfo.find(i => i.causes.includes(ix.at.get(g1.id)!))!
+      expect(info.causes.length).toBe(3)
+      return (gs: AclEv[]) => {
+        let W = BigInt(0)
+        for (const g of gs) W |= BigInt(1) << BigInt(info.causes.indexOf(ix.at.get(g.id)!))
+        return info.inW(xi, W)
+      }
+    }
+    // x falls only to both of its supports, which g1 and g2 cut; g3 cuts something else
+    const fe = w.ref.acl.evaluation()
+    expect(fe.cutOrd[xi]).toBeGreaterThanOrEqual(0)
+    const ask = asker(fe)
+    expect(ask([g1, g2, g3])).toBe(true)
+    expect(ask([g1])).toBe(false)
+    expect(ask([g1, g2])).toBe(true)
+    // a run whose memo never saw the smaller world
+    const fresh = new FastEval(ix)
+    fresh.run()
+    expect(asker(fresh)([g1, g2])).toBe(true)
+  })
+})
+
 describe('display rules (§3.5)', () => {
   test("edits: only the author's, latest by (ts, id); reactions: latest per author and key", () => {
     const w = base()
     join(w, 'U1')
     join(w, 'X1')
     const t = w.content('U1')
-    w.content('U1', 'edit', { target: t.id, body: 'one' })
-    const e2 = w.content('U1', 'edit', { target: t.id, body: 'two' })
+    const e1 = w.content('U1', 'edit', { target: t.id, body: 'one' })
+    const e2 = w.content('U1', 'edit', { target: t.id, body: 'two' }, { ts: e1.ts + 1 })
     w.content('X1', 'edit', { target: t.id, body: 'not mine' })
     w.content('X1', 'react', { target: t.id, key: '👍', on: true })
     w.content('U1', 'react', { target: t.id, key: '👍', on: true })
@@ -257,6 +426,31 @@ describe('display rules (§3.5)', () => {
     const v = w.view()
     expect(v.editOf(t)?.id).toBe(e2.id)
     expect(v.reactions(t).map(r => r.a)).toEqual(['X'])
+  })
+
+  test("edits, reactions, pins and redactions act only in their target's channel", () => {
+    const w = base()
+    const MOD = role(w, 5, MESSAGES)
+    join(w, 'M1')
+    join(w, 'U1')
+    give(w, 'M', MOD)
+    w.ok('O1', 'channel', { id: 'c1', name: 'other' })
+    const t = w.content('U1')
+    const c1 = { ch: 'c1', target: t.id }
+    w.content('U1', 'edit', { ...c1, body: 'moved' })
+    w.content('U1', 'react', { ...c1, key: 'x', on: true })
+    w.content('M1', 'pin', { ...c1, on: true })
+    w.content('M1', 'redact', c1)
+    let v = w.view()
+    expect([v.editOf(t), v.reactions(t), v.pinned(t), v.visible(t)]).toEqual([
+      null,
+      [],
+      false,
+      true,
+    ])
+    w.content('M1', 'redact', { target: t.id })
+    v = w.view()
+    expect(v.visible(t)).toBe(false)
   })
 
   test('pins need Manage messages; the latest visible pin of a target decides', () => {
@@ -356,6 +550,32 @@ describe('production-only types (not in the model)', () => {
     expect(w2.act('Vch1', 'proof', { x: hx(x), y: y2 }).v.s).toBe('A')
   })
 
+  test('the orphan rule keeps a void proof: its header alone would not keep the evidence it carries', () => {
+    const w = base(INVITE, false)
+    join(w, 'U1')
+    join(w, 'W1')
+    const w1 = w.ok('W1', 'mark')
+    const twin = w.build('W1', 'mark', { other: 1 }, { seq: w1.seq, aprev: w1.aprev ?? null })
+    const P = w.heads()
+    const ua = w.ok('U1', 'mark', {}, { ap: P })
+    w.ok('U1', 'mark', { other: 1 }, { ap: P, seq: ua.seq, aprev: ua.aprev ?? null })
+    const hx = (e: AclEv): ProofHeader => ({
+      id: e.id,
+      dev: e.dev,
+      seq: e.seq,
+      aprev: e.aprev,
+      L: 'a',
+    })
+    const p = w.ok('U1', 'proof', { x: hx(w1), y: hx(twin) }, { ap: [ua.id] })
+    const S = w.state()
+    expect(S.X.has(p.id)).toBe(true)
+    expect(S.F.get('W1')).toBe(w1.seq)
+    const drops = orphanDrops(w.ref.order, S, w.ref)
+    expect(drops.has(p.id)).toBe(false)
+    const kept = w.ref.order.filter(id => !drops.has(id))
+    expect(evaluate(kept, w.ref, [...drops]).F.get('W1')).toBe(w1.seq)
+  })
+
   test('P1-I4: channels, overwrites and settings are registers; unknown enum values and bits are inert', () => {
     const w = base(0, false)
     const CH = role(w, 5, CHANNELS | ROLES)
@@ -375,16 +595,226 @@ describe('production-only types (not in the model)', () => {
     expect(F.channels.get('c1')?.restrict_view).toBe(true)
     w.ok('A1', 'chperm', { ch: 'c1', subj: `r:${LO}`, allow: 0, deny: P.SendMessages })
     expect(w.act('A1', 'chperm', { ch: 'c1', subj: `r:${CH}`, allow: 0, deny: 1 }).v.s).toBe('R')
-    w.ok('O1', 'settings', { name: 'Srv', history: 'invited' })
+    // history: restrict-wins among the maximal writes, an unknown value reading as `joined`
+    w.ok('O2', 'device_add')
+    const S0 = w.heads()
+    w.ok('O1', 'settings', { name: 'Srv', history: 'shared' }, { ap: S0 })
+    w.ok('O2', 'settings', { name: 'Srv', history: 'invited' }, { ap: S0 })
     F = w.state().facts
     expect(F.overwrites.get('c1')?.get(`r:${LO}`)?.deny).toBe(P.SendMessages)
-    expect(F.setting?.history).toBe('invited')
+    expect(F.setting?.history).toBe('joined')
+    w.ok('O1', 'settings', { name: 'Srv', history: 'shared' })
+    expect(w.state().facts.setting?.history).toBe('shared')
     expect(w.act('O1', 'role_create', { pos: 1, bits: 1 << 20 }).v.s).toBe('A')
     expect(w.act('A1', 'x_newer', { anything: [1, 2] }).v.s).toBe('A')
   })
 
+  test("P1-M5: a device revocation known only to contacts changes nothing until a member relays it; then it acts for the record's identity", () => {
+    const w = base(INVITE, false)
+    const HI = role(w, 7, KICK)
+    join(w, 'A1')
+    give(w, 'A', HI)
+    w.ok('A2', 'device_add')
+    join(w, 'R1')
+    const P = w.heads()
+    const s = w.latestOwn('A2')!.seq
+    expect(w.state().facts.devs.get('A')?.has('A2')).toBe(true)
+    const m1 = w.ok('R1', 'mark')
+    const rel = w.ok('R1', 'device_revoke', { dk: 'A2', seen: s }, { actor: 'A' })
+    expect([rel.a, rel.relay, rel.dev]).toEqual(['A', 'R', 'R1'])
+    const rec = w.ref.rec(rel.id)
+    expect([rec.k, rec.cls, rec.self, rec.exempt]).toEqual([[7, HI], 'D', true, false])
+    expect(w.state().facts.devs.get('A')?.has('A2')).toBe(false)
+    expect(w.act('A2', 'mark').v).toEqual({ s: 'R', why: 'auth' })
+    const old = w.content('A2', 'msg', { body: 'old copy' }, { ap: P })
+    expect(w.view().hidden(old)?.why).toBe('revoked')
+    // the relay is in no identity's pool, and it acknowledges none of the relayer's own events
+    const m2 = w.ok('R1', 'mark')
+    expect([rec.pool?.includes(m1.id), rec.pool?.includes(rel.id)]).toEqual([true, false])
+    expect(w.ref.rec(m2.id).pool).not.toContain(rel.id)
+    expect(w.ref.rec(m2.id).pool).toContain(m1.id)
+    // a relay of a record the position already holds is a duplicate
+    expect(w.act('Vch1', 'device_revoke', { dk: 'A2', seen: s }, { actor: 'A' }).v).toEqual({
+      s: 'R',
+      why: 'dup',
+    })
+  })
+
+  test('a primary_rotate is never relayed: two relays of one record would contest it (§2.3)', () => {
+    const w = base(INVITE, false)
+    join(w, 'A1')
+    w.ok('A2', 'device_add')
+    join(w, 'R1')
+    join(w, 'T1')
+    const s = w.latestOwn('A2')!.seq
+    const c = { keep: ['A1'], seen: { A2: s }, pcert: 'p2' }
+    const P = w.heads()
+    expect(w.act('R1', 'primary_rotate', c, { actor: 'A', ap: P }).v).toEqual({
+      s: 'R',
+      why: 'auth',
+    })
+    expect(w.act('T1', 'primary_rotate', c, { actor: 'A', ap: P }).v).toEqual({
+      s: 'R',
+      why: 'auth',
+    })
+    expect(w.state().RF.size).toBe(0)
+    expect(w.act('A1', 'primary_rotate', { ...c, keep: [] }).v).toEqual({ s: 'A' })
+  })
+
+  // forked copies of one identity's revocation record, posted by another member from one old
+  // position: they are events of the relayer's device, in nobody's pool and nobody's W3(f) keys
+  const copies = (w: AclWorld, n: number, P: string[], s: number) => {
+    const y = w.latestOwn('Y1')!
+    for (let k = 0; k < n; k++)
+      expect(
+        w.act(
+          'Y1',
+          'device_revoke',
+          { dk: 'A2', seen: s },
+          { actor: 'A', ap: P, seq: y.seq + 1 + k, aprev: y.id }
+        ).v
+      ).toEqual({ s: 'A' })
+  }
+  test("32 forked relays of a member's revocation record void nothing of its own: its kick stands, its next event is admitted", () => {
+    const w = base(INVITE, false)
+    const MOD = role(w, 5, KICK)
+    join(w, 'A1')
+    give(w, 'A', MOD)
+    w.ok('A2', 'device_add')
+    join(w, 'Y1')
+    join(w, 'T1')
+    const s = w.latestOwn('A2')!.seq
+    const P = w.heads()
+    w.ok('A1', 'device_revoke', { dk: 'A2', seen: s })
+    const kick = w.ok('A1', 'kick', { to: 'T' })
+    copies(w, 32, P, s)
+    const S = w.state()
+    expect([S.X.has(kick.id), S.PC.has(kick.id), S.facts.mem.has('T')]).toEqual([
+      false,
+      false,
+      false,
+    ])
+    expect(w.act('A1', 'mark').v).toEqual({ s: 'A' })
+  })
+
+  test("two forked relays of a member's revocation record do not pin it (W3(f))", () => {
+    const w = base(INVITE, false)
+    join(w, 'A1')
+    w.ok('A2', 'device_add')
+    join(w, 'Y1')
+    const s = w.latestOwn('A2')!.seq
+    copies(w, 2, w.heads(), s)
+    expect(w.act('A1', 'mark').v).toEqual({ s: 'A' })
+  })
+
+  test("a relay counts against its relayer's W3(b) total; a relayer's other device doesn't witness its forked relays", () => {
+    const w = base(INVITE, false)
+    join(w, 'A1')
+    w.ok('A2', 'device_add')
+    join(w, 'Y1')
+    const s = w.latestOwn('A2')!.seq
+    let ts = 1000
+    for (let k = 0; k < MODEL_LIMITS.totU - 2; k++) w.ok('Y1', 'mark', {}, { ts: (ts += 100) })
+    const r = w.ok('Y1', 'device_revoke', { dk: 'A2', seen: s }, { actor: 'A', ts: (ts += 100) })
+    expect(w.ref.rec(r.id).exempt).toBe(false)
+    expect(w.act('Y1', 'mark', {}, { ts: ts + 100 }).v).toEqual({ s: 'R', why: 'W3b' })
+    const w2 = base(INVITE, false)
+    join(w2, 'A1')
+    w2.ok('A2', 'device_add')
+    join(w2, 'Y1')
+    w2.ok('Y2', 'device_add')
+    const s2 = w2.latestOwn('A2')!.seq
+    const P = w2.heads()
+    copies(w2, 2, P, s2)
+    const c1 = w2.ref.order.find(id => w2.ref.ev(id).relay === 'Y')!
+    w2.ok('Y2', 'mark', {}, { ap: [c1] })
+    expect(w2.state().X.has(c1)).toBe(true)
+  })
+
+  test("relaying needs a member's live device; a forged relayer is refused", () => {
+    const w = base(INVITE, false)
+    join(w, 'A1')
+    w.ok('A2', 'device_add')
+    join(w, 'R1')
+    join(w, 'L1')
+    const s = w.latestOwn('A2')!.seq
+    const forged = w.build('R1', 'device_revoke', { dk: 'A2', seen: s }, { actor: 'A' })
+    expect(w.ref.receive({ ...forged, relay: 'L' })).toEqual({ s: 'R', why: 'dev' })
+    w.ok('L1', 'leave')
+    expect(w.act('L1', 'device_revoke', { dk: 'A2', seen: s }, { actor: 'A' }).v).toEqual({
+      s: 'R',
+      why: 'auth',
+    })
+    expect(w.act('R1', 'device_revoke', { dk: 'A2', seen: s }, { actor: 'A' }).v.s).toBe('A')
+  })
+
+  test('W5: the channel cap counts live channels; a channel that is gone makes room', () => {
+    setLimits({ ...MODEL_LIMITS, channels: 2 })
+    try {
+      const w = base(0, false)
+      let ts = 100
+      const ch = (c: Record<string, unknown>) =>
+        w.act('O1', 'channel', { name: 'x', ...c }, { ts: (ts += 100) }).v.s
+      expect(ch({ id: 'c1' })).toBe('A')
+      expect(ch({ id: 'c2' })).toBe('R')
+      expect(ch({ id: 'c0', gone: true })).toBe('A')
+      expect(ch({ id: 'c2' })).toBe('A')
+      expect(ch({ id: 'c1', name: 'renamed' })).toBe('A')
+      expect(ch({ id: 'c0' })).toBe('R')
+    } finally {
+      setLimits(MODEL_LIMITS)
+    }
+  })
+
+  test('admission limits are fixed outside tests and scripts', () => {
+    expect(Object.isFrozen(LIM)).toBe(true)
+    const pe = process.env as Record<string, string | undefined>
+    const env = pe.NODE_ENV
+    pe.NODE_ENV = 'production'
+    try {
+      expect(() => setLimits({ w3: 1000 })).toThrow()
+    } finally {
+      pe.NODE_ENV = env
+    }
+    expect(LIM.w3).toBe(MODEL_LIMITS.w3)
+  })
+
+  test("the remover's watermark: a kick, ban or revoke of another member covers every live device of the target; a leave covers the devices it lists", () => {
+    const w = base(0, false)
+    const MOD = role(w, 5, KICK | BAN | ROLES)
+    const LO = role(w, 1, 0)
+    join(w, 'M1')
+    give(w, 'M', MOD)
+    join(w, 'U1')
+    w.ok('U2', 'device_add')
+    give(w, 'U', LO)
+    const u1 = aclMax(w, 'U1')
+    const u2 = aclMax(w, 'U2')
+    for (const [t, c] of [
+      ['kick', { to: 'U' }],
+      ['ban', { to: 'U' }],
+      ['revoke', { to: 'U', role: LO }],
+    ] as const) {
+      expect(w.act('M1', t, { ...c, seen: {} }).v).toEqual({ s: 'R', why: 'seen' })
+      expect(w.act('M1', t, { ...c, seen: { U1: u1 } }).v).toEqual({ s: 'R', why: 'seen' })
+      expect(w.act('M1', t, { ...c, seen: { U1: u1, U2: u2 - 1 } }).v).toEqual({
+        s: 'R',
+        why: 'seen',
+      })
+    }
+    expect(w.act('U1', 'leave', { seen: { U2: u2 - 1 } }).v).toEqual({ s: 'R', why: 'seen' })
+    expect(w.act('U1', 'leave', {}).v.s).toBe('A')
+  })
+
+  test('an event whose device belongs to another identity is refused (dev)', () => {
+    const w = base()
+    join(w, 'U1')
+    join(w, 'X1')
+    expect(w.ref.receive({ ...w.build('X1', 'mark'), a: 'U' })).toEqual({ s: 'R', why: 'dev' })
+  })
+
   test('a malformed known field is refused with a strike; a second genesis is refused', () => {
-    const r = new AclReplica({ binds: e => devOwner(e.dev) === e.a })
+    const r = new AclReplica({ binds: testBinds })
     const g = {
       id: 'g',
       t: 'genesis',
@@ -409,36 +839,92 @@ describe('production-only types (not in the model)', () => {
       c: { to: 5 },
     }
     expect(r.receive(bad as never)).toEqual({ s: 'M', why: 'content' })
-    expect(pastOf(r.acl.ix, ['g']).bits[0]).toBe(1)
-    expect(EVERYONE).toBe('everyone')
   })
 
-  test('content admission: the channel must exist and let the author send (overwrites, restrict_send)', () => {
+  test('a genesis of a rules version this client does not know earns no strike: the replica reports it and stores the server read-only', () => {
+    const r = new AclReplica({ binds: testBinds })
+    const g = {
+      id: 'g',
+      t: 'genesis',
+      a: 'O',
+      dev: 'O1',
+      seq: 0,
+      ap: [],
+      ts: 0,
+      c: { rules: 3, nonce: 'n', owners: 'a newer format', name: 'S' },
+    }
+    expect(r.receive(g as never)).toEqual({ s: 'U', rules: 3 })
+    const k = { id: 'k', t: 'kick', a: 'O', dev: 'O1', seq: 1, ap: ['g'], ts: 1, c: { to: 5 } }
+    expect(r.receive(k as never)).toEqual({ s: 'U', rules: 3 })
+    expect(r.order).toEqual([])
+    const r2 = new AclReplica({ binds: testBinds })
+    expect(r2.receive({ ...g, c: { ...g.c, rules: 2.5 } } as never)).toEqual({
+      s: 'M',
+      why: 'content',
+    })
+  })
+
+  test('content admission: channel content needs a channel `ch` that exists and lets the author send, in Discord order', () => {
     const w = base(0, false)
     const SPK = role(w, 3, 0)
+    const MUTE = role(w, 2, 0)
+    const CH = role(w, 4, CHANNELS)
     join(w, 'U1')
     join(w, 'X1')
+    join(w, 'C1')
     give(w, 'U', SPK)
-    w.ok('O1', 'settings', { name: 'S' })
-    const everyoneSend = w.act('O1', 'role_bits', { role: EVERYONE, bit: P.SendMessages, on: true })
-    expect(everyoneSend.v.s).toBe('A')
-    expect(w.admitContent(w.content('U1', 'msg', { body: 'x', ch: 'nope' }))).toEqual({
-      ok: false,
-      why: 'channel',
-    })
-    w.ok('O1', 'channel', { id: 'c1', name: 'general' })
-    expect(w.admitContent(w.content('X1', 'msg', { body: 'x', ch: 'c1' })).ok).toBe(true)
-    w.ok('O1', 'channel', { id: 'c1', name: 'announcements', restrict_send: true })
-    expect(w.admitContent(w.content('X1', 'msg', { body: 'x', ch: 'c1' }))).toEqual({
-      ok: false,
-      why: 'send',
-    })
-    w.ok('O1', 'chperm', { ch: 'c1', subj: `r:${SPK}`, allow: P.SendMessages, deny: 0 })
-    expect(w.admitContent(w.content('U1', 'msg', { body: 'x', ch: 'c1' })).ok).toBe(true)
-    expect(w.admitContent(w.content('X1', 'msg', { body: 'x', ch: 'c1' })).ok).toBe(false)
-    w.ok('O1', 'chperm', { ch: 'c1', subj: 'u:U', allow: 0, deny: P.SendMessages })
-    expect(w.admitContent(w.content('U1', 'msg', { body: 'x', ch: 'c1' })).ok).toBe(false)
-    expect(w.admitContent(w.content('O1', 'msg', { body: 'x', ch: 'c1' })).ok).toBe(true)
+    give(w, 'C', CH)
+    const send = (dev: string, c: Record<string, unknown>, t = 'msg') =>
+      w.admitContent(w.content(dev, t, { body: 'x', ...c }))
+    const no = (why: string) => ({ ok: false as const, why })
+    let ts = 1000
+    const own = (t: string, c: Record<string, unknown>) => {
+      w.ok('O1', t, c, { ts: (ts += 100) })
+      w.ok('Vch1', 'mark', {}, { ts: (ts += 100) })
+    }
+    // the known kinds need a string ch naming a live channel; other kinds are opaque
+    expect(send('X1', { ch: undefined })).toEqual(no('channel'))
+    expect(send('X1', { ch: 5 })).toEqual(no('channel'))
+    expect(send('X1', { ch: 'nope' })).toEqual(no('channel'))
+    expect(send('X1', { ch: undefined, target: 't' }, 'react')).toEqual(no('channel'))
+    expect(send('X1', { ch: undefined }, 'x_newer').ok).toBe(true)
+    own('channel', { id: 'c1', name: 'general' })
+    expect(send('X1', { ch: 'c1' }).ok).toBe(true)
+    // restrict_send: the channel's @everyone baseline lacks Send messages, even with an @everyone
+    // allow; a role's or the member's allow gives it back, a member deny takes it again
+    own('channel', { id: 'c1', name: 'announcements', restrict_send: true })
+    own('chperm', { ch: 'c1', subj: `r:${EVERYONE}`, allow: P.SendMessages, deny: 0 })
+    expect(send('X1', { ch: 'c1' })).toEqual(no('send'))
+    own('chperm', { ch: 'c1', subj: `r:${SPK}`, allow: P.SendMessages, deny: 0 })
+    expect(send('U1', { ch: 'c1' }).ok).toBe(true)
+    own('chperm', { ch: 'c1', subj: 'u:X', allow: P.SendMessages, deny: 0 })
+    expect(send('X1', { ch: 'c1' }).ok).toBe(true)
+    own('chperm', { ch: 'c1', subj: 'u:U', allow: 0, deny: P.SendMessages })
+    expect(send('U1', { ch: 'c1' })).toEqual(no('send'))
+    expect(send('O1', { ch: 'c1' }).ok).toBe(true)
+    expect(send('C1', { ch: 'c1' }).ok).toBe(true)
+    // role denies come before role allows; an @everyone deny is lifted by a role allow
+    own('channel', { id: 'c2', name: 'quiet' })
+    own('chperm', { ch: 'c2', subj: `r:${EVERYONE}`, allow: 0, deny: P.SendMessages })
+    expect(send('X1', { ch: 'c2' })).toEqual(no('send'))
+    give(w, 'U', MUTE)
+    own('chperm', { ch: 'c2', subj: `r:${MUTE}`, allow: 0, deny: P.SendMessages })
+    own('chperm', { ch: 'c2', subj: `r:${SPK}`, allow: P.SendMessages, deny: 0 })
+    expect(send('U1', { ch: 'c2' }).ok).toBe(true)
+    // restrict_view: sending needs View channel too
+    own('channel', { id: 'c3', name: 'staff', restrict_view: true })
+    expect(send('X1', { ch: 'c3' })).toEqual(no('send'))
+    own('chperm', { ch: 'c3', subj: `r:${SPK}`, allow: P.ViewChannel, deny: 0 })
+    expect(send('U1', { ch: 'c3' }).ok).toBe(true)
+    const F = w.state().facts
+    expect([canView(F, 'X', 'c3'), canView(F, 'U', 'c3'), canView(F, 'O', 'c3')]).toEqual([
+      false,
+      true,
+      true,
+    ])
+    // a channel that is gone takes no content
+    own('channel', { id: 'c1', name: 'announcements', gone: true })
+    expect(send('O1', { ch: 'c1' })).toEqual(no('channel'))
   })
 
   test('an event whose device the author has no certificate for is refused', () => {

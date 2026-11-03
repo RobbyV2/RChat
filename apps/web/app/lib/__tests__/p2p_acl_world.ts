@@ -1,5 +1,13 @@
 import { afterAll, afterEach, beforeAll, expect } from 'bun:test'
-import { AclReplica, decideContent, identityHead, pastOf, type Verdict } from '../p2p/acl/admit'
+import {
+  AclReplica,
+  CHANNEL_CONTENT,
+  decideContent,
+  identityHead,
+  pastOf,
+  type Verdict,
+} from '../p2p/acl/admit'
+import { orphanDrops } from '../p2p/acl/equivocation'
 import { evaluate } from '../p2p/acl/eval'
 import { ContentView, type ContentEv } from '../p2p/acl/visibility'
 import type { EvalResult, Facts } from '../p2p/acl/facts'
@@ -12,8 +20,10 @@ import {
   PRODUCTION_LIMITS,
   rkey,
   ROLES,
+  SEND,
   SERVER,
   setLimits,
+  VIEW,
   type AclContent,
   type AclEv,
   type Limits,
@@ -27,6 +37,9 @@ import type { World as ModelWorld } from './acl_model/world'
 // admission record and state, and the final state.
 
 export const devOwner = (dev: string) => dev.replace(/[0-9]+$/, '')
+// The model's device certificates: a device belongs to the identity its name starts with; a
+// relayed record's device to its relayer.
+export const testBinds = (e: AclEv) => devOwner(e.dev) === (e.relay ?? e.a)
 
 // The model's limits (smaller than production, so the generators reach every cap).
 export const MODEL_LIMITS: Limits = {
@@ -79,10 +92,40 @@ function seenMap(
   return seen
 }
 
+// The content fields the model reads, per type; the generators put stray ones into some events,
+// which production's whole-value registers would read.
+const MODEL_FIELDS: Record<string, string[]> = {
+  add: ['to', 'code'],
+  uninvite: ['to'],
+  join: [],
+  leave: [],
+  kick: ['to'],
+  ban: ['to'],
+  unban: ['to'],
+  role_create: ['pos', 'bits'],
+  role_move: ['role', 'pos'],
+  role_bits: ['role', 'bit', 'on'],
+  role_del: ['role'],
+  assign: ['to', 'role'],
+  revoke: ['to', 'role'],
+  code: ['h'],
+  code_revoke: ['code'],
+  profile: ['name'],
+  settings: ['name'],
+  mark: [],
+  device_add: [],
+  device_revoke: ['dev', 'seen'],
+  primary_rotate: ['keep', 'seen', 'pcert'],
+  upgrade: ['sigs'],
+}
+
 // A model event in the production format. `mref` (the model replica that saw it) gives the
 // remover's watermark of kick, ban and revoke, which the model doesn't carry.
 export function toProd(e: M.Ev, mref: M.Replica): AclEv {
-  const c = { ...(e.c ?? {}) } as Obj
+  const known = MODEL_FIELDS[e.t]
+  const c = Object.fromEntries(
+    Object.entries(e.c ?? {}).filter(([f]) => known === undefined || known.includes(f))
+  ) as Obj
   if (typeof c.role === 'string') c.role = roleP(c.role)
   switch (e.t) {
     case 'genesis':
@@ -92,7 +135,7 @@ export function toProd(e: M.Ev, mref: M.Replica): AclEv {
           rules: 2,
           nonce: 'n',
           owners: (e.c.owners as string[]).map(ik => ({ ik })),
-          everyone_bits: m2p(e.c.everyone ?? 0),
+          everyone_bits: m2p(e.c.everyone ?? 0) | VIEW | SEND,
           name: 'S',
         } as unknown as AclContent,
       }
@@ -153,11 +196,14 @@ const base = (e: {
   return out
 }
 
-// A production event in the model format.
+// A production event in the model format. A channel register (outside the model) becomes the
+// model's inert future type.
 export function toModel(e: AclEv): M.Ev {
   const c = { ...e.c } as Obj
   if (typeof c.role === 'string') c.role = roleM(c.role)
   switch (e.t) {
+    case 'channel':
+      return { ...base(e), t: 'x_future', c: {} } as M.Ev
     case 'genesis':
       return {
         ...base(e),
@@ -249,7 +295,8 @@ function compare(ids: string[], pr: AclReplica, mr: M.Replica, out: string[]) {
       return
     }
     if (pv !== 'A' || mr.ev(id).t === 'genesis') continue
-    const p = recKey(pr.rec(id))
+    const pRec = pr.rec(id)
+    const p = recKey(pr.ev(id).t === mr.ev(id).t ? pRec : { ...pRec, cls: mr.rec(id).cls })
     const m = recKey(mr.rec(id))
     if (p !== m) {
       out.push(`record of ${id}: ${p}, model ${m}`)
@@ -269,17 +316,85 @@ function compare(ids: string[], pr: AclReplica, mr: M.Replica, out: string[]) {
   if (b !== want) out.push(`batch evaluation differs: ${b} model ${want}`)
 }
 
+// A model universe (genCase) replayed through a production replica.
+export function prodReplica(mw: ModelWorld): AclReplica {
+  const pr = new AclReplica({ binds: testBinds })
+  for (const me of mw.all) pr.receive(toProd(me, mw.ref))
+  return pr
+}
+
+// The model's orphan rule (notes/acl-model/props.ts `orphanDrops`).
+function modelOrphanDrops(ids: string[], st: M.EvalResult, cx: M.Replica): Set<string> {
+  const out = new Set<string>()
+  if (!st.X.size) return out
+  const full = M.forkPoints(ids, cx)
+  const liveKey = (k: string) => {
+    const ep = k.slice(k.indexOf('|') + 1)
+    return ep === '' || !full.RF.has(ep)
+  }
+  const keyFI = (m: Map<string, number>) =>
+    [...m]
+      .filter(([k]) => liveKey(k))
+      .sort()
+      .join(';')
+  const fiFull = keyFI(full.FI)
+  let kept = [...ids]
+  const cands = [...st.X]
+    .filter(x => ids.includes(x))
+    .sort()
+    .reverse()
+  for (let changed = true; changed;) {
+    changed = false
+    for (const id of cands) {
+      if (out.has(id)) continue
+      const t = cx.ev(id).t as string
+      if (t === 'upgrade' || t === 'genesis' || t === 'proof') continue
+      if (kept.some(x => x !== id && cx.anc(x).has(id))) continue
+      const rest = kept.filter(x => x !== id)
+      const f2 = M.forkPoints(rest, cx, [...out, id])
+      if (keyFI(f2.FI) !== fiFull) continue
+      if (
+        [...full.RF].some(x => x !== id && rest.includes(x) && !f2.RF.has(x)) ||
+        [...f2.RF].some(x => !full.RF.has(x))
+      )
+        continue
+      kept = rest
+      out.add(id)
+      changed = true
+    }
+  }
+  return out
+}
+
+// The orphan rule on the final state (§2.3), through both: the same drops, and the kept events
+// with the dropped ones' headers as ghosts evaluate alike.
+function compareOrphans(pr: AclReplica, mr: M.Replica, out: string[]) {
+  const order = [...pr.order]
+  const drops = orphanDrops(order, pr.state(), pr)
+  const mDrops = modelOrphanDrops(order, mr.state(), mr)
+  const key = (d: Set<string>) => [...d].sort().join(',')
+  if (key(drops) !== key(mDrops)) {
+    out.push(`orphan drops differ: ${key(drops)} model ${key(mDrops)}`)
+    return
+  }
+  if (!drops.size) return
+  const kept = order.filter(id => !drops.has(id))
+  const p = evalSummary(evaluate(kept, pr, [...drops]))
+  const m = M.evalSummary(M.evaluate(kept, mr, { ghosts: [...drops] }))
+  if (p !== m) out.push(`evaluation without the orphans differs: ${p} model ${m}`)
+}
+
 // Replays a model universe (genCase) through the production replica and compares.
 export function diffModelWorld(mw: ModelWorld): string[] {
   const out: string[] = []
-  const pr = new AclReplica({ binds: e => devOwner(e.dev) === e.a })
-  for (const me of mw.all) pr.receive(toProd(me, mw.ref))
+  const pr = prodReplica(mw)
   compare(
     mw.all.map(e => e.id),
     pr,
     mw.ref,
     out
   )
+  if (!out.length) compareOrphans(pr, mw.ref, out)
   return out
 }
 
@@ -287,7 +402,7 @@ export function diffModelWorld(mw: ModelWorld): string[] {
 export class TestReplica extends AclReplica {
   private ancs = new Map<string, Set<string>>()
   constructor() {
-    super({ binds: e => devOwner(e.dev) === e.a })
+    super({ binds: testBinds })
   }
   anc(id: string): Set<string> {
     let s = this.ancs.get(id)
@@ -304,6 +419,8 @@ export class TestReplica extends AclReplica {
 }
 
 export interface Opts {
+  // relay the record of identity `actor` from `dev`, another member's device
+  actor?: string
   ap?: string[]
   keepOwn?: boolean
   seq?: number
@@ -322,6 +439,7 @@ export class AclWorld {
   all: AclEv[] = []
   n = 0
   contents: ContentEv[] = []
+  ch?: string
   private top = new Map<string, number>()
   // model: false for universes with types the model lacks (channel, chperm, proof)
   constructor(o: { model?: boolean } = {}) {
@@ -362,7 +480,7 @@ export class AclWorld {
         rules: 2,
         nonce: 'n',
         owners: owners.map(ik => ({ ik })),
-        everyone_bits: everyone,
+        everyone_bits: everyone | VIEW | SEND,
         name: 'S',
       } as unknown as AclContent,
     }
@@ -370,8 +488,14 @@ export class AclWorld {
     this.ref.receive(e)
     return e
   }
+  // A channel that content posts to by default.
+  channel(dev: string, id = 'c0'): AclEv {
+    const e = this.ok(dev, 'channel', { id, name: id })
+    this.ch = id
+    return e
+  }
   build(dev: string, t: string, c: Obj = {}, o: Opts = {}): AclEv {
-    const a = devOwner(dev)
+    const a = o.actor ?? devOwner(dev)
     let ap = o.ap ? [...o.ap] : this.heads()
     if (o.ap && (o.keepOwn ?? (o.seq === undefined && o.aprev === undefined))) {
       const own = this.latestOwn(dev)
@@ -403,6 +527,7 @@ export class AclWorld {
       ts,
       c: cc as AclContent,
     }
+    if (o.actor !== undefined) e.relay = devOwner(dev)
     const aprev = o.aprev === undefined ? last?.id : (o.aprev ?? undefined)
     if (aprev) e.aprev = aprev
     const Fb = this.ref.acl.stateOf(ap).facts
@@ -454,7 +579,10 @@ export class AclWorld {
       seq,
       ap,
       ts: o.ts ?? Math.max(0, ...ap.map(p => this.ref.ev(p).ts)) + 1,
-      c,
+      c:
+        this.ch !== undefined && !('ch' in c) && CHANNEL_CONTENT.includes(t)
+          ? { ...c, ch: this.ch }
+          : c,
     }
     const cprev = o.cprev === undefined ? prevC?.id : (o.cprev ?? undefined)
     if (cprev) m.cprev = cprev
@@ -463,9 +591,7 @@ export class AclWorld {
     return m
   }
   admitContent(m: ContentEv) {
-    return decideContent(m, pastOf(this.ref.acl.ix, m.ap), this.ref.acl.stateOf(m.ap), {
-      binds: e => devOwner(e.dev) === e.a,
-    })
+    return decideContent(m, pastOf(this.ref.acl.ix, m.ap), this.ref.acl.stateOf(m.ap))
   }
   view() {
     return new ContentView(this.ref.acl, this.contents)

@@ -36,6 +36,7 @@ export const SERVER = P.ManageServer
 export const CHANNELS = P.ManageChannels
 export const MESSAGES = P.ManageMessages
 export const SEND = P.SendMessages
+export const VIEW = P.ViewChannel
 export const ALL = 0x7fffffff
 export const MODBITS = KICK | BAN | ROLES | CHANNELS | SERVER | MESSAGES
 export const EVERYONE = 'everyone'
@@ -86,13 +87,19 @@ export const PRODUCTION_LIMITS: Readonly<Limits> = {
   w4: 500,
 }
 
-export const LIM: Limits = { ...PRODUCTION_LIMITS }
+// The limits admission reads. Fixed in the app; tests and scripts (the benchmark) run with
+// others (the model's), set through setLimits.
+export let LIM: Readonly<Limits> = Object.freeze({ ...PRODUCTION_LIMITS })
 export const setLimits = (l: Partial<Limits>) => {
-  Object.assign(LIM, PRODUCTION_LIMITS, l)
+  const env = typeof process === 'undefined' ? 'production' : process.env.NODE_ENV
+  if (env !== 'test' && env !== undefined) throw new Error('acl: admission limits are fixed')
+  LIM = Object.freeze({ ...PRODUCTION_LIMITS, ...l })
 }
 
 export interface Owner {
   ik: string
+  dk?: string
+  dcert?: string
   [k: string]: unknown
 }
 
@@ -113,6 +120,8 @@ export interface AclContent {
   seen?: number | Record<string, number>
   keep?: string[]
   pcert?: string
+  dcert?: string
+  idb?: { ik?: unknown; dcert?: unknown }
   owners?: Owner[]
   everyone_bits?: number
   sigs?: Record<string, string>
@@ -126,10 +135,16 @@ export interface AclContent {
   deny?: number
 }
 
+// `a` is the acting identity. A device_revoke that another member relays (§1.4, §1.6) acts for the
+// record's `ik` in facts, k, self-deny and protection: then `a` is that identity and `relay` the
+// member whose device `dev` signed it; everything else counts it as the relayer's (admit.ts). A
+// relayed primary_rotate is refused: two members could carry one record concurrently, and two
+// concurrent rotations are rotation evidence (§2.3), which only the recovery key may create.
 export interface AclEv {
   id: string
   t: string
   a: string
+  relay?: string
   dev: string
   seq: number
   ap: string[]
@@ -150,6 +165,7 @@ export interface Rec {
   depth: number
   epoch: string
   local: EvalResult
+  // U(e) (§4.1); for a relayed revocation, its relayer's pool there (the relay is in no pool)
   pool?: string[]
 }
 
@@ -172,6 +188,10 @@ export const idOp = (e: AclEv, F: FactsQ | undefined) =>
   e.t === 'device_add' ||
   e.t === 'primary_rotate' ||
   (e.t === 'join' && !(F?.devs.get(e.a)?.has(e.dev) ?? false))
+
+export const relayed = (e: AclEv) => e.relay !== undefined && e.relay !== e.a
+// The identity whose device signed e: its relayer, or its author.
+export const poster = (e: AclEv) => (relayed(e) ? e.relay! : e.a)
 
 // Devices an event introduces: its own device, and a rotation's keep list.
 export function introduces(e: AclEv): string[] {
@@ -378,8 +398,14 @@ export function guards(e: AclEv, F: Facts): boolean {
       return !sameValue(F.profile.get(a), c)
     case 'settings':
       return !sameValue(F.setting, c)
-    case 'channel':
-      return typeof c.id === 'string' && (F.channels.has(c.id) || F.channels.size < LIM.channels)
+    case 'channel': {
+      if (typeof c.id !== 'string') return false
+      const cur = F.channels.get(c.id)
+      if (c.gone === true || (cur !== undefined && cur.gone !== true)) return true
+      let live = 0
+      for (const x of F.channels.values()) if (x.gone !== true) live++
+      return live < LIM.channels
+    }
     case 'chperm': {
       if (typeof c.ch !== 'string' || typeof c.subj !== 'string') return false
       const ov = F.overwrites.get(c.ch)
@@ -390,12 +416,18 @@ export function guards(e: AclEv, F: Facts): boolean {
       return !(d?.has(e.dev) ?? false) && (d?.size ?? 0) < LIM.devCap
     }
     case 'device_revoke':
-      return c.ik === a && (F.devs.get(a)?.has(c.dk) ?? false) && c.dk !== e.dev
+      return (
+        c.ik === a &&
+        (!relayed(e) || F.mem.has(e.relay!)) &&
+        (F.devs.get(a)?.has(c.dk) ?? false) &&
+        c.dk !== e.dev
+      )
     case 'primary_rotate': {
       const d = F.devs.get(a)
       const keep: unknown = c.keep ?? []
       return (
         c.ik === a &&
+        !relayed(e) &&
         Array.isArray(keep) &&
         keep.every(v => typeof v === 'string' && (d?.has(v) ?? false) && v !== e.dev) &&
         new Set([...keep, e.dev]).size <= LIM.devCap
@@ -412,21 +444,22 @@ export function guards(e: AclEv, F: Facts): boolean {
   }
 }
 
-// Whether P may send in channel `ch` (§1.4 overwrites; Task 23 builds the editor): P's
-// permissions, then the overwrites of @everyone, of P's roles (denies, then allows) and of P;
-// a channel with `restrict_send` takes SendMessages only from an allow overwrite. Owners and
-// holders of Manage channels always may.
-export function canSend(F: Facts, P: string, ch: string): boolean {
-  if (F.owners.has(P)) return true
-  const base = permsQ(F, P)
-  if (base & CHANNELS) return true
+// P's permissions in channel `ch`, in Discord order (Task 23 builds the editor): owners and holders
+// of Manage channels have every bit; else P's permissions, the @everyone overwrite, the channel's
+// restrictions (restrict_view and restrict_send clear ViewChannel and SendMessages from that
+// baseline), the denies then the allows of P's roles' overwrites, and P's own overwrite.
+export function channelPerms(F: Facts, P: string, ch: string): number {
+  if (F.owners.has(P)) return ALL
+  let m = permsQ(F, P)
+  if (m & CHANNELS) return ALL
   const ov = F.overwrites.get(ch)
-  const restricted = F.channels.get(ch)?.restrict_send === true
-  let m = restricted ? base & ~SEND : base
+  const c = F.channels.get(ch)
   const apply = (o: AclContent | undefined) => {
     if (o) m = (m & ~(o.deny ?? 0)) | (o.allow ?? 0)
   }
   apply(ov?.get(`r:${EVERYONE}`))
+  if (c?.restrict_view === true) m &= ~VIEW
+  if (c?.restrict_send === true) m &= ~SEND
   let deny = 0
   let allow = 0
   for (const R of F.holds.get(P) ?? []) {
@@ -436,12 +469,17 @@ export function canSend(F: Facts, P: string, ch: string): boolean {
   }
   m = (m & ~deny) | allow
   apply(ov?.get(`u:${P}`))
-  return (m & SEND) !== 0
+  return m
 }
+export const canView = (F: Facts, P: string, ch: string) => (channelPerms(F, P, ch) & VIEW) !== 0
+// Sending needs ViewChannel and SendMessages.
+export const canSend = (F: Facts, P: string, ch: string) =>
+  (channelPerms(F, P, ch) & (VIEW | SEND)) === (VIEW | SEND)
 
-// The signing device is live for its identity; join, device_add and primary_rotate establish
-// their own device.
+// The signing device is live for its identity (a relayer's, for a relayed record); join,
+// device_add and primary_rotate establish their own device.
 export function deviceOk(e: AclEv, F: FactsQ): boolean {
+  if (relayed(e)) return F.devs.get(e.relay!)?.has(e.dev) ?? false
   if (e.t === 'join' || e.t === 'device_add' || e.t === 'primary_rotate')
     return !F.revoked.has(e.dev)
   return F.devs.get(e.a)?.has(e.dev) ?? false
@@ -574,6 +612,7 @@ const SCHEMA: Record<string, Record<string, Kind>> = {
   kick: { to: 'str', seen: 'seen' },
   ban: { to: 'str', seen: 'seen', wipe: 'bool' },
   unban: { to: 'str' },
+  join: { idb: 'rec' },
   leave: { seen: 'seen' },
   role_create: { pos: 'int', bits: 'mask' },
   role_move: { role: 'str', pos: 'int' },
@@ -582,6 +621,7 @@ const SCHEMA: Record<string, Record<string, Kind>> = {
   assign: { to: 'str', role: 'str' },
   revoke: { to: 'str', role: 'str', seen: 'seen' },
   code_revoke: { code: 'str' },
+  device_add: { dcert: 'str' },
   device_revoke: { ik: 'str', dk: 'str' },
   primary_rotate: { ik: 'str', seen: 'seen', pcert: 'str' },
   upgrade: { sigs: 'rec' },
@@ -609,17 +649,19 @@ const REQUIRED: Record<string, string[]> = {
   proof: ['x', 'y'],
 }
 
-// The fields an ACL type reads have their types; fields a newer version adds are kept, unread.
+// The fields an ACL type reads have their types; fields a newer version adds are kept, unread. A
+// genesis of another rules version needs only an integer `rules` (§1.2: shown read-only).
 export function aclContentOk(t: string, c: unknown): c is AclContent {
   if (!isRecord(c)) return false
   if (t === 'genesis')
     return (
-      c.rules === RULES_VERSION &&
-      Array.isArray(c.owners) &&
-      c.owners.length > 0 &&
-      c.owners.every(o => isRecord(o) && isStr(o.ik)) &&
-      isMask(c.everyone_bits) &&
-      (c.from === undefined || (isRecord(c.from) && isStr(c.from.srv)))
+      isInt(c.rules) &&
+      (c.rules !== RULES_VERSION ||
+        (Array.isArray(c.owners) &&
+          c.owners.length > 0 &&
+          c.owners.every(o => isRecord(o) && isStr(o.ik)) &&
+          isMask(c.everyone_bits) &&
+          (c.from === undefined || (isRecord(c.from) && isStr(c.from.srv)))))
     )
   for (const f of REQUIRED[t] ?? []) if (c[f] === undefined) return false
   for (const [f, k] of Object.entries(SCHEMA[t] ?? {}))

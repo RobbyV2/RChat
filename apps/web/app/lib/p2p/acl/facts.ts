@@ -6,6 +6,7 @@ import {
   EVERYONE,
   gt,
   INVITE,
+  introduces,
   NEG,
   TOP,
   type AclContent,
@@ -541,7 +542,7 @@ export abstract class View {
           for (const rr of ix.rotBy.get(xa) ?? EMPTY) {
             if (rr === x || !this.effIn(rr) || ix.before(rr, x)) continue
             const re = ix.ev[rr]
-            if (re.dev === v || (re.c.keep ?? []).includes(v)) continue
+            if (introduces(re).includes(v)) continue
             r = true
             break
           }
@@ -583,7 +584,8 @@ export abstract class View {
     const r = this.register(this.ix.settingsEv)
     if (!r) return undefined
     const c = this.ix.ev[r.win].c
-    return r.maxes.some(x => this.ix.ev[x].c.history === 'joined') ? { ...c, history: 'joined' } : c
+    const joined = (h: unknown) => h !== undefined && h !== 'shared'
+    return r.maxes.some(x => joined(this.ix.ev[x].c.history)) ? { ...c, history: 'joined' } : c
   }
   channel(id: string): AclContent | undefined {
     const r = this.register(this.ix.channelEv.get(id) ?? EMPTY)

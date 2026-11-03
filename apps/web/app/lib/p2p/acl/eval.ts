@@ -16,6 +16,7 @@ import {
   NEG,
   permsQ,
   protectedTarget,
+  relayed,
   rkey,
   target,
   TOP,
@@ -428,6 +429,7 @@ export class FastEval extends Equiv {
   effOrd: number[] = []
   effRank: (Rank | undefined)[] = []
   strataInfo: StratumInfo[] = []
+  onStratum?: (info: StratumInfo) => void
   stats: EvalStats = {
     strata: 0,
     causes: 0,
@@ -555,7 +557,8 @@ export class FastEval extends Equiv {
         if (v) return v
       }
       const extra = new Set<number>()
-      for (const d of this.relevantHighs(ix.ev[o].a)) if (this.frontier(o, d)) extra.add(d)
+      for (const d of this.relevantHighs(ix.ev[o].a))
+        if (st.high(d) && this.frontier(o, d)) extra.add(d)
       const v = minR(ix.k(o), new Mono(ix, anchorOf(ix, o), st, N, extra).me())
       if (!N) ksMemo.set(o, v)
       return v
@@ -663,17 +666,25 @@ export class FastEval extends Equiv {
       if (!v) vMemo.set(key, (v = new CauseView(ix, g, st, new Set(later))))
       return v
     }
+    // exposure to every cause of this stratum other than revocations and withdrawals, decided by
+    // the author's rank bound alone (true), or to be read in the cause's view (false)
+    const boundExposed = (pe: AclEv) => {
+      if (ix.owners.has(pe.a)) return false
+      const ub = this.rankBound(pe.a)
+      return pe.t === 'join' ? cmp(ub, kk) < 0 : !gt(ub, kk)
+    }
     const exposedE = (pe: AclEv, g: number, V: () => View): boolean => {
       const ge = ix.ev[g]
-      const P = pe.a
-      if (ix.owners.has(P)) return false
-      const ub = this.rankBound(P)
+      if (ix.owners.has(pe.a)) return false
       if (isRevocationT(ge.t)) {
-        if (!gt(ub, kk)) return true
-      } else if (pe.t === 'join') {
-        if (isWithdrawalT(ge.t) && !(permsQ(ix.rec[g].local.facts, ge.a) & KICK)) return false
-        if (cmp(ub, kk) < 0) return true
-      } else if (!gt(ub, kk)) return true
+        if (!gt(this.rankBound(pe.a), kk)) return true
+      } else if (
+        pe.t === 'join' &&
+        isWithdrawalT(ge.t) &&
+        !(permsQ(ix.rec[g].local.facts, ge.a) & KICK)
+      )
+        return false
+      else if (boundExposed(pe)) return true
       return exposedTo(pe, ge, ix.rec[g], V().facts(), kk)
     }
     const exposed = (p: number, g: number, V: () => View) => exposedE(ix.ev[p], g, V)
@@ -746,6 +757,7 @@ export class FastEval extends Equiv {
       below,
       authorizedK,
       exposed,
+      boundExposed,
       Vfor,
       uses,
       maxW,
@@ -778,14 +790,16 @@ export class FastEval extends Equiv {
         termDc,
         floorK
       )
-      this.strataInfo.push({
+      const info: StratumInfo = {
         s,
         kk,
         st,
         causes,
         inW,
         exposed: (pe, g) => exposedE(pe, g, () => Vof(g)),
-      })
+      }
+      this.strataInfo.push(info)
+      this.onStratum?.(info)
     }
     for (const d of [...selves, ...effNS]) {
       effOrd[d] = s
@@ -807,6 +821,7 @@ export class FastEval extends Equiv {
     below: (o: number, N?: NPred) => boolean,
     authorizedK: (o: number) => boolean,
     exposed: (p: number, g: number, V: () => View) => boolean,
+    boundExposed: (pe: AclEv) => boolean,
     Vfor: (g: number, p: number) => View,
     uses: (o: number, d: number) => boolean,
     maxW: (o: number, R: string) => number[],
@@ -815,7 +830,6 @@ export class FastEval extends Equiv {
     monoK: (o: number) => Mono
   ) {
     const ix = this.ix
-    const kk = st.kk
     interface Ch {
       c: number[]
       rk: Int32Array
@@ -904,6 +918,39 @@ export class FastEval extends Equiv {
       }
       return fr.length > 0 || seen.length > 0
     }
+    // A reader o of a group whose chains are `chs`: null if nothing of the group can cut it; else
+    // whether its rank bound decides its exposure to the group's denies (role-target denies: never
+    // revocations or withdrawals) and the visit loop's pair test, applied to the entries o saw but
+    // not as effective. `fr` then holds o's concurrent ranges as (chain, lo, hi).
+    const readerOf = (o: number, chs: number[]) => {
+      if (!alive(o) || ix.owners.has(ix.ev[o].a) || !frontierOf(o, chs)) return null
+      if (!below(o) || !authorizedK(o)) return null
+      const allExp = boundExposed(ix.ev[o])
+      const pair = (d: number) => {
+        if ((allExp || exposed(o, d, () => Vfor(d, o))) && uses(o, d)) addD(d, o)
+      }
+      for (const d of seen) pair(d)
+      return { allExp, pair }
+    }
+    // the readers of a role-wide deny of this kind on its role, collected once per stratum
+    const rdMemo = new Map<string, number[]>()
+    let rdStamp: Int32Array | undefined
+    const readersOf = (d: number): number[] => {
+      const key = `${ix.ev[d].t}|${ix.ev[d].c.role}`
+      let l = rdMemo.get(key)
+      if (!l) {
+        const out: number[] = []
+        const k = rdMemo.size
+        const stamp = (rdStamp ??= new Int32Array(ix.n).fill(-1))
+        this.readers(d, o => {
+          if (stamp[o] === k) return
+          stamp[o] = k
+          out.push(o)
+        })
+        rdMemo.set(key, (l = out))
+      }
+      return l
+    }
     for (const [R, l] of byRoleMv) {
       const ri = roles.length
       const gs = [...l].sort((x, y) => ix.ev[x].c.pos - ix.ev[y].c.pos || x - y)
@@ -947,15 +994,9 @@ export class FastEval extends Equiv {
         return (guess = lo)
       }
       const moveOp = (o: number) => {
-        if (!alive(o) || !frontierOf(o, chs)) return
-        if (!below(o) || !authorizedK(o)) return
-        const pe = ix.ev[o]
-        const ub = this.rankBound(pe.a)
-        const allExp = pe.t === 'join' ? cmp(ub, kk) < 0 : !gt(ub, kk)
-        const pair = (d: number) => {
-          if ((allExp || exposed(o, d, () => Vfor(d, o))) && uses(o, d)) addD(d, o)
-        }
-        for (const d of seen) pair(d)
+        const rd = readerOf(o, chs)
+        if (!rd) return
+        const { allExp, pair } = rd
         for (let t = 0; t < fr.length; t += 3) {
           const ci = fr[t]
           const c = chains[ci].c
@@ -997,15 +1038,9 @@ export class FastEval extends Equiv {
       roles.push({ gs, terms: false })
       const chs = chainsOf(gs, ri)
       const clearOp = (o: number) => {
-        if (!alive(o) || ix.owners.has(ix.ev[o].a) || !frontierOf(o, chs)) return
-        if (!below(o) || !authorizedK(o)) return
-        const pe = ix.ev[o]
-        const ub = this.rankBound(pe.a)
-        const allExp = pe.t === 'join' ? cmp(ub, kk) < 0 : !gt(ub, kk)
-        const pair = (d: number) => {
-          if ((allExp || exposed(o, d, () => Vfor(d, o))) && uses(o, d)) addD(d, o)
-        }
-        for (const d of seen) pair(d)
+        const rd = readerOf(o, chs)
+        if (!rd) return
+        const { allExp, pair } = rd
         for (let t = 0; t < fr.length; t += 3) {
           const ci = fr[t]
           const c = chains[ci].c
@@ -1020,12 +1055,7 @@ export class FastEval extends Equiv {
           }
         }
       }
-      const vis = new Uint8Array(ix.n)
-      this.readers(gs[0], o => {
-        if (vis[o]) return
-        vis[o] = 1
-        clearOp(o)
-      })
+      for (const o of readersOf(gs[0])) clearOp(o)
     }
     const cutBy = new Set<number>()
     const byChain = new Map<number, number[]>()
@@ -1440,7 +1470,13 @@ export class FastEval extends Equiv {
     this.maxPos.clear()
     const e = ix.ev[i]
     const pl = ix.rec[i].pool
-    if (pl && !ix.owners.has(e.a) && e.t !== 'primary_rotate' && pl.length > LIM.poolU)
+    if (
+      pl &&
+      !ix.owners.has(e.a) &&
+      e.t !== 'primary_rotate' &&
+      !relayed(e) &&
+      pl.length > LIM.poolU
+    )
       this.PC.add(ix.ids[i])
     if (this.candidateIn(i, this.F, this.FI, this.RF, this.PC)) {
       this.X[i] = 1

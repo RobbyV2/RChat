@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { genCase } from './acl_model/gen'
 import type { Ev } from './acl_model/model'
 import { World } from './acl_model/world'
-import { diffModelWorld, useModelLimits, useProductionLimits } from './p2p_acl_world'
+import { FastEval, type StratumInfo } from '../p2p/acl/eval'
+import { diffModelWorld, prodReplica, useModelLimits, useProductionLimits } from './p2p_acl_world'
 
 // The production ACL modules against the executable reference model (spec §7.2, §8.1): random
 // adversarial universes from the model's generator (a copy of notes/acl-model/gen.ts, model
@@ -41,6 +42,10 @@ test('seed 5019136: a range term that cuts nothing is no direct cut', () => {
   expect(run([5_019_136], s => genCase(s).w)).toEqual([])
 })
 
+test('seed 8414: a stray content field of a profile write is not part of the model register', () => {
+  expect(run([8414], s => genCase(s).w)).toEqual([])
+})
+
 // The saved universes behind the failures of §7.7 (revision-2 format converted as the model's
 // fixtures test does).
 const toR3 = (events: Ev[]): Ev[] => {
@@ -73,3 +78,34 @@ for (const f of readdirSync(dir)
     }
     expect(diffModelWorld(w)).toEqual([])
   })
+
+// §3.5 cascadeCut asks a stratum's in(x, W) for content authors' worlds after the stratum loop:
+// those answers must equal the ones the loop itself would give (higher strata only in k*).
+test('content worlds asked after the stratum loop equal those asked inside it', () => {
+  const fails: string[] = []
+  const worldsOf = (n: number) => {
+    const all = (BigInt(1) << BigInt(n)) - BigInt(1)
+    if (n <= 4) return Array.from({ length: Number(all) }, (_, i) => BigInt(i + 1))
+    return [all, ...Array.from({ length: n }, (_, i) => all ^ (BigInt(1) << BigInt(i)))]
+  }
+  const ask = (fe: FastEval, info: StratumInfo, out: Map<string, boolean>) => {
+    for (let x = 0; x < fe.cutOrd.length; x++)
+      if (fe.cutOrd[x] === info.s)
+        for (const W of worldsOf(info.causes.length)) out.set(`${info.s}|${x}|${W}`, info.inW(x, W))
+  }
+  for (const s of range(1, 600)) {
+    const ix = prodReplica(genCase(s).w).acl.ix
+    const inside = new Map<string, boolean>()
+    const a = new FastEval(ix)
+    a.onStratum = info => ask(a, info, inside)
+    a.run()
+    const b = new FastEval(ix)
+    b.run()
+    const after = new Map<string, boolean>()
+    for (const info of b.strataInfo) ask(b, info, after)
+    for (const [k, v] of inside)
+      if (after.get(k) !== v) fails.push(`seed ${s}: in(${k}) inside ${v}, after ${after.get(k)}`)
+    if (fails.length > 5) break
+  }
+  expect(fails).toEqual([])
+}, 600_000)

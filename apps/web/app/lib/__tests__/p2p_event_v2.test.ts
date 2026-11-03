@@ -18,15 +18,29 @@ import {
 } from '../p2p/event'
 import { b64u, concat, utf8 } from '../p2p/canonical'
 import { keyId, newKeyPair, sign } from '../p2p/keys'
+import { P } from '../p2p/acl/rules'
+import { genesisBundle, signDeviceCert2 } from '../p2p/acl/binding'
 
 // The v2 event format of P2P servers (ACL spec §1.2): cores, ids, signatures, schemas, and the
 // way into the ACL core.
 
 const author = (): Author => ({ ik: newKeyPair(), dk: newKeyPair() })
+// An identity bundle for a join that introduces the author's device at identity-chain position
+// `iprev` of server `s`.
+const idbOf = (x: Author, s = srv, iprev?: string) => ({
+  ik: keyId(x.ik.pk),
+  dcert: signDeviceCert2(x.ik, s, keyId(x.ik.pk), keyId(x.dk.pk), iprev),
+})
 const O = author()
 const U = author()
-const owner = { ik: keyId(O.ik.pk) }
-const genesisContent = { rules: 2, nonce: 'AAAA', owners: [owner], everyone_bits: 64, name: 'S' }
+const owner = genesisBundle(O.ik, keyId(O.dk.pk), 'AAAA')
+const genesisContent = {
+  rules: 2,
+  nonce: 'AAAA',
+  owners: [owner],
+  everyone_bits: P.Invite | P.ViewChannel | P.SendMessages,
+  name: 'S',
+}
 const g = buildEvent2(O, null, 'genesis', 'a', genesisContent, { seq: 0 }, 1)
 const srv = g.id
 
@@ -36,6 +50,16 @@ describe('v2 events', () => {
     expect(v.ok && v.id).toBe(srv)
     expect(eventId2(g.wire.ev)).toBe(srv)
     expect(validate2(g.wire, srv)).toEqual({ ok: false, why: 'server' })
+  })
+
+  test('a genesis of an unknown rules version is valid on the wire; its events are not checked against rules 2', () => {
+    const g3 = buildEvent2(O, null, 'genesis', 'a', { rules: 3, owners: 'new' }, { seq: 0 }, 1)
+    const v = validate2(g3.wire, null)
+    expect(v.ok).toBe(true)
+    expect(validate2({ ...g3.wire, c: { rules: 'three' } }, null).ok).toBe(false)
+    const k = buildEvent2(O, g3.id, 'kick', 'a', { to: 5 }, { seq: 1, ap: [g3.id] }, 2)
+    expect(validate2(k.wire, g3.id, 3).ok).toBe(true)
+    expect(validate2(k.wire, g3.id)).toEqual({ ok: false, why: 'content' })
   })
 
   test('ids and signatures are tagged v2', () => {
@@ -131,12 +155,7 @@ describe('v2 events', () => {
   })
 
   test('into the ACL core: a genesis, an invite and a join are admitted; content is admitted at its position', () => {
-    const certs = new Map([
-      [keyId(O.dk.pk), keyId(O.ik.pk)],
-      [keyId(U.dk.pk), keyId(U.ik.pk)],
-    ])
-    const bound = { binds: (e: { a: string; dev: string }) => certs.get(e.dev) === e.a }
-    const r = new AclReplica(bound)
+    const r = new AclReplica()
     const recv = (w: WireV2) => {
       const v = validate2(w, w.ev.t === 'genesis' ? null : srv)
       if (!v.ok) throw new Error(v.why)
@@ -153,7 +172,17 @@ describe('v2 events', () => {
       2
     )
     expect(recv(add.wire).s).toBe('A')
-    const join = buildEvent2(U, srv, 'join', 'a', {}, { seq: 0, ap: [add.id] }, 3)
+    const chan = buildEvent2(
+      O,
+      srv,
+      'channel',
+      'a',
+      { id: 'c0', name: 'general' },
+      { seq: 2, ap: [add.id], aprev: add.id },
+      2
+    )
+    expect(recv(chan.wire).s).toBe('A')
+    const join = buildEvent2(U, srv, 'join', 'a', { idb: idbOf(U) }, { seq: 0, ap: [chan.id] }, 3)
     expect(recv(join.wire).s).toBe('A')
     expect(r.state().facts.mem.has(keyId(U.ik.pk))).toBe(true)
     const msg = buildEvent2(
@@ -161,32 +190,166 @@ describe('v2 events', () => {
       srv,
       'msg',
       'c',
-      { body: 'hello' },
+      { body: 'hello', ch: 'c0' },
       { seq: 1, ap: [join.id], prev: [] },
       4
     )
     const m = contentEvOf(msg.id, msg.wire)
-    expect(decideContent(m, pastOf(r.acl.ix, m.ap), r.acl.stateOf(m.ap), bound).ok).toBe(true)
+    expect(decideContent(m, pastOf(r.acl.ix, m.ap), r.acl.stateOf(m.ap)).ok).toBe(true)
     const stranger = author()
     const x = buildEvent2(
       stranger,
       srv,
       'msg',
       'c',
-      { body: 'no' },
+      { body: 'no', ch: 'c0' },
       { seq: 1, ap: [join.id], prev: [] },
       4
     )
     const mx = contentEvOf(x.id, x.wire)
-    expect(decideContent(mx, pastOf(r.acl.ix, mx.ap), r.acl.stateOf(mx.ap), bound).ok).toBe(false)
+    expect(decideContent(mx, pastOf(r.acl.ix, mx.ap), r.acl.stateOf(mx.ap)).ok).toBe(false)
+  })
+
+  test("relayed device revocations (§1.4, §1.6): any member may carry an identity's signed record; the core reads it as that identity's; rotations are never relayed", () => {
+    const R = author()
+    const R_ = keyId(R.ik.pk)
+    const O_ = keyId(O.ik.pk)
+    const dk2 = keyId(newKeyPair().pk)
+    const chain = { seq: 1, ap: [srv], aprev: srv }
+    const rev = (rec: string) =>
+      buildEvent2(R, srv, 'device_revoke', 'a', { ik: O_, dk: dk2, seen: 3, rec }, chain, 2)
+    const ok = validate2(rev(signRevocation2(O.ik, srv, dk2, 3)).wire, srv)
+    expect(ok.ok).toBe(true)
+    const e = ok.ok ? aclEvOf(ok.id, ok.wire) : null
+    expect([e?.a, e?.relay, e?.dev]).toEqual([O_, R_, keyId(R.dk.pk)])
+    // the relayer can't sign the record itself
+    expect(validate2(rev(signRevocation2(R.ik, srv, dk2, 3)).wire, srv).ok).toBe(false)
+    // a rotation is posted by the identity's own device: its record can't be carried by another
+    // member, signed for the posting device or for none
+    const rc = { pcert: 'p2', keep: [], seen: {} }
+    const rot = (by: Author, rsig: string) =>
+      buildEvent2(
+        by,
+        srv,
+        'primary_rotate',
+        'a',
+        { ik: O_, ...rc, rsig },
+        { ...chain, iprev: srv },
+        2
+      )
+    const forOwn = signRotation2(O.ik, srv, keyId(O.dk.pk), srv, rc)
+    expect(validate2(rot(O, forOwn).wire, srv).ok).toBe(true)
+    expect(validate2(rot(R, forOwn).wire, srv).ok).toBe(false)
+    expect(validate2(rot(R, signRotation2(O.ik, srv, keyId(R.dk.pk), srv, rc)).wire, srv).ok).toBe(
+      false
+    )
+    expect(validate2(rot(R, signRotation2(O.ik, srv, '', srv, rc)).wire, srv).ok).toBe(false)
+  })
+
+  test("A1: an introduction's certificate is signed by the identity's primary over the server, the device and the identity-chain position; a forged or mismatched one is refused", () => {
+    const r = new AclReplica()
+    const recv = (w: WireV2) => {
+      const v = validate2(w, w.ev.t === 'genesis' ? null : srv)
+      if (!v.ok) return { s: 'M', why: v.why }
+      return r.receive(aclEvOf(v.id, v.wire))
+    }
+    const thief = author()
+    const O_ = keyId(O.ik.pk)
+    const U_ = keyId(U.ik.pk)
+    // genesis: the author's owner bundle certifies the posting device
+    const gen = (owners: unknown[]) => {
+      const x = buildEvent2(O, null, 'genesis', 'a', { ...genesisContent, owners }, { seq: 0 }, 1)
+      return new AclReplica().receive(aclEvOf(x.id, x.wire))
+    }
+    const genesisRefused = { s: 'R' as const, why: 'genesis' }
+    expect(gen([{ ik: O_ }])).toEqual(genesisRefused)
+    expect(gen([genesisBundle(O.ik, keyId(thief.dk.pk), 'AAAA')])).toEqual(genesisRefused)
+    expect(gen([genesisBundle(O.ik, keyId(O.dk.pk), 'BBBB')])).toEqual(genesisRefused)
+    // co-owners: each one's own bundle for this genesis, verified to its identity
+    const C = author()
+    const cb = genesisBundle(C.ik, keyId(C.dk.pk), 'AAAA')
+    expect(gen([owner, { ik: cb.ik }])).toEqual(genesisRefused)
+    const byCreator = genesisBundle(O.ik, keyId(C.dk.pk), 'AAAA')
+    expect(gen([owner, { ...byCreator, ik: cb.ik }])).toEqual(genesisRefused)
+    expect(
+      gen([owner, { ...cb, dcert: signDeviceCert2(O.ik, 'genesis:AAAA', cb.ik, cb.dk) }])
+    ).toEqual(genesisRefused)
+    expect(gen([owner, genesisBundle(C.ik, keyId(C.dk.pk), 'BBBB')])).toEqual(genesisRefused)
+    expect(gen([owner, cb])).toEqual({ s: 'A' })
+    expect(gen([{ ik: O_, dcert: signDeviceCert2(thief.ik, '', O_, keyId(O.dk.pk)) }])).toEqual(
+      genesisRefused
+    )
+    expect(recv(g.wire).s).toBe('A')
+    const add = buildEvent2(O, srv, 'add', 'a', { to: U_ }, { seq: 1, ap: [srv], aprev: srv }, 2)
+    expect(recv(add.wire).s).toBe('A')
+    // join: the bundle certifies the joining device at the identity's first position
+    const join = (c: Record<string, unknown>) =>
+      buildEvent2(U, srv, 'join', 'a', c, { seq: 0, ap: [add.id] }, 3)
+    const dev = { s: 'R' as const, why: 'dev' }
+    expect(recv(join({}).wire)).toEqual(dev)
+    expect(recv(join({ idb: idbOf(U, 'AAAA') }).wire)).toEqual(dev)
+    expect(recv(join({ idb: idbOf(U, srv, add.id) }).wire)).toEqual(dev)
+    expect(recv(join({ idb: { ...idbOf(U), ik: O_ } }).wire)).toEqual(dev)
+    const forged = signDeviceCert2(thief.ik, srv, U_, keyId(U.dk.pk))
+    expect(recv(join({ idb: { ik: U_, dcert: forged } }).wire)).toEqual(dev)
+    const j = join({ idb: idbOf(U) })
+    expect(recv(j.wire).s).toBe('A')
+    // a device of another identity is never live for U
+    const borrowed = buildEvent2(
+      { ik: U.ik, dk: O.dk },
+      srv,
+      'mark',
+      'a',
+      {},
+      {
+        seq: 2,
+        ap: [j.id],
+        aprev: add.id,
+      },
+      4
+    )
+    expect(recv(borrowed.wire)).toEqual({ s: 'R', why: 'auth' })
+    // device_add: signed by the live primary (U's identity key) over its iprev
+    const U2: Author = { ik: U.ik, dk: newKeyPair() }
+    const d2 = keyId(U2.dk.pk)
+    const dadd = (by: Author, dk: string, cert: string, ap: string, iprev: string, ts = 7) =>
+      buildEvent2(by, srv, 'device_add', 'a', { dcert: cert }, { seq: 0, ap: [ap], iprev }, ts)
+    expect(recv(dadd(U2, d2, signDeviceCert2(U2.dk, srv, U_, d2, j.id), j.id, j.id).wire)).toEqual(
+      dev
+    )
+    expect(recv(dadd(U2, d2, signDeviceCert2(U.ik, srv, U_, d2, srv), j.id, j.id).wire)).toEqual(
+      dev
+    )
+    const a2 = dadd(U2, d2, signDeviceCert2(U.ik, srv, U_, d2, j.id), j.id, j.id)
+    expect(recv(a2.wire).s).toBe('A')
+    // a rotation that names a new primary key: from then on only that key certifies devices
+    const P2 = newKeyPair()
+    const rc = { pcert: keyId(P2.pk), keep: [d2], seen: {} }
+    const rsig = signRotation2(U.ik, srv, keyId(U.dk.pk), a2.id, rc)
+    const rot = buildEvent2(
+      U,
+      srv,
+      'primary_rotate',
+      'a',
+      { ik: U_, ...rc, rsig },
+      { seq: 1, ap: [a2.id], aprev: j.id, iprev: a2.id },
+      8
+    )
+    expect(recv(rot.wire).s).toBe('A')
+    const U3: Author = { ik: U.ik, dk: newKeyPair() }
+    const d3 = keyId(U3.dk.pk)
+    expect(
+      recv(dadd(U3, d3, signDeviceCert2(U.ik, srv, U_, d3, rot.id), rot.id, rot.id, 9).wire)
+    ).toEqual(dev)
+    const a3 = dadd(U3, d3, signDeviceCert2(P2, srv, U_, d3, rot.id), rot.id, rot.id, 9)
+    expect(recv(a3.wire)).toEqual({ s: 'A' })
+    expect([...(r.state().facts.devs.get(U_) ?? [])].sort()).toEqual(
+      [keyId(U.dk.pk), d2, d3].sort()
+    )
   })
 
   test('a proof carries two signed headers of one device, verified on the wire; the core lowers F with them', () => {
-    const certs = new Map([
-      [keyId(O.dk.pk), keyId(O.ik.pk)],
-      [keyId(U.dk.pk), keyId(U.ik.pk)],
-    ])
-    const r = new AclReplica({ binds: e => certs.get(e.dev) === e.a })
+    const r = new AclReplica()
     const recv = (w: WireV2) => {
       const v = validate2(w, w.ev.t === 'genesis' ? null : srv)
       if (!v.ok) return { s: 'M', why: v.why }
@@ -203,8 +366,8 @@ describe('v2 events', () => {
       2
     )
     recv(add.wire)
-    const join = buildEvent2(U, srv, 'join', 'a', {}, { seq: 0, ap: [add.id] }, 3)
-    recv(join.wire)
+    const join = buildEvent2(U, srv, 'join', 'a', { idb: idbOf(U) }, { seq: 0, ap: [add.id] }, 3)
+    expect(recv(join.wire).s).toBe('A')
     // U's device signs two events at one seq; the second is only ever seen inside a proof
     const m1 = buildEvent2(U, srv, 'mark', 'a', {}, { seq: 1, ap: [join.id], aprev: join.id }, 4)
     const m2 = buildEvent2(
@@ -243,11 +406,10 @@ describe('v2 events', () => {
 
   test("an upgrade carries every other genesis owner's countersignature, verified on the wire", () => {
     const B = author()
-    const owners = [{ ik: keyId(O.ik.pk) }, { ik: keyId(B.ik.pk) }]
+    const owners = [owner, genesisBundle(B.ik, keyId(B.dk.pk), 'AAAA')]
     const g2 = buildEvent2(O, null, 'genesis', 'a', { ...genesisContent, owners }, { seq: 0 }, 1)
     const s2 = g2.id
-    const certs = new Map([[keyId(O.dk.pk), keyId(O.ik.pk)]])
-    const r = new AclReplica({ binds: e => certs.get(e.dev) === e.a })
+    const r = new AclReplica()
     r.receive(aclEvOf(g2.id, g2.wire))
     const next = { v: 2, t: 'genesis', note: 'the new server' }
     const up = (sigs: Record<string, string>) =>

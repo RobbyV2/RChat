@@ -1,6 +1,6 @@
 import { fiOf, type EvalResult } from './facts'
 import { EMPTY, Ix, pushM } from './reach'
-import { introduces, LIM, type AclEv, type Ctx } from './rules'
+import { introduces, LIM, poster, relayed, type AclEv, type Ctx } from './rules'
 
 // Equivocation (spec §2.3): device and identity fork points (FI per epoch), rotation and race
 // evidence, pool candidates (W3(g)), candidates, the void set X, and the revocation tails of §3.1.
@@ -146,7 +146,8 @@ export class Equiv {
     const PC = new Set<string>()
     const byA = new Map<string, number[]>()
     for (let i = 0; i < ix.n; i++)
-      if (this.inEv(i) && ix.rec[i].pool && !ix.owners.has(ix.ev[i].a)) pushM(byA, ix.ev[i].a, i)
+      if (this.inEv(i) && ix.rec[i].pool && !ix.owners.has(ix.ev[i].a) && !relayed(ix.ev[i]))
+        pushM(byA, ix.ev[i].a, i)
     let stamp: Int32Array | undefined
     let cur = 0
     let cnt = 0
@@ -275,13 +276,14 @@ export class Equiv {
       (e.t === 'primary_rotate' || r.depth < fiOf(this.FI, e.a, r.epoch))
     )
   }
-  // Some identity op of w's own identity in C(w) introduces w.dev cleanly.
+  // Some identity op of the identity whose device signed w, in C(w), introduces w.dev cleanly.
   private introducedCleanly(w: number) {
     const ix = this.ix
     const we = ix.ev[w]
+    const by = poster(we)
     for (const x of ix.introEv.get(we.dev) ?? EMPTY) {
       if (x !== w && !ix.has(w, x)) continue
-      if (ix.rec[x].depth < 0 || ix.ev[x].a !== we.a) continue
+      if (ix.rec[x].depth < 0 || ix.ev[x].a !== by) continue
       if (this.cleanIntro(x)) return true
     }
     return false
@@ -291,7 +293,7 @@ export class Equiv {
   droppedS(r: number, skip: (x: number) => boolean = () => false): string[] {
     const ix = this.ix
     const re = ix.ev[r]
-    const keep = new Set<string>([re.dev, ...(re.c.keep ?? [])])
+    const keep = new Set<string>(introduces(re))
     const out = new Set<string>()
     for (const x of ix.introBy.get(re.a) ?? EMPTY) {
       if (x === r || !this.inS(x) || ix.has(x, r) || skip(x)) continue
@@ -366,7 +368,9 @@ export class Equiv {
       if (!this.candidateIn(i, F, FI, this.RF, this.PC)) continue
       // witnessed: a descendant by another identity, clean, in good faith; candidacy only grows
       // with the set, so the search stops at a w in whose St(w) i is a candidate
+      // a witness is of another identity than the candidate's, and than its relayer's
       const a = ix.ev[i].a
+      const pa = poster(ix.ev[i])
       let wit = false
       const st = [i]
       while (st.length && !wit) {
@@ -376,7 +380,9 @@ export class Equiv {
           seen[w] = i
           const lo = ix.rec[w].local
           if (this.candidateIn(i, lo.F, lo.FI, lo.RF, lo.PC)) continue
-          if (ix.ev[w].a !== a && isClean(w)) {
+          const we = ix.ev[w]
+          const wp = poster(we)
+          if (we.a !== a && we.a !== pa && wp !== a && wp !== pa && isClean(w)) {
             wit = true
             break
           }
@@ -432,7 +438,8 @@ export const seenOf = (e: AclEv, v: string): number => {
 }
 
 // The orphan rule of §2.3 (storage only) on the held set `ids` with state `st`: X events with no
-// held descendant, other than the genesis and upgrades, whose drop leaves FI (on the genesis
+// held descendant, other than the genesis, upgrades and proofs (a kept header doesn't hold the
+// pair a proof carries, so dropping one could raise F), whose drop leaves FI (on the genesis
 // epoch and every epoch whose rotation is not contested) and the contested identity ops among the
 // held events unchanged; tried in descending id order until nothing more can go. Returns the
 // dropped ids; their headers stay as evidence (`ghosts`).
@@ -478,7 +485,7 @@ export function orphanDrops(
     for (const id of cands) {
       if (out.has(id)) continue
       const e = cx.ev(id)
-      if (e.t === 'upgrade' || e.t === 'genesis') continue
+      if (e.t === 'upgrade' || e.t === 'genesis' || e.t === 'proof') continue
       const xi = anc.at.get(id)!
       if (kept.some(x => x !== id && anc.has(anc.at.get(x)!, xi))) continue
       const rest = kept.filter(x => x !== id)

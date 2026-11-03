@@ -4,9 +4,12 @@
 // heads (admission, append, new state), and a backdated deny (admission, append, re-run), then the
 // re-run alone. Production limits, with ts in minutes as in the model's benchmark.
 // Usage: bun apps/web/scripts/acl_bench.ts <shape|all> [events=20000] [seed=1] [reps=3]
+// `visibility [events=20000] [seed=1] [contents=1000000]`: §5.7's content target on the `tree`
+// universe: visibility per rendered message (windows of 50 consecutive messages, first render).
 import { loadavg } from 'node:os'
 import { AclReplica, identityHead, pastOf, type Verdict } from '../app/lib/p2p/acl/admit'
 import { AclState } from '../app/lib/p2p/acl/cache'
+import { ContentView, type ContentEv } from '../app/lib/p2p/acl/visibility'
 import {
   BAN,
   idOp,
@@ -877,13 +880,162 @@ const med = (xs: number[]) => {
 }
 const f1 = (x: number) => +x.toFixed(1)
 
+// Content on an ACL universe: `n` events by the devices that posted ACL events, each at its own
+// last ACL event plus one of 16 later positions, in one channel; one in ten targets an earlier
+// message (edit, reaction, redaction or pin by a random member), one in 2,000 reuses its device's
+// last seq (content fork evidence).
+function contentOf(w: W, n: number, rng: Rng): ContentEv[] {
+  const ix = w.ref.acl.ix
+  const devs = new Map<string, number>()
+  for (let i = 0; i < ix.n; i++) devs.set(ix.ev[i].dev, i)
+  const devList = [...devs.keys()]
+  const snaps = Array.from(
+    { length: 16 },
+    (_, k) => ix.ids[Math.floor(((k + 1) * (ix.n - 1)) / 16)]
+  )
+  const seqOf = new Map<string, number>()
+  const prevOf = new Map<string, string>()
+  const out: ContentEv[] = []
+  for (let i = 0; i < n; i++) {
+    const dev = rng.pick(devList)
+    const last = devs.get(dev)!
+    const snap = rng.pick(snaps)
+    const ap = ix.at.get(snap)! > last ? [ix.ids[last], snap] : [ix.ids[last]]
+    let seq = (seqOf.get(dev) ?? ix.ev[last].seq) + 1
+    if (rng.chance(1 / 2000)) seq--
+    seqOf.set(dev, Math.max(seq, seqOf.get(dev) ?? 0))
+    const tgt = out.length && rng.chance(0.1) ? rng.pick(out) : undefined
+    const t = tgt ? rng.pick(['edit', 'react', 'redact', 'pin']) : 'msg'
+    const c: Obj = { ch: 'c0', body: `m${i}` }
+    if (tgt) {
+      c.target = tgt.id
+      c.ch = tgt.c?.ch
+      if (t === 'react') Object.assign(c, { key: 'k', on: true })
+      if (t === 'pin') c.on = true
+    }
+    const m: ContentEv = {
+      id: `c${i}`,
+      t,
+      a: ix.ev[last].a,
+      dev,
+      seq,
+      ap,
+      ts: Math.max(...ap.map(p => ix.ev[ix.at.get(p)!].ts)) + 1,
+      c,
+    }
+    const pv = prevOf.get(dev)
+    if (pv) m.cprev = pv
+    prevOf.set(dev, m.id)
+    out.push(m)
+  }
+  return out
+}
+
+function visibilityBench(N: number, seed: number, nContent: number) {
+  clock = 1
+  probe = undefined
+  const rng = new Rng(seed * 7919)
+  const w = new BenchWorld()
+  const tB = performance.now()
+  tree(w, N, rng)
+  const S = w.state()
+  const buildS = (performance.now() - tB) / 1000
+  const t0 = performance.now()
+  const contents = contentOf(w, nContent, rng)
+  const genS = (performance.now() - t0) / 1000
+  const t1 = performance.now()
+  const v = new ContentView(w.ref.acl, contents)
+  const viewMs = performance.now() - t1
+  const msgs = contents.filter(m => m.t === 'msg')
+  // St(m) of a position not seen before is a subset evaluation (content admission computes the
+  // same state); timed apart from the visibility decision
+  const acl = w.ref.acl
+  const stateOf0 = acl.stateOf.bind(acl)
+  let stMs = 0
+  acl.stateOf = (ap: readonly string[]) => {
+    const q = performance.now()
+    const r = stateOf0(ap)
+    stMs += performance.now() - q
+    return r
+  }
+  const sub0 = acl.stats.subsets
+  const starts = rng.shuffle(Array.from({ length: Math.floor(msgs.length / 50) }, (_, k) => k * 50))
+  const windows = Math.min(2000, starts.length)
+  const per: number[] = []
+  const perX: number[] = []
+  let hidden = 0
+  const why = new Map<string, number>()
+  const t2 = performance.now()
+  for (let k = 0; k < windows; k++) {
+    const at = starts[k]
+    const s0 = performance.now()
+    const st0 = stMs
+    for (let j = at; j < at + 50; j++) {
+      const h = v.hidden(msgs[j])
+      if (h) {
+        hidden++
+        why.set(h.why, (why.get(h.why) ?? 0) + 1)
+      }
+      v.redactedBy(msgs[j])
+      v.editOf(msgs[j])
+      v.reactions(msgs[j])
+      v.pinned(msgs[j])
+    }
+    per.push((performance.now() - s0) / 50)
+    perX.push((performance.now() - s0 - (stMs - st0)) / 50)
+  }
+  const firstMs = performance.now() - t2
+  const stFirst = stMs
+  const subsets = acl.stats.subsets - sub0
+  const t3 = performance.now()
+  for (let k = 0; k < windows; k++)
+    for (let j = starts[k]; j < starts[k] + 50; j++) v.visible(msgs[j])
+  const warmMs = performance.now() - t3
+  const sorted = [...per].sort((p, q) => p - q)
+  const sortedX = [...perX].sort((p, q) => p - q)
+  console.log(
+    JSON.stringify({
+      shape: 'visibility',
+      aclEvents: w.ref.order.length,
+      cut: S.cut.size,
+      X: S.X.size,
+      contents: contents.length,
+      messages: msgs.length,
+      rendered: windows * 50,
+      hidden,
+      hiddenBy: Object.fromEntries(why),
+      build_s: f1(buildS),
+      content_gen_s: f1(genS),
+      view_ms: f1(viewMs),
+      per_msg_ms: +(firstMs / (windows * 50)).toFixed(4),
+      per_msg_window_median_ms: +med(per).toFixed(4),
+      per_msg_window_p99_ms: +sorted[Math.floor(sorted.length * 0.99)].toFixed(4),
+      per_msg_window_max_ms: +sorted[sorted.length - 1].toFixed(4),
+      st_subset_evaluations: subsets,
+      st_ms: f1(stFirst),
+      per_msg_without_st_ms: +((firstMs - stFirst) / (windows * 50)).toFixed(4),
+      per_msg_without_st_window_median_ms: +med(perX).toFixed(4),
+      per_msg_without_st_window_p99_ms: +sortedX[Math.floor(sortedX.length * 0.99)].toFixed(4),
+      per_msg_without_st_window_max_ms: +sortedX[sortedX.length - 1].toFixed(4),
+      warm_per_msg_ms: +(warmMs / (windows * 50)).toFixed(5),
+      rss_mb: Math.round(process.memoryUsage().rss / 2 ** 20),
+      load1: f1(loadavg()[0]),
+    })
+  )
+}
+
 const args = process.argv.slice(2)
 const shapeArg = args[0] ?? 'all'
 const N = Number(args[1] ?? 20000)
 const seed = Number(args[2] ?? 1)
 const reps = Number(args[3] ?? 3)
 setLimits({ win: 60, day: 1440 })
-for (const name of shapeArg === 'all' ? Object.keys(SHAPES) : shapeArg.split(',')) {
+if (shapeArg === 'visibility') visibilityBench(N, seed, Number(args[3] ?? 1_000_000))
+for (const name of shapeArg === 'all'
+  ? Object.keys(SHAPES)
+  : shapeArg === 'visibility'
+    ? []
+    : shapeArg.split(',')) {
   clock = 1
   probe = undefined
   const rng = new Rng(seed * 7919)
