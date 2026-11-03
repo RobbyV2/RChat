@@ -23,6 +23,7 @@ cargo fmt --all
 cargo clippy --all-targets -- -D warnings
 cargo test
 bunx eslint . --ignore-pattern '.superpowers/**'
+bun test scripts
 cd apps/web && bun test app
 bunx prettier --write <changed files>
 bunx prettier --check "**/*.{ts,tsx,js,jsx,json,md,mjs}" --ignore-path .gitignore --ignore-path .prettierignore --ignore-path .git/info/exclude

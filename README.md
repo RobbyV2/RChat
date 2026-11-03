@@ -23,53 +23,74 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 
 ## Features
 
-| Feature                | What it does                                                                                                          |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Servers and channels   | Make servers with text channels, voice channels and threads.                                                          |
-| Roles                  | Give members roles with a color and permissions. A member cannot give more permissions than they have.                |
-| Voice, video and share | Talk in voice channels. Turn on your camera or share your screen.                                                     |
-| Direct messages        | Send private messages. Start voice or video calls in a DM. Close a DM to hide it until the next message.              |
-| P2P calls              | Call over a direct link between browsers.                                                                             |
-| P2P attachments        | Send files of any size from your browser. The server stores only the name, size and hash. Works when uploads are off. |
-| Relay servers          | Help calls and P2P files connect through STUN and TURN. Off by default. Relay only hides your IP address.             |
-| Your own relays        | Add your own STUN and TURN relays for P2P files and calls. You are asked before using someone else's unknown relay.   |
-| Uploads                | Upload files and images up to 25 MB. The server deletes them after one day. The site admin can turn them off.         |
-| Text only mode         | Turn off uploads and P2P attachments. Then messages can contain only text and emoji.                                  |
-| Link previews          | Show a card for links in a message. The server gets the preview and its image, not your browser.                      |
-| Mentions               | Type `@name` to ping a person. The app highlights messages that mention you.                                          |
-| Reactions              | React to a message with an emoji. Your own reactions show in blue.                                                    |
-| Emoji picker           | Search emoji by name. The picker keeps your frequent emoji and skin tone.                                             |
-| Replies                | Reply to a message. You can choose to ping the author or not.                                                         |
-| Edit messages          | Edit your message. Type `s/old/new` to fix your last message quickly.                                                 |
-| Forwarding             | Forward a message to a different channel or DM. Open a public server as a preview before you join.                    |
-| Pins                   | Pin important messages. Open all pins from the channel header.                                                        |
-| Join and leave notices | Show a notice when a member joins or leaves. Server admins choose the channel or turn notices off.                    |
-| Restricted channels    | Let only some roles or members see a channel or send in it.                                                           |
-| Channel topics         | Add a topic to a text or voice channel. It shows at the top of the channel.                                           |
-| Channel categories     | Group text and voice channels into categories. Managers drag channels and categories to reorder them.                 |
-| Slow mode              | Set a wait time between messages in a channel.                                                                        |
-| Server passwords       | Use a permanent password, temporary passwords or tickets with a use limit. Close the server to new members.           |
-| Private servers        | A server with a password stays hidden from people who are not members.                                                |
-| Invite links           | Paste an invite link to show a join card. Open it to see a full invite page.                                          |
-| Mini profiles          | Click a name to see roles, bio, join dates and a quick DM box.                                                        |
-| Moderation             | Kick and ban members. The site admin can delete users, servers and messages.                                          |
-| Blocking               | Block a person. They cannot DM, call or ping you, and their messages are hidden. Manage the list in Settings.         |
-| Friends                | Send, accept and deny friend requests and see who is online. Limit DMs and friend requests in Settings.               |
-| Polls                  | Single, multiple and ranked choice, rating scales and yes/no. Anonymous or public, deadlines, live results.           |
-| Message selection      | Select messages with Shift and Ctrl clicks or all at once. Delete, copy, pin, forward or export them together.        |
-| Notifications          | Choose all messages, mentions only or nothing per server or channel. Mute for a time. Get desktop alerts.             |
-| Organize               | Drag servers and DMs into your order. Drop a server on another to make a folder. Pin DMs.                             |
-| Search                 | Search messages with date filters. Search for servers by name.                                                        |
-| Command palette        | Press Ctrl+K to go anywhere, run any action, search a local index or try the API with forms.                          |
-| Sync config            | Export your settings and layout as text, a file, a share link or a QR code. Import them on a different device.        |
-| Appear offline         | Hide your online status from other people.                                                                            |
-| Streamer mode          | Blur names on screen while you stream. Hover to show a name.                                                          |
-| Guests                 | Read public servers without an account. Guests cannot send messages.                                                  |
-| Accounts               | Sign in with a text password or with 7 words in order. No email and no phone number.                                  |
-| Themes                 | Use the dark or the light theme. Install the app as a PWA.                                                            |
-| Profanity filter       | The site admin turns the filter on or off for messages, names, file names, bios and topics.                           |
-| Multiple instances     | Each instance has its own name and identity. The login page lets you pick a different instance.                       |
+| Feature                      | What it does                                                                                                                                                                                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Servers and channels         | Make servers with text channels, voice channels and threads.                                                                                                                                                                                     |
+| Roles                        | Give members roles with a color and permissions. A member cannot give more permissions than they have.                                                                                                                                           |
+| Voice, video and share       | Talk in voice channels. Turn on your camera or share your screen.                                                                                                                                                                                |
+| Direct messages              | Send private messages. Start voice or video calls in a DM. Close a DM to hide it until the next message.                                                                                                                                         |
+| P2P calls                    | Call over a direct link between browsers.                                                                                                                                                                                                        |
+| P2P attachments              | Send files of any size from your browser. The server stores only the name, size and hash. Works when uploads are off.                                                                                                                            |
+| Relay servers                | Help calls and P2P files connect through STUN and TURN. Off by default. Relay only hides your IP address.                                                                                                                                        |
+| Your own relays              | Add your own STUN and TURN relays for P2P files and calls. You are asked before using someone else's unknown relay.                                                                                                                              |
+| P2P contacts and DMs         | Add contacts with a code or QR code and verify them. Send messages and files straight to a contact, with no server in between.                                                                                                                   |
+| P2P servers                  | Make servers that live on the members' devices. The owner can add up to 8 co-owners when making the server.                                                                                                                                      |
+| P2P roles and rank           | Make roles. Drag them into order: a role higher in the list has a higher rank. Rename and recolor roles, and set what each can do. The member list groups members by top role and loads 50 at a time. The owner and co-owners can do everything. |
+| P2P channel access           | Limit who can see or send in a channel, and allow chosen roles and members. Set slow mode.                                                                                                                                                       |
+| P2P moderation               | Kick, ban and unban members. A ban can also hide the person's messages. Only a role at least as high as the banner can unban.                                                                                                                    |
+| P2P invites                  | Join with an invite code or link. Revoke a code, or withdraw an invite before it is used.                                                                                                                                                        |
+| P2P devices                  | Use one identity on several devices. Mark another device lost or stolen, or sign the others out with your recovery key.                                                                                                                          |
+| P2P ownership transfer       | The owner can hand a server to another member. Every co-owner must approve.                                                                                                                                                                      |
+| P2P threads, pins and search | Reply in threads, pin up to 100 messages a channel and search the messages stored on your device.                                                                                                                                                |
+| P2P voice                    | Join voice channels in P2P servers, with camera and screen share.                                                                                                                                                                                |
+| Account badge                | Show your instance account name to P2P contacts and server members, if you choose to. They see "Confirmed as name". The instance then learns your P2P key. You can turn it off.                                                                  |
+| Uploads                      | Upload files and images up to 25 MB. The server deletes them after one day. The site admin can turn them off.                                                                                                                                    |
+| Text only mode               | Turn off uploads and P2P attachments. Then messages can contain only text and emoji.                                                                                                                                                             |
+| Link previews                | Show a card for links in a message. The server gets the preview and its image, not your browser.                                                                                                                                                 |
+| Mentions                     | Type `@name` to ping a person. The app highlights messages that mention you.                                                                                                                                                                     |
+| Reactions                    | React to a message with an emoji. Your own reactions show in blue.                                                                                                                                                                               |
+| Emoji picker                 | Search emoji by name. The picker keeps your frequent emoji and skin tone.                                                                                                                                                                        |
+| Replies                      | Reply to a message. You can choose to ping the author or not.                                                                                                                                                                                    |
+| Edit messages                | Edit your message. Type `s/old/new` to fix your last message quickly.                                                                                                                                                                            |
+| Forwarding                   | Forward a message to a different channel or DM. Open a public server as a preview before you join.                                                                                                                                               |
+| Pins                         | Pin important messages. Open all pins from the channel header.                                                                                                                                                                                   |
+| Join and leave notices       | Show a notice when a member joins or leaves. Server admins choose the channel or turn notices off.                                                                                                                                               |
+| Restricted channels          | Let only some roles or members see a channel or send in it.                                                                                                                                                                                      |
+| Channel topics               | Add a topic to a text or voice channel. It shows at the top of the channel.                                                                                                                                                                      |
+| Channel categories           | Group text and voice channels into categories. Managers drag channels and categories to reorder them.                                                                                                                                            |
+| Slow mode                    | Set a wait time between messages in a channel.                                                                                                                                                                                                   |
+| Server passwords             | Use a permanent password, temporary passwords or tickets with a use limit. Close the server to new members.                                                                                                                                      |
+| Private servers              | A server with a password stays hidden from people who are not members.                                                                                                                                                                           |
+| Invite links                 | Paste an invite link to show a join card. Open it to see a full invite page.                                                                                                                                                                     |
+| Mini profiles                | Click a name to see roles, bio, join dates and a quick DM box.                                                                                                                                                                                   |
+| Moderation                   | Kick and ban members. The site admin can delete users, servers and messages.                                                                                                                                                                     |
+| Blocking                     | Block a person. They cannot DM, call or ping you, and their messages are hidden. Manage the list in Settings.                                                                                                                                    |
+| Friends                      | Send, accept and deny friend requests and see who is online. Limit DMs and friend requests in Settings.                                                                                                                                          |
+| Polls                        | Single, multiple and ranked choice, rating scales and yes/no. Anonymous or public, deadlines, live results.                                                                                                                                      |
+| Message selection            | Select messages with Shift and Ctrl clicks or all at once. Delete, copy, pin, forward or export them together.                                                                                                                                   |
+| Notifications                | Choose all messages, mentions only or nothing per server or channel. Mute for a time. Get desktop alerts.                                                                                                                                        |
+| Organize                     | Drag servers and DMs into your order. Drop a server on another to make a folder. Pin DMs.                                                                                                                                                        |
+| Search                       | Search messages with date filters. Search for servers by name.                                                                                                                                                                                   |
+| Command palette              | Press Ctrl+K to go anywhere, run any action, search a local index or try the API with forms.                                                                                                                                                     |
+| Sync config                  | Export your settings and layout as text, a file, a share link or a QR code. Import them on a different device.                                                                                                                                   |
+| Appear offline               | Hide your online status from other people.                                                                                                                                                                                                       |
+| Streamer mode                | Blur names on screen while you stream. Hover to show a name.                                                                                                                                                                                     |
+| Guests                       | Read public servers without an account. Guests cannot send messages.                                                                                                                                                                             |
+| Accounts                     | Sign in with a text password or with 7 words in order. No email and no phone number.                                                                                                                                                             |
+| Themes                       | Use the dark or the light theme. Install the app as a PWA.                                                                                                                                                                                       |
+| Profanity filter             | The site admin turns the filter on or off for messages, names, file names, bios and topics.                                                                                                                                                      |
+| Multiple instances           | Each instance has its own name and identity. The login page lets you pick a different instance.                                                                                                                                                  |
 
+### P2P limits
+
+- P2P content lives on the members' devices. The instance does not store it. If every device that holds it is lost, the content is lost.
+- Every device holds your identity key. Marking a device lost or recovering does not stop a thief who uses that key. Use Reset identity in Settings and set up a new device. Your contacts must verify you again.
+- Voice uses a mesh: each person connects to every other person. It works best with up to 8 people (4 with video).
+- Large P2P servers sync slowly. The app shows "Syncing the server, N changes so far" while it works.
+
+<p align="center">
+  <img src="docs/screenshots/p2p-server-dark.png" alt="A P2P server channel in the dark theme with members grouped by role" width="900">
+</p>
 <p align="center">
   <img src="docs/screenshots/replies-reactions-forward.png" alt="A mention, a reply, reactions with your own reaction in blue, and a forwarded message card" width="440">
   <img src="docs/screenshots/emoji-picker.png" alt="The emoji picker with frequent emoji and categories" width="440">
@@ -124,10 +145,10 @@ Open http://localhost:3000. The first account you register is the site admin. No
 | `assets`       | Logos, fonts and the bundled STUN list.                |
 | `deploy`       | Compose, Kubernetes and nginx files.                   |
 | `packaging`    | Package manager templates (see Releases).              |
-| `scripts`      | Release scripts for CI.                                |
+| `scripts`      | Release scripts for CI. Test: `bun test scripts`.      |
 | `jfiles`       | The `just` recipes. Run them from the repository root. |
 
-Keep `.env.local` in the repository root. The root scripts and `just` recipes read it from there.
+Keep `.env.local` in the repository root.
 
 ## Deployment modes
 
@@ -162,6 +183,8 @@ docker run --rm -u 0 -v rchat-data:/data --entrypoint chown ghcr.io/robbyv2/rcha
 ```
 
 Build the image locally with `docker compose up`.
+
+Do not run an older release on a database that a newer release upgraded. It does not start.
 
 ## Desktop app
 
@@ -233,7 +256,7 @@ rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-and
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 ```
 
-The native projects in `apps/desktop/src-tauri/gen` are generated, not committed. `mobile-init` creates one and applies the files in `apps/desktop/mobile`: icons, splash, call permissions and the Android window insets. Run it again after changing them:
+The native projects in `apps/desktop/src-tauri/gen` are generated, not committed. `mobile-init` creates one and applies the files in `apps/desktop/mobile`. Run it again after changing them:
 
 ```bash
 just src mobile-init android
@@ -251,7 +274,7 @@ CI builds a debug APK and an unsigned iOS build on every push to main and keeps 
 GitHub Actions has two channels:
 
 - Stable: pushing a version tag (`0.3.0`, or `0.3.0-rc.1` for a pre-release; no `v` prefix) publishes a GitHub Release. Pre-releases get no package manager files.
-- Weekly: every Monday, `main` is built as a pre-release named `weekly-YYYY-MM-DD` with version `<next patch>-weekly.YYYYMMDD`. The `weekly` and `nightly` tags move to it, and dated weekly releases beyond the newest 8 are deleted. The release named `weekly` is updated in place and holds the updater manifest: never delete it. It is skipped when nothing changed. Run the `release` workflow by hand to build one now.
+- Weekly: every Monday, `main` is built as a pre-release named `weekly-YYYY-MM-DD` with version `<next patch>-weekly.YYYYMMDD`. The `weekly` and `nightly` tags move to it, and dated weekly releases beyond the newest 8 are deleted. Never delete the release named `weekly`. Run the `release` workflow by hand to build one now.
 
 | Workflow      | When                               | What                                                                 |
 | ------------- | ---------------------------------- | -------------------------------------------------------------------- |
@@ -260,7 +283,7 @@ GitHub Actions has two channels:
 | `ci.yml`      | Pushes to main, manual runs        | Also desktop builds, desktop smoke run, mobile builds, Docker build  |
 | `release.yml` | Version tags, Mondays, manual runs | All of the above, then the release                                   |
 
-Changes to Markdown files and `docs/` alone run no CI. A push to main that changes nothing the mobile apps are built from skips the mobile builds.
+Changes to Markdown files and `docs/` alone run no CI.
 
 To skip heavy parts of `ci.yml` on a push, put a tag in the commit message, or give the pull request the label of the same words without brackets. Version tags, the weekly schedule and manual runs ignore them.
 
@@ -277,7 +300,7 @@ A release holds:
 
 - Windows: MSI and NSIS installers. macOS: a universal DMG. Linux: .deb, .rpm and AppImage (when it builds). Weekly and `-rc` versions get no .rpm. Going from a weekly .deb back to the stable one of the same version needs `apt install --allow-downgrades`.
 - Android: an APK, plus an AAB when the release key is set. iOS: an IPA, only when the signing secrets are set.
-- Server binaries (`rchat-server`) for Linux x86_64 and aarch64 (glibc 2.35 or newer), macOS (universal) and Windows x86_64. The aarch64 server and Docker builds use GitHub's `ubuntu-22.04-arm` runner.
+- Server binaries (`rchat-server`) for Linux x86_64 and aarch64 (glibc 2.35 or newer), macOS (universal) and Windows x86_64. The aarch64 server and Docker builds use GitHub's `ubuntu-22.04-arm` runner. Private repositories need an arm64 larger runner.
 - `SHA256SUMS`, the updater manifest `latest.json` with `.sig` files when updater signing is set, and `rchat-packaging_<version>.tar.gz`.
 - Docker images on GHCR: `latest` and the version for stable, `weekly`, `nightly` and `weekly-YYYY-MM-DD` for weekly, plus the commit SHA.
 
@@ -294,7 +317,7 @@ Signing uses repository secrets when they exist. Without them the builds are uns
 
 ### Package managers
 
-`packaging/` holds templates for winget, Scoop, a Homebrew cask and the AUR packages `rchat-bin` and `rchat-weekly-bin`. Each release attaches them, filled in, as `rchat-packaging_<version>.tar.gz`. Publishing them is manual: open a pull request to `microsoft/winget-pkgs` with the three winget files, put `rchat.json` in a Scoop bucket and `rchat.rb` in a Homebrew tap, and push a `PKGBUILD` to the AUR after running `makepkg --printsrcinfo > .SRCINFO`.
+`packaging/` holds templates for winget, Scoop, a Homebrew cask and the AUR packages `rchat-bin` and `rchat-weekly-bin`. Each release attaches them, filled in, as `rchat-packaging_<version>.tar.gz`. Publishing them is manual: open a pull request to `microsoft/winget-pkgs` with the three winget files, put `rchat.json` in a Scoop bucket and `rchat.rb` in your own Homebrew tap, and push a `PKGBUILD` to the AUR after running `makepkg --printsrcinfo > .SRCINFO`.
 
 ## Scaling
 
@@ -334,7 +357,7 @@ Put settings in `.env.local`. Refer to `.env.local.example` for all settings. Th
 | `S3_ENDPOINT`     | none        | Stores uploads in an S3 bucket. Also set the bucket and keys.                        |
 | `RCHAT_ROLES`     | `all`       | The roles this process runs (see Scaling).                                           |
 | `REDIS_URL`       | none        | The shared Redis server for many processes.                                          |
-| `TRUSTED_PROXIES` | none        | Proxy addresses to trust for the real client address.                                |
+| `TRUSTED_PROXIES` | none        | Proxy addresses to trust for the real client address. Set it behind a proxy.         |
 | `PUBLIC_STUN`     | `false`     | Gives calls a list of public STUN servers.                                           |
 | `RELAY_ENABLED`   | `false`     | Starts the built-in STUN and TURN relay on UDP port 3478.                            |
 | `RELAY_PUBLIC_IP` | none        | The public IP of the relay. TURN needs it.                                           |
@@ -343,8 +366,6 @@ Put settings in `.env.local`. Refer to `.env.local.example` for all settings. Th
 The relay uses UDP ports 49160 to 49415. Open them in the firewall. Reserve them so no other program uses them (`sysctl -w net.ipv4.ip_local_reserved_ports=49160-49415`).
 
 Data is not encrypted at rest.
-
-Rate limits and server password budgets count per client address, and password attempts also per network (IPv4 /24, IPv6 /48). Behind a proxy, set `TRUSTED_PROXIES`. See `.env.local.example`.
 
 ## License
 
