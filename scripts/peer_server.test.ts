@@ -111,4 +111,14 @@ describe('PeerJS per-address limit', () => {
     expect(env).toContain('# PEERJS_PEERS_PER_IP=50')
     expect(env).toContain('# PEERJS_CONCURRENT_LIMIT=5000')
   })
+
+  test('nginx shared memory zones have distinct names', () => {
+    const nginx = read('deploy/nginx.conf')
+    const names = [
+      ...[...nginx.matchAll(/limit_(?:req|conn)_zone\s[^;]*zone=([^:\s]+):/g)].map(m => m[1]),
+      ...[...nginx.matchAll(/^\s*zone\s+(\S+)\s+\S+;/gm)].map(m => m[1]),
+    ]
+    expect(names.length).toBeGreaterThan(5)
+    expect(names.filter((name, i) => names.indexOf(name) !== i)).toEqual([])
+  })
 })
