@@ -16,6 +16,7 @@
   "dependencies": {
     "@noble/curves": "2.4.0",
     "@noble/hashes": "2.4.0",
+    "@scure/bip39": "2.4.0",
     "@tauri-apps/api": "^2.12.4",
     "@typescript/native": "npm:typescript@^7.0.2",
     "emojibase-data": "^18.0.0",
