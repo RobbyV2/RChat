@@ -73,6 +73,46 @@ export const openBlob = (accept: string) =>
     input.click()
   })
 
+const canPrint = () => typeof window !== 'undefined' && typeof window.print === 'function'
+
+const PRINT_FRAME_MS = 10 * 60_000
+
+// Prints from a hidden frame that can't run scripts, so the page itself stays as it is. The frame
+// goes once the dialog closes.
+const print = (html: string) =>
+  new Promise<boolean>(resolve => {
+    if (typeof document === 'undefined' || !canPrint()) return resolve(false)
+    const frame = document.createElement('iframe')
+    frame.setAttribute('sandbox', 'allow-same-origin allow-modals')
+    frame.setAttribute('aria-hidden', 'true')
+    frame.tabIndex = -1
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'
+    const drop = () => frame.remove()
+    frame.addEventListener(
+      'load',
+      () => {
+        const win = frame.contentWindow
+        if (!win) {
+          drop()
+          return resolve(false)
+        }
+        win.addEventListener('afterprint', drop, { once: true })
+        setTimeout(drop, PRINT_FRAME_MS)
+        try {
+          win.focus()
+          win.print()
+          resolve(true)
+        } catch {
+          drop()
+          resolve(false)
+        }
+      },
+      { once: true }
+    )
+    frame.srcdoc = html
+    document.body.appendChild(frame)
+  })
+
 export const webSharing: Sharing = {
   copyText,
   canShare,
@@ -81,4 +121,6 @@ export const webSharing: Sharing = {
   saveBlob,
   openFile,
   openBlob,
+  canPrint,
+  print,
 }

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { notifications, setNotifier, setSharing, sharing } from '../platform'
 import { webSharing } from '../platform/web_sharing'
+import { desktopSharing } from '../platform/desktop_sharing'
+import { mobileSharing } from '../platform/mobile'
 import { permissionOf } from '../platform/notifications'
 import { webNotifier } from '../platform/web_notifications'
 import { fakeNotifier } from './fake_notifier'
@@ -164,5 +166,19 @@ describe('sharing', () => {
       share: async () => Promise.reject(new DOMException('no', 'AbortError')),
     })
     expect(await webSharing.share({ url: 'u' })).toBe('cancelled')
+  })
+
+  test('the web adapter prints where the window can; the shells do not', async () => {
+    g.window = { print: () => {} }
+    expect(webSharing.canPrint()).toBe(true)
+    g.window = undefined
+    expect(webSharing.canPrint()).toBe(false)
+    g.document = undefined
+    expect(await webSharing.print('<p>x</p>')).toBe(false)
+    const call = async () => null as never
+    for (const shell of [mobileSharing(call, () => {}), desktopSharing(call, () => {})]) {
+      expect(shell.canPrint()).toBe(false)
+      expect(await shell.print('<p>x</p>')).toBe(false)
+    }
   })
 })

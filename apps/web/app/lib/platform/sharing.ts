@@ -25,4 +25,7 @@ export interface Sharing {
   openFile: (accept: string, maxBytes: number, tooLarge?: () => void) => Promise<string | null>
   // Lets the user pick a file of any size, read later as a stream; null when cancelled.
   openBlob: (accept: string) => Promise<Blob | null>
+  canPrint: () => boolean
+  // Opens the print dialog for a self-contained HTML document; false when the platform can't.
+  print: (html: string) => Promise<boolean>
 }

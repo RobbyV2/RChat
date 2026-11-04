@@ -11,6 +11,8 @@ export const shareText = ({ text, url }: ShareData) =>
 export const mobileSharing = (call: Invoke, report: (message: string) => void): Sharing => ({
   ...desktopSharing(call, report),
   canShare: () => true,
+  canPrint: () => false,
+  print: async () => false,
   share: async (data): Promise<ShareResult> => {
     const text = shareText(data)
     if (!text) return 'failed'

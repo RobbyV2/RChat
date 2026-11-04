@@ -56,5 +56,7 @@ export const desktopSharing = (call: Invoke, report: (message: string) => void):
       call<string | null>('open_text', { accept, maxBytes }).catch(() => null),
     // The webview's own file picker: the file is streamed from disk, never sent over IPC.
     openBlob,
+    canPrint: () => false,
+    print: async () => false,
   }
 }
