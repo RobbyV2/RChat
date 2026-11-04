@@ -25,7 +25,32 @@ const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
 const realFetch = globalThis.fetch
 const realWindow = (globalThis as { window?: unknown }).window
+const realWebSocket = globalThis.WebSocket
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+// A socket whose host never resolves. A client left running here probes the catch-all fetch,
+// polls, and reloads site settings from it, which later files then inherit.
+class DeadSocket {
+  static CONNECTING = 0
+  static OPEN = 1
+  static CLOSED = 3
+  readyState = 0
+  onopen: (() => void) | null = null
+  onclose: ((e: { code: number }) => void) | null = null
+  onerror: (() => void) | null = null
+  onmessage: (() => void) | null = null
+  constructor() {
+    setTimeout(() => {
+      this.readyState = 3
+      this.onclose?.({ code: 1006 })
+    })
+  }
+  send() {}
+  close() {
+    this.readyState = 3
+  }
+}
+let settingsBefore = st().settings
 
 const ping = (over: Partial<Ping> = {}): Ping => ({
   id: 1,
@@ -80,6 +105,8 @@ beforeEach(() => {
     history: { state: null, pushState: () => {}, replaceState: () => {} },
   }
   globalThis.fetch = (async () => new Response('[]', { status: 200 })) as unknown as typeof fetch
+  globalThis.WebSocket = DeadSocket as unknown as typeof WebSocket
+  settingsBefore = st().settings
   useStore.setState({
     me: me('bob'),
     token: 't',
@@ -108,7 +135,9 @@ beforeEach(() => {
 afterEach(() => {
   st().resetAllNotify()
   globalThis.fetch = realFetch
+  globalThis.WebSocket = realWebSocket
   ;(globalThis as { window?: unknown }).window = realWindow
+  expect(st().settings).toBe(settingsBefore)
 })
 
 describe('muting', () => {
@@ -383,6 +412,8 @@ describe('membership', () => {
       return new Response(JSON.stringify(body), { status: 200 })
     }) as unknown as typeof fetch
     useStore.setState({ me: null, dms: [], servers: {}, reads: {} })
+    const { start } = home.ws
+    home.ws.start = () => {}
     try {
       await st().login({ username: 'bob', password: 'x' } as never)
       await sleep(30)
@@ -394,6 +425,7 @@ describe('membership', () => {
         4: { level: 'nothing' },
       })
     } finally {
+      home.ws.start = start
       home.ws.stop()
       useStore.setState({ token: null })
       g.document = realDocument
