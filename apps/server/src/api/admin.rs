@@ -11,7 +11,7 @@ use crate::api::{
     ApiError, Authed, OkResp, Paged, ProfanitySwitch, ServerSummaryLite, Settings, UserRef, bad,
     decode_cursor, encode_cursor, ok,
 };
-use crate::db::{AvatarKind, Db, User, now, purge_messages, user_row};
+use crate::db::{AvatarKind, Db, User, now, purge_messages, recount_members, user_row};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -470,10 +470,10 @@ pub(crate) async fn remove_server(state: &AppState, name: &str) -> Result<bool, 
     }
     for table in [
         "guest_grants",
-        "user_roles",
         "members",
-        "server_bans",
+        "user_roles",
         "interactions",
+        "server_bans",
         "member_timeouts",
     ] {
         sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -553,6 +553,11 @@ pub(crate) async fn hide_user_rows(
     }
     note_purge(&mut tx, kind, key, now()).await?;
     tx.commit().await?;
+    for server in &servers {
+        if let Err(e) = recount_members(&state.db, server).await {
+            tracing::warn!("member count of {server} not updated: {e}");
+        }
+    }
     Ok(Some(servers))
 }
 
@@ -1185,6 +1190,67 @@ mod tests {
             _ => panic!("expected banned re-register rejection"),
         }
         done(state, path).await;
+    }
+
+    async fn delete_during_account_hide(state: &AppState) {
+        let db = &state.db;
+        for stmt in [
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 1)",
+            "INSERT INTO members(server, username, joined_at) VALUES('club', 'alice', 1), ('club', 'bob', 1)",
+            "INSERT INTO roles(server, name, color, perms) VALUES('club', 'crew', '#ffffff', 0)",
+            "INSERT INTO user_roles(server, username, role_id) SELECT 'club', 'bob', id FROM roles WHERE server = 'club'",
+            "INSERT INTO interactions(server, username, last_at) VALUES('club', 'bob', 1)",
+            "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('club', 'bob', 'alice', 1)",
+        ] {
+            sqlx::query(stmt).execute(db).await.expect(stmt);
+        }
+        let mut tx = db.begin().await.expect("tx");
+        sqlx::query("DELETE FROM members WHERE username = 'bob'")
+            .execute(&mut *tx)
+            .await
+            .expect("the hide removes the memberships first");
+        let delete = {
+            let state = state.clone();
+            tokio::spawn(async move { remove_server(&state, "club").await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        for stmt in [
+            "DELETE FROM user_roles WHERE username = 'bob'",
+            "DELETE FROM interactions WHERE username = 'bob'",
+            "DELETE FROM server_bans WHERE username = 'bob'",
+        ] {
+            sqlx::query(stmt)
+                .execute(&mut *tx)
+                .await
+                .expect("then the roles, interactions and bans, while the delete waits");
+        }
+        tx.commit().await.expect("commit");
+        match delete.await.expect("task") {
+            Ok(removed) => assert!(removed),
+            Err(ApiError(code, msg)) => panic!("{code}: {msg}"),
+        }
+        for table in ["members", "user_roles", "interactions", "server_bans"] {
+            assert_eq!(
+                count(
+                    db,
+                    &format!("SELECT COUNT(*) FROM {table} WHERE server = 'club'")
+                )
+                .await,
+                0,
+                "{table}"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn deleting_a_server_while_an_account_is_hidden_does_not_deadlock() {
+        let (state, path) = temp_state("delete_hide_race").await;
+        delete_during_account_hide(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("delete_hide_race").await {
+            delete_during_account_hide(&state).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
     }
 
     #[tokio::test]

@@ -302,23 +302,21 @@ const POSTGRES_SEARCH: &[&str] = &[
 const SQLITE_TRIGGERS: &[&str] = &[
     "CREATE TRIGGER IF NOT EXISTS messages_dm_latest_insert AFTER INSERT ON messages WHEN new.dm_id IS NOT NULL BEGIN UPDATE dms SET last_message_id = new.id WHERE id = new.dm_id AND last_message_id < new.id; END",
     "CREATE TRIGGER IF NOT EXISTS messages_dm_latest_delete AFTER DELETE ON messages WHEN old.dm_id IS NOT NULL BEGIN UPDATE dms SET last_message_id = COALESCE((SELECT MAX(id) FROM messages WHERE dm_id = old.dm_id), 0) WHERE id = old.dm_id AND last_message_id = old.id; END",
-    "CREATE TRIGGER IF NOT EXISTS members_count_insert AFTER INSERT ON members BEGIN UPDATE servers SET member_count = member_count + 1 WHERE name = new.server; END",
-    "CREATE TRIGGER IF NOT EXISTS members_count_delete AFTER DELETE ON members BEGIN UPDATE servers SET member_count = member_count - 1 WHERE name = old.server; END",
+    "DROP TRIGGER IF EXISTS members_count_insert",
+    "DROP TRIGGER IF EXISTS members_count_delete",
 ];
 
 const POSTGRES_TRIGGERS: &[&str] = &[
     "CREATE OR REPLACE FUNCTION rchat_dm_latest_insert() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN UPDATE dms SET last_message_id = NEW.id WHERE id = NEW.dm_id AND last_message_id < NEW.id; RETURN NULL; END $f$",
     "CREATE OR REPLACE FUNCTION rchat_dm_latest_delete() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN UPDATE dms SET last_message_id = COALESCE((SELECT MAX(id) FROM messages WHERE dm_id = OLD.dm_id), 0) WHERE id = OLD.dm_id AND last_message_id = OLD.id; RETURN NULL; END $f$",
-    "CREATE OR REPLACE FUNCTION rchat_members_count_insert() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN UPDATE servers SET member_count = member_count + 1 WHERE name = NEW.server; RETURN NULL; END $f$",
-    "CREATE OR REPLACE FUNCTION rchat_members_count_delete() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN UPDATE servers SET member_count = member_count - 1 WHERE name = OLD.server; RETURN NULL; END $f$",
     "DROP TRIGGER IF EXISTS messages_dm_latest_insert ON messages",
     "CREATE TRIGGER messages_dm_latest_insert AFTER INSERT ON messages FOR EACH ROW WHEN (NEW.dm_id IS NOT NULL) EXECUTE FUNCTION rchat_dm_latest_insert()",
     "DROP TRIGGER IF EXISTS messages_dm_latest_delete ON messages",
     "CREATE TRIGGER messages_dm_latest_delete AFTER DELETE ON messages FOR EACH ROW WHEN (OLD.dm_id IS NOT NULL) EXECUTE FUNCTION rchat_dm_latest_delete()",
     "DROP TRIGGER IF EXISTS members_count_insert ON members",
-    "CREATE TRIGGER members_count_insert AFTER INSERT ON members FOR EACH ROW EXECUTE FUNCTION rchat_members_count_insert()",
     "DROP TRIGGER IF EXISTS members_count_delete ON members",
-    "CREATE TRIGGER members_count_delete AFTER DELETE ON members FOR EACH ROW EXECUTE FUNCTION rchat_members_count_delete()",
+    "DROP FUNCTION IF EXISTS rchat_members_count_insert()",
+    "DROP FUNCTION IF EXISTS rchat_members_count_delete()",
 ];
 
 static FTS_READY: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
@@ -1159,6 +1157,85 @@ pub async fn touch_interaction(db: &Db, server: &str, username: &str) -> sqlx::R
     .map(|_| ())
 }
 
+/// Locks the row of `server` until the transaction ends (on Postgres; SQLite has one writer).
+/// A transaction that locks a server row takes this lock before it writes anything else, so
+/// joins, leaves and system messages of one server queue instead of deadlocking.
+pub async fn lock_server(conn: &mut AnyConnection, server: &str) -> sqlx::Result<()> {
+    if conn.backend_name() == "PostgreSQL" {
+        sqlx::query("SELECT 1 FROM servers WHERE name = $1 FOR NO KEY UPDATE")
+            .bind(server)
+            .fetch_optional(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Moves `servers.member_count` by `delta`, in the transaction that added or removed that many
+/// member rows of `server`, after its `lock_server`.
+pub async fn shift_member_count(
+    conn: &mut AnyConnection,
+    server: &str,
+    delta: i64,
+) -> sqlx::Result<()> {
+    if delta != 0 {
+        sqlx::query("UPDATE servers SET member_count = member_count + $1 WHERE name = $2")
+            .bind(delta)
+            .bind(server)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Sets `servers.member_count` from the member rows, counting under the server lock, for changes
+/// that span servers without their locks (hiding an account) and for the sweep.
+pub async fn recount_members(db: &Db, server: &str) -> sqlx::Result<()> {
+    let mut tx = db.begin().await?;
+    lock_server(&mut tx, server).await?;
+    sqlx::query("UPDATE servers SET member_count = (SELECT COUNT(*) FROM members m WHERE m.server = $1) WHERE name = $1")
+        .bind(server)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await
+}
+
+/// Servers checked per read by `fix_member_counts`.
+const COUNT_BATCH: i64 = 500;
+
+/// Recounts every server whose `member_count` differs from its member rows (an update lost to a
+/// crash or an older binary, a recount that failed). Reads `batch` servers at a time in name order
+/// on the read pool, without locks, and recounts only the ones that are off. Returns how many it
+/// fixed.
+pub(crate) async fn fix_member_counts(db: &Db, batch: i64) -> sqlx::Result<u64> {
+    let read = reader(db);
+    let mut after = String::new();
+    let mut fixed = 0;
+    loop {
+        let names = sqlx::query("SELECT name FROM servers WHERE name > $1 ORDER BY name LIMIT $2")
+            .bind(&after)
+            .bind(batch)
+            .fetch_all(&read)
+            .await?;
+        let Some(last) = names.last() else {
+            return Ok(fixed);
+        };
+        let last: String = last.try_get(0)?;
+        let off = sqlx::query("SELECT s.name FROM servers s WHERE s.name > $1 AND s.name <= $2 AND s.member_count <> (SELECT COUNT(*) FROM members m WHERE m.server = s.name)")
+            .bind(&after)
+            .bind(&last)
+            .fetch_all(&read)
+            .await?;
+        for row in &off {
+            recount_members(db, &row.try_get::<String, _>(0)?).await?;
+            fixed += 1;
+        }
+        if (names.len() as i64) < batch {
+            return Ok(fixed);
+        }
+        after = last;
+    }
+}
+
 pub fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1531,6 +1608,7 @@ pub struct Swept {
     pub member_timeouts: u64,
     pub bulk_delete_jobs: u64,
     pub webhook_deliveries: u64,
+    pub member_counts: u64,
 }
 
 async fn delete_batched(db: &Db, sql: &'static str, cutoff: i64) -> sqlx::Result<u64> {
@@ -1738,6 +1816,7 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
             t - crate::api::webhooks::DELIVERY_KEEP,
         )
         .await?,
+        member_counts: fix_member_counts(db, COUNT_BATCH).await?,
     })
 }
 
@@ -1888,7 +1967,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn triggers_keep_dm_latest_and_member_counts() {
+    async fn triggers_keep_dm_latest_and_recounts_keep_member_counts() {
         let (state, path) = temp_state("triggers").await;
         let db = &state.db;
         let dm: i64 = sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('a', 'b') RETURNING id")
@@ -1944,11 +2023,14 @@ mod tests {
             .execute(db)
             .await
             .expect("duplicate join");
+        recount_members(db, "rchat").await.expect("recount");
         assert_eq!(members().await, 3);
         sqlx::query("DELETE FROM members WHERE server = 'rchat' AND username = 'y'")
             .execute(db)
             .await
             .expect("leave");
+        assert_eq!(members().await, 3, "only a recount changes the count");
+        recount_members(db, "rchat").await.expect("recount");
         assert_eq!(members().await, 2);
         sqlx::query("INSERT INTO servers(name, display_name, created_at) VALUES('old', 'Old', 1)")
             .execute(db)
@@ -1963,7 +2045,183 @@ mod tests {
             count(db, "SELECT member_count FROM servers WHERE name = 'new'").await,
             1
         );
+        recount_members(db, "gone").await.expect("recount");
         done(state, path).await;
+    }
+
+    const OLD_SQLITE_COUNTS: [&str; 2] = [
+        "CREATE TRIGGER IF NOT EXISTS members_count_insert AFTER INSERT ON members BEGIN UPDATE servers SET member_count = member_count + 1 WHERE name = new.server; END",
+        "CREATE TRIGGER IF NOT EXISTS members_count_delete AFTER DELETE ON members BEGIN UPDATE servers SET member_count = member_count - 1 WHERE name = old.server; END",
+    ];
+
+    const OLD_POSTGRES_COUNTS: [&str; 5] = [
+        "CREATE OR REPLACE FUNCTION rchat_members_count_insert() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN UPDATE servers SET member_count = member_count + 1 WHERE name = NEW.server; RETURN NULL; END $f$",
+        "CREATE OR REPLACE FUNCTION rchat_members_count_delete() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN UPDATE servers SET member_count = member_count - 1 WHERE name = OLD.server; RETURN NULL; END $f$",
+        "CREATE TRIGGER members_count_insert AFTER INSERT ON members FOR EACH ROW EXECUTE FUNCTION rchat_members_count_insert()",
+        "CREATE TRIGGER members_count_delete AFTER DELETE ON members FOR EACH ROW EXECUTE FUNCTION rchat_members_count_delete()",
+        "UPDATE settings SET value = 'before' WHERE key = 'trigger_version'",
+    ];
+
+    async fn old_member_counts(db: &Db, is_sqlite: bool) {
+        let old: &[&str] = match is_sqlite {
+            true => &OLD_SQLITE_COUNTS,
+            false => &OLD_POSTGRES_COUNTS,
+        };
+        for stmt in old.iter().chain(&[
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('old', 'Old', 'alice', 3)",
+            "INSERT INTO members(server, username, is_admin, joined_at) VALUES('old', 'alice', 1, 3)",
+            "INSERT INTO members(server, username, is_admin, joined_at) VALUES('old', 'bob', 0, 4)",
+            "INSERT INTO members(server, username, is_admin, joined_at) VALUES('old', 'carol', 0, 5)",
+            "DELETE FROM members WHERE server = 'old' AND username = 'carol'",
+            "INSERT INTO members(server, username, is_admin, joined_at) VALUES('rchat', 'dan', 0, 6)",
+        ]) {
+            sqlx::query(*stmt).execute(db).await.expect(stmt);
+        }
+        let old_objects = match is_sqlite {
+            true => 2,
+            false => 4,
+        };
+        assert_eq!(count(db, &count_triggers(is_sqlite)).await, old_objects);
+        assert_eq!(
+            count(db, "SELECT member_count FROM servers WHERE name = 'old'").await,
+            2
+        );
+    }
+
+    fn count_triggers(is_sqlite: bool) -> String {
+        match is_sqlite {
+            true => "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'members_count%'".to_string(),
+            false => "SELECT (SELECT COUNT(*) FROM pg_trigger WHERE tgname LIKE 'members_count%') + (SELECT COUNT(*) FROM pg_proc WHERE proname LIKE 'rchat_members_count%')".to_string(),
+        }
+    }
+
+    async fn upgraded_member_counts(db: &Db, is_sqlite: bool, round: usize) {
+        assert_eq!(count(db, &count_triggers(is_sqlite)).await, 0);
+        let dm_trigger = match is_sqlite {
+            true => {
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'messages_dm_latest_insert'"
+            }
+            false => "SELECT COUNT(*) FROM pg_trigger WHERE tgname = 'messages_dm_latest_insert'",
+        };
+        assert_eq!(count(db, dm_trigger).await, 1);
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM servers WHERE name = 'old' AND display_name = 'Old' AND creator = 'alice' AND created_at = 3").await,
+            1
+        );
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM members WHERE (server = 'old' AND username = 'alice' AND is_admin = 1 AND joined_at = 3) OR (server = 'old' AND username = 'bob' AND is_admin = 0 AND joined_at = 4) OR (server = 'rchat' AND username = 'dan' AND joined_at = 6)").await,
+            3
+        );
+        assert_eq!(
+            count(db, "SELECT member_count FROM servers WHERE name = 'rchat'").await,
+            1
+        );
+        let old = "SELECT member_count FROM servers WHERE name = 'old'";
+        if round == 0 {
+            assert_eq!(count(db, old).await, 2);
+            sqlx::query(
+                "INSERT INTO members(server, username, joined_at) VALUES('old', 'erin', 7)",
+            )
+            .execute(db)
+            .await
+            .expect("insert");
+            assert_eq!(count(db, old).await, 2, "no trigger counts it");
+            recount_members(db, "old").await.expect("recount");
+        }
+        assert_eq!(count(db, old).await, 3);
+    }
+
+    async fn wrong_member_counts_are_fixed(db: &Db) {
+        for stmt in [
+            "INSERT INTO servers(name, display_name, created_at) VALUES('a1', 'a1', 1), ('a2', 'a2', 1), ('b1', 'b1', 1), ('b2', 'b2', 1), ('c1', 'c1', 1)",
+            "INSERT INTO members(server, username, joined_at) VALUES('a1', 'x', 1), ('a1', 'y', 1), ('a2', 'x', 1), ('b2', 'x', 1), ('b2', 'y', 1), ('b2', 'z', 1), ('c1', 'y', 1)",
+            "UPDATE servers SET member_count = 2 WHERE name = 'a1'",
+            "UPDATE servers SET member_count = 5 WHERE name = 'a2'",
+            "UPDATE servers SET member_count = 4 WHERE name = 'b1'",
+            "UPDATE servers SET member_count = 3 WHERE name = 'b2'",
+            "UPDATE servers SET member_count = 0 WHERE name = 'c1'",
+        ] {
+            sqlx::query(stmt).execute(db).await.expect(stmt);
+        }
+        let counts = || async {
+            sqlx::query("SELECT name, member_count FROM servers ORDER BY name")
+                .fetch_all(db)
+                .await
+                .expect("counts")
+                .iter()
+                .map(|r| {
+                    (
+                        r.try_get::<String, _>(0).expect("name"),
+                        r.try_get::<i64, _>(1).expect("count"),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let want = |c1: i64| {
+            [
+                ("a1", 2),
+                ("a2", 1),
+                ("b1", 0),
+                ("b2", 3),
+                ("c1", c1),
+                ("rchat", 0),
+            ]
+            .map(|(n, c)| (n.to_string(), c))
+            .to_vec()
+        };
+        assert_eq!(fix_member_counts(db, 2).await.expect("fix"), 3);
+        assert_eq!(counts().await, want(1));
+        assert_eq!(fix_member_counts(db, 2).await.expect("again"), 0);
+        sqlx::query("UPDATE servers SET member_count = 9 WHERE name = 'c1'")
+            .execute(db)
+            .await
+            .expect("break c1");
+        assert_eq!(counts().await, want(9));
+        assert_eq!(sweep_stale(db).await.expect("sweep").member_counts, 1);
+        assert_eq!(counts().await, want(1));
+        assert_eq!(sweep_stale(db).await.expect("sweep").member_counts, 0);
+    }
+
+    #[tokio::test]
+    async fn the_sweep_fixes_wrong_member_counts() {
+        let (state, path) = temp_state("count_sweep").await;
+        wrong_member_counts_are_fixed(&state.db).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("count_sweep").await {
+            wrong_member_counts_are_fixed(&state.db).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn member_count_triggers_are_dropped_from_an_old_database() {
+        let path = crate::db::temp_db_path("count_triggers");
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let db = open(path.to_str()).await.expect("open");
+        old_member_counts(&db, true).await;
+        close(&db).await;
+        for round in 0..2 {
+            let db = open(path.to_str()).await.expect("upgrade");
+            upgraded_member_counts(&db, true, round).await;
+            close(&db).await;
+        }
+        wipe();
+        if let Some(pg) = crate::api::test_util::pg_temp("count_triggers").await {
+            let db = open(Some(pg.url.as_str())).await.expect("open postgres");
+            old_member_counts(&db, false).await;
+            close(&db).await;
+            for round in 0..2 {
+                let db = open(Some(pg.url.as_str())).await.expect("upgrade postgres");
+                upgraded_member_counts(&db, false, round).await;
+                close(&db).await;
+            }
+            drop(pg);
+        }
     }
 
     #[tokio::test]
@@ -1976,8 +2234,6 @@ mod tests {
         for stmt in [
             "DROP TRIGGER messages_dm_latest_insert",
             "DROP TRIGGER messages_dm_latest_delete",
-            "DROP TRIGGER members_count_insert",
-            "DROP TRIGGER members_count_delete",
             "DROP INDEX idx_dms_a_latest",
             "DROP INDEX idx_dms_b_latest",
             "DROP INDEX idx_guest_grants_used",
@@ -2957,7 +3213,7 @@ mod tests {
             "DELETE FROM settings WHERE key = 'relay_secret'",
             "DELETE FROM settings WHERE key = 'p2p_secret'",
             "UPDATE settings SET value = 'old-instance' WHERE key = 'instance_id'",
-            "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('club', 'Club', 'alice', 'hash', 1)",
+            "INSERT INTO servers(name, display_name, creator, password_hash, member_count, created_at) VALUES('club', 'Club', 'alice', 'hash', 1, 1)",
             "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('club', 'alice', 1, 0, 5)",
             "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES('g', 'club', 1, 1)",
         ] {
@@ -4760,6 +5016,7 @@ mod tests {
                 member_timeouts: 1,
                 bulk_delete_jobs: 1,
                 webhook_deliveries: 0,
+                member_counts: 0,
             }
         );
         assert_eq!(

@@ -38,7 +38,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, MESSAGE_MAX, Message, OkResp, ProfanityTarget, Settings,
     UserRef, allowed, bad, check_len, embeds, media, ok, placeholders, valid_color,
 };
-use crate::db::{AvatarKind, ChannelKind, Db, Perm, User, get_user, now, pepper};
+use crate::db::{AvatarKind, ChannelKind, Db, Perm, User, get_user, lock_server, now, pepper};
 use crate::net_guard::{self, AllowedHost, Http, Policy};
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
@@ -778,12 +778,7 @@ pub(crate) async fn create_webhook(
         .ok_or_else(|| bad("Unknown channel"))?;
     let t = now();
     let mut tx = db.begin().await?;
-    if !crate::db::is_sqlite(db) {
-        sqlx::query("SELECT 1 FROM servers WHERE name = $1 FOR UPDATE")
-            .bind(access.name())
-            .execute(&mut *tx)
-            .await?;
-    }
+    lock_server(&mut tx, access.name()).await?;
     let sql = format!(
         "INSERT INTO webhooks(server, channel_id, name, avatar_kind, avatar_color, token_hash, creator, creator_mentions, created_at) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9 WHERE (SELECT COUNT(*) FROM webhooks WHERE channel_id = $2) < $10 AND (SELECT COUNT(*) FROM webhooks WHERE server = $1) < $11 RETURNING {HOOK_COLS}"
     );
@@ -2086,12 +2081,7 @@ pub(crate) async fn create_outgoing(
     let secret = new_secret();
     let actor = manager_actor(db, &access, &user).await?;
     let mut tx = db.begin().await?;
-    if !crate::db::is_sqlite(db) {
-        sqlx::query("SELECT 1 FROM servers WHERE name = $1 FOR UPDATE")
-            .bind(access.name())
-            .execute(&mut *tx)
-            .await?;
-    }
+    lock_server(&mut tx, access.name()).await?;
     let sql = format!(
         "INSERT INTO outgoing_webhooks(server, name, url, events, secret, creator, created_at) SELECT $1, $2, $3, $4, $5, $6, $7 WHERE (SELECT COUNT(*) FROM outgoing_webhooks WHERE server = $1) < $8 RETURNING {OUT_COLS}"
     );

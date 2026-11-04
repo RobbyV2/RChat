@@ -1808,6 +1808,79 @@ pub(crate) mod test_util {
         }
     }
 
+    /// An empty database of its own on the Postgres server `TEST_POSTGRES_URL` points to, dropped
+    /// when this is dropped (also when the test panics).
+    pub(crate) struct PgTemp {
+        pub(crate) url: String,
+        admin: String,
+        name: String,
+    }
+
+    /// `None` unless `TEST_POSTGRES_URL` is a postgres:// URL (never `DATABASE_URL`).
+    pub(crate) async fn pg_temp(tag: &str) -> Option<PgTemp> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let admin = std::env::var("TEST_POSTGRES_URL")
+            .ok()
+            .filter(|u| u.starts_with("postgres://") || u.starts_with("postgresql://"))?;
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let name = format!("rchat_test_{tag}_{}_{n}", std::process::id());
+        let mut url = url::Url::parse(&admin).expect("TEST_POSTGRES_URL");
+        url.set_path(&name);
+        let temp = PgTemp {
+            url: url.to_string(),
+            admin,
+            name,
+        };
+        admin_sql(&temp.admin, &format!("CREATE DATABASE {}", temp.name))
+            .await
+            .expect("create the test database");
+        Some(temp)
+    }
+
+    async fn admin_sql(admin: &str, sql: &str) -> sqlx::Result<()> {
+        use sqlx::Connection;
+        sqlx::any::install_default_drivers();
+        let mut conn = sqlx::AnyConnection::connect(admin).await?;
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .execute(&mut conn)
+            .await?;
+        conn.close().await
+    }
+
+    impl Drop for PgTemp {
+        fn drop(&mut self) {
+            let admin = self.admin.clone();
+            let sql = format!("DROP DATABASE IF EXISTS {} WITH (FORCE)", self.name);
+            let dropped = std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| e.to_string())?
+                    .block_on(admin_sql(&admin, &sql))
+                    .map_err(|e| e.to_string())
+            })
+            .join();
+            if !matches!(dropped, Ok(Ok(()))) {
+                eprintln!("test database {} was not dropped: {dropped:?}", self.name);
+            }
+        }
+    }
+
+    /// `temp_state` on a `pg_temp` database.
+    pub(crate) async fn pg_state(tag: &str) -> Option<(AppState, PgTemp)> {
+        let temp = pg_temp(tag).await?;
+        let db = open(Some(temp.url.as_str())).await.expect("open postgres");
+        let instance = Instance::load(&db, &InstanceConfig::default())
+            .await
+            .expect("instance");
+        Some((AppState::new(db, Hub::new(), None, None, instance), temp))
+    }
+
+    pub(crate) async fn pg_done(state: AppState, temp: PgTemp) {
+        crate::db::close(&state.db).await;
+        drop(temp);
+    }
+
     /// A grant-shaped value (64 hex characters) derived from `name`, for tests.
     pub(crate) fn test_grant(name: &str) -> String {
         use sha2::Digest;
@@ -1847,6 +1920,9 @@ pub(crate) mod test_util {
             .execute(db)
             .await
             .expect("insert member");
+        crate::db::recount_members(db, server)
+            .await
+            .expect("recount");
     }
 
     /// Requires roles to view on every channel with rules, as the upgrade backfill does for

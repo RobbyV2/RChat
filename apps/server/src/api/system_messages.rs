@@ -47,21 +47,15 @@ const FALLBACK: &str =
 /// Posts a `join` or `leave` system message for `username` in the server's system channel (the
 /// configured text channel, else the first text channel) unless that kind is turned off or the
 /// member got the same kind in this server within `THROTTLE_SECS`, or the channel got
-/// `SERVER_NOTICES_MAX` join and leave messages in the last minute. On Postgres the server row
-/// is locked first, so concurrent joins and leaves can not both pass the checks. Returns the
-/// new message id.
+/// `SERVER_NOTICES_MAX` join and leave messages in the last minute. The caller's transaction
+/// took `lock_server` before its first write, so concurrent joins and leaves can not both pass
+/// the checks. Returns the new message id.
 pub(crate) async fn post_system(
     conn: &mut sqlx::AnyConnection,
     server: &str,
     username: &str,
     kind: SystemKind,
 ) -> sqlx::Result<Option<i64>> {
-    if conn.backend_name() == "PostgreSQL" {
-        sqlx::query("SELECT 1 FROM servers WHERE name = $1 FOR UPDATE")
-            .bind(server)
-            .fetch_optional(&mut *conn)
-            .await?;
-    }
     let t = now();
     let sql = format!(
         "INSERT INTO messages(channel_id, author, content, kind, created_at) SELECT x.ch, $2, '', '{kind}', $3 FROM (SELECT COALESCE({CONFIGURED}, {FALLBACK}) AS ch FROM servers s WHERE s.name = $1 AND s.{toggle} <> 0) x WHERE x.ch IS NOT NULL AND NOT EXISTS(SELECT 1 FROM messages m JOIN channels c ON c.id = m.channel_id WHERE m.author = $2 AND m.kind = '{kind}' AND m.created_at > $4 AND c.server = $1) AND (SELECT COUNT(*) FROM (SELECT 1 FROM messages n WHERE n.channel_id = x.ch AND n.kind IN ('join','leave') AND n.created_at > $5 LIMIT $6) recent) < $6 RETURNING id",

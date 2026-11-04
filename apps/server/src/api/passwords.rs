@@ -13,7 +13,7 @@ use crate::api::servers::guard_rchat;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, JoinedVia, OkResp, bad, check_len, ok, placeholders,
 };
-use crate::db::{Db, NO_EXTRA_HASH, Perm, User, now};
+use crate::db::{Db, NO_EXTRA_HASH, Perm, User, lock_server, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -347,12 +347,7 @@ pub(crate) async fn create_password(
         Actor::User(name) => Some(name.clone()),
     };
     let mut tx = db.begin().await?;
-    if !crate::db::is_sqlite(db) {
-        sqlx::query("SELECT 1 FROM servers WHERE name = $1 FOR UPDATE")
-            .bind(access.name())
-            .execute(&mut *tx)
-            .await?;
-    }
+    lock_server(&mut tx, access.name()).await?;
     let sql = format!(
         "INSERT INTO server_passwords(server, label, hash, lookup, created_by, created_at, expires_at, max_uses) SELECT $1, $2, $3, $4, $5, $6, $7, $8 WHERE (SELECT COUNT(*) FROM server_passwords WHERE server = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $6) AND (max_uses IS NULL OR uses < max_uses)) < $9 AND (SELECT COUNT(*) FROM server_passwords WHERE server = $1) < $10 RETURNING {COLUMNS}"
     );
@@ -441,6 +436,7 @@ pub(crate) async fn revoke_password(
     let access = manage(&state, &user, &name).await?;
     let actor = access.audit_actor(&state.db, Perm::DeleteServer).await?;
     let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, access.name()).await?;
     let found = sqlx::query("SELECT label FROM server_passwords WHERE id = $1 AND server = $2")
         .bind(id)
         .bind(access.name())

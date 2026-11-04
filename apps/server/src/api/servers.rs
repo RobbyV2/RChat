@@ -31,8 +31,8 @@ use crate::api::{
 };
 use crate::db::{
     ALL_PERMS, ChannelAccess, ChannelKind, Db, NO_PERMANENT_HASH, Perm, PermRow, Restrict, User,
-    can_grant, can_moderate, fold_access, get_user, now, perm_bits, perm_row, perm_subjects,
-    rule_narrows,
+    can_grant, can_moderate, fold_access, get_user, lock_server, now, perm_bits, perm_row,
+    perm_subjects, rule_narrows, shift_member_count,
 };
 use crate::state::AppState;
 use crate::ws::{Hub, WsEvent, evict_unviewable};
@@ -1397,7 +1397,7 @@ pub(crate) async fn create_server(
     let t = now();
     let mut tx = state.db.begin().await?;
     sqlx::query(
-        "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES($1, $2, $3, $4, $5)",
+        "INSERT INTO servers(name, display_name, creator, password_hash, member_count, created_at) VALUES($1, $2, $3, $4, 1, $5)",
     )
     .bind(&key)
     .bind(&display)
@@ -1616,12 +1616,7 @@ pub(crate) async fn guest_access(
     let cutoff = t - crate::db::guest_grant_ttl();
     let password_id = access.password_id().unwrap_or(0);
     let mut tx = state.db.begin().await?;
-    if !crate::db::is_sqlite(&state.db) {
-        sqlx::query("SELECT 1 FROM servers WHERE name = $1 FOR UPDATE")
-            .bind(access.name())
-            .execute(&mut *tx)
-            .await?;
-    }
+    lock_server(&mut tx, access.name()).await?;
     sqlx::query("DELETE FROM guest_grants WHERE server = $1 AND COALESCE(password_id, 0) = $2 AND last_used_at < $3 AND (last_used_at > 0 OR created_at < $3)")
         .bind(access.name())
         .bind(password_id)
@@ -1833,6 +1828,7 @@ async fn insert_member(
 ) -> Result<Option<NewMember>, ApiError> {
     let server = access.name();
     let mut tx = db.begin().await?;
+    lock_server(&mut tx, server).await?;
     let inserted = sqlx::query(
         "INSERT INTO members(server, username, is_admin, joined_at, joined_via) SELECT $1, $2, 0, $3, $4 WHERE NOT EXISTS(SELECT 1 FROM server_bans WHERE server = $1 AND username = $2) ON CONFLICT(server, username) DO NOTHING",
     )
@@ -1844,6 +1840,7 @@ async fn insert_member(
     .await?
     .rows_affected();
     if inserted > 0 {
+        shift_member_count(&mut tx, server, 1).await?;
         access.spend_ticket(&mut tx).await?;
         let notice = post_system(&mut tx, server, username, SystemKind::Join).await?;
         tx.commit().await?;
@@ -1937,8 +1934,8 @@ struct Ended {
 }
 
 /// Ends `username`'s membership of `server` (leave, kick, ban): drops the member row, their
-/// roles there and their pings in the server, and posts a leave message. Returns `None` when
-/// they were not a member.
+/// roles there and their pings in the server, lowers the member count and posts a leave message.
+/// The caller took `lock_server` first. Returns `None` when they were not a member.
 async fn end_membership(
     conn: &mut sqlx::AnyConnection,
     server: &str,
@@ -1959,6 +1956,7 @@ async fn end_membership(
     if removed == 0 {
         return Ok(None);
     }
+    shift_member_count(conn, server, -(removed as i64)).await?;
     let notice = post_system(conn, server, username, SystemKind::Leave).await?;
     Ok(Some(Ended { notice }))
 }
@@ -1992,6 +1990,7 @@ pub(crate) async fn leave_server(
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
     let key = access.name().to_string();
     let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, &key).await?;
     let ended = end_membership(&mut tx, &key, &user.username).await?;
     tx.commit().await?;
     match ended {
@@ -2361,6 +2360,7 @@ async fn purge_members(
             false => kept += 1,
         }
     }
+    let mut gone = 0;
     for chunk in removed.chunks(500) {
         for table in ["members", "user_roles"] {
             let sql = format!(
@@ -2371,9 +2371,13 @@ async fn purge_members(
             for name in chunk {
                 query = query.bind(name);
             }
-            query.execute(&mut **tx).await?;
+            let n = query.execute(&mut **tx).await?.rows_affected();
+            if table == "members" {
+                gone += n as i64;
+            }
         }
     }
+    shift_member_count(tx, server, -gone).await?;
     Ok((removed, kept, bypassed))
 }
 
@@ -2903,6 +2907,7 @@ pub(crate) async fn kick_member(
         .await?
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, &key).await?;
     let ended = end_membership(&mut tx, &key, &target).await?;
     if ended.is_some() {
         audit::record(
@@ -2974,6 +2979,7 @@ pub(crate) async fn ban_member(
         .await?
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, &key).await?;
     let banned = sqlx::query(
         "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES($1, $2, $3, $4) ON CONFLICT(server, username) DO NOTHING",
     )
@@ -5024,6 +5030,227 @@ mod tests {
         )
         .await
         .map(|_| ())
+    }
+
+    async fn crowd_server(state: &AppState, users: usize) -> Vec<String> {
+        let db = &state.db;
+        add_user(db, "alice", "Alice").await;
+        sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 1)")
+            .execute(db)
+            .await
+            .expect("server");
+        sqlx::query("INSERT INTO channels(server, name, created_at) VALUES('club', 'general', 1)")
+            .execute(db)
+            .await
+            .expect("channel");
+        add_member(db, "club", "alice", 1, 0, 1).await;
+        let names: Vec<String> = (0..users).map(|n| format!("u{n:02}")).collect();
+        for name in &names {
+            add_user(db, name, name).await;
+        }
+        names
+    }
+
+    async fn all_ok<T>(jobs: Vec<tokio::task::JoinHandle<Result<T, ApiError>>>) {
+        for job in jobs {
+            if let Err(ApiError(code, msg)) = job.await.expect("task") {
+                panic!("{code}: {msg}");
+            }
+        }
+    }
+
+    async fn leave(state: &AppState, who: &str) -> Result<(), ApiError> {
+        leave_server(
+            State(state.clone()),
+            Authed(mem_user(who, false)),
+            Path("club".to_string()),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    async fn kick(state: &AppState, target: &str) -> Result<(), ApiError> {
+        kick_member(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path("club".to_string()),
+            Json(UsernameReq {
+                username: target.to_string(),
+            }),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    async fn join_crowd(state: &AppState) {
+        let db = &state.db;
+        let names = crowd_server(state, 60).await;
+        let jobs = names
+            .iter()
+            .map(|name| {
+                let (state, name) = (state.clone(), name.clone());
+                tokio::spawn(async move { join(&state, &name, "club").await })
+            })
+            .collect();
+        all_ok(jobs).await;
+        let members = "SELECT COUNT(*) FROM members WHERE server = 'club'";
+        assert_eq!(count(db, members).await, 61);
+        assert_eq!(
+            count(db, "SELECT member_count FROM servers WHERE name = 'club'").await,
+            61
+        );
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM messages WHERE kind = 'join' AND channel_id IN (SELECT id FROM channels WHERE server = 'club')").await,
+            crate::api::system_messages::SERVER_NOTICES_MAX,
+            "the server lock still lets only the limit of join messages through"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn sixty_concurrent_joins_into_one_server_all_succeed() {
+        let (state, path) = temp_state("join_crowd").await;
+        join_crowd(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("join_crowd").await {
+            join_crowd(&state).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
+    }
+
+    async fn churn_crowd(state: &AppState) {
+        let db = &state.db;
+        let names = crowd_server(state, 70).await;
+        for name in &names[..40] {
+            join(state, name, "club").await.expect("first join");
+        }
+        let racing: Vec<String> = names[60..].to_vec();
+        for name in &racing[..5] {
+            join(state, name, "club").await.expect("first join");
+        }
+        let mut jobs = Vec::new();
+        for (k, name) in names.iter().enumerate() {
+            let (state, name) = (state.clone(), name.clone());
+            jobs.push(tokio::spawn(async move {
+                match k {
+                    0..20 => leave(&state, &name).await,
+                    20..30 => kick(&state, &name).await,
+                    30..35 => ban(&state, mem_user("alice", false), "club", &name).await,
+                    35..40 => Ok(()),
+                    _ => join(&state, &name, "club").await,
+                }
+            }));
+        }
+        let mut racers = Vec::new();
+        for name in &racing {
+            let (state, name) = (state.clone(), name.clone());
+            racers.push(tokio::spawn(async move {
+                match leave(&state, &name).await {
+                    Err(ApiError(StatusCode::BAD_REQUEST, _)) => Ok(()),
+                    other => other,
+                }
+            }));
+        }
+        all_ok(jobs).await;
+        all_ok(racers).await;
+        let settled = "SELECT COUNT(*) FROM members WHERE server = 'club' AND username NOT IN ('u60', 'u61', 'u62', 'u63', 'u64', 'u65', 'u66', 'u67', 'u68', 'u69')";
+        assert_eq!(count(db, settled).await, 1 + 5 + 20);
+        assert_eq!(
+            count(db, "SELECT member_count FROM servers WHERE name = 'club'").await,
+            count(db, "SELECT COUNT(*) FROM members WHERE server = 'club'").await
+        );
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM server_bans WHERE server = 'club'").await,
+            5
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn member_count_stays_right_through_concurrent_joins_and_leaves() {
+        let (state, path) = temp_state("join_churn").await;
+        churn_crowd(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("join_churn").await {
+            churn_crowd(&state).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
+    }
+
+    async fn revoke_during_guest_access(state: &AppState) {
+        let db = &state.db;
+        let _ = make_server(state, "club").await.expect("club");
+        set_password(state, "club-password").await;
+        let body = serde_json::json!({ "password": "tickets-please", "max_uses": 5 });
+        let Json(created) = crate::api::passwords::create_password(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path("club".to_string()),
+            Json(serde_json::from_value(body).expect("body")),
+        )
+        .await
+        .expect("extra password");
+        let id = created.info.id;
+        for n in 0..3 {
+            sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at, password_id) VALUES($1, 'club', 1, 1, $2)")
+                .bind(crate::db::secret_key(&format!("stale-{n}")))
+                .bind(id)
+                .execute(db)
+                .await
+                .expect("stale grant");
+        }
+        let access = resolve_server(db, "club", None, &Proof::password(Some("tickets-please")))
+            .await
+            .expect("guest access");
+        let mut tx = db.begin().await.expect("tx");
+        lock_server(&mut tx, "club").await.expect("lock");
+        sqlx::query("DELETE FROM guest_grants WHERE server = $1 AND COALESCE(password_id, 0) = $2 AND last_used_at < $3 AND (last_used_at > 0 OR created_at < $3)")
+            .bind("club")
+            .bind(id)
+            .bind(now())
+            .execute(&mut *tx)
+            .await
+            .expect("stale grants of the password");
+        let revoke = {
+            let state = state.clone();
+            tokio::spawn(async move {
+                crate::api::passwords::revoke_password(
+                    State(state),
+                    Authed(mem_user("alice", false)),
+                    Path(("club".to_string(), id)),
+                )
+                .await
+                .map(|_| ())
+            })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        access
+            .spend_ticket(&mut tx)
+            .await
+            .expect("the guest spends a use while the revoke waits");
+        tx.commit().await.expect("commit");
+        all_ok(vec![revoke]).await;
+        assert_eq!(
+            count(db, &format!("SELECT COUNT(*) FROM server_passwords WHERE id = {id} AND revoked_at IS NOT NULL AND uses = 1")).await,
+            1
+        );
+        assert_eq!(
+            count(
+                db,
+                &format!("SELECT COUNT(*) FROM guest_grants WHERE password_id = {id}")
+            )
+            .await,
+            0
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn revoking_a_password_while_a_guest_uses_it_does_not_deadlock() {
+        let (state, path) = temp_state("revoke_race").await;
+        revoke_during_guest_access(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("revoke_race").await {
+            revoke_during_guest_access(&state).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
     }
 
     async fn ban(

@@ -22,7 +22,7 @@ use crate::api::{
     ProfanityTarget, ServerSummary, UserRef, bad, check_len, check_profanity, ok, request_token,
     valid_color,
 };
-use crate::db::{AvatarKind, Db, User, get_user, now, secret_key};
+use crate::db::{AvatarKind, Db, User, get_user, lock_server, now, secret_key, shift_member_count};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -467,6 +467,7 @@ pub(crate) async fn register(
     check_profanity(&state.db, ProfanityTarget::Usernames, &username).await?;
     let password_hash = hash_password(&secret).await?;
     let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, "rchat").await?;
     let banned = sqlx::query("SELECT 1 FROM banned_usernames WHERE username = $1")
         .bind(&key)
         .fetch_optional(&mut *tx)
@@ -503,6 +504,7 @@ pub(crate) async fn register(
     .bind(t)
     .execute(&mut *tx)
     .await?;
+    shift_member_count(&mut tx, "rchat", 1).await?;
     let notice = post_system(&mut tx, "rchat", &key, SystemKind::Join).await?;
     sqlx::query("INSERT INTO dms(user_a, user_b) VALUES($1, $2)")
         .bind(&key)
