@@ -13,6 +13,9 @@ export type FrameType = (typeof FrameType)[keyof typeof FrameType]
 
 const TYPES: number[] = Object.values(FrameType)
 
+// A frame type of this version; a newer one's frames are skipped, at no cost.
+export const knownFrame = (type: number): type is FrameType => TYPES.includes(type)
+
 export const HEADER = 5
 // Ciphertext per data frame: chunk header (5) + data + GCM tag (16).
 export const FRAME_MAX = 16 * 1024
@@ -47,9 +50,7 @@ export const decodeFrame = (raw: ArrayBuffer | Uint8Array) => {
   const len = new DataView(buf.buffer, buf.byteOffset, buf.byteLength).getUint32(1)
   if (len !== buf.length - HEADER) fail('bad frame length')
   if (buf.length > WIRE_MAX) fail('frame too large')
-  const type = buf[0]
-  if (!TYPES.includes(type)) fail('unknown frame type')
-  return { type: type as FrameType, payload: buf.subarray(HEADER) }
+  return { type: buf[0], payload: buf.subarray(HEADER) }
 }
 
 // ----- AES-256-GCM -----

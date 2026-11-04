@@ -8,6 +8,7 @@ import {
   dataPayload,
   decodeFrame,
   encodeFrame,
+  knownFrame,
   FrameType,
   MESSAGE_MAX,
   parseData,
@@ -137,10 +138,13 @@ describe('frames', () => {
     const d = decodeFrame(f)
     expect(d.type).toBe(FrameType.H1)
     expect([...d.payload]).toEqual([1, 2, 3])
+    // A frame type of a newer version decodes; sessions skip it.
+    expect(decodeFrame(new Uint8Array([9, 0, 0, 0, 0])).type).toBe(9)
+    expect(knownFrame(9)).toBe(false)
+    expect(knownFrame(FrameType.Data)).toBe(true)
     const bad = [
       new Uint8Array([1, 0, 0]),
       new Uint8Array([1, 0, 0, 0, 4, 1, 2, 3]),
-      new Uint8Array([9, 0, 0, 0, 0]),
       encodeFrame(FrameType.Data, new Uint8Array(17 * 1024)),
     ]
     for (const b of bad) {
@@ -325,6 +329,25 @@ describe('session', () => {
     expect(sb.strikes).toBe(0)
   })
 
+  test('frame types from a newer version are skipped without a strike; known ones out of place strike', async () => {
+    const { sa, sb, got, b } = pair({ limits: { strikes: 3 } })
+    await settle()
+    for (let n = 0; n < 5; n += 1)
+      (b as unknown as { deliver: (d: Uint8Array) => void }).deliver(
+        new Uint8Array([40 + n, 0, 0, 0, 2, 7, 7])
+      )
+    await sa.send({ t: 'text', body: 'still here' })
+    await settle()
+    expect(sb.state).toBe('ready')
+    expect(sb.strikes).toBe(0)
+    expect(got.b).toEqual(['still here'])
+    ;(b as unknown as { deliver: (d: Uint8Array) => void }).deliver(
+      encodeFrame(FrameType.H1, new Uint8Array(4))
+    )
+    await settle()
+    expect(sb.strikes).toBe(1)
+  })
+
   test('messages before hello are refused', async () => {
     const { sa, sb } = pair({ onHello: () => new Promise<boolean>(() => {}) })
     await settle()
@@ -339,7 +362,11 @@ describe('session', () => {
     expect(sa.state).toBe('ready')
     expect(sb.state).toBe('ready')
     wire.cut = true
-    await clock.advance(90_000)
+    // Gone once not heard from for deadMs, not at the next ping after it.
+    const heard = (sa as unknown as { lastHeard: number }).lastHeard
+    await clock.advance(heard + LIMITS.deadMs - 1000 - clock.now())
+    expect(sa.state).toBe('ready')
+    await clock.advance(1002)
     expect(sa.state).toBe('closed')
     expect(sa.reason).toBe('timeout')
   })

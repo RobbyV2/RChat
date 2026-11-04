@@ -703,7 +703,12 @@ export type VoiceMsg =
     }
   | { type: 'call_accept'; dm_id: number; peer_id?: string; relays?: string[] }
   | { type: 'call_decline' | 'call_leave'; dm_id: number }
-  | { type: 'p2p_hosting'; peer_id: string; ids: string[]; relays?: Record<string, string[]> }
+  | {
+      type: 'p2p_hosting'
+      peer_id: string
+      ids: string[]
+      relay_sets?: { hosts: string[]; ids: string[] }[]
+    }
   | { type: 'p2p_who'; hosters: string[] }
   | { type: 'p2p_peer'; message_id: number; peer_id: string }
   | {

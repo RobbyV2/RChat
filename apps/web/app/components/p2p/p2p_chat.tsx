@@ -1151,7 +1151,11 @@ export function P2pChatBody(props: ChatBodyProps) {
     detached: false,
     outCount: ownCount,
     onBottom: () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible')
+      if (
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'visible' &&
+        !useP2p.getState().chat?.newer
+      )
         p2pDm.markRead(key)
     },
   })
@@ -1268,6 +1272,25 @@ export function P2pChatBody(props: ChatBodyProps) {
                     onJump={rowJump}
                   />
                 )
+              )}
+              {chat.newer && (
+                <div
+                  data-p2p-newer
+                  className="flex flex-wrap items-center justify-center gap-2 px-4 py-3 text-xs text-on-surface-variant"
+                >
+                  <History size={14} />
+                  Newer messages aren&apos;t shown.
+                  <button
+                    onClick={() => void p2pDm.loadNewerPage()}
+                    disabled={chat.loading}
+                    className={textBtn}
+                  >
+                    Show newer
+                  </button>
+                  <button onClick={() => void p2pDm.toPresent()} className={textBtn}>
+                    Jump to present
+                  </button>
+                </div>
               )}
             </div>
           </div>

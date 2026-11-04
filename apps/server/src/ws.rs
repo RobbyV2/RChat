@@ -797,6 +797,8 @@ enum ClientMsg {
         ids: Vec<String>,
         #[serde(default)]
         relays: BTreeMap<String, Vec<String>>,
+        #[serde(default)]
+        relay_sets: Vec<RelaySet>,
     },
     P2pWho {
         hosters: Vec<String>,
@@ -966,6 +968,13 @@ pub async fn sweep_and_log(state: &AppState, idle: i64) {
 
 // What a tab hosts: its peer id, the file ids, and the relay hosts declared per file id.
 type Hosting = (String, Vec<String>, BTreeMap<String, Vec<String>>);
+
+// Relay hosts declared once for several hosted files.
+#[derive(Deserialize)]
+struct RelaySet {
+    hosts: Vec<String>,
+    ids: Vec<String>,
+}
 
 async fn announce_hosting(
     state: &AppState,
@@ -1696,7 +1705,10 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             relays,
         } => {
             let peer_id = call_peer_id(peer_id)?;
-            let relays = crate::p2p::relay_hosts(relays)?;
+            let relays = match state.hub.call_kind(dm_id) {
+                Some(CallKind::P2p) => crate::p2p::relay_hosts(relays)?,
+                Some(CallKind::Rtc) | None => Vec::new(),
+            };
             if !state.hub.accept_ok(user) {
                 return Err(TOO_FAST.to_string());
             }
@@ -1771,6 +1783,7 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             peer_id: _,
             ids: _,
             relays: _,
+            relay_sets: _,
         }
         | ClientMsg::P2pPeer {
             message_id: _,
@@ -3822,19 +3835,44 @@ fn hosting_ids(ids: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-// Declared relay hosts for hosted ids only, without empty lists; None when any list is invalid.
+// The hosted ids and their declared relay hosts (no empty lists), from the per-id map and the
+// shared sets. An id with an invalid list, or two different lists, is left out.
 fn hosting_relays(
-    ids: &[String],
+    ids: Vec<String>,
     relays: BTreeMap<String, Vec<String>>,
-) -> Option<BTreeMap<String, Vec<String>>> {
-    let mut out = BTreeMap::new();
+    sets: Vec<RelaySet>,
+) -> (Vec<String>, BTreeMap<String, Vec<String>>) {
+    let hosted: HashSet<&String> = ids.iter().collect();
+    let mut lists: BTreeMap<String, Option<Vec<String>>> = BTreeMap::new();
+    let mut add = |id: String, hosts: Option<Vec<String>>| {
+        if !hosted.contains(&id) {
+            return;
+        }
+        let next = match (lists.remove(&id), hosts) {
+            (None, hosts) => hosts,
+            (Some(Some(a)), Some(b)) if a == b => Some(a),
+            (Some(_), _) => None,
+        };
+        lists.insert(id, next);
+    };
     for (id, hosts) in relays {
-        let hosts = crate::p2p::relay_hosts(hosts).ok()?;
-        if !hosts.is_empty() && ids.contains(&id) {
-            out.insert(id, hosts);
+        add(id, crate::p2p::relay_hosts(hosts).ok());
+    }
+    for RelaySet { hosts, ids: set } in sets.into_iter().take(P2P_IDS_CAP) {
+        let hosts = crate::p2p::relay_hosts(hosts).ok();
+        for id in set.into_iter().take(P2P_IDS_CAP) {
+            add(id, hosts.clone());
         }
     }
-    Some(out)
+    let kept = ids
+        .into_iter()
+        .filter(|id| !matches!(lists.get(id), Some(None)))
+        .collect();
+    let relays = lists
+        .into_iter()
+        .filter_map(|(id, hosts)| hosts.filter(|h| !h.is_empty()).map(|h| (id, h)))
+        .collect();
+    (kept, relays)
 }
 
 async fn first_frame(socket: &mut WebSocket) -> Option<Option<String>> {
@@ -4046,10 +4084,9 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                                 break;
                             }
                         }
-                        Ok(ClientMsg::P2pHosting { peer_id, ids, relays }) => {
-                            let ids = hosting_ids(ids);
-                            let relays = hosting_relays(&ids, relays);
-                            if let Some(user) = access.user.clone() && let Some(relays) = relays && crate::p2p::valid_peer_id(&peer_id) {
+                        Ok(ClientMsg::P2pHosting { peer_id, ids, relays, relay_sets }) => {
+                            let (ids, relays) = hosting_relays(hosting_ids(ids), relays, relay_sets);
+                            if let Some(user) = access.user.clone() && crate::p2p::valid_peer_id(&peer_id) {
                                 let (live, checked) = match live_hosted(&state.read(), &user, &ids).await {
                                     Some(live) => (live, ids.clone()),
                                     None => (Vec::new(), Vec::new()),
@@ -7741,6 +7778,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn instance_calls_ignore_relays_on_accept() {
+        let (state, path) = crate::api::test_util::temp_state("call_relays_rtc").await;
+        let db = &state.db;
+        for name in ["alice", "bob"] {
+            add_user_row(db, name).await;
+        }
+        let dm = insert_id(
+            db,
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
+        )
+        .await;
+        let start = ClientMsg::CallStart {
+            dm_id: dm,
+            p2p: false,
+            video: false,
+            peer_id: None,
+            relays: Vec::new(),
+        };
+        voice_msg(&state, "alice", 1, start).await.expect("start");
+        assert_eq!(state.hub.call_kind(dm), Some(CallKind::Rtc));
+        let mut rx = state.hub.subscribe();
+        let accept = ClientMsg::CallAccept {
+            dm_id: dm,
+            peer_id: None,
+            relays: vec![s("<b>")],
+        };
+        voice_msg(&state, "bob", 2, accept).await.expect("accept");
+        let mut active = 0;
+        while let Ok(ev) = rx.try_recv() {
+            if let WsEvent::CallState {
+                dm_id: _,
+                dm_users: _,
+                state: CallPhase::Active,
+                from: _,
+                kind: _,
+                video: _,
+                call_id: _,
+                answered_at: _,
+                peers: _,
+                relays,
+            } = ev
+            {
+                assert!(relays.is_empty());
+                active += 1;
+            }
+        }
+        assert_eq!(active, 1);
+        assert_eq!(
+            state.hub.call_relays(dm),
+            Some(vec![(s("alice"), Vec::new())])
+        );
+        crate::api::test_util::done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn call_logs_record_video_and_the_connection() {
         let (state, path) = crate::api::test_util::temp_state("call_log_kind").await;
         let db = &state.db;
@@ -8749,30 +8841,112 @@ mod tests {
     async fn hosting_relays_keep_valid_hosts_of_hosted_files() {
         let ids = vec![s("f1"), s("f2")];
         let kept = hosting_relays(
-            &ids,
+            ids.clone(),
             BTreeMap::from([
                 (s("f1"), vec![s("TURN.A.example")]),
                 (s("f2"), Vec::new()),
                 (s("other"), vec![s("turn.b.example")]),
             ]),
+            Vec::new(),
         );
         assert_eq!(
             kept,
-            Some(BTreeMap::from([(s("f1"), vec![s("turn.a.example")])]))
-        );
-        assert_eq!(
-            hosting_relays(&ids, BTreeMap::from([(s("f1"), vec![s("a.example:3478")])])),
-            None
-        );
-        assert_eq!(
-            hosting_relays(&ids, BTreeMap::from([(s("f1"), vec![s("<b>")])])),
-            None
+            (
+                ids.clone(),
+                BTreeMap::from([(s("f1"), vec![s("turn.a.example")])])
+            )
         );
         assert!(
             serde_json::from_str::<ClientMsg>(r#"{"type":"p2p_hosting","peer_id":"p","ids":[]}"#)
                 .is_ok(),
             "older apps send no relays"
         );
+    }
+
+    #[tokio::test]
+    async fn hosting_drops_only_the_ids_with_a_bad_relay_list() {
+        let ids = vec![s("f1"), s("f2"), s("f3"), s("f4")];
+        let (kept, relays) = hosting_relays(
+            ids,
+            BTreeMap::from([
+                (s("f1"), vec![s("a.example:3478")]),
+                (s("f2"), vec![s("turn.a.example")]),
+            ]),
+            vec![
+                RelaySet {
+                    hosts: vec![s("<b>")],
+                    ids: vec![s("f3")],
+                },
+                RelaySet {
+                    hosts: vec![s("turn.b.example")],
+                    ids: vec![s("f2"), s("f4")],
+                },
+            ],
+        );
+        assert_eq!(kept, vec![s("f4")]);
+        assert_eq!(
+            relays,
+            BTreeMap::from([(s("f4"), vec![s("turn.b.example")])])
+        );
+        let (kept, relays) = hosting_relays(
+            vec![s("f1"), s("f2")],
+            BTreeMap::from([(s("f1"), vec![s("turn.a.example")])]),
+            vec![RelaySet {
+                hosts: vec![s("TURN.A.example")],
+                ids: vec![s("f1"), s("f2"), s("gone")],
+            }],
+        );
+        assert_eq!(kept, vec![s("f1"), s("f2")]);
+        assert_eq!(
+            relays,
+            BTreeMap::from([
+                (s("f1"), vec![s("turn.a.example")]),
+                (s("f2"), vec![s("turn.a.example")]),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_full_hosting_message_with_shared_relays_fits_a_frame() {
+        let ids: Vec<String> = (0..P2P_IDS_CAP).map(|i| format!("{i:032x}")).collect();
+        let hosts: Vec<String> = (0..crate::p2p::RELAY_HOSTS_MAX)
+            .map(|i| {
+                let label = |c: &str, n| c.repeat(n);
+                format!(
+                    "{i}{}.{}.{}.{}",
+                    label("a", 62),
+                    label("b", 63),
+                    label("c", 63),
+                    label("d", 61)
+                )
+            })
+            .collect();
+        assert!(
+            hosts
+                .iter()
+                .all(|h| h.len() == 253 && crate::p2p::relay_host(h).is_some())
+        );
+        let text = serde_json::json!({
+            "type": "p2p_hosting",
+            "peer_id": "rchat-0123456789abcdef",
+            "ids": ids,
+            "relay_sets": [{ "hosts": hosts, "ids": ids }],
+        })
+        .to_string();
+        assert!(text.len() < FRAME_MAX, "{}", text.len());
+        let Ok(ClientMsg::P2pHosting {
+            peer_id: _,
+            ids: got,
+            relays,
+            relay_sets,
+        }) = serde_json::from_str::<ClientMsg>(&text)
+        else {
+            panic!("p2p_hosting");
+        };
+        let (kept, relays) = hosting_relays(hosting_ids(got), relays, relay_sets);
+        assert_eq!(kept.len(), P2P_IDS_CAP);
+        assert_eq!(relays.len(), P2P_IDS_CAP);
+        assert!(relays.values().all(|h| *h == hosts));
     }
 
     #[tokio::test]

@@ -58,6 +58,7 @@ import {
   type ServerCache,
 } from './db'
 import { reactionsOf } from './dm'
+import { around, type PageOpts } from './jump'
 import {
   buildEvent2,
   claimedId2,
@@ -69,6 +70,7 @@ import {
   headerOk,
   LIMITS as EV,
   LIMITS2,
+  shownReaction,
   sizeOf,
   validate2,
   type Attachment,
@@ -873,6 +875,10 @@ export class Servers {
       devices: ik => {
         const r = this.idents.get(ik)
         return r ? { certs: r.certs, revocations: r.revocations } : null
+      },
+      owner: dk => {
+        for (const r of this.idents.values()) if (r.certs.some(c => c.dk === dk)) return r.ik
+        return null
       },
     })
     deps.dms.moreEntitled = (ik, h) => this.entitled(ik, h)
@@ -2464,7 +2470,7 @@ export class Servers {
           if (t && t.room === room && t.type === 'msg' && t.sender === this.me) ping = 'reply'
         }
         this.autoFetch(rec, m)
-      } else if (rec.type === 'react' && c?.on === true && rec.target) {
+      } else if (rec.type === 'react' && c?.on === true && rec.target && shownReaction(c)) {
         const t = await this.db.get('events', rec.target)
         if (t && t.room === room && t.sender === this.me && t.chan) {
           ch = t.chan
@@ -4978,22 +4984,19 @@ export class Servers {
     return this.sync.pulling(room)
   }
 
-  // Messages of a channel, oldest first, with join and leave lines in the system channel.
+  // Messages of a channel, oldest first, with join and leave lines in the system channel (the
+  // page bounds as in dm.ts loadMessages).
   async loadChannel(
     room: string,
     ch: string,
-    opts: {
-      before?: string
-      after?: string
-      limit?: number
-      keep?: (r: EventRecord) => boolean
-    } = {}
+    opts: PageOpts & { keep?: (r: EventRecord) => boolean } = {}
   ): Promise<{ messages: P2pMessage[]; more: boolean }> {
     const limit = opts.limit ?? 100
     if (this.readOnly(room)) return { messages: [], more: false }
     if (!opts.keep && !this.canViewCh(room, ch)) return { messages: [], more: false }
+    const up = opts.newer === true
     const range = IDBKeyRange.bound(
-      [room, ch, opts.after ?? ''],
+      [room, ch, opts.after ?? opts.from ?? ''],
       [room, ch, opts.before ?? '￿'],
       !!opts.after,
       !!opts.before
@@ -5007,7 +5010,7 @@ export class Servers {
       if (!r) roots.set(id, (r = store.get(id)))
       return r
     }
-    let cursor = await store.index('room_chan_sort').openCursor(range, 'prev')
+    let cursor = await store.index('room_chan_sort').openCursor(range, up ? 'next' : 'prev')
     while (cursor && recs.length < limit + 1) {
       const r = cursor.value
       // Thread replies show in their thread only; an archive (spec 3.8) only what `keep` keeps,
@@ -5018,24 +5021,33 @@ export class Servers {
       cursor = await cursor.continue()
     }
     const more = recs.length > limit
-    const page = recs.slice(0, limit).reverse()
+    const page = up ? recs.slice(0, limit) : recs.slice(0, limit).reverse()
     const rows = await this.withReplies(room, ch, await this.rows(room, page))
-    const lo = more ? page[0]?.sortKey : opts.after
+    const lo = more && !up ? page[0]?.sortKey : (opts.after ?? opts.from)
+    const hi = more && up ? recs[limit].sortKey : opts.before
     const pinRows = await this.pinRows(
       room,
-      pins.filter(p => lo === undefined || p.sortKey > lo)
+      pins.filter(p => (lo === undefined || p.sortKey > lo) && (hi === undefined || p.sortKey < hi))
     )
     rows.push(...pinRows)
     const sys = systemOf(this.sumOf(room))
     // An archive (spec 3.8) brings no join and leave lines of the old copy.
     if (sys.ch === ch && (sys.join || sys.leave) && !opts.keep)
-      rows.push(...(await this.systemRows(room, lo, opts.before, sys)))
+      rows.push(...(await this.systemRows(room, lo, hi, sys)))
     rows.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0))
     // Spec 3.8: a new copy shows the old copy's messages of the same channel above its own, as
     // they are there (read-only).
     const prev = this.rooms.get(room)?.prev
     const migrated = prev ? await this.migratedOf(room) : null
-    if (prev && migrated && !more && !opts.after && this.rooms.has(prev) && page.length < limit) {
+    if (
+      prev &&
+      migrated &&
+      !up &&
+      !more &&
+      !opts.after &&
+      this.rooms.has(prev) &&
+      page.length < limit
+    ) {
       // Spec 3.8 step 6: only up to each device's last message at the transfer, and nothing by
       // someone banned here.
       const s = this.sumOf(room)
@@ -5322,10 +5334,12 @@ export class Servers {
   async loadAround(room: string, ch: string, id: string) {
     const r = await this.db.get('events', id)
     if (!r || r.room !== room || r.chan !== ch || (await this.rootOf(r))) return null
-    const older = await this.loadChannel(room, ch, { before: r.sortKey, limit: 50 })
-    const newer = await this.loadChannel(room, ch, { after: r.sortKey, limit: 1000 })
-    const self = await this.withReplies(room, ch, await this.rows(room, [r]))
-    return { messages: [...older.messages, ...self, ...newer.messages], more: older.more }
+    if (!this.canViewCh(room, ch)) return null
+    return around(
+      r.sortKey,
+      async () => this.withReplies(room, ch, await this.rows(room, [r])),
+      o => this.loadChannel(room, ch, o)
+    )
   }
 
   // Pinned messages of a channel, newest pin first (spec 3.5: the latest visible pin by someone

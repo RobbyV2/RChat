@@ -15,6 +15,7 @@ export const TAG = {
   succession: 'rchat-p2p-succ1\0',
   peer: 'rchat-p2p-peer\0',
   bind: 'rchat-p2p-bind1\0',
+  offer: 'rchat-p2p-offer1\0',
 } as const
 
 export interface KeyPair {

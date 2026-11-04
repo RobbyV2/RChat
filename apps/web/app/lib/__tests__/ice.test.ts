@@ -65,11 +65,16 @@ describe('ICE config', () => {
       const file = files.find(({ f }) => f.endsWith(name))
       const peers = [...(file?.src ?? '').matchAll(/new\s+Peer\s*\(([^;]*?)\)\s*(?:\n|;|$)/g)]
       expect(peers.length > 0).toBe(true)
-      // P2P peers get the instance config plus the user's own relays (relays.ts builds it on ice).
-      expect(peers.filter(m => !/\bconfig\s*:\s*relayBook\.autoConfig\(\s*\)/.test(m[1]))).toEqual(
-        []
-      )
+      // P2P peers get the instance config plus the user's own relays (relays.ts builds it on ice),
+      // relayed candidates only when offers can't be checked (transport.ts answerConfig).
+      expect(
+        peers.filter(
+          m => !/\bconfig\s*:\s*(relayBook\.autoConfig\(\s*\)|answerConfig\([^)]*\))/.test(m[1])
+        )
+      ).toEqual([])
     }
+    const transport = files.find(({ f }) => f.endsWith('/p2p/transport.ts'))?.src ?? ''
+    expect(/answerConfig = [^]*?const config = book\.autoConfig\(\)/.test(transport)).toBe(true)
     const relays = files.find(({ f }) => f.endsWith('/relays.ts'))
     expect(/ice\.instanceServers\(\)/.test(relays?.src ?? '')).toBe(true)
   })
@@ -92,7 +97,9 @@ describe('ICE config', () => {
     expect(/plan:\s*choice\s*=>\s*relayBook\.check\(/.test(app)).toBe(true)
     expect(/consent:\s*hosts\s*=>\s*relayBook\.consent\(hosts\)/.test(app)).toBe(true)
     expect(/const plan = await relayBook\.check\(/.test(app)).toBe(true)
-    expect(/voice\.consent\s*=\s*hosts\s*=>\s*relayBook\.consent\(hosts\)/.test(app)).toBe(true)
+    expect(
+      /voice\.consent\s*=\s*\(hosts, ik\)\s*=>\s*relayBook\.consent\(hosts, ik\)/.test(app)
+    ).toBe(true)
     expect(/iceTransportPolicy:\s*'relay'/.test(calls)).toBe(true)
     expect(/iceTransportPolicy:\s*'relay'/.test(voice)).toBe(true)
   })

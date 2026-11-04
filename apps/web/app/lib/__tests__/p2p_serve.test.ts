@@ -10,6 +10,9 @@ import {
   canHookOffers,
   CHUNK_BYTES,
   HELD_OFFERS_MAX,
+  HELD_PER_PEER,
+  HOSTED_MAX,
+  hostingMsg,
   intentOf,
   expiryDelay,
   keepPreview,
@@ -31,7 +34,7 @@ import {
   unexpired,
 } from '../p2p'
 import { setBlobs, type BlobStore } from '../platform'
-import { DENIED_DOWNLOAD, relayBook, type Decision } from '../relays'
+import { DENIED_DOWNLOAD, PROMPTS, relayBook, type Decision } from '../relays'
 import { webBlobs } from '../platform/web_blobs'
 import { Sha256 } from '../sha256'
 import { NEUTRAL_TYPE } from '../sniff'
@@ -272,6 +275,7 @@ describe('p2p transfer', () => {
     ensurePeer: () => unknown
     announce: () => void
     wire: (peer: unknown) => void
+    heldMs: number
   }
   const manager = (name = 'host') => {
     const m = new P2pManager()
@@ -690,6 +694,32 @@ describe('p2p transfer', () => {
     expect(kept.has('h:host:f')).toBe(false)
     const gone = await fetchFrom(x, 'f').got.catch((e: unknown) => e)
     expect(gone instanceof Error ? gone.message : null).toBe('File not available')
+  })
+
+  test('the hosting announce stays one small frame: newest 256 ids, each relay list once', () => {
+    const label = (c: string, n: number) => c.repeat(n)
+    const hosts = [0, 1, 2, 3].map(
+      i => `${i}${label('a', 62)}.${label('b', 63)}.${label('c', 63)}.${label('d', 61)}`
+    )
+    expect(hosts.every(h => h.length === 253)).toBe(true)
+    const files: [string, StoredFile][] = Array.from({ length: 5000 }, (_, i) => [
+      i.toString(16).padStart(32, '0'),
+      { name: 'f', mime: 'a/b', size: 1, expires_at: null, added_at: 1_700_000_000 + i },
+    ])
+    files.push(['f'.repeat(32), { ...files[0][1], added_at: 1_800_000_000, pending: true }])
+    const msg = hostingMsg('rchat-0123456789abcdef', files, ['legacy'], () => hosts)
+    expect(new TextEncoder().encode(JSON.stringify(msg)).length < 64 * 1024).toBe(true)
+    expect(msg.ids.length).toBe(HOSTED_MAX)
+    expect(msg.ids[0]).toBe((4999).toString(16).padStart(32, '0'))
+    expect(msg.ids.at(-1)).toBe((5000 - HOSTED_MAX).toString(16).padStart(32, '0'))
+    expect(msg.relay_sets).toEqual([{ hosts, ids: msg.ids }])
+    // Files kept by older versions go last, and lists differ per relay choice.
+    const few = hostingMsg('p', files.slice(0, 3), ['legacy'], id =>
+      id.endsWith('1') ? ['turn.a.example'] : []
+    )
+    expect(few.ids).toEqual([files[2][0], files[1][0], files[0][0], 'legacy'])
+    expect(few.relay_sets).toEqual([{ hosts: ['turn.a.example'], ids: [files[1][0]] }])
+    expect('relay_sets' in hostingMsg('p', files.slice(0, 1), [], () => [])).toBe(false)
   })
 
   test('a staged file is neither announced nor served until its message is posted', async () => {
@@ -1168,9 +1198,11 @@ describe('p2p transfer', () => {
         asked.push(host)
         return answers.shift() ?? 'deny'
       }
-      const meta = async () => ({
+      let t = 1_000_000
+      relayBook.now = () => t
+      const meta = async (host = 'their.example') => ({
         f: 'auto',
-        r: ['their.example'],
+        r: [host],
         t: await tokenFor(m, 'auto', 'remote'),
       })
       net.offer('remote', 'deny', await meta())
@@ -1181,15 +1213,22 @@ describe('p2p transfer', () => {
         connectionId: 'deny',
         reason: 'relay',
       })
-      net.offer('remote', 'once', await meta())
+      // Denied: the same downloader with the same relays isn't asked again.
+      t += PROMPTS.recentMs
+      net.offer('remote', 'again', await meta())
+      await until(() => net.sent.length > 1)
+      expect(net.sent.at(-1)?.payload.connectionId).toBe('again')
+      net.offer('remote', 'once', await meta('other.example'))
       await until(() => net.built.length === 1)
       expect(relayBook.prefs.allowed).toEqual([])
-      net.offer('remote', 'always', await meta())
+      t += PROMPTS.recentMs
+      net.offer('remote', 'always', await meta('other.example'))
       await until(() => net.built.length === 2)
-      expect(relayBook.prefs.allowed).toEqual(['their.example'])
-      net.offer('remote', 'known', await meta())
+      expect(relayBook.prefs.allowed).toEqual(['other.example'])
+      net.offer('remote', 'known', await meta('other.example'))
       expect(net.built.map(b => b.cid)).toEqual(['once', 'always', 'known'])
-      expect(asked).toEqual(['their.example', 'their.example', 'their.example'])
+      expect(asked).toEqual(['their.example', 'other.example', 'other.example'])
+      relayBook.now = () => Date.now()
       // A bad token never gets a prompt; a pinned file's relay hides the IP, so no prompt.
       relayBook.save({ ...relayBook.prefs, allowed: [] })
       net.offer('remote', 'forged', { f: 'auto', r: ['their.example'], t: 'nope' })
@@ -1205,13 +1244,42 @@ describe('p2p transfer', () => {
       expect(asked.length).toBe(3)
     })
 
-    test('offers waiting for an answer are capped', async () => {
-      const { m, net } = await hosting()
+    test('offers waiting for an answer are capped, per downloader and in all, for a while', async () => {
+      const { m, x, net } = await hosting()
       relayBook.prompt = () => new Promise(() => {})
       const t = await tokenFor(m, 'auto', 'remote')
-      for (let i = 0; i <= HELD_OFFERS_MAX; i += 1)
+      for (let i = 0; i <= HELD_PER_PEER; i += 1)
         net.offer('remote', `c${i}`, { f: 'auto', r: ['their.example'], t })
       expect(net.sent.map(x => x.payload.reason)).toEqual(['busy'])
+      const others = HELD_OFFERS_MAX - HELD_PER_PEER + 1
+      for (let i = 0; i < others; i += 1)
+        net.offer(`r${i}`, `d${i}`, {
+          f: 'auto',
+          r: ['their.example'],
+          t: await tokenFor(m, 'auto', `r${i}`),
+        })
+      expect(net.sent.map(x => x.payload.connectionId)).toEqual(['c2', `d${others - 1}`])
+      // An answer that never comes frees the slot once the downloader stopped waiting.
+      x.heldMs = 20
+      net.offer('late', 'e0', { f: 'auto', r: ['their.example'], t })
+      expect(net.sent.at(-1)?.payload.connectionId).toBe('e0')
+    })
+
+    test('an offer held past the wait is refused and frees its slot', async () => {
+      const { m, x, net } = await hosting()
+      x.heldMs = 20
+      relayBook.prompt = () => new Promise(() => {})
+      const t = await tokenFor(m, 'auto', 'remote')
+      net.offer('remote', 'c0', { f: 'auto', r: ['their.example'], t })
+      net.offer('remote', 'c1', { f: 'auto', r: ['their.example'], t })
+      expect(net.sent).toEqual([])
+      await until(() => net.sent.length === 2)
+      expect(net.sent.map(s => [s.payload.connectionId, s.payload.reason])).toEqual([
+        ['c0', 'busy'],
+        ['c1', 'busy'],
+      ])
+      net.offer('remote', 'c2', { f: 'auto', r: ['their.example'], t })
+      expect(net.sent.length).toBe(2)
     })
 
     test('a download declares its relays and token, and stops when the hoster refuses', async () => {
@@ -1254,30 +1322,37 @@ describe('p2p transfer', () => {
         asked.push(host)
         return answers.shift() ?? 'deny'
       }
+      let t = 1_000_000
+      relayBook.now = () => t
       const relays = ['their.example']
       const denied = await fetchFrom(x, 'f', { relays }).got.catch((e: unknown) => e)
       expect(denied instanceof Error ? denied.message : null).toBe(DENIED_DOWNLOAD)
       expect((await fetchFrom(x, 'f', { relays }).got).blob.size).toBe(6)
       expect(relayBook.prefs.allowed).toEqual([])
+      // Allowed once a moment ago: no second prompt yet.
+      expect((await fetchFrom(x, 'f', { relays }).got).blob.size).toBe(6)
+      expect(asked.length).toBe(2)
+      t += PROMPTS.recentMs
       expect((await fetchFrom(x, 'f', { relays }).got).blob.size).toBe(6)
       expect(relayBook.prefs.allowed).toEqual(['their.example'])
       expect((await fetchFrom(x, 'f', { relays }).got).blob.size).toBe(6)
       expect(asked).toEqual(['their.example', 'their.example', 'their.example'])
+      relayBook.now = () => Date.now()
     })
 
     test('hosting declares the relay hosts each file may be served through', async () => {
       relayBook.save({ ...relayBook.prefs, relays: [{ url: mine }] })
       const { m, x } = manager()
-      const msgs: { ids?: string[]; relays?: Record<string, string[]> }[] = []
+      const msgs: { ids?: string[]; relay_sets?: { hosts: string[]; ids: string[] }[] }[] = []
       ws.sendVoice = msg => msgs.push(msg as (typeof msgs)[number])
       x.ensurePeer = () => ({})
       x.announce = P2pManager.prototype.announce.bind(m)
       try {
         await m.stage('manual', new File([bytes(3)], 'm.bin'), null, undefined, mine)
         m.posted('manual', 1)
-        expect(msgs.at(-1)?.relays).toEqual({ manual: ['mine.example'] })
+        expect(msgs.at(-1)?.relay_sets).toEqual([{ hosts: ['mine.example'], ids: ['manual'] }])
         relayBook.save({ ...relayBook.prefs, relays: [] })
-        expect(msgs.at(-1)?.relays).toBeUndefined()
+        expect(msgs.at(-1)?.relay_sets).toBeUndefined()
         expect(msgs.at(-1)?.ids).toEqual(['manual'])
       } finally {
         ws.sendVoice = () => {}

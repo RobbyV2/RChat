@@ -284,8 +284,6 @@ export const markVerified = (c: Contact, now: number): Contact => ({
   warning: null,
 })
 
-export const unverify = (c: Contact): Contact => ({ ...c, verified: false, verifiedAt: null })
-
 // Shield colors: red while a warning stands, green once verified, grey otherwise.
 export type Shield = 'warning' | 'verified' | 'unverified'
 

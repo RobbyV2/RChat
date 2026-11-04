@@ -30,5 +30,7 @@ data:
   # RELAY_PUBLIC_IP: "203.0.113.10"
   # Public addresses the relay must never reach (see relay.yaml):
   # RELAY_DENIED_PEERS: "203.0.113.0/24"
-  # RELAY_USER_ALLOCATIONS: "16"
+  # RELAY_USER_ALLOCATIONS: "64"
+  # PEERJS_PEERS_PER_IP: "50"
+  # PEERJS_CONCURRENT_LIMIT: "5000"
   # ICE_SERVERS: '[{"urls":"turn:turn.example.com:3478","username":"u","credential":"p"}]'

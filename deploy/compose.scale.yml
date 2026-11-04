@@ -162,6 +162,8 @@ services:
     restart: unless-stopped
     command: ["/app/start.sh", "peer"]
     networks: [edge]
+    environment:
+      TRUSTED_PROXIES: ${RCHAT_EDGE_SUBNET:-10.240.80.0/24}
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:9001/peerjs > /dev/null"]
       interval: 10s

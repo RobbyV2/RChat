@@ -47,7 +47,7 @@ function NameField() {
 }
 
 export const BADGE_ON_BODY =
-  'Contacts and server members see "Confirmed as" and your account name next to your P2P name. The instance learns your P2P identity key, which links your P2P activity to your account. While this is on, it renews the confirmation every day.'
+  'Contacts, people you sent a request to and server members see "Confirmed as" and your account name next to your P2P name. The instance learns your P2P identity key, which links your P2P activity to your account. While this is on, it renews the confirmation every day.'
 
 export const badgeOffBody = (until: number | null) =>
   `Peers who already have your confirmation keep showing it until it expires${

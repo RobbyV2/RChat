@@ -15,12 +15,7 @@ case "${DATABASE_URL:-}" in
 esac
 
 peer() {
-    cd /app/peer && bunx peer --port "${PEERJS_PORT:-9001}" --path /peerjs 2>&1 | {
-        case "${RUST_LOG:-info}" in
-            *debug* | *trace*) cat ;;
-            *) grep --line-buffered -vE "Client (dis)?connected:" ;;
-        esac
-    }
+    cd /app/peer && bun server.mjs
 }
 
 if [ "$1" = "peer" ]; then

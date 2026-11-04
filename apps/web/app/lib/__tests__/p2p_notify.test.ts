@@ -77,11 +77,16 @@ describe('P2P conversations in the notification resolver', () => {
     expect(unreadShown(setMute(EMPTY_NOTIFY, scope, 'forever'), `p2p:${ROOM}`, null, NOW)).toBe(
       false
     )
-    const rooms = { [ROOM]: { id: ROOM, pings: 2 }, x: { id: 'B'.repeat(43), pings: 3 } }
-    expect(badgePings(rooms, EMPTY_NOTIFY)).toBe(5)
-    expect(badgePings(rooms, nothing)).toBe(3)
+    const rooms = {
+      [ROOM]: { id: ROOM, peer: 'bob', pings: 2 },
+      x: { id: 'B'.repeat(43), peer: 'carol', pings: 3 },
+      y: { id: 'C'.repeat(43), peer: 'blocked', pings: 7 },
+    }
+    const listed = new Set(['bob', 'carol'])
+    expect(badgePings(rooms, EMPTY_NOTIFY, listed)).toBe(5)
+    expect(badgePings(rooms, nothing, listed)).toBe(3)
     // A muted conversation still badges its pings.
-    expect(badgePings(rooms, setMute(EMPTY_NOTIFY, scope, 'forever'))).toBe(5)
+    expect(badgePings(rooms, setMute(EMPTY_NOTIFY, scope, 'forever'), listed)).toBe(5)
   })
 
   test('alerts follow the level: pings unless muted or Nothing, messages only under All', () => {

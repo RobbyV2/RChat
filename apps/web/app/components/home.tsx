@@ -652,8 +652,12 @@ function DmUnreadRow({ pings }: { pings: number }) {
 const useP2pUnread = () => {
   const servers = useP2p(s => s.servers)
   const rooms = useP2p(s => s.rooms)
+  const contacts = useP2p(s => s.contacts)
   const prefs = useStore(s => s.notifyPrefs)
-  return useMemo(() => p2pUnread({ servers, rooms }, prefs, Date.now()), [servers, rooms, prefs])
+  return useMemo(
+    () => p2pUnread({ servers, rooms, contacts }, prefs, Date.now()),
+    [servers, rooms, contacts, prefs]
+  )
 }
 
 function P2pServerUnreadRow({ v, pings, channels }: P2pUnreadRow) {

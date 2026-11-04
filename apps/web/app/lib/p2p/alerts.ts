@@ -8,6 +8,7 @@ import {
   type Resolved,
 } from '../notify'
 import type { UserRef } from '../types'
+import { visibleContacts, type Contact } from './contacts'
 import type { PingKind } from './dag'
 import type { Arrival } from './dm'
 import type { MsgContent } from './event'
@@ -62,13 +63,30 @@ export const p2pAlert = (
   }
 }
 
-// Pings that badge (the P2P tile, the tab title): every conversation except those set to
+// The contacts the conversation list has a row for (mutual, not blocked or ignored): only their
+// conversations count, since nothing else can be opened and read.
+export const listedPeers = (contacts: Contact[]): ReadonlySet<string> =>
+  new Set(
+    visibleContacts(contacts)
+      .filter(c => c.state === 'mutual')
+      .map(c => c.ik)
+  )
+
+type Counted = { id: string; peer: string; unread: number; pings: number }
+
+const listedRooms = <R extends { peer: string }>(
+  rooms: Record<string, R>,
+  listed: ReadonlySet<string>
+) => Object.values(rooms).filter(r => listed.has(r.peer))
+
+// Pings that badge (the P2P tile, the tab title): every listed conversation except those set to
 // "Nothing".
 export const badgePings = (
-  rooms: Record<string, { id: string; pings: number }>,
-  prefs: NotifyPrefs
+  rooms: Record<string, Omit<Counted, 'unread'>>,
+  prefs: NotifyPrefs,
+  listed: ReadonlySet<string>
 ) =>
-  Object.values(rooms).reduce(
+  listedRooms(rooms, listed).reduce(
     (n, r) => n + (levelOf(prefs, { kind: 'p2p', room: r.id }) === 'nothing' ? 0 : r.pings),
     0
   )
@@ -101,11 +119,13 @@ export interface P2pUnreadRow {
 export const p2pUnread = (
   st: {
     servers: Record<string, ServerView>
-    rooms: Record<string, { id: string; unread: number; pings: number }>
+    rooms: Record<string, Counted>
+    contacts: Contact[]
   },
   prefs: NotifyPrefs,
   now: number
 ) => {
+  const listed = listedPeers(st.contacts)
   const servers: P2pUnreadRow[] = Object.values(st.servers)
     .filter(v => v.me === 'join')
     .map(v => ({
@@ -124,8 +144,8 @@ export const p2pUnread = (
   return {
     servers,
     dms: {
-      pings: badgePings(st.rooms, prefs),
-      unread: Object.values(st.rooms).some(
+      pings: badgePings(st.rooms, prefs, listed),
+      unread: listedRooms(st.rooms, listed).some(
         r => r.unread > 0 && !mutedOf(prefs, { kind: 'p2p', room: r.id }, now)
       ),
     },

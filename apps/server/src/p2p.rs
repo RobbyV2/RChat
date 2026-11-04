@@ -137,45 +137,24 @@ pub fn verify(key: &[u8; 32], token: &str, now: i64) -> Option<Grant> {
 mod tests {
     use super::*;
 
+    // The same cases as the client's cleanHost (relays.test.ts).
+    const HOSTS: &str = "../web/app/lib/__tests__/fixtures/relay_hosts.json";
+
     #[test]
     fn relay_hosts_are_plain_hosts_only() {
-        for good in [
-            "turn.example.com",
-            "TURN.Example.com",
-            "10.0.0.1",
-            "[2001:db8::1]",
-            "xn--bcher-kva.example",
-            "localhost",
-        ] {
-            assert!(relay_host(good).is_some(), "{good}");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(HOSTS);
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).expect("fixture")).expect("json");
+        let good = doc["good"].as_array().expect("good");
+        let bad = doc["bad"].as_array().expect("bad");
+        assert!(good.len() > 10 && bad.len() > 20);
+        for case in good {
+            let (raw, clean) = (case[0].as_str().expect("raw"), case[1].as_str());
+            assert_eq!(relay_host(raw).as_deref(), clean, "{raw}");
         }
-        assert_eq!(
-            relay_host("TURN.Example.com").as_deref(),
-            Some("turn.example.com")
-        );
-        for bad in [
-            "",
-            "turn.example.com:3478",
-            "turn:turn.example.com",
-            "user@host",
-            "-bad.example",
-            "bad-.example",
-            "a..b",
-            "<b>x</b>",
-            "b\u{fc}cher.example",
-            "[not-v6]",
-            "[::1",
-            "host/path",
-            "host name",
-            "1.2.3",
-            "999.1.1.1",
-            "1.2.3.4.5",
-            "01.2.3.4",
-            "example.123",
-            &"a".repeat(64),
-            &format!("{}.com", "a.".repeat(130)),
-        ] {
-            assert!(relay_host(bad).is_none(), "{bad}");
+        for raw in bad {
+            let raw = raw.as_str().expect("bad host");
+            assert!(relay_host(raw).is_none(), "{raw}");
         }
         assert_eq!(
             relay_hosts(vec!["a.example".into(), "A.example".into()]).unwrap(),

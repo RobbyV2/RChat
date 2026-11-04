@@ -9,6 +9,7 @@ import {
   encodeMessage,
   FrameError,
   FrameType,
+  knownFrame,
   MESSAGE_MAX,
   parseData,
   Reassembler,
@@ -97,8 +98,6 @@ export interface SessionOpts {
 const FRAME_COST = 1024
 
 type Rx = { epoch: number; cipher: Cipher }
-
-const CONTROL = new Set(['hello', 'ping', 'pong', 'rk1', 'rk2', 'rk3', 'bye'])
 
 export class Session {
   state: 'handshake' | 'open' | 'ready' | 'closed' = 'handshake'
@@ -221,7 +220,12 @@ export class Session {
     } catch {
       return this.state === 'handshake' ? this.close('handshake') : this.strike()
     }
-    if (this.state === 'handshake') return this.handshake(frame.type, frame.payload)
+    if (this.state === 'handshake') {
+      if (!knownFrame(frame.type)) return this.close('handshake')
+      return this.handshake(frame.type, frame.payload)
+    }
+    // A frame type of a newer version: skipped within the rate limit.
+    if (!knownFrame(frame.type)) return void (await this.throttle())
     if (frame.type !== FrameType.Data) return this.strike()
     let pt: Uint8Array
     try {
@@ -364,15 +368,22 @@ export class Session {
     }
   }
 
+  // Pings every pingMs; a peer not heard from for deadMs is gone right then.
   private heartbeat() {
     const tick = () => {
       if (this.state === 'closed') return
-      if (this.clock.now() - this.lastHeard > this.limits.deadMs) return this.close('timeout')
       void this.send({ t: 'ping' })
       if (this.opts.role === 'initiator' && this.needsRekey()) void this.rekey()
       this.timers.push(this.clock.set(tick, this.limits.pingMs))
     }
+    const watch = () => {
+      if (this.state === 'closed') return
+      const left = this.lastHeard + this.limits.deadMs - this.clock.now()
+      if (left < 0) return this.close('timeout')
+      this.timers.push(this.clock.set(watch, left + 1))
+    }
     this.timers.push(this.clock.set(tick, this.limits.pingMs))
+    this.timers.push(this.clock.set(watch, this.limits.deadMs + 1))
   }
 
   private needsRekey() {
@@ -549,5 +560,3 @@ export class Session {
     for (const fn of this.closeFns) fn(this, reason)
   }
 }
-
-export const isControl = (t: string) => CONTROL.has(t)

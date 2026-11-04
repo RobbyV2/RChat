@@ -251,7 +251,7 @@ CI builds a debug APK and an unsigned iOS build on every push to main and keeps 
 GitHub Actions has two channels:
 
 - Stable: pushing a version tag (`0.3.0`, or `0.3.0-rc.1` for a pre-release; no `v` prefix) publishes a GitHub Release. Pre-releases get no package manager files.
-- Weekly: every Monday, `main` is built as a pre-release named `weekly-YYYY-MM-DD` with version `<next patch>-weekly.YYYYMMDD`. The `weekly` and `nightly` tags move to it, and dated weekly releases beyond the newest 8 are deleted. It is skipped when nothing changed. Run the `release` workflow by hand to build one now.
+- Weekly: every Monday, `main` is built as a pre-release named `weekly-YYYY-MM-DD` with version `<next patch>-weekly.YYYYMMDD`. The `weekly` and `nightly` tags move to it, and dated weekly releases beyond the newest 8 are deleted. The release named `weekly` is updated in place and holds the updater manifest: never delete it. It is skipped when nothing changed. Run the `release` workflow by hand to build one now.
 
 | Workflow      | When                               | What                                                                 |
 | ------------- | ---------------------------------- | -------------------------------------------------------------------- |
@@ -259,6 +259,8 @@ GitHub Actions has two channels:
 | `ci.yml`      | Every push and pull request        | Clippy and tests of the desktop crates (no bundling)                 |
 | `ci.yml`      | Pushes to main, manual runs        | Also desktop builds, desktop smoke run, mobile builds, Docker build  |
 | `release.yml` | Version tags, Mondays, manual runs | All of the above, then the release                                   |
+
+Changes to Markdown files and `docs/` alone run no CI. A push to main that changes nothing the mobile apps are built from skips the mobile builds.
 
 To skip heavy parts of `ci.yml` on a push, put a tag in the commit message, or give the pull request the label of the same words without brackets. Version tags, the weekly schedule and manual runs ignore them.
 

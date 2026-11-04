@@ -149,6 +149,10 @@ export class Link {
   pulled = 0
   stateTimes: { at: number; n: number }[] = []
   unavailable = new Set<string>()
+  // Acked `later` here (a device or a vouching head we don't have yet): asked again once it may
+  // be stored.
+  later = new Set<string>()
+  devices = ''
   peerHeads: string[] = []
   peerState: string[] = []
   // The peer said no to history until it sends heads again.
@@ -173,6 +177,11 @@ const strArray = (x: unknown, max: number, ok: (v: unknown) => boolean): string[
   Array.isArray(x) && x.length <= max && x.every(ok) ? (x as string[]) : null
 
 const isRid = (x: unknown): x is number => Number.isSafeInteger(x) && (x as number) > 0
+
+const prevsOf = (w: unknown): string[] => {
+  const p = (w as { ev?: { prev?: unknown } } | null)?.ev?.prev
+  return Array.isArray(p) ? p.filter((x): x is string => typeof x === 'string') : []
+}
 
 const wireSize = (w: unknown) => {
   try {
@@ -448,9 +457,23 @@ export class Sync {
     this.deps.onState?.(link.room)
   }
 
+  // Events acked `later` that may be stored now: a stored child vouches for them, or the
+  // contact's devices changed.
+  private retryLater(link: Link, ids: Iterable<string>) {
+    for (const id of ids) if (link.later.delete(id)) link.unavailable.delete(id)
+  }
+
   // What the peer has and we don't: its heads, and parents we miss. Ask for them, unless this
   // peer already said it has none of them.
   private async fillGaps(link: Link) {
+    if (!this.deps.check) {
+      const d = this.deps.devices(link.ik)
+      const key = d ? `${d.certs.map(c => c.dk).join()};${d.revocations.length}` : ''
+      if (key !== link.devices) {
+        link.devices = key
+        this.retryLater(link, [...link.later])
+      }
+    }
     const room = await this.deps.store.room(link.room)
     // Nothing more can be stored: asking would only bring refusals.
     if (room?.full || this.deps.quotaFull?.()) return
@@ -605,6 +628,7 @@ export class Sync {
       if (!v.ok) {
         if (v.later) {
           if (v.id) later.push(v.id)
+          if (v.id) link.later.add(v.id)
           continue
         }
         link.session.strike()
@@ -625,6 +649,7 @@ export class Sync {
         const good = (dev: string) => !revs.some(x => x.dk === dev)
         if (!(await vouched(db, link.room, v.id, v.wire.ev.sender, good))) {
           later.push(v.id)
+          link.later.add(v.id)
           continue
         }
       }
@@ -658,7 +683,10 @@ export class Sync {
         later.push(v.id)
       } else {
         acks.push(v.id)
-        if (res.status === 'new') added.push(res)
+        if (res.status === 'new') {
+          added.push(res)
+          this.retryLater(link, prevsOf(v.wire))
+        }
       }
     }
     if (added.length && !quota) this.deps.onQuota?.(false)
@@ -857,6 +885,8 @@ export class Sync {
       // Their storage is full: stop pushing for a while; what waits stays in the outbox.
       link.peerFull = this.deps.clock.set(() => {
         link.peerFull = null
+        // What was acked `full` left the window: the peer pulls it once it hears our heads.
+        void this.sendHeads(link)
         this.pump(link)
       }, this.limits.peerFullMs)
     }

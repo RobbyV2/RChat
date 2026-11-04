@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { Hub, makeNode, ManualClock, settle, waitFor } from './p2p_net'
 import type { P2pNode } from '../p2p/node'
@@ -8,6 +8,7 @@ import {
   Blobs,
   BULK,
   BulkLink,
+  HOLDERS_KEPT,
   MISMATCH_TEXT,
   partRange,
   thumbBytes,
@@ -20,6 +21,9 @@ import { buildEvent, LIMITS as EV, validate, type Attachment } from '../p2p/even
 import { AUTO_PAUSED_TEXT, Dms, dmRoomId, loadMessages, type DmDeps } from '../p2p/dm'
 import { insertEvent } from '../p2p/dag'
 import { keyId, newKeyPair, signCert } from '../p2p/keys'
+
+// Real-time tests (sessions, IndexedDB): budgets for a loaded machine.
+setDefaultTimeout(60_000)
 
 // P2P attachments (note section 5): block hashing, the bulk pipe, multi-source downloads with
 // per-block checks, resume, the serving gate and deletion on redaction.
@@ -35,7 +39,7 @@ afterEach(() => {
   for (const s of stops.splice(0)) s()
 })
 
-const eventually = async (ok: () => Promise<boolean>, what: string, ms = 20_000) => {
+const eventually = async (ok: () => Promise<boolean>, what: string, ms = 30_000) => {
   const end = Date.now() + ms
   while (!(await ok())) {
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
@@ -315,6 +319,21 @@ describe('storage', () => {
 })
 
 describe('bulk transfers', () => {
+  test('files probed for holders and never downloaded are not kept forever', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await node(hub, 'Alice', clock)
+    const bb = blobsOn(a, clock, { members: async () => [] })
+    const probe = (h: string) =>
+      (bb as unknown as { probe: (h: string) => Promise<unknown> }).probe(h)
+    const holders = (bb as unknown as { holders: Map<string, unknown> }).holders
+    for (let i = 0; i < HOLDERS_KEPT + 100; i += 1) await probe(b64u(bytes(32, i + 1)))
+    expect(holders.size).toBe(HOLDERS_KEPT)
+    clock.t += BULK.probeMs
+    await probe(b64u(bytes(32, 9999)))
+    expect(holders.size).toBe(1)
+  })
+
   test('multi-source: blocks come from every holder and the file matches', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -584,8 +603,11 @@ describe('bulk transfers', () => {
     const h = hold(hub, 0, 2)
     await bb.download(att)
     await eventually(async () => link.fetches.size === 2 && h.stash.length > 0, 'requests out')
-    await clock.advance(BULK.stallMs)
-    await eventually(async () => link.abandoned.size === 2, 'stalled blocks cancelled')
+    // Time moves on until both stall timers ran (one may be armed after a first advance).
+    await eventually(async () => {
+      await clock.advance(BULK.stallMs)
+      return link.abandoned.size >= 2
+    }, 'stalled blocks cancelled')
     // The network comes back: the stalled blocks arrive in full, late, and are dropped.
     h.release()
     await eventually(async () => !!(await bb.record(att.h))?.done, 'download')
@@ -1339,9 +1361,20 @@ describe('fix round 2: images, the gate, forwards, late chunks, auto-download li
     // Alice forwards it to Bob, then deletes the forward.
     const fwd = await a.dms.send(a.dms.roomFor(b.node.ik), { body: 'look', att: [att] })
     await eventually(async () => (await messagesOf(b, a)).length === 1, 'forwarded')
+    // The deletion's release of its files has run (and kept this one) before the check.
+    const blobs = a.dms.blobs as unknown as { release: (...x: unknown[]) => Promise<unknown> }
+    const release = blobs.release.bind(blobs)
+    let released = 0
+    blobs.release = async (...x: unknown[]) => {
+      try {
+        return await release(...x)
+      } finally {
+        released += 1
+      }
+    }
     await a.dms.redact(a.dms.roomFor(b.node.ik), fwd)
     await eventually(async () => (await messagesOf(a, b)).length === 0, 'deleted')
-    await new Promise(r => setTimeout(r, 200))
+    await eventually(async () => released > 0, 'released')
     expect((await a.dms.blobs.record(att.h))?.done).toBe(true)
     expect(same(await contentsOf(await a.dms.blobs.file(att.h)), data)).toBe(true)
     // Carol's message still lets Carol fetch it; Bob no longer can.

@@ -14,6 +14,7 @@ import {
   buildEvent,
   LIMITS as EV,
   isLate,
+  shownReaction,
   sizeOf,
   validate,
   CALL_OUTCOMES,
@@ -34,6 +35,7 @@ import { maskCode } from '../mentions'
 import { keyBytes } from './keys'
 import type { P2pNode } from './node'
 import { realClock, type Clock } from './session'
+import { around, type PageOpts } from './jump'
 import { isQuotaError, Sync, type SyncLimits } from './sync'
 
 // P2P direct messages: one room per pair of identities, its events in IndexedDB on both sides,
@@ -132,12 +134,12 @@ export const isRedactedBy = (msg: EventRecord, related: EventRecord[]) =>
   related.some(r => r.type === 'redact' && r.sender === msg.sender)
 
 // Reactions: the latest event per (sender, key) wins; chips go in order of each key's first
-// `on`.
+// `on`. Keys that aren't an emoji are stored but inert: no chip, no ping.
 export const reactionsOf = (related: EventRecord[], me: string): P2pReaction[] => {
   const latest = new Map<string, EventRecord>()
   const first = new Map<string, number>()
   for (const r of related) {
-    if (r.type !== 'react' || !r.wire.c) continue
+    if (r.type !== 'react' || !r.wire.c || !shownReaction(r.wire.c)) continue
     const c = r.wire.c as ReactContent
     const k = `${r.sender}\n${c.key}`
     const cur = latest.get(k)
@@ -347,26 +349,28 @@ export const viewOf = async (
   return out
 }
 
-const sortRange = (room: string, type: EvType, below?: string, above?: string) =>
-  IDBKeyRange.bound([room, type, above ?? ''], [room, type, below ?? '￿'], !!above, !!below)
+const sortRange = (room: string, type: EvType, below?: string, above?: string, from?: string) =>
+  IDBKeyRange.bound([room, type, above ?? from ?? ''], [room, type, below ?? '￿'], !!above, !!below)
 
-// The newest `limit` messages before `before` (a sort key), oldest first. `more` when older ones
-// are stored.
+// The newest `limit` messages before `before` (a sort key), oldest first, `more` when older ones
+// are stored; with `newer`, the oldest `limit` after `after` (or from `from`), `more` when newer
+// ones follow.
 export const loadMessages = async (
   db: P2pDatabase,
   room: string,
   me: string,
   peer: string,
-  opts: { before?: string; after?: string; limit?: number } = {}
+  opts: PageOpts = {}
 ) => {
   const limit = opts.limit ?? PAGE
+  const up = opts.newer === true
   const recs: EventRecord[] = []
-  // Messages, call rows and pin lines, newest first.
+  // Messages, call rows and pin lines, from the starting end.
   for (const type of ['msg', 'call', 'pin'] as const) {
     let cursor = await db
       .transaction('events')
       .store.index('room_type_sort')
-      .openCursor(sortRange(room, type, opts.before, opts.after), 'prev')
+      .openCursor(sortRange(room, type, opts.before, opts.after, opts.from), up ? 'next' : 'prev')
     let n = 0
     while (cursor && n < limit + 1) {
       recs.push(cursor.value)
@@ -374,10 +378,11 @@ export const loadMessages = async (
       cursor = await cursor.continue()
     }
   }
-  recs.sort((a, b) => (a.sortKey < b.sortKey ? 1 : a.sortKey > b.sortKey ? -1 : 0))
+  const sign = up ? -1 : 1
+  recs.sort((a, b) => (a.sortKey < b.sortKey ? sign : a.sortKey > b.sortKey ? -sign : 0))
   recs.length = Math.min(recs.length, limit + 1)
   const more = recs.length > limit
-  const page = recs.slice(0, limit).reverse()
+  const page = up ? recs.slice(0, limit) : recs.slice(0, limit).reverse()
   return { messages: await viewOf(db, room, page, me, peer), more }
 }
 
@@ -408,7 +413,7 @@ export const loadPins = async (db: P2pDatabase, room: string, me: string, peer: 
   return viewOf(db, room, recs, me, peer)
 }
 
-// A message by id with its surroundings, for jumping to it.
+// A message by id with its surroundings, for jumping to it (jump.ts).
 export const loadAround = async (
   db: P2pDatabase,
   room: string,
@@ -418,13 +423,11 @@ export const loadAround = async (
 ) => {
   const r = await db.get('events', id)
   if (!r || r.room !== room) return null
-  const older = await loadMessages(db, room, me, peer, { before: r.sortKey, limit: PAGE / 2 })
-  const newerPage = await loadMessages(db, room, me, peer, {
-    after: r.sortKey,
-    limit: PAGE * 10,
-  })
-  const self = await viewOf(db, room, [r], me, peer)
-  return { messages: [...older.messages, ...self, ...newerPage.messages], more: older.more }
+  return around(
+    r.sortKey,
+    () => viewOf(db, room, [r], me, peer),
+    o => loadMessages(db, room, me, peer, o)
+  )
 }
 
 // ----- Sending -----

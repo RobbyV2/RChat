@@ -6,7 +6,7 @@ import { bytesOf, hasKeys } from './canonical'
 import type { Message } from './frames'
 import { isKeyId, signTagged, verifyTagged, type Cert } from './keys'
 import type { Clock, Session } from './session'
-import { readPayload } from './signal'
+import { isRoomId, readPayload } from './signal'
 import { isShortId } from './state'
 
 // Voice channels of P2P servers (note section 5, "Calls and voice"): a full mesh, like instance
@@ -114,8 +114,6 @@ export interface VoiceRtcFrame {
   target: { p2pRoom: string; ch: string }
   payload: RtcPayload
 }
-
-const isRoomId = (x: unknown): x is string => typeof x === 'string' && bytesOf(x, 32) !== null
 
 export const readVoiceFrame = (x: unknown): VoiceFrame | null => {
   if (!isRecord(x) || !hasKeys(x, ['t', 'room', 'ch', 'on', 'n', 'dk', 'sig'])) return null
@@ -369,7 +367,7 @@ export class Voice implements Signaler {
   readonly roster: VoiceRoster
   media: VoiceMedia | null = null
   // Asks about a participant's relays; the host denied, or null.
-  consent: (hosts: string[]) => Promise<string | null> = () => Promise.resolve(null)
+  consent: (hosts: string[], ik: string) => Promise<string | null> = () => Promise.resolve(null)
   // A participant left out because their relay wasn't allowed.
   denied: (ik: string) => void = () => {}
   private mine: Mine | null = null
@@ -455,6 +453,7 @@ export class Voice implements Signaler {
       if (!(await this.deps.allowed(m.room, m.ch, ik)) || this.mine !== m) return
       this.sendTo(s, this.own(m))
       this.tell(s, m.room, m.ch, ik)
+      this.refuseOn(s, m, ik)
       this.resync()
     })().catch(() => {})
   }
@@ -804,10 +803,19 @@ export class Voice implements Signaler {
     this.changed()
   }
 
+  // A participant whose relays we refused hears it on its voice session, also one that comes up
+  // after the answer.
+  private refuseOn(s: Session, m: Mine, ik: string) {
+    const st = this.roster.state(m.room, ik, this.deps.clock.now())
+    if (!st?.relays.length || this.no.get(ik) !== st.relays.join(',')) return
+    if (this.voiceSession(m.room, ik) === s)
+      this.sendTo(s, { t: 'gvrefuse', room: m.room, ch: m.ch, relays: st.relays })
+  }
+
   private ask(m: Mine, ik: string, key: string, hosts: string[]) {
     if (this.asking.has(ik)) return
     this.asking.add(ik)
-    void this.consent(hosts).then(
+    void this.consent(hosts, ik).then(
       denied => {
         this.asking.delete(ik)
         if (this.mine !== m) return
@@ -816,7 +824,7 @@ export class Voice implements Signaler {
           this.no.set(ik, key)
           this.denied(ik)
           const s = this.voiceSession(m.room, ik)
-          if (s) this.sendTo(s, { t: 'gvrefuse', room: m.room, ch: m.ch, relays: hosts })
+          if (s) this.refuseOn(s, m, ik)
         }
         this.resync()
       },

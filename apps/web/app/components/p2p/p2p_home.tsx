@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Ban,
   Check,
@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
-import { badgePings } from '../../lib/p2p/alerts'
+import { badgePings, listedPeers } from '../../lib/p2p/alerts'
 import { dmRoomId, movedText, MOVING_TEXT, RESUME_TEXT } from '../../lib/p2p/dm'
 import { levelOf, mutedOf } from '../../lib/notify'
 import {
@@ -61,8 +61,9 @@ const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl tr
 // Only conversations: the P2P tile badges these, server tiles badge their own.
 const useDmPings = () => {
   const rooms = useP2p(s => s.rooms)
+  const contacts = useP2p(s => s.contacts)
   const prefs = useStore(s => s.notifyPrefs)
-  return badgePings(rooms, prefs)
+  return useMemo(() => badgePings(rooms, prefs, listedPeers(contacts)), [rooms, contacts, prefs])
 }
 
 export const useServerUnread = () => {

@@ -285,12 +285,4 @@ export const storageSpace = async (): Promise<{ free: number; quota: number } | 
   }
 }
 
-export const freeSpace = async (): Promise<number | null> => {
-  try {
-    const est = await navigator.storage?.estimate?.()
-    if (!est || est.quota === undefined) return null
-    return Math.max(0, est.quota - (est.usage ?? 0))
-  } catch {
-    return null
-  }
-}
+export const freeSpace = async (): Promise<number | null> => (await storageSpace())?.free ?? null

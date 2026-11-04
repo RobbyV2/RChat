@@ -27,7 +27,9 @@ import {
   emptySlot,
   memberBindingDue,
   parseSlot,
+  peersCanCheck,
   readSlots,
+  UNCHECKABLE,
   type BadgeSlot,
   type Issued,
 } from '../p2p/badge'
@@ -474,6 +476,37 @@ describe('badges over P2P', () => {
     const renewed = await issue(key, a.ik, clock.now() + 3000)
     await a.setBadge(own(renewed, a.ik, clock.now()))
     await waitFor(() => heardOf(carolHeard).some(([, t]) => t === renewed), 'carol hears')
+
+    // A blocked contact: no session, and nothing in later renewals.
+    const dave = await makeMember(hub, 'Dave', clock)
+    const daveHeard = listen(dave)
+    expect((await dave.node.addContact(await a.myCard(), 'alice')).ok).toBe(true)
+    await waitFor(() => a.contact(dave.node.ik)?.state === 'incoming', 'dave asks')
+    await a.accept(dave.node.ik)
+    await waitFor(() => heardOf(daveHeard).length > 0, 'dave hears')
+    await a.block(dave.node.ik)
+    daveHeard.length = 0
+    await a.setBadge(own(await issue(key, a.ik, clock.now() + 4000), a.ik, clock.now()))
+    await dave.node.dialPeer(a.peerId, {})
+    await settle(100)
+    expect(heardOf(daveHeard)).toEqual([])
+
+    // A stranger who dials Alice's address: her hello carries none, and she refuses them.
+    const sam = await makeMember(hub, 'Sam', clock)
+    const samHeard = listen(sam)
+    await sam.node.dialPeer(a.peerId, {})
+    await settle(100)
+    expect(heardOf(samHeard)).toEqual([])
+    expect(a.readySessions(sam.node.ik)).toEqual([])
+
+    // Someone dialing with an invite code sends theirs: Erin's reaches Alice as she joins.
+    const erin = await makeMember(hub, 'Erin', clock)
+    const erinToken = await issue(key, erin.node.ik, clock.now(), { sub: `erin@${HOST}` })
+    await erin.node.setBadge(own(erinToken, erin.node.ik, clock.now(), `erin@${HOST}`))
+    const aliceHeard: [string, unknown][] = []
+    a.onBinding((ik, t) => aliceHeard.push([ik, t]))
+    await joinWithCode(clock, alice, room, erin)
+    expect(aliceHeard.some(([ik, t]) => ik === erin.node.ik && t === erinToken)).toBe(true)
   }, 90_000)
 
   test('a binding for someone else, or past its time, is no badge', async () => {
@@ -709,6 +742,39 @@ describe('BadgeKeeper', () => {
     keeper.stop()
   })
 
+  test('an instance peers could not check never gets asked for a binding', async () => {
+    expect(peersCanCheck('https://chat.example.com')).toBe(true)
+    expect(peersCanCheck('https://chat.example.com:8443')).toBe(false)
+    expect(peersCanCheck('http://chat.example.com')).toBe(false)
+    expect(peersCanCheck('https://192.168.1.4')).toBe(false)
+    expect(peersCanCheck('http://127.0.0.1:3000', true)).toBe(true)
+    const node = fakeNode()
+    const asked: number[] = []
+    let iss = 'http://chat.example.com:8080'
+    const keeper = new BadgeKeeper({
+      node: node as never,
+      clock: new ManualClock(),
+      sub: () => `alice@${HOST}`,
+      checkable: () => peersCanCheck(iss),
+      request: async (_ik, ts): Promise<Issued> => {
+        asked.push(ts)
+        return { token: 't', sub: `alice@${HOST}`, expires_at: ts + BINDING_MAX_TTL }
+      },
+    })
+    expect(
+      await keeper.enable().then(
+        () => 'ok',
+        (e: Error) => e.message
+      )
+    ).toBe(UNCHECKABLE)
+    expect(asked).toEqual([])
+    expect(node.badge).toBeNull()
+    iss = 'https://chat.example.com'
+    await keeper.enable()
+    expect(asked.length).toBe(1)
+    expect(node.badge?.on).toBe(true)
+  })
+
   test('a badge turned on for another account is turned off and never sent for this one', async () => {
     const clock = new ManualClock()
     const node = fakeNode()
@@ -739,9 +805,12 @@ describe('BadgeKeeper', () => {
     // The same account in another letter case stays on.
     sub = `ALICE@${HOST.toUpperCase()}`
     await keeper.enable()
-    sub = `alice@${HOST}`.toUpperCase()
+    expect(node.badge?.sub).toBe(`ALICE@${HOST.toUpperCase()}`)
+    sub = `alice@${HOST}`
+    expect(keeper.due()).toBe(false)
     await jump(clock, BADGE.tickMs * 2)
     expect(node.badge?.on).toBe(true)
+    expect(node.badge?.sub).toBe(`ALICE@${HOST.toUpperCase()}`)
     keeper.stop()
   })
 

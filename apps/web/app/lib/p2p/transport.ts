@@ -2,8 +2,8 @@ import Peer, { type DataConnection } from 'peerjs'
 import { randomHex } from '../bytes'
 import { home } from '../instances'
 import { ice } from '../ice'
-import { hidesIp, relayBook, unknownHosts } from '../relays'
-import { TransportError, type Listener, type Transport } from './node'
+import { declaredHosts, hidesIp, relayBook, unknownHosts, type RelayBook } from '../relays'
+import { TransportError, type Listener, type OfferGuard, type Transport } from './node'
 import type { Pipe } from './session'
 
 // The PeerJS side of P2P messaging: our own Peer on the instance's PeerServer (never the one P2P
@@ -16,18 +16,80 @@ export const BULK_LABEL = 'rcp1b'
 // A bulk sender waits once this much is queued in the data channel.
 const LOW_MARK = 256 * 1024
 const DIAL_MS = 15_000
-// Offers held while the user decides about a relay host they don't know.
-const HELD_MAX = 4
+// Offers held while the user decides about a relay host they don't know, in all and per peer,
+// and the proofs of such offers checked a minute.
+export const HELD_MAX = 4
+export const HELD_PER_PEER = 1
+export const CHECKS_PER_MIN = 30
 
 type Hooked = Peer & { _handleMessage?: (msg: unknown) => void }
 
 type Offer = {
   type?: unknown
+  src?: unknown
   payload?: { label?: unknown; metadata?: unknown }
 }
 
-const relaysOf = (meta: unknown): unknown =>
-  typeof meta === 'object' && meta !== null ? (meta as { relays?: unknown }).relays : undefined
+const field = (meta: unknown, key: string): unknown =>
+  typeof meta === 'object' && meta !== null ? (meta as Record<string, unknown>)[key] : undefined
+
+// Without the hook every offer would be answered at once: then connections use relays only
+// while the user wants to be asked, so no relay of theirs sees this side's address.
+export const answerConfig = (hooked: boolean, book: RelayBook = relayBook): RTCConfiguration => {
+  const config = book.autoConfig()
+  return hooked || !book.prefs.ask ? config : { ...config, iceTransportPolicy: 'relay' }
+}
+
+// An offer through relay hosts we don't know is answered only once the user allowed them, and
+// asked about only for a signed device of someone we'd talk to (node.ts OfferGuard); anything
+// else is dropped and the other side's dial times out.
+export class OfferGate {
+  private held = new Map<string, number>()
+  private heldAll = 0
+  private checks: number[] = []
+
+  constructor(
+    private book: RelayBook,
+    private guard: () => OfferGuard | null,
+    private now: () => number = () => Date.now()
+  ) {}
+
+  offer(src: string, meta: unknown, answer: () => void) {
+    const declared = field(meta, 'relays')
+    const ask =
+      this.book.prefs.ask &&
+      !hidesIp(this.book.resolve()) &&
+      unknownHosts(declared, this.book.known()).length > 0
+    if (!ask) return answer()
+    const hosts = declaredHosts(declared)
+    const guard = this.guard()
+    if (hosts === null || !guard || !this.mayCheck()) return
+    const who = guard.sender(src, field(meta, 'ask'), hosts)
+    if (who === null || this.heldAll >= HELD_MAX || (this.held.get(who) ?? 0) >= HELD_PER_PEER)
+      return
+    this.hold(who, 1)
+    const done = () => this.hold(who, -1)
+    void this.book.consent(hosts, who).then(denied => {
+      done()
+      if (denied === null) answer()
+    }, done)
+  }
+
+  private hold(who: string, n: number) {
+    this.heldAll += n
+    const left = (this.held.get(who) ?? 0) + n
+    if (left > 0) this.held.set(who, left)
+    else this.held.delete(who)
+  }
+
+  private mayCheck() {
+    const now = this.now()
+    this.checks = this.checks.filter(t => now - t < 60_000)
+    if (this.checks.length >= CHECKS_PER_MIN) return false
+    this.checks.push(now)
+    return true
+  }
+}
 
 const channelOf = (conn: DataConnection) =>
   (conn as { dataChannel?: RTCDataChannel }).dataChannel ?? null
@@ -93,8 +155,13 @@ const pipeOf = (conn: DataConnection): Pipe => {
 
 export class PeerTransport implements Transport {
   private peer: Peer | null = null
-  private held = 0
   private unwatch: (() => void)[] = []
+  private offers: OfferGuard | null = null
+  private gate = new OfferGate(relayBook, () => this.offers)
+
+  guard(g: OfferGuard) {
+    this.offers = g
+  }
 
   listen(id: string, onPipe: (pipe: Pipe) => void, onLost: () => void): Promise<Listener> {
     this.close()
@@ -103,14 +170,16 @@ export class PeerTransport implements Transport {
       const peer = new Peer(id, {
         ...home.peer(),
         token: randomHex(8),
-        config: relayBook.autoConfig(),
+        config: answerConfig(false),
       })
       this.peer = peer
+      const hooked = this.hookOffers(peer)
+      if (!hooked) console.error('P2P offers cannot be checked: connecting through relays only')
       const refresh = () => {
-        if (!peer.destroyed) peer.options.config = relayBook.autoConfig()
+        if (!peer.destroyed) peer.options.config = answerConfig(hooked)
       }
+      refresh()
       this.unwatch = [ice.onChange(refresh), relayBook.onChange(refresh)]
-      this.hookOffers(peer)
       let opened = false
       peer.on('open', () => {
         opened = true
@@ -152,45 +221,35 @@ export class PeerTransport implements Transport {
     })
   }
 
-  // A contact's connection through relay hosts we don't know waits for the user's answer
-  // (relays.ts), as P2P files do; refused offers are dropped and the dial times out.
+  // A connection through relay hosts we don't know waits for the user's answer (OfferGate),
+  // as P2P files do. False when PeerJS has no method to hook.
   private hookOffers(peer: Peer) {
     const p = peer as Hooked
     const handle = p._handleMessage
-    if (typeof handle !== 'function') return
+    if (typeof handle !== 'function') return false
     p._handleMessage = (msg: unknown) => {
       const m = msg as Offer | null
       const label = m?.payload?.label
       if (m?.type !== 'OFFER' || (label !== LABEL && label !== BULK_LABEL))
         return handle.call(peer, msg)
-      const declared = relaysOf(m.payload?.metadata)
-      const ask =
-        relayBook.prefs.ask &&
-        !hidesIp(relayBook.resolve()) &&
-        unknownHosts(declared, relayBook.known()).length > 0
-      if (!ask) return handle.call(peer, msg)
-      if (this.held >= HELD_MAX) return
-      this.held += 1
-      void relayBook
-        .consent(declared)
-        .then(denied => {
-          if (denied === null && !peer.destroyed) handle.call(peer, msg)
-        })
-        .finally(() => {
-          this.held -= 1
-        })
+      this.gate.offer(String(m.src), m.payload?.metadata, () => {
+        if (!peer.destroyed) handle.call(peer, msg)
+      })
     }
+    return true
   }
 
-  dial(_from: string, to: string, kind?: 'bulk'): Promise<Pipe> {
+  dial(from: string, to: string, kind?: 'bulk'): Promise<Pipe> {
     const peer = this.peer
     if (!peer || peer.destroyed) return Promise.reject(new TransportError('network'))
     const plan = relayBook.resolve()
+    const relays = plan.ok ? plan.declared : []
+    const ask = relays.length ? this.offers?.vouch(from, to, relays) : null
     const conn = peer.connect(to, {
       label: kind === 'bulk' ? BULK_LABEL : LABEL,
       reliable: true,
       serialization: 'raw',
-      metadata: { relays: plan.ok ? plan.declared : [] },
+      metadata: { relays, ...(ask ? { ask } : {}) },
     })
     return new Promise((resolve, reject) => {
       let done = false

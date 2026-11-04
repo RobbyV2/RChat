@@ -18,6 +18,7 @@ export type { DeviceStore } from './device_store'
 export type { NoticeHandle, NoticeOptions, Notifier, Permission } from './notifications'
 export type { ShareData, ShareResult, Sharing } from './sharing'
 export type { QrScanner } from './qr_scanner'
+export { mobileBrowser, pausesHidden } from './background'
 export {
   desktopInfo,
   inShell,

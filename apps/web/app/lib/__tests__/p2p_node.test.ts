@@ -5,7 +5,7 @@ import { P2pStore, removeP2pDb, type SelfRecord } from '../p2p/db'
 import { keyId, newKeyPair, peerId, signCert, signRevocation, withSuffix } from '../p2p/keys'
 import { encodeCard, makeCard } from '../p2p/card'
 import { requests } from '../p2p/contacts'
-import { TabLeader, type ChannelLike, type LockLike } from '../p2p/leader'
+import { HANDOVER_MS, TabLeader, type ChannelLike, type LockLike } from '../p2p/leader'
 import { LIMITS as SESSION_LIMITS, Session } from '../p2p/session'
 
 const nodes: P2pNode[] = []
@@ -70,8 +70,12 @@ describe('P2P node', () => {
     await befriend(a, b, clock)
     const sessions = [...a.readySessions(b.ik), ...b.readySessions(a.ik)]
     await sessions[0].send({ t: 'profile2', profile: null })
+    // A profile of a newer version this one can't check: kept as it was, no strike.
+    const name = b.contact(a.ik)?.name
+    await sessions[0].send({ t: 'profile', profile: { ...a.profile, v: 2, name: 'Newer' } })
     await settle()
     expect(sessions.map(s => s.strikes)).toEqual([0, 0])
+    expect(b.contact(a.ik)?.name).toBe(name as string)
     // A relation a newer version adds: read as pending. The signed profile still counts, the
     // contact stays as it was and nobody is banned.
     b.stop()
@@ -296,6 +300,7 @@ describe('P2P node', () => {
         fns.add(fn)
         return () => fns.delete(fn)
       },
+      pauses: () => true,
     }
     const hub = new Hub()
     const a = await makeNode(hub, 'Alice', { clock, visibility })
@@ -336,6 +341,52 @@ describe('P2P node', () => {
     const pipe = (await t.dial('rcp-attacker', a.peerId)) as unknown as { closed: boolean }
     expect(pipe.closed).toBe(true)
     void keyId
+  })
+
+  test("a fellow member's revoked device is refused, and a moved one hears where it went", async () => {
+    const { out, clock } = await setup(['Alice', 'Mallory'])
+    const [a, m] = out.map(x => x.node)
+    const mSelf = (m as unknown as { self: SelfRecord }).self
+    let revs: ReturnType<typeof signRevocation>[] = []
+    // Not a contact: a fellow member the server extension wants, and knows the devices of.
+    a.use({
+      attach: () => {},
+      ready: () => {},
+      wanted: () => true,
+      devices: ik => (ik === m.ik ? { certs: [mSelf.cert], revocations: revs } : null),
+    })
+    expect(await m.dialPeer(a.peerId, {})).not.toBeNull()
+    await waitFor(() => a.readySessions(m.ik).length === 1, 'member session')
+    for (const x of a.readySessions(m.ik)) x.close('closed')
+    await waitFor(() => m.readySessions(a.ik).length === 0, 'closed on both sides')
+    revs = [signRevocation(mSelf.ik, m.dk, clock.now())]
+    const refused = await new Promise<string | null>(resolve => {
+      void m.dialPeer(a.peerId, {}).then(s => {
+        if (!s) return resolve(null)
+        s.onClose((_, why) => resolve(why))
+        if (s.state === 'closed') resolve(s.reason)
+      })
+    })
+    expect(refused === null || refused === 'remote').toBe(true)
+    expect(a.readySessions(m.ik)).toEqual([])
+    // Moved to a new device: let through only to hear that.
+    revs = [signRevocation(mSelf.ik, m.dk, clock.now(), keyId(newKeyPair().pk))]
+    await m.dialPeer(a.peerId, {})
+    await waitFor(() => m.status === 'moved', 'told it moved')
+    expect(a.readySessions(m.ik)).toEqual([])
+  })
+
+  test('failed handshakes of peer ids that never come back are forgotten', async () => {
+    const { out, clock } = await setup(['Alice'])
+    const a = out[0].node
+    const failed = (a as unknown as { failed: Map<string, number[]> }).failed
+    const banned = (a as unknown as { banned: Map<string, number> }).banned
+    for (let n = 0; n < 500; n += 1) failed.set(`rcp-gone-${n}`, [clock.now()])
+    banned.set('rcp-banned', clock.now() + 1000)
+    failed.set('rcp-recent', [clock.now() + 50_000])
+    await clock.advance(60_000 + LIMITS.tickMs)
+    expect([...failed.keys()]).toEqual(['rcp-recent'])
+    expect(banned.size).toBe(0)
   })
 
   test('a revoked device is refused even when its hello leaves the revocation out', async () => {
@@ -677,6 +728,63 @@ const bus = () => {
     return c
   }
 }
+
+const hookTab = (
+  locks: LockLike | null,
+  channel: (name: string) => ChannelLike | null,
+  clock: ManualClock
+) => {
+  const log: string[] = []
+  const leader = new TabLeader(
+    'db',
+    {
+      lead: async () => void log.push('lead'),
+      resign: async () => void log.push('resign'),
+      follow: () => void log.push('follow'),
+    },
+    { locks, channel, set: (fn, ms) => clock.set(fn, ms), clear: h => clock.clear(h) }
+  )
+  return { log, leader }
+}
+
+describe('tab leader', () => {
+  test('a holder that never answers loses the lock after the wait, then waits in line', async () => {
+    const locks = new FakeLocks()
+    const clock = new ManualClock()
+    const frozen: ChannelLike = { onmessage: null, postMessage: () => {}, close: () => {} }
+    const one = hookTab(locks, () => frozen, clock)
+    const two = hookTab(locks, bus(), clock)
+    one.leader.start()
+    await waitFor(() => one.leader.state === 'leading', 'one leads')
+    two.leader.start()
+    await waitFor(() => two.log.includes('follow'), 'two follows')
+    two.leader.takeOver()
+    await settle()
+    expect(two.leader.state).toBe('waiting')
+    await clock.advance(HANDOVER_MS)
+    await waitFor(() => two.leader.state === 'leading', 'taken')
+    await waitFor(() => one.leader.state === 'waiting', 'one lost it')
+    expect(one.log).toEqual(['lead', 'resign', 'follow'])
+    expect(two.log).toEqual(['follow', 'lead'])
+    // The one that took it closes: the other is next in line.
+    await two.leader.stop()
+    await waitFor(() => one.leader.state === 'leading', 'one again')
+    expect(one.log.at(-1)).toBe('lead')
+    await one.leader.stop()
+  })
+
+  test('without Web Locks the tab runs the node itself', async () => {
+    const t = hookTab(null, () => null, new ManualClock())
+    t.leader.start()
+    await settle()
+    expect(t.leader.state).toBe('leading')
+    t.leader.takeOver()
+    await settle()
+    expect(t.log).toEqual(['lead'])
+    await t.leader.stop()
+    expect(t.log).toEqual(['lead', 'resign'])
+  })
+})
 
 describe('one P2P node per database across tabs', () => {
   test('the second tab waits; Use here moves the node cleanly; closing hands it back', async () => {

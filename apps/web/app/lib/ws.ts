@@ -21,6 +21,20 @@ export function wsUrlFrom(
 
 export const CLOSE_TOO_MANY = 4008
 
+// The server closes the connection on a larger message (ws.rs FRAME_MAX).
+export const WS_MESSAGE_MAX = 64 * 1024
+
+// The message as sent, or null (and logged) when it is too large to send.
+export const wsText = (msg: unknown): string | null => {
+  const text = JSON.stringify(msg)
+  const big = text.length * 3 > WS_MESSAGE_MAX && new TextEncoder().encode(text).length
+  if (big && big >= WS_MESSAGE_MAX) {
+    console.error(`not sent: a ${(msg as { type?: unknown }).type} message of ${big} bytes`)
+    return null
+  }
+  return text
+}
+
 export const CLOSE_TOO_OFTEN = 4029
 
 export const reconnectsAfter = (code: number): boolean => code !== CLOSE_TOO_MANY
@@ -123,9 +137,7 @@ export class WsClient {
   }
 
   sendVoice(msg: VoiceMsg): boolean {
-    if (this.ws?.readyState !== WebSocket.OPEN) return false
-    this.ws.send(JSON.stringify(msg))
-    return true
+    return this.send(msg)
   }
 
   sendTyping(msg: TypingMsg) {
@@ -133,7 +145,11 @@ export class WsClient {
   }
 
   private send(payload: unknown) {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(payload))
+    if (this.ws?.readyState !== WebSocket.OPEN) return false
+    const text = wsText(payload)
+    if (text === null) return false
+    this.ws.send(text)
+    return true
   }
 
   private connect() {

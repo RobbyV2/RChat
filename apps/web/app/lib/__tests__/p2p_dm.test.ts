@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { Hub, makeNode, ManualClock, prng, settle, waitFor } from './p2p_net'
 import type { P2pNode } from '../p2p/node'
 import type { EventRecord, P2pStore } from '../p2p/db'
@@ -34,6 +34,9 @@ import { openDB } from 'idb'
 import { DB_VERSION, P2pStore as Store, UPGRADES } from '../p2p/db'
 import { SYNC } from '../p2p/sync'
 
+// Real-time tests (sessions, IndexedDB): budgets for a loaded machine.
+setDefaultTimeout(60_000)
+
 const live: { node: P2pNode; dms: Dms }[] = []
 afterEach(() => {
   for (const x of live.splice(0)) {
@@ -62,7 +65,7 @@ const makePeer = async (
 }
 
 // Polls an async condition, like waitFor for synchronous ones.
-const eventually = async (ok: () => Promise<boolean>, what: string, ms = 15_000) => {
+const eventually = async (ok: () => Promise<boolean>, what: string, ms = 30_000) => {
   const end = Date.now() + ms
   while (!(await ok())) {
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
@@ -513,11 +516,11 @@ describe('P2P DMs', () => {
       rec('edit', 'A', 30, { target: 'm', body: 'v3' }, 'zz'),
       // Not the author's: ignored.
       rec('edit', 'B', 99, { target: 'm', body: 'hijack' }),
-      rec('react', 'A', 5, { target: 'm', key: 'x', on: true }),
-      rec('react', 'B', 6, { target: 'm', key: 'x', on: true }),
-      rec('react', 'B', 7, { target: 'm', key: 'x', on: false }),
-      rec('react', 'B', 2, { target: 'm', key: 'y', on: true }),
-      rec('react', 'ME', 8, { target: 'm', key: 'y', on: true }),
+      rec('react', 'A', 5, { target: 'm', key: '👍', on: true }),
+      rec('react', 'B', 6, { target: 'm', key: '👍', on: true }),
+      rec('react', 'B', 7, { target: 'm', key: '👍', on: false }),
+      rec('react', 'B', 2, { target: 'm', key: '🎉', on: true }),
+      rec('react', 'ME', 8, { target: 'm', key: '🎉', on: true }),
       rec('pin', 'A', 10, { target: 'm', on: true }),
       rec('pin', 'B', 12, { target: 'm', on: false }),
       rec('pin', 'A', 11, { target: 'm', on: true }),
@@ -527,8 +530,8 @@ describe('P2P DMs', () => {
     expect(v.edited).toBe(30)
     expect(v.pinned).toBeNull()
     expect(v.reactions.map(r => [r.key, r.count, r.me])).toEqual([
-      ['y', 2, true],
-      ['x', 1, false],
+      ['🎉', 2, true],
+      ['👍', 1, false],
     ])
     const repinned = deriveMessage(
       msg,
@@ -593,6 +596,8 @@ describe('P2P DMs', () => {
     await a.dms.send(room, { body: 'hey @Bob' })
     await a.dms.send(room, { body: 'reply', reply: mine })
     await a.dms.react(room, mine, '🎉', true)
+    // Any short key is admitted, but text (with a bidi override here) is inert: no ping, no chip.
+    await a.dms.react(room, mine, 'Pay \u202eher\u202c now', true)
     const plain = await a.dms.send(room, { body: 'plain' })
     await a.dms.edit(room, plain, 'plain @Bob edited')
     await eventually(async () => (await bodies(b, a)).length === 4, 'all')
@@ -600,6 +605,14 @@ describe('P2P DMs', () => {
     const r = await roomOf(b, room)
     expect(r.pings).toBe(3)
     expect(r.unread).toBe(3)
+    await eventually(
+      async () =>
+        (await b.store.db.getAllFromIndex('events', 'room_type_sort')).filter(
+          e => e.type === 'react'
+        ).length === 2,
+      'both reactions stored'
+    )
+    expect((await view(b, a))[0].reactions.map(x => x.key)).toEqual(['🎉'])
     // Alice's own counters stay at zero.
     expect((await roomOf(a, room)).pings).toBe(0)
     expect((await view(b, a))[1].mentions).toEqual([b.node.ik])

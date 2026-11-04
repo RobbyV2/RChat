@@ -36,7 +36,7 @@ ARG NEXT_PUBLIC_WS_URL
 ARG NEXT_PUBLIC_PEERJS_HOST
 ARG NEXT_PUBLIC_PEERJS_PORT
 RUN bun run build
-COPY deploy/peer/package.json deploy/peer/bun.lock /peer/
+COPY deploy/peer/package.json deploy/peer/bun.lock deploy/peer/server.mjs /peer/
 RUN cd /peer && bun install --frozen-lockfile --production
 
 # Stage 5: Runtime

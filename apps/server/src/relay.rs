@@ -37,7 +37,10 @@ pub use crate::server::client_ip::Cidr;
 pub const DEFAULT_PORT: u16 = 3478;
 pub const DEFAULT_MIN_PORT: u16 = 49160;
 pub const DEFAULT_MAX_PORT: u16 = 49415;
-pub const DEFAULT_USER_ALLOCATIONS: usize = 16;
+// Each relayed peer connection of an account takes one. A relay-only member of a full P2P voice
+// mesh (10 people) holds a session and a media connection with each of the other 9, next to
+// its P2P server links, a call and file transfers.
+pub const DEFAULT_USER_ALLOCATIONS: usize = 64;
 pub const DEFAULT_USER_KIB_PER_SEC: u64 = 1024;
 pub const DEFAULT_TOTAL_KIB_PER_SEC: u64 = 64 * 1024;
 pub const CREDENTIAL_TTL_SECS: i64 = 3600;
@@ -1638,6 +1641,17 @@ pub fn status() -> Option<Status> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_allocations_fit_a_relay_only_p2p_user() {
+        let mesh = 2 * (10 - 1);
+        let servers = 2 * 8;
+        let call = 2;
+        let files = 4;
+        assert!(DEFAULT_USER_ALLOCATIONS >= mesh + servers + call + files);
+        let ports = usize::from(DEFAULT_MAX_PORT - DEFAULT_MIN_PORT) + 1;
+        assert!(DEFAULT_USER_ALLOCATIONS <= ports);
+    }
 
     #[test]
     fn classifier_blocks_internal_addresses() {

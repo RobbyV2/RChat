@@ -14,6 +14,7 @@ import {
   encodeMessage,
   FrameError,
   FrameType,
+  knownFrame,
   MESSAGE_MAX,
   parseData,
   Reassembler,
@@ -389,6 +390,8 @@ export class BulkLink {
       }
       return this.close('handshake')
     }
+    // A frame type of a newer version: skipped (the byte budget still applies).
+    if (!knownFrame(frame.type)) return
     if (frame.type !== FrameType.Data || !this.rx) return this.strike()
     const { counter, ct } = parseData(frame.payload)
     let pt: Uint8Array
@@ -712,6 +715,8 @@ export interface BlobsDeps {
 }
 
 const hashOk = (x: unknown): x is string => typeof x === 'string' && bytesOf(x, 32) !== null
+
+export const HOLDERS_KEPT = 256
 
 const blockOk = (x: unknown): x is number => Number.isSafeInteger(x) && (x as number) >= 0
 
@@ -1296,7 +1301,9 @@ export class Blobs {
           if (link && (await this.hasOf(link, h))) found.add(link)
         })
       )
+      this.holders.delete(h)
       this.holders.set(h, { links: found, at: this.clock.now() })
+      this.pruneHolders()
       this.changed(h)
     })()
     this.probing.set(h, run)
@@ -1306,6 +1313,19 @@ export class Blobs {
       this.probing.delete(h)
     }
     return this.holders.get(h)?.links ?? new Set<BulkLink>()
+  }
+
+  // Files probed and not downloaded are forgotten once stale, and past HOLDERS_KEPT.
+  private pruneHolders() {
+    const now = this.clock.now()
+    let over = this.holders.size - HOLDERS_KEPT
+    for (const [h, x] of this.holders) {
+      if (this.downloads.has(h)) continue
+      if (over > 0 || now - x.at >= this.limits.probeMs) {
+        this.holders.delete(h)
+        over -= 1
+      }
+    }
   }
 
   // Whether a holder has `h`. Files asked about while a `blob_has` is under way on the same pipe

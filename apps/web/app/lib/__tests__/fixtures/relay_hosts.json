@@ -1,0 +1,50 @@
+{
+  "good": [
+    ["turn.example.com", "turn.example.com"],
+    ["TURN.Example.com", "turn.example.com"],
+    ["Relay.Example", "relay.example"],
+    ["10.0.0.1", "10.0.0.1"],
+    ["255.255.255.255", "255.255.255.255"],
+    ["[2001:db8::1]", "[2001:db8::1]"],
+    ["[::1]", "[::1]"],
+    ["xn--bcher-kva.example", "xn--bcher-kva.example"],
+    ["localhost", "localhost"],
+    ["a-b.example", "a-b.example"],
+    ["1a.example", "1a.example"],
+    ["example.a1", "example.a1"],
+    [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    ]
+  ],
+  "bad": [
+    "",
+    "turn.example.com:3478",
+    "turn:turn.example.com",
+    "user@host",
+    "-bad.example",
+    "bad-.example",
+    "a..b",
+    ".example",
+    "example.",
+    "<b>x</b>",
+    "<script>",
+    "bücher.example",
+    "[not-v6]",
+    "[::1",
+    "::1",
+    "host/path",
+    "host name",
+    "a b",
+    "x:1",
+    "1.2.3",
+    "999.1.1.1",
+    "256.1.1.1",
+    "1.2.3.4.5",
+    "01.2.3.4",
+    "example.123",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.com",
+    "a_b.example"
+  ]
+}

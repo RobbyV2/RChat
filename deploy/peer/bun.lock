@@ -6,6 +6,7 @@
       "name": "peer-runtime",
       "dependencies": {
         "peer": "1.0.2",
+        "ws": "8.22.0",
       },
     },
   },

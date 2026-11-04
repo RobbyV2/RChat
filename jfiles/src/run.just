@@ -8,10 +8,10 @@ dev:
   set -euo pipefail
   cd "{{ROOT}}"
   echo "Building WASM (dev)..."
-  wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --dev
+  wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --dev
   trap 'kill 0' SIGINT
   {{DOTENVX}} bash -c 'FRONTEND_HOST=${FRONTEND_HOST:-127.0.0.1} exec bun run dev' 2>&1 | sed 's/^/[WEB] /' &
-  {{DOTENVX}} bash -c 'bunx peer --port "${PEERJS_PORT:-9001}" --path /peerjs 2>&1 | { case "${RUST_LOG:-info}" in *debug*|*trace*) cat ;; *) grep --line-buffered -vE "Client (dis)?connected:" ;; esac; }' | sed 's/^/[PEER] /' &
+  {{DOTENVX}} bash -c 'bun deploy/peer/server.mjs 2>&1' | sed 's/^/[PEER] /' &
   sleep 2
   {{DOTENVX}} cargo run --bin server 2>&1 | sed 's/^/[RUST] /' &
   wait
@@ -22,7 +22,7 @@ prod:
   set -euo pipefail
   cd "{{ROOT}}"
   echo "Building WASM..."
-  wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --release
+  wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release
   echo "Building frontend..."
   {{DOTENVX}} bun run build
   cp -r apps/web/public apps/web/.next/standalone/apps/web/ 2>/dev/null || true
@@ -32,7 +32,7 @@ prod:
   echo "Starting servers..."
   trap 'kill 0' SIGINT
   {{DOTENVX}} bash -c 'HOSTNAME=${FRONTEND_HOST:-127.0.0.1} exec bun ./apps/web/.next/standalone/apps/web/server.js' 2>&1 | sed 's/^/[WEB] /' &
-  {{DOTENVX}} bash -c 'bunx peer --port "${PEERJS_PORT:-9001}" --path /peerjs 2>&1 | { case "${RUST_LOG:-info}" in *debug*|*trace*) cat ;; *) grep --line-buffered -vE "Client (dis)?connected:" ;; esac; }' | sed 's/^/[PEER] /' &
+  {{DOTENVX}} bash -c 'bun deploy/peer/server.mjs 2>&1' | sed 's/^/[PEER] /' &
   sleep 2
   {{DOTENVX}} ./target/release/server 2>&1 | sed 's/^/[RUST] /' &
   wait

@@ -919,7 +919,7 @@ mod tests {
                 settings.capacity.user_allocations,
                 settings.capacity.total_allocations
             ),
-            (16, 256)
+            (64, 256)
         );
         assert!(settings.denied.is_empty());
         assert!(!settings.allow_private);

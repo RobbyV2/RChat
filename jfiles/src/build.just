@@ -6,11 +6,11 @@ build:
 
 # Build WASM module (release)
 build-wasm:
-  cd {{ROOT}} && wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --release
+  cd {{ROOT}} && wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --release
 
 # Build WASM module (dev, faster)
 build-wasm-dev:
-  cd {{ROOT}} && wasm-pack build crates/wasm --target web --out-dir ../../apps/web/public/wasm --dev
+  cd {{ROOT}} && wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --dev
 
 # Build the API server binary
 build-api:

@@ -18,7 +18,7 @@ import { Sha256, validSha256 } from './sha256'
 import { kindOf, NEUTRAL_TYPE, safeType, SNIFF_BYTES, type PreviewKind } from './sniff'
 import { SpeakingDetector } from './vad'
 import { mediaError } from './rules'
-import type { WsEvent } from './types'
+import type { VoiceMsg, WsEvent } from './types'
 import { slotLayout, videoPlan, type Slot } from './negotiation'
 import { captureScreen, nextShareId, syncStream, tuneScreen, type ScreenCapture } from './screen'
 
@@ -337,7 +337,43 @@ interface Offer {
 export const REFUSED = 'rchat-refused'
 export const REFUSED_RELAY = 'Download canceled: the sender did not allow your relay'
 // Offers waiting for a prompt or a token check at once; more are refused.
+// The server keeps this many hosted ids of a tab (ws.rs P2P_IDS_CAP).
+export const HOSTED_MAX = 256
+
+// What a tab hosts, as announced: posted files newest first (then files kept by older versions),
+// at most HOSTED_MAX, and each distinct list of declared relays once.
+export const hostingMsg = (
+  peerId: string,
+  files: [string, StoredFile][],
+  legacy: string[],
+  declared: (id: string) => string[]
+): VoiceMsg & { type: 'p2p_hosting' } => {
+  const ids = [
+    ...files
+      .filter(([, f]) => !f.pending)
+      .sort(([, a], [, b]) => (b.added_at ?? 0) - (a.added_at ?? 0))
+      .map(([id]) => id),
+    ...legacy,
+  ].slice(0, HOSTED_MAX)
+  const sets = new Map<string, { hosts: string[]; ids: string[] }>()
+  for (const id of ids) {
+    const hosts = declared(id)
+    if (!hosts.length) continue
+    const key = hosts.join(' ')
+    const set = sets.get(key) ?? { hosts, ids: [] }
+    set.ids.push(id)
+    sets.set(key, set)
+  }
+  return {
+    type: 'p2p_hosting',
+    peer_id: peerId,
+    ids,
+    ...(sets.size ? { relay_sets: [...sets.values()] } : {}),
+  }
+}
+
 export const HELD_OFFERS_MAX = 8
+export const HELD_PER_PEER = 2
 // How long a download that declared relays waits to connect, while the hoster may be asked.
 const CONSENT_WAIT_MS = 90_000
 
@@ -420,6 +456,9 @@ export class P2pManager {
   // Incoming offers being answered, by connection id, so the connection knows its config.
   private offers = new Map<string, Offer>()
   private holding = 0
+  private holdingBy = new Map<string, number>()
+  // How long an offer waits for the user's answer; the downloader stops waiting then too.
+  heldMs = CONSENT_WAIT_MS
   // Downloads waiting to connect, by `{hoster peer}:{connection id}`, failed by a refusal.
   private refusals = new Map<string, (reason: unknown) => void>()
   private awaiting: ReturnType<typeof setTimeout> | null = null
@@ -757,27 +796,20 @@ export class P2pManager {
   // stays off the broker, unless an earlier list has to be cleared.
   announce() {
     if (this.account === null) return
-    const ids = [
-      ...Object.entries(this.files())
-        .filter(([, f]) => !f.pending)
-        .map(([id]) => id),
-      ...Object.keys(this.legacyFiles()),
-    ]
-    if (ids.length === 0 && !this.announced) return
+    const msg = hostingMsg(
+      this.peerId(),
+      Object.entries(this.files()),
+      Object.keys(this.legacyFiles()),
+      id => {
+        const plan = relayBook.resolve(this.file(id)?.relay ?? AUTO)
+        return plan.ok ? plan.declared : []
+      }
+    )
+    if (msg.ids.length === 0 && !this.announced) return
     this.watchRelays()
-    if (ids.length) this.ensurePeer()
-    this.announced = ids.length > 0
-    const relays: Record<string, string[]> = {}
-    for (const id of ids) {
-      const plan = relayBook.resolve(this.file(id)?.relay ?? AUTO)
-      if (plan.ok && plan.declared.length) relays[id] = plan.declared
-    }
-    home.ws.sendVoice({
-      type: 'p2p_hosting',
-      peer_id: this.peerId(),
-      ids,
-      ...(Object.keys(relays).length ? { relays } : {}),
-    })
+    if (msg.ids.length) this.ensurePeer()
+    this.announced = msg.ids.length > 0
+    home.ws.sendVoice(msg)
   }
 
   // The server's key for checking download tokens, sent in answer to an announce.
@@ -960,13 +992,23 @@ export class P2pManager {
       }
       const gate = this.offerGate(intent, src)
       if (gate === null) return admit()
-      if (this.holding >= HELD_OFFERS_MAX) return refuseOffer(peer, src, cid, 'busy')
+      const mine = this.holdingBy.get(src) ?? 0
+      if (this.holding >= HELD_OFFERS_MAX || mine >= HELD_PER_PEER)
+        return refuseOffer(peer, src, cid, 'busy')
       this.holding += 1
-      void gate
-        .catch(() => 'missing' as const)
+      this.holdingBy.set(src, mine + 1)
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const late = new Promise<'busy'>(resolve => {
+        timer = setTimeout(() => resolve('busy'), this.heldMs)
+      })
+      void Promise.race([gate.catch(() => 'missing' as const), late])
         .then(refused => (refused === null ? admit() : refuseOffer(peer, src, cid, refused)))
         .finally(() => {
+          clearTimeout(timer)
           this.holding -= 1
+          const left = (this.holdingBy.get(src) ?? 1) - 1
+          if (left > 0) this.holdingBy.set(src, left)
+          else this.holdingBy.delete(src)
         })
     }
   }
@@ -985,7 +1027,7 @@ export class P2pManager {
     return this.tokenUser(intent.token, intent.id, from).then(async user => {
       if (user === null) return 'missing'
       if (!ask) return null
-      return (await relayBook.consent(intent.relays)) === null ? null : 'relay'
+      return (await relayBook.consent(intent.relays, `user:${user}`)) === null ? null : 'relay'
     })
   }
 

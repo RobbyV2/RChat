@@ -1627,7 +1627,10 @@ impl Replica {
                     call.peers.push((user.clone(), peer));
                 }
                 call.relays.retain(|(u, _)| *u != user);
-                call.relays.push((user.clone(), relays));
+                match call.kind {
+                    CallKind::P2p => call.relays.push((user.clone(), relays)),
+                    CallKind::Rtc => {}
+                }
                 call.occupants.push((user.clone(), conn));
                 evs.push(call_state(dm_id, call, CallPhase::Active));
                 let res = Ok((call.log_id, call.dm_users.clone()));
@@ -2910,6 +2913,7 @@ impl Hub {
         self.call_applied(op).await;
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub async fn call_start(
         &self,
@@ -2957,6 +2961,7 @@ impl Hub {
         }
     }
 
+    #[cfg(test)]
     pub async fn call_accept(
         &self,
         user: &str,
@@ -3017,6 +3022,16 @@ impl Hub {
         self.replica(|r| r.in_p2p_call(a, b))
     }
 
+    /// The kind of the call in DM `dm_id`, while there is one.
+    pub fn call_kind(&self, dm_id: i64) -> Option<CallKind> {
+        self.replica(|r| r.calls.get(&dm_id).map(|c| c.kind))
+    }
+
+    #[cfg(test)]
+    pub fn call_relays(&self, dm_id: i64) -> Option<Vec<(String, Vec<String>)>> {
+        self.replica(|r| r.calls.get(&dm_id).map(|c| c.relays.clone()))
+    }
+
     /// The server of the voice room `channel_id`, while anyone is in it.
     pub fn room_server(&self, channel_id: i64) -> Option<String> {
         self.replica(|r| r.rooms.get(&channel_id).map(|room| room.server.clone()))
@@ -3040,6 +3055,7 @@ impl Hub {
         }
     }
 
+    #[cfg(test)]
     pub fn set_p2p(&self, user: &str, conn: u64, peer_id: String, ids: Vec<String>) {
         self.set_p2p_relayed(user, conn, peer_id, ids, BTreeMap::new());
     }

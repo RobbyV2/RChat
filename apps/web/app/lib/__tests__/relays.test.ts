@@ -22,12 +22,14 @@ import {
   relaysText,
   resolveIce,
   UNREADABLE,
+  PROMPTS,
   unknownHosts,
   type Decision,
   type IceInputs,
   type RelayPrefs,
 } from '../relays'
 import { buildConfig, decodeConfig, encodeConfig, linkDoc, SECTIONS } from '../config_transfer'
+import hostCases from './fixtures/relay_hosts.json'
 
 // URLs are built from parts so no ICE URL literal sits in the app tree (see ice.test.ts).
 const T = 'turn'
@@ -102,10 +104,9 @@ describe('relay URLs', () => {
   })
 
   test('hosts are plain lowercase ASCII and shown cut down', () => {
-    expect(cleanHost('Relay.Example')).toBe('relay.example')
-    expect(cleanHost('[::1]')).toBe('[::1]')
-    for (const bad of ['', 'a b', '<script>', 'x:1', 'bücher.example', 7, null, '1.2.3'])
-      expect(cleanHost(bad)).toBeNull()
+    // The same cases as the server's relay_host (p2p.rs).
+    for (const [raw, clean] of hostCases.good) expect(cleanHost(raw)).toBe(clean)
+    for (const bad of [...hostCases.bad, 7, null]) expect(cleanHost(bad)).toBeNull()
     const long = `${'a'.repeat(60)}.example`
     expect(displayHost(long).length <= 48).toBe(true)
     expect(displayHost(long)).toContain('...')
@@ -285,8 +286,13 @@ describe('consent to relays of others', () => {
 
   test('Allow once lets this one through and asks again next time', async () => {
     const { b, asked } = book(['once', 'deny'])
+    let t = 1_000_000
+    b.now = () => t
     expect(await b.consent(['new.example'])).toBeNull()
     expect(b.prefs.allowed).toEqual([])
+    // What happens with it right away (the call after the offer) needs no second answer.
+    expect(await b.consent(['new.example'])).toBeNull()
+    t += PROMPTS.recentMs
     expect(await b.consent(['new.example'])).toBe('new.example')
     expect(asked).toEqual(['new.example', 'new.example'])
   })
@@ -332,6 +338,43 @@ describe('consent to relays of others', () => {
     pending[0]('always')
     expect(await first).toBeNull()
     expect(await second).toBeNull()
+    expect(pending.length).toBe(1)
+  })
+
+  test("a peer's prompts: a Deny is kept for that list, a few per peer and in all", async () => {
+    const { b, asked } = book([])
+    let t = 1_000_000
+    b.now = () => t
+    // Denied once, the same peer and list is refused without asking, also later.
+    expect(await b.consent(['a.example'], 'mallory')).toBe('a.example')
+    t += PROMPTS.recentMs
+    expect(await b.consent(['a.example'], 'mallory')).toBe('a.example')
+    expect(asked).toEqual(['a.example'])
+    // Fresh hosts: a few prompts per peer, then refused silently until the window passes.
+    for (let i = 0; i < 20; i++)
+      expect(await b.consent([`h${i}.example`], 'mallory')).not.toBeNull()
+    expect(asked.length).toBe(PROMPTS.perPeer)
+    // Others still get theirs, up to the cap for all peers together.
+    for (let i = 0; i < 30; i++) await b.consent([`o${i}.example`], `peer${i}`)
+    expect(asked.length).toBe(PROMPTS.all)
+    // The user's own actions are always asked.
+    expect(await b.consent(['mine.example'])).toBe('mine.example')
+    expect(asked.length).toBe(PROMPTS.all + 1)
+    t += PROMPTS.windowMs
+    await b.consent(['later.example'], 'mallory')
+    expect(asked.at(-1)).toBe('later.example')
+  })
+
+  test('the same peer asking about the same list again while asked waits for the one answer', async () => {
+    const b = new RelayBook(() => inputs())
+    const pending: ((d: Decision) => void)[] = []
+    b.prompt = () => new Promise(resolve => pending.push(resolve))
+    const asks = [1, 2, 3].map(() => b.consent(['new.example'], 'bob'))
+    const other = b.consent(['new.example'], 'carol')
+    await Promise.resolve()
+    expect(pending.length).toBe(1)
+    pending[0]('once')
+    expect(await Promise.all([...asks, other])).toEqual([null, null, null, null])
     expect(pending.length).toBe(1)
   })
 

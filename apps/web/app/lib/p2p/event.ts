@@ -1,5 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
+import { looksLikeEmoji } from '../emoji'
 import {
   b64u,
   bytesOf,
@@ -305,6 +306,11 @@ const isMentions = (x: unknown): x is string[] =>
 
 const reactKeyOk = (x: unknown): x is string =>
   typeof x === 'string' && x.length > 0 && utf8(x).length <= LIMITS.reactKey
+
+// Any short key is admitted (versions must agree), but only an emoji shows: a chip, a ping, a
+// notification. Others are inert.
+export const shownReaction = (c: unknown) =>
+  isRecord(c) && typeof c.key === 'string' && looksLikeEmoji(c.key)
 
 export const checkContent = (type: string, c: unknown): c is Content => {
   if (!isRecord(c)) return false

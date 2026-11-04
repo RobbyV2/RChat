@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { Hub, makeNode, ManualClock, waitFor } from './p2p_net'
 import { identityConflict, P2pNode } from '../p2p/node'
 import { P2pStore, withoutSecrets, type SelfRecord } from '../p2p/db'
@@ -70,6 +70,9 @@ import { assemble } from '../p2p/blobs'
 import type { P2pDatabase } from '../p2p/db'
 import { Servers } from '../p2p/server'
 
+// Real-time tests (sessions, IndexedDB): budgets for a loaded machine.
+setDefaultTimeout(60_000)
+
 // Device move (note section 7): the encrypted section, the dump of every store, the three
 // import cases, and what contacts and the old device see afterwards.
 
@@ -123,7 +126,7 @@ const openPeer = async (hub: Hub, db: string, clock: ManualClock) => {
 // test run slows down a lot (the move test is the longest chain of it).
 const SLOW = 40_000
 
-const eventually = async (ok: () => Promise<boolean>, what: string, ms = 15_000) => {
+const eventually = async (ok: () => Promise<boolean>, what: string, ms = 30_000) => {
   const end = Date.now() + ms
   while (!(await ok())) {
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)

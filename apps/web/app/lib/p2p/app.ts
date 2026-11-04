@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { api, home, writeLocal } from '../instances'
+import { api, home, shareOrigin, writeLocal } from '../instances'
 import { verifyBinding } from '../identity'
 import {
   addToFolder,
@@ -22,7 +22,7 @@ import { applySed, parseSed } from '../sed'
 import type { UserRef } from '../types'
 import type { ConfirmRequest, MarkAllExtra } from '../store_types'
 import { dbName, P2pStore, removeP2pDb, type OwnBadge, type RoomRecord } from './db'
-import { BadgeKeeper, Badges, readSlots, type BadgeSlot } from './badge'
+import { BadgeKeeper, Badges, peersCanCheck, readSlots, type BadgeSlot } from './badge'
 import { fingerprint, keyId } from './keys'
 import { displayName, type AddResult, type Contact } from './contacts'
 import { p2pAlert, p2pUnread } from './alerts'
@@ -45,6 +45,7 @@ import {
   type P2pMessage,
 } from './dm'
 import { contentMax, LIMITS as EV, sizeOf, type Attachment, type Fwd, type WireV2 } from './event'
+import { JUMP, type PageOpts } from './jump'
 import type { PingRec, PingText } from './inbox'
 import { PingLog, pingAlive, pingText, readPings } from './ping_log'
 import { assemble, EMPTY_VIEW, type BlobView, type Usage } from './blobs'
@@ -60,7 +61,7 @@ import {
   type Preview,
 } from './files'
 import { kindOf, NEUTRAL_TYPE } from '../sniff'
-import { sharing } from '../platform'
+import { pausesHidden, sharing } from '../platform'
 import { TabLeader, webLeaderDeps } from './leader'
 import {
   alreadyImported,
@@ -160,6 +161,8 @@ export interface P2pChat {
   messages: P2pMessage[]
   more: boolean
   loading: boolean
+  // Opened at a message with more after what is loaded (jump.ts): a gap at the end.
+  newer?: boolean
   // The read marker when the conversation was opened: the unread line goes after it.
   readSeq: number
   // Calls missed here that the caller hasn't logged (yet).
@@ -433,6 +436,7 @@ const rememberImport = (username: string, id: string) =>
 
 const pageVisibility: Visibility = {
   visible: () => typeof document === 'undefined' || document.visibilityState !== 'hidden',
+  pauses: () => pausesHidden(),
   onChange: fn => {
     if (typeof document === 'undefined') return () => {}
     document.addEventListener('visibilitychange', fn)
@@ -849,7 +853,7 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
     })
     servers = sv
     sv.voice.media = callRtc
-    sv.voice.consent = hosts => relayBook.consent(hosts)
+    sv.voice.consent = (hosts, ik) => relayBook.consent(hosts, ik)
     sv.voice.denied = ik => {
       const at = sv.voice.current()
       p2pHost.toast(relayDenied(at ? memberName(at.room, ik) : 'a member'))
@@ -890,7 +894,12 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
       },
     })
     calls = c
-    n.use({ attach: x => c.attach(x), ready: x => c.ready(x) })
+    n.use({
+      attach: x => c.attach(x),
+      ready: x => c.ready(x),
+      keep: x => c.keeps(x),
+      awake: () => c.awake() || sv.voice.current() !== null,
+    })
     const bs = new Badges({
       store: s,
       verify: checkBinding,
@@ -905,6 +914,7 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
     })
     const k = new BadgeKeeper({
       node: n,
+      checkable: () => peersCanCheck(shareOrigin(null), badgeLocal),
       request: (ik, ts, proof) => api.p2pBinding(ik, ts, proof),
       sub: accountSub,
       onIssued: () => void sv.refreshBadge().catch(() => {}),
@@ -1001,12 +1011,40 @@ const refreshRooms = async () => {
 // Moves on each jump to a message loaded around it: pages that started loading before are dropped.
 let jumpGen = 0
 
+// A page of the open conversation or channel.
+const chatPage = (chat: P2pChat, o: PageOpts) => {
+  const s = dbNow()
+  const me = meNow()
+  if (chat.ch) return servers ? servers.loadChannel(chat.room, chat.ch, o) : Promise.resolve(null)
+  return s && me ? loadMessages(s.db, chat.room, me, chat.peer, o) : Promise.resolve(null)
+}
+
+// Opened at a message, the view keeps its place when the conversation changes (an old copy's
+// rows above a new copy's stay as they are).
+const refreshWindow = async (cur: P2pChat) => {
+  const archived = cur.messages.filter(m => m.archived)
+  const first = cur.messages.find(m => !m.archived)
+  if (!first) return
+  const gen = jumpGen
+  const page = await chatPage(cur, {
+    from: first.sortKey,
+    limit: Math.max(PAGE, cur.messages.length),
+    newer: true,
+  }).catch(() => null)
+  const now = useP2p.getState().chat
+  if (!page || now?.room !== cur.room || now.ch !== cur.ch || gen !== jumpGen) return
+  useP2p.setState({
+    chat: { ...now, messages: [...archived, ...page.messages], newer: page.more, loading: false },
+  })
+}
+
 const loadChat = async (room: string, peer: string, keep = false) => {
   const s = dbNow()
   const me = meNow()
   if (!s || !me) return
   const cur = useP2p.getState().chat
   if (cur?.ch && cur.room === room) return loadChannel(room, cur.ch, keep)
+  if (keep && cur?.room === room && cur.newer) return refreshWindow(cur)
   const limit = keep && cur?.room === room ? Math.max(PAGE, cur.messages.length) : PAGE
   const gen = jumpGen
   try {
@@ -1014,7 +1052,7 @@ const loadChat = async (room: string, peer: string, keep = false) => {
     const missed = readMissed(await s.meta<unknown>(missedKey(room)).catch(() => undefined))
     const now = useP2p.getState().chat
     if (now?.room !== room || gen !== jumpGen) return
-    useP2p.setState({ chat: { ...now, messages, more, loading: false, missed } })
+    useP2p.setState({ chat: { ...now, messages, more, newer: false, loading: false, missed } })
   } catch {
     // Storage went away (sign out, Remove P2P data).
   }
@@ -1177,14 +1215,15 @@ const loadChannel = async (room: string, ch: string, keep = false) => {
   const sv = servers
   if (!sv) return
   const cur = useP2p.getState().chat
-  const limit =
-    keep && cur?.room === room && cur.ch === ch ? Math.max(PAGE, cur.messages.length) : PAGE
+  const same = keep && cur?.room === room && cur.ch === ch
+  if (same && cur.newer) return refreshWindow(cur)
+  const limit = same ? Math.max(PAGE, cur.messages.length) : PAGE
   const gen = jumpGen
   try {
     const { messages, more } = await sv.loadChannel(room, ch, { limit })
     const now = useP2p.getState().chat
     if (now?.room !== room || now.ch !== ch || gen !== jumpGen) return
-    useP2p.setState({ chat: { ...now, messages, more, loading: false } })
+    useP2p.setState({ chat: { ...now, messages, more, newer: false, loading: false } })
     if (!keep) await readSlow(room, ch)
   } catch {
     // Storage went away.
@@ -2469,6 +2508,41 @@ export const p2pDm = {
     })
   },
 
+  // Opened at a message: the next messages after the last one loaded.
+  async loadNewerPage() {
+    const chat = useP2p.getState().chat
+    if (!chat?.newer || chat.loading) return
+    useP2p.setState({ chat: { ...chat, loading: true } })
+    const last = chat.messages[chat.messages.length - 1]
+    const page = await chatPage(chat, {
+      after: last?.sortKey,
+      limit: JUMP.after,
+      newer: true,
+    }).catch(() => null)
+    const now = useP2p.getState().chat
+    if (now?.room !== chat.room || now.ch !== chat.ch) return
+    const have = new Set(now.messages.map(m => m.id))
+    useP2p.setState({
+      chat: page
+        ? {
+            ...now,
+            messages: [...now.messages, ...page.messages.filter(m => !have.has(m.id))],
+            newer: page.more,
+            loading: false,
+          }
+        : { ...now, loading: false },
+    })
+  },
+
+  // Back to the newest messages (refreshes from now on load those too).
+  async toPresent() {
+    const chat = useP2p.getState().chat
+    if (!chat) return
+    jumpGen += 1
+    useP2p.setState({ chat: { ...chat, newer: false } })
+    await (chat.ch ? loadChannel(chat.room, chat.ch) : loadChat(chat.room, chat.peer))
+  },
+
   // Older history from the other side (past the backfill horizon).
   loadOlderHistory() {
     const chat = useP2p.getState().chat
@@ -2502,7 +2576,16 @@ export const p2pDm = {
       if (now?.room !== chat.room || now.ch !== chat.ch) return
       // A page loading from before the jump would replace the messages around it.
       jumpGen += 1
-      useP2p.setState({ chat: { ...now, messages: around.messages, more: around.more } })
+      // It also stands in for a first page still loading, which the jump drops.
+      useP2p.setState({
+        chat: {
+          ...now,
+          messages: around.messages,
+          more: around.more,
+          newer: around.newer,
+          loading: false,
+        },
+      })
     }
     useP2p.setState(x => ({ focus: { room: chat.room, id, n: (x.focus?.n ?? 0) + 1 } }))
   },
@@ -2550,6 +2633,7 @@ export const p2pDm = {
     if (id !== null && files) p2pFiles.clear(room)
     const t = targetOf(room)
     if (t.kind === 'server') await readSlow(t.room, t.ch)
+    if (id !== null && useP2p.getState().chat?.newer) void p2pDm.toPresent()
     return id !== null
   },
 

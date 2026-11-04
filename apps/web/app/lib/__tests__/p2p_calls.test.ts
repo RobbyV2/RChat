@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Hub, makeNode, ManualClock, settle, waitFor } from './p2p_net'
-import { P2pNode } from '../p2p/node'
+import { LIMITS, P2pNode, victimFor, type Visibility } from '../p2p/node'
 import { P2pStore, type SelfRecord } from '../p2p/db'
 import { Dms, dmRoomId, loadMessages, withMissed, type MissedCall } from '../p2p/dm'
 import {
@@ -291,6 +291,7 @@ interface Peer {
 }
 
 interface PeerOpts {
+  visibility?: Visibility
   declared?: string[]
   relayOnly?: boolean
   consent?: (hosts: string[]) => Promise<string | null>
@@ -317,7 +318,7 @@ const planOf = (o: PeerOpts): CallPlan => ({
 })
 
 const makePeer = async (hub: Hub, name: string, clock: ManualClock, opts: PeerOpts = {}) => {
-  const n = await makeNode(hub, name, { clock })
+  const n = await makeNode(hub, name, { clock, visibility: opts.visibility })
   const dms = new Dms({ node: n.node, store: n.store, clock })
   const media = new FakeMedia()
   const p = {
@@ -355,7 +356,12 @@ const makePeer = async (hub: Hub, name: string, clock: ManualClock, opts: PeerOp
     notice: t => p.notices.push(t),
     clock,
   })
-  n.node.use({ attach: s => p.calls.attach(s), ready: s => p.calls.ready(s) })
+  n.node.use({
+    attach: s => p.calls.attach(s),
+    ready: s => p.calls.ready(s),
+    keep: s => p.calls.keeps(s),
+    awake: () => p.calls.awake(),
+  })
   live.push(p)
   return p
 }
@@ -380,6 +386,19 @@ const pair = async (ao: PeerOpts = {}, bo: PeerOpts = {}) => {
 }
 
 const sessionOf = (p: Peer, other: Peer) => p.node.readySessions(other.node.ik)[0] as Session
+
+// Resolves once `to` has handled everything `from` sent before (sessions keep their order), so
+// a test can then check what did not happen.
+let marks = 0
+const drained = async (from: Session, to: Session) => {
+  const mark = `t_mark${(marks += 1)}`
+  let seen = false
+  to.on(mark, () => {
+    seen = true
+  })
+  await from.send({ t: mark })
+  await waitFor(() => seen, 'frames handled')
+}
 
 // Every frame `p` sends from now on looks like it came from a newer version: extra fields on
 // `call` and `rtc` frames and in their payloads.
@@ -498,6 +517,67 @@ describe('P2P calls', () => {
       ])
   }, 60_000)
 
+  test('a phone tab hidden past the pause keeps an answered call; idle, it pauses', async () => {
+    let visible = true
+    const fns = new Set<() => void>()
+    const visibility: Visibility = {
+      visible: () => visible,
+      onChange: fn => {
+        fns.add(fn)
+        return () => fns.delete(fn)
+      },
+      pauses: () => true,
+    }
+    const { clock, a, b } = await pair({ visibility })
+    await answered(a, b)
+    visible = false
+    fns.forEach(f => f())
+    await clock.advance(LIMITS.hiddenPauseMs + 30_000)
+    await settle()
+    expect(a.node.status).toBe('online')
+    expect(a.calls.view()?.state).toBe('active')
+    expect(b.calls.view()?.state).toBe('active')
+    a.calls.hangup()
+    await waitFor(() => b.calls.view() === null, 'ended')
+    await clock.advance(LIMITS.hiddenPauseMs + 1000)
+    await waitFor(() => a.node.status === 'paused', 'paused once the call ended')
+  }, 60_000)
+
+  test('a computer tab hidden for long keeps its sessions', async () => {
+    let visible = true
+    const fns = new Set<() => void>()
+    const visibility: Visibility = {
+      visible: () => visible,
+      onChange: fn => {
+        fns.add(fn)
+        return () => fns.delete(fn)
+      },
+      pauses: () => false,
+    }
+    const { clock, a, b } = await pair({ visibility })
+    visible = false
+    fns.forEach(f => f())
+    await clock.advance(3 * LIMITS.hiddenPauseMs)
+    await settle()
+    expect(a.node.status).toBe('online')
+    expect(a.node.presence(b.node.ik)).toBe('online')
+  }, 60_000)
+
+  test("an answered call's session never makes room for another", async () => {
+    const { a, b } = await pair()
+    await answered(a, b)
+    const s = sessionOf(a, b)
+    expect(a.calls.keeps(s)).toBe(true)
+    expect(b.calls.keeps(sessionOf(b, a))).toBe(true)
+    const held = [{ contact: true, kept: a.calls.keeps(s), lastUseful: 0 }]
+    expect(
+      victimFor(held, { contact: true, kept: false }, { sessions: 1, memberSessions: 1 })
+    ).toBe(null)
+    a.calls.hangup()
+    await waitFor(() => b.calls.view() === null, 'ended')
+    expect(a.calls.keeps(s)).toBe(false)
+  }, 60_000)
+
   test('the callee hangs up: only the caller logs', async () => {
     const { clock, a, b } = await pair()
     await answered(a, b)
@@ -573,7 +653,7 @@ describe('P2P calls', () => {
   test('a contact that is no longer mutual cannot ring', async () => {
     const { a, b } = await pair({}, { mutual: false })
     await a.calls.start(b.node.ik, false)
-    await new Promise(r => setTimeout(r, 50))
+    await drained(sessionOf(a, b), sessionOf(b, a))
     expect(b.calls.view()).toBeNull()
     expect(sessionOf(b, a).strikes).toBe(0)
   }, 60_000)
@@ -611,7 +691,7 @@ describe('P2P calls', () => {
         room,
         video: false,
       })
-    await new Promise(r => setTimeout(r, 100))
+    await drained(out, s)
     expect(busy.length).toBe(RINGS_PER_MIN)
     expect(s.strikes).toBe(0)
   }, 60_000)
@@ -639,7 +719,7 @@ describe('P2P calls', () => {
     }
     for (let i = 0; i < 5; i += 1) await s.send(late)
     await s.send({ t: 'call', op: 'end', id, room })
-    await new Promise(r => setTimeout(r, 50))
+    await drained(s, recv)
     expect(recv.strikes).toBe(0)
     expect(b.media.signals).toEqual([])
     // Told once that the call is over.
@@ -649,7 +729,7 @@ describe('P2P calls', () => {
     await s.send({ ...late, target: { p2pRoom: ROOM_X } })
     await s.send({ t: 'call', op: 'ring', id, room })
     await s.send({ t: 'call', op: 'ring', id, room: ROOM_X, video: false })
-    await new Promise(r => setTimeout(r, 50))
+    await drained(s, recv)
     expect(recv.strikes).toBe(5)
   }, 60_000)
 
@@ -764,7 +844,7 @@ describe('P2P calls', () => {
     }
     for (let i = 0; i < UNKNOWN_PER_MIN + 5; i += 1)
       await s.send({ t: 'call', op: 'accept', id: `${i}`.padStart(21, 'x') + 'A', room })
-    await new Promise(r => setTimeout(r, 50))
+    await drained(s, recv)
     expect(ends.length).toBe(UNKNOWN_PER_MIN)
     expect(recv.strikes).toBe(0)
   }, 60_000)
@@ -794,7 +874,7 @@ describe('P2P calls', () => {
     expect(a.consented).toEqual([['relay.bob.example']])
     const offer: RtcPayload = { description: { type: 'offer', sdp: 'v=0\r\n' }, sid: 'bb22' }
     b.calls.signaler.send(a.node.ik, { p2pRoom: room }, offer)
-    await new Promise(r => setTimeout(r, 50))
+    await drained(sessionOf(b, a), sessionOf(a, b))
     // Nothing reaches the media (and so no candidates of ours go out) before the answer.
     expect(a.media.signals).toEqual([])
     expect(a.media.synced).toEqual([])

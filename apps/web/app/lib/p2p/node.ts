@@ -6,7 +6,6 @@ import {
   addFromCard,
   applySuccession,
   block,
-  CERTS_KEPT,
   cleanIntro,
   dialable,
   displayName,
@@ -30,6 +29,7 @@ import type { Me } from './handshake'
 import {
   bindingProof,
   cleanName,
+  isKeyId,
   keyId,
   newKeyPair,
   peerId,
@@ -38,11 +38,14 @@ import {
   signProfile,
   signRevocation,
   signSuccession,
+  signTagged,
   SUFFIX_MAX,
+  TAG,
   verifyCert,
   verifyProfile,
   verifyRevocation,
   verifySuccession,
+  verifyTagged,
   withSuffix,
   type Cert,
   type Profile,
@@ -77,11 +80,32 @@ export interface Transport {
   // TransportError('unavailable-id') when someone else holds the id.
   listen: (id: string, onPipe: (pipe: Pipe) => void, onLost: () => void) => Promise<Listener>
   dial: (from: string, to: string, kind?: 'bulk') => Promise<Pipe>
+  // The node's proofs for offers that declare relays, and its check of others' (relays.ts asks
+  // about a relay only for a signed device of someone we'd talk to).
+  guard?: (g: OfferGuard) => void
 }
+
+// An offer's proof: our device key (no more than the peer id tells) and its signature over who
+// dials whom, the relays declared and when. Never the identity: signaling sees offers in clear.
+export interface OfferProof {
+  dk: string
+  ts: number
+  sig: string
+}
+
+export interface OfferGuard {
+  vouch: (from: string, to: string, relays: string[]) => OfferProof | null
+  // The identity behind an offer from peer id `src`, or null.
+  sender: (src: string, proof: unknown, relays: string[]) => string | null
+}
+
+export const OFFER_SKEW_MS = 2 * 60_000
 
 export interface Visibility {
   visible: () => boolean
   onChange: (fn: () => void) => () => void
+  // Sessions pause after a while hidden (phones drop background pages anyway).
+  pauses?: () => boolean
 }
 
 export const LIMITS = {
@@ -147,10 +171,6 @@ const HELLO_CERTS = 4
 // Devices of ours recorded as no longer ours (lost, stolen or signed out by recovery).
 const LOST_KEPT = 256
 
-// The revocation that moved this device of a contact to a new one, if any.
-const movedFrom = (c: Contact | undefined, dk: string) =>
-  c?.revocations.find(r => r.dk === dk && r.successor !== undefined) ?? null
-
 // Our devices as a contact knows them disagree with a single line of moves: one device revoked
 // twice with different successors, or a live device that isn't this one. Every device holds the
 // identity key, so this means a copy of it is in use somewhere else.
@@ -210,6 +230,8 @@ export interface NodeExt {
   urgent?: () => { ik: string; certs: Cert[] }[]
   // Sessions that never make room for others.
   keep?: (s: Session) => boolean
+  // Keeps every session up while the page is hidden (an answered call, a joined voice channel).
+  awake?: () => boolean
   // Whether a session with an identity that isn't a mutual contact is wanted, given its hello.
   wanted?: (ik: string, hello: Message) => boolean
   // Signed devices and profile of a session peer that isn't a contact.
@@ -218,6 +240,8 @@ export interface NodeExt {
   member?: (ik: string) => boolean
   // Devices of an identity that isn't a contact (fellow server members).
   devices?: (ik: string) => { certs: Cert[]; revocations: Revocation[] } | null
+  // The fellow member a device key is certified for, if we know it.
+  owner?: (dk: string) => string | null
 }
 
 // What a dial to a peer id we only know from an invite code says in its hello.
@@ -284,6 +308,10 @@ export class P2pNode {
     private deps: NodeDeps
   ) {
     this.clock = deps.clock ?? realClock
+    deps.transport.guard?.({
+      vouch: (from, to, relays) => this.vouch(from, to, relays),
+      sender: (src, proof, relays) => this.offerFrom(src, proof, relays),
+    })
   }
 
   // Loads the identity and contacts, creating an identity when `create` is given and there is
@@ -572,7 +600,16 @@ export class P2pNode {
     this.ticker = null
     if (this.stopped || this.isPaused()) return
     this.ticker = this.clock.set(() => this.tick(), LIMITS.tickMs)
+    this.prune()
     this.schedule()
+  }
+
+  // Failed handshakes older than a minute and ended bans are forgotten.
+  private prune() {
+    const now = this.clock.now()
+    for (const [peer, ts] of this.failed)
+      if (ts.every(t => now - t >= 60_000)) this.failed.delete(peer)
+    for (const [key, until] of this.banned) if (until <= now) this.banned.delete(key)
   }
 
   private halt(reason: 'paused' | 'closed') {
@@ -608,8 +645,8 @@ export class P2pNode {
     } else if (!this.hiddenPaused) await this.listen()
   }
 
-  // Phones drop background tabs anyway: after 5 minutes hidden every session closes, and they
-  // come back when the tab is visible again.
+  // Phones drop background tabs anyway: there, after 5 minutes hidden every session closes
+  // (not during a call or in a voice channel), and they come back when the tab is visible again.
   private onVisibility() {
     const vis = this.deps.visibility
     if (!vis) return
@@ -624,10 +661,11 @@ export class P2pNode {
   }
 
   private armHiddenPause() {
-    if (this.hiddenTimer !== null) return
+    if (this.hiddenTimer !== null || this.deps.visibility?.pauses?.() !== true) return
     this.hiddenTimer = this.clock.set(() => {
       this.hiddenTimer = null
       if (this.deps.visibility?.visible() !== false) return
+      if (this.exts.some(x => x.awake?.() === true)) return this.armHiddenPause()
       this.hiddenPaused = true
       this.halt('paused')
       this.status = 'paused'
@@ -635,7 +673,54 @@ export class P2pNode {
     }, LIMITS.hiddenPauseMs)
   }
 
+  // ----- Offers -----
+
+  private vouch(from: string, to: string, relays: string[]): OfferProof | null {
+    if (this.self.moved || !hasSecrets(this.self)) return null
+    const ts = this.clock.now()
+    const sig = signTagged(this.self.dk.sk, TAG.offer, { from, to, relays, ts })
+    return { dk: this.dk, ts, sig }
+  }
+
+  // Signed by the device that registered `src`, for us, lately: a device we already know of a
+  // contact or a fellow member, not one we refuse. Anyone else gets no prompt.
+  private offerFrom(src: string, proof: unknown, relays: string[]): string | null {
+    if (!isRecord(proof)) return null
+    const { dk, ts, sig } = proof
+    if (!Number.isSafeInteger(ts) || Math.abs(this.clock.now() - (ts as number)) > OFFER_SKEW_MS)
+      return null
+    if (!isKeyId(dk) || !peerIds(dk).includes(src)) return null
+    const ik = this.ownerOf(dk)
+    if (ik === null || ik === this.ik || this.isBanned(ik) || this.isBanned(src)) return null
+    if (this.revokedDevice(ik, dk)) return null
+    const body = { from: src, to: this.peerId, relays, ts }
+    return verifyTagged(dk, TAG.offer, body, sig) ? ik : null
+  }
+
+  // Whose device `dk` is: a contact we talk to (not blocked or ignored), or a fellow member.
+  private ownerOf(dk: string): string | null {
+    for (const c of this.contacts.values())
+      if (c.certs.some(x => x.dk === dk)) return c.state !== 'blocked' && !c.ignored ? c.ik : null
+    for (const x of this.exts) {
+      const ik = x.owner?.(dk) ?? null
+      if (ik !== null && this.exts.some(y => y.member?.(ik) === true)) return ik
+    }
+    return null
+  }
+
   // ----- Sessions -----
+
+  // A device revoked in what we know of the identity: a contact's, or a fellow member's.
+  private revokedDevice(ik: string, dk: string) {
+    return this.anyDevicesOf(ik)?.revocations.some(r => r.dk === dk) === true
+  }
+
+  // The revocation that moved this device to a new one, if any.
+  private movedDevice(ik: string, dk: string) {
+    return (
+      this.anyDevicesOf(ik)?.revocations.find(r => r.dk === dk && r.successor !== undefined) ?? null
+    )
+  }
 
   private me(): Me {
     return { dk: this.self.dk, cert: this.self.cert, peer: this.peerId }
@@ -700,16 +785,12 @@ export class P2pNode {
       clock: this.clock,
       // A device that moved away is let through only to hear that it moved (our hello says so),
       // then refused.
-      admit: (r: { ik: string; dk: string }) => {
-        const c = this.contacts.get(r.ik)
-        return (
-          r.ik !== this.ik &&
-          !this.isBanned(r.ik) &&
-          c?.state !== 'blocked' &&
-          !(c && isRevoked(c, r.dk) && !movedFrom(c, r.dk)) &&
-          (expect === null || r.ik === expect)
-        )
-      },
+      admit: (r: { ik: string; dk: string }) =>
+        r.ik !== this.ik &&
+        !this.isBanned(r.ik) &&
+        this.contacts.get(r.ik)?.state !== 'blocked' &&
+        !(this.revokedDevice(r.ik, r.dk) && !this.movedDevice(r.ik, r.dk)) &&
+        (expect === null || r.ik === expect),
       hello: (r: { ik: string; dk: string }) => this.helloFor(r, pipe.remote),
       onHello: (m: Message, s: Session) => this.hello(m, s),
     }
@@ -721,7 +802,6 @@ export class P2pNode {
     s.onClose((_, why) => this.closed(s, why))
     s.on('profile', m => this.onProfile(m, s))
     s.on('verified', m => this.onVerified(m, s))
-    s.on('devices', m => this.onDevices(m, s))
     s.on('yours', m => this.onYours(m, s))
     for (const x of this.exts) x.attach(s)
     s.start()
@@ -841,7 +921,7 @@ export class P2pNode {
   }
 
   private helloFor({ ik, dk }: { ik: string; dk: string }, peer: string): Message {
-    const moved = movedFrom(this.contacts.get(ik), dk)
+    const moved = this.movedDevice(ik, dk)
     if (moved) return { t: 'hello', v: 1, rel: 'none', moved }
     const purpose = this.purposes.get(peer)
     const msg: Message = {
@@ -1087,15 +1167,16 @@ export class P2pNode {
     this.changed()
   }
 
+  // A profile this version can't check (a newer one) changes nothing, at no cost.
   private async onProfile(m: Message, s: Session) {
     const r = s.remote
-    const c = r && this.contacts.get(r.ik)
-    if (r && !c && verifyProfile(m.profile, r.ik)) {
+    if (!r || !verifyProfile(m.profile, r.ik)) return
+    const c = this.contacts.get(r.ik)
+    if (!c) {
       for (const x of this.exts) x.learn?.(r.ik, [], [], m.profile)
       if (m.binding !== undefined) this.heardBinding(r.ik, m.binding)
       return
     }
-    if (!c || !verifyProfile(m.profile, c.ik)) return s.strike()
     const p = m.profile
     await this.update(c.ik, cur => {
       if (!cur) return null
@@ -1103,25 +1184,6 @@ export class P2pNode {
       return next === cur ? null : recheckName(this.others(cur.ik), cur, next)
     })
     if (m.binding !== undefined && c.state !== 'blocked') this.heardBinding(c.ik, m.binding)
-  }
-
-  private async onDevices(m: Message, s: Session) {
-    const r = s.remote
-    const c = r && this.contacts.get(r.ik)
-    if (!c) return s.strike()
-    // Bounded before any signature check: each one is a pure-JS verify.
-    const certs = (Array.isArray(m.certs) ? m.certs : [])
-      .slice(0, CERTS_KEPT)
-      .filter((x): x is Cert => verifyCert(x, c.ik))
-    const revs = (Array.isArray(m.revs) ? m.revs : [])
-      .slice(0, CERTS_KEPT * 2)
-      .filter((x): x is Revocation => verifyRevocation(x, c.ik))
-    const now = this.clock.now()
-    const next = await this.update(c.ik, cur => (cur ? updateDevices(cur, certs, revs, now) : null))
-    // A device revoked just now loses its session at once.
-    if (next)
-      for (const x of this.sessionsOf(c.ik))
-        if (x.remote && isRevoked(next, x.remote.dk)) x.close('refused')
   }
 
   private async onVerified(m: Message, s: Session) {

@@ -149,6 +149,17 @@ export class Calls {
     return { id, room, peer, dir, state, video, startedAt, since }
   }
 
+  // The session of an answered call never makes room for another (node.ts keep).
+  keeps(s: Session) {
+    const c = this.cur
+    return c?.state === 'active' && c.dk !== null && s.remote?.ik === c.peer && s.remote.dk === c.dk
+  }
+
+  // A call keeps P2P up while the page is hidden (node.ts awake).
+  awake() {
+    return this.cur !== null
+  }
+
   // The ICE config of the call's peer connection: the plan of this side, nothing without one.
   config(): RTCConfiguration {
     return this.cur?.plan?.config ?? { iceServers: [], iceTransportPolicy: 'relay' }

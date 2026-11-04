@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { CLOSE_TOO_MANY, WsClient, mayConnectEarly, reconnectsAfter } from '../ws'
+import { CLOSE_TOO_MANY, WS_MESSAGE_MAX, WsClient, mayConnectEarly, reconnectsAfter } from '../ws'
 
 type Fake = {
   readyState: number
@@ -99,6 +99,33 @@ describe('realtime close codes', () => {
     ws.readyState = 3
     ws.onclose?.({ code: 4029 })
     expect((client as unknown as { reconnectTimer: unknown }).reconnectTimer === null).toBe(false)
+    client.stop()
+  })
+
+  test('a message the server would close the connection for is not sent', () => {
+    const { client, ws } = openClient()
+    const sent: string[] = []
+    ws.send = data => void sent.push(data)
+    const ids = (n: number, len: number) =>
+      Array.from({ length: n }, (_, i) => `${i}`.padEnd(len, 'x'))
+    const err = console.error
+    console.error = () => {}
+    try {
+      expect(client.sendVoice({ type: 'p2p_hosting', peer_id: 'p', ids: ids(256, 32) })).toBe(true)
+      expect(client.sendVoice({ type: 'p2p_hosting', peer_id: 'p', ids: ids(2000, 32) })).toBe(
+        false
+      )
+      expect(
+        client.sendVoice({
+          type: 'p2p_who',
+          hosters: [String.fromCodePoint(0x1f600).repeat(17000)],
+        })
+      ).toBe(false)
+    } finally {
+      console.error = err
+    }
+    expect(sent.length).toBe(1)
+    expect(sent[0].length < WS_MESSAGE_MAX).toBe(true)
     client.stop()
   })
 })

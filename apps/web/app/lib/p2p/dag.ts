@@ -9,6 +9,7 @@ import {
   isLate,
   LIMITS as EV,
   redacted,
+  shownReaction,
   sortKeyOf,
   targetOf,
   type Wire,
@@ -287,7 +288,7 @@ export const insertInto = async (
         if (r && r.room === rid && r.type === 'msg' && r.sender === ctx.me) ping = 'reply'
       }
     } else if (ev.type === 'react' && c && 'on' in c && c.on && target?.sender === ctx.me)
-      ping = 'reaction'
+      ping = shownReaction(c) ? 'reaction' : null
   }
   const next: RoomRecord = {
     ...room,

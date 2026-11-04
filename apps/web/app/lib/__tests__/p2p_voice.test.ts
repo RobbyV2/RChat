@@ -791,6 +791,30 @@ describe('voice participant sets', () => {
     ).toEqual({ t: 'gvrefuse', room: ROOM, ch: CH, relays: ['turn.b.example'] })
   })
 
+  test('a refusal reaches a participant whose session comes up after the answer', async () => {
+    const net = new Net()
+    const [a, b, c] = ['A', 'B', 'C'].map(n => net.add(n))
+    net.connect(a, c)
+    net.connect(b, c)
+    const asked: string[][] = []
+    a.consent = hosts => {
+      asked.push(hosts)
+      return Promise.resolve('turn.b.example')
+    }
+    const told: string[] = []
+    b.voice.denied = ik => told.push(ik)
+    await b.voice.join(ROOM, CH, { plan: { ...plan, declared: ['turn.b.example'] }, muted: false })
+    await c.voice.join(ROOM, CH, { plan, muted: false })
+    await a.voice.join(ROOM, CH, { plan, muted: false })
+    await net.flush()
+    expect(asked).toEqual([['turn.b.example']])
+    expect(told).toEqual([])
+    net.connect(a, b)
+    await net.flush()
+    expect(names(net, told)).toEqual(['A'])
+    expect(asked.length).toBe(1)
+  })
+
   test('someone who loses view of the channel is gone from the lists', async () => {
     const net = new Net()
     const [a, b] = ['A', 'B'].map(n => net.add(n))

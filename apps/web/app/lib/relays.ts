@@ -302,6 +302,13 @@ export const knownHosts = (instance: RTCIceServer[], p: RelayPrefs): Set<string>
 
 export type Decision = 'once' | 'always' | 'deny'
 
+// An Allow covers the same host for `recentMs` (other participants, the call after the offer).
+// Prompts others cause (an offer, a voice participant): a Deny covers the host for as long, and
+// that peer and relay list until the page closes; each peer gets `perPeer` prompts in
+// `windowMs`, all peers together `all`. Past that the relay is refused without asking.
+export const PROMPTS = { perPeer: 3, all: 10, windowMs: 10 * 60_000, recentMs: 60_000 }
+const REFUSED_MAX = 1000
+
 export const allowHost = (p: RelayPrefs, host: string): RelayPrefs =>
   p.allowed.includes(host) || p.allowed.length >= ALLOWED_MAX
     ? p
@@ -377,9 +384,15 @@ export class RelayBook {
   private unwatch: (() => void) | null = null
   private listeners = new Set<() => void>()
   private queue: Promise<unknown> = Promise.resolve()
+  private refused = new Set<string>()
+  private recent = new Map<string, { d: 'once' | 'deny'; until: number }>()
+  private prompted = new Map<string, number[]>()
+  private promptedAll: number[] = []
+  private asking = new Map<string, Promise<string | null>>()
   // Shows the prompt for one host; without a UI every unknown relay is refused.
   prompt: (host: string) => Promise<Decision> = () => Promise.resolve('deny')
   probe: (server: RTCIceServer) => Promise<boolean> = s => probeRelay(s)
+  now: () => number = () => Date.now()
 
   constructor(
     private inputs: () => IceInputs = () => ({
@@ -396,6 +409,12 @@ export class RelayBook {
     this.unwatch?.()
     this.unwatch = null
     this.key = key
+    this.queue = Promise.resolve()
+    this.asking.clear()
+    this.refused.clear()
+    this.recent.clear()
+    this.prompted.clear()
+    this.promptedAll = []
     this.prefs = key === null ? defaultRelays() : parseRelayPrefs(device().read(key))
     // Another tab's edit (a removed relay, an always-allowed host) applies here too.
     if (key !== null)
@@ -452,22 +471,65 @@ export class RelayBook {
   }
 
   // Asks about each declared host that isn't known, one prompt at a time. Returns the host the
-  // user denied, or null when everything may be used.
-  consent(declared: unknown): Promise<string | null> {
+  // user denied, or null when everything may be used. `from` names the peer that caused it (see
+  // PROMPTS); without it, the user started it and is always asked.
+  consent(declared: unknown, from?: string): Promise<string | null> {
+    const key = from === undefined ? null : `${from}\n${declaredHosts(declared)?.join(' ')}`
+    const same = key === null ? undefined : this.asking.get(key)
+    if (same) return same
     const run = async (): Promise<string | null> => {
       if (!this.prefs.ask) return null
-      for (const host of unknownHosts(declared, this.known())) {
+      const unknown = unknownHosts(declared, this.known())
+      if (key !== null && unknown.length && this.refused.has(key)) return unknown[0]
+      for (const host of unknown) {
         if (host === UNREADABLE) return host
         if (this.known().has(host)) continue
-        const d = await this.prompt(host)
-        if (d === 'deny') return host
+        let d: Decision
+        const seen = this.recent.get(host)
+        if (seen && seen.until > this.now() && (seen.d === 'once' || from !== undefined)) d = seen.d
+        else if (from !== undefined && !this.mayPrompt(from)) return host
+        else d = await this.prompt(host)
+        if (d !== 'always') this.recent.set(host, { d, until: this.now() + PROMPTS.recentMs })
+        if (d === 'deny') {
+          if (key !== null) this.refuse(key)
+          return host
+        }
         if (d === 'always') this.save(allowHost(this.prefs, host))
       }
       return null
     }
     const next = this.queue.then(run, run)
     this.queue = next.catch(() => null)
+    if (key !== null) {
+      this.asking.set(key, next)
+      const done = () => void this.asking.delete(key)
+      next.then(done, done)
+    }
     return next
+  }
+
+  private refuse(key: string) {
+    this.refused.delete(key)
+    this.refused.add(key)
+    if (this.refused.size > REFUSED_MAX) this.refused.delete(this.refused.values().next().value!)
+  }
+
+  // Counts a prompt `from` causes, or false when it had its share (or all peers had theirs).
+  private mayPrompt(from: string) {
+    const now = this.now()
+    for (const [h, r] of this.recent) if (r.until <= now) this.recent.delete(h)
+    const since = now - PROMPTS.windowMs
+    for (const [k, ts] of this.prompted) {
+      const left = ts.filter(t => t > since)
+      if (left.length) this.prompted.set(k, left)
+      else this.prompted.delete(k)
+    }
+    this.promptedAll = this.promptedAll.filter(t => t > since)
+    const mine = this.prompted.get(from) ?? []
+    if (mine.length >= PROMPTS.perPeer || this.promptedAll.length >= PROMPTS.all) return false
+    this.prompted.set(from, [...mine, this.now()])
+    this.promptedAll.push(this.now())
+    return true
   }
 }
 

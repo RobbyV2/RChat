@@ -20,6 +20,9 @@ spec:
         - name: peerjs
           image: ghcr.io/robbyv2/rchat:weekly
           args: ["/app/start.sh", "peer"]
+          envFrom:
+            - configMapRef:
+                name: rchat-config
           ports:
             - name: peer
               containerPort: 9001

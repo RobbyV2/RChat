@@ -40,7 +40,8 @@ export interface CallFrame {
   relays?: string[]
 }
 
-const isRoomId = (x: unknown): x is string => typeof x === 'string' && bytesOf(x, 32) !== null
+export const isRoomId = (x: unknown): x is string =>
+  typeof x === 'string' && bytesOf(x, 32) !== null
 
 const isSid = (x: unknown): x is string => typeof x === 'string' && /^[0-9a-f]{1,32}$/.test(x)
 

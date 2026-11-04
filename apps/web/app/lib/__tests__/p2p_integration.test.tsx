@@ -65,7 +65,7 @@ import { P2pDmPane } from '../../components/p2p/p2p_dm_pane'
 import { ServerSettingsDialog } from '../../components/p2p/p2p_server_settings'
 import { CallBanner } from '../../components/voice_grid'
 import { markAllReadItem } from '../../components/mark_read'
-import { p2pMarkAll } from '../p2p/app'
+import { p2pDm, p2pMarkAll } from '../p2p/app'
 import { me, memoryStorage } from './fixtures'
 
 afterAll(resetSessionCaches)
@@ -709,10 +709,31 @@ describe('P2P inbox in the app', () => {
     for (const over of changed) expect(pingInputsChanged({ ...base, ...over }, base)).toBe(true)
   })
 
+  test('Jump to present leaves a window opened at a message before anything loads', () => {
+    p2pState({
+      enabled: true,
+      me: BOB,
+      chat: {
+        room: ROOM,
+        peer: ALICE,
+        messages: [],
+        more: false,
+        newer: true,
+        loading: false,
+        readSeq: 0,
+        missed: [],
+      },
+    })
+    // A refresh starting now loads the newest page, not the window again.
+    void p2pDm.toPresent()
+    expect(useP2p.getState().chat?.newer).toBe(false)
+  })
+
   test('every "Mark all as read" includes P2P, through the one confirm', () => {
     p2pState({
       enabled: true,
       me: BOB,
+      contacts: [contact(ALICE, 'Alice', 'mutual')],
       rooms: {
         [ROOM]: { id: ROOM, peer: ALICE, seq: 4, unread: 1, pings: 0 },
       } as unknown as P2pState['rooms'],
@@ -966,19 +987,33 @@ describe('P2P on Home', () => {
         chans: { [CH]: { unread: 9, pings: 9, readSeq: 0 } },
       }),
     }
-    const rooms = { [ROOM]: { id: ROOM, unread: 1, pings: 0 } }
-    const out = p2pUnread({ servers, rooms }, EMPTY_NOTIFY, NOW)
+    const bob = keyId(newKeyPair().pk)
+    const gone = keyId(newKeyPair().pk)
+    const contactOf = (ik: string, state: Contact['state']) =>
+      ({ ik, state, ignored: false, name: ik, petname: null }) as unknown as Contact
+    const rooms = {
+      [ROOM]: { id: ROOM, peer: bob, unread: 1, pings: 0 },
+      // A contact who was blocked, or removed: no row, so nothing counts.
+      blocked: { id: 'blocked', peer: gone, unread: 3, pings: 2 },
+    }
+    const contacts = [contactOf(bob, 'mutual'), contactOf(gone, 'blocked')]
+    const out = p2pUnread({ servers, rooms, contacts }, EMPTY_NOTIFY, NOW)
     expect(out.servers.map(r => [r.v.name, r.pings, r.channels])).toEqual([
       ['Pinged', 2, 1],
       ['Busy', 0, 1],
     ])
     expect(out.dms).toEqual({ pings: 0, unread: true })
+    const only = { blocked: rooms.blocked }
+    expect(p2pUnread({ servers, rooms: only, contacts }, EMPTY_NOTIFY, NOW).dms).toEqual({
+      pings: 0,
+      unread: false,
+    })
     const muted = setLevel(EMPTY_NOTIFY, { kind: 'p2pc', room: 'c', ch: CH }, 'nothing')
-    expect(p2pUnread({ servers, rooms }, muted, NOW).servers.map(r => [r.v.name, r.pings])).toEqual(
-      [
-        ['Busy', 0],
-        ['Pinged', 0],
-      ]
-    )
+    expect(
+      p2pUnread({ servers, rooms, contacts }, muted, NOW).servers.map(r => [r.v.name, r.pings])
+    ).toEqual([
+      ['Busy', 0],
+      ['Pinged', 0],
+    ])
   })
 })

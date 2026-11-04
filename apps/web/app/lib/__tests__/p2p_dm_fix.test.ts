@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { Hub, makeNode, ManualClock, settle, waitFor } from './p2p_net'
 import type { P2pNode } from '../p2p/node'
 import type { P2pStore } from '../p2p/db'
@@ -9,6 +9,9 @@ import * as dm from '../p2p/dm'
 import { Dms, dmRoomId, loadMessages } from '../p2p/dm'
 import * as dag from '../p2p/dag'
 import { insertEvent } from '../p2p/dag'
+
+// Real-time tests (sessions, IndexedDB): budgets for a loaded machine.
+setDefaultTimeout(60_000)
 
 // Own events go through validation, storage is capped by bytes and survives a quota error,
 // revoked devices can't backdate, and the receive-side rules hold for events a peer pushes.
@@ -37,7 +40,7 @@ const makePeer = async (hub: Hub, name: string, clock: ManualClock, opts: DmOpts
   return { ...n, dms } as Peer
 }
 
-const eventually = async (ok: () => Promise<boolean>, what: string, ms = 15_000) => {
+const eventually = async (ok: () => Promise<boolean>, what: string, ms = 30_000) => {
   const end = Date.now() + ms
   while (!(await ok())) {
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
@@ -220,6 +223,29 @@ describe('storage limits', () => {
   }, 20_000)
 })
 
+describe('storage limits, after a full pause', () => {
+  test('what waited goes out when the pause ends, with nothing new sent', async () => {
+    // Longer than the receiver waits before it tries its storage again (like the default).
+    const { a, b, room, clock } = await pair({ limits: { peerFullMs: 61_000 } })
+    let quota = true
+    const db = b.store.db
+    const real = db.transaction.bind(db)
+    ;(db as unknown as { transaction: unknown }).transaction = (
+      names: string | string[],
+      mode?: IDBTransactionMode
+    ) => {
+      if (quota && mode === 'readwrite' && [names].flat().includes('events'))
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+      return real(names as never, mode)
+    }
+    await a.dms.send(room, { body: 'one' })
+    await eventually(async () => !!(await a.store.room(room))?.peerFull, 'peer full')
+    quota = false
+    await clock.advance(61_001)
+    await eventually(async () => (await bodies(b, a)).join() === 'one', 'arrives')
+  }, 20_000)
+})
+
 describe('revoked devices', () => {
   const setup = async () => {
     const p = await pair()
@@ -291,6 +317,30 @@ describe('revoked devices', () => {
     expect(good.wire.ev.prev).toEqual([early.id])
     await insertEvent(b.store.db, good.id, good.wire, revokedAt + 10, ctx)
     await sessB.send({ t: 'push', room, ev: good.wire })
+    await eventually(async () => (await bodies(a, b)).join() === 'early,good', 'both kept')
+    expect(sessionOf(a, room).strikes).toBe(0)
+  })
+
+  test('one pulled before the good device built on it comes once that head arrives', async () => {
+    const { a, b, room, bob, oldAuthor, revokedAt } = await setup()
+    const ctx = { me: b.node.ik, peer: a.node.ik }
+    const early = await eventOn(
+      b,
+      room,
+      oldAuthor,
+      'msg',
+      { body: 'early' },
+      { ts: revokedAt - 5000 }
+    )
+    await insertEvent(b.store.db, early.id, early.wire, revokedAt - 5000, ctx)
+    // Bob's heads name it: Alice pulls it, can't keep it yet, and stops asking.
+    const linkB = b.dms.sync.linksOf(room)[0]
+    await (b.dms.sync as unknown as { sendHeads: (l: unknown) => Promise<void> }).sendHeads(linkB)
+    const linkA = a.dms.sync.linksOf(room)[0]
+    await eventually(async () => linkA.unavailable.has(early.id), 'not stored yet')
+    const good = await eventOn(b, room, bob, 'msg', { body: 'good' }, { ts: revokedAt + 10 })
+    await insertEvent(b.store.db, good.id, good.wire, revokedAt + 10, ctx)
+    await sessionOf(b, room).send({ t: 'push', room, ev: good.wire })
     await eventually(async () => (await bodies(a, b)).join() === 'early,good', 'both kept')
     expect(sessionOf(a, room).strikes).toBe(0)
   })
