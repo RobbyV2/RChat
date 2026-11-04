@@ -34,9 +34,9 @@ import {
   sortRoles,
   type MemberView,
   type ChannelView,
-  type Rt,
   type ServerView,
 } from './types'
+import { type Rt } from './rt'
 
 // The read-only part of a room's runtime record a view reads.
 export type RtView = Pick<

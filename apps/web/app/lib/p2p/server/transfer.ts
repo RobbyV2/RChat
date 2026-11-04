@@ -29,9 +29,9 @@ import {
   MIGRATE_PER,
   CARRY_ACK,
   CARRY_ACKS_MAX,
-  type Rt,
   type Migrated,
 } from './types'
+import { type Rt } from './rt'
 
 export function transferAsks(cx: ServerCtx) {
   return [...cx.xferAsks].map(([key, a]) => ({
