@@ -4,6 +4,7 @@ import { levelOf, type NotifyPrefs } from '../notify'
 import { useStore } from '../store'
 import { memberName, p2pOpenAt, p2pPings, useP2p, type P2pState } from './app'
 import { displayName } from './contacts'
+import { LOCAL } from './limits'
 import {
   byCounter,
   counterKey,
@@ -19,8 +20,8 @@ import {
   type PingWorld,
 } from './inbox'
 
-const PAGE_SIZE = 30
-const RECOUNT_MS = 30
+const PAGE_SIZE = LOCAL.inbox.pageSize
+const RECOUNT_MS = LOCAL.inbox.recountMs
 
 export const worldOf = (st: P2pState, readSeq: ReadonlyMap<string, number>): PingWorld => ({
   readSeq,

@@ -4,6 +4,7 @@ import type { RtcTarget, Signaler } from '../rtc'
 import type { RtcPayload } from '../types'
 import { bytesOf, hasKeys } from './canonical'
 import type { Message } from './frames'
+import { LOCAL } from './limits'
 import { isKeyId, signTagged, verifyTagged, type Cert } from './keys'
 import type { Clock, Session } from './session'
 import { isRoomId, readPayload } from './signal'
@@ -30,37 +31,19 @@ import { isShortId } from './state'
 // `confirmMs` is dropped and ignored for `ttlMs`. At most `keepMax` participants hold sessions
 // outside the budget.
 
+const { fitAudio, fitVideo, ...VOICE_LOCAL } = LOCAL.voice
+
 export const VOICE = {
-  refreshMs: 20_000,
-  ttlMs: 60_000,
-  tickMs: 5_000,
-  // A participant whose session with its voice device went away, and who isn't heard of again
-  // (also through others), is gone after this: longer than a refresh.
-  lostMs: 30_000,
-  // How long someone we have a session with has to confirm what was passed on about them.
-  confirmMs: 10_000,
-  // A passed-on frame stamped (by its participant's clock) more than ttlMs plus this before ours
-  // is stale.
-  skewMs: 5 * 60_000,
-  // Frames a session may send us (a bucket: this many a second, bursts up to inBurst, for a
-  // newcomer's list); the rest is dropped.
-  inPerSec: 20,
-  inBurst: 80,
-  // Passing on: one state per member every gapMs at most, an unchanged one every relayMs, and
-  // linkPerSec frames a second on each link (the rest is dropped; refreshes come again).
-  gapMs: 1_000,
-  relayMs: 5_000,
-  linkPerSec: 10,
-  // Participants a channel lists at most, and those we keep sessions with outside the budget.
+  // Participants a channel lists at most.
   listMax: 64,
-  keepMax: 40,
+  ...VOICE_LOCAL,
 }
 
 export type VoiceLimits = typeof VOICE
 
 // Past these many in a channel (the second with a camera or a screen share on), the channel and
 // the voice panel say how far a mesh goes. Joining is never blocked.
-export const VOICE_FIT = { audio: 8, video: 4 }
+export const VOICE_FIT = { audio: fitAudio, video: fitVideo }
 export const VOICE_NOTICE =
   'Voice in P2P servers is peer-to-peer. It works best with up to 8 people (4 with video).'
 

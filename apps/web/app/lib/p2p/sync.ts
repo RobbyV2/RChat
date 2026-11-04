@@ -3,6 +3,7 @@ import { ancestorsAmong, getEvents, insertEvent, vouched, walkBack, type Inserte
 import type { EventRecord, P2pStore } from './db'
 import { claimedId, isEventId, redacted, validate, type Devices, type Wire } from './event'
 import type { Message } from './frames'
+import { LOCAL } from './limits'
 import type { Clock, Session } from './session'
 
 // The outcome of checking an event from a peer: stored next, refused (a strike), or not stored
@@ -54,18 +55,7 @@ export const SYNC = {
   // What a peer may have queued with us before it counts as flooding.
   pushQueueEvents: 64,
   pushQueueBytes: 512 * 1024,
-  pushPerMin: 600,
-  // Events pulled per session before older history waits for "Load older".
-  horizon: 2000,
-  // Servers: the ACL DAG comes whole (spec 4.2, no horizon), within a rate, so a peer can't flood
-  // us through pulls.
-  statePerMin: 2000,
-  headsDebounceMs: 250,
-  typingMs: 8000,
-  // Delivery checks against the peer's heads walk at most this far.
-  deliveredWalk: 500,
-  // After the other side said its storage is full, live pushes pause this long.
-  peerFullMs: 10 * 60_000,
+  ...LOCAL.sync,
 }
 
 export type SyncLimits = typeof SYNC
@@ -369,9 +359,9 @@ export class Sync {
     link.peerHeads = heads
     link.peerState = state
     link.held = false
-    // Asked for ours: answered at most once a second per link.
+    // Asked for ours: answered at most once per headsAnswerMs per link.
     const now = this.deps.clock.now()
-    if (m.ask === true && now - link.answeredAt >= 1_000) {
+    if (m.ask === true && now - link.answeredAt >= this.limits.headsAnswerMs) {
       link.answeredAt = now
       void this.sendHeads(link)
     }

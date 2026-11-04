@@ -40,14 +40,15 @@ import {
 } from './acl/rules'
 import { ContentView, type ContentEv, type Hidden } from './acl/visibility'
 import { aclEvOf, contentEvOf, type WireV2 } from './event'
+import { AGREED, LOCAL } from './limits'
 
 // One P2P server's evaluator state, where the host runs it (a worker in the browser): the ACL
 // replica, the content it holds, and what the page mirrors of the current state. The page stores
 // events; this decides them (spec §2.1), plans honest events (§1.2), answers visibility (§3.5)
 // and history (§3.6) questions, and sends the current state as deltas.
 
-export const HOLD_MS = 5 * 60_000
-export const MAX_PARENTS = 10
+export const HOLD_MS = LOCAL.acl.holdMs
+export const MAX_PARENTS = AGREED.ap
 
 // The version of the evaluator and of the records it stores (spec 2.4): a record or cache of
 // another version is not read; its events are admitted again. A header's record (its event can't
@@ -426,7 +427,7 @@ const setApply = (base: ReadonlySet<string>, d?: [string[], string[]]): Readonly
 }
 
 // Rejected ACL events the evaluator remembers (by id only; a rejected parent rejects its child).
-export const KEEP = { rejected: 10_000 }
+export const KEEP = { rejected: LOCAL.acl.keepRejected }
 
 // What a cold start found to drop: stored events that are not admitted (an import), with the ids
 // of content that failed its decision.
@@ -1212,7 +1213,8 @@ export class AclRoom {
     if (this.r.state().facts.owners.has(by)) return true
     const seen = new Set<number>([p])
     const queue = [...ix.kids[p]]
-    for (let at = 0; at < queue.length && seen.size < 4096; at++) {
+    const walk = LOCAL.acl.vouchWalk
+    for (let at = 0; at < queue.length && seen.size < walk; at++) {
       const q = queue[at]
       if (seen.has(q)) continue
       seen.add(q)
@@ -1220,7 +1222,7 @@ export class AclRoom {
       if (fe.inS(q) && !fe.X[q] && a !== by && a !== to) return true
       for (const k of ix.kids[q]) if (!seen.has(k)) queue.push(k)
     }
-    return seen.size >= 4096
+    return seen.size >= walk
   }
 
   // What changed since the page's copy (all of it the first time).
@@ -1935,7 +1937,7 @@ export class AclRoom {
       for (const P of F.mem) if (P !== r.a && P !== t.a) others += 1
       if (others < 3 || v.redactionWitnessed(r, t)) continue
       out.push(r.id)
-      if (out.length >= 10) break
+      if (out.length >= LOCAL.acl.acksPerPass) break
     }
     return out
   }

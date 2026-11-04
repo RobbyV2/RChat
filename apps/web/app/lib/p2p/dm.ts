@@ -34,6 +34,7 @@ import { fmtSize } from '../bytes'
 import { maskCode } from '../mentions'
 import { keyBytes } from './keys'
 import type { P2pNode } from './node'
+import { LOCAL } from './limits'
 import { realClock, type Clock } from './session'
 import { around, type PageOpts } from './jump'
 import { isQuotaError, Sync, type SyncLimits } from './sync'
@@ -53,8 +54,8 @@ export const dmRoomId = (a: string, b: string) => {
   return b64u(sha256(concat(utf8(DM_TAG), ka, kb)))
 }
 
-export const PINS_MAX = 100
-export const PAGE = 100
+export const PINS_MAX = LOCAL.dm.pinsMax
+export const PAGE = LOCAL.dm.page
 
 export interface P2pReaction {
   key: string
@@ -308,7 +309,7 @@ export interface MissedCall {
   at: number
 }
 
-export const MISSED_MAX = 50
+export const MISSED_MAX = LOCAL.dm.missedMax
 
 export const missedRow = (m: MissedCall): P2pMessage => ({
   ...blankRow(`call:${m.id}`, m.from, m.at, `${String(m.at).padStart(16, '0')}.local`, 0),
@@ -498,8 +499,8 @@ export interface DmDeps {
   space?: () => Promise<{ free: number; quota: number } | null>
 }
 
-export const AUTO_DAILY = 1024 ** 3
-export const AUTO_FLOOR = 512 * 1024 ** 2
+export const AUTO_DAILY = LOCAL.dm.autoDaily
+export const AUTO_FLOOR = LOCAL.dm.autoFloor
 const DAY = 24 * 60 * 60_000
 
 // Why a file that arrived was not fetched by itself.
@@ -652,7 +653,8 @@ export class Dms {
 
   private pause(h: string, why: AutoPause) {
     this.paused.set(h, why)
-    while (this.paused.size > 1000) this.paused.delete(this.paused.keys().next().value as string)
+    while (this.paused.size > LOCAL.dm.pausedMax)
+      this.paused.delete(this.paused.keys().next().value as string)
     this.blobs.touchView(h)
   }
 

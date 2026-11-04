@@ -10,6 +10,7 @@ import {
   type SearchMeta,
 } from './db'
 import { isEventId, type EditContent, type MsgContent } from './event'
+import { LOCAL } from './limits'
 
 // Local search over P2P server messages (note section 7, store `search`): one row per word and
 // message, written with the message in the transaction that stores, purges or drops it, and
@@ -18,21 +19,7 @@ import { isEventId, type EditContent, type MsgContent } from './event'
 // An edit's words count for its message, and hidden content keeps its rows (visibility changes
 // after storage), so hits are checked against what shows before they are listed.
 
-export const SEARCH = {
-  // Characters kept of a word, and words kept of a message.
-  word: 32,
-  words: 256,
-  // Query words this short match whole words only.
-  exact: 2,
-  page: 25,
-  // Candidates looked at for one page; past it the page ends early with a cursor.
-  scan: 2000,
-  // Candidates of one query kept for its next pages, and for how long.
-  pool: 20_000,
-  poolMs: 60_000,
-  // Events indexed per rebuild step.
-  step: 500,
-}
+export const SEARCH = { ...LOCAL.search }
 
 export const words = (text: string): string[] => {
   const norm = text

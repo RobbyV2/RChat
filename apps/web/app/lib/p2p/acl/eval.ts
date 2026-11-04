@@ -1,5 +1,6 @@
 import { Equiv, Hdrs, seenOf } from './equivocation'
 import { fullFacts, inFactsScope, View, type EvalResult, type FactsQ, type StIdx } from './facts'
+import { LOCAL } from '../limits'
 import { chainCover, EMPTY, firstTrue, Ix, pushM } from './reach'
 import {
   BOT,
@@ -35,6 +36,7 @@ import {
 const B0 = BigInt(0)
 const B1 = BigInt(1)
 const bit = (i: number) => B1 << BigInt(i)
+const MASK_SWITCH = LOCAL.acl.maskSwitch
 
 // Decisions of the strata above the one being processed, and this stratum's cuts so far.
 export interface Strat {
@@ -1275,7 +1277,7 @@ export class FastEval extends Equiv {
     const bitIx = new Map<number, number>(causes.map((g, i) => [g, i]))
     const ALLm = bit(causes.length) - B1
     const maskOf = (is: number[]): bigint => {
-      if (is.length < 32) {
+      if (is.length < MASK_SWITCH) {
         let m = B0
         for (const i of is) m |= bit(i)
         return m

@@ -116,6 +116,7 @@ import { Gossip, type GossipLimits, type LinkKind } from './gossip'
 import { isKeyId, keyId, peerId, verifyCert, verifyProfile, type Cert, type Profile } from './keys'
 import { liveCerts } from './keys'
 import { mergeCerts, mergeRevocations, displayName } from './contacts'
+import { AGREED, LOCAL } from './limits'
 import type { P2pNode } from './node'
 import { LocalHost, WorkerHost, type AclHost, type WorkerLike } from './resolve_host'
 import { realClock, type Clock, type Session } from './session'
@@ -184,72 +185,26 @@ import {
 // (gossip.ts).
 
 export const SERVER = {
-  // Server rooms on this device, and pending invites from contacts.
-  invites: 20,
-  // Redeem attempts a session may make.
-  redeems: 3,
-  redeemMs: 15_000,
   codePeers: 4,
-  // Spec 4.3 S4: a hidden body is purged once its cause has stood this long here (and S1 to S3
-  // hold), or at once when the room or the device runs out of space.
-  purgeAfter: 7 * 24 * 60 * 60_000,
-  // Storage passes (spec 2.3, 4.2, 4.3: drops, purges, bodies wanted back, proofs) run at most
-  // this often per room, and while causes stand at least once per `causesMs`.
-  storeMs: 5_000,
-  causesMs: 60_000,
-  // Proofs (spec 4.1): posted after a random delay up to this, at most proofsPerHour per room.
-  proofDelayMs: 30_000,
-  proofsPerHour: 6,
-  // A mark that acknowledges a moderator's redaction (spec 4.3 S2): within this of applying it,
-  // at most one per room per `ackMs`.
-  ackDelayMs: 60_000,
-  ackMs: 10 * 60_000,
-  // Evicted bodies someone viewed, wanted back at once (spec 4.2 step 3), and the least an
-  // eviction of the oldest bodies frees.
-  viewedMax: 500,
-  evictBytes: 64 * 1024,
-  // A code redeemed with us: the redeemer may sync the ACL (to join) for this long, at most
-  // this many at once per code and per room. An invite they don't use is withdrawn after it.
-  redeemTtl: 10 * 60_000,
-  // A co-owner has this long to agree when a contact creates a server with them; at most this
-  // many such questions wait at once.
-  coOwnerMs: 2 * 60_000,
-  coOwnerAsks: 4,
   // Co-owners a new server may list (its genesis must fit in one ACL event).
   coOwners: CO_OWNERS_MAX,
-  redeemsPerCode: 4,
-  redeemsPerRoom: 8,
-  // Invites one code makes us post, per hour by our clock; after this many in a row lapse
-  // unused, we stop taking the code for a while.
-  codeAddsPerHour: 4,
-  codeLapses: 4,
-  codePauseMs: 24 * 60 * 60_000,
-  // A session with someone who isn't a contact, left without room links, closes after this.
-  idleMs: 5_000,
-  // Local limits (spec 4.2): events waiting for their ACL parents, per room, and events dated
-  // in the future, per device. Overflow is dropped and fetched again later.
-  pendingEvents: 2000,
-  pendingBytes: 8 * 1024 * 1024,
-  heldPerDevice: 256,
-  rejectedKept: 10_000,
+  ...LOCAL.server,
 }
 
 // Vouching marks (Rt.vouch): at most one per room this often, and one per inviter.
-export const VOUCH = { roomMs: 10 * 60_000, inviterMs: 60 * 60_000 }
+export const VOUCH = { roomMs: LOCAL.server.vouchRoomMs, inviterMs: LOCAL.server.vouchInviterMs }
 
 export const CODE_PREFIX = 'rci1.'
 
 // How long a joiner waits for missing ACL events before joining with what it has, and how soon
 // the evaluation cache is written after a change.
-const JOIN_WAIT = 30_000
-const SAVE_MS = 1_000
+const JOIN_WAIT = LOCAL.server.joinWaitMs
+const SAVE_MS = LOCAL.server.saveMs
 
-export const CODE_TTLS = [
-  { label: '1 hour', ms: 60 * 60_000 },
-  { label: '1 day', ms: 24 * 60 * 60_000 },
-  { label: '7 days', ms: 7 * 24 * 60 * 60_000 },
-  { label: '30 days', ms: 30 * 24 * 60 * 60_000 },
-]
+export const CODE_TTLS = ['1 hour', '1 day', '7 days', '30 days'].map((label, i) => ({
+  label,
+  ms: LOCAL.server.codeTtls[i],
+}))
 
 export const NEEDS_INVITER = 'Someone who can invite must be online'
 export const NOBODY_ONLINE =
@@ -644,14 +599,17 @@ const systemRow = (rec: EventRecord, ik: string): P2pMessage => ({
 
 // Entries per `migrate` chunk (spec 3.8: chunks within the 16 KiB of a migrate event), and the
 // ACL events of a new owner's carry-over a member acknowledges with a mark.
-const MIGRATE_PER = 200
+const MIGRATE_PER = LOCAL.server.migratePer
 // A new copy links with the old copy's members this long after we joined it (spec 3.8).
-const SETTLE_MS = 60 * 60_000
-const ARCHIVE_LINKS = { perRoom: 2, outTarget: 1 }
-const SETTLE_RESAMPLE = [60_000, 5 * 60_000]
-const CARRY_ACK = 20
+const SETTLE_MS = LOCAL.server.settleMs
+const ARCHIVE_LINKS = {
+  perRoom: LOCAL.gossip.archivePerRoom,
+  outTarget: LOCAL.gossip.archiveOutTarget,
+}
+const SETTLE_RESAMPLE = LOCAL.server.settleResample
+const CARRY_ACK = LOCAL.server.carryAck
 // Acknowledgements of a carry-over whose size isn't known here (its old copy isn't).
-const CARRY_ACKS_MAX = 50
+const CARRY_ACKS_MAX = LOCAL.server.carryAcksMax
 
 export interface Migrated {
   members: string[]
@@ -720,12 +678,12 @@ export type ChannelPatch = {
   slow?: number
 }
 
-export const ROLE_NAME_MAX = 32
+export const ROLE_NAME_MAX = LOCAL.server.roleNameMax
 
 // Positions are absolute (spec 1.6): a new role goes below the lowest, leaving room between, else
 // into a gap below `cap` (our own top role's position), else (owners) above every role; never onto a
 // position a role has. Null: no room below `cap`.
-export const ROLE_STEP = 1024
+export const ROLE_STEP = LOCAL.server.roleStep
 export const NO_ROOM_TEXT = 'No room for a new role below your highest role. Move a role first.'
 export const newRolePos = (positions: number[], cap = Infinity): number | null => {
   const s = [...new Set(positions)].sort((a, b) => a - b)
@@ -1491,7 +1449,8 @@ export class Servers {
     if (c && (c.petname || c.name)) return displayName(c)
     if (room) {
       const n = memberOf(this.sumOf(room), ik)?.profile?.name
-      if (typeof n === 'string' && n.trim()) return Array.from(n).slice(0, 64).join('')
+      if (typeof n === 'string' && n.trim())
+        return Array.from(n).slice(0, LOCAL.server.memberNameMax).join('')
     }
     const p = this.idents.get(ik)?.profile
     if (p) return p.name
@@ -1503,7 +1462,8 @@ export class Servers {
   profileName(ik: string, room?: string) {
     if (ik === this.me) return this.deps.node.name
     const n = room ? memberOf(this.sumOf(room), ik)?.profile?.name : undefined
-    if (typeof n === 'string' && n.trim()) return Array.from(n).slice(0, 64).join('')
+    if (typeof n === 'string' && n.trim())
+      return Array.from(n).slice(0, LOCAL.server.memberNameMax).join('')
     const c = this.deps.node.contact(ik)
     if (c?.name) return c.name
     return this.idents.get(ik)?.profile?.name || 'Member'
@@ -2545,7 +2505,8 @@ export class Servers {
   private hold(room: string, id: string, w: WireV2): Inserted {
     const rt = this.ensureRt(room)
     const n = [...rt.held.values()].filter(h => h.wire.ev.dev === w.ev.dev).length
-    if (n < SERVER.heldPerDevice) rt.held.set(id, { wire: w, due: w.ev.ts - 5 * 60_000 })
+    if (n < SERVER.heldPerDevice)
+      rt.held.set(id, { wire: w, due: w.ev.ts - LOCAL.server.heldEarlyMs })
     return { status: 'quota' }
   }
 
@@ -3002,7 +2963,7 @@ export class Servers {
         throw new ServerError(SYNC_TEXT)
       }
       // W4 (spec 4.1): a mark at least every 500 content events of this device.
-      if (L === 'c' && Math.max(chain?.seq ?? -1, plan.seq) + 1 - plan.aclSeq > 500) {
+      if (L === 'c' && Math.max(chain?.seq ?? -1, plan.seq) + 1 - plan.aclSeq > AGREED.w4) {
         const mp = await this.host.plan(room, { t: 'mark', L: 'a', a: this.me, dev })
         await this.emitOne(room, 'mark', {}, 'a', chain, mp)
         chain = await chainNow()
@@ -3105,7 +3066,7 @@ export class Servers {
   // Then a #general channel and the settings.
   async create(name: string, coOwners: string[] = []): Promise<string> {
     const author = await this.author()
-    const clean = name.trim().slice(0, 100) || 'P2P server'
+    const clean = name.trim().slice(0, LOCAL.server.nameMax) || 'P2P server'
     const dk = keyId(author.dk.pk)
     if (coOwners.length > SERVER.coOwners) throw new ServerError(CO_OWNERS_MAX_TEXT)
     const sessions = coOwners.map(ik => {
@@ -3205,7 +3166,10 @@ export class Servers {
       return this.answerBundle(s, m.room, g, false)
     this.coAsks.set(key, {
       from,
-      name: typeof g.name === 'string' ? Array.from(g.name).slice(0, 100).join('') : '',
+      name:
+        typeof g.name === 'string'
+          ? Array.from(g.name).slice(0, LOCAL.server.nameMax).join('')
+          : '',
       room: m.room,
       g,
       s,
@@ -3248,7 +3212,7 @@ export class Servers {
   }
 
   setName(room: string, name: string, color?: number | null) {
-    const patch: Record<string, unknown> = { name: name.trim().slice(0, 100) }
+    const patch: Record<string, unknown> = { name: name.trim().slice(0, LOCAL.server.nameMax) }
     if (typeof color === 'number') patch.color = color
     return this.settings(room, patch)
   }
@@ -3272,7 +3236,7 @@ export class Servers {
     const id = newShortId()
     return this.emit(room, 'channel', () => ({
       id,
-      name: name.trim().slice(0, 100),
+      name: name.trim().slice(0, LOCAL.server.nameMax),
       kind: opts.kind ?? 'text',
       pos,
       ...(opts.restrictView ? { restrict_view: true } : {}),
@@ -3284,7 +3248,7 @@ export class Servers {
     const cur = channelOf(this.sumOf(room), id)
     if (!cur) throw new ServerError('Unknown channel')
     const next: Record<string, unknown> = { ...knownChannel(cur), ...patch, id }
-    if (patch.name !== undefined) next.name = patch.name.trim().slice(0, 100)
+    if (patch.name !== undefined) next.name = patch.name.trim().slice(0, LOCAL.server.nameMax)
     if (next.topic === '') delete next.topic
     for (const k of ['restrict_view', 'restrict_send']) if (next[k] !== true) delete next[k]
     if (!Number.isSafeInteger(next.slow) || (next.slow as number) <= 0) delete next.slow
@@ -3990,8 +3954,8 @@ export class Servers {
     if (s) return s
     this.prefer(room, ik)
     this.deps.node.schedule(true)
-    for (let i = 0; i < 30 && !s; i++) {
-      await new Promise<void>(done => this.clock.set(done, 500))
+    for (let i = 0; i < LOCAL.server.sessionTries && !s; i++) {
+      await new Promise<void>(done => this.clock.set(done, LOCAL.server.sessionWaitMs))
       s = this.deps.node.readySessions(ik)[0]
     }
     return s
@@ -4050,7 +4014,10 @@ export class Servers {
       kind,
       from,
       room,
-      name: typeof gname === 'string' ? Array.from(gname).slice(0, 100).join('') : 'P2P server',
+      name:
+        typeof gname === 'string'
+          ? Array.from(gname).slice(0, LOCAL.server.nameMax).join('')
+          : 'P2P server',
       to: kind === 'take' ? this.me : (g?.ev.a ?? ''),
       ...(g ? { g } : {}),
       s,
@@ -4193,8 +4160,8 @@ export class Servers {
         if (this.started && !this.rooms.has(from))
           return await save({ state: 'failed', why: OLD_GONE_TEXT })
         // The old copy isn't loaded here yet: again in a moment (for an hour; then on a change).
-        if ((rt.carryTries = (rt.carryTries ?? 0) + 1) <= 720)
-          this.clock.set(() => void this.carryOver(to).catch(() => {}), 5_000)
+        if ((rt.carryTries = (rt.carryTries ?? 0) + 1) <= LOCAL.server.carryTries)
+          this.clock.set(() => void this.carryOver(to).catch(() => {}), LOCAL.server.carryRetryMs)
         return carry.state === 'waiting' && carry.why === SYNC_TEXT
           ? undefined
           : await save({ state: 'waiting', why: SYNC_TEXT })
@@ -4420,7 +4387,7 @@ export class Servers {
       rt.carryAcks = kept ? a.n : 0
     }
     if (rt.carryDone || rt.carryAcks >= (rt.carryMax ?? r.carryMax ?? CARRY_ACKS_MAX)) return
-    if (now - rt.carryAt > 24 * 60 * 60_000) return
+    if (now - rt.carryAt > LOCAL.server.carryWindowMs) return
     if (s.ownerCount - rt.carryAckCount < CARRY_ACK) return
     const later = (ms: number) =>
       (rt.carryAckLater ??= this.clock.set(() => {
@@ -4428,7 +4395,8 @@ export class Servers {
         this.ackCarry(room, rt)
       }, ms))
     // Too soon after the last one: later, as the owner may be waiting for it (nothing new comes).
-    if (now - rt.carryAckAt < 60_000) return void later(60_000 - (now - rt.carryAckAt))
+    const gap = LOCAL.server.carryAckGapMs
+    if (now - rt.carryAckAt < gap) return void later(gap - (now - rt.carryAckAt))
     const base = rt.carryAckCount
     const acks = { base: s.ownerCount, n: rt.carryAcks + 1 }
     rt.carryAckAt = now
@@ -4463,11 +4431,11 @@ export class Servers {
     const at = up ? await this.carriedOf(prev, up) : null
     if (!at) {
       // The old copy isn't loaded here yet: again in a moment (for a minute).
-      if (!rt.checkLater && tries < 12)
+      if (!rt.checkLater && tries < LOCAL.server.checkTries)
         rt.checkLater = this.clock.set(() => {
           rt.checkLater = undefined
           void this.checkMigrated(room, prev, tries + 1).catch(() => {})
-        }, 5_000)
+        }, LOCAL.server.checkRetryMs)
       return
     }
     // What the carry-over posts, at most, from what the upgrade carries (known before any of it
@@ -4516,7 +4484,7 @@ export class Servers {
     waiting: (why: string) => Promise<void>
   ): Promise<string | null> {
     let last = TOO_OFTEN_TEXT
-    for (let i = 0; i < 24 * 60 && this.rooms.has(room); i++) {
+    for (let i = 0; i < LOCAL.server.stepTries && this.rooms.has(room); i++) {
       try {
         await step()
         return null
@@ -4525,7 +4493,7 @@ export class Servers {
         if (why !== LONE_TEXT && why !== QUICK_TEXT && why !== SYNC_TEXT) return why
         last = why
         await waiting(why)
-        await new Promise<void>(done => this.clock.set(done, 60_000))
+        await new Promise<void>(done => this.clock.set(done, LOCAL.server.stepRetryMs))
       }
     }
     return last
@@ -4934,7 +4902,7 @@ export class Servers {
     const now = this.clock.now()
     await this.putRoom({
       ...(cur ?? { ...blankRoom(room, '', now), kind: 'server', chans: {}, server: null }),
-      name: Array.from(m.name).slice(0, 100).join(''),
+      name: Array.from(m.name).slice(0, LOCAL.server.nameMax).join(''),
       invite: { from, at: now, wire: v.wire },
     })
     this.ensureRt(room)
@@ -5581,8 +5549,14 @@ export class Servers {
   async loadThreadAround(room: string, root: string, id: string) {
     const r = await this.db.get('events', id)
     if (!r || r.room !== room || (await this.rootOf(r)) !== root) return null
-    const older = await this.loadThread(room, root, { before: r.sortKey, limit: 50 })
-    const newer = await this.loadThread(room, root, { after: r.sortKey, limit: 1000 })
+    const older = await this.loadThread(room, root, {
+      before: r.sortKey,
+      limit: LOCAL.server.threadBefore,
+    })
+    const newer = await this.loadThread(room, root, {
+      after: r.sortKey,
+      limit: LOCAL.server.threadAfter,
+    })
     if (!older || !newer) return null
     const self = await this.rows(room, [r])
     return { ...older, messages: [...older.messages, ...self, ...newer.messages] }
@@ -5824,7 +5798,7 @@ export class Servers {
     let last: string | null = null
     let i = 0
     while (i < scan.length && hits.length < page) {
-      const chunk = scan.slice(i, i + 50)
+      const chunk = scan.slice(i, i + LOCAL.server.searchChunk)
       i += chunk.length
       const recs = new Map<string, EventRecord>()
       for (const x of chunk) {

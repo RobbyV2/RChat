@@ -3,6 +3,7 @@ import { randomHex } from '../bytes'
 import { home } from '../instances'
 import { ice } from '../ice'
 import { declaredHosts, hidesIp, relayBook, unknownHosts, type RelayBook } from '../relays'
+import { LOCAL } from './limits'
 import { TransportError, type Listener, type OfferGuard, type Transport } from './node'
 import type { Pipe } from './session'
 
@@ -14,13 +15,13 @@ import type { Pipe } from './session'
 export const LABEL = 'rcp1'
 export const BULK_LABEL = 'rcp1b'
 // A bulk sender waits once this much is queued in the data channel.
-const LOW_MARK = 256 * 1024
-const DIAL_MS = 15_000
+const LOW_MARK = LOCAL.transport.lowMark
+const DIAL_MS = LOCAL.transport.dialMs
 // Offers held while the user decides about a relay host they don't know, in all and per peer,
 // and the proofs of such offers checked a minute.
-export const HELD_MAX = 4
-export const HELD_PER_PEER = 1
-export const CHECKS_PER_MIN = 30
+export const HELD_MAX = LOCAL.transport.heldMax
+export const HELD_PER_PEER = LOCAL.transport.heldPerPeer
+export const CHECKS_PER_MIN = LOCAL.transport.checksPerMin
 
 type Hooked = Peer & { _handleMessage?: (msg: unknown) => void }
 

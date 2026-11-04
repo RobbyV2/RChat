@@ -1,4 +1,5 @@
 import { Hdrs } from './equivocation'
+import { LOCAL } from '../limits'
 import { FastEval } from './eval'
 import {
   emptyResult,
@@ -97,8 +98,8 @@ class SubView extends View {
 // enumerations (16), and the facts of recorded states (FACTS_CAP; a state's facts are built again
 // when read after they left, its statuses stay packed).
 const lrus = new WeakMap<Ix, Map<string, Map<object, unknown>>>()
-const LRU_CAP = 16
-export const FACTS_CAP = 1024
+const LRU_CAP = LOCAL.cache.lruCap
+export const FACTS_CAP = LOCAL.cache.factsCap
 function lruGet<T>(ix: Ix, k: object, make: () => T, kind = 'all', cap = LRU_CAP): T {
   let byKind = lrus.get(ix)
   if (!byKind) lrus.set(ix, (byKind = new Map()))
@@ -554,7 +555,7 @@ export const snapResult = (fe: FastEval, len: number): EvalResult => new SnapRes
 // Packed statuses of a downset, in chunked bitsets: chunk k holds indices [k*CB, (k+1)*CB). A
 // state built from another shares the chunks it doesn't change, so the recorded states of a
 // replica (off the heads, and every one after a cold start) cost the chunks they change.
-export const CB = 2048
+export const CB = LOCAL.cache.chunk
 export type Bits = (Uint32Array | undefined)[]
 // Per index, 1 + the ordinal of the stratum it is cut at (rankOrd), 0 when not cut.
 export type Ords = (Uint32Array | undefined)[]
@@ -1099,12 +1100,12 @@ export class AclState {
   private fe?: FastEval
   private cur?: EvalResult
   cache = new Map<string, EvalResult>()
-  cap = 4096
+  cap = LOCAL.cache.mergeCap
   // Admission states of content positions (spec 5.7), kept for rendering within a count and a byte
   // budget (a packed state takes about five bits per indexed event).
   content = new Map<string, EvalResult>()
-  contentCap = 16_384
-  contentBytes = 64 * 1024 * 1024
+  contentCap = LOCAL.cache.contentCap
+  contentBytes = LOCAL.cache.contentBytes
   stats = { head: 0, full: 0, subsets: 0, hits: 0, contentHits: 0 }
   constructor(public cx: Ctx) {
     this.ix = new Ix(cx)
@@ -1169,7 +1170,7 @@ export class AclState {
       if (prev?.len === src.len) return prev.p
       const p = snapPacked(src.fe, src.len, prev)
       this.snaps.push({ fe: src.fe, len: src.len, p })
-      if (this.snaps.length > 8) this.snaps.shift()
+      if (this.snaps.length > LOCAL.cache.headSnaps) this.snaps.shift()
       return p
     }
     return packedOfSets(this.ix, r)

@@ -1,4 +1,5 @@
 import { addS, EMPTY, firstTrue, Ix, type BitW } from './reach'
+import { LOCAL } from '../limits'
 import {
   ALL,
   BOT,
@@ -153,8 +154,10 @@ const NOBITS: ReadonlyMap<number, BitW> = new Map()
 // Two exact computations of one value, each giving up (undefined) past a number of steps: the
 // first, then the second, with budgets growing fourfold, so the cost is within a constant of the
 // cheaper one's.
+const RACE_STEPS = LOCAL.acl.raceSteps
+const RACE_GROWTH = LOCAL.acl.raceGrowth
 function race<T>(a: (limit: number) => T | undefined, b: (limit: number) => T | undefined): T {
-  for (let limit = 16; ; limit *= 4) {
+  for (let limit = RACE_STEPS; ; limit *= RACE_GROWTH) {
     const x = a(limit)
     if (x !== undefined) return x
     const y = b(limit)

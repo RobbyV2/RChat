@@ -1,5 +1,6 @@
 import { EVERYONE } from './acl/rules'
 import type { Summary } from './acl_room'
+import { LOCAL } from './limits'
 
 // The user-facing flows of P2P servers (spec p2p-acl-spec §8.2, §9): their copy, and the pure
 // decisions behind them. server.ts runs the flows; the components show this copy.
@@ -121,7 +122,7 @@ export interface Reached {
 //   inviter was kicked, by anyone, within the last week; a ban or a disowned device means the
 //   invitees go for good.
 const DAY = 24 * 60 * 60_000
-export const CUT_MS = 7 * 24 * 60 * 60_000
+export const CUT_MS = LOCAL.misc.cutMs
 export const cutOut = (s: Summary, ik: string, now: number) => {
   const m = s.members[ik]
   if (!m || m.m !== 'leave' || m.rem) return false
@@ -179,11 +180,10 @@ export const syncedSince = (
 
 // ----- Devices (§3.9) -----
 
-export const LOST_TIMES = [
-  { label: '1 hour ago', ms: 60 * 60_000 },
-  { label: '1 day ago', ms: 24 * 60 * 60_000 },
-  { label: '1 week ago', ms: 7 * 24 * 60 * 60_000 },
-]
+export const LOST_TIMES = ['1 hour ago', '1 day ago', '1 week ago'].map((label, i) => ({
+  label,
+  ms: LOCAL.misc.lostTimes[i],
+}))
 
 // What an ACL action did, for lists (re-apply, a lost device's actions): the act, and the member
 // it names (shown as a name, masked in streamer mode).

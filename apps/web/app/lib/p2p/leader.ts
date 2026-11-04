@@ -1,3 +1,5 @@
+import { LOCAL } from './limits'
+
 // One P2P node per identity database across tabs. The tab holding the Web Lock runs the node;
 // the others wait in line (and take over when that tab closes). "Use here" asks the holder to
 // stop its node cleanly, then takes the lock from it.
@@ -47,7 +49,7 @@ export const webLeaderDeps = (): LeaderDeps => ({
 
 // How long a holder that was asked to let go waits for the asking tab, and how long the asking
 // tab waits for a reply before it takes the lock anyway (a frozen tab).
-export const HANDOVER_MS = 3000
+export const HANDOVER_MS = LOCAL.misc.handoverMs
 
 type State = 'idle' | 'waiting' | 'leading' | 'handing' | 'stopped'
 

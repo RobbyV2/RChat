@@ -4,6 +4,7 @@ import type { RtcPayload } from '../types'
 import { b64u, randomBytes } from './canonical'
 import { CALL_ID_LEN, type CallContent, type CallOutcome } from './event'
 import type { Message } from './frames'
+import { LOCAL } from './limits'
 import type { MissedCall } from './dm'
 import { realClock, type Clock, type Session } from './session'
 import {
@@ -20,21 +21,21 @@ import {
 // to the conversation's room, both identities and, once answered, the one device that answered.
 // Only the tab that runs P2P (the leader) has a node, so only it rings and handles calls.
 
-export const RING_MS = 30_000
+export const RING_MS = LOCAL.calls.ringMs
 // The callee gives up a moment after the caller would have.
-export const RING_GRACE_MS = 5_000
+export const RING_GRACE_MS = LOCAL.calls.ringGraceMs
 // Rings per contact per minute; more are dropped without an answer.
-export const RINGS_PER_MIN = 5
+export const RINGS_PER_MIN = LOCAL.calls.ringsPerMin
 // How often a minute one session is told that a call it named doesn't exist.
-export const UNKNOWN_PER_MIN = 5
+export const UNKNOWN_PER_MIN = LOCAL.calls.unknownPerMin
 // How long an answered call waits for its session to come back (a short network drop), and
 // after the other side said goodbye (a reload or a closed tab).
-export const LOST_MS = 20_000
-export const BYE_MS = 5_000
+export const LOST_MS = LOCAL.calls.lostMs
+export const BYE_MS = LOCAL.calls.byeMs
 // Negotiation frames from the callee held while the caller is still deciding on its relays.
-export const HELD_MAX = 256
+export const HELD_MAX = LOCAL.calls.heldMax
 // How often the caller notes the call is still going, for the log after a crash or reload.
-export const ALIVE_MS = 10_000
+export const ALIVE_MS = LOCAL.calls.aliveMs
 
 export const OFFLINE_TEXT = (name: string) => `${name} is offline. Try again when they are online.`
 export const BUSY_TEXT = (name: string) => `${name} is in another call.`
@@ -529,7 +530,7 @@ export class Calls {
     told.push(now)
     this.told.set(s, told)
     this.answered.push(id)
-    if (this.answered.length > 64) this.answered.shift()
+    if (this.answered.length > LOCAL.calls.answeredMax) this.answered.shift()
     this.send(s, { t: 'call', op: 'end', id, room })
   }
 

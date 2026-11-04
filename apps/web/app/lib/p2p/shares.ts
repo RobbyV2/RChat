@@ -1,14 +1,10 @@
+import { LOCAL } from './limits'
+
 // Per-sender content shares of P2P servers (spec 4.2): what one sender's content may take of a
 // room's and of every server's content budget, counted over a rolling day of local receipt in
 // hourly buckets.
 
-export const SHARE = {
-  // Of a room's content budget, and of the budget of every server together.
-  room: 1 / 4,
-  server: 1 / 8,
-  hourMs: 60 * 60_000,
-  hours: 24,
-}
+export const SHARE = { ...LOCAL.share }
 
 // [hour, events, bytes] per hour with receipts, oldest first.
 export type Share = [number, number, number][]

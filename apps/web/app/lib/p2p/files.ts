@@ -3,6 +3,7 @@ import { hashBlob, type Hashed } from './hashing'
 import { thumbBytes } from './blobs'
 import { downloadName, GIF_MAX, guessKind, IMAGE_HEAD, imageSize, inlineImageOk } from '../sniff'
 import { LIMITS as EV } from './event'
+import { LOCAL } from './limits'
 
 // Browser side of P2P attachments: hashing in a worker, thumbnails made by the sender and
 // checked again by the receiver, safe download names and free space.
@@ -57,13 +58,13 @@ export interface Preview {
   dur?: number
 }
 
-const SIDE = 160
-const QUALITIES = [0.7, 0.55, 0.4, 0.3, 0.2]
-const TIMEOUT_MS = 8000
+const SIDE = LOCAL.files.side
+const QUALITIES = LOCAL.files.qualities
+const TIMEOUT_MS = LOCAL.files.timeoutMs
 // Where an image header is looked for (JPEG metadata may come first), and the largest image the
 // sender's own preview decodes.
-const HEAD_BYTES = 256 * 1024
-const PREVIEW_PIXELS = 100_000_000
+const HEAD_BYTES = LOCAL.files.headBytes
+const PREVIEW_PIXELS = LOCAL.files.previewPixels
 
 const withTimeout = <T>(p: Promise<T>, ms = TIMEOUT_MS) =>
   Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error('slow')), ms))])
@@ -196,7 +197,7 @@ export const checkedThumb = (thumb: string | undefined): Promise<string | null> 
     }
   })()
   thumbUrls.set(thumb, run)
-  if (thumbUrls.size > 200) {
+  if (thumbUrls.size > LOCAL.files.thumbUrls) {
     const [old] = thumbUrls.keys()
     const p = thumbUrls.get(old)
     thumbUrls.delete(old)

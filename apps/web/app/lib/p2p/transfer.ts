@@ -74,6 +74,7 @@ import {
 import { fingerprint } from './keys'
 import { hashPages, partRange, readBlock } from './blobs'
 import { BLOCK, blobRootOf, blockCount, digest } from './hashing'
+import { LOCAL } from './limits'
 import { NEUTRAL_TYPE, safeType, SNIFF_BYTES } from '../sniff'
 import { IV_BYTES, SALT_BYTES, type Kdf, type P2pSection } from './section'
 
@@ -105,14 +106,25 @@ export const filesSize = async (db: P2pDatabase) =>
 
 // Desktop finishes in about a second, a mid-range phone in two to three. Files say which
 // parameters they used; unlocking refuses anything below the minimum or above the maximum.
-export const KDF_DESKTOP: Kdf = { alg: 'argon2id', m: 128 * 1024, t: 3, p: 1 }
-export const KDF_MOBILE: Kdf = { alg: 'argon2id', m: 64 * 1024, t: 3, p: 1 }
-export const KDF_MIN = { m: 64 * 1024, t: 3, p: 1 }
-export const KDF_MAX = { m: 256 * 1024, t: 10, p: 4 }
+const TR = LOCAL.transfer
+export const KDF_DESKTOP: Kdf = {
+  alg: 'argon2id',
+  m: TR.kdfDesktopM,
+  t: TR.kdfDesktopT,
+  p: TR.kdfDesktopP,
+}
+export const KDF_MOBILE: Kdf = {
+  alg: 'argon2id',
+  m: TR.kdfMobileM,
+  t: TR.kdfMobileT,
+  p: TR.kdfMobileP,
+}
+export const KDF_MIN = { m: TR.kdfMinM, t: TR.kdfMinT, p: TR.kdfMinP }
+export const KDF_MAX = { m: TR.kdfMaxM, t: TR.kdfMaxT, p: TR.kdfMaxP }
 
-export const PASS_MIN = 10
+export const PASS_MIN = TR.passMin
 // What a dump may inflate to.
-export const DUMP_MAX = 1024 ** 3
+export const DUMP_MAX = TR.dumpMax
 
 export const WRONG_PASS = 'Wrong passphrase, or the file was changed'
 export const WEAK_KDF = "This file's encryption settings are too weak. Export it again."
@@ -457,7 +469,7 @@ const isEventRow = (x: unknown): x is EventRecord => {
   return ev.room === x.room && ev.depth === x.depth && claimedId(x.wire) === x.id
 }
 
-const HEADS_MAX = 1000
+const HEADS_MAX = TR.headsMax
 
 const isHead = (h: unknown) =>
   isRecord(h) && isEventId(h.id) && Number.isSafeInteger(h.depth) && (h.depth as number) >= 0
@@ -726,7 +738,7 @@ export const importKind = (local: SelfRecord | undefined, dump: Dump): ImportKin
 export const alreadyImported = (local: SelfRecord | undefined, dump: Dump) =>
   !!local && importKind(local, dump) === 'merge' && (local.imports ?? []).includes(dump.id)
 
-const IMPORTS_KEPT = 50
+const IMPORTS_KEPT = TR.importsKept
 
 const withImport = (list: string[] | undefined, id: string) =>
   [...new Set([...(list ?? []).filter(x => x !== id), id])].slice(-IMPORTS_KEPT)
@@ -1091,7 +1103,7 @@ const FILES_AAD = 'rchat-p2p-files1\0'
 const FRAME_LAST = 0x8000_0000
 // One block, its kind byte and the tag.
 export const FILES_FRAME_MAX = BLOCK + 1 + 16
-const HEAD_MAX = 1024
+const HEAD_MAX = TR.headMax
 
 export const F_FILE = 1
 export const F_BLOCK = 2
@@ -1279,7 +1291,7 @@ interface Incoming {
 }
 
 // Largest file an import takes (its hash list is held while it streams in).
-const FILE_SIZE_MAX = 256 * 1024 ** 3
+const FILE_SIZE_MAX = TR.fileSizeMax
 
 const isFileMeta = (x: unknown) =>
   isRecord(x) &&

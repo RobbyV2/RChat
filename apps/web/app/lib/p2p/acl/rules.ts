@@ -1,5 +1,6 @@
 import { isRecord } from '../../bytes'
 import { bytesOf, canonical } from '../canonical'
+import { AGREED, type Agreed } from '../limits'
 import type { EvalResult, Facts, FactsQ } from './facts'
 
 // The rules of P2P server ACL events (spec §1.4, §1.6): event classes, the Authority column (what
@@ -42,52 +43,10 @@ export const MODBITS = KICK | BAN | ROLES | CHANNELS | SERVER | MESSAGES
 export const EVERYONE = 'everyone'
 export const RULES_VERSION = 2
 
-export interface Limits {
-  devCap: number
-  w3: number
-  w3mod: number
-  win: number
-  day: number
-  freshCap: number
-  idCap: number
-  rotCap: number
-  classes: number
-  pendingPerDev: number
-  codesPerDev: number
-  codesPerDevServer: number
-  roles: number
-  totU: number
-  rotTot: number
-  poolU: number
-  ap: number
-  channels: number
-  overwrites: number
-  w4: number
-}
+export type Limits = Agreed
 
 // §4.1 production values (ts in ms).
-export const PRODUCTION_LIMITS: Readonly<Limits> = {
-  devCap: 8,
-  w3: 60,
-  w3mod: 600,
-  win: 60 * 60_000,
-  day: 24 * 60 * 60_000,
-  freshCap: 2,
-  idCap: 8,
-  rotCap: 4,
-  classes: 3,
-  pendingPerDev: 20,
-  codesPerDev: 20,
-  codesPerDevServer: 100,
-  roles: 250,
-  totU: 24,
-  rotTot: 4,
-  poolU: 384,
-  ap: 10,
-  channels: 500,
-  overwrites: 100,
-  w4: 500,
-}
+export const PRODUCTION_LIMITS: Readonly<Limits> = AGREED
 
 // The limits admission reads. Fixed in the app; tests and scripts (the benchmark) run with
 // others (the model's), set through setLimits.

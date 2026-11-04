@@ -15,7 +15,6 @@ import {
   FrameError,
   FrameType,
   knownFrame,
-  MESSAGE_MAX,
   parseData,
   Reassembler,
   WIRE_MAX,
@@ -31,6 +30,7 @@ import {
   type Hashed,
 } from './hashing'
 import type { P2pNode } from './node'
+import { LOCAL } from './limits'
 import { realClock, type Clock, type Pipe, type Session } from './session'
 
 // P2P attachments (note section 5). Files are split into 1 MiB blocks, named by a root hash over
@@ -41,58 +41,24 @@ import { realClock, type Clock, type Pipe, type Session } from './session'
 // a file only to a contact who shares a conversation with a live message that carries it, and
 // checks that again for every block.
 
+const { holdersKept, thumbSide, lateMax, touchedMax, ...BULK_LOCAL } = LOCAL.bulk
+
 export const BULK = {
-  // Plaintext bytes of a block per frame, and frames sent before waiting for the pipe to drain.
+  // Plaintext bytes of a block per frame.
   chunk: 15 * 1024,
-  batch: 16,
-  // Verified blocks waiting to be written before no more are asked for.
-  writes: 4,
-  // Block requests we keep outstanding per pipe, all downloads together, and never more than
-  // the credit the holder advertised.
-  window: 2,
   // The credit we advertise: block requests a peer may have queued or in service with us. They
   // are served one after another; only a request past this credit is refused (with a strike).
   serveMax: 2,
-  // Frames received and not yet handled, on top of the block bytes we asked for and haven't
-  // received yet, before the pipe counts as flooded.
-  queueBytes: 4 * MESSAGE_MAX,
   // Control requests (meta, has) we keep outstanding per pipe, and a peer may have waiting with
-  // us. One past it gets `busy` (no strike): only far more of those than any client of ours can
-  // cause in a minute counts against the peer.
+  // us. One past it gets `busy` (no strike).
   controlMax: 4,
-  busyFree: 256,
   metaPage: HASH_PAGE,
-  // Files asked about in one `blob_has`; the block hashes of files with at most `smallMeta`
-  // blocks come with the answer, so small files need no `blob_meta` of their own.
+  // Files asked about in one `blob_has`.
   hasMax: 64,
-  smallMeta: 16,
-  // Cancels a peer may send per minute before they count against it.
-  cancelsFree: 120,
-  // Bytes of cancelled blocks that may still be on the way on one pipe; past it the pipe is
-  // replaced (no strike) instead of waiting for them.
-  graceBytes: 8 * BLOCK,
-  strikes: 20,
-  // One strike is forgiven per this long, so rare harmless events never add up to a ban.
-  forgiveMs: 60_000,
-  banMs: 10 * 60_000,
-  openMs: 15_000,
-  // A block that makes no progress for this long (while its pipe makes none either) goes to
-  // another holder.
-  stallMs: 30_000,
-  // A pipe is replaced (fresh keys) after this many bytes or this long.
-  pipeBytes: 1024 ** 3,
-  pipeMs: 60 * 60_000,
   // Pipes a peer may open to us (still opening ones included), per session and per identity.
   inSession: 2,
   inPeer: 4,
-  // Blocks read from storage at once to serve them.
-  readers: 4,
-  // Holders asked again after this long.
-  probeMs: 60_000,
-  // A served file's last-used time is written at most this often.
-  touchMs: 60_000,
-  // Free space kept on top of a download.
-  margin: 16 * 1024 * 1024,
+  ...BULK_LOCAL,
 }
 
 export type BulkLimits = typeof BULK
@@ -545,7 +511,7 @@ export class BulkLink {
       const timer = this.clock.set(() => {
         this.calls.delete(rid)
         this.late.add(rid)
-        if (this.late.size > 64) this.late.delete(this.late.values().next().value as number)
+        if (this.late.size > lateMax) this.late.delete(this.late.values().next().value as number)
         resolve(null)
       }, this.limits.openMs * 2)
       this.calls.set(rid, {
@@ -716,7 +682,7 @@ export interface BlobsDeps {
 
 const hashOk = (x: unknown): x is string => typeof x === 'string' && bytesOf(x, 32) !== null
 
-export const HOLDERS_KEPT = 256
+export const HOLDERS_KEPT = holdersKept
 
 const blockOk = (x: unknown): x is number => Number.isSafeInteger(x) && (x as number) >= 0
 
@@ -1784,7 +1750,8 @@ export class Blobs {
     const last = this.touched.get(h)
     if (last !== undefined && now - last < this.limits.touchMs) return
     this.touched.set(h, now)
-    if (this.touched.size > 256) this.touched.delete(this.touched.keys().next().value as string)
+    if (this.touched.size > touchedMax)
+      this.touched.delete(this.touched.keys().next().value as string)
     void this.store.updateBlob(h, cur => (cur ? { ...cur, lastUsed: now } : null)).catch(() => {})
   }
 
@@ -1907,7 +1874,7 @@ export const isThumbJpeg = (b: Uint8Array) =>
   b.length >= 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff
 
 // Largest side a thumbnail may say it has.
-export const THUMB_SIDE = 1024
+export const THUMB_SIDE = thumbSide
 
 // A thumbnail claim from a message: b64u, at most 6 KiB, a JPEG by its bytes whose header says
 // it is at most 1024 px a side (read without decoding, so a tiny file can't declare a huge

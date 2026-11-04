@@ -14,8 +14,9 @@ import {
   type PingRec,
   type PingText,
 } from './inbox'
+import { LOCAL } from './limits'
 
-export const PING_BATCH_MS = 50
+export const PING_BATCH_MS = LOCAL.inbox.pingBatchMs
 
 // The ping a counted arrival leaves in the log.
 export const pingOf = (

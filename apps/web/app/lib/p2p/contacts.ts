@@ -10,6 +10,7 @@ import {
   type Revocation,
   type Succession,
 } from './keys'
+import { LOCAL } from './limits'
 
 // The contact roster (XMPP subscription model): adding someone's card makes them `outgoing`
 // until they accept; an unknown identity that reaches us lands in Message requests as
@@ -41,10 +42,10 @@ export interface Contact {
   lastSeen: number | null
 }
 
-export const INTRO_MAX = 500
-export const INTROS_MAX = 3
-export const PETNAME_MAX = 32
-export const CERTS_KEPT = 8
+export const INTRO_MAX = LOCAL.contacts.introMax
+export const INTROS_MAX = LOCAL.contacts.introsMax
+export const PETNAME_MAX = LOCAL.contacts.petnameMax
+export const CERTS_KEPT = LOCAL.contacts.certsKept
 
 export const displayName = (c: Pick<Contact, 'petname' | 'name'>) =>
   c.petname || c.name || 'Unknown'

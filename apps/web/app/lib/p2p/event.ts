@@ -16,6 +16,7 @@ import { aclContentOk, RULES_VERSION, type AclContent, type AclEv } from './acl/
 import type { ContentEv } from './acl/visibility'
 import { blockCount, EMPTY_ROOT } from './hashing'
 import { isShortId } from './state'
+import { AGREED } from './limits'
 import {
   isKeyId,
   keyBytes,
@@ -584,7 +585,7 @@ export const LIMITS2 = {
   core: 2048,
   aclContent: 4096,
   migrateContent: 16 * 1024,
-  ap: 10,
+  ap: AGREED.ap,
   prev: 10,
 }
 

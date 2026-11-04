@@ -1,5 +1,6 @@
 import { anchorOf, Mono, type Anchor, type FastEval } from './eval'
 import { gt, poster, type AclContent, type AclEv, type Rank } from './rules'
+import { LOCAL } from '../limits'
 
 // What storage may do with admitted events, decided here so storage applies it as given: the
 // orphan rule's drops and the headers they keep (spec §2.3, §4.2), and the deterministic parts of
@@ -242,7 +243,7 @@ export function witnessed(
     if (not.includes(a) || not.includes(ix.ev[i].a) || !acks(i)) continue
     n += 1
     who.add(a)
-    if (n >= 3 && who.size >= 2) return true
+    if (n >= LOCAL.acl.s2Events && who.size >= LOCAL.acl.s2Ids) return true
   }
   return false
 }

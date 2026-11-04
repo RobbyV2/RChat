@@ -1,5 +1,6 @@
 import { isKeyId } from './keys'
 import type { Message } from './frames'
+import { LOCAL } from './limits'
 import type { Clock, Session } from './session'
 import type { Link } from './sync'
 import { isShortId } from './state'
@@ -22,32 +23,9 @@ import { isEventId } from './event'
 // when it changes, at most once per `typingRelayMs` per typer, within a per-link budget.
 
 export const GOSSIP = {
-  perRoom: 8,
-  outTarget: 4,
-  resampleMs: 10 * 60_000,
-  tickMs: 5_000,
-  presenceMs: 20_000,
-  presenceTtl: 60_000,
   presenceMax: 64,
-  typingMs: 8_000,
-  // Relayed typing: once per typer and channel this often at most, and per link this many
-  // frames a second (in and out; the rest is dropped).
-  typingRelayMs: 3_000,
-  typingPerSec: 5,
-  // Members let in (who redeemed a code with us, or invited us) are linked first for this long.
-  preferMs: 10 * 60_000,
-  preferMax: 4,
-  // Candidates per room we ask for links at once, and members per room handed to the dialer
-  // (it skips those that didn't answer lately, so it goes down the list).
-  candidates: 16,
-  dialList: 256,
   linkRooms: 32,
-  // After a busy answer, that member isn't asked for that room again for this long.
-  busyMs: 2 * 60_000,
-  // An unanswered link request is given up after this long.
-  askMs: 15_000,
-  // Links of a room we left stay this long, for our last events and their acks.
-  leaveMs: 3_000,
+  ...LOCAL.gossip,
 }
 
 export type GossipLimits = typeof GOSSIP

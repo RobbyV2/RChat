@@ -1,7 +1,9 @@
+import { LOCAL } from './limits'
+
 // Jumping to a message, in a conversation or a channel: up to `before` messages before it, the
 // message and the next `after` ones, oldest first. `more`: older ones are stored; `newer`: more
 // follow the last one loaded, so the view marks the gap and loads them on request.
-export const JUMP = { before: 50, after: 1000 }
+export const JUMP = { before: LOCAL.misc.jumpBefore, after: LOCAL.misc.jumpAfter }
 
 export interface PageOpts {
   // Exclusive bounds, and an inclusive lower one.

@@ -1,4 +1,5 @@
 import type { Drops, PackedRec } from './acl_room'
+import { LOCAL } from './limits'
 import { headerContent } from './acl/storage'
 import { shareAdd, shareKey, shareLive, SHARE, withinShare, type Share } from './shares'
 import {
@@ -31,24 +32,7 @@ import {
 // still miss, and bounded walks over prev links. Inserting an event is one transaction, so the
 // heads, counters and redactions never disagree with the events stored.
 
-export const DAG = {
-  // Heads kept per room; new events reference at most LIMITS.prev of them.
-  heads: 50,
-  missing: 500,
-  // Events and bytes stored per room and in the whole database on this device.
-  roomCap: 100_000,
-  totalCap: 500_000,
-  roomBytes: 200 * 1024 * 1024,
-  totalBytes: 1024 * 1024 * 1024,
-  // P2P servers have a budget of their own, so a server can never crowd out DMs. It bounds their
-  // content; ACL events are always stored (spec 4.2).
-  serverCap: 400_000,
-  serverBytes: 768 * 1024 * 1024,
-  // Steps of any walk over prev links.
-  walk: 5000,
-  // A body fetched back after it was purged or evicted isn't evicted again for this long.
-  backGraceMs: 60 * 60_000,
-}
+export const DAG = { ...LOCAL.dag }
 
 export type PingKind = 'mention' | 'reply' | 'reaction'
 
@@ -375,7 +359,7 @@ export interface ServerInsert {
 }
 
 // Limits of a server whose rules this build doesn't know (stored unchecked, spec 1.2).
-export const UNKNOWN = { events: 20_000, bytes: 32 * 1024 * 1024 }
+export const UNKNOWN = { events: LOCAL.dag.unknownEvents, bytes: LOCAL.dag.unknownBytes }
 
 export type ServerInserted = Inserted | { status: 'stale' }
 
@@ -830,7 +814,7 @@ export const oldestBodies = async (
   ik: string,
   bytes: number,
   now: number,
-  max = 500,
+  max = LOCAL.dag.oldestBodies,
   opts: { from?: string; undelivered?: boolean } = {}
 ) => {
   const ids: string[] = []

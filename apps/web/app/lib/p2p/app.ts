@@ -50,6 +50,7 @@ import type { PingRec, PingText } from './inbox'
 import { PingLog, pingAlive, pingText, readPings } from './ping_log'
 import { assemble, EMPTY_VIEW, type BlobView, type Usage } from './blobs'
 import type { Hashed } from './hashing'
+import { LOCAL } from './limits'
 import {
   checkedThumb,
   freeSpace,
@@ -404,7 +405,7 @@ const writeOn = (username: string, on: boolean) =>
 // Transfer files imported in this browser, kept even when its P2P data is removed: importing
 // one again as a new device would make a second device of the identity. { v: 1, ids }.
 export const importsKey = (username: string) => `rchat_p2p_imports:${username}`
-const IMPORTS_KEPT = 50
+const IMPORTS_KEPT = LOCAL.transfer.browserImportsKept
 
 export const parseImports = (raw: string | null): string[] => {
   try {
@@ -496,10 +497,14 @@ export const p2pHost: P2pHost = {
 // Auto-download per account: files up to `dm` bytes in direct messages, images up to `server`
 // bytes in P2P servers, and at most `daily` bytes per contact per day. { v: 1, dm, server, daily }.
 export const autoKey = (username: string) => `rchat_p2p_auto:${username}`
-export const AUTO_DEFAULT = { dm: 10 * 1024 * 1024, server: 5 * 1024 * 1024, daily: AUTO_DAILY }
-export const AUTO_DAILY_OPTIONS = [256 * 1024 ** 2, 1024 ** 3, 4 * 1024 ** 3, 16 * 1024 ** 3]
-export const AUTO_DM = [0, 1, 10, 25, 100].map(n => n * 1024 * 1024)
-export const AUTO_SERVER = [0, 1, 5, 10].map(n => n * 1024 * 1024)
+export const AUTO_DEFAULT = {
+  dm: LOCAL.files.autoDm,
+  server: LOCAL.files.autoServer,
+  daily: AUTO_DAILY,
+}
+export const AUTO_DAILY_OPTIONS = [...LOCAL.files.autoDailyOptions]
+export const AUTO_DM = [...LOCAL.files.autoDmOptions]
+export const AUTO_SERVER = [...LOCAL.files.autoServerOptions]
 
 export const parseAuto = (raw: string | null) => {
   try {
@@ -2178,7 +2183,7 @@ export const fitAttachments = (body: string, list: Attachment[]): Attachment[] |
 export const TOO_MANY_FILES = 'These files have names too long to send in one message.'
 export const FILES_MAX_TEXT = `You can attach up to ${EV.att} files to a message.`
 export const PREPARING_TEXT = 'Files are still being prepared.'
-export const BIG_FILE = 1024 ** 3
+export const BIG_FILE = LOCAL.files.bigFile
 
 export const p2pFiles = {
   // A tile is shown: keep its state current and ask who has it.

@@ -9,6 +9,7 @@ import {
   type Rank,
 } from './acl/rules'
 import type { Membership, MemberSum, RoleSum, Summary } from './acl_room'
+import { AGREED, LOCAL } from './limits'
 
 // The current state of a P2P server as the page reads it: the mirror of the evaluator's facts
 // (acl_room.ts Summary), with the readers the views, gates and gossip use. Values members write
@@ -22,14 +23,9 @@ export type { Membership }
 export type HistoryVis = 'shared' | 'joined'
 
 export const LIMITS = {
-  name: 100,
-  topic: 1024,
-  label: 64,
-  reason: 200,
-  // How far past its own time a code may say it expires (the admitting device clamps to this).
-  codeTtl: 30 * 24 * 60 * 60_000,
+  ...LOCAL.display,
   // Live codes of a member without Manage server (the rules cap them per device, spec 4.1).
-  codesPerMember: 20,
+  codesPerMember: AGREED.codesPerDev,
 }
 
 export const CHANNEL_KINDS: readonly string[] = ['text', 'voice']

@@ -2,6 +2,7 @@ import { DM_PLACE, type InboxEntry, type InboxPlace, type InboxView } from '../i
 import type { InboxFilter } from '../types'
 import type { RoomRecord } from './db'
 import type { Membership } from './state'
+import { LOCAL } from './limits'
 
 // P2P pings for the inbox. The P2P core keeps only counters per conversation and
 // channel, so the tab that runs P2P also notes each ping as it arrives in a bounded list in the
@@ -32,8 +33,8 @@ export interface PingRec {
 }
 
 export const PING_LOG = 'inbox'
-export const PINGS_KEPT = 500
-export const PING_KEEP_MS = 30 * 24 * 60 * 60_000
+export const PINGS_KEPT = LOCAL.inbox.pingsKept
+export const PING_KEEP_MS = LOCAL.inbox.pingKeepMs
 export const P2P_INBOX = 'p2p'
 export const P2P_DM_LABEL = 'P2P direct message'
 

@@ -3,6 +3,7 @@ import { AssertionError, jwksUrl, type BindingClaims } from '../identity'
 import type { Contact } from './contacts'
 import type { OwnBadge, P2pStore } from './db'
 import { isKeyId } from './keys'
+import { LOCAL } from './limits'
 import { realClock, type Clock } from './session'
 
 // The account badge (note section 2): "Confirmed as alice@host". With it on, the instance signs
@@ -12,22 +13,7 @@ import { realClock, type Clock } from './session'
 // the last result ("checked {date}"); a binding past its expiry shows as expired. Each browser
 // checks for itself: the results live in its `meta` store (never exported), one key per identity.
 
-export const BADGE = {
-  // A check older than this is done again.
-  staleMs: 24 * 60 * 60_000,
-  // A token the issuer couldn't be asked about is tried again after this.
-  retryMs: 10 * 60_000,
-  // Our own binding is fetched again after this (it lives 7 days).
-  refreshMs: 24 * 60 * 60_000,
-  tickMs: 10 * 60_000,
-  // A binding that expired this long ago is forgotten.
-  keepExpiredMs: 30 * 24 * 60 * 60_000,
-  tokenMax: 4096,
-  // Tokens that failed their check, remembered so a peer repeating one costs nothing.
-  refusedMax: 256,
-  // Our server member events are posted again when the binding in them has less than this left.
-  memberLeftMs: 3.5 * 24 * 60 * 60_000,
-}
+export const BADGE = { ...LOCAL.badge }
 
 export type BadgeLimits = typeof BADGE
 

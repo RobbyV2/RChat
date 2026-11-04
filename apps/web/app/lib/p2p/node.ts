@@ -52,6 +52,7 @@ import {
   type Revocation,
 } from './keys'
 import type { Message } from './frames'
+import { LOCAL } from './limits'
 import {
   checkVerifyCode,
   NONCE_BYTES,
@@ -99,7 +100,7 @@ export interface OfferGuard {
   sender: (src: string, proof: unknown, relays: string[]) => string | null
 }
 
-export const OFFER_SKEW_MS = 2 * 60_000
+export const OFFER_SKEW_MS = LOCAL.node.offerSkewMs
 
 export interface Visibility {
   visible: () => boolean
@@ -108,24 +109,7 @@ export interface Visibility {
   pauses?: () => boolean
 }
 
-export const LIMITS = {
-  sessions: 48,
-  // Of those, sessions with identities that aren't mutual contacts (P2P server members): they
-  // never push out a contact's session.
-  memberSessions: 32,
-  // Incoming connections still in their handshake (unauthenticated): a pool of their own, so
-  // they never push out established sessions.
-  handshakes: 8,
-  inFlight: 4,
-  backoff: [30_000, 60_000, 120_000, 300_000, 600_000],
-  tickMs: 10_000,
-  hiddenPauseMs: 5 * 60_000,
-  failedHandshakes: 3,
-  strikeBanMs: 10 * 60_000,
-  // Message requests kept (the oldest unverified ones make room) and new ones per hour.
-  requests: 50,
-  requestsPerHour: 20,
-}
+export const LIMITS = { ...LOCAL.node }
 
 export const ELSEWHERE = 'Your P2P identity changed in another tab. Reload this page.'
 
@@ -167,9 +151,8 @@ export interface NodeDeps {
 type Rel = 'request' | 'mutual' | 'none' | 'pending'
 
 const REL = ['request', 'mutual', 'none', 'pending']
-const HELLO_CERTS = 4
-// Devices of ours recorded as no longer ours (lost, stolen or signed out by recovery).
-const LOST_KEPT = 256
+const HELLO_CERTS = LOCAL.node.helloCerts
+const LOST_KEPT = LOCAL.node.lostKept
 
 // Our devices as a contact knows them disagree with a single line of moves: one device revoked
 // twice with different successors, or a live device that isn't this one. Every device holds the
@@ -608,7 +591,7 @@ export class P2pNode {
   private prune() {
     const now = this.clock.now()
     for (const [peer, ts] of this.failed)
-      if (ts.every(t => now - t >= 60_000)) this.failed.delete(peer)
+      if (ts.every(t => now - t >= LOCAL.node.failedMs)) this.failed.delete(peer)
     for (const [key, until] of this.banned) if (until <= now) this.banned.delete(key)
   }
 
@@ -736,7 +719,7 @@ export class P2pNode {
 
   private recentFailures(peer: string) {
     const now = this.clock.now()
-    const list = (this.failed.get(peer) ?? []).filter(t => now - t < 60_000)
+    const list = (this.failed.get(peer) ?? []).filter(t => now - t < LOCAL.node.failedMs)
     this.failed.set(peer, list)
     return list.length
   }
@@ -1134,7 +1117,7 @@ export class P2pNode {
 
   private requestAllowed() {
     const now = this.clock.now()
-    this.requestTimes = this.requestTimes.filter(t => now - t < 3_600_000)
+    this.requestTimes = this.requestTimes.filter(t => now - t < LOCAL.node.requestsWindowMs)
     return this.requestTimes.length < LIMITS.requestsPerHour
   }
 

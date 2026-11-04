@@ -2,6 +2,7 @@ import { sha512 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
 import { b64u, bytesOf, canonical, concat, fromB64u, parseCanonical, utf8 } from './canonical'
 import { isKeyId, keyBytes } from './keys'
+import { LOCAL } from './limits'
 
 // Safety numbers (Signal's construction): per identity, SHA-512 iterated 5200 times over the
 // version and the key, cut to 30 digits; the pair's number is both halves sorted by key, 60
@@ -32,7 +33,7 @@ const halfOf = (ik: string) => {
   const key = keyBytes(ik)
   if (!key) throw new Error('bad identity key')
   const d = half(key)
-  if (cache.size > 64) cache.clear()
+  if (cache.size > LOCAL.misc.safetyCache) cache.clear()
   cache.set(ik, d)
   return d
 }

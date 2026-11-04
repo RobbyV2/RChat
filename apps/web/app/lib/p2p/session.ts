@@ -10,13 +10,13 @@ import {
   FrameError,
   FrameType,
   knownFrame,
-  MESSAGE_MAX,
   parseData,
   Reassembler,
   WIRE_MAX,
   type Message,
 } from './frames'
 import { Initiator, Responder, type Established, type Me, type Remote } from './handshake'
+import { LOCAL } from './limits'
 
 // One authenticated, encrypted session with a remote device over a reliable binary pipe:
 // handshake, then `hello` both ways, then typed messages. Later tasks register handlers for
@@ -64,17 +64,7 @@ export interface Limits {
   rekeyBytes: number
 }
 
-export const LIMITS: Limits = {
-  handshakeMs: 10_000,
-  pingMs: 20_000,
-  deadMs: 60_000,
-  strikes: 20,
-  framesPerSec: 50,
-  frameBurst: 160,
-  frameBacklogBytes: 4 * MESSAGE_MAX,
-  rekeyMs: 60 * 60_000,
-  rekeyBytes: 1024 ** 3,
-}
+export const LIMITS: Limits = { ...LOCAL.session }
 
 export type CloseReason =
   'closed' | 'remote' | 'handshake' | 'timeout' | 'strikes' | 'refused' | 'replaced' | 'paused'
@@ -95,7 +85,7 @@ export interface SessionOpts {
   onHello: (msg: Message, session: Session) => boolean | Promise<boolean>
 }
 
-const FRAME_COST = 1024
+const FRAME_COST = LOCAL.session.frameCost
 
 type Rx = { epoch: number; cipher: Cipher }
 

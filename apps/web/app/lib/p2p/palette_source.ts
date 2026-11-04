@@ -12,6 +12,7 @@ import {
 import { replaceSpoilers } from '../spoilers'
 import { memberName, p2pOpenAt, p2pRecent, useP2p, type P2pState } from './app'
 import { displayName } from './contacts'
+import { LOCAL } from './limits'
 import type { P2pMessage } from './dm'
 
 // P2P conversations and server channels in the palette's index: messages as this browser loads
@@ -145,8 +146,8 @@ export const placesOf = (st: Pick<P2pState, 'rooms' | 'servers' | 'contacts'>) =
   return out
 }
 
-const GAP_MS = 50
-const REFRESH_MS = 5000
+const GAP_MS = LOCAL.misc.paletteGapMs
+const REFRESH_MS = LOCAL.misc.paletteRefreshMs
 
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
 
