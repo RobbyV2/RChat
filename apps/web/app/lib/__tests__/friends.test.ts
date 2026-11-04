@@ -14,13 +14,12 @@ import { mergePings, pingCount } from '../pings'
 import { dmPingCount } from '../selectors'
 import { friendMenuItem } from '../../components/friends'
 import type { Friend, FriendRequest, Ping, WsEvent } from '../types'
-import { me, memoryStorage, user } from './fixtures'
+import { me, memoryStorage, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
-const tick = () => new Promise(r => setTimeout(r, 0))
 const friend = (name: string, online = false, display = name): Friend => ({
   user: user(name, { display_name: display }),
   since: 1,
@@ -148,7 +147,7 @@ describe('friends in the store', () => {
     dispatch({ type: 'friend_request_added', username: 'alice', request: request('erin', true, 3) })
     dispatch({ type: 'friend_request_added', username: 'bob', request: request('zed') })
     expect(st().incomingRequests.list.map(r => r.user.username)).toEqual(['erin', 'dora'])
-    await tick()
+    await until(() => st().friendCounts.incoming === 2)
     expect(st().friendCounts).toEqual({ incoming: 2, outgoing: 0 })
     expect(pingCount(st().pings.friends)).toBe(1)
     dispatch({ type: 'friend_request_removed', username: 'alice', other: 'dora' })

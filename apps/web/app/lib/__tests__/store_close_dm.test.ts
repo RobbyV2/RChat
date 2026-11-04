@@ -3,7 +3,7 @@ import { dmView, useStore, resetSessionCaches } from '../store'
 import { emptyLayout, type Layout } from '../nav_layout'
 import { home } from '../instances'
 import type { DmSummary, WsEvent } from '../types'
-import { me, memoryStorage, user } from './fixtures'
+import { me, memoryStorage, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -112,7 +112,7 @@ describe('closing dms', () => {
     dispatch({ type: 'dm_closed', username: 'alice', dm_id: 3 })
     routes.push([/\/dms\?ids=3$/, [dm(3, 'carol')]])
     dispatch({ type: 'dm_reopened', username: 'alice', dm_id: 3 })
-    await tick()
+    await until(() => dmIds()[1] === 3)
     expect(dmIds()).toEqual([1, 3, 2])
   })
 

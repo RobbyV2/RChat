@@ -11,7 +11,7 @@ import { mentionCandidates } from '../mentions'
 import { scopePings } from '../pings'
 import { headline, type Piece } from '../notices'
 import type { Ping, WsEvent } from '../types'
-import { me, member, msg, serverDetail, user } from './fixtures'
+import { me, member, msg, serverDetail, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -114,7 +114,7 @@ describe('incoming pings', () => {
   test('watching the scope at the bottom: no toast, no badge, marked seen on the server', async () => {
     useStore.setState({ reads: { c2: { lastRead: 9, latest: 9, server: 's' } } })
     dispatch(pinged(ping({ scope: 'c2' })))
-    await tick()
+    await until(() => reads().length > 0)
     expect(st().pings).toEqual({})
     expect(st().notices).toEqual([])
     expect(reads()).toEqual([{ scope: 'c2', last_read: 9, pings_until: 1 }])
@@ -126,7 +126,7 @@ describe('incoming pings', () => {
       atBottom: { c2: true, t5: true },
     })
     dispatch(pinged(ping({ id: 3, thread_root_id: 5 })))
-    await tick()
+    await until(() => reads().length > 0)
     expect(st().pings).toEqual({})
     expect(st().notices).toEqual([])
     expect(reads()).toEqual([{ scope: 't5', last_read: 0, pings_until: 3 }])
@@ -267,8 +267,7 @@ describe('unreads load', () => {
           }
         : []
     dispatch({ type: 'banned', username: 'dave' })
-    await tick()
-    await tick()
+    await until(() => 'c1' in st().pings)
     expect(st().pings).toEqual({
       c1: counted('c1', 's', 1, 4),
       t3: counted('c1', 's', 1, 2),

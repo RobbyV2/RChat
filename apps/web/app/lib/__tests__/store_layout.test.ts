@@ -3,7 +3,7 @@ import { dmView, folderLabel, railOrder, railServers, useStore, resetSessionCach
 import { emptyLayout, type Folder, type Layout } from '../nav_layout'
 import { home } from '../instances'
 import type { DmSummary, ServerSummary, WsEvent } from '../types'
-import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { me, memoryStorage, msg, serverDetail, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -22,7 +22,6 @@ const srv = (name: string): ServerSummary => ({
 })
 const recent = () => dmView(st()).recent.map(d => d.id)
 const pinned = () => dmView(st()).pinned.map(d => d.id)
-const tick = () => new Promise(r => setTimeout(r, 0))
 
 const storage = new Map<string, string>()
 const saved = (key: string): Layout | null => {
@@ -247,7 +246,7 @@ describe('dm order', () => {
     expect(recent()).toEqual([2, 3, 1])
     serve([dm(9, 'dave')])
     dispatch({ type: 'dm_created', dm_id: 9, dm_users: ['alice', 'dave'] })
-    await tick()
+    await until(() => recent()[0] === 9)
     expect(recent()).toEqual([9, 2, 3, 1])
   })
 
@@ -378,8 +377,7 @@ describe('guest access', () => {
       old_name: 'club',
       server: { name: 'club', display_name: 'Club', creator: null, has_password: true },
     })
-    await tick()
-    await tick()
+    await until(() => !st().guestServers.includes('club'))
     expect(st().guestServers).toEqual(['rchat'])
     expect(st().guestGrants).toEqual({})
     expect(st().servers.club).toBeUndefined()

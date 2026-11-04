@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { previewServer, useStore, resetSessionCaches } from '../store'
 import { clipOf, forwardKey } from '../forward'
 import type { Message } from '../types'
-import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { me, memoryStorage, msg, serverDetail, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -181,7 +181,7 @@ describe('leaving a preview', () => {
     previewing()
     hidden = serverDetail('lounge', { channels: [] })
     st().applyWsEvent({ type: 'channel_perms_changed', server: 'lounge', channel_id: 88 })
-    await tick()
+    await until(() => st().view === null)
     expect(st().view).toBeNull()
     expect(st().servers.lounge).toBeUndefined()
     expect(st().messages.c88).toBeUndefined()

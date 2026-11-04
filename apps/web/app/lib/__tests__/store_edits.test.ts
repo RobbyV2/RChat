@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { useStore, resetSessionCaches } from '../store'
 import { parseSed } from '../sed'
 import type { EditStub, Message, MessageMedia, ReplyRef, WsEvent } from '../types'
-import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { me, memoryStorage, msg, serverDetail, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -282,7 +282,7 @@ describe('edit stubs (server channels)', () => {
       msg(10, { author: bob, content: 'new plan', edited_at: 600, reactions: [] }),
     ]
     dispatch(stub(10))
-    await tick()
+    await until(() => st().messages.c1[1].content === 'new plan')
     expect(gets).toEqual(['/api/channels/1/messages?around=10&limit=1'])
     const list = st().messages.c1
     expect(list[1].content).toBe('new plan')
@@ -297,7 +297,7 @@ describe('edit stubs (server channels)', () => {
       msg(10, { author: bob, content: 'later plan', edited_at: 600 }),
     ]
     dispatch(stub(10))
-    await tick()
+    await until(() => st().messages.c1[0].reply_to?.content === 'later plan')
     expect(gets.length).toBe(1)
     expect(st().messages.c1[0].reply_to?.content).toBe('later plan')
   })
@@ -307,7 +307,7 @@ describe('edit stubs (server channels)', () => {
     useStore.setState({ messages: { c1: [mine], t20: [inThread] } })
     reads['/api/messages/20/thread?around=21&limit=1'] = [{ ...inThread, content: 'b' }]
     dispatch(stub(21, 20))
-    await tick()
+    await until(() => st().messages.t20[0].content === 'b')
     expect(gets).toEqual(['/api/messages/20/thread?around=21&limit=1'])
     expect(st().messages.t20[0].content).toBe('b')
   })
@@ -330,8 +330,7 @@ describe('edit stubs (server channels)', () => {
     dispatch(stub(10))
     dispatch(stub(10))
     dispatch(stub(10))
-    await tick()
-    await tick()
+    await until(() => gets.length === 2 && st().messages.c1[1].content === 'v2')
     expect(gets.length).toBe(2)
     expect(st().messages.c1[1].content).toBe('v2')
   })

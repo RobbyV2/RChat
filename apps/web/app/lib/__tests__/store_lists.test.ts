@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { dmsUnread, serverUnread, useStore, resetSessionCaches } from '../store'
 import type { DmSummary, Message, ServerSummary, WsEvent } from '../types'
-import { advance, me, member, msg, paged, serverDetail, user } from './fixtures'
+import { advance, me, member, msg, paged, serverDetail, until, user } from './fixtures'
 import { emptyLayout, layoutServers } from '../nav_layout'
 
 afterAll(resetSessionCaches)
@@ -99,7 +99,7 @@ describe('dm ordering', () => {
   test('dm_created fetches only the new dm and puts it on top', async () => {
     serve([dm(9, 'dave')])
     dispatch({ type: 'dm_created', dm_id: 9, dm_users: ['alice', 'dave'] })
-    await new Promise(r => setTimeout(r, 0))
+    await until(() => dmIds().includes(9))
     expect(requests).toHaveLength(1)
     expect(requests[0]).toEndWith('/dms?ids=9')
     expect(dmIds()).toEqual([1, 9, 2, 3])
@@ -222,13 +222,13 @@ describe('removed or renamed list items stay gone', () => {
     const load = st().loadMoreServers()
     await tick()
     dispatch({ type: 'server_deleted', name: 's50' })
-    await tick()
+    await until(() => requests.length === 2)
     expect(requests).toHaveLength(2)
     expect(cursorOf(requests[1])).toBe(cursorOf(requests[0]))
     held[0]([srv('s50'), srv('s51')])
     await load
     held[1]([srv('s51')])
-    await tick()
+    await until(() => serverNames().length === 51)
     expect(serverNames()).toHaveLength(51)
     expect(serverNames().includes('s50')).toBe(false)
     expect(serverNames()[50]).toBe('s51')
@@ -241,14 +241,14 @@ describe('removed or renamed list items stay gone', () => {
     const load = st().loadMoreServers()
     await tick()
     dispatch({ type: 'member_left', server: 's10', username: 'alice' })
-    await tick()
+    await until(() => requests.length === 2)
     expect(requests).toHaveLength(2)
     expect(cursorOf(requests[1])).toBe(cursorOf(requests[0]))
     held[0]([srv('s51')])
     await load
     expect(serverNames()).toHaveLength(49)
     held[1]([srv('s50'), srv('s51')])
-    await tick()
+    await until(() => serverNames().length === 51)
     expect(serverNames().slice(-2)).toEqual(['s50', 's51'])
     expect(serverNames().includes('s10')).toBe(false)
   })
@@ -263,12 +263,12 @@ describe('removed or renamed list items stay gone', () => {
       old_name: 's50',
       server: { name: 'n50', display_name: 'n50', creator: null, has_password: false },
     })
-    await tick()
+    await until(() => requests.length === 2)
     expect(requests).toHaveLength(2)
     held[0]([srv('s50')])
     await load
     held[1]([srv('n50')])
-    await tick()
+    await until(() => serverNames().includes('n50'))
     expect(serverNames().slice(-1)).toEqual(['n50'])
     expect(serverNames().includes('s50')).toBe(false)
   })
@@ -280,7 +280,7 @@ describe('removed or renamed list items stay gone', () => {
     await tick()
     dispatch({ type: 'server_deleted', name: 'far' })
     held[0]([srv('far')])
-    await tick()
+    await until(() => requests.length === 2)
     expect(requests).toHaveLength(2)
     held[1]([])
     await ensure
@@ -303,14 +303,14 @@ describe('removed or renamed list items stay gone', () => {
     const load = st().loadMoreDms()
     await tick()
     dispatch({ type: 'banned', username: 'dave' })
-    await tick()
+    await until(() => requests.length === 3)
     expect(requests).toHaveLength(3)
     expect(requests[1]).toEndWith('/unreads')
     held[0]([dm(4, 'dave'), dm(5, 'erin')])
     await load
     held[1]({ items: [{ scope: 'd5', server: null, last_read: 9, latest: 9 }] })
     held[2]([dm(5, 'erin')])
-    await tick()
+    await until(() => dmIds().includes(5))
     expect(dmIds()).toEqual([1, 2, 3, 5])
     expect(st().reads.d77).toBeUndefined()
     expect(dmsUnread(st())).toBe(false)
@@ -364,7 +364,7 @@ describe('server bans list', () => {
     })
     serve([ban(0), ban(1)])
     dispatch({ type: 'member_kicked', server: 'club', username: 'b0', banned: true })
-    await tick()
+    await until(() => names().length === 2)
     expect(cursorOf(requests[0])).toBeNull()
     expect(names()).toEqual(['b0', 'b1'])
     dispatch({ type: 'member_kicked', server: 'club', username: 'b2', banned: false })

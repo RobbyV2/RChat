@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { Message, Unread, WsEvent } from '../types'
-import { me, msg, user } from './fixtures'
+import { me, msg, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -66,7 +66,7 @@ afterEach(() => {
 
 const loadUnreadsLate = async () => {
   dispatch({ type: 'banned', username: 'mallory' })
-  await tick()
+  await until(() => unreads.length === 1)
   expect(unreads.length).toBe(1)
 }
 

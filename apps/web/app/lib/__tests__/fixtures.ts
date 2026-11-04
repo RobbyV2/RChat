@@ -25,6 +25,13 @@ export const drain = async () => {
   for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r))
 }
 
+// Polls `done` every tick for up to `ms` of real time, so a fetch chain can finish on a loaded
+// runner. The caller asserts afterwards.
+export const until = async (done: () => boolean, ms = 2000) => {
+  const end = Date.now() + ms
+  while (!done() && Date.now() < end) await new Promise(r => setTimeout(r, 0))
+}
+
 // Moves the fake clock (jest.useFakeTimers) `ms` forward one due timer at a time and runs `idle`
 // after each, stopping early once `done` holds. A busy machine can't change the outcome, and
 // the work is per timer, not per millisecond. A timer that keeps re-arming fails the test.

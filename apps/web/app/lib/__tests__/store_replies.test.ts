@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { Message, WsEvent } from '../types'
-import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { me, memoryStorage, msg, serverDetail, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -274,7 +274,7 @@ describe('partial quotes in live events', () => {
     serve(() => [msg(31, { author: user('carol'), reply_to: full })])
     dispatch(live(msg(31, { author: user('carol'), reply_to: ref(3) })))
     expect(st().messages.c1?.at(-1)?.reply_to?.partial).toBe(true)
-    await tick()
+    await until(() => !st().messages.c1?.at(-1)?.reply_to?.partial)
     expect(gets).toEqual(['/api/channels/1/messages?around=31&limit=1'])
     expect(st().messages.c1?.at(-1)?.reply_to).toEqual(full)
     dispatch({
@@ -295,7 +295,7 @@ describe('partial quotes in live events', () => {
       }),
     ])
     dispatch(live(msg(32, { author: user('carol'), reply_to: ref(3) })))
-    await tick()
+    await until(() => st().messages.c1?.at(-1)?.reply_to?.deleted === true)
     const quote = st().messages.c1?.at(-1)?.reply_to
     expect(quote?.deleted).toBe(true)
     expect(quote?.author).toBeNull()
@@ -311,7 +311,7 @@ describe('partial quotes in live events', () => {
     await tick()
     expect(gets).toEqual([])
     dispatch(live(msg(35, { thread_root_id: 10, author: user('carol'), reply_to: ref(4) })))
-    await tick()
+    await until(() => st().messages.t10?.find(m => m.id === 35)?.reply_to?.deleted === true)
     expect(gets).toEqual(['/api/messages/10/thread?around=35&limit=1'])
     expect(st().messages.t10?.find(m => m.id === 35)?.reply_to?.deleted).toBe(true)
   })

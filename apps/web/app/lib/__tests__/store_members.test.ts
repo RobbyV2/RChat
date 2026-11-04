@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { memberOf, serverAdminPerms, useStore, resetSessionCaches } from '../store'
 import { Perm, type Member, type WsEvent } from '../types'
-import { me, member, paged, role, serverDetail } from './fixtures'
+import { me, member, paged, role, serverDetail, until } from './fixtures'
 import { home } from '../instances'
 
 afterAll(resetSessionCaches)
@@ -101,8 +101,7 @@ describe('member lookups for authors', () => {
     requests = []
     directory.bob = member('bob', { role_ids: [2] })
     dispatch({ type: 'roles_changed', server: 's' })
-    await tick()
-    await tick()
+    await until(() => memberOf(st(), 's', 'bob')?.role_ids[0] === 2)
     const lookups = requests.filter(r => r.includes('usernames='))
     expect(lookups).toHaveLength(1)
     expect(asked(lookups[0])).toEqual(['bob'])
@@ -114,8 +113,7 @@ describe('member lookups for authors', () => {
     dispatch({ type: 'roles_changed', server: 's' })
     directory.bob = member('bob', { role_ids: [2] })
     await pending
-    await tick()
-    await tick()
+    await until(() => memberOf(st(), 's', 'bob')?.role_ids[0] === 2)
     expect(memberOf(st(), 's', 'bob')?.role_ids).toEqual([2])
   })
 

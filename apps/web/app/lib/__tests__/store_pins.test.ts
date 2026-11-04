@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { Message, WsEvent } from '../types'
-import { advance, drain, me, msg, serverDetail, user } from './fixtures'
+import { advance, drain, me, msg, serverDetail, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -101,7 +101,7 @@ describe('pins in the store', () => {
       pinned_at: 80,
       pinned_by: 'alice',
     })
-    await tick()
+    await until(() => requests.length > 0)
     expect(requests.map(r => r.url.replace(/^.*\/api/, ''))).toEqual(['/channels/1/pins'])
   })
 

@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { Message, WsEvent } from '../types'
-import { me, msg, user } from './fixtures'
+import { me, msg, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -153,7 +153,7 @@ describe('unread state from the server', () => {
     await tick()
     dispatch(live(49, 500))
     answer(reply({ items: [], more: false }))
-    await tick()
+    await until(() => st().reads.d77 === undefined)
     expect(st().reads.d77).toBeUndefined()
     expect(st().reads.c49).toEqual({ lastRead: 499, latest: 500, server: 's' })
   })
@@ -161,7 +161,7 @@ describe('unread state from the server', () => {
   test('a scope cut by the cap starts with no read position', async () => {
     unreads([{ scope: 'c41', server: 's', last_read: 1, latest: 2 }], true)
     dispatch({ type: 'banned', username: 'dave' })
-    await tick()
+    await until(() => 'c41' in st().reads)
     dispatch(live(49, 700))
     expect(st().reads.c49).toEqual({ lastRead: 0, latest: 700, server: 's' })
     unreads([], false)

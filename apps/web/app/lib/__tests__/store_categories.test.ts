@@ -3,7 +3,7 @@ import { resetSessionCaches, useStore } from '../store'
 import { channelGroups } from '../categories'
 import { emptyLayout } from '../nav_layout'
 import type { Channel, ChannelLayout, WsEvent } from '../types'
-import { me, serverDetail } from './fixtures'
+import { me, serverDetail, until } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -167,7 +167,7 @@ describe('categories in the store', () => {
       )
     )
     dispatch({ type: 'channel_perms_changed', server: 'club', channel_id: 1 })
-    for (let i = 0; i < 5; i++) await tick()
+    await until(() => st().layout.collapsed.club?.length === 1)
     expect(requests.map(r => r.method)).toEqual(['GET'])
     expect(st().layout.collapsed).toEqual({ club: [10], arena: [20] })
   })
