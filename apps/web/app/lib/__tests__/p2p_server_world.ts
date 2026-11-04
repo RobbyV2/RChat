@@ -6,6 +6,7 @@ import { AclRoom, type AclItem, type Plan, type Received } from '../p2p/acl_room
 import { b64u, randomBytes } from '../p2p/canonical'
 import { buildEvent2, contentEvOf, validate2, type ChainFields, type WireV2 } from '../p2p/event'
 import { keyId, newKeyPair, type KeyPair } from '../p2p/keys'
+import type { Agreed } from '../p2p/limits'
 import { EVERYONE_BITS } from '../p2p/server'
 
 // Server worlds for the rules tests: real signed v2 events (spec 1.2) received by the evaluator
@@ -35,6 +36,7 @@ export interface Sent {
 
 export class ServerWorld {
   room!: AclRoom
+  agreed?: Agreed
   srv = ''
   now = T0
   people = new Map<string, Who>()
@@ -63,8 +65,9 @@ export class ServerWorld {
     return d
   }
 
-  static create(owner: string, extra: Record<string, unknown> = {}) {
+  static create(owner: string, extra: Record<string, unknown> = {}, agreed?: Agreed) {
     const w = new ServerWorld()
+    w.agreed = agreed
     const o = w.who(owner)
     const bare: Record<string, unknown> = {
       rules: RULES_VERSION,
@@ -78,7 +81,7 @@ export class ServerWorld {
       bare.rules === RULES_VERSION ? { ...bare, owners: [genesisBundle(o.ik, o.dev, bare)] } : bare
     const g = buildEvent2(o, null, 'genesis', 'a', content, { seq: 0 }, w.now)
     w.srv = g.id
-    w.room = new AclRoom(g.id)
+    w.room = new AclRoom(g.id, { agreed })
     w.receive(g.id, g.wire)
     return w
   }
@@ -179,7 +182,7 @@ export class ServerWorld {
   // A cold start from what was stored: the records, no event decided again. `map` changes what
   // was stored (a record dropped, of another version, tampered with).
   restore(map: (it: AclItem) => AclItem = it => it) {
-    const r = new AclRoom(this.srv)
+    const r = new AclRoom(this.srv, { agreed: this.agreed })
     const out = r.restore(this.acl.map(map), this.contents)
     return { r, out, fresh: out.fresh }
   }

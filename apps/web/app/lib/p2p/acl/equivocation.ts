@@ -1,6 +1,6 @@
 import { fiOf, type EvalResult } from './facts'
 import { EMPTY, firstTrue, Ix, popcount, pushM } from './reach'
-import { introduces, LIM, poster, relayed, type AclEv, type Ctx, type Rec } from './rules'
+import { introduces, poster, relayed, type AclEv, type Ctx, type Rec } from './rules'
 
 // Equivocation (spec §2.3): device and identity fork points (FI per epoch), rotation and race
 // evidence, pool candidates (W3(g)), candidates, the void set X, and the revocation tails of §3.1.
@@ -254,7 +254,7 @@ export class Equiv {
   // chain that isn't linear is counted by popcount below x and one by one above it.
   poolCands(): Set<string> {
     const ix = this.ix
-    const lim = LIM.poolU
+    const lim = ix.cx.lim.poolU
     const n = ix.n
     const F = this.F
     const H = this.hdrs

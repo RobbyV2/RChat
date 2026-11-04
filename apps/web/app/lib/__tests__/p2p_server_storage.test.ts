@@ -1,15 +1,15 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { genCase } from './acl_model/gen'
 import { orphanDrops as referenceDrops } from '../p2p/acl/equivocation'
 import type { EvalResult } from '../p2p/acl/facts'
 import { AclReplica, totCounted } from '../p2p/acl/admit'
 import { headerContent, headerOf, orphanDrops } from '../p2p/acl/storage'
-import { LIM, P, rkey } from '../p2p/acl/rules'
+import { P, rkey } from '../p2p/acl/rules'
 import { AclRoom, IMPL, type AclItem } from '../p2p/acl_room'
 import { signDeviceCert2 } from '../p2p/acl/binding'
 import { contentEvOf, signRevocation2 } from '../p2p/event'
 import { SHARE, shareAdd, shareLive, shareTotal, withinShare } from '../p2p/shares'
-import { prodReplica, testBinds, useModelLimits, useProductionLimits } from './p2p_acl_world'
+import { MODEL_LIMITS, prodReplica, testBinds } from './p2p_acl_world'
 import { headerOk } from '../p2p/event'
 import { messageActs, type P2pMessage } from '../p2p/dm'
 import { banRequest } from '../p2p/app'
@@ -126,7 +126,7 @@ function growthBound(pr: AclReplica, drops: ReadonlyMap<string, boolean>) {
         m.set(e.dev, (m.get(e.dev) ?? 0) + 1)
       }
     }
-    for (const [v, n] of pre) if (n > LIM.totU) fails.push(`${a}: ${n} counted before F(${v})`)
+    for (const [v, n] of pre) if (n > pr.lim.totU) fails.push(`${a}: ${n} counted before F(${v})`)
     for (const [v, n] of past) if (n > 2) fails.push(`${a}: ${n} kept headers past F(${v})`)
     for (const n of below.values()) maxBelowId = Math.max(maxBelowId, n)
   }
@@ -160,9 +160,6 @@ const voidRelays = (w: ServerWorld, n: number) => {
 }
 
 describe('the orphan rule in storage (spec 2.3)', () => {
-  beforeAll(useModelLimits)
-  afterAll(useProductionLimits)
-
   test('the drop list storage applies equals the reference rule on equivocation-heavy universes, headers included', () => {
     let some = 0
     let bare = 0
@@ -204,7 +201,7 @@ describe('the orphan rule in storage (spec 2.3)', () => {
     }
     expect(headers).toBeGreaterThan(100)
     // headers below a kept identity-op header of their chain: bounded by W3(b) on that branch
-    expect(below).toBeLessThanOrEqual(LIM.totU)
+    expect(below).toBeLessThanOrEqual(MODEL_LIMITS.totU)
   }, 600_000)
 
   test('a cold start with the dropped events restored from their headers (outside the index) or gone evaluates as before, on the same universes (identity ops, rotations and joins among them)', () => {
@@ -215,7 +212,7 @@ describe('the orphan rule in storage (spec 2.3)', () => {
         orphanDrops(pr.acl.evaluation(), () => false).map(d => [d.id, d.header])
       )
       if (!drops.size) continue
-      const r = new AclReplica({ binds: testBinds })
+      const r = new AclReplica({ binds: testBinds, agreed: MODEL_LIMITS })
       for (const id of pr.order) {
         const e = pr.ev(id)
         const h = drops.get(id)
@@ -274,7 +271,7 @@ describe('the reviewer’s probe: void relays cited by a removed member’s hidd
     const gone = new Map(d.acl.map(x => [x.id, x.header]))
     expect(growthBound(w.room.r, gone).fails).toEqual([])
     const kept = w.acl.filter(it => !gone.has(it.id) && S0.X.has(it.id))
-    expect(kept.length).toBeLessThanOrEqual(LIM.poolU)
+    expect(kept.length).toBeLessThanOrEqual(w.room.r.lim.poolU)
     expect(kept.length).toBe(0)
     // A cold start from what is stored: the headers are evidence, the state is the same.
     const live = w.room.r.state()

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { genCase } from './acl_model/gen'
 import type { EvalResult } from '../p2p/acl/facts'
 import { P, rkey } from '../p2p/acl/rules'
@@ -14,7 +14,7 @@ import {
   type Summary,
   type SumDelta,
 } from '../p2p/acl_room'
-import { testBinds, toProd, useModelLimits, useProductionLimits } from './p2p_acl_world'
+import { MODEL_LIMITS, testBinds, toProd } from './p2p_acl_world'
 import { buildEvent2 } from '../p2p/event'
 import { signRevocation2 } from '../p2p/event'
 import { HOLD_MS } from '../p2p/acl_room'
@@ -407,8 +407,6 @@ describe('visibility through the host (spec 3.5, 3.6)', () => {
 })
 
 describe('the page’s summary (incremental)', () => {
-  beforeAll(useModelLimits)
-  afterAll(useProductionLimits)
   // Members in key order: the kept summary moves an entry it works out again to the end.
   const norm = (x: Summary) =>
     JSON.stringify(
@@ -432,7 +430,7 @@ describe('the page’s summary (incremental)', () => {
     const b = { ...emptySummary(), members: { x: shared, y: fresh } }
     expect(diffSummary(a, b)).toEqual({ put: { members: { y: fresh } } })
     // and a room's deltas share what no event touched
-    const w = ServerWorld.create('O')
+    const w = ServerWorld.create('O', {}, MODEL_LIMITS)
     w.join('O', 'Y')
     const before = w.room.summary()
     w.ok('O', 'mark')
@@ -448,7 +446,7 @@ describe('the page’s summary (incremental)', () => {
       ),
     ]) {
       const mw = gen()
-      const room = new AclRoom('t', { binds: testBinds })
+      const room = new AclRoom('t', { binds: testBinds, agreed: MODEL_LIMITS })
       for (const e of mw.all) {
         if (room.r.receive(toProd(e, mw.ref)).s !== 'A') continue
         events++

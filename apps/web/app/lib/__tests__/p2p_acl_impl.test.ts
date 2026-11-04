@@ -10,13 +10,12 @@ import {
   EVERYONE,
   INVITE,
   KICK,
-  LIM,
   MESSAGES,
   P,
   ROLES,
-  setLimits,
   type AclEv,
 } from '../p2p/acl/rules'
+import { AGREED, type Agreed } from '../p2p/limits'
 import {
   AclWorld,
   devOwner,
@@ -33,8 +32,8 @@ import {
 
 modelDiffAfterEach()
 
-function base(everyone = 0, model = true) {
-  const w = new AclWorld({ model })
+function base(everyone = 0, model = true, agreed?: Agreed) {
+  const w = new AclWorld({ model, agreed })
   w.genesis('O1', ['O'], everyone)
   w.channel('O1')
   w.ok('O1', 'add', { to: 'Vch' })
@@ -749,151 +748,141 @@ describe('production-only types (not in the model)', () => {
   })
 
   test("forked relays layered over the relayer's devices pin it (W3(f)): a held event keeps one chain of them, a kicked relayer's too", () => {
-    setLimits({})
-    try {
-      for (const kicked of [false, true]) {
-        const w = base(INVITE, false)
-        join(w, 'A1')
-        w.ok('A2', 'device_add')
-        join(w, 'B1')
-        w.ok('B2', 'device_add')
-        join(w, 'Y1')
-        w.ok('Y2', 'device_add')
-        w.ok('O1', 'mark')
-        w.ok('Y3', 'device_add')
-        const P = w.heads()
-        const sA = w.latestOwn('A2')!.seq
-        const sB = w.latestOwn('B2')!.seq
-        w.ok('A1', 'device_revoke', { dk: 'A2', seen: sA })
-        w.ok('B1', 'device_revoke', { dk: 'B2', seen: sB })
-        if (kicked) w.ok('O1', 'kick', { to: 'Y' })
-        const relay = (dev: string, ik: string, ap: string[]) =>
-          w.act(
-            dev,
-            'device_revoke',
-            { dk: `${ik}2`, seen: ik === 'A' ? sA : sB },
-            { actor: ik, ap, keepOwn: false }
-          )
-        const L1 = Array.from({ length: 100 }, () => {
-          const r = relay('Y1', 'A', P)
-          expect(r.v).toEqual({ s: 'A' })
-          return r.e.id
-        })
-        const w3f = { s: 'R' as const, why: 'W3f' }
-        expect(relay('Y2', 'B', L1.slice(0, 10)).v).toEqual(w3f)
-        expect(relay('Y2', 'B', L1.slice(0, 2)).v).toEqual(w3f)
-        expect(w.act('Y2', 'mark', {}, { ap: L1.slice(0, 2), keepOwn: false }).v).toEqual(w3f)
-        const L2 = L1.slice(0, 10).map(p => {
-          const r = relay('Y2', 'B', [p])
-          expect(r.v).toEqual({ s: 'A' })
-          return r.e.id
-        })
-        expect(w.act('Y3', 'mark', {}, { ap: L2 }).v).toEqual(w3f)
-        expect(w.act('Y3', 'mark', {}, { ap: L2.slice(0, 2) }).v).toEqual(w3f)
-        const m = w.ok('Y3', 'mark', {}, { ap: [L2[0]] })
-        const S = w.state()
-        expect([...L1, ...L2].every(id => S.X.has(id))).toBe(true)
-        expect(S.X.has(m.id)).toBe(false)
-        const drops = orphanDrops(w.ref.order, S, w.ref)
-        const keptY = w.ref.order.filter(id => devOwner(w.ref.ev(id).dev) === 'Y' && !drops.has(id))
-        expect(keptY.filter(id => w.ref.ev(id).relay === 'Y')).toEqual([L1[0], L2[0]])
-        expect(keptY.length).toBeLessThanOrEqual(LIM.poolU)
-        if (kicked) continue
-        // an acknowledged relay pins nothing
-        const ack = w.ok('O1', 'mark', {}, { ap: [L1[0]] })
-        expect(w.act('Y2', 'mark', {}, { ap: [ack.id, L1[1]], keepOwn: false }).v).toEqual({
-          s: 'A',
-        })
-      }
-    } finally {
-      setLimits(MODEL_LIMITS)
+    for (const kicked of [false, true]) {
+      const w = base(INVITE, false, AGREED)
+      join(w, 'A1')
+      w.ok('A2', 'device_add')
+      join(w, 'B1')
+      w.ok('B2', 'device_add')
+      join(w, 'Y1')
+      w.ok('Y2', 'device_add')
+      w.ok('O1', 'mark')
+      w.ok('Y3', 'device_add')
+      const P = w.heads()
+      const sA = w.latestOwn('A2')!.seq
+      const sB = w.latestOwn('B2')!.seq
+      w.ok('A1', 'device_revoke', { dk: 'A2', seen: sA })
+      w.ok('B1', 'device_revoke', { dk: 'B2', seen: sB })
+      if (kicked) w.ok('O1', 'kick', { to: 'Y' })
+      const relay = (dev: string, ik: string, ap: string[]) =>
+        w.act(
+          dev,
+          'device_revoke',
+          { dk: `${ik}2`, seen: ik === 'A' ? sA : sB },
+          { actor: ik, ap, keepOwn: false }
+        )
+      const L1 = Array.from({ length: 100 }, () => {
+        const r = relay('Y1', 'A', P)
+        expect(r.v).toEqual({ s: 'A' })
+        return r.e.id
+      })
+      const w3f = { s: 'R' as const, why: 'W3f' }
+      expect(relay('Y2', 'B', L1.slice(0, 10)).v).toEqual(w3f)
+      expect(relay('Y2', 'B', L1.slice(0, 2)).v).toEqual(w3f)
+      expect(w.act('Y2', 'mark', {}, { ap: L1.slice(0, 2), keepOwn: false }).v).toEqual(w3f)
+      const L2 = L1.slice(0, 10).map(p => {
+        const r = relay('Y2', 'B', [p])
+        expect(r.v).toEqual({ s: 'A' })
+        return r.e.id
+      })
+      expect(w.act('Y3', 'mark', {}, { ap: L2 }).v).toEqual(w3f)
+      expect(w.act('Y3', 'mark', {}, { ap: L2.slice(0, 2) }).v).toEqual(w3f)
+      const m = w.ok('Y3', 'mark', {}, { ap: [L2[0]] })
+      const S = w.state()
+      expect([...L1, ...L2].every(id => S.X.has(id))).toBe(true)
+      expect(S.X.has(m.id)).toBe(false)
+      const drops = orphanDrops(w.ref.order, S, w.ref)
+      const keptY = w.ref.order.filter(id => devOwner(w.ref.ev(id).dev) === 'Y' && !drops.has(id))
+      expect(keptY.filter(id => w.ref.ev(id).relay === 'Y')).toEqual([L1[0], L2[0]])
+      expect(keptY.length).toBeLessThanOrEqual(AGREED.poolU)
+      if (kicked) continue
+      // an acknowledged relay pins nothing
+      const ack = w.ok('O1', 'mark', {}, { ap: [L1[0]] })
+      expect(w.act('Y2', 'mark', {}, { ap: [ack.id, L1[1]], keepOwn: false }).v).toEqual({
+        s: 'A',
+      })
     }
   })
 
   test("forked relays beside the relayer's acknowledged events count in its W3(g) pool: gathering them stops at the cap, a kicked relayer's too", () => {
-    setLimits({})
-    try {
-      for (const kicked of [false, true]) {
-        const w = base(INVITE, false)
-        join(w, 'A1')
-        w.ok('A2', 'device_add')
-        join(w, 'B1')
-        w.ok('B2', 'device_add')
-        join(w, 'Y1')
-        w.ok('Y2', 'device_add')
-        w.ok('O1', 'mark')
-        w.ok('Y3', 'device_add')
-        const sA = w.latestOwn('A2')!.seq
-        const sB = w.latestOwn('B2')!.seq
-        let ack = w.ok('O1', 'mark')
-        let ts = ack.ts
-        const ys: AclEv[] = []
-        for (let k = 0; k < 400; k++) {
-          ys.push(w.ok('Y1', 'mark', {}, { ap: [ack.id], ts: (ts += 61_000) }))
-          if (k % 20 === 19) ack = w.ok('O1', 'mark', {}, { ap: [ys[k].id] })
-        }
-        const L = ys.map(y => {
-          const r = w.act(
-            'Y1',
-            'device_revoke',
-            { dk: 'A2', seen: sA },
-            { actor: 'A', ap: y.ap, seq: y.seq, ts: y.ts }
-          )
-          expect(r.v).toEqual({ s: 'A' })
-          return r.e.id
-        })
-        if (kicked) w.ok('O1', 'kick', { to: 'Y' }, { ap: [ack.id] })
-        let held = ack.id
-        let n = 0
-        let total = 0
-        let refused = false
-        const gathered: string[] = []
-        const gather = (dev: string, r: number) => {
-          const v = w.act(dev, 'mark', {}, { ap: [held, ...L.slice(n, n + r)] })
-          const over = total + 1 + r > LIM.poolU
-          expect(v.v).toEqual(over ? { s: 'R', why: 'W3g' } : { s: 'A' })
-          if (over) return false
-          held = v.e.id
-          gathered.push(held)
-          n += r
-          total += 1 + r
-          return true
-        }
-        for (let j = 0; j < 24; j++) expect(gather('Y2', 8)).toBe(true)
-        for (let j = 0; j < 23 && !refused; j++) refused = !gather('Y3', j ? 9 : 8)
-        expect([refused, n < L.length]).toEqual([true, true])
-        expect(gather('Y3', LIM.poolU - total - 1)).toBe(true)
-        expect(total).toBe(LIM.poolU)
-        expect(gather('Y3', 0)).toBe(false)
-        const rB = { dk: 'B2', seen: sB }
-        expect(w.act('Y3', 'device_revoke', rB, { actor: 'B', ap: [held] }).v).toEqual({
-          s: 'R',
-          why: 'W3g',
-        })
-        // the relays it left out are concurrent with the held head, but past Y1's fork point: they
-        // count in no pool (revision 7), so the head is no candidate; they are void and dropped
-        const S = w.state()
-        expect([L.every(id => S.X.has(id)), S.PC.has(held), S.X.has(held)]).toEqual([
-          true,
-          false,
-          false,
-        ])
-        expect(w.act('A1', 'mark', {}, { ap: [held] }).v).toEqual({ s: 'A' })
-        if (kicked) continue
-        // acknowledged relays count nothing: the rest of them can be gathered
-        held = w.ok('O1', 'mark', {}, { ap: [held] }).id
-        total = 0
-        while (n < L.length) expect(gather('Y3', Math.min(9, L.length - n))).toBe(true)
+    for (const kicked of [false, true]) {
+      const w = base(INVITE, false, AGREED)
+      join(w, 'A1')
+      w.ok('A2', 'device_add')
+      join(w, 'B1')
+      w.ok('B2', 'device_add')
+      join(w, 'Y1')
+      w.ok('Y2', 'device_add')
+      w.ok('O1', 'mark')
+      w.ok('Y3', 'device_add')
+      const sA = w.latestOwn('A2')!.seq
+      const sB = w.latestOwn('B2')!.seq
+      let ack = w.ok('O1', 'mark')
+      let ts = ack.ts
+      const ys: AclEv[] = []
+      for (let k = 0; k < 400; k++) {
+        ys.push(w.ok('Y1', 'mark', {}, { ap: [ack.id], ts: (ts += 61_000) }))
+        if (k % 20 === 19) ack = w.ok('O1', 'mark', {}, { ap: [ys[k].id] })
       }
-    } finally {
-      setLimits(MODEL_LIMITS)
+      const L = ys.map(y => {
+        const r = w.act(
+          'Y1',
+          'device_revoke',
+          { dk: 'A2', seen: sA },
+          { actor: 'A', ap: y.ap, seq: y.seq, ts: y.ts }
+        )
+        expect(r.v).toEqual({ s: 'A' })
+        return r.e.id
+      })
+      if (kicked) w.ok('O1', 'kick', { to: 'Y' }, { ap: [ack.id] })
+      let held = ack.id
+      let n = 0
+      let total = 0
+      let refused = false
+      const gathered: string[] = []
+      const gather = (dev: string, r: number) => {
+        const v = w.act(dev, 'mark', {}, { ap: [held, ...L.slice(n, n + r)] })
+        const over = total + 1 + r > AGREED.poolU
+        expect(v.v).toEqual(over ? { s: 'R', why: 'W3g' } : { s: 'A' })
+        if (over) return false
+        held = v.e.id
+        gathered.push(held)
+        n += r
+        total += 1 + r
+        return true
+      }
+      for (let j = 0; j < 24; j++) expect(gather('Y2', 8)).toBe(true)
+      for (let j = 0; j < 23 && !refused; j++) refused = !gather('Y3', j ? 9 : 8)
+      expect([refused, n < L.length]).toEqual([true, true])
+      expect(gather('Y3', AGREED.poolU - total - 1)).toBe(true)
+      expect(total).toBe(AGREED.poolU)
+      expect(gather('Y3', 0)).toBe(false)
+      const rB = { dk: 'B2', seen: sB }
+      expect(w.act('Y3', 'device_revoke', rB, { actor: 'B', ap: [held] }).v).toEqual({
+        s: 'R',
+        why: 'W3g',
+      })
+      // the relays it left out are concurrent with the held head, but past Y1's fork point: they
+      // count in no pool (revision 7), so the head is no candidate; they are void and dropped
+      const S = w.state()
+      expect([L.every(id => S.X.has(id)), S.PC.has(held), S.X.has(held)]).toEqual([
+        true,
+        false,
+        false,
+      ])
+      expect(w.act('A1', 'mark', {}, { ap: [held] }).v).toEqual({ s: 'A' })
+      if (kicked) continue
+      // acknowledged relays count nothing: the rest of them can be gathered
+      held = w.ok('O1', 'mark', {}, { ap: [held] }).id
+      total = 0
+      while (n < L.length) expect(gather('Y3', Math.min(9, L.length - n))).toBe(true)
     }
   })
 
   // A relayer's forked relays beside its acknowledged marks, gathered by its other devices in
   // separate views (W3(b) stops each at 24 marks): its relays are its own events across devices
   const gatherViews = (devs: string[], kicked: boolean) => {
-    const w = base(INVITE, false)
+    const w = base(INVITE, false, AGREED)
     join(w, 'A1')
     w.ok('A2', 'device_add')
     join(w, 'Y1')
@@ -949,41 +938,31 @@ describe('production-only types (not in the model)', () => {
     return { gather, state, ik, all: () => rel.length + marks.length }
   }
   test("a relayer's relays share its pool across devices: two views past poolU make the heads pool candidates, which stay stored (revision 7); a kicked relayer's too", () => {
-    setLimits({})
-    try {
-      for (const kicked of [false, true]) {
-        const v = gatherViews(['Y2', 'Y3'], kicked)
-        v.gather('Y2', 24)
-        v.gather('Y3', 13)
-        expect(v.state()).toMatchObject({ heads: [false, false], kept: 370 })
-        v.gather('Y3', 3)
-        const S = v.state()
-        expect([S.heads, S.rel]).toEqual([[true, true], true])
-        // revision 7: a candidate only by pool evidence stays stored, with its past; each view is
-        // bounded by W3(g) at admission (spec 4.1 growth bound, per device chain)
-        expect([S.kept, S.kept <= 2 * LIM.poolU]).toEqual([v.all(), true])
-        expect(v.ik()).toBe(false)
-      }
-    } finally {
-      setLimits(MODEL_LIMITS)
+    for (const kicked of [false, true]) {
+      const v = gatherViews(['Y2', 'Y3'], kicked)
+      v.gather('Y2', 24)
+      v.gather('Y3', 13)
+      expect(v.state()).toMatchObject({ heads: [false, false], kept: 370 })
+      v.gather('Y3', 3)
+      const S = v.state()
+      expect([S.heads, S.rel]).toEqual([[true, true], true])
+      // revision 7: a candidate only by pool evidence stays stored, with its past; each view is
+      // bounded by W3(g) at admission (spec 4.1 growth bound, per device chain)
+      expect([S.kept, S.kept <= 2 * AGREED.poolU]).toEqual([v.all(), true])
+      expect(v.ik()).toBe(false)
     }
   }, 120_000)
 
   test("a relayer's relays share its pool across devices: three views, one on a device revoked later, past poolU make the heads pool candidates, which stay stored (revision 7); a kicked relayer's too", () => {
-    setLimits({})
-    try {
-      for (const kicked of [false, true]) {
-        const v = gatherViews(['Y2', 'Y3', 'Y4'], kicked)
-        for (const d of ['Y2', 'Y3', 'Y4']) v.gather(d, 12)
-        expect(v.state()).toMatchObject({ heads: [false, false], kept: 360 })
-        v.gather('Y4', 4)
-        const S = v.state()
-        expect([S.heads, S.rel]).toEqual([[true, true], true])
-        expect([S.kept, S.kept <= 3 * LIM.poolU]).toEqual([v.all(), true])
-        expect(v.ik()).toBe(false)
-      }
-    } finally {
-      setLimits(MODEL_LIMITS)
+    for (const kicked of [false, true]) {
+      const v = gatherViews(['Y2', 'Y3', 'Y4'], kicked)
+      for (const d of ['Y2', 'Y3', 'Y4']) v.gather(d, 12)
+      expect(v.state()).toMatchObject({ heads: [false, false], kept: 360 })
+      v.gather('Y4', 4)
+      const S = v.state()
+      expect([S.heads, S.rel]).toEqual([[true, true], true])
+      expect([S.kept, S.kept <= 3 * AGREED.poolU]).toEqual([v.all(), true])
+      expect(v.ik()).toBe(false)
     }
   }, 120_000)
 
@@ -1017,27 +996,29 @@ describe('production-only types (not in the model)', () => {
     const sA = w.latestOwn('A2')!.seq
     const sB = w.latestOwn('B2')!.seq
     let ts = 1000
-    for (let k = 0; k < LIM.w3 - 1; k++) w.ok('Y1', 'mark', {}, { ts: (ts += 1) })
+    for (let k = 0; k < MODEL_LIMITS.w3 - 1; k++) w.ok('Y1', 'mark', {}, { ts: (ts += 1) })
     w.ok('Y1', 'device_revoke', { dk: 'A2', seen: sA }, { actor: 'A', ts: (ts += 1) })
     const rB = { dk: 'B2', seen: sB }
     expect(w.act('Y1', 'device_revoke', rB, { actor: 'B', ts: ts + 1 }).v).toEqual({
       s: 'R',
       why: 'W3',
     })
-    for (let k = 0; k < LIM.w3; k++) w.ok('B1', 'mark', {}, { ts: ts + 1 + k })
-    expect(w.act('B1', 'device_revoke', rB, { ts: ts + 1 + LIM.w3 }).v).toEqual({ s: 'A' })
+    for (let k = 0; k < MODEL_LIMITS.w3; k++) w.ok('B1', 'mark', {}, { ts: ts + 1 + k })
+    expect(w.act('B1', 'device_revoke', rB, { ts: ts + 1 + MODEL_LIMITS.w3 }).v).toEqual({ s: 'A' })
     const w2 = base(INVITE, false)
     join(w2, 'A1')
     w2.ok('A2', 'device_add')
     join(w2, 'Y1')
-    for (let k = 0; k < LIM.w3; k++) w2.ok('Y1', 'mark', {}, { ts: 1000 + k })
+    for (let k = 0; k < MODEL_LIMITS.w3; k++) w2.ok('Y1', 'mark', {}, { ts: 1000 + k })
     const r = { dk: 'A2', seen: w2.latestOwn('A2')!.seq }
-    const last = 1000 + LIM.w3 - 1
+    const last = 1000 + MODEL_LIMITS.w3 - 1
     expect(w2.act('Y1', 'device_revoke', r, { actor: 'A', ts: last + 1 }).v).toEqual({
       s: 'R',
       why: 'W3',
     })
-    expect(w2.act('Y1', 'device_revoke', r, { actor: 'A', ts: last + LIM.win }).v.s).toBe('A')
+    expect(w2.act('Y1', 'device_revoke', r, { actor: 'A', ts: last + MODEL_LIMITS.win }).v.s).toBe(
+      'A'
+    )
   })
 
   test("relaying needs a member's live device; a forged relayer is refused", () => {
@@ -1058,34 +1039,22 @@ describe('production-only types (not in the model)', () => {
   })
 
   test('W5: the channel cap counts live channels; a channel that is gone makes room', () => {
-    setLimits({ ...MODEL_LIMITS, channels: 2 })
-    try {
-      const w = base(0, false)
-      let ts = 100
-      const ch = (c: Record<string, unknown>) =>
-        w.act('O1', 'channel', { name: 'x', ...c }, { ts: (ts += 100) }).v.s
-      expect(ch({ id: 'c1' })).toBe('A')
-      expect(ch({ id: 'c2' })).toBe('R')
-      expect(ch({ id: 'c0', gone: true })).toBe('A')
-      expect(ch({ id: 'c2' })).toBe('A')
-      expect(ch({ id: 'c1', name: 'renamed' })).toBe('A')
-      expect(ch({ id: 'c0' })).toBe('R')
-    } finally {
-      setLimits(MODEL_LIMITS)
-    }
+    const w = base(0, false, { ...MODEL_LIMITS, channels: 2 })
+    let ts = 100
+    const ch = (c: Record<string, unknown>) =>
+      w.act('O1', 'channel', { name: 'x', ...c }, { ts: (ts += 100) }).v.s
+    expect(ch({ id: 'c1' })).toBe('A')
+    expect(ch({ id: 'c2' })).toBe('R')
+    expect(ch({ id: 'c0', gone: true })).toBe('A')
+    expect(ch({ id: 'c2' })).toBe('A')
+    expect(ch({ id: 'c1', name: 'renamed' })).toBe('A')
+    expect(ch({ id: 'c0' })).toBe('R')
   })
 
-  test('admission limits are fixed outside tests and scripts', () => {
-    expect(Object.isFrozen(LIM)).toBe(true)
-    const pe = process.env as Record<string, string | undefined>
-    const env = pe.NODE_ENV
-    pe.NODE_ENV = 'production'
-    try {
-      expect(() => setLimits({ w3: 1000 })).toThrow()
-    } finally {
-      pe.NODE_ENV = env
-    }
-    expect(LIM.w3).toBe(MODEL_LIMITS.w3)
+  test('admission limits are fixed: the production ones frozen, a replica keeps the ones it was built with', () => {
+    expect(Object.isFrozen(AGREED)).toBe(true)
+    expect(new AclReplica().lim).toBe(AGREED)
+    expect(new AclReplica({ agreed: MODEL_LIMITS }).lim.w3).toBe(MODEL_LIMITS.w3)
   })
 
   test("the remover's watermark: a kick, ban or revoke of another member covers every live device of the target; a leave covers the devices it lists", () => {
@@ -1123,7 +1092,7 @@ describe('production-only types (not in the model)', () => {
   })
 
   test('a malformed known field (a genesis nonce of other than 16 bytes, a kick target) is refused with a strike; a second genesis is refused', () => {
-    const r = new AclReplica({ binds: testBinds })
+    const r = new AclReplica({ binds: testBinds, agreed: MODEL_LIMITS })
     const g = {
       id: 'g',
       t: 'genesis',
@@ -1136,7 +1105,10 @@ describe('production-only types (not in the model)', () => {
     }
     for (const nonce of [undefined, 'n', 'AAAAAAAAAAAAAAAAAAAAAAAA', 16])
       expect(
-        new AclReplica({ binds: testBinds }).receive({ ...g, c: { ...g.c, nonce } } as never)
+        new AclReplica({ binds: testBinds, agreed: MODEL_LIMITS }).receive({
+          ...g,
+          c: { ...g.c, nonce },
+        } as never)
       ).toEqual({
         s: 'M',
         why: 'content',
@@ -1158,7 +1130,7 @@ describe('production-only types (not in the model)', () => {
   })
 
   test('a genesis of a rules version this client does not know earns no strike: the replica reports it and stores the server read-only', () => {
-    const r = new AclReplica({ binds: testBinds })
+    const r = new AclReplica({ binds: testBinds, agreed: MODEL_LIMITS })
     const g = {
       id: 'g',
       t: 'genesis',
@@ -1173,7 +1145,7 @@ describe('production-only types (not in the model)', () => {
     const k = { id: 'k', t: 'kick', a: 'O', dev: 'O1', seq: 1, ap: ['g'], ts: 1, c: { to: 5 } }
     expect(r.receive(k as never)).toEqual({ s: 'U', rules: 3 })
     expect(r.order).toEqual([])
-    const r2 = new AclReplica({ binds: testBinds })
+    const r2 = new AclReplica({ binds: testBinds, agreed: MODEL_LIMITS })
     expect(r2.receive({ ...g, c: { ...g.c, rules: 2.5 } } as never)).toEqual({
       s: 'M',
       why: 'content',
@@ -1244,7 +1216,7 @@ describe('production-only types (not in the model)', () => {
   })
 
   test('an event whose device the author has no certificate for is refused', () => {
-    const r = new AclReplica({ binds: () => false })
+    const r = new AclReplica({ binds: () => false, agreed: MODEL_LIMITS })
     const g = {
       id: 'g',
       t: 'genesis',

@@ -6,19 +6,8 @@ import { evaluate, FastEval } from '../p2p/acl/eval'
 import { Ix } from '../p2p/acl/reach'
 import { orphanDrops } from '../p2p/acl/equivocation'
 import type { EvalResult } from '../p2p/acl/facts'
-import {
-  BAN,
-  EVERYONE,
-  gt,
-  INVITE,
-  KICK,
-  LIM,
-  rank,
-  rankOf,
-  ROLES,
-  SERVER,
-  setLimits,
-} from '../p2p/acl/rules'
+import { BAN, EVERYONE, gt, INVITE, KICK, rank, rankOf, ROLES, SERVER } from '../p2p/acl/rules'
+import type { Agreed } from '../p2p/limits'
 import * as M from './acl_model/model'
 import {
   AclWorld,
@@ -41,8 +30,8 @@ const TOT = true
 const DAY_U = 24
 const dayBudget = () => DAY_U
 
-function base(everyone = 0) {
-  const w = new AclWorld()
+function base(everyone = 0, agreed?: Agreed) {
+  const w = new AclWorld({ agreed })
   w.genesis('O1', ['O'], everyone)
   if (VOUCH) {
     // the bystander of vouch() below: a plain member let in by the owner right after genesis
@@ -717,8 +706,8 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
       ts = ja.ts + 3
     for (let i = 0; i < 400; i++, ts += 3)
       if (w.act('A1', 'mark', {}, { ap: [ja.id], ts }).v.s === 'A') admitted++
-    const days = Math.ceil((ts - ja.ts) / LIM.day)
-    expect(admitted).toBeLessThanOrEqual(R4 ? dayBudget() * days : 2 * LIM.w3)
+    const days = Math.ceil((ts - ja.ts) / MODEL_LIMITS.day)
+    expect(admitted).toBeLessThanOrEqual(R4 ? dayBudget() * days : 2 * MODEL_LIMITS.w3)
     // revision 5 (§7.7, changed assertion): the model's day budget is one event per window for everyone (production 24
     // per day), 24 per model day instead of revision 4's 16 for members; the backlog stays below a third of the burst
     expect(admitted).toBeLessThan(R5 ? 400 / 3 : 400 / 4)
@@ -733,7 +722,7 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
     let admitted = 0
     for (let i = 0; i < 300; i++)
       if (w.act('O1', i % 2 ? 'mark' : 'x_future', {}, { ts: t0 }).v.s === 'A') admitted++
-    expect(admitted).toBeLessThanOrEqual(LIM.w3mod)
+    expect(admitted).toBeLessThanOrEqual(MODEL_LIMITS.w3mod)
     // moderation stays exempt: a ban is admitted at the same ts
     expect(w.act('O1', 'ban', { to: 'T' }, { ts: t0 }).v.s).toBe('A')
   })
@@ -753,9 +742,9 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
       if (w.act('M1', 'role_create', { pos: 2, bits: 0 }, { ap: P, ts: 100 + 2 * i }).v.s === 'A')
         mine++
     const live = F(w).roles.size
-    expect(mine).toBe(LIM.roles - 1) // the chain sees MR plus its own creates
-    expect(live).toBeGreaterThan(LIM.roles)
-    expect(live).toBeLessThanOrEqual(LIM.roles * 2)
+    expect(mine).toBe(MODEL_LIMITS.roles - 1) // the chain sees MR plus its own creates
+    expect(live).toBeGreaterThan(MODEL_LIMITS.roles)
+    expect(live).toBeLessThanOrEqual(MODEL_LIMITS.roles * 2)
     expect(w.act('O1', 'role_create', { pos: 1, bits: 0 }).v).toEqual({ s: 'R', why: 'W5' })
   })
 })
@@ -1065,7 +1054,7 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
         const anchor = shop ? [...honest].reverse().find(h => h.ts <= ts) : undefined
         if (w.act('A1', 'mark', {}, { ap: [anchor?.id ?? ja.id], ts }).v.s === 'A') admitted++
       }
-      return { admitted, days: Math.ceil((ts - ja.ts) / LIM.day) }
+      return { admitted, days: Math.ceil((ts - ja.ts) / MODEL_LIMITS.day) }
     }
     const shop = run(true),
       fixed = run(false)
@@ -1073,8 +1062,8 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
       // revision 5, dispatch 5b: a total of totU unacknowledged events per device, whatever the backlog cites. The only
       // difference is A's join, which the honest events (made after it, citing it) really acknowledged in the shopping
       // run and nobody acknowledged in the other; none of the 400 marks is ever acknowledged in either
-      expect(fixed.admitted).toBe(LIM.totU - 1)
-      expect(shop.admitted).toBe(LIM.totU)
+      expect(fixed.admitted).toBe(MODEL_LIMITS.totU - 1)
+      expect(shop.admitted).toBe(MODEL_LIMITS.totU)
     } else {
       expect(shop.admitted).toBe(fixed.admitted)
       expect(shop.admitted).toBeLessThanOrEqual(dayBudget() * shop.days)
@@ -1098,8 +1087,8 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
       // revision 5, dispatch 5b (controller ruling on growth): a lone device is blocked after totU ACL events that no
       // other identity acknowledged, however they are spaced; the first event of another identity that has them in its
       // past lets it go on (spec §4.1, §6.2 N12)
-      expect(own(100)).toBe(LIM.totU)
-      expect(own(10)).toBe(LIM.totU)
+      expect(own(100)).toBe(MODEL_LIMITS.totU)
+      expect(own(10)).toBe(MODEL_LIMITS.totU)
     }
     const w = base(INVITE)
     const ja = join(w, 'A1')
@@ -1109,13 +1098,13 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     if (!TOT)
       expect(n).toBe(100) // a member posting every second window while the owner is idle
     else {
-      expect(n).toBe(LIM.totU - 1) // its join and totU − 1 marks, then blocked while the owner is idle
+      expect(n).toBe(MODEL_LIMITS.totU - 1) // its join and totU − 1 marks, then blocked while the owner is idle
       const last = w.latestOwn('A1')!
       w.ok('O1', 'mark', {}, { ap: [last.id], ts: last.ts + 1 }) // the owner comes back: one ACL event citing A's
       let m = 0
       for (let i = 1; i <= 100; i++)
         if (w.act('A1', 'mark', {}, { ts: last.ts + 1 + 20 * i }).v.s === 'A') m++
-      expect(m).toBe(LIM.totU)
+      expect(m).toBe(MODEL_LIMITS.totU)
     }
   })
 
@@ -1134,7 +1123,7 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     let strangers = 0
     for (let i = 0; i < 60; i++)
       if (w.act('M1', 'ban', { to: `stranger${i}` }, { ts }).v.s === 'A') strangers++
-    expect(strangers).toBeLessThanOrEqual(LIM.w3mod)
+    expect(strangers).toBeLessThanOrEqual(MODEL_LIMITS.w3mod)
     let members = 0,
       acks = 0
     for (const T of mem) {
@@ -1149,7 +1138,7 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
       if (r.v.s === 'A') members++
     }
     expect(members).toBe(mem.length) // all 20 in one window: more than the moderators' hourly cap
-    expect(members).toBeGreaterThan(LIM.w3mod)
+    expect(members).toBeGreaterThan(MODEL_LIMITS.w3mod)
     if (TOT) expect(acks).toBeGreaterThan(0)
   })
   test('RV3-M2: a no-op primary_rotate is refused (W6); rotations and device churn are capped per identity', () => {
@@ -1161,7 +1150,7 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     for (let i = 0; i < 500; i++)
       if (w.act('A1', 'primary_rotate', { keep: ['A2'], seen: {}, pcert: `p${i}` }).v.s === 'A')
         rot++
-    expect(rot).toBeLessThanOrEqual(LIM.rotCap ?? 0)
+    expect(rot).toBeLessThanOrEqual(MODEL_LIMITS.rotCap ?? 0)
     // device churn through fresh devices: each new device has an empty chain, so only a per-identity cap bounds it
     const c = base(INVITE)
     join(c, 'B1')
@@ -1172,7 +1161,7 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
       adds++
       c.ok('B1', 'device_revoke', { dk: `B${i}`, seen: r.e.seq })
     }
-    expect(adds).toBeLessThanOrEqual(LIM.idCap ?? 0)
+    expect(adds).toBeLessThanOrEqual(MODEL_LIMITS.idCap ?? 0)
   })
 
   // boundary of the exact rule: inside the world of P's invite (the causes P is exposed to), X's grant counts only through
@@ -1211,7 +1200,7 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     orderIndependent(w)
   })
 
-  // the class cap (§3.1 step 4): beyond LIM.classes protection classes at one stratum, the sound fallback. Q kicks A, who
+  // the class cap (§3.1 step 4): beyond MODEL_LIMITS.classes protection classes at one stratum, the sound fallback. Q kicks A, who
   // gave X a ManageRoles role; X gave P an Invite role; P invites N. R and S remove Z and Y, who gave K and L an Invite
   // role concurrently; K and L invite. The owner promotes P after Q's kick, concurrently with R's and S's: P is exposed
   // to Q's kick only, which breaks P's support, so the exact rule cuts P's invite. With K and L promoted concurrently with
@@ -1264,7 +1253,7 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
       const S = w.state()
       expect(S.cut.has(g1.id) && S.cut.has(x.id)).toBe(true)
       expect(S.cut.has(k.id) && S.cut.has(l.id)).toBe(true) // K's and L's invites relied on the removed members' grants
-      expect(S.cut.has(p.id)).toBe(!extra || !LIM.classes || (TOT && !multi))
+      expect(S.cut.has(p.id)).toBe(!extra || !MODEL_LIMITS.classes || (TOT && !multi))
       const fe = new FastEval(Ix.of(w.ref.order, w.ref))
       fe.run()
       expect([fe.stats.maxClasses, fe.stats.fallbacks]).toEqual(extra ? [3, 1] : [1, 0])
@@ -1326,7 +1315,7 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     let moves = 0
     for (let p = 799; p > 700; p--)
       if (w.act('M1', 'role_move', { role: R, pos: p }, { ts }).v.s === 'A') moves++
-    expect(moves).toBeLessThanOrEqual(LIM.w3mod)
+    expect(moves).toBeLessThanOrEqual(MODEL_LIMITS.w3mod)
     expect(w.act('M1', 'revoke', { to: 'T', role: R }, { ts }).v.s).toBe('A')
   })
 
@@ -1621,7 +1610,7 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
     let n = 0
     for (let i = 1; i <= 160; i++)
       if (w.act('O1', 'profile', { name: i % 3 }, { ts: 3 * i }).v.s === 'A') n++
-    const days = Math.ceil((3 * 160) / LIM.day)
+    const days = Math.ceil((3 * 160) / MODEL_LIMITS.day)
     expect(n).toBeLessThanOrEqual((DAY_U ?? 24) * days) // revision 4 admits 64
   })
   // [R4V I2] device churn: device_adds are counted per identity per day across epochs. Revision 4 counted the current
@@ -1645,7 +1634,7 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
         w.act('A1', 'primary_rotate', { keep: [], seen: { ...seen }, pcert: `p${r}` }).v.s
       ).toBe('A')
     }
-    expect(adds).toBeLessThanOrEqual(LIM.idCap) // revision 4 admits 3 per epoch
+    expect(adds).toBeLessThanOrEqual(MODEL_LIMITS.idCap) // revision 4 admits 3 per epoch
   })
   // [R4V I2] W3(d): a removed member's fresh devices dated early would each backfill the whole idle range at dayU per day
   // (the backlog grew with the square of the idle time). A device whose device_add no other identity acknowledged posts
@@ -1660,7 +1649,7 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
     let n = 0
     for (let i = 1; i <= 120; i++)
       if (w.act('A3', 'mark', {}, { ap: [da.id], ts: ja.ts + 1 + 20 * i }).v.s === 'A') n++
-    expect(n).toBeLessThanOrEqual((TOT ? LIM.totU : 24) - 1) // the device_add is the first; revision 4 admits 120
+    expect(n).toBeLessThanOrEqual((TOT ? MODEL_LIMITS.totU : 24) - 1) // the device_add is the first; revision 4 admits 120
     // and A can mint at most freshCap such devices in total, whatever their dates (revision 4: 3 per day of the range)
     let fresh = 1
     for (let i = 4; i < 30; i++) {
@@ -1668,7 +1657,7 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
       if (w.act(`A${i}`, 'device_add', {}, { ap: [last.id], ts: last.ts + 300 * i }).v.s === 'A')
         fresh++
     }
-    expect(fresh).toBeLessThanOrEqual(LIM.freshCap ?? 2)
+    expect(fresh).toBeLessThanOrEqual(MODEL_LIMITS.freshCap ?? 2)
     // a member's device that the owner acknowledged (the owner cited its device_add) keeps dayU per day
     const v = base(INVITE)
     join(v, 'B1')
@@ -1681,7 +1670,7 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
     else {
       // revision 5, dispatch 5b: there is no day budget left; every device, acknowledged or not, has totU events that no
       // other identity acknowledged (the device_add itself is acknowledged by the owner's mark)
-      expect(m).toBe(LIM.totU)
+      expect(m).toBe(MODEL_LIMITS.totU)
     }
   })
 })
@@ -1832,7 +1821,7 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       ts = 1000
     const grow = (tip: string[], adds: number, rots: number) => {
       for (const kind of ['rot', 'add'] as const) {
-        if (kind === 'rot' ? rots >= LIM.rotTot : adds >= LIM.freshCap) continue
+        if (kind === 'rot' ? rots >= MODEL_LIMITS.rotTot : adds >= MODEL_LIMITS.freshCap) continue
         const dev = `X${n++}`
         const seen: Record<string, number> = {}
         for (const id of w.closure(tip)) {
@@ -1863,7 +1852,7 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     }
     grow([w.latestOwn('X1')!.id], 0, 0)
     expect(fresh).toBeGreaterThanOrEqual(20)
-    expect(storedOf(w, start).length).toBeLessThanOrEqual(2 * LIM.totU)
+    expect(storedOf(w, start).length).toBeLessThanOrEqual(2 * MODEL_LIMITS.totU)
   })
   // [H19] race: a device_add over the same iprev as a rotation of its identity lost the race to the recovery key. Before,
   // it stayed non-void; the rotation dropped its device, so the device's events were tails, cut and stored for good, one
@@ -1925,7 +1914,7 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     let rots = 0,
       ap = P,
       ts = 100
-    for (let i = 0; i < 12; i++, ts += LIM.day) {
+    for (let i = 0; i < 12; i++, ts += MODEL_LIMITS.day) {
       const seen: Record<string, number> = {}
       for (const id of w.closure(ap)) {
         const x = w.ref.ev(id)
@@ -1942,13 +1931,13 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
         ap = [r.e.id]
       }
     }
-    expect(rots).toBe(LIM.rotTot)
+    expect(rots).toBe(MODEL_LIMITS.rotTot)
     const v = base(INVITE)
     join(v, 'B1')
     let ok = 0
     for (let i = 0; i < 6; i++) {
       const last = v.ref.order[v.ref.order.length - 1]
-      const ts2 = v.ref.ev(last).ts + LIM.day
+      const ts2 = v.ref.ev(last).ts + MODEL_LIMITS.day
       const seen: Record<string, number> = {}
       for (const id of v.ref.order) {
         const x = v.ref.ev(id)
@@ -1980,8 +1969,8 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
         w.act('X1', 'mark', {}, { ap: [w.latestOwn('X1')!.id], ts: ay.ts + 1 + 11 * i }).v.s === 'A'
       )
         n++
-    expect(n + 1).toBeLessThanOrEqual(LIM.totU) // the add and the marks; its join and first mark were acknowledged before
-    expect(storedOf(w, start).length).toBeLessThanOrEqual(LIM.totU)
+    expect(n + 1).toBeLessThanOrEqual(MODEL_LIMITS.totU) // the add and the marks; its join and first mark were acknowledged before
+    expect(storedOf(w, start).length).toBeLessThanOrEqual(MODEL_LIMITS.totU)
   })
   // [H18] a member forks its device into branches and lets in sybils on each; each sybil's join witnessed its branch in
   // good faith, so every branch kept its budgets and its sybils: unboundedly many members at once, no removal needed
@@ -2000,7 +1989,7 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
         let prev = m0.id,
           seq = m0.seq,
           ts = m0.ts + 1 + b
-        for (let k = 0; k < LIM.pendingPerDev; k++) {
+        for (let k = 0; k < MODEL_LIMITS.pendingPerDev; k++) {
           const who = `Y${b}q${k}z`
           const a = w.act(
             'M1',
@@ -2066,7 +2055,7 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
         ap = [r.e.id]
       }
     }
-    expect(n).toBeLessThanOrEqual(LIM.totU)
+    expect(n).toBeLessThanOrEqual(MODEL_LIMITS.totU)
     expect(n).toBeLessThan(mem.length)
     expect(w.state().facts.mem.size).toBe(mem.length + 2) // every member stays (the kicks are cut with X's removal)
   })
@@ -2082,7 +2071,7 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     let ts = 100
     const olds: { dev: string; ack: string }[] = []
     for (let i = 2; i < 2 + n; i++) {
-      ts += LIM.day
+      ts += MODEL_LIMITS.day
       w.ok(`X${i}`, 'device_add', {}, { ts })
       w.ok(`X${i}`, 'mark', {}, { ts: ts + 1 })
       const ack = w.ok('O1', 'mark', {}, { ts: ts + 2 })
@@ -2105,9 +2094,9 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     for (const d of olds) for (let k = 0; k < 30; k++) if (post(d).v.s === 'A') admitted++
     const stored = storedOf(w, start)
     const S = w.state()
-    expect(admitted).toBe(6 * LIM.totU) // each chain keeps its own W3(b) budget at admission
+    expect(admitted).toBe(6 * MODEL_LIMITS.totU) // each chain keeps its own W3(b) budget at admission
     expect(stored.every(id => S.cut.has(id))).toBe(true)
-    expect(stored.length).toBe(6 * LIM.totU) // revision 6: at most poolU; dispatch 5b-i: 6 × totU = 72
+    expect(stored.length).toBe(6 * MODEL_LIMITS.totU) // revision 6: at most poolU; dispatch 5b-i: 6 × totU = 72
     expect(stored.filter(x => S.PC.has(x)).length).toBeGreaterThan(0)
   })
   // The boundary, restated independently from the recorded pools: x is a pool candidate iff |U(x) ∪ ⋃ U(y)| > poolU over
@@ -2117,12 +2106,12 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
   test('H20: the pool boundary: an event is a pool candidate iff its concurrent pool exceeds poolU; stored ≤ totU per old device throughout', () => {
     const { w, olds, post, start } = oldDevices(3)
     let firstPC = -1
-    for (let k = 0; k < LIM.totU; k++)
+    for (let k = 0; k < MODEL_LIMITS.totU; k++)
       for (const d of olds) {
         post(d)
         const S = w.state()
         // revision 7: pool candidates stay stored (revision 6: stored ≤ poolU)
-        expect(storedOf(w, start).length).toBeLessThanOrEqual(olds.length * LIM.totU)
+        expect(storedOf(w, start).length).toBeLessThanOrEqual(olds.length * MODEL_LIMITS.totU)
         if (firstPC < 0 && S.PC?.size) {
           firstPC = w.ref.order.length
           // only events with no later event of their own chain can overflow first
@@ -2142,12 +2131,12 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       for (const y of xs)
         if (y !== x && pre(y) && !ref.anc(x).has(y) && !ref.anc(y).has(x))
           for (const z of ref.rec(y).pool!) P.add(z)
-      expect(S.PC?.has(x) ?? false).toBe(P.size > LIM.poolU)
+      expect(S.PC?.has(x) ?? false).toBe(P.size > MODEL_LIMITS.poolU)
     }
   })
   test('W3(g): one view of an identity holds at most poolU events nobody else acknowledged', () => {
     const { w, olds, post } = oldDevices(3)
-    for (const d of olds) for (let k = 0; k < LIM.poolU / 3; k++) post(d)
+    for (const d of olds) for (let k = 0; k < MODEL_LIMITS.poolU / 3; k++) post(d)
     // a merge of the three chains would hold all of them (and itself) unacknowledged: refused (mutant pool-cap-off)
     const r = w.act('X1', 'mark', {}, { ap: olds.map(d => w.latestOwn(d.dev)!.id) })
     expect(r.v.s).toBe('R')
@@ -2182,7 +2171,7 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       join(w, 'M1')
       w.ok('M2', 'device_add')
       const m0 = w.ok('O1', 'mark')
-      const n = many ? LIM.poolU : LIM.poolU - 3
+      const n = many ? MODEL_LIMITS.poolU : MODEL_LIMITS.poolU - 3
       let ts = m0.ts
       for (let k = 0; k < n; k++) {
         w.ok('M1', 'mark', {}, { ts: (ts += 11) })
@@ -2294,7 +2283,7 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       const stored = storedOf(w, start)
       expect(admitted).toBeGreaterThan(stored.length)
       // [H20]: poolU (spec §4.1), whatever the devices; dispatch 5b-i's per-device bound was D × (totU + 1 + DEV) + rotTot
-      expect(stored.length).toBeLessThanOrEqual(LIM.poolU)
+      expect(stored.length).toBeLessThanOrEqual(MODEL_LIMITS.poolU)
       expect(w.state().facts.mem.has('X')).toBe(false)
     })
   }
@@ -2331,14 +2320,15 @@ describe('r5 review (revision 6)', () => {
     const m0 = w.ok('O1', 'mark')
     const a2 = w.latestOwn('A2')!
     const sibs: string[] = []
-    for (let i = 0; i < LIM.poolU + 1; i++)
+    for (let i = 0; i < MODEL_LIMITS.poolU + 1; i++)
       sibs.push(
         w.ok('A2', 'mark', {}, { ap: [m0.id], seq: a2.seq + 1, aprev: a2.id, ts: m0.ts + 1 + i }).id
       )
-    const noSib = () => w.heads(w.ref.order.filter(x => !sibs.includes(x))).slice(0, LIM.ap)
+    const noSib = () =>
+      w.heads(w.ref.order.filter(x => !sibs.includes(x))).slice(0, MODEL_LIMITS.ap)
     w.ok('A1', 'ban', { to: 'B' }, { ap: noSib() })
     const rev = w.ok('A1', 'device_revoke', { dk: 'A2', seen: a2.seq }, { ap: noSib() })
-    w.ok('C1', 'mark', {}, { ap: w.heads().slice(0, LIM.ap) })
+    w.ok('C1', 'mark', {}, { ap: w.heads().slice(0, MODEL_LIMITS.ap) })
     w.ok('O1', 'mark')
     const S = w.state()
     expect(S.PC.has(rev.id)).toBe(false)
@@ -2356,9 +2346,9 @@ describe('r5 review (revision 6)', () => {
     const a = w.ok('A1', 'mark', {}, { ap: P0 })
     const ms: string[] = []
     for (let i = 0; i < 12; i++) ms.push(w.ok(`m${i}x1`, 'mark', {}, { ap: P0 }).id)
-    expect(w.heads().length).toBeGreaterThan(LIM.ap)
+    expect(w.heads().length).toBeGreaterThan(MODEL_LIMITS.ap)
     const e = w.ok('A1', 'mark')
-    expect(e.ap.length).toBeLessThanOrEqual(LIM.ap)
+    expect(e.ap.length).toBeLessThanOrEqual(MODEL_LIMITS.ap)
     expect(e.aprev).toBe(a.id)
     expect(w.state().F.get('A1') ?? Infinity).toBe(Infinity)
     const r = w.act('B1', 'mark', {}, { ap: ms.slice(0, 11) })
@@ -2381,8 +2371,8 @@ describe('r5 review (revision 6)', () => {
     const chain = (dev: string, start: string[], profileLast = false) => {
       const ids: string[] = []
       let ap = start
-      for (let i = 0; i < LIM.totU - 1; i++) {
-        const prof = profileLast && i === LIM.totU - 2
+      for (let i = 0; i < MODEL_LIMITS.totU - 1; i++) {
+        const prof = profileLast && i === MODEL_LIMITS.totU - 2
         const e = w.ok(dev, prof ? 'profile' : 'mark', prof ? { name: 9 } : {}, {
           ap,
           ts: (ts += 11),
@@ -2557,15 +2547,16 @@ describe('revision 7 (C1, option 2)', () => {
       const m0 = w.ok('O1', 'mark')
       const a2 = w.latestOwn('A2')!
       const sibs: string[] = []
-      for (let i = 0; i < LIM.poolU + 1; i++)
+      for (let i = 0; i < MODEL_LIMITS.poolU + 1; i++)
         sibs.push(
           w.ok('A2', 'mark', {}, { ap: [m0.id], seq: a2.seq + 1, aprev: a2.id, ts: m0.ts + 1 + i })
             .id
         )
-      const noSib = () => w.heads(w.ref.order.filter(x => !sibs.includes(x))).slice(0, LIM.ap)
+      const noSib = () =>
+        w.heads(w.ref.order.filter(x => !sibs.includes(x))).slice(0, MODEL_LIMITS.ap)
       const ban = w.ok('A1', 'ban', { to: 'B' }, { ap: noSib() })
       const rev = w.ok('A1', 'device_revoke', { dk: 'A2', seen: a2.seq }, { ap: noSib() })
-      const o = () => (cite === 'all heads' ? { ap: w.heads().slice(-LIM.ap) } : {})
+      const o = () => (cite === 'all heads' ? { ap: w.heads().slice(-MODEL_LIMITS.ap) } : {})
       w.ok('C1', 'mark', {}, o())
       w.ok('O1', 'mark', {}, o())
       const S = w.state()
@@ -2589,12 +2580,13 @@ describe('revision 7 (C1, option 2)', () => {
     w.ok('O1', 'mark')
     const sibs: string[] = []
     const batch = () => {
-      for (let i = 0; i < LIM.poolU + 1; i++)
+      for (let i = 0; i < MODEL_LIMITS.poolU + 1; i++)
         sibs.push(
           w.ok('A2', 'mark', {}, { ap: [m0.id], seq: a2.seq + 1, aprev: a2.id, ts: m0.ts + 1 }).id
         )
     }
-    const noSib = () => w.heads(w.ref.order.filter(x => !sibs.includes(x))).slice(0, LIM.ap)
+    const noSib = () =>
+      w.heads(w.ref.order.filter(x => !sibs.includes(x))).slice(0, MODEL_LIMITS.ap)
     batch()
     w.ok('C1', 'mark')
     w.ok('O1', 'mark')
@@ -2702,7 +2694,7 @@ describe('r7.9 (witness search)', () => {
     const chain = (dev: string, start: string[]) => {
       const ids: string[] = []
       let ap = start
-      for (let i = 0; i < LIM.totU - 1; i++) {
+      for (let i = 0; i < MODEL_LIMITS.totU - 1; i++) {
         const e = w.ok(dev, 'mark', {}, { ap, ts: (ts += 11) })
         ids.push(e.id)
         ap = [e.id]
@@ -2750,7 +2742,7 @@ describe('r7.3 (concurrent introductions)', () => {
       fresh.push(w.ok(`A${10 + i}`, 'mark', {}, { ap: [d.id], ts: (ts += 1) }).id)
     }
     const ap = [...w.heads().filter(h => !/^A[1-9][0-9]$/.test(w.ref.ev(h).dev)), fresh[0]].slice(
-      -LIM.ap
+      -MODEL_LIMITS.ap
     )
     const rev = w.ok(
       'A1',
@@ -2877,8 +2869,8 @@ describe('r7b (older oracle findings, readings)', () => {
       const chain = (dev: string, start: string[], addLast = false) => {
         const ids: string[] = []
         let ap = start
-        for (let i = 0; i < LIM.totU - 1; i++) {
-          const last = addLast && i === LIM.totU - 2
+        for (let i = 0; i < MODEL_LIMITS.totU - 1; i++) {
+          const last = addLast && i === MODEL_LIMITS.totU - 2
           const e = w.ok(dev, last ? 'add' : 'mark', last ? { to: 'Z' } : {}, {
             ap,
             ts: (ts += 11),
@@ -2932,49 +2924,44 @@ describe('r7b (older oracle findings, readings)', () => {
 describe('r7c (class count from senior-made data)', () => {
   for (const cap of [2, 3]) {
     test(`r7c pclass (cap ${cap}): a protected author’s extra invites citing other cut grants make no class; the exact rule still cuts P’s invite`, () => {
-      setLimits({ ...MODEL_LIMITS, classes: cap })
-      try {
-        const w = base(0)
-        const QR = role(w, 3, KICK | BAN)
-        const AR = role(w, 2, ROLES)
-        const R1 = role(w, 1, ROLES)
-        const R3 = role(w, 0, INVITE)
-        const HR = role(w, 5, 0)
-        for (const d of 'Q1 R1 S1 T1 A1 Z1 Y1 W1 X1 P1 K1 L1 M1'.split(' ')) join(w, d)
-        w.ok('P2', 'device_add')
-        for (const m of ['Q', 'R', 'S', 'T']) give(w, m, QR)
-        for (const m of ['A', 'Z', 'Y', 'W']) give(w, m, AR)
-        const P0 = w.heads()
-        const g1 = w.ok('A1', 'assign', { to: 'X', role: R1 }, { ap: P0 })
-        const z = w.ok('Z1', 'assign', { to: 'K', role: R3 }, { ap: P0 })
-        const y = w.ok('Y1', 'assign', { to: 'L', role: R3 }, { ap: P0 })
-        const wv = w.ok('W1', 'assign', { to: 'M', role: R3 }, { ap: P0 })
-        const x = w.ok('X1', 'assign', { to: 'P', role: R3 }, { ap: [g1.id, wv.id] })
-        const p = w.ok('P1', 'add', { to: 'N' }, { ap: [x.id] })
-        const cs = (['Q1', 'R1', 'S1', 'T1'] as const).map((d, i) =>
-          w.ok(d, 'kick', { to: ['A', 'Z', 'Y', 'W'][i] }, { ap: P0 })
-        )
-        w.ok('O1', 'assign', { to: 'P', role: HR }, { ap: [p.id, cs[0].id, cs[1].id, cs[2].id] })
-        expect(w.state().cut.has(p.id)).toBe(true)
-        const plan = [
-          ['P1', [p.id, z.id]],
-          ['P2', [x.id, y.id]],
-          ['P2', [x.id, y.id, z.id]],
-        ] as const
-        const ex: string[] = []
-        for (let i = 0; i < cap; i++) {
-          const [dev, ap] = plan[i]
-          const own = w.latestOwn(dev)
-          const full = own && !ap.includes(own.id) ? [...ap, own.id] : [...ap]
-          ex.push(w.ok(dev, 'add', { to: `E${'abc'[i]}` }, { ap: full, ts: 2000 + 20 * i }).id)
-        }
-        const { S, st } = classStats(w)
-        expect(st).toEqual([1, 0])
-        expect(S.cut.has(g1.id) && S.cut.has(x.id) && S.cut.has(p.id)).toBe(true)
-        expect(ex.map(e => S.cut.has(e))).toEqual(ex.map(() => true))
-      } finally {
-        setLimits(MODEL_LIMITS)
+      const w = base(0, { ...MODEL_LIMITS, classes: cap })
+      const QR = role(w, 3, KICK | BAN)
+      const AR = role(w, 2, ROLES)
+      const R1 = role(w, 1, ROLES)
+      const R3 = role(w, 0, INVITE)
+      const HR = role(w, 5, 0)
+      for (const d of 'Q1 R1 S1 T1 A1 Z1 Y1 W1 X1 P1 K1 L1 M1'.split(' ')) join(w, d)
+      w.ok('P2', 'device_add')
+      for (const m of ['Q', 'R', 'S', 'T']) give(w, m, QR)
+      for (const m of ['A', 'Z', 'Y', 'W']) give(w, m, AR)
+      const P0 = w.heads()
+      const g1 = w.ok('A1', 'assign', { to: 'X', role: R1 }, { ap: P0 })
+      const z = w.ok('Z1', 'assign', { to: 'K', role: R3 }, { ap: P0 })
+      const y = w.ok('Y1', 'assign', { to: 'L', role: R3 }, { ap: P0 })
+      const wv = w.ok('W1', 'assign', { to: 'M', role: R3 }, { ap: P0 })
+      const x = w.ok('X1', 'assign', { to: 'P', role: R3 }, { ap: [g1.id, wv.id] })
+      const p = w.ok('P1', 'add', { to: 'N' }, { ap: [x.id] })
+      const cs = (['Q1', 'R1', 'S1', 'T1'] as const).map((d, i) =>
+        w.ok(d, 'kick', { to: ['A', 'Z', 'Y', 'W'][i] }, { ap: P0 })
+      )
+      w.ok('O1', 'assign', { to: 'P', role: HR }, { ap: [p.id, cs[0].id, cs[1].id, cs[2].id] })
+      expect(w.state().cut.has(p.id)).toBe(true)
+      const plan = [
+        ['P1', [p.id, z.id]],
+        ['P2', [x.id, y.id]],
+        ['P2', [x.id, y.id, z.id]],
+      ] as const
+      const ex: string[] = []
+      for (let i = 0; i < cap; i++) {
+        const [dev, ap] = plan[i]
+        const own = w.latestOwn(dev)
+        const full = own && !ap.includes(own.id) ? [...ap, own.id] : [...ap]
+        ex.push(w.ok(dev, 'add', { to: `E${'abc'[i]}` }, { ap: full, ts: 2000 + 20 * i }).id)
       }
+      const { S, st } = classStats(w)
+      expect(st).toEqual([1, 0])
+      expect(S.cut.has(g1.id) && S.cut.has(x.id) && S.cut.has(p.id)).toBe(true)
+      expect(ex.map(e => S.cut.has(e))).toEqual(ex.map(() => true))
     })
   }
   test('r7c jclass: three juniors’ revoked devices give their two-hop invitees’ joins one class at ⊥; the exact rule cuts them all', () => {

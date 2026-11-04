@@ -43,19 +43,8 @@ export const MODBITS = KICK | BAN | ROLES | CHANNELS | SERVER | MESSAGES
 export const EVERYONE = 'everyone'
 export const RULES_VERSION = 2
 
-export type Limits = Agreed
-
 // §4.1 production values (ts in ms).
-export const PRODUCTION_LIMITS: Readonly<Limits> = AGREED
-
-// The limits admission reads. Fixed in the app; tests and scripts (the benchmark) run with
-// others (the model's), set through setLimits.
-export let LIM: Readonly<Limits> = Object.freeze({ ...PRODUCTION_LIMITS })
-export const setLimits = (l: Partial<Limits>) => {
-  const env = typeof process === 'undefined' ? 'production' : process.env.NODE_ENV
-  if (env !== 'test' && env !== undefined) throw new Error('acl: admission limits are fixed')
-  LIM = Object.freeze({ ...PRODUCTION_LIMITS, ...l })
-}
+export const PRODUCTION_LIMITS: Readonly<Agreed> = AGREED
 
 export interface Owner {
   ik: string
@@ -130,9 +119,12 @@ export interface Rec {
   pool?: string[]
 }
 
+// What admission and evaluation read of a replica: its events, their admission records, and the
+// limits its server agreed on.
 export interface Ctx {
   ev(id: string): AclEv
   rec(id: string): Rec
+  readonly lim: Agreed
 }
 
 export const ownersOf = (c: AclContent): string[] => (c.owners ?? []).map(o => o.ik)
@@ -319,7 +311,7 @@ const sameValue = (x: unknown, y: unknown) => {
 }
 
 // Guards: target-state, cap and no-op checks, enforced at admission only, never a reason to cut.
-export function guards(e: AclEv, F: Facts): boolean {
+export function guards(e: AclEv, F: Facts, L: Agreed): boolean {
   if (F.upgraded.length && e.t !== 'leave') return false
   const a = e.a
   const c = e.c
@@ -368,16 +360,16 @@ export function guards(e: AclEv, F: Facts): boolean {
       if (c.gone === true || (cur !== undefined && cur.gone !== true)) return true
       let live = 0
       for (const x of F.channels.values()) if (x.gone !== true) live++
-      return live < LIM.channels
+      return live < L.channels
     }
     case 'chperm': {
       if (typeof c.ch !== 'string' || typeof c.subj !== 'string') return false
       const ov = F.overwrites.get(c.ch)
-      return ov === undefined || ov.has(c.subj) || ov.size < LIM.overwrites
+      return ov === undefined || ov.has(c.subj) || ov.size < L.overwrites
     }
     case 'device_add': {
       const d = F.devs.get(a)
-      return !(d?.has(e.dev) ?? false) && (d?.size ?? 0) < LIM.devCap
+      return !(d?.has(e.dev) ?? false) && (d?.size ?? 0) < L.devCap
     }
     case 'device_revoke':
       return (
@@ -394,7 +386,7 @@ export function guards(e: AclEv, F: Facts): boolean {
         !relayed(e) &&
         Array.isArray(keep) &&
         keep.every(v => typeof v === 'string' && (d?.has(v) ?? false) && v !== e.dev) &&
-        new Set([...keep, e.dev]).size <= LIM.devCap
+        new Set([...keep, e.dev]).size <= L.devCap
       )
     }
     case 'upgrade': {
@@ -472,7 +464,7 @@ export function deviceOk(e: AclEv, F: FactsQ): boolean {
 }
 export const authorizeFull = (e: AclEv, F: FactsQ) => deviceOk(e, F) && authority(e, F)
 
-export const admissible = (e: AclEv, F: Facts) => authorizeFull(e, F) && guards(e, F)
+export const admissible = (e: AclEv, F: Facts, L: Agreed) => authorizeFull(e, F) && guards(e, F, L)
 
 // role_meta (added within rules version 2, §1.4 common rules) has no case in authCore, guards or
 // classify: it is admitted, cut and live by the generic rule, as a client that doesn't know the

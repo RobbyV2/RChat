@@ -1555,7 +1555,7 @@ export class AclRoom {
       if (seen.has(key)) continue
       seen.add(key)
       const probe = { id: '', t: x.t, a: me, dev: '', seq: 0, ap: [], ts: 0, c } as AclEv
-      if (authority(probe, F) && guards(probe, F)) out.push({ id: x.id, t: x.t, c })
+      if (authority(probe, F) && guards(probe, F, this.r.lim)) out.push({ id: x.id, t: x.t, c })
     }
     return out
   }
@@ -1581,7 +1581,8 @@ export class AclRoom {
       if (acts.has(key)) continue
       acts.add(key)
       const probe = { id: '', t: e.t, a: me, dev: e.dev, seq: 0, ap: [], ts: 0, c } as AclEv
-      if (authority(probe, F) && guards(probe, F)) out.push({ id: ix.ids[i], t: e.t, c })
+      if (authority(probe, F) && guards(probe, F, this.r.lim))
+        out.push({ id: ix.ids[i], t: e.t, c })
     }
     return out
   }

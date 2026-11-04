@@ -14,6 +14,7 @@ import {
   type Shown,
   type SumDelta,
 } from './acl_room'
+import type { AdmitOpts } from './acl/admit'
 import type { ContentEv } from './acl/visibility'
 import type { WireV2 } from './event'
 
@@ -132,79 +133,83 @@ export type HostRequest =
 
 export type HostReply = { id: number; ok: unknown } | { id: number; err: string }
 
-const roomOf = (rooms: Map<string, AclRoom>, room: string) => {
+const roomOf = (rooms: Map<string, AclRoom>, room: string, opts?: Partial<AdmitOpts>) => {
   let r = rooms.get(room)
   if (!r) {
-    r = new AclRoom(room)
+    r = new AclRoom(room, opts)
     rooms.set(room, r)
   }
   return r
 }
 
 // One request against the rooms a host keeps.
-export const runRequest = (rooms: Map<string, AclRoom>, m: HostRequest): unknown => {
+export const runRequest = (
+  rooms: Map<string, AclRoom>,
+  m: HostRequest,
+  opts?: Partial<AdmitOpts>
+): unknown => {
   switch (m.op) {
     case 'load': {
-      const r = new AclRoom(m.room)
+      const r = new AclRoom(m.room, opts)
       rooms.set(m.room, r)
       const out = r.restore(m.acl, m.contents, m.check, m.bodiless, m.evicted)
       return { ...out, delta: r.delta() } satisfies Loaded
     }
     case 'acl': {
-      const r = roomOf(rooms, m.room)
+      const r = roomOf(rooms, m.room, opts)
       const out = r.receiveAcl(m.ev, m.w, m.now)
       return { out, delta: out.s === 'A' || out.s === 'U' ? r.delta() : null } satisfies Decided
     }
     case 'content':
-      return roomOf(rooms, m.room).receiveContent(m.ev, m.w, m.now)
+      return roomOf(rooms, m.room, opts).receiveContent(m.ev, m.w, m.now)
     case 'plan':
-      return roomOf(rooms, m.room).plan(m.q)
+      return roomOf(rooms, m.room, opts).plan(m.q)
     case 'display':
-      return roomOf(rooms, m.room).display(m.ids)
+      return roomOf(rooms, m.room, opts).display(m.ids)
     case 'history':
-      return roomOf(rooms, m.room).history(m.ik, m.ids)
+      return roomOf(rooms, m.room, opts).history(m.ik, m.ids)
     case 'diff':
-      return roomOf(rooms, m.room).aclDiff(m.from, m.have, m.limit)
+      return roomOf(rooms, m.room, opts).aclDiff(m.from, m.have, m.limit)
     case 'drops': {
-      const r = roomOf(rooms, m.room)
+      const r = roomOf(rooms, m.room, opts)
       const d = r.drops(m.mine)
       return { ...d, delta: d.acl.length ? r.delta() : null } satisfies Dropped
     }
     case 'proofs':
-      return roomOf(rooms, m.room).proofs({ a: m.a, dev: m.dev }, m.devs)
+      return roomOf(rooms, m.room, opts).proofs({ a: m.a, dev: m.dev }, m.devs)
     case 'purgeable':
-      return roomOf(rooms, m.room).purgeable(m.only)
+      return roomOf(rooms, m.room, opts).purgeable(m.only)
     case 'wanted':
-      return roomOf(rooms, m.room).wanted()
+      return roomOf(rooms, m.room, opts).wanted()
     case 'bodies':
-      roomOf(rooms, m.room).bodies(m.ids, m.have, m.evicted)
+      roomOf(rooms, m.room, opts).bodies(m.ids, m.have, m.evicted)
       return null
     case 'acks':
-      return roomOf(rooms, m.room).acks(m.me)
+      return roomOf(rooms, m.room, opts).acks(m.me)
     case 'unhold':
-      roomOf(rooms, m.room).unhold(m.ids)
+      roomOf(rooms, m.room, opts).unhold(m.ids)
       return null
     case 'restorable':
-      return roomOf(rooms, m.room).restorable(m.ids, m.viewed)
+      return roomOf(rooms, m.room, opts).restorable(m.ids, m.viewed)
     case 'viewable':
-      return roomOf(rooms, m.room).viewable(m.ik, m.chs)
+      return roomOf(rooms, m.room, opts).viewable(m.ik, m.chs)
     case 'last':
-      return roomOf(rooms, m.room).lastSent(m.a, m.ch)
+      return roomOf(rooms, m.room, opts).lastSent(m.a, m.ch)
     case 'reapply': {
-      const here = roomOf(rooms, m.room)
+      const here = roomOf(rooms, m.room, opts)
       const own = here.reapply(m.me, m.exclude)
       const old = m.from && rooms.get(m.from.room)
       if (!m.from || !old) return own
       return [...own, ...here.admissible(m.me, old.outside(m.me, m.from.up, m.exclude))]
     }
     case 'counted':
-      return roomOf(rooms, m.room).counted(m.ids)
+      return roomOf(rooms, m.room, opts).counted(m.ids)
     case 'stopped':
-      return roomOf(rooms, m.room).stopped(m.ids)
+      return roomOf(rooms, m.room, opts).stopped(m.ids)
     case 'carried':
-      return roomOf(rooms, m.room).carried(m.up)
+      return roomOf(rooms, m.room, opts).carried(m.up)
     case 'disown':
-      return roomOf(rooms, m.room).disown(m.ik, m.dk, m.witnesses, m.own)
+      return roomOf(rooms, m.room, opts).disown(m.ik, m.dk, m.witnesses, m.own)
     case 'drop':
       rooms.delete(m.room)
       return null
@@ -323,8 +328,11 @@ abstract class Base implements AclHost {
 
 export class LocalHost extends Base {
   rooms = new Map<string, AclRoom>()
+  constructor(private opts?: Partial<AdmitOpts>) {
+    super()
+  }
   protected async call<T>(m: Body<HostRequest>) {
-    return runRequest(this.rooms, { ...m, id: 0 } as HostRequest) as T
+    return runRequest(this.rooms, { ...m, id: 0 } as HostRequest, this.opts) as T
   }
   drop(room: string) {
     this.rooms.delete(room)

@@ -1,13 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import {
-  AclWorld,
-  devOwner,
-  diffProdWorld,
-  TestReplica,
-  toModel,
-  useModelLimits,
-  useProductionLimits,
-} from './p2p_acl_world'
+import { AclWorld, devOwner, diffProdWorld, TestReplica, toModel } from './p2p_acl_world'
+import { AGREED } from '../p2p/limits'
 import * as M from './acl_model/model'
 import {
   bodies,
@@ -50,7 +43,7 @@ import { applySummary, diffSummary, emptySummary, fromStored, toStored } from '.
 // view gate (spec 3.7).
 
 const world = () => {
-  const w = new AclWorld({ model: false })
+  const w = new AclWorld({ model: false, agreed: AGREED })
   w.genesis('O1', ['O'])
   w.channel('O1')
   return w
@@ -219,7 +212,7 @@ describe('races between moderation and role changes (spec 3.1, 8.2)', () => {
         const j = s % (i + 1)
         ;[order[i], order[j]] = [order[j], order[i]]
       }
-      const r = new TestReplica()
+      const r = new TestReplica(AGREED)
       for (const e of order) r.receive(e)
       expect(r.state().facts.channels.get('c0')?.name).toBe(want)
     }
@@ -229,7 +222,7 @@ describe('races between moderation and role changes (spec 3.1, 8.2)', () => {
   })
 
   test('ownership transfer racing a kick by the old owner: the kick counts only in the old copy, which then freezes', () => {
-    const w = new AclWorld({ model: false })
+    const w = new AclWorld({ model: false, agreed: AGREED })
     w.genesis('O1', ['O'])
     w.channel('O1')
     for (const d of ['R1', 'B1']) join(w, d)
@@ -493,7 +486,7 @@ describe('role_meta (spec 1.4, 1.5): a role keeps its name and color in a regist
         const j = s % (i + 1)
         ;[order[i], order[j]] = [order[j], order[i]]
       }
-      const r = new TestReplica()
+      const r = new TestReplica(AGREED)
       for (const e of order) r.receive(e)
       expect(r.state().facts.roleMeta.get(R)?.name).toBe(want)
     }
@@ -553,43 +546,33 @@ describe('role_meta (spec 1.4, 1.5): a role keeps its name and color in a regist
   }
   for (const variant of ['demoted', 'unauthorized'] as const)
     test(`role_meta is live exactly as an unknown type is: sticky code death agrees with an older client (${variant})`, () => {
-      useModelLimits()
-      try {
-        const { w, add } = deathWorld(variant)
-        expect(diffProdWorld(w)).toEqual([])
-        // A live write over v keeps the code dead; a cut one (Y kicked) doesn't.
-        expect(add.v.s).toBe(variant === 'demoted' ? 'R' : 'A')
-      } finally {
-        useProductionLimits()
-      }
+      const { w, add } = deathWorld(variant)
+      expect(diffProdWorld(w)).toEqual([])
+      // A live write over v keeps the code dead; a cut one (Y kicked) doesn't.
+      expect(add.v.s).toBe(variant === 'demoted' ? 'R' : 'A')
     })
 
   test('a client that does not know role_meta admits it with no effect and no strike', () => {
-    useModelLimits()
-    try {
-      const w = new AclWorld({ model: false })
-      w.genesis('O1', ['O'])
-      const R = role(w, 2, ROLES)
-      const LOW = role(w, 1, 0)
-      join(w, 'A1')
-      give(w, 'A', R)
-      const P0 = w.heads()
-      const metas = [
-        w.ok('O1', 'role_meta', { role: LOW, name: 'Crew', color: 3 }, { ap: P0 }),
-        w.ok('A1', 'role_meta', { role: LOW, name: 'Team' }, { ap: P0 }),
-        w.ok('A1', 'role_meta', { role: R, name: 7 }),
-      ]
-      w.ok('O1', 'kick', { to: 'A' })
-      // The reference model, which has no role_meta (an older client), reads them as unknown.
-      const mr = new M.Replica()
-      for (const e of w.all) mr.receive(toModel(e))
-      expect(metas.map(e => mr.status.get(e.id)?.s)).toEqual(['A', 'A', 'A'])
-      expect(diffProdWorld(w)).toEqual([])
-      // Here: the owner's write is the senior one.
-      expect(F(w).roleMeta.get(LOW)?.name).toBe('Crew')
-    } finally {
-      useProductionLimits()
-    }
+    const w = new AclWorld({ model: false })
+    w.genesis('O1', ['O'])
+    const R = role(w, 2, ROLES)
+    const LOW = role(w, 1, 0)
+    join(w, 'A1')
+    give(w, 'A', R)
+    const P0 = w.heads()
+    const metas = [
+      w.ok('O1', 'role_meta', { role: LOW, name: 'Crew', color: 3 }, { ap: P0 }),
+      w.ok('A1', 'role_meta', { role: LOW, name: 'Team' }, { ap: P0 }),
+      w.ok('A1', 'role_meta', { role: R, name: 7 }),
+    ]
+    w.ok('O1', 'kick', { to: 'A' })
+    // The reference model, which has no role_meta (an older client), reads them as unknown.
+    const mr = new M.Replica()
+    for (const e of w.all) mr.receive(toModel(e))
+    expect(metas.map(e => mr.status.get(e.id)?.s)).toEqual(['A', 'A', 'A'])
+    expect(diffProdWorld(w)).toEqual([])
+    // Here: the owner's write is the senior one.
+    expect(F(w).roleMeta.get(LOW)?.name).toBe('Crew')
   })
 })
 
@@ -724,7 +707,7 @@ describe('the fuzz of Task 22 with role, channel and overwrite events', () => {
           const j = s % (i + 1)
           ;[order[i], order[j]] = [order[j], order[i]]
         }
-        const r = new TestReplica()
+        const r = new TestReplica(AGREED)
         for (const e of order) r.receive(e)
         const held = [...w.contents].sort((x, y) => (x.id < y.id === (k % 2 === 0) ? -1 : 1))
         const got = picture(r, held)

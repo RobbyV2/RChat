@@ -12,7 +12,6 @@ import {
   isRevocationT,
   isWithdrawalT,
   KICK,
-  LIM,
   minR,
   NEG,
   permsQ,
@@ -1377,7 +1376,7 @@ export class FastEval extends Equiv {
     this.stats.maxClasses = Math.max(this.stats.maxClasses, classSet.size)
     this.stats.maxRegion = Math.max(this.stats.maxRegion, region.length)
     this.stats.maxFlat = Math.max(this.stats.maxFlat, flat.length)
-    if (classSet.size > LIM.classes) {
+    if (classSet.size > this.ix.cx.lim.classes) {
       this.stats.fallbacks++
       const cascTop = new Map<number, boolean>()
       for (const q of flat) {
@@ -1523,7 +1522,7 @@ export class FastEval extends Equiv {
       !ix.owners.has(poster(e)) &&
       e.t !== 'primary_rotate' &&
       !(e.t === 'device_revoke' && !relayed(e)) &&
-      pl.length > LIM.poolU
+      pl.length > ix.cx.lim.poolU
     )
       this.PC.add(ix.ids[i])
     if (this.candidateIn(i, this.F, this.FI, this.RF, this.PC)) {

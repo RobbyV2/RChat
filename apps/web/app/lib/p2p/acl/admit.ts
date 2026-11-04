@@ -3,6 +3,7 @@ import { deviceCertOk, genesisSrv } from './binding'
 import { AclState } from './cache'
 import { evidencePair, seenOf, type Header } from './equivocation'
 import { emptyResult, fiOf, type EvalResult } from './facts'
+import { AGREED, type Agreed } from '../limits'
 import { EMPTY, type Ix } from './reach'
 import {
   aclContentOk,
@@ -11,7 +12,6 @@ import {
   classify,
   idOp,
   introduces,
-  LIM,
   poster,
   relayed,
   MODBITS,
@@ -58,6 +58,8 @@ export interface AdmitOpts {
   // A1 device binding, a pure function of the event and its causal past (B(e), St(e); none for a
   // genesis): an event whose device isn't bound to its poster is refused. Default `certBinds`.
   binds: (e: AclEv, B?: Past, S?: EvalResult) => boolean
+  // The limits the server agreed on (spec 4.1). Default `AGREED`.
+  agreed?: Agreed
 }
 
 // The primary key of a's current epoch in B (§1.5 Primary): the `pcert` of the epoch's rotation
@@ -184,9 +186,10 @@ export function decide(
   opts: AdmitOpts = { binds: certBinds }
 ): { ok: true; rec: Rec } | { ok: false; why: string } {
   const ix = B.ix
+  const L = ix.cx.lim
   const F = S.facts
   // §1.2: at most `ap` (10) ACL parents
-  if (e.ap.length > LIM.ap) return { ok: false, why: 'ap' }
+  if (e.ap.length > L.ap) return { ok: false, why: 'ap' }
   if (!opts.binds(e, B, S)) return { ok: false, why: 'dev' }
   // A1 device, device chain, identity chain
   if ((S.F.get(e.dev) ?? Infinity) < Infinity) return { ok: false, why: 'forked' }
@@ -246,7 +249,7 @@ export function decide(
   )
     return { ok: false, why: 'dup' }
   // A3 authority and guards
-  if (!admissible(e, F)) return { ok: false, why: 'auth' }
+  if (!admissible(e, F, L)) return { ok: false, why: 'auth' }
   const { cls, self } = classify(e, F)
   const A = poster(e)
   const exempt = !relay && exemptOf(e, cls, B)
@@ -277,16 +280,16 @@ export function decide(
   const unackedIdx = [...unacked].map(x => ix.at.get(x)!)
   // A4 deterministic windows (§4.1)
   if (!exempt) {
-    const cap = perms(F, A) & MODBITS ? LIM.w3mod : LIM.w3
+    const cap = perms(F, A) & MODBITS ? L.w3mod : L.w3
     let n = 0
-    for (const x of own) if (!ix.rec[x].exempt && ix.ev[x].ts > e.ts - LIM.win) n++
+    for (const x of own) if (!ix.rec[x].exempt && ix.ev[x].ts > e.ts - L.win) n++
     if (n + 1 > cap) return { ok: false, why: 'W3' }
   }
   if (w3bCounted(e)) {
     const mine = own.filter(x => w3bCounted(ix.ev[x]))
-    if (mine.length + 1 > LIM.totU) {
+    if (mine.length + 1 > L.totU) {
       const un = mine.filter(x => unacked.has(ix.ids[x]))
-      if (un.length + 1 > LIM.totU) return { ok: false, why: 'W3b' }
+      if (un.length + 1 > L.totU) return { ok: false, why: 'W3b' }
     }
   }
   // W3(e) vouched invites: a non-owner's join needs a live add for it that an owner posted, or
@@ -298,20 +301,20 @@ export function decide(
   }
   // W3(c) identity churn: device_adds of the identity within a day in any epoch, rotations within a day
   const inDay = (t: string) =>
-    inPast(B, ix.byAuthor.get(e.a)).filter(i => ix.ev[i].t === t && ix.ev[i].ts > e.ts - LIM.day)
+    inPast(B, ix.byAuthor.get(e.a)).filter(i => ix.ev[i].t === t && ix.ev[i].ts > e.ts - L.day)
       .length
-  if (e.t === 'device_add' && inDay('device_add') + 1 > LIM.idCap) return { ok: false, why: 'W3c' }
-  if (e.t === 'primary_rotate' && inDay('primary_rotate') + 1 > LIM.rotCap)
+  if (e.t === 'device_add' && inDay('device_add') + 1 > L.idCap) return { ok: false, why: 'W3c' }
+  if (e.t === 'primary_rotate' && inDay('primary_rotate') + 1 > L.rotCap)
     return { ok: false, why: 'W3c' }
   // W3(c) rotation total (non-owners): unacknowledged rotations
   if (e.t === 'primary_rotate' && !owner) {
     const n = unackedIdx.filter(i => ix.ev[i].a === e.a && ix.ev[i].t === 'primary_rotate').length
-    if (n + 1 > LIM.rotTot) return { ok: false, why: 'W3c' }
+    if (n + 1 > L.rotTot) return { ok: false, why: 'W3c' }
   }
   // W3(d) fresh introductions (non-owners): unacknowledged device_adds
   if (e.t === 'device_add' && !owner) {
     const n = unackedIdx.filter(i => ix.ev[i].a === e.a && ix.ev[i].t === 'device_add').length
-    if (n + 1 > LIM.freshCap) return { ok: false, why: 'W3d' }
+    if (n + 1 > L.freshCap) return { ok: false, why: 'W3d' }
   }
   // W3(f) no pinning (non-owners): no unacknowledged evidence pair of the poster's own (its relays
   // included) in B(e), outside the past of its rotations; a rotation may see one pair per key
@@ -354,19 +357,19 @@ export function decide(
     if (!changes) return { ok: false, why: 'W6' }
   }
   // W5 live-state caps
-  if (e.t === 'role_create' && F.roles.size + 1 > LIM.roles) return { ok: false, why: 'W5' }
+  if (e.t === 'role_create' && F.roles.size + 1 > L.roles) return { ok: false, why: 'W5' }
   if (e.t === 'add') {
     let n = 0
     for (const ps of F.pending.values()) for (const p of ps) if (p.dev === e.dev) n++
-    if (n + 1 > LIM.pendingPerDev) return { ok: false, why: 'W5' }
+    if (n + 1 > L.pendingPerDev) return { ok: false, why: 'W5' }
   }
   if (e.t === 'code') {
     let n = 0
     for (const cd of F.codes.values()) if (cd.dev === e.dev) n++
-    if (n + 1 > (perms(F, e.a) & SERVER ? LIM.codesPerDevServer : LIM.codesPerDev))
+    if (n + 1 > (perms(F, e.a) & SERVER ? L.codesPerDevServer : L.codesPerDev))
       return { ok: false, why: 'W5' }
   }
-  if (!owner && pool.length > LIM.poolU) return { ok: false, why: 'W3g' }
+  if (!owner && pool.length > L.poolU) return { ok: false, why: 'W3g' }
   return { ok: true, rec: { k: rank(F, e.a), cls, self, exempt, depth, epoch, local: S, pool } }
 }
 
@@ -457,7 +460,7 @@ export function decideContent(
   let last = -1
   for (const i of inPast(B, ix.byDev.get(m.dev))) last = Math.max(last, ix.ev[i].seq)
   if (m.seq <= last) return { ok: false, why: 'seq' }
-  if (m.seq - last > LIM.w4) return { ok: false, why: 'W4' }
+  if (m.seq - last > ix.cx.lim.w4) return { ok: false, why: 'W4' }
   for (const p of m.ap) if (m.ts < ix.ev[ix.at.get(p)!].ts) return { ok: false, why: 'ts' }
   if (F.upgraded.length) return { ok: false, why: 'auth' }
   if (!F.mem.has(m.a) || !(F.devs.get(m.a)?.has(m.dev) ?? false)) return { ok: false, why: 'auth' }
@@ -508,8 +511,10 @@ export class AclReplica implements Ctx {
   acl: AclState
   private waiting = new Map<string, AclEv[]>()
   opts: AdmitOpts
+  readonly lim: Agreed
   constructor(opts: Partial<AdmitOpts> = {}) {
     this.opts = { binds: opts.binds ?? certBinds }
+    this.lim = opts.agreed ?? AGREED
     this.acl = new AclState(this)
   }
   ev(id: string) {

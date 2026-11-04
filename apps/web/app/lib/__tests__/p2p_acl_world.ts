@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect } from 'bun:test'
+import { afterEach, expect } from 'bun:test'
 import {
   AclReplica,
   CHANNEL_CONTENT,
@@ -17,18 +17,16 @@ import {
   idOp,
   INVITE,
   KICK,
-  LIM,
   PRODUCTION_LIMITS,
   rkey,
   ROLES,
   SEND,
   SERVER,
-  setLimits,
   VIEW,
   type AclContent,
   type AclEv,
-  type Limits,
 } from '../p2p/acl/rules'
+import type { Agreed } from '../p2p/limits'
 import * as M from './acl_model/model'
 // the model's orphan rule (props.ts, vendored with the model)
 import { orphanDrops as modelOrphanDrops } from './acl_model/props'
@@ -47,7 +45,7 @@ export const NONCE = 'AAAAAAAAAAAAAAAAAAAAAA'
 export const testBinds = (e: AclEv) => devOwner(e.dev) === (e.relay ?? e.a)
 
 // The model's limits (smaller than production, so the generators reach every cap).
-export const MODEL_LIMITS: Limits = {
+export const MODEL_LIMITS: Agreed = {
   ...PRODUCTION_LIMITS,
   devCap: M.LIM.devCap,
   w3: M.LIM.w3,
@@ -67,8 +65,6 @@ export const MODEL_LIMITS: Limits = {
   poolU: M.LIM.poolU,
   ap: M.LIM.ap,
 }
-export const useModelLimits = () => setLimits(MODEL_LIMITS)
-export const useProductionLimits = () => setLimits({})
 
 const BITMAP: [number, number][] = [
   [M.KICK, KICK],
@@ -325,7 +321,7 @@ function compare(ids: string[], pr: AclReplica, mr: M.Replica, out: string[]) {
 
 // A model universe (genCase) replayed through a production replica.
 export function prodReplica(mw: ModelWorld): AclReplica {
-  const pr = new AclReplica({ binds: testBinds })
+  const pr = new AclReplica({ binds: testBinds, agreed: MODEL_LIMITS })
   for (const me of mw.all) pr.receive(toProd(me, mw.ref))
   return pr
 }
@@ -369,11 +365,11 @@ export function diffModelWorld(mw: ModelWorld): string[] {
   return out
 }
 
-// A production replica with the model replica's ancestry helper.
+// A production replica with the model replica's ancestry helper (the model's limits unless given).
 export class TestReplica extends AclReplica {
   private ancs = new Map<string, Set<string>>()
-  constructor() {
-    super({ binds: testBinds })
+  constructor(agreed: Agreed = MODEL_LIMITS) {
+    super({ binds: testBinds, agreed })
   }
   anc(id: string): Set<string> {
     let s = this.ancs.get(id)
@@ -406,14 +402,16 @@ export const liveWorlds: AclWorld[] = []
 // honest client, `build` fills the acting identity of device_revoke and primary_rotate and the
 // remover's watermark of kick, ban and revoke when they are not given.
 export class AclWorld {
-  ref = new TestReplica()
+  ref: TestReplica
   all: AclEv[] = []
   n = 0
   contents: ContentEv[] = []
   ch?: string
   private top = new Map<string, number>()
-  // model: false for universes with types the model lacks (channel, chperm, proof)
-  constructor(o: { model?: boolean } = {}) {
+  // model: false for universes with types the model lacks (channel, chperm, proof); agreed: the
+  // limits (the model's unless given)
+  constructor(o: { model?: boolean; agreed?: Agreed } = {}) {
+    this.ref = new TestReplica(o.agreed)
     if (o.model !== false) liveWorlds.push(this)
   }
   heads(ids?: string[]): string[] {
@@ -449,20 +447,21 @@ export class AclWorld {
     for (const id of out) if (this.ref.ev(id).t === 'upgrade') out.delete(id)
     return out
   }
-  // An honest client's parents (§1.2): the heads of the events it may cite, at most LIM.ap of
+  // An honest client's parents (§1.2): the heads of the events it may cite, at most `ap` of
   // them (the most recently admitted), with its device's own latest event in their closure.
   capHeads(dev: string): string[] {
     let hs = this.heads()
     const ex = this.excluded()
     if (hs.some(h => ex.has(h))) hs = this.heads(this.ref.order.filter(id => !ex.has(id)))
     let ap = hs
-    if (hs.length > LIM.ap) {
+    const max = this.ref.lim.ap
+    if (hs.length > max) {
       const at = new Map(this.ref.order.map((id, i) => [id, i]))
-      ap = [...hs].sort((x, y) => at.get(y)! - at.get(x)!).slice(0, LIM.ap)
+      ap = [...hs].sort((x, y) => at.get(y)! - at.get(x)!).slice(0, max)
     }
     const own = this.latestOwn(dev)
     if (own && !this.closure(ap).has(own.id)) {
-      if (ap.length >= LIM.ap) ap[ap.length - 1] = own.id
+      if (ap.length >= max) ap[ap.length - 1] = own.id
       else ap.push(own.id)
     }
     return ap
@@ -620,11 +619,8 @@ export function diffProdWorld(w: AclWorld): string[] {
   return out
 }
 
-// Installs, in a test file: the model's limits, and after each test the model diff of every
-// world the test built.
+// Installs, in a test file: after each test the model diff of every world the test built.
 export function modelDiffAfterEach() {
-  beforeAll(useModelLimits)
-  afterAll(useProductionLimits)
   afterEach(() => {
     const ws = liveWorlds.splice(0)
     for (const w of ws) expect(diffProdWorld(w)).toEqual([])

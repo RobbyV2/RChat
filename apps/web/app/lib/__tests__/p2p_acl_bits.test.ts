@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { emptyResult, View } from '../p2p/acl/facts'
 import { Ix } from '../p2p/acl/reach'
+import { AGREED } from '../p2p/limits'
 import {
   BOT,
   cmp,
@@ -140,7 +141,7 @@ function universe(rng: Rng, mode: Mode) {
   const byId = new Map(evs.map(e => [e.id, e]))
   const ix = Ix.of(
     evs.map(e => e.id),
-    { ev: id => byId.get(id)!, rec: id => recs.get(id)! }
+    { ev: id => byId.get(id)!, rec: id => recs.get(id)!, lim: AGREED }
   )
   return { ix, R }
 }

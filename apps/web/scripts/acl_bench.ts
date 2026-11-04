@@ -28,14 +28,13 @@ import {
   idOp,
   INVITE,
   KICK,
-  LIM,
   ROLES,
-  setLimits,
   type AclContent,
   type AclEv,
   type Rec,
 } from '../app/lib/p2p/acl/rules'
 import { AclRoom, toStored, type PackedRec } from '../app/lib/p2p/acl_room'
+import { AGREED, type Agreed } from '../app/lib/p2p/limits'
 
 type Obj = Record<string, unknown>
 interface Opts {
@@ -84,8 +83,11 @@ class Rng {
 // A scenario builder over the production replica (the model's fastworld.ts): heads and each
 // device's latest event tracked incrementally; like an honest client, `build` fills the acting
 // identity of revocations and the remover's watermark of kick, ban and revoke.
+// The benchmark's limits: production ones, with its timestamps in minutes.
+const LIM: Agreed = { ...AGREED, win: 60, day: 1440 }
+
 class BenchWorld {
-  ref = new AclReplica({ binds: e => devOwner(e.dev) === e.a })
+  ref = new AclReplica({ binds: e => devOwner(e.dev) === e.a, agreed: LIM })
   n = 0
   private headSet = new Set<string>()
   private lastOwn = new Map<string, AclEv>()
@@ -1483,7 +1485,7 @@ function coldBench(shape: string, N: number, seed: number) {
     SHAPES[shape](w, N, rng)
     w.state()
     const buildS = (performance.now() - tB) / 1000
-    const room = new AclRoom('bench', { binds })
+    const room = new AclRoom('bench', { binds, agreed: LIM })
     room.r = w.ref
     const pack = (room as unknown as { pack: (e: AclEv, r: Rec) => PackedRec }).pack.bind(room)
     const tP = performance.now()
@@ -1511,7 +1513,7 @@ function coldBench(shape: string, N: number, seed: number) {
   const t0 = performance.now()
   const stored = JSON.parse(readFileSync(file, 'utf8')) as typeof L.items
   unlinkSync(file)
-  const cold = new AclRoom('bench', { binds })
+  const cold = new AclRoom('bench', { binds, agreed: LIM })
   const out = cold.restoreEvs(stored)
   const restoreMs = performance.now() - t0
   const t1 = performance.now()
@@ -1554,7 +1556,6 @@ const shapeArg = args[0] ?? 'all'
 const N = Number(args[1] ?? 20000)
 const seed = Number(args[2] ?? 1)
 const reps = Number(args[3] ?? 3)
-setLimits({ win: 60, day: 1440 })
 if (shapeArg === 'visibility')
   visibilityBench(N, seed, Number(args[3] ?? 1_000_000), Number(args[4] ?? 64))
 if (shapeArg.startsWith('coldstart:')) coldBench(shapeArg.slice(10), N, seed)

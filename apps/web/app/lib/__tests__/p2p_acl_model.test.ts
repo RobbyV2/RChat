@@ -1,19 +1,16 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { genCase } from './acl_model/gen'
 import type { Ev } from './acl_model/model'
 import { World } from './acl_model/world'
 import { FastEval, type StratumInfo } from '../p2p/acl/eval'
-import { diffModelWorld, prodReplica, useModelLimits, useProductionLimits } from './p2p_acl_world'
+import { diffModelWorld, prodReplica } from './p2p_acl_world'
 
 // The production ACL modules against the executable reference model (spec §7.2, §8.1): random
 // adversarial universes from the model's generator (a copy of notes/acl-model/gen.ts, model
 // constants), replayed through both; every verdict, admission record, admission state, the
 // incremental final state and a batch evaluation must be equal.
-
-beforeAll(useModelLimits)
-afterAll(useProductionLimits)
 
 const SEEDS = 2000
 const CHUNK = 100
