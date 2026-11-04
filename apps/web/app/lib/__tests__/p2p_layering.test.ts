@@ -113,4 +113,9 @@ describe('P2P layering', () => {
     expect(parts).toEqual(Object.keys(WRITERS).sort())
     expect(writers).toEqual(WRITERS)
   }, 120_000)
+
+  test('the page store loads no other part of the P2P app', () =>
+    expect([...importsOf(`${P2P}/app/store.ts`)].filter(p => p.startsWith(`${P2P}/app/`))).toEqual(
+      []
+    ))
 })

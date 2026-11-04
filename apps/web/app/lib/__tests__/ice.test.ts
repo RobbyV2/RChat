@@ -81,7 +81,10 @@ describe('ICE config', () => {
 
   test('calls with P2P contacts use the call plan from relays.ts, through the one seam', () => {
     const files = sources()
-    const app = files.find(({ f }) => f.endsWith('/p2p/app.ts'))?.src ?? ''
+    const app = files
+      .filter(({ f }) => f.includes('/p2p/app/'))
+      .map(({ src }) => src)
+      .join('\n')
     const calls = files.find(({ f }) => f.endsWith('/p2p/calls.ts'))?.src ?? ''
     const voice = files.find(({ f }) => f.endsWith('/p2p/voice.ts'))?.src ?? ''
     const rtc = files.find(({ f }) => f.endsWith('/rtc.ts'))?.src ?? ''
