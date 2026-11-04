@@ -1,7 +1,8 @@
 import type { View } from './view'
 
-// Home's local state per account: the places visited last ("Jump back in") and the tips the
-// user dismissed. Stored as `{v: 1, recents, tips}`; anything unreadable gives the defaults.
+// Home's local state per account: the places visited last ("Jump back in") and the tips and
+// notices the user dismissed. Stored as `{v: 1, recents, tips}`; anything unreadable gives the
+// defaults.
 
 export type Recent =
   | {
@@ -161,6 +162,24 @@ export const TIPS_SHOWN = 2
 
 export const shownTips = (prefs: HomePrefs, max = TIPS_SHOWN) =>
   TIPS.filter(t => !prefs.tips.includes(t.id)).slice(0, max)
+
+// Notices outside Home that stay closed once closed, kept with the tips.
+export const P2P_SERVER_INTRO = 'p2p_server_intro'
+export const P2P_DM_INTRO = 'p2p_dm_intro'
+
+// Where older versions kept them, as '1'. Still read, never written.
+export const legacyIntroKeys = (username: string): [string, string][] => [
+  [P2P_SERVER_INTRO, `rchat_p2p_server_intro:${username}`],
+  [P2P_DM_INTRO, `rchat_p2p_intro:${username}`],
+]
+
+// Shown only once Home's prefs belong to the signed-in P2P account, until that account closes it.
+export const noticeOpen = (
+  owner: string | null,
+  account: string | null,
+  prefs: HomePrefs,
+  id: string
+) => owner !== null && owner === account && !prefs.tips.includes(id)
 
 export const greeting = (hour: number) =>
   hour >= 5 && hour < 12

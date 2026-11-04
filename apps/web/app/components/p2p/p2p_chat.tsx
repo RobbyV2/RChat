@@ -29,8 +29,11 @@ import {
   SendHorizontal,
   Smile,
   Trash2,
+  X,
 } from 'lucide-react'
 import { maskOf, useStore, type ContextMenuItem } from '../../lib/store'
+import { noticeOpen } from '../../lib/home'
+import { hideTip, useHome } from '../../lib/home_store'
 import {
   chatKey,
   chatScope,
@@ -81,7 +84,7 @@ import { MessageTime } from '../timestamp'
 import { PresentBar, useChatScroll, useFocusMessage } from '../viewport_height'
 import { mentionRowCls } from '../message_pane'
 import { Masked, textBtn } from '../ui'
-import { KeyAvatar } from './p2p_badge'
+import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { AttachmentList, attachmentMenu, PendingFiles } from './p2p_files'
 import { namePasted } from '../message_composer'
 import { FormatToolbar, useFormatting } from '../format_toolbar'
@@ -162,6 +165,31 @@ export const asMessage = (
 
 export const noteBarCls =
   'mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] flex shrink-0 flex-wrap items-center gap-2 rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant keyboard:mb-3'
+
+// The note at the top of a conversation. Once closed it stays closed for the account, in every
+// tab.
+export function P2pIntro({ id, children }: { id: string; children: ReactNode }) {
+  const account = useP2p(s => s.account)
+  const open = useHome(s => noticeOpen(s.owner, account, s.prefs, id))
+  if (!open) return null
+  return (
+    <div
+      data-p2p-intro
+      className="mx-4 mt-3 flex items-start gap-3 rounded-2xl border border-dashed border-tertiary bg-tertiary-container/40 px-4 py-3 text-sm text-on-surface"
+    >
+      <P2pBadge />
+      <p className="min-w-0 flex-1">{children}</p>
+      <button
+        title="Dismiss"
+        aria-label="Dismiss"
+        onClick={() => hideTip(id)}
+        className="shrink-0 rounded-full p-1 hover:bg-surface-container-highest"
+      >
+        <X size={16} />
+      </button>
+    </div>
+  )
+}
 
 interface RowProps {
   p: P2pMessage

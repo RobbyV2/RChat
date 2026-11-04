@@ -17,11 +17,10 @@ import {
   Users,
   Volume2,
   Waypoints,
-  X,
 } from 'lucide-react'
 import { maskOf, useMask, useStore, type ContextMenuItem } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
-import { home, writeLocal } from '../../lib/instances'
+import { P2P_SERVER_INTRO } from '../../lib/home'
 import {
   channelScope,
   chatKey,
@@ -64,7 +63,7 @@ import {
   VOUCH_INVITER_TEXT,
   WITHDRAW_TEXT,
 } from '../../lib/p2p/flows'
-import { noteBarCls, P2pChatBody, type Mentionable } from './p2p_chat'
+import { noteBarCls, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
 import { P2pVoiceRow } from './p2p_voice'
 import { VoiceDock, VoiceGrid } from '../voice_grid'
 import { MemberCard, roleMenuItems } from './p2p_server_roles'
@@ -798,43 +797,12 @@ export function P2pMemberList() {
   )
 }
 
-const introKey = (user: string) => `rchat_p2p_server_intro:${user}`
-
-function ServerIntro() {
-  const account = useP2p(s => s.account)
-  const [hidden, setHidden] = useState(() => {
-    if (!account) return true
-    try {
-      return localStorage.getItem(home.scoped(introKey(account))) === '1'
-    } catch {
-      return true
-    }
-  })
-  if (hidden) return null
-  return (
-    <div
-      data-p2p-intro
-      className="mx-4 mt-3 flex items-start gap-3 rounded-2xl border border-dashed border-tertiary bg-tertiary-container/40 px-4 py-3 text-sm text-on-surface"
-    >
-      <P2pBadge />
-      <p className="min-w-0 flex-1">
-        This server is stored only on its members&apos; devices. Messages reach you while a member
-        who has them is online. The instance never sees them and doesn&apos;t filter them.
-      </p>
-      <button
-        title="Dismiss"
-        aria-label="Dismiss"
-        onClick={() => {
-          setHidden(true)
-          if (account) writeLocal(home.scoped(introKey(account)), '1')
-        }}
-        className="shrink-0 rounded-full p-1 hover:bg-surface-container-highest"
-      >
-        <X size={16} />
-      </button>
-    </div>
-  )
-}
+const ServerIntro = () => (
+  <P2pIntro id={P2P_SERVER_INTRO}>
+    This server is stored only on its members&apos; devices. Messages reach you while a member who
+    has them is online. The instance never sees them and doesn&apos;t filter them.
+  </P2pIntro>
+)
 
 const NONE: string[] = []
 

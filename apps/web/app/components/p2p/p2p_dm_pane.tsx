@@ -1,10 +1,10 @@
 'use client'
 
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import { ArrowLeft, Menu, X } from 'lucide-react'
+import { useCallback, useMemo, type ReactNode } from 'react'
+import { ArrowLeft, Menu } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
-import { home, writeLocal } from '../../lib/instances'
+import { P2P_DM_INTRO } from '../../lib/home'
 import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
 import { displayName, shieldOf } from '../../lib/p2p/contacts'
 import {
@@ -28,50 +28,17 @@ import {
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { useRoomCallShare, VoiceGrid } from '../voice_grid'
 import { IncomingCallBar, P2pCallButtons } from './p2p_call'
-import { noteBarCls, P2pChatBody, type Mentionable } from './p2p_chat'
+import { noteBarCls, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
 
 const NONE: string[] = []
 
-const introKey = (user: string) => `rchat_p2p_intro:${user}`
-
-const readIntro = (user: string | null) => {
-  if (!user) return true
-  try {
-    return localStorage.getItem(home.scoped(introKey(user))) === '1'
-  } catch {
-    return true
-  }
-}
-
-function IntroBanner({ name }: { name: string }) {
-  const account = useP2p(s => s.account)
-  const [hidden, setHidden] = useState(() => readIntro(account))
-  if (hidden) return null
-  return (
-    <div
-      data-p2p-intro
-      className="mx-4 mt-3 flex items-start gap-3 rounded-2xl border border-dashed border-tertiary bg-tertiary-container/40 px-4 py-3 text-sm text-on-surface"
-    >
-      <P2pBadge />
-      <p className="min-w-0 flex-1">
-        This conversation is stored only on your device and{' '}
-        <span className="streamer font-medium">{name}</span>&apos;s. Messages are delivered when you
-        are both online, and the instance never sees them.
-      </p>
-      <button
-        title="Dismiss"
-        aria-label="Dismiss"
-        onClick={() => {
-          setHidden(true)
-          if (account) writeLocal(home.scoped(introKey(account)), '1')
-        }}
-        className="shrink-0 rounded-full p-1 hover:bg-surface-container-highest"
-      >
-        <X size={16} />
-      </button>
-    </div>
-  )
-}
+const IntroBanner = ({ name }: { name: string }) => (
+  <P2pIntro id={P2P_DM_INTRO}>
+    This conversation is stored only on your device and{' '}
+    <span className="streamer font-medium">{name}</span>&apos;s. Messages are delivered when you are
+    both online, and the instance never sees them.
+  </P2pIntro>
+)
 
 const statusLine = (online: boolean, name: string): ReactNode =>
   online ? (
