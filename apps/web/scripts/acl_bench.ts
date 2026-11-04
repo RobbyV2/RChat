@@ -33,7 +33,8 @@ import {
   type AclEv,
   type Rec,
 } from '../app/lib/p2p/acl/rules'
-import { AclRoom, toStored, type PackedRec } from '../app/lib/p2p/acl_room'
+import { toStored } from '../app/lib/p2p/acl/summary'
+import { AclRoom, type PackedRec } from '../app/lib/p2p/acl_room'
 import { AGREED, type Agreed } from '../app/lib/p2p/limits'
 
 type Obj = Record<string, unknown>

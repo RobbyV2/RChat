@@ -1,3 +1,4 @@
+import type { SumDelta } from './acl/summary'
 import {
   AclRoom,
   type AclItem,
@@ -12,7 +13,6 @@ import {
   type PlanReq,
   type Received,
   type Shown,
-  type SumDelta,
 } from './acl_room'
 import type { AdmitOpts } from './acl/admit'
 import type { ContentEv } from './acl/visibility'

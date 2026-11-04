@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { P } from '../p2p/acl/rules'
-import { applySummary, emptySummary, type Summary } from '../p2p/acl_room'
+import { applySummary, emptySummary, type Summary } from '../p2p/acl/summary'
 import { LocalHost, WorkerHost, type AclHost, type WorkerLike } from '../p2p/resolve_host'
 import { ServerWorld } from './p2p_server_world'
 

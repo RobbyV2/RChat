@@ -3,17 +3,15 @@ import { genCase } from './acl_model/gen'
 import type { EvalResult } from '../p2p/acl/facts'
 import { P, rkey } from '../p2p/acl/rules'
 import {
-  AclRoom,
   applySummary,
   diffSummary,
   emptySummary,
-  IMPL,
-  KEEP,
   toStored,
   type MemberSum,
   type Summary,
   type SumDelta,
-} from '../p2p/acl_room'
+} from '../p2p/acl/summary'
+import { AclRoom, IMPL, KEEP } from '../p2p/acl_room'
 import { MODEL_LIMITS, testBinds, toProd } from './p2p_acl_world'
 import { buildEvent2 } from '../p2p/event'
 import { signRevocation2 } from '../p2p/event'

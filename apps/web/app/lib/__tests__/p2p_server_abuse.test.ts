@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { P } from '../p2p/acl/rules'
-import { IMPL, SUM_SHAPE } from '../p2p/acl_room'
+import { SUM_SHAPE } from '../p2p/acl/summary'
+import { IMPL } from '../p2p/acl_room'
 import {
   blankRoom,
   cacheKey,

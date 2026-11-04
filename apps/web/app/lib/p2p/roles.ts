@@ -1,5 +1,5 @@
 import { cmp, EVERYONE, P, type Rank } from './acl/rules'
-import type { OverSum } from './acl_room'
+import type { OverSum } from './acl/summary'
 import { actParts, roleMoveWarns } from './flows'
 import { ROLE_STEP, type MemberView, type RoleView, type ServerView } from './server'
 

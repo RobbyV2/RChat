@@ -1,5 +1,5 @@
 import { EVERYONE } from './acl/rules'
-import type { Summary } from './acl_room'
+import type { Summary } from './acl/summary'
 import { LOCAL } from './limits'
 
 // The user-facing flows of P2P servers (spec p2p-acl-spec §8.2, §9): their copy, and the pure

@@ -1,6 +1,7 @@
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb'
 import type { Contact } from './contacts'
-import type { PackedRec, Summary } from './acl_room'
+import type { Summary } from './acl/summary'
+import type { PackedRec } from './acl_room'
 import type { Core, Wire, WireV2 } from './event'
 import type { Cert, KeyPair, Profile, Revocation, Succession } from './keys'
 

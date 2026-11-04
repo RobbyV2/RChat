@@ -8,7 +8,7 @@ import {
   type ChanFacts,
   type Rank,
 } from './acl/rules'
-import type { Membership, MemberSum, RoleSum, Summary } from './acl_room'
+import type { Membership, MemberSum, RoleSum, Summary } from './acl/summary'
 import { AGREED, LOCAL } from './limits'
 
 // The current state of a P2P server as the page reads it: the mirror of the evaluator's facts

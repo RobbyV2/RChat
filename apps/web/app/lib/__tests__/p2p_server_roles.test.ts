@@ -36,7 +36,7 @@ import {
 import { ContentView, type ContentEv } from '../p2p/acl/visibility'
 import { evalSummary } from './p2p_acl_world'
 import { ServerWorld } from './p2p_server_world'
-import { applySummary, diffSummary, emptySummary, fromStored, toStored } from '../p2p/acl_room'
+import { applySummary, diffSummary, emptySummary, fromStored, toStored } from '../p2p/acl/summary'
 
 // Roles and moderation in P2P servers (Task 23) on the production ACL modules: the rank rules,
 // races between moderation and role changes, channel registers, slow mode (spec 3.5) and the

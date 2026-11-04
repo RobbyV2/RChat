@@ -7,22 +7,24 @@ import {
   applySummary,
   emptySummary,
   fromStored,
-  IMPL,
   sameSummary,
   SUM_SHAPE,
-  trimContent,
   toStored,
+  type OverSum,
+  type SumDelta,
+  type Summary,
+} from './acl/summary'
+import {
+  IMPL,
+  trimContent,
   type AclItem,
   type Carried,
   type Disowned,
-  type OverSum,
   type PackedRec,
   type Plan,
   type Reapply,
   type Received,
   type Shown,
-  type SumDelta,
-  type Summary,
 } from './acl_room'
 import { b64u, bytesOf, canonical, fromB64u, randomBytes, utf8 } from './canonical'
 import {

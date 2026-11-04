@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { AclContent } from '../p2p/acl/rules'
-import { emptySummary, type MemberSum, type Summary } from '../p2p/acl_room'
+import { emptySummary, type MemberSum, type Summary } from '../p2p/acl/summary'
 import * as flows from '../p2p/flows'
 import {
   hasInviteCode,
