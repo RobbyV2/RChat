@@ -46,6 +46,14 @@ const failure = (p: Promise<unknown>) =>
     (e: Error) => e.message
   )
 
+// Mutual contacts: they reach each other whatever links their servers have.
+const contacts = async (clock: ManualClock, a: Member, b: Member) => {
+  await a.node.addContact(await b.node.myCard())
+  await pump(clock, () => b.node.contact(a.node.ik)?.state === 'incoming', 'request')
+  await b.node.accept(a.node.ik)
+  await pump(clock, () => a.node.contact(b.node.ik)?.state === 'mutual', 'mutual')
+}
+
 const memberOf = (m: Member, room: string, ik: string) =>
   m.servers.view(room)?.members.find(x => x.ik === ik)
 
@@ -1128,21 +1136,82 @@ describe('transfer (spec 3.8)', () => {
     expect(held().length).toBe(2)
   }, 120_000)
 
+  test("a follower gets the new copy from the old copy's members while the new owner is away", async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const d = await makeMember(hub, 'Dan', clock)
+    await contacts(clock, a, b)
+    const room = await a.servers.create('Away')
+    for (const m of [b, c, d]) await joinWithCode(clock, a, room, m)
+    // Dan is away for the transfer, and Bob goes once he has invited everyone and Carol holds it.
+    await d.node.setPaused(true)
+    const t = failure(a.servers.transfer(room, b.node.ik))
+    await pump(clock, () => b.servers.transferAsks().length === 1, 'bob asked', 500)
+    void b.servers.answerTransfer(b.servers.transferAsks()[0].key, true)
+    expect(await t).toBe('ok')
+    await pump(clock, () => !!b.servers.view(room)?.next, 'bob follows', 500)
+    const next = b.servers.view(room)!.next!
+    const invited = (m: Member) =>
+      m.servers.view(next)?.members.some(x => x.ik === d.node.ik && x.m === 'invite') === true
+    for (const m of [a, c])
+      await pump(clock, () => m.servers.myMembership(next) === 'join', `${m.name} in`, 1_000)
+    await pump(clock, () => invited(c), 'carol holds dan invited', 1_000)
+    await b.node.setPaused(true)
+    await d.node.setPaused(false)
+    await pump(clock, () => d.servers.myMembership(next) === 'join', 'dan in', 1_000, 60_000)
+  }, 120_000)
+
   test("members acknowledge only the new owner's events: others' marks never set them off", async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
     const b = await makeMember(hub, 'Bob', clock)
     const c = await makeMember(hub, 'Carol', clock)
+    // Fewer than the 8 links a member keeps per server: everyone links with everyone.
     const rest: Member[] = []
-    for (let i = 0; i < 22; i++) rest.push(await makeMember(hub, `M${i}`, clock))
+    for (let i = 0; i < 5; i++) rest.push(await makeMember(hub, `M${i}`, clock))
+    await contacts(clock, a, b)
     const room = await a.servers.create('Crowd')
     for (const m of [b, c, ...rest]) await joinWithCode(clock, a, room, m)
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 30; i++) {
       await a.servers.addChannel(room, `room-${i}`)
       if (i % 10 === 9) {
         const ack = await emit(c)(room, 'mark', () => ({}))
         await pump(clock, async () => !!(await a.store.event(ack)), 'alice holds it', 1_000)
+      }
+    }
+    // Bob's carry-over stops partway (his changes refused as if nobody acknowledged them), and he
+    // stays online, so all he posted reaches everyone.
+    const bs = b.servers as unknown as { emit: (r: string, ...x: unknown[]) => Promise<string> }
+    const post = bs.emit.bind(b.servers)
+    let held = false
+    bs.emit = (r, ...x) => {
+      if (r === room || b.servers.sumOf(r).ownerCount < 40) return post(r, ...x)
+      held = true
+      return Promise.reject(new Error(LONE_TEXT))
+    }
+    // For each quiet member: the ACL count its last acknowledgement check saw, and its posts
+    // under way.
+    const quiet = [a, ...rest]
+    const seen = new Map<Member, number>()
+    const busy = new Map<Member, number>()
+    for (const m of quiet) {
+      const s = m.servers as unknown as {
+        ackCarry: (r: string, rt: AckRt) => void
+        emit: (r: string, ...x: unknown[]) => Promise<string>
+      }
+      const ack = s.ackCarry.bind(m.servers)
+      s.ackCarry = (r, rt) => {
+        ack(r, rt)
+        seen.set(m, m.servers.sumOf(r).count)
+      }
+      const send = s.emit.bind(m.servers)
+      s.emit = (r, ...x) => {
+        busy.set(m, (busy.get(m) ?? 0) + 1)
+        return send(r, ...x).finally(() => busy.set(m, (busy.get(m) ?? 1) - 1))
       }
     }
     const t = failure(a.servers.transfer(room, b.node.ik))
@@ -1151,33 +1220,50 @@ describe('transfer (spec 3.8)', () => {
     expect(await t).toBe('ok')
     await pump(clock, () => !!b.servers.view(room)?.next, 'bob follows', 500)
     const next = b.servers.view(room)!.next!
-    // Everyone joins; then Bob goes away mid-carry.
-    const members = [a, c, ...rest]
-    for (const m of members)
-      await pump(clock, () => m.servers.myMembership(next) === 'join', `${m.name} in`, 200, 120_000)
-    expect(b.servers.view(next)?.carry).not.toBeNull()
-    await b.node.setPaused(true)
-    await clock.advance(70_000)
-    // What each has posted, and how much of Bob's it holds. One that receives more of Bob's
-    // (sent before he left) may acknowledge that; the others post nothing.
-    const quiet = [a, ...rest]
-    const at = () =>
+    for (const m of [c, ...quiet])
+      await pump(clock, () => m.servers.myMembership(next) === 'join', `${m.name} in`, 500, 120_000)
+    const rtOf = (m: Member) => (m.servers as unknown as { rt: (r: string) => AckRt }).rt(next)
+    // Everyone holds all of Bob's, has checked what it holds, and owes him nothing.
+    const settled = (m: Member) => {
+      const s = m.servers.sumOf(next)
+      return (
+        s.ownerCount === b.servers.sumOf(next).ownerCount &&
+        seen.get(m) === s.count &&
+        !busy.get(m) &&
+        rtOf(m).carryAckLater === undefined
+      )
+    }
+    await pump(
+      clock,
+      () => held && quiet.every(settled),
+      'bob stopped, and everyone settled',
+      5_000,
+      120_000
+    )
+    const state = () =>
       Promise.all(
         quiet.map(async m => [
+          m.name,
           (await m.store.outbox(next)).length,
+          rtOf(m).carryAckAt,
+          rtOf(m).carryAckLater,
           m.servers.sumOf(next).ownerCount,
         ])
       )
-    const before = await at()
-    // Carol is busy: 20 marks of hers. Nobody acknowledges them.
+    const before = await state()
+    const counts = quiet.map(m => m.servers.sumOf(next).count)
+    // Carol is busy: 20 marks of hers. Once each quiet member checked with all of them in hand,
+    // none has posted, decided or put off a mark.
     for (let i = 0; i < 20; i++) await emit(c)(next, 'mark', () => ({}))
-    await clock.advance(70_000)
-    const after = await at()
-    const still = quiet.filter((_, i) => after[i][1] === before[i][1])
-    expect(still.length).toBeGreaterThan(15)
-    for (const [i] of quiet.entries())
-      if (after[i][1] === before[i][1]) expect(after[i][0]).toBe(before[i][0])
-  }, 450_000)
+    await pump(
+      clock,
+      () => quiet.every((m, i) => (seen.get(m) ?? 0) >= counts[i] + 20 && !busy.get(m)),
+      'everyone checked her marks',
+      1_000,
+      120_000
+    )
+    expect(await state()).toEqual(before)
+  }, 300_000)
 
   type AckRt = { carryAckAt: number; carryAckCount: number | null; carryAckLater?: unknown }
   const saveCache = (m: Member, room: string) =>
