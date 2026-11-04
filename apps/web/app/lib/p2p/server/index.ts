@@ -1,8 +1,7 @@
-import { sha256 } from '@noble/hashes/sha2.js'
-import { isRecord } from '../bytes'
-import { deviceCertOk, genesisBundle, genesisSrv, signDeviceCert2 } from './acl/binding'
-import { aclContentOk, gt, restricts, RULES_VERSION, type Rank } from './acl/rules'
-import type { ContentEv } from './acl/visibility'
+import { isRecord } from '../../bytes'
+import { deviceCertOk, genesisBundle, genesisSrv, signDeviceCert2 } from '../acl/binding'
+import { aclContentOk, gt, RULES_VERSION } from '../acl/rules'
+import type { ContentEv } from '../acl/visibility'
 import {
   applySummary,
   emptySummary,
@@ -10,10 +9,9 @@ import {
   sameSummary,
   SUM_SHAPE,
   toStored,
-  type OverSum,
   type SumDelta,
   type Summary,
-} from './acl/summary'
+} from '../acl/summary'
 import {
   IMPL,
   trimContent,
@@ -22,11 +20,9 @@ import {
   type Disowned,
   type PackedRec,
   type Plan,
-  type Reapply,
   type Received,
-  type Shown,
-} from './acl_room'
-import { b64u, bytesOf, canonical, fromB64u, randomBytes, utf8 } from './canonical'
+} from '../acl_room'
+import { b64u, bytesOf, canonical, randomBytes } from '../canonical'
 import {
   blankRoom,
   cacheKey,
@@ -46,11 +42,10 @@ import {
   restoreBody,
   SERVER_TOTAL_BYTES,
   storedSize,
-  UNKNOWN,
   withinShareNow,
   type DevChain,
   type Inserted,
-} from './dag'
+} from '../dag'
 import {
   serverWire,
   type ChanCounts,
@@ -58,14 +53,11 @@ import {
   type CodeRecord,
   type EventRecord,
   type IdentRecord,
-  type OutboxRecord,
   type P2pDatabase,
-  type P2pStore,
   type RoomRecord,
   type ServerCache,
-} from './db'
-import { reactionsOf } from './dm'
-import { around, type PageOpts } from './jump'
+} from '../db'
+import type { PageOpts } from '../jump'
 import {
   buildEvent2,
   claimedId2,
@@ -74,7 +66,6 @@ import {
   signUpgrade,
   upgradeSigOk,
   contentEvOf,
-  fitContent,
   headerOk,
   LIMITS as EV,
   LIMITS2,
@@ -87,11 +78,10 @@ import {
   type MsgContent,
   type Wire,
   type WireV2,
-} from './event'
+} from '../event'
 import {
   CANT_TEXT,
   CONFLICT_TEXT,
-  CO_OWNERS_MAX,
   CO_OWNERS_MAX_TEXT,
   LONE_TEXT,
   TOO_BIG_TEXT,
@@ -106,22 +96,28 @@ import {
   effectHolds,
   refusalText,
   signedAgain,
-  slowText,
   syncedSince,
   TOO_OFTEN_TEXT,
   type HeadsReport,
   type Reached,
-} from './flows'
-import type { Message } from './frames'
-import { memberBindingDue } from './badge'
-import { Gossip, type GossipLimits, type LinkKind } from './gossip'
-import { isKeyId, keyId, peerId, verifyCert, verifyProfile, type Cert, type Profile } from './keys'
-import { liveCerts } from './keys'
-import { mergeCerts, mergeRevocations, displayName } from './contacts'
-import { AGREED, LOCAL } from './limits'
-import type { P2pNode } from './node'
-import { LocalHost, WorkerHost, type AclHost, type WorkerLike } from './resolve_host'
-import { realClock, type Clock, type Session } from './session'
+} from '../flows'
+import type { Message } from '../frames'
+import { memberBindingDue } from '../badge'
+import { Gossip, type LinkKind } from '../gossip'
+import {
+  isKeyId,
+  keyId,
+  peerId,
+  verifyCert,
+  verifyProfile,
+  liveCerts,
+  type Cert,
+  type Profile,
+} from '../keys'
+import { mergeCerts, mergeRevocations, displayName } from '../contacts'
+import { AGREED, LOCAL } from '../limits'
+import { LocalHost, WorkerHost, type AclHost, type WorkerLike } from '../resolve_host'
+import { realClock, type Clock, type Session } from '../session'
 import {
   can,
   chanFactsOf,
@@ -130,7 +126,6 @@ import {
   channelsOf,
   historyOf,
   isOwner,
-  isShortId,
   knownChannel,
   knownSettings,
   LIMITS as STATE_LIMITS,
@@ -140,574 +135,107 @@ import {
   EVERYONE,
   MOD_BITS,
   nameOf,
-  outranks,
   P,
-  permsOf,
   rankOf,
   roleRank,
-  rolesOf,
-  systemOf,
-  topRoleOf,
-  type ChannelContent,
   type HistoryVis,
-  type Membership,
   type SystemContent,
-} from './state'
-import { isQuotaError, Sync, type Check, type Link, type SyncLimits, type Walked } from './sync'
+} from '../state'
+import { isQuotaError, Sync, type Check, type Link, type Walked } from '../sync'
+import { indexEstimate, rebuildStep, SEARCH, unindexRoom } from '../search'
+import { Voice } from '../voice'
+import { dmRoomId, MOVED_TEXT, MOVING_TEXT, STORAGE_FULL_TEXT, type P2pMessage } from '../dm'
+import type { ServerCtx } from './context'
 import {
-  candidates,
-  indexEstimate,
-  matches,
-  rebuildStep,
-  SEARCH,
-  unindexRoom,
-  words,
-} from './search'
-import { Voice, type VoiceLimits, type VoiceUser } from './voice'
-import {
-  dmRoomId,
-  DmError,
-  mentionsIn,
-  MOVED_TEXT,
-  MOVING_TEXT,
-  PINS_MAX,
-  STORAGE_FULL_TEXT,
-  type Dms,
-  type P2pMessage,
-} from './dm'
+  SERVER,
+  VOUCH,
+  JOIN_WAIT,
+  SAVE_MS,
+  NOBODY_ONLINE,
+  BAD_CODE,
+  REDEEM_TEXT,
+  LEGACY_TEXT,
+  UPDATE_TEXT,
+  SYNC_TEXT,
+  OLD_GONE_TEXT,
+  ServerError,
+  encodeCode,
+  parseCode,
+  codeHash,
+  newShortId,
+  EVERYONE_BITS,
+  webLocks,
+  sizeOfWire,
+  MIGRATE_PER,
+  SETTLE_MS,
+  ARCHIVE_LINKS,
+  SETTLE_RESAMPLE,
+  CARRY_ACK,
+  CARRY_ACKS_MAX,
+  RESIGN_CONTENT,
+  RESIGN_ACL,
+  ROLE_NAME_MAX,
+  NO_ROOM_TEXT,
+  newRolePos,
+  type ServerArrival,
+  type SearchQuery,
+  type ServerView,
+  type Rt,
+  type Redeemer,
+  type ServerDeps,
+  type EmitOpts,
+  type Migrated,
+  type LostRoom,
+  type ChannelPatch,
+} from './types'
+import * as views from './views'
+import * as search from './search'
+import * as messages from './messages'
+export {
+  SERVER,
+  VOUCH,
+  CODE_PREFIX,
+  CODE_TTLS,
+  NEEDS_INVITER,
+  NOBODY_ONLINE,
+  BAD_CODE,
+  REDEEM_TEXT,
+  LEGACY_TEXT,
+  UPDATE_TEXT,
+  SYNC_TEXT,
+  OLD_GONE_TEXT,
+  ServerError,
+  encodeCode,
+  parseCode,
+  codeHash,
+  newShortId,
+  EVERYONE_BITS,
+  THREAD_ROOT_TEXT,
+  PIN_TEXT,
+  PIN_THREAD_TEXT,
+  ROLE_NAME_MAX,
+  ROLE_STEP,
+  NO_ROOM_TEXT,
+  newRolePos,
+} from './types'
+export type {
+  InviteCode,
+  ServerArrival,
+  SearchQuery,
+  SearchHit,
+  MemberView,
+  RoleView,
+  ChannelView,
+  ModView,
+  ReachedView,
+  ServerView,
+  ServerDeps,
+  Migrated,
+  LostRoom,
+  ChannelPatch,
+} from './types'
 
-// P2P servers (spec p2p-acl-spec §1 to §4): groups whose membership, permissions, channels and
-// messages live only on their members' devices. Every event is a signed v2 event of one of two
-// layers: ACL events (membership, roles, channels, settings) form a DAG every member holds
-// whole; content events (messages) hang off an ACL position. The evaluator (acl_room.ts, in a
-// worker in the browser) decides every event (spec §2.1: admitted, rejected, pending, held) and
-// works out the current state and what each message shows; this module stores, syncs and serves
-// events, builds our own, and keeps the page's mirror of the state. Rooms sync over the same
-// sessions as DMs, with their own message types (prefix `s`), on at most 8 links per room
-// (gossip.ts).
-
-export const SERVER = {
-  codePeers: 4,
-  // Co-owners a new server may list (its genesis must fit in one ACL event).
-  coOwners: CO_OWNERS_MAX,
-  ...LOCAL.server,
-}
-
-// Vouching marks (Rt.vouch): at most one per room this often, and one per inviter.
-export const VOUCH = { roomMs: LOCAL.server.vouchRoomMs, inviterMs: LOCAL.server.vouchInviterMs }
-
-export const CODE_PREFIX = 'rci1.'
-
-// How long a joiner waits for missing ACL events before joining with what it has, and how soon
-// the evaluation cache is written after a change.
-const JOIN_WAIT = LOCAL.server.joinWaitMs
-const SAVE_MS = LOCAL.server.saveMs
-
-export const CODE_TTLS = ['1 hour', '1 day', '7 days', '30 days'].map((label, i) => ({
-  label,
-  ms: LOCAL.server.codeTtls[i],
-}))
-
-export const NEEDS_INVITER = 'Someone who can invite must be online'
-export const NOBODY_ONLINE =
-  'Nobody who can invite is online right now. Try again when one of them is.'
-export const BAD_CODE = "This isn't a P2P server invite code."
-export const REDEEM_TEXT: Record<string, string> = {
-  expired: 'This invite has expired.',
-  revoked: 'This invite was revoked.',
-  unknown: "This invite isn't valid any more.",
-  banned: "You can't join this server.",
-  busy: 'Too many people are joining with this invite right now. Try again in a few minutes.',
-}
-export const LEGACY_TEXT = 'Created with an earlier test version. Recreate it.'
-export const UPDATE_TEXT = 'Update the app to take part'
 export { CANT_TEXT, TOO_OFTEN_TEXT }
-export const SYNC_TEXT = 'Waiting to sync. Try again in a moment.'
-export const OLD_GONE_TEXT = 'The old copy was removed from this device'
-
-// `who`: a name the message is about, shown apart (streamer mode hides it).
-export class ServerError extends Error {
-  constructor(
-    message: string,
-    readonly who?: string
-  ) {
-    super(message)
-  }
-}
-
-export interface InviteCode {
-  v: 1
-  room: string
-  name: string
-  // The code's event id (spec 8.2: links carry the code's id and its secret).
-  code?: string
-  secret: string
-  peers: string[]
-}
-
-const isPeerId = (x: unknown) => typeof x === 'string' && /^rcp-[a-z2-7]{26}(-[1-9])?$/.test(x)
-
-export const encodeCode = (c: InviteCode) => CODE_PREFIX + b64u(utf8(canonical(c)))
-
-export const parseCode = (text: string): InviteCode | null => {
-  const t = text.trim()
-  if (!t.startsWith(CODE_PREFIX)) return null
-  try {
-    const x = JSON.parse(new TextDecoder().decode(fromB64u(t.slice(CODE_PREFIX.length))))
-    if (
-      !isRecord(x) ||
-      x.v !== 1 ||
-      bytesOf(x.room, 32) === null ||
-      typeof x.name !== 'string' ||
-      Array.from(x.name).length > 100 ||
-      bytesOf(x.secret, 16) === null ||
-      !Array.isArray(x.peers) ||
-      x.peers.length > SERVER.codePeers ||
-      !x.peers.every(isPeerId) ||
-      (x.code !== undefined && bytesOf(x.code, 32) === null)
-    )
-      return null
-    return {
-      v: 1,
-      room: x.room as string,
-      name: x.name,
-      ...(x.code !== undefined ? { code: x.code as string } : {}),
-      secret: x.secret as string,
-      peers: x.peers as string[],
-    }
-  } catch {
-    return null
-  }
-}
-
-export const codeHash = (secret: string) => b64u(sha256(fromB64u(secret)))
-
-export const newShortId = () => b64u(randomBytes(8))
-
-// What @everyone may do in a new server.
-export const EVERYONE_BITS = P.Invite | P.ViewChannel | P.SendMessages
-
-export interface ServerArrival {
-  room: string
-  ch: string
-  rec: EventRecord
-  ping: 'mention' | 'reply' | 'reaction' | 'everyone' | null
-  unread: boolean
-  // A thread reply (or a reaction to one): the thread's root.
-  thread: string | null
-}
-
-export const THREAD_ROOT_TEXT = 'Threads only start on channel messages'
-export const PIN_TEXT = "You can't pin messages here"
-export const PIN_THREAD_TEXT = "Messages in threads can't be pinned"
-
-// What to search P2P servers for (search panel): words, authors, a channel, files, and times
-// (unix seconds, exclusive).
-export interface SearchQuery {
-  q: string
-  from: readonly string[] | null
-  room: string | null
-  ch: string | null
-  hasFile: boolean
-  beforeTs: number | null
-  afterTs: number | null
-}
-
-export interface SearchHit {
-  room: string
-  ch: string
-  thread: string | null
-  m: P2pMessage
-}
-
-export interface MemberView {
-  ik: string
-  m: Membership
-  name: string
-  owner: boolean
-  online: boolean
-  contact: boolean
-  // We outrank them (kick and ban need it, spec 1.6).
-  below: boolean
-  // Invited, and their join waits for a third member (spec 9 rule 14); invited only by us.
-  waits: boolean
-  myInvite: boolean
-  // Banned, and our rank is at least that of every ban of them (spec 8.2 unban).
-  unban: boolean
-  // Their roles, the highest first, and the highest (the member list groups by it).
-  roles: string[]
-  top: string | null
-}
-
-// A role (spec 1.4, 1.6), and whether we outrank it: we may change, give and take it.
-export interface RoleView {
-  id: string
-  name: string
-  color: number | null
-  pos: number
-  bits: number
-  holders: number
-  below: boolean
-  // A channel's overwrites hold its holders back: taking it away needs Manage channels (spec 1.4).
-  held: boolean
-}
-
-// A channel we may view, what we may do there (spec 1.4, Discord order), whether slow mode leaves
-// us out (spec 3.5), and its overwrites by subject.
-export type ChannelView = { id: string } & ChannelContent & {
-    send: boolean
-    exempt: boolean
-    over: Record<string, OverSum>
-  }
-
-// A moderation action waiting for a fresh heads exchange (spec 8.2).
-export interface ModView {
-  id: number
-  // What it does ("Kick"), and to whom.
-  act: string
-  who: string | null
-}
-
-// Members a removal of ours took along (spec 8.2), by the member we removed.
-export interface ReachedView {
-  by: string
-  lost: string[]
-}
-
-export interface ServerView {
-  id: string
-  name: string
-  color: number | null
-  me: Membership | null
-  joining: boolean
-  owner: string | null
-  owners: string[]
-  perms: number
-  rank: Rank
-  history: HistoryVis
-  system: SystemContent
-  channels: ChannelView[]
-  roles: RoleView[]
-  everyone: number
-  members: MemberView[]
-  online: number
-  joined: number
-  chans: Record<string, import('./db').ChanCounts>
-  // Arrival number of the newest stored event: it moves only when stored content changes.
-  seq: number
-  gap: boolean
-  full: boolean
-  // Shown read-only, with this text (a server of old or unknown rules).
-  readOnly: string | null
-  // Who is in each voice channel.
-  voice: Record<string, VoiceUser[]>
-  mods: ModView[]
-  reached: ReachedView[]
-  // Our denies the current state doesn't count that we may still make (spec 9 rule 18, I2).
-  reapply: Reapply[]
-  // Why our join waits (spec 9 rule 14), whether this device conflicts with another copy of it
-  // (spec 3.9), and, while the ACL syncs, how many changes we hold (spec 9 rule 19).
-  joinWait: string | null
-  conflict: boolean
-  syncing: number | null
-  // Spec 3.8: transferred to a new copy (read-only now), more than one upgrade (the user picks),
-  // the copy we followed, and the copy a new one follows.
-  upgraded: boolean
-  disputed: boolean
-  next: string | null
-  prev: string | null
-  // The new owner's carry-over while it isn't done (spec 3.8), and how the member list the new
-  // owner carried over differs from the old copy's.
-  carry: { state: Carry['state']; why: string | null } | null
-  migrateDiff: { added: string[]; removed: string[] } | null
-}
-
-interface Parked {
-  wire: WireV2
-  missing: Set<string>
-  size: number
-}
-
-interface Rt {
-  sum: Summary
-  lock: Promise<unknown>
-  loading: Promise<void> | null
-  joinPosted: boolean
-  others: { sum: Summary; list: string[] } | null
-  candidates?: { sum: Summary; old: Summary; list: string[] }
-  // The members a new copy's carry-over names (spec 3.8), once all of it is here; the carry-over
-  // as read (undefined: read it again), and whether it is done and compared.
-  carriedMembers?: Set<string>
-  migrated?: Migrated | null
-  migrateChecked?: boolean
-  // Events waiting for ACL parents, by id, and who waits on which parent.
-  pending: Map<string, Parked>
-  pendingBytes: number
-  waits: Map<string, Set<string>>
-  // Admitted events dated in the future, until local time reaches them.
-  held: Map<string, { wire: WireV2; due: number }>
-  rejected: Set<string>
-  // Invites (add ids, by inviter) another member posted: a tick posts a mark, so the invitee's
-  // join has the acknowledgement of a third member it needs (spec 4.1 W3(e)), while the invite is
-  // pending and its inviter a member; at most one per inviter per VOUCH.inviterMs and one per room
-  // per VOUCH.roomMs.
-  vouch: Map<string, string>
-  vouchedAt: number
-  // Our own ACL events we must hold before we sign again.
-  need: Set<string>
-  // Storage passes (SERVER.storeMs): due when the state or the held content changed.
-  storeDirty: boolean
-  storeAt: number
-  // Content held without its body (purged, evicted, stripped by its author), and those of them
-  // that show and are wanted back from peers.
-  bodiless: Set<string>
-  want: Set<string>
-  wantAt: number
-  // Bodies evicted for space that someone viewed: wanted back (spec 4.2 step 3).
-  viewed: Set<string>
-  // Per sender, where the next eviction walk starts (dag.ts oldestBodies `from`).
-  evictFrom: Map<string, string>
-  // Proofs to post, by device: the fork point and when; the lowest one posted per device, and
-  // when we posted the last ones.
-  proofs: Map<string, { f: number; due: number }>
-  proofed: Map<string, number>
-  proofTimes: number[]
-  // A mark acknowledging a moderator's redaction: when due, and the last one.
-  ackDue: number | null
-  ackAt: number
-  // Who may be sent our content of which channel (`ik\nch`), in the current state (pushes).
-  views: Map<string, boolean>
-  // Moderation waiting for sync, and the heads each peer last sent and when.
-  mods: Mod[]
-  modsBusy: boolean
-  reports: Map<string, { at: number; state: string[] }>
-  reached: Reached[]
-  reapply: Reapply[]
-  joinWait: string | null
-  conflict: boolean
-  // Following an upgrade, and the new owner carrying the old copy over (spec 3.8), in flight; the
-  // new copy's `migrate` content and how its member list differs from the old copy's.
-  following: boolean
-  carrying: boolean
-  migrateDiff: { added: string[]; removed: string[] } | null
-  // Acknowledging a new owner's carry-over: when, and the ACL count then.
-  carryAckAt: number
-  carryAckCount: number | null
-  // The old copy as an upgrade carries it (spec 3.8 step 4), and whether the carry-over into this
-  // copy said it is done.
-  carried?: { up: string; s: Carried; set?: Set<string> }
-  carryDone: boolean
-  carryAckLater?: unknown
-  // Acknowledgements posted (kept in the room record too), how many the carry-over can need
-  // (from the old copy), and the owners' ACL count and when it last grew here (or we started).
-  carryAcks: number
-  carryMax?: number
-  carrySeen: number | null
-  carryAt: number
-  checkLater?: unknown
-  // The upgrade of the old copy this one follows (spec 3.8), and how often the carry-over found
-  // the old copy not loaded yet.
-  upgrade?: string
-  carryTries?: number
-  // `carryRoles` running, and asked for again meanwhile.
-  givingRoles?: boolean
-  giveAgain?: boolean
-}
-
-interface Mod {
-  id: number
-  act: string
-  who: string | null
-  at: number
-  force: boolean
-  run: () => Promise<unknown>
-  done: (v: unknown) => void
-  fail: (e: unknown) => void
-}
-
-// Someone who redeemed a code with us: they may sync the ACL until `until` to join; the invite
-// we posted for them is withdrawn after that unless they joined.
-interface Redeemer {
-  code: string
-  until: number
-  add: string
-  // When its invite took one of the code's hourly slots (none: it was invited already).
-  at?: number
-}
-
-export interface ServerDeps {
-  node: P2pNode
-  store: P2pStore
-  dms: Dms
-  clock?: Clock
-  random?: () => number
-  limits?: Partial<SyncLimits>
-  gossip?: Partial<GossipLimits>
-  voice?: Partial<VoiceLimits>
-  roomCap?: number
-  totalCap?: number
-  roomBytes?: number
-  totalBytes?: number
-  serverCap?: number
-  serverBytes?: number
-  // Images in servers up to this size are fetched as soon as they arrive (0: never).
-  autoMax?: () => number
-  attachments?: () => boolean
-  // Where the evaluator runs (a worker in the browser).
-  resolver?: AclHost
-}
-
-const MENTION_EVERYONE = /(^|[^\p{L}\p{N}\p{M}_])@everyone(?![\p{L}\p{N}\p{M}_])/iu
-
-interface EmitOpts {
-  L?: 'a' | 'c'
-  to?: string
-  // A position to sign at instead of the heads (spec 3.9).
-  ap?: string[]
-}
-
-interface LockLike {
-  request: (name: string, cb: () => Promise<unknown>) => Promise<unknown>
-}
-
-const webLocks = (): LockLike | null =>
-  typeof navigator !== 'undefined' && navigator.locks
-    ? (navigator.locks as unknown as LockLike)
-    : null
-
-const sizeOfWire = (w: WireV2) => storedSize(w as unknown as Wire)
-
-// A line made from an event (join, leave, pin), about `ik`.
-const systemRow = (rec: EventRecord, ik: string): P2pMessage => ({
-  id: rec.id,
-  sender: ik,
-  ts: rec.effTs,
-  sentTs: serverWire(rec).ev.ts,
-  sortKey: rec.sortKey,
-  seq: rec.seq,
-  body: '',
-  reply: null,
-  mentions: [],
-  fwd: null,
-  att: [],
-  edited: null,
-  reactions: [],
-  pinned: null,
-  late: false,
-  pending: false,
-  failed: false,
-  call: null,
-})
-
-// Entries per `migrate` chunk (spec 3.8: chunks within the 16 KiB of a migrate event), and the
-// ACL events of a new owner's carry-over a member acknowledges with a mark.
-const MIGRATE_PER = LOCAL.server.migratePer
-// A new copy links with the old copy's members this long after we joined it (spec 3.8).
-const SETTLE_MS = LOCAL.server.settleMs
-const ARCHIVE_LINKS = {
-  perRoom: LOCAL.gossip.archivePerRoom,
-  outTarget: LOCAL.gossip.archiveOutTarget,
-}
-const SETTLE_RESAMPLE = LOCAL.server.settleResample
-const CARRY_ACK = LOCAL.server.carryAck
-// Acknowledgements of a carry-over whose size isn't known here (its old copy isn't).
-const CARRY_ACKS_MAX = LOCAL.server.carryAcksMax
-
-export interface Migrated {
-  members: string[]
-  bans: string[]
-  marks: Record<string, number>
-  done: boolean
-}
-
-// What this browser signs again from a new key when a rotation drops its old one (spec 3.9).
-const RESIGN_CONTENT = ['msg', 'edit', 'redact', 'react', 'pin']
-const RESIGN_ACL = [
-  'add',
-  'uninvite',
-  'kick',
-  'ban',
-  'unban',
-  'role_create',
-  'role_move',
-  'role_bits',
-  'role_del',
-  'assign',
-  'revoke',
-  'channel',
-  'chperm',
-  'settings',
-  'role_meta',
-  'code',
-  'code_revoke',
-]
-
-// A server in the lost-device preview (spec 8.2): what the device did, when we received each of
-// its ACL events, and whether this browser's key there came after the trusted point (what it
-// signed that stops counting is signed again from the new key).
-export interface LostRoom extends Disowned {
-  room: string
-  at: Record<string, number>
-  // This browser's own ACL changes the new key signs again (its key came after the trusted point).
-  resign: { id: string; t: string; to?: string }[]
-  // Our other devices added since the trusted point: the rotation signs them out too.
-  others: string[]
-}
-
-// A row that shows in place of a message without its content.
-const placeholder = (r: EventRecord) => systemRow(r, r.sender)
-
-// A channel's counters with `n` pings taken off (of `thread`'s, when given).
-const lessPings = (old: ChanCounts, n: number, thread: string | null): ChanCounts => {
-  const next: ChanCounts = { ...old, pings: Math.max(0, old.pings - n) }
-  if (thread && old.threads?.[thread]) {
-    const threads = { ...old.threads }
-    const left = threads[thread] - n
-    if (left > 0) threads[thread] = left
-    else delete threads[thread]
-    if (Object.keys(threads).length) next.threads = threads
-    else delete next.threads
-  }
-  return next
-}
-
-export type ChannelPatch = {
-  name?: string
-  topic?: string
-  gone?: true
-  restrict_view?: boolean
-  restrict_send?: boolean
-  slow?: number
-}
-
-export const ROLE_NAME_MAX = LOCAL.server.roleNameMax
-
-// Positions are absolute (spec 1.6): a new role goes below the lowest, leaving room between, else
-// into a gap below `cap` (our own top role's position), else (owners) above every role; never onto a
-// position a role has. Null: no room below `cap`.
-export const ROLE_STEP = LOCAL.server.roleStep
-export const NO_ROOM_TEXT = 'No room for a new role below your highest role. Move a role first.'
-export const newRolePos = (positions: number[], cap = Infinity): number | null => {
-  const s = [...new Set(positions)].sort((a, b) => a - b)
-  if (!s.length) return Number.isFinite(cap) ? null : ROLE_STEP * ROLE_STEP
-  if (s[0] > 0) {
-    const p = s[0] > ROLE_STEP ? s[0] - ROLE_STEP : Math.floor(s[0] / 2)
-    return p < cap ? p : null
-  }
-  for (let i = 0; i < s.length; i++) {
-    const hi = Math.min(s[i + 1] ?? Infinity, cap)
-    if (hi === Infinity) return s[i] + ROLE_STEP
-    if (hi - s[i] >= 2) return Math.floor((s[i] + hi) / 2)
-    if (hi === cap) break
-  }
-  return null
-}
-
-const roleName = (x: unknown) =>
-  typeof x === 'string' && x.trim() ? Array.from(x.trim()).slice(0, ROLE_NAME_MAX).join('') : 'Role'
-
-const sortRoles = (ids: string[], at: Map<string, number>) =>
-  ids.filter(id => at.has(id)).sort((a, b) => at.get(a)! - at.get(b)!)
 
 export class Servers {
   readonly sync: Sync
@@ -734,6 +262,10 @@ export class Servers {
   private vouchedBy = new Map<string, number>()
   storageFull = false
 
+  private get cx(): ServerCtx {
+    return this as unknown as ServerCtx
+  }
+
   constructor(private deps: ServerDeps) {
     this.clock = deps.clock ?? realClock
     this.host =
@@ -741,7 +273,7 @@ export class Servers {
       (typeof window !== 'undefined' && typeof Worker !== 'undefined'
         ? new WorkerHost(
             () =>
-              new Worker(new URL('./p2p.worker.ts', import.meta.url), {
+              new Worker(new URL('../p2p.worker.ts', import.meta.url), {
                 type: 'module',
               }) as unknown as WorkerLike
           )
@@ -4940,39 +4472,17 @@ export class Servers {
       await this.updateRoom(room, cur => ({ ...cur, invite: null }))
     this.changed(room)
   }
-
   // ----- Messages -----
 
-  // Member names a message may mention, by member.
   private mentionables(room: string) {
-    const out: { ik: string; names: string[] }[] = []
-    const s = this.sumOf(room)
-    for (const m of membersOf(s)) {
-      if (m.m !== 'join' || m.ik === this.me) continue
-      const c = this.deps.node.contact(m.ik)
-      const names = [
-        c?.petname,
-        c?.name,
-        this.idents.get(m.ik)?.profile?.name,
-        typeof m.profile?.name === 'string' ? m.profile.name : undefined,
-      ]
-      out.push({ ik: m.ik, names: [...new Set(names.filter((n): n is string => !!n))] })
-    }
-    return out
+    return messages.mentionables(this.cx, room)
   }
 
-  // A message inside our slow-mode interval would be hidden (spec 3.5): it isn't signed.
   private content(room: string, t: string, c: Record<string, unknown>) {
-    const ch = c.ch
-    if (t !== 'msg' || typeof ch !== 'string') return this.emit(room, t, () => c, { L: 'c' })
-    return this.locked(room, async () => {
-      const wait = await this.slowLeft(room, ch)
-      if (wait > 0) throw new ServerError(slowText(wait))
-      return this.emitNow(room, t, () => c, { L: 'c' })
-    })
+    return messages.content(this.cx, room, t, c)
   }
 
-  async send(
+  send(
     room: string,
     msg: {
       ch: string
@@ -4983,861 +4493,168 @@ export class Servers {
       thread?: string
     }
   ) {
-    const content: MsgContent = { body: msg.body, ch: msg.ch }
-    if (msg.thread) {
-      await this.threadRoot(room, msg.thread, msg.ch)
-      content.thread = msg.thread
-    }
-    if (msg.reply) content.reply = msg.reply
-    if (msg.att?.length) content.att = msg.att
-    if (msg.fwd) content.fwd = msg.fwd
-    else {
-      const mentions = this.mentionables(room)
-        .filter(m => mentionsIn(msg.body, m.names))
-        .map(m => m.ik)
-        .slice(0, EV.mentions)
-      if (mentions.length) content.mentions = mentions
-      if (MENTION_EVERYONE.test(msg.body) && can(this.sumOf(room), this.me, P.MentionEveryone))
-        content.everyone = true
-    }
-    const fitted = fitContent(content)
-    if (!fitted) throw new ServerError(TOO_BIG_TEXT)
-    return this.content(room, 'msg', fitted as unknown as Record<string, unknown>)
+    return messages.send(this.cx, room, msg)
   }
 
-  // A thread reply's root, when it is one: a top-level message of the same channel held here.
-  // A reply that names anything else (or a root not here yet) shows in its channel.
-  private async rootOf(
+  private rootOf(
     rec: EventRecord,
     get: (id: string) => Promise<EventRecord | undefined> = id => this.db.get('events', id)
   ): Promise<string | null> {
-    if (!rec.thread) return null
-    const r = await get(rec.thread)
-    return r && r.room === rec.room && r.type === 'msg' && r.chan === rec.chan && !r.thread
-      ? rec.thread
-      : null
+    return messages.rootOf(this.cx, rec, get)
   }
 
-  // The thread an event of ours belongs to (null: none, or not a server event).
-  async threadOf(id: string) {
-    const r = await this.db.get('events', id)
-    return r && this.rooms.has(r.room) ? this.rootOf(r) : null
+  threadOf(id: string) {
+    return messages.threadOf(this.cx, id)
   }
 
-  // A thread's root: a top-level message of the channel that shows here.
-  private async threadRoot(room: string, id: string, ch?: string) {
-    const r = await this.db.get('events', id)
-    // A root whose body was evicted here for space still takes replies.
-    const gone = (r?.purged || r?.redacted) && !r?.evicted
-    if (!r || r.room !== room || r.type !== 'msg' || !r.chan || r.thread || gone)
-      throw new ServerError(THREAD_ROOT_TEXT)
-    if (ch !== undefined && r.chan !== ch) throw new ServerError(THREAD_ROOT_TEXT)
-    const sh = (await this.host.display(room, [id]))[0]
-    if (!sh || sh.hidden) throw new ServerError(THREAD_ROOT_TEXT)
-    return r
+  private threadRoot(room: string, id: string, ch?: string) {
+    return messages.threadRoot(this.cx, room, id, ch)
   }
 
-  private async message(room: string, target: string) {
-    const r = await this.db.get('events', target)
-    if (!r || r.room !== room || r.type !== 'msg' || !r.chan)
-      throw new ServerError('Message not found')
-    return r
+  private message(room: string, target: string) {
+    return messages.message(this.cx, room, target)
   }
 
-  async edit(room: string, target: string, body: string) {
-    const r = await this.message(room, target)
-    if (r.sender !== this.me || (serverWire(r).c as MsgContent | null)?.fwd)
-      throw new ServerError("You can't edit this message")
-    return this.content(room, 'edit', { target, body, ch: r.chan })
+  edit(room: string, target: string, body: string) {
+    return messages.edit(this.cx, room, target, body)
   }
 
-  async redact(room: string, target: string) {
-    const r = await this.db.get('events', target)
-    if (!r || r.room !== room || r.layer !== 'c' || !r.chan)
-      throw new ServerError("You can't delete this message")
-    const s = this.sumOf(room)
-    if (
-      r.sender !== this.me &&
-      !isOwner(s, this.me) &&
-      !(can(s, this.me, P.ManageMessages) && outranks(s, this.me, r.sender))
-    )
-      throw new ServerError("You can't delete this message")
-    const id = await this.content(room, 'redact', { target, ch: r.chan })
-    this.sync.redactWaiting(room, target)
-    const o = await this.db.get('outbox', target)
-    if (o?.failed) await this.db.delete('outbox', target)
-    return id
+  redact(room: string, target: string) {
+    return messages.redact(this.cx, room, target)
   }
 
-  async react(room: string, target: string, key: string, on: boolean) {
-    const r = await this.message(room, target)
-    return this.content(room, 'react', { target, key, on, ch: r.chan })
+  react(room: string, target: string, key: string, on: boolean) {
+    return messages.react(this.cx, room, target, key, on)
   }
 
-  // Manage messages (owners have it), top-level messages only, at most PINS_MAX per channel.
-  async pin(room: string, target: string, on: boolean) {
-    const r = await this.message(room, target)
-    if (!can(this.sumOf(room), this.me, P.ManageMessages)) throw new ServerError(PIN_TEXT)
-    if (await this.rootOf(r)) throw new ServerError(PIN_THREAD_TEXT)
-    if (on && r.chan) {
-      const pins = await this.loadPins(room, r.chan)
-      if (pins.length >= PINS_MAX) throw new ServerError(`You can pin up to ${PINS_MAX} messages`)
-    }
-    return this.content(room, 'pin', { target, on, ch: r.chan })
+  pin(room: string, target: string, on: boolean) {
+    return messages.pin(this.cx, room, target, on)
   }
 
-  async retry(room: string, id: string) {
-    const r = await this.db.get('events', id)
-    const o = await this.db.get('outbox', id)
-    if (!r || !o || r.room !== room || r.sender !== this.me) return
-    const v = await this.check(room, r.wire)
-    if (!v.ok) throw new DmError("This message can't be sent. Delete it instead.")
-    await this.db.put('outbox', { ...o, failed: false })
-    const w = serverWire(r)
-    if (w.ev.L === 'c') await this.fillViews(room, typeof w.c?.ch === 'string' ? w.c.ch : '')
-    this.sync.resend(room, id, r.wire)
-    this.changed(room)
+  retry(room: string, id: string) {
+    return messages.retry(this.cx, room, id)
   }
 
-  // Reads the channel up to now; pings on thread replies stay until their thread is read.
-  // `drop`: thread pings to take off as well, per root.
-  async markRead(room: string, ch: string, drop: Readonly<Record<string, number>> = {}) {
-    await this.updateRoom(room, cur => {
-      const old = cur.chans?.[ch]
-      const threads: Record<string, number> = {}
-      for (const [t, n] of Object.entries(old?.threads ?? {}))
-        if (n - (drop[t] ?? 0) > 0) threads[t] = n - (drop[t] ?? 0)
-      const left = Object.values(threads).reduce((a, b) => a + b, 0)
-      if (old && !old.unread && old.pings === left && old.readSeq === cur.lastSeq) return null
-      const next: ChanCounts = { unread: 0, pings: left, readSeq: cur.lastSeq }
-      if (left) next.threads = threads
-      return { ...cur, chans: { ...cur.chans, [ch]: next } }
-    })
-    this.changed(room)
+  markRead(room: string, ch: string, drop: Readonly<Record<string, number>> = {}) {
+    return messages.markRead(this.cx, room, ch, drop)
   }
 
-  // Reads a channel and takes off the thread pings that no longer count: their reply (or the
-  // reaction) doesn't show or left its thread, or the thread's root doesn't show; counted pings
-  // not among `pings` (the log's unread thread pings of the channel) go too. Returns the ids of
-  // `pings` that no longer count.
-  // `counts`: the thread counters as they were before `pings` was read (default: now).
-  async readChannel(
+  readChannel(
     room: string,
     ch: string,
     pings: readonly { id: string; thread: string }[],
     counts: Readonly<Record<string, number>> = this.threadCounts(room, ch)
   ) {
-    const live = await this.livePings(room, pings)
-    const drop: Record<string, number> = {}
-    for (const [root, n] of Object.entries(counts)) {
-      const alive = pings.filter(p => p.thread === root && live.has(p.id)).length
-      if (n > alive) drop[root] = n - alive
-    }
-    await this.markRead(room, ch, drop)
-    return pings.filter(p => !live.has(p.id)).map(p => p.id)
+    return messages.readChannel(this.cx, room, ch, pings, counts)
   }
 
   threadCounts(room: string, ch: string): Record<string, number> {
-    return { ...this.rooms.get(room)?.chans?.[ch]?.threads }
+    return messages.threadCounts(this.cx, room, ch)
   }
 
-  private async livePings(room: string, pings: readonly { id: string; thread: string }[]) {
-    const recs = new Map<string, EventRecord>()
-    for (const r of await getEvents(this.db, room, [
-      ...new Set(pings.flatMap(p => [p.id, p.thread])),
-    ]))
-      recs.set(r.id, r)
-    const targets = new Map<string, EventRecord>()
-    for (const r of await getEvents(
-      this.db,
-      room,
-      [...recs.values()].flatMap(r => (r.type === 'react' && r.target ? [r.target] : []))
-    ))
-      targets.set(r.id, r)
-    // The message each ping is about (a reaction's target), in the thread it pinged in.
-    const about = new Map<string, EventRecord>()
-    for (const p of pings) {
-      const r = recs.get(p.id)
-      const m = r?.type === 'react' && r.target ? targets.get(r.target) : r
-      if (!r || !m || m.type !== 'msg' || r.purged || r.redacted || m.purged || m.redacted) continue
-      if ((await this.rootOf(m)) === p.thread && recs.get(p.thread)) about.set(p.id, m)
-    }
-    const ids = [
-      ...new Set([...about].flatMap(([id, m]) => [id, m.id, m.thread as string]).filter(x => x)),
-    ]
-    const shown = await this.host.display(room, ids)
-    const ok = new Set(ids.filter((_x, i) => shown[i] && !shown[i]?.hidden))
-    return new Set(
-      [...about]
-        .filter(([id, m]) => ok.has(id) && ok.has(m.id) && ok.has(m.thread as string))
-        .map(([id]) => id)
-    )
+  private livePings(room: string, pings: readonly { id: string; thread: string }[]) {
+    return messages.livePings(this.cx, room, pings)
   }
 
-  // Reads a thread: its pings come off the channel's counter.
-  async markThread(room: string, ch: string, root: string) {
-    await this.updateRoom(room, cur => {
-      const old = cur.chans?.[ch]
-      const n = old?.threads?.[root]
-      if (!old || !n) return null
-      return { ...cur, chans: { ...cur.chans, [ch]: lessPings(old, n, root) } }
-    })
-    this.changed(room)
+  markThread(room: string, ch: string, root: string) {
+    return messages.markThread(this.cx, room, ch, root)
   }
 
-  // Pings marked read one by one (the inbox): off the channel's counter (and the thread's), the
-  // read position stays.
-  async unping(room: string, ch: string, n: number, thread: string | null = null) {
-    await this.updateRoom(room, cur => {
-      const old = cur.chans?.[ch]
-      if (!old?.pings) return null
-      return { ...cur, chans: { ...cur.chans, [ch]: lessPings(old, n, thread) } }
-    })
-    this.changed(room)
+  unping(room: string, ch: string, n: number, thread: string | null = null) {
+    return messages.unping(this.cx, room, ch, n, thread)
   }
 
-  // In a channel, or in one of its threads (`root`).
   typing(room: string, ch: string, on: boolean, root?: string) {
-    this.gossip.typing(room, ch, on, root)
+    return messages.typing(this.cx, room, ch, on, root)
   }
 
   typingIn(room: string, ch: string, root: string | null = null) {
-    return this.gossip.typingIn(room, ch, root)
+    return messages.typingIn(this.cx, room, ch, root)
   }
 
   loadOlder(room: string) {
-    this.sync.loadOlder(room)
+    return messages.loadOlder(this.cx, room)
   }
 
   // ----- Views -----
 
   view(room: string): ServerView | null {
-    const r = this.rooms.get(room)
-    if (!r) return null
-    const s = this.sumOf(room)
-    const rt = this.rt(room)
-    const online = this.gossip.online(room)
-    const owners = s.owners
-    const meRank = memberOf(s, this.me)?.rank
-    const banner = membershipOf(s, this.me) === 'join' && can(s, this.me, P.Ban)
-    const order = rolesOf(s)
-    const at = new Map(order.map((r, i) => [r.id, i]))
-    const members: MemberView[] = membersOf(s)
-      .filter(m => m.m === 'join' || m.m === 'invite' || m.m === 'ban')
-      .map(m => ({
-        ik: m.ik,
-        m: m.m,
-        name: this.nameOf(m.ik, room),
-        owner: owners.includes(m.ik),
-        online: m.m === 'join' && online.has(m.ik),
-        contact: this.deps.node.contact(m.ik)?.state === 'mutual',
-        below: !!meRank && gt(meRank, m.rank as Rank),
-        // Waiting for a third member only while they are trying to join: linked with us, or
-        // redeeming a code with us.
-        waits:
-          m.m === 'invite' &&
-          m.waits === true &&
-          (this.redeeming(room, m.ik) || this.sync.linksOf(room).some(l => l.ik === m.ik)),
-        myInvite: m.m === 'invite' && !!m.inviters?.length && m.inviters.every(x => x === this.me),
-        unban: m.m === 'ban' && banner && !!meRank && (!m.banRank || !gt(m.banRank, meRank)),
-        roles: m.m === 'join' ? sortRoles(m.roles, at) : [],
-        top: m.m === 'join' ? topRoleOf(s, m.ik) : null,
-      }))
-    const joined = members.filter(m => m.m === 'join')
-    const n = nameOf(s)
-    const readOnly = this.readOnly(room)
-    const me = readOnly ? null : membershipOf(s, this.me)
-    return {
-      id: room,
-      name: n?.name ?? r.name ?? 'P2P server',
-      color: n?.color ?? null,
-      me,
-      joining: !!r.joining,
-      owner: s.creator,
-      owners,
-      perms: me === 'join' ? permsOf(s, this.me) : 0,
-      rank: meRank ?? [-Infinity, ''],
-      history: historyOf(s),
-      system: systemOf(s),
-      channels: readOnly ? [] : this.channelViews(s, me),
-      roles: readOnly
-        ? []
-        : order.map(r => ({
-            id: r.id,
-            name: roleName(r.name),
-            color:
-              Number.isSafeInteger(r.color) && r.color! >= 0 && r.color! <= 0xffffff
-                ? r.color!
-                : null,
-            pos: r.pos,
-            bits: r.bits,
-            holders: joined.filter(m => m.roles.includes(r.id)).length,
-            below: me === 'join' && !!meRank && gt(meRank, roleRank(s, r.id)),
-            held: restricts(chanFactsOf(s), r.id),
-          })),
-      everyone: s.everyone,
-      members: readOnly ? [] : members,
-      online: joined.filter(m => m.online).length,
-      joined: joined.length,
-      chans: r.chans ?? {},
-      seq: r.lastSeq,
-      gap: r.missing.length > 0 || (this.rt(room)?.waits.size ?? 0) > 0,
-      full: r.full,
-      readOnly,
-      voice: this.frozen(room) || me !== 'join' ? {} : this.voice.channels(room),
-      mods: (rt?.mods ?? []).map(x => ({ id: x.id, act: x.act, who: x.who })),
-      reached: (rt?.reached ?? []).map(x => ({ by: x.by, lost: [...x.lost] })),
-      reapply: readOnly ? [] : (rt?.reapply ?? []),
-      joinWait: rt?.joinWait ?? null,
-      conflict: rt?.conflict ?? false,
-      syncing: this.sync.pullingState(room) ? s.count : null,
-      upgraded: s.upgraded,
-      disputed: (s.upgrades?.length ?? 0) > 1,
-      next: r.next ?? null,
-      prev: r.prev ?? null,
-      carry:
-        r.carry && r.carry.state !== 'done'
-          ? { state: r.carry.state, why: r.carry.why ?? null }
-          : null,
-      migrateDiff: rt?.migrateDiff ?? null,
-    }
+    return views.view(this.cx, room)
   }
 
-  // The channels we may view, with what we may do there.
-  private channelViews(s: Summary, me: Membership | null): ChannelView[] {
-    const F = chanFactsOf(s)
-    const out: ChannelView[] = []
-    for (const c of channelsOf(s)) {
-      const p = channelPermsOf(s, this.me, c.id, F)
-      if (!(p & P.ViewChannel)) continue
-      out.push({
-        ...c,
-        send: me === 'join' && (p & P.SendMessages) !== 0,
-        exempt: (p & (P.ManageChannels | P.ManageMessages)) !== 0,
-        over: s.overwrites?.[c.id] ?? {},
-      })
-    }
-    return out
-  }
-
-  // Whether we may view `ch` (spec 1.4).
   private canViewCh(room: string, ch: string) {
-    const s = this.sumOf(room)
-    return (channelPermsOf(s, this.me, ch) & P.ViewChannel) !== 0
+    return views.canViewCh(this.cx, room, ch)
   }
 
   online(room: string) {
-    return this.sync.online(room)
+    return views.online(this.cx, room)
   }
 
   pulling(room: string) {
-    return this.sync.pulling(room)
+    return views.pulling(this.cx, room)
   }
 
-  // Messages of a channel, oldest first, with join and leave lines in the system channel (the
-  // page bounds as in dm.ts loadMessages).
-  async loadChannel(
+  loadChannel(
     room: string,
     ch: string,
     opts: PageOpts & { keep?: (r: EventRecord) => boolean } = {}
   ): Promise<{ messages: P2pMessage[]; more: boolean }> {
-    const limit = opts.limit ?? 100
-    if (this.readOnly(room)) return { messages: [], more: false }
-    if (!opts.keep && !this.canViewCh(room, ch)) return { messages: [], more: false }
-    // A transferred copy shows only its archive (spec 3.8 step 6), opened by itself too.
-    if (!opts.keep && this.sumOf(room).upgraded) {
-      const keep = await this.archiveKeep(room, this.rooms.get(room)?.next)
-      if (keep) opts = { ...opts, keep }
-    }
-    const up = opts.newer === true
-    const range = IDBKeyRange.bound(
-      [room, ch, opts.after ?? opts.from ?? ''],
-      [room, ch, opts.before ?? '￿'],
-      !!opts.after,
-      !!opts.before
-    )
-    const recs: EventRecord[] = []
-    const pins: EventRecord[] = []
-    const store = this.db.transaction('events').store
-    const roots = new Map<string, Promise<EventRecord | undefined>>()
-    const get = (id: string) => {
-      let r = roots.get(id)
-      if (!r) roots.set(id, (r = store.get(id)))
-      return r
-    }
-    let cursor = await store.index('room_chan_sort').openCursor(range, up ? 'next' : 'prev')
-    while (cursor && recs.length < limit + 1) {
-      const r = cursor.value
-      // Thread replies show in their thread only; an archive (spec 3.8) only what `keep` keeps,
-      // without its pin lines.
-      if (r.type === 'msg' && !(await this.rootOf(r, get)) && (!opts.keep || opts.keep(r)))
-        recs.push(r)
-      else if (r.type === 'pin' && !opts.keep) pins.push(r)
-      cursor = await cursor.continue()
-    }
-    const more = recs.length > limit
-    const page = up ? recs.slice(0, limit) : recs.slice(0, limit).reverse()
-    const rows = await this.withReplies(room, ch, await this.rows(room, page))
-    const lo = more && !up ? page[0]?.sortKey : (opts.after ?? opts.from)
-    const hi = more && up ? recs[limit].sortKey : opts.before
-    const pinRows = await this.pinRows(
-      room,
-      pins.filter(p => (lo === undefined || p.sortKey > lo) && (hi === undefined || p.sortKey < hi))
-    )
-    rows.push(...pinRows)
-    const sys = systemOf(this.sumOf(room))
-    // An archive (spec 3.8) brings no join and leave lines of the old copy.
-    if (sys.ch === ch && (sys.join || sys.leave) && !opts.keep)
-      rows.push(...(await this.systemRows(room, lo, hi, sys)))
-    rows.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0))
-    // Spec 3.8: a new copy shows the old copy's messages of the same channel above its own, as
-    // they are there (read-only).
-    const prev = this.rooms.get(room)?.prev
-    const keep = prev && this.rooms.has(prev) ? await this.archiveKeep(prev, room) : null
-    if (prev && keep && !up && !more && !opts.after && page.length < limit) {
-      const before = page[0]?.sortKey ?? opts.before
-      const old = await this.loadChannel(prev, ch, { before, limit: limit - page.length, keep })
-      return {
-        messages: [...old.messages.map(m => ({ ...m, archived: true })), ...rows],
-        more: old.more,
-      }
-    }
-    return { messages: rows, more }
+    return views.loadChannel(this.cx, room, ch, opts)
   }
 
-  // What an old copy shows after its transfer (spec 3.8 step 6): each device's messages up to
-  // its last one at the transfer, by what the new owner carried over or, at the latest, what we
-  // held when we heard of the upgrade (the new owner's holdings are partial: history, backfill
-  // horizon, channels it can't view), and nothing by someone banned in the new copy. Null before
-  // either is known.
-  private async archiveKeep(old: string, next?: string) {
-    const local = this.rooms.get(old)?.archive
-    const migrated = next ? await this.migratedOf(next) : null
-    if (!local && !migrated) return null
-    const s = next ? this.sumOf(next) : null
-    const mark = (m: Record<string, number> | undefined, dev: string) =>
-      m && Object.hasOwn(m, dev) ? m[dev] : -1
-    return (r: EventRecord) =>
-      r.dev !== undefined &&
-      r.dseq !== undefined &&
-      r.dseq <= Math.max(mark(migrated?.marks, r.dev), mark(local, r.dev)) &&
-      (!s || membershipOf(s, r.sender) !== 'ban')
+  private archiveKeep(old: string, next?: string) {
+    return views.archiveKeep(this.cx, old, next)
   }
 
-  // Each device's last message we hold in a copy, when we first hear it was transferred: what
-  // comes later at positions from before the upgrade never shows (spec 3.8 step 6).
-  private async markArchive(room: string) {
-    const archive = Object.create(null) as Record<string, number>
-    const range = IDBKeyRange.bound([room, -Infinity], [room, Infinity])
-    const tx = this.db.transaction('events')
-    for (
-      let cur = await tx.store.index('room_seq').openCursor(range);
-      cur;
-      cur = await cur.continue()
-    ) {
-      const r = cur.value
-      if (r.layer === 'c' && r.dev && r.dseq !== undefined)
-        archive[r.dev] = Math.max(Object.hasOwn(archive, r.dev) ? archive[r.dev] : -1, r.dseq)
-    }
-    await tx.done.catch(() => {})
-    await this.updateRoom(room, cur => (cur.archive ? cur : { ...cur, archive }))
+  private markArchive(room: string) {
+    return views.markArchive(this.cx, room)
   }
 
-  // "{name} pinned a message to this channel.": a pin that shows, by someone with Manage messages
-  // where it was posted, of a top-level message (a link to it while it shows).
-  private async pinRows(room: string, pins: EventRecord[]) {
-    const on = pins.filter(p => (serverWire(p).c as { on?: unknown } | null)?.on === true)
-    if (!on.length) return []
-    const shown = await this.host.display(
-      room,
-      on.map(p => p.id)
-    )
-    const ok = on.filter((_p, i) => shown[i] && !shown[i]?.hidden && shown[i]?.pins === true)
-    const targets = await getEvents(
-      this.db,
-      room,
-      ok.flatMap(p => (p.target ? [p.target] : []))
-    )
-    const byId = new Map(targets.map(t => [t.id, t]))
-    const top = new Set<string>()
-    for (const t of targets) if (!(await this.rootOf(t))) top.add(t.id)
-    const live = targets.filter(t => t.type === 'msg' && top.has(t.id) && !t.redacted)
-    const vis = await this.host.display(
-      room,
-      live.map(t => t.id)
-    )
-    const showing = new Set(live.filter((_t, i) => vis[i] && !vis[i]?.hidden).map(t => t.id))
-    const out: P2pMessage[] = []
-    for (const p of ok) {
-      const t = p.target ? byId.get(p.target) : undefined
-      if (t && (!top.has(t.id) || t.chan !== p.chan)) continue
-      out.push({
-        ...systemRow(p, p.sender),
-        system: {
-          kind: 'pin',
-          ik: p.sender,
-          target: t && showing.has(t.id) ? t.id : null,
-        },
-      })
-    }
-    return out
+  private pinRows(room: string, pins: EventRecord[]) {
+    return views.pinRows(this.cx, room, pins)
   }
 
-  // Top-level rows of channel `ch` with their thread's reply count and last reply time (replies
-  // in the same channel that show).
-  private async withReplies(room: string, ch: string, rows: P2pMessage[]) {
-    const roots = rows.filter(m => !m.thread && !m.noThread && !m.system)
-    if (!roots.length) return rows
-    const ix = this.db.transaction('events').store.index('room_thread_sort')
-    const lists = await Promise.all(
-      roots.map(m => ix.getAll(IDBKeyRange.bound([room, m.id, ''], [room, m.id, '￿'])))
-    )
-    const replies = new Map<string, EventRecord[]>()
-    roots.forEach((m, i) => {
-      if (lists[i].length) replies.set(m.id, lists[i])
-    })
-    if (!replies.size) return rows
-    const all = [...replies.values()].flat().filter(r => r.type === 'msg' && r.chan === ch)
-    const shown = await this.host.display(
-      room,
-      all.map(r => r.id)
-    )
-    const vis = new Set(all.filter((_r, i) => shown[i] && !shown[i]?.hidden).map(r => r.id))
-    return rows.map(m => {
-      const list = replies.get(m.id)?.filter(r => vis.has(r.id) && !r.redacted)
-      if (!list?.length) return m
-      return { ...m, replies: list.length, lastReply: list[list.length - 1].effTs }
-    })
+  private withReplies(room: string, ch: string, rows: P2pMessage[]) {
+    return views.withReplies(this.cx, room, ch, rows)
   }
 
-  // A thread: its root and replies, oldest first, `limit` at most before `before`.
-  async loadThread(
+  loadThread(
     room: string,
     root: string,
     opts: { before?: string; after?: string; limit?: number } = {}
   ) {
-    const limit = opts.limit ?? 100
-    const r = await this.db.get('events', root)
-    if (this.readOnly(room) || !r || r.room !== room || r.type !== 'msg' || !r.chan) return null
-    if (!this.canViewCh(room, r.chan) || (await this.rootOf(r))) return null
-    const range = IDBKeyRange.bound(
-      [room, root, opts.after ?? ''],
-      [room, root, opts.before ?? '￿'],
-      !!opts.after,
-      !!opts.before
-    )
-    // A transferred copy: its archive only (spec 3.8 step 6).
-    const keep = this.sumOf(room).upgraded
-      ? await this.archiveKeep(room, this.rooms.get(room)?.next)
-      : null
-    if (keep && !keep(r)) return null
-    const recs: EventRecord[] = []
-    let cursor = await this.db
-      .transaction('events')
-      .store.index('room_thread_sort')
-      .openCursor(range, 'prev')
-    while (cursor && recs.length < limit + 1) {
-      const x = cursor.value
-      if (x.type === 'msg' && x.chan === r.chan && (!keep || keep(x))) recs.push(x)
-      cursor = await cursor.continue()
-    }
-    const more = recs.length > limit
-    const page = recs.slice(0, limit).reverse()
-    const [head] = await this.withReplies(room, r.chan, await this.rows(room, [r]))
-    return { root: head ?? null, ch: r.chan, messages: await this.rows(room, page), more }
+    return views.loadThread(this.cx, room, root, opts)
   }
 
-  // A thread around one of its replies, for jumping to it.
-  async loadThreadAround(room: string, root: string, id: string) {
-    const r = await this.db.get('events', id)
-    if (!r || r.room !== room || (await this.rootOf(r)) !== root) return null
-    const older = await this.loadThread(room, root, {
-      before: r.sortKey,
-      limit: LOCAL.server.threadBefore,
-    })
-    const newer = await this.loadThread(room, root, {
-      after: r.sortKey,
-      limit: LOCAL.server.threadAfter,
-    })
-    if (!older || !newer) return null
-    const self = await this.rows(room, [r])
-    return { ...older, messages: [...older.messages, ...self, ...newer.messages] }
+  loadThreadAround(room: string, root: string, id: string) {
+    return views.loadThreadAround(this.cx, room, root, id)
   }
 
-  // Join and leave lines from ACL events in a sort key range: the genesis (its creator) and a live
-  // join, an effective leave, kick or ban.
-  private async systemRows(
+  private systemRows(
     room: string,
     lo: string | undefined,
     hi: string | undefined,
     sys: { join: boolean; leave: boolean }
   ) {
-    const kinds = [
-      ...(sys.join ? ['genesis', 'join'] : []),
-      ...(sys.leave ? ['leave', 'kick', 'ban'] : []),
-    ]
-    const recs: EventRecord[] = []
-    for (const t of kinds)
-      recs.push(
-        ...(await this.db.getAllFromIndex(
-          'events',
-          'room_type_sort',
-          IDBKeyRange.bound([room, t, lo ?? ''], [room, t, hi ?? '￿'], !!lo, !!hi)
-        ))
-      )
-    if (!recs.length) return []
-    const ids = recs.map(r => r.id)
-    const shown = await this.host.display(room, ids)
-    // A server that shows joiners only what came after them shows no lines from before either.
-    const mine =
-      historyOf(this.sumOf(room)) === 'joined'
-        ? await this.host.history(room, this.me, ids)
-        : ids.map(() => true)
-    const out: P2pMessage[] = []
-    recs.forEach((rec, i) => {
-      if (!shown[i] || shown[i]?.hidden || !mine[i]) return
-      const c = serverWire(rec).c
-      const ik = rec.type === 'kick' || rec.type === 'ban' ? (c?.to as string) : rec.sender
-      if (typeof ik !== 'string') return
-      out.push({
-        ...systemRow(rec, ik),
-        system: { kind: rec.type === 'join' || rec.type === 'genesis' ? 'join' : 'leave', ik },
-      })
-    })
-    return out
+    return views.systemRows(this.cx, room, lo, hi, sys)
   }
 
-  // Message rows: what shows, with its last edit, its reactions and its pin (spec 3.5).
-  private async rows(room: string, recs: EventRecord[]) {
-    if (!recs.length) return []
-    const box = new Map<string, OutboxRecord>(
-      (await this.db.getAllFromIndex('outbox', 'room', room)).map(o => [o.id, o])
-    )
-    const shown = await this.host.display(
-      room,
-      recs.map(r => r.id)
-    )
-    const out: P2pMessage[] = []
-    const viewed: string[] = []
-    const replies = new Map<string, Shown | null>()
-    const roots = new Map<string, Promise<EventRecord | undefined>>()
-    const getRoot = (id: string) => {
-      let x = roots.get(id)
-      if (!x) roots.set(id, (x = this.db.get('events', id)))
-      return x
-    }
-    for (let i = 0; i < recs.length; i++) {
-      const r = recs[i]
-      const sh = shown[i]
-      const thread = await this.rootOf(r, getRoot)
-      const c = serverWire(r).c as MsgContent | null
-      // Shows, but its body was purged or evicted here: until a peer sends it back (spec 4.3);
-      // an evicted one is asked for now that it is viewed (spec 4.2).
-      if (sh && !sh.hidden && r.purged) {
-        if (r.evicted) viewed.push(r.id)
-        out.push({
-          ...placeholder(r),
-          unavailable: true,
-          thread,
-          ...(r.thread && !thread ? { noThread: true as const } : {}),
-        })
-        continue
-      }
-      // Sent by a member around the time they were removed, and after it (spec 3.5, 8.2): a line
-      // in its place says so.
-      if (sh?.hidden?.why === 'removed' && r.type === 'msg') {
-        // One line for a run of them by the same member.
-        const last = out[out.length - 1]
-        if (!(last?.removed && last.sender === r.sender))
-          out.push({ ...placeholder(r), removed: true, thread })
-        continue
-      }
-      // Ours, sent too soon after our last one (two devices, one offline): we see why it's gone.
-      if (sh?.hidden?.why === 'slow' && r.type === 'msg' && r.sender === this.me) {
-        out.push({ ...placeholder(r), slowHidden: true, thread })
-        continue
-      }
-      // Not decided here yet (our own message on its way in), or hidden.
-      if (!sh || sh.hidden || !c || r.redacted) continue
-      const edit = sh.edit && !c.fwd ? await this.db.get('events', sh.edit) : undefined
-      const reacts = (await getEvents(
-        this.db,
-        room,
-        sh.reactions.map(x => x.id)
-      )) as EventRecord[]
-      const pin = sh.pin ? await this.db.get('events', sh.pin.id) : undefined
-      let reply: P2pMessage['reply'] = null
-      if (c.reply) {
-        const t = await this.db.get('events', c.reply)
-        let ts = replies.get(c.reply)
-        if (ts === undefined && t && t.room === room) {
-          ts = (await this.host.display(room, [t.id]))[0]
-          replies.set(c.reply, ts)
-        }
-        const tc = t && t.room === room ? (serverWire(t).c as MsgContent | null) : null
-        const gone = !t || !tc || t.redacted || !ts || !!ts.hidden
-        const tedit = !gone && ts?.edit ? await this.db.get('events', ts.edit) : undefined
-        reply = {
-          id: c.reply,
-          sender: t?.room === room ? t.sender : null,
-          body: gone
-            ? null
-            : tedit
-              ? String((serverWire(tedit).c as { body?: unknown } | null)?.body ?? '')
-              : (tc as MsgContent).body,
-        }
-      }
-      const o = box.get(r.id)
-      const pending = r.sender === this.me && !!o && o.deliveredTo.length === 0
-      out.push({
-        id: r.id,
-        sender: r.sender,
-        ts: r.effTs,
-        sentTs: serverWire(r).ev.ts,
-        sortKey: r.sortKey,
-        seq: r.seq,
-        body: edit ? String((serverWire(edit).c as { body?: unknown } | null)?.body ?? '') : c.body,
-        reply,
-        mentions: c.fwd ? [] : (c.mentions ?? []),
-        fwd: c.fwd ?? null,
-        att: c.att ?? [],
-        edited: edit ? edit.effTs : null,
-        reactions: reactionsOf(reacts, this.me),
-        pinned: sh.pin?.on && pin && !thread ? pin.effTs : null,
-        late: r.sender !== this.me && r.receivedAt - r.effTs > EV.lateMs,
-        pending,
-        failed: pending && !!o?.failed,
-        call: null,
-        everyone: c.everyone === true && sh.everyone,
-        thread,
-        ...(r.thread && !thread ? { noThread: true as const } : {}),
-      })
-    }
-    if (viewed.length) {
-      const rt = this.ensureRt(room)
-      const fresh = viewed.filter(id => !rt.viewed.has(id))
-      for (const id of fresh) rt.viewed.add(id)
-      while (rt.viewed.size > SERVER.viewedMax)
-        rt.viewed.delete(rt.viewed.values().next().value as string)
-      if (fresh.length) this.sync.fetch(room, fresh)
-    }
-    return out
+  private rows(room: string, recs: EventRecord[]) {
+    return views.rows(this.cx, room, recs)
   }
 
-  async loadAround(room: string, ch: string, id: string) {
-    const r = await this.db.get('events', id)
-    if (!r || r.room !== room || r.chan !== ch || (await this.rootOf(r))) return null
-    if (!this.canViewCh(room, ch)) return null
-    // A transferred copy shows only its archive (spec 3.8 step 6), at a jump too.
-    if (this.sumOf(room).upgraded) {
-      const keep = await this.archiveKeep(room, this.rooms.get(room)?.next)
-      if (keep && !keep(r)) return null
-    }
-    return around(
-      r.sortKey,
-      async () => this.withReplies(room, ch, await this.rows(room, [r])),
-      o => this.loadChannel(room, ch, o)
-    )
+  loadAround(room: string, ch: string, id: string) {
+    return views.loadAround(this.cx, room, ch, id)
   }
 
-  // Pinned messages of a channel, newest pin first (spec 3.5: the latest visible pin by someone
-  // with Manage messages in its admission state decides).
-  async loadPins(room: string, ch: string) {
-    if (!this.canViewCh(room, ch)) return []
-    const seen = new Set<string>()
-    const targets: string[] = []
-    let steps = 0
-    let cursor = await this.db
-      .transaction('events')
-      .store.index('room_type_sort')
-      .openCursor(IDBKeyRange.bound([room, 'pin', ''], [room, 'pin', '￿']), 'prev')
-    while (cursor && steps < DAG.walk) {
-      const p = cursor.value
-      steps += 1
-      if (p.target && p.chan === ch && !seen.has(p.target)) {
-        seen.add(p.target)
-        targets.push(p.target)
-      }
-      cursor = await cursor.continue()
-    }
-    if (!targets.length) return []
-    const shown = await this.host.display(room, targets)
-    const on = targets.filter((_t, i) => shown[i]?.pin?.on && !shown[i]?.hidden)
-    // A transferred copy pins only what its archive shows (spec 3.8 step 6).
-    const keep = this.sumOf(room).upgraded
-      ? await this.archiveKeep(room, this.rooms.get(room)?.next)
-      : null
-    const recs: EventRecord[] = []
-    for (const r of await getEvents(this.db, room, on))
-      if (r.type === 'msg' && r.chan === ch && !(await this.rootOf(r)) && (!keep || keep(r)))
-        recs.push(r)
-    return this.rows(room, recs.slice(0, PINS_MAX))
+  loadPins(room: string, ch: string) {
+    return views.loadPins(this.cx, room, ch)
   }
 
   // ----- Search -----
 
-  // Messages stored here (thread replies too) that show and match, newest first: one page of at
-  // most SEARCH.page below `cursor` (a sort key). `next` when more may follow.
-  // A query without letters or digits ("!!!") looks for that text in what shows.
-  async search(q: SearchQuery, cursor: string | null = null, page: number = SEARCH.page) {
-    const query = words(q.q)
-    const literal = !query.length && q.q.trim() ? q.q.trim().toLowerCase() : null
-    const rooms = [...this.rooms.values()]
-      .filter(r => !r.invite && !this.readOnly(r.id) && (q.room === null || r.id === q.room))
-      .map(r => r.id)
-    const from = q.from ? new Set(q.from) : null
-    // A transferred copy: its archive only (spec 3.8 step 6).
-    const keeps = new Map<string, (r: EventRecord) => boolean>()
-    for (const room of rooms)
-      if (this.sumOf(room).upgraded) {
-        const keep = await this.archiveKeep(room, this.rooms.get(room)?.next)
-        if (keep) keeps.set(room, keep)
-      }
-    const { pool, capped: more0 } = await this.searchPool(q, query, rooms, cursor)
-    const scan = pool.slice(0, SEARCH.scan)
-    let capped = more0 || pool.length > scan.length
-    const hits: SearchHit[] = []
-    let last: string | null = null
-    let i = 0
-    while (i < scan.length && hits.length < page) {
-      const chunk = scan.slice(i, i + LOCAL.server.searchChunk)
-      i += chunk.length
-      const recs = new Map<string, EventRecord>()
-      for (const x of chunk) {
-        const r = await this.db.get('events', x.id)
-        if (!r || r.room !== x.room || r.type !== 'msg' || !r.chan || r.purged || r.redacted)
-          continue
-        if (q.ch !== null && r.chan !== q.ch) continue
-        if (from && !from.has(r.sender)) continue
-        if (q.hasFile && !r.atts?.length) continue
-        if (q.beforeTs !== null && r.effTs >= q.beforeTs * 1000) continue
-        if (q.afterTs !== null && r.effTs <= q.afterTs * 1000) continue
-        // A channel we may no longer view (spec 1.4) isn't searched either.
-        if (!this.isChannel(r.room, r.chan) || !this.canViewCh(r.room, r.chan)) continue
-        const keep = keeps.get(r.room)
-        if (keep && !keep(r)) continue
-        recs.set(r.id, r)
-      }
-      const shown = new Map<string, P2pMessage>()
-      for (const room of new Set([...recs.values()].map(r => r.room)))
-        for (const m of await this.rows(
-          room,
-          [...recs.values()].filter(r => r.room === room)
-        ))
-          shown.set(m.id, m)
-      for (const x of chunk) {
-        last = x.sk
-        const m = shown.get(x.id)
-        const r = recs.get(x.id)
-        const text = m ? (m.fwd ? m.fwd.body : m.body) : ''
-        if (!m || !r || m.unavailable) continue
-        if (literal ? !text.toLowerCase().includes(literal) : !matches(text, query)) continue
-        hits.push({ room: r.room, ch: r.chan as string, thread: m.thread ?? null, m })
-        if (hits.length >= page) break
-      }
-    }
-    capped ||= i < scan.length || hits.length >= page
-    return { hits, next: capped ? last : null }
+  search(q: SearchQuery, cursor: string | null = null, page: number = SEARCH.page) {
+    return search.search(this.cx, q, cursor, page)
   }
 
   // The candidates of a query, newest first below `cursor`. Words: from the index, kept for the
@@ -5848,120 +4665,44 @@ export class Servers {
     pool: { room: string; id: string; sk: string }[]
     capped: boolean
   } | null = null
-
-  private async searchPool(
+  private searchPool(
     q: SearchQuery,
     query: readonly string[],
     rooms: readonly string[],
     cursor: string | null
   ) {
-    const now = this.clock.now()
-    const key = JSON.stringify([query, q.from, rooms])
-    const c = this.searchCache
-    if (query.length && cursor !== null && c?.key === key && now - c.at < SEARCH.poolMs) {
-      const pool = c.pool.filter(x => x.sk < cursor)
-      if (pool.length || !c.capped) return { pool, capped: c.capped }
-    }
-    const pool: { room: string; id: string; sk: string }[] = []
-    let capped = false
-    const max = query.length ? SEARCH.pool : SEARCH.scan
-    for (const room of rooms) {
-      const got = query.length
-        ? await candidates(this.db, room, query, cursor, max)
-        : await this.recent(room, q, cursor, max)
-      pool.push(...got.list)
-      capped ||= got.more
-    }
-    pool.sort((a, b) => (a.sk < b.sk ? 1 : a.sk > b.sk ? -1 : 0))
-    const kept = pool.slice(0, max)
-    capped ||= pool.length > kept.length
-    if (query.length) this.searchCache = { key, at: now, pool: kept, capped }
-    return { pool: kept, capped }
+    return search.searchPool(this.cx, q, query, rooms, cursor)
   }
 
-  // Newest messages of a room below `before` without words to look for: by author when the query
-  // names authors, else every message.
-  private async recent(room: string, q: SearchQuery, before: string | null, max: number) {
-    const out: { room: string; id: string; sk: string }[] = []
-    const scan = async (index: 'room_type_sort' | 'room_sender_sort', key: string) => {
-      let cursor = await this.db
-        .transaction('events')
-        .store.index(index)
-        .openCursor(
-          IDBKeyRange.bound([room, key, ''], [room, key, before ?? '￿'], false, !!before),
-          'prev'
-        )
-      let n = 0
-      while (cursor && n < max + 1) {
-        const r = cursor.value
-        if (r.type === 'msg') {
-          out.push({ room, id: r.id, sk: r.sortKey })
-          n += 1
-        }
-        cursor = await cursor.continue()
-      }
-    }
-    if (q.from) for (const ik of q.from) await scan('room_sender_sort', ik)
-    else await scan('room_type_sort', 'msg')
-    out.sort((a, b) => (a.sk < b.sk ? 1 : -1))
-    return { list: out.slice(0, max), more: out.length > max }
+  private recent(room: string, q: SearchQuery, before: string | null, max: number) {
+    return search.recent(this.cx, room, q, before, max)
   }
 
-  // Whether a channel id is one of the room's live text channels.
   isChannel(room: string, ch: string) {
-    if (!isShortId(ch)) return false
-    const c = channelOf(this.sumOf(room), ch)
-    return !!c && (c.kind === undefined || c.kind === 'text')
+    return search.isChannel(this.cx, room, ch)
   }
 
   isVoiceChannel(room: string, ch: string) {
-    if (!isShortId(ch) || this.frozen(room)) return false
-    return channelOf(this.sumOf(room), ch)?.kind === 'voice'
+    return search.isVoiceChannel(this.cx, room, ch)
   }
 
-  // A joined member of a room we are joined in (voice frames come and go only between them).
   private voiceMember(room: string, ik: string | undefined) {
-    return !!ik && this.myMembership(room) === 'join' && this.may(room, ik) === 'full'
+    return search.voiceMember(this.cx, room, ik)
   }
 
-  // Who may be in a voice channel, and hear who is: a joined member who may view it.
-  // At once when the answer is cached.
   voiceAllowed(room: string, ch: string, ik: string): boolean | Promise<boolean> {
-    if (!this.isVoiceChannel(room, ch) || this.myMembership(room) !== 'join') return false
-    if (ik !== this.me && this.may(room, ik) !== 'full') return false
-    const rt = this.ensureRt(room)
-    const key = `${ik}\n${ch}`
-    const hit = rt.views.get(key)
-    if (hit !== undefined) return hit
-    // An answer for a state that changed meanwhile is stale: asked again.
-    const sum = rt.sum
-    return this.host.viewable(room, ik, [ch]).then(([ok]) => {
-      if (rt.sum !== sum) return this.voiceAllowed(room, ch, ik)
-      rt.views.set(key, ok === true)
-      return ok === true
-    })
+    return search.voiceAllowed(this.cx, room, ch, ik)
   }
 
-  // The voice channel we are in went away, or we may no longer view it; others who may not are
-  // gone from the lists.
   private checkVoice(room: string) {
-    void this.voice.recheck(room).catch(() => {})
-    const cur = this.voice.current()
-    if (cur?.room !== room) return
-    void Promise.resolve(this.voiceAllowed(room, cur.ch, this.me)).then(ok => {
-      const now = this.voice.current()
-      if (!ok && now?.room === room && now.ch === cur.ch) this.voice.leave()
-    })
+    return search.checkVoice(this.cx, room)
   }
 
-  // The admission record of a stored ACL event (tests).
-  async recordOf(id: string): Promise<PackedRec | null> {
-    return (await this.db.get('events', id))?.acl ?? null
+  recordOf(id: string): Promise<PackedRec | null> {
+    return search.recordOf(this.cx, id)
   }
 
-  // Server events held for later (tests): pending (waiting for ACL parents) and held (dated ahead).
   waiting(room: string) {
-    const rt = this.rt(room)
-    return { pending: rt?.pending.size ?? 0, held: rt?.held.size ?? 0, unknown: UNKNOWN }
+    return search.waiting(this.cx, room)
   }
 }
