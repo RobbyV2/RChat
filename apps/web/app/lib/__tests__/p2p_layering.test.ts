@@ -41,4 +41,7 @@ describe('P2P layering', () => {
       expect([entry, files, packages]).toEqual([entry, [], []])
     }
   })
+
+  test('transfer works without the views', () =>
+    expect(reaches(importsOf(`${P2P}/server/transfer.ts`), 'server/views.ts')).toBe(false))
 })

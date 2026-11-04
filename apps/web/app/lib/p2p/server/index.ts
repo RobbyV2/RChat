@@ -17,12 +17,11 @@ import {
   trimContent,
   type AclItem,
   type Carried,
-  type Disowned,
   type PackedRec,
   type Plan,
   type Received,
 } from '../acl_room'
-import { b64u, bytesOf, canonical, randomBytes } from '../canonical'
+import { b64u, bytesOf, randomBytes } from '../canonical'
 import {
   blankRoom,
   cacheKey,
@@ -49,8 +48,6 @@ import {
 import {
   serverWire,
   type ChanCounts,
-  type Carry,
-  type CodeRecord,
   type EventRecord,
   type IdentRecord,
   type P2pDatabase,
@@ -62,9 +59,6 @@ import {
   buildEvent2,
   claimedId2,
   signRevocation2,
-  signRotation2,
-  signUpgrade,
-  upgradeSigOk,
   contentEvOf,
   headerOk,
   LIMITS as EV,
@@ -83,19 +77,13 @@ import {
   CANT_TEXT,
   CONFLICT_TEXT,
   CO_OWNERS_MAX_TEXT,
-  LONE_TEXT,
   TOO_BIG_TEXT,
-  QUICK_TEXT,
   reachedBy,
   TRANSFERRED_TEXT,
-  CO_OWNER_DECLINED_TEXT,
-  CO_OWNER_OFFLINE_TEXT,
   CUT_MS,
   cutOut,
   VOUCH_WAIT_TEXT,
-  effectHolds,
   refusalText,
-  signedAgain,
   syncedSince,
   TOO_OFTEN_TEXT,
   type HeadsReport,
@@ -107,7 +95,6 @@ import { Gossip, type LinkKind } from '../gossip'
 import {
   isKeyId,
   keyId,
-  peerId,
   verifyCert,
   verifyProfile,
   liveCerts,
@@ -132,7 +119,6 @@ import {
   memberOf,
   membershipOf,
   membersOf,
-  EVERYONE,
   MOD_BITS,
   nameOf,
   P,
@@ -151,29 +137,18 @@ import {
   VOUCH,
   JOIN_WAIT,
   SAVE_MS,
-  NOBODY_ONLINE,
   BAD_CODE,
-  REDEEM_TEXT,
   LEGACY_TEXT,
   UPDATE_TEXT,
   SYNC_TEXT,
-  OLD_GONE_TEXT,
   ServerError,
-  encodeCode,
-  parseCode,
-  codeHash,
   newShortId,
   EVERYONE_BITS,
   webLocks,
   sizeOfWire,
-  MIGRATE_PER,
   SETTLE_MS,
   ARCHIVE_LINKS,
   SETTLE_RESAMPLE,
-  CARRY_ACK,
-  CARRY_ACKS_MAX,
-  RESIGN_CONTENT,
-  RESIGN_ACL,
   ROLE_NAME_MAX,
   NO_ROOM_TEXT,
   newRolePos,
@@ -191,6 +166,10 @@ import {
 import * as views from './views'
 import * as search from './search'
 import * as messages from './messages'
+import * as transfer from './transfer'
+import * as codes from './codes'
+import * as devices from './devices'
+
 export {
   SERVER,
   VOUCH,
@@ -237,6 +216,9 @@ export type {
 
 export { CANT_TEXT, TOO_OFTEN_TEXT }
 
+// The facade as its modules see it (server/context.ts).
+const ctx = (s: Servers) => s as unknown as ServerCtx
+
 export class Servers {
   readonly sync: Sync
   readonly gossip: Gossip
@@ -261,10 +243,6 @@ export class Servers {
   // When we last vouched for an invite by each inviter.
   private vouchedBy = new Map<string, number>()
   storageFull = false
-
-  private get cx(): ServerCtx {
-    return this as unknown as ServerCtx
-  }
 
   constructor(private deps: ServerDeps) {
     this.clock = deps.clock ?? realClock
@@ -3093,329 +3071,58 @@ export class Servers {
 
   // ----- Cut denies (spec 9 rule 18, 3.9) -----
 
-  // Re-applies our denies the current state doesn't count, each checked again as it is signed;
-  // those refused are reported with why.
-  async reapplyAll(room: string) {
-    const rt = this.ensureRt(room)
-    const failed: string[] = []
-    for (const r of rt.reapply) {
-      const to = typeof r.c.to === 'string' ? r.c.to : undefined
-      const seen = r.t === 'kick' || r.t === 'ban' || r.t === 'revoke'
-      await this.emit(room, r.t, plan => (seen ? { ...r.c, seen: plan.seen ?? {} } : { ...r.c }), {
-        to,
-      }).catch((e: unknown) => failed.push(e instanceof Error ? e.message : String(e)))
-    }
-    rt.reapply = await this.reapplyOf(room)
-    this.changed(room)
-    if (failed.length)
-      throw new ServerError(
-        `${failed.length === 1 ? "One couldn't" : `${failed.length} couldn't`} be applied: ${failed[0]}`
-      )
+  reapplyAll(room: string) {
+    return devices.reapplyAll(ctx(this), room)
   }
 
-  // Our denies to apply again (spec 9 rule 18); in a new copy, our kicks and bans in the old one
-  // that its upgrade didn't have in its past too (spec 3.8 step 7: not carried over).
-  private async reapplyOf(room: string) {
-    const prev = this.rooms.get(room)?.prev
-    const rt = this.ensureRt(room)
-    const up =
-      prev && this.rooms.has(prev) ? (rt.upgrade ?? (await this.upgradeOf(prev, room))) : null
-    if (up) rt.upgrade = up
-    return this.host.reapply(
-      room,
-      this.me,
-      this.deps.node.lostDevices(),
-      prev && up ? { room: prev, up } : undefined
-    )
+  private reapplyOf(room: string) {
+    return devices.reapplyOf(ctx(this), room)
   }
 
   // ----- Devices (spec 3.9) -----
 
-  // Our devices in the servers we are in, with what the node knows of them.
   myDevices() {
-    const known = new Map(this.deps.node.ownDevices().map(d => [d.dk, d]))
-    const out = new Map<string, { dk: string; rooms: string[]; label: string; created: number }>()
-    for (const room of this.joinedRooms()) {
-      const m = memberOf(this.sumOf(room), this.me)
-      if (m?.m !== 'join') continue
-      for (const dk of m.devs) {
-        const d = out.get(dk) ?? {
-          dk,
-          rooms: [],
-          label: known.get(dk)?.label ?? 'Device',
-          created: known.get(dk)?.created ?? 0,
-        }
-        d.rooms.push(room)
-        out.set(dk, d)
-      }
-    }
-    return [...out.values()]
+    return devices.myDevices(ctx(this))
   }
 
-  // Servers we are in and can still change: not read-only, not transferred to a new copy.
   private joinedRooms() {
-    return [...this.rooms.keys()].filter(
-      room => this.myMembership(room) === 'join' && !this.frozen(room)
-    )
+    return devices.joinedRooms(ctx(this))
   }
 
-  // The ACL events of `room` this replica held by `t`, other than device `dk`'s: a lost device's
-  // last trusted event is the newest of its own that one of them has in its past (spec 3.9). A
-  // thief can backdate an event but can't make us hold it, or others cite it, before it exists.
-  // Also the highest seq of what this browser itself signed with `dk` by `t` (its own outbox: a
-  // copy of the key can't put events there), when `dk` is an earlier key of this browser.
-  private async witnesses(room: string, dk: string, t: number) {
-    const recs = await this.db.getAllFromIndex(
-      'events',
-      'room_aseq',
-      IDBKeyRange.bound([room, -Infinity], [room, Infinity])
-    )
-    const ids = recs.filter(r => r.dev !== dk && r.receivedAt <= t).map(r => r.id)
-    const sent = (await this.db.getAllFromIndex('outbox', 'room', room)).filter(o => o.created <= t)
-    let own = -1
-    for (const r of await getEvents(
-      this.db,
-      room,
-      sent.map(o => o.id)
-    ))
-      if (r.dev === dk && r.sender === this.me && r.dseq !== undefined) own = Math.max(own, r.dseq)
-    return { ids, own }
+  private witnesses(room: string, dk: string, t: number) {
+    return devices.witnesses(ctx(this), room, dk, t)
   }
 
-  // This browser's own events signed with device key `dev` in `room`, in device order.
-  private async ownEvents(room: string, dev: string) {
-    const recs = await this.db.getAllFromIndex(
-      'events',
-      'room_dseq',
-      IDBKeyRange.bound([room, this.me, -Infinity], [room, this.me, Infinity])
-    )
-    return recs
-      .filter(r => r.dev === dev && !r.purged)
-      .filter(r => (r.layer === 'c' ? RESIGN_CONTENT : RESIGN_ACL).includes(r.type))
+  private ownEvents(room: string, dev: string) {
+    return devices.ownEvents(ctx(this), room, dev)
   }
 
-  // This browser's own work with key `dev` that a rotation dropping `dev` would undo, so the new
-  // key signs it again (spec 3.9): messages that show, and ACL changes whose effect holds (never
-  // what a moderator redacted, removed or cut, or a change cut or superseded since).
-  private async resignable(room: string, dev: string) {
-    const own = await this.ownEvents(room, dev)
-    const counts = await this.host.counted(
-      room,
-      own.map(r => r.id)
-    )
-    const s = this.sumOf(room)
-    return own.filter((r, i) => {
-      if (!counts[i]) return false
-      if (r.layer === 'c') return true
-      const c = (serverWire(r).c ?? {}) as Record<string, unknown>
-      return effectHolds(r.type, c, r.id, this.me, s)
-    })
+  private resignable(room: string, dev: string) {
+    return devices.resignable(ctx(this), room, dev)
   }
 
-  // What a lost or stolen device `dk` did after it stopped being ours at `t`, per server (spec
-  // 8.2): its ACL events after its last trusted one (with when we received each), how many
-  // messages, who joined through its invites from then on, and what of this browser's own work
-  // the new key may sign again (when this browser's key came after the trusted point).
-  async lostPreview(dk: string, t: number): Promise<LostRoom[]> {
-    const mine = this.myDev() ?? ''
-    const out: LostRoom[] = []
-    for (const room of this.joinedRooms()) {
-      const w = await this.witnesses(room, dk, t)
-      const d = await this.host.disown(room, this.me, dk, w.ids, w.own)
-      if (!d.live) continue
-      const at: Record<string, number> = {}
-      for (const r of await getEvents(
-        this.db,
-        room,
-        d.acts.map(x => x.id)
-      ))
-        at[r.id] = r.receivedAt
-      const own = d.ap && !d.devs.includes(mine) ? await this.resignable(room, mine) : []
-      const resign = own
-        .filter(r => r.layer !== 'c')
-        .map(r => {
-          const to = (serverWire(r).c as { to?: unknown } | null)?.to
-          return { id: r.id, t: r.type, ...(typeof to === 'string' ? { to } : {}) }
-        })
-      const live = memberOf(this.sumOf(room), this.me)?.devs ?? []
-      const others = d.ap ? live.filter(v => v !== dk && v !== mine && !d.devs.includes(v)) : []
-      out.push({ room, ...d, at, resign, others })
-    }
-    return out
+  lostPreview(dk: string, t: number): Promise<LostRoom[]> {
+    return devices.lostPreview(ctx(this), dk, t)
   }
 
-  // Removes device `dk` from every server and undoes what it signed after its last trusted event
-  // (spec 3.9). This browser moves to a new device key, which posts a rotation (signed with the
-  // recovery key) positioned at the last point it trusts. The rotation drops `dk` at that point
-  // and keeps this browser's old key, which is then revoked on the heads, so this browser's own
-  // work stands. Where the old key came after that point the rotation can't keep it: what it
-  // signed is signed again from the new key. Where nothing before the device's changes can be
-  // trusted (it made the server), it is revoked on the heads: what it did stays, nothing it signs
-  // later counts. Returns those servers and the ones where it failed, with why.
-  async disownDevice(dk: string, t: number) {
-    const author = await this.author()
-    // A retry after an attempt that changed the key already: that key stays (contacts heard of
-    // it; a new one each time is another move for them and another device here), and this
-    // browser's key from before that attempt is the one whose work is signed again.
-    const again = this.deps.node.lostDevices().includes(dk)
-    const cur = keyId(author.dk.pk)
-    const old = again ? (this.deps.node.movedTo(cur) ?? cur) : cur
-    if (dk === old || dk === cur) throw new ServerError(CANT_TEXT)
-    const plans = new Map<string, Disowned>()
-    const carry = new Map<string, EventRecord[]>()
-    for (const room of this.joinedRooms()) {
-      const w = await this.witnesses(room, dk, t)
-      const d = await this.host.disown(room, this.me, dk, w.ids, w.own)
-      if (!d.live) continue
-      plans.set(room, d)
-      if (d.ap && !d.devs.includes(old)) carry.set(room, await this.resignable(room, old))
-    }
-    // In no server any more: revoked for contacts only, this key stays.
-    if (!again && !plans.size) {
-      await this.deps.node.disowned([dk])
-      return { late: [], failed: [], unsent: 0 }
-    }
-    if (!again) {
-      await this.deps.node.rekey({ moved: true, lost: [dk] })
-      for (const rt of this.rts.values()) rt.conflict = false
-    }
-    const fresh = await this.author()
-    const dev = keyId(fresh.dk.pk)
-    const late: string[] = []
-    const failed: { room: string; why: string }[] = []
-    let unsent = 0
-    for (const room of this.joinedRooms()) {
-      const d = plans.get(room)
-      try {
-        if (d?.ap) {
-          const keep = d.devs.filter(v => v !== dk && v !== dev)
-          const seen: Record<string, number> = {}
-          for (const [v, n] of Object.entries(d.seen))
-            if (!keep.includes(v) && v !== dev) seen[v] = n
-          const c = { pcert: this.me, keep, seen }
-          await this.emit(
-            room,
-            'primary_rotate',
-            plan => ({
-              ik: this.me,
-              ...c,
-              rsig: signRotation2(fresh.ik, room, dev, plan.iprev, c),
-            }),
-            { ap: d.ap }
-          )
-          // The old key (a move): revoked on the heads, so all it signed stands.
-          await this.refreshMe(room)
-          const own = carry.get(room)
-          if (own?.length) unsent += await this.resign(room, own)
-          continue
-        }
-        // The new key introduces itself (and the old one is revoked); `dk` is revoked on the heads.
-        await this.refreshMe(room)
-        if (!d) continue
-        late.push(room)
-        await this.emit(
-          room,
-          'device_revoke',
-          plan => {
-            const seen = plan.seen?.[dk] ?? d.seq
-            return { ik: this.me, dk, seen, rec: signRevocation2(fresh.ik, room, dk, seen) }
-          },
-          { to: dk }
-        )
-      } catch (e) {
-        failed.push({ room, why: e instanceof Error ? e.message : String(e) })
-      }
-    }
-    return { late, failed, unsent }
+  disownDevice(dk: string, t: number) {
+    return devices.disownDevice(ctx(this), dk, t)
   }
 
-  // Signs our own events again from this device (spec 3.9: `recs`, what `resignable` found before
-  // a rotation dropped this browser's old key), in their order, where the rotation stopped them
-  // counting: content hidden by it, ACL changes no longer in force whose effect is gone; ids they
-  // name that were signed again are mapped. What still counts is left alone.
-  // Returns how many messages slow mode kept from being sent again.
-  private async resign(room: string, recs: EventRecord[]) {
-    let unsent = 0
-    const ids = new Map<string, string>()
-    const sorted = [...recs].sort((a, b) => (a.dseq ?? 0) - (b.dseq ?? 0))
-    const stopped = await this.host.stopped(
-      room,
-      sorted.map(r => r.id)
-    )
-    for (const [i, r] of sorted.entries()) {
-      if (!stopped[i]) continue
-      const w = serverWire(r)
-      if (!w.c) continue
-      if (w.ev.L !== 'c' && effectHolds(w.ev.t, w.c, r.id, this.me, this.sumOf(room))) continue
-      const c = signedAgain(w.c, ids)
-      const content = w.ev.L === 'c'
-      const to = !content && typeof c.to === 'string' ? c.to : undefined
-      const seen = ['kick', 'ban', 'revoke'].includes(w.ev.t)
-      // A message goes through the slow-mode check (spec 3.5): one it would hide isn't sent.
-      const id = await (
-        content
-          ? this.content(room, w.ev.t, c)
-          : this.emit(room, w.ev.t, plan => (seen ? { ...c, seen: plan.seen ?? {} } : c), { to })
-      ).catch((e: unknown) => {
-        if (content && e instanceof Error && e.message.startsWith('Slow mode')) unsent += 1
-        return null
-      })
-      if (id) ids.set(r.id, id)
-    }
-    return unsent
+  private resign(room: string, recs: EventRecord[]) {
+    return devices.resign(ctx(this), room, recs)
   }
 
-  // Recovery (spec 3.9, 8.2): a rotation signed with the recovery key (the identity key until Task
-  // 17 splits them) in every server, keeping `keep` and this device; every other device of ours
-  // is signed out. Copies transferred to a new one are left alone. Returns the servers where it
-  // failed, with why.
-  async recover(keep: string[]) {
-    const author = await this.author()
-    const dev = keyId(author.dk.pk)
-    const failed: { room: string; why: string }[] = []
-    // Signed out: not ours any more, so what they did is never offered to re-apply (I2).
-    const out = new Set<string>()
-    for (const room of this.joinedRooms()) {
-      const live = memberOf(this.sumOf(room), this.me)?.devs ?? []
-      const kept = keep.filter(v => v !== dev && live.includes(v))
-      if (live.every(v => v === dev || kept.includes(v))) continue
-      await this.emit(room, 'primary_rotate', plan => {
-        const seen: Record<string, number> = {}
-        for (const [v, n] of Object.entries(plan.seen ?? {})) if (!kept.includes(v)) seen[v] = n
-        const c = { pcert: this.me, keep: kept, seen }
-        return { ik: this.me, ...c, rsig: signRotation2(author.ik, room, dev, plan.iprev, c) }
-      })
-        .then(() => {
-          for (const v of live) if (v !== dev && !kept.includes(v)) out.add(v)
-        })
-        .catch((e: unknown) =>
-          failed.push({ room, why: e instanceof Error ? e.message : String(e) })
-        )
-    }
-    if (out.size) await this.deps.node.disowned([...out])
-    return failed
+  recover(keep: string[]) {
+    return devices.recover(ctx(this), keep)
   }
 
-  // Spec 3.9: this device's history conflicts with another copy of it. It stops signing in the
-  // server where that shows; set up as a new device (a new key, introduced in every server), the
-  // copy's voided moderation can be applied again.
   private conflicted(room: string) {
-    const rt = this.ensureRt(room)
-    const dev = this.myDev()
-    if (!dev || rt.conflict) return
-    rt.conflict = true
-    void this.updateRoom(room, cur => ({ ...cur, conflict: dev })).catch(() => {})
-    this.changed(room)
+    return devices.conflicted(ctx(this), room)
   }
 
-  async newDevice() {
-    await this.deps.node.rekey()
-    for (const room of this.rooms.keys()) {
-      const rt = this.rt(room)
-      if (rt) rt.conflict = false
-      await this.refreshMe(room).catch(() => {})
-      this.changed(room)
-    }
+  newDevice() {
+    return devices.newDevice(ctx(this))
   }
 
   // ----- Transfer (spec 3.8) -----
@@ -3436,1050 +3143,191 @@ export class Servers {
   >()
 
   transferAsks() {
-    return [...this.xferAsks].map(([key, a]) => ({
-      key,
-      kind: a.kind,
-      from: a.from,
-      room: a.room,
-      to: a.to,
-      name: nameOf(this.sumOf(a.room))?.name ?? this.rooms.get(a.room)?.name ?? a.name,
-    }))
+    return transfer.transferAsks(ctx(this))
   }
 
-  // An owner transfers the server to member `to` (spec 3.8): `to` builds the new copy's genesis
-  // and signs it, every other genesis owner countersigns it (also ones who left), and the upgrade
-  // goes out. This copy becomes read-only; everyone follows to the new one.
-  async transfer(room: string, to: string) {
-    const s = this.sumOf(room)
-    if (!s.owners.includes(this.me) || to === this.me || membershipOf(s, to) !== 'join')
-      throw new ServerError(CANT_TEXT)
-    const ses = await this.sessionTo(room, to)
-    if (!ses) throw new ServerError('They must be online to take it')
-    const reply = await this.request(ses, { t: 'gxfer', room }, SERVER.coOwnerMs)
-    const g = this.successorOk(room, reply?.g, to)
-    if (!g) throw new ServerError("They didn't take the transfer")
-    const sigs: Record<string, string> = {}
-    // Co-owners who never joined or have left may not hold the server: its genesis goes along.
-    const genesis = (await this.db.get('events', room))?.wire
-    for (const o of s.owners) {
-      if (o === this.me) continue
-      // A co-owner who is a member is dialed for the room; one who left only as a contact.
-      const os =
-        membershipOf(s, o) === 'join'
-          ? await this.sessionTo(room, o)
-          : this.deps.node.readySessions(o)[0]
-      const r = os
-        ? await this.request(os, { t: 'gcosign', room, g, genesis }, SERVER.coOwnerMs)
-        : null
-      if (typeof r?.sig !== 'string' || !upgradeSigOk(o, room, g, r.sig))
-        throw new ServerError(
-          os ? CO_OWNER_DECLINED_TEXT : CO_OWNER_OFFLINE_TEXT,
-          this.nameOf(o, room)
-        )
-      sigs[o] = r.sig
-    }
-    await this.emit(room, 'upgrade', () => ({ g, sigs }))
+  transfer(room: string, to: string) {
+    return transfer.transfer(ctx(this), room, to)
   }
 
-  // A ready session to `ik`: one we have, else one dialed for `room` (a member we never linked
-  // with), waiting at most 15 s.
-  private async sessionTo(room: string, ik: string) {
-    let s = this.deps.node.readySessions(ik)[0]
-    if (s) return s
-    this.prefer(room, ik)
-    this.deps.node.schedule(true)
-    for (let i = 0; i < LOCAL.server.sessionTries && !s; i++) {
-      await new Promise<void>(done => this.clock.set(done, LOCAL.server.sessionWaitMs))
-      s = this.deps.node.readySessions(ik)[0]
-    }
-    return s
+  private sessionTo(room: string, ik: string) {
+    return transfer.sessionTo(ctx(this), room, ik)
   }
 
-  // The new copies the upgrades of `room` name (more than one: the user picks, spec 3.8).
-  // With who transferred it (`by`), so two copies with the same owner can be told apart.
-  async successors(room: string) {
-    const out: { id: string; owner: string; by: string; g: WireV2 }[] = []
-    for (const id of this.sumOf(room).upgrades ?? []) {
-      const up = await this.db.get('events', id)
-      const g = up ? this.successorOk(room, (serverWire(up).c as { g?: unknown } | null)?.g) : null
-      const v = g ? validate2(g, null) : null
-      if (up && g && v?.ok) out.push({ id: v.id, owner: g.ev.a, by: up.sender, g })
-    }
-    return out
+  successors(room: string) {
+    return transfer.successors(ctx(this), room)
   }
 
-  // A new copy's genesis for `room`, signed by its owner `to`, of rules we know and naming the
-  // room it follows; null otherwise.
   private successorOk(room: string, g: unknown, to?: string): WireV2 | null {
-    const v = validate2(g, null)
-    if (!v.ok || v.wire.ev.t !== 'genesis') return null
-    const c = v.wire.c as { rules?: unknown; from?: { srv?: unknown } } | null
-    if (c?.rules !== RULES_VERSION || c.from?.srv !== room) return null
-    if (to !== undefined && v.wire.ev.a !== to) return null
-    return v.wire
+    return transfer.successorOk(ctx(this), room, g, to)
   }
 
   private onTransfer(m: Message, s: Session, kind: 'take' | 'cosign') {
-    const from = s.remote?.ik
-    const room = m.room
-    if (!from || typeof room !== 'string') return s.strike()
-    const answer = (ok: boolean, extra: Record<string, unknown> = {}) =>
-      void s
-        .send({ t: kind === 'take' ? 'gxfered' : 'gcosigned', room, ok, ...extra })
-        .catch(() => {})
-    // The server's owners: from its genesis (sent along to a co-owner, who may not hold it).
-    const gen = validate2(kind === 'cosign' ? m.genesis : null, null)
-    const owners =
-      kind === 'take'
-        ? this.sumOf(room).owners
-        : gen.ok && gen.id === room
-          ? (((gen.wire.c?.owners as { ik?: unknown }[] | undefined) ?? []).map(
-              o => o.ik
-            ) as string[])
-          : []
-    if (!owners.includes(from) || from === this.me) return answer(false)
-    const g = kind === 'cosign' ? this.successorOk(room, m.g) : null
-    if (kind === 'take' && this.myMembership(room) !== 'join') return answer(false)
-    if (kind === 'cosign' && (!g || !owners.includes(this.me))) return answer(false)
-    const key = `${kind}\n${from}\n${room}`
-    if (this.xferAsks.size >= SERVER.coOwnerAsks && !this.xferAsks.has(key)) return answer(false)
-    const gname = (gen.ok ? gen.wire.c?.name : undefined) ?? g?.c?.name
-    this.xferAsks.set(key, {
-      kind,
-      from,
-      room,
-      name:
-        typeof gname === 'string'
-          ? Array.from(gname).slice(0, LOCAL.server.nameMax).join('')
-          : 'P2P server',
-      to: kind === 'take' ? this.me : (g?.ev.a ?? ''),
-      ...(g ? { g } : {}),
-      s,
-    })
-    const drop = () => {
-      if (this.xferAsks.delete(key)) this.changed('')
-    }
-    s.onClose(drop)
-    this.clock.set(drop, SERVER.coOwnerMs)
-    this.changed('')
+    return transfer.onTransfer(ctx(this), m, s, kind)
   }
 
-  async answerTransfer(key: string, yes: boolean) {
-    const a = this.xferAsks.get(key)
-    if (!a) return
-    this.xferAsks.delete(key)
-    this.changed('')
-    const t = a.kind === 'take' ? 'gxfered' : 'gcosigned'
-    const send = (ok: boolean, extra: Record<string, unknown> = {}) =>
-      void a.s.send({ t, room: a.room, ok, ...extra }).catch(() => {})
-    const author = this.deps.node.author()
-    if (!yes || !author) return send(false)
-    if (a.kind === 'cosign' && a.g) return send(true, { sig: signUpgrade(author.ik, a.room, a.g) })
-    send(true, { g: await this.successorOf(a.room) })
+  answerTransfer(key: string, yes: boolean) {
+    return transfer.answerTransfer(ctx(this), key, yes)
   }
 
-  // The genesis of a new copy of `room` that we own, with the room's name and what @everyone may
-  // do (spec 3.8: `from` names the room it follows).
-  private async successorOf(room: string): Promise<WireV2> {
-    const author = await this.author()
-    const dk = keyId(author.dk.pk)
-    const s = this.sumOf(room)
-    const bare: Record<string, unknown> = {
-      rules: RULES_VERSION,
-      nonce: b64u(randomBytes(16)),
-      owners: [{ ik: this.me, dk }],
-      everyone_bits: s.everyone,
-      name: nameOf(s)?.name ?? 'P2P server',
-      cert: this.deps.node.cert,
-      profile: this.deps.node.profile,
-      from: { srv: room },
-    }
-    const binding = this.deps.node.binding
-    if (binding) bare.binding = binding
-    const content = {
-      ...bare,
-      owners: [{ ik: this.me, dk, dcert: genesisBundle(author.ik, dk, bare).dcert }],
-    }
-    return buildEvent2(author, null, 'genesis', 'a', content, { seq: 0 }, this.clock.now())
-      .wire as WireV2
+  private successorOf(room: string): Promise<WireV2> {
+    return transfer.successorOf(ctx(this), room)
   }
 
-  // The follow rule (spec 3.8): with exactly one upgrade, the new copy is followed: its owner
-  // creates it and carries members, roles, channels and bans over; everyone else joins it when
-  // invited. With more than one, the user chooses (disputed). One at a time per room.
-  private async follow(room: string) {
-    const rt = this.ensureRt(room)
-    if (rt.following) return
-    rt.following = true
-    try {
-      const s = this.sumOf(room)
-      const r = this.rooms.get(room)
-      if (s.upgrades.length !== 1 || !r || r.next || this.myMembership(room) !== 'join') return
-      const up = await this.db.get('events', s.upgrades[0])
-      if (!up) return
-      const g = this.successorOk(room, (serverWire(up).c as { g?: unknown } | null)?.g)
-      if (g) await this.followTo(room, g)
-    } finally {
-      rt.following = false
-    }
+  private follow(room: string) {
+    return transfer.follow(ctx(this), room)
   }
 
-  // Follows `room` to the new copy whose genesis is `g` (also the user's choice when disputed).
-  async followTo(room: string, g: WireV2) {
-    const v = validate2(g, null)
-    if (!v.ok || !this.successorOk(room, g)) return
-    const next = v.id
-    await this.updateRoom(room, cur => ({ ...cur, next }))
-    const now = this.clock.now()
-    const owner = g.ev.a === this.me
-    if (!this.rooms.has(next))
-      await this.putRoom({
-        ...blankRoom(next, '', now),
-        kind: 'server',
-        name: this.rooms.get(room)?.name ?? 'P2P server',
-        chans: {},
-        server: null,
-        since: now,
-        prev: room,
-        ...(owner
-          ? { carry: { from: room, roles: {}, state: 'running' as const } }
-          : { joining: { at: now, via: 'invite' as const } }),
-      })
-    if (owner) {
-      await this.locked(next, async () => {
-        if (await this.db.get('events', next)) return
-        await this.withDevice(keyId((await this.author()).dk.pk), () =>
-          this.take(next, next, g, now)
-        )
-      })
-      void this.carryOver(next).catch(() => {})
-    } else {
-      this.ensureRt(next).joinPosted = false
-      this.prefer(next, g.ev.a)
-      this.deps.node.schedule(true)
-    }
-    this.changed(room)
-    this.changed(next)
+  followTo(room: string, g: WireV2) {
+    return transfer.followTo(ctx(this), room, g)
   }
 
-  // The new owner carries the old copy over (spec 3.8 steps 4 and 6, as owner events), as it
-  // was at the upgrade (project(Eval_S(B(u))), not as it is now): first the `migrate` content
-  // (who was a member, who banned, and each device's last message at the transfer: the old copy
-  // shows here only up to there, without the new copy's banned members), then an invite for each
-  // member, so they join and acknowledge the rest; then the channels with their ids, the
-  // settings, the roles and the bans, and a last `migrate` chunk that says it is done. Finished
-  // steps are recorded, so a start resumes after them and never redoes one that was changed
-  // since; limits that clear by themselves (spec 4.1 W3) are waited out, and anything else stops
-  // it with the reason shown.
-  private async carryOver(to: string) {
-    const rt = this.ensureRt(to)
-    const rec = this.rooms.get(to)
-    if (rt.carrying || !rec?.carry || rec.carry.state === 'done') return
-    if (this.sumOf(to).owners[0] !== this.me) return
-    rt.carrying = true
-    let carry = rec.carry
-    const save = async (patch: Partial<Carry>) => {
-      carry = { ...carry, ...patch }
-      if (!patch.why) delete carry.why
-      await this.updateRoom(to, cur => ({ ...cur, carry }))
-      this.changed(to)
-    }
-    try {
-      const from = carry.from
-      await this.ensureRt(from).loading
-      const up = carry.up ?? (await this.upgradeOf(from, to))
-      const s = up ? await this.carriedOf(from, up) : null
-      if (up && s) rt.carryTries = 0
-      if (!up || !s) {
-        if (this.started && !this.rooms.has(from))
-          return await save({ state: 'failed', why: OLD_GONE_TEXT })
-        // The old copy isn't loaded here yet: again in a moment (for an hour; then on a change).
-        if ((rt.carryTries = (rt.carryTries ?? 0) + 1) <= LOCAL.server.carryTries)
-          this.clock.set(() => void this.carryOver(to).catch(() => {}), LOCAL.server.carryRetryMs)
-        return carry.state === 'waiting' && carry.why === SYNC_TEXT
-          ? undefined
-          : await save({ state: 'waiting', why: SYNC_TEXT })
-      }
-      await save({ state: 'running', up })
-      if (!carry.chunks) await save({ chunks: await this.migrateChunks(from, s) })
-      const cur = () => this.sumOf(to)
-      const steps: [string, () => Promise<unknown>][] = []
-      for (const [n, chunk] of (carry.chunks ?? []).entries())
-        steps.push([`m${n}`, () => this.emit(to, 'migrate', () => ({ chunk }))])
-      for (const ik of s.members)
-        if (ik !== this.me)
-          steps.push([
-            `a:${ik}`,
-            async () => {
-              const now = membershipOf(cur(), ik)
-              if (now !== 'join' && now !== 'invite' && now !== 'ban')
-                await this.emit(to, 'add', () => ({ to: ik }))
-              // They may have asked for the new copy before they were invited (and been told no).
-              if (now !== 'join' && now !== 'ban') this.prefer(to, ik)
-            },
-          ])
-      for (const c of channelsOf({ ...emptySummary(), channels: s.channels }))
-        steps.push([
-          `c:${c.id}`,
-          async () => {
-            if (!cur().channels[c.id])
-              await this.emit(to, 'channel', () => ({ ...knownChannel(c), id: c.id }))
-          },
-        ])
-      if (s.settings)
-        steps.push([
-          'settings',
-          async () => {
-            if (
-              canonical(knownSettings(cur().settings ?? {})) !==
-              canonical(knownSettings(s.settings ?? {}))
-            )
-              await this.emit(to, 'settings', () => knownSettings(s.settings ?? {}))
-          },
-        ])
-      for (const [id, role] of Object.entries(s.roles).sort(([, a], [, b]) => a.pos - b.pos))
-        steps.push([
-          `r:${id}`,
-          async () => {
-            if (carry.roles[id] && cur().roles[carry.roles[id]]) return
-            const made = await this.emit(to, 'role_create', () => ({ ...role }))
-            await save({ roles: { ...carry.roles, [id]: made } })
-          },
-        ])
-      // Overwrites, their role subjects mapped to the new roles.
-      for (const [ch, ov] of Object.entries(s.overwrites ?? {}))
-        for (const [subj, o] of Object.entries(ov))
-          steps.push([
-            `o:${ch}|${subj}`,
-            async () => {
-              const old = subj.startsWith('r:') && subj !== `r:${EVERYONE}` ? subj.slice(2) : null
-              if (old !== null && !carry.roles[old]) return
-              const target = old !== null ? `r:${carry.roles[old]}` : subj
-              const now = cur().overwrites?.[ch]?.[target]
-              if (now?.allow === o.allow && now?.deny === o.deny) return
-              await this.emit(to, 'chperm', () => ({
-                ch,
-                subj: target,
-                allow: o.allow,
-                deny: o.deny,
-              }))
-            },
-          ])
-      for (const ik of s.bans)
-        steps.push([
-          `b:${ik}`,
-          async () => {
-            if (membershipOf(cur(), ik) !== 'ban')
-              await this.emit(to, 'ban', () => ({ to: ik, seen: {} }))
-          },
-        ])
-      steps.push([
-        'done',
-        () => this.emit(to, 'migrate', () => ({ chunk: { kind: 'done', n: 0, of: 1, list: [] } })),
-      ])
-      for (const [key, step] of steps) {
-        if (carry.done?.includes(key)) continue
-        const why = await this.untilAllowed(to, step, w => save({ state: 'waiting', why: w }))
-        if (why !== null) return await save({ state: 'failed', why })
-        await save({ state: 'running', done: [...(carry.done ?? []), key] })
-      }
-      await save({ state: 'done' })
-      await this.carryRoles(to)
-    } finally {
-      rt.carrying = false
-    }
+  private carryOver(to: string) {
+    return transfer.carryOver(ctx(this), to)
   }
 
-  // Tries the carry-over again (after it stopped on an error).
   retryCarry(room: string) {
-    const r = this.rooms.get(room)
-    if (r?.carry && r.carry.state === 'failed') void this.carryOver(room).catch(() => {})
+    return transfer.retryCarry(ctx(this), room)
   }
 
-  // The upgrade of `from` that names the new copy `to` (spec 3.8).
-  private async upgradeOf(from: string, to: string) {
-    for (const id of this.sumOf(from).upgrades ?? []) {
-      const up = await this.db.get('events', id)
-      const g = up ? this.successorOk(from, (serverWire(up).c as { g?: unknown } | null)?.g) : null
-      const v = g ? validate2(g, null) : null
-      if (v?.ok && v.id === to) return id
-    }
-    return null
+  private upgradeOf(from: string, to: string) {
+    return transfer.upgradeOf(ctx(this), from, to)
   }
 
-  // The old copy as the upgrade `up` carries it (spec 3.8 step 4), kept while it is in use.
-  private async carriedOf(from: string, up: string) {
-    const rt = this.ensureRt(from)
-    if (rt.carried?.up !== up) {
-      const s = await this.host.carried(from, up)
-      if (!s) return null
-      rt.carried = { up, s }
-    }
-    return rt.carried.s
+  private carriedOf(from: string, up: string) {
+    return transfer.carriedOf(ctx(this), from, up)
   }
 
-  // `migrate` content (spec 3.8): the members and bans the upgrade carries, and the last message
-  // seq of each device we hold in the old copy, in chunks within the size of an ACL event.
-  private async migrateChunks(from: string, s: Carried) {
-    const marks: Record<string, number> = {}
-    const recs = await this.db.getAllFromIndex(
-      'events',
-      'room_seq',
-      IDBKeyRange.bound([from, -Infinity], [from, Infinity])
-    )
-    for (const r of recs)
-      if (r.layer === 'c' && r.dev && r.dseq !== undefined)
-        marks[r.dev] = Math.max(marks[r.dev] ?? -1, r.dseq)
-    const out: Record<string, unknown>[] = []
-    const split = <T>(kind: string, list: T[], each: number) => {
-      const of = Math.max(1, Math.ceil(list.length / each))
-      for (let n = 0; n < of; n++)
-        out.push({ kind, n, of, list: list.slice(n * each, (n + 1) * each) })
-    }
-    split('members', [...s.members].sort(), MIGRATE_PER)
-    split('bans', [...s.bans].sort(), MIGRATE_PER)
-    split('marks', Object.entries(marks), MIGRATE_PER)
-    return out
+  private migrateChunks(from: string, s: Carried) {
+    return transfer.migrateChunks(ctx(this), from, s)
   }
 
-  // The `migrate` content an owner of this copy posted (spec 3.8), once every chunk is here, and
-  // whether the carry-over said it is done.
-  private async migratedOf(room: string): Promise<Migrated | null> {
-    const rt = this.ensureRt(room)
-    if (rt.migrated !== undefined) return rt.migrated
-    const out = await this.readMigrated(room)
-    rt.migrated = out
-    return out
+  private migratedOf(room: string): Promise<Migrated | null> {
+    return transfer.migratedOf(ctx(this), room)
   }
 
-  // A new `migrate` chunk: read and compared again.
   private migrateArrived(rt: Rt) {
-    rt.migrated = undefined
-    rt.migrateChecked = false
+    return transfer.migrateArrived(ctx(this), rt)
   }
 
-  private async readMigrated(room: string): Promise<Migrated | null> {
-    const s = this.sumOf(room)
-    const recs = await this.db.getAllFromIndex(
-      'events',
-      'room_type_sort',
-      IDBKeyRange.bound([room, 'migrate', ''], [room, 'migrate', '\uffff'])
-    )
-    const parts = new Map<string, { of: number; got: Map<number, unknown[]> }>()
-    for (const r of recs) {
-      if (!s.owners.includes(r.sender)) continue
-      const c = (serverWire(r).c as { chunk?: unknown } | null)?.chunk
-      if (!isRecord(c) || typeof c.kind !== 'string' || !Array.isArray(c.list)) continue
-      const n = c.n
-      const of = c.of
-      if (!Number.isSafeInteger(n) || !Number.isSafeInteger(of)) continue
-      const p = parts.get(c.kind) ?? { of: of as number, got: new Map() }
-      p.got.set(n as number, c.list)
-      parts.set(c.kind, p)
-    }
-    const all = (kind: string) => {
-      const p = parts.get(kind)
-      if (!p || p.got.size < p.of) return null
-      return [...p.got.keys()].sort((a, b) => a - b).flatMap(n => p.got.get(n) ?? [])
-    }
-    const members = all('members')
-    const bans = all('bans')
-    const marks = all('marks')
-    if (!members || !bans || !marks) return null
-    const strs = (l: unknown[]) => l.filter((x): x is string => typeof x === 'string')
-    const map: Record<string, number> = {}
-    for (const e of marks)
-      if (Array.isArray(e) && typeof e[0] === 'string' && Number.isSafeInteger(e[1]))
-        map[e[0]] = e[1] as number
-    return { members: strs(members), bans: strs(bans), marks: map, done: parts.has('done') }
+  private readMigrated(room: string): Promise<Migrated | null> {
+    return transfer.readMigrated(ctx(this), room)
   }
 
-  // A member of a new copy acknowledges the owner's carry-over (spec 4.1 W3(b): an owner alone
-  // waits after 24 changes nobody else acknowledged): a mark once 20 more ACL events of an owner
-  // arrived (other members' marks never count), at most one a minute, until the carry-over says
-  // it is done. An owner who stops (gone, stalled, failed) gets no more, nor one who goes on past
-  // what the carry-over holds (the old copy at the upgrade, which we hold too) or whose carry-over
-  // made no progress here for a day while we ran. The baseline and count are in the room record.
   private ackCarry(room: string, rt: Rt) {
-    const r = this.rooms.get(room)
-    const s = this.sumOf(room)
-    const now = this.clock.now()
-    if (this.stopped || !r?.prev || r.carry || this.myMembership(room) !== 'join') return
-    if (s.owners.includes(this.me)) return
-    // The day counts from the last owner event that arrived, or our start: the owner may be
-    // waiting for a mark we never got to post while closed.
-    if (rt.carrySeen === null || s.ownerCount > rt.carrySeen) {
-      rt.carrySeen = s.ownerCount
-      rt.carryAt = now
-    }
-    if (rt.carryAckCount === null) {
-      const a = r.acks
-      const kept = !!a && Number.isSafeInteger(a.base) && Number.isSafeInteger(a.n) && a.n >= 0
-      // Never acknowledged before (just joined): a mark at once, as what we hold unacknowledged
-      // may be all the owner can still post.
-      rt.carryAckCount = kept ? a.base : s.ownerCount - CARRY_ACK
-      rt.carryAcks = kept ? a.n : 0
-    }
-    if (rt.carryDone || rt.carryAcks >= (rt.carryMax ?? r.carryMax ?? CARRY_ACKS_MAX)) return
-    if (now - rt.carryAt > LOCAL.server.carryWindowMs) return
-    if (s.ownerCount - rt.carryAckCount < CARRY_ACK) return
-    const later = (ms: number) =>
-      (rt.carryAckLater ??= this.clock.set(() => {
-        rt.carryAckLater = undefined
-        this.ackCarry(room, rt)
-      }, ms))
-    // Too soon after the last one: later, as the owner may be waiting for it (nothing new comes).
-    const gap = LOCAL.server.carryAckGapMs
-    if (now - rt.carryAckAt < gap) return void later(gap - (now - rt.carryAckAt))
-    const base = rt.carryAckCount
-    const acks = { base: s.ownerCount, n: rt.carryAcks + 1 }
-    rt.carryAckAt = now
-    rt.carryAckCount = acks.base
-    rt.carryAcks = acks.n
-    void this.emit(room, 'mark', () => ({}))
-      .then(
-        () => this.updateRoom(room, cur => ({ ...cur, acks })),
-        () => {
-          // Not posted: still owed, again in a minute.
-          if (rt.carryAckCount !== acks.base) return
-          rt.carryAckCount = base
-          rt.carryAcks = acks.n - 1
-          later(60_000)
-        }
-      )
-      .catch(() => {})
+    return transfer.ackCarry(ctx(this), room, rt)
   }
 
-  // Spec 3.8 step 5: the member list the new owner carried over, against the old copy's at the
-  // upgrade (not its members now: leaving the archive changes nothing here).
-  private async checkMigrated(room: string, prev: string, tries = 0) {
-    const rt = this.ensureRt(room)
-    // Done and compared: nothing here changes any more.
-    if (rt.migrateChecked) return
-    const m = await this.migratedOf(room)
-    rt.carryDone = m?.done ?? false
-    if (!this.rooms.has(prev)) return
-    await this.ensureRt(prev).loading
-    const up = rt.upgrade ?? (await this.upgradeOf(prev, room))
-    if (up) rt.upgrade = up
-    const at = up ? await this.carriedOf(prev, up) : null
-    if (!at) {
-      // The old copy isn't loaded here yet: again in a moment (for a minute).
-      if (!rt.checkLater && tries < LOCAL.server.checkTries)
-        rt.checkLater = this.clock.set(() => {
-          rt.checkLater = undefined
-          void this.checkMigrated(room, prev, tries + 1).catch(() => {})
-        }, LOCAL.server.checkRetryMs)
-      return
-    }
-    // What the carry-over posts, at most, from what the upgrade carries (known before any of it
-    // is here): what bounds our acknowledgements of it, with room for about 100 changes of the
-    // owner's own meanwhile. Every carried event counts: overwrites and `migrate` chunks too.
-    const old = this.sumOf(prev)
-    const devices = at.members.reduce((n, ik) => n + (old.members[ik]?.devs.length || 1), 0)
-    const chunks = [at.members.length, at.bans.length, devices].reduce(
-      (n, k) => n + Math.max(1, Math.ceil(k / MIGRATE_PER)),
-      1
-    )
-    const size =
-      at.members.length +
-      at.bans.length +
-      Object.keys(at.channels).length +
-      Object.keys(at.roles).length +
-      Object.values(at.holds).reduce((n, l) => n + l.length, 0) +
-      Object.values(at.overwrites ?? {}).reduce((n, o) => n + Object.keys(o).length, 0) +
-      chunks +
-      8
-    rt.carryMax = Math.ceil(size / CARRY_ACK) + 5
-    // Known from now on, also at a start that loads this copy before the old one.
-    if (this.rooms.get(room)?.carryMax !== rt.carryMax) {
-      const carryMax = rt.carryMax
-      await this.updateRoom(room, cur => ({ ...cur, carryMax }))
-    }
-    if (!m) return
-    rt.carriedMembers = new Set(m.members)
-    const was = new Set(at.members)
-    const added = m.members.filter(ik => !was.has(ik)).sort()
-    const removed = at.members.filter(ik => !rt.carriedMembers?.has(ik)).sort()
-    const diff = added.length || removed.length ? { added, removed } : null
-    if (JSON.stringify(diff) !== JSON.stringify(rt.migrateDiff)) {
-      rt.migrateDiff = diff
-      this.changed(room)
-    }
-    if (m.done) rt.migrateChecked = true
+  private checkMigrated(room: string, prev: string, tries = 0) {
+    return transfer.checkMigrated(ctx(this), room, prev, tries)
   }
 
-  // Runs `step`, waiting out the limits that clear by themselves (another member's ACL event, or
-  // the hourly window), a minute at a time for at most a day. Null when it went through, else why
-  // it didn't (after a day, the limit it still waits for).
-  private async untilAllowed(
+  private untilAllowed(
     room: string,
     step: () => Promise<unknown>,
     waiting: (why: string) => Promise<void>
   ): Promise<string | null> {
-    let last = TOO_OFTEN_TEXT
-    for (let i = 0; i < LOCAL.server.stepTries && this.rooms.has(room); i++) {
-      try {
-        await step()
-        return null
-      } catch (e) {
-        const why = e instanceof Error ? e.message : String(e)
-        if (why !== LONE_TEXT && why !== QUICK_TEXT && why !== SYNC_TEXT) return why
-        last = why
-        await waiting(why)
-        await new Promise<void>(done => this.clock.set(done, LOCAL.server.stepRetryMs))
-      }
-    }
-    return last
+    return transfer.untilAllowed(ctx(this), room, step, waiting)
   }
 
-  // Members of the old copy who joined the new one get the roles they held at the upgrade back,
-  // once each (a role taken from them since stays taken). One run at a time per room, reading
-  // what was given and what they hold again for each role.
-  private async carryRoles(room: string) {
-    const rt = this.ensureRt(room)
-    if (rt.givingRoles) {
-      rt.giveAgain = true
-      return
-    }
-    rt.givingRoles = true
-    try {
-      do {
-        rt.giveAgain = false
-        await this.giveRoles(room)
-      } while (rt.giveAgain)
-    } finally {
-      rt.givingRoles = false
-    }
+  private carryRoles(room: string) {
+    return transfer.carryRoles(ctx(this), room)
   }
 
-  private async giveRoles(room: string) {
-    const c = this.rooms.get(room)?.carry
-    if (!c?.up || this.sumOf(room).owners[0] !== this.me) return
-    const old = await this.carriedOf(c.from, c.up)
-    if (!old) return
-    const given = new Set(c.given ?? [])
-    // What the old copy says now: a role taken away concurrently with the transfer (spec 3.8
-    // step 7) isn't given back.
-    const now = this.sumOf(c.from)
-    for (const [ik, held] of Object.entries(old.holds))
-      for (const r of held) {
-        const key = `${ik}\n${r}`
-        if (given.has(key)) continue
-        if (!now.members[ik]?.roles.includes(r)) continue
-        const cur = this.sumOf(room)
-        const carry = this.rooms.get(room)?.carry
-        const role = carry?.roles[r]
-        if (cur.members[ik]?.m !== 'join') break
-        if (!carry || !role || !cur.roles[role] || carry.given?.includes(key)) continue
-        given.add(key)
-        if (!cur.members[ik]?.roles.includes(role))
-          await this.emit(room, 'assign', () => ({ to: ik, role }))
-        await this.updateRoom(room, x =>
-          x.carry ? { ...x, carry: { ...x.carry, given: [...(x.carry.given ?? []), key] } } : x
-        )
-      }
+  private giveRoles(room: string) {
+    return transfer.giveRoles(ctx(this), room)
   }
 
   // ----- Invite codes -----
 
-  async issueCode(room: string, ttl: number, label = '') {
-    const s = this.sumOf(room)
-    if (this.myMembership(room) !== 'join') throw new ServerError('Join the server first')
-    if (!can(s, this.me, P.Invite)) throw new ServerError("You can't invite people here")
-    const now = this.clock.now()
-    // At the cap of live codes, our own expired ones are revoked to make room.
-    if (!can(s, this.me, P.ManageServer)) {
-      const mine = Object.entries(s.codes).filter(([, c]) => c.a === this.me)
-      const old = mine
-        .filter(([, c]) => (c.exp ?? Infinity) <= now)
-        .slice(0, Math.max(0, mine.length - STATE_LIMITS.codesPerMember + 1))
-      for (const [id] of old) await this.emit(room, 'code_revoke', () => ({ code: id }))
-      if (mine.length - old.length >= STATE_LIMITS.codesPerMember)
-        throw new ServerError('Revoke one of your invites first')
-    }
-    const secret = b64u(randomBytes(16))
-    const hash = codeHash(secret)
-    const exp = now + ttl
-    const clean = label.trim().slice(0, STATE_LIMITS.label)
-    await this.emit(room, 'code', () => ({ h: hash, exp, ...(clean ? { label: clean } : {}) }))
-    const rec: CodeRecord = { hash, room, secret, exp, label: clean, created: now }
-    await this.db.put('codes', rec)
-    return this.codeText(room, secret)
+  issueCode(room: string, ttl: number, label = '') {
+    return codes.issueCode(ctx(this), room, ttl, label)
   }
 
-  // The code string: the room, its name, the secret, and the peer ids of up to 4 members who
-  // can let people in (us first). No identities, addresses or anything else.
   codeText(room: string, secret: string) {
-    const s = this.sumOf(room)
-    const peers = [this.deps.node.peerId]
-    for (const ik of this.joinedOthers(room)) {
-      if (peers.length >= SERVER.codePeers) break
-      if (!can(s, ik, P.Invite)) continue
-      const d = this.deps.node.anyDevicesOf(ik)
-      const cert = d ? liveCerts(d.certs, d.revocations)[0] : undefined
-      if (cert) peers.push(peerId(cert.dk))
-    }
-    const id = this.codeByHash(room, codeHash(secret))?.id
-    return encodeCode({
-      v: 1,
-      room,
-      name: nameOf(s)?.name ?? 'P2P server',
-      ...(id ? { code: id } : {}),
-      secret,
-      peers,
-    })
+    return codes.codeText(ctx(this), room, secret)
   }
 
-  // The live code with this hash (codes are named by their event id, spec 1.4).
   private codeByHash(room: string, hash: string) {
-    for (const [id, c] of Object.entries(this.sumOf(room).codes))
-      if (c.h === hash) return { id, ...c }
-    return null
+    return codes.codeByHash(ctx(this), room, hash)
   }
 
   // Codes whose revocation waits for sync: refused here from the moment it is asked.
   private holding = new Set<string>()
 
-  // Revokes a code once synced (moderate), refusing it here meanwhile; null if cancelled.
-  async revokeCodeSynced(room: string, hash: string) {
-    const key = `${room}\n${hash}`
-    this.holding.add(key)
-    try {
-      return await this.moderate(room, { act: 'Revoke an invite code' }, () =>
-        this.revokeCode(room, hash)
-      )
-    } finally {
-      this.holding.delete(key)
-    }
+  revokeCodeSynced(room: string, hash: string) {
+    return codes.revokeCodeSynced(ctx(this), room, hash)
   }
 
-  async revokeCode(room: string, hash: string) {
-    const cur = this.codeByHash(room, hash)
-    if (!cur) throw new ServerError('Unknown invite')
-    await this.emit(room, 'code_revoke', () => ({ code: cur.id }))
+  revokeCode(room: string, hash: string) {
+    return codes.revokeCode(ctx(this), room, hash)
   }
 
-  // Live codes of a room, with the code string for those we issued here.
-  async codes(room: string) {
-    const s = this.sumOf(room)
-    const mine = new Map(
-      (await this.db.getAllFromIndex('codes', 'room', room)).map(c => [c.hash, c])
-    )
-    const paused = this.pausedCodes(room)
-    const out: {
-      hash: string
-      exp: number
-      revoked: boolean
-      label: string
-      by: string
-      text: string | null
-      paused?: true
-    }[] = []
-    for (const c of Object.values(s.codes)) {
-      const rec = mine.get(c.h)
-      mine.delete(c.h)
-      out.push({
-        hash: c.h,
-        exp: c.exp ?? rec?.exp ?? 0,
-        revoked: false,
-        label: c.label ?? rec?.label ?? '',
-        by: c.a,
-        text: rec ? this.codeText(room, rec.secret) : null,
-        ...(paused.has(c.h) ? { paused: true as const } : {}),
-      })
-    }
-    // Ours that are no longer live: revoked, or dead with our right to invite.
-    for (const rec of mine.values())
-      out.push({
-        hash: rec.hash,
-        exp: rec.exp,
-        revoked: true,
-        label: rec.label,
-        by: this.me,
-        text: null,
-      })
-    return out.sort((a, b) => b.exp - a.exp)
+  codes(room: string) {
+    return codes.codes(ctx(this), room)
   }
 
-  // Joins with a code: dials the members it names until one lets us in.
-  async redeem(text: string): Promise<string> {
-    const code = parseCode(text)
-    if (!code) throw new ServerError(BAD_CODE)
-    if (this.myMembership(code.room) === 'join') return code.room
-    if (!this.rooms.has(code.room) && (await this.isDmId(code.room)))
-      throw new ServerError(BAD_CODE)
-    const now = this.clock.now()
-    const had = this.rooms.get(code.room)
-    if (!had)
-      await this.putRoom({
-        ...blankRoom(code.room, '', now),
-        kind: 'server',
-        name: code.name,
-        chans: {},
-        server: null,
-        joining: { at: now, via: 'code' },
-        since: now,
-      })
-    else await this.updateRoom(code.room, cur => ({ ...cur, joining: { at: now, via: 'code' } }))
-    this.ensureRt(code.room).joinPosted = false
-    let why: string | null = null
-    for (const peer of code.peers) {
-      const s = await this.deps.node.dialPeer(peer, { rci: code.room })
-      if (!s || !s.remote) continue
-      const reply = await this.request(s, {
-        t: 'gredeem',
-        room: code.room,
-        ...(code.code ? { code: code.code } : {}),
-        secret: code.secret,
-        profile: this.deps.node.profile,
-      })
-      if (reply?.ok === true) {
-        this.prefer(code.room, s.remote.ik)
-        // The invite they posted for us: it enters the room once we hold what it sits on.
-        if (isRecord(reply.ev)) {
-          const ev = reply.ev as unknown as WireV2
-          await this.updateRoom(code.room, cur => ({
-            ...cur,
-            joining: { at: cur.joining?.at ?? now, via: 'code', ev },
-          }))
-          void this.locked(code.room, () => this.takeInvite(code.room)).catch(() => {})
-        }
-        this.changed(code.room)
-        return code.room
-      }
-      const w = typeof reply?.why === 'string' ? reply.why : null
-      if (w && w in REDEEM_TEXT) {
-        // Busy or unknown at one member: another may let us in.
-        if (w !== 'unknown' || !why) why = w
-        if (w !== 'unknown' && w !== 'busy') break
-      }
-    }
-    if (!had) await this.forgetEmpty(code.room)
-    else await this.updateRoom(code.room, cur => ({ ...cur, joining: null }))
-    throw new ServerError(why ? REDEEM_TEXT[why] : NOBODY_ONLINE)
+  redeem(text: string): Promise<string> {
+    return codes.redeem(ctx(this), text)
   }
 
-  private async forgetEmpty(room: string) {
-    if (await this.dropEmpty(room)) this.changed(room)
+  private forgetEmpty(room: string) {
+    return codes.forgetEmpty(ctx(this), room)
   }
 
   private request(s: Session, msg: Message, ms = SERVER.redeemMs): Promise<Message | null> {
-    return new Promise(resolve => {
-      const key = `${s.peer}\n${msg.room as string}`
-      const timer = this.clock.set(() => {
-        this.waiters.delete(key)
-        resolve(null)
-      }, ms)
-      this.waiters.set(key, m => {
-        this.clock.clear(timer)
-        this.waiters.delete(key)
-        resolve(m)
-      })
-      s.onClose(() => this.waiters.get(key)?.({ t: 'gredeemed', ok: false }))
-      void s.send(msg).catch(() => resolve(null))
-    })
+    return codes.request(ctx(this), s, msg, ms)
   }
 
   private onRedeemed(m: Message, s: Session) {
-    if (typeof m.room !== 'string') return s.strike()
-    this.waiters.get(`${s.peer}\n${m.room}`)?.(m)
+    return codes.onRedeemed(ctx(this), m, s)
   }
 
-  // The invite an admitting member posted for us: through the pending store, so it is decided
-  // once we hold its ACL parents; our join follows (afterState).
-  private async takeInvite(room: string) {
-    const r = this.rooms.get(room)
-    const wire = r?.joining?.ev
-    if (!wire) return
-    const m = this.myMembership(room)
-    if (m !== 'invite' && m !== 'join') {
-      const v = await this.check(room, wire)
-      // Before the genesis is here it can't be judged: kept until a stored event retries it.
-      if (!v.ok && v.later) return
-      if (v.ok) await this.take(room, v.id, wire, this.clock.now())
-    }
-    await this.updateRoom(room, cur =>
-      cur.joining?.ev ? { ...cur, joining: { at: cur.joining.at, via: cur.joining.via } } : null
-    )
+  private takeInvite(room: string) {
+    return codes.takeInvite(ctx(this), room)
   }
 
-  // Someone redeems a code with us: we check it by our own clock and, if it holds, post an
-  // invite for them that names the code (spec 8.1), send it to them and let them sync the ACL for
-  // a while. The invite is withdrawn if they don't join by then (lapseRedeems).
-  private async onRedeem(m: Message, s: Session) {
-    const r = s.remote
-    const room = m.room
-    if (!r || typeof room !== 'string' || bytesOf(m.secret, 16) === null) return s.strike()
-    const n = (this.redeems.get(s) ?? 0) + 1
-    this.redeems.set(s, n)
-    if (n > SERVER.redeems) return s.strike()
-    const answer = (ok: boolean, why?: string, ev?: Wire) =>
-      void s
-        .send({ t: 'gredeemed', room, ok, ...(why ? { why } : {}), ...(ev ? { ev } : {}) })
-        .catch(() => {})
-    const st = this.sumOf(room)
-    if (this.myMembership(room) !== 'join' || !can(st, this.me, P.Invite) || this.frozen(room))
-      return answer(false, 'unknown')
-    const hash = codeHash(m.secret as string)
-    if (this.holding.has(`${room}\n${hash}`)) return answer(false, 'revoked')
-    // The code the link names (its id), else the live code with this secret's hash.
-    const named = typeof m.code === 'string' ? st.codes[m.code] : undefined
-    const code =
-      typeof m.code === 'string'
-        ? named?.h === hash
-          ? { id: m.code, ...named }
-          : null
-        : this.codeByHash(room, hash)
-    if (named && named.h !== hash) return answer(false, 'unknown')
-    if (!code) {
-      const rec = await this.db.get('codes', hash)
-      return answer(false, rec && rec.room === room ? 'revoked' : 'unknown')
-    }
-    const now = this.clock.now()
-    if ((code.exp ?? Infinity) <= now) return answer(false, 'expired')
-    const cur = membershipOf(st, r.ik)
-    if (cur === 'ban') return answer(false, 'banned')
-    if (cur === 'join') {
-      this.prefer(room, r.ik)
-      return answer(true)
-    }
-    const map = this.redeemersOf(room)
-    if (!map.has(r.ik)) {
-      const perCode = [...map.values()].filter(x => x.code === code.id).length
-      if (perCode >= SERVER.redeemsPerCode || map.size >= SERVER.redeemsPerRoom)
-        return answer(false, 'busy')
-    }
-    let add = memberOf(st, r.ik)?.adds?.[0]
-    let at: number | undefined
-    if (cur !== 'invite') {
-      if (!this.codeOpen(room, code.id, now)) return answer(false, 'busy')
-      // The slot is taken before signing, so redeems at the same moment can't pass it.
-      const use = this.codeUseOf(room, code.id)
-      use.adds.push(now)
-      try {
-        add = await this.emit(room, 'add', () => ({ to: r.ik, code: code.id }))
-      } catch {
-        const i = use.adds.lastIndexOf(now)
-        if (i >= 0) use.adds.splice(i, 1)
-        return answer(false, 'unknown')
-      }
-      at = now
-    }
-    const ev = add ? (await this.db.get('events', add))?.wire : undefined
-    if (!map.has(r.ik) && add)
-      map.set(r.ik, {
-        code: code.id,
-        until: now + SERVER.redeemTtl,
-        add,
-        ...(at !== undefined ? { at } : {}),
-      })
-    this.redeemers.set(room, map)
-    this.prefer(room, r.ik)
-    answer(true, undefined, ev)
+  private onRedeem(m: Message, s: Session) {
+    return codes.onRedeem(ctx(this), m, s)
   }
 
   // ----- Direct invites -----
 
-  // Invites a mutual contact; they see it under "P2P server invites" when they are online.
-  async invite(room: string, ik: string) {
-    const c = this.deps.node.contact(ik)
-    if (!c || c.state !== 'mutual') throw new ServerError('Only mutual contacts can be invited')
-    const cur = membershipOf(this.sumOf(room), ik)
-    if (cur === 'join') throw new ServerError('Already a member')
-    if (cur === 'ban') throw new ServerError('This contact is banned from the server')
-    if (cur !== 'invite') await this.emit(room, 'add', () => ({ to: ik }))
-    for (const s of this.deps.node.readySessions(ik)) this.sendInvite(s, room)
+  invite(room: string, ik: string) {
+    return codes.invite(ctx(this), room, ik)
   }
 
   private sendInvite(s: Session, room: string) {
-    const m = memberOf(this.sumOf(room), s.remote?.ik ?? '')
-    const add = m?.m === 'invite' ? m.adds?.[0] : undefined
-    if (!add) return
-    void this.db.get('events', add).then(rec => {
-      if (!rec) return
-      void s
-        .send({
-          t: 'ginvite',
-          room,
-          name: nameOf(this.sumOf(room))?.name ?? 'P2P server',
-          ev: rec.wire,
-        })
-        .catch(() => {})
-    })
+    return codes.sendInvite(ctx(this), s, room)
   }
 
-  // A contact comes online: they hear about invites they haven't answered.
   private offerInvites(s: Session) {
-    const ik = s.remote?.ik
-    if (!ik || this.deps.node.contact(ik)?.state !== 'mutual') return
-    for (const room of this.rooms.keys())
-      if (this.myMembership(room) === 'join' && membershipOf(this.sumOf(room), ik) === 'invite')
-        this.sendInvite(s, room)
+    return codes.offerInvites(ctx(this), s)
   }
 
-  private async onInvite(m: Message, s: Session) {
-    const from = s.remote?.ik
-    const room = m.room
-    if (!from || typeof room !== 'string' || typeof m.name !== 'string') return s.strike()
-    // Only from mutual contacts: nobody else can put rows in our list.
-    if (this.deps.node.contact(from)?.state !== 'mutual') return
-    const v = validate2(m.ev, room)
-    if (!v.ok) return s.strike()
-    const ev = v.wire.ev
-    if (ev.t !== 'add' || v.wire.c?.to !== this.me || ev.a !== from) return s.strike()
-    const cur = this.rooms.get(room)
-    if (cur && (cur.joining || this.myMembership(room) === 'join')) return
-    if (!cur && (await this.isDmId(room))) return
-    const pending = [...this.rooms.values()].filter(r => r.invite).length
-    if (!cur && pending >= SERVER.invites) return
-    const now = this.clock.now()
-    await this.putRoom({
-      ...(cur ?? { ...blankRoom(room, '', now), kind: 'server', chans: {}, server: null }),
-      name: Array.from(m.name).slice(0, LOCAL.server.nameMax).join(''),
-      invite: { from, at: now, wire: v.wire },
-    })
-    this.ensureRt(room)
-    this.changed(room)
+  private onInvite(m: Message, s: Session) {
+    return codes.onInvite(ctx(this), m, s)
   }
 
   invites() {
-    return [...this.rooms.values()].filter(r => r.invite && !r.joining)
+    return codes.invites(ctx(this))
   }
 
-  async acceptInvite(room: string) {
-    const r = this.rooms.get(room)
-    if (!r?.invite) return
-    const from = r.invite.from
-    const now = this.clock.now()
-    await this.updateRoom(room, cur => ({
-      ...cur,
-      invite: null,
-      joining: { at: now, via: 'invite', ev: cur.invite?.wire },
-      since: now,
-    }))
-    this.ensureRt(room).joinPosted = false
-    this.prefer(room, from)
-    void this.locked(room, () => this.takeInvite(room)).catch(() => {})
-    this.deps.node.schedule(true)
-    this.changed(room)
+  acceptInvite(room: string) {
+    return codes.acceptInvite(ctx(this), room)
   }
 
-  async declineInvite(room: string) {
-    const r = this.rooms.get(room)
-    if (!r?.invite) return
-    if (!(await this.dropEmpty(room)))
-      await this.updateRoom(room, cur => ({ ...cur, invite: null }))
-    this.changed(room)
+  declineInvite(room: string) {
+    return codes.declineInvite(ctx(this), room)
   }
   // ----- Messages -----
 
   private mentionables(room: string) {
-    return messages.mentionables(this.cx, room)
+    return messages.mentionables(ctx(this), room)
   }
 
   private content(room: string, t: string, c: Record<string, unknown>) {
-    return messages.content(this.cx, room, t, c)
+    return messages.content(ctx(this), room, t, c)
   }
 
   send(
@@ -4493,50 +3341,50 @@ export class Servers {
       thread?: string
     }
   ) {
-    return messages.send(this.cx, room, msg)
+    return messages.send(ctx(this), room, msg)
   }
 
   private rootOf(
     rec: EventRecord,
     get: (id: string) => Promise<EventRecord | undefined> = id => this.db.get('events', id)
   ): Promise<string | null> {
-    return messages.rootOf(this.cx, rec, get)
+    return messages.rootOf(ctx(this), rec, get)
   }
 
   threadOf(id: string) {
-    return messages.threadOf(this.cx, id)
+    return messages.threadOf(ctx(this), id)
   }
 
   private threadRoot(room: string, id: string, ch?: string) {
-    return messages.threadRoot(this.cx, room, id, ch)
+    return messages.threadRoot(ctx(this), room, id, ch)
   }
 
   private message(room: string, target: string) {
-    return messages.message(this.cx, room, target)
+    return messages.message(ctx(this), room, target)
   }
 
   edit(room: string, target: string, body: string) {
-    return messages.edit(this.cx, room, target, body)
+    return messages.edit(ctx(this), room, target, body)
   }
 
   redact(room: string, target: string) {
-    return messages.redact(this.cx, room, target)
+    return messages.redact(ctx(this), room, target)
   }
 
   react(room: string, target: string, key: string, on: boolean) {
-    return messages.react(this.cx, room, target, key, on)
+    return messages.react(ctx(this), room, target, key, on)
   }
 
   pin(room: string, target: string, on: boolean) {
-    return messages.pin(this.cx, room, target, on)
+    return messages.pin(ctx(this), room, target, on)
   }
 
   retry(room: string, id: string) {
-    return messages.retry(this.cx, room, id)
+    return messages.retry(ctx(this), room, id)
   }
 
   markRead(room: string, ch: string, drop: Readonly<Record<string, number>> = {}) {
-    return messages.markRead(this.cx, room, ch, drop)
+    return messages.markRead(ctx(this), room, ch, drop)
   }
 
   readChannel(
@@ -4545,53 +3393,53 @@ export class Servers {
     pings: readonly { id: string; thread: string }[],
     counts: Readonly<Record<string, number>> = this.threadCounts(room, ch)
   ) {
-    return messages.readChannel(this.cx, room, ch, pings, counts)
+    return messages.readChannel(ctx(this), room, ch, pings, counts)
   }
 
   threadCounts(room: string, ch: string): Record<string, number> {
-    return messages.threadCounts(this.cx, room, ch)
+    return messages.threadCounts(ctx(this), room, ch)
   }
 
   private livePings(room: string, pings: readonly { id: string; thread: string }[]) {
-    return messages.livePings(this.cx, room, pings)
+    return messages.livePings(ctx(this), room, pings)
   }
 
   markThread(room: string, ch: string, root: string) {
-    return messages.markThread(this.cx, room, ch, root)
+    return messages.markThread(ctx(this), room, ch, root)
   }
 
   unping(room: string, ch: string, n: number, thread: string | null = null) {
-    return messages.unping(this.cx, room, ch, n, thread)
+    return messages.unping(ctx(this), room, ch, n, thread)
   }
 
   typing(room: string, ch: string, on: boolean, root?: string) {
-    return messages.typing(this.cx, room, ch, on, root)
+    return messages.typing(ctx(this), room, ch, on, root)
   }
 
   typingIn(room: string, ch: string, root: string | null = null) {
-    return messages.typingIn(this.cx, room, ch, root)
+    return messages.typingIn(ctx(this), room, ch, root)
   }
 
   loadOlder(room: string) {
-    return messages.loadOlder(this.cx, room)
+    return messages.loadOlder(ctx(this), room)
   }
 
   // ----- Views -----
 
   view(room: string): ServerView | null {
-    return views.view(this.cx, room)
+    return views.view(ctx(this), room)
   }
 
   private canViewCh(room: string, ch: string) {
-    return views.canViewCh(this.cx, room, ch)
+    return views.canViewCh(ctx(this), room, ch)
   }
 
   online(room: string) {
-    return views.online(this.cx, room)
+    return views.online(ctx(this), room)
   }
 
   pulling(room: string) {
-    return views.pulling(this.cx, room)
+    return views.pulling(ctx(this), room)
   }
 
   loadChannel(
@@ -4599,23 +3447,23 @@ export class Servers {
     ch: string,
     opts: PageOpts & { keep?: (r: EventRecord) => boolean } = {}
   ): Promise<{ messages: P2pMessage[]; more: boolean }> {
-    return views.loadChannel(this.cx, room, ch, opts)
+    return views.loadChannel(ctx(this), room, ch, opts)
   }
 
   private archiveKeep(old: string, next?: string) {
-    return views.archiveKeep(this.cx, old, next)
+    return views.archiveKeep(ctx(this), old, next)
   }
 
   private markArchive(room: string) {
-    return views.markArchive(this.cx, room)
+    return views.markArchive(ctx(this), room)
   }
 
   private pinRows(room: string, pins: EventRecord[]) {
-    return views.pinRows(this.cx, room, pins)
+    return views.pinRows(ctx(this), room, pins)
   }
 
   private withReplies(room: string, ch: string, rows: P2pMessage[]) {
-    return views.withReplies(this.cx, room, ch, rows)
+    return views.withReplies(ctx(this), room, ch, rows)
   }
 
   loadThread(
@@ -4623,11 +3471,11 @@ export class Servers {
     root: string,
     opts: { before?: string; after?: string; limit?: number } = {}
   ) {
-    return views.loadThread(this.cx, room, root, opts)
+    return views.loadThread(ctx(this), room, root, opts)
   }
 
   loadThreadAround(room: string, root: string, id: string) {
-    return views.loadThreadAround(this.cx, room, root, id)
+    return views.loadThreadAround(ctx(this), room, root, id)
   }
 
   private systemRows(
@@ -4636,25 +3484,25 @@ export class Servers {
     hi: string | undefined,
     sys: { join: boolean; leave: boolean }
   ) {
-    return views.systemRows(this.cx, room, lo, hi, sys)
+    return views.systemRows(ctx(this), room, lo, hi, sys)
   }
 
   private rows(room: string, recs: EventRecord[]) {
-    return views.rows(this.cx, room, recs)
+    return views.rows(ctx(this), room, recs)
   }
 
   loadAround(room: string, ch: string, id: string) {
-    return views.loadAround(this.cx, room, ch, id)
+    return views.loadAround(ctx(this), room, ch, id)
   }
 
   loadPins(room: string, ch: string) {
-    return views.loadPins(this.cx, room, ch)
+    return views.loadPins(ctx(this), room, ch)
   }
 
   // ----- Search -----
 
   search(q: SearchQuery, cursor: string | null = null, page: number = SEARCH.page) {
-    return search.search(this.cx, q, cursor, page)
+    return search.search(ctx(this), q, cursor, page)
   }
 
   // The candidates of a query, newest first below `cursor`. Words: from the index, kept for the
@@ -4671,38 +3519,38 @@ export class Servers {
     rooms: readonly string[],
     cursor: string | null
   ) {
-    return search.searchPool(this.cx, q, query, rooms, cursor)
+    return search.searchPool(ctx(this), q, query, rooms, cursor)
   }
 
   private recent(room: string, q: SearchQuery, before: string | null, max: number) {
-    return search.recent(this.cx, room, q, before, max)
+    return search.recent(ctx(this), room, q, before, max)
   }
 
   isChannel(room: string, ch: string) {
-    return search.isChannel(this.cx, room, ch)
+    return search.isChannel(ctx(this), room, ch)
   }
 
   isVoiceChannel(room: string, ch: string) {
-    return search.isVoiceChannel(this.cx, room, ch)
+    return search.isVoiceChannel(ctx(this), room, ch)
   }
 
   private voiceMember(room: string, ik: string | undefined) {
-    return search.voiceMember(this.cx, room, ik)
+    return search.voiceMember(ctx(this), room, ik)
   }
 
   voiceAllowed(room: string, ch: string, ik: string): boolean | Promise<boolean> {
-    return search.voiceAllowed(this.cx, room, ch, ik)
+    return search.voiceAllowed(ctx(this), room, ch, ik)
   }
 
   private checkVoice(room: string) {
-    return search.checkVoice(this.cx, room)
+    return search.checkVoice(ctx(this), room)
   }
 
   recordOf(id: string): Promise<PackedRec | null> {
-    return search.recordOf(this.cx, id)
+    return search.recordOf(ctx(this), id)
   }
 
   waiting(room: string) {
-    return search.waiting(this.cx, room)
+    return search.waiting(ctx(this), room)
   }
 }
