@@ -1387,21 +1387,45 @@ pub async fn check_profanity(db: &Db, target: ProfanityTarget, text: &str) -> Re
 pub struct Authed(pub User);
 pub struct MaybeAuthed(pub Option<User>);
 
-pub(crate) async fn user_for_token(state: &AppState, token: &str) -> Option<User> {
+pub const AUTH_UNAVAILABLE: &str = "Cannot check your session right now. Try again soon";
+
+fn auth_unavailable(e: sqlx::Error) -> ApiError {
+    tracing::warn!("session lookup failed: {e}");
+    ApiError(
+        StatusCode::SERVICE_UNAVAILABLE,
+        AUTH_UNAVAILABLE.to_string(),
+    )
+}
+
+/// The account of a session token. `Ok(None)` only when no live account has that token; any
+/// other failure (pool closed or starved, query or row errors) is a 503, so clients keep the
+/// token and retry.
+pub(crate) async fn user_for_token(
+    state: &AppState,
+    token: &str,
+) -> Result<Option<User>, ApiError> {
     let row = sqlx::query(
         "SELECT u.* FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
     )
     .bind(crate::db::secret_key(token))
     .fetch_optional(&state.read())
     .await
-    .ok()??;
-    User::from_row(&row).ok()
+    .map_err(auth_unavailable)?;
+    row.map(|row| User::from_row(&row))
+        .transpose()
+        .map_err(auth_unavailable)
 }
 
-async fn bearer_user(parts: &Parts, state: &AppState) -> Option<User> {
-    let header = parts.headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let token = header.strip_prefix("Bearer ")?;
-    user_for_token(state, token).await
+async fn bearer_user(parts: &Parts, state: &AppState) -> Result<Option<User>, ApiError> {
+    let token = parts
+        .headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    match token {
+        Some(token) => user_for_token(state, token).await,
+        None => Ok(None),
+    }
 }
 
 pub(crate) fn request_token(headers: &HeaderMap) -> Option<String> {
@@ -1423,11 +1447,12 @@ pub(crate) fn request_token(headers: &HeaderMap) -> Option<String> {
 async fn require_token(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let user = match request_token(req.headers()) {
         Some(token) => user_for_token(&state, &token).await,
-        None => None,
+        None => Ok(None),
     };
     match user {
-        Some(_) => next.run(req).await,
-        None => ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string()).into_response(),
+        Ok(Some(_)) => next.run(req).await,
+        Ok(None) => ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string()).into_response(),
+        Err(e) => e.into_response(),
     }
 }
 
@@ -1435,7 +1460,7 @@ impl FromRequestParts<AppState> for Authed {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Authed, ApiError> {
-        match bearer_user(parts, state).await {
+        match bearer_user(parts, state).await? {
             Some(user) => Ok(Authed(user)),
             None => Err(ApiError(
                 StatusCode::UNAUTHORIZED,
@@ -1452,7 +1477,7 @@ impl FromRequestParts<AppState> for MaybeAuthed {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<MaybeAuthed, ApiError> {
-        Ok(MaybeAuthed(bearer_user(parts, state).await))
+        Ok(MaybeAuthed(bearer_user(parts, state).await?))
     }
 }
 
@@ -2587,6 +2612,103 @@ mod tests {
             }
             assert!(all.blocks(ProfanityTarget::ServerNames, text), "{text}");
         }
+    }
+
+    async fn get_as(state: &AppState, path: &str, token: Option<&str>) -> (StatusCode, String) {
+        let trusted = ProxyTrust::from_config(false, Some("127.0.0.1")).expect("trust");
+        let app = routes(state.clone(), &Roles::ALL, ClientIp(trusted)).with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+        });
+        let req = reqwest::Client::new().get(format!("http://{addr}{path}"));
+        let req = match token {
+            Some(token) => req.bearer_auth(token),
+            None => req,
+        };
+        let res = req.send().await.expect("request");
+        let status = res.status();
+        let body = res.text().await.expect("body");
+        server.abort();
+        (status, body)
+    }
+
+    #[tokio::test]
+    async fn a_token_lookup_that_fails_is_503_not_401() {
+        let (state, path) = temp_state("auth_unavailable").await;
+        let db = &state.db;
+        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('bob', 'bob', 'x', 'text', 'identicon', 0)")
+            .execute(db)
+            .await
+            .expect("user");
+        sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, 'bob', 0)")
+            .bind(crate::db::secret_key("tok-bob"))
+            .execute(db)
+            .await
+            .expect("token");
+        let found = user_for_token(&state, "tok-bob").await.expect("lookup");
+        assert_eq!(found.map(|u| u.username).as_deref(), Some("bob"));
+        assert!(
+            user_for_token(&state, "tok-nobody")
+                .await
+                .expect("lookup")
+                .is_none()
+        );
+        assert_eq!(
+            get_as(&state, "/me", Some("tok-bob")).await.0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            get_as(&state, "/me", Some("tok-nobody")).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert!(AUTH_UNAVAILABLE.is_ascii());
+        let unavailable = serde_json::json!({ "error": AUTH_UNAVAILABLE }).to_string();
+        let url = format!("sqlite://{}?mode=rwc", path.display());
+        let starved = sqlx::any::AnyPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect(&url)
+            .await
+            .expect("starved pool");
+        let held = starved.acquire().await.expect("the only connection");
+        let stalled = state.clone().with_reader(starved.clone());
+        for token in ["tok-bob", "tok-nobody"] {
+            let ApiError(code, msg) = user_for_token(&stalled, token)
+                .await
+                .err()
+                .expect("lookup fails");
+            assert_eq!(
+                (code, msg.as_str()),
+                (StatusCode::SERVICE_UNAVAILABLE, AUTH_UNAVAILABLE)
+            );
+        }
+        for path in ["/me", "/invites/rchat", "/openapi.json"] {
+            assert_eq!(
+                get_as(&stalled, path, Some("tok-bob")).await,
+                (StatusCode::SERVICE_UNAVAILABLE, unavailable.clone()),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            get_as(&stalled, "/me", None).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        drop(held);
+        starved.close().await;
+        crate::db::close(&state.db).await;
+        assert_eq!(
+            get_as(&state, "/me", Some("tok-bob")).await,
+            (StatusCode::SERVICE_UNAVAILABLE, unavailable)
+        );
+        done(state, path).await;
     }
 
     #[tokio::test]

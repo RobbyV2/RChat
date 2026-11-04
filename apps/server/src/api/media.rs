@@ -825,7 +825,7 @@ pub(crate) async fn download_media(
 ) -> Result<Response, ApiError> {
     let db = state.read();
     let user = match request_token(&headers) {
-        Some(token) => user_for_token(&state, &token).await,
+        Some(token) => user_for_token(&state, &token).await?,
         None => None,
     };
     require_guest_ok(&db, user.as_ref()).await?;

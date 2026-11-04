@@ -1420,6 +1420,7 @@ mod tests {
         assert!(
             crate::api::user_for_token(&state, &bob_token)
                 .await
+                .expect("lookup")
                 .is_none()
         );
         assert!(matches!(

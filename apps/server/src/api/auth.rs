@@ -679,7 +679,7 @@ async fn login_at(state: &AppState, req: LoginReq, t: i64) -> Result<Json<AuthRe
 ///
 /// Returns the signed-in user's account and preferences together with the first page (50) of
 /// their joined servers and of their DMs. Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/me", tag = "Account", responses((status = 200, description = "The signed-in user's profile with the first page (50) of joined servers and of DMs; `servers_more`/`dms_more` say whether `/api/me/servers` and `/api/dms` have more, and `servers_cursor`/`dms_cursor` are the `cursor` values for their next pages (null when there are no more)", body = Me), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/me", tag = "Account", responses((status = 200, description = "The signed-in user's profile with the first page (50) of joined servers and of DMs; `servers_more`/`dms_more` say whether `/api/me/servers` and `/api/dms` have more, and `servers_cursor`/`dms_cursor` are the `cursor` values for their next pages (null when there are no more)", body = Me), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String), (status = 503, description = "The token could not be checked (the database is unavailable). The session is not ended; retry later", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn me(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1046,10 +1046,14 @@ mod tests {
         assert!(
             crate::api::user_for_token(&state, &resp.token)
                 .await
+                .expect("lookup")
                 .is_some()
         );
         assert!(
-            crate::api::user_for_token(&state, &stored).await.is_none(),
+            crate::api::user_for_token(&state, &stored)
+                .await
+                .expect("lookup")
+                .is_none(),
             "the stored value is not a token"
         );
         done(state, path).await;
@@ -1702,8 +1706,18 @@ mod tests {
             .await
             .expect("logout");
         assert_eq!(tokens_of(&state, "lea").await, vec![secret_key("phone")]);
-        assert!(crate::api::user_for_token(&state, &mine).await.is_none());
-        assert!(crate::api::user_for_token(&state, "phone").await.is_some());
+        assert!(
+            crate::api::user_for_token(&state, &mine)
+                .await
+                .expect("lookup")
+                .is_none()
+        );
+        assert!(
+            crate::api::user_for_token(&state, "phone")
+                .await
+                .expect("lookup")
+                .is_some()
+        );
         assert!(matches!(
             rx.try_recv(),
             Ok(WsEvent::TokensRevoked { username }) if username == "lea"

@@ -141,6 +141,7 @@ import {
   type ForwardClip,
 } from './forward'
 import { catchUpDelay, due } from './backoff'
+import { endsSession, meRetryIn } from './session'
 import { chunked, createReadQueue, markedRead, mergeReads, withThreads } from './reads'
 import {
   WINDOW_MAX,
@@ -1126,12 +1127,24 @@ export const useStore = create<RChatState>()((set, get) => {
       .me()
       .then(me => applyMe(me, true))
       .catch(e => {
-        if (e instanceof ApiError && e.status === 401) expireSession()
+        if (endsSession(e)) expireSession()
         else fail(e)
       })
 
   let meRetry: ReturnType<typeof setTimeout> | null = null
+  let meAttempt = 0
   let recovering = false
+
+  const retryMe = (e: unknown) => {
+    const wait = meRetryIn(e, meAttempt)
+    if (wait === null) {
+      expireSession()
+      return
+    }
+    meAttempt += 1
+    set({ bootError: errorText(e) })
+    meRetry = setTimeout(() => void recoverMe(), wait)
+  }
 
   const recoverMe = async () => {
     if (meRetry) clearTimeout(meRetry)
@@ -1141,18 +1154,14 @@ export const useStore = create<RChatState>()((set, get) => {
     try {
       const me = await api.me()
       if (!get().token) return
+      meAttempt = 0
       applyMe(me, false)
       set({ bootError: null })
       p2p.announce()
       void loadUnreads()
       await bootUrl()
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
-        expireSession()
-        return
-      }
-      set({ bootError: errorText(e) })
-      meRetry = setTimeout(() => void recoverMe(), 5000)
+      retryMe(e)
     } finally {
       recovering = false
     }
@@ -3488,6 +3497,7 @@ export const useStore = create<RChatState>()((set, get) => {
     noticeTimer = null
     if (meRetry) clearTimeout(meRetry)
     meRetry = null
+    meAttempt = 0
     if (expiryTimer !== null) clearTimeout(expiryTimer)
     expiryTimer = null
     notifySynced = false
@@ -3778,15 +3788,16 @@ export const useStore = create<RChatState>()((set, get) => {
         try {
           me = await api.me()
         } catch (e) {
-          if (e instanceof ApiError && e.status === 401) {
+          if (endsSession(e)) {
             fail(e)
             expireSession()
             return
           }
           setTokenCookie(token)
-          set({ token, guest: false, bootError: errorText(e) })
+          set({ token, guest: false })
           startWs()
-          meRetry = setTimeout(() => void recoverMe(), 5000)
+          meAttempt = 0
+          retryMe(e)
           return
         }
         setTokenCookie(token)
