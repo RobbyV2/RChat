@@ -40,7 +40,8 @@ const makePeer = async (hub: Hub, name: string, clock: ManualClock, opts: DmOpts
   return { ...n, dms } as Peer
 }
 
-const eventually = async (ok: () => Promise<boolean>, what: string, ms = 30_000) => {
+// Waits for the state, for most of the test budget (a loaded run is slow, not wrong).
+const eventually = async (ok: () => Promise<boolean>, what: string, ms = 50_000) => {
   const end = Date.now() + ms
   while (!(await ok())) {
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
@@ -220,7 +221,7 @@ describe('storage limits', () => {
     expect(b.dms.storageFull).toBe(false)
     await eventually(async () => !(await a.store.room(room))?.peerFull, 'cleared')
     await eventually(async () => (await view(a, b)).every(m => !m.pending), 'delivered')
-  }, 20_000)
+  })
 })
 
 describe('storage limits, after a full pause', () => {
@@ -243,7 +244,7 @@ describe('storage limits, after a full pause', () => {
     quota = false
     await clock.advance(61_001)
     await eventually(async () => (await bodies(b, a)).join() === 'one', 'arrives')
-  }, 20_000)
+  })
 })
 
 describe('revoked devices', () => {

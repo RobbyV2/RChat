@@ -286,3 +286,48 @@ export const storageSpace = async (): Promise<{ free: number; quota: number } | 
 }
 
 export const freeSpace = async (): Promise<number | null> => (await storageSpace())?.free ?? null
+
+// Object URLs of files shown inline, newest last: past `max`, the oldest that nothing on screen
+// uses is revoked; one in use stays until its last user lets go.
+export class UrlCache {
+  private urls = new Map<string, Promise<string | null>>()
+  private refs = new Map<string, number>()
+
+  constructor(
+    private max: number,
+    private revoke: (url: string) => void = u => URL.revokeObjectURL(u)
+  ) {}
+
+  // `make` runs once per file until it is dropped; each call is one user until `unuse`.
+  use(h: string, make: () => Promise<string | null>) {
+    let hit = this.urls.get(h)
+    if (hit) this.urls.delete(h)
+    else hit = make()
+    this.urls.set(h, hit)
+    this.refs.set(h, (this.refs.get(h) ?? 0) + 1)
+    this.trim()
+    return hit
+  }
+
+  unuse(h: string) {
+    const n = (this.refs.get(h) ?? 0) - 1
+    if (n > 0) this.refs.set(h, n)
+    else this.refs.delete(h)
+    this.trim()
+  }
+
+  // The file is gone: its URL goes, in use or not.
+  drop(h: string) {
+    const u = this.urls.get(h)
+    if (!u) return
+    this.urls.delete(h)
+    void u.then(x => x && this.revoke(x))
+  }
+
+  private trim() {
+    for (const h of [...this.urls.keys()]) {
+      if (this.urls.size <= this.max) return
+      if (!this.refs.get(h)) this.drop(h)
+    }
+  }
+}

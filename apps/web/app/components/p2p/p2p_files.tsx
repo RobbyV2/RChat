@@ -124,6 +124,7 @@ function useFileUrl(h: string, ready: boolean) {
     void p2pFiles.url(h).then(u => live && setUrl(u))
     return () => {
       live = false
+      p2pFiles.unuse(h)
     }
   }, [h, ready])
   return url

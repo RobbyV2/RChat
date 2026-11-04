@@ -54,6 +54,34 @@ export interface SystemContent {
 
 export const isShortId = (x: unknown): x is string => bytesOf(x, 8) !== null
 
+const pick = (x: Record<string, unknown>, keys: readonly string[]) => {
+  const out: Record<string, unknown> = {}
+  for (const k of keys) if (Object.hasOwn(x, k) && x[k] !== undefined) out[k] = x[k]
+  return out
+}
+
+// The fields of a channel and of the settings this version reads; what we write again keeps
+// only these.
+const CHANNEL_FIELDS = [
+  'name',
+  'kind',
+  'pos',
+  'topic',
+  'gone',
+  'restrict_view',
+  'restrict_send',
+  'slow',
+]
+export const knownChannel = (c: object) => pick(c as Record<string, unknown>, CHANNEL_FIELDS)
+
+export const knownSettings = (x: object) => {
+  const out = pick(x as Record<string, unknown>, ['name', 'color', 'history', 'system'])
+  if (out.system !== null && typeof out.system === 'object')
+    out.system = pick(out.system as Record<string, unknown>, ['ch', 'join', 'leave'])
+  else delete out.system
+  return out
+}
+
 const text = (x: unknown, max: number) =>
   typeof x === 'string' && x.trim() !== '' ? Array.from(x).slice(0, max).join('') : null
 const int = (x: unknown) => (Number.isSafeInteger(x) ? (x as number) : null)
@@ -128,7 +156,15 @@ export const systemOf = (s: Summary): SystemContent => {
 export const MOD_BITS = P.Kick | P.Ban | P.ManageMessages
 
 // The summary as channel permissions read it (acl/rules.ts channelPerms, spec 1.4).
-export const chanFactsOf = (s: Summary): ChanFacts => ({
+// Built once per summary (summaries are replaced, never changed): search and every page load ask.
+const facts = new WeakMap<Summary, ChanFacts>()
+export const chanFactsOf = (s: Summary): ChanFacts => {
+  let F = facts.get(s)
+  if (!F) facts.set(s, (F = buildChanFacts(s)))
+  return F
+}
+
+const buildChanFacts = (s: Summary): ChanFacts => ({
   owners: new Set(s.owners),
   bits: { get: (R: string) => (R === EVERYONE ? s.everyone : s.roles[R]?.bits) },
   holds: { get: (ik: string) => (s.members[ik]?.m === 'join' ? s.members[ik].roles : undefined) },

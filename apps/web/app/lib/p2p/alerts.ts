@@ -5,6 +5,7 @@ import {
   mutedOf,
   pingToast,
   type NotifyPrefs,
+  type NotifyScope,
   type Resolved,
 } from '../notify'
 import type { UserRef } from '../types'
@@ -13,6 +14,30 @@ import type { PingKind } from './dag'
 import type { Arrival } from './dm'
 import type { MsgContent } from './event'
 import type { ServerView } from './server'
+
+// A P2P notification override as the settings list names it, by its key: `room/ch` is a
+// channel, a server's room a server, anything else a conversation.
+export const p2pOverride = (
+  key: string,
+  servers: Readonly<Record<string, Pick<ServerView, 'name' | 'channels'>>>,
+  dmName: (room: string) => string | null
+): { scope: NotifyScope; name: string; prefix?: string; hint?: string } => {
+  const cut = key.indexOf('/')
+  const room = cut < 0 ? key : key.slice(0, cut)
+  const v = Object.hasOwn(servers, room) ? servers[room] : undefined
+  if (cut >= 0) {
+    const ch = key.slice(cut + 1)
+    const c = v?.channels.find(x => x.id === ch)
+    return {
+      scope: { kind: 'p2pc', room, ch },
+      name: c?.name ?? 'Channel',
+      ...(c ? { prefix: '#' } : {}),
+      hint: v?.name ?? 'P2P server',
+    }
+  }
+  if (v) return { scope: { kind: 'p2ps', room }, name: v.name }
+  return { scope: { kind: 'p2p', room }, name: dmName(room) ?? 'P2P conversation' }
+}
 
 // How a new event in a P2P conversation notifies, by the conversation's Task 9 rule: pings
 // (mentions, replies to you, reactions to your messages) toast unless muted or "Nothing"; other
@@ -91,20 +116,47 @@ export const badgePings = (
     0
   )
 
-// Pings in a server's channels that badge: channels set to "Nothing" don't, nor channels that
-// don't show (deleted, or we may no longer view them: they couldn't be cleared).
-export const serverPings = (
-  v: { id: string; chans: Record<string, { pings: number }>; channels: readonly { id: string }[] },
-  prefs: NotifyPrefs
-) =>
-  Object.entries(v.chans).reduce(
+// Every count below is of the conversations and channels that are still open to us: listed
+// contacts, joined servers, channels that show (not deleted, and we may view them). Others
+// couldn't be cleared.
+type Chans = {
+  id: string
+  me: string | null
+  chans: Record<string, { pings: number; unread: number }>
+  channels: readonly { id: string }[]
+}
+
+const liveChans = (v: Chans) =>
+  v.me !== 'join' ? [] : Object.entries(v.chans).filter(([ch]) => v.channels.some(x => x.id === ch))
+
+// Pings in a server's channels that badge: channels set to "Nothing" don't.
+export const serverPings = (v: Chans, prefs: NotifyPrefs) =>
+  liveChans(v).reduce(
     (n, [ch, c]) =>
-      n +
-      (!v.channels.some(x => x.id === ch) ||
-      levelOf(prefs, { kind: 'p2pc', room: v.id, ch }) === 'nothing'
-        ? 0
-        : c.pings),
+      n + (levelOf(prefs, { kind: 'p2pc', room: v.id, ch }) === 'nothing' ? 0 : c.pings),
     0
+  )
+
+// Unread channels of a server that show it (the server and the channel not muted).
+export const unreadChannels = (v: Chans, prefs: NotifyPrefs, now = Date.now()) =>
+  mutedOf(prefs, { kind: 'p2ps', room: v.id }, now)
+    ? 0
+    : liveChans(v).filter(
+        ([ch, c]) => c.unread > 0 && !mutedOf(prefs, { kind: 'p2pc', room: v.id, ch }, now)
+      ).length
+
+export const serverUnread = (v: Chans, prefs: NotifyPrefs, now = Date.now()) =>
+  unreadChannels(v, prefs, now) > 0
+
+// Whether listed conversations have unread messages that show it (not muted).
+export const dmUnread = (
+  rooms: Record<string, Counted>,
+  prefs: NotifyPrefs,
+  listed: ReadonlySet<string>,
+  now = Date.now()
+) =>
+  listedRooms(rooms, listed).some(
+    r => r.unread > 0 && !mutedOf(prefs, { kind: 'p2p', room: r.id }, now)
   )
 
 export interface P2pUnreadRow {
@@ -128,26 +180,14 @@ export const p2pUnread = (
   const listed = listedPeers(st.contacts)
   const servers: P2pUnreadRow[] = Object.values(st.servers)
     .filter(v => v.me === 'join')
-    .map(v => ({
-      v,
-      pings: serverPings(v, prefs),
-      channels: mutedOf(prefs, { kind: 'p2ps', room: v.id }, now)
-        ? 0
-        : v.channels.filter(
-            c =>
-              (v.chans[c.id]?.unread ?? 0) > 0 &&
-              !mutedOf(prefs, { kind: 'p2pc', room: v.id, ch: c.id }, now)
-          ).length,
-    }))
+    .map(v => ({ v, pings: serverPings(v, prefs), channels: unreadChannels(v, prefs, now) }))
     .filter(r => r.pings > 0 || r.channels > 0)
     .sort((a, b) => b.pings - a.pings || a.v.name.localeCompare(b.v.name))
   return {
     servers,
     dms: {
       pings: badgePings(st.rooms, prefs, listed),
-      unread: listedRooms(st.rooms, listed).some(
-        r => r.unread > 0 && !mutedOf(prefs, { kind: 'p2p', room: r.id }, now)
-      ),
+      unread: dmUnread(st.rooms, prefs, listed, now),
     },
   }
 }

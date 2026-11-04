@@ -387,11 +387,14 @@ export function guards(e: AclEv, F: Facts): boolean {
       return c.on ? !cur : cur
     }
     case 'role_del':
-      return c.role !== EVERYONE
+      return c.role !== EVERYONE && mayLift(F, a, c.role)
     case 'assign':
       return c.to !== a && F.mem.has(c.to) && !holds(c.to, c.role)
     case 'revoke':
-      return holds(c.to, c.role)
+      // Taking away a role that a live channel's overwrites restrict widens access there:
+      // owners and ManageChannels only, oneself included (§1.4, §10.21; the model has no chperm).
+      // Deleting it takes it from everyone, so the same holds there.
+      return holds(c.to, c.role) && mayLift(F, a, c.role)
     case 'code':
       return typeof c.h === 'string'
     case 'code_revoke':
@@ -445,6 +448,23 @@ export function guards(e: AclEv, F: Facts): boolean {
       return true
   }
 }
+
+// Whether role `R` has an overwrite in a live channel with a deny, or an allow short of
+// ViewChannel and SendMessages: the rows that hold its holders back there.
+export const restricts = (F: Pick<Facts, 'overwrites' | 'channels'>, R: string) => {
+  for (const [ch, ov] of F.overwrites) {
+    const o = ov.get(`r:${R}`)
+    const c = F.channels.get(ch)
+    if (!o || !c || c.gone === true) continue
+    const allow = o.allow ?? 0
+    if ((o.deny ?? 0) !== 0 || (allow !== 0 && (allow & (VIEW | SEND)) !== (VIEW | SEND)))
+      return true
+  }
+  return false
+}
+
+const mayLift = (F: Facts, a: string, R: string) =>
+  !restricts(F, R) || F.owners.has(a) || (permsQ(F, a) & CHANNELS) !== 0
 
 // What channel permissions read (the page reads them from its summary too).
 export type ChanFacts = Pick<FactsQ, 'owners' | 'bits' | 'holds'> &

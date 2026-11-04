@@ -110,6 +110,8 @@ export interface RoomRecord {
   missing: string[]
   maxDepth: number
   count: number
+  // P2P servers: the ACL events among `count` (the content budgets don't count them).
+  acount?: number
   // Arrival counter: every stored event takes the next number. Unread counts go by arrival.
   lastSeq: number
   readSeq: number
@@ -146,7 +148,17 @@ export interface RoomRecord {
   carry?: Carry
   // A member's acknowledgements of the carry-over into this copy (server.ts ackCarry): the
   // owners' ACL count at the last one, and how many.
-  acks?: { base: number; n: number }
+  acks?: { base: number; n: number; max?: number }
+  // P2P servers, an old copy after a transfer (spec 3.8): each device's last message seq we held
+  // when we heard of the upgrade.
+  archive?: Record<string, number>
+  // P2P servers, a new copy (spec 3.8): the most acknowledgements its carry-over may get.
+  carryMax?: number
+  // P2P servers: this device's key (spec 3.9) conflicts with another copy of it here.
+  conflict?: string
+  // P2P servers: when each channel became viewable to us while we were in (its history from
+  // before then arrives as nothing new).
+  viewFrom?: Record<string, number>
   // An invite from a contact we haven't answered: who sent it and their invite (`add`) event.
   invite?: { from: string; at: number; wire: WireV2 } | null
   // Causes that hide content (spec 4.3: removals, bans that hide everything, moderators'

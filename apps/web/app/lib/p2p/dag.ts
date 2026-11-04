@@ -6,7 +6,6 @@ import {
   authorizeTarget,
   effTsOf,
   isEventId,
-  isLate,
   LIMITS as EV,
   redacted,
   shownReaction,
@@ -16,14 +15,7 @@ import {
   type WireV2,
 } from './event'
 import type { IDBPTransaction } from 'idb'
-import {
-  indexEstimate,
-  indexEvent,
-  unindex,
-  unindexEdit,
-  type EventRead,
-  type SearchWrite,
-} from './search'
+import { indexEvent, unindex, unindexEdit, type EventRead, type SearchWrite } from './search'
 import {
   serverWire,
   SERVER_TOTAL_BYTES,
@@ -89,9 +81,49 @@ export interface InsertCtx {
   mark?: Pick<EventRecord, 'chan'>
 }
 
-// Server rooms count against their own totals.
+// Server rooms count against their own totals; the ACL events among them apart.
 export const SERVER_TOTAL = 'sevents'
+export const SERVER_ACL = 'sacl'
 export { SERVER_TOTAL_BYTES }
+
+// What a stored server record counts (spec 4.2): an event that isn't purged; an ACL one apart.
+export const countOf = (e: Pick<EventRecord, 'layer' | 'purged'>) => ({
+  n: e.purged ? 0 : 1,
+  acl: !e.purged && e.layer === 'a' ? 1 : 0,
+})
+
+type MetaRW = { get(k: string): Promise<unknown>; put(v: unknown, k: string): Promise<unknown> }
+
+// Every change to a server room's counts and bytes, and to every server's together, goes through
+// here; returns the room record to put.
+export const moveCounts = async (
+  meta: MetaRW,
+  r: RoomRecord,
+  d: { n?: number; acl?: number; bytes?: number }
+): Promise<RoomRecord> => {
+  const num = async (k: string) => ((await meta.get(k)) as number | undefined) ?? 0
+  const move = async (k: string, by = 0) => {
+    if (by) await meta.put(Math.max(0, (await num(k)) + by), k)
+  }
+  await move(SERVER_TOTAL, d.n)
+  await move(SERVER_ACL, d.acl)
+  await move(SERVER_TOTAL_BYTES, d.bytes)
+  return {
+    ...r,
+    count: Math.max(0, r.count + (d.n ?? 0)),
+    acount: Math.max(0, (r.acount ?? 0) + (d.acl ?? 0)),
+    bytes: Math.max(0, (r.bytes ?? 0) + (d.bytes ?? 0)),
+  }
+}
+
+// Content events of a room and of every server, as the content budgets count them.
+export const contentCounts = async (meta: { get(k: string): Promise<unknown> }, r: RoomRecord) => {
+  const num = async (k: string) => ((await meta.get(k)) as number | undefined) ?? 0
+  return {
+    room: Math.max(0, r.count - (r.acount ?? 0)),
+    total: Math.max(0, (await num(SERVER_TOTAL)) - (await num(SERVER_ACL))),
+  }
+}
 
 export const blankRoom = (id: string, peer: string, now: number): RoomRecord => ({
   id,
@@ -322,6 +354,9 @@ export interface DevChain {
 
 export const chainKey = (room: string, dev: string) => `chain2\n${room}\n${dev}`
 
+// A server's evaluation cache (db.ts ServerCache), kept apart from its room record.
+export const cacheKey = (room: string) => `cache\n${room}`
+
 export interface ServerInsert {
   me: string
   // An admitted ACL event: its admission order and record (absent: content, or a server of
@@ -477,6 +512,7 @@ export const insertServer = async (
   const totalBytes = ((await meta.get(SERVER_TOTAL_BYTES)) as number | undefined) ?? 0
   const size = storedSize(wire as unknown as Wire)
   const roomBytes = r.bytes ?? 0
+  const cc = await contentCounts(meta, r)
   const full: FullWhy | null = ctx.unknown
     ? r.count >= UNKNOWN.events || total >= (ctx.serverCap ?? DAG.serverCap)
       ? 'events'
@@ -485,7 +521,7 @@ export const insertServer = async (
         : null
     : acl
       ? null
-      : r.count >= (ctx.roomCap ?? DAG.roomCap) || total >= (ctx.serverCap ?? DAG.serverCap)
+      : cc.room >= (ctx.roomCap ?? DAG.roomCap) || cc.total >= (ctx.serverCap ?? DAG.serverCap)
         ? 'events'
         : roomBytes + size > (ctx.roomBytes ?? DAG.roomBytes) ||
             totalBytes + size > (ctx.serverBytes ?? DAG.serverBytes)
@@ -547,9 +583,11 @@ export const insertServer = async (
   if (acl && ctx.aseq !== undefined) rec.aseq = ctx.aseq
   if (acl && ctx.acl) rec.acl = ctx.acl
   if (!acl && typeof c?.ch === 'string') rec.chan = c.ch
+  // Aimed at an event of another room held here: what we hold decides it, not the wire, so the
+  // relay may be honest (spec 2.1): refused, no strike.
   if (tid && target?.room !== undefined && target.room !== room) {
     tx.abort()
-    return { status: 'invalid', why: 'auth' }
+    return { status: 'rejected', why: 'target' }
   }
   if (tid) rec.target = tid
   if (gone) rec.purged = true
@@ -589,17 +627,18 @@ export const insertServer = async (
     for (const p of prev) await children.put({ parent: p, child: id })
     heads = nextHeads(r.heads, id, depth, prev, (await children.count(childRange(id))) > 0)
   }
-  await tx.objectStore('rooms').put({
-    ...r,
-    heads,
-    missing: missing.slice(-DAG.missing),
-    count: r.count + (gone ? 0 : 1),
-    lastSeq: seq,
-    lastTs: !acl && ev.t === 'msg' ? Math.max(r.lastTs, effTs) : r.lastTs,
-    bytes: roomBytes + storedBytes,
-  })
-  await meta.put(total + (gone ? 0 : 1), SERVER_TOTAL)
-  await meta.put(totalBytes + storedBytes, SERVER_TOTAL_BYTES)
+  const moved = await moveCounts(
+    meta,
+    {
+      ...r,
+      heads,
+      missing: missing.slice(-DAG.missing),
+      lastSeq: seq,
+      lastTs: !acl && ev.t === 'msg' ? Math.max(r.lastTs, effTs) : r.lastTs,
+    },
+    { ...countOf({ layer: ev.L, ...(gone ? { purged: true } : {}) }), bytes: storedBytes }
+  )
+  await tx.objectStore('rooms').put(moved)
   await tx.done
   return { status: 'new', rec, ping: null, unread: false, freed: [] }
 }
@@ -618,6 +657,7 @@ export const dropServer = async (db: P2pDatabase, room: string, drops: Drops) =>
   const meta = tx.objectStore('meta')
   const header = new Map(drops.acl.map(d => [d.id, d.header]))
   let n = 0
+  let nAcl = 0
   let bytes = 0
   const freed: string[] = []
   const gone = new Set<string>()
@@ -637,7 +677,9 @@ export const dropServer = async (db: P2pDatabase, room: string, drops: Drops) =>
     await events.delete(id)
     for (const p of w.ev.prev ?? []) await tx.objectStore('children').delete([p, id])
     gone.add(id)
-    if (!e.purged) n += 1
+    const k = countOf(e)
+    n += k.n
+    nAcl += k.acl
     const size = storedSize(e.wire)
     bytes += size
     if (w.ev.L === 'c' && !e.purged && !e.redacted) await heldAdd(meta, room, e.sender, -size)
@@ -645,20 +687,18 @@ export const dropServer = async (db: P2pDatabase, room: string, drops: Drops) =>
   }
   const rec = await tx.objectStore('rooms').get(room)
   if (rec && gone.size)
-    await tx.objectStore('rooms').put({
-      ...rec,
-      heads: rec.heads.filter(h => !gone.has(h.id)),
-      missing: rec.missing.filter(m => !gone.has(m)),
-      count: Math.max(0, rec.count - n),
-      bytes: Math.max(0, (rec.bytes ?? 0) - bytes),
-      full: false,
-    })
-  if (gone.size) {
-    const total = ((await meta.get(SERVER_TOTAL)) as number | undefined) ?? 0
-    const tb = ((await meta.get(SERVER_TOTAL_BYTES)) as number | undefined) ?? 0
-    await meta.put(Math.max(0, total - n), SERVER_TOTAL)
-    await meta.put(Math.max(0, tb - bytes), SERVER_TOTAL_BYTES)
-  }
+    await tx.objectStore('rooms').put(
+      await moveCounts(
+        meta,
+        {
+          ...rec,
+          heads: rec.heads.filter(h => !gone.has(h.id)),
+          missing: rec.missing.filter(m => !gone.has(m)),
+          full: false,
+        },
+        { n: -n, acl: -nAcl, bytes: -bytes }
+      )
+    )
   await tx.done
   return freed
 }
@@ -709,18 +749,9 @@ export const purgeServer = async (
   }
   const rec = await tx.objectStore('rooms').get(room)
   if (rec && done.length)
-    await tx.objectStore('rooms').put({
-      ...rec,
-      bytes: Math.max(0, (rec.bytes ?? 0) - saved),
-      count: Math.max(0, rec.count - counted),
-      full: false,
-    })
-  if (done.length) {
-    const total = ((await meta.get(SERVER_TOTAL)) as number | undefined) ?? 0
-    const tb = ((await meta.get(SERVER_TOTAL_BYTES)) as number | undefined) ?? 0
-    await meta.put(Math.max(0, total - counted), SERVER_TOTAL)
-    await meta.put(Math.max(0, tb - saved), SERVER_TOTAL_BYTES)
-  }
+    await tx
+      .objectStore('rooms')
+      .put(await moveCounts(meta, { ...rec, full: false }, { n: -counted, bytes: -saved }))
   await tx.done
   return { done, freed, mine }
 }
@@ -752,16 +783,7 @@ export const restoreBody = async (
   const grown = size - storedSize(r.wire) + indexed
   await heldAdd(meta, room, r.sender, size + indexed)
   const rec = await tx.objectStore('rooms').get(room)
-  if (rec)
-    await tx.objectStore('rooms').put({
-      ...rec,
-      bytes: (rec.bytes ?? 0) + grown,
-      count: rec.count + 1,
-    })
-  const total = ((await meta.get(SERVER_TOTAL)) as number | undefined) ?? 0
-  const tb = ((await meta.get(SERVER_TOTAL_BYTES)) as number | undefined) ?? 0
-  await meta.put(total + 1, SERVER_TOTAL)
-  await meta.put(tb + grown, SERVER_TOTAL_BYTES)
+  if (rec) await tx.objectStore('rooms').put(await moveCounts(meta, rec, { n: 1, bytes: grown }))
   await tx.done
   return next
 }
@@ -799,29 +821,43 @@ export const evictionOrder = async (db: P2pDatabase, room: string | null, me: st
 // The oldest content bodies of `ik` in `room` (in display order across its devices, on the
 // sender's index, not a room scan), at least `bytes` of them and at least one, at most `max`. One
 // walk gives both those outside their grace (`ids`) and those fetched back less than
-// DAG.backGraceMs before `now` (`late`). `seen`: records walked.
+// DAG.backGraceMs before `now` (`late`). `seen`: records walked, at most DAG.walk. `from`: where
+// the walk starts (the `from` an earlier walk returned: nothing before it has a body to give).
+// `undelivered`: our own, kept while no peer has them.
 export const oldestBodies = async (
   db: P2pDatabase,
   room: string,
   ik: string,
   bytes: number,
   now: number,
-  max = 500
+  max = 500,
+  opts: { from?: string; undelivered?: boolean } = {}
 ) => {
   const ids: string[] = []
   const late: string[] = []
   let got = 0
   let lateGot = 0
   let seen = 0
-  let cursor = await db
-    .transaction('events')
-    .store.index('room_sender_sort')
-    .openCursor(IDBKeyRange.bound([room, ik, ''], [room, ik, '\uffff']))
+  let first: string | undefined
+  let last: string | undefined
+  const tx = db.transaction(['events', 'outbox'])
+  const outbox = tx.objectStore('outbox')
+  let cursor = await tx
+    .objectStore('events')
+    .index('room_sender_sort')
+    .openCursor(IDBKeyRange.bound([room, ik, opts.from ?? ''], [room, ik, '\uffff']))
   const enough = (l: string[], n: number) => l.length >= max || (n >= bytes && l.length > 0)
-  while (cursor && !enough(ids, got)) {
+  while (cursor && !enough(ids, got) && seen < DAG.walk) {
     const r = cursor.value
     seen += 1
+    last = r.sortKey
     if (r.layer === 'c' && !r.purged && !r.redacted) {
+      first ??= r.sortKey
+      const o = opts.undelivered ? await outbox.get(r.id) : undefined
+      if (o && !o.deliveredTo.length) {
+        cursor = await cursor.continue()
+        continue
+      }
       if (r.back !== undefined && now - r.back < DAG.backGraceMs) {
         if (!enough(late, lateGot)) {
           late.push(r.id)
@@ -834,16 +870,12 @@ export const oldestBodies = async (
     }
     cursor = await cursor.continue()
   }
-  return { ids, late, seen }
+  return { ids, late, seen, from: first ?? last }
 }
 
 // Recomputes the bytes each sender's content bodies take in a room (a cold start; counts kept
 // before this build are rebuilt too).
-export const resetHeld = async (db: P2pDatabase, room: string, recs: readonly EventRecord[]) => {
-  const held = new Map<string, number>()
-  for (const r of recs)
-    if (r.layer === 'c' && !r.purged && !r.redacted)
-      held.set(r.sender, (held.get(r.sender) ?? 0) + storedSize(r.wire) + indexEstimate(r))
+export const resetHeld = async (db: P2pDatabase, room: string, held: Map<string, number>) => {
   const tx = db.transaction('meta', 'readwrite')
   const lo = `held\n${room}\n`
   for (const k of (await tx.store.getAllKeys(IDBKeyRange.bound(lo, `${lo}\uffff`))) as string[])
@@ -888,9 +920,6 @@ export const vouched = async (
   await tx.done
   return ok
 }
-
-export const lateMark = (rec: Pick<EventRecord, 'effTs' | 'receivedAt'>) =>
-  isLate(rec.effTs, rec.receivedAt)
 
 // Parents of a stored event: `prev`, and for a server event its ACL parents too.
 export const parentsOf = (r: EventRecord): string[] => {

@@ -10,12 +10,15 @@ import {
   APPLY_ANYWAY,
   CARRY_FAILED_TEXT,
   carryWaitText,
+  CO_OWNERS_MAX,
+  CO_OWNERS_MAX_TEXT,
   CO_OWNERS_TEXT,
   CONFLICT_TEXT,
   DEVICES_TEXT,
   DISPUTED_TEXT,
   INVITE_AGAIN,
   LOST_TIMES,
+  lostOthersText,
   lostText,
   MIGRATE_DIFF_TEXT,
   OWN_RESIGN_TEXT,
@@ -26,6 +29,7 @@ import {
   SYNCING_TEXT,
   TRANSFER_CO_OWNERS_TEXT,
 } from '../../lib/p2p/flows'
+import { reapplyLine } from '../../lib/p2p/roles'
 import type { ServerView } from '../../lib/p2p/server'
 import { Dialog, dangerBtn, filledBtn, Masked, textBtn } from '../ui'
 import { KeyAvatar } from './p2p_badge'
@@ -166,6 +170,7 @@ function ReachedNote({ v, r }: { v: ServerView; r: ServerView['reached'][number]
 }
 
 function ReapplyNote({ v }: { v: ServerView }) {
+  const mask = useMask()
   return (
     <div role="status" data-p2p-reapply className={noteCls}>
       <span className="flex min-w-48 flex-1 flex-col gap-1">
@@ -173,7 +178,7 @@ function ReapplyNote({ v }: { v: ServerView }) {
         <ul className="flex flex-col">
           <Capped
             items={v.reapply.map(r => {
-              const { act, who } = actParts(r.t, typeof r.c.to === 'string' ? r.c.to : undefined)
+              const { act, who, role } = reapplyLine(r.t, r.c, v.roles)
               return (
                 <li key={r.id}>
                   {act}
@@ -183,6 +188,7 @@ function ReapplyNote({ v }: { v: ServerView }) {
                       <Who room={v.id} ik={who} />
                     </>
                   )}
+                  {role && `: ${mask(role)}`}
                 </li>
               )
             })}
@@ -452,15 +458,16 @@ export function CoOwnerPicker({
         <ul className="flex max-h-40 flex-col overflow-y-auto">
           {list.map(c => {
             const online = presence[c.ik] === 'online'
+            const full = value.length >= CO_OWNERS_MAX && !value.includes(c.ik)
             return (
               <li key={c.ik}>
                 <label
-                  className={`flex items-center gap-3 rounded-xl px-2 py-1.5 text-sm ${online ? '' : 'opacity-60'}`}
+                  className={`flex items-center gap-3 rounded-xl px-2 py-1.5 text-sm ${online && !full ? '' : 'opacity-60'}`}
                 >
                   <input
                     type="checkbox"
                     className="accent-primary"
-                    disabled={!online}
+                    disabled={!online || full}
                     checked={value.includes(c.ik)}
                     onChange={e =>
                       onChange(
@@ -476,6 +483,9 @@ export function CoOwnerPicker({
             )
           })}
         </ul>
+      )}
+      {value.length >= CO_OWNERS_MAX && (
+        <p className="text-xs text-on-surface-variant">{CO_OWNERS_MAX_TEXT}</p>
       )}
     </fieldset>
   )
@@ -566,12 +576,17 @@ export function LostDeviceDialog({ dk }: { dk: string }) {
   const [list, setList] = useState<Preview | null>(null)
   const [busy, setBusy] = useState(false)
   const servers = useP2p(s => s.servers)
+  // Each run reads every server's ACL: once the time stops changing.
   useEffect(() => {
     let live = true
     setList(null)
-    void p2pDevices.preview(dk, t).then(r => live && setList(r))
+    const timer = setTimeout(
+      () => void p2pDevices.preview(dk, t).then(r => live && setList(r)),
+      400
+    )
     return () => {
       live = false
+      clearTimeout(timer)
     }
   }, [dk, t])
   const time = when(t)
@@ -650,6 +665,11 @@ export function LostDeviceDialog({ dk }: { dk: string }) {
                       </li>
                     )}
                   </ul>
+                )}
+                {p.others.length > 0 && (
+                  <p data-p2p-lost-others className="mt-2 text-xs text-on-surface-variant">
+                    {lostOthersText(p.others.length)}
+                  </p>
                 )}
                 {p.resign.length > 0 && (
                   <div data-p2p-lost-own className="mt-2 text-xs text-on-surface-variant">

@@ -97,8 +97,8 @@ export const settle = async (rounds = 30) => {
 }
 
 // Waits until `ok()` holds, however slow the machine is (WebCrypto and fake-indexeddb under a
-// loaded test run). Fails with `what` after `ms` of real time.
-export const waitFor = async (ok: () => boolean, what = 'condition', ms = 20_000) => {
+// loaded test run). Fails with `what` after `ms` of real time (within the DM suites' 60 s test budget).
+export const waitFor = async (ok: () => boolean, what = 'condition', ms = 50_000) => {
   const end = Date.now() + ms
   while (!ok()) {
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactElement } from 'react'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
-import { resetSessionCaches, useStore } from '../store'
+import { maskOf, resetSessionCaches, useStore, type ContextMenuItem } from '../store'
 import { resetMasking, setMasking } from '../profanity'
 import { DEFAULT_VIEW, type InboxView } from '../inbox'
 import { addInboxAdapter, removeInboxAdapter } from '../inbox_source'
@@ -11,10 +11,12 @@ import { EMPTY_NOTIFY, setLevel } from '../notify'
 import { parseHome, pushP2pRecent, recentKey, recentShown } from '../home'
 import { messageItems, type ResultCtx } from '../palette_results'
 import { PaletteIndex } from '../palette_index'
-import { useP2p, type P2pState } from '../p2p/app'
+import { mirrorFrom, profileName, tellBadge, useP2p, type P2pState } from '../p2p/app'
+import type { Fwd } from '../p2p/event'
+import { useP2pList } from '../../components/p2p/p2p_chat'
 import type { Contact } from '../p2p/contacts'
 import { keyId, newKeyPair } from '../p2p/keys'
-import type { RoomRecord } from '../p2p/db'
+import type { OwnBadge, RoomRecord } from '../p2p/db'
 import type { P2pMessage } from '../p2p/dm'
 import type { ServerView } from '../p2p/server'
 import { p2pUnread } from '../p2p/alerts'
@@ -62,10 +64,11 @@ import { InboxButton } from '../../components/inbox'
 import { P2pHome } from '../../components/p2p/p2p_home'
 import { memberMenu, P2pMemberList, P2pServerSidebar } from '../../components/p2p/p2p_server_view'
 import { P2pDmPane } from '../../components/p2p/p2p_dm_pane'
+import { AccountChip } from '../../components/p2p/p2p_badge'
 import { ServerSettingsDialog } from '../../components/p2p/p2p_server_settings'
 import { CallBanner } from '../../components/voice_grid'
 import { markAllReadItem } from '../../components/mark_read'
-import { p2pDm, p2pMarkAll } from '../p2p/app'
+import { p2pDm, p2pHost, p2pMarkAll, p2pServer } from '../p2p/app'
 import { me, memoryStorage } from './fixtures'
 
 afterAll(resetSessionCaches)
@@ -507,6 +510,8 @@ describe('personal filter on P2P names', () => {
     expect(html).toContain('**** club')
     expect(html).toContain('****-talk')
     expect(/shit/i.test(html.replace(/data-p2p-(channel|member)="[^"]*"/g, ''))).toBe(false)
+    // No em dashes in UI copy: the member group header counts in brackets.
+    expect(html).not.toContain('\u2014')
   })
 
   test('the DM pane, chat rows, file tiles, rail tiles and the call banner are masked too', async () => {
@@ -613,6 +618,191 @@ describe('personal filter on P2P names', () => {
     expect(labels).toContain('Ban ****lord')
     const html = render(<ServerSettingsDialog room={SRV} tab="channels" />)
     expect(html).toContain('title="Delete #****-talk"')
+  })
+})
+
+describe('forwarding', () => {
+  const stub = (t: string) => t.replace(/shit/gi, '****')
+  let list: ReturnType<typeof useP2pList> | null = null
+  function Probe({ messages }: { messages: P2pMessage[] }) {
+    list = useP2pList({
+      messages,
+      nameOf: ik => maskOf(useStore.getState())(ik === ALICE ? 'Mom' : 'Carol'),
+      ownName: ik => profileName(ik),
+      people: [],
+      draftKey: ROOM,
+      scope: `d:${ROOM}`,
+      canAct: true,
+      mayPin: false,
+      mayDelete: () => false,
+      forwardSkip: ALICE,
+      threads: false,
+    })
+    return null
+  }
+
+  test('a forward carries the author’s own profile name, never a petname or a masked name', async () => {
+    const m: P2pMessage = {
+      id: 'm1',
+      sender: ALICE,
+      ts: NOW,
+      sentTs: NOW,
+      sortKey: 'm1',
+      seq: 1,
+      body: 'from alice',
+      reply: null,
+      mentions: [],
+      fwd: null,
+      att: [],
+      edited: null,
+      reactions: [],
+      pinned: null,
+      late: false,
+      pending: false,
+      failed: false,
+      call: null,
+    }
+    p2pState({
+      enabled: true,
+      account: 'bob',
+      me: BOB,
+      ik: BOB,
+      name: 'Bob',
+      contacts: [{ ...contact(ALICE, 'Shitlord'), petname: 'Mom' }, contact(CAROL, 'Carol')],
+    })
+    await setMasking(true, () => Promise.resolve(stub))
+    Object.assign(initial, { profanityReady: true, me: me('bob') })
+    useStore.setState({ profanityReady: true, me: me('bob') })
+    let items: ContextMenuItem[] = []
+    const capture = (_x: number, _y: number, it: ContextMenuItem[]) => {
+      items = it
+    }
+    Object.assign(initial, { openContextMenu: capture })
+    const sent: Fwd[] = []
+    const saved = { ensureRoom: p2pDm.ensureRoom, forward: p2pDm.forward }
+    p2pDm.ensureRoom = async () => 'carol-room'
+    p2pDm.forward = async (_room: string, fwd: Fwd) => {
+      sent.push(fwd)
+      return true
+    }
+    const g = globalThis as { document?: unknown; Element?: unknown; HTMLElement?: unknown }
+    const dom = { document: g.document, Element: g.Element, HTMLElement: g.HTMLElement }
+    Object.assign(g, {
+      document: { elementFromPoint: () => null },
+      Element: class {},
+      HTMLElement: class {},
+    })
+    try {
+      render(<Probe messages={[m]} />)
+      const row = list!.rows[0]
+      // The row shows the petname, masked.
+      expect(row.m.author.display_name).toBe('Mom')
+      list!.rowMenu(row.p, row.m, 0, 0)
+      const fwdItem = items.find(x => x.label === 'Forward')!
+      await fwdItem.submenu!.find(x => x.label === 'Carol')!.action!()
+      await new Promise(r => setTimeout(r, 0))
+      expect(sent.map(f => f.name)).toEqual(['Shitlord'])
+      // The forward clipboard carries the same name.
+      fwdItem.submenu!.find(x => x.label === 'Copy for forwarding')!.action!()
+      expect(useStore.getState().forwardClip?.author?.display_name).toBe('Shitlord')
+      list!.copyRow(row.p, row.m)
+      expect(useStore.getState().forwardClip?.author?.display_name).toBe('Shitlord')
+    } finally {
+      Object.assign(p2pDm, saved)
+      Object.assign(g, dom)
+    }
+  })
+})
+
+describe('account chips', () => {
+  test('a chip is a control the keyboard reaches', () => {
+    p2pState({
+      enabled: true,
+      badges: { [ALICE]: { ik: ALICE, ok: null, todo: { token: 't', tried: 0 } } },
+    })
+    const html = render(<AccountChip ik={ALICE} />)
+    expect(html).toContain('data-account-badge="unchecked"')
+    expect(html).toContain('role="button"')
+    expect(html).toContain('tabindex="0"')
+    expect(html).toContain('aria-haspopup="menu"')
+  })
+})
+
+describe('our own badge in other tabs', () => {
+  test('the leading tab tells the others when our own badge changes, and only then', () => {
+    const sent: unknown[] = []
+    const post = (m: unknown) => void sent.push(m)
+    const badge = { token: 't1', sub: 'alice', exp: 1, iat: 0 } as unknown as OwnBadge
+    tellBadge(null, null, post)
+    expect(sent).toEqual([])
+    tellBadge(null, badge, post)
+    tellBadge(badge, { ...badge }, post)
+    tellBadge(badge, null, post)
+    expect(sent).toEqual([{ badges: true }, { badges: true }])
+  })
+
+  test('mirroring the node posts badges when its badge changes, and only then', async () => {
+    const sent: unknown[] = []
+    const post = (m: unknown) => void sent.push(m)
+    let badge: OwnBadge | null = null
+    const n = {
+      view: () => ({
+        status: 'online' as const,
+        ik: keyId(newKeyPair().pk),
+        name: 'Alice',
+        contacts: [],
+        presence: {},
+        dropped: 0,
+        movedAt: null,
+        movingAt: null,
+        alertAt: null,
+        badge,
+      }),
+      paused: false,
+      myCard: async () => null,
+    } as unknown as Parameters<typeof mirrorFrom>[0]
+    useP2p.setState({ badge: null })
+    await mirrorFrom(n, post)
+    expect(sent).toEqual([])
+    badge = { token: 't1', sub: 'alice', exp: 1, iat: 0 } as unknown as OwnBadge
+    await mirrorFrom(n, post)
+    await mirrorFrom(n, post)
+    expect(sent).toEqual([{ badges: true }])
+    expect(useP2p.getState().badge).toEqual(badge)
+    badge = null
+    await mirrorFrom(n, post)
+    expect(sent).toEqual([{ badges: true }, { badges: true }])
+  })
+})
+
+describe('a tab that only reads', () => {
+  test('a send that fails keeps what it replied to; Mark all as read says where it can be done', async () => {
+    p2pState({
+      enabled: true,
+      reader: true,
+      elsewhere: true,
+      me: BOB,
+      replying: { room: ROOM, id: 'm1' },
+      rooms: {
+        [ROOM]: { id: ROOM, peer: ALICE, seq: 2, unread: 1, pings: 1, lastTs: NOW },
+      } as unknown as P2pState['rooms'],
+      servers: {
+        [SRV]: server({ chans: { [CH]: { unread: 1, pings: 0, readSeq: 0 } } }),
+      } as unknown as P2pState['servers'],
+    })
+    const toasts: string[] = []
+    const was = p2pHost.toast
+    p2pHost.toast = text => toasts.push(text)
+    try {
+      expect(await p2pDm.send(ROOM, 'hello')).toBe(false)
+      expect(useP2p.getState().replying).toEqual({ room: ROOM, id: 'm1' })
+      toasts.length = 0
+      p2pDm.markAllRead()
+      p2pServer.markAllRead(SRV)
+      expect(toasts).toEqual(['P2P is open in another tab.', 'P2P is open in another tab.'])
+    } finally {
+      p2pHost.toast = was
+    }
   })
 })
 

@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useSyncExternalStore } from 'react'
-import { useStore } from '../lib/store'
+import { useMask, useStore } from '../lib/store'
 import { notifications, type Permission } from '../lib/platform'
 import { ruleSummary, type NotifyScope, type Rule } from '../lib/notify'
 import { useP2p } from '../lib/p2p/app'
+import { p2pOverride } from '../lib/p2p/alerts'
 import { displayName } from '../lib/p2p/contacts'
 import { SettingSwitch } from './admin_panel'
 import { sectionCls, textBtn } from './ui'
@@ -164,12 +165,19 @@ const useOverrides = () => {
   })
   const p2pRooms = useP2p(s => s.rooms)
   const contacts = useP2p(s => s.contacts)
-  const p2pList: Override[] = Object.entries(prefs.p2p).map(([room, rule]) => {
+  const p2pServers = useP2p(s => s.servers)
+  const dmName = (room: string) => {
     const c = contacts.find(x => x.ik === p2pRooms[room]?.peer)
+    return c ? displayName(c) : null
+  }
+  const mask = useMask()
+  const p2pList: Override[] = Object.entries(prefs.p2p).map(([key, rule]) => {
+    const o = p2pOverride(key, p2pServers, dmName)
     return {
-      key: `p:${room}`,
-      scope: { kind: 'p2p', room },
-      name: c ? displayName(c) : 'P2P conversation',
+      key: `p:${key}`,
+      ...o,
+      name: mask(o.name),
+      ...(o.hint ? { hint: mask(o.hint) } : {}),
       rule,
     }
   })
@@ -205,7 +213,7 @@ export function NotificationsSection() {
             <Group title="Servers" list={serverList} now={now} />
             <Group title="Channels" list={channelList} now={now} />
             <Group title="DMs" list={dmList} now={now} />
-            <Group title="P2P conversations" list={p2pList} now={now} />
+            <Group title="P2P" list={p2pList} now={now} />
           </>
         ) : (
           <p className="mt-4 px-2 text-sm text-on-surface-variant">No custom settings yet.</p>

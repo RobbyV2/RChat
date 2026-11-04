@@ -6,6 +6,7 @@ import {
   memberName,
   p2pDm,
   p2pThread,
+  profileName,
   threadKey,
   threadScope,
   useP2p,
@@ -22,7 +23,16 @@ import { ThreadPanelView } from '../thread_panel'
 import { TypingIndicator } from '../typing_indicator'
 import { PresentBar, useChatScroll } from '../viewport_height'
 import { textBtn, useEscape } from '../ui'
-import { P2pComposer, P2pRow, pingsMe, useP2pFlash, useP2pList, type Mentionable } from './p2p_chat'
+import {
+  P2pComposer,
+  P2pHiddenRow,
+  P2pRow,
+  P2pSlowRow,
+  pingsMe,
+  useP2pFlash,
+  useP2pList,
+  type Mentionable,
+} from './p2p_chat'
 import { sendBlock } from './p2p_server_view'
 
 // The thread of a P2P server channel beside it (full screen on phones): its root, the replies
@@ -72,10 +82,12 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
   const canAct = !disabled
   const replies = t.messages ?? EMPTY
   const all = useMemo(() => (t.head ? [t.head, ...replies] : replies), [t.head, replies])
-  const { rows, num, idOf, source, editing, editingState, rowMenu, picker, setPicker } = useP2pList(
-    {
+  const ownName = useCallback((ik: string) => profileName(ik, room), [room])
+  const { rows, num, idOf, source, editing, editingState, rowMenu, copyRow, picker, setPicker } =
+    useP2pList({
       messages: all,
       nameOf,
+      ownName,
       people,
       draftKey: key,
       scope,
@@ -84,8 +96,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
       mayDelete,
       forwardSkip: null,
       threads: false,
-    }
-  )
+    })
   const head = t.head ? rows[0] : null
   const list = useMemo(() => (t.head ? rows.slice(1) : rows), [rows, t.head])
   const shared = useMemo(() => list.map(r => r.m), [list])
@@ -134,6 +145,8 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
 
   const row = (r: { p: P2pMessage; m: Message }, root: boolean) => {
     const { p, m } = r
+    if (p.removed) return <P2pHiddenRow key={p.id} m={m} divider={false} />
+    if (p.slowHidden) return <P2pSlowRow key={p.id} m={m} divider={false} />
     return (
       <P2pRow
         key={p.id}
@@ -150,6 +163,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
         draftKey={key}
         threads={false}
         onMenu={rowMenu}
+        onCopy={copyRow}
         onJump={root ? jumpMain : jumpHere}
       />
     )

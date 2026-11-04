@@ -103,6 +103,24 @@ export const bodies = async (m: Member, room: string, ch: string) =>
 
 export const general = (m: Member, room: string) => m.servers.view(room)?.channels[0]?.id as string
 
+// `owner` creates a server with co-owners, each of whom agrees when asked.
+export const createWith = async (clock: ManualClock, owner: Member, name: string, co: Member[]) => {
+  const made = owner.servers.create(
+    name,
+    co.map(m => m.node.ik)
+  )
+  for (const m of co) {
+    await pump(
+      clock,
+      () => m.servers.coOwnerAsks().some(x => x.from === owner.node.ik),
+      `${m.name} asked`,
+      1_000
+    )
+    m.servers.answerCoOwner(m.servers.coOwnerAsks().find(x => x.from === owner.node.ik)!.key, true)
+  }
+  return made
+}
+
 // A creates a server and B joins it with a code.
 export const joinWithCode = async (
   clock: ManualClock,

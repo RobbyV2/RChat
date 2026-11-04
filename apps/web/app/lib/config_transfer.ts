@@ -222,11 +222,19 @@ export const buildConfig = (src: ConfigSource, include: ReadonlySet<SectionKey>)
   return doc
 }
 
-// Sections a share link may carry: never `p2p`, which isn't one of SECTIONS.
+// Sections a share link may carry: never `p2p`, which isn't one of SECTIONS, nor the P2P rail
+// (P2P server ids and folder names): the instance keeps the link and must never learn them.
 export const linkDoc = (doc: ConfigDoc): ConfigDoc => {
   const out: ConfigDoc = { v: doc.v }
   for (const s of SECTIONS)
     if (s.link && doc[s.key] !== undefined) Object.assign(out, { [s.key]: doc[s.key] })
+  if (out.layout?.p2p) {
+    const { p2p: _p, ...layout } = out.layout
+    out.layout = layout
+  }
+  // Notification rules of P2P conversations and servers are keyed by their room ids.
+  if (out.notify && Object.keys(out.notify.p2p).length)
+    out.notify = { ...out.notify, p2p: Object.create(null) as NotifyPrefs['p2p'] }
   return out
 }
 

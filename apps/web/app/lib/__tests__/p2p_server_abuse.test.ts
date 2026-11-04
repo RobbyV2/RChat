@@ -1,15 +1,26 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { P } from '../p2p/acl/rules'
-import { IMPL } from '../p2p/acl_room'
-import { chainKey, UNKNOWN, type DevChain } from '../p2p/dag'
-import { buildEvent2, type Wire } from '../p2p/event'
+import { IMPL, SUM_SHAPE } from '../p2p/acl_room'
+import {
+  blankRoom,
+  cacheKey,
+  chainKey,
+  SERVER_ACL,
+  SERVER_TOTAL,
+  storedSize,
+  UNKNOWN,
+  type DevChain,
+} from '../p2p/dag'
+import type { RoomRecord, ServerCache } from '../p2p/db'
+import { buildEvent2, type Wire, type WireV2 } from '../p2p/event'
 import { genesisBundle } from '../p2p/acl/binding'
 import { b64u, randomBytes } from '../p2p/canonical'
-import { keyId } from '../p2p/keys'
+import { keyId, newKeyPair } from '../p2p/keys'
+import { LocalHost, type AclHost } from '../p2p/resolve_host'
 import { Gossip } from '../p2p/gossip'
 import type { Message } from '../p2p/frames'
-import { LONE_TEXT } from '../p2p/flows'
-import { LEGACY_TEXT, SERVER, UPDATE_TEXT } from '../p2p/server'
+import { LONE_TEXT, TOO_BIG_TEXT } from '../p2p/flows'
+import { LEGACY_TEXT, parseCode, REDEEM_TEXT, SERVER, UPDATE_TEXT } from '../p2p/server'
 import { SHARE } from '../p2p/shares'
 import type { Session } from '../p2p/session'
 import type { Link } from '../p2p/sync'
@@ -310,7 +321,7 @@ describe('storage (spec 4.2)', () => {
     const held = (await stored(a, id))!.dseq!
     const dev = keyId(b.node.author()!.dk.pk)
     // A reaction far ahead on Bob's chain, aimed at a message of another room: the evaluator takes
-    // it, storage refuses it (a target elsewhere).
+    // it, storage refuses it (a target elsewhere, no strike).
     const far = await signed(
       b,
       room,
@@ -318,7 +329,7 @@ describe('storage (spec 4.2)', () => {
       { target: away, key: 'x', on: true, ch },
       { seq: held + 400 }
     )
-    expect(await deliver(a, room, far.wire, clock.now())).toBe('invalid')
+    expect(await deliver(a, room, far.wire, clock.now())).toBe('rejected')
     expect((await planOf(a, room, 'kick', 'a', b.node.ik)).seen?.[dev]).toBe(held)
     // Alice kicks Bob; what Bob writes after what Alice held is hidden, whatever seq it takes.
     await a.servers.kick(room, b.node.ik)
@@ -508,21 +519,146 @@ describe('storage (spec 4.2)', () => {
     expect((await stored(a, lateE.id))?.wire.c).not.toBeNull()
   }, 90_000)
 
-  test('a cold start reads the stored records; a cache of another implementation is ignored', async () => {
+  test('our own messages no peer has yet are never evicted for space; once one has them, the oldest may go', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock, { servers: { roomCap: 5 } })
+    const room = await a.servers.create('Alone')
+    const ch = general(a, room)
+    const sent = ['m0', 'm1', 'm2', 'm3', 'm4']
+    const ids: string[] = []
+    for (const body of sent) ids.push(await a.servers.send(room, { ch, body }))
+    expect(await failure(a.servers.send(room, { ch, body: 'one too many' }))).not.toBe('ok')
+    expect(await bodies(a, room, ch)).toEqual(sent)
+    expect((await a.store.db.getAll('events')).some(r => r.purged)).toBe(false)
+    const b = await makeMember(hub, 'Bob', clock)
+    await joinWithCode(clock, a, room, b)
+    await pump(clock, async () => (await bodies(b, room, ch)).length === 5, 'bob has them')
+    await pump(
+      clock,
+      async () => (await a.store.db.getAll('outbox')).every(o => o.deliveredTo.length > 0),
+      'delivered'
+    )
+    await a.servers.send(room, { ch, body: 'now it fits' })
+    expect((await stored(a, ids[0]))?.purged).toBe(true)
+  }, 60_000)
+
+  test('ACL events never count against the content budget, and every counter stays in step with what is stored', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock, { servers: { roomCap: 10 } })
+    const room = await a.servers.create('Budget')
+    const ch = general(a, room)
+    for (let i = 0; i < 12; i += 1)
+      await a.servers.createRole(room, { name: `r${i}`, color: null, bits: 0 })
+    for (let i = 0; i < 10; i += 1) await a.servers.send(room, { ch, body: `m${i}` })
+    expect(await bodies(a, room, ch)).toHaveLength(10)
+    const inStep = async () => {
+      const rec = (await a.store.room(room))!
+      const evs = (await a.store.db.getAll('events')).filter(r => r.room === room && !r.purged)
+      expect(rec.count).toBe(evs.length)
+      expect(rec.acount).toBe(evs.filter(r => r.layer === 'a').length)
+      expect(await a.store.meta<number>(SERVER_TOTAL)).toBe(evs.length)
+      expect(await a.store.meta<number>(SERVER_ACL)).toBe(rec.acount)
+      return rec
+    }
+    await inStep()
+    // A purged row that turns out not to be admitted takes its bytes along (B1b drift).
+    const s = a.servers as unknown as {
+      purge(room: string, ids: string[]): Promise<number>
+      dropRows(room: string, ids: string[]): Promise<void>
+    }
+    const msg = (await a.store.db.getAll('events')).find(r => r.room === room && r.type === 'msg')!
+    expect(await s.purge(room, [msg.id])).toBe(1)
+    const purged = (await stored(a, msg.id))!
+    const before = await inStep()
+    await s.dropRows(room, [msg.id])
+    const after = await inStep()
+    expect(after.bytes).toBe(before.bytes! - storedSize(purged.wire))
+  }, 60_000)
+
+  test('a cold start of a server whose members came in another order than they first acted reads the stored records once', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const room = await a.servers.create('Order')
+    // Invited first, never joins: listed before Bob and Carol here, after them in a fresh
+    // replica.
+    await emit(a)(room, 'add', () => ({ to: keyId(newKeyPair().pk) }))
+    await joinWithCode(clock, a, room, b)
+    await joinWithCode(clock, a, room, c)
+    await a.servers.send(room, { ch: general(a, room), body: 'a body the evaluator never reads' })
+    await clock.advance(5_000)
+    // The cache is kept apart from the room record (which every stored event rewrites).
+    const cache = (await a.store.meta<ServerCache>(cacheKey(room)))!
+    expect(cache.impl).toBe(IMPL)
+    expect((await a.store.room(room))?.server ?? null).toBeNull()
+    // One an older build kept in the room record is read the same.
+    await a.store.db.put('rooms', { ...(await a.store.room(room))!, server: cache })
+    await a.store.db.delete('meta', cacheKey(room))
+    stopMember(a)
+    a.store.close()
+    const host = new LocalHost()
+    const loads: { records: number; total: number; bodies: number; contents: number }[] = []
+    const load = host.load.bind(host)
+    host.load = (r, acl, contents, ...rest) => {
+      if (r === room)
+        loads.push({
+          records: acl.filter(x => x.rec).length,
+          total: acl.length,
+          bodies: contents.filter(m => m.c?.body !== undefined).length,
+          contents: contents.length,
+        })
+      return load(r, acl, contents, ...rest)
+    }
+    const again = await makeMember(hub, 'Alice', clock, { db: a.db, servers: { resolver: host } })
+    expect(again.servers.view(room)?.name).toBe('Order')
+    expect(loads.length).toBe(1)
+    expect(loads[0].records).toBe(loads[0].total)
+    await clock.advance(5_000)
+    expect((await again.store.meta<ServerCache>(cacheKey(room)))?.impl).toBe(IMPL)
+    expect((await again.store.room(room))?.server ?? null).toBeNull()
+    // Content goes to the evaluator trimmed to what it reads.
+    expect(loads[0].contents).toBeGreaterThan(0)
+    expect(loads[0].bodies).toBe(0)
+    expect(await bodies(again, room, general(again, room))).toEqual([
+      'a body the evaluator never reads',
+    ])
+  }, 60_000)
+
+  test('a cold start reads the stored records; a cache of another implementation is ignored', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    let a = await makeMember(hub, 'Alice', clock)
     const b = await makeMember(hub, 'Bob', clock)
     const room = await a.servers.create('Rules')
     await joinWithCode(clock, a, room, b)
     await a.servers.kick(room, b.node.ik)
     const acl = (await a.store.db.getAll('events')).filter(r => r.room === room && r.layer === 'a')
     expect(acl.every(r => typeof r.aseq === 'number' && r.acl)).toBe(true)
-    const rec = (await a.store.room(room))!
-    await a.store.db.put('rooms', {
-      ...rec,
-      server: { impl: 0, rules: 2, count: 0, sum: { nonsense: true } as never },
-    })
+    // A cache of an older summary shape is not read either.
+    expect(
+      (await a.store.meta<ServerCache>(cacheKey(room))) ?? (await a.store.room(room))?.server
+    ).not.toBeUndefined()
+    await a.store.db.put(
+      'meta',
+      { impl: IMPL, shape: SUM_SHAPE - 1, rules: 2, count: 0, sum: { nonsense: true } as never },
+      cacheKey(room)
+    )
+    stopMember(a)
+    const shaped = await restart(hub, a, clock)
+    expect(shaped.servers.view(room)?.name).toBe('Rules')
+    await clock.advance(5_000)
+    expect((await shaped.store.meta<ServerCache>(cacheKey(room)))?.shape).toBe(SUM_SHAPE)
+    stopMember(shaped)
+    a = await restart(hub, shaped, clock)
+    await a.store.db.put(
+      'meta',
+      { impl: 0, rules: 2, count: 0, sum: { nonsense: true } as never },
+      cacheKey(room)
+    )
     // Every record written by another implementation version: not read, admitted again.
     for (const r of acl) await a.store.db.put('events', { ...r, acl: { ...r.acl!, v: IMPL - 1 } })
     stopMember(a)
@@ -530,11 +666,122 @@ describe('storage (spec 4.2)', () => {
     expect(again.servers.view(room)?.name).toBe('Rules')
     expect(again.servers.myMembership(room)).toBe('join')
     expect(membershipAt(again, room, b.node.ik)).toBeNull()
-    expect((await again.store.room(room))?.server?.impl).toBe(IMPL)
+    await clock.advance(5_000)
+    expect((await again.store.meta<ServerCache>(cacheKey(room)))?.impl).toBe(IMPL)
     const after = (await again.store.db.getAll('events')).filter(
       r => r.room === room && r.layer === 'a'
     )
     expect(after.every(r => r.acl?.v === IMPL)).toBe(true)
+  }, 60_000)
+})
+
+describe('our own events (wire checks)', () => {
+  test('one over the size limit is refused here and never kept; an edit of a channel with a planted field stays small', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('Wire')
+    await joinWithCode(clock, a, room, b)
+    const count = async () =>
+      (await a.store.db.getAll('events')).filter(r => r.room === room).length
+    const before = await count()
+    const big = b64u(randomBytes(8))
+    expect(
+      await failure(
+        emit(a)(room, 'channel', () => ({
+          id: big,
+          name: 'big',
+          kind: 'text',
+          pos: 5,
+          x: 'y'.repeat(5000),
+        }))
+      )
+    ).toBe(TOO_BIG_TEXT)
+    expect(await count()).toBe(before)
+    expect(a.servers.view(room)?.channels.some(c => c.id === big)).toBe(false)
+    // A valid channel carrying a field this version doesn't know, near the limit (a member
+    // with Manage channels can write one).
+    const id = b64u(randomBytes(8))
+    await emit(a)(room, 'channel', () => ({
+      id,
+      name: 'planted',
+      kind: 'text',
+      pos: 6,
+      x: 'y'.repeat(3800),
+    }))
+    const edit = await a.servers.editChannel(room, id, { topic: 't'.repeat(400) })
+    const w = (await stored(a, edit))!.wire
+    expect(JSON.stringify(w.c)).not.toContain('yyyy')
+    expect((await b.servers.check(room, w)).ok).toBe(true)
+    // The next message still reaches Bob.
+    await a.servers.send(room, { ch: id, body: 'after the edit' })
+    await pump(clock, async () => (await bodies(b, room, id)).includes('after the edit'), 'sent')
+  }, 60_000)
+
+  test('a message is sized with every field it carries: thumbnails go first, else it is refused', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('Sizes')
+    const ch = general(a, room)
+    await joinWithCode(clock, a, room, b)
+    const att = Array.from({ length: 8 }, (_, i) => ({
+      h: b64u(randomBytes(32)),
+      size: 10,
+      blocks: 1,
+      name: `p${i}.png`,
+      mime: 'image/png',
+      thumb: b64u(randomBytes(6 * 1024)),
+    }))
+    const body = '\u{1d54f}'.repeat(4000)
+    const id = await a.servers.send(room, { ch, body, att })
+    const w = (await stored(a, id))!.wire
+    const sent = (w.c as { att: { thumb?: string }[] }).att
+    expect(sent.length).toBe(8)
+    expect(sent.filter(x => x.thumb).length).toBeLessThan(8)
+    expect((await b.servers.check(room, w)).ok).toBe(true)
+    // Names alone past the limit: refused, and not kept.
+    const named = Array.from({ length: 50 }, () => ({
+      h: b64u(randomBytes(32)),
+      size: 10,
+      blocks: 1,
+      name: '\u{1d54f}'.repeat(255),
+      mime: 'image/png',
+    }))
+    const n = (await a.store.db.getAll('events')).length
+    expect(await failure(a.servers.send(room, { ch, body, att: named }))).toBe(TOO_BIG_TEXT)
+    expect((await a.store.db.getAll('events')).length).toBe(n)
+  }, 60_000)
+})
+
+describe('content aimed at another room', () => {
+  test('is refused without a strike where that room’s event is held, and stored by relays that don’t hold it', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const room = await a.servers.create('S')
+    const ch = general(a, room)
+    await joinWithCode(clock, a, room, b)
+    await joinWithCode(clock, a, room, c)
+    // Alice's other server: its id is in every invite code of it. Carol isn't in it.
+    const other = await a.servers.create('T')
+    const ev = await signed(b, room, 'react', { target: other, key: '👍', on: true, ch })
+    expect(await deliver(c, room, ev.wire, clock.now())).toBe('new')
+    // Carol builds on it, so Alice asks Carol for it.
+    await c.servers.send(room, { ch, body: 'after the reaction' })
+    await pump(
+      clock,
+      async () => (await bodies(a, room, ch)).includes('after the reaction'),
+      'alice got carol’s message'
+    )
+    await pump(clock, async () => (await a.store.event(ev.id)) === undefined, 'refused', 5_000)
+    expect(await deliver(a, room, ev.wire, clock.now())).toBe('rejected')
+    for (const l of a.servers.sync.linksOf(room)) expect(l.session.strikes).toBe(0)
+    expect(a.servers.sync.linksOf(room).length).toBeGreaterThan(0)
   }, 60_000)
 })
 
@@ -699,6 +946,114 @@ describe('invite codes', () => {
     await pump(clock, () => membershipAt(a, room, x.node.ik) === null, 'withdrawn')
   }, 60_000)
 
+  test('ten people joining through one code within an hour all get in while its issuer is online', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const room = await a.servers.create('Class')
+    const code = await a.servers.issueCode(room, DAY)
+    for (let i = 0; i < 10; i += 1) {
+      const x = await makeMember(hub, `Student${i}`, clock)
+      expect(await failure(x.servers.redeem(code))).toBe('ok')
+      await pump(clock, () => x.servers.myMembership(room) === 'join', `student ${i} joined`, 1_000)
+      await pump(
+        clock,
+        () =>
+          a.servers.view(room)?.members.some(m => m.ik === x.node.ik && m.m === 'join') === true,
+        `alice sees student ${i}`,
+        1_000
+      )
+    }
+    expect(a.servers.view(room)?.joined).toBe(11)
+  }, 120_000)
+
+  test('a code busy at one member is taken by another it names', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('Two doors')
+    await joinWithCode(clock, a, room, b)
+    // Everyone may invite: the code names Alice, then Bob.
+    const code = await a.servers.issueCode(room, DAY)
+    expect(parseCode(code)?.peers.length).toBe(2)
+    // Alice has no slot left for the code right now; Bob, the code's next member, has.
+    const use = (
+      a.servers as unknown as { codeUseOf(r: string, c: string): { adds: number[] } }
+    ).codeUseOf(room, parseCode(code)!.code!)
+    use.adds.push(...Array.from({ length: SERVER.codeAddsPerHour }, () => clock.now()))
+    const x = await makeMember(hub, 'Xena', clock)
+    expect(await failure(x.servers.redeem(code))).toBe('ok')
+    await pump(clock, () => x.servers.myMembership(room) === 'join', 'xena joined', 1_000)
+    // Bob let her in.
+    expect(a.servers.sumOf(room).members[x.node.ik]?.via).toBe(b.node.ik)
+  }, 60_000)
+
+  test('one code makes us post a few invites an hour; after several lapse unused it stops working here for a while', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const room = await a.servers.create('Leaked')
+    const code = await a.servers.issueCode(room, 30 * DAY)
+    const adds = () => Object.values(a.servers.sumOf(room).members).filter(m => m.m === 'invite')
+    // Fresh identities that take the code and never join.
+    const fresh = async (i: number) => {
+      const x = await makeMember(hub, `Fresh${i}`, clock)
+      ;(x.servers as unknown as { postJoin: () => Promise<void> }).postJoin = async () => {}
+      return failure(x.servers.redeem(code))
+    }
+    for (let i = 0; i < SERVER.codeAddsPerHour; i += 1) expect(await fresh(i)).toBe('ok')
+    expect(adds().length).toBe(SERVER.codeAddsPerHour)
+    expect(await fresh(10)).toBe(REDEEM_TEXT.busy)
+    expect(adds().length).toBe(SERVER.codeAddsPerHour)
+    // Their invites lapse: withdrawn, and the code is paused here.
+    clock.t += SERVER.redeemTtl + 1
+    await pump(clock, () => adds().length === 0, 'withdrawn')
+    expect((await a.servers.codes(room))[0].paused).toBe(true)
+    clock.t += 60 * 60_000
+    expect(await fresh(11)).toBe(REDEEM_TEXT.busy)
+    // A real joiner after the pause gets in.
+    clock.t += SERVER.codePauseMs
+    const b = await makeMember(hub, 'Bob', clock)
+    await b.servers.redeem(code)
+    await pump(clock, () => b.servers.myMembership(room) === 'join', 'bob joined')
+    expect((await a.servers.codes(room))[0].paused).toBeUndefined()
+  }, 90_000)
+
+  test('an invite handed over before the server’s first event is here waits for it', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const x = await makeMember(hub, 'Xavier', clock)
+    const room = await a.servers.create('Early')
+    const add = await emit(a)(room, 'add', () => ({ to: x.node.ik }))
+    const wire = (await stored(a, add))!.wire as unknown as WireV2
+    const now = clock.now()
+    const xs = x.servers as unknown as {
+      putRoom(r: RoomRecord): Promise<void>
+      takeInvite(room: string): Promise<void>
+    }
+    await xs.putRoom({
+      ...blankRoom(room, '', now),
+      kind: 'server',
+      name: 'Early',
+      chans: {},
+      server: null,
+      joining: { at: now, via: 'code', ev: wire },
+      since: now,
+    })
+    await xs.takeInvite(room)
+    expect((await x.store.room(room))?.joining?.ev).not.toBeUndefined()
+    // What it sits on arrives (here by hand): the next try takes it.
+    const acl = (await a.store.db.getAll('events'))
+      .filter(r => r.room === room && r.layer === 'a' && r.id !== add)
+      .sort((p, q) => (p.aseq ?? 0) - (q.aseq ?? 0))
+    for (const r of acl) expect(await deliver(x, room, r.wire, now)).toBe('new')
+    await xs.takeInvite(room)
+    expect(x.servers.myMembership(room)).toBe('invite')
+    expect((await x.store.room(room))?.joining?.ev).toBeUndefined()
+  }, 60_000)
+
   test('codes and invites naming a DM’s room id never touch the DM', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -762,6 +1117,94 @@ describe('invite codes', () => {
     expect(await e.store.room(empty)).toBeUndefined()
     expect(e.servers.invites()).toEqual([])
     expect(!!dm).toBe(true)
+  }, 60_000)
+})
+
+describe('names', () => {
+  test('a member’s own name for forwards skips our petname for them', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    await a.node.addContact(await b.node.myCard())
+    await pump(clock, () => b.node.contact(a.node.ik)?.state === 'incoming', 'request')
+    await b.node.accept(a.node.ik)
+    await pump(clock, () => a.node.contact(b.node.ik)?.state === 'mutual', 'mutual')
+    await a.node.rename(b.node.ik, 'Bobby')
+    const room = await a.servers.create('Names')
+    await joinWithCode(clock, a, room, b)
+    expect(a.servers.nameOf(b.node.ik, room)).toBe('Bobby')
+    expect(a.servers.profileName(b.node.ik, room)).toBe('Bob')
+    expect(a.servers.profileName(b.node.ik)).toBe('Bob')
+    expect(a.servers.profileName(a.node.ik, room)).toBe('Alice')
+  }, 60_000)
+})
+
+describe('view answers', () => {
+  test('one asked for a state that changed meanwhile is not kept', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('Views')
+    const ch = general(a, room)
+    await joinWithCode(clock, a, room, b)
+    const s = a.servers as unknown as {
+      host: AclHost
+      fillViews(room: string, ch: string): Promise<void>
+      ensureRt(room: string): { views: Map<string, boolean>; sum: object }
+    }
+    const rt = s.ensureRt(room)
+    rt.views.clear()
+    const real = s.host.viewable.bind(s.host)
+    let release = () => {}
+    const gate = new Promise<void>(r => (release = r))
+    s.host.viewable = async (...args) => {
+      const out = await real(...args)
+      await gate
+      return out
+    }
+    const asked = s.fillViews(room, ch)
+    // The state moves on while the answer is on its way.
+    rt.sum = { ...rt.sum }
+    release()
+    await asked
+    expect(rt.views.has(`${b.node.ik}\n${ch}`)).toBe(false)
+    s.host.viewable = real
+    await s.fillViews(room, ch)
+    expect(rt.views.get(`${b.node.ik}\n${ch}`)).toBe(true)
+  }, 60_000)
+})
+
+describe('removals sent to us directly', () => {
+  test('are taken once per room per session, and not once we are out', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('Direct')
+    await joinWithCode(clock, a, room, b)
+    await a.node.setPaused(true)
+    const kick = await signed(a, room, 'kick', {
+      to: b.node.ik,
+      seen: (await planOf(a, room, 'kick', 'a', b.node.ik)).seen ?? {},
+    })
+    const bs = b.servers as unknown as { onMember(m: Message, s: Session): Promise<void> }
+    let checks = 0
+    const check = b.servers.check.bind(b.servers)
+    b.servers.check = (r, raw) => {
+      checks += 1
+      return check(r, raw)
+    }
+    let strikes = 0
+    const session = (): Session => ({ strike: () => (strikes += 1) }) as unknown as Session
+    const s1 = session()
+    await bs.onMember({ t: 'gmember', room, ev: kick.wire }, s1)
+    expect(b.servers.myMembership(room)).toBe('leave')
+    await bs.onMember({ t: 'gmember', room, ev: kick.wire }, s1)
+    await bs.onMember({ t: 'gmember', room, ev: kick.wire }, session())
+    expect(checks).toBe(1)
+    expect(strikes).toBe(0)
   }, 60_000)
 })
 

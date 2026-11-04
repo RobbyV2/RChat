@@ -68,7 +68,7 @@ export const pastFit = (count: number, video: boolean) =>
   count > (video ? VOICE_FIT.video : VOICE_FIT.audio)
 
 export const NO_VOICE = "You can't join this voice channel."
-export const relayDenied = (name: string) => `Not connected to ${name}: relay not allowed`
+export const RELAY_DENIED_TEXT = 'Relay not allowed. Not connected to'
 
 export interface VoiceFrame {
   t: 'gvoice'

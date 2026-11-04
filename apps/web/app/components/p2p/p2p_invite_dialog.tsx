@@ -11,7 +11,13 @@ import { Dialog, FieldError, fieldCls, filledBtn, Masked, textBtn } from '../ui'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { QrScan } from './qr_scan'
 import { CoOwnerAsks, CoOwnerPicker } from './p2p_server_flows'
-import { CODE_DEATH_TEXT, CODE_RETRY_TEXT, CODE_REVOKE_TEXT, OWNER_TEXT } from '../../lib/p2p/flows'
+import {
+  CODE_DEATH_TEXT,
+  CODE_PAUSED_TEXT,
+  CODE_RETRY_TEXT,
+  CODE_REVOKE_TEXT,
+  OWNER_TEXT,
+} from '../../lib/p2p/flows'
 
 const IP_NOTE =
   'Members you connect with can see your IP address unless you use relay only (Settings, Voice and P2P).'
@@ -29,6 +35,7 @@ export interface CodeRow {
   label: string
   by: string
   text: string | null
+  paused?: true
 }
 
 const expiryText = (exp: number, now: number) => {
@@ -151,6 +158,9 @@ export function CodeList({ room, version }: { room: string; version: number }) {
                 </button>
               )}
             </div>
+            {live && c.paused && (
+              <p className="text-xs text-on-surface-variant">{CODE_PAUSED_TEXT}</p>
+            )}
             {open === c.hash && c.text && <CodeBox text={c.text} />}
           </li>
         )

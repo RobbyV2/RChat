@@ -48,6 +48,11 @@ const stored = (m: Member, id: string) => m.store.db.get('events', id)
 const countedOf = async (m: Member, room: string) =>
   (await m.store.db.getAll('events')).filter(r => r.room === room && !r.purged).length
 const droppedRec = (m: Member, id: string) => m.store.db.get('dropped', id)
+// What the content budget counts (ACL events are counted apart).
+const contentOf = async (m: Member, room: string) => {
+  const r = (await m.store.room(room))!
+  return r.count - (r.acount ?? 0)
+}
 const evaluator = (m: Member, room: string) =>
   (m.servers as unknown as { host: LocalHost }).host.rooms.get(room) as AclRoom
 const membershipAt = (m: Member, room: string, ik: string) =>
@@ -408,11 +413,11 @@ describe('eviction under pressure (spec 4.2)', () => {
         out.push(await deliver(a, room, ev.wire, clock.now()))
       }
       expect(out.every(x => x === 'new')).toBe(true)
-      expect((await a.store.room(room))!.count).toBeLessThanOrEqual(40)
+      expect(await contentOf(a, room)).toBeLessThanOrEqual(40)
       const cm = await signed(c, room, 'msg', { body: 'carol', ch })
       expect(await deliver(a, room, cm.wire, clock.now())).toBe('new')
       await a.servers.send(room, { ch, body: 'alice' })
-      expect((await a.store.room(room))!.count).toBeLessThanOrEqual(40)
+      expect(await contentOf(a, room)).toBeLessThanOrEqual(40)
       // Bob's oldest went (they showed: evicted, not purged for a cause), Carol's and Alice's stay.
       const first = await stored(a, sent[0])
       expect([first?.purged, first?.evicted, first?.wire.c]).toEqual([true, true, null])
@@ -522,7 +527,7 @@ describe('eviction details (spec 4.2)', () => {
         }
         for (let i = 0; i < 5; i++) await a.servers.send(room, { ch, body: `a ${i}` })
         expect(out.every(x => x === 'new')).toBe(true)
-        expect((await a.store.room(room))!.count).toBeLessThanOrEqual(40)
+        expect(await contentOf(a, room)).toBeLessThanOrEqual(40)
         expect((await a.store.room(room))!.count).toBe(await countedOf(a, room))
         // A copy without its body purged here: the count follows.
         expect(await (a.servers as unknown as Purge).purge(room, [bare[0]])).toBe(1)
@@ -631,8 +636,42 @@ describe('eviction details (spec 4.2)', () => {
   // The room's cap lowered to what it holds: what comes next needs room.
   const capNow = async (m: Member, room: string) => {
     const deps = (m.servers as unknown as { deps: { roomCap: number } }).deps
-    deps.roomCap = (await m.store.room(room))!.count
+    deps.roomCap = await contentOf(m, room)
   }
+
+  test(
+    'a body stored below where its sender’s last eviction walk stopped is still the first to go',
+    () =>
+      lifted(async () => {
+        const clock = new ManualClock()
+        const hub = new Hub()
+        const { a, b, room, ch, sent } = await budgetRoom(clock, hub)
+        const starts = (
+          a.servers as unknown as { ensureRt(r: string): { evictFrom: Map<string, string> } }
+        ).ensureRt(room).evictFrom
+        expect(starts.has(b.node.ik)).toBe(true)
+        // A body of Bob's stored below the start (another of his devices can date one there)
+        // moves it back.
+        starts.set(b.node.ik, '\uffff')
+        const next = await signed(b, room, 'msg', { body: 'next', ch })
+        expect(await deliver(b, room, next.wire, clock.now())).toBe('new')
+        await capNow(a, room)
+        expect(await deliver(a, room, next.wire, clock.now())).toBe('new')
+        expect(starts.get(b.node.ik)).not.toBe('\uffff')
+        // A start past every body: the walk goes again from the beginning.
+        starts.set(b.node.ik, '\uffff')
+        const kept: string[] = []
+        for (const id of [...sent, next.id]) if (!(await stored(a, id))?.evicted) kept.push(id)
+        expect(kept.length).toBeGreaterThan(0)
+        await capNow(a, room)
+        // Past Bob's share window.
+        clock.t += DAY
+        const more = await signed(b, room, 'msg', { body: 'more', ch })
+        expect(await deliver(a, room, more.wire, clock.now())).toBe('new')
+        expect((await stored(a, kept[0]))?.evicted).toBe(true)
+      }),
+    90_000
+  )
 
   test(
     'a start doesn’t fetch back evicted bodies nobody viewed: a room at its budget stays within it across two reloads',
@@ -643,14 +682,14 @@ describe('eviction details (spec 4.2)', () => {
         const { a, b, room } = await budgetRoom(clock, hub)
         const before = await evictedOf(a, room)
         expect(before.length).toBeGreaterThan(5)
-        expect((await a.store.room(room))!.count).toBeLessThanOrEqual(30)
+        expect(await contentOf(a, room)).toBeLessThanOrEqual(30)
         await b.node.setPaused(false)
         let x = a
         for (let i = 0; i < 2; i++) {
           stopMember(x)
           x = await restart(hub, x, clock)
           for (let k = 0; k < 4; k++) await clock.advance(SERVER.causesMs)
-          expect((await x.store.room(room))!.count).toBeLessThanOrEqual(30)
+          expect(await contentOf(x, room)).toBeLessThanOrEqual(30)
           expect((await evictedOf(x, room)).sort()).toEqual([...before].sort())
           expect(await (x.servers as unknown as { host: LocalHost }).host.wanted(room)).toEqual([])
         }
@@ -738,7 +777,9 @@ describe('eviction details (spec 4.2)', () => {
         const b2 = await fill(b, r2, 7)
         const c1 = await fill(c, r1, 8)
         // Bob holds 13 bodies across servers, Carol 8 in one: in One, Carol holds the most.
-        const total = (await a.store.db.get('meta', 'sevents')) as number
+        const total =
+          ((await a.store.db.get('meta', 'sevents')) as number) -
+          ((await a.store.db.get('meta', 'sacl')) as number)
         ;(a.servers as unknown as { deps: { serverCap: number } }).deps.serverCap = total
         const m = await signed(
           c,

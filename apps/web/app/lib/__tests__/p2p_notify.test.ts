@@ -12,7 +12,7 @@ import {
   unreadShown,
   type NotifyScope,
 } from '../notify'
-import { badgePings, p2pAlert } from '../p2p/alerts'
+import { badgePings, p2pAlert, p2pOverride } from '../p2p/alerts'
 import type { Arrival } from '../p2p/dm'
 import type { EventRecord } from '../p2p/db'
 import type { Content, EvType } from '../p2p/event'
@@ -122,5 +122,34 @@ describe('P2P conversations in the notification resolver', () => {
     expect(
       p2pAlert(arrival('edit', { target: 'x', body: 'y' }, null, false), all, actor, go)
     ).toBeNull()
+  })
+})
+
+describe('P2P overrides in the settings list', () => {
+  const servers = {
+    srv: { name: 'Club', channels: [{ id: 'ch1', name: 'general' }] },
+  } as unknown as Parameters<typeof p2pOverride>[1]
+  const dm = (room: string) => (room === 'dm' ? 'Alice' : null)
+  test('a channel, a server and a conversation each get their own scope and name', () => {
+    expect(p2pOverride('srv/ch1', servers, dm)).toEqual({
+      scope: { kind: 'p2pc', room: 'srv', ch: 'ch1' },
+      name: 'general',
+      prefix: '#',
+      hint: 'Club',
+    })
+    expect(p2pOverride('srv', servers, dm)).toEqual({
+      scope: { kind: 'p2ps', room: 'srv' },
+      name: 'Club',
+    })
+    expect(p2pOverride('dm', servers, dm)).toEqual({
+      scope: { kind: 'p2p', room: 'dm' },
+      name: 'Alice',
+    })
+    // Gone from here: generic names, never a prototype key's value.
+    expect(p2pOverride('srv/gone', servers, dm).name).toBe('Channel')
+    expect(p2pOverride('constructor', servers, dm)).toEqual({
+      scope: { kind: 'p2p', room: 'constructor' },
+      name: 'P2P conversation',
+    })
   })
 })

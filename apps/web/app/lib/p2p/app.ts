@@ -44,7 +44,7 @@ import {
   MISSED_MAX,
   type P2pMessage,
 } from './dm'
-import { contentMax, LIMITS as EV, sizeOf, type Attachment, type Fwd, type WireV2 } from './event'
+import { fitContent, LIMITS as EV, type Attachment, type Fwd, type WireV2 } from './event'
 import { JUMP, type PageOpts } from './jump'
 import type { PingRec, PingText } from './inbox'
 import { PingLog, pingAlive, pingText, readPings } from './ping_log'
@@ -58,6 +58,7 @@ import {
   previewOf,
   saveName,
   storageSpace,
+  UrlCache,
   type Preview,
 } from './files'
 import { kindOf, NEUTRAL_TYPE } from '../sniff'
@@ -91,7 +92,7 @@ import { PeerTransport } from './transport'
 import { JoinAborted, RtcManager } from '../rtc'
 import { hidesIp, relayBook } from '../relays'
 import { Calls, type CallView, type PendingCall } from './calls'
-import { relayDenied } from './voice'
+import { RELAY_DENIED_TEXT } from './voice'
 import { slowChanged } from './roles'
 import {
   CODE_TTLS,
@@ -105,7 +106,7 @@ import {
   type ServerArrival,
   type ServerView,
 } from './server'
-import { WIPE_TEXT } from './flows'
+import { unsentText, WIPE_TEXT } from './flows'
 import { P, type HistoryVis } from './state'
 
 // The P2P view model. IndexedDB (through the node) is the source of truth; this store only
@@ -470,7 +471,7 @@ export interface P2pHost {
   alert: (a: AlertInput) => void
   following: (scope: string) => boolean
   typingOn: () => boolean
-  toast: (text: string) => void
+  toast: (text: string, name?: string) => void
   // The instance is text and emoji only: no attachments anywhere, P2P ones included.
   textOnly: () => boolean
   // In an instance call or voice channel (a P2P ring then gets "busy").
@@ -633,10 +634,22 @@ const scheduleBadges = () => {
   }, 30)
 }
 
-const mirror = async () => {
-  const n = node
-  if (!n) return
+// Our own badge changed here: tabs that only read hear it (they re-read it on `badges`).
+export const tellBadge = (
+  was: OwnBadge | null,
+  now: OwnBadge | null,
+  post: (m: { badges: true }) => void
+) => {
+  if (JSON.stringify(was ?? null) !== JSON.stringify(now ?? null)) post({ badges: true })
+}
+
+// The node's view into the store; our own badge change is told to the reader tabs (`post`).
+export const mirrorFrom = async (
+  n: Pick<P2pNode, 'view' | 'paused' | 'myCard'>,
+  post: (m: { badges: true }) => void
+) => {
   const v = n.view()
+  tellBadge(useP2p.getState().badge, v.badge, post)
   useP2p.setState({
     status: v.status,
     ik: v.ik,
@@ -656,6 +669,11 @@ const mirror = async () => {
   })
   const card = await n.myCard().catch(() => null)
   if (node === n) useP2p.setState({ card })
+}
+
+const mirror = async () => {
+  const n = node
+  if (n) await mirrorFrom(n, m => data?.postMessage(m))
 }
 
 const stopNode = () => {
@@ -740,8 +758,13 @@ const read = async (username: string, live: () => boolean) => {
         if (msg && 'call' in msg) return useP2p.setState({ callElsewhere: elsewhereCall(msg.call) })
         if (msg && 'inbox' in msg) return useP2p.setState(st => ({ pingLog: st.pingLog + 1 }))
         if (msg && 'badges' in msg)
-          return void readSlots(s).then(
-            slots => reader?.store === s && mirrorBadges(Object.fromEntries(slots)),
+          return void Promise.all([readSlots(s), s.self()]).then(
+            ([slots, me]) => {
+              if (reader?.store !== s) return
+              mirrorBadges(Object.fromEntries(slots))
+              // Our own badge changed in the leading tab too.
+              if (me) useP2p.setState({ badge: me.badge ?? null })
+            },
             () => {}
           )
         const room = msg?.room
@@ -856,7 +879,7 @@ const boot = async (username: string, create: string | null, l: TabLeader, live:
     sv.voice.consent = (hosts, ik) => relayBook.consent(hosts, ik)
     sv.voice.denied = ik => {
       const at = sv.voice.current()
-      p2pHost.toast(relayDenied(at ? memberName(at.room, ik) : 'a member'))
+      p2pHost.toast(RELAY_DENIED_TEXT, at ? memberName(at.room, ik) : 'a member')
     }
     sv.voice.onChange(() => {
       const cur = sv.voice.current()
@@ -1063,6 +1086,12 @@ const refreshRoom = async (room: string) => {
   if (!s) return
   if (servers?.isServer(room)) return refreshServer(room)
   const r = await s.room(room).catch(() => undefined)
+  // A tab that only reads gets the leader's server updates too: listed by name, never as DMs.
+  if (r?.kind === 'server') {
+    if (!servers && !r.invite)
+      useP2p.setState(st => ({ servers: { ...st.servers, [room]: readerView(r) } }))
+    return
+  }
   if (r) useP2p.setState(st => ({ rooms: { ...st.rooms, [room]: summary(r) } }))
   if (dms && useP2p.getState().storageFull !== dms.storageFull)
     useP2p.setState({ storageFull: dms.storageFull })
@@ -1458,6 +1487,14 @@ export const memberName = (room: string, ik: string) =>
   useP2p.getState().servers[room]?.members.find(m => m.ik === ik)?.name ??
   'Member'
 
+// The name an author gives themselves (never our petname, never masked): a forward carries it.
+export const profileName = (ik: string, room?: string) => {
+  if (servers) return servers.profileName(ik, room)
+  const st = useP2p.getState()
+  if (ik === st.ik) return st.name || 'Member'
+  return st.contacts.find(c => c.ik === ik)?.name || 'Member'
+}
+
 export const serverScope = (room: string) => ({ kind: 'p2ps', room }) as const
 export const channelScope = (room: string, ch: string) => ({ kind: 'p2pc', room, ch }) as const
 
@@ -1527,7 +1564,8 @@ const withServers = async <T>(fn: (s: Servers) => Promise<T>): Promise<T | null>
   try {
     return await fn(sv)
   } catch (e) {
-    p2pHost.toast(e instanceof Error ? e.message : String(e))
+    if (e instanceof ServerError && e.who) p2pHost.toast(e.message, e.who)
+    else p2pHost.toast(e instanceof Error ? e.message : String(e))
     return null
   }
 }
@@ -1788,8 +1826,10 @@ export const p2pServer = {
   },
 
   markAllRead(room: string) {
-    for (const ch of Object.keys(useP2p.getState().servers[room]?.chans ?? {}))
-      p2pServer.markRead(room, ch)
+    const chans = useP2p.getState().servers[room]?.chans ?? {}
+    if (!servers && Object.values(chans).some(c => c.unread || c.pings))
+      return p2pHost.toast(ELSEWHERE_TEXT)
+    for (const ch of Object.keys(chans)) p2pServer.markRead(room, ch)
   },
 
   // What a code says (the server's name), for the join screen, without joining.
@@ -1813,6 +1853,7 @@ export const p2pDevices = {
       p2pHost.toast(
         'Removed. Where it made the server, what it did stays; nothing it signs from now on counts.'
       )
+    else if (out?.unsent) p2pHost.toast(unsentText(out.unsent))
     refreshServers()
   },
   async recover(keep: string[]) {
@@ -2107,18 +2148,12 @@ const scheduleFile = (h: string) => {
   )
 }
 
-// Object URLs of stored files shown inline (only of types sniffing allows), newest last.
-const urls = new Map<string, Promise<string | null>>()
+// Object URLs of stored files shown inline (only of types sniffing allows).
+const urls = new UrlCache(24)
 // Stored images whose header says they are too large to show inline.
 const big = new Set<string>()
-const URLS_MAX = 24
 
-const dropUrl = (h: string) => {
-  const u = urls.get(h)
-  if (!u) return
-  urls.delete(h)
-  void u.then(x => x && URL.revokeObjectURL(x))
-}
+const dropUrl = (h: string) => urls.drop(h)
 
 let pendingSeq = 0
 
@@ -2137,12 +2172,8 @@ const clipText = (s: string, chars: number, bytes: number) => {
 const cleanMime = (t: string) => (/^[\x21-\x7e]{1,127}$/.test(t) ? t : 'application/octet-stream')
 
 // The attachments of a message: as many thumbnails as fit, the last ones dropped first.
-export const fitAttachments = (body: string, list: Attachment[]): Attachment[] | null => {
-  const out = list.map(a => ({ ...a }))
-  const fits = () => sizeOf({ body, att: out }) <= contentMax({ att: out })
-  for (let i = out.length - 1; i >= 0 && !fits(); i -= 1) delete out[i].thumb
-  return fits() ? out : null
-}
+export const fitAttachments = (body: string, list: Attachment[]): Attachment[] | null =>
+  fitContent({ body, att: list })?.att ?? null
 
 export const TOO_MANY_FILES = 'These files have names too long to send in one message.'
 export const FILES_MAX_TEXT = `You can attach up to ${EV.att} files to a message.`
@@ -2180,15 +2211,10 @@ export const p2pFiles = {
     void refreshFile(h)
   },
 
-  // The stored file as a URL, for the passive players only (by its sniffed type).
+  // The stored file as a URL, for the passive players only (by its sniffed type). Each call is
+  // one tile using it until `unuse`.
   url(h: string): Promise<string | null> {
-    const hit = urls.get(h)
-    if (hit) {
-      urls.delete(h)
-      urls.set(h, hit)
-      return hit
-    }
-    const run = (async () => {
+    return urls.use(h, async () => {
       const s = dbNow()
       const blob = s ? await assemble(s.db, h).catch(() => null) : null
       if (!blob || kindOf(blob.type) === null) return null
@@ -2198,11 +2224,10 @@ export const p2pFiles = {
         return null
       }
       return URL.createObjectURL(blob)
-    })()
-    urls.set(h, run)
-    while (urls.size > URLS_MAX) dropUrl(urls.keys().next().value as string)
-    return run
+    })
   },
+
+  unuse: (h: string) => urls.unuse(h),
 
   thumb: checkedThumb,
 
@@ -2623,13 +2648,16 @@ export const p2pDm = {
     if (att === null) return false
     const st = useP2p.getState()
     const reply = st.replying?.room === room ? st.replying.id : undefined
-    useP2p.setState({ replying: null })
     const id = await onTarget(
       room,
       (d, r) => d.send(r, { body: text, reply, att }),
       (sv, r, ch, thread) =>
         sv.send(r, { ch, body: text, reply, att, ...(thread ? { thread } : {}) })
     )
+    // A failed send keeps what it replied to.
+    const now = useP2p.getState().replying
+    if (id !== null && reply && now?.room === room && now.id === reply)
+      useP2p.setState({ replying: null })
     if (id !== null && files) p2pFiles.clear(room)
     const t = targetOf(room)
     if (t.kind === 'server') await readSlow(t.room, t.ch)
@@ -2757,10 +2785,11 @@ export const p2pDm = {
     void withDms(d => d.markRead(room))
   },
 
-  // Every conversation with unread messages or pings.
+  // Every conversation with unread messages or pings. Only the tab that runs P2P can.
   markAllRead() {
-    for (const r of Object.values(useP2p.getState().rooms))
-      if (r.unread || r.pings) p2pDm.markRead(r.id)
+    const list = Object.values(useP2p.getState().rooms).filter(r => r.unread || r.pings)
+    if (list.length && !dms) return p2pHost.toast(ELSEWHERE_TEXT)
+    for (const r of list) p2pDm.markRead(r.id)
   },
 
   typing(room: string, on: boolean) {

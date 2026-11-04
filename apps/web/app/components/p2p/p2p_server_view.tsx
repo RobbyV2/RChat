@@ -7,7 +7,6 @@ import {
   Folder as FolderIcon,
   FolderOpen,
   Hash,
-  Link2,
   Lock,
   LogOut,
   Menu,
@@ -40,9 +39,9 @@ import {
 import { displayName, shieldOf } from '../../lib/p2p/contacts'
 import { movedText, type P2pMessage } from '../../lib/p2p/dm'
 import { P } from '../../lib/p2p/state'
-import { serverPings } from '../../lib/p2p/alerts'
+import { serverPings, serverUnread } from '../../lib/p2p/alerts'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
-import { levelOf, mutedOf, type NotifyPrefs } from '../../lib/notify'
+import { levelOf, mutedOf } from '../../lib/notify'
 import { folderKey, railItems, serverKey, type Folder } from '../../lib/nav_layout'
 import type { DropTarget } from '../../lib/drag'
 import { serverInitial } from '../../lib/rules'
@@ -82,17 +81,9 @@ const idle =
 
 // ----- Counts -----
 
-export { serverPings }
+export { serverPings, serverUnread }
 
 // Unread channels that show it: muted channels (or a muted server) don't.
-export const serverUnread = (v: ServerView, prefs: NotifyPrefs, now = Date.now()) =>
-  !mutedOf(prefs, serverScope(v.id), now) &&
-  Object.entries(v.chans).some(
-    ([ch, c]) =>
-      c.unread > 0 &&
-      v.channels.some(x => x.id === ch) &&
-      !mutedOf(prefs, channelScope(v.id, ch), now)
-  )
 
 const can = (v: ServerView | undefined, bit: number) =>
   !!v && v.me === 'join' && (v.perms & bit) !== 0
@@ -171,7 +162,7 @@ export const serverMenu = (v: ServerView, folder: string | null, at: number): Co
 const confirmForget = (v: ServerView) =>
   useStore.getState().askConfirm({
     title: 'Remove Server',
-    body: `Remove ${v.name} and everything of it from this device? You aren't a member any more, so it can't come back.`,
+    body: `Remove ${useStore.getState().streamer ? 'this server' : v.name} and everything of it from this device? You aren't a member any more, so it can't come back.`,
     confirm: 'Remove',
     action: () => void p2pServer.forget(v.id),
   })
@@ -793,7 +784,7 @@ export function P2pMemberList() {
             <span className="min-w-0 truncate">
               <Masked text={g.label} />
             </span>
-            <span className="shrink-0">— {g.total}</span>
+            <span className="shrink-0">({g.total})</span>
           </p>
           <ul className="flex flex-col px-1">
             {g.list.map(m => (
@@ -1190,9 +1181,3 @@ export function ServerInviteRows() {
     </section>
   )
 }
-
-export const copyInviteItem = (text: string): ContextMenuItem => ({
-  label: 'Copy Invite',
-  icon: Link2,
-  action: () => void sharing().copyText(text),
-})

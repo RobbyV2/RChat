@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
-import { badgePings, listedPeers } from '../../lib/p2p/alerts'
+import { badgePings, dmUnread, listedPeers } from '../../lib/p2p/alerts'
 import { dmRoomId, movedText, MOVING_TEXT, RESUME_TEXT } from '../../lib/p2p/dm'
 import { levelOf, mutedOf } from '../../lib/notify'
 import {
@@ -41,7 +41,7 @@ import { AddContactDialog } from './add_contact'
 import { VerifyDialog } from './verify_dialog'
 import { P2pFolderDialog, ServerInviteDialog, ServerNewDialog } from './p2p_invite_dialog'
 import { ServerSettingsDialog } from './p2p_server_settings'
-import { ServerInviteRows, serverUnread } from './p2p_server_view'
+import { ServerInviteRows } from './p2p_server_view'
 import { CoOwnerAsks, LostDeviceDialog, RecoverDialog, TransferAsks } from './p2p_server_flows'
 import {
   AccountChip,
@@ -66,20 +66,12 @@ const useDmPings = () => {
   return useMemo(() => badgePings(rooms, prefs, listedPeers(contacts)), [rooms, contacts, prefs])
 }
 
-export const useServerUnread = () => {
-  const servers = useP2p(s => s.servers)
-  const prefs = useStore(s => s.notifyPrefs)
-  return Object.values(servers).some(v => serverUnread(v, prefs))
-}
-
-// Unread conversations that show it: muted ones don't.
+// Unread conversations that show it: muted ones and unlisted contacts' don't.
 const useP2pUnread = () => {
   const rooms = useP2p(s => s.rooms)
+  const contacts = useP2p(s => s.contacts)
   const prefs = useStore(s => s.notifyPrefs)
-  const now = Date.now()
-  return Object.values(rooms).some(
-    r => r.unread > 0 && !mutedOf(prefs, { kind: 'p2p', room: r.id }, now)
-  )
+  return useMemo(() => dmUnread(rooms, prefs, listedPeers(contacts)), [rooms, contacts, prefs])
 }
 
 // The rail tile under the home button. Pending requests and pings show as a badge.
@@ -330,7 +322,7 @@ export const contactMenu = (c: Contact, me: string | null = null): ContextMenuIt
         danger: true,
         action: () =>
           ask({
-            title: `Block ${name}?`,
+            title: `Block ${useStore.getState().streamer ? 'this contact' : name}?`,
             body: 'They can no longer reach you over P2P. You can remove the block later.',
             confirm: 'Block',
             action: () => void p2p.block(c.ik),
@@ -345,7 +337,7 @@ export const contactMenu = (c: Contact, me: string | null = null): ContextMenuIt
       c.state === 'blocked'
         ? void p2p.remove(c.ik)
         : ask({
-            title: `Remove ${name}?`,
+            title: `Remove ${useStore.getState().streamer ? 'this contact' : name}?`,
             body: 'They stay able to send you a new request.',
             confirm: 'Remove',
             action: () => void p2p.remove(c.ik),
@@ -811,7 +803,7 @@ function RenameDialog({ ik }: { ik: string }) {
         }}
         placeholder={c.name || 'Name'}
         aria-label="Name for this contact"
-        className={`${fieldCls} w-full`}
+        className={`${fieldCls} streamer w-full`}
       />
       <p className="pt-1.5 text-xs text-on-surface-variant">
         Only you see this name. Leave empty to use theirs.

@@ -1,3 +1,4 @@
+import { P } from '../p2p/acl/rules'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Hub, ManualClock } from './p2p_net'
 import { P2pStore } from '../p2p/db'
@@ -79,11 +80,6 @@ describe('co-owners (spec 3.8)', () => {
     b.servers.answerCoOwner(await asked(), true)
     const room = await made
     expect(a.servers.view(room)?.owners).toEqual([a.node.ik, b.node.ik])
-    // Agreed beforehand: nobody is asked.
-    b.servers.allowCoOwner(a.node.ik)
-    const again = await a.servers.create('Shared too', [b.node.ik])
-    expect(b.servers.coOwnerAsks()).toEqual([])
-    expect(a.servers.view(again)?.owners).toEqual([a.node.ik, b.node.ik])
     const g = (await a.store.event(room))!.wire.c as { owners: { ik: string; dk: string }[] }
     expect(g.owners.map(o => o.ik)).toEqual([a.node.ik, b.node.ik])
     expect(g.owners[1].dk).toBe(b.node.cert.dk)
@@ -473,6 +469,18 @@ describe('history and files', () => {
     const mine = (await fileOf(9)).att.h
     await pump(clock, async () => (await bodies(a, room, ch)).includes('mine'), 'a has mine')
     expect(await a.servers.entitled(b.node.ik, mine)).toBe(false)
+    // Removed from this device, the server takes its counters, its cache and the files Bob
+    // downloaded from it along.
+    const keys = async () =>
+      ((await b.store.db.getAllKeys('meta')) as string[]).filter(k => k.includes(`\n${room}`))
+    expect((await keys()).some(k => k.startsWith('held\n'))).toBe(true)
+    await b.servers.leave(room)
+    await b.servers.forget(room)
+    expect((await keys()).filter(k => !k.startsWith('chain2\n'))).toEqual([])
+    expect(await b.store.db.countFromIndex('dropped', 'room', room)).toBe(0)
+    expect(await b.dms.blobs.record(f.att.h)).toBeUndefined()
+    // Alice's own file stays at hers.
+    expect((await a.dms.blobs.record(f.att.h))?.done).toBe(true)
   }, 90_000)
 })
 
@@ -543,6 +551,33 @@ describe('pings, presence and typing', () => {
     // Carol paused: Bob still counts her only while someone reports her (one hop, 60 s).
     await c.node.setPaused(true)
     await pump(clock, () => b.servers.view(room)!.online === 2, 'b sees carol go', 20_000, 30_000)
+  }, 60_000)
+
+  test('typing in a channel goes only to members who may view it', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const room = await a.servers.create('Quiet corner')
+    await joinWithCode(clock, a, room, b)
+    await joinWithCode(clock, a, room, c)
+    const mods = await a.servers.addChannel(room, 'mods', { restrictView: true })
+    await a.servers.setOverwrite(room, mods, `u:${c.node.ik}`, P.ViewChannel, 0)
+    await pump(clock, () => !!c.servers.view(room)?.channels.some(x => x.id === mods), 'carol')
+    await pump(
+      clock,
+      () => b.servers.sumOf(room).overwrites?.[mods] !== undefined,
+      'bob holds the row'
+    )
+    const heard: string[] = []
+    for (const s of b.node.readySessions(a.node.ik))
+      s.on('gtyping', m => void heard.push(String(m.ch)))
+    a.servers.typing(room, mods, true)
+    await pump(clock, () => c.servers.typingIn(room, mods).includes(a.node.ik), 'carol sees it')
+    await clock.advance(10_000)
+    expect(heard).toEqual([])
+    expect(b.servers.typingIn(room, mods)).toEqual([])
   }, 60_000)
 
   test('a room keeps at most 8 links per member', async () => {

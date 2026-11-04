@@ -1557,6 +1557,11 @@ export class P2pNode {
     this.changed()
   }
 
+  // The key this device moved away from to `dk`, if it did.
+  movedTo(dk: string) {
+    return this.self.revocations.find(r => r.successor === dk)?.dk ?? null
+  }
+
   // The device keys this identity moved away from (Task 19 moves and imports).
   movedFrom() {
     return this.self.revocations.filter(r => r.successor !== undefined).map(r => r.dk)
@@ -1569,12 +1574,32 @@ export class P2pNode {
     return [...new Set([...gone, ...(this.self.lost ?? [])])]
   }
 
-  // Records devices of ours that are not ours any more (recovery signed them out).
+  // Records devices of ours that are not ours any more (recovery signed them out), and revokes
+  // them for contacts too (without a successor, as for a lost device; this key stays).
   async disowned(dks: string[]) {
-    await this.writeSelf(cur => ({
-      ...cur,
-      lost: [...new Set([...(cur.lost ?? []), ...dks])].slice(-LOST_KEPT),
-    }))
+    if (!hasSecrets(this.self)) return
+    const now = this.clock.now()
+    const ik = keyId(this.self.ik.pk)
+    const me = keyId(this.self.dk.pk)
+    const done = new Set(this.self.revocations.map(r => r.dk))
+    const revs = dks
+      .filter(v => v !== me && !done.has(v))
+      .map(v => signRevocation(this.self.ik, v, now))
+    await this.writeSelf(cur => {
+      const revocations = mergeRevocations(cur.revocations, revs, ik)
+      return {
+        ...cur,
+        revocations,
+        certs: mergeCerts([], cur.certs, ik, revocations),
+        lost: [...new Set([...(cur.lost ?? []), ...dks])].slice(-LOST_KEPT),
+      }
+    })
+    if (!revs.length) return
+    // Contacts hear of it in the next hello.
+    this.halt('closed')
+    this.dials.clear()
+    if (!this.isPaused() && !this.stopped) await this.listen()
+    this.changed()
   }
 
   // Our certified devices: key, label and when each was made.

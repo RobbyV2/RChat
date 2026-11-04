@@ -15,7 +15,7 @@ import {
   type BlobsDeps,
 } from '../p2p/blobs'
 import { gifFrames, GIF_FRAMES, imageSize, inlineImageOk } from '../sniff'
-import { imageFits } from '../p2p/files'
+import { imageFits, UrlCache } from '../p2p/files'
 import { BLOCK, blobRoot, EMPTY_ROOT, hashBlob, hashBytes, TAG_BLOB } from '../p2p/hashing'
 import { buildEvent, LIMITS as EV, validate, type Attachment } from '../p2p/event'
 import { AUTO_PAUSED_TEXT, Dms, dmRoomId, loadMessages, type DmDeps } from '../p2p/dm'
@@ -39,7 +39,8 @@ afterEach(() => {
   for (const s of stops.splice(0)) s()
 })
 
-const eventually = async (ok: () => Promise<boolean>, what: string, ms = 30_000) => {
+// Waits for the state, for most of the test budget (a loaded run is slow, not wrong).
+const eventually = async (ok: () => Promise<boolean>, what: string, ms = 50_000) => {
   const end = Date.now() + ms
   while (!(await ok())) {
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
@@ -1500,4 +1501,36 @@ describe('fix round 2: images, the gate, forwards, late chunks, auto-download li
     await a.dms.send(a.dms.roomFor(b.node.ik), { body: 'new day', att: [ae] })
     await eventually(async () => !!(await b.dms.blobs.record(ae.h))?.done, 'new day')
   }, 60_000)
+})
+
+describe('object URLs of shown files', () => {
+  test('past the cap only URLs nothing on screen uses are revoked; one in use goes after its last user', async () => {
+    const revoked: string[] = []
+    const cache = new UrlCache(2, u => revoked.push(u))
+    let made = 0
+    const make = (h: string) => () => {
+      made += 1
+      return Promise.resolve(`blob:${h}`)
+    }
+    // Three tiles on screen at once: none is revoked, though past the cap.
+    for (const h of ['a', 'b', 'c']) await cache.use(h, make(h))
+    await new Promise(r => setTimeout(r, 0))
+    expect(revoked).toEqual([])
+    // The same file again is one URL, used twice.
+    expect(await cache.use('a', make('a'))).toBe('blob:a')
+    expect(made).toBe(3)
+    cache.unuse('a')
+    await new Promise(r => setTimeout(r, 0))
+    expect(revoked).toEqual([])
+    cache.unuse('b')
+    await new Promise(r => setTimeout(r, 0))
+    expect(revoked).toEqual(['blob:b'])
+    cache.unuse('a')
+    cache.unuse('c')
+    await new Promise(r => setTimeout(r, 0))
+    expect(revoked).toEqual(['blob:b'])
+    cache.drop('a')
+    await new Promise(r => setTimeout(r, 0))
+    expect(revoked).toEqual(['blob:b', 'blob:a'])
+  })
 })

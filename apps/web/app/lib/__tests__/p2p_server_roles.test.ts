@@ -43,7 +43,7 @@ import {
 import { ContentView, type ContentEv } from '../p2p/acl/visibility'
 import { evalSummary } from './p2p_acl_world'
 import { ServerWorld } from './p2p_server_world'
-import { applySummary, diffSummary, emptySummary } from '../p2p/acl_room'
+import { applySummary, diffSummary, emptySummary, fromStored, toStored } from '../p2p/acl_room'
 
 // Roles and moderation in P2P servers (Task 23) on the production ACL modules: the rank rules,
 // races between moderation and role changes, channel registers, slow mode (spec 3.5) and the
@@ -101,6 +101,43 @@ describe('the rank rules (spec 1.4, 1.6)', () => {
     // Dropping one's own role is always allowed.
     expect(verdict(w, 'B1', 'revoke', { to: 'B', role: MOD })).toBe('A')
     expect(F(w).holds.get('B')?.has(MOD) ?? false).toBe(false)
+  })
+})
+
+describe('dropping a role that holds its holders back in a channel (spec 1.4, 10.21)', () => {
+  test('a muted member can’t drop the muting role; a member with Manage channels can, and anyone can once nothing is held back', () => {
+    const w = world()
+    const MUTED = role(w, 2, 0)
+    const CHMOD = role(w, 4, CHANNELS)
+    for (const d of ['A1', 'B1', 'C1']) join(w, d)
+    give(w, 'A', MUTED)
+    give(w, 'B', MUTED)
+    give(w, 'B', CHMOD)
+    give(w, 'C', MUTED)
+    // #c0: the muted role may view, not send (the editor writes an unticked box as a deny).
+    w.ok('O1', 'chperm', { ch: 'c0', subj: `r:${MUTED}`, allow: VIEW, deny: SEND })
+    expect(verdict(w, 'A1', 'revoke', { to: 'A', role: MUTED })).toBe('R')
+    expect(F(w).holds.get('A')?.has(MUTED)).toBe(true)
+    expect(verdict(w, 'B1', 'revoke', { to: 'B', role: MUTED })).toBe('A')
+    // Someone with Manage roles and no Manage channels can't take it from another either.
+    const ROLER = role(w, 5, ROLES)
+    give(w, 'C', ROLER)
+    w.ok('O1', 'revoke', { to: 'C', role: ROLER })
+    const HELP = role(w, 6, ROLES)
+    join(w, 'D1')
+    give(w, 'D', HELP)
+    expect(verdict(w, 'D1', 'revoke', { to: 'A', role: MUTED })).toBe('R')
+    // An allow short of view and send holds back too; an allow of both doesn't.
+    w.ok('O1', 'chperm', { ch: 'c0', subj: `r:${MUTED}`, allow: VIEW, deny: 0 })
+    expect(verdict(w, 'A1', 'revoke', { to: 'A', role: MUTED })).toBe('R')
+    w.ok('O1', 'chperm', { ch: 'c0', subj: `r:${MUTED}`, allow: VIEW | SEND, deny: 0 })
+    expect(verdict(w, 'A1', 'revoke', { to: 'A', role: MUTED })).toBe('A')
+    // Deleting the role takes it from everyone: the same rule.
+    w.ok('O1', 'chperm', { ch: 'c0', subj: `r:${MUTED}`, allow: 0, deny: SEND })
+    expect(verdict(w, 'D1', 'role_del', { role: MUTED })).toBe('R')
+    // A deleted channel's rows hold nobody back.
+    w.ok('O1', 'channel', { id: 'c0', name: 'c0', gone: true })
+    expect(verdict(w, 'C1', 'revoke', { to: 'C', role: MUTED })).toBe('A')
   })
 })
 
@@ -716,6 +753,34 @@ describe('the fuzz of Task 22 with role, channel and overwrite events', () => {
   }, 600_000)
 })
 
+describe('a channel that becomes viewable', () => {
+  test('its history arrives as nothing new: no pings, unread or alerts for it', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('Later')
+    await joinWithCode(clock, a, room, b)
+    const mods = await a.servers.addChannel(room, 'mods', { restrictView: true })
+    await pump(clock, () => b.servers.sumOf(room).channels[mods] !== undefined, 'bob has it')
+    await a.servers.send(room, { ch: mods, body: '@Bob before you could see this' })
+    const arrivals: string[] = []
+    b.servers.onArrive(x =>
+      arrivals.push(String(x.rec.wire.c && (x.rec.wire.c as { body?: string }).body))
+    )
+    await a.servers.setOverwrite(room, mods, `u:${b.node.ik}`, P.ViewChannel | P.SendMessages, 0)
+    await pump(clock, async () => (await bodies(b, room, mods)).length === 1, 'bob gets history')
+    await clock.advance(1_000)
+    expect(arrivals).toEqual([])
+    const c = b.servers.view(room)!.chans[mods] ?? { unread: 0, pings: 0 }
+    expect([c.unread, c.pings]).toEqual([0, 0])
+    // What comes after counts.
+    await a.servers.send(room, { ch: mods, body: '@Bob now' })
+    await pump(clock, () => arrivals.length === 1, 'the new one alerts')
+    expect(b.servers.view(room)!.chans[mods]?.pings).toBe(1)
+  }, 60_000)
+})
+
 describe('the summary is safe from keys a member picks', () => {
   test('a channel, an overwrite or a ban keyed __proto__ or constructor pollutes no prototype', () => {
     const w = ServerWorld.create('O')
@@ -743,6 +808,16 @@ describe('the summary is safe from keys a member picks', () => {
     expect(page.members['__proto__']?.m).toBe('ban')
     expect(Object.keys(page.channels).sort()).toEqual(Object.keys(sum.channels).sort())
     expect(({} as Record<string, unknown>)['u:polluted']).toBeUndefined()
+    // A delta to a state without them deletes them, against a stored (plain) copy too.
+    expect(Object.getPrototypeOf(emptySummary().channels)).toBeNull()
+    for (const to of [emptySummary(), fromStored(toStored(emptySummary()))]) {
+      const gone = diffSummary(sum, to)
+      expect(gone?.del?.channels).toContain('__proto__')
+      expect(gone?.del?.channels).toContain('constructor')
+      expect(gone?.del?.members).toContain('__proto__')
+      expect(gone?.del?.overwrites).toContain('__proto__')
+      expect(gone?.del?.overwrites).toContain('constructor')
+    }
   })
 })
 
@@ -973,5 +1048,11 @@ describe('slow mode (spec 3.5)', () => {
     await b.servers.send(room, { ch, body: 'three' })
     await pump(clock, async () => (await bodies(a, room, ch)).includes('three'), 'alice has three')
     expect((await bodies(a, room, ch)).sort()).toEqual(['a1', 'a2', 'c1', 'one', 'three'])
+    // Carol, its author, sees a line saying why it's gone; nobody else does.
+    await pump(clock, async () => !!(await c.store.event(forced.id)), 'carol holds it')
+    const at = async (m: Member) =>
+      (await m.servers.loadChannel(room, ch, { limit: 100 })).messages.filter(x => x.slowHidden)
+    expect((await at(c)).map(x => x.id)).toEqual([forced.id])
+    expect(await at(a)).toEqual([])
   }, 120_000)
 })

@@ -1,11 +1,33 @@
-import { cmp, P, type Rank } from './acl/rules'
+import { cmp, EVERYONE, P, type Rank } from './acl/rules'
 import type { OverSum } from './acl_room'
-import { roleMoveWarns } from './flows'
-import { ROLE_STEP, type MemberView, type RoleView } from './server'
+import { actParts, roleMoveWarns } from './flows'
+import { ROLE_STEP, type MemberView, type RoleView, type ServerView } from './server'
 
 // Roles and channel permissions of P2P servers as the settings and the member list show them
 // (spec 1.4, 1.6): the permission toggles, where a dragged role lands, the member list grouped by
 // top role, and the allow-list rows of a channel.
+
+// Whether we may take role `r` from member `m`: ours we may always drop, others' with Manage roles
+// above both; a role a channel's overwrites hold its holders back with only with Manage channels
+// too (spec 1.4: the instance rule).
+export const mayTakeRole = (
+  v: Pick<ServerView, 'me' | 'perms'>,
+  m: Pick<MemberView, 'ik' | 'roles' | 'below'>,
+  r: Pick<RoleView, 'id' | 'below' | 'held'>,
+  me: string | null
+) => {
+  const can = (bit: number) => v.me === 'join' && (v.perms & bit) !== 0
+  if (!m.roles.includes(r.id) || (r.held && !can(P.ManageChannels))) return false
+  return m.ik === me || (can(P.ManageRoles) && r.below && m.below)
+}
+
+// Whether we may write an overwrite for `subj` (spec 1.4 chperm: ranked above its subject). A
+// member who left or a deleted role ranks below everyone: its rows can always be cleared.
+export const mayWriteRow = (v: Pick<ServerView, 'rank' | 'roles' | 'members'>, subj: string) => {
+  if (subj === `r:${EVERYONE}`) return v.rank[0] > -1
+  if (subj.startsWith('r:')) return v.roles.find(r => `r:${r.id}` === subj)?.below ?? true
+  return v.members.find(m => `u:${m.ik}` === subj)?.below ?? true
+}
 
 export const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
   { label: 'Manage channels', bit: P.ManageChannels },
@@ -34,6 +56,24 @@ export const EVERYONE_ITEMS = [
 ]
 
 export const ROLE_LOCKED = 'Only someone with a higher role can change this role.'
+
+// A line of the Re-apply list: the act, whom it is about and the role it names.
+export const reapplyLine = (
+  t: string,
+  c: Record<string, unknown>,
+  roles: readonly Pick<RoleView, 'id' | 'name'>[]
+): { act: string; who?: string; role?: string } => {
+  const { act, who } = actParts(t, typeof c.to === 'string' ? c.to : undefined)
+  const ref = typeof c.role === 'string' ? c.role : null
+  const off = t === 'role_bits' && c.on === false && EVERYONE_ITEMS.find(x => x.bit === c.bit)
+  const role =
+    ref === null ? null : ref === EVERYONE ? '@everyone' : roles.find(r => r.id === ref)?.name
+  return {
+    act: off ? `Turn off ${off.label}` : act,
+    ...(who ? { who } : {}),
+    ...(role ? { role } : ref !== null ? { role: 'Deleted role' } : {}),
+  }
+}
 
 // A role's rank (spec 1.6).
 const rankOf = (r: Pick<RoleView, 'id' | 'pos'>): Rank => [r.pos, r.id]
@@ -71,10 +111,15 @@ export function placeRole(roles: RoleView[], id: string, index: number, top: Ran
   const room = cap === Infinity ? ROLE_STEP * (movable.length + 1) : cap
   const step = Math.floor(room / (movable.length + 1))
   if (step < 1) return []
-  return movable.flatMap((r, i) => {
+  const moves = movable.flatMap((r, i) => {
     const pos = step * (movable.length - i)
-    return pos === r.pos ? [] : [{ role: r.id, pos }]
+    return pos === r.pos ? [] : [{ role: r.id, pos, from: r.pos }]
   })
+  // Posted one at a time, each a change in force at once (a move down cuts at once): moves down
+  // lowest first, then moves up highest first, so no two other roles swap on the way.
+  const down = moves.filter(m => m.pos < m.from).sort((x, y) => x.pos - y.pos)
+  const up = moves.filter(m => m.pos > m.from).sort((x, y) => y.pos - x.pos)
+  return [...down, ...up].map(({ role, pos }) => ({ role, pos }))
 }
 
 // Whether moves lower a role someone holds (spec 8.2 role order): ask first.

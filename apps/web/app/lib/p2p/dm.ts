@@ -104,6 +104,8 @@ export interface P2pMessage {
   noThread?: true
   // P2P servers: hidden, sent around the time its author was removed (spec 3.5, 8.2).
   removed?: boolean
+  // P2P servers: ours, hidden by slow mode (spec 3.5): a line says so, to us only.
+  slowHidden?: boolean
   // P2P servers: from the copy this one was transferred from (spec 3.8), shown read-only.
   archived?: boolean
 }

@@ -960,15 +960,20 @@ export const useStore = create<RChatState>()((set, get) => {
         const s = get()
         const members = new Set(serverNames(s))
         const dms = new Set([...s.dms.map(d => d.id), ...closedDms.keys()])
+        // P2P rules add to ours (a link carries none, and must not clear them).
+        const p2p = Object.assign(Object.create(null), get().notifyPrefs.p2p, n.p2p) as typeof n.p2p
         saveNotify(
-          keepScopes(n, {
-            server: name => members.has(name),
-            channel: id => {
-              const server = channelServer(s, id)
-              return server === null || members.has(server)
-            },
-            dm: id => dms.has(id),
-          })
+          keepScopes(
+            { ...n, p2p },
+            {
+              server: name => members.has(name),
+              channel: id => {
+                const server = channelServer(s, id)
+                return server === null || members.has(server)
+              },
+              dm: id => dms.has(id),
+            }
+          )
         )
       } catch {
         failed.push(sectionOf('notify').label)
@@ -4047,7 +4052,7 @@ export const useStore = create<RChatState>()((set, get) => {
 
     applyConfig: applyConfigDoc,
 
-    showToast: text => toast(text),
+    showToast: (text, name) => toast(text, name),
 
     consumeInviteJoin: () =>
       set(s => (s.invite?.join ? { invite: { ...s.invite, join: false } } : {})),

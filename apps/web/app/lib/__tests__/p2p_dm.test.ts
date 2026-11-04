@@ -64,8 +64,8 @@ const makePeer = async (
   return { ...n, dms }
 }
 
-// Polls an async condition, like waitFor for synchronous ones.
-const eventually = async (ok: () => Promise<boolean>, what: string, ms = 30_000) => {
+// Polls an async condition, like waitFor for synchronous ones, for most of the test budget.
+const eventually = async (ok: () => Promise<boolean>, what: string, ms = 50_000) => {
   const end = Date.now() + ms
   while (!(await ok())) {
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)

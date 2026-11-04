@@ -2,17 +2,20 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import {
   CONFLICT_TEXT,
   LONE_TEXT,
+  lostOthersText,
   QUICK_TEXT,
-  TRANSFER_CO_OWNERS_TEXT,
+  CO_OWNER_DECLINED_TEXT,
   UNBAN_TEXT,
   VOUCH_WAIT_TEXT,
 } from '../p2p/flows'
 import { signDeviceCert2 } from '../p2p/acl/binding'
+import { EVERYONE, P } from '../p2p/acl/rules'
 import { buildEvent2, signUpgrade } from '../p2p/event'
 import { keyId, newKeyPair } from '../p2p/keys'
 import { parseCode, encodeCode, REDEEM_TEXT, Servers } from '../p2p/server'
 import {
   bodies,
+  createWith,
   deliver,
   general,
   joinWithCode,
@@ -116,6 +119,12 @@ describe('moderation waits for sync (spec 8.2, 9 rule 2)', () => {
       a.servers.unban(room, c.node.ik)
     )
     await pump(clock, () => a.servers.view(room)?.mods.length === 1, 'waiting once more', 1_000)
+    // One applied anyway behind another that waits goes at once.
+    const later = a.servers.moderate(room, { act: 'Mark' }, () => emit(a)(room, 'mark', () => ({})))
+    await pump(clock, () => a.servers.view(room)?.mods.length === 2, 'two waiting', 1_000)
+    a.servers.applyAnyway(room, a.servers.view(room)!.mods[1].id)
+    expect(typeof (await later)).toBe('string')
+    expect(a.servers.view(room)?.mods.length).toBe(1)
     a.servers.cancelMod(room, a.servers.view(room)!.mods[0].id)
     expect(await unban).toBeNull()
     expect(state(a, room, c.node.ik)).toBe('ban')
@@ -316,6 +325,13 @@ describe('removals that reach invitees (spec 8.2)', () => {
     expect(state(a, room, d.node.ik)).toBe('leave')
     await pump(clock, () => state(d, room, d.node.ik) === 'leave', 'dave out at his')
     await pump(clock, async () => !!(await d.store.room(room))?.cascade, 'dave notes the cascade')
+    // Invite them again, refused for now (a limit): Dave stays in the note.
+    const s = a.servers as unknown as { emit: (r: string, t: string, ...x: unknown[]) => unknown }
+    const real = s.emit.bind(a.servers)
+    s.emit = (r, t, ...x) => (t === 'add' ? Promise.reject(new Error('Later')) : real(r, t, ...x))
+    expect(await failure(a.servers.inviteAgain(room, b.node.ik))).toBe('Later')
+    s.emit = real
+    expect(a.servers.view(room)?.reached).toEqual([{ by: b.node.ik, lost: [d.node.ik] }])
     // Invite them again: Dave, out by the cascade, joins again by himself.
     await a.servers.inviteAgain(room, b.node.ik)
     expect(a.servers.view(room)?.reached).toEqual([])
@@ -377,7 +393,7 @@ describe('devices (spec 3.9, 8.2)', () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
-    const b = await makeMember(hub, 'Bob', clock)
+    let b = await makeMember(hub, 'Bob', clock)
     const room = await a.servers.create('Copies')
     const ch = general(a, room)
     await joinWithCode(clock, a, room, b)
@@ -388,6 +404,11 @@ describe('devices (spec 3.9, 8.2)', () => {
     await emit(b)(room, 'mark', () => ({}))
     expect(await deliver(b, room, twin.wire, clock.now())).toBe('new')
     await pump(clock, () => b.servers.view(room)?.conflict === true, 'bob sees the conflict')
+    expect(await failure(b.servers.send(room, { ch, body: 'two' }))).toBe(CONFLICT_TEXT)
+    // A reload doesn't forget it.
+    stopMember(b)
+    b = await restart(hub, b, clock)
+    expect(b.servers.view(room)?.conflict).toBe(true)
     expect(await failure(b.servers.send(room, { ch, body: 'two' }))).toBe(CONFLICT_TEXT)
     await b.servers.newDevice()
     const dev2 = keyId(b.node.author()!.dk.pk)
@@ -408,19 +429,27 @@ describe('devices (spec 3.9, 8.2)', () => {
       'the old device is signed out'
     )
     expect(b.node.lostDevices()).toEqual([dev])
+    // Contacts learn it too: a revocation without a successor.
+    const revs = (await b.store.self())!.revocations
+    expect(revs.some(r => r.dk === dev && r.successor === undefined)).toBe(true)
   }, 120_000)
 
   test('a copy that receives what its key signed elsewhere, past its own chain, stops signing', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
-    const b = await makeMember(hub, 'Bob', clock)
+    let b = await makeMember(hub, 'Bob', clock)
     const room = await a.servers.create('Copies')
     const ch = general(a, room)
     await joinWithCode(clock, a, room, b)
     // Another copy of Bob's device signs a message here first (no fork: the next seq).
     const other = await signed(b, room, 'msg', { body: 'from the other copy', ch })
     expect(await deliver(b, room, other.wire, clock.now())).toBe('new')
+    expect(b.servers.view(room)?.conflict).toBe(true)
+    expect(await failure(b.servers.send(room, { ch, body: 'mine' }))).toBe(CONFLICT_TEXT)
+    // A reload doesn't forget it (the evidence is a continuation, no fork to find again).
+    stopMember(b)
+    b = await restart(hub, b, clock)
     expect(b.servers.view(room)?.conflict).toBe(true)
     expect(await failure(b.servers.send(room, { ch, body: 'mine' }))).toBe(CONFLICT_TEXT)
     // Its own events coming back change nothing.
@@ -513,9 +542,15 @@ describe('devices (spec 3.9, 8.2)', () => {
     // dropped, and what it signed past that isn't offered either.
     await (
       b.node as unknown as {
-        writeSelf: (f: (cur: Record<string, unknown>) => Record<string, unknown>) => Promise<void>
+        writeSelf: (
+          f: (cur: { revocations: { successor?: string }[] }) => Record<string, unknown>
+        ) => Promise<void>
       }
-    ).writeSelf(cur => ({ ...cur, lost: [] }))
+    ).writeSelf(cur => ({
+      ...cur,
+      lost: [],
+      revocations: cur.revocations.filter(r => r.successor !== undefined),
+    }))
     expect(b.node.lostDevices()).toEqual([])
     await emit(a)(room, 'mark', () => ({}))
     await pump(clock, async () => !!(await b.store.event(kick.id)), 'bob holds the kick')
@@ -544,6 +579,64 @@ describe('devices (spec 3.9, 8.2)', () => {
     expect(b.servers.view(room)?.conflict).toBe(false)
     expect(await deliver(b, room, xw as never, clock.now())).toBe('new')
     expect(b.servers.view(room)?.conflict).toBe(true)
+  }, 60_000)
+
+  test('a lost device: the preview names our other devices added on top of what it did, which the rotation signs out', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const room = await a.servers.create('Third')
+    await joinWithCode(clock, a, room, b)
+    await joinWithCode(clock, a, room, c)
+    const all = [a, b, c]
+    const { other, dk, add } = await secondDevice(clock, room, b, all)
+    const trusted = clock.now()
+    await clock.advance(60_000)
+    // The stolen device makes a code; another device of Bob's introduces itself on top of it.
+    const h = keyId(crypto.getRandomValues(new Uint8Array(32)))
+    const code = stolen(b, other, room, 'code', 'a', { h, exp: clock.now() + 3_600_000 }, 1, add)
+    for (const m of all)
+      expect(['new', 'dup']).toContain(await deliver(m, room, code.wire as never, clock.now()))
+    const third = newKeyPair()
+    const plan = await planOf(b, room, 'device_add')
+    const intro = buildEvent2(
+      { ik: b.node.author()!.ik, dk: third },
+      room,
+      'device_add',
+      'a',
+      { dcert: signDeviceCert2(b.node.author()!.ik, room, b.node.ik, keyId(third.pk), plan.iprev) },
+      { seq: 0, ap: [code.id], ...(plan.iprev ? { iprev: plan.iprev } : {}) },
+      code.wire.ev.ts + 1
+    )
+    for (const m of all)
+      expect(await deliver(m, room, intro.wire as never, clock.now())).toBe('new')
+    const [p] = await b.servers.lostPreview(dk, trusted)
+    expect(p.ap).not.toBeNull()
+    expect(p.others).toEqual([keyId(third.pk)])
+    expect(lostOthersText(1)).toContain('set it up again')
+  }, 60_000)
+
+  test('a lost device in none of our servers is revoked for contacts, and this browser keeps its key', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const room = await a.servers.create('Elsewhere')
+    await joinWithCode(clock, a, room, b)
+    const lost = keyId(newKeyPair().pk)
+    const before = keyId(b.node.author()!.dk.pk)
+    expect(await b.servers.disownDevice(lost, clock.now())).toEqual({
+      late: [],
+      failed: [],
+      unsent: 0,
+    })
+    expect(keyId(b.node.author()!.dk.pk)).toBe(before)
+    const revs = (await b.store.self())!.revocations
+    expect(revs.some(r => r.dk === lost && r.successor === undefined)).toBe(true)
+    expect(revs.some(r => r.dk === before)).toBe(false)
+    expect(b.node.lostDevices()).toContain(lost)
   }, 60_000)
 
   test('a lost device: a fork of it already seen here is undone too', async () => {
@@ -625,9 +718,19 @@ describe('devices (spec 3.9, 8.2)', () => {
     expect(p.resign).toEqual([])
     expect(Object.keys(p.at).sort()).toEqual([code.id, kick.id].sort())
     const before = keyId(b.node.author()!.dk.pk)
-    expect(await b.servers.disownDevice(dk, trusted)).toEqual({ late: [], failed: [] })
+    // A first try fails in the room (a limit, say): the key it made stays for the retry.
+    const s = b.servers as unknown as { emit: (r: string, t: string, ...x: unknown[]) => unknown }
+    const real = s.emit.bind(b.servers)
+    s.emit = (r, t, ...x) =>
+      t === 'primary_rotate' ? Promise.reject(new Error('Try again later')) : real(r, t, ...x)
+    const first = await b.servers.disownDevice(dk, trusted)
+    s.emit = real
+    expect(first.failed.map(f => f.room)).toEqual([room])
+    const made = keyId(b.node.author()!.dk.pk)
+    expect(made).not.toBe(before)
+    expect(await b.servers.disownDevice(dk, trusted)).toEqual({ late: [], failed: [], unsent: 0 })
     const fresh = keyId(b.node.author()!.dk.pk)
-    expect(fresh).not.toBe(before)
+    expect(fresh).toBe(made)
     for (const m of [a, c])
       await pump(
         clock,
@@ -679,7 +782,7 @@ describe('devices (spec 3.9, 8.2)', () => {
     const [p] = await b.servers.lostPreview(dk, t)
     expect(p.acts).toEqual([])
     expect(p.content).toBe(1)
-    expect(await b.servers.disownDevice(dk, t)).toEqual({ late: [], failed: [] })
+    expect(await b.servers.disownDevice(dk, t)).toEqual({ late: [], failed: [], unsent: 0 })
     // Lost after this browser moved from it: both revocations count, and it is lost.
     expect(b.node.lostDevices()).toContain(dk)
     const fresh = keyId(b.node.author()!.dk.pk)
@@ -754,7 +857,7 @@ describe('devices (spec 3.9, 8.2)', () => {
     const [p] = await b.servers.lostPreview(dk, trusted)
     // Exactly what is signed again: the code that still works.
     expect(p.resign.map(x => [x.id, x.t])).toEqual([[k2code[0], 'code']])
-    expect(await b.servers.disownDevice(dk, trusted)).toEqual({ late: [], failed: [] })
+    expect(await b.servers.disownDevice(dk, trusted)).toEqual({ late: [], failed: [], unsent: 0 })
     const k3 = keyId(b.node.author()!.dk.pk)
     // The stolen device and k2 go (k2 came after the cut-off); the first key and the newest stay.
     await pump(
@@ -795,8 +898,7 @@ describe('transfer (spec 3.8)', () => {
     await pump(clock, () => d.node.contact(a.node.ik)?.state === 'incoming', 'request')
     await d.node.accept(a.node.ik)
     await pump(clock, () => a.node.contact(d.node.ik)?.state === 'mutual', 'mutual')
-    d.servers.allowCoOwner(a.node.ik)
-    const room = await a.servers.create('Old', [d.node.ik])
+    const room = await createWith(clock, a, 'Old', [d])
     const ch = general(a, room)
     await joinWithCode(clock, a, room, b)
     await joinWithCode(clock, a, room, c)
@@ -824,7 +926,7 @@ describe('transfer (spec 3.8)', () => {
     const q = await ask(d, 'cosign')
     expect([q.to, q.name]).toEqual([b.node.ik, 'Old'])
     void d.servers.answerTransfer(q.key, false)
-    expect(await t).toBe(TRANSFER_CO_OWNERS_TEXT)
+    expect(await t).toBe(CO_OWNER_DECLINED_TEXT)
     expect(a.servers.view(room)?.upgraded).toBe(false)
     // She approves.
     const preAp = c.servers.sumOf(room).heads
@@ -903,7 +1005,9 @@ describe('transfer (spec 3.8)', () => {
     // before it, doesn't show; nor does anything by someone the new copy bans.
     const late = await signed(c, room, 'msg', { body: 'late in the old copy', ch }, { ap: preAp })
     for (const m of [a, b]) await deliver(m, room, late.wire, clock.now())
-    expect((await bodies(a, room, ch)).includes('late in the old copy')).toBe(true)
+    // Stored in the old copy, shown nowhere (the old copy shows only its archive too).
+    expect(await a.store.event(late.id)).not.toBeUndefined()
+    expect((await bodies(a, room, ch)).includes('late in the old copy')).toBe(false)
     expect((await rows(a)).map(x => x[0])).not.toContain('late in the old copy')
     await b.servers.ban(next, c.node.ik)
     await sees(clock, a, next, c.node.ik, 'ban')
@@ -984,6 +1088,384 @@ describe('transfer (spec 3.8)', () => {
       await pump(clock, () => m.servers.myMembership(next) === 'join', `${m.name} in`, 1_000)
     return next
   }
+
+  test('the old copy shows, counts and announces nothing injected at positions from before the upgrade', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const room = await a.servers.create('Old')
+    const ch = general(a, room)
+    await joinWithCode(clock, a, room, b)
+    await joinWithCode(clock, a, room, c)
+    await giveRole(a, room, c, P.ManageMessages)
+    await a.servers.send(room, { ch, body: 'before' })
+    await pump(clock, async () => (await bodies(c, room, ch)).includes('before'), 'carol has it')
+    const kept = (await a.servers.loadChannel(room, ch, { limit: 10 })).messages.find(
+      m => m.body === 'before'
+    )!
+    await a.servers.pin(room, kept.id, true)
+    await pump(clock, () => ((c.servers.view(room)?.perms ?? 0) & P.ManageMessages) !== 0, 'carol')
+    const plan = await planOf(c, room, 'msg', 'c')
+    const at = plan.ap
+    const next = await transferred(clock, room, a, b, [a, b, c])
+    await pump(clock, () => b.servers.view(next)?.carry === null, 'carried over', 1_000)
+    await b.servers.ban(next, c.node.ik)
+    await pump(clock, () => state(a, next, c.node.ik) === 'ban', 'alice sees the ban', 1_000)
+    const arrivals: string[] = []
+    a.servers.onArrive(x => arrivals.push(x.rec.id))
+    const before = a.servers.view(room)!.chans[ch] ?? { unread: 0, pings: 0 }
+    // Carol, banned in the new copy, writes in the old one at a position from before the upgrade.
+    const spam = await signed(
+      c,
+      room,
+      'msg',
+      { body: '@Alice zebraspam in the old copy', ch, mentions: [a.node.ik] },
+      { ap: at }
+    )
+    expect(await deliver(a, room, spam.wire, clock.now())).toBe('new')
+    await clock.advance(1_000)
+    expect(arrivals).toEqual([])
+    const after = a.servers.view(room)!.chans[ch] ?? { unread: 0, pings: 0 }
+    expect([after.unread, after.pings]).toEqual([before.unread, before.pings])
+    expect(await bodies(a, room, ch)).toEqual(['before'])
+    expect(await bodies(a, next, ch)).toEqual(['before'])
+    // Nor is it a search hit, or shown by a jump to it.
+    const q = {
+      q: 'zebraspam',
+      from: null,
+      room: null,
+      ch: null,
+      hasFile: false,
+      beforeTs: null,
+      afterTs: null,
+    }
+    expect((await a.servers.search(q)).hits).toEqual([])
+    expect(await a.servers.loadAround(room, ch, spam.id)).toBeNull()
+    const ok = (await a.servers.search({ ...q, q: 'before' })).hits.map(h => h.m.body)
+    expect(ok).toContain('before')
+    // Nor pinned: Carol (Manage messages at that position) pins it there too.
+    const pin = await signed(
+      c,
+      room,
+      'pin',
+      { target: spam.id, on: true, ch },
+      { ap: at, seq: plan.seq + 2, cprev: spam.id }
+    )
+    expect(await deliver(a, room, pin.wire, clock.now())).toBe('new')
+    await clock.advance(1_000)
+    expect((await a.servers.loadPins(room, ch)).map(m => m.body)).toEqual(['before'])
+  }, 120_000)
+
+  test('a ban made at the same time as the transfer is offered to re-apply in the new copy (spec 3.8 step 7)', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const d = await makeMember(hub, 'Dave', clock)
+    const room = await a.servers.create('Step7')
+    for (const m of [b, c, d]) await joinWithCode(clock, a, room, m)
+    await giveRole(a, room, c, 32)
+    await pump(clock, () => ((c.servers.view(room)?.perms ?? 0) & 32) !== 0, 'carol may ban')
+    // Carol bans Dave while away: the transfer doesn't have it in its past.
+    await c.node.setPaused(true)
+    await pump(clock, () => !c.servers.online(room), 'carol away')
+    await c.servers.ban(room, d.node.ik)
+    const t = failure(a.servers.transfer(room, b.node.ik))
+    await pump(clock, () => b.servers.transferAsks().length === 1, 'bob asked', 1_000)
+    void b.servers.answerTransfer(b.servers.transferAsks()[0].key, true)
+    expect(await t).toBe('ok')
+    await c.node.setPaused(false)
+    await pump(clock, () => !!c.servers.view(room)?.next, 'carol follows', 1_000)
+    const next = c.servers.view(room)!.next!
+    await pump(clock, () => c.servers.myMembership(next) === 'join', 'carol in', 1_000)
+    await pump(
+      clock,
+      () => ((c.servers.view(next)?.perms ?? 0) & 32) !== 0,
+      'carol has her role again',
+      5_000,
+      60_000
+    )
+    await pump(clock, () => state(c, next, d.node.ik) !== null, 'dave carried', 1_000)
+    expect(state(c, next, d.node.ik)).not.toBe('ban')
+    await pump(
+      clock,
+      () => c.servers.view(next)?.reapply.some(r => r.t === 'ban' && r.c.to === d.node.ik) === true,
+      'offered',
+      1_000
+    )
+    await c.servers.reapplyAll(next)
+    expect(state(c, next, d.node.ik)).toBe('ban')
+    expect(c.servers.view(next)?.reapply).toEqual([])
+  }, 120_000)
+
+  test('a demotion made at the same time as the transfer stays; a role change then is offered to re-apply (spec 3.8 step 7)', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const d = await makeMember(hub, 'Dave', clock)
+    const room = await a.servers.create('Demoted')
+    for (const m of [b, c, d]) await joinWithCode(clock, a, room, m)
+    await giveRole(a, room, c, 16, 5)
+    const helper = await giveRole(a, room, d, 4 | 32, 1)
+    await pump(clock, () => ((c.servers.view(room)?.perms ?? 0) & 16) !== 0, 'carol manages roles')
+    await pump(clock, () => ((d.servers.view(room)?.perms ?? 0) & 4) !== 0, 'dave may kick')
+    // Carol, away, takes Helper from Dave and Ban off Helper; Dave is away for the transfer too.
+    await c.node.setPaused(true)
+    await d.node.setPaused(true)
+    await pump(clock, () => !c.servers.online(room), 'carol away')
+    await c.servers.revokeRole(room, d.node.ik, helper)
+    await c.servers.setRoleBit(room, helper, 32, false)
+    const t = failure(a.servers.transfer(room, b.node.ik))
+    await pump(clock, () => b.servers.transferAsks().length === 1, 'bob asked', 1_000)
+    void b.servers.answerTransfer(b.servers.transferAsks()[0].key, true)
+    expect(await t).toBe('ok')
+    await c.node.setPaused(false)
+    await pump(
+      clock,
+      () => !b.servers.sumOf(room).members[d.node.ik]?.roles.includes(helper),
+      'bob holds the demotion',
+      1_000
+    )
+    await d.node.setPaused(false)
+    await pump(clock, () => !!c.servers.view(room)?.next, 'carol follows', 1_000)
+    const next = c.servers.view(room)!.next!
+    for (const m of [b, c, d])
+      await pump(
+        clock,
+        () => m.servers.myMembership(next) === 'join',
+        `${m.name} in`,
+        5_000,
+        90_000
+      )
+    await pump(clock, () => b.servers.view(next)?.carry === null, 'carried over', 5_000, 90_000)
+    await pump(
+      clock,
+      () => ((c.servers.view(next)?.perms ?? 0) & 16) !== 0,
+      'carol has her role again',
+      5_000,
+      60_000
+    )
+    await clock.advance(10_000)
+    // The demotion stands in the new copy.
+    expect(b.servers.sumOf(next).members[d.node.ik]?.roles ?? []).toEqual([])
+    // Ban off Helper, made during the transfer: offered for the new copy's Helper.
+    const newHelper = Object.entries(b.servers.sumOf(next).roles).find(([, r]) => r.pos === 1)![0]
+    await pump(
+      clock,
+      () =>
+        c.servers.view(next)?.reapply.some(r => r.t === 'role_bits' && r.c.role === newHelper) ===
+        true,
+      'offered',
+      1_000
+    )
+    await c.servers.reapplyAll(next)
+    expect((c.servers.sumOf(next).roles[newHelper].bits & 32) === 0).toBe(true)
+  }, 120_000)
+
+  // Carol, away, changes something while Alice transfers the server to Bob; Carol joins the new
+  // copy once it is carried over. Roles: Helper at position 1 and Other at 2, both with Ban.
+  const changedAway = async (
+    name: string,
+    change: (c: Member, room: string, helper: string) => Promise<unknown>
+  ) => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const room = await a.servers.create(name)
+    for (const m of [b, c]) await joinWithCode(clock, a, room, m)
+    await giveRole(a, room, c, 16, 5)
+    const helper = await emit(a)(room, 'role_create', () => ({ pos: 1, bits: 32, name: 'Helper' }))
+    const other = await emit(a)(room, 'role_create', () => ({ pos: 2, bits: 32, name: 'Other' }))
+    await pump(
+      clock,
+      () => !!c.servers.sumOf(room).roles[other] && ((c.servers.view(room)?.perms ?? 0) & 16) !== 0,
+      'carol manages roles'
+    )
+    await c.node.setPaused(true)
+    await pump(clock, () => !c.servers.online(room), 'carol away')
+    await change(c, room, helper)
+    const t = failure(a.servers.transfer(room, b.node.ik))
+    await pump(clock, () => b.servers.transferAsks().length === 1, 'bob asked', 1_000)
+    void b.servers.answerTransfer(b.servers.transferAsks()[0].key, true)
+    expect(await t).toBe('ok')
+    await c.node.setPaused(false)
+    await pump(clock, () => !!c.servers.view(room)?.next, 'carol follows', 1_000)
+    const next = c.servers.view(room)!.next!
+    await pump(clock, () => c.servers.myMembership(next) === 'join', 'carol in', 5_000, 90_000)
+    await pump(clock, () => b.servers.view(next)?.carry === null, 'carried over', 5_000, 90_000)
+    await pump(
+      clock,
+      () => ((c.servers.view(next)?.perms ?? 0) & 16) !== 0,
+      'carol manages roles again',
+      1_000
+    )
+    const made = (role: string) =>
+      Object.entries(b.servers.sumOf(next).roles).find(([, r]) => r.name === role)![0]
+    const offered = () => c.servers.view(next)?.reapply.filter(r => r.t === 'role_bits') ?? []
+    return { clock, b, c, next, made, offered }
+  }
+
+  test('a role change made during a transfer is offered for the role made from it, after the new copy moved its roles', async () => {
+    const { clock, b, c, next, made, offered } = await changedAway('Moved', (c, room, helper) =>
+      c.servers.setRoleBit(room, helper, 32, false)
+    )
+    const [newHelper, newOther] = [made('Helper'), made('Other')]
+    // Other takes the position Helper had.
+    await b.servers.moveRole(next, newHelper, 3)
+    await b.servers.moveRole(next, newOther, 1)
+    await pump(
+      clock,
+      () => c.servers.sumOf(next).roles[newOther]?.pos === 1,
+      'carol sees the move',
+      1_000
+    )
+    await clock.advance(10_000)
+    await pump(clock, () => offered().length > 0, 'offered', 1_000)
+    const named = offered().map(r =>
+      r.c.role === newHelper ? 'Helper' : r.c.role === newOther ? 'Other' : r.c.role
+    )
+    expect(named).toEqual(['Helper'])
+    await c.servers.reapplyAll(next)
+    const roles = c.servers.sumOf(next).roles
+    expect([roles[newHelper].bits & 32, roles[newOther].bits & 32]).toEqual([0, 32])
+  }, 120_000)
+
+  test('a role change made during a transfer is not offered once the new copy deleted that role, not even for a new one just like it', async () => {
+    const { clock, b, c, next, made, offered } = await changedAway('Deleted', (c, room, helper) =>
+      c.servers.setRoleBit(room, helper, 32, false)
+    )
+    const newHelper = made('Helper')
+    await pump(clock, () => offered().some(r => r.c.role === newHelper), 'offered', 1_000)
+    await b.servers.deleteRole(next, newHelper)
+    // The owner makes a role with Helper's position, bits and name, after the carry-over.
+    const fresh = await emit(b)(next, 'role_create', () => ({ pos: 1, bits: 32, name: 'Helper' }))
+    await pump(
+      clock,
+      () => !c.servers.sumOf(next).roles[newHelper] && !!c.servers.sumOf(next).roles[fresh],
+      'carol sees both',
+      1_000
+    )
+    await clock.advance(10_000)
+    expect(offered()).toEqual([])
+  }, 120_000)
+
+  test('a lockdown made during a transfer (@everyone may no longer send) is offered and applied in the new copy', async () => {
+    const { c, next, clock } = await changedAway('Locked', (c, room) =>
+      c.servers.setRoleBit(room, EVERYONE, P.SendMessages, false)
+    )
+    expect((c.servers.view(next)!.everyone & P.SendMessages) !== 0).toBe(true)
+    await pump(
+      clock,
+      () =>
+        c.servers.view(next)?.reapply.some(r => r.t === 'role_bits' && r.c.role === EVERYONE) ===
+        true,
+      'offered',
+      1_000
+    )
+    await c.servers.reapplyAll(next)
+    await pump(
+      clock,
+      () => (c.servers.view(next)!.everyone & P.SendMessages) === 0,
+      'locked',
+      1_000
+    )
+  }, 120_000)
+
+  test('a role taken and given back during a transfer is not offered to take again', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const d = await makeMember(hub, 'Dave', clock)
+    const room = await a.servers.create('Undone')
+    for (const m of [b, c, d]) await joinWithCode(clock, a, room, m)
+    await giveRole(a, room, c, 16, 5)
+    const helper = await giveRole(a, room, d, 4, 1)
+    await pump(clock, () => ((c.servers.view(room)?.perms ?? 0) & 16) !== 0, 'carol manages roles')
+    await pump(
+      clock,
+      () => c.servers.sumOf(room).members[d.node.ik]?.roles.includes(helper) === true,
+      'carol sees dave helper'
+    )
+    await c.node.setPaused(true)
+    await pump(clock, () => !c.servers.online(room), 'carol away')
+    await c.servers.revokeRole(room, d.node.ik, helper)
+    await c.servers.assignRole(room, d.node.ik, helper)
+    const t = failure(a.servers.transfer(room, b.node.ik))
+    await pump(clock, () => b.servers.transferAsks().length === 1, 'bob asked', 1_000)
+    void b.servers.answerTransfer(b.servers.transferAsks()[0].key, true)
+    expect(await t).toBe('ok')
+    await c.node.setPaused(false)
+    await pump(clock, () => !!c.servers.view(room)?.next, 'carol follows', 1_000)
+    const next = c.servers.view(room)!.next!
+    for (const m of [b, c, d])
+      await pump(
+        clock,
+        () => m.servers.myMembership(next) === 'join',
+        `${m.name} in`,
+        5_000,
+        90_000
+      )
+    await pump(clock, () => b.servers.view(next)?.carry === null, 'carried over', 5_000, 90_000)
+    const newHelper = Object.entries(b.servers.sumOf(next).roles).find(([, r]) => r.pos === 1)![0]
+    await pump(
+      clock,
+      () =>
+        c.servers.sumOf(next).members[d.node.ik]?.roles.includes(newHelper) === true &&
+        ((c.servers.view(next)?.perms ?? 0) & 16) !== 0,
+      'dave has it again',
+      5_000,
+      60_000
+    )
+    await clock.advance(10_000)
+    expect(c.servers.view(next)!.reapply.filter(r => r.t === 'revoke')).toEqual([])
+  }, 120_000)
+
+  test('older messages the new owner never held stay in the archive', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const room = await a.servers.create('Joined')
+    const ch = general(a, room)
+    await a.servers.setHistory(room, 'joined')
+    await joinWithCode(clock, a, room, c)
+    await c.servers.send(room, { ch, body: 'carol early' })
+    await pump(clock, async () => (await bodies(a, room, ch)).includes('carol early'), 'sent')
+    // A channel Bob can't view, where only Alice and Carol write.
+    const mods = await a.servers.addChannel(room, 'mods', { restrictView: true })
+    await a.servers.setOverwrite(room, mods, `u:${c.node.ik}`, P.ViewChannel, 0)
+    await pump(clock, () => !!c.servers.view(room)?.channels.some(x => x.id === mods), 'carol')
+    await c.servers.send(room, { ch: mods, body: 'carol in mods' })
+    await pump(clock, async () => (await bodies(a, room, mods)).length === 1, 'mods sent')
+    await joinWithCode(clock, a, room, b)
+    await a.servers.send(room, { ch, body: 'alice later' })
+    await pump(clock, async () => (await bodies(b, room, ch)).includes('alice later'), 'bob has')
+    // Bob holds nothing of Carol's: her messages are older than his join, or in a channel he
+    // can't view.
+    expect(await bodies(b, room, ch)).toEqual(['alice later'])
+    const next = await transferred(clock, room, a, b, [a, b, c])
+    await pump(clock, () => b.servers.view(next)?.carry === null, 'carried over', 1_000)
+    // Carol's allow row comes along: she sees #mods in the new copy, with its archive.
+    await pump(
+      clock,
+      () => !!c.servers.view(next)?.channels.some(x => x.id === mods),
+      'mods carried',
+      1_000
+    )
+    for (const m of [a, c])
+      expect(await bodies(m, next, ch)).toEqual(['carol early', 'alice later'])
+    expect(await bodies(c, next, mods)).toEqual(['carol in mods'])
+  }, 120_000)
 
   const updateRoom = (m: Member) =>
     (
@@ -1163,6 +1645,117 @@ describe('transfer (spec 3.8)', () => {
     await d.node.setPaused(false)
     await pump(clock, () => d.servers.myMembership(next) === 'join', 'dan in', 1_000, 60_000)
   }, 120_000)
+
+  test('once in the new copy, the old one keeps a link or two; the new one links with old members for a while', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const all: Member[] = []
+    for (const n of ['Alice', 'Bob', 'Carol', 'Dan', 'Erin', 'Fay'])
+      all.push(await makeMember(hub, n, clock))
+    const [a, b] = all
+    const room = await a.servers.create('Budget')
+    for (const m of all.slice(1)) await joinWithCode(clock, a, room, m)
+    await pump(
+      clock,
+      () => all.some(m => m.servers.sync.linksOf(room).length > 2),
+      'the old copy linked',
+      1_000
+    )
+    // Fay is away: only invited in the new copy.
+    await all[5].node.setPaused(true)
+    const next = await transferred(clock, room, a, b, all.slice(0, 5))
+    const fay = all[5].node.ik
+    await pump(clock, () => state(a, next, fay) === 'invite', 'fay invited', 1_000)
+    const live = all.slice(0, 5)
+    await pump(
+      clock,
+      () => live.every(m => m.servers.sync.linksOf(room).length <= 2),
+      'old copy links trimmed',
+      5_000
+    )
+    for (const m of live) expect(m.servers.sync.linksOf(next).length).toBeGreaterThan(0)
+    type Wb = { linkCandidates(r: string): string[]; joinedOthers(r: string): string[] }
+    const wa = a.servers as unknown as Wb
+    expect(wa.joinedOthers(next)).not.toContain(fay)
+    expect(wa.linkCandidates(next)).toContain(fay)
+    await b.servers.ban(next, fay)
+    await pump(clock, () => state(a, next, fay) === 'ban', 'alice sees the ban', 1_000)
+    expect(wa.linkCandidates(next)).not.toContain(fay)
+  }, 120_000)
+
+  test('an old copy whose links all go to members who moved still lets in one who was away', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    // No re-sampling, which could free a link by chance.
+    const still = { servers: { gossip: { resampleMs: 24 * 60 * 60_000 } } }
+    const a = await makeMember(hub, 'Alice', clock, still)
+    const b = await makeMember(hub, 'Bob', clock, still)
+    const c = await makeMember(hub, 'Carol', clock, still)
+    const d = await makeMember(hub, 'Dave', clock)
+    const room = await a.servers.create('Away')
+    for (const m of [b, c, d]) await joinWithCode(clock, a, room, m)
+    await d.node.setPaused(true)
+    const moved = [a, b, c]
+    const next = await transferred(clock, room, a, b, moved)
+    // Each who moved keeps two links in the old copy, both with the other two.
+    await pump(
+      clock,
+      () => moved.every(m => m.servers.sync.linksOf(room).length === 2),
+      'old copy links full',
+      1_000
+    )
+    await d.node.setPaused(false)
+    // At his first contact, not once a link frees up by chance.
+    const back = clock.now()
+    await pump(
+      clock,
+      () => !!d.servers.view(room)?.next || clock.now() - back > 30_000,
+      'dave hears',
+      1_000
+    )
+    expect(d.servers.view(room)?.next).toBe(next)
+    for (const m of moved) expect(m.servers.sync.linksOf(room).length).toBeLessThanOrEqual(2)
+  }, 120_000)
+
+  test('members who never join the new copy hold an old-copy link only for a while', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    // A minute for the window (and for preferring who let us in), to keep the test short.
+    const short = { servers: { gossip: { preferMs: 60_000 } } }
+    const a = await makeMember(hub, 'Alice', clock, short)
+    const b = await makeMember(hub, 'Bob', clock, short)
+    // Clients that never take the new copy.
+    const stay: Member[] = []
+    for (const n of ['Xena', 'Yuri', 'Zoe', 'Dave']) {
+      const m = await makeMember(hub, n, clock)
+      ;(m.servers as unknown as { follow: () => Promise<void> }).follow = async () => {}
+      stay.push(m)
+    }
+    const [x, , z, d] = stay
+    const room = await a.servers.create('Stay')
+    for (const m of [b, ...stay]) await joinWithCode(clock, a, room, m)
+    await d.node.setPaused(true)
+    const next = await transferred(clock, room, a, b, [a, b])
+    expect(x.servers.myMembership(next)).toBeNull()
+    // Past the window those links count like any other: back to two each.
+    const end = clock.now() + 2 * 60_000
+    await pump(clock, () => clock.now() >= end, 'the window', 5_000)
+    for (const m of [a, b]) expect(m.servers.sync.linksOf(room).length).toBeLessThanOrEqual(2)
+    // Dave, away until now, takes one of them at his first contact.
+    await d.node.setPaused(false)
+    const back = clock.now()
+    const linked = () =>
+      [a, b].some(m => m.servers.sync.linksOf(room).some(l => l.ik === d.node.ik))
+    await pump(clock, () => linked() || clock.now() - back > 30_000, 'dave linked', 1_000)
+    expect(linked()).toBe(true)
+    // Someone banned in the new copy is no longer needed in the old one.
+    type Wg = { deps: { needs: (r: string, ik: string) => boolean } }
+    const needs = (a.servers.gossip as unknown as Wg).deps.needs
+    expect(needs(room, z.node.ik)).toBe(true)
+    await b.servers.ban(next, z.node.ik)
+    await pump(clock, () => state(a, next, z.node.ik) === 'ban', 'alice sees the ban', 1_000)
+    expect(needs(room, z.node.ik)).toBe(false)
+  }, 240_000)
 
   test("members acknowledge only the new owner's events: others' marks never set them off", async () => {
     const clock = new ManualClock()
@@ -1407,6 +2000,46 @@ describe('transfer (spec 3.8)', () => {
     expect(b.servers.view(next)!.channels.length).toBe(81)
   }, 300_000)
 
+  test('a carry-over of 200 overwrites is acknowledged to its end', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await makeMember(hub, 'Alice', clock)
+    const b = await makeMember(hub, 'Bob', clock)
+    const c = await makeMember(hub, 'Carol', clock)
+    const room = await a.servers.create('Rows')
+    await joinWithCode(clock, a, room, b)
+    await joinWithCode(clock, a, room, c)
+    // Carol acknowledges what Alice did (spec 4.1 W3(b)), so Alice can go on.
+    const ack = async () => {
+      await pump(
+        clock,
+        () => c.servers.sumOf(room).count === a.servers.sumOf(room).count,
+        'carol holds it',
+        1_000
+      )
+      const n = a.servers.sumOf(room).count
+      await emit(c)(room, 'mark', () => ({}))
+      await pump(clock, () => a.servers.sumOf(room).count > n, 'alice holds the mark', 1_000)
+    }
+    let n = 0
+    for (const name of ['one', 'two']) {
+      const ch = await a.servers.addChannel(room, name, { restrictView: true })
+      for (let i = 0; i < 100; i += 1) {
+        await a.servers.setOverwrite(room, ch, `u:${keyId(newKeyPair().pk)}`, P.ViewChannel, 0)
+        if (++n % 20 === 0) await ack()
+      }
+    }
+    expect(
+      Object.values(a.servers.sumOf(room).overwrites).reduce((k, o) => k + Object.keys(o).length, 0)
+    ).toBe(200)
+    await ack()
+    const next = await transferred(clock, room, a, b, [a, b, c])
+    await pump(clock, () => b.servers.view(next)?.carry === null, 'carried over', 5_000, 240_000)
+    expect(
+      Object.values(b.servers.sumOf(next).overwrites).reduce((k, o) => k + Object.keys(o).length, 0)
+    ).toBe(200)
+  }, 400_000)
+
   test('an owner who goes on past what the carry-over holds gets no more acknowledgements', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -1491,8 +2124,7 @@ describe('transfer (spec 3.8)', () => {
     await pump(clock, () => d.node.contact(a.node.ik)?.state === 'incoming', 'request')
     await d.node.accept(a.node.ik)
     await pump(clock, () => a.node.contact(d.node.ik)?.state === 'mutual', 'mutual')
-    d.servers.allowCoOwner(a.node.ik)
-    const room = await a.servers.create('Two', [d.node.ik])
+    const room = await createWith(clock, a, 'Two', [d])
     await joinWithCode(clock, a, room, d)
     await joinWithCode(clock, a, room, b)
     const preAp = d.servers.sumOf(room).heads

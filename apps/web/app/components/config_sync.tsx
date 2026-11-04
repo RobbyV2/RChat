@@ -537,7 +537,8 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
       </div>
       <p className="text-xs text-on-surface-variant">
         Anyone with the link can see the included settings, like the servers you are in and who you
-        message, until it expires. This instance stores them as readable text.
+        message, until it expires. This instance stores them as readable text. Links never include
+        P2P servers or P2P settings.
       </p>
       {empty && <p className="text-xs text-on-surface-variant">Include at least one section.</p>}
       <FieldError message={error} />

@@ -204,15 +204,24 @@ export function AccountChip({
       : sub
         ? [{ label: 'Copy account', icon: Copy, action: () => void sharing().copyText(sub) }]
         : []
+  const open = (x: number, y: number) =>
+    openMenu(x, y, items, { header: <BadgeSheet state={state} slot={slot} /> })
   return (
     <span
       data-account-badge={state}
       title={line}
       aria-label={line}
-      role="img"
-      {...longPress((x, y) =>
-        openMenu(x, y, items, { header: <BadgeSheet state={state} slot={slot} /> })
-      )}
+      aria-haspopup="menu"
+      role="button"
+      tabIndex={0}
+      onKeyDown={e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        e.stopPropagation()
+        const r = e.currentTarget.getBoundingClientRect()
+        open(r.left, r.bottom)
+      }}
+      {...longPress(open)}
       className={`inline-flex min-w-0 items-center gap-1 rounded-full py-px text-[11px] leading-4 font-medium ${
         size === 'icon' ? 'shrink-0 p-px' : 'shrink px-1.5'
       } ${cls}`}

@@ -112,10 +112,17 @@ export interface GossipDeps {
   dialable?: (ik: string) => boolean
   // A session left without room links.
   idle?: (s: Session) => void
+  // A room that keeps fewer links than the limits give (an old copy after a transfer).
+  budget?: (room: string) => { perRoom: number; outTarget: number } | null
+  // A member let in at the cap, in place of a link that isn't one (someone away from an old copy),
+  // for `preferMs` from when we first let them in or keep them that way.
+  needs?: (room: string, ik: string) => boolean
   // After every tick.
   onTick?: () => void
-  // Whether `ch` is a live text channel of the room (typing elsewhere is ignored).
+  // Whether `ch` is a live text channel of the room (typing elsewhere is ignored), and whether
+  // member `ik` may view it (typing there goes only to those who may).
   channel?: (room: string, ch: string) => boolean
+  sees?: (room: string, ch: string, ik: string) => boolean
   onPresence: (room: string) => void
   onTyping: (room: string, ch: string, ik: string, on: boolean) => void
   limits?: Partial<GossipLimits>
@@ -134,6 +141,8 @@ export class Gossip {
   private busy = new Map<string, number>()
   // Members to link with first (who let us in, or invited us), until when.
   private preferred = new Map<string, Map<string, number>>()
+  // Until when each needed member counts as needed, per room (never renewed).
+  private needed = new Map<string, Map<string, number>>()
   private seen = new Map<string, Map<string, number>>()
   private typers = new Map<string, { until: number; timer: unknown }>()
   // When we last relayed each typer's state, and frames per link this second.
@@ -209,6 +218,17 @@ export class Gossip {
     return (this.preferred.get(room)?.get(ik) ?? 0) > this.deps.clock.now()
   }
 
+  private keeps(room: string, ik: string) {
+    if (this.isPreferred(room, ik)) return true
+    if (!this.deps.needs?.(room, ik)) return false
+    const now = this.deps.clock.now()
+    const map = this.needed.get(room) ?? new Map<string, number>()
+    this.needed.set(room, map)
+    let until = map.get(ik)
+    if (until === undefined) map.set(ik, (until = now + this.limits.preferMs))
+    return until > now
+  }
+
   private preferredOf(room: string) {
     const now = this.deps.clock.now()
     return [...(this.preferred.get(room) ?? [])].filter(([, t]) => t > now).map(([ik]) => ik)
@@ -256,6 +276,10 @@ export class Gossip {
     return n
   }
 
+  private cap(room: string) {
+    return this.deps.budget?.(room) ?? this.limits
+  }
+
   // Whether we would ask `ik` for a link to `room` now.
   private wants(room: string, ik: string) {
     if (!this.deps.may(room, ik) || this.linked(room, ik)) return false
@@ -264,8 +288,8 @@ export class Gossip {
     if ((this.busy.get(k) ?? 0) > now || (this.asked.get(k) ?? 0) > now) return false
     if (this.isPreferred(room, ik)) return true
     const asking = this.pending(room)
-    if (this.deps.links(room).length + asking >= this.limits.perRoom) return false
-    if (this.outOf(room).size + asking >= this.limits.outTarget) return false
+    if (this.deps.links(room).length + asking >= this.cap(room).perRoom) return false
+    if (this.outOf(room).size + asking >= this.cap(room).outTarget) return false
     return this.deps.members(room).includes(ik)
   }
 
@@ -318,8 +342,8 @@ export class Gossip {
       const need = Math.max(
         0,
         Math.min(
-          this.limits.perRoom - used,
-          this.limits.outTarget - this.outOf(room).size - asking - flying
+          this.cap(room).perRoom - used,
+          this.cap(room).outTarget - this.outOf(room).size - asking - flying
         )
       )
       const list = [...pref, ...(need ? this.ranked(room).map(c => c.ik) : [])]
@@ -379,11 +403,11 @@ export class Gossip {
   // least preferred first.
   private trim(room: string) {
     const links = this.deps.links(room)
-    let extra = links.length - this.limits.perRoom
+    let extra = links.length - this.cap(room).perRoom
     if (extra <= 0) return
     const order = new Map(this.ranked(room).map((c, i) => [c.ik, i]))
     const victims = links
-      .filter(l => !this.isPreferred(room, l.ik))
+      .filter(l => !this.keeps(room, l.ik))
       .sort(
         (a, b) =>
           Number(this.outOf(room).has(a.ik)) - Number(this.outOf(room).has(b.ik)) ||
@@ -403,7 +427,7 @@ export class Gossip {
     for (const room of this.deps.rooms()) {
       const keep = new Set(
         this.ranked(room)
-          .slice(0, this.limits.outTarget)
+          .slice(0, this.cap(room).outTarget)
           .map(c => c.ik)
       )
       for (const ik of [...this.outOf(room)]) {
@@ -426,13 +450,13 @@ export class Gossip {
     if (!this.deps.linksOn(s).length) this.deps.idle?.(s)
   }
 
-  // Room for a preferred member at the cap: the least preferred link someone else asked for
-  // goes. False when every link is preferred.
+  // Room for a preferred (or needed) member at the cap: the least preferred link someone else
+  // asked for goes. False when every link is preferred or needed.
   private evictFor(room: string) {
     const order = new Map(this.ranked(room).map((c, i) => [c.ik, i]))
     const victim = this.deps
       .links(room)
-      .filter(l => !this.isPreferred(room, l.ik))
+      .filter(l => !this.keeps(room, l.ik))
       .sort(
         (a, b) =>
           Number(this.outOf(room).has(a.ik)) - Number(this.outOf(room).has(b.ik)) ||
@@ -447,6 +471,7 @@ export class Gossip {
   leave(room: string) {
     this.out.delete(room)
     this.preferred.delete(room)
+    this.needed.delete(room)
     this.timers.push(
       this.deps.clock.set(() => {
         if (this.deps.rooms().includes(room)) return
@@ -474,8 +499,8 @@ export class Gossip {
         continue
       }
       const have = this.linked(room, ik)
-      const atCap = !have && this.deps.links(room).length >= this.limits.perRoom
-      if (atCap && !(this.isPreferred(room, ik) && this.evictFor(room))) busy.push(room)
+      const atCap = !have && this.deps.links(room).length >= this.cap(room).perRoom
+      if (atCap && !(this.keeps(room, ik) && this.evictFor(room))) busy.push(room)
       else ok.push(room)
     }
     // The answer goes out before our heads, so the other side links first.
@@ -492,8 +517,8 @@ export class Gossip {
     const now = this.deps.clock.now()
     for (const room of rooms) {
       this.asked.delete(this.key(ik, room))
-      const atCap = !this.linked(room, ik) && this.deps.links(room).length >= this.limits.perRoom
-      const full = atCap && !(this.isPreferred(room, ik) && this.evictFor(room))
+      const atCap = !this.linked(room, ik) && this.deps.links(room).length >= this.cap(room).perRoom
+      const full = atCap && !(this.keeps(room, ik) && this.evictFor(room))
       if (full || !this.deps.rooms().includes(room) || !this.deps.may(room, ik)) {
         void s.send({ t: 'grlink_drop', rooms: [room] }).catch(() => {})
         continue
@@ -596,7 +621,7 @@ export class Gossip {
   typing(room: string, ch: string, on: boolean, root?: string) {
     const frame = root ? { t: 'ttyping', room, ch, root, on } : { t: 'gtyping', room, ch, on }
     for (const l of this.deps.links(room))
-      if (this.full(room, l.ik) && this.allow(l.session, 'out'))
+      if (this.full(room, l.ik) && this.sees(room, ch, l.ik) && this.allow(l.session, 'out'))
         void l.session.send(frame).catch(() => {})
   }
 
@@ -638,8 +663,18 @@ export class Gossip {
       ? { t: 'ttyping', room, ch, root, on, ik }
       : { t: 'gtyping', room, ch, on, ik }
     for (const l of this.deps.links(room))
-      if (l.session !== s && l.ik !== ik && this.full(room, l.ik) && this.allow(l.session, 'out'))
+      if (
+        l.session !== s &&
+        l.ik !== ik &&
+        this.full(room, l.ik) &&
+        this.sees(room, ch, l.ik) &&
+        this.allow(l.session, 'out')
+      )
         void l.session.send(frame).catch(() => {})
+  }
+
+  private sees(room: string, ch: string, ik: string) {
+    return this.deps.sees?.(room, ch, ik) ?? true
   }
 
   // Shows or stops showing a typer in a place (a channel, or `{channel}#{root}`); true when that

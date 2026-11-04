@@ -126,7 +126,7 @@ const openPeer = async (hub: Hub, db: string, clock: ManualClock) => {
 // test run slows down a lot (the move test is the longest chain of it).
 const SLOW = 40_000
 
-const eventually = async (ok: () => Promise<boolean>, what: string, ms = 30_000) => {
+const eventually = async (ok: () => Promise<boolean>, what: string, ms = SLOW) => {
   const end = Date.now() + ms
   while (!(await ok())) {
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)

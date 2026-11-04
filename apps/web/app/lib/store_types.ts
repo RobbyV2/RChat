@@ -62,14 +62,14 @@ import type { Timeout } from './timeouts'
 import type { TypingMap } from './typing'
 import type { SelfAudio } from './voice_layout'
 
-// A menu row. `submenu` opens a nested menu (a flyout on desktop, a sheet with Back on touch)
-// instead of running `action`. `checked` makes it a radio (`radio: true`) or check item.
 // More that "Mark all as read" marks (P2P): whether it has anything unread, and marking it.
 export interface MarkAllExtra {
   pending: boolean
   mark: () => void
 }
 
+// A menu row. `submenu` opens a nested menu (a flyout on desktop, a sheet with Back on touch)
+// instead of running `action`. `checked` makes it a radio (`radio: true`) or check item.
 export interface ContextMenuItem {
   label: string
   subtitle?: string
@@ -369,7 +369,7 @@ export interface RChatState {
   syncConfigLink: () => boolean
   closeConfigLink: () => void
   applyConfig: (doc: ConfigDoc, keys: SectionKey[]) => Promise<string | null>
-  showToast: (text: string) => void
+  showToast: (text: string, name?: string) => void
   consumeInviteJoin: () => void
   startDm: (username: string) => Promise<void>
   messageUser: (username: string, content: string) => Promise<void>

@@ -168,6 +168,14 @@ const buffered = (conn: DataConnection) => (conn as { bufferSize?: number }).buf
 
 const nowS = () => Math.floor(Date.now() / 1000)
 
+const readRaw = (key: string) => {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
 const readJson = <T extends object>(key: string): Record<string, T> => {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(key) ?? '{}')
@@ -465,6 +473,8 @@ export class P2pManager {
   private heldMedia: MediaConnection[] = []
   private heldControl: DataConnection[] = []
   private cached: Record<string, StoredFile> | null = null
+  // What storage held when `cached` was read or last written.
+  private raw: string | null = null
   private legacy: Record<string, StoredFile> | null = null
   private got: Record<string, Received> | null = null
   private id: string | null = null
@@ -581,8 +591,27 @@ export class P2pManager {
 
   files(): Record<string, StoredFile> {
     if (this.account === null) return {}
-    this.cached ??= readJson<StoredFile>(this.key('rchat_p2p_files'))
+    if (!this.cached) {
+      this.raw = readRaw(this.key('rchat_p2p_files'))
+      this.cached = readJson<StoredFile>(this.key('rchat_p2p_files'))
+    }
     return this.cached
+  }
+
+  // Every change starts from what is stored now when another tab of the account wrote since this
+  // one read or wrote it; otherwise from this tab's copy (which holds what storage refused).
+  private fresh() {
+    if (this.cached && readRaw(this.key('rchat_p2p_files')) === this.raw) return this.cached
+    this.cached = null
+    return this.files()
+  }
+
+  private save(files: Record<string, StoredFile>) {
+    const json = JSON.stringify(files)
+    const ok = writeLocal(this.key('rchat_p2p_files'), json)
+    if (ok) this.raw = json
+    this.cached = files
+    return ok
   }
 
   // Files kept by versions before per-account storage, until the server says whose they are.
@@ -592,14 +621,15 @@ export class P2pManager {
   }
 
   private write(files: Record<string, StoredFile>) {
-    if (!writeLocal(this.key('rchat_p2p_files'), JSON.stringify(files)))
+    const was = this.cached
+    if (!this.save(files)) {
+      this.cached = was
       throw new Error('storage write failed')
-    this.cached = files
+    }
   }
 
   private drop(files: Record<string, StoredFile>, gone: string[]) {
-    writeLocal(this.key('rchat_p2p_files'), JSON.stringify(files))
-    this.cached = files
+    this.save(files)
     for (const id of gone)
       void blobs()
         .remove(this.hostKey(id))
@@ -652,7 +682,7 @@ export class P2pManager {
     } catch {
       throw full
     }
-    const files = { ...this.files() }
+    const files = { ...this.fresh() }
     files[id] = {
       name: file.name,
       mime: file.type || NEUTRAL_TYPE,
@@ -675,17 +705,16 @@ export class P2pManager {
 
   // The send went through: the file now follows its message (see removeByMessage).
   posted(id: string, messageId: number) {
-    const files = { ...this.files() }
+    const files = { ...this.fresh() }
     if (!Object.hasOwn(files, id)) return
     const { pending, ...f } = files[id]
     files[id] = { ...f, message_id: messageId }
-    writeLocal(this.key('rchat_p2p_files'), JSON.stringify(files))
-    this.cached = files
+    this.save(files)
     if (pending) this.announce()
   }
 
   removeFile(id: string) {
-    const files = { ...this.files() }
+    const files = { ...this.fresh() }
     if (!Object.hasOwn(files, id)) return
     const { pending } = files[id]
     delete files[id]
@@ -696,7 +725,7 @@ export class P2pManager {
   // The message (or its attachment) was removed: stop serving the file and drop any copy we
   // downloaded, even when the message isn't loaded here.
   forgetMessage(messageId: number) {
-    const files = { ...this.files() }
+    const files = { ...this.fresh() }
     const gone = Object.keys(files).filter(id => files[id].message_id === messageId)
     for (const id of gone) delete files[id]
     if (gone.length) {
@@ -710,7 +739,7 @@ export class P2pManager {
   }
 
   purgeExpired() {
-    const files = { ...this.files() }
+    const files = { ...this.fresh() }
     const now = nowS()
     const gone: string[] = []
     for (const [id, f] of Object.entries(files)) {
@@ -749,7 +778,7 @@ export class P2pManager {
     if (this.account === null) return
     const alive = new Set(live)
     const now = nowS()
-    const files = { ...this.files() }
+    const files = { ...this.fresh() }
     const stale = checked.filter(
       id =>
         Object.hasOwn(files, id) &&
@@ -773,10 +802,9 @@ export class P2pManager {
         continue
       }
       if (this.account !== owner) return
-      const next = { ...this.files() }
+      const next = { ...this.fresh() }
       next[id] = { name: f.name, mime: f.mime, size: f.size, expires_at: f.expires_at }
-      writeLocal(this.key('rchat_p2p_files'), JSON.stringify(next))
-      this.cached = next
+      this.save(next)
       delete legacy[id]
       void blobs()
         .remove(id)

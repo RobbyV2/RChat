@@ -34,6 +34,9 @@ import {
 import {
   blankRoom,
   insertInto,
+  countOf,
+  moveCounts,
+  SERVER_ACL,
   SERVER_TOTAL,
   SERVER_TOTAL_BYTES,
   storedSize,
@@ -543,13 +546,8 @@ const putServerRow = async (tx: LooseTx, e: EventRecord) => {
   const size = storedSize(e.wire)
   const seq = r.lastSeq + 1
   await tx.objectStore('events').put({ ...row, seq })
-  await rooms.put({ ...r, count: r.count + 1, lastSeq: seq, bytes: (r.bytes ?? 0) + size })
-  const meta = tx.objectStore('meta')
-  await meta.put((((await meta.get(SERVER_TOTAL)) as number | undefined) ?? 0) + 1, SERVER_TOTAL)
-  await meta.put(
-    (((await meta.get(SERVER_TOTAL_BYTES)) as number | undefined) ?? 0) + size,
-    SERVER_TOTAL_BYTES
-  )
+  const meta = tx.objectStore('meta') as unknown as Parameters<typeof moveCounts>[0]
+  await rooms.put(await moveCounts(meta, { ...r, lastSeq: seq }, { ...countOf(e), bytes: size }))
 }
 
 // Reads the inflated lines one at a time, so memory goes to the records, never to one huge
@@ -816,12 +814,13 @@ const load = async (
   fire(meta.put(DB_VERSION, 'schema'))
   const ik = keyId(dump.self.ik.pk)
   const oldDk = keyId(dump.self.dk.pk)
-  // Events and bytes per room: DMs and servers are counted apart (purged server events count as
-  // nothing).
-  const perRoom = new Map<string, { n: number; bytes: number }>()
-  const count = (m: Map<string, { n: number; bytes: number }>, k: string, size: number) => {
-    const u = m.get(k) ?? { n: 0, bytes: 0 }
-    m.set(k, { n: u.n + 1, bytes: u.bytes + size })
+  // Events and bytes per room: DMs and servers are counted apart (purged server events count no
+  // event; a server's ACL events are counted apart too).
+  const perRoom = new Map<string, { n: number; acl: number; bytes: number }>()
+  const count = (k: string, e: EventRecord) => {
+    const u = perRoom.get(k) ?? { n: 0, acl: 0, bytes: 0 }
+    const c = e.layer ? countOf(e) : { n: e.purged ? 0 : 1, acl: 0 }
+    perRoom.set(k, { n: u.n + c.n, acl: u.acl + c.acl, bytes: u.bytes + storedSize(e.wire) })
   }
   let skipped = dump.skipped
   let latest = now
@@ -843,7 +842,7 @@ const load = async (
         const e = v as EventRecord
         // A server event is checked and decided on the next start (server.ts load).
         if (e.layer) v = { ...e, imp: true }
-        if (!e.purged) count(perRoom, e.room, storedSize(e.wire))
+        count(e.room, e)
         const ev = (e.wire as Wire).ev
         if (ev.sender === ik && ev.dev === oldDk) {
           latest = Math.max(latest, ev.ts)
@@ -861,18 +860,22 @@ const load = async (
   // A server room's bytes counted the exporter's search rows: here they are the events', and the
   // index is built again on start (and counted then).
   for (const r of rooms)
-    if (r.kind === 'server')
-      fire(tx.objectStore('rooms').put({ ...r, bytes: perRoom.get(r.id)?.bytes ?? 0 }))
-  const dms = { n: 0, bytes: 0 }
-  const srv = { n: 0, bytes: 0 }
+    if (r.kind === 'server') {
+      const u = perRoom.get(r.id) ?? { n: 0, acl: 0, bytes: 0 }
+      fire(tx.objectStore('rooms').put({ ...r, count: u.n, acount: u.acl, bytes: u.bytes }))
+    }
+  const dms = { n: 0, acl: 0, bytes: 0 }
+  const srv = { n: 0, acl: 0, bytes: 0 }
   for (const [room, u] of perRoom) {
     const t = servers.has(room) ? srv : dms
     t.n += u.n
+    t.acl += u.acl
     t.bytes += u.bytes
   }
   fire(meta.put(dms.n, TOTAL))
   fire(meta.put(dms.bytes, TOTAL_BYTES))
   fire(meta.put(srv.n, SERVER_TOTAL))
+  fire(meta.put(srv.acl, SERVER_ACL))
   fire(meta.put(srv.bytes, SERVER_TOTAL_BYTES))
   const revokedAt = Math.min(latest, now + EV.futureMs)
   // Events the old device dated after the revocation would be refused: they stay unsent.

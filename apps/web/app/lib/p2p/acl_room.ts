@@ -185,6 +185,10 @@ export interface Summary {
   ownerCount: number
 }
 
+// Records keyed by ids and strings members pick (channel ids, overwrite subjects, ban targets):
+// without a prototype, so a key like `__proto__` is only a key.
+const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>
+
 type Keyed = 'members' | 'roles' | 'channels' | 'overwrites' | 'codes'
 const KEYED: readonly Keyed[] = ['members', 'roles', 'channels', 'overwrites', 'codes']
 
@@ -198,13 +202,13 @@ export const emptySummary = (): Summary => ({
   rules: null,
   owners: [],
   creator: null,
-  members: {},
-  roles: {},
+  members: dict(),
+  roles: dict(),
   everyone: 0,
-  channels: {},
-  overwrites: {},
+  channels: dict(),
+  overwrites: dict(),
   settings: null,
-  codes: {},
+  codes: dict(),
   upgraded: false,
   upgrades: [],
   forks: [],
@@ -225,14 +229,26 @@ export const fromStored = <T>(x: T): T =>
     v === BIG ? Infinity : v === -BIG ? -Infinity : v
   ) as T
 
+// Whether two summaries hold the same state, whatever the order of their keys and of the lists
+// that are sets (a member's roles and devices; a cache and a fresh replica list them apart).
+const SETS = new Set(['roles', 'devs', 'adds', 'inviters', 'upgrades', 'forks', 'heads'])
+const norm = (x: unknown, k = ''): unknown => {
+  if (Array.isArray(x)) {
+    const out = x.map(v => norm(v))
+    return SETS.has(k) ? out.map(v => JSON.stringify(v)).sort() : out
+  }
+  if (x === null || typeof x !== 'object') return x
+  const out = dict<unknown>()
+  for (const key of Object.keys(x).sort()) out[key] = norm((x as Record<string, unknown>)[key], key)
+  return out
+}
+export const sameSummary = (a: Summary, b: Summary) =>
+  JSON.stringify(norm(toStored(a))) === JSON.stringify(norm(toStored(b)))
+
 const json = (x: unknown) =>
   JSON.stringify(x, (_k, v: unknown) =>
     typeof v === 'number' && !Number.isFinite(v) ? `#${String(v)}` : v
   )
-
-// Records keyed by ids and strings members pick (channel ids, overwrite subjects, ban targets):
-// without a prototype, so a key like `__proto__` is only a key.
-const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>
 
 export const diffSummary = (a: Summary, b: Summary): SumDelta | null => {
   const out: SumDelta = {}
@@ -249,7 +265,7 @@ export const diffSummary = (a: Summary, b: Summary): SumDelta | null => {
     // an entry the kept summary shares (the same object) is unchanged
     for (const [id, v] of Object.entries(y))
       if (!Object.hasOwn(x, id) || (x[id] !== v && json(x[id]) !== json(v))) put[id] = v
-    const del = Object.keys(x).filter(id => !(id in y))
+    const del = Object.keys(x).filter(id => !Object.hasOwn(y, id))
     if (Object.keys(put).length) (out.put ??= {})[k] = put as never
     if (del.length) (out.del ??= {})[k] = del
   }
@@ -452,6 +468,9 @@ export interface Reapply {
   id: string
   t: string
   c: AclContent
+  // From an old copy (spec 3.8 step 7): the role it names (not @everyone) as the upgrade carried
+  // it over, to find the role the carry-over made from it in the new copy.
+  roleWas?: RoleSum
 }
 
 export interface Disowned {
@@ -500,6 +519,42 @@ const rolesOf = (F: EvalResult['facts'], ix: Ix) => {
   }
   return roles
 }
+
+// A role_create's content is the carried summary `was`.
+const sameRole = (c: AclContent, was: RoleSum) =>
+  c.pos === was.pos && c.bits === was.bits && c.name === was.name && c.color === was.color
+
+// Whether a deny's effect still holds in `F`: the member still out or banned, the role still not
+// held, the bit still off, the role still deleted or where it was moved, the invite still gone.
+const standing = (t: string, c: AclContent, F: EvalResult['facts']) => {
+  const to = typeof c.to === 'string' ? c.to : ''
+  const role = typeof c.role === 'string' ? c.role : ''
+  switch (t) {
+    case 'kick':
+      return !F.mem.has(to)
+    case 'ban':
+      return F.ban.has(to)
+    case 'uninvite':
+      return !F.mem.has(to) && !F.invited.get(to)?.length
+    case 'revoke':
+      return ![...(F.holds.get(to) ?? [])].includes(role)
+    case 'role_bits':
+      return (
+        (role === EVERYONE || F.roles.has(role)) &&
+        ((F.bits.get(role) ?? 0) & (c.bit as number)) === 0
+      )
+    case 'role_del':
+      return !F.roles.has(role)
+    case 'role_move':
+      return F.pos.get(role) === c.pos
+    default:
+      return true
+  }
+}
+
+// The role a deny names, not @everyone, which every copy has.
+const roleRef = (c: AclContent) =>
+  typeof c.role === 'string' && c.role !== EVERYONE ? c.role : null
 
 // The overwrites that allow or deny something, by channel and subject.
 const overwritesOf = (F: EvalResult['facts']) => {
@@ -1127,15 +1182,23 @@ export class AclRoom {
   // Who let `ik` in by its join `j`: the author of the latest invite of it in j's past, and the
   // issuer of the code that invite named.
   private letIn(sum: MemberSum, ik: string, j: number) {
+    const inv = this.inviteOf(ik, j)
+    if (!inv) return
+    const ix = this.r.acl.ix
+    sum.via = poster(ix.ev[inv.add])
+    if (inv.code !== undefined) sum.code = ix.ev[inv.code].a
+  }
+
+  // The invite join `j` of `ik` used (the latest admitted `add` of `ik` in its past), and the
+  // `code` event that invite names.
+  private inviteOf(ik: string, j: number): { add: number; code: number | undefined } | null {
     const ix = this.r.acl.ix
     const fe = this.r.acl.evaluation()
     let add = -1
     for (const a of ix.addEv.get(ik) ?? []) if (a > add && fe.inS(a) && ix.has(j, a)) add = a
-    if (add < 0) return
-    sum.via = poster(ix.ev[add])
+    if (add < 0) return null
     const code = ix.ev[add].c.code
-    const ci = code === undefined ? undefined : ix.codeEv.get(code)
-    if (ci !== undefined) sum.code = ix.ev[ci].a
+    return { add, code: code === undefined ? undefined : ix.codeEv.get(code) }
   }
 
   // Whether the invite `add` of `to` lets a join in by W3(e): an owner's, or one that an admitted
@@ -1424,6 +1487,77 @@ export class AclRoom {
   // I2: our own denies the current state doesn't count (cut, void by a fork, past a revocation's
   // watermark) that we may still make at the heads: the same act, checked against the current
   // state's authority and guards. One per act, newest first.
+  // Spec 3.8 step 7: our denies in this (old) copy that the upgrade `up` doesn't have in its past
+  // (made concurrently with the transfer, so not carried over), to re-apply in the new copy
+  // (`admissible` there decides). A role is named as the upgrade carried it over.
+  outside(me: string, up: string, exclude: readonly string[] = []): Reapply[] {
+    const ix = this.r.acl.ix
+    const u = ix.at.get(up)
+    if (u === undefined || ix.genesis < 0) return []
+    const fe = this.r.acl.evaluation()
+    const carried = rolesOf(this.r.acl.stateOf(ix.ev[u].ap).facts, ix)
+    const F = this.r.state().facts
+    const out: Reapply[] = []
+    for (const i of ix.byAuthor.get(me) ?? []) {
+      const e = ix.ev[i]
+      if (!ix.isD[i] || ix.isSelfD[i]) continue
+      if (e.relay || !fe.inS(i) || fe.X[i] || fe.tail[i] || exclude.includes(e.dev)) continue
+      if (ix.has(u, i)) continue
+      const {
+        seen: _s,
+        reason: _r,
+        ...c
+      } = e.c as AclContent & { seen?: unknown; reason?: unknown }
+      // Still in force here: not cut, and nothing since gave back what it took.
+      if (!fe.isEffI(i) || !standing(e.t, c as AclContent, F)) continue
+      const role = roleRef(c as AclContent)
+      const roleWas = role === null ? undefined : carried[role]
+      if (role !== null && !roleWas) continue
+      out.push({
+        id: ix.ids[i],
+        t: e.t,
+        c: c as AclContent,
+        ...(roleWas ? { roleWas } : {}),
+      })
+    }
+    return out
+  }
+
+  // Those of `list` we may make here now (authority and guards in the current state). A role is
+  // the one the carry-over made from it: the owner's role_create with the carried summary, before
+  // its `done` chunk (later moves and edits don't change that). None, more than one, or deleted
+  // since: the act isn't offered.
+  admissible(me: string, list: readonly Reapply[]): Reapply[] {
+    const F = this.r.state().facts
+    const ix = this.r.acl.ix
+    const owner = ix.genesis < 0 ? null : ix.ev[ix.genesis].a
+    const done: number[] = []
+    ix.ev.forEach((e, i) => {
+      const chunk = e.t === 'migrate' && e.a === owner ? (e.c.chunk as AclContent) : null
+      if (chunk?.kind === 'done') done.push(i)
+    })
+    const madeFrom = (was: RoleSum) => {
+      const hits = [...ix.roleCreate].filter(([, i]) => {
+        const e = ix.ev[i]
+        return e.a === owner && sameRole(e.c, was) && !done.some(d => ix.has(i, d))
+      })
+      return hits.length === 1 && F.roles.has(hits[0][0]) ? hits[0][0] : undefined
+    }
+    const seen = new Set<string>()
+    const out: Reapply[] = []
+    for (const x of list) {
+      const role = x.roleWas ? madeFrom(x.roleWas) : null
+      if (role === undefined) continue
+      const c = role === null ? x.c : ({ ...x.c, role } as AclContent)
+      const key = `${x.t}\n${JSON.stringify(c)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const probe = { id: '', t: x.t, a: me, dev: '', seq: 0, ap: [], ts: 0, c } as AclEv
+      if (authority(probe, F) && guards(probe, F)) out.push({ id: x.id, t: x.t, c })
+    }
+    return out
+  }
+
   reapply(me: string, exclude: readonly string[] = []): Reapply[] {
     const ix = this.r.acl.ix
     if (ix.genesis < 0 || this.r.unknownRules !== undefined) return []
@@ -1526,12 +1660,8 @@ export class AclRoom {
       let j = -1
       for (const g of ix.memEv.get(X) ?? []) if (fe.inS(g) && !fe.isVoidI(g) && g > j) j = g
       if (j < 0 || ix.ev[j].t !== 'join') continue
-      let add = -1
-      for (const a of ix.addEv.get(X) ?? []) if (a > add && fe.inS(a) && ix.has(j, a)) add = a
-      if (add < 0) continue
-      const code = ix.ev[add].c.code
-      const ci = code === undefined ? undefined : ix.codeEv.get(code)
-      if (Dset.has(add) || (ci !== undefined && Dset.has(ci))) lose.push(X)
+      const inv = this.inviteOf(X, j)
+      if (inv && (Dset.has(inv.add) || (inv.code !== undefined && Dset.has(inv.code)))) lose.push(X)
     }
     return {
       seq,

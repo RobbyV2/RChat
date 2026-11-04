@@ -502,16 +502,27 @@ describe('the P2P rail (Task 22 leftover)', () => {
   const p2p = [R1, { id: 'pf', name: 'Clubs', servers: [R2, R3], open: false }]
   const withRail = () => {
     const src = source()
-    return source({ layout: { ...src.layout!, p2p } })
+    let notify = setMute(src.notify!, { kind: 'p2ps', room: R1 }, 'forever')
+    notify = setLevel(notify, { kind: 'p2pc', room: R2, ch: 'chan0000000' }, 'all')
+    return source({ layout: { ...src.layout!, p2p }, notify })
   }
 
-  test("the layout section carries P2P servers' order and folders, also in a share link", async () => {
-    const doc = buildConfig(withRail(), new Set<SectionKey>(['layout']))
+  test("the layout section carries P2P servers' order and folders in the string and file, never in a share link", async () => {
+    const doc = buildConfig(withRail(), new Set<SectionKey>(['layout', 'notify']))
     expect(doc.layout?.p2p).toEqual(p2p)
     const back = await decodeConfig(await encodeConfig(doc), NOW)
     if (!back.ok) throw new Error(back.error)
     expect(back.doc.layout?.p2p).toEqual(p2p)
-    expect(linkDoc(back.doc).layout?.p2p).toEqual(p2p)
+    expect(Object.keys(back.doc.notify?.p2p ?? {}).length).toBe(2)
+    // The instance stores share links: no room id and no P2P folder name in one.
+    const link = linkDoc(back.doc)
+    expect(link.layout?.p2p).toBeUndefined()
+    expect(link.layout?.servers).toEqual(back.doc.layout?.servers)
+    // P2P notification rules are keyed by room ids too: none in a link; the rest stays.
+    expect(Object.keys(link.notify?.p2p ?? {})).toEqual([])
+    expect(link.notify?.servers).toEqual(back.doc.notify?.servers)
+    const sent = JSON.stringify(link)
+    for (const x of [R1, R2, R3, 'Clubs']) expect(sent).not.toContain(x)
     expect(describeChanges(back.doc, source()).find(c => c.key === 'layout')?.next).toContain(
       '3 P2P servers'
     )

@@ -5,12 +5,18 @@ import type { Summary } from './acl_room'
 // decisions behind them. server.ts runs the flows; the components show this copy.
 
 export const OWNER_TEXT = 'The owner is set when the server is created and never changes.'
+export const CO_OWNERS_MAX = 8
+export const CO_OWNERS_MAX_TEXT = `A server can have up to ${CO_OWNERS_MAX} co-owners.`
 export const CO_OWNERS_TEXT =
   'Co-owners (optional). Co-owners can do everything the owner can. You can only add them now.'
 export const transferText = (name: string) =>
   `Transferring ownership creates a new copy of this server owned by ${name}. Members, roles, channels and bans move over automatically, and everyone switches to the new copy. Messages from before the transfer stay readable above the new ones; the old copy becomes read-only.`
 export const TRANSFER_CO_OWNERS_TEXT =
   'Every co-owner must approve the transfer, including co-owners who have left.'
+// A co-owner didn't approve (the name follows): offline (one who left is reached only as a
+// contact), or declined.
+export const CO_OWNER_OFFLINE_TEXT = 'A co-owner must be online to approve the transfer:'
+export const CO_OWNER_DECLINED_TEXT = "A co-owner didn't approve the transfer:"
 export const EQUAL_ROLES_TEXT =
   'If two people with the same top role remove each other at about the same time, both removals stand. Someone with a higher role, or the owner, can add either of them back.'
 export const HIGHER_ROLES_TEXT =
@@ -41,6 +47,8 @@ export const CODE_RETRY_TEXT =
   "If you don't finish joining within about 10 minutes, use the code again."
 export const CODE_REVOKE_TEXT =
   'A revoked code stops working everywhere as members sync. People it already let in stay unless a moderator removes them.'
+export const CODE_PAUSED_TEXT =
+  'Paused on this device: several people used it without joining. Revoke it if it leaked.'
 export const CODE_DEATH_TEXT =
   'Codes stop working for good if the person who made them loses the right to invite.'
 export const WITHDRAW_TEXT =
@@ -62,10 +70,16 @@ export const CARRY_WAIT_TEXT = 'Moving the old copy over. Waiting for its member
 export const CARRY_HOURLY_TEXT = 'Moving the old copy over. Waiting for the hourly limit.'
 export const CARRY_SYNC_TEXT = 'Moving the old copy over. Waiting to sync.'
 export const CARRY_FAILED_TEXT = "Couldn't move everything from the old copy over"
+export const lostOthersText = (n: number) =>
+  `${n === 1 ? 'One of your other devices was' : `${n} of your other devices were`} added here after that time. ${n === 1 ? 'It is' : 'They are'} signed out too: set ${n === 1 ? 'it' : 'them'} up again afterwards.`
+export const unsentText = (n: number) =>
+  `Removed. ${n === 1 ? 'One of your messages was' : `${n} of your messages were`} not sent again: slow mode.`
+export const SLOW_HIDDEN_TEXT = 'Hidden: sent too soon after your last message (slow mode).'
 export const OWN_RESIGN_TEXT =
   'Your own messages and changes from this browser since then stay. These changes are signed again from its new key:'
 export const TOO_OFTEN_TEXT = "You've done that too often. Try again later."
 export const CANT_TEXT = "You can't do that here"
+export const TOO_BIG_TEXT = 'Too long to send. Make it shorter.'
 
 // What a refusal of one of our own events says (spec 4.1): W3(a) and a ban of someone who never
 // joined (charged to the same window) are the hourly message; W3(b) is the lone device's; a join
@@ -99,10 +113,25 @@ export interface Reached {
   lost: string[]
 }
 
-// Members out with no removal of their own whose join came through an invite (or a code) of
-// someone we removed within the last day: the removal took them along (spec 3.1 cascades). Those
-// new in `after`, by removed member.
+// Two readings of "taken along" by a cascade (spec 3.1): a member out with no removal of their
+// own whose join came through an invite (or a code) of someone removed.
+// - takenAlong: for the note to whoever removed them (Invite them again): someone *we* removed
+//   (kick, ban or leave) within the last day.
+// - cutOut: for the member themself (they keep the ACL and come back when invited again): their
+//   inviter was kicked, by anyone, within the last week; a ban or a disowned device means the
+//   invitees go for good.
 const DAY = 24 * 60 * 60_000
+export const CUT_MS = 7 * 24 * 60 * 60_000
+export const cutOut = (s: Summary, ik: string, now: number) => {
+  const m = s.members[ik]
+  if (!m || m.m !== 'leave' || m.rem) return false
+  return [m.via, m.code].some(x => {
+    const r = x === undefined ? undefined : s.members[x]
+    return r?.m === 'leave' && r.remT === 'kick' && now - (r.remTs ?? -Infinity) < CUT_MS
+  })
+}
+
+// Those `takenAlong` notes, new in `after`, by removed member.
 const takenAlong = (s: Summary, me: string, now: number) => {
   const ours = (x: string) => {
     const r = s.members[x]
@@ -175,6 +204,7 @@ export const actParts = (t: string, to?: string): { act: string; who?: string } 
     role_move: 'Move a role',
     role_bits: 'Change what a role may do',
     role_del: 'Delete a role',
+    role_meta: 'Rename or recolor a role',
     channel: 'Change a channel',
     chperm: 'Change who may use a channel',
     settings: 'Change the server settings',

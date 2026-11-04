@@ -50,7 +50,7 @@ p2pHost.prefs = () => useStore.getState().notifyPrefs
 p2pHost.alert = a => useStore.getState().alertFrom(a)
 p2pHost.following = scope => useStore.getState().atBottom[scope] === true
 p2pHost.typingOn = () => useStore.getState().typingOn
-p2pHost.toast = text => useStore.getState().showToast(text)
+p2pHost.toast = (text, name) => useStore.getState().showToast(text, name)
 p2pHost.textOnly = () => {
   const s = useStore.getState().settings
   return !s.asset_uploads && !s.p2p_attachments

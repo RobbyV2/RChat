@@ -12,6 +12,8 @@ import {
   ROLE_LOCKED,
   fromHex,
   hex,
+  mayTakeRole,
+  mayWriteRow,
   movesWarn,
   nameColor,
   overBits,
@@ -112,7 +114,9 @@ const roleItems = (v: ServerView, r: RoleView): ContextMenuItem[] => {
       label: 'Move Down',
       action: () => moveRoles(v, placeRole(v.roles, r.id, i + 1, v.rank)),
     })
-  items.push({ label: 'Delete Role', danger: true, action: () => deleteRole(v, r) })
+  // Its channel rows hold its holders back: deleting it needs Manage channels (spec 1.4).
+  if (!r.held || can(v, P.ManageChannels))
+    items.push({ label: 'Delete Role', danger: true, action: () => deleteRole(v, r) })
   return items
 }
 
@@ -172,7 +176,7 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
             </span>
           </>
         )}
-        {edit && (
+        {edit && (!r.held || can(v, P.ManageChannels)) && (
           <button
             onClick={() => deleteRole(v, r)}
             aria-label={`Delete ${mask(r.name)}`}
@@ -245,8 +249,7 @@ export function RolesTab({ v }: { v: ServerView }) {
 // the role and the member; our own roles we may always drop.
 const mayGive = (v: ServerView, m: MemberView, r: RoleView, me: string | null) =>
   can(v, P.ManageRoles) && r.below && m.m === 'join' && m.ik !== me && m.below && !m.owner
-const mayTake = (v: ServerView, m: MemberView, r: RoleView, me: string | null) =>
-  m.roles.includes(r.id) && (m.ik === me || (can(v, P.ManageRoles) && r.below && m.below))
+const mayTake = mayTakeRole
 
 // Taking a role; one's own asks first (nobody can give themselves a role back, spec 1.6).
 const takeRole = (v: ServerView, m: MemberView, r: RoleView) => {
@@ -340,12 +343,7 @@ export function MemberCard({ room, ik }: { room: string; ik: string }) {
 
 // ----- A channel's permissions -----
 
-// Whether we may write an overwrite for `subj` (spec 1.4 chperm: ranked above its subject).
-const mayWrite = (v: ServerView, subj: string) => {
-  if (subj === `r:${EVERYONE}`) return v.rank[0] > -1
-  if (subj.startsWith('r:')) return v.roles.find(r => `r:${r.id}` === subj)?.below ?? false
-  return v.members.find(m => `u:${m.ik}` === subj)?.below ?? false
-}
+const mayWrite = mayWriteRow
 
 // A subject's name as text (labels): @everyone, the role's or the member's.
 const subjectText = (v: ServerView, subj: string, mask: (t: string) => string) =>

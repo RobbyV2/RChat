@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { P } from '../p2p/acl/rules'
+import { EVERYONE, P } from '../p2p/acl/rules'
 import {
+  reapplyLine,
   ALLOW_BOTH,
   fromHex,
+  mayTakeRole,
+  mayWriteRow,
   hex,
   memberGroups,
   movesWarn,
@@ -13,7 +16,7 @@ import {
   slowChanged,
   type Move,
 } from '../p2p/roles'
-import { serverPings } from '../p2p/alerts'
+import { serverPings, serverUnread } from '../p2p/alerts'
 import { EMPTY_NOTIFY } from '../notify'
 import { newRolePos, ROLE_STEP, type MemberView, type RoleView } from '../p2p/server'
 import type { Rank } from '../p2p/acl/rules'
@@ -26,6 +29,7 @@ const role = (id: string, pos: number, holders = 0, color: number | null = null)
   bits: 0,
   holders,
   below: true,
+  held: false,
 })
 const member = (ik: string, over: Partial<MemberView> = {}): MemberView => ({
   ik,
@@ -99,6 +103,31 @@ describe('role positions (spec 1.6)', () => {
     expect(apply(roles, mod).join(' ')).toBe('top a c b')
     expect(mod.every(m => m.pos < 50 && m.pos >= 0)).toBe(true)
     expect(mod.some(m => m.role === 'top')).toBe(false)
+  })
+
+  test('a respace posted one move at a time never swaps two other roles on the way', () => {
+    // Owners: every role from the top range down to small positions, the dragged one in a gap.
+    const roles = [
+      role('a', 1_000_005),
+      role('b', 1_000_004),
+      role('c', 1_000_003),
+      role('d', 1_000_002),
+      role('e', 1_000_001),
+    ]
+    const moves = placeRole(roles, 'e', 1, OWNER)
+    expect(moves.length).toBeGreaterThan(1)
+    expect(apply(roles, moves).join('')).toBe('aebcd')
+    const others = (list: RoleView[]) =>
+      apply(list, [])
+        .filter(id => id !== 'e')
+        .join('')
+    for (let n = 1; n <= moves.length; n += 1) {
+      const now = roles.map(r => ({
+        ...r,
+        pos: moves.slice(0, n).find(m => m.role === r.id)?.pos ?? r.pos,
+      }))
+      expect(others(now)).toBe('abcd')
+    }
   })
 
   test('equal positions (ordered by id) have no room between them either', () => {
@@ -175,12 +204,80 @@ describe('slow mode and pings of the open server', () => {
     expect(slowChanged(undefined, { exempt: false })).toBe(false)
   })
 
-  test('pings of channels that no longer show (deleted, or not viewable) do not badge', () => {
+  test('pings and unread of channels that no longer show (deleted, or not viewable), or of a server we are out of, do not count', () => {
     const v = {
       id: 'srv',
-      chans: { a: { pings: 2 }, gone: { pings: 5 } },
+      me: 'join',
+      chans: { a: { pings: 2, unread: 0 }, gone: { pings: 5, unread: 3 } },
       channels: [{ id: 'a' }],
     }
     expect(serverPings(v, EMPTY_NOTIFY)).toBe(2)
+    expect(serverUnread(v, EMPTY_NOTIFY)).toBe(false)
+    expect(serverUnread({ ...v, chans: { a: { pings: 0, unread: 1 } } }, EMPTY_NOTIFY)).toBe(true)
+    for (const me of ['leave', 'ban', null]) {
+      expect(serverPings({ ...v, me }, EMPTY_NOTIFY)).toBe(0)
+      expect(serverUnread({ ...v, me, chans: { a: { pings: 1, unread: 1 } } }, EMPTY_NOTIFY)).toBe(
+        false
+      )
+    }
+  })
+})
+
+describe('taking roles in the UI (spec 1.4)', () => {
+  test('a role a channel holds its holders back with comes off only with Manage channels', () => {
+    const v = { me: 'join' as const, perms: 0 }
+    const mine = { ik: 'me', roles: ['muted', 'fun'], below: false }
+    const muted = { ...role('muted', 1), held: true }
+    const fun = role('fun', 2)
+    expect(mayTakeRole(v, mine, fun, 'me')).toBe(true)
+    expect(mayTakeRole(v, mine, muted, 'me')).toBe(false)
+    expect(mayTakeRole({ ...v, perms: P.ManageChannels }, mine, muted, 'me')).toBe(true)
+    // Someone else's: Manage roles above both, and Manage channels for a held one.
+    const theirs = { ik: 'x', roles: ['muted'], below: true }
+    expect(mayTakeRole({ ...v, perms: P.ManageRoles }, theirs, muted, 'me')).toBe(false)
+    expect(
+      mayTakeRole({ ...v, perms: P.ManageRoles | P.ManageChannels }, theirs, muted, 'me')
+    ).toBe(true)
+  })
+})
+
+describe('allow-list rows (spec 1.4 chperm)', () => {
+  test('rows of a member who left or a deleted role can be cleared; others need rank above them', () => {
+    const v = {
+      rank: [5, 'r'] as Rank,
+      roles: [{ ...role('high', 9), below: false }, role('low', 1)],
+      members: [member('peer', { below: false }), member('junior')],
+    }
+    expect(mayWriteRow(v, 'r:high')).toBe(false)
+    expect(mayWriteRow(v, 'r:low')).toBe(true)
+    expect(mayWriteRow(v, 'r:gone')).toBe(true)
+    expect(mayWriteRow(v, 'u:peer')).toBe(false)
+    expect(mayWriteRow(v, 'u:junior')).toBe(true)
+    expect(mayWriteRow(v, 'u:departed')).toBe(true)
+  })
+})
+
+describe('the Re-apply list', () => {
+  const roles = [{ id: 'r1', name: 'Helper' }]
+  test('each line names the role it acts on', () => {
+    expect(reapplyLine('revoke', { to: 'bob', role: 'r1' }, roles)).toEqual({
+      act: 'Take a role from',
+      who: 'bob',
+      role: 'Helper',
+    })
+    expect(
+      reapplyLine('role_bits', { role: EVERYONE, bit: P.SendMessages, on: false }, roles)
+    ).toEqual({
+      act: 'Turn off Send messages',
+      role: '@everyone',
+    })
+    expect(reapplyLine('role_del', { role: 'r1' }, roles)).toEqual({
+      act: 'Delete a role',
+      role: 'Helper',
+    })
+    expect(reapplyLine('role_bits', { role: 'gone', bit: 1, on: false }, roles).role).toBe(
+      'Deleted role'
+    )
+    expect(reapplyLine('kick', { to: 'bob' }, roles)).toEqual({ act: 'Kick', who: 'bob' })
   })
 })

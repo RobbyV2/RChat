@@ -667,12 +667,14 @@ describe('p2p transfer', () => {
     )
     kept.set('theirs', new Blob(['t']))
     const { m } = manager('alice')
-    const files = m as unknown as { cached: Record<string, StoredFile> }
-    files.cached = {
-      posted: { ...file(null), message_id: 1, added_at: now - 600 },
-      sending: { ...file(null), added_at: now },
-      old: file(null),
-    }
+    localStorage.setItem(
+      'rchat_p2p_files:alice',
+      JSON.stringify({
+        posted: { ...file(null), message_id: 1, added_at: now - 600 },
+        sending: { ...file(null), added_at: now },
+        old: file(null),
+      })
+    )
     await m.reconcile(['mine'], ['posted', 'sending', 'old', 'mine', 'theirs'])
     expect(Object.keys(m.files()).sort()).toEqual(['mine', 'sending'])
     expect(kept.get('h:alice:mine')?.size).toBe(3)
@@ -756,10 +758,30 @@ describe('p2p transfer', () => {
     const { m } = manager()
     await m.stage('stuck', new File([bytes(3)], 's.bin'), null)
     await m.stage('fresh', new File([bytes(3)], 'f.bin'), null)
-    const files = (m as unknown as { cached: Record<string, StoredFile> }).cached
+    const key = 'rchat_p2p_files:host'
+    const files = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, StoredFile>
     files.stuck = { ...files.stuck, added_at: Math.floor(Date.now() / 1000) - 3601 }
+    localStorage.setItem(key, JSON.stringify(files))
     m.purgeExpired()
     expect(Object.keys(m.files())).toEqual(['fresh'])
+  })
+
+  test('two tabs of an account hosting files never drop each other’s entries', async () => {
+    const a = manager('alice').m
+    const b = manager('alice').m
+    expect(b.files()).toEqual({})
+    await a.storeFile('one', new File([bytes(3)], 'one.bin'), null)
+    // Tab B read the list before tab A wrote: its next change keeps A's file.
+    await b.storeFile('two', new File([bytes(3)], 'two.bin'), null)
+    expect(
+      Object.keys(JSON.parse(localStorage.getItem('rchat_p2p_files:alice') ?? '{}')).sort()
+    ).toEqual(['one', 'two'])
+    a.posted('one', 7)
+    b.removeFile('two')
+    expect(Object.keys(JSON.parse(localStorage.getItem('rchat_p2p_files:alice') ?? '{}'))).toEqual([
+      'one',
+    ])
+    expect(b.file('one')?.message_id).toBe(7)
   })
 
   test("two messages reusing an id each get their own hoster's verified file", async () => {

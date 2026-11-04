@@ -38,11 +38,12 @@ import {
   p2pFiles,
   p2pThread,
   p2pUser,
+  profileName,
   useP2p,
   type P2pChat,
 } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
-import { hiddenRemovedText } from '../../lib/p2p/flows'
+import { hiddenRemovedText, SLOW_HIDDEN_TEXT } from '../../lib/p2p/flows'
 import {
   bodyTooLong,
   messageActs,
@@ -178,6 +179,8 @@ interface RowProps {
   // A top-level message of a server channel: its thread can be made or opened.
   threads: boolean
   onMenu: (p: P2pMessage, m: Message, x: number, y: number) => void
+  // Puts the row on the forward clipboard.
+  onCopy: (p: P2pMessage, m: Message) => void
   onJump: (num: number) => void
 }
 
@@ -208,6 +211,7 @@ export const P2pRow = memo(function P2pRow({
   draftKey,
   threads,
   onMenu,
+  onCopy,
   onJump,
 }: RowProps) {
   const actions: ToolbarAction[] = []
@@ -223,7 +227,7 @@ export const P2pRow = memo(function P2pRow({
       icon: Reply,
       onClick: () => p2pDm.startReply(draftKey, p.id),
     })
-  if (can.forward) actions.push(forwardAction(() => copyForP2p(p, m)))
+  if (can.forward) actions.push(forwardAction(() => onCopy(p, m)))
   if (thread)
     actions.push({
       key: 'thread',
@@ -465,7 +469,7 @@ const pinLineMenu = (p: P2pMessage, m: Message): ContextMenuItem[] => {
 }
 
 // In place of a message sent around the time its author was removed (spec 8.2).
-function P2pHiddenRow({ m, divider }: { m: Message; divider: boolean }) {
+export function P2pHiddenRow({ m, divider }: { m: Message; divider: boolean }) {
   const [before, after] = hiddenRemovedText('\u0000').split('\u0000')
   return (
     <div data-row data-mid={m.id}>
@@ -491,6 +495,28 @@ function P2pHiddenRow({ m, divider }: { m: Message; divider: boolean }) {
   )
 }
 
+// In place of our own message slow mode hides (spec 3.5).
+export function P2pSlowRow({ m, divider }: { m: Message; divider: boolean }) {
+  return (
+    <div data-row data-mid={m.id}>
+      {divider && (
+        <div data-divider className="px-4 py-1" aria-hidden>
+          <div className="h-0.5 rounded-full bg-error" />
+        </div>
+      )}
+      <div data-p2p-slow-hidden className="flex items-start gap-3 px-4 py-1">
+        <span className="flex w-9 shrink-0 justify-center pt-0.5 text-on-surface-variant">
+          <EyeOff size={16} aria-hidden />
+        </span>
+        <p className="min-w-0 flex-1 text-sm text-on-surface-variant italic">
+          {SLOW_HIDDEN_TEXT}
+          <MessageTime ts={m.created_at} className="ml-2 text-xs not-italic opacity-70" />
+        </p>
+      </div>
+    </div>
+  )
+}
+
 const confirmDelete = (id: string, skip = false) => {
   const run = () => void p2pDm.remove(id)
   if (skip) return run()
@@ -507,10 +533,10 @@ const confirmDelete = (id: string, skip = false) => {
 
 // Puts a message on the forward clipboard: Send in another conversation forwards it there (a
 // P2P one directly; an instance one after it says the text will be copied there).
-export const copyForP2p = (p: P2pMessage, m: Message) => {
+export const copyForP2p = (p: P2pMessage, m: Message, author: string) => {
   const clip: ForwardClip = {
     id: 1 + Math.floor(Math.random() * 2 ** 40),
-    author: p.fwd ? (m.forward?.author ?? null) : m.author,
+    author: p.fwd ? (m.forward?.author ?? null) : p2pUser(p.sender, author),
     snippet: plainLine(p.fwd ? p.fwd.body : p.body),
     has_media: false,
     created_at: p.fwd ? seconds(p.fwd.ts) : m.created_at,
@@ -520,7 +546,8 @@ export const copyForP2p = (p: P2pMessage, m: Message) => {
   useStore.getState().copyForwardClip(clip)
 }
 
-// Forwards straight into a P2P conversation with a contact.
+// Forwards straight into a P2P conversation with a contact. `author`: the sender's own profile
+// name (profileName), never a display string.
 export const forwardTo = async (ik: string, p: P2pMessage, author: string) => {
   const fwd = p.fwd ?? {
     name: author,
@@ -532,7 +559,7 @@ export const forwardTo = async (ik: string, p: P2pMessage, author: string) => {
   if (target && (await p2pDm.forward(target, fwd))) {
     const c = useP2p.getState().contacts.find(x => x.ik === ik)
     const s = useStore.getState()
-    s.showToast(`Forwarded to ${c ? maskOf(s)(displayName(c)) : 'contact'}`)
+    s.showToast('Forwarded to', c ? maskOf(s)(displayName(c)) : 'contact')
   }
 }
 
@@ -648,7 +675,7 @@ export function P2pComposer({
           .then(ok => {
             if (!ok) return
             if (useStore.getState().forwardClip?.id === clip.id) useStore.getState().clearForward()
-            useStore.getState().showToast(`Forwarded to ${title}`)
+            useStore.getState().showToast('Forwarded to', title)
           })
       }}
     />
@@ -825,6 +852,8 @@ export function P2pComposer({
 export interface ListOpts {
   messages: P2pMessage[]
   nameOf: (ik: string) => string
+  // The sender's own profile name, for forwards (never a petname or a masked name).
+  ownName: (ik: string) => string
   people: Mentionable[]
   draftKey: string
   scope: string
@@ -839,6 +868,7 @@ export interface ListOpts {
 export function useP2pList({
   messages,
   nameOf,
+  ownName,
   people,
   draftKey,
   scope,
@@ -898,7 +928,10 @@ export function useP2pList({
       })),
     [messages, num, replyNumOf, user, me]
   )
-  const shared = useMemo(() => rows.filter(r => !r.p.system && !r.p.removed).map(r => r.m), [rows])
+  const shared = useMemo(
+    () => rows.filter(r => !r.p.system && !r.p.removed && !r.p.slowHidden).map(r => r.m),
+    [rows]
+  )
   const idOf = useCallback(
     (n: number) => rows.find(r => r.m.id === n)?.p.id ?? replyNums.get(n) ?? null,
     [rows, replyNums]
@@ -975,9 +1008,13 @@ export function useP2pList({
         submenu: [
           ...others.map(c => ({
             label: maskOf(useStore.getState())(displayName(c)),
-            action: () => void forwardTo(c.ik, p, m.author.display_name),
+            action: () => void forwardTo(c.ik, p, ownName(p.sender)),
           })),
-          { label: 'Copy for forwarding', icon: Copy, action: () => copyForP2p(p, m) },
+          {
+            label: 'Copy for forwarding',
+            icon: Copy,
+            action: () => copyForP2p(p, m, ownName(p.sender)),
+          },
         ],
       })
     const thread = threads ? threadAct(p, act) : null
@@ -1044,6 +1081,10 @@ export function useP2pList({
     (p: P2pMessage, m: Message, x: number, y: number) => menuRef.current(p, m, x, y),
     []
   )
+  const copyRow = useCallback(
+    (p: P2pMessage, m: Message) => copyForP2p(p, m, ownName(p.sender)),
+    [ownName]
+  )
   return {
     me,
     user,
@@ -1055,6 +1096,7 @@ export function useP2pList({
     editing,
     editingState,
     rowMenu,
+    copyRow,
     picker,
     setPicker,
   }
@@ -1111,6 +1153,8 @@ export function P2pChatBody(props: ChatBodyProps) {
 
   const messages = chat.messages ?? EMPTY
   const scope = chatScope(chat.room, chat.ch)
+  const ownRoom = chat.ch ? chat.room : undefined
+  const ownName = useCallback((ik: string) => profileName(ik, ownRoom), [ownRoom])
   const canDrop = canAct && !textOnly && movingAt === null
 
   const {
@@ -1123,11 +1167,13 @@ export function P2pChatBody(props: ChatBodyProps) {
     editing,
     editingState,
     rowMenu,
+    copyRow,
     picker,
     setPicker,
   } = useP2pList({
     messages,
     nameOf,
+    ownName,
     people,
     draftKey: key,
     scope,
@@ -1251,6 +1297,8 @@ export function P2pChatBody(props: ChatBodyProps) {
                   <P2pSystemRow key={p.id} m={m} divider={i === divider} />
                 ) : p.removed ? (
                   <P2pHiddenRow key={p.id} m={m} divider={i === divider} />
+                ) : p.slowHidden ? (
+                  <P2pSlowRow key={p.id} m={m} divider={i === divider} />
                 ) : p.call ? (
                   <P2pCallRow key={p.id} p={p} me={me} />
                 ) : (
@@ -1269,6 +1317,7 @@ export function P2pChatBody(props: ChatBodyProps) {
                     draftKey={key}
                     threads={!!chat.ch}
                     onMenu={rowMenu}
+                    onCopy={copyRow}
                     onJump={rowJump}
                   />
                 )

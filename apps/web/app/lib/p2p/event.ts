@@ -39,10 +39,6 @@ import {
 // `call`: the log row of a call, written by the caller once it is over.
 export type EvType = 'msg' | 'edit' | 'redact' | 'react' | 'pin' | 'move' | 'call'
 
-export const EV_TYPES: readonly string[] = ['msg', 'edit', 'redact', 'react', 'pin', 'move', 'call']
-
-export const isKnownType = (x: unknown): x is EvType => EV_TYPES.includes(x as EvType)
-
 // A type name a newer version may use.
 const isTypeName = (x: unknown): x is string =>
   typeof x === 'string' && /^[a-z][a-z0-9_]{0,31}$/.test(x)
@@ -429,6 +425,16 @@ export const contentMax = (c: unknown) =>
   isRecord(c) && (Array.isArray(c.att) || (isRecord(c.fwd) && Array.isArray(c.fwd.att)))
     ? LIMITS.attContent
     : LIMITS.content
+
+// Drops thumbnails from the last attachment back until the content fits; null when it can't.
+export const fitContent = <T extends { att?: { thumb?: string }[] }>(c: T): T | null => {
+  if (sizeOf(c) <= contentMax(c)) return c
+  if (!c.att?.length) return null
+  const att = c.att.map(a => ({ ...a }))
+  const out = { ...c, att }
+  for (let i = att.length - 1; i >= 0 && sizeOf(out) > contentMax(out); i -= 1) delete att[i].thumb
+  return sizeOf(out) <= contentMax(out) ? out : null
+}
 
 export const sizeOf = (x: unknown) => {
   try {

@@ -195,6 +195,7 @@ describe('P2P server flows: devices and roles', () => {
     expect(flows.actParts('code')).toEqual({ act: 'Make an invite code' })
     expect(flows.actParts('kick')).toEqual({ act: 'Kick' })
     expect(flows.actParts('mark')).toEqual({ act: 'Sync' })
+    expect(flows.actParts('role_meta')).toEqual({ act: 'Rename or recolor a role' })
   })
 
   test('moving a role down warns', () => {

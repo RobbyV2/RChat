@@ -240,6 +240,16 @@ describe('applying', () => {
     })
   })
 
+  test('notification rules from a link (no P2P ones) keep our own P2P rules', async () => {
+    const room = 'A'.repeat(43)
+    useStore.setState({
+      notifyPrefs: setMute(EMPTY_NOTIFY, { kind: 'p2ps', room }, 'forever'),
+    })
+    expect(await st().applyConfig(incoming(), ['notify'])).toBeNull()
+    expect(st().notifyPrefs.p2p[room]).toEqual({ muteUntil: 'forever' })
+    expect(Object.keys(st().notifyPrefs.servers)).toEqual(['club'])
+  })
+
   test('on another account: unknown servers and DMs drop out, the rest is written to its keys', async () => {
     const error = await st().applyConfig(incoming(), [
       'theme',
