@@ -118,4 +118,9 @@ describe('P2P layering', () => {
     expect([...importsOf(`${P2P}/app/store.ts`)].filter(p => p.startsWith(`${P2P}/app/`))).toEqual(
       []
     ))
+
+  test('the two event formats load apart', () => {
+    expect(reaches(importsOf(`${P2P}/event_v1.ts`), 'event_v2.ts')).toBe(false)
+    expect(reaches(importsOf(`${P2P}/event_v2.ts`), 'event_v1.ts')).toBe(false)
+  })
 })

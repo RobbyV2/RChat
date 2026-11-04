@@ -18,7 +18,7 @@ import { maskOf, useMask, useStore, type ContextMenuItem } from '../../lib/store
 import { fmtSize } from '../../lib/bytes'
 import { downloadName, kindOf } from '../../lib/sniff'
 import { BIG_FILE, p2pFiles, useP2p, type FileView, type PendingFile } from '../../lib/p2p/app'
-import type { Attachment } from '../../lib/p2p/event'
+import type { Attachment } from '../../lib/p2p/content'
 import { AUTO_PAUSED_TEXT } from '../../lib/p2p/dm'
 import { SpoilerCover } from '../markdown_message'
 

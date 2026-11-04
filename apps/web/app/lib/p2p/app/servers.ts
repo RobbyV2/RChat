@@ -4,7 +4,7 @@ import type { RoomRecord } from '../db'
 import { keyId } from '../keys'
 import { displayName } from '../contacts'
 import { PAGE } from '../dm'
-import type { WireV2 } from '../event'
+import type { WireV2 } from '../event_v2'
 import { slowChanged } from '../roles'
 import {
   parseCode,

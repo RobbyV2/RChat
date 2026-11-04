@@ -62,15 +62,9 @@ import {
   withFiles,
   withoutSecrets,
 } from './db'
-import {
-  attsOf,
-  buildEvent,
-  claimedId,
-  claimedId2,
-  isEventId,
-  LIMITS as EV,
-  type Wire,
-} from './event'
+import { attsOf, isEventId, LIMITS as EV } from './content'
+import { buildEvent, claimedId, type Wire } from './event_v1'
+import { claimedId2 } from './event_v2'
 import { fingerprint } from './keys'
 import { hashPages, partRange, readBlock } from './blobs'
 import { BLOCK, blobRootOf, blockCount, digest } from './hashing'

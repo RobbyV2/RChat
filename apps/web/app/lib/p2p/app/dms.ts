@@ -17,7 +17,7 @@ import {
   PAGE,
   type Arrival,
 } from '../dm'
-import type { Fwd } from '../event'
+import type { Fwd } from '../content'
 import { JUMP, type PageOpts } from '../jump'
 import { Servers, type ServerView } from '../server'
 import {

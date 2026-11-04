@@ -14,14 +14,9 @@ import {
   type Inserted,
 } from '../dag'
 import { serverWire, type ChanCounts, type EventRecord } from '../db'
-import {
-  claimedId2,
-  shownReaction,
-  validate2,
-  type MsgContent,
-  type Wire,
-  type WireV2,
-} from '../event'
+import { claimedId2, validate2, type WireV2 } from '../event_v2'
+import { shownReaction, type MsgContent } from '../content'
+import { type Wire } from '../event_v1'
 import { reachedBy } from '../flows'
 import type { Message } from '../frames'
 import { isKeyId, verifyCert, verifyProfile, type Cert, type Profile } from '../keys'

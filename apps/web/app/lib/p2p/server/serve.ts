@@ -1,6 +1,7 @@
 import { DAG, getEvents } from '../dag'
 import { serverWire, type EventRecord } from '../db'
-import type { Wire, WireV2 } from '../event'
+import type { Wire } from '../event_v1'
+import type { WireV2 } from '../event_v2'
 import { cutOut } from '../flows'
 import { historyOf, membershipOf } from '../state'
 import type { Link, Walked } from '../sync'

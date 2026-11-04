@@ -1,6 +1,6 @@
 import type { Summary } from '../acl/summary'
 import type { Carried, Reapply } from '../acl_room'
-import type { WireV2 } from '../event'
+import type { WireV2 } from '../event_v2'
 import type { Reached } from '../flows'
 import type { Migrated, Parked, Mod } from './types'
 

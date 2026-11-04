@@ -13,7 +13,8 @@ import {
   type DevChain,
 } from '../p2p/dag'
 import type { RoomRecord, ServerCache } from '../p2p/db'
-import { buildEvent2, type Wire, type WireV2 } from '../p2p/event'
+import { buildEvent2, type WireV2 } from '../p2p/event_v2'
+import { type Wire } from '../p2p/event_v1'
 import { genesisBundle } from '../p2p/acl/binding'
 import { b64u, randomBytes } from '../p2p/canonical'
 import { keyId, newKeyPair } from '../p2p/keys'

@@ -2,7 +2,7 @@ import { b64u } from './canonical'
 import { hashBlob, type Hashed } from './hashing'
 import { thumbBytes } from './blobs'
 import { downloadName, GIF_MAX, guessKind, IMAGE_HEAD, imageSize, inlineImageOk } from '../sniff'
-import { LIMITS as EV } from './event'
+import { LIMITS as EV } from './content'
 import { LOCAL } from './limits'
 
 // Browser side of P2P attachments: hashing in a worker, thumbnails made by the sender and

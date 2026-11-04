@@ -1,7 +1,7 @@
 import type { Disowned } from '../acl_room'
 import { getEvents } from '../dag'
 import { serverWire, type EventRecord } from '../db'
-import { signRevocation2, signRotation2 } from '../event'
+import { signRevocation2, signRotation2 } from '../event_v2'
 import { CANT_TEXT, effectHolds, signedAgain } from '../flows'
 import { keyId } from '../keys'
 import { memberOf } from '../state'

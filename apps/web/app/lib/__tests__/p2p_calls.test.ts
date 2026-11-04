@@ -17,7 +17,7 @@ import {
 } from '../p2p/calls'
 import { P2pSignaler, readCallFrame, readRtcFrame, type RtcFrame } from '../p2p/signal'
 import { decodeMessage, encodeMessage, type Message } from '../p2p/frames'
-import { checkContent, type CallContent } from '../p2p/event'
+import { checkContent, type CallContent } from '../p2p/content'
 import { RtcManager, wsSignaler, type RtcTarget, type Signaler } from '../rtc'
 import { sameScope, type SignalScope } from '../negotiation'
 import { DENIED_CALL } from '../relays'

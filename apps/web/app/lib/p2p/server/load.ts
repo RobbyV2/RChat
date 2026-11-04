@@ -12,7 +12,7 @@ import {
 import { IMPL, trimContent, type AclItem } from '../acl_room'
 import { cacheKey, countOf, moveCounts, unindexAll, resetHeld, storedSize } from '../dag'
 import { serverWire, type RoomRecord, type ServerCache } from '../db'
-import { contentEvOf, headerOk, validate2, type WireV2 } from '../event'
+import { contentEvOf, headerOk, validate2, type WireV2 } from '../event_v2'
 import { cutOut } from '../flows'
 import {
   chanFactsOf,

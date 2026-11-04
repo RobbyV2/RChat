@@ -54,7 +54,7 @@ import {
   type SummarySource,
 } from './acl/summary'
 import { ContentView, type ContentEv, type Hidden } from './acl/visibility'
-import { aclEvOf, contentEvOf, type WireV2 } from './event'
+import { aclEvOf, contentEvOf, type WireV2 } from './event_v2'
 import { AGREED, LOCAL } from './limits'
 
 // One P2P server's evaluator state, where the host runs it (a worker in the browser): the ACL

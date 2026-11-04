@@ -3,7 +3,7 @@ import { declaredHosts } from '../relays'
 import type { RtcTarget, Signaler } from '../rtc'
 import type { RtcPayload } from '../types'
 import { bytesOf, hasKeys, pickKeys } from './canonical'
-import { isCallId } from './event'
+import { isCallId } from './content'
 import { isKeyId } from './keys'
 
 // Call signaling over the encrypted session with a contact (note section 4): the media SDP and

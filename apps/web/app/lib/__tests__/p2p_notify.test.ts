@@ -15,7 +15,7 @@ import {
 import { badgePings, p2pAlert, p2pOverride } from '../p2p/alerts'
 import type { Arrival } from '../p2p/dm'
 import type { EventRecord } from '../p2p/db'
-import type { Content, EvType } from '../p2p/event'
+import type { Content, EvType } from '../p2p/content'
 
 const NOW = new Date(2026, 9, 28, 14, 0).getTime()
 const ROOM = 'A'.repeat(43)

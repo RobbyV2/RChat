@@ -4,15 +4,9 @@ import { aclContentOk, RULES_VERSION } from '../acl/rules'
 import type { Plan, Received } from '../acl_room'
 import { b64u, bytesOf, randomBytes } from '../canonical'
 import { blankRoom, chainKey, insertServer, type DevChain } from '../dag'
-import {
-  buildEvent2,
-  LIMITS as EV,
-  LIMITS2,
-  sizeOf,
-  validate2,
-  type ChainFields,
-  type Wire,
-} from '../event'
+import { buildEvent2, LIMITS2, validate2, type ChainFields } from '../event_v2'
+import { LIMITS as EV, sizeOf } from '../content'
+import { type Wire } from '../event_v1'
 import {
   CANT_TEXT,
   CONFLICT_TEXT,

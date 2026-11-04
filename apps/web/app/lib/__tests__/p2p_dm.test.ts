@@ -6,19 +6,16 @@ import { b64u, concat, utf8 } from '../p2p/canonical'
 import { keyId, newKeyPair, sign, signRevocation, type KeyPair } from '../p2p/keys'
 import {
   buildEvent,
-  contentHash,
   effTsOf,
   eventIdBytes,
   isLate,
-  LIMITS as EV,
   TAG_SIG,
   validate,
-  type Content,
   type Core,
-  type EvType,
   type RoomAuth,
   type Wire,
-} from '../p2p/event'
+} from '../p2p/event_v1'
+import { contentHash, LIMITS as EV, type Content, type EvType } from '../p2p/content'
 import {
   deriveMessage,
   Dms,

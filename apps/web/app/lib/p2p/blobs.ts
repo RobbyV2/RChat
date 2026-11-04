@@ -3,7 +3,7 @@ import { hkdf } from '@noble/hashes/hkdf.js'
 import { imageSize, NEUTRAL_TYPE, safeType, SNIFF_BYTES } from '../sniff'
 import { b64u, bytesOf, concat, equalBytes, fromB64u, randomBytes, utf8 } from './canonical'
 import type { BlobRecord, EventRecord, HashPage, P2pDatabase, P2pStore } from './db'
-import type { Attachment } from './event'
+import type { Attachment } from './content'
 import {
   chunk,
   Cipher,

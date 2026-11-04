@@ -2,7 +2,8 @@ import { deleteDB, openDB, type DBSchema, type IDBPDatabase, type IDBPTransactio
 import type { Contact } from './contacts'
 import type { Summary } from './acl/summary'
 import type { PackedRec } from './acl_room'
-import type { Core, Wire, WireV2 } from './event'
+import type { Core, Wire } from './event_v1'
+import type { WireV2 } from './event_v2'
 import type { Cert, KeyPair, Profile, Revocation, Succession } from './keys'
 
 // P2P data lives only in this browser, in one IndexedDB database per instance and account. Each

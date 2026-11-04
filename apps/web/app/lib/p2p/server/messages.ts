@@ -1,6 +1,6 @@
 import { getEvents } from '../dag'
 import { serverWire, type ChanCounts, type EventRecord } from '../db'
-import { fitContent, LIMITS as EV, type Attachment, type Fwd, type MsgContent } from '../event'
+import { fitContent, LIMITS as EV, type Attachment, type Fwd, type MsgContent } from '../content'
 import { TOO_BIG_TEXT, slowText } from '../flows'
 import { can, isOwner, membersOf, outranks, P } from '../state'
 import { DmError, mentionsIn, PINS_MAX } from '../dm'

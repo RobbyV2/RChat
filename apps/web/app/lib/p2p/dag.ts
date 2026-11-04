@@ -2,19 +2,9 @@ import type { Drops, PackedRec } from './acl_room'
 import { LOCAL } from './limits'
 import { headerContent } from './acl/storage'
 import { shareAdd, shareKey, shareLive, SHARE, withinShare, type Share } from './shares'
-import {
-  attsOf,
-  authorizeTarget,
-  effTsOf,
-  isEventId,
-  LIMITS as EV,
-  redacted,
-  shownReaction,
-  sortKeyOf,
-  targetOf,
-  type Wire,
-  type WireV2,
-} from './event'
+import { attsOf, isEventId, LIMITS as EV, shownReaction } from './content'
+import { authorizeTarget, effTsOf, redacted, sortKeyOf, targetOf, type Wire } from './event_v1'
+import { type WireV2 } from './event_v2'
 import type { IDBPTransaction } from 'idb'
 import { indexEvent, unindex, unindexEdit, type EventRead, type SearchWrite } from './search'
 import {

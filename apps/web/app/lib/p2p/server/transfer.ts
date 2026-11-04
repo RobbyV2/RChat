@@ -6,7 +6,7 @@ import type { Carried } from '../acl_room'
 import { b64u, canonical, randomBytes } from '../canonical'
 import { blankRoom } from '../dag'
 import { serverWire, type Carry } from '../db'
-import { buildEvent2, signUpgrade, upgradeSigOk, validate2, type WireV2 } from '../event'
+import { buildEvent2, signUpgrade, upgradeSigOk, validate2, type WireV2 } from '../event_v2'
 import {
   CANT_TEXT,
   LONE_TEXT,

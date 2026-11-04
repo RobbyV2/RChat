@@ -10,7 +10,7 @@ import {
 } from '../p2p/flows'
 import { signDeviceCert2 } from '../p2p/acl/binding'
 import { EVERYONE, P } from '../p2p/acl/rules'
-import { buildEvent2, signUpgrade } from '../p2p/event'
+import { buildEvent2, signUpgrade } from '../p2p/event_v2'
 import { keyId, newKeyPair } from '../p2p/keys'
 import { parseCode, encodeCode, REDEEM_TEXT, Servers } from '../p2p/server'
 import {

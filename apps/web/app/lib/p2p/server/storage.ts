@@ -10,7 +10,7 @@ import {
   type Inserted,
 } from '../dag'
 import { serverWire, type RoomRecord } from '../db'
-import { signRevocation2, headerOk, type WireV2 } from '../event'
+import { signRevocation2, headerOk, type WireV2 } from '../event_v2'
 import { VOUCH_WAIT_TEXT } from '../flows'
 import { memberBindingDue } from '../badge'
 import { keyId } from '../keys'

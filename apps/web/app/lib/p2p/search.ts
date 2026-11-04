@@ -9,7 +9,7 @@ import {
   type SearchKey,
   type SearchMeta,
 } from './db'
-import { isEventId, type EditContent, type MsgContent } from './event'
+import { isEventId, type EditContent, type MsgContent } from './content'
 import { LOCAL } from './limits'
 
 // Local search over P2P server messages (note section 7, store `search`): one row per word and

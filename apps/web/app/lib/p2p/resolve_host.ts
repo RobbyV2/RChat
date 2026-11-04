@@ -16,7 +16,7 @@ import {
 } from './acl_room'
 import type { AdmitOpts } from './acl/admit'
 import type { ContentEv } from './acl/visibility'
-import type { WireV2 } from './event'
+import type { WireV2 } from './event_v2'
 
 // Where the ACL evaluator of P2P servers runs. In the browser a Web Worker keeps an AclRoom per
 // room (its index, evaluation and merge caches), so an evaluation never blocks the page; elsewhere

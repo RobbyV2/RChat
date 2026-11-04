@@ -5,7 +5,7 @@ import { DAG, getEvents } from '../dag'
 import { serverWire, type EventRecord, type OutboxRecord, type RoomRecord } from '../db'
 import { reactionsOf, PINS_MAX, type P2pMessage } from '../dm'
 import { around, type PageOpts } from '../jump'
-import { LIMITS as EV, type MsgContent } from '../event'
+import { LIMITS as EV, type MsgContent } from '../content'
 import { LOCAL } from '../limits'
 import {
   can,

@@ -4,7 +4,7 @@ import { LOCAL } from './limits'
 import type { Clock, Session } from './session'
 import type { Link } from './sync'
 import { isShortId } from './state'
-import { isEventId } from './event'
+import { isEventId } from './content'
 
 // Which members a P2P server room syncs with (note section 5, "Connection budget"). Nobody
 // connects to everyone: each member links a room with at most `perRoom` sessions (a hard cap,

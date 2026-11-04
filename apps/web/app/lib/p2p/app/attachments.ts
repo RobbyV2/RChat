@@ -1,5 +1,5 @@
 import { home, writeLocal } from '../../instances'
-import { fitContent, LIMITS as EV, type Attachment } from '../event'
+import { fitContent, LIMITS as EV, type Attachment } from '../content'
 import { assemble, EMPTY_VIEW } from '../blobs'
 import type { Hashed } from '../hashing'
 import { LOCAL } from '../limits'

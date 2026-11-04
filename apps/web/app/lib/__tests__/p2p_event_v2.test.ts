@@ -4,7 +4,6 @@ import {
   aclEvOf,
   buildEvent2,
   contentEvOf,
-  eventId,
   eventId2,
   eventIdBytes2,
   signRevocation2,
@@ -12,10 +11,11 @@ import {
   signUpgrade,
   TAG_SIG2,
   validate2,
-  type Author,
   type CoreV2,
   type WireV2,
-} from '../p2p/event'
+} from '../p2p/event_v2'
+import { eventId } from '../p2p/event_v1'
+import { type Author } from '../p2p/content'
 import { b64u, concat, utf8 } from '../p2p/canonical'
 import { keyId, newKeyPair, sign } from '../p2p/keys'
 import { P } from '../p2p/acl/rules'

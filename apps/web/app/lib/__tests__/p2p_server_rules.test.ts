@@ -13,8 +13,8 @@ import {
 } from '../p2p/acl/summary'
 import { AclRoom, IMPL, KEEP } from '../p2p/acl_room'
 import { MODEL_LIMITS, testBinds, toProd } from './p2p_acl_world'
-import { buildEvent2 } from '../p2p/event'
-import { signRevocation2 } from '../p2p/event'
+import { buildEvent2 } from '../p2p/event_v2'
+import { signRevocation2 } from '../p2p/event_v2'
 import { HOLD_MS } from '../p2p/acl_room'
 import { MIN, ServerWorld } from './p2p_server_world'
 

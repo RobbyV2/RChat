@@ -1,6 +1,6 @@
 import type { EventRecord, P2pStore } from './db'
 import { editOf } from './dm'
-import type { EditContent, MsgContent } from './event'
+import type { EditContent, MsgContent } from './content'
 import {
   addPings,
   byThreadCounter,

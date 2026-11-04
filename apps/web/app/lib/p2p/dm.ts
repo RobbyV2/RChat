@@ -10,16 +10,12 @@ import {
   type RoomRecord,
 } from './db'
 import { Blobs, type BulkLimits } from './blobs'
+import { buildEvent, isLate, validate, type Invalid, type Wire } from './event_v1'
 import {
-  buildEvent,
   LIMITS as EV,
-  isLate,
   shownReaction,
   sizeOf,
-  validate,
   CALL_OUTCOMES,
-  type Invalid,
-  type Wire,
   type Attachment,
   type CallContent,
   type Content,
@@ -29,7 +25,7 @@ import {
   type MsgContent,
   type PinContent,
   type ReactContent,
-} from './event'
+} from './content'
 import { fmtSize } from '../bytes'
 import { maskCode } from '../mentions'
 import { keyBytes } from './keys'

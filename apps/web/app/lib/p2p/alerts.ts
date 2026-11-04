@@ -12,7 +12,7 @@ import type { UserRef } from '../types'
 import { visibleContacts, type Contact } from './contacts'
 import type { PingKind } from './dag'
 import type { Arrival } from './dm'
-import type { MsgContent } from './event'
+import type { MsgContent } from './content'
 import type { ServerView } from './server'
 
 // A P2P notification override as the settings list names it, by its key: `room/ch` is a
