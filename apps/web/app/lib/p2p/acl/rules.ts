@@ -1,5 +1,5 @@
 import { isRecord } from '../../bytes'
-import { bytesOf, canonical } from '../canonical'
+import { bytesOf, canonical, isInt } from '../canonical'
 import { AGREED, type Agreed } from '../limits'
 import type { EvalResult, Facts, FactsQ } from './facts'
 
@@ -475,7 +475,9 @@ export const roleMetaOk = (e: AclEv, St: FactsQ) =>
   typeof e.c.role === 'string' &&
   (e.c.name === undefined || typeof e.c.name === 'string') &&
   (e.c.color === undefined ||
-    (isInt(e.c.color) && (e.c.color as number) >= 0 && (e.c.color as number) <= 0xffffff)) &&
+    (isInt(e.c.color, -Infinity) &&
+      (e.c.color as number) >= 0 &&
+      (e.c.color as number) <= 0xffffff)) &&
   St.roles.has(e.c.role) &&
   (St.owners.has(e.a) ||
     (St.mem.has(e.a) && (permsQ(St, e.a) & ROLES) !== 0 && gt(rank(St, e.a), rankOf(St, e.c.role))))
@@ -575,22 +577,21 @@ export function exposedTo(p: AclEv, g: AclEv, gRec: Rec, V: FactsQ, kk: Rank): b
 
 // ----- content schemas of the ACL types (malformed known fields are refused with a strike) -----
 
-const isInt = (x: unknown) => Number.isSafeInteger(x)
 const isStr = (x: unknown) => typeof x === 'string'
 const isBit = (x: unknown) =>
-  isInt(x) &&
+  isInt(x, -Infinity) &&
   (x as number) > 0 &&
   (x as number) <= 2 ** 30 &&
   ((x as number) & ((x as number) - 1)) === 0
-const isMask = (x: unknown) => isInt(x) && (x as number) >= 0 && (x as number) <= ALL
+const isMask = (x: unknown) => isInt(x, -Infinity) && (x as number) >= 0 && (x as number) <= ALL
 const isSeenMap = (x: unknown) =>
-  isRecord(x) && Object.values(x).every(v => isInt(v) && (v as number) >= -1)
+  isRecord(x) && Object.values(x).every(v => isInt(v, -Infinity) && (v as number) >= -1)
 const isStrList = (x: unknown) => Array.isArray(x) && x.every(isStr)
 
 type Kind = 'str' | 'int' | 'bool' | 'bit' | 'mask' | 'seen' | 'strs' | 'rec'
 const KINDS: Record<Kind, (x: unknown) => boolean> = {
   str: isStr,
-  int: isInt,
+  int: (x: unknown) => isInt(x, -Infinity),
   bool: x => typeof x === 'boolean',
   bit: isBit,
   mask: isMask,
@@ -651,7 +652,7 @@ export function aclContentOk(t: string, c: unknown): c is AclContent {
   if (!isRecord(c)) return false
   if (t === 'genesis')
     return (
-      isInt(c.rules) &&
+      isInt(c.rules, -Infinity) &&
       (c.rules !== RULES_VERSION ||
         (bytesOf(c.nonce, NONCE_LEN) !== null &&
           Array.isArray(c.owners) &&
@@ -663,7 +664,7 @@ export function aclContentOk(t: string, c: unknown): c is AclContent {
   for (const f of REQUIRED[t] ?? []) if (c[f] === undefined) return false
   for (const [f, k] of Object.entries(SCHEMA[t] ?? {}))
     if (c[f] !== undefined && !KINDS[k](c[f])) return false
-  if (t === 'device_revoke' && c.seen !== undefined && !isInt(c.seen)) return false
+  if (t === 'device_revoke' && c.seen !== undefined && !isInt(c.seen, -Infinity)) return false
   if (t === 'primary_rotate' && c.keep !== undefined && !isStrList(c.keep)) return false
   return true
 }

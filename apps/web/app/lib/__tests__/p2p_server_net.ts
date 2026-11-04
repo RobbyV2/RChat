@@ -1,5 +1,5 @@
 import { Hub, makeNode, ManualClock, prng, waitFor } from './p2p_net'
-import { CHANNEL_CONTENT } from '../p2p/acl/admit'
+import { CHANNEL_CONTENT } from '../p2p/event_v2'
 import { chainKey, type DevChain } from '../p2p/dag'
 import { Dms } from '../p2p/dm'
 import { buildEvent2, type ChainFields } from '../p2p/event_v2'

@@ -5,6 +5,7 @@ import { b64u, randomBytes } from './canonical'
 import { CALL_ID_LEN, type CallContent, type CallOutcome } from './content'
 import type { Message } from './frames'
 import { LOCAL } from './limits'
+import { RateWindow } from './rate'
 import type { MissedCall } from './dm'
 import { realClock, type Clock, type Session } from './session'
 import {
@@ -126,11 +127,11 @@ export const newCallId = () => b64u(randomBytes(CALL_ID_LEN))
 export class Calls {
   private cur: Live | null = null
   private clock: Clock
-  private rings = new Map<string, number[]>()
+  private rings = new Map<string, RateWindow>()
   // Calls we told a peer are over, so a burst of late frames gets one answer, and when each
   // session was last told (a few times a minute at most, whatever ids it makes up).
   private answered: string[] = []
-  private told = new WeakMap<Session, number[]>()
+  private told = new WeakMap<Session, RateWindow>()
   private fns = new Set<() => void>()
   private ringFns = new Set<(c: CallView) => void>()
   readonly signaler: P2pSignaler
@@ -420,11 +421,10 @@ export class Calls {
     const r = s.remote
     if (!r) return
     const now = this.clock.now()
-    for (const [ik, ts] of this.rings) if (ts.every(t => now - t >= 60_000)) this.rings.delete(ik)
-    const recent = (this.rings.get(r.ik) ?? []).filter(t => now - t < 60_000)
-    if (recent.length >= RINGS_PER_MIN) return
-    recent.push(now)
-    this.rings.set(r.ik, recent)
+    for (const [ik, w] of this.rings) if (w.idle(now)) this.rings.delete(ik)
+    let rings = this.rings.get(r.ik)
+    if (!rings) this.rings.set(r.ik, (rings = new RateWindow(60_000, RINGS_PER_MIN)))
+    if (!rings.hit(now)) return
     const c = this.cur
     // Both sides called each other at once: the call with the lower id goes ahead. The side
     // holding the higher one drops its own quietly and takes the ring.
@@ -525,10 +525,9 @@ export class Calls {
   private unknown(s: Session, id: string, room: string) {
     if (this.answered.includes(id)) return
     const now = this.clock.now()
-    const told = (this.told.get(s) ?? []).filter(t => now - t < 60_000)
-    if (told.length >= UNKNOWN_PER_MIN) return
-    told.push(now)
-    this.told.set(s, told)
+    let told = this.told.get(s)
+    if (!told) this.told.set(s, (told = new RateWindow(60_000, UNKNOWN_PER_MIN)))
+    if (!told.hit(now)) return
     this.answered.push(id)
     if (this.answered.length > LOCAL.calls.answeredMax) this.answered.shift()
     this.send(s, { t: 'call', op: 'end', id, room })

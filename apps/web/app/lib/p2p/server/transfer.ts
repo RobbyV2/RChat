@@ -32,6 +32,7 @@ import {
   type Migrated,
 } from './types'
 import { type Rt } from './rt'
+import { clip } from '../rate'
 
 export function transferAsks(cx: ServerCtx) {
   return [...cx.xferAsks].map(([key, a]) => ({
@@ -139,10 +140,7 @@ export function onTransfer(cx: ServerCtx, m: Message, s: Session, kind: 'take' |
     kind,
     from,
     room,
-    name:
-      typeof gname === 'string'
-        ? Array.from(gname).slice(0, LOCAL.server.nameMax).join('')
-        : 'P2P server',
+    name: typeof gname === 'string' ? clip(gname, LOCAL.server.nameMax) : 'P2P server',
     to: kind === 'take' ? cx.me : (g?.ev.a ?? ''),
     ...(g ? { g } : {}),
     s,

@@ -24,6 +24,7 @@ import {
 import type { SyncLimits } from '../sync'
 import type { VoiceLimits, VoiceUser } from '../voice'
 import type { Dms, P2pMessage } from '../dm'
+import { clip } from '../rate'
 
 // P2P servers (spec p2p-acl-spec §1 to §4): groups whose membership, permissions, channels and
 // messages live only on their members' devices. Every event is a signed v2 event of one of two
@@ -398,9 +399,6 @@ export interface Migrated {
   done: boolean
 }
 
-// What this browser signs again from a new key when a rotation drops its old one (spec 3.9).
-export const RESIGN_CONTENT = ['msg', 'edit', 'redact', 'react', 'pin']
-
 export const RESIGN_ACL = [
   'add',
   'uninvite',
@@ -485,7 +483,7 @@ export const newRolePos = (positions: number[], cap = Infinity): number | null =
 }
 
 export const roleName = (x: unknown) =>
-  typeof x === 'string' && x.trim() ? Array.from(x.trim()).slice(0, ROLE_NAME_MAX).join('') : 'Role'
+  typeof x === 'string' && x.trim() ? clip(x.trim(), ROLE_NAME_MAX) : 'Role'
 
 export const sortRoles = (ids: string[], at: Map<string, number>) =>
   ids.filter(id => at.has(id)).sort((a, b) => at.get(a)! - at.get(b)!)

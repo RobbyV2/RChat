@@ -1,7 +1,7 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
-import { b64u, bytesOf, canonicalBytes, concat, nfc, utf8 } from './canonical'
+import { b64u, bytesOf, canonicalBytes, concat, nfc, utf8, isInt } from './canonical'
 
 // Identity key (IK): the long-term "who"; its id is the base64url public key (43 chars).
 // Device key (DK): one per browser profile; it runs handshakes and signs events. The IK
@@ -76,8 +76,6 @@ export const verify = (pk: Uint8Array, msg: Uint8Array, sig: Uint8Array) => {
     return false
   }
 }
-
-const isInt = (x: unknown, min = 0): x is number => Number.isSafeInteger(x) && (x as number) >= min
 
 // Exactly these keys (optional ones may be missing), so unsigned extras can't ride along.
 const onlyKeys = (x: Record<string, unknown>, required: string[], optional: string[] = []) =>

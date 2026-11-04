@@ -4,6 +4,7 @@ import { home } from '../instances'
 import { ice } from '../ice'
 import { declaredHosts, hidesIp, relayBook, unknownHosts, type RelayBook } from '../relays'
 import { LOCAL } from './limits'
+import { RateWindow } from './rate'
 import { TransportError, type Listener, type OfferGuard, type Transport } from './node'
 import type { Pipe } from './session'
 
@@ -47,7 +48,7 @@ export const answerConfig = (hooked: boolean, book: RelayBook = relayBook): RTCC
 export class OfferGate {
   private held = new Map<string, number>()
   private heldAll = 0
-  private checks: number[] = []
+  private checks = new RateWindow(60_000, CHECKS_PER_MIN)
 
   constructor(
     private book: RelayBook,
@@ -84,11 +85,7 @@ export class OfferGate {
   }
 
   private mayCheck() {
-    const now = this.now()
-    this.checks = this.checks.filter(t => now - t < 60_000)
-    if (this.checks.length >= CHECKS_PER_MIN) return false
-    this.checks.push(now)
-    return true
+    return this.checks.hit(this.now())
   }
 }
 

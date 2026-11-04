@@ -27,6 +27,7 @@ import {
   type Rank,
   type Rec,
 } from './rules'
+import { CHANNEL_CONTENT } from '../event_v2'
 
 // Admission (spec §2): a pure function of an event and its causal past. `decide` is the port of
 // the model's; `AclReplica.receive` is §2.1 without the wire checks (signatures, sizes) and the
@@ -481,17 +482,6 @@ export function decideContent(
 }
 
 const ok = (m: ContentHead, F: EvalResult['facts']) => ({ ok: true as const, k: rank(F, m.a) })
-
-// The known content kinds, all posted in a channel (§1.4); other kinds are opaque.
-export const CHANNEL_CONTENT: readonly string[] = [
-  'msg',
-  'edit',
-  'redact',
-  'react',
-  'pin',
-  'call',
-  'move',
-]
 
 // A genesis: seq 0, no parents, the author among the owners, rules version 2.
 export const genesisOk = (e: AclEv) =>

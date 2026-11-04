@@ -5,6 +5,7 @@ import { claimedId, redacted, validate, type Devices, type Wire } from './event_
 import { isEventId } from './content'
 import type { Message } from './frames'
 import { LOCAL } from './limits'
+import { RateWindow } from './rate'
 import type { Clock, Session } from './session'
 
 // The outcome of checking an event from a peer: stored next, refused (a strike), or not stored
@@ -136,9 +137,9 @@ export class Link {
   waiting: { id: string; wire: Wire }[] = []
   theirPushes = 0
   theirPushBytes = 0
-  pushTimes: number[] = []
+  pushTimes = new RateWindow(60_000, Infinity)
   pulled = 0
-  stateTimes: { at: number; n: number }[] = []
+  stateTimes = new RateWindow(60_000, Infinity)
   unavailable = new Set<string>()
   // Acked `later` here (a device or a vouching head we don't have yet): asked again once it may
   // be stored.
@@ -837,13 +838,12 @@ export class Sync {
     const { clock } = this.deps
     for (;;) {
       const now = clock.now()
-      link.stateTimes = link.stateTimes.filter(t => now - t.at < 60_000)
-      const used = link.stateTimes.reduce((a, t) => a + t.n, 0)
-      if (used + n <= this.limits.statePerMin || !link.stateTimes.length || link.closed) break
-      const wait = 60_000 - (now - link.stateTimes[0].at) + 1
+      const used = link.stateTimes.count(now)
+      if (used + n <= this.limits.statePerMin || !link.stateTimes.times.length || link.closed) break
+      const wait = 60_000 - (now - link.stateTimes.oldest()!) + 1
       await new Promise<void>(resolve => clock.set(resolve, wait))
     }
-    link.stateTimes.push({ at: clock.now(), n })
+    link.stateTimes.note(clock.now(), n)
   }
 
   // Past pushPerMin live events a minute, the next one waits; its ack (and so the sender's
@@ -852,12 +852,11 @@ export class Sync {
     const { clock } = this.deps
     for (;;) {
       const now = clock.now()
-      link.pushTimes = link.pushTimes.filter(t => now - t < 60_000)
-      if (link.pushTimes.length < this.limits.pushPerMin || link.closed) break
-      const wait = 60_000 - (now - link.pushTimes[0]) + 1
+      if (link.pushTimes.count(now) < this.limits.pushPerMin || link.closed) break
+      const wait = 60_000 - (now - link.pushTimes.oldest()!) + 1
       await new Promise<void>(resolve => clock.set(resolve, wait))
     }
-    link.pushTimes.push(clock.now())
+    link.pushTimes.note(clock.now())
   }
 
   private onAck(m: Message, s: Session) {

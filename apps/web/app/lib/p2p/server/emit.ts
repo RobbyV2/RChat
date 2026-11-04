@@ -40,6 +40,7 @@ import {
   type EmitOpts,
   type ChannelPatch,
 } from './types'
+import { clip } from '../rate'
 
 export async function author(cx: ServerCtx) {
   const author = cx.deps.node.author()
@@ -206,7 +207,7 @@ export async function create(
   coOwners: string[] = []
 ): Promise<string> {
   const author = await cx.author()
-  const clean = name.trim().slice(0, LOCAL.server.nameMax) || 'P2P server'
+  const clean = clip(name.trim(), LOCAL.server.nameMax) || 'P2P server'
   const dk = keyId(author.dk.pk)
   if (coOwners.length > SERVER.coOwners) throw new ServerError(CO_OWNERS_MAX_TEXT)
   const sessions = coOwners.map(ik => {
@@ -299,8 +300,7 @@ export function onBundle(cx: ServerCtx, m: Message, s: Session) {
     return cx.answerBundle(s, m.room, g, false)
   cx.coAsks.set(key, {
     from,
-    name:
-      typeof g.name === 'string' ? Array.from(g.name).slice(0, LOCAL.server.nameMax).join('') : '',
+    name: typeof g.name === 'string' ? clip(g.name, LOCAL.server.nameMax) : '',
     room: m.room,
     g,
     s,
@@ -349,7 +349,7 @@ export function settings(cx: ServerCtx, room: string, patch: Record<string, unkn
 }
 
 export function setName(cx: ServerCtx, room: string, name: string, color?: number | null) {
-  const patch: Record<string, unknown> = { name: name.trim().slice(0, LOCAL.server.nameMax) }
+  const patch: Record<string, unknown> = { name: clip(name.trim(), LOCAL.server.nameMax) }
   if (typeof color === 'number') patch.color = color
   return cx.settings(room, patch)
 }
@@ -375,7 +375,7 @@ export function addChannel(
   return cx
     .emit(room, 'channel', () => ({
       id,
-      name: name.trim().slice(0, LOCAL.server.nameMax),
+      name: clip(name.trim(), LOCAL.server.nameMax),
       kind: opts.kind ?? 'text',
       pos,
       ...(opts.restrictView ? { restrict_view: true } : {}),
@@ -388,7 +388,7 @@ export function editChannel(cx: ServerCtx, room: string, id: string, patch: Chan
   const cur = channelOf(cx.sumOf(room), id)
   if (!cur) throw new ServerError('Unknown channel')
   const next: Record<string, unknown> = { ...knownChannel(cur), ...patch, id }
-  if (patch.name !== undefined) next.name = patch.name.trim().slice(0, LOCAL.server.nameMax)
+  if (patch.name !== undefined) next.name = clip(patch.name.trim(), LOCAL.server.nameMax)
   if (next.topic === '') delete next.topic
   for (const k of ['restrict_view', 'restrict_send']) if (next[k] !== true) delete next[k]
   if (!Number.isSafeInteger(next.slow) || (next.slow as number) <= 0) delete next.slow

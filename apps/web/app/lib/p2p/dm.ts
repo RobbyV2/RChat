@@ -34,6 +34,7 @@ import { LOCAL } from './limits'
 import { realClock, type Clock } from './session'
 import { around, type PageOpts } from './jump'
 import { isQuotaError, Sync, type SyncLimits } from './sync'
+import { clip } from './rate'
 
 // P2P direct messages: one room per pair of identities, its events in IndexedDB on both sides,
 // synced whenever both are online. This module builds the conversation view (edits, reactions,
@@ -452,7 +453,7 @@ export const bodyTooLong = (body: string) =>
   Array.from(body).length > EV.body || sizeOf({ body }) > EV.content
 
 // Forwarded author names longer than events allow are cut, not refused.
-export const clipName = (name: string) => Array.from(name).slice(0, EV.name).join('')
+export const clipName = (name: string) => clip(name, EV.name)
 export const MOVED_TEXT =
   'Your P2P identity moved to another device. This browser can no longer send.'
 export const MOVING_TEXT =

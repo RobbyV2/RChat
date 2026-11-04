@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
-import { b64u, bytesOf, canonicalBytes, concat, hasKeys, utf8 } from './canonical'
+import { b64u, bytesOf, canonicalBytes, concat, hasKeys, utf8, isInt } from './canonical'
 import type { ProofHeader } from './acl/admit'
 import { aclContentOk, RULES_VERSION, type AclContent, type AclEv } from './acl/rules'
 import type { ContentEv } from './acl/visibility'
@@ -10,7 +10,6 @@ import {
   contentHash,
   isEventId,
   isTypeName,
-  isInt,
   checkContent,
   contentMax,
   sizeOf,
@@ -19,6 +18,20 @@ import {
 } from './content'
 
 // ----- Format v2 (P2P servers, ACL spec §1.2) -----
+
+// The known content kinds, all posted in a channel (§1.4); other kinds are opaque.
+export const CHANNEL_CONTENT: readonly string[] = [
+  'msg',
+  'edit',
+  'redact',
+  'react',
+  'pin',
+  'call',
+  'move',
+]
+
+// What this browser signs again from a new key when a rotation drops its old one (spec 3.9).
+export const RESIGN_CONTENT = ['msg', 'edit', 'redact', 'react', 'pin']
 
 // A v2 core: every server event, ACL (`L` "a") or content (`L` "c"), signed by a device. Nothing
 // the sender asserts about authority is in it; admission computes everything from the position.

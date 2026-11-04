@@ -1,12 +1,12 @@
 import type { Disowned } from '../acl_room'
 import { getEvents } from '../dag'
 import { serverWire, type EventRecord } from '../db'
-import { signRevocation2, signRotation2 } from '../event_v2'
+import { signRevocation2, signRotation2, RESIGN_CONTENT } from '../event_v2'
 import { CANT_TEXT, effectHolds, signedAgain } from '../flows'
 import { keyId } from '../keys'
 import { memberOf } from '../state'
 import type { ServerCtx } from './context'
-import { ServerError, RESIGN_CONTENT, RESIGN_ACL, type LostRoom } from './types'
+import { ServerError, RESIGN_ACL, type LostRoom } from './types'
 
 // Re-applies our denies the current state doesn't count, each checked again as it is signed;
 // those refused are reported with why.

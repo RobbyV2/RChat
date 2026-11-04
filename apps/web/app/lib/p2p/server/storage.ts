@@ -200,12 +200,11 @@ export async function proofPass(cx: ServerCtx, room: string) {
 }
 
 export function postProofs(cx: ServerCtx, room: string, rt: Rt, now: number) {
-  rt.proofTimes = rt.proofTimes.filter(t => now - t < 60 * 60_000)
   for (const [dev, q] of rt.proofs) {
     if (q.due > now) continue
-    if (rt.proofTimes.length >= SERVER.proofsPerHour) return
+    if (rt.proofTimes.count(now) >= rt.proofTimes.limit) return
     rt.proofs.delete(dev)
-    rt.proofTimes.push(now)
+    rt.proofTimes.note(now)
     void cx.postProof(room, dev).catch(() => {})
   }
 }

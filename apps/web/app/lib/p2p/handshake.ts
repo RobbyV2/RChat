@@ -14,6 +14,7 @@ import {
 } from './canonical'
 import { gcmOpen, gcmSeal, nonceOf } from './frames'
 import { baseId, keyBytes, peerId, sign, verify, verifyCert, type Cert, type KeyPair } from './keys'
+import { NONCE_LEN } from './acl/rules'
 
 // SIGMA-I over the PeerJS data channel (note section 4). The signaling server relays the SDP and
 // could sit in the middle of DTLS, so confidentiality never relies on DTLS: both sides prove
@@ -61,7 +62,6 @@ const fail = (why: string): never => {
   throw new HandshakeError(why)
 }
 
-const NONCE_LEN = 16
 const HS_MAX = 4096
 const AUTH = 'rchat-p2p-auth1\0'
 const enc = (s: string) => utf8(s)

@@ -20,6 +20,7 @@ import {
   parseCode,
   codeHash,
 } from './types'
+import { clip } from '../rate'
 
 export async function issueCode(cx: ServerCtx, room: string, ttl: number, label = '') {
   const s = cx.sumOf(room)
@@ -370,7 +371,7 @@ export async function onInvite(cx: ServerCtx, m: Message, s: Session) {
   const now = cx.clock.now()
   await cx.putRoom({
     ...(cur ?? { ...blankRoom(room, '', now), kind: 'server', chans: {}, server: null }),
-    name: Array.from(m.name).slice(0, LOCAL.server.nameMax).join(''),
+    name: clip(m.name, LOCAL.server.nameMax),
     invite: { from, at: now, wire: v.wire },
   })
   cx.ensureRt(room)

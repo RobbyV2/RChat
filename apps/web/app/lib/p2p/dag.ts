@@ -2,7 +2,7 @@ import type { Drops, PackedRec } from './acl_room'
 import { LOCAL } from './limits'
 import { headerContent } from './acl/storage'
 import { shareAdd, shareKey, shareLive, SHARE, withinShare, type Share } from './shares'
-import { attsOf, isEventId, LIMITS as EV, shownReaction } from './content'
+import { attsOf, isEventId, LIMITS as EV, shownReaction, TARGETED } from './content'
 import { authorizeTarget, effTsOf, redacted, sortKeyOf, targetOf, type Wire } from './event_v1'
 import { type WireV2 } from './event_v2'
 import type { IDBPTransaction } from 'idb'
@@ -416,8 +416,6 @@ export const withinShareNow = async (
   caps: Caps
 ) => (await shareOf(k => db.get('meta', k), room, sender, size, now, caps)).ok
 
-const CONTENT_TARGETED: readonly string[] = ['edit', 'redact', 'react', 'pin']
-
 // A message's or an edit's search rows taken out (it is dropped or purged). Returns the bytes.
 const unindexOne = (st: SearchWrite, events: EventRead, r: EventRecord) =>
   r.type === 'msg'
@@ -531,8 +529,7 @@ export const insertServer = async (
   // Display order among equal times follows the content parents, and for ACL events (join and
   // leave lines) their admission order.
   const depth = acl ? (ctx.aseq ?? 0) : 1 + Math.max(-1, ...parents.map(x => x.depth))
-  const tid =
-    !acl && c && CONTENT_TARGETED.includes(ev.t) && typeof c.target === 'string' ? c.target : null
+  const tid = !acl && c && TARGETED.includes(ev.t) && typeof c.target === 'string' ? c.target : null
   const target = tid ? await events.get(tid) : undefined
   // An edit of a message purged here by its author goes without its body too (spec 4.3).
   const gone = ev.t === 'edit' && !!target?.purged && target.sender === ev.a && c !== null

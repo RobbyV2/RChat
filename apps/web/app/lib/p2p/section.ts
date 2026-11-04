@@ -1,5 +1,5 @@
 import { isRecord } from '../bytes'
-import { bytesOf } from './canonical'
+import { bytesOf, isInt } from './canonical'
 
 // The `p2p` section of a config export: this browser's P2P identity and history, encrypted with
 // a key derived from a passphrase. Only the string and the file carry it, never a share link.
@@ -25,15 +25,13 @@ export const IV_BYTES = 12
 
 const B64U = /^[A-Za-z0-9_-]+$/
 
-const isInt = (x: unknown): x is number => Number.isSafeInteger(x) && (x as number) > 0
-
 export const isKdf = (x: unknown): x is Kdf =>
   isRecord(x) &&
   Object.keys(x).length === 4 &&
   x.alg === 'argon2id' &&
-  isInt(x.m) &&
-  isInt(x.t) &&
-  isInt(x.p)
+  isInt(x.m, 1) &&
+  isInt(x.t, 1) &&
+  isInt(x.p, 1)
 
 // Shape only; the parameters are checked against the minimums when it is unlocked, so a weak
 // file gets a clear refusal instead of disappearing.

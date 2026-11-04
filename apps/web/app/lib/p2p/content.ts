@@ -1,7 +1,16 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
 import { looksLikeEmoji } from '../emoji'
-import { b64u, bytesOf, canonical, canonicalBytes, fromB64u, hasKeys, utf8 } from './canonical'
+import {
+  b64u,
+  bytesOf,
+  canonical,
+  canonicalBytes,
+  fromB64u,
+  hasKeys,
+  utf8,
+  isInt,
+} from './canonical'
 import { blockCount, EMPTY_ROOT } from './hashing'
 import { isShortId } from './state'
 import { isKeyId, type KeyPair } from './keys'
@@ -138,9 +147,6 @@ export const isCallId = (x: unknown): x is string => bytesOf(x, CALL_ID_LEN) !==
 
 const chars = (s: string) => Array.from(s).length
 
-export const isInt = (x: unknown, min = 0): x is number =>
-  Number.isSafeInteger(x) && (x as number) >= min
-
 export const contentHash = (c: Content) => b64u(sha256(canonicalBytes(c)))
 
 export interface Author {
@@ -228,6 +234,9 @@ const reactKeyOk = (x: unknown): x is string =>
 // notification. Others are inert.
 export const shownReaction = (c: unknown) =>
   isRecord(c) && typeof c.key === 'string' && looksLikeEmoji(c.key)
+
+// The content kinds about another event (`target`): edits, redactions, reactions and pins.
+export const TARGETED: readonly string[] = ['edit', 'redact', 'react', 'pin']
 
 export const checkContent = (type: string, c: unknown): c is Content => {
   if (!isRecord(c)) return false

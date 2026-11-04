@@ -1,4 +1,5 @@
 import type { Summary } from '../acl/summary'
+import type { RateWindow } from '../rate'
 import type { Carried, Reapply } from '../acl_room'
 import type { WireV2 } from '../event_v2'
 import type { Reached } from '../flows'
@@ -47,7 +48,7 @@ export interface StoreRt {
   // when we posted the last ones.
   proofs: Map<string, { f: number; due: number }>
   proofed: Map<string, number>
-  proofTimes: number[]
+  proofTimes: RateWindow
   // A mark acknowledging a moderator's redaction: when due, and the last one.
   ackDue: number | null
   ackAt: number

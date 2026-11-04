@@ -1,5 +1,5 @@
 import { genesisBundle, signDeviceCert2 } from '../p2p/acl/binding'
-import { CHANNEL_CONTENT } from '../p2p/acl/admit'
+import { CHANNEL_CONTENT } from '../p2p/event_v2'
 import { RULES_VERSION } from '../p2p/acl/rules'
 import type { ContentEv } from '../p2p/acl/visibility'
 import { AclRoom, type AclItem, type Plan, type Received } from '../p2p/acl_room'

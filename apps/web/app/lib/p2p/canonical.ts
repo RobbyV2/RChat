@@ -112,6 +112,10 @@ export const fromB64u = (text: string): Uint8Array => {
   return out
 }
 
+// A safe integer of at least `min`.
+export const isInt = (x: unknown, min = 0): x is number =>
+  Number.isSafeInteger(x) && (x as number) >= min
+
 // A b64u string of exactly `len` bytes, or null.
 export const bytesOf = (text: unknown, len: number): Uint8Array | null => {
   if (typeof text !== 'string') return null

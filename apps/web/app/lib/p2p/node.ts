@@ -53,6 +53,7 @@ import {
 } from './keys'
 import type { Message } from './frames'
 import { LOCAL } from './limits'
+import { RateWindow } from './rate'
 import {
   checkVerifyCode,
   NONCE_BYTES,
@@ -272,7 +273,7 @@ export class P2pNode {
   private failed = new Map<string, number[]>()
   private banned = new Map<string, number>()
   private verifyNonces = new Map<string, string[]>()
-  private requestTimes: number[] = []
+  private requestTimes = new RateWindow(LOCAL.node.requestsWindowMs, () => LIMITS.requestsPerHour)
   private dropped = 0
   private listener: Listener | null = null
   private ticker: unknown = null
@@ -590,8 +591,7 @@ export class P2pNode {
   // Failed handshakes older than a minute and ended bans are forgotten.
   private prune() {
     const now = this.clock.now()
-    for (const [peer, ts] of this.failed)
-      if (ts.every(t => now - t >= LOCAL.node.failedMs)) this.failed.delete(peer)
+    for (const [peer, ts] of this.failed) if (this.failures(ts).idle(now)) this.failed.delete(peer)
     for (const [key, until] of this.banned) if (until <= now) this.banned.delete(key)
   }
 
@@ -717,11 +717,19 @@ export class P2pNode {
     return false
   }
 
+  // Handshakes that failed with `peer` lately (their times per peer, in this map until idle).
+  private failedOf(peer: string) {
+    let ts = this.failed.get(peer)
+    if (!ts) this.failed.set(peer, (ts = []))
+    return this.failures(ts)
+  }
+
+  private failures(ts: number[]) {
+    return new RateWindow(LOCAL.node.failedMs, () => LIMITS.failedHandshakes, ts)
+  }
+
   private recentFailures(peer: string) {
-    const now = this.clock.now()
-    const list = (this.failed.get(peer) ?? []).filter(t => now - t < LOCAL.node.failedMs)
-    this.failed.set(peer, list)
-    return list.length
+    return this.failedOf(peer).count(this.clock.now())
   }
 
   private incoming(pipe: Pipe) {
@@ -822,9 +830,7 @@ export class P2pNode {
     const r = s.remote
     // Refusals count too: blocked, revoked or not-yet-accepted keys can't probe freely.
     if ((why === 'handshake' || why === 'refused') && s.role === 'responder') {
-      const list = this.failed.get(s.peer) ?? []
-      list.push(this.clock.now())
-      this.failed.set(s.peer, list)
+      this.failedOf(s.peer).note(this.clock.now())
     }
     if (why === 'strikes') {
       this.banned.set(s.peer, this.clock.now() + LIMITS.strikeBanMs)
@@ -1033,7 +1039,7 @@ export class P2pNode {
         await this.countDropped(1)
         return false
       }
-      this.requestTimes.push(now)
+      this.requestTimes.note(now)
     }
     let ok = false
     let created = false
@@ -1058,8 +1064,7 @@ export class P2pNode {
       return next
     })
     if (slot && !created) {
-      const i = this.requestTimes.lastIndexOf(now)
-      if (i >= 0) this.requestTimes.splice(i, 1)
+      this.requestTimes.drop(now)
     }
     if (!ok || !c) return this.contacts.get(r.ik)?.state !== 'blocked' && this.extWants(r.ik, m)
     // A hello from a new device may carry revocations for one still connected; the others hear
@@ -1116,9 +1121,7 @@ export class P2pNode {
   }
 
   private requestAllowed() {
-    const now = this.clock.now()
-    this.requestTimes = this.requestTimes.filter(t => now - t < LOCAL.node.requestsWindowMs)
-    return this.requestTimes.length < LIMITS.requestsPerHour
+    return this.requestTimes.count(this.clock.now()) < this.requestTimes.limit
   }
 
   // Keeps at most LIMITS.requests pending requests: the oldest unverified ones go.

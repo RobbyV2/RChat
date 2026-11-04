@@ -1,12 +1,11 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
-import { b64u, bytesOf, canonicalBytes, concat, hasKeys, utf8 } from './canonical'
+import { b64u, bytesOf, canonicalBytes, concat, hasKeys, utf8, isInt } from './canonical'
 import { isKeyId, keyBytes, keyId, sign, verify, type Cert, type Revocation } from './keys'
 import {
   LIMITS,
   contentHash,
   isTypeName,
-  isInt,
   sizeOf,
   contentMax,
   isEventId,
@@ -14,6 +13,7 @@ import {
   type EvType,
   type Content,
   type Author,
+  TARGETED,
 } from './content'
 
 // ----- Format v1 (direct messages) -----
@@ -81,8 +81,6 @@ export const buildEvent = (
 
 // The redacted form: the core and signature only, still verifiable and still in the DAG.
 export const redacted = (w: Wire): Wire => ({ ev: w.ev, c: null, sig: w.sig })
-
-const TARGETED: readonly string[] = ['edit', 'redact', 'react', 'pin']
 
 // The event an edit, redaction, reaction or pin is about. Decided by the type, so a field named
 // `target` that a newer version adds to another type is never read as one.

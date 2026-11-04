@@ -14,6 +14,7 @@ import {
 import { unindexRoom } from '../search'
 import type { ServerCtx } from './context'
 import { ServerError, ROLE_NAME_MAX, NO_ROOM_TEXT, newRolePos } from './types'
+import { clip } from '../rate'
 
 // A new role goes to the bottom of the list.
 export async function createRole(
@@ -28,7 +29,7 @@ export async function createRole(
     me[0] === Infinity ? Infinity : me[0]
   )
   if (pos === null) throw new ServerError(NO_ROOM_TEXT)
-  const name = Array.from(role.name.trim()).slice(0, ROLE_NAME_MAX).join('')
+  const name = clip(role.name.trim(), ROLE_NAME_MAX)
   return cx.emit(room, 'role_create', () => ({
     pos,
     bits: role.bits,
@@ -48,7 +49,7 @@ export async function editRole(
   const s = cx.sumOf(room)
   if (!can(s, cx.me, P.ManageRoles) || !s.roles[role] || !gt(rankOf(s, cx.me), roleRank(s, role)))
     throw new ServerError(CANT_TEXT)
-  const name = Array.from(meta.name.trim()).slice(0, ROLE_NAME_MAX).join('')
+  const name = clip(meta.name.trim(), ROLE_NAME_MAX)
   return cx.emit(room, 'role_meta', () => ({
     role,
     ...(name ? { name } : {}),

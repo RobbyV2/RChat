@@ -1,12 +1,6 @@
 import { afterEach, expect } from 'bun:test'
-import {
-  AclReplica,
-  CHANNEL_CONTENT,
-  decideContent,
-  identityHead,
-  pastOf,
-  type Verdict,
-} from '../p2p/acl/admit'
+import { CHANNEL_CONTENT } from '../p2p/event_v2'
+import { AclReplica, decideContent, identityHead, pastOf, type Verdict } from '../p2p/acl/admit'
 import { orphanDrops } from '../p2p/acl/equivocation'
 import { evaluate } from '../p2p/acl/eval'
 import { ContentView, type ContentEv } from '../p2p/acl/visibility'

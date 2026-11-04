@@ -3,6 +3,7 @@ import { isRecord } from '../bytes'
 import { b64u, bytesOf, canonical, concat, fromB64u, parseCanonical, utf8 } from './canonical'
 import { isKeyId, keyBytes } from './keys'
 import { LOCAL } from './limits'
+import { NONCE_LEN } from './acl/rules'
 
 // Safety numbers (Signal's construction): per identity, SHA-512 iterated 5200 times over the
 // version and the key, cut to 30 digits; the pair's number is both halves sorted by key, 60
@@ -48,7 +49,6 @@ export const safetyGroups = (a: string, b: string) => safetyDigits(a, b).match(/
 // ----- QR verification -----
 
 export const VERIFY_PREFIX = 'rcv1.'
-const NONCE_LEN = 16
 
 export interface VerifyPayload {
   // The identity showing the code, the one it expects to scan it, and a one-time nonce.

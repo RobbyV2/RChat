@@ -13,6 +13,7 @@ import { Gossip, type LinkKind } from '../gossip'
 import { keyId, verifyProfile, liveCerts, type Cert, type Profile } from '../keys'
 import { mergeCerts, mergeRevocations, displayName } from '../contacts'
 import { LOCAL } from '../limits'
+import { RateWindow, clip } from '../rate'
 import { LocalHost, WorkerHost, type AclHost, type WorkerLike } from '../resolve_host'
 import { realClock, type Clock, type Session } from '../session'
 import {
@@ -435,7 +436,7 @@ export class Servers {
         evictFrom: new Map(),
         proofs: new Map(),
         proofed: new Map(),
-        proofTimes: [],
+        proofTimes: new RateWindow(60 * 60_000, () => SERVER.proofsPerHour),
         ackDue: null,
         ackAt: -Infinity,
         views: new Map(),
@@ -743,8 +744,8 @@ export class Servers {
   // Whether we take a code now: not paused here, and under its hourly invites.
   private codeOpen(room: string, code: string, now: number) {
     const u = this.codeUseOf(room, code)
-    u.adds = u.adds.filter(t => now - t < 60 * 60_000)
-    return u.until <= now && u.adds.length < SERVER.codeAddsPerHour
+    const adds = new RateWindow(60 * 60_000, SERVER.codeAddsPerHour, u.adds).count(now)
+    return u.until <= now && adds < SERVER.codeAddsPerHour
   }
 
   // Codes we stopped taking here, by hash.
@@ -844,8 +845,7 @@ export class Servers {
     if (c && (c.petname || c.name)) return displayName(c)
     if (room) {
       const n = memberOf(this.sumOf(room), ik)?.profile?.name
-      if (typeof n === 'string' && n.trim())
-        return Array.from(n).slice(0, LOCAL.server.memberNameMax).join('')
+      if (typeof n === 'string' && n.trim()) return clip(n, LOCAL.server.memberNameMax)
     }
     const p = this.idents.get(ik)?.profile
     if (p) return p.name
@@ -857,8 +857,7 @@ export class Servers {
   profileName(ik: string, room?: string) {
     if (ik === this.me) return this.deps.node.name
     const n = room ? memberOf(this.sumOf(room), ik)?.profile?.name : undefined
-    if (typeof n === 'string' && n.trim())
-      return Array.from(n).slice(0, LOCAL.server.memberNameMax).join('')
+    if (typeof n === 'string' && n.trim()) return clip(n, LOCAL.server.memberNameMax)
     const c = this.deps.node.contact(ik)
     if (c?.name) return c.name
     return this.idents.get(ik)?.profile?.name || 'Member'
