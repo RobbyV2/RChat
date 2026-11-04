@@ -184,7 +184,7 @@ docker run --rm -u 0 -v rchat-data:/data --entrypoint chown ghcr.io/robbyv2/rcha
 
 Build the image locally with `docker compose up`.
 
-Do not run an older release on a database that a newer release upgraded. It does not start.
+Do not run an older release on a database that a newer release upgraded. From 0.3.0 on, it does not start. Releases before 0.3.0 still start on it, so do not go back to them.
 
 ## Desktop app
 
@@ -338,7 +338,7 @@ kubectl apply -k deploy/k8s
 
 Keep Redis on a private network.
 
-Upgrade all copies together. An older copy refuses to start once a newer one has upgraded the database.
+Upgrade all copies together. From 0.3.0 on, an older copy refuses to start once a newer one has upgraded the database. Copies before 0.3.0 keep running, so stop them all before you upgrade.
 
 ## Configuration
 
