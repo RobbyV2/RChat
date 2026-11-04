@@ -216,6 +216,10 @@ body {
   filter: none;
 }
 
+.streamer-mode .streamer-secret {
+  filter: blur(5px);
+}
+
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--color-surface-container-highest) transparent;

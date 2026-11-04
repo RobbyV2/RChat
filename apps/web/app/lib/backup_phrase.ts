@@ -86,3 +86,53 @@ export const checkAnswers = (words: string[], picks: number[], answers: string[]
   picks.length === CHECK_COUNT &&
   answers.length === CHECK_COUNT &&
   picks.every((p, i) => words[p] !== undefined && expand(clean(answers[i]).trim()) === words[p])
+
+// Puts typed or pasted text into the 12 word slots. A QR payload or exactly 12 words replace all of
+// them; anything else fills from `at`. Words that don't fit are reported, never dropped quietly.
+export const spread = (slots: string[], at: number, text: string) => {
+  const t = text.trim()
+  const qr = t.startsWith(QR_PREFIX) ? tokens(t.slice(QR_PREFIX.length)) : null
+  const parts = qr ?? tokens(t)
+  const whole = qr !== null || parts.length === PHRASE_LENGTH
+  const start = whole ? 0 : Math.max(0, Math.min(at, PHRASE_LENGTH - 1))
+  const next = whole
+    ? Array<string>(PHRASE_LENGTH).fill('')
+    : Array.from({ length: PHRASE_LENGTH }, (_, i) => slots[i] ?? '')
+  parts.slice(0, PHRASE_LENGTH - start).forEach((w, i) => (next[start + i] = w))
+  return { slots: next, overflow: parts.length > PHRASE_LENGTH - start }
+}
+
+export const OVERFLOW = "That's more than 12 words"
+export const WRONG_WORDS = 'Check the words: one of them is wrong'
+
+// A full set that fails is reported once the focused field holds a word, not while it is typed.
+export const phraseProblem = (slots: string[], overflow: boolean, focus: number | null) => {
+  if (overflow) return OVERFLOW
+  if (slots.some(s => !s)) return null
+  if (focus !== null && expand(slots[focus]) === null) return null
+  return normalize(slots.join(' ')) ? null : WRONG_WORDS
+}
+
+// Typing into field `at`. A whole phrase (12 words, or the QR text) fills every field; a word
+// followed by a space or comma is done and focus moves on; anything else stays as typed, so a space
+// inside a word never writes into the next field.
+export const typeInto = (slots: string[], at: number, value: string) => {
+  const t = value.trim()
+  const body = t.startsWith(QR_PREFIX) ? t.slice(QR_PREFIX.length) : t
+  if (tokens(body).length === PHRASE_LENGTH) return { ...spread(slots, at, value), next: null }
+  const done = /^([^\s,]+)[\s,]+$/u.exec(value)
+  const word = /^[\s,]*$/u.test(value) ? '' : (done?.[1] ?? value).toLowerCase()
+  return {
+    slots: slots.map((s, i) => (i === at ? word : s)),
+    overflow: false,
+    next: done && at < PHRASE_LENGTH - 1 ? at + 1 : null,
+  }
+}
+
+// Enter takes the one suggestion left, else moves on; in the last field it submits the form.
+export const enterAction = (slots: string[], at: number): { take: string } | 'next' | 'submit' => {
+  const typed = slots[at]
+  const hits = typed ? suggest(typed, 2) : []
+  if (hits.length === 1 && hits[0] !== typed) return { take: hits[0] }
+  return at < PHRASE_LENGTH - 1 ? 'next' : 'submit'
+}

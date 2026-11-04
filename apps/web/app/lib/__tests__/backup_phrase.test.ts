@@ -3,13 +3,17 @@ import {
   WORDS,
   checkAnswers,
   derive,
+  enterAction,
   generate,
   normalize,
   parseQr,
+  phraseProblem,
   pickCheck,
   qrPayload,
   seed,
+  spread,
   suggest,
+  typeInto,
 } from '../backup_phrase'
 
 const ABOUT =
@@ -118,5 +122,82 @@ describe('backup phrase', () => {
     expect(checkAnswers(w, [], [])).toBe(false)
     expect(checkAnswers(w, [0, 5], ['abandon', 'abandon'])).toBe(false)
     expect(checkAnswers(w, [0, 5, 12], ['abandon', 'abandon', 'abandon'])).toBe(false)
+  })
+
+  test('pasting a whole phrase or the QR text into any slot fills all 12', () => {
+    const empty = Array(12).fill('')
+    expect(spread(empty, 3, ABOUT)).toEqual({ slots: ABOUT.split(' '), overflow: false })
+    expect(spread(empty, 5, `rchat-backup:1:${ABOUT}`)).toEqual({
+      slots: ABOUT.split(' '),
+      overflow: false,
+    })
+    const typed = Array(12).fill('zoo')
+    expect(spread(typed, 7, ABOUT.replace(/ /g, ',\n'))).toEqual({
+      slots: ABOUT.split(' '),
+      overflow: false,
+    })
+  })
+
+  test('a single word fills its slot; words left over are flagged, never dropped silently', () => {
+    expect(spread(Array(12).fill(''), 2, 'Zoo ').slots[2]).toBe('zoo')
+    expect(spread(Array(12).fill(''), 10, 'able about acid').overflow).toBe(true)
+    expect(spread(Array(12).fill(''), 0, `${ABOUT} abandon`).overflow).toBe(true)
+    const some = spread(['able', ...Array(11).fill('')], 4, 'Acid  ACT')
+    expect(some).toEqual({
+      slots: ['able', '', '', '', 'acid', 'act', ...Array(6).fill('')],
+      overflow: false,
+    })
+    expect(spread(Array(12).fill(''), 0, `rchat-backup:1:${ABOUT} abandon`).overflow).toBe(true)
+  })
+
+  test('a copied numbered list pasted anywhere fills all 12', () => {
+    const words = ABOUT.split(' ')
+    const copied = words.map((w, i) => `${i + 1}. ${w}`).join('\n')
+    expect(spread(Array(12).fill(''), 6, copied)).toEqual({ slots: words, overflow: false })
+  })
+
+  test('typing: a finished word moves on, a space inside a word overwrites nothing', () => {
+    const filled = ['liz', 'music', ...Array(10).fill('')]
+    expect(typeInto(filled, 0, 'liz ard')).toEqual({
+      slots: ['liz ard', 'music', ...Array(10).fill('')],
+      overflow: false,
+      next: null,
+    })
+    expect(typeInto(filled, 0, 'Lizard ')).toEqual({
+      slots: ['lizard', 'music', ...Array(10).fill('')],
+      overflow: false,
+      next: 1,
+    })
+    expect(typeInto(filled, 0, 'lizard,').next).toBe(1)
+    expect(typeInto(filled, 11, 'zoo ').next).toBeNull()
+    expect(typeInto(filled, 0, ' ').slots[0]).toBe('')
+    expect(typeInto(filled, 4, ABOUT).slots).toEqual(ABOUT.split(' '))
+    expect(typeInto(filled, 4, `rchat-backup:1:${ABOUT}`).slots).toEqual(ABOUT.split(' '))
+    expect(typeInto(filled, 1, 'rchat-backup:1:').slots).toEqual([
+      'liz',
+      'rchat-backup:1:',
+      ...Array(10).fill(''),
+    ])
+  })
+
+  test('the checksum message waits while the focused field is mid-word', () => {
+    const words = ABOUT.split(' ')
+    const wrong = [...words.slice(0, 11), 'a']
+    expect(phraseProblem(wrong, false, 11)).toBeNull()
+    expect(phraseProblem(wrong, false, null)).toBe('Check the words: one of them is wrong')
+    const swapped = [...words.slice(0, 11), 'abandon']
+    expect(phraseProblem(swapped, false, 11)).toBe('Check the words: one of them is wrong')
+    expect(phraseProblem(words, false, 11)).toBeNull()
+    expect(phraseProblem(['abandon', ...Array(11).fill('')], false, null)).toBeNull()
+    expect(phraseProblem(words, true, null)).toBe("That's more than 12 words")
+  })
+
+  test('Enter takes the one suggestion, else moves on, and submits from the last field', () => {
+    const slots = ['aban', 'act', ...Array(9).fill(''), 'abou']
+    expect(enterAction(slots, 0)).toEqual({ take: 'abandon' })
+    expect(enterAction(slots, 1)).toBe('next')
+    expect(enterAction(slots, 11)).toEqual({ take: 'about' })
+    expect(enterAction([...slots.slice(0, 11), 'about'], 11)).toBe('submit')
+    expect(enterAction([...slots.slice(0, 11), ''], 11)).toBe('submit')
   })
 })
