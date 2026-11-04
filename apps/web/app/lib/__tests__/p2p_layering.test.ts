@@ -126,4 +126,7 @@ describe('P2P layering', () => {
 
   test("the room's flows work without its storage policy", () =>
     expect(reaches(importsOf(`${P2P}/acl_room_flows.ts`), 'acl_room_storage.ts')).toBe(false))
+
+  test('the packed state codec loads without the caches', () =>
+    expect(reaches(importsOf(`${P2P}/acl/packed.ts`), 'acl/cache.ts')).toBe(false))
 })

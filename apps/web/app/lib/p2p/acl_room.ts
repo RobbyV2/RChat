@@ -14,7 +14,7 @@ import {
   packedResult,
   samePacked,
   type StDelta,
-} from './acl/cache'
+} from './acl/packed'
 import type { EvalResult } from './acl/facts'
 import type { Drop } from './acl/storage'
 import {
