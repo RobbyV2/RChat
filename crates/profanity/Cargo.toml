@@ -1,6 +1,6 @@
 [package]
 name = "rchat-profanity"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 description = "The profanity matcher shared by the server and the web client"
