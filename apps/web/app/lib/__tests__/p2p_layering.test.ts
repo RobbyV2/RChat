@@ -123,4 +123,7 @@ describe('P2P layering', () => {
     expect(reaches(importsOf(`${P2P}/event_v1.ts`), 'event_v2.ts')).toBe(false)
     expect(reaches(importsOf(`${P2P}/event_v2.ts`), 'event_v1.ts')).toBe(false)
   })
+
+  test("the room's flows work without its storage policy", () =>
+    expect(reaches(importsOf(`${P2P}/acl_room_flows.ts`), 'acl_room_storage.ts')).toBe(false))
 })

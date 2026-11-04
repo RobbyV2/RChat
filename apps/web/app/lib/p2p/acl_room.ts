@@ -16,13 +16,10 @@ import {
   type StDelta,
 } from './acl/cache'
 import type { EvalResult } from './acl/facts'
-import { orphanDrops, stableDeny, underDroppable, type Drop } from './acl/storage'
+import type { Drop } from './acl/storage'
 import {
   canView,
-  EVERYONE,
-  authority,
   gt,
-  guards,
   idOp,
   MESSAGES,
   introduces,
@@ -41,11 +38,8 @@ import {
   BIG,
   buildSummary,
   diffSummary,
-  dict,
   emptySummary,
   inviteOf,
-  overwritesOf,
-  rolesOf,
   type OverSum,
   type RoleSum,
   type SumDelta,
@@ -54,8 +48,11 @@ import {
   type SummarySource,
 } from './acl/summary'
 import { ContentView, type ContentEv, type Hidden } from './acl/visibility'
+import type { RoomCtx } from './acl_room_ctx'
 import { aclEvOf, contentEvOf, type WireV2 } from './event_v2'
 import { AGREED, LOCAL } from './limits'
+import * as flows from './acl_room_flows'
+import * as storage from './acl_room_storage'
 
 // One P2P server's evaluator state, where the host runs it (a worker in the browser): the ACL
 // replica, the content it holds, and what the page mirrors of the current state. The page stores
@@ -338,42 +335,6 @@ export interface Purgeable {
   other: string[]
 }
 
-// A role_create's content is the carried summary `was`.
-const sameRole = (c: AclContent, was: RoleSum) =>
-  c.pos === was.pos && c.bits === was.bits && c.name === was.name && c.color === was.color
-
-// Whether a deny's effect still holds in `F`: the member still out or banned, the role still not
-// held, the bit still off, the role still deleted or where it was moved, the invite still gone.
-const standing = (t: string, c: AclContent, F: EvalResult['facts']) => {
-  const to = typeof c.to === 'string' ? c.to : ''
-  const role = typeof c.role === 'string' ? c.role : ''
-  switch (t) {
-    case 'kick':
-      return !F.mem.has(to)
-    case 'ban':
-      return F.ban.has(to)
-    case 'uninvite':
-      return !F.mem.has(to) && !F.invited.get(to)?.length
-    case 'revoke':
-      return ![...(F.holds.get(to) ?? [])].includes(role)
-    case 'role_bits':
-      return (
-        (role === EVERYONE || F.roles.has(role)) &&
-        ((F.bits.get(role) ?? 0) & (c.bit as number)) === 0
-      )
-    case 'role_del':
-      return !F.roles.has(role)
-    case 'role_move':
-      return F.pos.get(role) === c.pos
-    default:
-      return true
-  }
-}
-
-// The role a deny names, not @everyone, which every copy has.
-const roleRef = (c: AclContent) =>
-  typeof c.role === 'string' && c.role !== EVERYONE ? c.role : null
-
 // A stored admission record, its St(e) built when first read.
 class StoredRec implements Rec {
   k: Rank
@@ -403,6 +364,9 @@ class StoredRec implements Rec {
     return (this.st ??= this.room.stateOfStored(this.e, this.header))
   }
 }
+
+// The room as its storage policy and flows modules see it (acl_room_ctx.ts).
+const ctx = (r: AclRoom) => r as unknown as RoomCtx
 
 export class AclRoom {
   r: AclReplica
@@ -1053,514 +1017,74 @@ export class AclRoom {
 
   // ----- Flows (spec 3.9, 9 rule 18) -----
 
-  // Whether each event still counts: content that shows; an ACL event in force (a deny effective,
-  // anything else not void, cut or past a watermark).
   counted(ids: readonly string[]): boolean[] {
-    const v = this.view()
-    const S = this.r.state()
-    const ix = this.r.acl.ix
-    return ids.map(id => {
-      const m = v.byIdOf(id)
-      if (m) return !v.hidden(m)
-      const i = ix.at.get(id)
-      if (i === undefined || !this.r.admitted(id)) return false
-      if (ix.isD[i]) return S.eff.has(id)
-      return !S.X.has(id) && !S.cut.has(id) && !S.tail.has(id)
-    })
+    return flows.counted(ctx(this), ids)
   }
 
-  // Whether each event stopped counting because of a device's removal: content hidden past its
-  // device's fork point or a revocation's watermark (not redacted, wiped, removed or cut); an
-  // ACL event no longer in force.
   stopped(ids: readonly string[]): boolean[] {
-    const v = this.view()
-    const now = this.counted(ids)
-    return ids.map((id, n) => {
-      const m = v.byIdOf(id)
-      if (!m) return !now[n]
-      const why = v.hidden(m)?.why
-      return why === 'revoked' || why === 'fork'
-    })
+    return flows.stopped(ctx(this), ids)
   }
 
-  // Spec 3.8 step 4: project(Eval_S(B(u))) for the upgrade `up`: the members, bans, roles (and
-  // who holds them), channels and settings at its parents. Null when it isn't admitted here.
   carried(up: string): Carried | null {
-    const ix = this.r.acl.ix
-    const i = ix.at.get(up)
-    if (i === undefined || !this.r.admitted(up) || ix.ev[i].t !== 'upgrade') return null
-    const F = this.r.acl.stateOf(ix.ev[i].ap).facts
-    const holds = dict<string[]>()
-    for (const ik of F.mem) holds[ik] = [...(F.holds.get(ik) ?? [])]
-    const roles = rolesOf(F, ix)
-    const channels = dict<AclContent>()
-    for (const [id, c] of F.channels) channels[id] = c
-    return {
-      members: [...F.mem],
-      bans: [...F.ban],
-      holds,
-      roles,
-      channels,
-      overwrites: overwritesOf(F),
-      settings: F.setting ?? null,
-    }
+    return flows.carried(ctx(this), up)
   }
 
-  // I2: our own denies the current state doesn't count (cut, void by a fork, past a revocation's
-  // watermark) that we may still make at the heads: the same act, checked against the current
-  // state's authority and guards. One per act, newest first.
-  // Spec 3.8 step 7: our denies in this (old) copy that the upgrade `up` doesn't have in its past
-  // (made concurrently with the transfer, so not carried over), to re-apply in the new copy
-  // (`admissible` there decides). A role is named as the upgrade carried it over.
   outside(me: string, up: string, exclude: readonly string[] = []): Reapply[] {
-    const ix = this.r.acl.ix
-    const u = ix.at.get(up)
-    if (u === undefined || ix.genesis < 0) return []
-    const fe = this.r.acl.evaluation()
-    const carried = rolesOf(this.r.acl.stateOf(ix.ev[u].ap).facts, ix)
-    const F = this.r.state().facts
-    const out: Reapply[] = []
-    for (const i of ix.byAuthor.get(me) ?? []) {
-      const e = ix.ev[i]
-      if (!ix.isD[i] || ix.isSelfD[i]) continue
-      if (e.relay || !fe.inS(i) || fe.X[i] || fe.tail[i] || exclude.includes(e.dev)) continue
-      if (ix.has(u, i)) continue
-      const {
-        seen: _s,
-        reason: _r,
-        ...c
-      } = e.c as AclContent & { seen?: unknown; reason?: unknown }
-      // Still in force here: not cut, and nothing since gave back what it took.
-      if (!fe.isEffI(i) || !standing(e.t, c as AclContent, F)) continue
-      const role = roleRef(c as AclContent)
-      const roleWas = role === null ? undefined : carried[role]
-      if (role !== null && !roleWas) continue
-      out.push({
-        id: ix.ids[i],
-        t: e.t,
-        c: c as AclContent,
-        ...(roleWas ? { roleWas } : {}),
-      })
-    }
-    return out
+    return flows.outside(ctx(this), me, up, exclude)
   }
 
-  // Those of `list` we may make here now (authority and guards in the current state). A role is
-  // the one the carry-over made from it: the owner's role_create with the carried summary, before
-  // its `done` chunk (later moves and edits don't change that). None, more than one, or deleted
-  // since: the act isn't offered.
   admissible(me: string, list: readonly Reapply[]): Reapply[] {
-    const F = this.r.state().facts
-    const ix = this.r.acl.ix
-    const owner = ix.genesis < 0 ? null : ix.ev[ix.genesis].a
-    const done: number[] = []
-    ix.ev.forEach((e, i) => {
-      const chunk = e.t === 'migrate' && e.a === owner ? (e.c.chunk as AclContent) : null
-      if (chunk?.kind === 'done') done.push(i)
-    })
-    const madeFrom = (was: RoleSum) => {
-      const hits = [...ix.roleCreate].filter(([, i]) => {
-        const e = ix.ev[i]
-        return e.a === owner && sameRole(e.c, was) && !done.some(d => ix.has(i, d))
-      })
-      return hits.length === 1 && F.roles.has(hits[0][0]) ? hits[0][0] : undefined
-    }
-    const seen = new Set<string>()
-    const out: Reapply[] = []
-    for (const x of list) {
-      const role = x.roleWas ? madeFrom(x.roleWas) : null
-      if (role === undefined) continue
-      const c = role === null ? x.c : ({ ...x.c, role } as AclContent)
-      const key = `${x.t}\n${JSON.stringify(c)}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      const probe = { id: '', t: x.t, a: me, dev: '', seq: 0, ap: [], ts: 0, c } as AclEv
-      if (authority(probe, F) && guards(probe, F, this.r.lim)) out.push({ id: x.id, t: x.t, c })
-    }
-    return out
+    return flows.admissible(ctx(this), me, list)
   }
 
   reapply(me: string, exclude: readonly string[] = []): Reapply[] {
-    const ix = this.r.acl.ix
-    if (ix.genesis < 0 || this.r.unknownRules !== undefined) return []
-    const fe = this.r.acl.evaluation()
-    const F = this.r.state().facts
-    const out: Reapply[] = []
-    const acts = new Set<string>()
-    const own = [...(ix.byAuthor.get(me) ?? [])].sort((x, y) => y - x)
-    for (const i of own) {
-      const e = ix.ev[i]
-      if (!ix.isD[i] || ix.isSelfD[i] || e.relay || !fe.inS(i) || fe.isEffI(i)) continue
-      // Not a device we disowned as lost or stolen, or signed out: not ours to re-apply. Past a
-      // revocation's or rotation's watermark (the evaluation's tail: devices it dropped, those
-      // introduced concurrently with it too) the room itself says so, on every device of ours.
-      if (exclude.includes(e.dev) || fe.tail[i]) continue
-      const { seen: _s, ...c } = e.c as AclContent & { seen?: unknown }
-      const { reason: _r, ...act } = c as AclContent & { reason?: unknown }
-      const key = `${e.t}\n${JSON.stringify(act)}`
-      if (acts.has(key)) continue
-      acts.add(key)
-      const probe = { id: '', t: e.t, a: me, dev: e.dev, seq: 0, ap: [], ts: 0, c } as AclEv
-      if (authority(probe, F) && guards(probe, F, this.r.lim))
-        out.push({ id: ix.ids[i], t: e.t, c })
-    }
-    return out
+    return flows.reapply(ctx(this), me, exclude)
   }
 
-  // Spec 3.9, 8.2 lost or stolen device: what device `dk` of `ik` did after its last trusted event
-  // (its ACL events with a higher seq, and how much content; `witnesses`: the ACL events received
-  // here by the cut-off; `own`: the highest seq this browser itself signed with it by then), who
-  // joined
-  // through its invites from then on and goes with them, and where a rotation that disowns them
-  // can sit: the newest admitted events that have none of them in their past (null: none, its
-  // first changes can't be undone). There, `devs` are ik's live devices and `seen` the watermark
-  // of each device of ik its past introduces: `dk` up to its last trusted seq, the others up to
-  // their last event that has none of them in its past.
   disown(ik: string, dk: string, witnesses: readonly string[], own = -1): Disowned {
-    const ix = this.r.acl.ix
-    const none: Disowned = {
-      seq: -1,
-      acts: [],
-      content: 0,
-      lose: [],
-      ap: null,
-      live: false,
-      devs: [],
-      seen: {},
-    }
-    if (ix.genesis < 0 || this.r.unknownRules !== undefined) return none
-    const fe = this.r.acl.evaluation()
-    const F = this.r.state().facts
-    // Its last trusted event: the newest of its ACL events that an ACL event of someone else, or of
-    // another device of ours, received here by the cut-off has in its past. Its own dates are not
-    // evidence: a thief can backdate them.
-    const known = witnesses.filter(id => this.r.admitted(id) && ix.ev[ix.at.get(id)!].dev !== dk)
-    const { bits: wb } = ix.closure(known)
-    let seq = own
-    for (const i of ix.byDev.get(dk) ?? [])
-      if ((wb[i >>> 5] >>> (i & 31)) & 1) seq = Math.max(seq, ix.ev[i].seq)
-    // Below its fork point known here: what forks we already saw is undone too.
-    seq = Math.min(seq, (this.r.state().F.get(dk) ?? Infinity) - 1)
-    const held = [...this.contents.values()].filter(m => m.dev === dk)
-    const D = (ix.byDev.get(dk) ?? []).filter(i => ix.ev[i].seq > seq)
-    const Dset = new Set(D)
-    const Db = new Uint32Array((ix.n + 31) >>> 5)
-    for (const i of D) Db[i >>> 5] |= 1 << (i & 31)
-    const tainted = (i: number) => {
-      if (Dset.has(i)) return true
-      const a = ix.anc[i]
-      for (let w = 0; w < a.length; w++) if (a[w] & Db[w]) return true
-      return false
-    }
-    const ok = (i: number) => {
-      if (!fe.inS(i) || tainted(i) || fe.X[i] || fe.tail[i]) return false
-      const e = ix.ev[i]
-      return F.mem.has(e.a) || i === ix.genesis || (e.t === 'leave' && fe.isEffI(i))
-    }
-    const heads = this.heads(ok).slice(0, MAX_PARENTS)
-    const ap = heads.length ? heads : null
-    const at = ap ?? this.heads(i => fe.inS(i)).slice(0, MAX_PARENTS)
-    const St = this.r.acl.stateOf(at).facts
-    const live = St.devs.get(ik)?.has(dk) ?? false
-    const seen: Record<string, number> = {}
-    if (ap) {
-      const { bits } = ix.closure(ap)
-      const inC = (i: number) => ((bits[i >>> 5] >>> (i & 31)) & 1) === 1
-      for (const x of ix.introBy.get(ik) ?? [])
-        if (inC(x))
-          for (const v of introduces(ix.ev[x])) {
-            let m = -1
-            for (const i of ix.byDev.get(v) ?? []) if (inC(i)) m = Math.max(m, ix.ev[i].seq)
-            for (const c of this.contents.values())
-              if (c.dev === v && c.ap.every(p => !tainted(ix.at.get(p) ?? 0)))
-                m = Math.max(m, c.seq)
-            seen[v] = v === dk ? Math.max(seq, m) : m
-          }
-      seen[dk] = seq
-    }
-    const lose: string[] = []
-    for (const X of F.mem) {
-      let j = -1
-      for (const g of ix.memEv.get(X) ?? []) if (fe.inS(g) && !fe.isVoidI(g) && g > j) j = g
-      if (j < 0 || ix.ev[j].t !== 'join') continue
-      const inv = this.inviteOf(X, j)
-      if (inv && (Dset.has(inv.add) || (inv.code !== undefined && Dset.has(inv.code)))) lose.push(X)
-    }
-    return {
-      seq,
-      acts: D.map(i => {
-        const e = ix.ev[i]
-        const to = typeof e.c.to === 'string' ? e.c.to : undefined
-        return { id: ix.ids[i], t: e.t, ts: e.ts, ...(to ? { to } : {}) }
-      }),
-      content: held.filter(m => m.seq > seq).length,
-      lose,
-      ap,
-      live,
-      devs: [...(St.devs.get(ik) ?? [])],
-      seen,
-    }
+    return flows.disown(ctx(this), ik, dk, witnesses, own)
   }
 
   // ----- Storage (spec 2.3, 4.2, 4.3) -----
 
-  // What storage drops now, beyond what it dropped before: the orphan rule's ACL events (held
-  // descendants: the ACL events that stay and visible content), and content with its header:
-  // past its device's fork point (but the pair defining it), past a revocation's watermark, or
-  // hidden and citing a dropped event (controller ruling). `mine`: this device, whose own events
-  // stay (it cites them).
   drops(mine?: string): Drops {
-    const ix = this.r.acl.ix
-    if (ix.genesis < 0 || this.r.unknownRules !== undefined) return { acl: [], content: [] }
-    const fe = this.r.acl.evaluation()
-    const v = this.view()
-    const keep = (i: number) => ix.ev[i].dev === mine
-    const under = underDroppable(fe, keep)
-    const touching = new Set<ContentEv>()
-    const cited = new Uint8Array(ix.n)
-    for (const m of this.contents.values()) {
-      if (!m.ap.some(p => under[ix.at.get(p) ?? -1] === 1)) continue
-      touching.add(m)
-      if (v.visible(m)) for (const p of m.ap) cited[ix.at.get(p)!] = 1
-    }
-    const acl = orphanDrops(fe, i => cited[i] === 1, keep, this.gone).filter(
-      d => !this.gone.has(d.id)
-    )
-    for (const d of acl) this.gone.set(d.id, d.header)
-    const content: string[] = []
-    const pairs = new Map<string, Set<string>>()
-    for (const m of this.contents.values()) {
-      if (m.dev === mine) continue
-      const cites =
-        touching.has(m) &&
-        m.ap.some(p => this.gone.has(p) || this.r.acl.isHeader(p)) &&
-        !v.visible(m)
-      if (!cites && v.dropKind(m) === null) continue
-      let pair = pairs.get(m.dev)
-      if (!pair) pairs.set(m.dev, (pair = v.fcPair(m.dev)))
-      if (!pair.has(m.id)) content.push(m.id)
-    }
-    if (content.length) {
-      for (const id of content) {
-        this.evict(id, false)
-        this.contents.delete(id)
-        this.bodiless.delete(id)
-      }
-      this.cv = null
-    }
-    return { acl, content }
+    return storage.drops(ctx(this), mine)
   }
 
-  // Evidence worth a proof (spec 2.3, 4.1), for the devices with new events since the last call
-  // (or `devs`): the held pair with the lowest fork point against each, when a proof of it that
-  // `q` posts now would be admitted (it lowers F below an ACL event of the device there).
   proofs(q: { a: string; dev: string }, devs?: readonly string[]): ProofCand[] {
-    const ix = this.r.acl.ix
-    if (ix.genesis < 0 || this.r.unknownRules !== undefined) return []
-    const list = devs ?? [...this.dirty]
-    const v = this.view()
-    const out: ProofCand[] = []
-    let plan: Plan | null = null
-    for (const d of list) {
-      const ev = d === q.dev ? null : v.evidence(d)
-      if (ev) plan ??= this.plan({ t: 'proof', L: 'a', a: q.a, dev: q.dev })
-      // Without a position to post from, the rest waits for the next call.
-      if (plan && !plan.ap.length) return out
-      if (!devs) this.dirty.delete(d)
-      if (!ev || !plan) continue
-      const e: AclEv = {
-        id: '',
-        t: 'proof',
-        a: q.a,
-        dev: q.dev,
-        seq: plan.seq + 1,
-        ap: plan.ap,
-        ts: plan.ts,
-        c: { x: ev.x, y: ev.y } as unknown as AclContent,
-      }
-      if (plan.aprev !== undefined) e.aprev = plan.aprev
-      const r = decide(e, pastOf(ix, plan.ap), this.r.acl.stateOf(plan.ap), this.r.opts)
-      if (r.ok) out.push({ dev: d, f: ev.f, x: ev.x.id, y: ev.y.id })
-    }
-    return out
+    return storage.proofs(ctx(this), q, devs)
   }
 
-  // Spec 4.3: the causes hiding held content that still has its body (of `only`, when given),
-  // with S2 and S3 worked out once per state.
   purgeable(only?: readonly string[]): Purgeable {
-    const ix = this.r.acl.ix
-    const out: Purgeable = { live: [], causes: [], other: [] }
-    if (ix.genesis < 0 || this.r.unknownRules !== undefined) return out
-    const fe = this.r.acl.evaluation()
-    const v = this.view()
-    if (this.stabAt !== this.evals) {
-      this.stab.clear()
-      this.stabAt = this.evals
-    }
-    const live = new Set<string>()
-    for (const P of new Set([...ix.remEv.keys(), ...ix.revokeEv.keys(), ...ix.byAuthor.keys()])) {
-      for (const d of fe.againstMember(P)) live.add(ix.ids[d])
-      const w = v.wipedBy(P)
-      if (w !== null) live.add(ix.ids[w])
-    }
-    out.live = [...live]
-    const pool = only
-      ? only.flatMap(id => {
-          const m = v.byIdOf(id)
-          return m ? [m] : []
-        })
-      : v.hideable()
-    const by = new Map<string, Cause>()
-    const stable = (key: string, f: () => boolean) => {
-      let x = this.stab.get(key)
-      if (x === undefined) this.stab.set(key, (x = f()))
-      return x
-    }
-    for (const m of pool) {
-      if (this.bodiless.has(m.id)) continue
-      if (v.selfRedacted(m)) {
-        const c = by.get('') ?? { id: '', kind: 'self' as const, stable: true, ids: [] }
-        c.ids.push(m.id)
-        by.set('', c)
-        continue
-      }
-      const h = v.hidden(m)
-      if (!h) continue
-      let c: Cause | undefined
-      if (h.why === 'removed' || h.why === 'wipe') {
-        const i = ix.at.get(h.by)!
-        c = by.get(h.by) ?? {
-          id: h.by,
-          kind: h.why === 'wipe' ? 'wipe' : 'deny',
-          stable: stable(h.by, () => stableDeny(fe, i)),
-          ids: [],
-        }
-      } else if (h.why === 'redacted') {
-        const r = v.byIdOf(h.by)!
-        c = by.get(h.by) ?? {
-          id: h.by,
-          kind: 'redact',
-          stable: stable(`${h.by}|${m.a}`, () => v.stableRedaction(r, m)),
-          ids: [],
-        }
-      }
-      if (!c) {
-        out.other.push(m.id)
-        continue
-      }
-      c.ids.push(m.id)
-      by.set(c.id, c)
-    }
-    out.causes = [...by.values()]
-    return out
+    return storage.purgeable(ctx(this), only)
   }
 
-  // Content held without its body (purged, or evicted for space) that shows now: its body is
-  // wanted from peers (spec 4.3 restore).
-  // An edit is wanted only while its target shows; a body evicted for space only when viewed (the
-  // page asks for those itself).
   wanted(): string[] {
-    if (!this.bodiless.size) return []
-    return [...this.bodiless].filter(id => !this.evicted.has(id) && this.shows(id))
+    return storage.wanted(ctx(this))
   }
 
-  // Whether these bodies may be taken back now (`viewed`: also evicted ones): each shows, and an
-  // edit only with its target.
   restorable(ids: readonly string[], viewed: boolean): boolean[] {
-    return ids.map(
-      id => this.bodiless.has(id) && (viewed || !this.evicted.has(id)) && this.shows(id)
-    )
+    return storage.restorable(ctx(this), ids, viewed)
   }
 
   private shows(id: string) {
-    const v = this.view()
-    const m = v.byIdOf(id)
-    if (!m || !v.visible(m)) return false
-    const t = m.t === 'edit' && typeof m.c?.target === 'string' ? v.byIdOf(m.c.target) : null
-    return m.t !== 'edit' || (!!t && v.visible(t))
+    return storage.shows(ctx(this), id)
   }
 
-  // Content storage didn't keep after all (refused after it was decided): it goes, and its
-  // device's highest held seq is what is held again (a removal's watermark covers no more).
   unhold(ids: readonly string[]) {
-    const devs = new Set<string>()
-    for (const id of ids) {
-      const m = this.contents.get(id)
-      if (m) devs.add(m.dev)
-      this.evict(id, false)
-      this.contents.delete(id)
-      this.bodiless.delete(id)
-    }
-    if (!devs.size) return
-    this.cv = null
-    for (const d of devs) this.maxContent.delete(d)
-    for (const m of this.contents.values())
-      if (devs.has(m.dev))
-        this.maxContent.set(m.dev, Math.max(this.maxContent.get(m.dev) ?? -1, m.seq))
+    return storage.unhold(ctx(this), ids)
   }
 
-  // Storage purged bodies (`have` false; `evicted`: for space) or got them back.
   bodies(ids: readonly string[], have: boolean, evicted = false) {
-    for (const id of ids) {
-      if (have) {
-        this.bodiless.delete(id)
-        this.evict(id, false)
-        // Its author's edits that waited with it (evicted too) are wanted with it now.
-        for (const x of [...(this.evictedEdits.get(id) ?? [])]) this.evict(x, false)
-      } else if (this.contents.has(id)) {
-        this.bodiless.add(id)
-        if (evicted) this.evict(id, true)
-      }
-    }
+    return storage.bodies(ctx(this), ids, have, evicted)
   }
 
   private evict(id: string, on: boolean) {
-    const m = this.contents.get(id)
-    const t = m?.t === 'edit' && typeof m.c?.target === 'string' ? m.c.target : null
-    if (on) {
-      this.evicted.add(id)
-      if (t !== null) {
-        let s = this.evictedEdits.get(t)
-        if (!s) this.evictedEdits.set(t, (s = new Set()))
-        s.add(id)
-      }
-    } else if (this.evicted.delete(id) && t !== null) {
-      const s = this.evictedEdits.get(t)
-      s?.delete(id)
-      if (s && !s.size) this.evictedEdits.delete(t)
-    }
+    return storage.evict(ctx(this), id, on)
   }
 
-  // Moderators' redactions `me` may acknowledge with a mark (spec 4.3 S2; controller ruling): each
-  // hides its target here, isn't acknowledged yet, isn't by `me` or of `me`'s message, `me` hasn't
-  // named it in a mark, and at least 2 members other than its two authors could acknowledge it.
   acks(me: string): string[] {
-    const ix = this.r.acl.ix
-    if (ix.genesis < 0 || this.r.unknownRules !== undefined) return []
-    const v = this.view()
-    const F = this.r.state().facts
-    const named = new Set<string>()
-    for (const i of ix.byAuthor.get(me) ?? []) {
-      const ack = ix.ev[i].c.ack
-      if (Array.isArray(ack)) for (const x of ack) if (typeof x === 'string') named.add(x)
-    }
-    const out: string[] = []
-    for (const r of this.contents.values()) {
-      if (r.t !== 'redact' || r.a === me || named.has(r.id) || typeof r.c?.target !== 'string')
-        continue
-      const t = v.byIdOf(r.c.target)
-      if (!t || t.a === me || t.a === r.a) continue
-      const h = v.hidden(t)
-      if (h?.why !== 'redacted' || h.by !== r.id) continue
-      // S2 needs 3 acknowledging events of 2 identities, and each names it once: 3 members besides
-      // its two authors.
-      let others = 0
-      for (const P of F.mem) if (P !== r.a && P !== t.a) others += 1
-      if (others < 3 || v.redactionWitnessed(r, t)) continue
-      out.push(r.id)
-      if (out.length >= LOCAL.acl.acksPerPass) break
-    }
-    return out
+    return storage.acks(ctx(this), me)
   }
 
   // The time of `a`'s latest held message in `ch` (slow mode, spec 3.5), or null.
