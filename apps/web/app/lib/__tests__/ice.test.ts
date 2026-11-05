@@ -57,7 +57,7 @@ describe('ICE config', () => {
     const peerjs = files.filter(({ src }) => /from\s+['"]peerjs['"]/.test(src))
     // P2P files and calls (p2p.ts) and P2P messaging (p2p/transport.ts), each with its own Peer.
     expect(peerjs.map(o => rel(o.f)).sort()).toEqual(['p2p.ts', 'transport.ts'])
-    const rtc = files.find(({ f }) => f.endsWith('/rtc.ts'))
+    const rtc = files.find(({ f }) => f.endsWith('/lib/rtc.ts'))
     expect(
       /new\s+(?:window\.)?\w*RTCPeerConnection\s*\(\s*iceConfig\(\)\s*\)/.test(rtc?.src ?? '')
     ).toBe(true)
@@ -87,7 +87,7 @@ describe('ICE config', () => {
       .join('\n')
     const calls = files.find(({ f }) => f.endsWith('/p2p/calls.ts'))?.src ?? ''
     const voice = files.find(({ f }) => f.endsWith('/p2p/voice.ts'))?.src ?? ''
-    const rtc = files.find(({ f }) => f.endsWith('/rtc.ts'))?.src ?? ''
+    const rtc = files.find(({ f }) => f.endsWith('/lib/rtc.ts'))?.src ?? ''
     // rtc.ts builds every connection: the instance config, or the one its owner passes.
     expect(/new RTCPeerConnection\(this\.ice\(\)\)/.test(rtc)).toBe(true)
     // The P2P media manager passes the plan of the voice channel it is in, else the call's;
