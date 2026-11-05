@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::{HeaderName, Method, header};
@@ -26,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig::load(&cli)?;
 
     let roles = config.roles;
-    let db = rust_next::db::open(config.database_url.as_deref()).await?;
+    let db = rust_next::db::open_with(config.database_url.as_deref(), &config.db_options()).await?;
     let instance = rust_next::instance::Instance::load(&db, &config.instance()).await?;
     info!("Instance: {} ({})", instance.name, instance.id);
     let web_only = roles
@@ -36,9 +37,13 @@ async fn main() -> anyhow::Result<()> {
         };
     let (hub, bus) = match config.redis_url.as_deref().map(str::trim) {
         Some(url) if !web_only => {
-            let (hub, bus) =
-                rust_next::bus::connect(url, &config.redis_prefix, config.redis_hub_maxlen, roles)
-                    .await?;
+            let (hub, bus) = rust_next::bus::connect(
+                url,
+                &config.redis_prefix,
+                config.limits.redis_hub_maxlen,
+                roles,
+            )
+            .await?;
             info!("Realtime bus: redis (prefix {})", config.redis_prefix);
             (hub, Some(bus))
         }
@@ -85,8 +90,8 @@ async fn main() -> anyhow::Result<()> {
         }
         None => None,
     };
-    hub.set_limits(config.ws_limits());
-    let state = AppState::new(db, hub, config.s3()?, bus, instance);
+    let state = AppState::new(db, hub, config.s3()?, bus, instance)
+        .with_limits(Arc::new(config.limits.clone()));
     rust_next::api::webhooks::configure(config.outbound()?);
     rust_next::api::media::configure(config.upload_limits());
     rust_next::api::webhooks::spawn(&state, roles.jobs);
@@ -155,10 +160,7 @@ async fn main() -> anyhow::Result<()> {
             }
         });
         let voice = state.clone();
-        let idle: i64 = std::env::var("VOICE_IDLE_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(60);
+        let idle = voice.limits.voice_idle_secs;
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             let mut since = rust_next::db::now();
@@ -240,7 +242,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!(
         "Rate limiting: {} req/s, burst {}",
-        config.rate_limit_per_second, config.rate_limit_burst
+        config.limits.rate_limit_per_second, config.limits.rate_limit_burst
     );
     match &config.proxy_trust {
         ProxyTrust::Peer => {}

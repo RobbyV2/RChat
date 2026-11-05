@@ -1481,7 +1481,12 @@ impl FromRequestParts<AppState> for MaybeAuthed {
     }
 }
 
-pub fn routes(state: AppState, roles: &Roles, key: ClientIp) -> Router<AppState> {
+pub fn routes(
+    state: AppState,
+    roles: &Roles,
+    key: ClientIp,
+    swagger_ui: Option<&str>,
+) -> Router<AppState> {
     let limiter = || {
         GovernorLayer::new(
             GovernorConfigBuilder::default()
@@ -1562,7 +1567,7 @@ pub fn routes(state: AppState, roles: &Roles, key: ClientIp) -> Router<AppState>
                 )
                 .route_layer(limiter()),
         );
-        router = router.merge(api_routes(state, strict_routes, invite_routes));
+        router = router.merge(api_routes(state, strict_routes, invite_routes, swagger_ui));
     }
     if roles.gateway {
         router = router.route(
@@ -1598,6 +1603,7 @@ fn api_routes(
     state: AppState,
     strict_routes: Router<AppState>,
     invite_routes: Router<AppState>,
+    swagger_ui: Option<&str>,
 ) -> Router<AppState> {
     Router::new()
         .route("/me", get(auth::me).patch(auth::patch_me))
@@ -1804,7 +1810,7 @@ fn api_routes(
         .route("/admin/ban", post(admin::ban_user))
         .merge(strict_routes)
         .merge(invite_routes)
-        .merge(openapi::routes().route_layer(from_fn_with_state(state, require_token)))
+        .merge(openapi::routes(swagger_ui).route_layer(from_fn_with_state(state, require_token)))
 }
 
 #[cfg(test)]
@@ -2689,7 +2695,8 @@ mod tests {
 
     async fn get_as(state: &AppState, path: &str, token: Option<&str>) -> (StatusCode, String) {
         let trusted = ProxyTrust::from_config(false, Some("127.0.0.1")).expect("trust");
-        let app = routes(state.clone(), &Roles::ALL, ClientIp(trusted)).with_state(state.clone());
+        let app =
+            routes(state.clone(), &Roles::ALL, ClientIp(trusted), None).with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
@@ -2788,7 +2795,8 @@ mod tests {
     async fn invites_have_their_own_strict_limiter() {
         let (state, path) = temp_state("strict_invites").await;
         let trusted = ProxyTrust::from_config(false, Some("127.0.0.1")).expect("trust");
-        let app = routes(state.clone(), &Roles::ALL, ClientIp(trusted)).with_state(state.clone());
+        let app =
+            routes(state.clone(), &Roles::ALL, ClientIp(trusted), None).with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
@@ -2854,7 +2862,8 @@ mod tests {
     async fn server_names_and_passwords_change_in_the_strict_bucket() {
         let (state, path) = temp_state("strict_servers").await;
         let trusted = ProxyTrust::from_config(false, Some("127.0.0.1")).expect("trust");
-        let app = routes(state.clone(), &Roles::ALL, ClientIp(trusted)).with_state(state.clone());
+        let app =
+            routes(state.clone(), &Roles::ALL, ClientIp(trusted), None).with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");

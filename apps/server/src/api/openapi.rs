@@ -239,9 +239,9 @@ fn swagger_on(value: Option<&str>) -> bool {
     )
 }
 
-pub fn routes() -> Router<AppState> {
+pub fn routes(swagger_ui: Option<&str>) -> Router<AppState> {
     let router = Router::new().route("/openapi.json", get(openapi_json));
-    match swagger_on(std::env::var("SWAGGER_UI").ok().as_deref()) {
+    match swagger_on(swagger_ui) {
         true => {
             router.merge(SwaggerUi::new("/swagger-ui").url("/api/openapi.json", ApiDoc::openapi()))
         }

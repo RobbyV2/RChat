@@ -15,13 +15,14 @@ type ProxyClient = Client<HttpConnector, Body>;
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 
 use crate::config::AppConfig;
+use crate::limits::Limits;
 use crate::server::client_ip::ClientIp;
 use crate::state::AppState;
 
-fn limited(router: Router, key: ClientIp, config: &AppConfig) -> Router {
+fn limited(router: Router, key: ClientIp, limits: &Limits) -> Router {
     let governor_conf = GovernorConfigBuilder::default()
-        .per_millisecond((1000 / config.rate_limit_per_second.max(1)).max(1))
-        .burst_size(config.rate_limit_burst)
+        .per_millisecond((1000 / limits.rate_limit_per_second.max(1)).max(1))
+        .burst_size(limits.rate_limit_burst)
         .key_extractor(key)
         .finish()
         .expect("invalid rate limit config");
@@ -30,14 +31,19 @@ fn limited(router: Router, key: ClientIp, config: &AppConfig) -> Router {
 
 pub fn register_routes(proxy_url: Option<&str>, config: &AppConfig, state: AppState) -> Router {
     let key = ClientIp(config.proxy_trust.clone());
-    let api_routes =
-        crate::api::routes(state.clone(), &config.roles, key.clone()).with_state(state.clone());
-    let api_routes = limited(api_routes, key.clone(), config);
+    let api_routes = crate::api::routes(
+        state.clone(),
+        &config.roles,
+        key.clone(),
+        config.swagger_ui.as_deref(),
+    )
+    .with_state(state.clone());
+    let api_routes = limited(api_routes, key.clone(), &state.limits);
     let well_known = match config.roles.api {
         true => limited(
             crate::api::instance::well_known_routes().with_state(state.clone()),
             key,
-            config,
+            &state.limits,
         ),
         false => Router::new(),
     };

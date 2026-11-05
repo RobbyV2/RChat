@@ -1613,7 +1613,7 @@ pub(crate) async fn guest_access(
     let network = grant_network(&state.db).await?;
     let grant = new_token();
     let t = now();
-    let cutoff = t - crate::db::guest_grant_ttl();
+    let cutoff = t - state.limits.guest_grant_ttl();
     let password_id = access.password_id().unwrap_or(0);
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, access.name()).await?;

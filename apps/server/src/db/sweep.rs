@@ -1,6 +1,6 @@
 use sqlx::Row;
 
-use super::pool::{Db, env_num, reader};
+use super::pool::{Db, limits, reader};
 use super::{now, recount_members};
 
 /// Servers checked per read by `fix_member_counts`.
@@ -73,12 +73,8 @@ async fn delete_batched(db: &Db, sql: &'static str, cutoff: i64) -> sqlx::Result
     }
 }
 
-fn days(key: &str, default: i64) -> i64 {
-    env_num::<i64>(key).unwrap_or(default).max(1) * 86400
-}
-
-pub fn guest_grant_ttl() -> i64 {
-    days("GUEST_GRANT_DAYS", 30)
+pub fn guest_grant_ttl(db: &Db) -> i64 {
+    limits(db).guest_grant_ttl()
 }
 
 pub const SERVER_PASSWORD_KEEP: i64 = 30 * 86400;
@@ -98,10 +94,11 @@ pub const PINGS_KEPT: i64 = 2000;
 
 pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
     let t = now();
+    let limits = limits(db);
     let stale_grants = delete_batched(
         db,
         "DELETE FROM guest_grants WHERE \"grant\" IN (SELECT \"grant\" FROM guest_grants WHERE last_used_at < $1 AND (last_used_at > 0 OR created_at < $1) LIMIT $2)",
-        t - guest_grant_ttl(),
+        t - limits.guest_grant_ttl(),
     )
     .await?;
     let ended_grants = delete_batched(
@@ -133,7 +130,7 @@ pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
         embeds: delete_batched(
             db,
             "DELETE FROM embeds WHERE url IN (SELECT e.url FROM embeds e WHERE e.fetched_at < $1 AND NOT EXISTS(SELECT 1 FROM message_embeds me WHERE me.url = e.url) LIMIT $2)",
-            t - days("EMBED_CACHE_DAYS", 30),
+            t - limits.embed_cache_ttl(),
         )
         .await?
             + delete_batched(

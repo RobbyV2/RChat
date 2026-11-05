@@ -82,7 +82,7 @@ pub async fn flush_grant_touches(db: &Db) -> sqlx::Result<u64> {
         .map(|set| set.into_iter().collect())
         .unwrap_or_default();
     let t = now();
-    let cutoff = t - guest_grant_ttl();
+    let cutoff = t - guest_grant_ttl(db);
     let mut total = 0;
     for (i, chunk) in grants.chunks(100).enumerate() {
         let sql = format!(

@@ -266,7 +266,7 @@ pub(super) async fn grants_open(db: &Db, grants: &[String], server: &str) -> sql
     );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(server)
-        .bind(t - guest_grant_ttl())
+        .bind(t - guest_grant_ttl(db))
         .bind(t);
     for grant in grants {
         query = query.bind(secret_key(grant));
@@ -292,7 +292,7 @@ pub(super) async fn live_grant_servers(db: &Db, grants: &[String]) -> sqlx::Resu
         password_live("$2")
     );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(t - guest_grant_ttl())
+        .bind(t - guest_grant_ttl(db))
         .bind(t);
     for grant in grants {
         query = query.bind(secret_key(grant));
@@ -613,7 +613,7 @@ mod tests {
         let (state, path) = temp_state("grant_slide").await;
         let db = &state.db;
         let t = now();
-        let ttl = guest_grant_ttl();
+        let ttl = guest_grant_ttl(db);
         for (grant, used) in [
             ("fresh", t - 60),
             ("stale", t - 2 * 86400),
@@ -671,7 +671,7 @@ mod tests {
         let (state, path) = temp_state("grant_legacy").await;
         let db = &state.db;
         let t = now();
-        let ttl = guest_grant_ttl();
+        let ttl = guest_grant_ttl(db);
         for (grant, created) in [("new", t - 60), ("old", t - ttl - 60)] {
             sqlx::query(
                 "INSERT INTO guest_grants(\"grant\", server, created_at) VALUES($1, 'rchat', $2)",

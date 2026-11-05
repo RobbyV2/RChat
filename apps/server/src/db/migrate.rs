@@ -4,6 +4,7 @@ use sqlx::{AnyConnection, Row};
 use super::schema::{POSTGRES_SCHEMA, POSTGRES_TRIGGERS, SQLITE_SCHEMA, SQLITE_TRIGGERS};
 use super::secrets::secret_key;
 use super::{ALL_PERMS, NO_EXTRA_HASH, now};
+use crate::config::Seeds;
 
 const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "password_hash TEXT"),
@@ -321,7 +322,18 @@ async fn postgres_triggers(conn: &mut AnyConnection) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> anyhow::Result<()> {
+pub(super) async fn init_schema(
+    conn: &mut AnyConnection,
+    is_sqlite: bool,
+    seeds: &Seeds,
+) -> anyhow::Result<()> {
+    let Seeds {
+        guests_enabled,
+        profanity_filter,
+        profanity_targets,
+        p2p_attachments,
+        outgoing_webhooks,
+    } = seeds;
     let schema = match is_sqlite {
         true => SQLITE_SCHEMA,
         false => POSTGRES_SCHEMA,
@@ -444,19 +456,17 @@ pub(super) async fn init_schema(conn: &mut AnyConnection, is_sqlite: bool) -> an
         .bind(t)
         .execute(&mut *conn)
         .await?;
-    let guests = match std::env::var("GUESTS_ENABLED") {
-        Ok(v) if matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "off") => "0",
+    let guests = match guests_enabled {
+        Some(v) if matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "off") => "0",
         _ => "1",
     };
     seed_setting(conn, "guests_enabled", guests).await?;
-    let profanity = crate::api::profanity_seed(
-        std::env::var("PROFANITY_FILTER").ok().as_deref(),
-        std::env::var("PROFANITY_TARGETS").ok().as_deref(),
-    );
+    let profanity =
+        crate::api::profanity_seed(profanity_filter.as_deref(), profanity_targets.as_deref());
     seed_settings(&mut *conn, &profanity).await?;
-    let p2p = crate::api::switch_seed(std::env::var("P2P_ATTACHMENTS").ok().as_deref());
+    let p2p = crate::api::switch_seed(p2p_attachments.as_deref());
     seed_settings(&mut *conn, &[("p2p_attachments", p2p)]).await?;
-    let outgoing = crate::api::switch_off_seed(std::env::var("OUTGOING_WEBHOOKS").ok().as_deref());
+    let outgoing = crate::api::switch_off_seed(outgoing_webhooks.as_deref());
     seed_settings(&mut *conn, &[("outgoing_webhooks", outgoing)]).await?;
     for (key, value) in [
         ("instance_id", crate::identity::random_id()),

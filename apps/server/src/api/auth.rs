@@ -1997,6 +1997,7 @@ mod tests {
             state.clone(),
             &crate::config::Roles::ALL,
             crate::server::client_ip::ClientIp(trusted),
+            None,
         )
         .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

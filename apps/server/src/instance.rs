@@ -29,6 +29,8 @@ pub struct InstanceConfig {
     pub peerjs_port: Option<u16>,
     pub proxy_trust: ProxyTrust,
     pub ice: IceConfig,
+    pub relay_secret: Option<String>,
+    pub p2p_secret: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -142,6 +144,8 @@ impl Instance {
             peerjs_port,
             proxy_trust,
             ice,
+            relay_secret,
+            p2p_secret,
         } = config;
         let keys = match signing_key.as_deref().map(str::trim) {
             Some(spec) if !spec.is_empty() => {
@@ -166,12 +170,12 @@ impl Instance {
         Ok(Arc::new(Instance {
             stun: crate::relay::pick_stun(&crate::relay::bundled_stun(), &id, ice.public_stun),
             ice: ice.clone(),
-            relay_secret: match crate::db::env_secret("RELAY_SECRET") {
-                Some(secret) => secret,
+            relay_secret: match relay_secret {
+                Some(secret) => secret.clone(),
                 None => setting(db, "relay_secret").await?,
             },
-            p2p_secret: match crate::db::env_secret("P2P_SECRET") {
-                Some(secret) => secret,
+            p2p_secret: match p2p_secret {
+                Some(secret) => secret.clone(),
                 None => setting(db, "p2p_secret").await?,
             },
             id,

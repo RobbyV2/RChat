@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use sqlx::AnyPool;
@@ -7,13 +7,50 @@ use sqlx::any::{AnyPoolOptions, install_default_drivers};
 
 use super::migrate::init_schema;
 use super::schema::{postgres_search_index, probe_fts, set_fts, sqlite_search_index};
-use super::secrets::{PEPPERS, pepper};
+use super::secrets::{PEPPERS, pepper_with};
+use crate::config::Seeds;
+use crate::limits::Limits;
 
 pub type Db = AnyPool;
 
 const SCHEMA_LOCK: i64 = 0x7263_6861_7400;
 
 static READERS: LazyLock<Mutex<HashMap<String, Db>>> = LazyLock::new(Default::default);
+static LIMITS: LazyLock<Mutex<HashMap<String, Arc<Limits>>>> = LazyLock::new(Default::default);
+
+/// What `open_with` reads from the configuration: the limits, `PASSWORD_PEPPER` and the env
+/// values that seed settings at first start.
+#[derive(Clone, Default)]
+pub struct DbOptions {
+    pub limits: Limits,
+    pub pepper: Option<String>,
+    pub seeds: Seeds,
+}
+
+impl std::fmt::Debug for DbOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DbOptions")
+            .field("limits", &self.limits)
+            .field("seeds", &self.seeds)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The limits of the state that runs on `db` (`AppState::with_limits`), for code that has only
+/// the pool. The defaults until a state sets them.
+pub(crate) fn limits(db: &Db) -> Arc<Limits> {
+    LIMITS
+        .lock()
+        .ok()
+        .and_then(|limits| limits.get(&pool_key(db)).cloned())
+        .unwrap_or_default()
+}
+
+pub(crate) fn set_limits(db: &Db, limits: Arc<Limits>) {
+    if let Ok(mut map) = LIMITS.lock() {
+        map.insert(pool_key(db), limits);
+    }
+}
 
 pub fn reader(db: &Db) -> Db {
     READERS
@@ -26,6 +63,9 @@ pub fn reader(db: &Db) -> Db {
 pub async fn close(db: &Db) {
     if let Ok(mut peppers) = PEPPERS.lock() {
         peppers.remove(&pool_key(db));
+    }
+    if let Ok(mut limits) = LIMITS.lock() {
+        limits.remove(&pool_key(db));
     }
     let read = READERS
         .lock()
@@ -63,11 +103,16 @@ pub(crate) fn temp_db_path(tag: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("rchat_{tag}_{}_{test}_{n}.db", std::process::id()))
 }
 
-pub(super) fn env_num<T: std::str::FromStr>(key: &str) -> Option<T> {
-    std::env::var(key).ok().and_then(|v| v.trim().parse().ok())
+pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
+    open_with(database_url, &DbOptions::default()).await
 }
 
-pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
+pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::Result<Db> {
+    let DbOptions {
+        limits,
+        pepper,
+        seeds,
+    } = opts;
     install_default_drivers();
     let url = match database_url {
         Some(u)
@@ -81,14 +126,17 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
         None => "sqlite://rchat.db?mode=rwc".to_string(),
     };
     let is_sqlite = url.starts_with("sqlite:");
-    let max = env_num::<u32>("DATABASE_MAX_CONNECTIONS");
+    let max = limits.database_max_connections;
     if is_sqlite && max.is_some_and(|n| n != 1) {
         tracing::warn!(
             "DATABASE_MAX_CONNECTIONS is ignored for sqlite: it has a single writer; use DATABASE_READ_CONNECTIONS for reads"
         );
     }
-    let mut options = pool_options(writer_connections(is_sqlite, max));
-    if let Some(min) = env_num("DATABASE_MIN_CONNECTIONS") {
+    let mut options = pool_options(
+        writer_connections(is_sqlite, max),
+        limits.database_acquire_timeout_secs,
+    );
+    if let Some(min) = limits.database_min_connections {
         options = options.min_connections(min);
     }
     let pragmas: &'static [&'static str] = match is_sqlite {
@@ -109,7 +157,7 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
             .execute(&mut *tx)
             .await?;
     }
-    init_schema(&mut tx, is_sqlite).await?;
+    init_schema(&mut tx, is_sqlite, seeds).await?;
     if !is_sqlite {
         postgres_search_index(&mut tx).await;
     }
@@ -123,7 +171,7 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
             let in_memory = url.contains(":memory:") || url.contains("mode=memory");
             let readers = match in_memory {
                 true => 0,
-                false => env_num("DATABASE_READ_CONNECTIONS").unwrap_or_else(|| {
+                false => limits.database_read_connections.unwrap_or_else(|| {
                     std::thread::available_parallelism()
                         .map(|n| n.get() as u32)
                         .unwrap_or(4)
@@ -131,7 +179,7 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
                 }),
             };
             if readers > 0 {
-                let read = open_reader(&url, readers).await?;
+                let read = open_reader(&url, readers, limits.database_acquire_timeout_secs).await?;
                 if let Ok(mut map) = READERS.lock() {
                     map.insert(pool_key(&pool), read);
                 }
@@ -139,7 +187,7 @@ pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
         }
         false => set_fts(&pool, false),
     }
-    pepper(&pool).await?;
+    pepper_with(&pool, pepper.as_deref()).await?;
     Ok(pool)
 }
 
@@ -151,9 +199,9 @@ pub fn writer_connections(is_sqlite: bool, configured: Option<u32>) -> u32 {
     }
 }
 
-fn pool_options(max: u32) -> AnyPoolOptions {
+fn pool_options(max: u32, acquire_timeout_secs: Option<u64>) -> AnyPoolOptions {
     let options = AnyPoolOptions::new().max_connections(max);
-    match env_num("DATABASE_ACQUIRE_TIMEOUT_SECS") {
+    match acquire_timeout_secs {
         Some(secs) => options.acquire_timeout(Duration::from_secs(secs)),
         None => options,
     }
@@ -170,13 +218,15 @@ fn with_pragmas(options: AnyPoolOptions, pragmas: &'static [&'static str]) -> An
     })
 }
 
-async fn open_reader(url: &str, max: u32) -> anyhow::Result<Db> {
+async fn open_reader(url: &str, max: u32, acquire_timeout_secs: Option<u64>) -> anyhow::Result<Db> {
     let pragmas = &[
         "PRAGMA busy_timeout=5000",
         "PRAGMA query_only=ON",
         "PRAGMA mmap_size=268435456",
     ];
-    Ok(with_pragmas(pool_options(max), pragmas)
-        .connect(url)
-        .await?)
+    Ok(
+        with_pragmas(pool_options(max, acquire_timeout_secs), pragmas)
+            .connect(url)
+            .await?,
+    )
 }

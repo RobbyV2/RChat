@@ -3328,27 +3328,43 @@ async fn file_names_stored_before_the_upload_limits_are_cleaned_once() {
     wipe();
 }
 
-#[test]
-fn env_secrets_come_from_the_variable_or_a_file() {
-    let name = format!("RCHAT_TEST_SECRET_{}", std::process::id());
-    assert_eq!(env_secret(&name), None);
-    let file = std::env::temp_dir().join(format!("rchat_secret_{}", std::process::id()));
-    std::fs::write(&file, "from-file\n").expect("write");
-    unsafe {
-        std::env::set_var(format!("{name}_FILE"), &file);
+#[tokio::test]
+async fn open_with_uses_the_configured_options() {
+    let path = temp_db_path("open_with");
+    let opts = DbOptions {
+        limits: crate::limits::Limits {
+            database_read_connections: Some(3),
+            ..Default::default()
+        },
+        pepper: Some("configured".into()),
+        seeds: crate::config::Seeds {
+            guests_enabled: Some(" Off ".into()),
+            p2p_attachments: Some("off".into()),
+            outgoing_webhooks: Some("on".into()),
+            ..Default::default()
+        },
+    };
+    let db = open_with(path.to_str(), &opts).await.expect("open");
+    assert_eq!(pepper(&db).await.expect("pepper"), b"configured");
+    assert_eq!(reader(&db).options().get_max_connections(), 3);
+    for (key, on) in [
+        ("guests_enabled", false),
+        ("p2p_attachments", false),
+        ("outgoing_webhooks", true),
+    ] {
+        assert_eq!(setting_on(&db, key).await.expect(key), on, "{key}");
     }
-    assert_eq!(env_secret(&name).as_deref(), Some("from-file"));
-    unsafe {
-        std::env::set_var(&name, "  direct ");
-    }
-    assert_eq!(env_secret(&name).as_deref(), Some("direct"));
-    unsafe {
-        std::env::set_var(&name, " ");
-        std::env::remove_var(format!("{name}_FILE"));
-    }
-    assert_eq!(env_secret(&name), None, "blank counts as unset");
-    unsafe {
-        std::env::remove_var(&name);
-    }
-    let _ = std::fs::remove_file(file);
+    let stored: String = sqlx::query("SELECT value FROM settings WHERE key = 'password_pepper'")
+        .fetch_one(&db)
+        .await
+        .expect("stored pepper")
+        .try_get(0)
+        .expect("value");
+    assert_ne!(stored, "configured");
+    close(&db).await;
+    let db = open(path.to_str()).await.expect("reopen");
+    assert_eq!(pepper(&db).await.expect("pepper"), stored.into_bytes());
+    assert!(!setting_on(&db, "guests_enabled").await.expect("kept"));
+    close(&db).await;
+    let _ = std::fs::remove_file(&path);
 }

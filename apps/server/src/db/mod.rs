@@ -14,14 +14,14 @@ use sqlx::{AnyConnection, Row};
 #[cfg(test)]
 pub(crate) use migrate::seed_settings;
 pub use migrate::{SCHEMA_VERSION, trigger_version};
-pub(crate) use pool::pool_key;
 #[cfg(test)]
 pub(crate) use pool::temp_db_path;
-pub use pool::{Db, close, is_sqlite, open, reader, writer_connections};
+pub use pool::{Db, DbOptions, close, is_sqlite, open, open_with, reader, writer_connections};
+pub(crate) use pool::{pool_key, set_limits};
 pub use schema::has_fts;
 #[cfg(test)]
 pub(crate) use schema::set_fts;
-pub use secrets::{env_secret, pepper, secret_key};
+pub use secrets::{pepper, secret_key};
 #[cfg(test)]
 pub(crate) use sweep::KEPT_USERS_SQL;
 pub use sweep::{

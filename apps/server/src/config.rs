@@ -1,22 +1,16 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::time::Duration;
 
 use s3::creds::Credentials;
 use s3::{Bucket, Region};
 use serde::Deserialize;
 
-use crate::bus::DEFAULT_HUB_MAXLEN;
-use crate::hub::{
-    CONNECT_BURST, CONNECTS_PER_MINUTE, CONNS_PER_USER, GUESTS_MAX, GUESTS_PER_IP,
-    Limits as WsLimits, SOCKETS_PER_IP,
-};
+use crate::db::DbOptions;
 use crate::instance::InstanceConfig;
-use crate::relay::{Capacity, Cidr, IceConfig, Limits, RelayAdvert, RelaySettings};
+use crate::limits::Limits;
+use crate::relay::{Capacity, Cidr, IceConfig, Limits as RelayLimits, RelayAdvert, RelaySettings};
 use crate::server::client_ip::ProxyTrust;
-
-const MIN_HUB_MAXLEN: u64 = 1_000;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -150,14 +144,6 @@ pub struct AppConfig {
     pub port: u16,
     pub server_proxy_url: Option<String>,
     pub database_url: Option<String>,
-    pub rate_limit_per_second: u64,
-    pub rate_limit_burst: u32,
-    pub ws_connections_per_user: usize,
-    pub ws_connect_burst: u32,
-    pub ws_connects_per_minute: u32,
-    pub ws_sockets_per_ip: usize,
-    pub ws_guest_sockets_per_ip: usize,
-    pub ws_guest_sockets_max: usize,
     pub s3_endpoint: Option<String>,
     pub s3_bucket: Option<String>,
     pub s3_access_key: Option<String>,
@@ -166,7 +152,6 @@ pub struct AppConfig {
     pub rchat_roles: Option<String>,
     pub redis_url: Option<String>,
     pub redis_prefix: String,
-    pub redis_hub_maxlen: u64,
     pub trust_proxy: bool,
     pub trusted_proxies: Option<String>,
     pub instance_name: Option<String>,
@@ -188,19 +173,79 @@ pub struct AppConfig {
     pub relay_max_port: u16,
     pub relay_allow_private: bool,
     pub relay_denied_peers: Option<String>,
-    pub relay_user_allocations: u32,
-    pub relay_max_allocations: Option<u32>,
-    pub relay_user_kib_per_sec: u64,
-    pub relay_max_kib_per_sec: u64,
     pub ice_servers: Option<String>,
     pub webhook_allowed_hosts: Option<String>,
     pub webhook_allow_http: bool,
-    pub upload_budget_mib: u64,
-    pub upload_buffer_mib: u64,
     #[serde(skip)]
     pub roles: Roles,
     #[serde(skip)]
     pub proxy_trust: ProxyTrust,
+    #[serde(skip)]
+    pub limits: Limits,
+    #[serde(skip)]
+    pub secrets: Secrets,
+    #[serde(skip)]
+    pub seeds: Seeds,
+    #[serde(skip)]
+    pub swagger_ui: Option<String>,
+}
+
+/// Secrets from `NAME` or the file named by `NAME_FILE`, resolved like `env_secret`.
+#[derive(Clone, Default)]
+pub struct Secrets {
+    pub password_pepper: Option<String>,
+    pub relay_secret: Option<String>,
+    pub p2p_secret: Option<String>,
+}
+
+impl std::fmt::Debug for Secrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Secrets").finish_non_exhaustive()
+    }
+}
+
+/// The env values that seed instance settings at first start, as given.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Seeds {
+    pub guests_enabled: Option<String>,
+    pub profanity_filter: Option<String>,
+    pub profanity_targets: Option<String>,
+    pub p2p_attachments: Option<String>,
+    pub outgoing_webhooks: Option<String>,
+}
+
+fn lookup(env: &Option<HashMap<String, String>>, name: &str) -> Option<String> {
+    match env {
+        Some(env) => env.get(name).cloned(),
+        None => std::env::var(name).ok(),
+    }
+}
+
+fn trimmed<T: std::str::FromStr>(raw: Option<String>) -> Option<T> {
+    raw.and_then(|v| v.trim().parse().ok())
+}
+
+fn secret(env: &Option<HashMap<String, String>>, name: &str) -> Option<String> {
+    let direct = lookup(env, name).filter(|v| !v.trim().is_empty());
+    let file = lookup(env, &format!("{name}_FILE"))
+        .filter(|p| !p.trim().is_empty())
+        .and_then(|p| match std::fs::read_to_string(p.trim()) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::error!("{name}_FILE can not be read: {e}");
+                None
+            }
+        });
+    direct
+        .or(file)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// A secret from the environment: `NAME`, or the contents of the file named by `NAME_FILE`.
+/// Blank values count as unset.
+pub fn env_secret(name: &str) -> Option<String> {
+    secret(&None, name)
 }
 
 /// Prints no secrets: the S3 key, database and Redis URLs (passwords) and fixed ICE servers
@@ -227,16 +272,7 @@ impl AppConfig {
             .set_default("host", "127.0.0.1")?
             .set_default("server_port", 3000_i64)?
             .set_default("port", 3001_i64)?
-            .set_default("rate_limit_per_second", 10_i64)?
-            .set_default("rate_limit_burst", 60_i64)?
-            .set_default("ws_connections_per_user", CONNS_PER_USER as i64)?
-            .set_default("ws_connect_burst", i64::from(CONNECT_BURST))?
-            .set_default("ws_connects_per_minute", i64::from(CONNECTS_PER_MINUTE))?
-            .set_default("ws_sockets_per_ip", SOCKETS_PER_IP as i64)?
-            .set_default("ws_guest_sockets_per_ip", GUESTS_PER_IP as i64)?
-            .set_default("ws_guest_sockets_max", GUESTS_MAX as i64)?
             .set_default("redis_prefix", "rchat")?
-            .set_default("redis_hub_maxlen", DEFAULT_HUB_MAXLEN as i64)?
             .set_default("trust_proxy", false)?
             .set_default("public_stun", false)?
             .set_default("public_stun_count", 3_i64)?
@@ -247,27 +283,7 @@ impl AppConfig {
             .set_default("relay_max_port", i64::from(crate::relay::DEFAULT_MAX_PORT))?
             .set_default("relay_allow_private", false)?
             .set_default("webhook_allow_http", false)?
-            .set_default(
-                "upload_budget_mib",
-                crate::api::media::DEFAULT_BUDGET_MIB as i64,
-            )?
-            .set_default(
-                "upload_buffer_mib",
-                crate::api::media::DEFAULT_BUFFER_MIB as i64,
-            )?
-            .set_default(
-                "relay_user_allocations",
-                crate::relay::DEFAULT_USER_ALLOCATIONS as i64,
-            )?
-            .set_default(
-                "relay_user_kib_per_sec",
-                crate::relay::DEFAULT_USER_KIB_PER_SEC as i64,
-            )?
-            .set_default(
-                "relay_max_kib_per_sec",
-                crate::relay::DEFAULT_TOTAL_KIB_PER_SEC as i64,
-            )?
-            .add_source(config::Environment::default().source(env));
+            .add_source(config::Environment::default().source(env.clone()));
 
         if let Some(ref host) = cli.host {
             builder = builder.set_override("host", host.as_str())?;
@@ -282,20 +298,41 @@ impl AppConfig {
             builder = builder.set_override("rchat_roles", roles.as_str())?;
         }
 
-        let mut config: AppConfig = builder.build()?.try_deserialize()?;
+        let built = builder.build()?;
+        let mut config: AppConfig = built.clone().try_deserialize()?;
+        let defaults = Limits::default();
+        config.limits = Limits {
+            database_max_connections: trimmed(lookup(&env, "DATABASE_MAX_CONNECTIONS")),
+            database_min_connections: trimmed(lookup(&env, "DATABASE_MIN_CONNECTIONS")),
+            database_acquire_timeout_secs: trimmed(lookup(&env, "DATABASE_ACQUIRE_TIMEOUT_SECS")),
+            database_read_connections: trimmed(lookup(&env, "DATABASE_READ_CONNECTIONS")),
+            guest_grant_days: trimmed(lookup(&env, "GUEST_GRANT_DAYS"))
+                .unwrap_or(defaults.guest_grant_days),
+            embed_cache_days: trimmed(lookup(&env, "EMBED_CACHE_DAYS"))
+                .unwrap_or(defaults.embed_cache_days),
+            voice_idle_secs: lookup(&env, "VOICE_IDLE_SECS")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.voice_idle_secs),
+            voice_room_max: lookup(&env, "VOICE_ROOM_MAX")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(defaults.voice_room_max),
+            ..built.try_deserialize()?
+        };
+        config.secrets = Secrets {
+            password_pepper: secret(&env, "PASSWORD_PEPPER"),
+            relay_secret: secret(&env, "RELAY_SECRET"),
+            p2p_secret: secret(&env, "P2P_SECRET"),
+        };
+        config.seeds = Seeds {
+            guests_enabled: lookup(&env, "GUESTS_ENABLED"),
+            profanity_filter: lookup(&env, "PROFANITY_FILTER"),
+            profanity_targets: lookup(&env, "PROFANITY_TARGETS"),
+            p2p_attachments: lookup(&env, "P2P_ATTACHMENTS"),
+            outgoing_webhooks: lookup(&env, "OUTGOING_WEBHOOKS"),
+        };
+        config.swagger_ui = lookup(&env, "SWAGGER_UI");
         config.roles = config.resolve_roles()?;
-        if config.ws_connections_per_user == 0
-            || config.ws_connect_burst == 0
-            || config.ws_connects_per_minute == 0
-            || config.ws_sockets_per_ip == 0
-        {
-            anyhow::bail!(
-                "WS_CONNECTIONS_PER_USER, WS_CONNECT_BURST, WS_CONNECTS_PER_MINUTE and WS_SOCKETS_PER_IP must be at least 1"
-            );
-        }
-        if config.redis_hub_maxlen < MIN_HUB_MAXLEN {
-            anyhow::bail!("REDIS_HUB_MAXLEN must be at least {MIN_HUB_MAXLEN}");
-        }
+        config.limits.validate()?;
         config.check_shared_state()?;
         config.proxy_trust =
             ProxyTrust::from_config(config.trust_proxy, config.trusted_proxies.as_deref())?;
@@ -309,9 +346,6 @@ impl AppConfig {
         config.ice()?;
         config.relay()?;
         config.outbound()?;
-        if config.upload_buffer_mib < 32 {
-            anyhow::bail!("UPLOAD_BUFFER_MIB must be at least 32");
-        }
         Ok(config)
     }
 
@@ -319,8 +353,17 @@ impl AppConfig {
     /// `UPLOAD_BUFFER_MIB` (most MiB of upload bodies in memory at once).
     pub fn upload_limits(&self) -> crate::api::media::UploadLimits {
         crate::api::media::UploadLimits {
-            budget: self.upload_budget_mib.saturating_mul(1024 * 1024),
-            buffer: self.upload_buffer_mib.saturating_mul(1024 * 1024),
+            budget: self.limits.upload_budget_mib.saturating_mul(1024 * 1024),
+            buffer: self.limits.upload_buffer_mib.saturating_mul(1024 * 1024),
+        }
+    }
+
+    /// What the database layer reads at open: the limits, the pepper and the setting seeds.
+    pub fn db_options(&self) -> DbOptions {
+        DbOptions {
+            limits: self.limits.clone(),
+            pepper: self.secrets.password_pepper.clone(),
+            seeds: self.seeds.clone(),
         }
     }
 
@@ -457,17 +500,17 @@ impl AppConfig {
             anyhow::bail!("RELAY_PORT must be outside RELAY_MIN_PORT..RELAY_MAX_PORT");
         }
         let ports = u32::from(self.relay_max_port - self.relay_min_port) + 1;
-        let total = self.relay_max_allocations.unwrap_or(ports);
+        let total = self.limits.relay_max_allocations.unwrap_or(ports);
         if total == 0 || total > ports {
             anyhow::bail!(
                 "RELAY_MAX_ALLOCATIONS must be 1 to the size of RELAY_MIN_PORT..RELAY_MAX_PORT ({ports}); each allocation takes one port"
             );
         }
-        if self.relay_user_allocations == 0 || self.relay_user_allocations > total {
+        if self.limits.relay_user_allocations == 0 || self.limits.relay_user_allocations > total {
             anyhow::bail!("RELAY_USER_ALLOCATIONS must be 1 to RELAY_MAX_ALLOCATIONS ({total})");
         }
-        if self.relay_user_kib_per_sec == 0
-            || self.relay_max_kib_per_sec < self.relay_user_kib_per_sec
+        if self.limits.relay_user_kib_per_sec == 0
+            || self.limits.relay_max_kib_per_sec < self.limits.relay_user_kib_per_sec
         {
             anyhow::bail!(
                 "RELAY_USER_KIB_PER_SEC must be at least 1 and RELAY_MAX_KIB_PER_SEC at least RELAY_USER_KIB_PER_SEC"
@@ -504,12 +547,12 @@ impl AppConfig {
             allow_private: self.relay_allow_private,
             denied,
             capacity: Capacity {
-                user_allocations: self.relay_user_allocations as usize,
+                user_allocations: self.limits.relay_user_allocations as usize,
                 total_allocations: total as usize,
-                user_bytes_per_sec: self.relay_user_kib_per_sec as f64 * 1024.0,
-                total_bytes_per_sec: self.relay_max_kib_per_sec as f64 * 1024.0,
+                user_bytes_per_sec: self.limits.relay_user_kib_per_sec as f64 * 1024.0,
+                total_bytes_per_sec: self.limits.relay_max_kib_per_sec as f64 * 1024.0,
             },
-            limits: Limits::default(),
+            limits: RelayLimits::default(),
         }))
     }
 
@@ -576,22 +619,12 @@ impl AppConfig {
                 .instance_signing_key
                 .as_ref()
                 .map(|Secret(s)| s.clone()),
+            relay_secret: self.secrets.relay_secret.clone(),
+            p2p_secret: self.secrets.p2p_secret.clone(),
             allowed_hosts: self.allowed_hosts.clone(),
             peerjs_port: self.peerjs_port,
             proxy_trust: self.proxy_trust.clone(),
             ice: self.ice().unwrap_or_default(),
-        }
-    }
-
-    /// Per-user realtime connection limits.
-    pub fn ws_limits(&self) -> WsLimits {
-        WsLimits {
-            conns_per_user: self.ws_connections_per_user,
-            connect_burst: self.ws_connect_burst,
-            connect_every: Duration::from_secs(60) / self.ws_connects_per_minute,
-            sockets_per_ip: self.ws_sockets_per_ip,
-            guests_per_ip: self.ws_guest_sockets_per_ip,
-            guests_max: self.ws_guest_sockets_max,
         }
     }
 
@@ -669,7 +702,10 @@ pub struct CliOverrides {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
+    use crate::hub::Limits as WsLimits;
 
     #[test]
     fn roles_parse() {
@@ -707,7 +743,7 @@ mod tests {
     #[test]
     fn ws_limits_default_and_load_from_env() {
         let config = AppConfig::load_from(&cli(None, None), env(&[])).unwrap();
-        assert_eq!(config.ws_limits(), WsLimits::default());
+        assert_eq!(config.limits.ws_limits(), WsLimits::default());
         let set = [
             ("WS_CONNECTIONS_PER_USER", "5"),
             ("WS_CONNECT_BURST", "4"),
@@ -718,6 +754,7 @@ mod tests {
         ];
         let limits = AppConfig::load_from(&cli(None, None), env(&set))
             .unwrap()
+            .limits
             .ws_limits();
         assert_eq!(
             limits,
@@ -728,6 +765,7 @@ mod tests {
                 sockets_per_ip: 30,
                 guests_per_ip: 0,
                 guests_max: 7,
+                voice_room_max: crate::ws::VOICE_ROOM_MAX,
             }
         );
         assert!(
@@ -826,10 +864,13 @@ mod tests {
     #[test]
     fn hub_maxlen_is_configurable() {
         let config = AppConfig::load_from(&cli(None, None), env(&[])).unwrap();
-        assert_eq!(config.redis_hub_maxlen, DEFAULT_HUB_MAXLEN);
+        assert_eq!(
+            config.limits.redis_hub_maxlen,
+            crate::bus::DEFAULT_HUB_MAXLEN
+        );
         let set = env(&[("REDIS_HUB_MAXLEN", "250000")]);
         let config = AppConfig::load_from(&cli(None, None), set).unwrap();
-        assert_eq!(config.redis_hub_maxlen, 250_000);
+        assert_eq!(config.limits.redis_hub_maxlen, 250_000);
         let low = env(&[("REDIS_HUB_MAXLEN", "10")]);
         assert!(AppConfig::load_from(&cli(None, None), low).is_err());
     }
@@ -1046,5 +1087,142 @@ mod tests {
             "no relay role, no relay"
         );
         assert!(without.ice().unwrap().relay.is_some(), "still advertised");
+    }
+
+    #[test]
+    fn limits_default_to_todays_values() {
+        let l = AppConfig::defaults().limits;
+        assert_eq!(l, Limits::default());
+        assert_eq!(
+            (
+                l.voice_room_max,
+                l.voice_idle_secs,
+                l.guest_grant_days,
+                l.embed_cache_days
+            ),
+            (25, 60, 30, 30)
+        );
+        assert_eq!(l.database_max_connections, None);
+        assert_eq!((l.rate_limit_per_second, l.rate_limit_burst), (10, 60));
+    }
+
+    #[test]
+    fn limits_load_from_env() {
+        let set = [
+            ("VOICE_ROOM_MAX", "7"),
+            ("GUEST_GRANT_DAYS", "2"),
+            ("DATABASE_MAX_CONNECTIONS", "16"),
+            ("RATE_LIMIT_PER_SECOND", "3"),
+            ("RELAY_USER_KIB_PER_SEC", "9"),
+        ];
+        let l = AppConfig::load_from(&cli(None, None), env(&set))
+            .unwrap()
+            .limits;
+        assert_eq!(
+            (
+                l.voice_room_max,
+                l.guest_grant_days,
+                l.database_max_connections,
+                l.rate_limit_per_second,
+                l.relay_user_kib_per_sec
+            ),
+            (7, 2, Some(16), 3, 9)
+        );
+        assert_eq!(l.guest_grant_ttl(), 2 * 86400);
+        let bad = env(&[("RATE_LIMIT_PER_SECOND", "fast")]);
+        assert!(AppConfig::load_from(&cli(None, None), bad).is_err());
+    }
+
+    #[test]
+    fn moved_reads_keep_their_lenient_parsing() {
+        let set = [
+            ("VOICE_ROOM_MAX", "abc"),
+            ("VOICE_IDLE_SECS", " 9"),
+            ("DATABASE_MAX_CONNECTIONS", "x"),
+            ("DATABASE_MIN_CONNECTIONS", " 3 "),
+            ("GUEST_GRANT_DAYS", "0"),
+            ("EMBED_CACHE_DAYS", "-4"),
+        ];
+        let l = AppConfig::load_from(&cli(None, None), env(&set))
+            .unwrap()
+            .limits;
+        assert_eq!(l.voice_room_max, 25);
+        assert_eq!(l.voice_idle_secs, 60);
+        assert_eq!(l.database_max_connections, None);
+        assert_eq!(l.database_min_connections, Some(3));
+        assert_eq!(l.guest_grant_ttl(), 86400);
+        assert_eq!(l.embed_cache_ttl(), 86400);
+    }
+
+    #[test]
+    fn secrets_and_seeds_come_from_config() {
+        let file = std::env::temp_dir().join(format!("rchat_pepper_{}", std::process::id()));
+        std::fs::write(&file, "from-file\n").expect("write");
+        let set = [
+            ("PASSWORD_PEPPER_FILE", file.to_str().expect("path")),
+            ("RELAY_SECRET", " relay "),
+            ("P2P_SECRET", " "),
+            ("GUESTS_ENABLED", "off"),
+            ("PROFANITY_TARGETS", "names"),
+            ("OUTGOING_WEBHOOKS", "on"),
+            ("SWAGGER_UI", "no"),
+        ];
+        let config = AppConfig::load_from(&cli(None, None), env(&set)).unwrap();
+        let Secrets {
+            password_pepper,
+            relay_secret,
+            p2p_secret,
+        } = &config.secrets;
+        assert_eq!(password_pepper.as_deref(), Some("from-file"));
+        assert_eq!(relay_secret.as_deref(), Some("relay"));
+        assert_eq!(p2p_secret.as_deref(), None);
+        assert_eq!(
+            config.seeds,
+            Seeds {
+                guests_enabled: Some("off".into()),
+                profanity_filter: None,
+                profanity_targets: Some("names".into()),
+                p2p_attachments: None,
+                outgoing_webhooks: Some("on".into()),
+            }
+        );
+        assert_eq!(config.swagger_ui.as_deref(), Some("no"));
+        let opts = config.db_options();
+        assert_eq!(opts.pepper.as_deref(), Some("from-file"));
+        assert_eq!(
+            (opts.limits, opts.seeds),
+            (config.limits.clone(), config.seeds.clone())
+        );
+        assert!(!format!("{:?}", config.db_options()).contains("from-file"));
+        let _ = std::fs::remove_file(file);
+        let defaults = AppConfig::defaults();
+        assert_eq!(defaults.seeds, Seeds::default());
+        assert_eq!(defaults.secrets.password_pepper, None);
+        assert_eq!(defaults.swagger_ui, None);
+    }
+
+    #[test]
+    fn env_secrets_come_from_the_variable_or_a_file() {
+        let name = format!("RCHAT_TEST_SECRET_{}", std::process::id());
+        assert_eq!(env_secret(&name), None);
+        let file = std::env::temp_dir().join(format!("rchat_secret_{}", std::process::id()));
+        std::fs::write(&file, "from-file\n").expect("write");
+        unsafe {
+            std::env::set_var(format!("{name}_FILE"), &file);
+        }
+        assert_eq!(env_secret(&name).as_deref(), Some("from-file"));
+        unsafe {
+            std::env::set_var(&name, "  direct ");
+        }
+        assert_eq!(env_secret(&name).as_deref(), Some("direct"));
+        unsafe {
+            std::env::set_var(&name, " ");
+            std::env::remove_var(format!("{name}_FILE"));
+        }
+        assert_eq!(env_secret(&name), None, "blank counts as unset");
+        unsafe {
+            std::env::remove_var(&name);
+        }
+        let _ = std::fs::remove_file(file);
     }
 }

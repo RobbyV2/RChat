@@ -2007,6 +2007,7 @@ struct Inner {
 /// `connect_every`, per instance. Per client address (an IPv6 /64 counts as one), at most
 /// `sockets_per_ip` open on this instance, `guests_per_ip` of them as guests. At most
 /// `guests_max` guest sockets on this instance from all addresses together (0 turns guests off).
+/// At most `voice_room_max` people in one voice channel (0 for no limit).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Limits {
     pub conns_per_user: usize,
@@ -2015,6 +2016,7 @@ pub struct Limits {
     pub sockets_per_ip: usize,
     pub guests_per_ip: usize,
     pub guests_max: usize,
+    pub voice_room_max: usize,
 }
 
 pub const CONNS_PER_USER: usize = 20;
@@ -2035,13 +2037,14 @@ impl Default for Limits {
             sockets_per_ip: SOCKETS_PER_IP,
             guests_per_ip: GUESTS_PER_IP,
             guests_max: GUESTS_MAX,
+            voice_room_max: crate::ws::VOICE_ROOM_MAX,
         }
     }
 }
 
 /// A token bucket per user: `burst` units at once, then one more per `every`.
 struct Pacer {
-    burst: f64,
+    burst: AtomicU64,
     every: Duration,
     users: Mutex<HashMap<String, (f64, Instant)>>,
 }
@@ -2049,10 +2052,18 @@ struct Pacer {
 impl Pacer {
     fn new(burst: f64, every: Duration) -> Pacer {
         Pacer {
-            burst,
+            burst: AtomicU64::new(burst.to_bits()),
             every,
             users: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn burst(&self) -> f64 {
+        f64::from_bits(self.burst.load(Ordering::Relaxed))
+    }
+
+    fn set_burst(&self, burst: f64) {
+        self.burst.store(burst.to_bits(), Ordering::Relaxed);
     }
 
     fn take(&self, key: &str, cost: f64) -> bool {
@@ -2060,14 +2071,15 @@ impl Pacer {
     }
 
     fn take_at(&self, key: &str, cost: f64, now: Instant) -> bool {
+        let burst = self.burst();
         let mut users = self.users.lock().unwrap();
         if users.len() > PACED_USERS_MAX {
-            let full = self.every.mul_f64(self.burst);
+            let full = self.every.mul_f64(burst);
             users.retain(|_, (_, at)| now.duration_since(*at) < full);
         }
-        let (tokens, at) = users.entry(key.to_string()).or_insert((self.burst, now));
+        let (tokens, at) = users.entry(key.to_string()).or_insert((burst, now));
         let refill = now.duration_since(*at).as_secs_f64() / self.every.as_secs_f64();
-        *tokens = (*tokens + refill).min(self.burst);
+        *tokens = (*tokens + refill).min(burst);
         *at = now;
         match *tokens >= cost {
             true => {
@@ -2106,10 +2118,6 @@ struct Pacing {
 /// Signalling bytes one account may send at once: at least enough to negotiate with a full voice
 /// room twice (joining, then turning on a camera or screen share). Rooms without a limit get the
 /// budget of a default-sized room.
-pub fn signal_burst() -> usize {
-    signal_burst_for(crate::ws::voice_room_max())
-}
-
 fn signal_burst_for(room_max: usize) -> usize {
     let room = match room_max {
         0 => crate::ws::VOICE_ROOM_MAX,
@@ -2126,7 +2134,7 @@ impl Default for Pacing {
             dm_calls: Pacer::new(f64::from(DM_CALL_BURST), DM_CALL_EVERY),
             accepts: Pacer::new(f64::from(ACCEPT_BURST), ACCEPT_EVERY),
             signals: Pacer::new(
-                signal_burst() as f64,
+                signal_burst_for(Limits::default().voice_room_max) as f64,
                 Duration::from_secs(1) / SIGNAL_BYTES_PER_SEC,
             ),
             typing: Pacer::new(f64::from(TYPING_USER_BURST), TYPING_USER_EVERY),
@@ -3132,6 +3140,7 @@ impl Hub {
             sockets_per_ip: _,
             guests_per_ip: _,
             guests_max: _,
+            voice_room_max: _,
         } = self.limits();
         let every = connect_every.as_millis() as i64;
         let (opened, clock) =
@@ -3241,8 +3250,17 @@ impl Hub {
         })
     }
 
-    pub fn set_limits(&self, limits: Limits) {
+    pub(crate) fn set_limits(&self, limits: Limits) {
+        self.inner
+            .pacing
+            .signals
+            .set_burst(signal_burst_for(limits.voice_room_max) as f64);
         *self.inner.limits.lock().unwrap() = limits;
+    }
+
+    /// The signalling bytes one account may send at once (see `signal_burst_for`).
+    pub fn signal_burst(&self) -> usize {
+        signal_burst_for(self.limits().voice_room_max)
     }
 
     pub fn p2p_of(&self, user: &str) -> Option<(String, Vec<String>)> {
@@ -3406,6 +3424,24 @@ pub(crate) mod tests {
         assert!(default > SIGNAL_BURST);
         assert_eq!(signal_burst_for(4), SIGNAL_BURST);
         assert_eq!(signal_burst_for(100), 2 * 100 * crate::ws::SIGNAL_MAX);
+    }
+
+    #[test]
+    fn the_voice_room_limit_sizes_the_signal_budget() {
+        let hub = Hub::new();
+        assert_eq!(
+            hub.signal_burst(),
+            signal_burst_for(crate::ws::VOICE_ROOM_MAX)
+        );
+        hub.set_limits(Limits {
+            voice_room_max: 100,
+            ..Limits::default()
+        });
+        let burst = 2 * 100 * crate::ws::SIGNAL_MAX;
+        assert_eq!(hub.signal_burst(), burst);
+        assert!(hub.signal_ok("alice", burst));
+        assert!(!hub.signal_ok("alice", burst / 2));
+        assert!(hub.signal_ok("bob", burst));
     }
 
     #[derive(Clone)]

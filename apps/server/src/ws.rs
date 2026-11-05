@@ -1,6 +1,6 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use axum::Extension;
@@ -1490,16 +1490,6 @@ pub fn announce_purge(hub: &Hub, server: &str, usernames: &[String]) {
     }
 }
 
-pub(crate) fn voice_room_max() -> usize {
-    static MAX: OnceLock<usize> = OnceLock::new();
-    *MAX.get_or_init(|| {
-        std::env::var("VOICE_ROOM_MAX")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(VOICE_ROOM_MAX)
-    })
-}
-
 pub async fn depart(state: &AppState) {
     let wait = Duration::from_secs(3);
     if let Ok(Some(purge)) = tokio::time::timeout(wait, state.hub.depart()).await {
@@ -1599,7 +1589,7 @@ async fn voice_msg(state: &AppState, user: &str, conn: u64, msg: ClientMsg) -> R
             let server = channel.server().name().to_string();
             let ends = state
                 .hub
-                .voice_join_capped(user, conn, &server, channel_id, voice_room_max())
+                .voice_join_capped(user, conn, &server, channel_id, state.limits.voice_room_max)
                 .await?;
             for end in ends {
                 finalize_call_log(state, end, false).await;
@@ -10551,8 +10541,13 @@ mod tests {
         let (state, path) = crate::api::test_util::temp_state(tag).await;
         let trusted = crate::server::client_ip::ProxyTrust::from_config(false, Some("127.0.0.1"))
             .expect("trust");
-        let app = crate::api::routes(state.clone(), &crate::config::Roles::ALL, ClientIp(trusted))
-            .with_state(state.clone());
+        let app = crate::api::routes(
+            state.clone(),
+            &crate::config::Roles::ALL,
+            ClientIp(trusted),
+            None,
+        )
+        .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
@@ -10998,7 +10993,7 @@ mod tests {
             }
         }
         let each = 15 * 1024 + 10;
-        let burst = crate::hub::signal_burst() / each;
+        let burst = state.hub.signal_burst() / each;
         assert!(
             (burst..=burst + 1).contains(&sent),
             "{sent} signals passed (the budget refills while they are sent)"
@@ -11022,7 +11017,7 @@ mod tests {
                 .await
                 .expect("join");
         }
-        for n in 0..2 * (voice_room_max() - 1) {
+        for n in 0..2 * (state.limits.voice_room_max - 1) {
             let offer = ClientMsg::RtcSignal {
                 to: s("bob"),
                 channel_id: Some(cid),
