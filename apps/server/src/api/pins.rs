@@ -431,7 +431,7 @@ mod tests {
         (state, path, cid)
     }
 
-    use crate::db::Perm;
+    use crate::api::access::perms::Perm;
 
     #[tokio::test]
     async fn manage_messages_pins_top_level_user_messages_with_a_notice() {

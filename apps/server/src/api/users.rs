@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, resolve_server};
 use crate::api::{ApiError, ApiErrorBody, MaybeAuthed, Role, UserRef, allowed, require_guest_ok};
-use crate::db::{Db, Perm, User, get_user};
+use crate::db::{Db, User, get_user};
 use crate::state::AppState;
 
 /// Optional profile context.

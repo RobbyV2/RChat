@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::*;
-use crate::api::access::ViewRules;
+use crate::api::access::{ViewRules, ws_channel_now};
 use crate::db::now;
 use crate::ws::access::{Access, channel_gate};
 use crate::ws::filter::{event_channel, on_event, track, wants};
@@ -416,8 +416,8 @@ async fn channel_events_reach_only_viewers_with_their_own_positions() {
     .await;
     let after = insert_id(db, "INSERT INTO channels(server, name, created_at, position) VALUES('open', 'after', 1, 2) RETURNING id").await;
     exec(db, "UPDATE channels SET position = 1 WHERE name = 'secret'").await;
-    let (_, hidden) = channel_now(db, secret).await.unwrap().unwrap();
-    let (_, shown) = channel_now(db, after).await.unwrap().unwrap();
+    let (_, hidden) = ws_channel_now(db, secret).await.unwrap().unwrap();
+    let (_, shown) = ws_channel_now(db, after).await.unwrap().unwrap();
     assert_eq!(shown.position, 2);
     let layout = crate::api::categories::current_layout(db, "open")
         .await

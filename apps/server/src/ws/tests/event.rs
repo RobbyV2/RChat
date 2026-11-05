@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::access::user_scope;
 use crate::api::{Member, UserRef};
 use crate::ws::access::Access;
 

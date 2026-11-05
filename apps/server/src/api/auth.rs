@@ -943,11 +943,12 @@ pub(crate) async fn patch_me(
     if avatar.is_some() || bio.as_ref().is_some_and(|b| *b != user.bio) {
         state.hub.broadcast(WsEvent::UserUpdated {
             user: user_ref.clone(),
-            scope: crate::ws::user_scope(&state.read(), &stored.username).await,
+            scope: crate::api::access::user_scope(&state.read(), &stored.username).await,
         });
     }
     if appear_offline.is_some()
-        && let Some((hidden, seq)) = crate::ws::presence_mode(&state.db, &stored.username).await?
+        && let Some((hidden, seq)) =
+            crate::api::access::presence_mode(&state.db, &stored.username).await?
     {
         state.hub.broadcast(WsEvent::PresenceMode {
             username: stored.username.clone(),

@@ -7,6 +7,7 @@ use serde::Deserialize;
 use sqlx::{AnyConnection, Row};
 use utoipa::ToSchema;
 
+use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, resolve_category, resolve_server};
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
 use crate::api::servers::{CHANNEL_MAX, check_name};
@@ -14,7 +15,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, Category, ChannelLayout, LayoutCategory, OkResp,
     ProfanityTarget, bad, ok,
 };
-use crate::db::{Db, Perm, now};
+use crate::db::{Db, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 

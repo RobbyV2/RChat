@@ -6,13 +6,14 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::access::perms::ChannelAccess;
 use crate::api::access::{member_channel_rights, not_found};
 use crate::api::pings::{GROUP_PINGS_MAX, GroupKind, announce_counts, excerpt};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, OkResp, UserRef, bad, cursor_int, decode_cursor, encode_cursor,
     ok, user_from, user_refs,
 };
-use crate::db::{ChannelAccess, Db, LIVE_AUTHOR, User};
+use crate::db::{Db, LIVE_AUTHOR, User};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 

@@ -9,7 +9,7 @@ use super::p2p::{CALLING_TOO_OFTEN, RECONNECTING, TOO_FAST};
 use super::protocol::ClientMsg;
 use super::{CallKind, SIGNAL_MAX};
 
-use crate::api::access::ws_voice_channel;
+use crate::api::access::{ws_dm_users, ws_voice_channel};
 use crate::api::messages::load_broadcast;
 use crate::api::timeouts::running_timeouts;
 use crate::db::{ChannelKind, now, touch_interaction};
@@ -188,16 +188,10 @@ pub(super) async fn voice_msg(
             if !state.hub.call_ok(user, dm_id) {
                 return Err(CALLING_TOO_OFTEN.to_string());
             }
-            let row = sqlx::query("SELECT user_a, user_b FROM dms WHERE id = $1")
-                .bind(dm_id)
-                .fetch_optional(&state.read())
+            let (a, b) = ws_dm_users(&state.read(), dm_id)
                 .await
                 .map_err(db_err)?
                 .ok_or_else(|| "DM not found".to_string())?;
-            let (a, b): (String, String) = (
-                row.try_get(0).map_err(db_err)?,
-                row.try_get(1).map_err(db_err)?,
-            );
             if a != user && b != user {
                 return Err("Not a participant".to_string());
             }

@@ -8,7 +8,9 @@ use crate::api::access::servers_with_expired_passwords;
 use crate::db::now;
 use crate::fanout::Topic;
 use crate::hub::Epoch;
-use crate::ws::access::{Access, Pace, SUB_FRAME_COST, SubPace, channel_gate, reauthorize};
+use crate::ws::access::{
+    Access, Pace, SUB_FRAME_COST, SubPace, channel_gate, reauthorize, token_live,
+};
 use crate::ws::filter::{on_event, wants};
 
 #[tokio::test]

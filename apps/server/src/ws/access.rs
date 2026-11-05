@@ -7,15 +7,18 @@ use tracing::{debug, warn};
 
 use super::event::WsEvent;
 use super::filter::wants;
-use super::p2p::{Hosting, P2pScope, Who, announce_hosting, p2p_scope, presence_mode};
+use super::p2p::{Hosting, P2pScope, Who, announce_hosting, p2p_scope};
 use super::{
     GUEST_SUB_CHECKS_BURST, GUEST_SUB_CHECKS_RATE, GUEST_SUBSCRIBE_CAP, LOG_EVERY,
     P2P_ANNOUNCE_EVERY, P2P_SCOPE_TTL, REAUTH_GIVE_UP, REAUTH_RETRY, SUB_CHECKS_BURST,
-    SUB_CHECKS_RATE, SUBSCRIBE_CAP, authed_sub_ok, channel_now, guest_sub_ok, is_member,
-    member_servers_of, server_password_hash, session_of, token_live,
+    SUB_CHECKS_RATE, SUBSCRIBE_CAP, authed_sub_ok, guest_sub_ok,
 };
 
-use crate::api::access::{ViewRules, ws_channel_view, ws_grant_deadline, ws_view_under};
+use crate::api::access::{
+    ViewRules, is_member, presence_mode, ws_channel_now, ws_channel_public, ws_channel_view,
+    ws_grant_deadline, ws_member_servers, ws_server_password_hash, ws_view_under,
+};
+use crate::api::token_row;
 use crate::db::{Db, now, setting_on};
 use crate::fanout::Topic;
 use crate::hub::{Epoch, Hub, PRESENCE_SERVERS_MAX, Scope};
@@ -638,6 +641,13 @@ impl Access {
     }
 }
 
+pub(super) async fn token_live(db: &Db, token: Option<&str>) -> sqlx::Result<bool> {
+    match token {
+        Some(token) => Ok(token_row(db, token).await?.is_some()),
+        None => Ok(false),
+    }
+}
+
 pub(super) async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::Result<bool> {
     let db = &state.read();
     // The appear-offline setting comes from the primary: a replica behind it would announce a
@@ -645,14 +655,14 @@ pub(super) async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::
     let (servers, mode) = match &access.user {
         Some(user) => {
             if let Some(token) = &access.token
-                && !session_of(db, token).await?
+                && token_row(db, token).await?.is_none()
             {
                 return Ok(false);
             }
             let Some(mode) = presence_mode(&state.db, user).await? else {
                 return Ok(false);
             };
-            (member_servers_of(db, user).await?, Some(mode))
+            (ws_member_servers(db, user).await?, Some(mode))
         }
         None => {
             if !setting_on(db, "guests_enabled").await? {
@@ -720,7 +730,7 @@ pub(super) async fn grant_deadlines(
 }
 
 pub(super) async fn still_held(db: &Db, access: &Access, name: &str) -> sqlx::Result<bool> {
-    if server_password_hash(db, name).await?.is_none() {
+    if ws_server_password_hash(db, name).await?.is_none() {
         return Ok(true);
     }
     match &access.user {
@@ -734,24 +744,12 @@ pub(super) async fn still_held(db: &Db, access: &Access, name: &str) -> sqlx::Re
     }
 }
 
-async fn channel_public(db: &Db, cid: i64) -> sqlx::Result<Option<(String, bool)>> {
-    let Some((owner, _)) = channel_now(db, cid).await? else {
-        return Ok(None);
-    };
-    let restricted = sqlx::query("SELECT 1 FROM channels c WHERE c.id = $1 AND (c.restrict_view <> 0 OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.can_view = 0))")
-        .bind(cid)
-        .fetch_optional(db)
-        .await?
-        .is_some();
-    Ok(Some((owner, !restricted)))
-}
-
 async fn channel_view(
     db: &Db,
     username: Option<&str>,
     cid: i64,
 ) -> sqlx::Result<Option<(String, bool)>> {
-    let Some((owner, _)) = channel_now(db, cid).await? else {
+    let Some((owner, _)) = ws_channel_now(db, cid).await? else {
         return Ok(None);
     };
     let view = ws_channel_view(db, &owner, cid, username).await?;
@@ -771,7 +769,7 @@ pub(super) async fn channel_gate(
     let slot = state.hub.channels().slot(cid);
     let read = state.read();
     let shared = slot
-        .get_or_try_init(|| channel_public(&read, cid))
+        .get_or_try_init(|| ws_channel_public(&read, cid))
         .await
         .cloned();
     let looked = match shared {

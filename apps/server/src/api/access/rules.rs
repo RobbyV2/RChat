@@ -1,11 +1,12 @@
 use sqlx::Row;
 
-use super::ViewRules;
-
+use super::perms::{
+    ALL_PERMS, ChannelAccess, Perm, PermRow, Restrict, fold_access, perm_bits, perm_row,
+    perm_subjects,
+};
+use super::{ViewRules, member_role};
 use crate::db::{
-    ALL_PERMS, ChannelAccess, Db, GRANT_TOUCH_SECS, Perm, PermRow, Restrict, User, fold_access,
-    get_user, guest_grant_ttl, now, perm_bits, perm_row, perm_subjects, queue_grant_touches,
-    secret_key,
+    Db, GRANT_TOUCH_SECS, User, get_user, guest_grant_ttl, now, queue_grant_touches, secret_key,
 };
 
 pub(super) async fn effective_perms(db: &Db, server: &str, user: &User) -> sqlx::Result<i64> {
@@ -16,17 +17,10 @@ pub(super) async fn effective_perms(db: &Db, server: &str, user: &User) -> sqlx:
 }
 
 pub(super) async fn member_perms(db: &Db, server: &str, username: &str) -> sqlx::Result<i64> {
-    let row =
-        sqlx::query("SELECT is_admin, perms FROM members WHERE server = $1 AND username = $2")
-            .bind(server)
-            .bind(username)
-            .fetch_optional(db)
-            .await?;
-    let Some(r) = row else {
+    let Some((is_admin, perms)) = member_role(db, server, username).await? else {
         return Ok(0);
     };
-    let (is_admin, perms): (i64, i64) = (r.try_get(0)?, r.try_get(1)?);
-    if is_admin != 0 {
+    if is_admin {
         return Ok(perm_bits(true, perms, 0));
     }
     let rows = sqlx::query("SELECT r.perms FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2")

@@ -17,8 +17,7 @@ use super::calls::{VoiceWait, finalize_call_log, send_voice_snapshot, voice_cmd}
 use super::event::WsEvent;
 use super::filter::on_event;
 use super::p2p::{
-    RECONNECTING, announce_drop, answer_who, hosting_ids, hosting_relays, live_hosted, p2p_refused,
-    p2p_release, presence_mode,
+    RECONNECTING, announce_drop, answer_who, hosting_ids, hosting_relays, p2p_refused, p2p_release,
 };
 use super::protocol::{
     CLOSE_NO_AUTH, CLOSE_TOO_MANY, CLOSE_TOO_MANY_ADDR, CLOSE_TOO_MANY_GUESTS, CLOSE_TOO_OFTEN,
@@ -30,10 +29,11 @@ use super::rewrite::{
 use super::typing::{Bucket, Typer, type_in};
 use super::{
     FRAME_MAX, LAG_REAUTH_EVERY, OUT_FRAMES, PING_EVERY, SEND_TIMEOUT, SILENT_LIMIT, authed_sub_ok,
-    guest_sub_ok, is_member, member_servers_of,
+    guest_sub_ok,
 };
 
-use crate::api::access::ws_banned;
+use crate::api::access::{is_member, presence_mode, ws_banned, ws_live_hosted, ws_member_servers};
+use crate::api::token_row;
 use crate::db::{now, setting_on};
 use crate::fanout::Topic;
 use crate::hub::{AddrSlot, Hub};
@@ -194,23 +194,17 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
     let mut epoch = state.hub.epoch();
     let mut lossy = epoch.borrow_and_update().lossy;
     let (username, is_site_admin, since): (Option<String>, bool, Option<i64>) = match &token {
-        Some(token) => {
-            let row = sqlx::query(
-                "SELECT u.username, u.is_site_admin, u.created_at FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
-            )
-            .bind(crate::db::secret_key(token))
-            .fetch_optional(&state.read())
-            .await;
-            match row {
-                Ok(Some(r)) => (
-                    r.try_get(0).ok(),
-                    r.try_get::<i64, _>(1).map(|v| v != 0).unwrap_or(false),
-                    r.try_get(2).ok(),
-                ),
-                Ok(None) => (None, false, None),
-                Err(e) => return refuse(e),
-            }
-        }
+        Some(token) => match token_row(&state.read(), token).await {
+            Ok(Some(r)) => (
+                r.try_get("username").ok(),
+                r.try_get::<i64, _>("is_site_admin")
+                    .map(|v| v != 0)
+                    .unwrap_or(false),
+                r.try_get("created_at").ok(),
+            ),
+            Ok(None) => (None, false, None),
+            Err(e) => return refuse(e),
+        },
         None => (None, false, None),
     };
     let mut mode = None;
@@ -229,7 +223,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
         };
     }
     let member_servers: HashSet<String> = match &username {
-        Some(user) => match member_servers_of(&state.read(), user).await {
+        Some(user) => match ws_member_servers(&state.read(), user).await {
             Ok(servers) => servers,
             Err(e) => return refuse(e),
         },
@@ -372,7 +366,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                         Ok(ClientMsg::P2pHosting { peer_id, ids, relays, relay_sets }) => {
                             let (ids, relays) = hosting_relays(hosting_ids(ids), relays, relay_sets);
                             if let Some(user) = access.user.clone() && crate::p2p::valid_peer_id(&peer_id) {
-                                let (live, checked) = match live_hosted(&state.read(), &user, &ids).await {
+                                let (live, checked) = match ws_live_hosted(&state.read(), &user, &ids).await {
                                     Some(live) => (live, ids.clone()),
                                     None => (Vec::new(), Vec::new()),
                                 };

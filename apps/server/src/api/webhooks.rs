@@ -19,6 +19,7 @@ use tokio::sync::{Notify, Semaphore, mpsc};
 use url::Url;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::access::perms::Perm;
 use crate::api::access::{
     Proof, ResolvedChannel, ServerAccess, Via, denied, forbidden, plain_member_perms,
     resolve_channel, resolve_message, resolve_server, timed_out_error, webhook_channel,
@@ -38,7 +39,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, MESSAGE_MAX, Message, OkResp, ProfanityTarget, Settings,
     UserRef, allowed, bad, check_len, embeds, media, ok, placeholders, valid_color,
 };
-use crate::db::{AvatarKind, ChannelKind, Db, Perm, User, get_user, lock_server, now, pepper};
+use crate::db::{AvatarKind, ChannelKind, Db, User, get_user, lock_server, now, pepper};
 use crate::net_guard::{self, AllowedHost, Http, Policy};
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};

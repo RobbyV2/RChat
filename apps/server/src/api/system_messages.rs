@@ -4,11 +4,12 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::ToSchema;
 
+use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, ServerAccess, not_found, resolve_channel, resolve_server};
 use crate::api::audit;
 use crate::api::messages::load_broadcast;
 use crate::api::{ApiError, ApiErrorBody, Authed};
-use crate::db::{ChannelKind, Db, Perm, User, now};
+use crate::db::{ChannelKind, Db, User, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 

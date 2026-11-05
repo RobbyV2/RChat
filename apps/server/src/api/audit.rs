@@ -4,12 +4,13 @@ use serde_json::{Map, Value, json};
 use sqlx::{AnyConnection, Row};
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, denied, resolve_server};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Paged, UserRef, bad, cursor_int, decode_cursor, encode_cursor,
     placeholders, user_from, user_refs,
 };
-use crate::db::{Db, PURGE_BATCH, Perm, now};
+use crate::db::{Db, PURGE_BATCH, now};
 use crate::state::AppState;
 
 /// Most entries per page.
@@ -1142,7 +1143,7 @@ mod tests {
             changes(&last(&state).await),
             vec![(
                 "perms".to_string(),
-                json!(crate::db::ALL_PERMS),
+                json!(crate::api::access::perms::ALL_PERMS),
                 json!(Perm::Kick as i64)
             )]
         );

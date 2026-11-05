@@ -1,7 +1,6 @@
 use std::cell::Cell;
 
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 
 use super::{CallKind, CallPhase};
 
@@ -10,7 +9,6 @@ use crate::api::pings::{Ping, ThreadPings};
 use crate::api::{
     Channel, ChannelLayout, Embed, Member, Message, ServerSummaryLite, Settings, UserRef,
 };
-use crate::db::Db;
 
 thread_local! {
     static BUS_WIRE: Cell<bool> = const { Cell::new(false) };
@@ -32,53 +30,6 @@ impl UserScope {
         } = self;
         servers.is_empty() && views.is_empty() && users.is_empty()
     }
-}
-
-pub const USER_SCOPE_SERVERS: i64 = 500;
-pub const USER_SCOPE_DMS: i64 = 250;
-pub const USER_SCOPE_SMALL: i64 = 1000;
-
-pub async fn user_scope(db: &Db, user: &str) -> UserScope {
-    let mut scope = UserScope::default();
-    if let Ok(rows) = sqlx::query(
-        "SELECT m.server, s.member_count FROM members m JOIN servers s ON s.name = m.server WHERE m.username = $1 ORDER BY m.joined_at DESC LIMIT $2",
-    )
-    .bind(user)
-    .bind(USER_SCOPE_SERVERS)
-    .fetch_all(db)
-    .await
-    {
-        for r in &rows {
-            let (Ok(server), Ok(count)) = (r.try_get::<String, _>(0), r.try_get::<i64, _>(1)) else {
-                continue;
-            };
-            match count <= USER_SCOPE_SMALL {
-                true => scope.servers.push(server),
-                false => scope.views.push(server),
-            }
-        }
-    }
-    for sql in [
-        "SELECT user_b FROM dms WHERE user_a = $1 ORDER BY last_message_id DESC LIMIT $2",
-        "SELECT user_a FROM dms WHERE user_b = $1 ORDER BY last_message_id DESC LIMIT $2",
-    ] {
-        if let Ok(rows) = sqlx::query(sql)
-            .bind(user)
-            .bind(USER_SCOPE_DMS)
-            .fetch_all(db)
-            .await
-        {
-            scope.users.extend(
-                rows.iter()
-                    .filter_map(|r| r.try_get::<String, _>(0).ok())
-                    .filter(|u| u != user),
-            );
-        }
-    }
-    scope.users.push(user.to_string());
-    scope.users.sort();
-    scope.users.dedup();
-    scope
 }
 
 fn routing_only<T>(_: &T) -> bool {

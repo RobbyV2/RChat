@@ -42,6 +42,7 @@ use axum::routing::{delete, get, patch, post, put};
 pub(crate) use rchat_profanity::is_profane;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use sqlx::any::AnyRow;
 use tower_governor::key_extractor::KeyExtractor;
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use utoipa::ToSchema;
@@ -1397,6 +1398,17 @@ fn auth_unavailable(e: sqlx::Error) -> ApiError {
     )
 }
 
+/// The account row (`users.*`) holding session `token`, `None` when no live account has it.
+/// REST sign-in and the realtime sign-in and session checks all use it. Never answers a client.
+pub(crate) async fn token_row(db: &Db, token: &str) -> sqlx::Result<Option<AnyRow>> {
+    sqlx::query(
+        "SELECT u.* FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
+    )
+    .bind(crate::db::secret_key(token))
+    .fetch_optional(db)
+    .await
+}
+
 /// The account of a session token. `Ok(None)` only when no live account has that token; any
 /// other failure (pool closed or starved, query or row errors) is a 503, so clients keep the
 /// token and retry.
@@ -1404,13 +1416,9 @@ pub(crate) async fn user_for_token(
     state: &AppState,
     token: &str,
 ) -> Result<Option<User>, ApiError> {
-    let row = sqlx::query(
-        "SELECT u.* FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
-    )
-    .bind(crate::db::secret_key(token))
-    .fetch_optional(&state.read())
-    .await
-    .map_err(auth_unavailable)?;
+    let row = token_row(&state.read(), token)
+        .await
+        .map_err(auth_unavailable)?;
     row.map(|row| User::from_row(&row))
         .transpose()
         .map_err(auth_unavailable)

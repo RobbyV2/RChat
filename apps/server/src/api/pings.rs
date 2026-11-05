@@ -650,7 +650,9 @@ pub async fn group_mentions(
     if mention_candidates(content).is_empty() {
         return Ok(Vec::new());
     }
-    let allowed = channel.member_bits(db).await? & crate::db::Perm::MentionEveryone as i64 != 0;
+    let allowed = channel.member_bits(db).await?
+        & crate::api::access::perms::Perm::MentionEveryone as i64
+        != 0;
     group_mentions_as(
         db,
         channel.server().name(),

@@ -7,9 +7,13 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::access::perms::{
+    ALL_PERMS, ChannelAccess, Perm, PermRow, Restrict, can_grant, can_moderate, fold_access,
+    perm_bits, perm_row, perm_subjects, rule_narrows,
+};
 use crate::api::access::{
-    BANNED, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, forbidden,
-    resolve_channel, resolve_invite, resolve_server,
+    BANNED, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, forbidden, is_member,
+    member_role, resolve_channel, resolve_invite, resolve_server,
 };
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
 use crate::api::audit::{self, ChannelRef, Details, Entry, Target, TargetKind};
@@ -30,9 +34,7 @@ use crate::api::{
     placeholders, require_guest_ok, unique_capped, user_from, user_ref, user_refs, valid_color,
 };
 use crate::db::{
-    ALL_PERMS, ChannelAccess, ChannelKind, Db, NO_PERMANENT_HASH, Perm, PermRow, Restrict, User,
-    can_grant, can_moderate, fold_access, get_user, lock_server, now, perm_bits, perm_row,
-    perm_subjects, rule_narrows, shift_member_count,
+    ChannelKind, Db, NO_PERMANENT_HASH, User, get_user, lock_server, now, shift_member_count,
 };
 use crate::state::AppState;
 use crate::ws::{Hub, WsEvent, evict_unviewable};
@@ -1846,12 +1848,7 @@ async fn insert_member(
         tx.commit().await?;
         return Ok(Some(NewMember { notice }));
     }
-    let member = sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
-        .bind(server)
-        .bind(username)
-        .fetch_optional(&mut *tx)
-        .await?
-        .is_some();
+    let member = is_member(&mut *tx, server, username).await?;
     tx.commit().await?;
     match member {
         true => Ok(None),
@@ -3195,12 +3192,7 @@ async fn set_admin(
         .await?
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
-    let was =
-        sqlx::query("SELECT is_admin, perms FROM members WHERE server = $1 AND username = $2")
-            .bind(server)
-            .bind(target)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let was = member_role(&mut *tx, server, target).await?;
     let changed = sqlx::query(
         "UPDATE members SET is_admin = $1, perms = 0 WHERE server = $2 AND username = $3",
     )
@@ -3210,19 +3202,18 @@ async fn set_admin(
     .execute(&mut *tx)
     .await?
     .rows_affected();
-    if let Some(was) = &was {
-        let (was_admin, was_perms) = (was.try_get::<i64, _>(0)? != 0, was.try_get::<i64, _>(1)?);
-        if was_admin != is_admin || (is_admin && was_perms != 0) {
-            let action = match is_admin {
-                true => audit::Action::AdminGrant,
-                false => audit::Action::AdminRevoke,
-            };
-            audit::record(
-                &mut tx,
-                Entry::new(server, &actor, action).target(Target::user(target)),
-            )
-            .await?;
-        }
+    if let Some((was_admin, was_perms)) = was
+        && (was_admin != is_admin || (is_admin && was_perms != 0))
+    {
+        let action = match is_admin {
+            true => audit::Action::AdminGrant,
+            false => audit::Action::AdminRevoke,
+        };
+        audit::record(
+            &mut tx,
+            Entry::new(server, &actor, action).target(Target::user(target)),
+        )
+        .await?;
     }
     tx.commit().await?;
     match changed {
@@ -4114,13 +4105,7 @@ pub(crate) async fn assign_role(
     let access = role_guard(&state, &name, &user).await?;
     let key = access.name().to_string();
     let role_perms = require_role(&state.db, &key, id).await?;
-    let member = sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
-        .bind(&key)
-        .bind(&target)
-        .fetch_optional(&state.db)
-        .await?
-        .is_some();
-    if !member {
+    if !is_member(&state.db, &key, &target).await? {
         return Err(not_found("Not a member"));
     }
     if target != user.username {

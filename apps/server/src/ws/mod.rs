@@ -1,12 +1,9 @@
-use std::collections::HashSet;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 
-use crate::api::access::{ws_server_open, ws_voice_viewable};
-use crate::api::{Channel, ServerSummaryLite};
-use crate::db::{ChannelKind, Db};
+use crate::api::access::{ws_channel_now, ws_server_open, ws_voice_viewable};
+use crate::db::Db;
 pub use crate::hub::Hub;
 use crate::state::AppState;
 
@@ -24,11 +21,7 @@ mod typing;
 pub(crate) use access::LogGate;
 pub(crate) use calls::end_dm_call;
 pub use conn::{__path_handler, handler};
-pub use event::{
-    CallPeer, CallRelays, EditStub, USER_SCOPE_DMS, USER_SCOPE_SERVERS, USER_SCOPE_SMALL, Updated,
-    UserScope, WsEvent, to_bus_json, user_scope,
-};
-pub(crate) use p2p::presence_mode;
+pub use event::{CallPeer, CallRelays, EditStub, Updated, UserScope, WsEvent, to_bus_json};
 pub use protocol::{
     CLOSE_NO_AUTH, CLOSE_TOO_MANY, CLOSE_TOO_MANY_ADDR, CLOSE_TOO_MANY_GUESTS, CLOSE_TOO_OFTEN,
 };
@@ -88,7 +81,7 @@ const TYPING_SCOPE_MAX: usize = 24;
 
 pub(crate) async fn evict_unviewable(state: &AppState, server: &str, channel_id: Option<i64>) {
     for (cid, users) in state.hub.rooms_in(server, channel_id) {
-        if let Ok(Some((owner, _))) = channel_now(&state.read(), cid).await
+        if let Ok(Some((owner, _))) = ws_channel_now(&state.read(), cid).await
             && owner != server
         {
             continue;
@@ -104,124 +97,12 @@ pub(crate) async fn evict_unviewable(state: &AppState, server: &str, channel_id:
     }
 }
 
-async fn channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(String, Channel)>> {
-    let row =
-        sqlx::query("SELECT server, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position FROM channels WHERE id = $1")
-            .bind(id)
-            .fetch_optional(db)
-            .await?;
-    match row {
-        Some(r) => Ok(Some((
-            r.try_get(0)?,
-            Channel {
-                id,
-                name: r.try_get(1)?,
-                kind: ChannelKind::parse(&r.try_get::<String, _>(2)?)?,
-                slowmode_seconds: r.try_get(3)?,
-                restrict_view: r.try_get::<i64, _>(4)? != 0,
-                restrict_send: r.try_get::<i64, _>(5)? != 0,
-                topic: r.try_get(6)?,
-                category_id: r.try_get(7)?,
-                position: r.try_get(8)?,
-            },
-        ))),
-        None => Ok(None),
-    }
-}
-
-async fn admin_state(db: &Db, server: &str, user: &str) -> sqlx::Result<Option<(bool, i64)>> {
-    let row =
-        sqlx::query("SELECT is_admin, perms FROM members WHERE server = $1 AND username = $2")
-            .bind(server)
-            .bind(user)
-            .fetch_optional(db)
-            .await?;
-    match row {
-        Some(r) => Ok(Some((r.try_get::<i64, _>(0)? != 0, r.try_get(1)?))),
-        None => Ok(None),
-    }
-}
-
-async fn refresh_lite(db: &Db, name: &str) -> sqlx::Result<Option<ServerSummaryLite>> {
-    let row = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
-    )
-    .bind(name)
-    .fetch_optional(db)
-    .await?;
-    match row {
-        Some(r) => Ok(Some(ServerSummaryLite {
-            name: r.try_get(0)?,
-            display_name: r.try_get(1)?,
-            creator: r.try_get(2)?,
-            has_password: r.try_get::<Option<String>, _>(3)?.is_some(),
-            banner_color: r.try_get(4)?,
-            name_color: r.try_get(5)?,
-        })),
-        None => Ok(None),
-    }
-}
-
-async fn server_password_hash(db: &Db, server: &str) -> sqlx::Result<Option<Option<String>>> {
-    Ok(
-        sqlx::query("SELECT password_hash FROM servers WHERE name = $1")
-            .bind(server)
-            .fetch_optional(db)
-            .await?
-            .map(|r| r.try_get(0).unwrap_or(None)),
-    )
-}
-
-async fn is_member(db: &Db, server: &str, user: &str) -> sqlx::Result<bool> {
-    Ok(
-        sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2")
-            .bind(server)
-            .bind(user)
-            .fetch_optional(db)
-            .await?
-            .is_some(),
-    )
-}
-
 async fn guest_sub_ok(db: &Db, server: &str, grant: Option<&str>) -> sqlx::Result<bool> {
     ws_server_open(db, server, None, false, grant).await
 }
 
 async fn authed_sub_ok(db: &Db, server: &str, user: &str, site_admin: bool) -> sqlx::Result<bool> {
     ws_server_open(db, server, Some(user), site_admin, None).await
-}
-
-async fn member_servers_of(db: &Db, user: &str) -> sqlx::Result<HashSet<String>> {
-    Ok(
-        sqlx::query("SELECT server FROM members WHERE username = $1")
-            .bind(user)
-            .fetch_all(db)
-            .await?
-            .iter()
-            .filter_map(|r| r.try_get(0).ok())
-            .collect(),
-    )
-}
-
-async fn token_live(db: &Db, token: Option<&str>) -> sqlx::Result<bool> {
-    match token {
-        Some(token) => Ok(sqlx::query("SELECT 1 FROM tokens WHERE token = $1")
-            .bind(crate::db::secret_key(token))
-            .fetch_optional(db)
-            .await?
-            .is_some()),
-        None => Ok(false),
-    }
-}
-
-async fn session_of(db: &Db, token: &str) -> sqlx::Result<bool> {
-    Ok(sqlx::query(
-        "SELECT 1 FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
-    )
-    .bind(crate::db::secret_key(token))
-    .fetch_optional(db)
-    .await?
-    .is_some())
 }
 
 #[cfg(test)]

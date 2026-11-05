@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use sqlx::{AnyConnection, Row};
 use utoipa::ToSchema;
 
+use crate::api::access::perms::Perm;
 use crate::api::access::{
     MsgScope, Proof, ResolvedChannel, ResolvedMessage, not_found, resolve_channel, resolve_dm,
     resolve_message, typing_scope,
@@ -19,7 +20,7 @@ use crate::api::budget::{Budget, slow_down};
 use crate::api::messages::moderated;
 use crate::api::pings::{announce_counts, pinged_by};
 use crate::api::{ApiError, ApiErrorBody, Authed, allowed, bad, placeholders};
-use crate::db::{Db, LIVE_AUTHOR, Perm, User, get_user, now, pool_key};
+use crate::db::{Db, LIVE_AUTHOR, User, get_user, now, pool_key};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 

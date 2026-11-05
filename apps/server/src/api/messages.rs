@@ -8,6 +8,7 @@ use sqlx::Row;
 use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::access::perms::{ChannelAccess, Perm, perm_subjects};
 use crate::api::access::{
     Proof, ResolvedMessage, channel_manager_servers, granted_servers, member_channel_rights,
     resolve_channel, resolve_dm, resolve_message,
@@ -29,8 +30,7 @@ use crate::api::{
     user_from, user_refs, yes,
 };
 use crate::db::{
-    ChannelAccess, Db, LIVE_AUTHOR, MediaKind, Perm, User, has_fts, is_sqlite, now, perm_subjects,
-    pool_key, touch_interaction,
+    Db, LIVE_AUTHOR, MediaKind, User, has_fts, is_sqlite, now, pool_key, touch_interaction,
 };
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
@@ -2986,11 +2986,11 @@ pub(crate) async fn mark_read_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::access::perms::Perm;
     use crate::api::access::reference_channel_access as channel_access;
     use crate::api::access::resolve_server;
     use crate::api::pings::{GroupKind, GroupMention};
     use crate::api::test_util::{add_member, done, mem_user, temp_state};
-    use crate::db::Perm;
 
     async fn general_id(db: &Db) -> i64 {
         sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")

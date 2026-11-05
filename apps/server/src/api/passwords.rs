@@ -7,13 +7,14 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::ToSchema;
 
+use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, ServerAccess, password_lookup, resolve_server};
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
 use crate::api::servers::guard_rchat;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, JoinedVia, OkResp, bad, check_len, ok, placeholders,
 };
-use crate::db::{Db, NO_EXTRA_HASH, Perm, User, lock_server, now};
+use crate::db::{Db, NO_EXTRA_HASH, User, lock_server, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 

@@ -5,9 +5,8 @@ use tokio::time::Instant;
 use super::access::{Access, channel_gate, deleted_gate};
 use super::conn::{forget_server, join, leave};
 use super::event::WsEvent;
-use super::is_member;
 
-use crate::api::access::ws_sees_timeouts;
+use crate::api::access::{is_member, ws_sees_timeouts};
 use crate::db::{MediaKind, now};
 use crate::state::AppState;
 

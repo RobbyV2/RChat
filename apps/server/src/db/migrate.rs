@@ -3,7 +3,8 @@ use sqlx::{AnyConnection, Row};
 
 use super::schema::{POSTGRES_SCHEMA, POSTGRES_TRIGGERS, SQLITE_SCHEMA, SQLITE_TRIGGERS};
 use super::secrets::secret_key;
-use super::{ALL_PERMS, NO_EXTRA_HASH, now};
+use super::{NO_EXTRA_HASH, now};
+use crate::api::access::perms::ALL_PERMS;
 use crate::config::Seeds;
 
 const MIGRATIONS: &[(&str, &str)] = &[

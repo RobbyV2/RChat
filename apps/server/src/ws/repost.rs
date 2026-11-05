@@ -2,10 +2,13 @@ use std::time::Duration;
 
 use super::calls::finalize_call_log;
 use super::event::{Updated, WsEvent};
-use super::p2p::{announce_drop, presence_mode};
-use super::{PURGE_CHUNK, admin_state, channel_now, evict_unviewable, is_member, refresh_lite};
+use super::p2p::announce_drop;
+use super::{PURGE_CHUNK, evict_unviewable};
 
-use crate::api::access::{servers_with_expired_passwords, ws_banned, ws_voice_viewable};
+use crate::api::access::{
+    is_member, member_role, presence_mode, servers_with_expired_passwords, ws_banned,
+    ws_channel_now, ws_server_lite, ws_voice_viewable,
+};
 use crate::api::messages::{Quotes, load_broadcast, load_message};
 use crate::api::{Settings, UserRef};
 use crate::db::get_user;
@@ -21,7 +24,7 @@ pub async fn announce_expired_passwords(
 ) -> sqlx::Result<()> {
     let db = &state.read();
     for name in servers_with_expired_passwords(db, since, until).await? {
-        if let Some(server) = refresh_lite(db, &name).await? {
+        if let Some(server) = ws_server_lite(db, &name).await? {
             state.hub.broadcast(WsEvent::ServerUpdated { server });
         }
     }
@@ -231,15 +234,15 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             }),
         },
         WsEvent::ChannelCreated { server, channel } => {
-            let (owner, channel) = channel_now(db, channel.id).await.ok().flatten()?;
+            let (owner, channel) = ws_channel_now(db, channel.id).await.ok().flatten()?;
             (owner == server).then_some(WsEvent::ChannelCreated { server, channel })
         }
         WsEvent::ChannelRenamed { server, channel } => {
-            let (owner, channel) = channel_now(db, channel.id).await.ok().flatten()?;
+            let (owner, channel) = ws_channel_now(db, channel.id).await.ok().flatten()?;
             (owner == server).then_some(WsEvent::ChannelRenamed { server, channel })
         }
         WsEvent::ChannelUpdated { server, channel } => {
-            let (owner, channel) = channel_now(db, channel.id).await.ok().flatten()?;
+            let (owner, channel) = ws_channel_now(db, channel.id).await.ok().flatten()?;
             (owner == server).then_some(WsEvent::ChannelUpdated { server, channel })
         }
         WsEvent::LayoutChanged {
@@ -260,20 +263,20 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             })
         }
         WsEvent::ServerCreated { server } => {
-            let server = refresh_lite(db, &server.name).await.ok().flatten()?;
+            let server = ws_server_lite(db, &server.name).await.ok().flatten()?;
             Some(WsEvent::ServerCreated { server })
         }
         WsEvent::ServerRenamed { old_name, server } => {
             let reused =
-                old_name != server.name && !matches!(refresh_lite(db, &old_name).await, Ok(None));
-            let server = refresh_lite(db, &server.name).await.ok().flatten()?;
+                old_name != server.name && !matches!(ws_server_lite(db, &old_name).await, Ok(None));
+            let server = ws_server_lite(db, &server.name).await.ok().flatten()?;
             (!reused).then_some(WsEvent::ServerRenamed { old_name, server })
         }
         WsEvent::ServerUpdated { server } => {
-            let server = refresh_lite(db, &server.name).await.ok().flatten()?;
+            let server = ws_server_lite(db, &server.name).await.ok().flatten()?;
             Some(WsEvent::ServerUpdated { server })
         }
-        WsEvent::ServerDeleted { name } => match refresh_lite(db, &name).await {
+        WsEvent::ServerDeleted { name } => match ws_server_lite(db, &name).await {
             Ok(Some(_)) => None,
             Ok(None) | Err(_) => Some(WsEvent::ServerDeleted { name }),
         },
@@ -345,7 +348,7 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             is_admin: _,
             perms: _,
         } => {
-            let (is_admin, perms) = admin_state(db, &server, &username).await.ok().flatten()?;
+            let (is_admin, perms) = member_role(db, &server, &username).await.ok().flatten()?;
             Some(WsEvent::AdminChanged {
                 server,
                 username,
@@ -449,7 +452,7 @@ pub(crate) async fn repost(state: &AppState, op: Op) {
             }
         }
         Op::EvictVoice { user, channel_id } => {
-            let allowed = match channel_now(&state.read(), channel_id).await {
+            let allowed = match ws_channel_now(&state.read(), channel_id).await {
                 Ok(Some((server, _))) => {
                     ws_voice_viewable(&state.read(), &server, channel_id, &user).await
                 }

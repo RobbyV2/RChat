@@ -11,6 +11,7 @@ use sha2::Sha256;
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, ResolvedMessage, not_found, resolve_message};
 use crate::api::audit;
 use crate::api::reactions::canonical_emoji;
@@ -19,7 +20,7 @@ use crate::api::{
     UserRef, bad, check_len, cursor_int, decode_cursor, encode_cursor, placeholders,
     require_guest_ok, user_from, user_refs,
 };
-use crate::db::{Db, Perm, User, is_sqlite, now, pool_key};
+use crate::db::{Db, User, is_sqlite, now, pool_key};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 

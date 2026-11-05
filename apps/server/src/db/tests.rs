@@ -8,6 +8,7 @@ use super::schema::*;
 use super::sweep::*;
 
 use super::*;
+use crate::api::access::perms::{ALL_PERMS, Restrict, fold_access, perm_row};
 use crate::api::test_util::{add_member, done, temp_state};
 
 async fn general_id(db: &Db) -> i64 {
@@ -17,30 +18,6 @@ async fn general_id(db: &Db) -> i64 {
         .expect("general channel")
         .try_get(0)
         .expect("channel id")
-}
-
-#[test]
-fn moderation_needs_a_strict_superset() {
-    let kick = Perm::Kick as i64;
-    let channels = Perm::ManageChannels as i64;
-    let cases: [(i64, bool, i64, bool); 9] = [
-        (kick, false, 0, true),
-        (kick, false, kick, false),
-        (kick, false, ALL_PERMS, false),
-        (kick, false, channels, false),
-        (kick | channels, false, channels, true),
-        (kick | channels, false, kick, true),
-        (ALL_PERMS, false, ALL_PERMS, false),
-        (ALL_PERMS, false, ALL_PERMS & !channels, true),
-        (ALL_PERMS, true, ALL_PERMS, true),
-    ];
-    for (actor, site_admin, target, expected) in cases {
-        assert_eq!(
-            can_moderate(actor, site_admin, target),
-            expected,
-            "actor {actor} site admin {site_admin} target {target}"
-        );
-    }
 }
 
 async fn count(db: &Db, sql: &str) -> i64 {

@@ -6,14 +6,17 @@ use tokio::time::Instant;
 
 use super::access::{Access, Pace};
 use super::conn::{Out, sent};
-use super::event::{UserScope, WsEvent, user_scope};
+use super::event::{UserScope, WsEvent};
 use super::{
     P2P_ID_MAX, P2P_IDS_CAP, P2P_WHO_CACHE_MAX, P2P_WHO_CAP, P2P_WHO_EVERY, P2P_WHO_TTL,
-    authed_sub_ok, member_servers_of,
+    authed_sub_ok,
 };
 
 use crate::api::Settings;
-use crate::api::access::ws_channel_read_since;
+use crate::api::access::{
+    user_scope, ws_appear_offline, ws_channel_read_since, ws_dm_between, ws_hosted_messages,
+    ws_member_servers, ws_p2p_message,
+};
 use crate::db::{Db, now};
 use crate::hub::P2pDrop;
 use crate::state::AppState;
@@ -134,38 +137,12 @@ impl Who {
     }
 }
 
-/// Whether `user` appears offline, and the version of that setting (`users.presence_seq`).
-pub(crate) async fn presence_mode(db: &Db, user: &str) -> sqlx::Result<Option<(bool, i64)>> {
-    sqlx::query("SELECT appear_offline, presence_seq FROM users WHERE username = $1")
-        .bind(user)
-        .fetch_optional(db)
-        .await?
-        .map(|row| Ok((row.try_get::<i64, _>(0)? != 0, row.try_get::<i64, _>(1)?)))
-        .transpose()
-}
-
-async fn appear_offline(db: &Db, hoster: &str) -> sqlx::Result<Option<bool>> {
-    sqlx::query("SELECT appear_offline FROM users WHERE username = $1")
-        .bind(hoster)
-        .fetch_optional(db)
-        .await?
-        .map(|row| row.try_get::<i64, _>(0).map(|v| v != 0))
-        .transpose()
-}
-
 async fn peer_facts(db: &Db, me: &str, hoster: &str) -> sqlx::Result<Option<Peer>> {
-    let Some(offline) = appear_offline(db, hoster).await? else {
+    let Some(offline) = ws_appear_offline(db, hoster).await? else {
         return Ok(None);
     };
-    let dm = sqlx::query(
-        "SELECT 1 FROM dms WHERE (user_a = $1 AND user_b = $2) OR (user_a = $2 AND user_b = $1)",
-    )
-    .bind(me)
-    .bind(hoster)
-    .fetch_optional(db)
-    .await?
-    .is_some();
-    let servers = member_servers_of(db, hoster).await?.into_iter().collect();
+    let dm = ws_dm_between(db, me, hoster).await?;
+    let servers = ws_member_servers(db, hoster).await?.into_iter().collect();
     Ok(Some(Peer {
         offline,
         dm,
@@ -191,7 +168,7 @@ pub(super) async fn p2p_visible(
     let peer = match access.who.peers.get(hoster) {
         Some((at, peer)) if now < *at + P2P_WHO_TTL => match peer.clone() {
             Some(peer) => Some(Peer {
-                offline: appear_offline(&db, hoster).await.ok()??,
+                offline: ws_appear_offline(&db, hoster).await.ok()??,
                 ..peer
             }),
             None => None,
@@ -277,12 +254,7 @@ pub(super) async fn p2p_release(
     if !Settings::cached(&db).await.p2p_attachments {
         return deny(NOT_AVAILABLE);
     }
-    let row = sqlx::query(
-        "SELECT m.media_id, m.channel_id, c.server, d.user_a, d.user_b, m.created_at, m.media_hoster, m.media_expires_at FROM messages m LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN dms d ON d.id = m.dm_id WHERE m.id = $1 AND m.media_kind = 'p2p' AND m.media_removed = 0",
-    )
-    .bind(message_id)
-    .fetch_optional(&db)
-    .await;
+    let row = ws_p2p_message(&db, message_id).await;
     let Ok(Some(row)) = row else {
         return deny(NOT_AVAILABLE);
     };
@@ -304,7 +276,7 @@ pub(super) async fn p2p_release(
     if p2p_blocked(state, &me, &hoster).await {
         return deny(NOT_AVAILABLE);
     }
-    let shown = matches!(appear_offline(&db, &hoster).await, Ok(Some(false)))
+    let shown = matches!(ws_appear_offline(&db, &hoster).await, Ok(Some(false)))
         || state.hub.in_p2p_call(&me, &hoster);
     let Some((hoster_peer, relays)) = state.hub.p2p_host_of(&hoster, &media_id).filter(|_| shown)
     else {
@@ -379,18 +351,7 @@ async fn lookup_p2p_ids(
     hoster: &str,
     ids: &[String],
 ) -> Vec<String> {
-    let sql = format!(
-        "SELECT m.media_id, m.channel_id, c.server, d.user_a, d.user_b, m.created_at FROM messages m LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN dms d ON d.id = m.dm_id WHERE m.media_kind = 'p2p' AND m.media_removed = 0 AND m.media_hoster = $1 AND m.media_id IN ({})",
-        (2..ids.len() + 2)
-            .map(|n| format!("${n}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(hoster);
-    for id in ids {
-        query = query.bind(id);
-    }
-    let Ok(rows) = query.fetch_all(db).await else {
+    let Ok(rows) = ws_hosted_messages(db, hoster, ids).await else {
         return Vec::new();
     };
     let mut cache = ReadCache::default();
@@ -526,30 +487,6 @@ pub(super) async fn answer_who(state: &AppState, access: &mut Access, out: &Out)
         }
     }
     true
-}
-
-/// Which of `ids` are live P2P attachments hosted by `user`: not removed, not expired. `None`
-/// when the database can't say, so nothing is dropped by mistake.
-pub(super) async fn live_hosted(db: &Db, user: &str, ids: &[String]) -> Option<Vec<String>> {
-    if ids.is_empty() {
-        return Some(Vec::new());
-    }
-    let sql = format!(
-        "SELECT DISTINCT media_id FROM messages WHERE media_kind = 'p2p' AND media_removed = 0 AND media_hoster = $1 AND (media_expires_at IS NULL OR media_expires_at > $2) AND media_id IN ({})",
-        crate::api::placeholders(3, ids.len())
-    );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(user)
-        .bind(crate::db::now());
-    for id in ids {
-        query = query.bind(id);
-    }
-    let rows = query.fetch_all(db).await.ok()?;
-    Some(
-        rows.iter()
-            .filter_map(|r| r.try_get::<String, _>(0).ok())
-            .collect(),
-    )
 }
 
 pub(super) fn hosting_ids(ids: Vec<String>) -> Vec<String> {
