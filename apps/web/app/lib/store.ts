@@ -25,29 +25,8 @@ import { ice, iceKey, iceValue, parseIce } from './ice'
 import { callRtc, p2pAccount, p2pCall, p2pRail, p2pVoice } from './p2p/app'
 import { DENIED_CALL, hidesIp, mergeRelays, relayBook, relaysKey, type Decision } from './relays'
 import { mentionsUser } from './mentions'
-import {
-  NO_PINGS,
-  addPing,
-  clearPings,
-  forgetPings,
-  mergePings,
-  pingAction,
-  pingAlert,
-  pingKey,
-  pingUntil,
-  setScopePings,
-} from './pings'
-import {
-  NO_GROUP_PINGS,
-  addGroupPing,
-  dropGroupMessage,
-  seenGroupMessages,
-  forgetGroupPings,
-  groupAction,
-  groupKindsFor,
-  mergeGroupPings,
-  onlineForHere,
-} from './group_pings'
+import { NO_PINGS } from './pings'
+import { NO_GROUP_PINGS, dropGroupMessage } from './group_pings'
 import {
   EMPTY_NOTIFY,
   extendMute,
@@ -66,7 +45,6 @@ import {
   setLevel,
   setMute,
   setSuppress,
-  groupKindsShown,
   type NotifyPrefs,
 } from './notify'
 import { notifications } from './platform'
@@ -128,7 +106,6 @@ import {
 } from './forward'
 import { catchUpDelay, due } from './backoff'
 import { endsSession, meRetryIn } from './session'
-import { chunked, createReadQueue, markedRead, mergeReads, withThreads } from './reads'
 import {
   WINDOW_MAX,
   createLru,
@@ -155,7 +132,6 @@ import {
   type Key,
   type OlderState,
   type Page,
-  type ReadMark,
 } from './lists'
 import { SEARCH_PAGE, SEARCH_TRIES, addSearchPage, searchParams } from './search'
 import {
@@ -241,10 +217,8 @@ import {
   type UploadMode,
 } from './attachments'
 import {
-  allMarkTargets,
   changeableRoles,
   dmView,
-  dmsMarkTargets,
   memberOf,
   memberTimeout,
   myPerms,
@@ -252,7 +226,6 @@ import {
   previewServer,
   scopeRule,
   serverNames,
-  serversMarkTargets,
   voiceMutedIn,
 } from './selectors'
 import type {
@@ -267,9 +240,9 @@ import type {
 import { parsePath, threadKey, viewKey, viewPath, type Nav, type View } from './view'
 import { pageVisible, routeEvent, type Handlers } from './slices/ctx'
 import { presenceSlice } from './slices/presence'
+import { readsSlice } from './slices/reads'
 
 import { blockedSet, matchesBlockQuery, withoutTypers, type Blocked } from './blocks'
-import { FRIENDS_SCOPE } from './friends'
 import { friendsInitial, friendsSlice } from './friends_store'
 import { pollsSlice } from './polls_store'
 import { selectionInitial, selectionSlice } from './selection_store'
@@ -292,7 +265,6 @@ import type {
   ServerSummary,
   ServerSummaryLite,
   Theme,
-  Unread,
   UserRef,
   VoiceMsg,
   WsEvent,
@@ -1401,46 +1373,6 @@ export const useStore = create<RChatState>()((set, get) => {
     set({ call: null })
   }
 
-  let unreadsReady: Promise<void> = Promise.resolve()
-
-  let unreadsMore = false
-  let unreadsLoading = 0
-  const lateAnchor = new Set<string>()
-
-  const placeLate = (items: Unread[]) => {
-    const view = get().view
-    const key = view ? viewKey(view) : null
-    const item = items.find(i => i.scope === key)
-    if (key && lateAnchor.has(key) && item && item.latest > item.last_read && item.last_read > 0)
-      set(s => ({ unreadAnchor: { ...s.unreadAnchor, [key]: item.last_read } }))
-    lateAnchor.clear()
-  }
-
-  const loadUnreads = () => {
-    const before = get().reads
-    const pingsBefore = get().pings
-    const groupsBefore = get().groupPings
-    unreadsLoading += 1
-    unreadsReady = api
-      .getUnreads()
-      .then(({ items, more }) => {
-        unreadsMore = more
-        placeLate(items)
-        set(s => ({
-          reads: mergeReads(before, s.reads, items, readQueue.pending),
-          pings: mergePings(pingsBefore, s.pings, items),
-          groupPings: mergeGroupPings(groupsBefore, s.groupPings, items),
-        }))
-      })
-      .catch(() => {})
-      .finally(() => {
-        unreadsLoading -= 1
-        if (!unreadsLoading) lateAnchor.clear()
-        if (!get().readsReady) set({ readsReady: true })
-      })
-    return unreadsReady
-  }
-
   const pruneServers = async () => {
     const me = get().me
     if (!me) return
@@ -1680,25 +1612,6 @@ export const useStore = create<RChatState>()((set, get) => {
     if (get().me && !get().me?.servers.some(x => x.name === name)) await refetchMe()
   }
 
-  const forgetReads = (keep: (scope: string, mark: ReadMark) => boolean) =>
-    set(s => {
-      const entries = Object.entries(s.reads)
-      const kept = entries.filter(([scope, mark]) => keep(scope, mark))
-      const pings = forgetPings(
-        s.pings,
-        (scope, p) => !keep(scope, { lastRead: 0, latest: 0, server: p.server ?? undefined })
-      )
-      const groupPings = forgetGroupPings(
-        s.groupPings,
-        (scope, server) => !keep(scope, { lastRead: 0, latest: 0, server: server ?? undefined })
-      )
-      return {
-        ...(kept.length === entries.length ? {} : { reads: Object.fromEntries(kept) }),
-        ...(pings === s.pings ? {} : { pings }),
-        ...(groupPings === s.groupPings ? {} : { groupPings }),
-      }
-    })
-
   const forgetPending = (keep: (key: string, upload: PendingUpload) => boolean) =>
     set(s => {
       const entries = Object.entries(s.pending)
@@ -1764,11 +1677,11 @@ export const useStore = create<RChatState>()((set, get) => {
     if (readInvite() || readConfigLink() || (!get().me && !get().guest)) return
     const target = parsePath(window.location.pathname)
     const fallback = async () => {
-      await unreadsReady
+      await readsHub.ready()
       return leaveForSafety()
     }
     if (target?.kind === 'message') {
-      await unreadsReady
+      await readsHub.ready()
       const opened = await openMessageAt(target.id, 'replace').catch((e: unknown) => {
         fail(e)
         return true
@@ -1789,7 +1702,7 @@ export const useStore = create<RChatState>()((set, get) => {
           .ensureDms([target.dmId])
           .catch(() => {})
       if (!known() && !closedDms.has(target.dmId)) return fallback()
-      await unreadsReady
+      await readsHub.ready()
       return get().openDm(target.dmId, nav)
     }
     let detail: ServerDetail
@@ -1819,7 +1732,7 @@ export const useStore = create<RChatState>()((set, get) => {
     if (!channel) return fallback()
     if (cur?.kind === 'channel' && cur.server === target.server && cur.channelId === channel.id)
       return syncUrl(cur, 'replace')
-    await unreadsReady
+    await readsHub.ready()
     return get().openChannel(target.server, channel.id, channel.id === wanted ? nav : 'replace')
   }
 
@@ -2652,30 +2565,6 @@ export const useStore = create<RChatState>()((set, get) => {
 
   const sameUser = (username: string) => get().me?.username === username
 
-  // Highest ping id cleared here per key, sent as `pings_until` so the server only marks pings
-  // this client showed; a ping that arrives meanwhile keeps its badge.
-  const seenPings = new Map<string, number>()
-  const noteSeen = (key: string, until: number) => {
-    if (until > (seenPings.get(key) ?? 0)) seenPings.set(key, until)
-  }
-
-  const readQueue = createReadQueue({
-    send: (scope, id) =>
-      get().token ? api.postRead(scope, id, true, seenPings.get(scope) ?? 0) : Promise.resolve(),
-  })
-
-  // Clears the badge of a scope (outside threads) or of a thread (`t<root id>`) here and,
-  // through POST /api/read (which marks those pings seen and echoes read_updated), on the
-  // account's other tabs and devices.
-  const seePings = (key: string) => {
-    const until = pingUntil(get().pings[key])
-    if (until === 0) return
-    noteSeen(key, until)
-    set(s => ({ pings: clearPings(s.pings, key, until) }))
-    const lastRead = key[0] === 't' ? 0 : (get().reads[key]?.lastRead ?? 0)
-    if (get().token) void api.postRead(key, lastRead, false, until).catch(() => {})
-  }
-
   const moveDmUp = (id: number) => {
     set(s => {
       const dm = s.dms.find(d => d.id === id)
@@ -2870,15 +2759,6 @@ export const useStore = create<RChatState>()((set, get) => {
     askP2p(msgs)
   }
 
-  const placeAnchor = (key: string) =>
-    set(s => {
-      const mark = s.reads[key]
-      if (!mark && unreadsLoading) lateAnchor.add(key)
-      else lateAnchor.delete(key)
-      const anchor = mark && mark.latest > mark.lastRead ? mark.lastRead : 0
-      return { unreadAnchor: { ...s.unreadAnchor, [key]: anchor } }
-    })
-
   const enterView = (view: View) => {
     const key = viewKey(view)
     const before = get().view
@@ -2893,11 +2773,6 @@ export const useStore = create<RChatState>()((set, get) => {
       pins: s.pins && s.pins.key !== key ? null : s.pins,
     }))
     placeAnchor(key)
-  }
-
-  const clearAnchor = (key: string) => {
-    lateAnchor.delete(key)
-    set(s => (s.unreadAnchor[key] ? { unreadAnchor: { ...s.unreadAnchor, [key]: 0 } } : {}))
   }
 
   const openChannelAt = async (
@@ -3101,86 +2976,9 @@ export const useStore = create<RChatState>()((set, get) => {
     if (notice) desktopAlert(notice)
   }
 
-  let groupReload: ReturnType<typeof setTimeout> | null = null
-  const reloadGroups = () => {
-    if (groupReload !== null) return
-    groupReload = setTimeout(() => {
-      groupReload = null
-      if (get().me) void loadUnreads()
-    }, 2000)
-  }
-
-  // A live channel message with @everyone, @here or role mentions. When it addresses you, it is
-  // counted (until the channel is read past it) and toasts like a ping, through the same
-  // decision as pings plus the server's suppress settings. Returns whether it was handled, so
-  // no plain message toast follows; when the suppress settings hide every kind it addresses
-  // you with, the plain message path ("All messages") decides instead. Nothing is stored per
-  // member on the server: each client decides from the message itself. `@here` uses the
-  // server's rule: you are online while connected anywhere on the site, unless you appear
-  // offline, whatever server or page is open.
-  const groupAlert = (m: Message, server: string): boolean => {
-    const s = get()
-    const me = s.me
-    if (!me || m.channel_id === null || !m.group_mentions?.length) return false
-    if (s.blocked[m.author.username]) return false
-    const member = me.servers.some(x => x.name === server)
-    const known = memberOf(s, server, me.username)
-    const kinds = groupKindsFor(m, {
-      username: me.username,
-      member,
-      online: onlineForHere(me),
-      roleIds: known?.role_ids ?? null,
-    })
-    if (!kinds.length) {
-      if (member && !known && m.group_mentions.some(g => g.kind === 'role')) reloadGroups()
-      return false
-    }
-    const toMe =
-      mentionsUser(m.content, me.username) ||
-      repliesToMe(m, me.username) ||
-      (m.reply_to?.partial === true && m.reply_to.mention)
-    if (toMe) return true
-    const scope = `c${m.channel_id}`
-    set(st => ({
-      groupPings: addGroupPing(st.groupPings, scope, server, { message_id: m.id, kinds }),
-    }))
-    const shown = groupKindsShown(s.notifyPrefs, server, kinds)
-    if (!shown.length) return false
-    const target = scopeOfKey(scope, server)
-    const alert = pingAlert(
-      { scope, thread_root_id: null },
-      {
-        view: s.view ? viewKey(s.view) : null,
-        thread: s.panel?.kind === 'thread' ? s.panel.root.id : null,
-        following: key => s.atBottom[key] === true && !detached(key),
-        visible: pageVisible(),
-      },
-      target ? scopeRule(s, target) : undefined
-    )
-    if (!alert.toast) return true
-    const host = s.servers[server]
-    const roles = host?.roles ?? []
-    const role =
-      m.group_mentions
-        .filter(g => g.kind === 'role' && known?.role_ids.includes(g.role_id ?? -1))
-        .map(g => roles.find(r => r.id === g.role_id)?.name)
-        .find(name => name !== undefined) ?? null
-    const channelId = m.channel_id
-    alertUser({
-      key: scope,
-      actor: m.author,
-      action: groupAction(shown, role),
-      body: m.content,
-      server: host?.display_name ?? null,
-      channel: host?.channels.find(c => c.id === channelId)?.name ?? null,
-      dm: false,
-      message: true,
-      name: m.author.display_name,
-      generic: 'New notification',
-      go: () => void get().openChannel(server, channelId, 'push', m.id),
-    })
-    return true
-  }
+  const readsHub = readsSlice(set, get, { alertUser, detached, friendsHub })
+  const { clearAnchor, forgetReads, groupAlert, lateAnchor, loadUnreads, placeAnchor, readQueue } =
+    readsHub
 
   let endedVoice: number | null = null
   // Whether the server has listed us in the room we last joined. Until it has,
@@ -3338,20 +3136,16 @@ export const useStore = create<RChatState>()((set, get) => {
     if (expiryTimer !== null) clearTimeout(expiryTimer)
     expiryTimer = null
     notifySynced = false
-    readQueue.clear()
-    unreadsMore = false
-    unreadsReady = Promise.resolve()
+    readsHub.forget()
     stopCatchUp()
     joins.reset()
     dmPager.reset(null)
     serverPager.reset(null)
     historyGen.clear()
     tails.clear()
-    lateAnchor.clear()
     views.clear()
     presenceHub.forget()
     bannedHere.clear()
-    seenPings.clear()
     reactorCache.clear()
     quotes.clear()
     quoteReads.clear()
@@ -3573,7 +3367,7 @@ export const useStore = create<RChatState>()((set, get) => {
           const viewingScope = viewNow ? viewKey(viewNow) : null
           set(s => {
             const prev = s.reads[scope] ?? {
-              lastRead: mine ? m.id : unreadsMore ? 0 : m.id - 1,
+              lastRead: mine ? m.id : readsHub.more() ? 0 : m.id - 1,
               latest: 0,
             }
             return {
@@ -3874,106 +3668,6 @@ export const useStore = create<RChatState>()((set, get) => {
       const here = view?.kind === 'channel' && view.server === ev.server
       if (me?.username === ev.username && (here || servers[ev.server])) bannedFrom(ev.server)
     },
-    read_updated: ev => {
-      if (get().me?.username !== ev.username) return
-      const until = ev.pings_until ?? 0
-      noteSeen(ev.scope, until)
-      if (ev.scope[0] === 't') {
-        set(s => ({ pings: clearPings(s.pings, ev.scope, until) }))
-        return
-      }
-      readQueue.seen(ev.scope, ev.last_read)
-      set(s => {
-        const prev = s.reads[ev.scope] ?? { lastRead: 0, latest: ev.last_read }
-        const lastRead = Math.max(prev.lastRead, ev.last_read)
-        return {
-          reads: {
-            ...s.reads,
-            [ev.scope]: { ...prev, lastRead, latest: Math.max(prev.latest, ev.last_read) },
-          },
-          pings: clearPings(s.pings, ev.scope, until),
-        }
-      })
-    },
-    ping: ev => {
-      const me = get().me
-      if (!me || me.username !== ev.username) return
-      const { ping } = ev
-      if (ping.scope === FRIENDS_SCOPE) {
-        friendsHub.onPing(ping, (go, action, actor) =>
-          alertUser({
-            key: FRIENDS_SCOPE,
-            actor,
-            action,
-            body: '',
-            server: null,
-            channel: null,
-            dm: false,
-            message: false,
-            name: actor.display_name,
-            generic: 'New notification',
-            go,
-          })
-        )
-        return
-      }
-      const s = get()
-      const target = scopeOfKey(ping.scope, ping.server)
-      const alert = pingAlert(
-        ping,
-        {
-          view: s.view ? viewKey(s.view) : null,
-          thread: s.panel?.kind === 'thread' ? s.panel.root.id : null,
-          following: key => s.atBottom[key] === true && !detached(key),
-          visible: pageVisible(),
-        },
-        target ? scopeRule(s, target) : undefined
-      )
-      if (alert.badge) set(st => ({ pings: addPing(st.pings, ping) }))
-      else {
-        const key = pingKey(ping)
-        noteSeen(key, ping.id)
-        const lastRead = key[0] === 't' ? 0 : (get().reads[key]?.lastRead ?? 0)
-        if (get().token) void api.postRead(key, lastRead, false, ping.id).catch(() => {})
-      }
-      if (!alert.toast) return
-      const host = ping.server !== null ? s.servers[ping.server] : undefined
-      const channel = host?.channels.find(c => `c${c.id}` === ping.scope)?.name ?? null
-      alertUser({
-        key: pingKey(ping),
-        actor: ping.actor,
-        action: pingAction(ping, null),
-        body: ping.excerpt,
-        server: ping.server !== null ? (host?.display_name ?? null) : null,
-        channel,
-        dm: ping.scope[0] === 'd',
-        message: ping.kind !== 'reaction',
-        name: ping.actor.display_name,
-        generic: 'New notification',
-        go: () => void get().openPing(ping),
-      })
-    },
-    group_pings_seen: ev => {
-      if (get().me?.username !== ev.username) return
-      set(s => {
-        const groupPings = seenGroupMessages(s.groupPings, ev.scope, ev.message_ids)
-        return groupPings === s.groupPings ? {} : { groupPings }
-      })
-    },
-    ping_count: ev => {
-      if (get().me?.username !== ev.username) return
-      set(s => {
-        const known = Object.values(s.pings).find(p => p.scope === ev.scope)
-        return {
-          pings: setScopePings(
-            s.pings,
-            ev.scope,
-            known?.server ?? s.reads[ev.scope]?.server ?? null,
-            ev
-          ),
-        }
-      })
-    },
     voice_state: ev => {
       set(s => {
         const voiceUsers = { ...s.voiceUsers }
@@ -4226,8 +3920,9 @@ export const useStore = create<RChatState>()((set, get) => {
     },
   } satisfies Handlers
 
-  const tables = [presenceHub.handlers, events]
-  type Routed = keyof typeof presenceHub.handlers | keyof typeof events
+  const tables = [presenceHub.handlers, readsHub.handlers, events]
+  type Routed =
+    keyof typeof presenceHub.handlers | keyof typeof readsHub.handlers | keyof typeof events
   const unrouted: Record<Exclude<WsEvent['type'], Routed | Ignored>, never> = {}
   void unrouted
   routed = tables
@@ -5312,91 +5007,7 @@ export const useStore = create<RChatState>()((set, get) => {
       writeLocal(home.scoped(replyMentionKey(username)), replyMentionValue(mention))
     },
 
-    markRead: (scope, messageId) => {
-      const cur = get().reads[scope]
-      if (cur && messageId <= cur.lastRead) {
-        seePings(scope)
-        return
-      }
-      const until = pingUntil(get().pings[scope])
-      noteSeen(scope, until)
-      set(s => {
-        const prev = s.reads[scope] ?? { lastRead: 0, latest: messageId }
-        const lastRead = Math.max(prev.lastRead, messageId)
-        return {
-          reads: {
-            ...s.reads,
-            [scope]: { ...prev, lastRead, latest: Math.max(prev.latest, messageId) },
-          },
-          pings: clearPings(s.pings, scope, until),
-        }
-      })
-      const preview = previewServer(get())
-      const previewed =
-        preview !== null && !!get().servers[preview]?.channels.some(c => `c${c.id}` === scope)
-      if (get().token && !previewed) readQueue.mark(scope, messageId)
-    },
-
-    seeThread: rootId => seePings(`t${rootId}`),
-
-    markScopesRead: async scopes => {
-      const s = get()
-      if (!s.me) return
-      const keys = withThreads(scopes, s.pings)
-      if (!keys.length) return
-      for (const key of keys) noteSeen(key, pingUntil(s.pings[key]))
-      set(st => markedRead(st.reads, st.pings, keys))
-      const reads = get().reads
-      for (const key of keys) if (key[0] !== 't' && get().unreadAnchor[key]) clearAnchor(key)
-      if (!get().token) return
-      for (const chunk of chunked(keys)) {
-        const failed = await api.postReadBatch(chunk).then(
-          () => false,
-          () => true
-        )
-        for (const key of chunk) {
-          const at = reads[key]?.lastRead ?? 0
-          if (key[0] === 't') {
-            if (failed) void api.postRead(key, 0, false, seenPings.get(key) ?? 0).catch(() => {})
-          } else if (at > 0) {
-            if (failed) readQueue.mark(key, at)
-            else readQueue.seen(key, at)
-          }
-        }
-      }
-    },
-
-    markServerRead: name => get().markServersRead([name]),
-
-    markServersRead: names => get().markScopesRead(serversMarkTargets(get(), names)),
-
-    markDmsRead: () => get().markScopesRead(dmsMarkTargets(get())),
-
-    // The unread list is capped, so when it was cut, marking reloads it and goes on (bounded).
-    markAllRead: async () => {
-      await get().markScopesRead(allMarkTargets(get()))
-      for (let round = 0; unreadsMore && round < 5; round += 1) {
-        await loadUnreads()
-        const more = allMarkTargets(get())
-        if (!more.length) return
-        await get().markScopesRead(more)
-      }
-    },
-
-    askMarkAllRead: extra => {
-      const s = get()
-      const more = extra?.pending === true
-      if (!s.me || (!allMarkTargets(s).length && !more)) return
-      s.askConfirm({
-        title: 'Mark all as read',
-        body: 'Mark every channel and DM as read?',
-        confirm: 'Mark as read',
-        action: () => {
-          void get().markAllRead()
-          if (more) extra?.mark()
-        },
-      })
-    },
+    ...readsHub.actions,
 
     setAtBottom: (key, v) =>
       set(s => (s.atBottom[key] === v ? {} : { atBottom: { ...s.atBottom, [key]: v } })),
