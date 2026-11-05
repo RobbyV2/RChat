@@ -146,18 +146,6 @@ pub(crate) async fn check_dm_write(db: &Db, actor: &str, users: &[String]) -> Re
     }
 }
 
-/// `check_dm_write` for the DM `dm_id`; a DM that does not exist passes (callers check that).
-pub(crate) async fn check_dm_id(db: &Db, actor: &str, dm_id: i64) -> Result<(), ApiError> {
-    let Some(r) = sqlx::query("SELECT user_a, user_b FROM dms WHERE id = $1")
-        .bind(dm_id)
-        .fetch_optional(db)
-        .await?
-    else {
-        return Ok(());
-    };
-    check_dm_write(db, actor, &[r.try_get(0)?, r.try_get(1)?]).await
-}
-
 /// Removes the unseen pings `blocked` caused for `blocker` and sends `ping_count` for each
 /// scope that had one.
 async fn drop_pings(state: &AppState, blocker: &str, blocked: &str) -> Result<(), ApiError> {

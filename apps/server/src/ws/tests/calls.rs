@@ -337,6 +337,120 @@ async fn blocked_users_cannot_call() {
 }
 
 #[tokio::test]
+async fn calls_answer_alike_for_missing_and_unreachable_dms() {
+    let (state, path) = crate::api::test_util::temp_state("call_dm_probe").await;
+    let db = &state.db;
+    for name in ["alice", "bob", "carol", "dave"] {
+        add_user_row(db, name).await;
+    }
+    let theirs = insert_id(
+        db,
+        "INSERT INTO dms(user_a, user_b) VALUES('bob', 'carol') RETURNING id",
+    )
+    .await;
+    let purging = insert_id(
+        db,
+        "INSERT INTO dms(user_a, user_b) VALUES('alice', 'dave') RETURNING id",
+    )
+    .await;
+    exec(
+        db,
+        "UPDATE users SET password_hash = '!purging' WHERE username = 'dave'",
+    )
+    .await;
+    let start = |dm_id| ClientMsg::CallStart {
+        dm_id,
+        p2p: false,
+        video: false,
+        peer_id: None,
+        relays: Vec::new(),
+    };
+    let alice = crate::api::test_util::mem_user("alice", false);
+    for dm in [theirs, purging + 100, purging] {
+        assert_eq!(
+            voice_msg(&state, "alice", 1, start(dm)).await,
+            Err("DM not found".to_string()),
+            "dm {dm}"
+        );
+        let rest = crate::api::access::resolve_dm(db, dm, &alice).await;
+        assert!(
+            rest.is_err_and(|e| e.0 == axum::http::StatusCode::NOT_FOUND),
+            "dm {dm}"
+        );
+    }
+    let logs = insert_id(db, "SELECT COUNT(*) FROM messages WHERE kind = 'call'").await;
+    assert_eq!(logs, 0);
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn accepts_answer_alike_for_missing_and_unreachable_dms() {
+    let (state, path) = crate::api::test_util::temp_state("accept_dm_probe").await;
+    let db = &state.db;
+    for name in ["alice", "bob", "carol", "dave", "erin", "frank"] {
+        add_user_row(db, name).await;
+    }
+    let theirs = insert_id(
+        db,
+        "INSERT INTO dms(user_a, user_b) VALUES('bob', 'carol') RETURNING id",
+    )
+    .await;
+    let purging = insert_id(
+        db,
+        "INSERT INTO dms(user_a, user_b) VALUES('alice', 'dave') RETURNING id",
+    )
+    .await;
+    exec(
+        db,
+        "UPDATE users SET password_hash = '!purging' WHERE username = 'dave'",
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO blocks(blocker, blocked, created_at) VALUES('alice', 'bob', 1)",
+    )
+    .await;
+    let start = ClientMsg::CallStart {
+        dm_id: theirs,
+        p2p: true,
+        video: false,
+        peer_id: Some(s("peer-a")),
+        relays: vec![s("turn.a.example")],
+    };
+    voice_msg(&state, "bob", 1, start).await.expect("start");
+    let accept = |dm_id, relays: Vec<String>| ClientMsg::CallAccept {
+        dm_id,
+        peer_id: Some(s("peer-x")),
+        relays,
+    };
+    let none = Err(s("No incoming call"));
+    assert_eq!(
+        voice_msg(&state, "alice", 2, accept(theirs, Vec::new())).await,
+        none
+    );
+    assert_eq!(
+        voice_msg(&state, "alice", 2, accept(purging, Vec::new())).await,
+        none
+    );
+    assert_eq!(
+        voice_msg(&state, "frank", 3, accept(purging + 100, Vec::new())).await,
+        none
+    );
+    for n in 0..5 {
+        assert_eq!(
+            voice_msg(&state, "erin", 4, accept(theirs, vec![s("not a host!")])).await,
+            none,
+            "probe {n}"
+        );
+    }
+    assert_eq!(
+        voice_msg(&state, "erin", 4, accept(theirs, vec![s("not a host!")])).await,
+        Err(s("Too many requests, slow down"))
+    );
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
 async fn blocking_ends_calls_and_stops_answers_and_signals() {
     let (state, path) = crate::api::test_util::temp_state("call_block_ends").await;
     let db = &state.db;

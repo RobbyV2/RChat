@@ -1132,7 +1132,7 @@ pub struct ResolvedMessage {
     user: Option<User>,
 }
 
-async fn dm_pair(db: &Db, id: i64, live: bool) -> Result<Option<Vec<String>>, ApiError> {
+async fn dm_pair(db: &Db, id: i64, live: bool) -> sqlx::Result<Option<Vec<String>>> {
     let sql = match live {
         true => format!("SELECT user_a, user_b FROM dms WHERE id = $1 AND {LIVE_DM}"),
         false => "SELECT user_a, user_b FROM dms WHERE id = $1".to_string(),
@@ -1927,16 +1927,17 @@ pub(crate) async fn ws_dm_between(db: &Db, a: &str, b: &str) -> sqlx::Result<boo
     .is_some())
 }
 
-/// Calls: the two people of DM `dm_id`. Never answers a client.
-pub(crate) async fn ws_dm_users(db: &Db, dm_id: i64) -> sqlx::Result<Option<(String, String)>> {
-    let row = sqlx::query("SELECT user_a, user_b FROM dms WHERE id = $1")
-        .bind(dm_id)
-        .fetch_optional(db)
-        .await?;
-    match row {
-        Some(r) => Ok(Some((r.try_get(0)?, r.try_get(1)?))),
-        None => Ok(None),
-    }
+/// Calls: the two people of DM `dm_id`, `None` where `resolve_dm` answers 404 to `user`.
+/// Never answers a client.
+pub(crate) async fn ws_dm_users(
+    db: &Db,
+    dm_id: i64,
+    user: &str,
+) -> sqlx::Result<Option<(String, String)>> {
+    Ok(match dm_pair(db, dm_id, true).await?.as_deref() {
+        Some([a, b]) if a == user || b == user => Some((a.clone(), b.clone())),
+        _ => None,
+    })
 }
 
 /// `p2p_peer`: the live P2P attachment of message `message_id`, with columns media_id,

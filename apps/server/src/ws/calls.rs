@@ -188,13 +188,10 @@ pub(super) async fn voice_msg(
             if !state.hub.call_ok(user, dm_id) {
                 return Err(CALLING_TOO_OFTEN.to_string());
             }
-            let (a, b) = ws_dm_users(&state.read(), dm_id)
+            let (a, b) = ws_dm_users(&state.read(), dm_id, user)
                 .await
                 .map_err(db_err)?
                 .ok_or_else(|| "DM not found".to_string())?;
-            if a != user && b != user {
-                return Err("Not a participant".to_string());
-            }
             if a == b {
                 return Err("Cannot call yourself".to_string());
             }
@@ -248,14 +245,18 @@ pub(super) async fn voice_msg(
             relays,
         } => {
             let peer_id = call_peer_id(peer_id)?;
+            if !state.hub.accept_ok(user) {
+                return Err(TOO_FAST.to_string());
+            }
+            let (a, b) = ws_dm_users(&state.read(), dm_id, user)
+                .await
+                .map_err(db_err)?
+                .ok_or_else(|| "No incoming call".to_string())?;
             let relays = match state.hub.call_kind(dm_id) {
                 Some(CallKind::P2p) => crate::p2p::relay_hosts(relays)?,
                 Some(CallKind::Rtc) | None => Vec::new(),
             };
-            if !state.hub.accept_ok(user) {
-                return Err(TOO_FAST.to_string());
-            }
-            crate::api::blocks::check_dm_id(&state.db, user, dm_id)
+            crate::api::blocks::check_dm_write(&state.db, user, &[a, b])
                 .await
                 .map_err(|crate::api::ApiError(_, e)| e)?;
             let (log_id, dm_users) = state
