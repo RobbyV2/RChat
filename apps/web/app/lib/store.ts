@@ -80,21 +80,7 @@ import {
   showText,
 } from './profanity'
 import { parseSpoilers, spoilersKey, spoilersValue, type ShowSpoilers } from './spoilers'
-import {
-  IDLE,
-  TYPING_TTL_MS,
-  hideTypers,
-  nextExpiry as nextTypingExpiry,
-  nextTyping,
-  parseTyping,
-  pruneTypers,
-  stopTyping,
-  typingKey,
-  typingValue,
-  withTyper,
-  type TypingMsg,
-  type TypingOut,
-} from './typing'
+import { hideTypers, parseTyping, typingKey, typingValue } from './typing'
 import { forgetGuestMedia } from './media_src'
 import {
   addNotice,
@@ -244,16 +230,6 @@ import {
 import { deniedAccess, runJoinStep } from './join_flow'
 import { secretsKey } from './passwords'
 import { historyKey } from './openapi'
-import {
-  freshPresence,
-  knownPresence,
-  notePresence,
-  presenceDelta,
-  presenceSnap,
-  snapOnline,
-  type PresenceLog,
-  type PresenceSnap,
-} from './presence'
 import { Perm, hasPerm } from './types'
 import {
   MAX_UPLOAD,
@@ -289,6 +265,8 @@ import type {
   SearchState,
 } from './store_types'
 import { parsePath, threadKey, viewKey, viewPath, type Nav, type View } from './view'
+import { pageVisible, routeEvent, type Handlers } from './slices/ctx'
+import { presenceSlice } from './slices/presence'
 
 import { blockedSet, matchesBlockQuery, withoutTypers, type Blocked } from './blocks'
 import { FRIENDS_SCOPE } from './friends'
@@ -424,8 +402,6 @@ const applyEmbeds = (list: Message[]) =>
         return e && e !== m.embeds ? { ...m, embeds: e } : m
       })
 
-const pageVisible = () => typeof document === 'undefined' || document.visibilityState === 'visible'
-
 export const roleMenuItems = (server: string, username: string): ContextMenuItem[] => {
   const s = useStore.getState()
   const roleIds = memberOf(s, server, username)?.role_ids ?? []
@@ -544,6 +520,24 @@ export const confirmDeleteMessage = (id: number, now = false) => {
     action: () => void useStore.getState().deleteMessage(id),
   })
 }
+
+export const IGNORED = [
+  'bulk_delete_progress',
+  'friend_added',
+  'friend_presence',
+  'friend_removed',
+  'friend_request_added',
+  'friend_request_removed',
+  'poll_updated',
+  'poll_voted',
+  'privacy_changed',
+] as const satisfies readonly WsEvent['type'][]
+type Ignored = (typeof IGNORED)[number]
+
+let routed: readonly Handlers[] = []
+
+// The handler tables `applyWsEvent` routes through, after the friends, polls and selection hooks.
+export const eventTables = () => routed
 
 let forgetStoreSession = () => {}
 
@@ -719,35 +713,8 @@ export const useStore = create<RChatState>()((set, get) => {
     writeLocal(home.scoped(profanityKey(owner)), profanityValue(on))
   }
 
-  let outgoing: TypingOut = IDLE
-  let typingTimer: ReturnType<typeof setTimeout> | null = null
-
-  const sendTyping = (msgs: TypingMsg[]) => {
-    for (const msg of msgs) home.ws.sendTyping(msg)
-  }
-
-  const armTyping = () => {
-    if (typingTimer !== null) clearTimeout(typingTimer)
-    typingTimer = null
-    const next = nextTypingExpiry(get().typing)
-    if (next === null) return
-    typingTimer = setTimeout(
-      () => {
-        typingTimer = null
-        set(s => ({ typing: pruneTypers(s.typing, Date.now()) }))
-        armTyping()
-      },
-      Math.max(next - Date.now() + 50, 50)
-    )
-  }
-
-  const forgetTyping = (sendStop: boolean) => {
-    if (sendStop) sendTyping(stopTyping(outgoing))
-    outgoing = IDLE
-    if (typingTimer !== null) clearTimeout(typingTimer)
-    typingTimer = null
-    set({ typing: {} })
-  }
+  const presenceHub = presenceSlice(set, get)
+  const { forgetTyping, noteTyper } = presenceHub
 
   const saveTypingOn = (on: boolean) => {
     const owner = notifyOwner()
@@ -755,19 +722,6 @@ export const useStore = create<RChatState>()((set, get) => {
     if (on !== get().typingOn) set({ typingOn: on })
     writeLocal(home.scoped(typingKey(owner)), typingValue(on))
     if (!on) forgetTyping(true)
-  }
-
-  const noteTyper = (scope: string, username: string, name: string, on: boolean) => {
-    const { typing } = get()
-    const next = withTyper(
-      typing,
-      scope,
-      username,
-      on ? { name, until: Date.now() + TYPING_TTL_MS } : null
-    )
-    if (next === typing) return
-    set({ typing: next })
-    armTyping()
   }
 
   let expiryTimer: ReturnType<typeof setTimeout> | null = null
@@ -1920,8 +1874,7 @@ export const useStore = create<RChatState>()((set, get) => {
     forgetPending((_, upload) => !scopes.has(upload.scope))
     forgetReads((_, mark) => mark.server !== name)
     forgetMemberInfo(name)
-    presenceLogs.delete(name)
-    presenceSnaps.delete(name)
+    presenceHub.forgetServer(name)
     saveLayout(forgetServer(get().layout, name))
     forgetServerRules(name)
     set(s => ({
@@ -2383,120 +2336,6 @@ export const useStore = create<RChatState>()((set, get) => {
     return out ?? pages
   }
 
-  const presence: { ev: Extract<WsEvent, { type: 'presence_changed' }>; seq: number }[] = []
-  const presenceLogs = new Map<string, PresenceLog>()
-  const presenceSnaps = new Map<string, PresenceSnap>()
-  let presenceSeq = 0
-  let presenceFrame = false
-
-  const knownOnline = (server: string, username: string) => {
-    const noted = knownPresence(presenceLogs.get(server), presenceSnaps.get(server), username)
-    if (noted !== undefined) return noted
-    const s = get()
-    return (
-      s.members[server]?.list.find(m => m.username === username)?.online ??
-      s.memberInfo[server]?.[username]?.online
-    )
-  }
-
-  const flushPresence = () => {
-    presenceFrame = false
-    const batch = presence.splice(0)
-    if (!batch.length) return
-    const byServer = new Map<string, Map<string, boolean>>()
-    const delta = new Map<string, number>()
-    const counts = new Map<string, number>()
-    for (const { ev, seq } of batch) {
-      if (typeof ev.online_count === 'number') counts.set(ev.server, ev.online_count)
-      const users = byServer.get(ev.server) ?? new Map<string, boolean>()
-      users.set(ev.username, ev.online)
-      byServer.set(ev.server, users)
-      const known = knownOnline(ev.server, ev.username)
-      delta.set(ev.server, (delta.get(ev.server) ?? 0) + presenceDelta(known, ev.online))
-      const log = presenceLogs.get(ev.server) ?? new Map()
-      notePresence(log, ev.username, ev.online, seq)
-      presenceLogs.set(ev.server, log)
-    }
-    set(s => {
-      let servers = s.servers
-      let members = s.members
-      let memberInfo = s.memberInfo
-      for (const [server, users] of byServer) {
-        const detail = servers[server]
-        if (detail) {
-          const online_count =
-            counts.get(server) ?? Math.max(0, detail.online_count + (delta.get(server) ?? 0))
-          if (online_count !== detail.online_count)
-            servers = { ...servers, [server]: { ...detail, online_count } }
-        }
-        const cache = members[server]
-        if (cache) {
-          const hit = (m: Member) => users.has(m.username) && users.get(m.username) !== m.online
-          const list = mapWhere(cache.list, hit, m => ({
-            ...m,
-            online: users.get(m.username) ?? m.online,
-          }))
-          if (list !== cache.list) members = { ...members, [server]: { ...cache, list } }
-        }
-        const known = memberInfo[server]
-        if (known) {
-          let next: Record<string, Member | null> | null = null
-          for (const [username, online] of users) {
-            const cur = known[username]
-            if (!cur || cur.online === online) continue
-            next ??= { ...known }
-            next[username] = { ...cur, online }
-          }
-          if (next) memberInfo = { ...memberInfo, [server]: next }
-        }
-      }
-      return { servers, members, memberInfo }
-    })
-  }
-
-  const applySnapshot = (ev: Extract<WsEvent, { type: 'presence_snapshot' }>) => {
-    flushPresence()
-    presenceSeq += 1
-    const snap = presenceSnap(ev.online, ev.online_count, presenceSeq)
-    presenceSnaps.set(ev.server, snap)
-    const fix = <T extends { username: string; online: boolean }>(m: T) => {
-      const online = snapOnline(snap, m.username)
-      return online === undefined || online === m.online ? m : { ...m, online }
-    }
-    set(s => {
-      const out: Partial<RChatState> = {}
-      const detail = s.servers[ev.server]
-      if (detail && detail.online_count !== ev.online_count)
-        out.servers = { ...s.servers, [ev.server]: { ...detail, online_count: ev.online_count } }
-      const cache = s.members[ev.server]
-      if (cache) {
-        const list = mapWhere(cache.list, m => fix(m) !== m, fix)
-        if (list !== cache.list) out.members = { ...s.members, [ev.server]: { ...cache, list } }
-      }
-      const known = s.memberInfo[ev.server]
-      if (known) {
-        let next: Record<string, Member | null> | null = null
-        for (const [username, m] of Object.entries(known)) {
-          if (!m || fix(m) === m) continue
-          next ??= { ...known }
-          next[username] = fix(m)
-        }
-        if (next) out.memberInfo = { ...s.memberInfo, [ev.server]: next }
-      }
-      return out
-    })
-  }
-
-  const queuePresence = (ev: Extract<WsEvent, { type: 'presence_changed' }>) => {
-    presenceSeq += 1
-    presence.push({ ev, seq: presenceSeq })
-    if (presenceFrame) return
-    presenceFrame = true
-    if (typeof requestAnimationFrame === 'function' && pageVisible())
-      requestAnimationFrame(flushPresence)
-    else setTimeout(flushPresence, 16)
-  }
-
   // Leaving a previewed server forgets it: its detail, cached messages, reads and member info
   // go, so nothing of it is left once the rail icon disappears.
   const forgetPreview = (name: string) => {
@@ -2512,8 +2351,7 @@ export const useStore = create<RChatState>()((set, get) => {
     forgetPending((_, upload) => !scopes.has(upload.scope))
     forgetReads(scope => !scopes.has(scope))
     forgetMemberInfo(name)
-    presenceLogs.delete(name)
-    presenceSnaps.delete(name)
+    presenceHub.forgetServer(name)
     set(s => {
       const servers = { ...s.servers }
       delete servers[name]
@@ -2720,14 +2558,13 @@ export const useStore = create<RChatState>()((set, get) => {
       const gen = memberGen[server] ?? 0
       for (const n of batch) memberPending.add(pendingKey(server, n))
       let found: Member[]
-      const since = presenceSeq
+      const since = presenceHub.seq()
       try {
-        found = freshPresence(
+        found = presenceHub.fresh(
+          server,
           await api.membersByName(server, batch).catch(e => {
             throw banCheck(e, server)
           }),
-          presenceLogs.get(server),
-          presenceSnaps.get(server),
           since
         )
       } finally {
@@ -3512,9 +3349,7 @@ export const useStore = create<RChatState>()((set, get) => {
     tails.clear()
     lateAnchor.clear()
     views.clear()
-    presence.length = 0
-    presenceLogs.clear()
-    presenceSnaps.clear()
+    presenceHub.forget()
     bannedHere.clear()
     seenPings.clear()
     reactorCache.clear()
@@ -3532,6 +3367,870 @@ export const useStore = create<RChatState>()((set, get) => {
     set(s => ({ outbox: { ...s.outbox, [o.key]: [...(s.outbox[o.key] ?? []), o] } }))
     void drain(o.key)
   }
+
+  const onReaction = (ev: Extract<WsEvent, { type: 'reaction_added' | 'reaction_removed' }>) => {
+    const mine = get().me?.username === ev.username
+    const key = reactorKey(ev.message_id, ev.emoji)
+    const added = ev.type === 'reaction_added'
+    const at = Math.floor(Date.now() / 1000)
+    forgetReactors(key)
+    patchReactions(ev.message_id, m => {
+      if (!mine || !reactionQueue.has(key) || ev.count === undefined)
+        return withReaction(m, ev.emoji, added, mine, at, ev.count)
+      const local = reacted(m, ev.emoji)
+      const count = ev.count - (added ? 1 : 0) + (local ? 1 : 0)
+      return withReaction(m, ev.emoji, local, true, at, count)
+    })
+  }
+
+  const onChannelChange = (
+    ev: Extract<WsEvent, { type: 'channel_renamed' | 'channel_updated' }>
+  ) => {
+    patchServer(ev.server, d => ({
+      ...d,
+      channels: d.channels.map(c => (c.id === ev.channel.id ? ev.channel : c)),
+    }))
+  }
+
+  const onServerChange = (ev: Extract<WsEvent, { type: 'server_renamed' | 'server_updated' }>) => {
+    const { server } = ev
+    const old_name = ev.type === 'server_renamed' ? ev.old_name : server.name
+    staleInvites(old_name)
+    set(s => {
+      const servers = { ...s.servers }
+      const detail = servers[old_name]
+      if (detail) {
+        delete servers[old_name]
+        servers[server.name] = {
+          ...detail,
+          name: server.name,
+          display_name: server.display_name,
+          has_password: server.has_password,
+          banner_color: server.banner_color ?? null,
+          name_color: server.name_color ?? null,
+        }
+      }
+      const members = renameKey(s.members, old_name, server.name)
+      const interacted = renameKey(s.interacted, old_name, server.name)
+      const memberInfo = renameKey(s.memberInfo, old_name, server.name)
+      const reads = Object.fromEntries(
+        Object.entries(s.reads).map(([scope, mark]) => [
+          scope,
+          mark.server === old_name ? { ...mark, server: server.name } : mark,
+        ])
+      )
+      const pings = Object.fromEntries(
+        Object.entries(s.pings).map(([scope, p]) => [
+          scope,
+          p.server === old_name ? { ...p, server: server.name } : p,
+        ])
+      )
+      const groupPings = Object.fromEntries(
+        Object.entries(s.groupPings).map(([scope, g]) => [
+          scope,
+          g.server === old_name ? { ...g, server: server.name } : g,
+        ])
+      )
+      return {
+        servers,
+        members,
+        memberInfo,
+        interacted,
+        reads,
+        pings,
+        groupPings,
+        voice:
+          s.voice?.server === old_name && old_name !== server.name
+            ? { ...s.voice, server: server.name }
+            : s.voice,
+        me: s.me
+          ? {
+              ...s.me,
+              servers: s.me.servers.map(x =>
+                x.name === old_name
+                  ? {
+                      ...x,
+                      name: server.name,
+                      display_name: server.display_name,
+                      banner_color: server.banner_color ?? null,
+                      name_color: server.name_color ?? null,
+                    }
+                  : x
+              ),
+            }
+          : s.me,
+        view:
+          s.view?.kind === 'channel' && s.view.server === old_name && old_name !== server.name
+            ? { ...s.view, server: server.name }
+            : s.view,
+        adminServers: {
+          ...s.adminServers,
+          list: s.adminServers.list.map(x => (x.name === old_name ? server : x)),
+        },
+      }
+    })
+    saveLayout(renameServer(get().layout, old_name, server.name))
+    saveNotify(renameServerRule(get().notifyPrefs, old_name, server.name))
+    serverGen += 1
+    const renamed = old_name !== server.name
+    if (renamed) {
+      droppedAt.set(old_name, serverGen)
+      memberGen[old_name] = (memberGen[old_name] ?? 0) + 1
+      memberGen[server.name] = (memberGen[server.name] ?? 0) + 1
+    }
+    if (serverPager.removed()) void get().loadMoreServers()
+    if (get().guest && get().guestServers.includes(old_name)) {
+      persistGuestServers(get().guestServers.map(n => (n === old_name ? server.name : n)))
+      const names = { ...get().guestNames, [server.name]: server.display_name }
+      if (renamed) delete names[old_name]
+      persistGuestNames(names)
+      const grants = get().guestGrants
+      if (renamed && grants[old_name]) {
+        const next = { ...grants, [server.name]: grants[old_name] }
+        delete next[old_name]
+        persistGrants(next)
+      }
+      if (renamed) {
+        home.ws.unsubscribe(old_name)
+        home.ws.subscribe([server.name])
+      }
+      if (server.has_password)
+        void api.getServer(server.name).catch((e: unknown) => {
+          if (lockedOut(e)) guestLocked(server.name)
+        })
+    }
+    const renamedView = get().view
+    if (renamed && renamedView?.kind === 'channel' && renamedView.server === server.name)
+      syncUrl(renamedView, 'replace')
+  }
+
+  const onMemberGone = (ev: Extract<WsEvent, { type: 'member_left' | 'member_kicked' }>) => {
+    staleInvites(ev.server)
+    const banned = ev.type === 'member_kicked' && ev.banned
+    if (get().me?.username === ev.username) {
+      if (ev.type === 'member_kicked') removedFrom(ev.server, banned)
+      else dropServer(ev.server)
+      return
+    }
+    if (banned && get().bans[ev.server]) void get().loadBans(ev.server, true)
+    patchServer(ev.server, d => ({
+      ...d,
+      member_count: Math.max(0, d.member_count - 1),
+    }))
+    patchMembers(ev.server, list => list.filter(m => m.username !== ev.username))
+    if (Object.hasOwn(get().memberInfo[ev.server] ?? {}, ev.username))
+      writeMemberInfo(ev.server, [[ev.username, null]])
+  }
+
+  const events = {
+    message: ev => {
+      const m = withQuote(ev.message)
+      const rootId = m.thread_root_id
+      if (rootId !== null) {
+        const tkey = threadKey(rootId)
+        const ckey = m.channel_id !== null ? `c${m.channel_id}` : null
+        const bump = (list: Message[]) =>
+          patchById(list, rootId, r => ({ ...r, reply_count: r.reply_count + 1 }))
+        const held = ckey ? tails.get(ckey) : undefined
+        if (ckey && held) tails.set(ckey, bump(held))
+        const live = liveKey(tkey)
+        if (live && holding(tkey)) holdTail(tkey, m)
+        const thread = live && !holding(tkey) ? (appendLive(tkey, [m]) ?? holdLive(tkey, [m])) : {}
+        set(s => {
+          const messages = { ...s.messages, ...thread.messages }
+          if (ckey && messages[ckey]) messages[ckey] = bump(messages[ckey])
+          return {
+            ...thread,
+            messages,
+            panel:
+              s.panel?.kind === 'thread' && s.panel.root.id === rootId
+                ? {
+                    ...s.panel,
+                    root: { ...s.panel.root, reply_count: s.panel.root.reply_count + 1 },
+                  }
+                : s.panel,
+          }
+        })
+      } else {
+        const key = messageKey(ev.channel_id, ev.dm_id)
+        if (key && liveKey(key)) {
+          if (holding(key)) holdTail(key, m)
+          else set(appendLive(key, [m]) ?? holdLive(key, [m]))
+        }
+      }
+      askP2p([m])
+      readQuote(m)
+      const typedIn = rootId !== null ? threadKey(rootId) : messageKey(ev.channel_id, ev.dm_id)
+      if (typedIn) noteTyper(typedIn, m.author.username, '', false)
+      if (ev.dm_id !== null && get().me) bumpDm(ev.dm_id)
+      if (m.kind === 'call') return
+      if (rootId === null) {
+        const scope = messageKey(m.channel_id, m.dm_id)
+        if (scope) {
+          const meNow = get().me
+          const mine = meNow?.username === m.author.username
+          const viewNow = get().view
+          const viewingScope = viewNow ? viewKey(viewNow) : null
+          set(s => {
+            const prev = s.reads[scope] ?? {
+              lastRead: mine ? m.id : unreadsMore ? 0 : m.id - 1,
+              latest: 0,
+            }
+            return {
+              reads: {
+                ...s.reads,
+                [scope]: {
+                  ...prev,
+                  latest: Math.max(prev.latest, m.id),
+                  server: ev.server ?? prev.server,
+                },
+              },
+            }
+          })
+          if (mine || (scope === viewingScope && get().atBottom[scope] && pageVisible()))
+            get().markRead(scope, m.id)
+        }
+      }
+      if (rootId === null && ev.server !== null && groupAlert(m, ev.server)) return
+      const { me, view } = get()
+      if (!me || m.author.username === me.username || (rootId !== null && m.dm_id === null)) return
+      if (get().blocked[m.author.username]) return
+      const scope = messageKey(m.channel_id, m.dm_id)
+      const target = scope ? scopeOfKey(scope, ev.server ?? null) : null
+      if (!scope || !target) return
+      const toMe =
+        repliesToMe(m, me.username) || (m.reply_to?.partial === true && m.reply_to.mention)
+      if (!m.forward && (mentionsUser(m.content, me.username) || toMe)) return
+      const watched =
+        view !== null &&
+        viewKey(view) === scope &&
+        get().atBottom[scope] === true &&
+        !detached(scope) &&
+        pageVisible()
+      if (!messageAlert(scopeRule(get(), target), watched)) return
+      const { dm_id, channel_id } = ev
+      const host = ev.server !== null ? get().servers[ev.server] : undefined
+      const channel =
+        channel_id !== null ? (host?.channels.find(c => c.id === channel_id)?.name ?? null) : null
+      alertUser({
+        key: scope,
+        actor: m.author,
+        action: '',
+        body:
+          m.kind === 'pin'
+            ? 'Pinned a message'
+            : isSystem(m)
+              ? systemText(m)
+              : m.content || (m.media?.spoiler ? '' : m.media?.filename) || 'Attachment',
+        server: dm_id === null ? (host?.display_name ?? null) : null,
+        channel,
+        dm: dm_id !== null,
+        message: true,
+        name: m.author.display_name,
+        generic: 'New message',
+        go: () => {
+          if (dm_id !== null) void get().openDm(dm_id, 'push', m.id)
+          else if (ev.server !== null && channel_id !== null)
+            void get().openChannel(ev.server, channel_id, 'push', m.id)
+        },
+      })
+    },
+    message_updated: ev => {
+      dropLinkCards(ev.stub ? ev.id : ev.message.id)
+      if (ev.stub) rereadEdited(ev)
+      else applyUpdated(ev.message)
+      refreshPins(ev.stub ? ev.id : ev.message.id)
+    },
+    message_pinned: ev => {
+      setPinned(ev.message_id, ev.pinned_at)
+      const key = messageKey(ev.channel_id, ev.dm_id)
+      if (key && get().pins?.key === key) loadPins(key)
+    },
+    message_unpinned: ev => {
+      setPinned(ev.message_id, null)
+    },
+    reaction_added: onReaction,
+    reaction_removed: onReaction,
+    message_deleted: ev => {
+      dropDeleted(ev.id, ev.thread_root_id, ev.server)
+    },
+    messages_deleted: ev => {
+      for (const id of ev.ids) dropDeleted(id, ev.thread_root_id, ev.server)
+    },
+    media_removed: ev => {
+      unhost(ev.message_id)
+      patchMessage(ev.message_id, m =>
+        m.media
+          ? {
+              ...m,
+              media: { ...m.media, removed: true, removed_by_author: ev.removed_by_author },
+            }
+          : m
+      )
+    },
+    embeds_resolved: ev => {
+      rememberEmbeds(ev.message_id, ev.embeds)
+      patchMessage(ev.message_id, m => ({ ...m, embeds: ev.embeds }))
+    },
+    embeds_removed: ev => {
+      const cur = pendingEmbeds.get(ev.message_id)
+      if (cur) rememberEmbeds(ev.message_id, withoutEmbed(cur, ev.ord, ev.banner))
+      patchMessage(ev.message_id, m => ({
+        ...m,
+        embeds: withoutEmbed(m.embeds, ev.ord, ev.banner),
+      }))
+    },
+    channel_created: ev => {
+      patchServer(ev.server, d =>
+        d.channels.some(c => c.id === ev.channel.id)
+          ? d
+          : { ...d, channels: [...d.channels, ev.channel] }
+      )
+    },
+    channel_renamed: onChannelChange,
+    channel_updated: onChannelChange,
+    channel_deleted: ev => {
+      dropLinkCards()
+      saveNotify(
+        resetScope(get().notifyPrefs, { kind: 'channel', id: ev.channel_id, server: null })
+      )
+      patchServer(ev.server, d => ({
+        ...d,
+        channels: d.channels.filter(c => c.id !== ev.channel_id),
+      }))
+      if (get().voice?.channelId === ev.channel_id) endVoiceMedia()
+      set(s => {
+        const voiceUsers = { ...s.voiceUsers }
+        delete voiceUsers[ev.channel_id]
+        return { voiceUsers }
+      })
+      forgetReads(scope => scope !== `c${ev.channel_id}`)
+      forgetPending((_, upload) => upload.scope !== `c${ev.channel_id}`)
+      tails.delete(`c${ev.channel_id}`)
+      dropEditIn(new Set([`c${ev.channel_id}`]))
+      if (!liveKey(`c${ev.channel_id}`)) forgetViews([`c${ev.channel_id}`])
+      const { view, servers } = get()
+      if (view?.kind === 'channel' && view.channelId === ev.channel_id) {
+        const next = servers[ev.server]?.channels[0]
+        if (next) void get().openChannel(ev.server, next.id, 'replace')
+        else {
+          clearView()
+        }
+      }
+    },
+    server_created: ev => {
+      set(s => ({
+        adminOverview: s.adminOverview
+          ? { ...s.adminOverview, server_count: s.adminOverview.server_count + 1 }
+          : s.adminOverview,
+        adminServers:
+          (s.adminServers.list.length > 0 || !s.adminServers.hasMore) &&
+          matches(s.adminServers.q, ev.server.name, ev.server.display_name)
+            ? {
+                ...s.adminServers,
+                list: insertSorted(
+                  s.adminServers.list,
+                  ev.server,
+                  (a, b) => a.name.localeCompare(b.name),
+                  x => x.name,
+                  s.adminServers.hasMore
+                ),
+              }
+            : s.adminServers,
+      }))
+    },
+    server_renamed: onServerChange,
+    server_updated: onServerChange,
+    server_deleted: ev => {
+      staleInvites(ev.name)
+      dropServer(ev.name)
+      set(s => ({
+        adminOverview: s.adminOverview
+          ? { ...s.adminOverview, server_count: Math.max(0, s.adminOverview.server_count - 1) }
+          : s.adminOverview,
+        adminServers: {
+          ...s.adminServers,
+          list: s.adminServers.list.filter(x => x.name !== ev.name),
+        },
+      }))
+    },
+    member_joined: ev => {
+      staleInvites(ev.server)
+      const self = get().me?.username === ev.member.username
+      if (!self) patchServer(ev.server, d => ({ ...d, member_count: d.member_count + 1 }))
+      patchMembers(ev.server, list => [
+        ...list.filter(m => m.username !== ev.member.username),
+        ev.member,
+      ])
+      if (get().memberInfo[ev.server]) writeMemberInfo(ev.server, [[ev.member.username, ev.member]])
+      if (self) void addServer(ev.server).catch(() => {})
+    },
+    member_left: onMemberGone,
+    member_kicked: onMemberGone,
+    admin_changed: ev => {
+      set(s => ({
+        adminChanges: { ...s.adminChanges, [ev.server]: (s.adminChanges[ev.server] ?? 0) + 1 },
+      }))
+      patchMembers(ev.server, list =>
+        list.map(m =>
+          m.username === ev.username ? { ...m, is_admin: ev.is_admin, perms: ev.perms } : m
+        )
+      )
+      patchMemberInfo(ev.server, ev.username, m => ({
+        ...m,
+        is_admin: ev.is_admin,
+        perms: ev.perms,
+      }))
+      set(s =>
+        s.me?.username === ev.username
+          ? {
+              me: {
+                ...s.me,
+                servers: s.me.servers.map(x =>
+                  x.name === ev.server ? { ...x, is_admin: ev.is_admin } : x
+                ),
+              },
+            }
+          : {}
+      )
+      if (
+        get().me?.username === ev.username ||
+        hasPerm(myPerms(get(), ev.server), Perm.ManageAdmins)
+      )
+        refetchServer(ev.server)
+    },
+    roles_changed: ev => {
+      dropLinkCards()
+      if (!get().servers[ev.server]) return
+      refetchServer(ev.server)
+      void get().loadMembers(ev.server, true)
+      refreshMemberInfo(ev.server)
+    },
+    channel_perms_changed: ev => {
+      dropLinkCards()
+      refetchServer(ev.server)
+    },
+    layout_changed: ev => {
+      if (layoutSends.has(ev.server)) return
+      const known = get().servers[ev.server]
+      if (!known) return
+      const listed = new Set([
+        ...ev.layout.uncategorized,
+        ...ev.layout.categories.flatMap(c => c.channels),
+      ])
+      patchServer(ev.server, d => applyLayout(d, ev.layout))
+      if (known.channels.some(c => !listed.has(c.id))) refetchServer(ev.server)
+    },
+    user_updated: ev => {
+      const u = ev.user
+      const byAuthor = (m: Message) => m.author.username === u.username
+      const reauthor = (list: Message[]) => mapWhere(list, byAuthor, m => ({ ...m, author: u }))
+      mapTails(reauthor)
+      set(s => ({
+        me: s.me && s.me.username === u.username ? { ...s.me, ...u } : s.me,
+        dms: s.dms.map(d => (d.other.username === u.username ? { ...d, other: u } : d)),
+        members: mapPages(s.members, list =>
+          mapWhere(
+            list,
+            m => m.username === u.username,
+            m => ({ ...m, ...u })
+          )
+        ),
+        messages: mapLists(s.messages, reauthor),
+        adminUsers: {
+          ...s.adminUsers,
+          list: s.adminUsers.list.map(x => (x.username === u.username ? u : x)),
+        },
+        interacted: mapPages(s.interacted, list =>
+          mapWhere(
+            list,
+            x => x.username === u.username,
+            () => u
+          )
+        ),
+        search: {
+          ...s.search,
+          results: s.search.results.map(r =>
+            r.message.author.username === u.username
+              ? { ...r, message: { ...r.message, author: u } }
+              : r
+          ),
+        },
+        panel:
+          s.panel?.kind === 'thread' && s.panel.root.author.username === u.username
+            ? { ...s.panel, root: { ...s.panel.root, author: u } }
+            : s.panel,
+        profile:
+          s.profile?.user.username === u.username
+            ? { ...s.profile, user: u, rev: (s.profile.rev ?? 0) + 1 }
+            : s.profile,
+      }))
+      mapMemberInfo((username, m) => (username === u.username ? { ...m, ...u } : m))
+      reauthorLinkCards(u)
+    },
+    server_banned: ev => {
+      staleInvites(ev.server)
+      const { me, servers, view } = get()
+      const here = view?.kind === 'channel' && view.server === ev.server
+      if (me?.username === ev.username && (here || servers[ev.server])) bannedFrom(ev.server)
+    },
+    read_updated: ev => {
+      if (get().me?.username !== ev.username) return
+      const until = ev.pings_until ?? 0
+      noteSeen(ev.scope, until)
+      if (ev.scope[0] === 't') {
+        set(s => ({ pings: clearPings(s.pings, ev.scope, until) }))
+        return
+      }
+      readQueue.seen(ev.scope, ev.last_read)
+      set(s => {
+        const prev = s.reads[ev.scope] ?? { lastRead: 0, latest: ev.last_read }
+        const lastRead = Math.max(prev.lastRead, ev.last_read)
+        return {
+          reads: {
+            ...s.reads,
+            [ev.scope]: { ...prev, lastRead, latest: Math.max(prev.latest, ev.last_read) },
+          },
+          pings: clearPings(s.pings, ev.scope, until),
+        }
+      })
+    },
+    ping: ev => {
+      const me = get().me
+      if (!me || me.username !== ev.username) return
+      const { ping } = ev
+      if (ping.scope === FRIENDS_SCOPE) {
+        friendsHub.onPing(ping, (go, action, actor) =>
+          alertUser({
+            key: FRIENDS_SCOPE,
+            actor,
+            action,
+            body: '',
+            server: null,
+            channel: null,
+            dm: false,
+            message: false,
+            name: actor.display_name,
+            generic: 'New notification',
+            go,
+          })
+        )
+        return
+      }
+      const s = get()
+      const target = scopeOfKey(ping.scope, ping.server)
+      const alert = pingAlert(
+        ping,
+        {
+          view: s.view ? viewKey(s.view) : null,
+          thread: s.panel?.kind === 'thread' ? s.panel.root.id : null,
+          following: key => s.atBottom[key] === true && !detached(key),
+          visible: pageVisible(),
+        },
+        target ? scopeRule(s, target) : undefined
+      )
+      if (alert.badge) set(st => ({ pings: addPing(st.pings, ping) }))
+      else {
+        const key = pingKey(ping)
+        noteSeen(key, ping.id)
+        const lastRead = key[0] === 't' ? 0 : (get().reads[key]?.lastRead ?? 0)
+        if (get().token) void api.postRead(key, lastRead, false, ping.id).catch(() => {})
+      }
+      if (!alert.toast) return
+      const host = ping.server !== null ? s.servers[ping.server] : undefined
+      const channel = host?.channels.find(c => `c${c.id}` === ping.scope)?.name ?? null
+      alertUser({
+        key: pingKey(ping),
+        actor: ping.actor,
+        action: pingAction(ping, null),
+        body: ping.excerpt,
+        server: ping.server !== null ? (host?.display_name ?? null) : null,
+        channel,
+        dm: ping.scope[0] === 'd',
+        message: ping.kind !== 'reaction',
+        name: ping.actor.display_name,
+        generic: 'New notification',
+        go: () => void get().openPing(ping),
+      })
+    },
+    group_pings_seen: ev => {
+      if (get().me?.username !== ev.username) return
+      set(s => {
+        const groupPings = seenGroupMessages(s.groupPings, ev.scope, ev.message_ids)
+        return groupPings === s.groupPings ? {} : { groupPings }
+      })
+    },
+    ping_count: ev => {
+      if (get().me?.username !== ev.username) return
+      set(s => {
+        const known = Object.values(s.pings).find(p => p.scope === ev.scope)
+        return {
+          pings: setScopePings(
+            s.pings,
+            ev.scope,
+            known?.server ?? s.reads[ev.scope]?.server ?? null,
+            ev
+          ),
+        }
+      })
+    },
+    voice_state: ev => {
+      set(s => {
+        const voiceUsers = { ...s.voiceUsers }
+        if (ev.users.length) voiceUsers[ev.channel_id] = ev.users
+        else delete voiceUsers[ev.channel_id]
+        const muted = s.voiceMuted[ev.channel_id]
+        const kept = muted?.filter(u => ev.users.includes(u))
+        if (!muted || kept?.length === muted.length) return { voiceUsers }
+        const voiceMuted = { ...s.voiceMuted }
+        if (kept?.length) voiceMuted[ev.channel_id] = kept
+        else delete voiceMuted[ev.channel_id]
+        return { voiceUsers, voiceMuted }
+      })
+      const { me, voice } = get()
+      if (!me) return
+      const listing = joins.state(ev.channel_id, ev.users.includes(me.username))
+      if (voice?.channelId === ev.channel_id) {
+        if (listing === 'listed') {
+          voiceListed = true
+          rtc.sync(ev.users)
+        } else if (listing === 'absent' && voiceListed) {
+          endedVoice = ev.channel_id
+          endVoiceMedia()
+        }
+      }
+    },
+    voice_muted: ev => {
+      set(s => {
+        const was = s.voiceMuted[ev.channel_id] ?? []
+        const list = was.filter(u => u !== ev.username)
+        if (ev.muted) list.push(ev.username)
+        const voiceMuted = { ...s.voiceMuted }
+        if (list.length) voiceMuted[ev.channel_id] = list
+        else delete voiceMuted[ev.channel_id]
+        return { voiceMuted }
+      })
+      applyMic()
+    },
+    member_timeout: ev => {
+      const wire =
+        ev.until === null
+          ? undefined
+          : { until: ev.until, remaining: ev.remaining, reason: ev.reason }
+      const mine = get().me?.username === ev.username
+      if (mine) {
+        set(s =>
+          s.me
+            ? {
+                me: {
+                  ...s.me,
+                  servers: s.me.servers.map(x =>
+                    x.name === ev.server
+                      ? {
+                          ...x,
+                          timed_out_until: ev.until === null ? undefined : localUntil(ev.remaining),
+                        }
+                      : x
+                  ),
+                },
+              }
+            : {}
+        )
+        applyMic()
+      }
+      if (!mine || hasPerm(myPerms(get(), ev.server), Perm.TimeoutMembers))
+        noteTimeout(ev.server, ev.username, wire)
+    },
+    call_state: ev => {
+      const { me } = get()
+      if (!me) return
+      if (ev.state === 'ended') {
+        if (get().call?.dmId === ev.dm_id) {
+          endCallMedia(ev.kind)
+          set({ call: null })
+        }
+        return
+      }
+      if (!get().dms.some(d => d.id === ev.dm_id))
+        void get()
+          .ensureDms([ev.dm_id])
+          .catch(() => {})
+      const prev = get().call
+      const since =
+        ev.state !== 'active'
+          ? null
+          : typeof ev.answered_at === 'number'
+            ? ev.answered_at
+            : prev?.dmId === ev.dm_id && prev.since !== null
+              ? prev.since
+              : Math.floor(Date.now() / 1000)
+      set({
+        call: {
+          dmId: ev.dm_id,
+          dmUsers: ev.dm_users,
+          state: ev.state,
+          from: ev.from,
+          kind: ev.kind,
+          video: ev.video === true,
+          since,
+          relays: Array.isArray(ev.relays) ? ev.relays : [],
+        },
+      })
+      if (ev.state !== 'active') return
+      if (ev.kind === 'rtc') {
+        rtc.sync(ev.dm_users)
+        return
+      }
+      bindP2pCall(me.username, ev)
+    },
+    p2p_availability: ev => {
+      const { hoster, ids, online } = ev
+      set(s => ({
+        p2pAvailability: { ...s.p2pAvailability, [hoster]: { ids, online } },
+      }))
+    },
+    p2p_peer: ev => {
+      p2p.granted(ev)
+    },
+    rtc_signal: ev => {
+      if (get().me?.username === ev.to)
+        rtc
+          .onSignal(ev.from, ev.payload, { channelId: ev.channel_id, dmId: ev.dm_id })
+          .catch((e: unknown) => console.error('rtc signal', e))
+    },
+    voice_ended: ev => {
+      const { me, voice } = get()
+      const mine = me !== null && (ev.dm_users?.includes(me.username) ?? false)
+      if (mine && ev.channel_id !== null && voice?.channelId === ev.channel_id) endVoiceMedia()
+      const endedChannel = ev.channel_id !== null && ev.channel_id === endedVoice
+      if (endedChannel) endedVoice = null
+      if (endedChannel || mine) fail(new Error(ev.reason))
+    },
+    error: ev => {
+      fail(new Error(ev.message))
+      const { me, voice, call, voiceUsers } = get()
+      const confirmed =
+        call !== null ||
+        (voice !== null && me !== null && (voiceUsers[voice.channelId] ?? []).includes(me.username))
+      if (confirmed) return
+      if (voice) joins.refused()
+      if (rtc.active() || voice) endVoiceMedia()
+      if (p2p.mediaActive()) p2p.endMedia()
+      set({ selfAudio: SELF_AUDIO_IDLE })
+    },
+    dm_created: ev => {
+      const { me } = get()
+      if (me && ev.dm_users.includes(me.username)) bumpDm(ev.dm_id)
+    },
+    dm_closed: ev => {
+      if (get().me?.username === ev.username) hideDm(ev.dm_id)
+    },
+    dm_reopened: ev => {
+      if (get().me?.username !== ev.username) return
+      closedDms.delete(ev.dm_id)
+      bumpDm(ev.dm_id)
+    },
+    user_blocked: ev => {
+      if (get().me?.username === ev.username) noteBlocked(ev.blocked)
+    },
+    user_unblocked: ev => {
+      if (get().me?.username === ev.username) noteUnblocked(ev.blocked)
+    },
+    banned: ev => {
+      staleInvites(null)
+      if (get().me?.username === ev.username) {
+        expireSession()
+        return
+      }
+      forgetProfiles(ev.username)
+      const gone = get()
+        .dms.filter(d => d.other.username === ev.username)
+        .map(d => `d${d.id}`)
+      dmGen += 1
+      const reload = dmPager.removed()
+      forgetReads(scope => !gone.includes(scope))
+      const byBanned = (m: Message) => m.author.username === ev.username
+      const roots = new Set(
+        Object.values(get().messages)
+          .flatMap(list => list.filter(byBanned))
+          .map(m => threadKey(m.id))
+      )
+      forgetPending((key, upload) => !gone.includes(upload.scope) && !roots.has(key))
+      for (const scope of gone) tails.delete(scope)
+      const unban = (list: Message[]) => dropWhere(list, byBanned)
+      mapTails(unban)
+      if (get().me) void loadUnreads()
+      set(s => ({
+        messages: mapLists(s.messages, unban),
+        members: mapPages(s.members, list => dropWhere(list, m => m.username === ev.username)),
+        interacted: mapPages(s.interacted, list =>
+          dropWhere(list, u => u.username === ev.username)
+        ),
+        dms: s.dms.filter(d => d.other.username !== ev.username),
+        adminOverview: s.adminOverview
+          ? { ...s.adminOverview, user_count: Math.max(0, s.adminOverview.user_count - 1) }
+          : s.adminOverview,
+        adminUsers: {
+          ...s.adminUsers,
+          list: s.adminUsers.list.filter(u => u.username !== ev.username),
+        },
+      }))
+      mapMemberInfo((username, m) => (username === ev.username ? null : m))
+      set(s => (s.profile?.user.username === ev.username ? { profile: null } : {}))
+      if (reload) void get().loadMoreDms()
+      const { view, dms } = get()
+      if (view?.kind === 'dm' && !dms.some(d => d.id === view.dmId)) {
+        const self = dms.find(d => d.is_self)
+        if (self) void get().openDm(self.id, 'replace')
+        else {
+          clearView()
+        }
+      }
+    },
+    user_registered: ev => {
+      set(s => ({
+        adminOverview: s.adminOverview
+          ? { ...s.adminOverview, user_count: s.adminOverview.user_count + 1 }
+          : s.adminOverview,
+        adminUsers:
+          (s.adminUsers.list.length > 0 || !s.adminUsers.hasMore) &&
+          matches(s.adminUsers.q, ev.user.username, ev.user.display_name)
+            ? {
+                ...s.adminUsers,
+                list: insertSorted(
+                  s.adminUsers.list,
+                  ev.user,
+                  (a, b) => a.username.localeCompare(b.username),
+                  u => u.username,
+                  s.adminUsers.hasMore
+                ),
+              }
+            : s.adminUsers,
+      }))
+    },
+    p2p_hosted: ev => {
+      if (typeof ev.key === 'string' && typeof ev.peer_id === 'string')
+        p2p.setServeKey(ev.key, ev.peer_id, ev.now ?? null)
+      void p2p.reconcile(ev.live, ev.checked)
+    },
+    settings_changed: ev => {
+      const settings = siteSettings(ev.settings)
+      const p2pFlip = settings.p2p_attachments !== get().settings.p2p_attachments
+      set({ settings, ...(p2pFlip ? { p2pAvailability: {} } : {}) })
+      const { view } = get()
+      if (p2pFlip && view) askP2p(get().messages[viewKey(view)] ?? [])
+    },
+    resync: () => {
+      dropLinkCards()
+      resync()
+    },
+  } satisfies Handlers
+
+  const tables = [presenceHub.handlers, events]
+  type Routed = keyof typeof presenceHub.handlers | keyof typeof events
+  const unrouted: Record<Exclude<WsEvent['type'], Routed | Ignored>, never> = {}
+  void unrouted
+  routed = tables
 
   return {
     token: null,
@@ -4413,13 +5112,7 @@ export const useStore = create<RChatState>()((set, get) => {
       if (on !== get().typingOn) set({ typingOn: on })
       if (!on) forgetTyping(true)
     },
-    noteTyping: (scope, active) => {
-      const { typingOn, me, guest } = get()
-      if (!typingOn || !me || guest) return
-      const { next, send } = nextTyping(outgoing, scope, active, Date.now())
-      outgoing = next
-      sendTyping(send)
-    },
+    noteTyping: presenceHub.noteTyping,
 
     sendForward: key => {
       const { me, guest, forwardClip: clip } = get()
@@ -5114,19 +5807,14 @@ export const useStore = create<RChatState>()((set, get) => {
           () => get().members[server] ?? emptyPage<Member>(),
           writeMembers(server),
           async cursor => {
-            const since = presenceSeq
+            const since = presenceHub.seq()
             const page = await api.listMembers(server, cursor).catch(e => {
               throw banCheck(e, server)
             })
             noteMemberTimeouts(server, page.items)
             return {
               ...page,
-              items: freshPresence(
-                page.items,
-                presenceLogs.get(server),
-                presenceSnaps.get(server),
-                since
-              ),
+              items: presenceHub.fresh(server, page.items, since),
             }
           },
           m => m.username,
@@ -5411,930 +6099,7 @@ export const useStore = create<RChatState>()((set, get) => {
       if (friendsHub.onEvent(ev)) return
       if (pollsHub.onEvent(ev)) return
       if (selectionHub.onEvent(ev)) return
-      switch (ev.type) {
-        case 'message': {
-          const m = withQuote(ev.message)
-          const rootId = m.thread_root_id
-          if (rootId !== null) {
-            const tkey = threadKey(rootId)
-            const ckey = m.channel_id !== null ? `c${m.channel_id}` : null
-            const bump = (list: Message[]) =>
-              patchById(list, rootId, r => ({ ...r, reply_count: r.reply_count + 1 }))
-            const held = ckey ? tails.get(ckey) : undefined
-            if (ckey && held) tails.set(ckey, bump(held))
-            const live = liveKey(tkey)
-            if (live && holding(tkey)) holdTail(tkey, m)
-            const thread =
-              live && !holding(tkey) ? (appendLive(tkey, [m]) ?? holdLive(tkey, [m])) : {}
-            set(s => {
-              const messages = { ...s.messages, ...thread.messages }
-              if (ckey && messages[ckey]) messages[ckey] = bump(messages[ckey])
-              return {
-                ...thread,
-                messages,
-                panel:
-                  s.panel?.kind === 'thread' && s.panel.root.id === rootId
-                    ? {
-                        ...s.panel,
-                        root: { ...s.panel.root, reply_count: s.panel.root.reply_count + 1 },
-                      }
-                    : s.panel,
-              }
-            })
-          } else {
-            const key = messageKey(ev.channel_id, ev.dm_id)
-            if (key && liveKey(key)) {
-              if (holding(key)) holdTail(key, m)
-              else set(appendLive(key, [m]) ?? holdLive(key, [m]))
-            }
-          }
-          askP2p([m])
-          readQuote(m)
-          const typedIn = rootId !== null ? threadKey(rootId) : messageKey(ev.channel_id, ev.dm_id)
-          if (typedIn) noteTyper(typedIn, m.author.username, '', false)
-          if (ev.dm_id !== null && get().me) bumpDm(ev.dm_id)
-          if (m.kind === 'call') return
-          if (rootId === null) {
-            const scope = messageKey(m.channel_id, m.dm_id)
-            if (scope) {
-              const meNow = get().me
-              const mine = meNow?.username === m.author.username
-              const viewNow = get().view
-              const viewingScope = viewNow ? viewKey(viewNow) : null
-              set(s => {
-                const prev = s.reads[scope] ?? {
-                  lastRead: mine ? m.id : unreadsMore ? 0 : m.id - 1,
-                  latest: 0,
-                }
-                return {
-                  reads: {
-                    ...s.reads,
-                    [scope]: {
-                      ...prev,
-                      latest: Math.max(prev.latest, m.id),
-                      server: ev.server ?? prev.server,
-                    },
-                  },
-                }
-              })
-              if (mine || (scope === viewingScope && get().atBottom[scope] && pageVisible()))
-                get().markRead(scope, m.id)
-            }
-          }
-          if (rootId === null && ev.server !== null && groupAlert(m, ev.server)) return
-          const { me, view } = get()
-          if (!me || m.author.username === me.username || (rootId !== null && m.dm_id === null))
-            return
-          if (get().blocked[m.author.username]) return
-          const scope = messageKey(m.channel_id, m.dm_id)
-          const target = scope ? scopeOfKey(scope, ev.server ?? null) : null
-          if (!scope || !target) return
-          const toMe =
-            repliesToMe(m, me.username) || (m.reply_to?.partial === true && m.reply_to.mention)
-          if (!m.forward && (mentionsUser(m.content, me.username) || toMe)) return
-          const watched =
-            view !== null &&
-            viewKey(view) === scope &&
-            get().atBottom[scope] === true &&
-            !detached(scope) &&
-            pageVisible()
-          if (!messageAlert(scopeRule(get(), target), watched)) return
-          const { dm_id, channel_id } = ev
-          const host = ev.server !== null ? get().servers[ev.server] : undefined
-          const channel =
-            channel_id !== null
-              ? (host?.channels.find(c => c.id === channel_id)?.name ?? null)
-              : null
-          alertUser({
-            key: scope,
-            actor: m.author,
-            action: '',
-            body:
-              m.kind === 'pin'
-                ? 'Pinned a message'
-                : isSystem(m)
-                  ? systemText(m)
-                  : m.content || (m.media?.spoiler ? '' : m.media?.filename) || 'Attachment',
-            server: dm_id === null ? (host?.display_name ?? null) : null,
-            channel,
-            dm: dm_id !== null,
-            message: true,
-            name: m.author.display_name,
-            generic: 'New message',
-            go: () => {
-              if (dm_id !== null) void get().openDm(dm_id, 'push', m.id)
-              else if (ev.server !== null && channel_id !== null)
-                void get().openChannel(ev.server, channel_id, 'push', m.id)
-            },
-          })
-          return
-        }
-        case 'message_updated': {
-          dropLinkCards(ev.stub ? ev.id : ev.message.id)
-          if (ev.stub) rereadEdited(ev)
-          else applyUpdated(ev.message)
-          refreshPins(ev.stub ? ev.id : ev.message.id)
-          return
-        }
-        case 'message_pinned': {
-          setPinned(ev.message_id, ev.pinned_at)
-          const key = messageKey(ev.channel_id, ev.dm_id)
-          if (key && get().pins?.key === key) loadPins(key)
-          return
-        }
-        case 'message_unpinned': {
-          setPinned(ev.message_id, null)
-          return
-        }
-        case 'reaction_added':
-        case 'reaction_removed': {
-          const mine = get().me?.username === ev.username
-          const key = reactorKey(ev.message_id, ev.emoji)
-          const added = ev.type === 'reaction_added'
-          const at = Math.floor(Date.now() / 1000)
-          forgetReactors(key)
-          patchReactions(ev.message_id, m => {
-            if (!mine || !reactionQueue.has(key) || ev.count === undefined)
-              return withReaction(m, ev.emoji, added, mine, at, ev.count)
-            const local = reacted(m, ev.emoji)
-            const count = ev.count - (added ? 1 : 0) + (local ? 1 : 0)
-            return withReaction(m, ev.emoji, local, true, at, count)
-          })
-          return
-        }
-        case 'message_deleted': {
-          dropDeleted(ev.id, ev.thread_root_id, ev.server)
-          return
-        }
-        case 'messages_deleted': {
-          for (const id of ev.ids) dropDeleted(id, ev.thread_root_id, ev.server)
-          return
-        }
-        case 'media_removed': {
-          unhost(ev.message_id)
-          patchMessage(ev.message_id, m =>
-            m.media
-              ? {
-                  ...m,
-                  media: { ...m.media, removed: true, removed_by_author: ev.removed_by_author },
-                }
-              : m
-          )
-          return
-        }
-        case 'embeds_resolved': {
-          rememberEmbeds(ev.message_id, ev.embeds)
-          patchMessage(ev.message_id, m => ({ ...m, embeds: ev.embeds }))
-          return
-        }
-        case 'embeds_removed': {
-          const cur = pendingEmbeds.get(ev.message_id)
-          if (cur) rememberEmbeds(ev.message_id, withoutEmbed(cur, ev.ord, ev.banner))
-          patchMessage(ev.message_id, m => ({
-            ...m,
-            embeds: withoutEmbed(m.embeds, ev.ord, ev.banner),
-          }))
-          return
-        }
-        case 'channel_created': {
-          patchServer(ev.server, d =>
-            d.channels.some(c => c.id === ev.channel.id)
-              ? d
-              : { ...d, channels: [...d.channels, ev.channel] }
-          )
-          return
-        }
-        case 'channel_renamed':
-        case 'channel_updated': {
-          patchServer(ev.server, d => ({
-            ...d,
-            channels: d.channels.map(c => (c.id === ev.channel.id ? ev.channel : c)),
-          }))
-          return
-        }
-        case 'channel_deleted': {
-          dropLinkCards()
-          saveNotify(
-            resetScope(get().notifyPrefs, { kind: 'channel', id: ev.channel_id, server: null })
-          )
-          patchServer(ev.server, d => ({
-            ...d,
-            channels: d.channels.filter(c => c.id !== ev.channel_id),
-          }))
-          if (get().voice?.channelId === ev.channel_id) endVoiceMedia()
-          set(s => {
-            const voiceUsers = { ...s.voiceUsers }
-            delete voiceUsers[ev.channel_id]
-            return { voiceUsers }
-          })
-          forgetReads(scope => scope !== `c${ev.channel_id}`)
-          forgetPending((_, upload) => upload.scope !== `c${ev.channel_id}`)
-          tails.delete(`c${ev.channel_id}`)
-          dropEditIn(new Set([`c${ev.channel_id}`]))
-          if (!liveKey(`c${ev.channel_id}`)) forgetViews([`c${ev.channel_id}`])
-          const { view, servers } = get()
-          if (view?.kind === 'channel' && view.channelId === ev.channel_id) {
-            const next = servers[ev.server]?.channels[0]
-            if (next) void get().openChannel(ev.server, next.id, 'replace')
-            else {
-              clearView()
-            }
-          }
-          return
-        }
-        case 'server_created': {
-          set(s => ({
-            adminOverview: s.adminOverview
-              ? { ...s.adminOverview, server_count: s.adminOverview.server_count + 1 }
-              : s.adminOverview,
-            adminServers:
-              (s.adminServers.list.length > 0 || !s.adminServers.hasMore) &&
-              matches(s.adminServers.q, ev.server.name, ev.server.display_name)
-                ? {
-                    ...s.adminServers,
-                    list: insertSorted(
-                      s.adminServers.list,
-                      ev.server,
-                      (a, b) => a.name.localeCompare(b.name),
-                      x => x.name,
-                      s.adminServers.hasMore
-                    ),
-                  }
-                : s.adminServers,
-          }))
-          return
-        }
-        case 'server_renamed':
-        case 'server_updated': {
-          const { server } = ev
-          const old_name = ev.type === 'server_renamed' ? ev.old_name : server.name
-          staleInvites(old_name)
-          set(s => {
-            const servers = { ...s.servers }
-            const detail = servers[old_name]
-            if (detail) {
-              delete servers[old_name]
-              servers[server.name] = {
-                ...detail,
-                name: server.name,
-                display_name: server.display_name,
-                has_password: server.has_password,
-                banner_color: server.banner_color ?? null,
-                name_color: server.name_color ?? null,
-              }
-            }
-            const members = renameKey(s.members, old_name, server.name)
-            const interacted = renameKey(s.interacted, old_name, server.name)
-            const memberInfo = renameKey(s.memberInfo, old_name, server.name)
-            const reads = Object.fromEntries(
-              Object.entries(s.reads).map(([scope, mark]) => [
-                scope,
-                mark.server === old_name ? { ...mark, server: server.name } : mark,
-              ])
-            )
-            const pings = Object.fromEntries(
-              Object.entries(s.pings).map(([scope, p]) => [
-                scope,
-                p.server === old_name ? { ...p, server: server.name } : p,
-              ])
-            )
-            const groupPings = Object.fromEntries(
-              Object.entries(s.groupPings).map(([scope, g]) => [
-                scope,
-                g.server === old_name ? { ...g, server: server.name } : g,
-              ])
-            )
-            return {
-              servers,
-              members,
-              memberInfo,
-              interacted,
-              reads,
-              pings,
-              groupPings,
-              voice:
-                s.voice?.server === old_name && old_name !== server.name
-                  ? { ...s.voice, server: server.name }
-                  : s.voice,
-              me: s.me
-                ? {
-                    ...s.me,
-                    servers: s.me.servers.map(x =>
-                      x.name === old_name
-                        ? {
-                            ...x,
-                            name: server.name,
-                            display_name: server.display_name,
-                            banner_color: server.banner_color ?? null,
-                            name_color: server.name_color ?? null,
-                          }
-                        : x
-                    ),
-                  }
-                : s.me,
-              view:
-                s.view?.kind === 'channel' && s.view.server === old_name && old_name !== server.name
-                  ? { ...s.view, server: server.name }
-                  : s.view,
-              adminServers: {
-                ...s.adminServers,
-                list: s.adminServers.list.map(x => (x.name === old_name ? server : x)),
-              },
-            }
-          })
-          saveLayout(renameServer(get().layout, old_name, server.name))
-          saveNotify(renameServerRule(get().notifyPrefs, old_name, server.name))
-          serverGen += 1
-          const renamed = old_name !== server.name
-          if (renamed) {
-            droppedAt.set(old_name, serverGen)
-            memberGen[old_name] = (memberGen[old_name] ?? 0) + 1
-            memberGen[server.name] = (memberGen[server.name] ?? 0) + 1
-          }
-          if (serverPager.removed()) void get().loadMoreServers()
-          if (get().guest && get().guestServers.includes(old_name)) {
-            persistGuestServers(get().guestServers.map(n => (n === old_name ? server.name : n)))
-            const names = { ...get().guestNames, [server.name]: server.display_name }
-            if (renamed) delete names[old_name]
-            persistGuestNames(names)
-            const grants = get().guestGrants
-            if (renamed && grants[old_name]) {
-              const next = { ...grants, [server.name]: grants[old_name] }
-              delete next[old_name]
-              persistGrants(next)
-            }
-            if (renamed) {
-              home.ws.unsubscribe(old_name)
-              home.ws.subscribe([server.name])
-            }
-            if (server.has_password)
-              void api.getServer(server.name).catch((e: unknown) => {
-                if (lockedOut(e)) guestLocked(server.name)
-              })
-          }
-          const renamedView = get().view
-          if (renamed && renamedView?.kind === 'channel' && renamedView.server === server.name)
-            syncUrl(renamedView, 'replace')
-          return
-        }
-        case 'server_deleted': {
-          staleInvites(ev.name)
-          dropServer(ev.name)
-          set(s => ({
-            adminOverview: s.adminOverview
-              ? { ...s.adminOverview, server_count: Math.max(0, s.adminOverview.server_count - 1) }
-              : s.adminOverview,
-            adminServers: {
-              ...s.adminServers,
-              list: s.adminServers.list.filter(x => x.name !== ev.name),
-            },
-          }))
-          return
-        }
-        case 'member_joined': {
-          staleInvites(ev.server)
-          const self = get().me?.username === ev.member.username
-          if (!self) patchServer(ev.server, d => ({ ...d, member_count: d.member_count + 1 }))
-          patchMembers(ev.server, list => [
-            ...list.filter(m => m.username !== ev.member.username),
-            ev.member,
-          ])
-          if (get().memberInfo[ev.server])
-            writeMemberInfo(ev.server, [[ev.member.username, ev.member]])
-          if (self) void addServer(ev.server).catch(() => {})
-          return
-        }
-        case 'member_left':
-        case 'member_kicked': {
-          staleInvites(ev.server)
-          const banned = ev.type === 'member_kicked' && ev.banned
-          if (get().me?.username === ev.username) {
-            if (ev.type === 'member_kicked') removedFrom(ev.server, banned)
-            else dropServer(ev.server)
-            return
-          }
-          if (banned && get().bans[ev.server]) void get().loadBans(ev.server, true)
-          patchServer(ev.server, d => ({
-            ...d,
-            member_count: Math.max(0, d.member_count - 1),
-          }))
-          patchMembers(ev.server, list => list.filter(m => m.username !== ev.username))
-          if (Object.hasOwn(get().memberInfo[ev.server] ?? {}, ev.username))
-            writeMemberInfo(ev.server, [[ev.username, null]])
-          return
-        }
-        case 'admin_changed': {
-          set(s => ({
-            adminChanges: { ...s.adminChanges, [ev.server]: (s.adminChanges[ev.server] ?? 0) + 1 },
-          }))
-          patchMembers(ev.server, list =>
-            list.map(m =>
-              m.username === ev.username ? { ...m, is_admin: ev.is_admin, perms: ev.perms } : m
-            )
-          )
-          patchMemberInfo(ev.server, ev.username, m => ({
-            ...m,
-            is_admin: ev.is_admin,
-            perms: ev.perms,
-          }))
-          set(s =>
-            s.me?.username === ev.username
-              ? {
-                  me: {
-                    ...s.me,
-                    servers: s.me.servers.map(x =>
-                      x.name === ev.server ? { ...x, is_admin: ev.is_admin } : x
-                    ),
-                  },
-                }
-              : {}
-          )
-          if (
-            get().me?.username === ev.username ||
-            hasPerm(myPerms(get(), ev.server), Perm.ManageAdmins)
-          )
-            refetchServer(ev.server)
-          return
-        }
-        case 'roles_changed': {
-          dropLinkCards()
-          if (!get().servers[ev.server]) return
-          refetchServer(ev.server)
-          void get().loadMembers(ev.server, true)
-          refreshMemberInfo(ev.server)
-          return
-        }
-        case 'channel_perms_changed': {
-          dropLinkCards()
-          refetchServer(ev.server)
-          return
-        }
-        case 'layout_changed': {
-          if (layoutSends.has(ev.server)) return
-          const known = get().servers[ev.server]
-          if (!known) return
-          const listed = new Set([
-            ...ev.layout.uncategorized,
-            ...ev.layout.categories.flatMap(c => c.channels),
-          ])
-          patchServer(ev.server, d => applyLayout(d, ev.layout))
-          if (known.channels.some(c => !listed.has(c.id))) refetchServer(ev.server)
-          return
-        }
-        case 'user_updated': {
-          const u = ev.user
-          const byAuthor = (m: Message) => m.author.username === u.username
-          const reauthor = (list: Message[]) => mapWhere(list, byAuthor, m => ({ ...m, author: u }))
-          mapTails(reauthor)
-          set(s => ({
-            me: s.me && s.me.username === u.username ? { ...s.me, ...u } : s.me,
-            dms: s.dms.map(d => (d.other.username === u.username ? { ...d, other: u } : d)),
-            members: mapPages(s.members, list =>
-              mapWhere(
-                list,
-                m => m.username === u.username,
-                m => ({ ...m, ...u })
-              )
-            ),
-            messages: mapLists(s.messages, reauthor),
-            adminUsers: {
-              ...s.adminUsers,
-              list: s.adminUsers.list.map(x => (x.username === u.username ? u : x)),
-            },
-            interacted: mapPages(s.interacted, list =>
-              mapWhere(
-                list,
-                x => x.username === u.username,
-                () => u
-              )
-            ),
-            search: {
-              ...s.search,
-              results: s.search.results.map(r =>
-                r.message.author.username === u.username
-                  ? { ...r, message: { ...r.message, author: u } }
-                  : r
-              ),
-            },
-            panel:
-              s.panel?.kind === 'thread' && s.panel.root.author.username === u.username
-                ? { ...s.panel, root: { ...s.panel.root, author: u } }
-                : s.panel,
-            profile:
-              s.profile?.user.username === u.username
-                ? { ...s.profile, user: u, rev: (s.profile.rev ?? 0) + 1 }
-                : s.profile,
-          }))
-          mapMemberInfo((username, m) => (username === u.username ? { ...m, ...u } : m))
-          reauthorLinkCards(u)
-          return
-        }
-        case 'presence_changed': {
-          queuePresence(ev)
-          return
-        }
-        case 'presence_snapshot': {
-          applySnapshot(ev)
-          return
-        }
-        case 'server_banned': {
-          staleInvites(ev.server)
-          const { me, servers, view } = get()
-          const here = view?.kind === 'channel' && view.server === ev.server
-          if (me?.username === ev.username && (here || servers[ev.server])) bannedFrom(ev.server)
-          return
-        }
-        case 'presence_mode': {
-          set(s =>
-            s.me?.username === ev.username
-              ? { me: { ...s.me, appear_offline: ev.appear_offline } }
-              : {}
-          )
-          return
-        }
-        case 'read_updated': {
-          if (get().me?.username !== ev.username) return
-          const until = ev.pings_until ?? 0
-          noteSeen(ev.scope, until)
-          if (ev.scope[0] === 't') {
-            set(s => ({ pings: clearPings(s.pings, ev.scope, until) }))
-            return
-          }
-          readQueue.seen(ev.scope, ev.last_read)
-          set(s => {
-            const prev = s.reads[ev.scope] ?? { lastRead: 0, latest: ev.last_read }
-            const lastRead = Math.max(prev.lastRead, ev.last_read)
-            return {
-              reads: {
-                ...s.reads,
-                [ev.scope]: { ...prev, lastRead, latest: Math.max(prev.latest, ev.last_read) },
-              },
-              pings: clearPings(s.pings, ev.scope, until),
-            }
-          })
-          return
-        }
-        case 'ping': {
-          const me = get().me
-          if (!me || me.username !== ev.username) return
-          const { ping } = ev
-          if (ping.scope === FRIENDS_SCOPE) {
-            friendsHub.onPing(ping, (go, action, actor) =>
-              alertUser({
-                key: FRIENDS_SCOPE,
-                actor,
-                action,
-                body: '',
-                server: null,
-                channel: null,
-                dm: false,
-                message: false,
-                name: actor.display_name,
-                generic: 'New notification',
-                go,
-              })
-            )
-            return
-          }
-          const s = get()
-          const target = scopeOfKey(ping.scope, ping.server)
-          const alert = pingAlert(
-            ping,
-            {
-              view: s.view ? viewKey(s.view) : null,
-              thread: s.panel?.kind === 'thread' ? s.panel.root.id : null,
-              following: key => s.atBottom[key] === true && !detached(key),
-              visible: pageVisible(),
-            },
-            target ? scopeRule(s, target) : undefined
-          )
-          if (alert.badge) set(st => ({ pings: addPing(st.pings, ping) }))
-          else {
-            const key = pingKey(ping)
-            noteSeen(key, ping.id)
-            const lastRead = key[0] === 't' ? 0 : (get().reads[key]?.lastRead ?? 0)
-            if (get().token) void api.postRead(key, lastRead, false, ping.id).catch(() => {})
-          }
-          if (!alert.toast) return
-          const host = ping.server !== null ? s.servers[ping.server] : undefined
-          const channel = host?.channels.find(c => `c${c.id}` === ping.scope)?.name ?? null
-          alertUser({
-            key: pingKey(ping),
-            actor: ping.actor,
-            action: pingAction(ping, null),
-            body: ping.excerpt,
-            server: ping.server !== null ? (host?.display_name ?? null) : null,
-            channel,
-            dm: ping.scope[0] === 'd',
-            message: ping.kind !== 'reaction',
-            name: ping.actor.display_name,
-            generic: 'New notification',
-            go: () => void get().openPing(ping),
-          })
-          return
-        }
-        case 'group_pings_seen': {
-          if (get().me?.username !== ev.username) return
-          set(s => {
-            const groupPings = seenGroupMessages(s.groupPings, ev.scope, ev.message_ids)
-            return groupPings === s.groupPings ? {} : { groupPings }
-          })
-          return
-        }
-        case 'ping_count': {
-          if (get().me?.username !== ev.username) return
-          set(s => {
-            const known = Object.values(s.pings).find(p => p.scope === ev.scope)
-            return {
-              pings: setScopePings(
-                s.pings,
-                ev.scope,
-                known?.server ?? s.reads[ev.scope]?.server ?? null,
-                ev
-              ),
-            }
-          })
-          return
-        }
-        case 'voice_state': {
-          set(s => {
-            const voiceUsers = { ...s.voiceUsers }
-            if (ev.users.length) voiceUsers[ev.channel_id] = ev.users
-            else delete voiceUsers[ev.channel_id]
-            const muted = s.voiceMuted[ev.channel_id]
-            const kept = muted?.filter(u => ev.users.includes(u))
-            if (!muted || kept?.length === muted.length) return { voiceUsers }
-            const voiceMuted = { ...s.voiceMuted }
-            if (kept?.length) voiceMuted[ev.channel_id] = kept
-            else delete voiceMuted[ev.channel_id]
-            return { voiceUsers, voiceMuted }
-          })
-          const { me, voice } = get()
-          if (!me) return
-          const listing = joins.state(ev.channel_id, ev.users.includes(me.username))
-          if (voice?.channelId === ev.channel_id) {
-            if (listing === 'listed') {
-              voiceListed = true
-              rtc.sync(ev.users)
-            } else if (listing === 'absent' && voiceListed) {
-              endedVoice = ev.channel_id
-              endVoiceMedia()
-            }
-          }
-          return
-        }
-        case 'voice_muted': {
-          set(s => {
-            const was = s.voiceMuted[ev.channel_id] ?? []
-            const list = was.filter(u => u !== ev.username)
-            if (ev.muted) list.push(ev.username)
-            const voiceMuted = { ...s.voiceMuted }
-            if (list.length) voiceMuted[ev.channel_id] = list
-            else delete voiceMuted[ev.channel_id]
-            return { voiceMuted }
-          })
-          applyMic()
-          return
-        }
-        case 'member_timeout': {
-          const wire =
-            ev.until === null
-              ? undefined
-              : { until: ev.until, remaining: ev.remaining, reason: ev.reason }
-          const mine = get().me?.username === ev.username
-          if (mine) {
-            set(s =>
-              s.me
-                ? {
-                    me: {
-                      ...s.me,
-                      servers: s.me.servers.map(x =>
-                        x.name === ev.server
-                          ? {
-                              ...x,
-                              timed_out_until:
-                                ev.until === null ? undefined : localUntil(ev.remaining),
-                            }
-                          : x
-                      ),
-                    },
-                  }
-                : {}
-            )
-            applyMic()
-          }
-          if (!mine || hasPerm(myPerms(get(), ev.server), Perm.TimeoutMembers))
-            noteTimeout(ev.server, ev.username, wire)
-          return
-        }
-        case 'call_state': {
-          const { me } = get()
-          if (!me) return
-          if (ev.state === 'ended') {
-            if (get().call?.dmId === ev.dm_id) {
-              endCallMedia(ev.kind)
-              set({ call: null })
-            }
-            return
-          }
-          if (!get().dms.some(d => d.id === ev.dm_id))
-            void get()
-              .ensureDms([ev.dm_id])
-              .catch(() => {})
-          const prev = get().call
-          const since =
-            ev.state !== 'active'
-              ? null
-              : typeof ev.answered_at === 'number'
-                ? ev.answered_at
-                : prev?.dmId === ev.dm_id && prev.since !== null
-                  ? prev.since
-                  : Math.floor(Date.now() / 1000)
-          set({
-            call: {
-              dmId: ev.dm_id,
-              dmUsers: ev.dm_users,
-              state: ev.state,
-              from: ev.from,
-              kind: ev.kind,
-              video: ev.video === true,
-              since,
-              relays: Array.isArray(ev.relays) ? ev.relays : [],
-            },
-          })
-          if (ev.state !== 'active') return
-          if (ev.kind === 'rtc') {
-            rtc.sync(ev.dm_users)
-            return
-          }
-          bindP2pCall(me.username, ev)
-          return
-        }
-        case 'p2p_availability': {
-          const { hoster, ids, online } = ev
-          set(s => ({
-            p2pAvailability: { ...s.p2pAvailability, [hoster]: { ids, online } },
-          }))
-          return
-        }
-        case 'p2p_peer': {
-          p2p.granted(ev)
-          return
-        }
-        case 'rtc_signal': {
-          if (get().me?.username === ev.to)
-            rtc
-              .onSignal(ev.from, ev.payload, { channelId: ev.channel_id, dmId: ev.dm_id })
-              .catch((e: unknown) => console.error('rtc signal', e))
-          return
-        }
-        case 'voice_ended': {
-          const { me, voice } = get()
-          const mine = me !== null && (ev.dm_users?.includes(me.username) ?? false)
-          if (mine && ev.channel_id !== null && voice?.channelId === ev.channel_id) endVoiceMedia()
-          const endedChannel = ev.channel_id !== null && ev.channel_id === endedVoice
-          if (endedChannel) endedVoice = null
-          if (endedChannel || mine) fail(new Error(ev.reason))
-          return
-        }
-        case 'error': {
-          fail(new Error(ev.message))
-          const { me, voice, call, voiceUsers } = get()
-          const confirmed =
-            call !== null ||
-            (voice !== null &&
-              me !== null &&
-              (voiceUsers[voice.channelId] ?? []).includes(me.username))
-          if (confirmed) return
-          if (voice) joins.refused()
-          if (rtc.active() || voice) endVoiceMedia()
-          if (p2p.mediaActive()) p2p.endMedia()
-          set({ selfAudio: SELF_AUDIO_IDLE })
-          return
-        }
-        case 'dm_created': {
-          const { me } = get()
-          if (me && ev.dm_users.includes(me.username)) bumpDm(ev.dm_id)
-          return
-        }
-        case 'dm_closed': {
-          if (get().me?.username === ev.username) hideDm(ev.dm_id)
-          return
-        }
-        case 'dm_reopened': {
-          if (get().me?.username !== ev.username) return
-          closedDms.delete(ev.dm_id)
-          bumpDm(ev.dm_id)
-          return
-        }
-        case 'user_blocked': {
-          if (get().me?.username === ev.username) noteBlocked(ev.blocked)
-          return
-        }
-        case 'user_unblocked': {
-          if (get().me?.username === ev.username) noteUnblocked(ev.blocked)
-          return
-        }
-        case 'banned': {
-          staleInvites(null)
-          if (get().me?.username === ev.username) {
-            expireSession()
-            return
-          }
-          forgetProfiles(ev.username)
-          const gone = get()
-            .dms.filter(d => d.other.username === ev.username)
-            .map(d => `d${d.id}`)
-          dmGen += 1
-          const reload = dmPager.removed()
-          forgetReads(scope => !gone.includes(scope))
-          const byBanned = (m: Message) => m.author.username === ev.username
-          const roots = new Set(
-            Object.values(get().messages)
-              .flatMap(list => list.filter(byBanned))
-              .map(m => threadKey(m.id))
-          )
-          forgetPending((key, upload) => !gone.includes(upload.scope) && !roots.has(key))
-          for (const scope of gone) tails.delete(scope)
-          const unban = (list: Message[]) => dropWhere(list, byBanned)
-          mapTails(unban)
-          if (get().me) void loadUnreads()
-          set(s => ({
-            messages: mapLists(s.messages, unban),
-            members: mapPages(s.members, list => dropWhere(list, m => m.username === ev.username)),
-            interacted: mapPages(s.interacted, list =>
-              dropWhere(list, u => u.username === ev.username)
-            ),
-            dms: s.dms.filter(d => d.other.username !== ev.username),
-            adminOverview: s.adminOverview
-              ? { ...s.adminOverview, user_count: Math.max(0, s.adminOverview.user_count - 1) }
-              : s.adminOverview,
-            adminUsers: {
-              ...s.adminUsers,
-              list: s.adminUsers.list.filter(u => u.username !== ev.username),
-            },
-          }))
-          mapMemberInfo((username, m) => (username === ev.username ? null : m))
-          set(s => (s.profile?.user.username === ev.username ? { profile: null } : {}))
-          if (reload) void get().loadMoreDms()
-          const { view, dms } = get()
-          if (view?.kind === 'dm' && !dms.some(d => d.id === view.dmId)) {
-            const self = dms.find(d => d.is_self)
-            if (self) void get().openDm(self.id, 'replace')
-            else {
-              clearView()
-            }
-          }
-          return
-        }
-        case 'user_registered': {
-          set(s => ({
-            adminOverview: s.adminOverview
-              ? { ...s.adminOverview, user_count: s.adminOverview.user_count + 1 }
-              : s.adminOverview,
-            adminUsers:
-              (s.adminUsers.list.length > 0 || !s.adminUsers.hasMore) &&
-              matches(s.adminUsers.q, ev.user.username, ev.user.display_name)
-                ? {
-                    ...s.adminUsers,
-                    list: insertSorted(
-                      s.adminUsers.list,
-                      ev.user,
-                      (a, b) => a.username.localeCompare(b.username),
-                      u => u.username,
-                      s.adminUsers.hasMore
-                    ),
-                  }
-                : s.adminUsers,
-          }))
-          return
-        }
-        case 'p2p_hosted': {
-          if (typeof ev.key === 'string' && typeof ev.peer_id === 'string')
-            p2p.setServeKey(ev.key, ev.peer_id, ev.now ?? null)
-          void p2p.reconcile(ev.live, ev.checked)
-          return
-        }
-        case 'settings_changed': {
-          const settings = siteSettings(ev.settings)
-          const p2pFlip = settings.p2p_attachments !== get().settings.p2p_attachments
-          set({ settings, ...(p2pFlip ? { p2pAvailability: {} } : {}) })
-          const { view } = get()
-          if (p2pFlip && view) askP2p(get().messages[viewKey(view)] ?? [])
-          return
-        }
-        case 'resync': {
-          dropLinkCards()
-          resync()
-          return
-        }
-        case 'typing': {
-          const { typingOn, me, blocked } = get()
-          if (!typingOn || ev.username === me?.username || blocked[ev.username]) return
-          noteTyper(ev.scope, ev.username, ev.display_name, ev.until > 0)
-          return
-        }
-      }
+      routeEvent(ev, tables)
     },
 
     openContextMenu: (x, y, items, opts = {}) => set({ contextMenu: { ...opts, x, y, items } }),
