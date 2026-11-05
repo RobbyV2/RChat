@@ -2,8 +2,8 @@
 // that runs one handler per event type.
 
 import type { StoreApi } from 'zustand'
-import type { RChatState } from '../store_types'
-import type { WsEvent } from '../types'
+import type { Paged, RChatState } from '../store_types'
+import type { ServerSummary, WsEvent } from '../types'
 
 export type SetState = StoreApi<RChatState>['setState']
 export type GetState = StoreApi<RChatState>['getState']
@@ -25,3 +25,26 @@ export const routeEvent = (ev: WsEvent, tables: readonly Handlers[]): boolean =>
 
 export const pageVisible = () =>
   typeof document === 'undefined' || document.visibilityState === 'visible'
+
+// Runs `fetch` until no newer generation started while it ran.
+export const settled = async <T>(gen: () => number, fetch: () => Promise<T>): Promise<T> => {
+  for (;;) {
+    const at = gen()
+    const out = await fetch()
+    if (gen() === at) return out
+  }
+}
+
+export const PAGE = 50
+
+export const LIST_MAX = 100
+
+export const BANNED = 'You are banned from this server'
+
+export class Banned extends Error {}
+
+export const emptyPage = <T>(): Paged<T> => ({ list: [], hasMore: true, loading: false, q: '' })
+
+export const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
+
+export const serverKey = (x: ServerSummary) => x.name
