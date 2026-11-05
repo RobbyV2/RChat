@@ -290,6 +290,9 @@ pub(super) async fn voice_msg(
             if !state.hub.signal_ok(user, size) {
                 return Err(TOO_FAST.to_string());
             }
+            if !state.hub.rtc_shared(user, &to, channel_id, dm_id) {
+                return Err("No shared voice session".to_string());
+            }
             if let Some(cid) = channel_id
                 && shows_video(&payload)
                 && let Some(server) = state.hub.room_server(cid)
@@ -299,9 +302,6 @@ pub(super) async fn voice_msg(
                     .is_some()
             {
                 return Err(crate::api::access::TIMED_OUT.to_string());
-            }
-            if !state.hub.rtc_shared(user, &to, channel_id, dm_id) {
-                return Err("No shared voice session".to_string());
             }
             if dm_id.is_some() {
                 crate::api::blocks::check_dm(&state.db, user, &to)

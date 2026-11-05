@@ -149,6 +149,48 @@ async fn timed_out_members_cannot_turn_on_video_in_voice() {
 }
 
 #[tokio::test]
+async fn timed_out_members_cannot_tell_if_hidden_voice_is_in_use() {
+    let (state, path) = crate::api::test_util::temp_state("timeout_hidden_voice").await;
+    for name in ["alice", "bob"] {
+        add_user_row(&state.db, name).await;
+        crate::api::test_util::add_member(&state.db, "rchat", name, 0, 0, 0).await;
+    }
+    let busy = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at, restrict_view) VALUES('rchat', 'staff', 'voice', 0, 1) RETURNING id").await;
+    let empty = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at, restrict_view) VALUES('rchat', 'quiet', 'voice', 0, 1) RETURNING id").await;
+    sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:alice', 1, 1, 1)")
+        .bind(busy)
+        .execute(&state.db)
+        .await
+        .expect("rule");
+    voice_msg(
+        &state,
+        "alice",
+        1,
+        ClientMsg::VoiceJoin { channel_id: busy },
+    )
+    .await
+    .expect("alice joins");
+    time_out(&state.db, "bob", now() + 600).await;
+    let probe = |channel_id| {
+        voice_msg(
+            &state,
+            "bob",
+            2,
+            ClientMsg::RtcSignal {
+                to: s("alice"),
+                channel_id: Some(channel_id),
+                dm_id: None,
+                payload: serde_json::json!({"cam": true}),
+            },
+        )
+    };
+    let none = Err("No shared voice session".to_string());
+    assert_eq!(probe(busy).await, none, "a hidden room in use");
+    assert_eq!(probe(empty).await, none, "an empty hidden room");
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
 async fn locked_server_voice_needs_membership() {
     let (state, path) = crate::api::test_util::temp_state("locked_voice").await;
     let db = &state.db;
