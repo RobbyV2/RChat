@@ -926,6 +926,16 @@ impl Hub {
         self.replica(|r| r.calls.get(&dm_id).map(|c| c.relays.clone()))
     }
 
+    /// Whether `user` is in the voice room `channel_id` of `server` now.
+    pub fn in_room(&self, server: &str, channel_id: i64, user: &str) -> bool {
+        self.replica(|r| r.in_room(server, channel_id, user))
+    }
+
+    /// Whether `user` has joined the answered RTC call in DM `dm_id` (see `rtc_shared`).
+    pub fn in_active_call(&self, dm_id: i64, user: &str) -> bool {
+        self.replica(|r| r.in_active_call(dm_id, user))
+    }
+
     /// The server of the voice room `channel_id`, while anyone is in it.
     pub fn room_server(&self, channel_id: i64) -> Option<String> {
         self.replica(|r| r.rooms.get(&channel_id).map(|room| room.server.clone()))

@@ -1789,7 +1789,7 @@ mod tests {
         (after.0 - before.0, after.1 - before.1)
     }
 
-    const HANDLERS: [(&str, &str); 28] = [
+    const HANDLERS: [(&str, &str); 38] = [
         ("servers.rs", include_str!("servers.rs")),
         ("passwords.rs", include_str!("passwords.rs")),
         ("messages.rs", include_str!("messages.rs")),
@@ -1800,7 +1800,17 @@ mod tests {
         ("admin.rs", include_str!("admin.rs")),
         ("auth.rs", include_str!("auth.rs")),
         ("mod.rs", include_str!("mod.rs")),
-        ("ws.rs", include_str!("../ws.rs")),
+        ("ws/mod.rs", include_str!("../ws/mod.rs")),
+        ("ws/access.rs", include_str!("../ws/access.rs")),
+        ("ws/calls.rs", include_str!("../ws/calls.rs")),
+        ("ws/conn.rs", include_str!("../ws/conn.rs")),
+        ("ws/event.rs", include_str!("../ws/event.rs")),
+        ("ws/filter.rs", include_str!("../ws/filter.rs")),
+        ("ws/p2p.rs", include_str!("../ws/p2p.rs")),
+        ("ws/protocol.rs", include_str!("../ws/protocol.rs")),
+        ("ws/repost.rs", include_str!("../ws/repost.rs")),
+        ("ws/rewrite.rs", include_str!("../ws/rewrite.rs")),
+        ("ws/typing.rs", include_str!("../ws/typing.rs")),
         ("hub/mod.rs", include_str!("../hub/mod.rs")),
         ("hub/replica.rs", include_str!("../hub/replica.rs")),
         ("hub/link.rs", include_str!("../hub/link.rs")),

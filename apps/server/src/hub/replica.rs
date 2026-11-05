@@ -789,6 +789,8 @@ impl Replica {
         ends
     }
 
+    /// Whether `user` is in any DM call, ringing or answered, of any kind: a new call to or from
+    /// them is busy.
     pub(super) fn in_call(&self, user: &str) -> bool {
         self.calls_of(user).iter().any(|id| {
             self.calls
@@ -1752,6 +1754,18 @@ impl Replica {
                 .is_some_and(|c| c.active && c.kind == CallKind::Rtc && both(&c.occupants)),
             (_, _) => false,
         }
+    }
+
+    pub(super) fn in_room(&self, server: &str, channel_id: i64, user: &str) -> bool {
+        self.rooms
+            .get(&channel_id)
+            .is_some_and(|r| r.server == server && r.users.iter().any(|(u, _)| u == user))
+    }
+
+    pub(super) fn in_active_call(&self, dm_id: i64, user: &str) -> bool {
+        self.calls.get(&dm_id).is_some_and(|c| {
+            c.active && c.kind == CallKind::Rtc && c.occupants.iter().any(|(u, _)| u == user)
+        })
     }
 
     pub(super) fn in_p2p_call(&self, a: &str, b: &str) -> bool {
