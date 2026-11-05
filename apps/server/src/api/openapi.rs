@@ -547,11 +547,13 @@ mod tests {
         fn walk(dir: &std::path::Path, found: &mut Vec<String>) {
             for entry in std::fs::read_dir(dir).expect("read src") {
                 let path = entry.expect("entry").path();
+                let name = path.file_name().and_then(|n| n.to_str());
                 match path.extension().and_then(|e| e.to_str()) {
+                    _ if name == Some("tests") || name == Some("tests.rs") => {}
                     _ if path.is_dir() => walk(&path, found),
                     Some("rs") => {
                         let src = std::fs::read_to_string(&path).expect("read");
-                        let code = src.split("#[cfg(test)]\nmod tests").next().unwrap_or(&src);
+                        let code = &crate::api::test_util::non_test_code(&src);
                         found.extend(
                             non_ascii(code)
                                 .into_iter()

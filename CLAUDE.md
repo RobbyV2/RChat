@@ -4,7 +4,7 @@ Rules for anyone (person or agent) changing this repo. They bind every change.
 
 ## Layout
 
-- `apps/server`: Rust axum server. Schema in `src/db.rs`, WS hub `src/ws.rs`, REST in `src/api/` (OpenAPI registry `src/api/openapi.rs`, access gate `src/api/access.rs`).
+- `apps/server`: Rust axum server. Schema in `src/db/schema.rs` and `src/db/migrate.rs`, WS hub `src/ws.rs`, REST in `src/api/` (OpenAPI registry `src/api/openapi.rs`, access gate `src/api/access.rs`).
 - `apps/web`: Next.js 16 client. Zustand store `app/lib/store.ts`, API client `app/lib/api.ts`, theme tokens `app/globals.css`, platform adapters `app/lib/platform/` (web, desktop, mobile).
 - `crates/wasm`: shared Rust compiled to WebAssembly for the client.
 - `apps/desktop/src-tauri`: Tauri shell for desktop and mobile.

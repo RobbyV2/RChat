@@ -1789,7 +1789,7 @@ mod tests {
         (after.0 - before.0, after.1 - before.1)
     }
 
-    const HANDLERS: [(&str, &str); 19] = [
+    const HANDLERS: [(&str, &str); 25] = [
         ("servers.rs", include_str!("servers.rs")),
         ("passwords.rs", include_str!("passwords.rs")),
         ("messages.rs", include_str!("messages.rs")),
@@ -1803,7 +1803,13 @@ mod tests {
         ("ws.rs", include_str!("../ws.rs")),
         ("hub.rs", include_str!("../hub.rs")),
         ("fanout.rs", include_str!("../fanout.rs")),
-        ("db.rs", include_str!("../db.rs")),
+        ("db/mod.rs", include_str!("../db/mod.rs")),
+        ("db/migrate.rs", include_str!("../db/migrate.rs")),
+        ("db/pool.rs", include_str!("../db/pool.rs")),
+        ("db/schema.rs", include_str!("../db/schema.rs")),
+        ("db/secrets.rs", include_str!("../db/secrets.rs")),
+        ("db/sweep.rs", include_str!("../db/sweep.rs")),
+        ("db/touch.rs", include_str!("../db/touch.rs")),
         ("pings.rs", include_str!("pings.rs")),
         ("reactions.rs", include_str!("reactions.rs")),
         ("pins.rs", include_str!("pins.rs")),
@@ -1850,16 +1856,9 @@ mod tests {
             "message_scope(",
         ];
         for (file, source) in HANDLERS {
-            let code = [
-                "#[cfg(test)]\nmod tests",
-                "#[cfg(test)]\npub(crate) mod tests",
-            ]
-            .iter()
-            .fold(source, |code, marker| {
-                code.split(marker).next().expect("code")
-            });
+            let code = crate::api::test_util::non_test_code(source);
             for token in banned {
-                assert!(!calls(code, token), "{file} calls {token}");
+                assert!(!calls(&code, token), "{file} calls {token}");
             }
         }
     }

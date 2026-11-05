@@ -1816,6 +1816,29 @@ pub(crate) mod test_util {
     use crate::state::AppState;
     use crate::ws::Hub;
 
+    /// `src` with each top-level `#[cfg(test)]` inline module blanked, from its attribute to its
+    /// closing `}` at column 0, keeping the line numbers: the code the source scans check.
+    pub(crate) fn non_test_code(src: &str) -> String {
+        let lines: Vec<&str> = src.split('\n').collect();
+        let mut kept = Vec::with_capacity(lines.len());
+        let mut skip = false;
+        for (i, line) in lines.iter().enumerate() {
+            skip |= *line == "#[cfg(test)]"
+                && lines.get(i + 1).is_some_and(|next| {
+                    let decl = next.strip_prefix("pub(crate) ").unwrap_or(next);
+                    decl.starts_with("mod ") && decl.ends_with(" {")
+                });
+            kept.push(match skip {
+                true => "",
+                false => line,
+            });
+            if skip && line.starts_with('}') {
+                skip = false;
+            }
+        }
+        kept.join("\n")
+    }
+
     pub(crate) async fn temp_state(tag: &str) -> (AppState, PathBuf) {
         let path = crate::db::temp_db_path(tag);
         let _ = std::fs::remove_file(&path);
@@ -1967,6 +1990,56 @@ mod tests {
     use super::*;
     use crate::api::test_util::{done, temp_state};
     use crate::server::client_ip::ProxyTrust;
+
+    #[test]
+    fn source_scans_see_all_code_outside_test_modules() {
+        let db_mod = include_str!("../db/mod.rs");
+        assert_eq!(test_util::non_test_code(db_mod), db_mod);
+        let code = [
+            "fn a() {}",
+            "#[cfg(test)]",
+            "mod tests;",
+            "fn b() {}",
+            "#[cfg(test)]",
+            "pub(crate) mod util {",
+            "    fn c() {}",
+            "}",
+            "fn d() {}",
+            "#[cfg(test)]",
+            "mod more {",
+            "    fn f() {}",
+            "} // tests",
+            "pub fn g() {",
+            "    h();",
+            "}",
+            "#[cfg(test)]",
+            "mod tests {",
+            "    fn e() {}",
+            "}",
+            "",
+        ]
+        .join("\n");
+        let kept = test_util::non_test_code(&code);
+        assert_eq!(
+            kept.lines().count(),
+            code.lines().count(),
+            "line numbers stay"
+        );
+        let kept: Vec<&str> = kept.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(
+            kept,
+            [
+                "fn a() {}",
+                "#[cfg(test)]",
+                "mod tests;",
+                "fn b() {}",
+                "fn d() {}",
+                "pub fn g() {",
+                "    h();",
+                "}"
+            ]
+        );
+    }
 
     #[tokio::test]
     async fn settings_fail_closed_and_never_cache_errors() {
