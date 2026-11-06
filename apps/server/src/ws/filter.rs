@@ -623,8 +623,7 @@ pub(super) fn wants(
             deleted: _,
         } => in_server(server),
         WsEvent::UserUpdated { user, scope } => {
-            scope.is_empty()
-                || Some(user.username.as_str()) == me
+            Some(user.username.as_str()) == me
                 || scope
                     .servers
                     .iter()

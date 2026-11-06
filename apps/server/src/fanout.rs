@@ -406,7 +406,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             to(targets)
         }
         WsEvent::UserRegistered { user: _ } => to(vec![Target::Admins]),
-        WsEvent::UserUpdated { user, scope } if !scope.is_empty() => {
+        WsEvent::UserUpdated { user, scope } => {
             let crate::ws::UserScope {
                 servers,
                 views,
@@ -418,9 +418,9 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             targets.extend(users(partners));
             to(targets)
         }
-        WsEvent::UserUpdated { user: _, scope: _ }
-        | WsEvent::Banned { username: _ }
-        | WsEvent::SettingsChanged { settings: _ } => Route::Everyone,
+        WsEvent::Banned { username: _ } | WsEvent::SettingsChanged { settings: _ } => {
+            Route::Everyone
+        }
         WsEvent::Error { message: _ }
         | WsEvent::P2pHosted {
             live: _,

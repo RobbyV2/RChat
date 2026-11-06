@@ -60,6 +60,31 @@ fn routing_fields_stay_off_the_client_wire() {
     );
 }
 
+#[test]
+fn a_user_update_without_scope_reaches_only_its_user() {
+    let ev = WsEvent::UserUpdated {
+        user: UserRef {
+            username: s("dave"),
+            ..message().author
+        },
+        scope: UserScope {
+            servers: vec![s("rchat")],
+            views: Vec::new(),
+            users: vec![s("dave")],
+        },
+    };
+    let bare: WsEvent = serde_json::from_str(&serde_json::to_string(&ev).unwrap()).unwrap();
+    assert!(matches!(&bare, WsEvent::UserUpdated { user: _, scope } if scope.is_empty()));
+    assert_eq!(
+        crate::fanout::route(&bare),
+        crate::fanout::Route::To(vec![crate::fanout::Target::User("dave")])
+    );
+    let dave = Access::new(Some(s("dave")), false, set(&["rchat"]));
+    let bob = Access::new(Some(s("bob")), false, set(&["rchat"]));
+    assert!(dave.wants(&bare));
+    assert!(!bob.wants(&bare));
+}
+
 #[tokio::test]
 async fn user_updates_reach_only_people_who_share_something() {
     let (state, path) = crate::api::test_util::temp_state("ws_user_scope").await;
