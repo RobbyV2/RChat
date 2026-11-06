@@ -5,19 +5,13 @@
 // re-run alone. Production limits, with ts in minutes as in the model's benchmark.
 // Usage: bun apps/web/scripts/acl_bench.ts <shape|all> [events=20000] [seed=1] [reps=3]
 // `visibility [events=20000] [seed=1] [contents=1000000] [cacheMiB=64]`: §5.7's content target on
-// the `tree` universe: every content event admitted (decideContent in St(m), which the bounded
-// content-position cache keeps), then visibility per rendered message (windows of 50 consecutive
-// messages, first render).
+// the `tree` universe with a channel @everyone may view and post in: every content event admitted
+// (decideContent in St(m), which the bounded content-position cache keeps), then visibility per
+// rendered message (windows of 50 consecutive messages, first render).
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { loadavg, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-  AclReplica,
-  decideContent,
-  identityHead,
-  pastOf,
-  type Verdict,
-} from '../app/lib/p2p/acl/admit'
+import { decideContent, pastOf, type Verdict } from '../app/lib/p2p/acl/admit'
 import { AclState } from '../app/lib/p2p/acl/cache'
 import { Hdrs } from '../app/lib/p2p/acl/equivocation'
 import { FastEval } from '../app/lib/p2p/acl/eval'
@@ -25,224 +19,17 @@ import { Ix } from '../app/lib/p2p/acl/reach'
 import { ContentView, type ContentEv } from '../app/lib/p2p/acl/visibility'
 import {
   BAN,
-  idOp,
   INVITE,
   KICK,
   ROLES,
-  type AclContent,
+  SEND,
+  VIEW,
   type AclEv,
   type Rec,
 } from '../app/lib/p2p/acl/rules'
 import { toStored } from '../app/lib/p2p/acl/summary'
 import { AclRoom, type PackedRec } from '../app/lib/p2p/acl_room'
-import { AGREED, type Agreed } from '../app/lib/p2p/limits'
-
-type Obj = Record<string, unknown>
-interface Opts {
-  ap?: string[]
-  keepOwn?: boolean
-  seq?: number
-  aprev?: string | null
-  iprev?: string | null
-  ts?: number
-}
-const devOwner = (dev: string) => dev.replace(/[0-9]+$/, '')
-
-class Rng {
-  constructor(public s: number) {
-    if (!this.s) this.s = 1
-  }
-  next() {
-    let x = this.s
-    x ^= x << 13
-    x ^= x >>> 17
-    x ^= x << 5
-    this.s = x >>> 0
-    return this.s / 4294967296
-  }
-  int(n: number) {
-    return Math.floor(this.next() * n)
-  }
-  pick<T>(a: readonly T[]): T {
-    return a[this.int(a.length)]
-  }
-  chance(p: number) {
-    return this.next() < p
-  }
-  shuffle<T>(a: T[]): T[] {
-    const b = [...a]
-    for (let i = b.length - 1; i > 0; i--) {
-      const j = this.int(i + 1)
-      const t = b[i]
-      b[i] = b[j]
-      b[j] = t
-    }
-    return b
-  }
-}
-
-// A scenario builder over the production replica (the model's fastworld.ts): heads and each
-// device's latest event tracked incrementally; like an honest client, `build` fills the acting
-// identity of revocations and the remover's watermark of kick, ban and revoke.
-// The benchmark's limits: production ones, with its timestamps in minutes.
-const LIM: Agreed = { ...AGREED, win: 60, day: 1440 }
-
-class BenchWorld {
-  ref = new AclReplica({ binds: e => devOwner(e.dev) === e.a, agreed: LIM })
-  n = 0
-  private headSet = new Set<string>()
-  private lastOwn = new Map<string, AclEv>()
-  heads(): string[] {
-    return [...this.headSet]
-  }
-  latestOwn(dev: string): AclEv | undefined {
-    return this.lastOwn.get(dev)
-  }
-  private note(e: AclEv, v: Verdict) {
-    if (v.s !== 'A') return
-    for (const p of e.ap) this.headSet.delete(p)
-    this.headSet.add(e.id)
-    const l = this.lastOwn.get(e.dev)
-    if (!l || e.seq > l.seq) this.lastOwn.set(e.dev, e)
-  }
-  genesis(dev: string, owners: string[], everyone = 0, ts = 0): AclEv {
-    const e: AclEv = {
-      id: `g${this.n++}`,
-      t: 'genesis',
-      a: devOwner(dev),
-      dev,
-      seq: 0,
-      ap: [],
-      ts,
-      c: {
-        rules: 2,
-        nonce: 'AAAAAAAAAAAAAAAAAAAAAA',
-        owners: owners.map(ik => ({ ik })),
-        everyone_bits: everyone,
-        name: 'S',
-      } as unknown as AclContent,
-    }
-    this.note(e, this.ref.receive(e))
-    return e
-  }
-  build(dev: string, t: string, c: Obj = {}, o: Opts = {}): AclEv {
-    const a = devOwner(dev)
-    const ix = this.ref.acl.ix
-    const inC = (ap: string[], id: string) => {
-      const i = ix.at.get(id)!
-      return ap.some(p => p === id || ix.has(ix.at.get(p)!, i))
-    }
-    let ap = o.ap
-      ? [...o.ap]
-      : this.clientRule
-        ? this.defaultParents(dev)
-        : this.capped(dev, this.heads())
-    if (o.ap && (o.keepOwn ?? (o.seq === undefined && o.aprev === undefined))) {
-      const own = this.latestOwn(dev)
-      if (own && !inC(ap, own.id)) ap.push(own.id)
-    }
-    ap = [...new Set(ap)]
-    const B = pastOf(ix, ap)
-    const inB = (i: number) => ((B.bits[i >>> 5] >>> (i & 31)) & 1) === 1
-    let last: AclEv | undefined
-    for (const x of ix.byDev.get(dev) ?? []) {
-      if (!inB(x)) continue
-      if (!last || ix.ev[x].seq > last.seq) last = ix.ev[x]
-    }
-    const ts = o.ts ?? Math.max(0, ...ap.map(p => this.ref.ev(p).ts)) + 1
-    const cc = { ...c }
-    if ((t === 'device_revoke' || t === 'primary_rotate') && cc.ik === undefined) cc.ik = a
-    if ((t === 'kick' || t === 'ban' || (t === 'revoke' && cc.to !== a)) && cc.seen === undefined) {
-      const seen: Record<string, number> = {}
-      for (const x of ix.byAuthor.get(cc.to as string) ?? [])
-        if (inB(x)) seen[ix.ev[x].dev] = Math.max(seen[ix.ev[x].dev] ?? -1, ix.ev[x].seq)
-      cc.seen = seen
-    }
-    const e: AclEv = {
-      id: `${t}.${dev}.${this.n++}`,
-      t,
-      a,
-      dev,
-      seq: o.seq ?? (last ? last.seq + 1 : 1),
-      ap,
-      ts,
-      c: cc as AclContent,
-    }
-    const aprev = o.aprev === undefined ? last?.id : (o.aprev ?? undefined)
-    if (aprev) e.aprev = aprev
-    if (idOp(e, this.ref.acl.stateOf(ap).facts)) {
-      const ip =
-        o.iprev === undefined
-          ? identityHead(a, B, t === 'primary_rotate').iprev
-          : (o.iprev ?? undefined)
-      if (ip) e.iprev = ip
-    }
-    return e
-  }
-  // At most LIM.ap parents (§1.2): the most recently admitted, with the device's own latest event
-  // in their closure.
-  private capped(dev: string, hs: string[]): string[] {
-    const ix = this.ref.acl.ix
-    let ap = hs
-    if (ap.length > LIM.ap)
-      ap = [...ap].sort((x, y) => ix.at.get(y)! - ix.at.get(x)!).slice(0, LIM.ap)
-    const own = this.latestOwn(dev)
-    if (own && !ap.some(p => p === own.id || ix.has(ix.at.get(p)!, ix.at.get(own.id)!))) {
-      if (ap.length >= LIM.ap) ap[ap.length - 1] = own.id
-      else ap.push(own.id)
-    }
-    return ap
-  }
-  // The client rule (§1.2), for the measured honest events: the maximal events that are no
-  // candidate, X or Tail event (upgrades excepted), walking down from excluded heads.
-  clientRule = false
-  defaultParents(dev: string): string[] {
-    const st = this.ref.state()
-    const fe = this.ref.acl.evaluation()
-    const ix = this.ref.acl.ix
-    const forked =
-      st.F.size > 0 ||
-      [...st.FI.values()].some(d => d < Infinity) ||
-      st.RF.size > 0 ||
-      st.PC.size > 0
-    const bad = (id: string) => {
-      const i = ix.at.get(id)!
-      return (
-        ix.ev[i].t !== 'upgrade' &&
-        (fe.X[i] === 1 ||
-          fe.tail[i] === 1 ||
-          (forked && fe.candidateIn(i, st.F, st.FI, st.RF, st.PC)))
-      )
-    }
-    const hs = this.heads()
-    if (!hs.some(bad)) return this.capped(dev, hs)
-    const out = new Set<string>()
-    const seen = new Set<string>()
-    const todo = [...hs]
-    while (todo.length) {
-      const x = todo.pop()!
-      if (seen.has(x)) continue
-      seen.add(x)
-      if (!bad(x)) out.add(x)
-      else for (const q of this.ref.ev(x).ap) todo.push(q)
-    }
-    const l = [...out]
-    const at = (id: string) => ix.at.get(id)!
-    return this.capped(
-      dev,
-      l.filter(x => !l.some(y => y !== x && ix.has(at(y), at(x))))
-    )
-  }
-  act(dev: string, t: string, c: Obj = {}, o: Opts = {}): { e: AclEv; v: Verdict } {
-    const e = this.build(dev, t, c, o)
-    const v = this.ref.receive(e)
-    this.note(e, v)
-    return { e, v }
-  }
-  state() {
-    return this.ref.state()
-  }
-}
+import { BenchWorld, binds, LIM, Rng, type Obj, type Opts } from './p2p_bench/world'
 
 type W = BenchWorld
 type Shape = (w: W, N: number, rng: Rng) => Record<string, number | string>
@@ -274,9 +61,11 @@ const okF =
  * ⊤, a moderator's leave, and honest activity to fill.
  */
 const tree: Shape = (w, N, rng) => treeOf(w, N, rng, 0)
-const treeOf = (w: W, N: number, rng: Rng, classes: number) => {
+// `chan`: a channel c0 that @everyone may view and post in, so content is admitted.
+const treeOf = (w: W, N: number, rng: Rng, classes: number, chan = false) => {
   const ok = okF(w)
-  w.genesis('O1', ['O'], INVITE)
+  w.genesis('O1', ['O'], chan ? INVITE | VIEW | SEND : INVITE)
+  if (chan) ok('O1', 'channel', { id: 'c0', name: 'general', kind: 'text', pos: 0 })
   ok('O2', 'device_add')
   ok('O3', 'device_add') // an idle owner device: the backdated deny's author
   const MOD = ok('O1', 'role_create', { pos: 3, bits: KICK | BAN })!.id
@@ -1350,7 +1139,7 @@ function visibilityBench(N: number, seed: number, nContent: number, cacheMiB: nu
   const rng = new Rng(seed * 7919)
   const w = new BenchWorld()
   const tB = performance.now()
-  tree(w, N, rng)
+  treeOf(w, N, rng, 0, true)
   const S = w.state()
   const buildS = (performance.now() - tB) / 1000
   const t0 = performance.now()
@@ -1476,7 +1265,6 @@ function coldBench(shape: string, N: number, seed: number) {
   gc()
   const rssStart = rss()
   const heapStart = heap()
-  const binds = (e: AclEv) => devOwner(e.dev) === e.a
   const live = () => {
     clock = 1
     probe = undefined

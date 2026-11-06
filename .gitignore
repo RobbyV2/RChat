@@ -55,6 +55,9 @@ i.txt
 temp/
 deploy/k8s/secrets.env
 
+# P2P bench universes
+/apps/web/.bench/
+
 # WASM build output
 /apps/web/public/wasm/
 
