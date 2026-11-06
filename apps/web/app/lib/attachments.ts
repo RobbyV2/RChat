@@ -12,8 +12,6 @@ export interface PendingUpload {
   relay?: string
 }
 
-export const MAX_UPLOAD = 25 * 1024 * 1024
-
 // Servers before 0.3.0 send no p2p_attachments: P2P was always on there.
 export const siteSettings = (s: SiteSettings): SiteSettings => ({
   ...s,
@@ -31,8 +29,8 @@ export const attachModes = (s: SiteSettings): UploadMode[] => [
 ]
 
 // The mode a new attachment starts in: a server upload when allowed and small enough, else P2P.
-export const startMode = (s: SiteSettings, size: number): UploadMode | null => {
+export const startMode = (s: SiteSettings, size: number, max: number): UploadMode | null => {
   const modes = attachModes(s)
-  if (modes.includes('server') && (size <= MAX_UPLOAD || !modes.includes('p2p'))) return 'server'
+  if (modes.includes('server') && (size <= max || !modes.includes('p2p'))) return 'server'
   return modes.includes('p2p') ? 'p2p' : null
 }

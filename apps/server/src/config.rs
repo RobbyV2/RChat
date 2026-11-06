@@ -29,6 +29,7 @@ pub struct Roles {
     pub jobs: bool,
     pub web: bool,
     pub relay: bool,
+    pub sfu: bool,
 }
 
 impl Default for Roles {
@@ -47,6 +48,7 @@ impl Roles {
         jobs: true,
         web: true,
         relay: true,
+        sfu: true,
     };
 
     pub const NONE: Roles = Roles {
@@ -58,6 +60,7 @@ impl Roles {
         jobs: false,
         web: false,
         relay: false,
+        sfu: false,
     };
 
     pub fn parse(spec: &str) -> anyhow::Result<Roles> {
@@ -73,8 +76,9 @@ impl Roles {
                 "jobs" => roles.jobs = true,
                 "web" => roles.web = true,
                 "relay" => roles.relay = true,
+                "sfu" => roles.sfu = true,
                 other => anyhow::bail!(
-                    "unknown role {other} (expected all, api, gateway, media, search, embeds, jobs, web, relay)"
+                    "unknown role {other} (expected all, api, gateway, media, search, embeds, jobs, web, relay, sfu)"
                 ),
             }
         }
@@ -94,6 +98,7 @@ impl Roles {
             jobs,
             web: _,
             relay: _,
+            sfu: _,
         } = *self;
         let backend = [api, gateway, media, search, embeds, jobs];
         backend.contains(&true) && backend.contains(&false)
@@ -109,6 +114,7 @@ impl Roles {
             jobs,
             web,
             relay,
+            sfu,
         } = *self;
         [
             (api, "api"),
@@ -119,6 +125,7 @@ impl Roles {
             (jobs, "jobs"),
             (web, "web"),
             (relay, "relay"),
+            (sfu, "sfu"),
         ]
         .into_iter()
         .filter_map(|(on, name)| on.then_some(name))
@@ -221,10 +228,6 @@ fn lookup(env: &Option<HashMap<String, String>>, name: &str) -> Option<String> {
     }
 }
 
-fn trimmed<T: std::str::FromStr>(raw: Option<String>) -> Option<T> {
-    raw.and_then(|v| v.trim().parse().ok())
-}
-
 fn secret(env: &Option<HashMap<String, String>>, name: &str) -> Option<String> {
     let direct = lookup(env, name).filter(|v| !v.trim().is_empty());
     let file = lookup(env, &format!("{name}_FILE"))
@@ -298,26 +301,8 @@ impl AppConfig {
             builder = builder.set_override("rchat_roles", roles.as_str())?;
         }
 
-        let built = builder.build()?;
-        let mut config: AppConfig = built.clone().try_deserialize()?;
-        let defaults = Limits::default();
-        config.limits = Limits {
-            database_max_connections: trimmed(lookup(&env, "DATABASE_MAX_CONNECTIONS")),
-            database_min_connections: trimmed(lookup(&env, "DATABASE_MIN_CONNECTIONS")),
-            database_acquire_timeout_secs: trimmed(lookup(&env, "DATABASE_ACQUIRE_TIMEOUT_SECS")),
-            database_read_connections: trimmed(lookup(&env, "DATABASE_READ_CONNECTIONS")),
-            guest_grant_days: trimmed(lookup(&env, "GUEST_GRANT_DAYS"))
-                .unwrap_or(defaults.guest_grant_days),
-            embed_cache_days: trimmed(lookup(&env, "EMBED_CACHE_DAYS"))
-                .unwrap_or(defaults.embed_cache_days),
-            voice_idle_secs: lookup(&env, "VOICE_IDLE_SECS")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(defaults.voice_idle_secs),
-            voice_room_max: lookup(&env, "VOICE_ROOM_MAX")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(defaults.voice_room_max),
-            ..built.try_deserialize()?
-        };
+        let mut config: AppConfig = builder.build()?.try_deserialize()?;
+        config.limits = Limits::load(&|name| lookup(&env, name))?;
         config.secrets = Secrets {
             password_pepper: secret(&env, "PASSWORD_PEPPER"),
             relay_secret: secret(&env, "RELAY_SECRET"),
@@ -332,7 +317,6 @@ impl AppConfig {
         };
         config.swagger_ui = lookup(&env, "SWAGGER_UI");
         config.roles = config.resolve_roles()?;
-        config.limits.validate()?;
         config.check_shared_state()?;
         config.proxy_trust =
             ProxyTrust::from_config(config.trust_proxy, config.trusted_proxies.as_deref())?;
@@ -695,7 +679,7 @@ pub struct CliOverrides {
 
     #[arg(
         long,
-        help = "Service roles: all, or a comma list of api, gateway, media, search, embeds, jobs, web, relay"
+        help = "Service roles: all, or a comma list of api, gateway, media, search, embeds, jobs, web, relay, sfu"
     )]
     pub roles: Option<String>,
 }
@@ -1134,24 +1118,200 @@ mod tests {
     }
 
     #[test]
-    fn moved_reads_keep_their_lenient_parsing() {
-        let set = [
-            ("VOICE_ROOM_MAX", "abc"),
-            ("VOICE_IDLE_SECS", " 9"),
-            ("DATABASE_MAX_CONNECTIONS", "x"),
+    fn bad_limit_values_name_the_variable() {
+        let load = |pairs: &[(&str, &str)]| AppConfig::load_from(&cli(None, None), env(pairs));
+        for (k, v, range) in [
+            ("UPLOAD_MAX_MIB", "abc", "1 to 512"),
+            ("UPLOAD_MAX_MIB", "0", "1 to 512"),
+            ("MESSAGE_MAX_CHARS", "-1", "1 to 100000"),
+            ("MESSAGE_MAX_CHARS", "100001", "1 to 100000"),
+            ("VOICE_ROOM_MAX", "abc", "0 to 10000"),
+            ("VOICE_IDLE_SECS", "9s", "5 to 86400"),
+            ("DATABASE_MAX_CONNECTIONS", "x", "1 to 1000"),
+            ("GUEST_GRANT_DAYS", "0", "1 to 3650"),
+            ("EMBED_CACHE_DAYS", "-4", "1 to 3650"),
+            ("RATE_LIMIT_PER_SECOND", "fast", "1 to 1000"),
+            ("REPORT_RETENTION_DAYS", "-1", "0 to 3650"),
+            ("E2EE_KEY_RETENTION_DAYS", "70", "1 to 69"),
+            ("E2EE", "maybe", "on or off"),
+            ("SFU_ENABLED", "2", "on or off"),
+        ] {
+            let err = load(&[(k, v)]).unwrap_err().to_string();
+            assert_eq!(err, format!("{k}: expected {range}, got {v}"));
+        }
+        for (max, buffer) in [("64", "32"), ("64", "63"), ("512", "256")] {
+            let err = load(&[("UPLOAD_MAX_MIB", max), ("UPLOAD_BUFFER_MIB", buffer)])
+                .unwrap_err()
+                .to_string();
+            assert_eq!(
+                err,
+                format!(
+                    "UPLOAD_BUFFER_MIB: expected at least UPLOAD_MAX_MIB ({max}), got {buffer}"
+                )
+            );
+        }
+        for (max, buffer, warned) in [
+            ("25", "32", true),
+            ("25", "49", true),
+            ("25", "50", false),
+            ("64", "64", true),
+            ("64", "128", false),
+        ] {
+            let l = load(&[("UPLOAD_MAX_MIB", max), ("UPLOAD_BUFFER_MIB", buffer)])
+                .unwrap_or_else(|e| panic!("{max}/{buffer}: {e}"))
+                .limits;
+            let warning = l.upload_buffer_warning();
+            assert_eq!(warning.is_some(), warned, "{max}/{buffer}");
+            if let Some(w) = warning {
+                assert!(
+                    w.starts_with("UPLOAD_BUFFER_MIB is ") && w.is_ascii(),
+                    "{w}"
+                );
+                assert!(w.contains(&format!(
+                    "at least {}",
+                    2 * max.parse::<u64>().expect("max")
+                )));
+            }
+        }
+        assert_eq!(load(&[]).unwrap().limits.upload_buffer_warning(), None);
+        let l = load(&[
+            ("UPLOAD_MAX_MIB", "64"),
+            ("UPLOAD_BUFFER_MIB", "128"),
+            ("VOICE_IDLE_SECS", " 9 "),
             ("DATABASE_MIN_CONNECTIONS", " 3 "),
-            ("GUEST_GRANT_DAYS", "0"),
-            ("EMBED_CACHE_DAYS", "-4"),
+            ("DATABASE_MAX_CONNECTIONS", ""),
+        ])
+        .unwrap()
+        .limits;
+        assert_eq!(
+            (
+                l.upload_max_mib,
+                l.voice_idle_secs,
+                l.database_min_connections,
+                l.database_max_connections
+            ),
+            (64, 9, Some(3), None)
+        );
+        for none in [
+            "REPORT_SAME_TARGET_HOURS",
+            "REPORT_TARGETS_PER_DAY",
+            "REPORT_MAX_PER_WEEK",
+            "REPORT_RETENTION_DAYS",
+            "P2P_BACKUP_MAX_MIB",
+            "WIDGET_VIEWERS_MAX",
+            "E2EE_GUESTS_PER_GROUP",
+            "VOICE_ROOM_MAX",
+            "UPLOAD_BUDGET_MIB",
+        ] {
+            assert!(load(&[(none, "0")]).is_ok(), "{none}=0 means none");
+        }
+    }
+
+    #[test]
+    fn plan_owned_limits_have_their_defaults() {
+        let l = AppConfig::defaults().limits;
+        assert_eq!(
+            (
+                l.report_same_target_hours,
+                l.report_targets_per_day,
+                l.report_max_per_week,
+                l.report_retention_days
+            ),
+            (72, 3, 10, 180)
+        );
+        assert_eq!(
+            (
+                l.e2ee,
+                l.e2ee_guests_per_group,
+                l.e2ee_key_retention_days,
+                l.e2ee_compliance
+            ),
+            (false, 500, 30, false)
+        );
+        assert_eq!(
+            (
+                l.sfu_enabled,
+                l.sfu_max_participants,
+                l.sfu_max_streams,
+                l.sfu_user_kib_per_sec
+            ),
+            (false, 100, 2000, 4096)
+        );
+        assert_eq!(l.p2p_backup_max_mib, 64);
+        assert_eq!(
+            (
+                l.widgets,
+                l.widget_quick_joins_per_hour,
+                l.widget_viewers_max,
+                l.widget_bridge,
+                l.widget_bridge_servers_max
+            ),
+            (true, 10, 5000, false, 50)
+        );
+        assert_eq!(
+            (l.upload_max_mib, l.message_max_chars, l.upload_bytes()),
+            (25, 4000, 25 * 1024 * 1024)
+        );
+        let set = [
+            ("REPORT_TARGETS_PER_DAY", "0"),
+            ("E2EE", "on"),
+            ("E2EE_COMPLIANCE", "true"),
+            ("SFU_ENABLED", "yes"),
+            ("SFU_MAX_STREAMS", "9000"),
+            ("P2P_BACKUP_MAX_MIB", "0"),
+            ("WIDGETS", "off"),
+            ("WIDGET_BRIDGE_SERVERS_MAX", "7"),
+            ("MESSAGE_MAX_CHARS", "500"),
+            ("UPLOAD_MAX_MIB", "10"),
         ];
         let l = AppConfig::load_from(&cli(None, None), env(&set))
             .unwrap()
             .limits;
-        assert_eq!(l.voice_room_max, 25);
-        assert_eq!(l.voice_idle_secs, 60);
-        assert_eq!(l.database_max_connections, None);
-        assert_eq!(l.database_min_connections, Some(3));
-        assert_eq!(l.guest_grant_ttl(), 86400);
-        assert_eq!(l.embed_cache_ttl(), 86400);
+        assert_eq!(
+            (
+                l.report_targets_per_day,
+                l.e2ee,
+                l.e2ee_compliance,
+                l.sfu_enabled,
+                l.sfu_max_streams,
+                l.p2p_backup_max_mib,
+                l.widgets,
+                l.widget_bridge_servers_max,
+                l.message_max_chars,
+                l.upload_bytes()
+            ),
+            (
+                0,
+                true,
+                true,
+                true,
+                9000,
+                0,
+                false,
+                7,
+                500,
+                10 * 1024 * 1024
+            )
+        );
+    }
+
+    #[test]
+    fn sfu_is_a_role() {
+        let roles = Roles::parse("api,sfu").unwrap();
+        assert!(roles.sfu && roles.api && !roles.gateway);
+        const { assert!(Roles::ALL.sfu && !Roles::NONE.sfu) };
+        assert_eq!(Roles::parse("SFU").unwrap().names(), vec!["sfu"]);
+        assert!(
+            !Roles::parse("api,gateway,media,search,embeds,jobs,sfu")
+                .unwrap()
+                .splits_backend()
+        );
+        let err = Roles::parse("nope").unwrap_err().to_string();
+        assert!(err.contains("relay, sfu)"), "{err}");
+        let mut set = env(&SHARED).unwrap();
+        set.insert("RCHAT_ROLES".to_string(), "sfu".to_string());
+        let config = AppConfig::load_from(&cli(None, None), Some(set)).unwrap();
+        assert_eq!(config.roles.names(), vec!["sfu"]);
     }
 
     #[test]

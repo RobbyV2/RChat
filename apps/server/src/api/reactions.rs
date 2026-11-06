@@ -371,7 +371,13 @@ pub(crate) async fn list_reactors(
     let emoji = check_emoji(&emoji)?;
     let db = &state.read();
     require_guest_ok(db, user.as_ref()).await?;
-    resolve_message(db, id, user.as_ref(), &Proof::headers(&headers)).await?;
+    resolve_message(
+        db,
+        id,
+        user.as_ref(),
+        &Proof::headers(&headers, &state.limits),
+    )
+    .await?;
     let ReactorsQuery { limit } = q;
     let rows = sqlx::query(
         "SELECT r.username FROM reactions r WHERE r.message_id = $1 AND r.emoji = $2 AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username = r.username AND pu.password_hash = '!purging') ORDER BY r.created_at, r.username LIMIT $3",
@@ -1103,7 +1109,9 @@ mod tests {
             ],
             "a seen ping stays and is not repeated"
         );
-        crate::db::sweep_stale(db).await.expect("sweep");
+        crate::db::sweep_stale(db, &state.limits)
+            .await
+            .expect("sweep");
         unreact(&state, "bob", id, "👀")
             .await
             .expect("unreact after the sweep");

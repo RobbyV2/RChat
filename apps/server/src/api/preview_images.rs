@@ -15,8 +15,7 @@ use crate::api::access::{Proof, resolve_message};
 use crate::api::budget::{Budget, slow_down};
 use crate::api::embeds::preview_policy;
 use crate::api::{
-    ApiError, ApiErrorBody, Settings, header_grants, request_token, require_guest_ok,
-    user_for_token,
+    ApiError, ApiErrorBody, Settings, request_token, require_guest_ok, user_for_token,
 };
 use crate::db::{Db, now};
 use crate::net_guard::Policy;
@@ -454,7 +453,7 @@ pub(crate) async fn serve(
     if !Settings::cached(db).await.asset_previews {
         return Err(not_found());
     }
-    let proof = Proof::grants(header_grants(headers));
+    let proof = Proof::headers(headers, &state.limits);
     resolve_message(db, message_id, user.as_ref(), &proof)
         .await
         .map_err(|e| match e {

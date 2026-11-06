@@ -10,6 +10,7 @@ use super::sweep::*;
 use super::*;
 use crate::api::access::perms::{ALL_PERMS, Restrict, fold_access, perm_row};
 use crate::api::test_util::{add_member, done, temp_state};
+use crate::limits::Limits;
 
 async fn general_id(db: &Db) -> i64 {
     sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
@@ -271,9 +272,21 @@ async fn wrong_member_counts_are_fixed(db: &Db) {
         .await
         .expect("break c1");
     assert_eq!(counts().await, want(9));
-    assert_eq!(sweep_stale(db).await.expect("sweep").member_counts, 1);
+    assert_eq!(
+        sweep_stale(db, &Limits::default())
+            .await
+            .expect("sweep")
+            .member_counts,
+        1
+    );
     assert_eq!(counts().await, want(1));
-    assert_eq!(sweep_stale(db).await.expect("sweep").member_counts, 0);
+    assert_eq!(
+        sweep_stale(db, &Limits::default())
+            .await
+            .expect("sweep")
+            .member_counts,
+        0
+    );
 }
 
 #[tokio::test]
@@ -2577,7 +2590,7 @@ async fn the_sweep_keeps_the_newest_seen_pings_of_recipients_above_the_cap() {
             .expect("seen pings");
     }
     let newest = count(&db, "SELECT MAX(id) FROM pings WHERE username = 'bob'").await;
-    let swept = sweep_stale(&db).await.expect("sweep");
+    let swept = sweep_stale(&db, &Limits::default()).await.expect("sweep");
     assert_eq!(swept.pings, 600);
     assert_eq!(
         count(&db, "SELECT COUNT(*) FROM pings WHERE username = 'bob'").await,
@@ -2592,7 +2605,13 @@ async fn the_sweep_keeps_the_newest_seen_pings_of_recipients_above_the_cap() {
         count(&db, "SELECT COUNT(*) FROM pings WHERE username = 'carol'").await,
         5
     );
-    assert_eq!(sweep_stale(&db).await.expect("again").pings, 0);
+    assert_eq!(
+        sweep_stale(&db, &Limits::default())
+            .await
+            .expect("again")
+            .pings,
+        0
+    );
     close(&db).await;
     wipe();
 }
@@ -2907,7 +2926,7 @@ async fn dead_server_passwords_are_purged_after_30_days() {
             .await
             .expect("grant");
     }
-    let swept = sweep_stale(db).await.expect("sweep");
+    let swept = sweep_stale(db, &state.limits).await.expect("sweep");
     assert_eq!((swept.server_passwords, swept.guest_grants), (3, 1));
     assert_eq!(count(db, "SELECT COUNT(*) FROM server_passwords").await, 3);
     assert_eq!(
@@ -3090,7 +3109,7 @@ async fn stale_rows_are_swept() {
             .await
             .expect("ping");
     }
-    let swept = sweep_stale(db).await.expect("sweep");
+    let swept = sweep_stale(db, &state.limits).await.expect("sweep");
     assert_eq!(
         swept,
         Swept {

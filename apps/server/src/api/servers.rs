@@ -1179,7 +1179,13 @@ pub(crate) async fn list_members(
     } = MemberListQuery::parse(raw.as_deref().unwrap_or(""))?;
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
-    let access = resolve_server(db, &name, viewer.as_ref(), &Proof::headers(&headers)).await?;
+    let access = resolve_server(
+        db,
+        &name,
+        viewer.as_ref(),
+        &Proof::headers(&headers, &state.limits),
+    )
+    .await?;
     let key = access.name().to_string();
     let creator = access.lite().creator.clone();
     let (rows, next) = match usernames {
@@ -1330,7 +1336,13 @@ pub(crate) async fn list_interacted(
 ) -> Result<Paged<UserRef>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
-    let access = resolve_server(db, &name, viewer.as_ref(), &Proof::headers(&headers)).await?;
+    let access = resolve_server(
+        db,
+        &name,
+        viewer.as_ref(),
+        &Proof::headers(&headers, &state.limits),
+    )
+    .await?;
     let key = access.name();
     let MembersQuery {
         offset,
@@ -1468,7 +1480,13 @@ pub(crate) async fn get_server(
 ) -> Result<Json<ServerDetail>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
-    let access = resolve_server(db, &name, viewer.as_ref(), &Proof::headers(&headers)).await?;
+    let access = resolve_server(
+        db,
+        &name,
+        viewer.as_ref(),
+        &Proof::headers(&headers, &state.limits),
+    )
+    .await?;
     Ok(Json(server_detail(db, &state.hub, &access).await?))
 }
 
@@ -1791,7 +1809,7 @@ pub(crate) async fn get_invite(
         db,
         &name,
         viewer.as_ref(),
-        &Proof::password(given.as_deref()).and_grants(grants),
+        &Proof::password(given.as_deref()).and_grants(grants, &state.limits),
     )
     .await?;
     let (server, status, (preview_channel, preview), ticket) = match view {

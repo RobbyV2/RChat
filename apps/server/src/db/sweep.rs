@@ -1,7 +1,8 @@
 use sqlx::Row;
 
-use super::pool::{Db, limits, reader};
+use super::pool::{Db, reader};
 use super::{now, recount_members};
+use crate::limits::Limits;
 
 /// Servers checked per read by `fix_member_counts`.
 const COUNT_BATCH: i64 = 500;
@@ -73,10 +74,6 @@ async fn delete_batched(db: &Db, sql: &'static str, cutoff: i64) -> sqlx::Result
     }
 }
 
-pub fn guest_grant_ttl(db: &Db) -> i64 {
-    limits(db).guest_grant_ttl()
-}
-
 pub const SERVER_PASSWORD_KEEP: i64 = 30 * 86400;
 
 pub const PING_KEEP: i64 = 30 * 86400;
@@ -92,9 +89,9 @@ pub const TIMEOUT_KEEP: i64 = 3600;
 /// caps them.
 pub const PINGS_KEPT: i64 = 2000;
 
-pub async fn sweep_stale(db: &Db) -> sqlx::Result<Swept> {
+/// Deletes what has aged out, with the retention times of `limits`.
+pub async fn sweep_stale(db: &Db, limits: &Limits) -> sqlx::Result<Swept> {
     let t = now();
-    let limits = limits(db);
     let stale_grants = delete_batched(
         db,
         "DELETE FROM guest_grants WHERE \"grant\" IN (SELECT \"grant\" FROM guest_grants WHERE last_used_at < $1 AND (last_used_at > 0 OR created_at < $1) LIMIT $2)",

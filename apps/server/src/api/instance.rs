@@ -72,13 +72,14 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
             previews: asset_previews,
             identity_assertions: true,
         },
+        &state.limits,
     )
 }
 
 /// Describe this instance
 ///
 /// Who this instance is: id, name, host, versions, the URLs of its API, WebSocket gateway and
-/// PeerJS server, which optional features are on, and its fixed limits. No authentication.
+/// PeerJS server, which optional features are on, and its limits. No authentication.
 /// Cached for 60 seconds (`Cache-Control: public` when `PUBLIC_URL` is set, `private` when
 /// the URLs are derived from the request host). General rate-limit bucket.
 #[utoipa::path(get, path = "/api/instance", tag = "Instance", responses((status = 200, description = "Who this instance is: id, name, URLs, versions, features and limits", body = InstanceInfo), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
@@ -406,6 +407,57 @@ mod tests {
         };
         assert!(Instance::load(&reopened, &config).await.is_err());
         crate::db::close(&reopened).await;
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn instance_reports_configured_limits() {
+        let (state, path) = temp_state("instance_limits").await;
+        let (addr, server) = serve(state.clone()).await;
+        let info = json(
+            reqwest::get(format!("http://{addr}/api/instance"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(info["limits"]["upload_bytes"], 25 * 1024 * 1024);
+        assert_eq!(info["limits"]["message_chars"], 4000);
+        assert_eq!(
+            (&info["e2ee"], &info["sfu"], &info["widgets"]),
+            (
+                &serde_json::json!(false),
+                &serde_json::json!(false),
+                &serde_json::json!(true)
+            )
+        );
+        server.abort();
+        let state = state.with_limits(std::sync::Arc::new(crate::limits::Limits {
+            upload_max_mib: 10,
+            message_max_chars: 500,
+            e2ee: true,
+            sfu_enabled: true,
+            widgets: false,
+            ..Default::default()
+        }));
+        let (addr, server) = serve(state.clone()).await;
+        let info = json(
+            reqwest::get(format!("http://{addr}/api/instance"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(info["limits"]["upload_bytes"], 10_485_760);
+        assert_eq!(info["limits"]["message_chars"], 500);
+        assert_eq!(info["limits"]["name_chars"], 100);
+        assert_eq!(
+            (&info["e2ee"], &info["sfu"], &info["widgets"]),
+            (
+                &serde_json::json!(true),
+                &serde_json::json!(true),
+                &serde_json::json!(false)
+            )
+        );
+        server.abort();
         done(state, path).await;
     }
 
@@ -965,6 +1017,7 @@ mod tests {
                 previews: true,
                 identity_assertions: true,
             },
+            &state.limits,
         );
         assert_eq!(info.peerjs_url, "https://chat.example:9443/peerjs");
         assert!(!state.instance.pinned());

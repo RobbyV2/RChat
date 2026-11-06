@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 
 use super::now;
 use super::pool::{Db, pool_key};
-use super::sweep::guest_grant_ttl;
 
 const TOUCH_EVERY: Duration = Duration::from_secs(60);
 const TOUCH_MAX: usize = 100_000;
@@ -74,7 +73,8 @@ pub fn queue_grant_touches(db: &Db, grants: impl IntoIterator<Item = String>) {
     }
 }
 
-pub async fn flush_grant_touches(db: &Db) -> sqlx::Result<u64> {
+/// Writes the queued grant uses, skipping grants older than `grant_ttl` seconds.
+pub async fn flush_grant_touches(db: &Db, grant_ttl: i64) -> sqlx::Result<u64> {
     let grants: Vec<String> = GRANT_TOUCHES
         .lock()
         .ok()
@@ -82,7 +82,7 @@ pub async fn flush_grant_touches(db: &Db) -> sqlx::Result<u64> {
         .map(|set| set.into_iter().collect())
         .unwrap_or_default();
     let t = now();
-    let cutoff = t - guest_grant_ttl(db);
+    let cutoff = t - grant_ttl;
     let mut total = 0;
     for (i, chunk) in grants.chunks(100).enumerate() {
         let sql = format!(

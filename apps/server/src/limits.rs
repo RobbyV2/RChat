@@ -1,5 +1,3 @@
-use serde::Deserialize;
-
 use crate::api::media::{DEFAULT_BUDGET_MIB, DEFAULT_BUFFER_MIB};
 use crate::bus::DEFAULT_HUB_MAXLEN;
 use crate::hub::{
@@ -7,11 +5,52 @@ use crate::hub::{
 };
 use crate::relay::{DEFAULT_TOTAL_KIB_PER_SEC, DEFAULT_USER_ALLOCATIONS, DEFAULT_USER_KIB_PER_SEC};
 
-const MIN_HUB_MAXLEN: u64 = 1_000;
+const MIB: usize = 1024 * 1024;
+
+/// Every numeric limit: its env name, smallest and largest value.
+const RANGES: [(&str, i64, i64); 38] = [
+    ("RATE_LIMIT_PER_SECOND", 1, 1_000),
+    ("RATE_LIMIT_BURST", 1, 1_000_000),
+    ("WS_CONNECTIONS_PER_USER", 1, 10_000),
+    ("WS_CONNECT_BURST", 1, 10_000),
+    ("WS_CONNECTS_PER_MINUTE", 1, 60_000),
+    ("WS_SOCKETS_PER_IP", 1, 1_000_000),
+    ("WS_GUEST_SOCKETS_PER_IP", 0, 1_000_000),
+    ("WS_GUEST_SOCKETS_MAX", 0, 1_000_000),
+    ("REDIS_HUB_MAXLEN", 1_000, 100_000_000),
+    ("DATABASE_MAX_CONNECTIONS", 1, 1_000),
+    ("DATABASE_MIN_CONNECTIONS", 0, 1_000),
+    ("DATABASE_ACQUIRE_TIMEOUT_SECS", 1, 3_600),
+    ("DATABASE_READ_CONNECTIONS", 0, 64),
+    ("UPLOAD_MAX_MIB", 1, 512),
+    ("UPLOAD_BUDGET_MIB", 0, 1_048_576),
+    ("UPLOAD_BUFFER_MIB", 32, 1_048_576),
+    ("MESSAGE_MAX_CHARS", 1, 100_000),
+    ("GUEST_GRANT_DAYS", 1, 3_650),
+    ("EMBED_CACHE_DAYS", 1, 3_650),
+    ("VOICE_IDLE_SECS", 5, 86_400),
+    ("VOICE_ROOM_MAX", 0, 10_000),
+    ("RELAY_USER_ALLOCATIONS", 1, 65_535),
+    ("RELAY_MAX_ALLOCATIONS", 1, 65_535),
+    ("RELAY_USER_KIB_PER_SEC", 1, 10_485_760),
+    ("RELAY_MAX_KIB_PER_SEC", 1, 10_485_760),
+    ("REPORT_SAME_TARGET_HOURS", 0, 8_760),
+    ("REPORT_TARGETS_PER_DAY", 0, 10_000),
+    ("REPORT_MAX_PER_WEEK", 0, 100_000),
+    ("REPORT_RETENTION_DAYS", 0, 3_650),
+    ("E2EE_GUESTS_PER_GROUP", 0, 5_000),
+    ("E2EE_KEY_RETENTION_DAYS", 1, 69),
+    ("SFU_MAX_PARTICIPANTS", 2, 10_000),
+    ("SFU_MAX_STREAMS", 1, 1_000_000),
+    ("SFU_USER_KIB_PER_SEC", 1, 1_048_576),
+    ("P2P_BACKUP_MAX_MIB", 0, 512),
+    ("WIDGET_QUICK_JOINS_PER_HOUR", 1, 10_000),
+    ("WIDGET_VIEWERS_MAX", 0, 1_000_000),
+    ("WIDGET_BRIDGE_SERVERS_MAX", 1, 10_000),
+];
 
 /// The operator's instance limits, one field per env name (the name lowercased).
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Limits {
     pub rate_limit_per_second: u64,
     pub rate_limit_burst: u32,
@@ -22,28 +61,40 @@ pub struct Limits {
     pub ws_guest_sockets_per_ip: usize,
     pub ws_guest_sockets_max: usize,
     pub redis_hub_maxlen: u64,
-    #[serde(skip)]
     pub database_max_connections: Option<u32>,
-    #[serde(skip)]
     pub database_min_connections: Option<u32>,
-    #[serde(skip)]
     pub database_acquire_timeout_secs: Option<u64>,
-    #[serde(skip)]
     pub database_read_connections: Option<u32>,
+    pub upload_max_mib: u64,
     pub upload_budget_mib: u64,
     pub upload_buffer_mib: u64,
-    #[serde(skip)]
+    pub message_max_chars: usize,
     pub guest_grant_days: i64,
-    #[serde(skip)]
     pub embed_cache_days: i64,
-    #[serde(skip)]
     pub voice_idle_secs: i64,
-    #[serde(skip)]
     pub voice_room_max: usize,
     pub relay_user_allocations: u32,
     pub relay_max_allocations: Option<u32>,
     pub relay_user_kib_per_sec: u64,
     pub relay_max_kib_per_sec: u64,
+    pub report_same_target_hours: u32,
+    pub report_targets_per_day: u32,
+    pub report_max_per_week: u32,
+    pub report_retention_days: u32,
+    pub e2ee: bool,
+    pub e2ee_guests_per_group: u32,
+    pub e2ee_key_retention_days: u32,
+    pub e2ee_compliance: bool,
+    pub sfu_enabled: bool,
+    pub sfu_max_participants: u32,
+    pub sfu_max_streams: u32,
+    pub sfu_user_kib_per_sec: u32,
+    pub p2p_backup_max_mib: u32,
+    pub widgets: bool,
+    pub widget_quick_joins_per_hour: u32,
+    pub widget_viewers_max: u32,
+    pub widget_bridge: bool,
+    pub widget_bridge_servers_max: u32,
 }
 
 impl Default for Limits {
@@ -62,8 +113,10 @@ impl Default for Limits {
             database_min_connections: None,
             database_acquire_timeout_secs: None,
             database_read_connections: None,
+            upload_max_mib: 25,
             upload_budget_mib: DEFAULT_BUDGET_MIB,
             upload_buffer_mib: DEFAULT_BUFFER_MIB,
+            message_max_chars: 4000,
             guest_grant_days: 30,
             embed_cache_days: 30,
             voice_idle_secs: 60,
@@ -72,28 +125,149 @@ impl Default for Limits {
             relay_max_allocations: None,
             relay_user_kib_per_sec: DEFAULT_USER_KIB_PER_SEC,
             relay_max_kib_per_sec: DEFAULT_TOTAL_KIB_PER_SEC,
+            report_same_target_hours: 72,
+            report_targets_per_day: 3,
+            report_max_per_week: 10,
+            report_retention_days: 180,
+            e2ee: false,
+            e2ee_guests_per_group: 500,
+            e2ee_key_retention_days: 30,
+            e2ee_compliance: false,
+            sfu_enabled: false,
+            sfu_max_participants: 100,
+            sfu_max_streams: 2000,
+            sfu_user_kib_per_sec: 4096,
+            p2p_backup_max_mib: 64,
+            widgets: true,
+            widget_quick_joins_per_hour: 10,
+            widget_viewers_max: 5000,
+            widget_bridge: false,
+            widget_bridge_servers_max: 50,
+        }
+    }
+}
+
+/// The values the operator set, by env name. Blank values count as unset.
+struct Env<'a>(&'a dyn Fn(&str) -> Option<String>);
+
+impl Env<'_> {
+    fn raw(&self, name: &str) -> Option<String> {
+        (self.0)(name)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    }
+
+    fn opt<T: TryFrom<i64>>(&self, name: &str) -> anyhow::Result<Option<T>> {
+        let Some((_, lo, hi)) = RANGES.iter().find(|(n, _, _)| *n == name) else {
+            anyhow::bail!("{name} has no range");
+        };
+        let Some(raw) = self.raw(name) else {
+            return Ok(None);
+        };
+        raw.parse::<i64>()
+            .ok()
+            .filter(|v| (lo..=hi).contains(&v))
+            .and_then(|v| T::try_from(v).ok())
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("{name}: expected {lo} to {hi}, got {raw}"))
+    }
+
+    fn num<T: TryFrom<i64>>(&self, name: &str, default: T) -> anyhow::Result<T> {
+        Ok(self.opt(name)?.unwrap_or(default))
+    }
+
+    fn switch(&self, name: &str, default: bool) -> anyhow::Result<bool> {
+        let Some(raw) = self.raw(name) else {
+            return Ok(default);
+        };
+        match raw.to_ascii_lowercase().as_str() {
+            "on" | "true" | "yes" | "1" => Ok(true),
+            "off" | "false" | "no" | "0" => Ok(false),
+            _ => anyhow::bail!("{name}: expected on or off, got {raw}"),
         }
     }
 }
 
 impl Limits {
+    /// Every limit from `env` (the value of an env name, if set). A value that is not a number
+    /// in its range, or not on or off, is an error naming the variable and the range.
+    pub fn load(env: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<Limits> {
+        let d = Limits::default();
+        let e = Env(env);
+        let limits = Limits {
+            rate_limit_per_second: e.num("RATE_LIMIT_PER_SECOND", d.rate_limit_per_second)?,
+            rate_limit_burst: e.num("RATE_LIMIT_BURST", d.rate_limit_burst)?,
+            ws_connections_per_user: e.num("WS_CONNECTIONS_PER_USER", d.ws_connections_per_user)?,
+            ws_connect_burst: e.num("WS_CONNECT_BURST", d.ws_connect_burst)?,
+            ws_connects_per_minute: e.num("WS_CONNECTS_PER_MINUTE", d.ws_connects_per_minute)?,
+            ws_sockets_per_ip: e.num("WS_SOCKETS_PER_IP", d.ws_sockets_per_ip)?,
+            ws_guest_sockets_per_ip: e.num("WS_GUEST_SOCKETS_PER_IP", d.ws_guest_sockets_per_ip)?,
+            ws_guest_sockets_max: e.num("WS_GUEST_SOCKETS_MAX", d.ws_guest_sockets_max)?,
+            redis_hub_maxlen: e.num("REDIS_HUB_MAXLEN", d.redis_hub_maxlen)?,
+            database_max_connections: e.opt("DATABASE_MAX_CONNECTIONS")?,
+            database_min_connections: e.opt("DATABASE_MIN_CONNECTIONS")?,
+            database_acquire_timeout_secs: e.opt("DATABASE_ACQUIRE_TIMEOUT_SECS")?,
+            database_read_connections: e.opt("DATABASE_READ_CONNECTIONS")?,
+            upload_max_mib: e.num("UPLOAD_MAX_MIB", d.upload_max_mib)?,
+            upload_budget_mib: e.num("UPLOAD_BUDGET_MIB", d.upload_budget_mib)?,
+            upload_buffer_mib: e.num("UPLOAD_BUFFER_MIB", d.upload_buffer_mib)?,
+            message_max_chars: e.num("MESSAGE_MAX_CHARS", d.message_max_chars)?,
+            guest_grant_days: e.num("GUEST_GRANT_DAYS", d.guest_grant_days)?,
+            embed_cache_days: e.num("EMBED_CACHE_DAYS", d.embed_cache_days)?,
+            voice_idle_secs: e.num("VOICE_IDLE_SECS", d.voice_idle_secs)?,
+            voice_room_max: e.num("VOICE_ROOM_MAX", d.voice_room_max)?,
+            relay_user_allocations: e.num("RELAY_USER_ALLOCATIONS", d.relay_user_allocations)?,
+            relay_max_allocations: e.opt("RELAY_MAX_ALLOCATIONS")?,
+            relay_user_kib_per_sec: e.num("RELAY_USER_KIB_PER_SEC", d.relay_user_kib_per_sec)?,
+            relay_max_kib_per_sec: e.num("RELAY_MAX_KIB_PER_SEC", d.relay_max_kib_per_sec)?,
+            report_same_target_hours: e
+                .num("REPORT_SAME_TARGET_HOURS", d.report_same_target_hours)?,
+            report_targets_per_day: e.num("REPORT_TARGETS_PER_DAY", d.report_targets_per_day)?,
+            report_max_per_week: e.num("REPORT_MAX_PER_WEEK", d.report_max_per_week)?,
+            report_retention_days: e.num("REPORT_RETENTION_DAYS", d.report_retention_days)?,
+            e2ee: e.switch("E2EE", d.e2ee)?,
+            e2ee_guests_per_group: e.num("E2EE_GUESTS_PER_GROUP", d.e2ee_guests_per_group)?,
+            e2ee_key_retention_days: e.num("E2EE_KEY_RETENTION_DAYS", d.e2ee_key_retention_days)?,
+            e2ee_compliance: e.switch("E2EE_COMPLIANCE", d.e2ee_compliance)?,
+            sfu_enabled: e.switch("SFU_ENABLED", d.sfu_enabled)?,
+            sfu_max_participants: e.num("SFU_MAX_PARTICIPANTS", d.sfu_max_participants)?,
+            sfu_max_streams: e.num("SFU_MAX_STREAMS", d.sfu_max_streams)?,
+            sfu_user_kib_per_sec: e.num("SFU_USER_KIB_PER_SEC", d.sfu_user_kib_per_sec)?,
+            p2p_backup_max_mib: e.num("P2P_BACKUP_MAX_MIB", d.p2p_backup_max_mib)?,
+            widgets: e.switch("WIDGETS", d.widgets)?,
+            widget_quick_joins_per_hour: e
+                .num("WIDGET_QUICK_JOINS_PER_HOUR", d.widget_quick_joins_per_hour)?,
+            widget_viewers_max: e.num("WIDGET_VIEWERS_MAX", d.widget_viewers_max)?,
+            widget_bridge: e.switch("WIDGET_BRIDGE", d.widget_bridge)?,
+            widget_bridge_servers_max: e
+                .num("WIDGET_BRIDGE_SERVERS_MAX", d.widget_bridge_servers_max)?,
+        };
+        limits.validate()?;
+        Ok(limits)
+    }
+
+    /// The checks between limits.
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.ws_connections_per_user == 0
-            || self.ws_connect_burst == 0
-            || self.ws_connects_per_minute == 0
-            || self.ws_sockets_per_ip == 0
-        {
+        if self.upload_buffer_mib < self.upload_max_mib {
             anyhow::bail!(
-                "WS_CONNECTIONS_PER_USER, WS_CONNECT_BURST, WS_CONNECTS_PER_MINUTE and WS_SOCKETS_PER_IP must be at least 1"
+                "UPLOAD_BUFFER_MIB: expected at least UPLOAD_MAX_MIB ({}), got {}",
+                self.upload_max_mib,
+                self.upload_buffer_mib
             );
         }
-        if self.redis_hub_maxlen < MIN_HUB_MAXLEN {
-            anyhow::bail!("REDIS_HUB_MAXLEN must be at least {MIN_HUB_MAXLEN}");
-        }
-        if self.upload_buffer_mib < 32 {
-            anyhow::bail!("UPLOAD_BUFFER_MIB must be at least 32");
-        }
         Ok(())
+    }
+
+    /// The warning to log at start when `UPLOAD_BUFFER_MIB` is under twice `UPLOAD_MAX_MIB`.
+    pub fn upload_buffer_warning(&self) -> Option<String> {
+        let twice = self.upload_max_mib.saturating_mul(2);
+        match self.upload_buffer_mib < twice {
+            true => Some(format!(
+                "UPLOAD_BUFFER_MIB is {}, under twice UPLOAD_MAX_MIB: one upload can hold most of it while others wait. Set it to at least {twice}.",
+                self.upload_buffer_mib
+            )),
+            false => None,
+        }
     }
 
     /// The realtime limits the hub enforces.
@@ -109,6 +283,16 @@ impl Limits {
         }
     }
 
+    /// The largest upload in bytes (`UPLOAD_MAX_MIB`).
+    pub fn upload_bytes(&self) -> usize {
+        self.upload_max_mib as usize * MIB
+    }
+
+    /// The largest request body that carries an upload: the upload and 1 MiB for the rest.
+    pub fn upload_body_bytes(&self) -> usize {
+        self.upload_bytes() + MIB
+    }
+
     /// Seconds an unused guest grant lives (`GUEST_GRANT_DAYS`, at least one day).
     pub fn guest_grant_ttl(&self) -> i64 {
         self.guest_grant_days.max(1) * 86400
@@ -117,5 +301,134 @@ impl Limits {
     /// Seconds an unreferenced link preview is cached (`EMBED_CACHE_DAYS`, at least one day).
     pub fn embed_cache_ttl(&self) -> i64 {
         self.embed_cache_days.max(1) * 86400
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use super::{Limits, RANGES};
+
+    fn load(pairs: &[(&str, String)]) -> anyhow::Result<Limits> {
+        let set: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
+        Limits::load(&|name| set.get(name).cloned())
+    }
+
+    /// The env names `Limits::load` reads, in order.
+    fn names() -> Vec<String> {
+        let asked = RefCell::new(Vec::new());
+        Limits::load(&|name| {
+            asked.borrow_mut().push(name.to_string());
+            None
+        })
+        .expect("defaults");
+        asked.into_inner()
+    }
+
+    #[test]
+    fn every_range_loads_at_its_edges_and_refuses_past_them() {
+        let read = names();
+        for (name, lo, hi) in RANGES {
+            assert!(read.iter().any(|n| n == name), "{name} is read");
+            let with = |v: i64| {
+                let mut pairs = vec![(name, v.to_string())];
+                match name {
+                    "UPLOAD_MAX_MIB" => pairs.push(("UPLOAD_BUFFER_MIB", "1048576".to_string())),
+                    "UPLOAD_BUFFER_MIB" => pairs.push(("UPLOAD_MAX_MIB", "1".to_string())),
+                    _ => {}
+                }
+                load(&pairs)
+            };
+            for edge in [lo, hi] {
+                assert!(with(edge).is_ok(), "{name}={edge}");
+            }
+            for past in [lo - 1, hi + 1] {
+                let err = with(past).unwrap_err().to_string();
+                assert_eq!(err, format!("{name}: expected {lo} to {hi}, got {past}"));
+            }
+        }
+        for name in read {
+            let numeric = RANGES.iter().any(|(n, _, _)| *n == name);
+            let default = load(&[]).expect("defaults");
+            match numeric {
+                true => {
+                    let err = load(&[(&name, "1.5".to_string())]).unwrap_err();
+                    assert!(err.to_string().starts_with(&format!("{name}: expected ")));
+                }
+                false => {
+                    let on = load(&[(&name, " On ".to_string())]).expect("on");
+                    let off = load(&[(&name, "FALSE".to_string())]).expect("off");
+                    assert_ne!(on, off, "{name}");
+                    assert!(on == default || off == default, "{name}");
+                    for (word, same) in [("true", &on), ("yes", &on), ("1", &on)]
+                        .into_iter()
+                        .chain([("off", &off), ("no", &off), ("0", &off)])
+                    {
+                        assert_eq!(&load(&[(&name, word.to_string())]).expect(word), same);
+                    }
+                    let err = load(&[(&name, "maybe".to_string())]).unwrap_err();
+                    assert_eq!(
+                        err.to_string(),
+                        format!("{name}: expected on or off, got maybe")
+                    );
+                }
+            }
+            assert_eq!(load(&[(&name, "  ".to_string())]).expect("blank"), default);
+        }
+    }
+
+    #[test]
+    fn every_limit_is_documented_with_its_range_and_default() {
+        let example = include_str!("../../../.env.local.example");
+        let lines: Vec<&str> = example.lines().collect();
+        let mut documented = Vec::new();
+        for name in names() {
+            let key = format!("# {name}=");
+            let at = lines
+                .iter()
+                .position(|l| l.starts_with(&key))
+                .unwrap_or_else(|| panic!("{name} is in .env.local.example"));
+            let value = lines[at][key.len()..].to_string();
+            let about: Vec<&str> = lines[..at]
+                .iter()
+                .rev()
+                .take_while(|l| l.starts_with("# ") && !l.contains('='))
+                .copied()
+                .collect();
+            match RANGES.iter().find(|(n, _, _)| *n == name) {
+                Some((_, lo, hi)) => assert!(
+                    about.iter().any(|l| l.contains(&format!("{lo} to {hi}"))),
+                    "{name}: the comment above it gives {lo} to {hi}"
+                ),
+                None => assert!(
+                    about.iter().any(|l| l.contains("on or off")),
+                    "{name}: the comment above it says on or off"
+                ),
+            }
+            documented.push((name, value));
+        }
+        let pairs: Vec<(&str, String)> = documented
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.clone()))
+            .collect();
+        let shown = load(&pairs).expect("the documented values load");
+        let unset = |l: Limits| Limits {
+            database_max_connections: None,
+            database_min_connections: None,
+            database_acquire_timeout_secs: None,
+            database_read_connections: None,
+            relay_max_allocations: None,
+            ..l
+        };
+        assert_eq!(
+            unset(shown),
+            Limits::default(),
+            "the documented values are the defaults"
+        );
     }
 }

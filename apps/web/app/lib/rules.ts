@@ -75,10 +75,12 @@ export const siteFilterOn = (settings: ProfanitySettings) =>
   )
 
 export const NAME_MAX = 100
-export const MESSAGE_MAX = 4000
 export const SLOWMODE_MAX = 21600
 
 export const charCount = (text: string) => Array.from(text).length
+
+// The length from which a message box shows how many characters are left.
+export const counterFrom = (max: number) => max - Math.min(500, Math.floor(max / 4))
 
 export const BIO_MAX = 190
 

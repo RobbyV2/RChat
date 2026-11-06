@@ -45,7 +45,11 @@ async fn banned_user_cannot_join_voice() {
             .expect("sub")
     );
     let access = Access::new(Some(s("bob")), false, set(&[]));
-    assert!(!still_held(&state.db, &access, "rchat").await.expect("held"));
+    assert!(
+        !still_held(&state.db, &access, "rchat", &state.limits)
+            .await
+            .expect("held")
+    );
     crate::api::test_util::done(state, path).await;
 }
 

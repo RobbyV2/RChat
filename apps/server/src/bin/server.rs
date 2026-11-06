@@ -25,6 +25,9 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = CliOverrides::parse();
     let config = AppConfig::load(&cli)?;
+    if let Some(warning) = config.limits.upload_buffer_warning() {
+        tracing::warn!("{warning}");
+    }
 
     let roles = config.roles;
     let db = rust_next::db::open_with(config.database_url.as_deref(), &config.db_options()).await?;
@@ -107,12 +110,13 @@ async fn main() -> anyhow::Result<()> {
             ticks.tick();
         }
     });
-    let touches = state.db.clone();
+    let touches = state.clone();
     tokio::spawn(async move {
+        let ttl = touches.limits.guest_grant_ttl();
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         loop {
             interval.tick().await;
-            if let Err(e) = rust_next::db::flush_grant_touches(&touches).await {
+            if let Err(e) = rust_next::db::flush_grant_touches(&touches.db, ttl).await {
                 tracing::warn!("guest grant refresh failed: {e}");
             }
         }
@@ -134,7 +138,7 @@ async fn main() -> anyhow::Result<()> {
             loop {
                 interval.tick().await;
                 if holds(&stale, "db-sweep", Duration::from_secs(590)).await {
-                    match rust_next::db::sweep_stale(&stale.db).await {
+                    match rust_next::db::sweep_stale(&stale.db, &stale.limits).await {
                         Ok(swept) if swept != rust_next::db::Swept::default() => {
                             info!("swept stale rows: {swept:?}")
                         }

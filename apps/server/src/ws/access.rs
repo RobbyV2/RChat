@@ -22,6 +22,7 @@ use crate::api::token_row;
 use crate::db::{Db, now, setting_on};
 use crate::fanout::Topic;
 use crate::hub::{Epoch, Hub, PRESENCE_SERVERS_MAX, Scope};
+use crate::limits::Limits;
 use crate::state::AppState;
 
 struct Gate {
@@ -633,7 +634,7 @@ impl Access {
             return true;
         }
         let started = Instant::now();
-        match still_held(&state.read(), self, name).await {
+        match still_held(&state.read(), self, name, &state.limits).await {
             Ok(true) => true,
             Ok(false) => self.refresh(state, conn).await,
             Err(e) => self.hold(e, started),
@@ -677,7 +678,7 @@ pub(super) async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::
             Some(user) => authed_sub_ok(db, server, user, access.site_admin).await?,
             None => {
                 let grant = access.grants.get(server).map(String::as_str);
-                guest_sub_ok(db, server, grant).await?
+                guest_sub_ok(db, server, grant, &state.limits).await?
             }
         };
         if allowed {
@@ -729,7 +730,12 @@ pub(super) async fn grant_deadlines(
     Ok(deadlines)
 }
 
-pub(super) async fn still_held(db: &Db, access: &Access, name: &str) -> sqlx::Result<bool> {
+pub(super) async fn still_held(
+    db: &Db,
+    access: &Access,
+    name: &str,
+    limits: &Limits,
+) -> sqlx::Result<bool> {
     if ws_server_password_hash(db, name).await?.is_none() {
         return Ok(true);
     }
@@ -740,7 +746,10 @@ pub(super) async fn still_held(db: &Db, access: &Access, name: &str) -> sqlx::Re
             }
             authed_sub_ok(db, name, user, access.site_admin).await
         }
-        None => guest_sub_ok(db, name, access.grants.get(name).map(String::as_str)).await,
+        None => {
+            let grant = access.grants.get(name).map(String::as_str);
+            guest_sub_ok(db, name, grant, limits).await
+        }
     }
 }
 

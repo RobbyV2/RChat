@@ -1697,7 +1697,9 @@ mod tests {
                 .is_empty()
         );
 
-        crate::db::sweep_stale(db).await.expect("sweep");
+        crate::db::sweep_stale(db, &state.limits)
+            .await
+            .expect("sweep");
         assert_eq!(
             all(&state, "alice", json!({})).await.len(),
             6,
@@ -1706,7 +1708,9 @@ mod tests {
         exec(db, "UPDATE pings SET created_at = 1").await;
         exec(db, "UPDATE friend_pings SET created_at = 1").await;
         exec(db, "UPDATE group_pings SET created_at = 1").await;
-        crate::db::sweep_stale(db).await.expect("sweep old");
+        crate::db::sweep_stale(db, &state.limits)
+            .await
+            .expect("sweep old");
         assert!(
             all(&state, "alice", json!({})).await.is_empty(),
             "then they age out"
@@ -1834,7 +1838,9 @@ mod tests {
             .await
             .expect("mark");
         exec(db, &format!("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2500) INSERT INTO pings(username, kind, scope, server, message_id, actor, created_at, seen, emoji) SELECT 'alice', 'reaction', '{c}', 'rchat', {}, 'bob', {}, 1, '👍' FROM n", second.id, now())).await;
-        let swept = crate::db::sweep_stale(db).await.expect("sweep");
+        let swept = crate::db::sweep_stale(db, &state.limits)
+            .await
+            .expect("sweep");
         assert!(swept.pings >= 500, "the cap trimmed the reactions");
         let unseen = crate::api::pings::group_unseen(db, "alice", &[])
             .await

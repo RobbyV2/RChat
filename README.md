@@ -44,7 +44,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 | P2P threads, pins and search | Reply in threads, pin up to 100 messages a channel and search the messages stored on your device.                                                                                                                                                |
 | P2P voice                    | Join voice channels in P2P servers, with camera and screen share.                                                                                                                                                                                |
 | Account badge                | Show your instance account name to P2P contacts and server members, if you choose to. They see "Confirmed as name". The instance then learns your P2P key. You can turn it off.                                                                  |
-| Uploads                      | Upload files and images up to 25 MB. The server deletes them after one day. The site admin can turn them off.                                                                                                                                    |
+| Uploads                      | Upload files and images up to 25 MB by default. The server deletes them after one day. The site admin can turn them off.                                                                                                                         |
 | Text only mode               | Turn off uploads and P2P attachments. Then messages can contain only text and emoji.                                                                                                                                                             |
 | Link previews                | Show a card for links in a message. The server gets the preview and its image, not your browser.                                                                                                                                                 |
 | Mentions                     | Type `@name` to ping a person. The app highlights messages that mention you.                                                                                                                                                                     |
@@ -323,7 +323,7 @@ Signing uses repository secrets when they exist. Without them the builds are uns
 
 One process is enough for most groups. For more load, run many copies of the same image. All copies share one Postgres database and one Redis server. Valkey, KeyDB and Dragonfly also work.
 
-Give each copy one or more roles with `RCHAT_ROLES`. The roles are `api`, `gateway`, `media`, `search`, `embeds`, `jobs`, `web` and `relay`. Your load balancer sends each path to the correct role.
+Give each copy one or more roles with `RCHAT_ROLES`. The roles are `api`, `gateway`, `media`, `search`, `embeds`, `jobs`, `web`, `relay` and `sfu`. Your load balancer sends each path to the correct role.
 
 There are two examples:
 
@@ -342,26 +342,30 @@ Upgrade all copies together. From 0.3.0 on, an older copy refuses to start once 
 
 ## Configuration
 
-Put settings in `.env.local`. Refer to `.env.local.example` for all settings. These are the most useful ones:
+Put settings in `.env.local`. Refer to `.env.local.example` for all settings and the range of each limit. A limit outside its range stops the server at start. These are the most useful ones:
 
-| Variable          | Default     | What it does                                                                         |
-| ----------------- | ----------- | ------------------------------------------------------------------------------------ |
-| `APP_MODE`        | `full`      | `full` serves the API and the app. `api-only` serves only the API.                   |
-| `HOST`            | `127.0.0.1` | The address the server listens on. Use `0.0.0.0` for remote access.                  |
-| `SERVER_PORT`     | `3000`      | The public port.                                                                     |
-| `DATABASE_URL`    | `rchat.db`  | A sqlite file, or a `postgres://` URL.                                               |
-| `PUBLIC_URL`      | none        | The address people open, for example `https://chat.example.com`.                     |
-| `INSTANCE_NAME`   | `RChat`     | The name people see for your instance.                                               |
-| `GUESTS_ENABLED`  | `true`      | Lets people read public servers without an account.                                  |
-| `P2P_ATTACHMENTS` | `true`      | Lets people send P2P attachments. The admin panel controls it after the first start. |
-| `S3_ENDPOINT`     | none        | Stores uploads in an S3 bucket. Also set the bucket and keys.                        |
-| `RCHAT_ROLES`     | `all`       | The roles this process runs (see Scaling).                                           |
-| `REDIS_URL`       | none        | The shared Redis server for many processes.                                          |
-| `TRUSTED_PROXIES` | none        | Proxy addresses to trust for the real client address. Set it behind a proxy.         |
-| `PUBLIC_STUN`     | `false`     | Gives calls a list of public STUN servers.                                           |
-| `RELAY_ENABLED`   | `false`     | Starts the built-in STUN and TURN relay on UDP port 3478.                            |
-| `RELAY_PUBLIC_IP` | none        | The public IP of the relay. TURN needs it.                                           |
-| `VOICE_ROOM_MAX`  | `25`        | The most people in one voice channel. `0` means no limit.                            |
+| Variable            | Default     | What it does                                                                         |
+| ------------------- | ----------- | ------------------------------------------------------------------------------------ |
+| `APP_MODE`          | `full`      | `full` serves the API and the app. `api-only` serves only the API.                   |
+| `HOST`              | `127.0.0.1` | The address the server listens on. Use `0.0.0.0` for remote access.                  |
+| `SERVER_PORT`       | `3000`      | The public port.                                                                     |
+| `DATABASE_URL`      | `rchat.db`  | A sqlite file, or a `postgres://` URL.                                               |
+| `PUBLIC_URL`        | none        | The address people open, for example `https://chat.example.com`.                     |
+| `INSTANCE_NAME`     | `RChat`     | The name people see for your instance.                                               |
+| `GUESTS_ENABLED`    | `true`      | Lets people read public servers without an account.                                  |
+| `P2P_ATTACHMENTS`   | `true`      | Lets people send P2P attachments. The admin panel controls it after the first start. |
+| `S3_ENDPOINT`       | none        | Stores uploads in an S3 bucket. Also set the bucket and keys.                        |
+| `RCHAT_ROLES`       | `all`       | The roles this process runs (see Scaling).                                           |
+| `REDIS_URL`         | none        | The shared Redis server for many processes.                                          |
+| `TRUSTED_PROXIES`   | none        | Proxy addresses to trust for the real client address. Set it behind a proxy.         |
+| `PUBLIC_STUN`       | `false`     | Gives calls a list of public STUN servers.                                           |
+| `RELAY_ENABLED`     | `false`     | Starts the built-in STUN and TURN relay on UDP port 3478.                            |
+| `RELAY_PUBLIC_IP`   | none        | The public IP of the relay. TURN needs it.                                           |
+| `VOICE_ROOM_MAX`    | `25`        | The most people in one voice channel. `0` means no limit.                            |
+| `UPLOAD_MAX_MIB`    | `25`        | The largest upload in MiB. Raise your proxy's body size limit to match.              |
+| `MESSAGE_MAX_CHARS` | `4000`      | The longest message in characters.                                                   |
+
+When you raise `UPLOAD_MAX_MIB`, keep `UPLOAD_BUFFER_MIB` (256 by default) at least twice as large.
 
 The relay uses UDP ports 49160 to 49415. Open them in the firewall. Reserve them so no other program uses them (`sysctl -w net.ipv4.ip_local_reserved_ports=49160-49415`).
 

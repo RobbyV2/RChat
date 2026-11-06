@@ -5,9 +5,7 @@ use super::perms::{
     perm_subjects,
 };
 use super::{ViewRules, member_role};
-use crate::db::{
-    Db, GRANT_TOUCH_SECS, User, get_user, guest_grant_ttl, now, queue_grant_touches, secret_key,
-};
+use crate::db::{Db, GRANT_TOUCH_SECS, User, get_user, now, queue_grant_touches, secret_key};
 
 pub(super) async fn effective_perms(db: &Db, server: &str, user: &User) -> sqlx::Result<i64> {
     match user.is_site_admin {
@@ -246,9 +244,14 @@ fn password_live(at: &str) -> String {
     )
 }
 
-/// Whether any of `grants` (raw values, as the client holds them) opens `server`. One query
-/// for the whole list.
-pub(super) async fn grants_open(db: &Db, grants: &[String], server: &str) -> sqlx::Result<bool> {
+/// Whether any of `grants` (raw values, as the client holds them, unused grants living `ttl`
+/// seconds) opens `server`. One query for the whole list.
+pub(super) async fn grants_open(
+    db: &Db,
+    grants: &[String],
+    server: &str,
+    ttl: i64,
+) -> sqlx::Result<bool> {
     if grants.is_empty() {
         return Ok(false);
     }
@@ -260,7 +263,7 @@ pub(super) async fn grants_open(db: &Db, grants: &[String], server: &str) -> sql
     );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(server)
-        .bind(t - guest_grant_ttl(db))
+        .bind(t - ttl)
         .bind(t);
     for grant in grants {
         query = query.bind(secret_key(grant));
@@ -275,7 +278,11 @@ pub(super) async fn grants_open(db: &Db, grants: &[String], server: &str) -> sql
     Ok(true)
 }
 
-pub(super) async fn live_grant_servers(db: &Db, grants: &[String]) -> sqlx::Result<Vec<String>> {
+pub(super) async fn live_grant_servers(
+    db: &Db,
+    grants: &[String],
+    ttl: i64,
+) -> sqlx::Result<Vec<String>> {
     if grants.is_empty() {
         return Ok(Vec::new());
     }
@@ -285,9 +292,7 @@ pub(super) async fn live_grant_servers(db: &Db, grants: &[String]) -> sqlx::Resu
         crate::api::placeholders(3, grants.len()),
         password_live("$2")
     );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(t - guest_grant_ttl(db))
-        .bind(t);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(t - ttl).bind(t);
     for grant in grants {
         query = query.bind(secret_key(grant));
     }
@@ -607,7 +612,7 @@ mod tests {
         let (state, path) = temp_state("grant_slide").await;
         let db = &state.db;
         let t = now();
-        let ttl = guest_grant_ttl(db);
+        let ttl = state.limits.guest_grant_ttl();
         for (grant, used) in [
             ("fresh", t - 60),
             ("stale", t - 2 * 86400),
@@ -644,7 +649,7 @@ mod tests {
                 .expect("used")
         };
         assert_eq!(used("stale").await, t - 2 * 86400);
-        assert_eq!(flush_grant_touches(db).await.expect("flush"), 1);
+        assert_eq!(flush_grant_touches(db, ttl).await.expect("flush"), 1);
         assert!(used("stale").await >= t);
         assert_eq!(used("fresh").await, t - 60);
         assert!(
@@ -652,12 +657,16 @@ mod tests {
                 .await
                 .expect("refreshed")
         );
-        assert_eq!(flush_grant_touches(db).await.expect("nothing queued"), 0);
+        assert_eq!(
+            flush_grant_touches(db, ttl).await.expect("nothing queued"),
+            0
+        );
         done(state, path).await;
     }
 
     async fn grant_live(db: &Db, grant: &str, server: &str) -> sqlx::Result<bool> {
-        grants_open(db, &[grant.to_string()], server).await
+        let ttl = crate::limits::Limits::default().guest_grant_ttl();
+        grants_open(db, &[grant.to_string()], server, ttl).await
     }
 
     #[tokio::test]
@@ -665,7 +674,7 @@ mod tests {
         let (state, path) = temp_state("grant_legacy").await;
         let db = &state.db;
         let t = now();
-        let ttl = guest_grant_ttl(db);
+        let ttl = state.limits.guest_grant_ttl();
         for (grant, created) in [("new", t - 60), ("old", t - ttl - 60)] {
             sqlx::query(
                 "INSERT INTO guest_grants(\"grant\", server, created_at) VALUES($1, 'rchat', $2)",
@@ -678,7 +687,13 @@ mod tests {
         }
         assert!(grant_live(db, "new", "rchat").await.expect("new"));
         assert!(!grant_live(db, "old", "rchat").await.expect("old"));
-        assert_eq!(sweep_stale(db).await.expect("sweep").guest_grants, 1);
+        assert_eq!(
+            sweep_stale(db, &state.limits)
+                .await
+                .expect("sweep")
+                .guest_grants,
+            1
+        );
         assert!(grant_live(db, "new", "rchat").await.expect("kept"));
         queue_grant_touches(db, [secret_key("expired")]);
         sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($2, 'rchat', 1, $1)")
@@ -687,7 +702,7 @@ mod tests {
             .execute(db)
             .await
             .expect("expired grant");
-        assert_eq!(flush_grant_touches(db).await.expect("flush"), 1);
+        assert_eq!(flush_grant_touches(db, ttl).await.expect("flush"), 1);
         assert!(
             count(
                 db,
@@ -712,8 +727,90 @@ mod tests {
         );
         queue_grant_touches(db, [secret_key("new")]);
         close(db).await;
-        assert!(flush_grant_touches(db).await.is_err());
+        assert!(flush_grant_touches(db, ttl).await.is_err());
         assert!(grant_touch_queued(db, &secret_key("new")));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn each_state_keeps_its_own_guest_grant_ttl() {
+        use crate::api::access::{Proof, ws_server_open};
+        use crate::limits::Limits;
+        use crate::state::AppState;
+        let (state, path) = temp_state("grant_ttl_per_state").await;
+        let short = state.clone().with_limits(std::sync::Arc::new(Limits {
+            guest_grant_days: 2,
+            ..Limits::default()
+        }));
+        let long = AppState::new(
+            state.db.clone(),
+            state.hub.clone(),
+            None,
+            None,
+            state.instance.clone(),
+        );
+        let db = &state.db;
+        sqlx::query("UPDATE servers SET password_hash = 'x' WHERE name = 'rchat'")
+            .execute(db)
+            .await
+            .expect("protect");
+        let t = now();
+        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, 'rchat', 0, $2)")
+            .bind(secret_key("aged"))
+            .bind(t - 3 * 86400)
+            .execute(db)
+            .await
+            .expect("grant");
+        let aged = vec!["aged".to_string()];
+        let (s, l) = (
+            short.limits.guest_grant_ttl(),
+            long.limits.guest_grant_ttl(),
+        );
+        assert!(!grants_open(db, &aged, "rchat", s).await.expect("short"));
+        assert!(grants_open(db, &aged, "rchat", l).await.expect("long"));
+        assert!(
+            live_grant_servers(db, &aged, s)
+                .await
+                .expect("short")
+                .is_empty()
+        );
+        assert_eq!(
+            live_grant_servers(db, &aged, l).await.expect("long"),
+            ["rchat"]
+        );
+        let open = |limits: &Limits| {
+            let proof = Proof::grants(aged.clone(), limits);
+            async move {
+                ws_server_open(db, "rchat", None, false, &proof)
+                    .await
+                    .expect("gate")
+            }
+        };
+        assert!(!open(&short.limits).await);
+        assert!(open(&long.limits).await);
+        queue_grant_touches(db, [secret_key("aged")]);
+        assert_eq!(flush_grant_touches(db, s).await.expect("short flush"), 0);
+        queue_grant_touches(db, [secret_key("aged")]);
+        assert_eq!(flush_grant_touches(db, l).await.expect("long flush"), 1);
+        sqlx::query("UPDATE guest_grants SET last_used_at = $1")
+            .bind(t - 3 * 86400)
+            .execute(db)
+            .await
+            .expect("age again");
+        assert_eq!(
+            sweep_stale(db, &long.limits)
+                .await
+                .expect("long sweep")
+                .guest_grants,
+            0
+        );
+        assert_eq!(
+            sweep_stale(db, &short.limits)
+                .await
+                .expect("short sweep")
+                .guest_grants,
+            1
+        );
         done(state, path).await;
     }
 }

@@ -55,7 +55,8 @@ import {
   type P2pMessage,
 } from '../../lib/p2p/dm'
 import { emojiBase } from '../../lib/reactions'
-import { MESSAGE_MAX, charCount } from '../../lib/rules'
+import { LIMITS as P2P_LIMITS } from '../../lib/p2p/content'
+import { charCount, counterFrom } from '../../lib/rules'
 import { clock } from '../../lib/slowmode'
 import { useCountdown } from '../../lib/countdown'
 import { composing, sendKey } from '../../lib/keys'
@@ -93,6 +94,7 @@ import { P2pCallRow } from './p2p_call'
 // The message list and composer of a P2P conversation, shared by direct messages and P2P server
 // channels: what differs (the header, who may do what, names, mentions) comes in as props.
 
+const BODY_MAX = P2P_LIMITS.body
 const EMPTY: P2pMessage[] = []
 
 // Shared message components key rows by a number that grows in display order (jumps and the
@@ -670,7 +672,7 @@ export function P2pComposer({
   if (disabled) return <>{disabled}</>
 
   const count = charCount(text)
-  const tooLong = count > MESSAGE_MAX || bodyTooLong(text)
+  const tooLong = count > BODY_MAX || bodyTooLong(text)
   const send = () => {
     if ((!text.trim() && !files) || tooLong || slowLeft > 0) return
     const sent = text
@@ -820,19 +822,19 @@ export function P2pComposer({
           placeholder={streamer ? 'Send a P2P message' : placeholder}
           className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:text-on-surface-variant md:text-sm"
         />
-        {(count > MESSAGE_MAX - 500 || tooLong) && (
+        {(count > counterFrom(BODY_MAX) || tooLong) && (
           <span
             data-too-long={tooLong ? '' : undefined}
             title={
-              count > MESSAGE_MAX
-                ? `Messages can be up to ${MESSAGE_MAX} characters`
+              count > BODY_MAX
+                ? `Messages can be up to ${BODY_MAX} characters`
                 : tooLong
                   ? 'This message takes too much space. Use fewer special characters.'
-                  : `Messages can be up to ${MESSAGE_MAX} characters`
+                  : `Messages can be up to ${BODY_MAX} characters`
             }
             className={`shrink-0 self-center text-xs tabular-nums ${tooLong ? 'font-medium text-error' : 'text-on-surface-variant'}`}
           >
-            {count > MESSAGE_MAX || !tooLong ? MESSAGE_MAX - count : 'Too long'}
+            {count > BODY_MAX || !tooLong ? BODY_MAX - count : 'Too long'}
           </span>
         )}
         <button
@@ -1005,6 +1007,7 @@ export function useP2pList({
     () =>
       editingState
         ? {
+            max: BODY_MAX,
             text: editingState.text,
             listKey: scope,
             focus: editingState.focus,

@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { X } from 'lucide-react'
 import { api } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
+import { limitsOf } from '../lib/instance_limits'
 import { iceOffer } from '../lib/ice'
 import { ownTurn } from '../lib/relays'
 import { RelaySection } from './relay_settings'
@@ -673,6 +674,7 @@ function ShortcutList() {
 }
 
 function InformationSection() {
+  const uploadMib = useStore(s => Math.round(limitsOf(s.instance).upload_bytes / 1048576))
   return (
     <div className="flex flex-col gap-8">
       <Info title="About RChat">
@@ -703,8 +705,8 @@ function InformationSection() {
       </Info>
       <Info title="Files and attachments">
         <p>
-          Server uploads are capped at 25MB and deleted exactly one day after posting; the message
-          stays and shows a removal notice. Uploaded blobs live in the server database.
+          Server uploads are capped at {uploadMib}MB and deleted exactly one day after posting; the
+          message stays and shows a removal notice. Uploaded blobs live in the server database.
         </p>
         <p>
           P2P attachments never touch the server. The file is stored in the sender&apos;s browser

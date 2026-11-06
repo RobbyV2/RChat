@@ -256,11 +256,66 @@ impl Slots {
     }
 }
 
+impl Slot {
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+}
+
 impl Drop for Slot {
     fn drop(&mut self) {
         let mut held = locked(&self.slots.held);
         if let Some(n) = held.get_mut(&self.key) {
             *n = n.saturating_sub(1);
+            if *n == 0 {
+                held.remove(&self.key);
+            }
+        }
+    }
+}
+
+/// Amounts held at once per key, each key up to its own most.
+#[derive(Default)]
+pub struct Shares {
+    held: Mutex<HashMap<String, u64>>,
+}
+
+/// An amount held in `Shares`; dropping it gives the amount back.
+pub struct Share {
+    shares: &'static Shares,
+    key: String,
+    amount: u64,
+}
+
+impl Shares {
+    /// Holds `amount` more for `key`, unless that takes it past `most`.
+    pub fn take(&'static self, key: &str, amount: u64, most: u64) -> Option<Share> {
+        let mut held = locked(&self.held);
+        let n = held.get(key).copied().unwrap_or(0);
+        match n.saturating_add(amount) <= most {
+            true => {
+                held.insert(key.to_string(), n + amount);
+                Some(Share {
+                    shares: self,
+                    key: key.to_string(),
+                    amount,
+                })
+            }
+            false => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn held(&self, key: &str) -> u64 {
+        locked(&self.held).get(key).copied().unwrap_or(0)
+    }
+}
+
+impl Drop for Share {
+    fn drop(&mut self) {
+        let mut held = locked(&self.shares.held);
+        if let Some(n) = held.get_mut(&self.key) {
+            *n = n.saturating_sub(self.amount);
             if *n == 0 {
                 held.remove(&self.key);
             }

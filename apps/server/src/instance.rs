@@ -358,7 +358,12 @@ impl Instance {
             .unwrap_or_else(|| origin.to_string())
     }
 
-    pub fn discovery(&self, origin: &str, features: Features) -> InstanceInfo {
+    pub fn discovery(
+        &self,
+        origin: &str,
+        features: Features,
+        limits: &crate::limits::Limits,
+    ) -> InstanceInfo {
         let origin = origin.to_string();
         let site = Url::parse(&origin).ok();
         let secure = site.as_ref().is_some_and(|u| u.scheme() == "https");
@@ -415,7 +420,10 @@ impl Instance {
             jwks_uri: format!("{origin}{JWKS_PATH}"),
             ice: self.ice_info(&origin),
             features,
-            limits: Limits::current(),
+            limits: Limits::of(limits),
+            e2ee: limits.e2ee,
+            sfu: limits.sfu_enabled,
+            widgets: limits.widgets,
         }
     }
 }
@@ -435,16 +443,16 @@ pub struct Features {
     pub identity_assertions: bool,
 }
 
-/// Fixed limits of this server build.
+/// Limits of this instance.
 #[derive(Clone, Copy, Serialize, ToSchema)]
 pub struct Limits {
-    /// Longest message text, in characters.
+    /// Longest message text, in characters: by default 4000 (`MESSAGE_MAX_CHARS`).
     #[schema(example = 4000)]
     pub message_chars: usize,
     /// Longest username, server, channel or role name, in characters.
     #[schema(example = 100)]
     pub name_chars: usize,
-    /// Largest upload, in bytes.
+    /// Largest upload, in bytes: by default 25 MiB (`UPLOAD_MAX_MIB`).
     #[schema(example = 26214400)]
     pub upload_bytes: usize,
     /// Seconds an uploaded file is kept before it is deleted.
@@ -459,11 +467,11 @@ pub struct Limits {
 }
 
 impl Limits {
-    pub fn current() -> Limits {
+    pub fn of(limits: &crate::limits::Limits) -> Limits {
         Limits {
-            message_chars: crate::api::MESSAGE_MAX,
+            message_chars: limits.message_max_chars,
             name_chars: crate::api::NAME_MAX,
-            upload_bytes: crate::api::media::MAX_SIZE,
+            upload_bytes: limits.upload_bytes(),
             media_retention_secs: crate::api::media::MEDIA_TTL_SECS,
             page_size: crate::api::LIST_PAGE,
             assertion_ttl_secs: crate::identity::ASSERTION_TTL_SECS,
@@ -517,8 +525,14 @@ pub struct InstanceInfo {
     pub ice: Ice,
     /// Optional features and whether they are on.
     pub features: Features,
-    /// Fixed limits.
+    /// Limits of this instance.
     pub limits: Limits,
+    /// End-to-end encryption is on (`E2EE`, off by default).
+    pub e2ee: bool,
+    /// Calls may go through the instance's media server (`SFU_ENABLED`, off by default).
+    pub sfu: bool,
+    /// Embeddable widgets are on (`WIDGETS`, on by default).
+    pub widgets: bool,
 }
 
 /// ICE servers for peer-to-peer connections (calls, P2P files). The instance never adds

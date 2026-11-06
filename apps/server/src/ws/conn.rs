@@ -577,7 +577,7 @@ pub(super) async fn subscribe(
                 Some(user) => authed_sub_ok(&state.read(), &s, user, access.site_admin)
                     .await
                     .unwrap_or(false),
-                None => guest_sub_ok(&state.read(), &s, grant.as_deref())
+                None => guest_sub_ok(&state.read(), &s, grant.as_deref(), &state.limits)
                     .await
                     .unwrap_or(false),
             };

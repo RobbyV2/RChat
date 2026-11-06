@@ -1244,7 +1244,9 @@ mod tests {
                 .expect("nothing left"),
             None
         );
-        let swept = crate::db::sweep_stale(db).await.expect("sweep");
+        let swept = crate::db::sweep_stale(db, &state.limits)
+            .await
+            .expect("sweep");
         assert_eq!(swept.pings, 1, "seen pings stay until they age out");
         sqlx::query("DELETE FROM messages WHERE id = $1")
             .bind(mid)

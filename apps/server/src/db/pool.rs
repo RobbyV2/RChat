@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use sqlx::AnyPool;
@@ -16,7 +16,6 @@ pub type Db = AnyPool;
 const SCHEMA_LOCK: i64 = 0x7263_6861_7400;
 
 static READERS: LazyLock<Mutex<HashMap<String, Db>>> = LazyLock::new(Default::default);
-static LIMITS: LazyLock<Mutex<HashMap<String, Arc<Limits>>>> = LazyLock::new(Default::default);
 
 /// What `open_with` reads from the configuration: the limits, `PASSWORD_PEPPER` and the env
 /// values that seed settings at first start.
@@ -36,22 +35,6 @@ impl std::fmt::Debug for DbOptions {
     }
 }
 
-/// The limits of the state that runs on `db` (`AppState::with_limits`), for code that has only
-/// the pool. The defaults until a state sets them.
-pub(crate) fn limits(db: &Db) -> Arc<Limits> {
-    LIMITS
-        .lock()
-        .ok()
-        .and_then(|limits| limits.get(&pool_key(db)).cloned())
-        .unwrap_or_default()
-}
-
-pub(crate) fn set_limits(db: &Db, limits: Arc<Limits>) {
-    if let Ok(mut map) = LIMITS.lock() {
-        map.insert(pool_key(db), limits);
-    }
-}
-
 pub fn reader(db: &Db) -> Db {
     READERS
         .lock()
@@ -63,9 +46,6 @@ pub fn reader(db: &Db) -> Db {
 pub async fn close(db: &Db) {
     if let Ok(mut peppers) = PEPPERS.lock() {
         peppers.remove(&pool_key(db));
-    }
-    if let Ok(mut limits) = LIMITS.lock() {
-        limits.remove(&pool_key(db));
     }
     let read = READERS
         .lock()

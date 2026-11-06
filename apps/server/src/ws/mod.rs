@@ -2,9 +2,10 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::api::access::{ws_channel_now, ws_server_open, ws_voice_viewable};
+use crate::api::access::{Proof, ws_channel_now, ws_server_open, ws_voice_viewable};
 use crate::db::Db;
 pub use crate::hub::Hub;
+use crate::limits::Limits;
 use crate::state::AppState;
 
 mod access;
@@ -87,7 +88,7 @@ pub(crate) async fn evict_unviewable(state: &AppState, server: &str, channel_id:
             continue;
         }
         for user in users {
-            let open = ws_server_open(&state.read(), server, Some(&user), false, None)
+            let open = ws_server_open(&state.read(), server, Some(&user), false, &Proof::none())
                 .await
                 .unwrap_or(false);
             if !open || !ws_voice_viewable(&state.read(), server, cid, &user).await {
@@ -97,12 +98,18 @@ pub(crate) async fn evict_unviewable(state: &AppState, server: &str, channel_id:
     }
 }
 
-async fn guest_sub_ok(db: &Db, server: &str, grant: Option<&str>) -> sqlx::Result<bool> {
-    ws_server_open(db, server, None, false, grant).await
+async fn guest_sub_ok(
+    db: &Db,
+    server: &str,
+    grant: Option<&str>,
+    limits: &Limits,
+) -> sqlx::Result<bool> {
+    let proof = Proof::grants(grant.map(str::to_string).into_iter().collect(), limits);
+    ws_server_open(db, server, None, false, &proof).await
 }
 
 async fn authed_sub_ok(db: &Db, server: &str, user: &str, site_admin: bool) -> sqlx::Result<bool> {
-    ws_server_open(db, server, Some(user), site_admin, None).await
+    ws_server_open(db, server, Some(user), site_admin, &Proof::none()).await
 }
 
 #[cfg(test)]

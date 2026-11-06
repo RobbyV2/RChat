@@ -17,8 +17,9 @@ import {
   Timer,
   X,
 } from 'lucide-react'
-import { errorText, MAX_UPLOAD, type UploadMode, useMask, useStore, viewKey } from '../lib/store'
-import { MESSAGE_MAX, charCount } from '../lib/rules'
+import { errorText, type UploadMode, useMask, useStore, viewKey } from '../lib/store'
+import { limitsOf } from '../lib/instance_limits'
+import { charCount, counterFrom } from '../lib/rules'
 import { composing, sendKey } from '../lib/keys'
 import { runJoinStep, type JoinStep } from '../lib/join_flow'
 import { spliceText } from '../lib/autocomplete'
@@ -228,6 +229,8 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const pending = useStore(s => (draftKey ? s.pending[draftKey] : undefined)) ?? null
   const uploadsOn = useStore(s => s.settings.asset_uploads)
   const p2pOn = useStore(s => s.settings.p2p_attachments)
+  const uploadMax = useStore(s => limitsOf(s.instance).upload_bytes)
+  const max = useStore(s => limitsOf(s.instance).message_chars)
   const canAttach = uploadsOn || p2pOn
   const uploadFile = useStore(s => s.uploadFile)
   const toggleSpoiler = useStore(s => s.toggleSpoiler)
@@ -378,14 +381,14 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
         ? { kind: 'dm', id: view.dmId }
         : null
 
-  const switchable = pending !== null && uploadsOn && p2pOn && pending.file.size <= MAX_UPLOAD
+  const switchable = pending !== null && uploadsOn && p2pOn && pending.file.size <= uploadMax
 
   const attach = (file: File | null) => {
     if (draftKey) uploadFile(draftKey, file)
   }
 
   const count = charCount(text)
-  const tooLong = count > MESSAGE_MAX
+  const tooLong = count > max
 
   const closeBar = replying && draftKey ? () => cancelReply(draftKey) : null
   const bar =
@@ -584,12 +587,12 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           placeholder={placeholder}
           className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:text-on-surface-variant md:text-sm"
         />
-        {count > MESSAGE_MAX - 500 && (
+        {count > counterFrom(max) && (
           <span
-            title={`Messages can be up to ${MESSAGE_MAX} characters`}
+            title={`Messages can be up to ${max} characters`}
             className={`shrink-0 self-center text-xs tabular-nums ${tooLong ? 'font-medium text-error' : 'text-on-surface-variant'}`}
           >
-            {MESSAGE_MAX - count}
+            {max - count}
           </span>
         )}
         <button

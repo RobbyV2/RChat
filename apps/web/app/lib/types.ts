@@ -925,6 +925,10 @@ export interface InstanceInfo {
   ice?: InstanceIce
   features: InstanceFeatures
   limits: InstanceLimits
+  // Absent before 0.4.0.
+  e2ee?: boolean
+  sfu?: boolean
+  widgets?: boolean
 }
 
 // ICE servers the instance offers for P2P connections; absent on instances before API 1.1.

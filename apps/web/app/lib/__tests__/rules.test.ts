@@ -14,6 +14,7 @@ import {
   canPromote,
   canTransferTo,
   charCount,
+  counterFrom,
   expiryText,
   mediaError,
   memberPerms,
@@ -212,6 +213,15 @@ describe('charCount', () => {
   test('counts code points, not UTF-16 units', () => {
     expect(charCount('😀😀')).toBe(2)
     expect(charCount('abc')).toBe(3)
+  })
+})
+
+describe('counterFrom', () => {
+  test('the counter shows for the last 500 characters, or the last quarter of short limits', () => {
+    expect(counterFrom(4000)).toBe(3500)
+    expect(counterFrom(200)).toBe(150)
+    expect(counterFrom(10)).toBe(8)
+    expect(counterFrom(1)).toBe(1)
   })
 })
 

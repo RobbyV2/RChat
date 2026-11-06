@@ -1413,7 +1413,13 @@ pub(crate) async fn get_poll(
 ) -> Result<Json<Poll>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, user.as_ref()).await?;
-    resolve_message(db, id, user.as_ref(), &Proof::headers(&headers)).await?;
+    resolve_message(
+        db,
+        id,
+        user.as_ref(),
+        &Proof::headers(&headers, &state.limits),
+    )
+    .await?;
     Ok(Json(view_for(db, id, user.as_ref()).await?))
 }
 
@@ -1713,7 +1719,13 @@ pub(crate) async fn list_voters(
     } = q;
     let db = &state.read();
     require_guest_ok(db, user.as_ref()).await?;
-    resolve_message(db, id, user.as_ref(), &Proof::headers(&headers)).await?;
+    resolve_message(
+        db,
+        id,
+        user.as_ref(),
+        &Proof::headers(&headers, &state.limits),
+    )
+    .await?;
     let poll = view_for(db, id, user.as_ref()).await?;
     if poll.anonymous {
         return Err(ApiError(

@@ -59,7 +59,8 @@ import {
   type Point,
   type ProfileAction,
 } from '../lib/profile'
-import { MESSAGE_MAX, memberPerms, rolePerms } from '../lib/rules'
+import { memberPerms, rolePerms } from '../lib/rules'
+import { limitsOf } from '../lib/instance_limits'
 import { sendKey } from '../lib/keys'
 import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
@@ -179,6 +180,7 @@ function Card({ target }: { target: ProfileTarget }) {
   const view = useStore(s => s.view)
   const dialog = useStore(s => s.activeDialog)
   const me = useStore(s => s.me)
+  const messageMax = useStore(s => limitsOf(s.instance).message_chars)
   const guest = useStore(s => s.guest)
   const streamer = useStore(s => s.streamer)
   const homeHost = useStore(s => s.instanceHost)
@@ -671,7 +673,7 @@ function Card({ target }: { target: ProfileTarget }) {
             ) : (
               <input
                 value={text}
-                maxLength={MESSAGE_MAX}
+                maxLength={messageMax}
                 onChange={e => setText(e.target.value)}
                 onKeyDown={e => {
                   if (sendKey(e)) {

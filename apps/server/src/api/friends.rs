@@ -2145,7 +2145,9 @@ mod tests {
                 .await
                 .expect("ping");
         }
-        crate::db::sweep_stale(&state.db).await.expect("sweep");
+        crate::db::sweep_stale(&state.db, &state.limits)
+            .await
+            .expect("sweep");
         let left: Vec<i64> = sqlx::query("SELECT id FROM friend_pings ORDER BY id")
             .fetch_all(&state.db)
             .await

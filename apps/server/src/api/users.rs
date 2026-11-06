@@ -89,8 +89,15 @@ async fn profile_member(
     server: &str,
     username: &str,
 ) -> Result<Option<ProfileMember>, ApiError> {
-    let Some(access) =
-        allowed(resolve_server(&state.db, server, viewer, &Proof::headers(headers)).await)?
+    let Some(access) = allowed(
+        resolve_server(
+            &state.db,
+            server,
+            viewer,
+            &Proof::headers(headers, &state.limits),
+        )
+        .await,
+    )?
     else {
         return Ok(None);
     };

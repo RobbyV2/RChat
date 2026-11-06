@@ -5,7 +5,7 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use axum::Json;
-use axum::extract::{FromRequest, Multipart, Path, Query, Request, State};
+use axum::extract::{FromRequest, Path, Query, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
@@ -36,8 +36,8 @@ use crate::api::pings::{
 };
 use crate::api::polls::PollReq;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, MESSAGE_MAX, Message, OkResp, ProfanityTarget, Settings,
-    UserRef, allowed, bad, check_len, embeds, media, ok, placeholders, valid_color,
+    ApiError, ApiErrorBody, Authed, Message, OkResp, ProfanityTarget, Settings, UserRef, allowed,
+    bad, check_len, embeds, media, ok, placeholders, valid_color,
 };
 use crate::db::{AvatarKind, ChannelKind, Db, User, get_user, lock_server, now, pepper};
 use crate::net_guard::{self, AllowedHost, Http, Policy};
@@ -75,6 +75,11 @@ pub const HOOK_BURST: u32 = 5;
 const HOOK_WINDOW: Duration = Duration::from_secs(2);
 /// Webhook messages per channel per minute, all of its webhooks together.
 pub const CHANNEL_BUDGET: u32 = 30;
+/// Most bytes of JSON in a webhook message: the body, or the `payload_json` part.
+const EXECUTE_JSON_MAX: usize = 2 * 1024 * 1024;
+/// Most bytes of a multipart body of a webhook that can not upload, or whose owner has no room
+/// free for it: its JSON and part headers.
+const EXECUTE_FORM_MAX: usize = EXECUTE_JSON_MAX + 64 * 1024;
 /// The fixed User-Agent of outgoing requests: never anything about the instance or its owner.
 pub const USER_AGENT: &str = "rchat-webhooks/1.0";
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -1051,7 +1056,8 @@ pub enum MentionKind {
 /// A message posted through a webhook. It needs `content`, an embed, a file or a poll.
 #[derive(Default, Deserialize, ToSchema)]
 pub struct ExecuteReq {
-    /// Text, at most 4000 characters, like a user message.
+    /// Text, at most `limits.message_chars` characters (by default 4000,
+    /// `MESSAGE_MAX_CHARS`), like a user message.
     #[serde(default)]
     pub content: String,
     /// Name for this message only, 1 to 80 characters, checked like the webhook's name.
@@ -1221,38 +1227,56 @@ async fn read_execute(
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.to_ascii_lowercase().starts_with("multipart/form-data"));
+    let declared = media::declared_length(req.headers());
     if !multipart {
+        let (parts, body) = req.into_parts();
+        let json = media::read_json(body.into_data_stream(), declared, EXECUTE_JSON_MAX).await?;
+        let req = Request::from_parts(parts, axum::body::Body::from(json));
         let Json(body) = Json::<ExecuteReq>::from_request(req, state)
             .await
             .map_err(|e| bad(&e.body_text()))?;
         return Ok((body, None));
     }
-    let declared = media::declared_length(req.headers());
-    let mut form = Multipart::from_request(req, state)
+    let file_only = declared.is_some_and(|n| n > EXECUTE_FORM_MAX as u64);
+    let room = async {
+        let charge = upload_charge(&state.db, hook).await?;
+        let slot = media::reading_slot(&state.db, charge.account)?;
+        let body = state.limits.upload_body_bytes();
+        media::reserve(slot, declared, body, file_only).await
+    };
+    let (most, mut held, mut refused) = match room.await {
+        Ok(held) => (usize::MAX, Some(held), None),
+        Err(e) if file_only => return Err(e),
+        Err(e) => (EXECUTE_FORM_MAX, None, Some(e)),
+    };
+    let (mut form, watch) = media::form(req, most)
         .await
         .map_err(|e| bad(&e.body_text()))?;
+    let over = || media::json_over(EXECUTE_JSON_MAX);
     let mut body: Option<ExecuteReq> = None;
     let mut file = None;
     while let Some(field) = form
         .next_field()
         .await
-        .map_err(|e| ApiError(StatusCode::BAD_REQUEST, e.to_string()))?
+        .map_err(|e| watch.error(over, ApiError(StatusCode::BAD_REQUEST, e.to_string())))?
     {
         match field.name() {
             Some("payload_json") => {
-                let text = field
-                    .text()
-                    .await
-                    .map_err(|e| ApiError(StatusCode::BAD_REQUEST, e.to_string()))?;
-                body = Some(serde_json::from_str(&text).map_err(|_| bad("Invalid payload_json"))?);
+                let json = media::read_json_part(field, EXECUTE_JSON_MAX, &watch).await?;
+                body =
+                    Some(serde_json::from_slice(&json).map_err(|_| bad("Invalid payload_json"))?);
             }
             Some(_) | None if file.is_none() && field.file_name().is_some() => {
+                let held = match (held.take(), refused.take()) {
+                    (Some(held), _) => held,
+                    (None, Some(e)) => return Err(e),
+                    (None, None) => return Err(bad("Send one file and payload_json")),
+                };
                 let filename = media::clean_filename(field.file_name().unwrap_or("file"));
                 let mime =
                     media::clean_mime(field.content_type().unwrap_or("application/octet-stream"));
-                let charge = upload_charge(&state.db, hook).await?;
-                let slot = media::reading_slot(&state.db, charge.account)?;
-                let data = media::read_file(field, declared, slot).await?;
+                let max = state.limits.upload_bytes();
+                let data = media::read_file(field, max, held, &watch).await?;
                 file = Some(Upload {
                     filename,
                     mime,
@@ -1297,7 +1321,7 @@ async fn post(
     } = req;
     let db = &state.db;
     let settings = Settings::cached(db).await;
-    check_len(&content, MESSAGE_MAX, "Message")?;
+    check_len(&content, state.limits.message_max_chars, "Message")?;
     settings.check_profanity(ProfanityTarget::Messages, &content)?;
     validate_embeds(&cards, &settings)?;
     let name = match username.as_deref() {
@@ -1432,7 +1456,7 @@ async fn post(
         embeds: cards,
     };
     let message = insert_message(
-        db,
+        state,
         Some(hook.channel_id),
         None,
         thread_root_id,
@@ -1481,11 +1505,17 @@ async fn post(
 /// Execute a webhook
 ///
 /// Posts a message into the webhook's channel as the webhook. No bearer token: the URL is the
-/// secret. Send JSON, or `multipart/form-data` with the JSON in a `payload_json` part and one
-/// file part (only while file uploads are on and the webhook has an owner; at most 25 MiB). Files
+/// secret. Send JSON (at most 2 MiB), or `multipart/form-data` with the JSON in a `payload_json`
+/// part (at most 2 MiB) and one file part (only while file uploads are on and the webhook has an
+/// owner; at most `limits.upload_bytes` of `GET /api/instance`, by default 25 MiB
+/// (`UPLOAD_MAX_MIB`)). A multipart body takes room for its whole declared length in the
+/// owner's share of the upload buffer before it is read, like the owner's own uploads. When the
+/// webhook can not upload, or a body not declared over 2 MiB and 64 KiB finds no room free at
+/// once, the body may be at most 2 MiB and 64 KiB and a file part in it is refused. A body that
+/// sends nothing for 30 seconds, or takes over 10 minutes in all, is dropped with 408. Files
 /// count against the upload budget of the webhook's owner, and the webhooks of one server
-/// together get one more budget of the same size. The same rules as a user's
-/// message apply: length limit, profanity filter, slow mode (per webhook, no exemption),
+/// together get one more budget of the same size. The same rules as a
+/// user's message apply: length limit, profanity filter, slow mode (per webhook, no exemption),
 /// attachment switches, and reply and thread placement inside its channel. The webhook can
 /// always send in its own channel and nowhere else; timeouts and blocks do not apply to it.
 /// `@username` mentions ping as usual unless `allowed_mentions` narrows them; `@everyone`,
@@ -1493,7 +1523,7 @@ async fn post(
 /// and still has the Mention everyone permission (mentionable roles also when asked). Rate
 /// limits: 5 per 2 seconds per webhook, 30 per minute per channel, and the strict bucket per
 /// IP. Wrong ids, wrong tokens and deleted webhooks all get the same 404.
-#[utoipa::path(post, path = "/api/webhooks/{id}/{token}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ExecuteQuery), request_body(content = ExecuteReq, description = "JSON, or multipart with `payload_json` and one file", content_type = "application/json"), responses((status = 200, description = "With `wait=true`: the posted message", body = Message), (status = 204, description = "Posted"), (status = 400, description = "Empty message, text over 4000 characters, invalid embeds, name, avatar, poll, `reply_to` (`Cannot reply to that message`) or `thread_id` (`Unknown thread`), or the profanity filter", body = ApiErrorBody), (status = 403, description = "`File uploads are turned off on this server`, or `This webhook has no owner, so it cannot upload files`", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`: no such webhook or a wrong token (identical responses)", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the file sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 413, description = "File over 25 MiB", body = ApiErrorBody), (status = 429, description = "Slow mode (`Slow mode: wait Ns`), the webhook or channel budget (`Too many attempts. Try again later`), the upload budget of the webhook's owner or of the server's webhooks (`Upload limit reached: ...`), 3 uploads of the owner already being read (`Too many uploads at once: ...`), or the strict bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`", body = ApiErrorBody)), security(()))]
+#[utoipa::path(post, path = "/api/webhooks/{id}/{token}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ExecuteQuery), request_body(content = ExecuteReq, description = "JSON, or multipart with `payload_json` and one file", content_type = "application/json"), responses((status = 200, description = "With `wait=true`: the posted message", body = Message), (status = 204, description = "Posted"), (status = 400, description = "Empty message, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), invalid embeds, name, avatar, poll, `reply_to` (`Cannot reply to that message`) or `thread_id` (`Unknown thread`), or the profanity filter", body = ApiErrorBody), (status = 403, description = "`File uploads are turned off on this server`, or `This webhook has no owner, so it cannot upload files`: for a file part, or a multipart body declared over 2 MiB and 64 KiB", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`: no such webhook or a wrong token (identical responses)", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`), or JSON (the body or `payload_json`) over 2 MiB, or a multipart body over 2 MiB and 64 KiB for a webhook that can not upload (`JSON exceeds 2MB limit`)", body = ApiErrorBody), (status = 429, description = "Slow mode (`Slow mode: wait Ns`), the webhook or channel budget (`Too many attempts. Try again later`), the upload budget of the webhook's owner or of the server's webhooks (`Upload limit reached: ...`), 3 uploads or multipart bodies of the owner, or ones holding the owner's share of the upload buffer, already being read, for a file part or a multipart body declared over 2 MiB and 64 KiB (`Too many uploads at once: ...`), or the strict bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`", body = ApiErrorBody)), security(()))]
 pub(crate) async fn execute(
     State(state): State<AppState>,
     Path((id, token)): Path<(String, String)>,
@@ -1559,7 +1589,8 @@ async fn own_message(db: &Db, hook: &Hook, message_id: &str) -> Result<i64, ApiE
 /// New text or embeds for a webhook message; omitted fields stay.
 #[derive(Deserialize, ToSchema)]
 pub struct WebhookEdit {
-    /// New text, at most 4000 characters.
+    /// New text, at most `limits.message_chars` characters (by default 4000,
+    /// `MESSAGE_MAX_CHARS`).
     #[serde(default)]
     pub content: Option<String>,
     /// New embeds (replacing the old ones), at most 10; `[]` removes them.
@@ -1601,7 +1632,7 @@ pub(crate) async fn edit_hook_message(
     let settings = Settings::cached(db).await;
     let content = content.unwrap_or_else(|| old.clone());
     let cards = cards.unwrap_or(old_cards.clone());
-    check_len(&content, MESSAGE_MAX, "Message")?;
+    check_len(&content, state.limits.message_max_chars, "Message")?;
     settings.check_profanity(ProfanityTarget::Messages, &content)?;
     validate_embeds(&cards, &settings)?;
     if blank(&content) && !attached && cards.is_empty() {
@@ -3791,6 +3822,300 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn execute_json_is_capped_apart_from_the_upload_size() {
+        use crate::server::client_ip::{ClientIp, ProxyTrust};
+        let (state, path, cid) = setup("wh_json_cap").await;
+        let state = state.with_limits(Arc::new(crate::limits::Limits {
+            upload_max_mib: 64,
+            ..Default::default()
+        }));
+        let made = create(&state, "owner", cid, "Big").await.expect("create");
+        let at = format!("/webhooks/{}/{}", made.webhook.id, made.token);
+        let trusted = ProxyTrust::from_config(false, Some("127.0.0.1")).expect("trust");
+        let app = crate::api::routes(
+            state.clone(),
+            &crate::config::Roles::ALL,
+            ClientIp(trusted),
+            None,
+        )
+        .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+        });
+        let mib = 1024 * 1024;
+        let padded = |n: usize| json!({"content": "hi", "pad": "x".repeat(n)}).to_string();
+        let client = reqwest::Client::new();
+        let send = |body: String, kind: &str| {
+            client
+                .post(format!("http://{addr}{at}"))
+                .header("content-type", kind)
+                .body(body)
+                .send()
+        };
+        let res = send(padded(mib + mib / 2), "application/json")
+            .await
+            .expect("send");
+        assert_eq!(res.status(), StatusCode::NO_CONTENT, "1.5 MiB of JSON fits");
+        let boundary = "XyZ";
+        let parts = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n{}\r\n--{boundary}--\r\n",
+            padded(3 * mib)
+        );
+        for (body, kind) in [
+            (padded(3 * mib), "application/json".to_string()),
+            (parts, format!("multipart/form-data; boundary={boundary}")),
+        ] {
+            let res = send(body, &kind).await.expect("send");
+            let status = res.status();
+            let text = res.text().await.expect("text");
+            assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{kind}: {text}");
+            assert!(text.contains("JSON exceeds 2MB limit"), "{text}");
+        }
+        let mut sock = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let head = format!(
+            "POST {at} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+            3 * mib
+        );
+        sock.write_all(head.as_bytes()).await.expect("head");
+        sock.write_all(&[b' '; 1024]).await.expect("start");
+        let mut got = [0u8; 12];
+        tokio::time::timeout(Duration::from_secs(10), sock.read_exact(&mut got))
+            .await
+            .expect("answered before the body arrives")
+            .expect("read");
+        assert_eq!(&got, b"HTTP/1.1 413");
+        server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn execute_forms_take_room_or_are_capped_before_parsing() {
+        use crate::server::client_ip::{ClientIp, ProxyTrust};
+        let (state, path, cid) = setup("wh_form_room").await;
+        let db = &state.db;
+        let made = create(&state, "owner", cid, "Files").await.expect("create");
+        let at = format!("/webhooks/{}/{}", made.webhook.id, made.token);
+        let trusted = ProxyTrust::from_config(false, Some("127.0.0.1")).expect("trust");
+        let app = crate::api::routes(
+            state.clone(),
+            &crate::config::Roles::ALL,
+            ClientIp(trusted),
+            None,
+        )
+        .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+        });
+        let mib = 1024 * 1024;
+        let open = |length: Option<usize>| {
+            let at = at.clone();
+            async move {
+                let mut sock = tokio::net::TcpStream::connect(addr).await.expect("connect");
+                let length = match length {
+                    Some(n) => format!("Content-Length: {n}"),
+                    None => "Transfer-Encoding: chunked".to_string(),
+                };
+                let head = format!(
+                    "POST {at} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: multipart/form-data; boundary=XB\r\n{length}\r\n\r\n"
+                );
+                sock.write_all(head.as_bytes()).await.expect("head");
+                sock
+            }
+        };
+        let status = |mut sock: tokio::net::TcpStream| async move {
+            let mut got = [0u8; 12];
+            tokio::time::timeout(Duration::from_secs(10), sock.read_exact(&mut got))
+                .await
+                .expect("answered before the body arrives")
+                .expect("read");
+            String::from_utf8_lossy(&got).to_string()
+        };
+        let until = |kib: u64, why: &'static str| async move {
+            let ceiling = std::time::Instant::now() + Duration::from_secs(10);
+            while media::share_held(db, "owner") != kib {
+                assert!(std::time::Instant::now() < ceiling, "{why}");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        let mut sock = open(Some(mib)).await;
+        sock.write_all(&[b'x'; 1024]).await.expect("preamble");
+        until(
+            1024,
+            "an owned webhook's body takes room for its owner first",
+        )
+        .await;
+        drop(sock);
+        until(0, "and gives it back when the client goes").await;
+        exec(db, "UPDATE webhooks SET creator = NULL").await;
+        let mut sock = open(Some(3 * mib)).await;
+        sock.write_all(&[b'x'; 1024]).await.expect("preamble");
+        assert_eq!(
+            status(sock).await,
+            "HTTP/1.1 403",
+            "an owner-less webhook takes no body that only a file could fill"
+        );
+        let sock = open(None).await;
+        let (mut read, mut write) = sock.into_split();
+        let writer = tokio::spawn(async move {
+            let mut left = EXECUTE_FORM_MAX + 1;
+            while left > 0 {
+                let n = left.min(64 * 1024);
+                let chunk = [
+                    format!("{n:x}\r\n").into_bytes(),
+                    vec![b'x'; n],
+                    b"\r\n".to_vec(),
+                ];
+                if write.write_all(&chunk.concat()).await.is_err() {
+                    break;
+                }
+                left -= n;
+            }
+            write
+        });
+        let mut got = [0u8; 12];
+        tokio::time::timeout(Duration::from_secs(10), read.read_exact(&mut got))
+            .await
+            .expect("answered")
+            .expect("read");
+        assert_eq!(&got, b"HTTP/1.1 413", "nor more than its JSON");
+        drop(writer.await);
+        server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn text_forms_post_while_the_owner_has_no_room() {
+        let (state, path, cid) = setup("wh_form_busy").await;
+        let db = &state.db;
+        let made = create(&state, "owner", cid, "Files").await.expect("create");
+        let id = made.webhook.id.to_string();
+        let form = |file: bool| {
+            let file = match file {
+                true => {
+                    "--XyZ\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nall good\r\n"
+                }
+                false => "",
+            };
+            format!(
+                "--XyZ\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n{{\"content\": \"hi\"}}\r\n{file}--XyZ--\r\n"
+            )
+        };
+        let send = |body: String, declared: Option<usize>| {
+            let mut req = Request::builder()
+                .method("POST")
+                .header(header::CONTENT_TYPE, "multipart/form-data; boundary=XyZ");
+            if let Some(n) = declared {
+                req = req.header(header::CONTENT_LENGTH, n);
+            }
+            let req = req.body(Body::from(body)).expect("request");
+            HOOK_PACE.forget_prefix(&format!("{}\n", crate::db::pool_key(db)));
+            execute(
+                State(state.clone()),
+                Path((id.clone(), made.token.clone())),
+                Query(ExecuteQuery { wait: false }),
+                req,
+            )
+        };
+        let status = |r: Result<Response, ApiError>| match r {
+            Ok(r) => (r.status(), String::new()),
+            Err(ApiError(s, m)) => (s, m),
+        };
+        let length = |file: bool| Some(form(file).len());
+        let posted = (StatusCode::NO_CONTENT, String::new());
+        let busy = (
+            StatusCode::TOO_MANY_REQUESTS,
+            format!(
+                "Too many uploads at once: up to {} per account",
+                media::UPLOADS_PER_ACCOUNT
+            ),
+        );
+        let slots: Vec<_> = (0..media::UPLOADS_PER_ACCOUNT)
+            .map(|_| media::reading_slot(db, "owner").expect("slot"))
+            .collect();
+        for (text, file) in [(length(false), length(true)), (None, None)] {
+            assert_eq!(
+                status(send(form(false), text).await),
+                posted,
+                "a text-only form posts while the owner reads its most uploads"
+            );
+            assert_eq!(
+                status(send(form(true), file).await),
+                busy,
+                "a file is refused"
+            );
+        }
+        assert_eq!(
+            status(send(form(false), Some(3 * 1024 * 1024)).await),
+            busy,
+            "a body only a file could fill is refused before it is read"
+        );
+        drop(slots);
+        let full = Arc::new(Semaphore::new(0));
+        let started = Instant::now();
+        for (text, file) in [(length(false), length(true)), (None, None)] {
+            assert_eq!(
+                status(media::with_buffer(full.clone(), send(form(false), text)).await),
+                posted,
+                "nor waits for room in a full buffer"
+            );
+            assert_eq!(
+                status(media::with_buffer(full.clone(), send(form(true), file)).await),
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Too many uploads right now, try again in a moment".to_string()
+                )
+            );
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "without waiting"
+        );
+        assert_eq!(status(send(form(true), length(true)).await), posted);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn hook_messages_follow_the_configured_length() {
+        let (state, path, cid) = setup("wh_length").await;
+        let state = state.with_limits(std::sync::Arc::new(crate::limits::Limits {
+            message_max_chars: 5,
+            ..Default::default()
+        }));
+        let made = create(&state, "owner", cid, "Deploys")
+            .await
+            .expect("create");
+        let id = made.webhook.id.to_string();
+        assert_eq!(
+            code(run(&state, &id, &made.token, json!({"content": "x".repeat(6)})).await),
+            (
+                StatusCode::BAD_REQUEST,
+                "Message must be at most 5 characters".to_string()
+            )
+        );
+        HOOK_PACE.forget_prefix(&format!("{}\n", crate::db::pool_key(&state.db)));
+        run(&state, &id, &made.token, json!({"content": "x".repeat(5)}))
+            .await
+            .expect("5 fit");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn execute_checks_tokens_and_validates_like_users() {
         let (state, path, cid) = setup("wh_execute").await;
         let db = &state.db;
@@ -3824,7 +4149,7 @@ mod tests {
         }
         let cases = [
             json!({"content": ""}),
-            json!({"content": "x".repeat(MESSAGE_MAX + 1)}),
+            json!({"content": "x".repeat(state.limits.message_max_chars + 1)}),
             json!({"content": "x", "username": "owner"}),
             json!({"content": "x", "avatar": "red"}),
             json!({"embeds": [{}]}),

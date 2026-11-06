@@ -3,7 +3,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Pencil } from 'lucide-react'
 import { useStore, type ContextMenuItem } from '../lib/store'
-import { MESSAGE_MAX, charCount } from '../lib/rules'
+import { limitsOf } from '../lib/instance_limits'
+import { charCount, counterFrom } from '../lib/rules'
 import { sendKey } from '../lib/keys'
 import type { ToolbarAction } from './message_toolbar'
 import { useMedia } from './context_menu'
@@ -47,6 +48,7 @@ const touchBtn = 'min-h-10 rounded-full px-4 text-sm font-medium'
 
 // An edit box bound to something other than the store's edit state (a P2P conversation).
 export interface EditBinding {
+  max: number
   text: string
   listKey: string
   focus: number
@@ -63,6 +65,8 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
   const storeSet = useStore(s => s.setEditText)
   const storeSave = useStore(s => s.saveEdit)
   const storeCancel = useStore(s => s.cancelEdit)
+  const storeMax = useStore(s => limitsOf(s.instance).message_chars)
+  const max = binding ? binding.max : storeMax
   const text = binding ? binding.text : storeText
   const listKey = binding ? binding.listKey : storeKey
   const focusAsk = binding ? binding.focus : storeFocus
@@ -108,7 +112,7 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
   }, [focusAsk])
 
   const count = charCount(text)
-  const tooLong = count > MESSAGE_MAX
+  const tooLong = count > max
   const save = () => saveEdit(fine)
   const cancel = () => cancelEdit(fine)
 
@@ -142,12 +146,12 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
           }}
           className="max-h-80 flex-1 resize-none bg-transparent py-0.5 text-base leading-relaxed outline-none md:text-sm"
         />
-        {count > MESSAGE_MAX - 500 && (
+        {count > counterFrom(max) && (
           <span
-            title={`Messages can be up to ${MESSAGE_MAX} characters`}
+            title={`Messages can be up to ${max} characters`}
             className={`shrink-0 self-center text-xs tabular-nums ${tooLong ? 'font-medium text-error' : 'text-on-surface-variant'}`}
           >
-            {MESSAGE_MAX - count}
+            {max - count}
           </span>
         )}
       </div>

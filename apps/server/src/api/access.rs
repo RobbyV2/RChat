@@ -13,6 +13,7 @@ use crate::api::auth::{Work, derive_key, dummy_hash, verify_in};
 use crate::api::budget::{self, Backoff, Budget, slow_down};
 use crate::api::{ApiError, Channel, ServerSummaryLite, header_grants};
 use crate::db::{ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, User, now, pool_key};
+use crate::limits::Limits;
 use crate::ws::UserScope;
 
 pub mod perms;
@@ -108,9 +109,12 @@ enum Slot<'a> {
     Open(Option<&'a str>),
 }
 
+/// What a request shows to get into a server: a password, and guest grants that live as long as
+/// the `GUEST_GRANT_DAYS` of the state that checks them.
 pub struct Proof<'a> {
     password: Slot<'a>,
     grants: Vec<String>,
+    grant_ttl: i64,
 }
 
 impl<'a> Proof<'a> {
@@ -118,29 +122,31 @@ impl<'a> Proof<'a> {
         Proof {
             password: Slot::Closed,
             grants: Vec::new(),
+            grant_ttl: 0,
         }
     }
 
-    pub fn grants(grants: Vec<String>) -> Proof<'static> {
-        Proof {
-            password: Slot::Closed,
-            grants,
-        }
+    pub fn grants(grants: Vec<String>, limits: &Limits) -> Proof<'static> {
+        Proof::none().and_grants(grants, limits)
     }
 
-    pub fn headers(headers: &HeaderMap) -> Proof<'static> {
-        Proof::grants(header_grants(headers))
+    pub fn headers(headers: &HeaderMap, limits: &Limits) -> Proof<'static> {
+        Proof::grants(header_grants(headers), limits)
     }
 
     pub fn password(password: Option<&'a str>) -> Proof<'a> {
         Proof {
             password: Slot::Open(password.map(str::trim).filter(|p| !p.is_empty())),
-            grants: Vec::new(),
+            ..Proof::none()
         }
     }
 
-    pub fn and_grants(self, grants: Vec<String>) -> Proof<'a> {
-        Proof { grants, ..self }
+    pub fn and_grants(self, grants: Vec<String>, limits: &Limits) -> Proof<'a> {
+        Proof {
+            grants,
+            grant_ttl: limits.guest_grant_ttl(),
+            ..self
+        }
     }
 }
 
@@ -427,7 +433,7 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
         None => (false, false, false),
     };
     let granted = match who.username {
-        None => grants_open(db, &proof.grants, &key).await?,
+        None => grants_open(db, &proof.grants, &key, proof.grant_ttl).await?,
         Some(_) => false,
     };
     let hash: Option<String> = match &row {
@@ -1453,7 +1459,7 @@ pub(crate) async fn member_channel_rights(
 
 /// Servers a guest may search: the ones its live grants in `proof` open.
 pub(crate) async fn granted_servers(db: &Db, proof: &Proof<'_>) -> sqlx::Result<Vec<String>> {
-    live_grant_servers(db, &proof.grants).await
+    live_grant_servers(db, &proof.grants, proof.grant_ttl).await
 }
 
 /// Servers where `user` manages channels (search sees their restricted channels).
@@ -1701,14 +1707,13 @@ pub(crate) async fn ws_server_open(
     name: &str,
     username: Option<&str>,
     site_admin: bool,
-    grant: Option<&str>,
+    proof: &Proof<'_>,
 ) -> sqlx::Result<bool> {
-    let proof = Proof::grants(grant.map(str::to_string).into_iter().collect());
     let who = Who {
         username,
         site_admin,
     };
-    ws_result(gate(db, name, who, &proof).await.map(|g| !g.banned))
+    ws_result(gate(db, name, who, proof).await.map(|g| !g.banned))
 }
 
 /// When the guest grant `grant` on `server` ends because the extra password it came through

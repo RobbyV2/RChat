@@ -479,7 +479,9 @@ mod tests {
             share(&state, "alice", blob(4), 600).await.is_ok(),
             "expired links do not count"
         );
-        let swept = crate::db::sweep_stale(db).await.expect("sweep");
+        let swept = crate::db::sweep_stale(db, &state.limits)
+            .await
+            .expect("sweep");
         assert_eq!(swept.config_shares, 1);
         let left: i64 = sqlx::query("SELECT COUNT(*) FROM config_shares WHERE owner = 'alice'")
             .fetch_one(db)

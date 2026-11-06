@@ -292,7 +292,13 @@ pub(crate) async fn channel_pins(
 ) -> Result<Json<Vec<Message>>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, user.as_ref()).await?;
-    let channel = resolve_channel(db, id, user.as_ref(), &Proof::headers(&headers)).await?;
+    let channel = resolve_channel(
+        db,
+        id,
+        user.as_ref(),
+        &Proof::headers(&headers, &state.limits),
+    )
+    .await?;
     let floor = channel.read_since(db).await?;
     Ok(Json(
         pinned_messages(db, Some(id), None, floor, PINS_MAX).await?,

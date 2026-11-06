@@ -23,9 +23,9 @@ use crate::api::pings::{
 };
 use crate::api::reactions::attach_reactions;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, CallLog, Embed, ForwardRef, LIST_MAX, LIST_PAGE, MESSAGE_MAX,
-    MaybeAuthed, MediaRef, Message, OkResp, Origin, Paged, ProfanityTarget, ReplyRef, Settings,
-    UserRef, allowed, bad, check_len, check_profanity, cursor_int, decode_cursor, dms, embeds,
+    ApiError, ApiErrorBody, Authed, CallLog, Embed, ForwardRef, LIST_MAX, LIST_PAGE, MaybeAuthed,
+    MediaRef, Message, OkResp, Origin, Paged, ProfanityTarget, ReplyRef, Settings, UserRef,
+    allowed, bad, check_len, check_profanity, cursor_int, decode_cursor, dms, embeds,
     encode_cursor, media::MEDIA_TTL_SECS, ok, placeholders, require_guest_ok, unique_capped,
     user_from, user_refs, yes,
 };
@@ -66,7 +66,8 @@ enum Span {
 /// mutually exclusive.
 #[derive(Deserialize, ToSchema)]
 pub struct SendReq {
-    /// Message text, at most 4000 characters (Unicode code points). May be empty or blank when
+    /// Message text, at most `limits.message_chars` characters (Unicode code points; by default
+    /// 4000, `MESSAGE_MAX_CHARS`). May be empty or blank when
     /// an attachment is given. Up to 3 `http(s)` links in it (invite links excluded) get link
     /// previews after the message is posted.
     #[schema(example = "Hello https://example.com")]
@@ -1130,7 +1131,7 @@ pub(crate) fn replied(quote: &Option<Quoted>) -> Option<&str> {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn insert_message(
-    db: &Db,
+    state: &AppState,
     channel_id: Option<i64>,
     dm_id: Option<i64>,
     thread_root_id: Option<i64>,
@@ -1150,6 +1151,7 @@ pub(crate) async fn insert_message(
         forward_of: _,
         poll,
     } = req;
+    let db = &state.db;
     let settings = Settings::cached(db).await;
     let poll = match poll {
         Some(_) if media_id.is_some() || p2p.is_some() => {
@@ -1165,7 +1167,7 @@ pub(crate) async fn insert_message(
         Some(spec) => spec.question().to_string(),
         None => content,
     };
-    check_len(&content, MESSAGE_MAX, "Message")?;
+    check_len(&content, state.limits.message_max_chars, "Message")?;
     let spoiler = media_spoiler.unwrap_or(false);
     attachments_allowed(&settings, media_id.is_some(), p2p.is_some())?;
     let mut tx = db.begin().await?;
@@ -1540,7 +1542,7 @@ async fn deliver(
                 (_, _) => Vec::new(),
             };
             let message = insert_message(
-                db,
+                state,
                 channel_id,
                 dm_id,
                 thread_root_id,
@@ -1681,7 +1683,13 @@ pub(crate) async fn message_location(
 ) -> Result<Json<MessageLocation>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, user.as_ref()).await?;
-    let found = locate_message(db, id, user.as_ref(), &Proof::headers(&headers)).await?;
+    let found = locate_message(
+        db,
+        id,
+        user.as_ref(),
+        &Proof::headers(&headers, &state.limits),
+    )
+    .await?;
     Ok(Json(found))
 }
 
@@ -1733,7 +1741,7 @@ pub(crate) async fn message_locations(
     if !LOCATE_BATCHES.take(&format!("{}\n{caller}", pool_key(&state.db))) {
         return Err(slow_down());
     }
-    let proof = Proof::headers(&headers);
+    let proof = Proof::headers(&headers, &state.limits);
     let mut seen = std::collections::HashSet::with_capacity(ids.len());
     let mut found = Vec::with_capacity(ids.len());
     for id in ids {
@@ -1769,7 +1777,13 @@ pub(crate) async fn channel_messages(
 ) -> Result<Json<Vec<Message>>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, user.as_ref()).await?;
-    let channel = resolve_channel(db, id, user.as_ref(), &Proof::headers(&headers)).await?;
+    let channel = resolve_channel(
+        db,
+        id,
+        user.as_ref(),
+        &Proof::headers(&headers, &state.limits),
+    )
+    .await?;
     let min_ts = channel.read_since(db).await?;
     let mut msgs = page(
         db,
@@ -1798,7 +1812,7 @@ pub(crate) async fn channel_messages(
 /// channel. With `mention_reply` (default), its author gets one `reply` ping instead. With
 /// `forward_of`, the message is a copy of a message you can read (see `SendReq`). Forwards never
 /// ping. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), voice channel, text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), voice channel, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_channel_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1836,7 +1850,13 @@ pub(crate) async fn thread_messages(
 ) -> Result<Json<Vec<Message>>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, user.as_ref()).await?;
-    let root = resolve_message(db, id, user.as_ref(), &Proof::headers(&headers)).await?;
+    let root = resolve_message(
+        db,
+        id,
+        user.as_ref(),
+        &Proof::headers(&headers, &state.limits),
+    )
+    .await?;
     let min_ts = root.thread_channel()?.read_since(db).await?;
     let mut msgs = page(db, "m.thread_root_id = $1", id, &q, min_ts).await?;
     attach_reactions(db, &mut msgs, user.as_ref()).await?;
@@ -1858,7 +1878,7 @@ pub(crate) async fn thread_messages(
 /// of the thread. With `mention_reply` (default), its author gets a `reply` ping instead of a
 /// mention ping. With `forward_of`, the reply is a copy of a message you can read (see `SendReq`)
 /// and pings nobody. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (plain text `Too Many Requests! Wait for Ns`)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn send_thread_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1910,7 +1930,7 @@ pub(crate) async fn dm_messages(
 /// event). `reply_to` may quote a message of the same conversation; with `mention_reply`
 /// (default) its author gets a `reply` ping instead. With `forward_of` the message is a copy
 /// of a message you can read (see `SendReq`) and pings nobody. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over 4000 characters, empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off), or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off), or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn send_dm_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2034,7 +2054,8 @@ pub(crate) async fn moderated(
 /// New text for a message.
 #[derive(Deserialize, ToSchema)]
 pub struct EditReq {
-    /// The new text, at most 4000 characters (Unicode code points). It may only be blank when
+    /// The new text, at most `limits.message_chars` characters (Unicode code points; by default
+    /// 4000, `MESSAGE_MAX_CHARS`). It may only be blank when
     /// the message has an attachment.
     #[schema(example = "Hello again")]
     content: String,
@@ -2054,7 +2075,7 @@ pub struct EditReq {
 /// read the message again through the message list (`around=id`), which applies the
 /// read-history rules. In DMs, both participants get `message_updated` with the full message, and
 /// new previews as `embeds_resolved`. General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), request_body = EditReq, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Blocked by the profanity filter, text over 4000 characters, blank text on a message without attachment (`Message is empty`), or not a user message (`Cannot edit this message`). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not your message (`You can only edit your own messages`), no longer a member of the server, or no permission to send in the channel, or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket (plain text), or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/messages/{id}", tag = "Messages", params(("id" = i64, Path, description = "Message id")), request_body = EditReq, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Blocked by the profanity filter, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), blank text on a message without attachment (`Message is empty`), or not a user message (`Cannot edit this message`). A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not your message (`You can only edit your own messages`), no longer a member of the server, or no permission to send in the channel, or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket (plain text), or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn edit_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2076,7 +2097,7 @@ pub(crate) async fn edit_message(
     if kind != "user" || row.try_get::<Option<i64>, _>(3)?.is_some() {
         return Err(bad("Cannot edit this message"));
     }
-    check_len(&content, MESSAGE_MAX, "Message")?;
+    check_len(&content, state.limits.message_max_chars, "Message")?;
     let attached = message.scope().media_id.is_some() && media_removed == 0;
     if content.trim().is_empty() && !attached {
         return Err(bad("Message is empty"));
@@ -2212,6 +2233,7 @@ async fn search_paged(
     let db = &state.read();
     require_guest_ok(db, user).await?;
     check_nul([&sq.q, &sq.server, &sq.from, &sq.has], &sq.servers)?;
+    let proof = &Proof::headers(headers, &state.limits);
     if let Some(raw) = sq.cursor.take() {
         sq.before = Some(cursor_int(&decode_cursor(&raw, 1)?[0])?);
         sq.offset = None;
@@ -2223,7 +2245,7 @@ async fn search_paged(
     let first_page = sq.offset.is_none_or(|n| n <= 0);
     if !text.is_empty() && !short && is_sqlite(db) && first_page {
         let phrase = fts_phrase(text);
-        return fts_paged(db, user, headers, sq, &phrase).await;
+        return fts_paged(db, user, proof, sq, &phrase).await;
     }
     let windowed = !text.is_empty() && (short || unscoped) && is_sqlite(db) && first_page;
     let budget = match short {
@@ -2231,7 +2253,7 @@ async fn search_paged(
         false => i64::MAX,
     };
     if !windowed {
-        let results = search_once(db, user, headers, sq, None, SEARCH_PAGE).await?;
+        let results = search_once(db, user, proof, sq, None, SEARCH_PAGE).await?;
         let next = match results.len() as i64 == SEARCH_PAGE {
             true => results.last().map(|r| r.message.id),
             false => None,
@@ -2256,7 +2278,7 @@ async fn search_paged(
     while (results.len() as i64) < SEARCH_PAGE && hi > floor + 1 && scanned < budget {
         let lo = hi.saturating_sub(size).max(floor + 1);
         let want = SEARCH_PAGE - results.len() as i64;
-        let page = search_once(db, user, headers, sq.clone(), Some((lo, hi)), want).await?;
+        let page = search_once(db, user, proof, sq.clone(), Some((lo, hi)), want).await?;
         results.extend(page);
         scanned = scanned.saturating_add(hi - lo);
         hi = lo;
@@ -2273,7 +2295,7 @@ async fn search_paged(
 async fn fts_paged(
     db: &Db,
     user: Option<&User>,
-    headers: &HeaderMap,
+    proof: &Proof<'_>,
     sq: SearchQuery,
     phrase: &str,
 ) -> Result<(Vec<SearchResult>, Option<i64>), ApiError> {
@@ -2300,7 +2322,7 @@ async fn fts_paged(
         };
         let lo: i64 = last.try_get(0)?;
         let want = SEARCH_PAGE - results.len() as i64;
-        results.extend(search_once(db, user, headers, sq.clone(), Some((lo, hi)), want).await?);
+        results.extend(search_once(db, user, proof, sq.clone(), Some((lo, hi)), want).await?);
         hi = lo;
         if (rows.len() as i64) < FTS_BATCH {
             more = false;
@@ -2318,12 +2340,12 @@ async fn fts_paged(
 async fn search_once(
     db: &Db,
     user: Option<&User>,
-    headers: &HeaderMap,
+    proof: &Proof<'_>,
     sq: SearchQuery,
     window: Option<(i64, i64)>,
     limit: i64,
 ) -> Result<Vec<SearchResult>, ApiError> {
-    let (sql, binds) = match search_sql(db, user, headers, sq, window, limit).await? {
+    let (sql, binds) = match search_sql(db, user, proof, sq, window, limit).await? {
         Some(built) => built,
         None => return Ok(Vec::new()),
     };
@@ -2374,7 +2396,7 @@ fn check_nul(texts: [&Option<String>; 4], servers: &Option<Vec<String>>) -> Resu
 async fn search_sql(
     db: &Db,
     user: Option<&User>,
-    headers: &HeaderMap,
+    proof: &Proof<'_>,
     sq: SearchQuery,
     window: Option<(i64, i64)>,
     limit: i64,
@@ -2436,7 +2458,7 @@ async fn search_sql(
         }
         None => {
             conds.push("c.restrict_view = 0".to_string());
-            let granted = granted_servers(db, &Proof::headers(headers)).await?;
+            let granted = granted_servers(db, proof).await?;
             match granted.is_empty() {
                 true => conds.push(
                     "c.server IN (SELECT name FROM servers WHERE password_hash IS NULL)"
@@ -3166,12 +3188,26 @@ mod tests {
         let (state, path) = temp_state("msg_len").await;
         let cid = general_id(&state.db).await;
         add_member(&state.db, "rchat", "alice", 0, 0, now()).await;
-        let ok = send_with(&state, cid, "alice", "😀".repeat(MESSAGE_MAX), None).await;
+        let ok = send_with(
+            &state,
+            cid,
+            "alice",
+            "😀".repeat(state.limits.message_max_chars),
+            None,
+        )
+        .await;
         assert_eq!(
             ok.expect("4000 emoji ok").0.content.chars().count(),
-            MESSAGE_MAX
+            state.limits.message_max_chars
         );
-        let long = send_with(&state, cid, "alice", "a".repeat(MESSAGE_MAX + 1), None).await;
+        let long = send_with(
+            &state,
+            cid,
+            "alice",
+            "a".repeat(state.limits.message_max_chars + 1),
+            None,
+        )
+        .await;
         assert!(matches!(long, Err(ApiError(StatusCode::BAD_REQUEST, _))));
         let dm: i64 =
             sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'alice') RETURNING id")
@@ -3185,7 +3221,7 @@ mod tests {
             Path(dm),
             Authed(mem_user("alice", false)),
             Json(SendReq {
-                content: "a".repeat(MESSAGE_MAX + 1),
+                content: "a".repeat(state.limits.message_max_chars + 1),
                 media_id: None,
                 media_spoiler: None,
                 p2p: None,
@@ -3197,6 +3233,40 @@ mod tests {
         )
         .await;
         assert!(matches!(dm_long, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn messages_over_the_configured_length_are_refused() {
+        let (state, path) = temp_state("msg_len_configured").await;
+        let wide = state.clone();
+        let state = state.with_limits(std::sync::Arc::new(crate::limits::Limits {
+            message_max_chars: 10,
+            ..Default::default()
+        }));
+        let cid = general_id(&state.db).await;
+        add_member(&state.db, "rchat", "alice", 0, 0, now()).await;
+        let long = send_with(&state, cid, "alice", "a".repeat(11), None).await;
+        assert!(
+            matches!(&long, Err(ApiError(StatusCode::BAD_REQUEST, m)) if m == "Message must be at most 10 characters"),
+            "{:?}",
+            long.err()
+        );
+        let note = send_with(&state, cid, "alice", "😀".repeat(10), None)
+            .await
+            .expect("10 fit")
+            .0;
+        assert!(matches!(
+            edit(&state, note.id, "alice", &"b".repeat(11)).await,
+            Err(ApiError(StatusCode::BAD_REQUEST, _))
+        ));
+        edit(&state, note.id, "alice", &"b".repeat(10))
+            .await
+            .expect("10 fit");
+        let wider = send_with(&wide, cid, "alice", "a".repeat(11), None)
+            .await
+            .expect("the default allows 11");
+        assert_eq!(wider.0.content.chars().count(), 11);
         done(state, path).await;
     }
 
@@ -4557,7 +4627,7 @@ mod tests {
     }
 
     async fn plan(db: &Db, user: &User, sq: SearchQuery) -> String {
-        let (sql, binds) = search_sql(db, Some(user), &HeaderMap::new(), sq, None, SEARCH_PAGE)
+        let (sql, binds) = search_sql(db, Some(user), &Proof::none(), sq, None, SEARCH_PAGE)
             .await
             .expect("search sql")
             .expect("built");
@@ -7036,13 +7106,27 @@ mod tests {
             Some((StatusCode::BAD_REQUEST, "Message is empty".to_string()))
         );
         assert_eq!(
-            error(edit(&state, note.id, "alice", &"a".repeat(MESSAGE_MAX + 1)).await).map(|e| e.0),
+            error(
+                edit(
+                    &state,
+                    note.id,
+                    "alice",
+                    &"a".repeat(state.limits.message_max_chars + 1)
+                )
+                .await
+            )
+            .map(|e| e.0),
             Some(StatusCode::BAD_REQUEST)
         );
         assert!(
-            edit(&state, note.id, "alice", &"😀".repeat(MESSAGE_MAX))
-                .await
-                .is_ok()
+            edit(
+                &state,
+                note.id,
+                "alice",
+                &"😀".repeat(state.limits.message_max_chars)
+            )
+            .await
+            .is_ok()
         );
         assert_eq!(
             error(edit(&state, note.id, "alice", "well fuck").await),
@@ -7666,7 +7750,7 @@ mod tests {
             async move {
                 crate::api::media::media_view_ok(
                     &state.db,
-                    &HeaderMap::new(),
+                    &Proof::none(),
                     &media_id,
                     Some(&mem_user(who, false)),
                 )
@@ -8379,7 +8463,9 @@ mod tests {
             .execute(db)
             .await
             .expect("age");
-        crate::db::sweep_stale(db).await.expect("sweep");
+        crate::db::sweep_stale(db, &state.limits)
+            .await
+            .expect("sweep");
         assert_eq!(group_rows(db).await, 0, "30 days");
         done(state, path).await;
     }

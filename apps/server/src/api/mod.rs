@@ -699,7 +699,8 @@ pub struct Message {
     pub thread_root_id: Option<i64>,
     /// Who sent it.
     pub author: UserRef,
-    /// Text, at most 4000 characters; may be empty when there is an attachment, and is empty
+    /// Text, at most `limits.message_chars` characters (by default 4000,
+    /// `MESSAGE_MAX_CHARS`); may be empty when there is an attachment, and is empty
     /// for call logs.
     pub content: String,
     /// Unix seconds when it was sent.
@@ -1338,7 +1339,6 @@ pub(crate) fn header_grants(headers: &HeaderMap) -> Vec<String> {
 }
 
 pub const NAME_MAX: usize = 100;
-pub const MESSAGE_MAX: usize = 4000;
 pub const SLOWMODE_MAX: i64 = 21600;
 pub const TOPIC_MAX: usize = 1024;
 
@@ -1506,6 +1506,7 @@ pub fn routes(
         )
     };
     let strict = limiter();
+    let upload_body = DefaultBodyLimit::max(state.limits.upload_body_bytes());
     let mut router = Router::new();
     if roles.api {
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
@@ -1567,7 +1568,7 @@ pub fn routes(
                     "/webhooks/{id}/{token}",
                     get(webhooks::webhook_info)
                         .post(webhooks::execute)
-                        .layer(DefaultBodyLimit::max(26 * 1024 * 1024)),
+                        .layer(upload_body),
                 )
                 .route(
                     "/webhooks/{id}/{token}/messages/{message_id}",
@@ -1585,10 +1586,7 @@ pub fn routes(
     }
     if roles.media {
         let upload = Router::new()
-            .route(
-                "/media",
-                post(media::upload_media).layer(DefaultBodyLimit::max(26 * 1024 * 1024)),
-            )
+            .route("/media", post(media::upload_media).layer(upload_body))
             .route_layer(strict);
         router = router
             .merge(upload)

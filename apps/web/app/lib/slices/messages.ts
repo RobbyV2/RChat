@@ -3,7 +3,6 @@
 
 import { ApiError, type PageOpts, type SendOpts } from '../api'
 import {
-  MAX_UPLOAD,
   type PendingUpload,
   type UploadMode,
   attachModes,
@@ -12,6 +11,7 @@ import {
 } from '../attachments'
 import { type ForwardClip, canForward, clipOf, forwardPending } from '../forward'
 import { dropGroupMessage } from '../group_pings'
+import { limitsOf, tooLargeText } from '../instance_limits'
 import { api, home, writeLocal } from '../instances'
 import { staleInvites } from '../invite'
 import {
@@ -46,7 +46,7 @@ import {
   replyMentionValue,
   sendReply,
 } from '../replies'
-import { MESSAGE_MAX, charCount } from '../rules'
+import { charCount } from '../rules'
 import { SEARCH_PAGE, SEARCH_TRIES, addSearchPage, searchParams } from '../search'
 import { type Sed, applySed, lastEditable } from '../sed'
 import { myPerms, scopeRule } from '../selectors'
@@ -1086,7 +1086,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         p2pId: id,
       }
     }
-    if (file.size > MAX_UPLOAD) throw new Error('File exceeds 25MB limit')
+    const max = limitsOf(get().instance).upload_bytes
+    if (file.size > max) throw new Error(tooLargeText(max))
     const uploaded = await api.uploadMedia(file)
     return { opts: { media_id: uploaded.id, media_spoiler: spoiler }, p2pId: null }
   }
@@ -1553,7 +1554,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         confirmDeleteMessage(m.id)
         return
       }
-      if (charCount(text) > MESSAGE_MAX) return
+      if (charCount(text) > limitsOf(get().instance).message_chars) return
       get().cancelEdit(refocus)
       if (text === m.content) return
       const edited_at = Math.floor(Date.now() / 1000)
@@ -1708,10 +1709,11 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       }),
 
     uploadFile: (key, file) => {
-      const mode = file ? startMode(get().settings, file.size) : null
+      const max = limitsOf(get().instance).upload_bytes
+      const mode = file ? startMode(get().settings, file.size, max) : null
       if (file && mode === null) return
-      if (file && mode === 'server' && file.size > MAX_UPLOAD) {
-        fail(new Error('File exceeds 25MB limit'))
+      if (file && mode === 'server' && file.size > max) {
+        fail(new Error(tooLargeText(max)))
         return
       }
       if (file && get().settings.p2p_attachments) void hashOf(file).catch(() => {})
@@ -1735,7 +1737,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         if (!cur) return {}
         const mode: UploadMode = cur.mode === 'server' ? 'p2p' : 'server'
         if (!attachModes(s.settings).includes(mode)) return {}
-        if (mode === 'server' && cur.file.size > MAX_UPLOAD) return {}
+        if (mode === 'server' && cur.file.size > limitsOf(s.instance).upload_bytes) return {}
         if (mode === 'p2p') void hashOf(cur.file).catch(() => {})
         return { pending: { ...s.pending, [key]: { ...cur, mode } } }
       }),

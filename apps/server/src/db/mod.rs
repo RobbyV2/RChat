@@ -14,10 +14,10 @@ use sqlx::{AnyConnection, Row};
 #[cfg(test)]
 pub(crate) use migrate::seed_settings;
 pub use migrate::{SCHEMA_VERSION, trigger_version};
+pub(crate) use pool::pool_key;
 #[cfg(test)]
 pub(crate) use pool::temp_db_path;
 pub use pool::{Db, DbOptions, close, is_sqlite, open, open_with, reader, writer_connections};
-pub(crate) use pool::{pool_key, set_limits};
 pub use schema::has_fts;
 #[cfg(test)]
 pub(crate) use schema::set_fts;
@@ -26,7 +26,7 @@ pub use secrets::{pepper, secret_key};
 pub(crate) use sweep::KEPT_USERS_SQL;
 pub use sweep::{
     AUDIT_KEEP, PING_KEEP, PINGS_KEPT, PURGE_BATCH, SERVER_PASSWORD_KEEP, Swept, TIMEOUT_KEEP,
-    guest_grant_ttl, purge_messages, sweep_stale,
+    purge_messages, sweep_stale,
 };
 #[cfg(test)]
 pub(crate) use touch::grant_touch_queued;

@@ -1,13 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { home } from '../instances'
-import {
-  attachModes,
-  MAX_UPLOAD,
-  siteSettings,
-  startMode,
-  useStore,
-  resetSessionCaches,
-} from '../store'
+import { attachModes, siteSettings, startMode, useStore, resetSessionCaches } from '../store'
 import { p2p, type CallBinding } from '../p2p'
 import { DENIED_CALL, relayBook } from '../relays'
 import type { CallRelays, MessageMedia, SiteSettings, VoiceMsg, WsEvent } from '../types'
@@ -262,7 +255,8 @@ describe('attachment settings', () => {
     p2p_attachments: true,
     guests_enabled: true,
   }
-  const big = MAX_UPLOAD + 1
+  const max = 25 * 1024 * 1024
+  const big = max + 1
 
   test('older servers without the switch keep P2P on', () => {
     const old = { ...base } as Partial<SiteSettings>
@@ -272,13 +266,13 @@ describe('attachment settings', () => {
   })
 
   test('P2P does not depend on uploads and has no size cap; both off is text only', () => {
-    expect(startMode(base, 10)).toBe('server')
-    expect(startMode(base, big)).toBe('p2p')
-    expect(startMode({ ...base, asset_uploads: false }, 10)).toBe('p2p')
-    expect(startMode({ ...base, asset_uploads: false }, 2 ** 40)).toBe('p2p')
-    expect(startMode({ ...base, p2p_attachments: false }, big)).toBe('server')
+    expect(startMode(base, 10, max)).toBe('server')
+    expect(startMode(base, big, max)).toBe('p2p')
+    expect(startMode({ ...base, asset_uploads: false }, 10, max)).toBe('p2p')
+    expect(startMode({ ...base, asset_uploads: false }, 2 ** 40, max)).toBe('p2p')
+    expect(startMode({ ...base, p2p_attachments: false }, big, max)).toBe('server')
     const textOnly = { ...base, asset_uploads: false, p2p_attachments: false }
-    expect(startMode(textOnly, 1)).toBeNull()
+    expect(startMode(textOnly, 1, max)).toBeNull()
     expect(attachModes(textOnly)).toEqual([])
   })
 

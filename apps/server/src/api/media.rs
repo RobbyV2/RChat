@@ -2,7 +2,8 @@ use std::fmt::Write;
 
 use axum::Json;
 use axum::body::Body;
-use axum::extract::{Multipart, Path, State};
+use axum::extract::multipart::MultipartRejection;
+use axum::extract::{FromRequest, Multipart, Path, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::Response;
 use rand::Rng;
@@ -12,14 +13,13 @@ use sqlx::Row;
 use crate::api::access::{MsgScope, Proof, resolve_message};
 use crate::api::audit;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, MediaRef, OkResp, Settings, allowed, bad, header_grants, ok,
-    placeholders, request_token, require_guest_ok, user_for_token,
+    ApiError, ApiErrorBody, Authed, MediaRef, OkResp, Settings, allowed, bad, ok, placeholders,
+    request_token, require_guest_ok, user_for_token,
 };
 use crate::db::{Db, MediaKind, User, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
-pub(crate) const MAX_SIZE: usize = 25 * 1024 * 1024;
 pub(crate) const MEDIA_TTL_SECS: i64 = 86400;
 /// Longest stored file name, in bytes.
 pub(crate) const FILENAME_MAX: usize = 255;
@@ -118,15 +118,58 @@ fn limits() -> UploadLimits {
     LIMITS.get().copied().unwrap_or_default()
 }
 
+#[cfg(test)]
+tokio::task_local! {
+    static TEST_BUFFER: std::sync::Arc<tokio::sync::Semaphore>;
+}
+
+/// Runs `f` with `buffer` as the upload buffer.
+#[cfg(test)]
+pub(crate) async fn with_buffer<T>(
+    buffer: std::sync::Arc<tokio::sync::Semaphore>,
+    f: impl std::future::Future<Output = T>,
+) -> T {
+    TEST_BUFFER.scope(buffer, f).await
+}
+
 /// Upload bodies in memory, counted in KiB.
 fn buffer() -> std::sync::Arc<tokio::sync::Semaphore> {
+    #[cfg(test)]
+    if let Ok(buffer) = TEST_BUFFER.try_with(std::sync::Arc::clone) {
+        return buffer;
+    }
     BUFFER
         .get_or_init(|| {
-            let kib = (limits().buffer / 1024).clamp(MAX_SIZE as u64 / 1024, u32::MAX as u64);
+            let kib = (limits().buffer / 1024).min(u32::MAX as u64);
             std::sync::Arc::new(tokio::sync::Semaphore::new(kib as usize))
         })
         .clone()
 }
+
+/// The upload buffer, and the most KiB of it one account holds at once.
+struct Room {
+    buffer: std::sync::Arc<tokio::sync::Semaphore>,
+    share: u32,
+}
+
+/// The KiB of a `buffer` of bytes one account holds at once, for upload bodies of at most `body`
+/// bytes: a quarter of it, `UPLOADS_PER_ACCOUNT` bodies up to half of it, or one body up to all
+/// of it, whichever is most.
+fn share_kib(buffer: u64, body: usize) -> u32 {
+    let kib = buffer / 1024;
+    let one = (body as u64).div_ceil(1024);
+    let all = one.saturating_mul(UPLOADS_PER_ACCOUNT as u64).min(kib / 2);
+    (kib / 4).max(all).max(one.min(kib)).min(u32::MAX as u64) as u32
+}
+
+#[cfg(test)]
+pub(crate) fn share_held(db: &Db, account: &str) -> u64 {
+    SHARES.held(&format!("{}\n{account}", crate::db::pool_key(db)))
+}
+
+/// The KiB of the upload buffer each account holds.
+static SHARES: std::sync::LazyLock<crate::api::budget::Shares> =
+    std::sync::LazyLock::new(crate::api::budget::Shares::default);
 
 const BUFFER_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 /// How long an upload body may send nothing before it is dropped with 408.
@@ -177,86 +220,323 @@ pub(crate) fn declared_length(headers: &axum::http::HeaderMap) -> Option<u64> {
         .and_then(|v| v.trim().parse().ok())
 }
 
-fn too_large() -> ApiError {
+fn too_large(max: usize) -> ApiError {
     ApiError(
         StatusCode::PAYLOAD_TOO_LARGE,
-        "File exceeds 25MB limit".to_string(),
+        format!("File exceeds {}MB limit", max / (1024 * 1024)),
     )
 }
 
-/// An upload body held in memory, counted against the instance-wide upload buffer and its
-/// account's uploads at once until it is dropped.
-pub(crate) struct Buffered {
-    pub data: Vec<u8>,
-    _held: tokio::sync::OwnedSemaphorePermit,
+/// 413 for JSON over `max` bytes.
+pub(crate) fn json_over(max: usize) -> ApiError {
+    ApiError(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        format!("JSON exceeds {}MB limit", max / (1024 * 1024)),
+    )
+}
+
+/// Room held for one upload body from before it is read until it is dropped: one of its
+/// account's places among its uploads at once, part of the account's share of the upload
+/// buffer, and room in the buffer for the whole body.
+pub(crate) struct Held {
+    /// The most bytes the body can have.
+    most: usize,
+    _room: tokio::sync::OwnedSemaphorePermit,
+    _share: crate::api::budget::Share,
     _slot: crate::api::budget::Slot,
 }
 
-/// Reads one multipart file part of a request that declared `declared` bytes (`None`: not
-/// declared). Room in the upload buffer for the whole file (the declared length, at most
-/// `MAX_SIZE`) is taken once before reading, so a body never waits for more room while it holds
-/// some; when the buffer stays full the upload is refused with 503. A body that sends nothing
-/// for `IDLE_WAIT`, or takes longer than `BODY_WAIT`, is dropped with 408 and its room given
-/// back. `slot` is the account's place among its uploads at once.
+/// Takes room for an upload body of `declared` bytes (`None`: not declared), at most `body`
+/// bytes, for the account of `slot`, before any of it is read, so a body never waits for more
+/// room while it holds some. One account holds at most its share of the buffer (`share_kib`)
+/// and is refused with 429 past it; when the buffer stays full the upload is refused with 503,
+/// at once unless it may `wait`.
+pub(crate) async fn reserve(
+    slot: crate::api::budget::Slot,
+    declared: Option<u64>,
+    body: usize,
+    wait: bool,
+) -> Result<Held, ApiError> {
+    let room = Room {
+        buffer: buffer(),
+        share: share_kib(limits().buffer, body),
+    };
+    let wait = match wait {
+        true => WAITS.room,
+        false => std::time::Duration::ZERO,
+    };
+    take_room(slot, declared, body, room, wait).await
+}
+
+async fn take_room(
+    slot: crate::api::budget::Slot,
+    declared: Option<u64>,
+    body: usize,
+    room: Room,
+    wait: std::time::Duration,
+) -> Result<Held, ApiError> {
+    let most = declared.map_or(body, |n| n.min(body as u64) as usize);
+    let kib = u32::try_from(most.div_ceil(1024))
+        .unwrap_or(u32::MAX)
+        .min(room.share);
+    let share = SHARES
+        .take(slot.key(), kib.into(), room.share.into())
+        .ok_or_else(|| {
+            ApiError(
+                StatusCode::TOO_MANY_REQUESTS,
+                format!(
+                    "Too many uploads at once: up to {} per account",
+                    fmt_bytes(u64::from(room.share) * 1024)
+                ),
+            )
+        })?;
+    let held = match wait.is_zero() {
+        true => room.buffer.try_acquire_many_owned(kib).ok(),
+        false => tokio::time::timeout(wait, room.buffer.acquire_many_owned(kib))
+            .await
+            .ok()
+            .and_then(Result::ok),
+    }
+    .ok_or_else(|| {
+        ApiError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Too many uploads right now, try again in a moment".to_string(),
+        )
+    })?;
+    Ok(Held {
+        most,
+        _room: held,
+        _share: share,
+        _slot: slot,
+    })
+}
+
+/// An upload body held in memory, counted against the instance-wide upload buffer, its
+/// account's share of it and its account's uploads at once until it is dropped.
+pub(crate) struct Buffered {
+    pub data: Vec<u8>,
+    _held: Held,
+}
+
+/// Reads one multipart file part of at most `max` bytes of a body read through `form`, in the
+/// room `held` took for that body.
 pub(crate) async fn read_file(
     field: axum::extract::multipart::Field<'_>,
-    declared: Option<u64>,
-    slot: crate::api::budget::Slot,
+    max: usize,
+    held: Held,
+    watch: &Watch,
 ) -> Result<Buffered, ApiError> {
-    read_chunks(field, declared, buffer(), WAITS, slot).await
+    read_chunks(field, max, held, watch).await
 }
 
 async fn read_chunks<S, E>(
     stream: S,
-    declared: Option<u64>,
-    buffer: std::sync::Arc<tokio::sync::Semaphore>,
-    waits: Waits,
-    slot: crate::api::budget::Slot,
+    max: usize,
+    held: Held,
+    watch: &Watch,
 ) -> Result<Buffered, ApiError>
 where
     S: futures_util::Stream<Item = Result<axum::body::Bytes, E>>,
     E: std::fmt::Display,
 {
-    use futures_util::StreamExt;
-    let most = declared.map_or(MAX_SIZE, |n| n.min(MAX_SIZE as u64) as usize);
-    let kib = u32::try_from(most.div_ceil(1024)).map_err(|_| too_large())?;
-    let held = tokio::time::timeout(waits.room, buffer.acquire_many_owned(kib))
+    let data = collect(stream, held.most.min(max))
         .await
-        .ok()
-        .and_then(Result::ok)
-        .ok_or_else(|| {
-            ApiError(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Too many uploads right now, try again in a moment".to_string(),
-            )
+        .map_err(|stop| match stop {
+            Stop::Over => too_large(max),
+            Stop::Failed(e) => watch.error(
+                || too_large(max),
+                ApiError(StatusCode::PAYLOAD_TOO_LARGE, e),
+            ),
         })?;
-    let stalled = || {
-        ApiError(
-            StatusCode::REQUEST_TIMEOUT,
-            "The upload stopped sending data".to_string(),
-        )
-    };
-    let end = tokio::time::Instant::now() + waits.body;
+    Ok(Buffered { data, _held: held })
+}
+
+/// Reads a JSON body of at most `max` bytes, of which `declared` were announced, with the waits
+/// of an upload body but outside the upload buffer: 413 past `max` (before reading when the
+/// declared length is already past it), 408 when it stalls.
+pub(crate) async fn read_json<S, E>(
+    stream: S,
+    declared: Option<u64>,
+    max: usize,
+) -> Result<Vec<u8>, ApiError>
+where
+    S: futures_util::Stream<Item = Result<axum::body::Bytes, E>> + Send + 'static,
+    E: Into<BoxError>,
+{
+    read_small(stream, declared, max, WAITS).await
+}
+
+async fn read_small<S, E>(
+    stream: S,
+    declared: Option<u64>,
+    max: usize,
+    waits: Waits,
+) -> Result<Vec<u8>, ApiError>
+where
+    S: futures_util::Stream<Item = Result<axum::body::Bytes, E>> + Send + 'static,
+    E: Into<BoxError>,
+{
+    if declared.is_some_and(|n| n > max as u64) {
+        return Err(json_over(max));
+    }
+    let watch = Watch::default();
+    read_json_part(paced(stream, usize::MAX, waits, watch.clone()), max, &watch).await
+}
+
+/// Reads a JSON part of at most `max` bytes of a body read through `form` (or `paced`): 413
+/// past `max`.
+pub(crate) async fn read_json_part<S, E>(
+    stream: S,
+    max: usize,
+    watch: &Watch,
+) -> Result<Vec<u8>, ApiError>
+where
+    S: futures_util::Stream<Item = Result<axum::body::Bytes, E>>,
+    E: std::fmt::Display,
+{
+    collect(stream, max).await.map_err(|stop| match stop {
+        Stop::Over => json_over(max),
+        Stop::Failed(e) => watch.error(|| json_over(max), bad(&e)),
+    })
+}
+
+fn stalled() -> ApiError {
+    ApiError(
+        StatusCode::REQUEST_TIMEOUT,
+        "The upload stopped sending data".to_string(),
+    )
+}
+
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+/// Why a paced body was cut off before its end.
+#[derive(Clone, Copy, Debug)]
+enum Cut {
+    /// More than its most bytes came.
+    Over,
+    /// Nothing came for `Waits::idle`, or the whole took longer than `Waits::body`.
+    Stalled,
+}
+
+impl std::fmt::Display for Cut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Cut::Over => "The body is too large",
+            Cut::Stalled => "The upload stopped sending data",
+        })
+    }
+}
+
+impl std::error::Error for Cut {}
+
+/// Why a paced body was cut off, once it was.
+#[derive(Clone, Default)]
+pub(crate) struct Watch(std::sync::Arc<std::sync::OnceLock<Cut>>);
+
+impl Watch {
+    /// The error for a failed read of the body: 408 when it stalled, `over()` when it passed its
+    /// most bytes, else `other`.
+    pub(crate) fn error(&self, over: impl FnOnce() -> ApiError, other: ApiError) -> ApiError {
+        match self.0.get() {
+            Some(Cut::Stalled) => stalled(),
+            Some(Cut::Over) => over(),
+            None => other,
+        }
+    }
+}
+
+/// `stream` cut off with an error once it passes `most` bytes, sends nothing for `waits.idle`,
+/// or runs longer than `waits.body` from its first poll; `watch` then says which.
+fn paced<S, E>(
+    stream: S,
+    most: usize,
+    waits: Waits,
+    watch: Watch,
+) -> impl futures_util::Stream<Item = Result<axum::body::Bytes, BoxError>> + Send + 'static
+where
+    S: futures_util::Stream<Item = Result<axum::body::Bytes, E>> + Send + 'static,
+    E: Into<BoxError>,
+{
+    use futures_util::StreamExt;
+    let start = (Box::pin(stream), 0usize, None, watch);
+    futures_util::stream::unfold(Some(start), move |state| async move {
+        let (mut stream, seen, end, watch) = state?;
+        let end = end.unwrap_or_else(|| tokio::time::Instant::now() + waits.body);
+        let next = (tokio::time::Instant::now() + waits.idle).min(end);
+        let cut = match tokio::time::timeout_at(next, stream.next()).await {
+            Ok(None) => return None,
+            Ok(Some(Err(e))) => return Some((Err(e.into()), None)),
+            Ok(Some(Ok(chunk))) if seen.saturating_add(chunk.len()) <= most => {
+                let seen = seen + chunk.len();
+                return Some((Ok(chunk), Some((stream, seen, Some(end), watch))));
+            }
+            Ok(Some(Ok(_))) => Cut::Over,
+            Err(_) => Cut::Stalled,
+        };
+        let _ = watch.0.set(cut);
+        Some((Err(Box::new(cut) as BoxError), None))
+    })
+}
+
+/// A `multipart/form-data` request read as one body: at most `most` bytes, and within the upload
+/// waits from its first byte to its last, so a stalled preamble, part header or part ends it
+/// with 408 and many parts can not make it last longer. The `Watch` says why it was cut off.
+pub(crate) async fn form(
+    req: Request,
+    most: usize,
+) -> Result<(Multipart, Watch), MultipartRejection> {
+    form_within(req, most, WAITS).await
+}
+
+async fn form_within(
+    req: Request,
+    most: usize,
+    waits: Waits,
+) -> Result<(Multipart, Watch), MultipartRejection> {
+    let watch = Watch::default();
+    let (parts, body) = req.into_parts();
+    let body = Body::from_stream(paced(body.into_data_stream(), most, waits, watch.clone()));
+    let form = Multipart::from_request(Request::from_parts(parts, body), &()).await?;
+    Ok((form, watch))
+}
+
+/// The multipart body of an upload, read through `form`.
+pub(crate) struct UploadForm(Multipart, Watch);
+
+impl<S: Send + Sync> FromRequest<S> for UploadForm {
+    type Rejection = MultipartRejection;
+
+    async fn from_request(req: Request, _: &S) -> Result<UploadForm, MultipartRejection> {
+        let (form, watch) = form(req, usize::MAX).await?;
+        Ok(UploadForm(form, watch))
+    }
+}
+
+/// Why `collect` stopped before the end of its stream.
+enum Stop {
+    /// More than its most bytes came.
+    Over,
+    /// The stream failed, with its error.
+    Failed(String),
+}
+
+/// Reads `stream` to its end, at most `most` bytes.
+async fn collect<S, E>(stream: S, most: usize) -> Result<Vec<u8>, Stop>
+where
+    S: futures_util::Stream<Item = Result<axum::body::Bytes, E>>,
+    E: std::fmt::Display,
+{
+    use futures_util::StreamExt;
     let mut stream = std::pin::pin!(stream);
     let mut data: Vec<u8> = Vec::new();
-    loop {
-        let next = (tokio::time::Instant::now() + waits.idle).min(end);
-        let chunk = match tokio::time::timeout_at(next, stream.next()).await {
-            Ok(Some(chunk)) => chunk,
-            Ok(None) => break,
-            Err(_) => return Err(stalled()),
-        };
-        let chunk = chunk.map_err(|e| ApiError(StatusCode::PAYLOAD_TOO_LARGE, e.to_string()))?;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| Stop::Failed(e.to_string()))?;
         if data.len() + chunk.len() > most {
-            return Err(too_large());
+            return Err(Stop::Over);
         }
         data.extend_from_slice(&chunk);
     }
-    Ok(Buffered {
-        data,
-        _held: held,
-        _slot: slot,
-    })
+    Ok(data)
 }
 
 fn fmt_bytes(n: u64) -> String {
@@ -480,19 +760,22 @@ async fn store_within(
 /// pass the returned `id` as
 /// `media_id` when sending a message; only the uploader can attach it, and only to one
 /// message. The file is deleted 24 hours after upload whether attached or not, and messages
-/// carrying it then show it as removed (`media_removed` event). At most 25 MiB per file, and
+/// carrying it then show it as removed (`media_removed` event). At most `limits.upload_bytes`
+/// of `GET /api/instance` per file, by default 25 MiB (`UPLOAD_MAX_MIB`), and
 /// at most the instance's per-account budget (`UPLOAD_BUDGET_MIB`, 2 GiB unless set) of your
 /// files kept at once (files your webhooks sent count too). At most 3 of your uploads are read
-/// at once; a body that sends nothing for 30 seconds (or takes over 10 minutes) is dropped with
-/// 408.
+/// at once. Each takes room for its whole declared body in the instance's upload buffer
+/// (`UPLOAD_BUFFER_MIB`) before any of it is read, and together they hold at most a quarter of
+/// it, three uploads (up to half of it) or one upload, whichever is most. A body that sends
+/// nothing for 30 seconds, or takes over 10 minutes in all, is dropped with 408.
 ///
 /// Requires a bearer token and the instance's uploads setting. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/media", tag = "Media", request_body(content = Vec<u8>, content_type = "multipart/form-data", description = "A multipart form whose first part is the file"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef), (status = 400, description = "No file part (JSON `No file provided`) or a malformed multipart body (JSON). A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "File uploads are disabled on this instance", body = ApiErrorBody), (status = 413, description = "File over 25 MiB (`File exceeds 25MB limit`). A request body over 26 MiB is cut off while the file is read and answers with this status and the JSON error \"Error parsing `multipart/form-data` request\"", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket (shared with register, login, word hints, password change and guest access) or the general bucket (plain text), the per-account budget is used up (JSON `Upload limit reached: ...`; space frees up as your files expire), or 3 of your uploads are already being read (JSON `Too many uploads at once: ...`)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`: the instance holds as many upload bodies in memory as it allows (each upload takes room for its whole declared size first)", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/media", tag = "Media", request_body(content = Vec<u8>, content_type = "multipart/form-data", description = "A multipart form whose first part is the file"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef), (status = 400, description = "No file part (JSON `No file provided`) or a malformed multipart body (JSON). A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "File uploads are disabled on this instance", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`): `File exceeds 25MB limit` with the configured number. A request body over that size plus 1 MiB is cut off while the file is read and answers with this status and the JSON error \"Error parsing `multipart/form-data` request\"", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket (shared with register, login, word hints, password change and guest access) or the general bucket (plain text), the per-account budget is used up (JSON `Upload limit reached: ...`; space frees up as your files expire), or 3 of your uploads, or uploads holding your share of the upload buffer, are already being read (JSON `Too many uploads at once: ...`)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`: the instance holds as many upload bodies in memory as it allows (each upload takes room for its whole declared size first)", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn upload_media(
     State(state): State<AppState>,
     Authed(user): Authed,
     headers: axum::http::HeaderMap,
-    mut multipart: Multipart,
+    UploadForm(mut multipart, watch): UploadForm,
 ) -> Result<Json<MediaRef>, ApiError> {
     if !Settings::cached(&state.db).await.asset_uploads {
         return Err(ApiError(
@@ -502,15 +785,22 @@ pub(crate) async fn upload_media(
     }
     check_budget(&state.db, Charge::own(&user.username), 1, budget()).await?;
     let slot = reading_slot(&state.db, &user.username)?;
-    let declared = declared_length(&headers);
+    let body = state.limits.upload_body_bytes();
+    let held = reserve(slot, declared_length(&headers), body, true).await?;
+    let max = state.limits.upload_bytes();
     let field = multipart
         .next_field()
         .await
-        .map_err(|e| ApiError(StatusCode::BAD_REQUEST, e.to_string()))?
+        .map_err(|e| {
+            watch.error(
+                || too_large(max),
+                ApiError(StatusCode::BAD_REQUEST, e.to_string()),
+            )
+        })?
         .ok_or_else(|| bad("No file provided"))?;
     let filename = clean_filename(field.file_name().unwrap_or("file"));
     let mime = clean_mime(field.content_type().unwrap_or(NEUTRAL_MIME));
-    let body = read_file(field, declared, slot).await?;
+    let body = read_file(field, max, held, &watch).await?;
     let (id, uploaded_at) = save_upload(
         &state,
         &filename,
@@ -550,8 +840,9 @@ async fn save_within(
     charge: Charge<'_>,
     budget: u64,
 ) -> Result<(String, i64), ApiError> {
-    if data.len() > MAX_SIZE {
-        return Err(too_large());
+    let max = state.limits.upload_bytes();
+    if data.len() > max {
+        return Err(too_large(max));
     }
     let filename = &clean_filename(filename);
     let mime = &clean_mime(mime);
@@ -737,7 +1028,7 @@ pub(crate) async fn may_carry(
 
 pub(crate) async fn media_view_ok(
     db: &Db,
-    headers: &axum::http::HeaderMap,
+    proof: &Proof<'_>,
     media_id: &str,
     user: Option<&User>,
 ) -> Result<(), ApiError> {
@@ -761,9 +1052,8 @@ pub(crate) async fn media_view_ok(
             (_, _) => Err(media_hidden()),
         };
     }
-    let proof = Proof::grants(header_grants(headers));
     for r in &rows {
-        if allowed(resolve_message(db, r.try_get(0)?, user, &proof).await)?.is_some() {
+        if allowed(resolve_message(db, r.try_get(0)?, user, proof).await)?.is_some() {
             return Ok(());
         }
     }
@@ -829,7 +1119,8 @@ pub(crate) async fn download_media(
         None => None,
     };
     require_guest_ok(&db, user.as_ref()).await?;
-    media_view_ok(&db, &headers, &id, user.as_ref()).await?;
+    let proof = Proof::headers(&headers, &state.limits);
+    media_view_ok(&db, &proof, &id, user.as_ref()).await?;
     if Settings::cached(&db).await.text_only() {
         return Err(ApiError(
             StatusCode::FORBIDDEN,
@@ -1038,11 +1329,13 @@ pub async fn sweep_expired(state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::{
-        Charge, FILENAME_MAX, MAX_SIZE, MEDIA_TTL_SECS, MIME_MAX, NEUTRAL_MIME, SWEEP_BATCH,
-        UPLOADS_PER_ACCOUNT, Waits, check_budget, clean_filename, clean_mime, content_disposition,
-        delete_media, download_media, media_view_ok, read_chunks, reading_slot, save_within,
-        store_media, sweep,
+        Charge, FILENAME_MAX, MEDIA_TTL_SECS, MIME_MAX, NEUTRAL_MIME, Room, SWEEP_BATCH,
+        UPLOADS_PER_ACCOUNT, Waits, Watch, check_budget, clean_filename, clean_mime,
+        content_disposition, delete_media, download_media, form_within, media_view_ok, paced,
+        read_chunks, read_json_part, read_small, reading_slot, save_within, share_held, share_kib,
+        store_media, sweep, take_room,
     };
+    use crate::api::access::Proof;
     use crate::api::test_util::{done, mem_user, temp_state};
     use crate::api::{ApiError, Authed};
     use crate::db::{now, open};
@@ -1089,6 +1382,93 @@ mod tests {
         }
         let long = format!("application/{}", "x".repeat(MIME_MAX));
         assert_eq!(clean_mime(&long), NEUTRAL_MIME);
+    }
+
+    /// Serves the routes of `state` on a local port.
+    async fn serve(
+        state: &crate::state::AppState,
+    ) -> (
+        std::net::SocketAddr,
+        tokio::task::JoinHandle<std::io::Result<()>>,
+    ) {
+        use crate::server::client_ip::{ClientIp, ProxyTrust};
+        let trusted = ProxyTrust::from_config(false, Some("127.0.0.1")).expect("trust");
+        let app = crate::api::routes(
+            state.clone(),
+            &crate::config::Roles::ALL,
+            ClientIp(trusted),
+            None,
+        )
+        .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+        });
+        (addr, server)
+    }
+
+    async fn add_alice(db: &crate::db::Db) {
+        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'alice', 'x', 'text', 'identicon', 0)")
+            .execute(db)
+            .await
+            .expect("user");
+        sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, 'alice', 0)")
+            .bind(crate::db::secret_key("tok-alice"))
+            .execute(db)
+            .await
+            .expect("token");
+    }
+
+    /// Uploads a file of `kib` KiB as alice through the routes of `state`.
+    async fn post_file(state: &crate::state::AppState, kib: usize) -> (StatusCode, String) {
+        let (addr, server) = serve(state).await;
+        let mut body = b"--XB\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n".to_vec();
+        body.extend(vec![7u8; kib * 1024]);
+        body.extend_from_slice(b"\r\n--XB--\r\n");
+        let res = reqwest::Client::new()
+            .post(format!("http://{addr}/media"))
+            .bearer_auth("tok-alice")
+            .header("content-type", "multipart/form-data; boundary=XB")
+            .body(body)
+            .send()
+            .await
+            .expect("upload");
+        let status = res.status();
+        let text = res.text().await.expect("body");
+        server.abort();
+        (status, text)
+    }
+
+    #[tokio::test]
+    async fn uploads_over_the_configured_size_are_refused() {
+        let (state, path) = temp_state("media_configured_size").await;
+        add_alice(&state.db).await;
+        let small = state
+            .clone()
+            .with_limits(std::sync::Arc::new(crate::limits::Limits {
+                upload_max_mib: 1,
+                ..Default::default()
+            }));
+        let (status, text) = post_file(&small, 1536).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{text}");
+        assert!(text.contains("File exceeds 1MB limit"), "{text}");
+        let (status, text) = post_file(&small, 2560).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{text}");
+        let (status, text) = post_file(&small, 1000).await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        let (status, text) = post_file(&state, 1536).await;
+        assert_eq!(status, StatusCode::OK, "the default allows it: {text}");
+        let (status, text) = post_file(&state, 25 * 1024 + 1).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{text}");
+        assert!(text.contains("File exceeds 25MB limit"), "{text}");
+        done(state, path).await;
     }
 
     #[tokio::test]
@@ -1204,6 +1584,8 @@ mod tests {
         done(state, path).await;
     }
 
+    const MAX: usize = 25 * 1024 * 1024;
+
     fn test_waits(room_ms: u64, idle_ms: u64) -> Waits {
         Waits {
             room: std::time::Duration::from_millis(room_ms),
@@ -1235,15 +1617,46 @@ mod tests {
         reading_slot(db, who).expect("slot")
     }
 
+    /// Takes room as an upload handler does, then reads `stream` as its file part.
+    async fn read(
+        stream: impl futures_util::Stream<Item = Result<axum::body::Bytes, std::io::Error>>
+        + Send
+        + 'static,
+        declared: Option<u64>,
+        max: usize,
+        room: Room,
+        waits: Waits,
+        slot: crate::api::budget::Slot,
+    ) -> Result<super::Buffered, ApiError> {
+        let held = take_room(slot, declared, max, room, waits.room).await?;
+        let watch = Watch::default();
+        read_chunks(
+            paced(stream, usize::MAX, waits, watch.clone()),
+            max,
+            held,
+            &watch,
+        )
+        .await
+    }
+
+    /// The whole buffer, with no share per account.
+    fn whole(buffer: &std::sync::Arc<tokio::sync::Semaphore>) -> Room {
+        Room {
+            buffer: buffer.clone(),
+            share: u32::MAX,
+        }
+    }
+
     #[tokio::test]
     async fn the_whole_body_is_reserved_once_and_given_back() {
         let (state, path) = temp_state("media_reserve").await;
         let db = &state.db;
         let room = std::sync::Arc::new(tokio::sync::Semaphore::new(64));
-        let first = read_chunks(
+        let first = read(
             pieces(3, 16),
             Some(48 * 1024),
-            room.clone(),
+            MAX,
+            whole(&room),
             test_waits(50, 5000),
             slot(db, "a"),
         )
@@ -1251,10 +1664,11 @@ mod tests {
         .expect("fits");
         assert_eq!(first.data.len(), 48 * 1024);
         assert_eq!(room.available_permits(), 16);
-        let busy = read_chunks(
+        let busy = read(
             pieces(2, 16),
             Some(32 * 1024),
-            room.clone(),
+            MAX,
+            whole(&room),
             test_waits(50, 5000),
             slot(db, "b"),
         )
@@ -1271,10 +1685,11 @@ mod tests {
             64,
             "a stored body gives its room back"
         );
-        let lying = read_chunks(
+        let lying = read(
             pieces(3, 16),
             Some(16 * 1024),
-            room.clone(),
+            MAX,
+            whole(&room),
             test_waits(50, 5000),
             slot(db, "c"),
         )
@@ -1284,10 +1699,13 @@ mod tests {
             Some(StatusCode::PAYLOAD_TOO_LARGE),
             "never more than the room taken"
         );
-        let big = read_chunks(
-            pieces(MAX_SIZE / (16 * 1024) + 1, 16),
+        let big = read(
+            pieces(MAX / (16 * 1024) + 1, 16),
             None,
-            std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_SIZE / 1024)),
+            MAX,
+            whole(&std::sync::Arc::new(tokio::sync::Semaphore::new(
+                MAX / 1024,
+            ))),
             test_waits(50, 5000),
             slot(db, "d"),
         )
@@ -1309,7 +1727,14 @@ mod tests {
         let stuck: Vec<_> = (0..UPLOADS_PER_ACCOUNT)
             .map(|_| {
                 let (room, held) = (room.clone(), slot(&db, "mallory"));
-                tokio::spawn(read_chunks(stalled(1), Some(30 * 1024), room, waits, held))
+                tokio::spawn(read(
+                    stalled(1),
+                    Some(30 * 1024),
+                    MAX,
+                    whole(&room),
+                    waits,
+                    held,
+                ))
             })
             .collect();
         let ceiling = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -1327,10 +1752,11 @@ mod tests {
             ),
             "one account reads at most {UPLOADS_PER_ACCOUNT} bodies at once"
         );
-        let small = read_chunks(
+        let small = read(
             pieces(1, 8),
             Some(8 * 1024),
-            room.clone(),
+            MAX,
+            whole(&room),
             waits,
             slot(&db, "alice"),
         )
@@ -1338,10 +1764,11 @@ mod tests {
         .expect("another account's upload goes through");
         drop(small);
         let started = std::time::Instant::now();
-        let large = read_chunks(
+        let large = read(
             pieces(4, 8),
             Some(32 * 1024),
-            room.clone(),
+            MAX,
+            whole(&room),
             waits,
             slot(&db, "bob"),
         )
@@ -1372,10 +1799,11 @@ mod tests {
         let uploads = (0..8).map(|n| {
             let (room, held) = (room.clone(), slot(&state.db, &format!("user{n}")));
             tokio::spawn(async move {
-                let body = read_chunks(
+                let body = read(
                     pieces(5, 8),
                     Some(40 * 1024),
-                    room,
+                    MAX,
+                    whole(&room),
                     test_waits(20_000, 5000),
                     held,
                 )
@@ -1392,6 +1820,279 @@ mod tests {
             );
         }
         assert_eq!(room.available_permits(), 100);
+        done(state, path).await;
+    }
+
+    #[test]
+    fn one_account_gets_three_uploads_a_quarter_or_one_upload() {
+        let mib = 1024 * 1024;
+        let body = |max: u64| ((max + 1) * mib) as usize;
+        assert_eq!(share_kib(256 * mib, body(25)), 78 * 1024);
+        assert!(
+            3 * (25 * 1024 + 1) <= share_kib(256 * mib, body(25)),
+            "three uploads of the most size at the defaults"
+        );
+        assert_eq!(share_kib(2048 * mib, body(25)), 512 * 1024, "a quarter");
+        assert_eq!(share_kib(256 * mib, body(128)), 129 * 1024, "one upload");
+        assert_eq!(share_kib(1024 * mib, body(512)), 513 * 1024);
+        assert_eq!(share_kib(50 * mib, body(25)), 26 * 1024);
+        assert_eq!(share_kib(32 * mib, body(25)), 26 * 1024);
+        assert_eq!(
+            share_kib(32 * mib, body(32)),
+            32 * 1024,
+            "at most the buffer"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_account_holds_at_most_its_share_of_the_buffer() {
+        let (state, path) = temp_state("media_share").await;
+        let db = state.db.clone();
+        let buffer = std::sync::Arc::new(tokio::sync::Semaphore::new(100));
+        let room = || Room {
+            buffer: buffer.clone(),
+            share: 25,
+        };
+        let waits = test_waits(5000, 3000);
+        let max = 25 * 1024;
+        let stuck = tokio::spawn(read(
+            stalled(1),
+            Some(max as u64),
+            max,
+            room(),
+            waits,
+            slot(&db, "mallory"),
+        ));
+        let ceiling = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while buffer.available_permits() > 75 {
+            assert!(std::time::Instant::now() < ceiling, "the upload is held");
+            tokio::task::yield_now().await;
+        }
+        let more = read(
+            pieces(1, 1),
+            Some(1024),
+            max,
+            room(),
+            waits,
+            slot(&db, "mallory"),
+        )
+        .await;
+        match more {
+            Err(ApiError(code, msg)) => {
+                assert_eq!(code, StatusCode::TOO_MANY_REQUESTS);
+                assert!(msg.starts_with("Too many uploads at once: up to "), "{msg}");
+                assert!(msg.ends_with(" per account") && msg.is_ascii(), "{msg}");
+            }
+            Ok(_) => panic!("one account holds at most its share"),
+        }
+        assert_eq!(
+            buffer.available_permits(),
+            75,
+            "a refused body holds nothing"
+        );
+        let others: Vec<_> = ["alice", "bob", "carol"]
+            .into_iter()
+            .map(|who| {
+                let (room, held) = (room(), slot(&db, who));
+                tokio::spawn(read(pieces(3, 8), Some(24 * 1024), max, room, waits, held))
+            })
+            .collect();
+        for upload in others {
+            let body = upload.await.expect("task").expect("other accounts upload");
+            assert_eq!(body.data.len(), 24 * 1024);
+        }
+        assert_eq!(
+            stuck.await.expect("task").err().map(|ApiError(c, _)| c),
+            Some(StatusCode::REQUEST_TIMEOUT)
+        );
+        let again = read(
+            pieces(1, 1),
+            Some(1024),
+            max,
+            room(),
+            waits,
+            slot(&db, "mallory"),
+        )
+        .await
+        .expect("the share is given back");
+        drop(again);
+        assert_eq!(buffer.available_permits(), 100);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn json_parts_are_capped_and_timed_outside_the_buffer() {
+        let waits = test_waits(5000, 300);
+        let two = 2 * 1024 * 1024;
+        let small = read_small(pieces(2, 8), Some(16 * 1024), two, waits)
+            .await
+            .expect("fits");
+        assert_eq!(small.len(), 16 * 1024);
+        for (body, declared) in [(pieces(3, 1024), None), (pieces(3, 1024), Some(1024))] {
+            match read_small(body, declared, two, waits).await {
+                Err(ApiError(code, msg)) => {
+                    assert_eq!(code, StatusCode::PAYLOAD_TOO_LARGE);
+                    assert_eq!(msg, "JSON exceeds 2MB limit");
+                }
+                Ok(_) => panic!("3 MiB is over the cap"),
+            }
+        }
+        let started = std::time::Instant::now();
+        let declared = read_small(
+            futures_util::stream::pending::<Result<axum::body::Bytes, std::io::Error>>(),
+            Some(3 * 1024 * 1024),
+            two,
+            waits,
+        )
+        .await;
+        assert_eq!(
+            declared.err().map(|ApiError(c, _)| c),
+            Some(StatusCode::PAYLOAD_TOO_LARGE),
+            "refused on its declared length before reading"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_millis(250));
+        let stuck = read_small(stalled(1), None, two, waits).await;
+        assert_eq!(
+            stuck.err().map(|ApiError(c, _)| c),
+            Some(StatusCode::REQUEST_TIMEOUT)
+        );
+    }
+
+    /// A multipart request with the boundary `XB` whose body is `stream`.
+    fn form_request(
+        stream: impl futures_util::Stream<Item = Result<axum::body::Bytes, std::io::Error>>
+        + Send
+        + 'static,
+    ) -> axum::extract::Request {
+        axum::http::Request::builder()
+            .header(
+                axum::http::header::CONTENT_TYPE,
+                "multipart/form-data; boundary=XB",
+            )
+            .body(axum::body::Body::from_stream(stream))
+            .expect("request")
+    }
+
+    #[tokio::test]
+    async fn a_form_is_paced_as_one_body() {
+        use futures_util::StreamExt;
+        let waits = Waits {
+            room: std::time::Duration::from_secs(5),
+            idle: std::time::Duration::from_millis(300),
+            body: std::time::Duration::from_millis(1500),
+        };
+        let failed = |watch: &Watch, e: axum::extract::multipart::MultipartError| {
+            let over = || ApiError(StatusCode::PAYLOAD_TOO_LARGE, String::new());
+            watch
+                .error(over, ApiError(StatusCode::BAD_REQUEST, e.to_string()))
+                .0
+        };
+        let first = |stream| async move {
+            let (mut form, watch) = form_within(form_request(stream), 128 * 1024, waits)
+                .await
+                .expect("form");
+            let started = std::time::Instant::now();
+            let code = match form.next_field().await {
+                Ok(_) => StatusCode::OK,
+                Err(e) => failed(&watch, e),
+            };
+            (code, started.elapsed())
+        };
+        let header =
+            futures_util::stream::iter([Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                b"--XB\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n",
+            ))]);
+        for (what, stream) in [
+            ("a preamble", stalled(1).boxed()),
+            (
+                "a part header",
+                header.chain(futures_util::stream::pending()).boxed(),
+            ),
+        ] {
+            let (code, took) = first(stream).await;
+            assert_eq!(code, StatusCode::REQUEST_TIMEOUT, "{what} that stalls");
+            assert!(
+                took < std::time::Duration::from_millis(1200),
+                "{what} ends at the idle wait: {took:?}"
+            );
+        }
+        let (code, _) = first(pieces(4, 64).boxed()).await;
+        assert_eq!(code, StatusCode::PAYLOAD_TOO_LARGE, "past its most bytes");
+        let part = axum::body::Bytes::from_static(
+            b"--XB\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n{}\r\n",
+        );
+        let endless = futures_util::stream::unfold((), move |_| {
+            let part = part.clone();
+            async move {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                Some((Ok::<_, std::io::Error>(part), ()))
+            }
+        });
+        let (mut form, watch) = form_within(form_request(endless), usize::MAX, waits)
+            .await
+            .expect("form");
+        let started = std::time::Instant::now();
+        let parts = async {
+            let mut read = 0;
+            loop {
+                let field = match form.next_field().await {
+                    Ok(Some(field)) => field,
+                    Ok(None) => return (read, None),
+                    Err(e) => return (read, Some(failed(&watch, e))),
+                };
+                match read_json_part(field, 1024, &watch).await {
+                    Ok(_) => read += 1,
+                    Err(ApiError(code, _)) => return (read, Some(code)),
+                }
+            }
+        };
+        let (read, code) = tokio::time::timeout(std::time::Duration::from_secs(6), parts)
+            .await
+            .expect("the body wait ends many parts");
+        assert!(read > 3, "{read} parts");
+        assert_eq!(code, Some(StatusCode::REQUEST_TIMEOUT));
+        let took = started.elapsed();
+        assert!(
+            took >= std::time::Duration::from_millis(1400)
+                && took < std::time::Duration::from_secs(4),
+            "{took:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn multipart_bodies_take_their_room_before_they_are_parsed() {
+        use tokio::io::AsyncWriteExt;
+        let (state, path) = temp_state("media_preamble").await;
+        add_alice(&state.db).await;
+        let (addr, server) = serve(&state).await;
+        let until = |kib: u64, why: &'static str| {
+            let db = state.db.clone();
+            async move {
+                let ceiling = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                while share_held(&db, "alice") != kib {
+                    assert!(std::time::Instant::now() < ceiling, "{why}");
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            }
+        };
+        let mut socks = Vec::new();
+        for _ in 0..2 {
+            let mut sock = tokio::net::TcpStream::connect(addr).await.expect("connect");
+            let head = format!(
+                "POST /media HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer tok-alice\r\nContent-Type: multipart/form-data; boundary=XB\r\nContent-Length: {}\r\n\r\n",
+                1024 * 1024
+            );
+            sock.write_all(head.as_bytes()).await.expect("head");
+            sock.write_all(&[b'x'; 64 * 1024]).await.expect("preamble");
+            socks.push(sock);
+        }
+        until(2 * 1024, "a preamble holds room for its whole body").await;
+        drop(socks);
+        until(0, "and gives it back when the client goes").await;
+        server.abort();
+        let (status, text) = post_file(&state, 8).await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        assert_eq!(share_held(&state.db, "alice"), 0);
         done(state, path).await;
     }
 
@@ -1666,9 +2367,14 @@ mod tests {
             let id = id.clone();
             let state = state.clone();
             async move {
-                media_view_ok(&state.db, &headers, &id, Some(&mem_user(who, false)))
-                    .await
-                    .is_ok()
+                media_view_ok(
+                    &state.db,
+                    &Proof::headers(&headers, &state.limits),
+                    &id,
+                    Some(&mem_user(who, false)),
+                )
+                .await
+                .is_ok()
             }
         };
         assert!(view("carol").await);
@@ -1772,9 +2478,14 @@ mod tests {
         let see = |who: &'static str, admin: bool| {
             let (state, headers, id) = (state.clone(), headers.clone(), id.clone());
             async move {
-                media_view_ok(&state.db, &headers, &id, Some(&mem_user(who, admin)))
-                    .await
-                    .is_ok()
+                media_view_ok(
+                    &state.db,
+                    &Proof::headers(&headers, &state.limits),
+                    &id,
+                    Some(&mem_user(who, admin)),
+                )
+                .await
+                .is_ok()
             }
         };
         assert!(see("carol", false).await && see("root", true).await);
@@ -1785,7 +2496,16 @@ mod tests {
         assert!(!see("carol", false).await);
         assert!(!see("root", true).await);
         assert!(see("dave", false).await);
-        assert!(media_view_ok(&state.db, &headers, &id, None).await.is_ok());
+        assert!(
+            media_view_ok(
+                &state.db,
+                &Proof::headers(&headers, &state.limits),
+                &id,
+                None
+            )
+            .await
+            .is_ok()
+        );
         done(state, path).await;
     }
 
@@ -1931,9 +2651,14 @@ mod tests {
             let (state, headers) = (state.clone(), headers.clone());
             async move {
                 let user = who.map(|w| mem_user(w, w == "root"));
-                media_view_ok(&state.db, &headers, &id, user.as_ref())
-                    .await
-                    .is_ok()
+                media_view_ok(
+                    &state.db,
+                    &Proof::headers(&headers, &state.limits),
+                    &id,
+                    user.as_ref(),
+                )
+                .await
+                .is_ok()
             }
         };
         for id in [&old, &fresh, &reply] {
@@ -2005,7 +2730,11 @@ mod tests {
         let grant = crate::api::test_util::test_grant("g1");
         let mut with_header = axum::http::HeaderMap::new();
         with_header.insert("x-guest-grant", grant.parse().expect("header"));
-        assert!(media_view_ok(db, &with_header, &id, None).await.is_ok());
+        assert!(
+            media_view_ok(db, &Proof::headers(&with_header, &state.limits), &id, None)
+                .await
+                .is_ok()
+        );
         let hidden =
             download_media(State(state.clone()), axum::http::HeaderMap::new(), Path(id)).await;
         assert_eq!(
