@@ -1137,6 +1137,8 @@ fn poster(hook: &Hook, name: &str, kind: AvatarKind, color: Option<String>) -> U
         is_site_admin: false,
         appear_offline: true,
         created_at: 0,
+        recovery_pub: None,
+        recovery_set_at: None,
     }
 }
 

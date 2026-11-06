@@ -579,14 +579,14 @@ async fn throttle_attempt(db: &Db, key: &str, t: i64) -> Result<(), ApiError> {
 
 pub(crate) const PASSWORD_FAILURES_MAX: i64 = 50;
 
-fn session_key(token: &str) -> String {
+pub(crate) fn session_key(token: &str) -> String {
     Sha256::digest(token.as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
 }
 
-async fn throttle_change(db: &Db, key: &str, t: i64) -> Result<(), ApiError> {
+pub(crate) async fn throttle_change(db: &Db, key: &str, t: i64) -> Result<(), ApiError> {
     let day = (t / 86400).to_string();
     let admitted = sqlx::query(
         "INSERT INTO change_attempts(session, day, failures, last_at) VALUES($1, $2, 0, $3) ON CONFLICT(session) DO UPDATE SET failures = CASE WHEN change_attempts.day = excluded.day THEN change_attempts.failures ELSE 0 END, day = excluded.day, last_at = excluded.last_at WHERE change_attempts.day <> excluded.day OR excluded.last_at - change_attempts.last_at >= 3 RETURNING failures",
@@ -606,7 +606,7 @@ async fn throttle_change(db: &Db, key: &str, t: i64) -> Result<(), ApiError> {
     }
 }
 
-async fn note_change_failure(db: &Db, key: &str) -> Result<(), ApiError> {
+pub(crate) async fn note_change_failure(db: &Db, key: &str) -> Result<(), ApiError> {
     sqlx::query("UPDATE change_attempts SET failures = failures + 1 WHERE session = $1")
         .bind(key)
         .execute(db)

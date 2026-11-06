@@ -3097,6 +3097,14 @@ async fn stale_rows_are_swept() {
             "INSERT INTO bulk_delete_jobs(username, scope, status, created_at, finished_at, claimed_at) VALUES('a', 'c3', 'running', 0, NULL, $1)",
             t - crate::api::bulk_delete::JOB_KEEP - 1,
         ),
+        (
+            "INSERT INTO recovery_challenges(nonce, username, expires_at) VALUES('used-up', 'a', $1)",
+            t - 1,
+        ),
+        (
+            "INSERT INTO recovery_challenges(nonce, username, expires_at) VALUES('waiting', 'a', $1)",
+            t,
+        ),
     ] {
         sqlx::query(sql).bind(at).execute(db).await.expect(sql);
     }
@@ -3124,7 +3132,7 @@ async fn stale_rows_are_swept() {
             .await
             .expect("ping");
     }
-    let swept = sweep_stale(db, &state.limits).await.expect("sweep");
+    let swept = sweep_stale_at(db, &state.limits, t).await.expect("sweep");
     assert_eq!(
         swept,
         Swept {
@@ -3139,8 +3147,21 @@ async fn stale_rows_are_swept() {
             member_timeouts: 1,
             bulk_delete_jobs: 1,
             webhook_deliveries: 0,
+            recovery_challenges: 1,
             member_counts: 0,
         }
+    );
+    assert_eq!(
+        count(
+            db,
+            "SELECT COUNT(*) FROM recovery_challenges WHERE nonce = 'waiting'"
+        )
+        .await,
+        count(db, "SELECT COUNT(*) FROM recovery_challenges").await
+    );
+    assert_eq!(
+        count(db, "SELECT COUNT(*) FROM recovery_challenges").await,
+        1
     );
     assert_eq!(
         count(
@@ -3432,6 +3453,112 @@ async fn manage_reports_is_granted_on_upgrade() {
     wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("reports_perm").await {
         report_perms_upgrade(&pg.url).await;
+        drop(pg);
+    }
+}
+
+async fn old_recovery_db(db: &Db) {
+    for stmt in [
+        "DROP INDEX idx_recovery_challenges_expires",
+        "DROP TABLE recovery_challenges",
+        "ALTER TABLE users DROP COLUMN recovery_pub",
+        "ALTER TABLE users DROP COLUMN recovery_set_at",
+        "UPDATE settings SET value = '18' WHERE key = 'schema_version'",
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'old-hash', 'text', 'identicon', 7)",
+    ] {
+        sqlx::query(stmt).execute(db).await.expect(stmt);
+    }
+}
+
+async fn upgraded_recovery_db(db: &Db, key: Option<&str>) {
+    let row = sqlx::query("SELECT password_hash, created_at, recovery_pub, recovery_set_at FROM users WHERE username = 'alice'")
+        .fetch_one(db)
+        .await
+        .expect("alice");
+    let kept: (String, i64, Option<String>, Option<i64>) = (
+        row.try_get(0).expect("password_hash"),
+        row.try_get(1).expect("created_at"),
+        row.try_get(2).expect("recovery_pub"),
+        row.try_get(3).expect("recovery_set_at"),
+    );
+    assert_eq!(
+        kept,
+        (
+            "old-hash".to_string(),
+            7,
+            key.map(str::to_string),
+            key.map(|_| 9)
+        )
+    );
+    let user = get_user(db, "alice").await.expect("load").expect("alice");
+    assert_eq!(
+        (user.recovery_pub.as_deref(), user.recovery_set_at),
+        (key, key.map(|_| 9))
+    );
+    let index = match is_sqlite(db) {
+        true => {
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_recovery_challenges_expires'"
+        }
+        false => {
+            "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_recovery_challenges_expires'"
+        }
+    };
+    assert_eq!(count(db, index).await, 1);
+    sqlx::query(
+        "INSERT INTO recovery_challenges(nonce, username, expires_at) VALUES('n1', 'alice', 9)",
+    )
+    .execute(db)
+    .await
+    .expect("new table");
+    sqlx::query("DELETE FROM recovery_challenges")
+        .execute(db)
+        .await
+        .expect("clear");
+    assert_eq!(
+        count(
+            db,
+            "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+        )
+        .await,
+        SCHEMA_VERSION
+    );
+}
+
+async fn recovery_upgrade(url: &str) {
+    let db = open(Some(url)).await.expect("open");
+    old_recovery_db(&db).await;
+    close(&db).await;
+    for _ in 0..2 {
+        let db = open(Some(url)).await.expect("upgrade");
+        upgraded_recovery_db(&db, None).await;
+        close(&db).await;
+    }
+    let db = open(Some(url)).await.expect("open");
+    sqlx::query(
+        "UPDATE users SET recovery_pub = 'key', recovery_set_at = 9 WHERE username = 'alice'",
+    )
+    .execute(&db)
+    .await
+    .expect("set a key");
+    close(&db).await;
+    let db = open(Some(url)).await.expect("restart");
+    upgraded_recovery_db(&db, Some("key")).await;
+    close(&db).await;
+}
+
+#[tokio::test]
+async fn recovery_columns_are_added_to_an_old_database() {
+    let path = crate::db::temp_db_path("recovery_upgrade");
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    recovery_upgrade(path.to_str().expect("path")).await;
+    wipe();
+    if let Some(pg) = crate::api::test_util::pg_temp("recovery_upgrade").await {
+        recovery_upgrade(&pg.url).await;
         drop(pg);
     }
 }

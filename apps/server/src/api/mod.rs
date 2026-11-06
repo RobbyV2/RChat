@@ -23,6 +23,8 @@ pub mod pins;
 pub mod polls;
 pub mod preview_images;
 pub mod reactions;
+pub mod reauth;
+pub mod recovery;
 pub mod servers;
 pub mod system_messages;
 pub mod timeouts;
@@ -1541,11 +1543,12 @@ fn auth_unavailable(e: sqlx::Error) -> ApiError {
     )
 }
 
-/// The account row (`users.*`) holding session `token`, `None` when no live account has it.
-/// REST sign-in and the realtime sign-in and session checks all use it. Never answers a client.
+/// The account row (`users.*`, plus the session's `session_created_at`) holding session
+/// `token`, `None` when no live account has it. REST sign-in and the realtime sign-in and
+/// session checks all use it. Never answers a client.
 pub(crate) async fn token_row(db: &Db, token: &str) -> sqlx::Result<Option<AnyRow>> {
     sqlx::query(
-        "SELECT u.* FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
+        "SELECT u.*, t.created_at AS session_created_at FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
     )
     .bind(crate::db::secret_key(token))
     .fetch_optional(db)
@@ -1559,21 +1562,37 @@ pub(crate) async fn user_for_token(
     state: &AppState,
     token: &str,
 ) -> Result<Option<User>, ApiError> {
+    Ok(session_for_token(state, token).await?.map(|(user, _)| user))
+}
+
+/// The account of session `token` and when that session was created, with the errors of
+/// `user_for_token`.
+pub(crate) async fn session_for_token(
+    state: &AppState,
+    token: &str,
+) -> Result<Option<(User, i64)>, ApiError> {
     let row = token_row(&state.read(), token)
         .await
         .map_err(auth_unavailable)?;
-    row.map(|row| User::from_row(&row))
+    row.map(|row| Ok((User::from_row(&row)?, row.try_get("session_created_at")?)))
         .transpose()
         .map_err(auth_unavailable)
 }
 
-async fn bearer_user(parts: &Parts, state: &AppState) -> Result<Option<User>, ApiError> {
-    let token = parts
-        .headers
+/// The token of an `Authorization: Bearer <token>` header.
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
-    match token {
+        .and_then(|v| v.strip_prefix("Bearer "))
+}
+
+pub(crate) fn unauthorized() -> ApiError {
+    ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string())
+}
+
+async fn bearer_user(parts: &Parts, state: &AppState) -> Result<Option<User>, ApiError> {
+    match bearer_token(&parts.headers) {
         Some(token) => user_for_token(state, token).await,
         None => Ok(None),
     }
@@ -1602,7 +1621,7 @@ async fn require_token(State(state): State<AppState>, req: Request, next: Next) 
     };
     match user {
         Ok(Some(_)) => next.run(req).await,
-        Ok(None) => ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string()).into_response(),
+        Ok(None) => unauthorized().into_response(),
         Err(e) => e.into_response(),
     }
 }
@@ -1613,10 +1632,7 @@ impl FromRequestParts<AppState> for Authed {
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Authed, ApiError> {
         match bearer_user(parts, state).await? {
             Some(user) => Ok(Authed(user)),
-            None => Err(ApiError(
-                StatusCode::UNAUTHORIZED,
-                "Unauthorized".to_string(),
-            )),
+            None => Err(unauthorized()),
         }
     }
 }
@@ -1669,6 +1685,7 @@ pub fn routes(
             .route("/auth/register", post(auth::register))
             .route("/auth/login", post(auth::login))
             .route("/auth/words/{username}", get(auth::words))
+            .route("/auth/recovery/challenge", post(recovery::challenge))
             .route("/me/password", post(auth::change_password))
             .route("/servers/{name}/guest_access", post(servers::guest_access))
             .route("/servers", post(servers::create_server))
@@ -2103,6 +2120,8 @@ pub(crate) mod test_util {
             is_site_admin: site_admin,
             appear_offline: false,
             created_at: now(),
+            recovery_pub: None,
+            recovery_set_at: None,
         }
     }
 
@@ -3002,6 +3021,7 @@ mod tests {
             (false, "/settings", 40),
             (true, "/config_shares", 40),
             (true, "/identity/p2p_binding", 40),
+            (true, "/auth/recovery/challenge", 40),
         ] {
             let mut count = 0;
             for n in 0..tries {
@@ -3037,6 +3057,7 @@ mod tests {
         assert!(limited["/invites/rchat"] >= 5, "{limited:?}");
         assert!(limited["/config_shares"] >= 5, "{limited:?}");
         assert!(limited["/identity/p2p_binding"] >= 5, "{limited:?}");
+        assert!(limited["/auth/recovery/challenge"] >= 5, "{limited:?}");
         assert_eq!(limited["/auth/words/nobody"], 0, "{limited:?}");
         assert_eq!(limited["/settings"], 0, "{limited:?}");
         done(state, path).await;

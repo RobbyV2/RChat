@@ -136,6 +136,8 @@ pub struct User {
     pub is_site_admin: bool,
     pub appear_offline: bool,
     pub created_at: i64,
+    pub recovery_pub: Option<String>,
+    pub recovery_set_at: Option<i64>,
 }
 
 impl User {
@@ -152,6 +154,8 @@ impl User {
             is_site_admin: row.try_get::<i64, _>("is_site_admin")? != 0,
             appear_offline: row.try_get::<i64, _>("appear_offline")? != 0,
             created_at: row.try_get("created_at")?,
+            recovery_pub: row.try_get("recovery_pub")?,
+            recovery_set_at: row.try_get("recovery_set_at")?,
         })
     }
 }

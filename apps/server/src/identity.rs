@@ -258,20 +258,21 @@ pub fn p2p_key(ik: &str) -> Option<VerifyingKey> {
     }
 }
 
-/// Whether `proof` is a signature by the key `ik` over the binding of `sub` at `ts`.
-pub fn binding_proof_ok(key: &VerifyingKey, sub: &str, ts: i64, proof: &str) -> bool {
-    let Some(signature) = URL_SAFE_NO_PAD
-        .decode(proof)
+/// Whether `sig` (base64url, 64 bytes) is a strict Ed25519 signature by `key` over `msg`.
+pub fn sig_ok(key: &VerifyingKey, msg: &[u8], sig: &str) -> bool {
+    let Some(sig) = URL_SAFE_NO_PAD
+        .decode(sig)
         .ok()
         .and_then(|b| <[u8; 64]>::try_from(b).ok())
     else {
         return false;
     };
-    key.verify_strict(
-        &binding_message(sub, ts),
-        &Signature::from_bytes(&signature),
-    )
-    .is_ok()
+    key.verify_strict(msg, &Signature::from_bytes(&sig)).is_ok()
+}
+
+/// Whether `proof` is a signature by the key `ik` over the binding of `sub` at `ts`.
+pub fn binding_proof_ok(key: &VerifyingKey, sub: &str, ts: i64, proof: &str) -> bool {
+    sig_ok(key, &binding_message(sub, ts), proof)
 }
 
 #[derive(Debug, PartialEq, Eq)]

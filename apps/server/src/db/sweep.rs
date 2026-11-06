@@ -54,6 +54,7 @@ pub struct Swept {
     pub member_timeouts: u64,
     pub bulk_delete_jobs: u64,
     pub webhook_deliveries: u64,
+    pub recovery_challenges: u64,
     pub member_counts: u64,
 }
 
@@ -91,7 +92,10 @@ pub const PINGS_KEPT: i64 = 2000;
 
 /// Deletes what has aged out, with the retention times of `limits`.
 pub async fn sweep_stale(db: &Db, limits: &Limits) -> sqlx::Result<Swept> {
-    let t = now();
+    sweep_stale_at(db, limits, now()).await
+}
+
+pub(crate) async fn sweep_stale_at(db: &Db, limits: &Limits, t: i64) -> sqlx::Result<Swept> {
     let stale_grants = delete_batched(
         db,
         "DELETE FROM guest_grants WHERE \"grant\" IN (SELECT \"grant\" FROM guest_grants WHERE last_used_at < $1 AND (last_used_at > 0 OR created_at < $1) LIMIT $2)",
@@ -189,6 +193,12 @@ pub async fn sweep_stale(db: &Db, limits: &Limits) -> sqlx::Result<Swept> {
             db,
             "DELETE FROM webhook_deliveries WHERE id IN (SELECT id FROM webhook_deliveries WHERE created_at < $1 LIMIT $2)",
             t - crate::api::webhooks::DELIVERY_KEEP,
+        )
+        .await?,
+        recovery_challenges: delete_batched(
+            db,
+            "DELETE FROM recovery_challenges WHERE nonce IN (SELECT nonce FROM recovery_challenges WHERE expires_at < $1 LIMIT $2)",
+            t,
         )
         .await?,
         member_counts: fix_member_counts(db, COUNT_BATCH).await?,

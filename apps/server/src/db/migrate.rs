@@ -103,6 +103,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("messages", "webhook_embeds TEXT"),
     ("media", "charged_to TEXT"),
     ("media", "charged_server TEXT"),
+    ("users", "recovery_pub TEXT"),
+    ("users", "recovery_set_at {INT}"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -159,7 +161,9 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// webhook's owner and its server's webhooks).
 /// 17: stored names of uploaded files cleaned like new uploads (`messages.media_filename`).
 /// 18: the Manage reports permission bit.
-pub const SCHEMA_VERSION: i64 = 18;
+/// 19: recovery phrase columns (`users.recovery_pub`, `users.recovery_set_at`) and
+/// `recovery_challenges`.
+pub const SCHEMA_VERSION: i64 = 19;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
