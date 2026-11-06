@@ -5,6 +5,7 @@ import { home } from '../instances'
 import {
   freshPresence,
   knownPresence,
+  missingOnline,
   notePresence,
   presenceDelta,
   presenceSnap,
@@ -96,6 +97,7 @@ export const presenceSlice = (set: SetState, get: GetState) => {
   const presence: PresenceChange[] = []
   const presenceLogs = new Map<string, PresenceLog>()
   const presenceSnaps = new Map<string, PresenceSnap>()
+  const presenceDrops = new Map<string, number>()
   let presenceSeq = 0
   let presenceFrame = false
 
@@ -113,7 +115,8 @@ export const presenceSlice = (set: SetState, get: GetState) => {
     for (const c of batch) {
       was.set(c, knownOnline(c.server, c.username))
       const log = presenceLogs.get(c.server) ?? new Map()
-      notePresence(log, c.username, c.online, c.seq)
+      const lost = notePresence(log, c.username, c.online, c.seq)
+      if (lost) presenceDrops.set(c.server, lost.seq)
       presenceLogs.set(c.server, log)
     }
     set(s => applyPresence(s, batch, c => was.get(c)))
@@ -170,15 +173,32 @@ export const presenceSlice = (set: SetState, get: GetState) => {
     since: number
   ) => freshPresence(rows, presenceLogs.get(server), presenceSnaps.get(server), since)
 
+  // Up to `limit` names known online in `server` that no loaded or looked-up row covers.
+  const missing = (server: string, limit: number) => {
+    const s = get()
+    return missingOnline(
+      s.members[server]?.list ?? [],
+      s.memberInfo[server],
+      presenceLogs.get(server),
+      presenceSnaps.get(server),
+      limit
+    )
+  }
+
+  // The seq of the newest change in `server` that its log no longer holds.
+  const dropped = (server: string) => presenceDrops.get(server) ?? 0
+
   const forgetServer = (name: string) => {
     presenceLogs.delete(name)
     presenceSnaps.delete(name)
+    presenceDrops.delete(name)
   }
 
   const forget = () => {
     presence.length = 0
     presenceLogs.clear()
     presenceSnaps.clear()
+    presenceDrops.clear()
   }
 
   let outgoing: TypingOut = IDLE
@@ -256,6 +276,8 @@ export const presenceSlice = (set: SetState, get: GetState) => {
     knownOnline,
     seq: () => presenceSeq,
     fresh,
+    missing,
+    dropped,
     forgetServer,
     forget,
     forgetTyping,

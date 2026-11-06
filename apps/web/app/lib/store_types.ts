@@ -587,6 +587,7 @@ export interface RChatState {
   loadMembers: (server: string, reset?: boolean) => Promise<void>
   loadInteracted: (server: string, reset?: boolean) => Promise<void>
   ensureMembers: (server: string, usernames: string[]) => Promise<void>
+  loadMissingOnline: (server: string) => Promise<void>
   rememberMember: (server: string, username: string, member: Member | null) => void
   notePresence: (server: string, username: string, online: boolean) => void
   refreshMember: (server: string, username: string) => Promise<void>

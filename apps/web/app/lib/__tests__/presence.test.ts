@@ -3,7 +3,11 @@ import {
   PRESENCE_LOG_MAX,
   byCodePoint,
   freshPresence,
+  listComplete,
+  missingOnline,
   notePresence,
+  onlineMore,
+  onlineRows,
   presenceSnap,
   snapOnline,
   onlineTotals,
@@ -42,11 +46,17 @@ describe('presence helpers', () => {
 
   test('the log keeps the latest note per user and stays bounded', () => {
     const log: PresenceLog = new Map()
-    for (let i = 0; i <= PRESENCE_LOG_MAX; i++) notePresence(log, `u${i}`, true, i)
+    for (let i = 0; i < PRESENCE_LOG_MAX; i++)
+      expect(notePresence(log, `u${i}`, true, i)).toBeUndefined()
+    expect(notePresence(log, `u${PRESENCE_LOG_MAX}`, true, PRESENCE_LOG_MAX)).toEqual({
+      online: true,
+      seq: 0,
+    })
     expect(log.size).toBe(PRESENCE_LOG_MAX)
     expect(log.has('u0')).toBe(false)
-    notePresence(log, 'u1', false, 9999)
+    expect(notePresence(log, 'u1', false, 9999)).toBeUndefined()
     expect(log.get('u1')).toEqual({ online: false, seq: 9999 })
+    expect(notePresence(log, 'new', true, 10_000)).toEqual({ online: true, seq: 2 })
   })
 
   test('a snapshot decides listed names, and others only up to its last name', () => {
@@ -85,6 +95,61 @@ describe('presence helpers', () => {
     expect(freshPresence(rows, undefined, snap, 9)).toBe(rows)
   })
 
+  test('missingOnline lists online names no loaded row covers', () => {
+    const log: PresenceLog = new Map()
+    notePresence(log, 'bob', true, 2)
+    notePresence(log, 'carol', true, 3)
+    notePresence(log, 'dave', false, 4)
+    const loaded = [member('alice', { online: true })]
+    const info = { carol: member('carol', { online: true }) }
+    expect(missingOnline(loaded, info, log, undefined, 50)).toEqual(['bob'])
+    expect(missingOnline(loaded, {}, log, undefined, 1)).toEqual(['bob'])
+    expect(missingOnline(loaded, undefined, log, undefined, 50)).toEqual(['bob', 'carol'])
+    expect(missingOnline(loaded, info, undefined, undefined, 50)).toEqual([])
+  })
+
+  test('missingOnline takes snapshot names too, with the newer of log and snapshot deciding', () => {
+    const log: PresenceLog = new Map()
+    notePresence(log, 'erin', true, 1)
+    notePresence(log, 'zed', false, 6)
+    notePresence(log, 'b', true, 7)
+    const snap = presenceSnap(['a', 'amy', 'bob', 'zed', '\u00E9mile'], 5, 5)
+    const loaded = [member('amy')]
+    const info = { bob: null }
+    expect(missingOnline(loaded, info, log, snap, 50)).toEqual(['a', 'b', '\u00E9mile'])
+    expect(missingOnline(loaded, info, log, snap, 2)).toEqual(['a', 'b'])
+  })
+
+  test('onlineRows adds looked-up online members to the loaded ones, by display name', () => {
+    const loaded = [
+      member('alice', { online: true, display_name: 'Zoe' }),
+      member('bob', { display_name: 'Bob' }),
+      member('dave', { online: true, display_name: 'Dave' }),
+    ]
+    const info = {
+      bob: member('bob', { online: true }),
+      carol: member('carol', { online: true, display_name: 'Carol' }),
+      dave: member('dave', { online: true, display_name: 'Dave' }),
+      erin: member('erin'),
+      zed: null,
+    }
+    expect(onlineRows(loaded, info).map(m => m.username)).toEqual(['carol', 'dave', 'alice'])
+    expect(onlineRows(loaded, undefined).map(m => m.username)).toEqual(['dave', 'alice'])
+    expect(onlineRows([], info).map(m => m.username)).toEqual(['bob', 'carol', 'dave'])
+  })
+
+  test('the online section asks for more while its count exceeds its rows', () => {
+    const idle = paged([member('alice', { online: true })])
+    const info = { bob: member('bob', { online: true }) }
+    expect(onlineMore(3, 2, idle, info)).toBe('omore2:1')
+    expect(onlineMore(2, 2, idle, info)).toBeNull()
+    expect(onlineMore(1, 2, idle, info)).toBeNull()
+    expect(onlineMore(3, 2, { ...idle, loading: true }, info)).toBeNull()
+    expect(onlineMore(3, 2, undefined, info)).toBeNull()
+    expect(onlineMore(3, 2, idle, undefined)).toBe('omore2:0')
+    expect(onlineMore(3, 2, idle, { ...info, carol: member('carol'), zed: null })).toBe('omore2:3')
+  })
+
   test('a delta only counts a real change', () => {
     expect(presenceDelta(true, true)).toBe(0)
     expect(presenceDelta(false, false)).toBe(0)
@@ -97,6 +162,16 @@ describe('presence helpers', () => {
     const rows = [member('a', { online: true }), member('b', { online: true }), member('c')]
     expect(onlineTotals(1, 3, rows, true)).toEqual({ online: 2, offline: 1 })
     expect(onlineTotals(5, 3, rows, true)).toEqual({ online: 2, offline: 1 })
+  })
+
+  test('a list is complete only when its rows cover every member', () => {
+    const done = paged([member('alice')])
+    expect(listComplete(done, 4, 4)).toBe(true)
+    expect(listComplete(done, 5, 4)).toBe(true)
+    expect(listComplete(done, 3, 4)).toBe(false)
+    expect(listComplete({ ...done, hasMore: true }, 4, 4)).toBe(false)
+    expect(listComplete({ ...done, loading: true }, 4, 4)).toBe(false)
+    expect(listComplete(undefined, 4, 4)).toBe(false)
   })
 
   test('totals never contradict the loaded rows of a partial list', () => {

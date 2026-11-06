@@ -11,7 +11,7 @@ import {
   memberPerms,
   rolePerms,
 } from '../lib/rules'
-import { onlineTotals } from '../lib/presence'
+import { onlineSection } from '../lib/presence'
 import {
   banMenuItem,
   changeableRoles,
@@ -91,6 +91,7 @@ function MemberTimeout({ server, username }: { server: string; username: string 
 export default function MemberSidebar() {
   const detail = useStore(s => (s.view?.kind === 'channel' ? s.servers[s.view.server] : null))
   const cache = useStore(s => (s.view?.kind === 'channel' ? s.members[s.view.server] : undefined))
+  const info = useStore(s => (s.view?.kind === 'channel' ? s.memberInfo[s.view.server] : undefined))
   const inter = useStore(s =>
     s.view?.kind === 'channel' ? s.interacted[s.view.server] : undefined
   )
@@ -98,6 +99,7 @@ export default function MemberSidebar() {
   const perms = useStore(s => (s.view?.kind === 'channel' ? myPerms(s, s.view.server) : 0))
   const loadMembers = useStore(s => s.loadMembers)
   const loadInteracted = useStore(s => s.loadInteracted)
+  const loadMissingOnline = useStore(s => s.loadMissingOnline)
   const openContextMenu = useStore(s => s.openContextMenu)
   const openDialog = useStore(s => s.openDialog)
   const startDm = useStore(s => s.startDm)
@@ -112,27 +114,30 @@ export default function MemberSidebar() {
   const more = useCallback(() => {
     if (server) void loadMembers(server)
   }, [server, loadMembers])
+  const moreOnline = useCallback(() => {
+    if (server) void loadMissingOnline(server)
+  }, [server, loadMissingOnline])
   const moreInteracted = useCallback(() => {
     if (server) void loadInteracted(server)
   }, [server, loadInteracted])
   const items = useMemo(() => {
     if (!detail) return []
     const loaded = cache?.list ?? []
-    const online = loaded.filter(m => m.online).sort(byName)
-    const offline = loaded.filter(m => !m.online).sort(byName)
+    const {
+      online,
+      offline: away,
+      totals,
+      more: omore,
+    } = onlineSection(detail.online_count, detail.member_count, cache, info)
+    const offline = away.sort(byName)
     const out: Item[] = []
     const section = (id: string, label: string, count: number, list: Member[]) => {
       if (count <= 0 && !list.length) return
       out.push({ kind: 'head', key: `h${id}`, label: `${label} (${count})` })
       for (const m of list) out.push({ kind: 'member', key: `m${m.username}`, m })
     }
-    const totals = onlineTotals(
-      detail.online_count,
-      detail.member_count,
-      cache?.list,
-      cache ? !cache.hasMore && !cache.loading : false
-    )
     section('on', 'Online', totals.online, online)
+    if (omore) out.push({ kind: 'more', key: omore, onVisible: moreOnline })
     section('off', 'Offline', totals.offline, offline)
     if (cache?.hasMore) out.push({ kind: 'more', key: `more${loaded.length}`, onVisible: more })
     const users = inter?.list ?? []
@@ -147,7 +152,7 @@ export default function MemberSidebar() {
         out.push({ kind: 'more', key: `imore${users.length}`, onVisible: moreInteracted })
     }
     return out
-  }, [detail, cache, inter, more, moreInteracted])
+  }, [detail, cache, info, inter, more, moreOnline, moreInteracted])
   const { ref, range } = useWindowed(items)
   if (!detail) return null
 

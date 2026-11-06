@@ -722,15 +722,17 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     dropServer(name)
   }
 
-  // Reloads the unread counts, drops servers we were removed from, and reloads the open member list.
+  // Reloads the unread counts, drops servers we were removed from, and reloads the open server's
+  // member list and looked-up members.
   const catchUpLists = () => {
     if (get().me) void loadUnreads()
     void pruneServers()
       .catch(() => {})
       .then(() => {
         const { view, members } = get()
-        if (view?.kind === 'channel' && members[view.server])
-          void get().loadMembers(view.server, true)
+        if (view?.kind !== 'channel') return
+        if (members[view.server]) void get().loadMembers(view.server, true)
+        refreshMemberInfo(view.server)
       })
   }
 

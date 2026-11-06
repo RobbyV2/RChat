@@ -5,13 +5,19 @@ type Row = { username: string; online: boolean }
 
 export const PRESENCE_LOG_MAX = 2000
 
-export const notePresence = (log: PresenceLog, username: string, online: boolean, seq: number) => {
+export const notePresence = (
+  log: PresenceLog,
+  username: string,
+  online: boolean,
+  seq: number
+): PresenceNote | undefined => {
   log.delete(username)
   log.set(username, { online, seq })
-  if (log.size > PRESENCE_LOG_MAX) {
-    const oldest = log.keys().next().value
-    if (oldest !== undefined) log.delete(oldest)
-  }
+  if (log.size <= PRESENCE_LOG_MAX) return undefined
+  const oldest = log.entries().next().value
+  if (!oldest) return undefined
+  log.delete(oldest[0])
+  return oldest[1]
 }
 
 export const overlayPresence = <T extends Row>(
@@ -73,6 +79,66 @@ export const knownPresence = (
   if (fresh && (!snap || fresh.seq > snap.seq)) return fresh.online
   const snapped = snap && snap.seq > since ? snapOnline(snap, username) : undefined
   return snapped ?? fresh?.online
+}
+
+export const missingOnline = (
+  loaded: Row[],
+  info: Record<string, Row | null> | undefined,
+  log: PresenceLog | undefined,
+  snap: PresenceSnap | undefined,
+  limit: number
+): string[] => {
+  const covered = new Set(loaded.map(r => r.username))
+  const names = new Set([...(log?.keys() ?? []), ...(snap?.online ?? [])])
+  return [...names]
+    .filter(
+      n =>
+        !covered.has(n) && !(info && Object.hasOwn(info, n)) && knownPresence(log, snap, n) === true
+    )
+    .sort(byCodePoint)
+    .slice(0, limit)
+}
+
+export const onlineRows = <T extends Row & { display_name: string }>(
+  loaded: T[],
+  info: Record<string, T | null> | undefined
+): T[] => {
+  const listed = new Set(loaded.map(r => r.username))
+  const extra = Object.values(info ?? {}).filter(
+    (m): m is T => m !== null && m.online && !listed.has(m.username)
+  )
+  return [...loaded.filter(m => m.online), ...extra].sort((a, b) =>
+    a.display_name.localeCompare(b.display_name)
+  )
+}
+
+export const onlineMore = (
+  total: number,
+  rows: number,
+  cache: { loading: boolean } | undefined,
+  info: Record<string, unknown> | undefined
+): string | null =>
+  cache && !cache.loading && total > rows ? `omore${rows}:${Object.keys(info ?? {}).length}` : null
+
+export const listComplete = (
+  cache: { hasMore: boolean; loading: boolean } | undefined,
+  rows: number,
+  members: number
+) => !!cache && !cache.hasMore && !cache.loading && rows >= members
+
+// The member list's online section: its rows, counts and the key of its "more" sentinel.
+export const onlineSection = <T extends Row & { display_name: string }>(
+  count: number,
+  members: number,
+  cache: { list: T[]; hasMore: boolean; loading: boolean } | undefined,
+  info: Record<string, T | null> | undefined
+) => {
+  const loaded = cache?.list ?? []
+  const online = onlineRows(loaded, info)
+  const offline = loaded.filter(m => !m.online)
+  const rows = [...online, ...offline]
+  const totals = onlineTotals(count, members, rows, listComplete(cache, rows.length, members))
+  return { online, offline, totals, more: onlineMore(totals.online, online.length, cache, info) }
 }
 
 export const freshPresence = <T extends Row>(

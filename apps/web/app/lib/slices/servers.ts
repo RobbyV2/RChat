@@ -97,7 +97,10 @@ export interface ServersDeps {
   persistGrants: (grants: Record<string, string>) => void
   persistGuestNames: (names: Record<string, string>) => void
   persistGuestServers: (list: string[]) => void
-  presenceHub: Pick<ReturnType<typeof presenceSlice>, 'forgetServer' | 'fresh' | 'seq'>
+  presenceHub: Pick<
+    ReturnType<typeof presenceSlice>,
+    'dropped' | 'forgetServer' | 'fresh' | 'missing' | 'seq'
+  >
   reauthorLinkCards: (u: UserRef) => void
   refetchMe: () => Promise<void>
   rememberGuestName: (name: string, display: string) => void
@@ -540,6 +543,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
 
   const memberGen: Record<string, number> = {}
   const memberPending = new Set<string>()
+  const listSince = new Map<string, number>()
+  const pastOnline = new Set<string>()
   const pendingKey = (server: string, username: string) => `${server}\n${username}`
 
   const writeMemberInfo = (server: string, entries: [string, Member | null][]) =>
@@ -701,6 +706,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
 
   const forget = () => {
     bannedHere.clear()
+    listSince.clear()
+    pastOnline.clear()
   }
 
   const actions: Pick<
@@ -747,6 +754,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'loadMembers'
     | 'loadInteracted'
     | 'ensureMembers'
+    | 'loadMissingOnline'
     | 'rememberMember'
     | 'notePresence'
     | 'refreshMember'
@@ -925,9 +933,12 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
           writeMembers(server),
           async cursor => {
             const since = presenceHub.seq()
+            if (cursor === null) listSince.set(server, since)
             const page = await api.listMembers(server, cursor).catch(e => {
               throw banCheck(e, server)
             })
+            if (page.items.at(-1)?.online === false) pastOnline.add(server)
+            else pastOnline.delete(server)
             noteMemberTimeouts(server, page.items)
             return {
               ...page,
@@ -968,6 +979,16 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
           !memberPending.has(pendingKey(server, n))
       )
       if (missing.length) await fetchMemberInfo(server, missing).catch(() => {})
+    },
+
+    loadMissingOnline: async server => {
+      const names = presenceHub.missing(server, PAGE)
+      if (names.length) await get().ensureMembers(server, names)
+      else if (
+        (!get().members[server]?.hasMore || pastOnline.has(server)) &&
+        presenceHub.dropped(server) > (listSince.get(server) ?? 0)
+      )
+        await get().loadMembers(server, true)
     },
 
     rememberMember: (server, username, member) => writeMemberInfo(server, [[username, member]]),
