@@ -61,21 +61,49 @@ const placeOf = (s: RChatState, t: Target): Place => {
   }
 }
 
-const memberOf = (s: RChatState, t: Target) =>
-  t.kind === 'member'
-    ? t.user
-    : t.kind === 'message'
-      ? t.message.webhook
-        ? null
-        : t.message.author
-      : (s.profile?.user ?? null)
+const memberOf = (s: RChatState, t: Target) => {
+  switch (t.kind) {
+    case 'member':
+      return t.user
+    case 'message':
+      return t.message.webhook ? null : t.message.author
+    case 'dm':
+      return t.dm.other
+    case 'none':
+    case 'selection':
+    case 'server':
+    case 'folder':
+    case 'channel':
+    case 'category':
+    case 'home':
+      return s.profile?.user ?? null
+  }
+}
+
+const listOf = (s: RChatState, t: Target) => {
+  switch (t.kind) {
+    case 'message':
+    case 'selection':
+      return t.list
+    case 'dm':
+      return viewKey({ kind: 'dm', dmId: t.dm.id })
+    case 'none':
+    case 'member':
+    case 'server':
+    case 'folder':
+    case 'channel':
+    case 'category':
+    case 'home':
+      return currentList(s)
+  }
+}
 
 export const ctxFor = (s: RChatState, target: Target, via: Via): ActionCtx => ({
   s,
   via,
   target,
   ...placeOf(s, target),
-  list: target.kind === 'message' || target.kind === 'selection' ? target.list : currentList(s),
+  list: listOf(s, target),
   message: target.kind === 'message' ? target.message : null,
   member: memberOf(s, target),
 })

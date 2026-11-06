@@ -3,6 +3,7 @@ import { allActions, guardAction, isAvailable, labelOf } from './registry'
 import {
   askable,
   confirmThenRun,
+  dangerOf,
   expansionsOf,
   iconOf,
   runExpansion,
@@ -36,7 +37,7 @@ export const paletteRow = (a: Action, ctx: ActionCtx): PaletteCommand => {
     group: a.group ?? 'commands',
     icon: iconOf(a, ctx),
     keywords: title === a.title ? a.keywords : [...(a.keywords ?? []), a.title],
-    danger: a.danger,
+    danger: dangerOf(a, ctx),
     name: a.name,
     hint: a.hint,
     keepOpen: a.keepOpen,

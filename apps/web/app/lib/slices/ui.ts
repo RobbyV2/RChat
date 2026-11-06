@@ -1,5 +1,5 @@
 // The store's interface state: errors, toasts and notices, menus, dialogs and panels, the
-// per-account display preferences, and the menu and confirm builders.
+// per-account display preferences, and the confirm builders.
 
 import { ApiError } from '../api'
 import {
@@ -67,11 +67,10 @@ import {
   profanityValue,
   setMasking,
 } from '../profanity'
-import { changeableRoles, dmView, memberOf, memberTimeout, serverNames } from '../selectors'
+import { dmView, serverNames } from '../selectors'
 import { type ShowSpoilers, parseSpoilers, spoilersKey, spoilersValue } from '../spoilers'
-import type { ContextMenuItem, RChatState } from '../store_types'
+import type { RChatState } from '../store_types'
 import { type TimeoutWire, fromWire } from '../timeouts'
-import type { UserRef } from '../types'
 import { parseTyping, typingKey, typingValue } from '../typing'
 import { Banned, type GetState, type SetState, emptySearch, errorText, readScoped } from './ctx'
 import { isSelfDm } from './messages'
@@ -89,35 +88,15 @@ const store = () => {
   return bound
 }
 
-export const roleMenuItems = (server: string, username: string): ContextMenuItem[] => {
-  const s = store().getState()
-  const roleIds = memberOf(s, server, username)?.role_ids ?? []
-  return changeableRoles(s, server, username).map(r => {
-    const assigned = roleIds.includes(r.id)
-    return {
-      label: `${assigned ? 'Remove' : 'Assign'} ${r.name}`,
-      danger: assigned,
-      action: () =>
-        void (assigned
-          ? s.unassignRole(server, r.id, username)
-          : s.assignRole(server, r.id, username)),
-    }
-  })
-}
-
-export const banMenuItem = (server: string, username: string): ContextMenuItem => ({
-  label: 'Ban from server',
-  danger: true,
-  action: () => {
-    const s = store().getState()
-    s.askConfirm({
+export const confirmBan = (server: string, username: string) =>
+  store()
+    .getState()
+    .askConfirm({
       title: 'Ban from Server',
       body: "Ban this user? They are removed from the server and can't join again until unbanned.",
       confirm: 'Ban',
-      action: () => void s.banMember(server, username),
+      action: () => void store().getState().banMember(server, username),
     })
-  },
-})
 
 // Records the running timeouts (or none) of members of `server`, as a moderator sees them.
 export const noteMemberTimeouts = (
@@ -138,30 +117,6 @@ export const noteMemberTimeouts = (
 
 export const noteTimeout = (server: string, username: string, timeout: TimeoutWire | undefined) =>
   noteMemberTimeouts(server, [{ username, timeout }])
-
-// Time out a member, or change or remove their timeout (context menus).
-export const timeoutMenuItems = (server: string, user: UserRef): ContextMenuItem[] => {
-  const s = store().getState()
-  const running = memberTimeout(s, server, user.username) !== null
-  const open = () => s.openDialog({ kind: 'timeout', server, user: userRefOf(user) })
-  return running
-    ? [
-        { label: 'Change Timeout', action: open },
-        {
-          label: 'Remove Timeout',
-          danger: true,
-          action: () => void s.removeTimeout(server, user.username),
-        },
-      ]
-    : [{ label: 'Time Out', danger: true, action: open }]
-}
-
-const userRefOf = (u: UserRef): UserRef => ({
-  username: u.username,
-  display_name: u.display_name,
-  avatar_kind: u.avatar_kind,
-  avatar_color: u.avatar_color,
-})
 
 export const confirmKick = (server: string, username: string, after?: () => void) =>
   store()

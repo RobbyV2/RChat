@@ -1,35 +1,13 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Perm, hasPerm, type Member, type UserRef } from '../lib/types'
+import type { Member, UserRef } from '../lib/types'
 import { prefixHeights, visibleRange } from '../lib/window'
-import {
-  canModerate,
-  canPromote,
-  canRevoke,
-  canTransferTo,
-  memberPerms,
-  rolePerms,
-} from '../lib/rules'
 import { onlineSection } from '../lib/presence'
-import {
-  banMenuItem,
-  changeableRoles,
-  confirmKick,
-  confirmTransfer,
-  myPerms,
-  revokeAdminFor,
-  roleColor,
-  myRolePerms,
-  roleMenuItems,
-  timeoutMenuItems,
-  useStore,
-  type ContextMenuItem,
-} from '../lib/store'
+import { openActionMenu } from '../lib/actions/menu'
+import { roleColor, useStore } from '../lib/store'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
-import { blockMenuItem } from './blocking'
-import { friendMenuItem } from './friends'
 import { Badge, profileTrigger } from './profile_card'
 import { Masked, Sentinel } from './ui'
 import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
@@ -96,14 +74,9 @@ export default function MemberSidebar() {
     s.view?.kind === 'channel' ? s.interacted[s.view.server] : undefined
   )
   const me = useStore(s => s.me)
-  const perms = useStore(s => (s.view?.kind === 'channel' ? myPerms(s, s.view.server) : 0))
   const loadMembers = useStore(s => s.loadMembers)
   const loadInteracted = useStore(s => s.loadInteracted)
   const loadMissingOnline = useStore(s => s.loadMissingOnline)
-  const openContextMenu = useStore(s => s.openContextMenu)
-  const openDialog = useStore(s => s.openDialog)
-  const startDm = useStore(s => s.startDm)
-  const grantAdmin = useStore(s => s.grantAdmin)
   const server = detail?.name
   useEffect(() => {
     if (server) {
@@ -156,92 +129,14 @@ export default function MemberSidebar() {
   const { ref, range } = useWindowed(items)
   if (!detail) return null
 
-  const menuFor = (m: Member, x: number, y: number): ContextMenuItem[] => {
-    if (!me) return []
-    const self = m.username === me.username
-    const items: ContextMenuItem[] = [
-      {
-        label: 'Direct Message',
-        action: () => void startDm(m.username),
-      },
-    ]
-    if (
-      hasPerm(perms, Perm.Kick) &&
-      !self &&
-      canModerate(perms, me.is_site_admin, memberPerms(m, detail.roles))
-    )
-      items.push(
-        {
-          label: 'Kick',
-          danger: true,
-          action: () => confirmKick(detail.name, m.username),
-        },
-        banMenuItem(detail.name, m.username)
-      )
-    if (
-      hasPerm(perms, Perm.TimeoutMembers) &&
-      !self &&
-      canModerate(perms, me.is_site_admin, memberPerms(m, detail.roles))
-    )
-      items.push(...timeoutMenuItems(detail.name, m))
-    if (hasPerm(perms, Perm.ManageAdmins)) {
-      if (m.is_admin) {
-        if (canRevoke(perms, me.is_site_admin, m.perms, rolePerms(m, detail.roles)))
-          items.push({
-            label: 'Revoke Admin',
-            danger: true,
-            action: () => revokeAdminFor(detail.name, m.username),
-          })
-      } else if (canPromote(perms, me.is_site_admin))
-        items.push({
-          label: 'Promote to Admin',
-          action: () => void grantAdmin(detail.name, m.username),
-        })
-      if (
-        !self &&
-        canTransferTo(
-          perms,
-          me.is_site_admin,
-          m.perms,
-          myRolePerms(useStore.getState(), detail.name)
-        )
-      )
-        items.push({
-          label: 'Transfer Admin',
-          action: () => confirmTransfer(detail.name, m.username),
-        })
-      if (changeableRoles(useStore.getState(), detail.name, m.username).length)
-        items.push({
-          label: 'Assign Role',
-          action: () => openContextMenu(x, y, roleMenuItems(detail.name, m.username)),
-        })
-    }
-    const friend = friendMenuItem(m)
-    if (friend) items.push(friend)
-    const block = blockMenuItem(m)
-    if (block) items.push(block)
-    if (me.is_site_admin && !self)
-      items.push({
-        label: 'Ban site-wide',
-        danger: true,
-        action: () => openDialog({ kind: 'ban_confirm', username: m.username }),
-      })
-    items.push({
-      label: 'Copy User ID',
-      action: () => void navigator.clipboard.writeText(m.username),
-    })
-    return items
-  }
-
   const row = (m: Member) => {
     return (
       <div
         key={m.username}
         {...(me
-          ? longPress((x, y) => {
-              const items = menuFor(m, x, y)
-              if (items.length) openContextMenu(x, y, items)
-            })
+          ? longPress((x, y) =>
+              openActionMenu(x, y, { kind: 'member', user: m, server: detail.name, where: 'list' })
+            )
           : {})}
         {...profileTrigger(m, detail.name)}
         className={`flex h-10 cursor-pointer items-center gap-2 rounded-xl px-2 hover:bg-surface-container-high ${rowFocus} ${
@@ -272,17 +167,7 @@ export default function MemberSidebar() {
       key={u.username}
       {...(me
         ? longPress((x, y) =>
-            openContextMenu(x, y, [
-              {
-                label: 'Direct Message',
-                action: () => void startDm(u.username),
-              },
-              ...[friendMenuItem(u), blockMenuItem(u)].filter(i => i !== null),
-              {
-                label: 'Copy User ID',
-                action: () => void navigator.clipboard.writeText(u.username),
-              },
-            ])
+            openActionMenu(x, y, { kind: 'member', user: u, server: null, where: 'interacted' })
           )
         : {})}
       {...profileTrigger(u, detail.name)}

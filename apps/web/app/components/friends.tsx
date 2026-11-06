@@ -1,19 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import {
-  Check,
-  Copy,
-  MessageCircle,
-  MoreVertical,
-  UserMinus,
-  UserPlus,
-  Users,
-  X,
-} from 'lucide-react'
+import { Check, MessageCircle, MoreVertical, UserMinus, UserPlus, Users, X } from 'lucide-react'
 import { ApiError } from '../lib/api'
 import { api } from '../lib/instances'
-import { useStore, type ContextMenuItem } from '../lib/store'
+import { authorItem } from '../lib/actions/author'
+import { messageFriend } from '../lib/actions/member'
+import { openActionMenu } from '../lib/actions/menu'
+import type { Target } from '../lib/actions/types'
+import { useStore } from '../lib/store'
 import { bannerColor } from '../lib/profile'
 import { scopePings } from '../lib/pings'
 import { badgePings } from '../lib/selectors'
@@ -32,7 +27,6 @@ import {
 import type { Friend, FriendRequest, Profile, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
-import { blockMenuItem } from './blocking'
 import { profileTrigger } from './profile_card'
 import { PingBadge } from './ping_badge'
 import {
@@ -48,29 +42,9 @@ import {
   textBtn,
   useEscape,
 } from './ui'
-import { isWebhookAuthor } from '../lib/webhooks'
 
-// "Add friend" for a user menu; null for yourself, guests and people you blocked.
-export const friendMenuItem = (user: UserRef): ContextMenuItem | null => {
-  const s = useStore.getState()
-  if (
-    !s.me ||
-    s.guest ||
-    isWebhookAuthor(user.username) ||
-    user.username === s.me.username ||
-    s.blocked[user.username]
-  )
-    return null
-  const known = [s.friends, s.onlineFriends, s.incomingRequests, s.outgoingRequests].some(p =>
-    p.list.some((x: { user: UserRef }) => x.user.username === user.username)
-  )
-  if (known) return null
-  return {
-    label: 'Add friend',
-    icon: UserPlus,
-    action: () => useStore.getState().askAddFriends([user.username]),
-  }
-}
+// "Add friend" for a message author's menu (until the message menus move to the registry).
+export const friendMenuItem = (user: UserRef) => authorItem('member_friend_add', user)
 
 // The unseen friend pings (requests and accepted requests), for badges.
 export const useFriendPings = () => useStore(s => scopePings(badgePings(s), FRIENDS_SCOPE))
@@ -117,43 +91,19 @@ function Name({ user, sub }: { user: UserRef; sub?: string }) {
 const rowCls =
   'group flex min-h-12 items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-surface-container-high'
 
-// Opens the DM; on narrow screens the full screen panel closes so the DM shows.
-const message = (user: UserRef) => {
-  const s = useStore.getState()
-  if (window.matchMedia('(max-width: 767px)').matches) s.closePanel()
-  void s.startDm(user.username)
-}
-
-const friendItems = (user: UserRef): ContextMenuItem[] => {
-  const s = useStore.getState()
-  return [
-    {
-      label: 'Message',
-      icon: MessageCircle,
-      action: () => message(user),
-    },
-    {
-      label: 'Remove friend',
-      icon: UserMinus,
-      danger: true,
-      action: () => s.askRemoveFriend(user),
-    },
-    ...[blockMenuItem(user)].filter(i => i !== null),
-    {
-      label: 'Copy User ID',
-      icon: Copy,
-      action: () => void navigator.clipboard.writeText(user.username),
-    },
-  ]
-}
+const friendAt = (user: UserRef): Target => ({
+  kind: 'member',
+  user,
+  server: null,
+  where: 'friend',
+})
 
 export function FriendRow({ friend }: { friend: Friend }) {
-  const openContextMenu = useStore(s => s.openContextMenu)
   const { user, online } = friend
   return (
     <div
       data-friend={user.username}
-      {...longPress((x, y) => openContextMenu(x, y, friendItems(user)))}
+      {...longPress((x, y) => openActionMenu(x, y, friendAt(user)))}
       className={rowCls}
     >
       <div {...profileTrigger(user, null)} className="flex min-w-0 flex-1 items-center gap-3">
@@ -163,7 +113,7 @@ export function FriendRow({ friend }: { friend: Friend }) {
       <button
         title="Message"
         aria-label={`Message ${user.display_name}`}
-        onClick={() => message(user)}
+        onClick={() => messageFriend(user)}
         className={iconBtn}
       >
         <MessageCircle size={18} />
@@ -173,7 +123,7 @@ export function FriendRow({ friend }: { friend: Friend }) {
         aria-label={`More for ${user.display_name}`}
         onClick={e => {
           const r = e.currentTarget.getBoundingClientRect()
-          openContextMenu(r.left, r.bottom, friendItems(user))
+          openActionMenu(r.left, r.bottom, friendAt(user))
         }}
         className={iconBtn}
       >
@@ -187,27 +137,13 @@ export function RequestRow({ request }: { request: FriendRequest }) {
   const acceptFriend = useStore(s => s.acceptFriend)
   const denyFriend = useStore(s => s.denyFriend)
   const cancelFriendRequest = useStore(s => s.cancelFriendRequest)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const { user, incoming } = request
-  const items = (): ContextMenuItem[] =>
-    incoming
-      ? [
-          { label: 'Accept', icon: Check, action: () => void acceptFriend(user) },
-          { label: 'Deny', icon: X, action: () => void denyFriend(user.username) },
-          ...[blockMenuItem(user)].filter(i => i !== null),
-        ]
-      : [
-          {
-            label: 'Cancel request',
-            icon: X,
-            action: () => void cancelFriendRequest(user.username),
-          },
-          ...[blockMenuItem(user)].filter(i => i !== null),
-        ]
   return (
     <div
       data-request={user.username}
-      {...longPress((x, y) => openContextMenu(x, y, items()))}
+      {...longPress((x, y) =>
+        openActionMenu(x, y, { kind: 'member', user, server: null, where: 'request' })
+      )}
       className={rowCls}
     >
       <div {...profileTrigger(user, null)} className="flex min-w-0 flex-1 items-center gap-3">

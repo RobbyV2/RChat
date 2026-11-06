@@ -15,7 +15,6 @@ import {
   Menu,
   MessageCircle,
   Pin,
-  PinOff,
   Plus,
   Trash2,
   Users,
@@ -46,6 +45,7 @@ import {
 } from '../lib/home'
 import { forgetRecent, hideTip, parseSummary, unreadSummaryKey, useHome } from '../lib/home_store'
 import { isMac, paletteShortcut, usePalette } from '../lib/palette'
+import { openActionMenu } from '../lib/actions/menu'
 import { dmSections } from '../lib/nav_layout'
 import { passwordSignup } from '../lib/features'
 import { enterKey } from '../lib/keys'
@@ -776,10 +776,7 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
   const unread = useStore(s => scopeUnread(s, key))
   const pings = useStore(s => scopePingCount(s, key))
   const openDm = useStore(s => s.openDm)
-  const unpinDm = useStore(s => s.unpinDm)
   const placeDm = useStore(s => s.placeDm)
-  const markScopesRead = useStore(s => s.markScopesRead)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const streamer = useStore(s => s.streamer)
   const mask = useMask()
   return (
@@ -788,23 +785,12 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
       data-pinned-dm={dm.id}
       title={streamer ? 'Direct message' : mask(dm.other.display_name)}
       onClick={() => void openDm(dm.id)}
-      {...longPress(
-        (x, y) =>
-          openContextMenu(x, y, [
-            { label: 'Open', icon: ExternalLink, action: () => void openDm(dm.id) },
-            markReadItem(
-              scopeMarkTargets(useStore.getState(), key),
-              () => void markScopesRead([key])
-            ),
-            { label: 'Unpin DM', icon: PinOff, action: () => unpinDm(dm.id) },
-          ]),
-        {
-          group: 'home_dm',
-          key: String(dm.id),
-          zones: zone => zone === 'home_pinned',
-          onDrop: ({ index }) => placeDm(dm.id, 'pinned', index),
-        }
-      )}
+      {...longPress((x, y) => openActionMenu(x, y, { kind: 'dm', dm, where: 'home' }), {
+        group: 'home_dm',
+        key: String(dm.id),
+        zones: zone => zone === 'home_pinned',
+        onDrop: ({ index }) => placeDm(dm.id, 'pinned', index),
+      })}
       className={rowCls}
     >
       <UserAvatar

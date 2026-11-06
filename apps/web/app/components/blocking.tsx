@@ -1,32 +1,17 @@
 'use client'
 
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { UserCheck, UserX } from 'lucide-react'
-import { useStore, type ContextMenuItem } from '../lib/store'
+import { UserX } from 'lucide-react'
+import { authorItem } from '../lib/actions/author'
+import { useStore } from '../lib/store'
 import { blockedLabel, blockedRuns, type BlockedRun } from '../lib/blocks'
 import type { Message, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { fieldCls, FieldError, filledBtn, Masked, Sentinel, textBtn } from './ui'
-import { isWebhookAuthor } from '../lib/webhooks'
 
-// "Block" (with a short confirm) or "Unblock" for a user menu; null for yourself and guests.
-export const blockMenuItem = (user: UserRef): ContextMenuItem | null => {
-  const s = useStore.getState()
-  if (!s.me || s.guest || isWebhookAuthor(user.username) || user.username === s.me.username)
-    return null
-  return s.blocked[user.username]
-    ? {
-        label: 'Unblock',
-        icon: UserCheck,
-        action: () => void useStore.getState().unblockUser(user.username, user.display_name),
-      }
-    : {
-        label: 'Block',
-        icon: UserX,
-        danger: true,
-        action: () => useStore.getState().askBlock(user),
-      }
-}
+// "Block" or "Unblock" for a message author's menu (until the message menus move to the registry).
+export const blockMenuItem = (user: UserRef) =>
+  authorItem('member_block', user) ?? authorItem('member_unblock', user)
 
 // Collapsed runs of blocked users' messages. A run opens with Show, or by itself when a jump
 // targets one of its messages.

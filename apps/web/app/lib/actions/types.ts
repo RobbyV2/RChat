@@ -44,10 +44,11 @@ export interface ActionCtx {
   server: string | null
   channel: Channel | null
   dm: DmSummary | null
-  // The message list: the target message's, else the open thread, channel or DM.
+  // The message list: the target message's or DM's, else the open thread, channel or DM.
   list: string | null
   message: Message | null
-  // The target member, a message target's author unless a webhook, else the open profile card's.
+  // The target member, a message target's author unless a webhook, a DM target's other person,
+  // else the open profile card's.
   member: UserRef | null
 }
 
@@ -112,6 +113,8 @@ export interface Action<A extends Args = Args> {
   subtitle?(ctx: ActionCtx): string | undefined
   // The icon for this context; `icon` stays the static one.
   iconFor?(ctx: ActionCtx): LucideIcon
+  // Whether this context's row is shown as danger; `danger` stays the static flag.
+  dangerFor?(ctx: ActionCtx): boolean
   wrap?: boolean
   // The label is a name (blurred in streamer mode).
   name?: boolean

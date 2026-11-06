@@ -25,16 +25,14 @@ import { serversSlice } from './slices/servers'
 import { rtcSlice } from './slices/rtc'
 import { BOOT_RETRY_MS, p2pGate, sessionSlice, tapWs } from './slices/session'
 import {
-  banMenuItem,
   bindStore,
+  confirmBan,
   confirmDeleteMessage,
   confirmKick,
   confirmTransfer,
   noteMemberTimeouts,
   noteTimeout,
   revokeAdminFor,
-  roleMenuItems,
-  timeoutMenuItems,
   uiSlice,
 } from './slices/ui'
 
@@ -51,16 +49,14 @@ export * from './view'
 export { errorText }
 export {
   BOOT_RETRY_MS,
-  banMenuItem,
+  confirmBan,
   confirmDeleteMessage,
   confirmKick,
   confirmTransfer,
   noteMemberTimeouts,
   noteTimeout,
   revokeAdminFor,
-  roleMenuItems,
   tapWs,
-  timeoutMenuItems,
 }
 
 export const IGNORED = [

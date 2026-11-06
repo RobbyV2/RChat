@@ -40,6 +40,9 @@ export const expansionsOf = (a: Action, ctx: ActionCtx): Expansion[] =>
 export const iconOf = (a: Action, ctx: ActionCtx) =>
   a.iconFor ? guardAction(a, () => a.iconFor!(ctx), a.icon) : a.icon
 
+export const dangerOf = (a: Action, ctx: ActionCtx) =>
+  a.dangerFor ? guardAction(a, () => a.dangerFor!(ctx), a.danger) : a.danger
+
 // An expansion row runs with its entry as it is on fresh state, and only while it is still listed.
 export const runExpansion = async (a: Action, ctx: ActionCtx, key: string): Promise<void> => {
   const hit = recheckAction(a.id, ctx)

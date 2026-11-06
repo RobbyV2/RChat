@@ -44,13 +44,12 @@ import { mentionLookups, mentionsUser } from '../lib/mentions'
 import { readOnly } from '../lib/reactions'
 import { slowTitle } from '../lib/slowmode'
 import { canQuote, repliesToMe } from '../lib/replies'
+import { banMenuItem, roleMenuItems, timeoutMenuItems } from '../lib/actions/author'
 import {
-  banMenuItem,
   byUsername,
   changeableRoles,
   confirmDeleteMessage,
   confirmKick,
-  timeoutMenuItems,
   confirmTransfer,
   memberOf,
   memberState,
@@ -58,7 +57,6 @@ import {
   myPerms,
   revokeAdminFor,
   roleColor,
-  roleMenuItems,
   userRefFor,
   useStore,
   myRolePerms,
@@ -845,7 +843,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
             danger: true,
             action: () => confirmKick(view.server, author.username),
           },
-          banMenuItem(view.server, author.username)
+          ...[banMenuItem(view.server, author.username)].filter(i => i !== null)
         )
       if (
         !left &&

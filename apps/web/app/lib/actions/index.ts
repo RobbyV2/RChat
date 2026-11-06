@@ -1,5 +1,8 @@
+import { adminActions } from './admin'
+import { dmActions } from './dm'
 import { friendActions } from './friends'
 import { globalActions, goActions } from './global'
+import { memberActions } from './member'
 import { placeActions } from './place'
 import { defineAction } from './registry'
 import { selectionActions } from './selection'
@@ -18,6 +21,9 @@ export const registerAppActions = () => {
     globalActions,
     friendActions,
     settingsActions,
+    memberActions,
+    adminActions,
+    dmActions,
   ])
     for (const a of list) defineAction(a)
 }

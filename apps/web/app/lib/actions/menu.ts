@@ -11,7 +11,15 @@ import {
   subscribeActions,
   targetActions,
 } from './registry'
-import { askable, confirmThenRun, expansionsOf, iconOf, runExpansion, valueSteps } from './steps'
+import {
+  askable,
+  confirmThenRun,
+  dangerOf,
+  expansionsOf,
+  iconOf,
+  runExpansion,
+  valueSteps,
+} from './steps'
 import type { Action, ActionCtx, Target } from './types'
 
 const picked = (a: Action, ctx: ActionCtx): Pick<ContextMenuItem, 'action' | 'submenu'> => {
@@ -44,7 +52,7 @@ const rowOf = (a: Action, ctx: ActionCtx): ContextMenuItem => ({
   label: labelOf(a, ctx),
   subtitle: a.subtitle?.(ctx),
   wrap: a.wrap,
-  danger: a.danger,
+  danger: dangerOf(a, ctx),
   disabled: a.disabled?.(ctx),
   icon: iconOf(a, ctx),
   checked: a.checked?.(ctx),

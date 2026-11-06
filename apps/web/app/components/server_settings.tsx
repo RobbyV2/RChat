@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Hash, Lock, Trash2, TriangleAlert, Volume2, X } from 'lucide-react'
 import type { Page } from '../lib/lists'
+import { roleItems } from '../lib/actions/member'
 import { api } from '../lib/instances'
 import {
   changeableRoles,
   errorText,
   revokeAdminFor,
-  roleMenuItems,
   serverAdminPerms,
   useStore,
   type ConfirmRequest,
@@ -1122,7 +1122,7 @@ function Settings({ server }: { server: string }) {
     hasPerm(perms, Perm.ManageAdmins) &&
     changeableRoles(useStore.getState(), server, m.username).length > 0 ? (
       <button
-        onClick={e => openContextMenu(e.clientX, e.clientY, roleMenuItems(server, m.username))}
+        onClick={e => openContextMenu(e.clientX, e.clientY, roleItems(server, m))}
         className={textBtn}
       >
         Roles

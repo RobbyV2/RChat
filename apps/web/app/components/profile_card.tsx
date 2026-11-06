@@ -28,7 +28,7 @@ import { formatQualified, isHomeHost } from '../lib/qualified'
 import { InstanceChip } from './instance_badge'
 import { api } from '../lib/instances'
 import {
-  banMenuItem,
+  confirmBan,
   confirmKick,
   confirmTransfer,
   memberState,
@@ -388,7 +388,7 @@ function Card({ target }: { target: ProfileTarget }) {
         return
       case 'server_ban':
         close()
-        banMenuItem(server, username).action?.()
+        confirmBan(server, username)
         return
       case 'timeout':
         close()

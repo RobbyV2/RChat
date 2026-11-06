@@ -796,6 +796,39 @@ test('row fields reach menus and the palette: wrap, checked, radio, choice dange
   })
 })
 
+test('dangerFor decides a row danger in menus and the palette; a throwing one keeps danger', () => {
+  let risky = false
+  const t = { targets: ['message'] as const, scope: 'message' as const, danger: true }
+  def({ id: 't_flag', title: 'Flag', dangerFor: () => risky, ...t, ...on })
+  def({
+    id: 't_throw',
+    title: 'Throw',
+    dangerFor: () => {
+      throw new Error('x')
+    },
+    ...t,
+    ...on,
+  })
+  const rows = () =>
+    quiet(() => [
+      menuItems(ctx('menu', m5)).map(i => i.danger),
+      paletteCommands(ctx('palette', m5))
+        .filter(r => r.id.startsWith('t_'))
+        .map(r => r.danger),
+    ])
+  const first = rows()
+  expect(first.out).toEqual([
+    [false, true],
+    [false, true],
+  ])
+  expect(first.logged.map(l => l[1])).toEqual(['t_throw'])
+  risky = true
+  expect(rows().out).toEqual([
+    [true, true],
+    [true, true],
+  ])
+})
+
 test('an open action menu rebuilds when a registry change swaps a row and keeps the count', () => {
   const msgAction = { scope: 'message' as const, targets: ['message'] as const, run: () => {} }
   let swapped = false

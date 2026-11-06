@@ -26,6 +26,8 @@ import { api, shareOrigin } from '../instances'
 import {
   LEVELS,
   MUTE_CHOICES,
+  muteEnd,
+  mutedText,
   muteUntilFor,
   ownRule,
   type Level,
@@ -35,12 +37,12 @@ import { openPollFromPalette } from '../palette_store'
 import { sharing } from '../platform'
 import type { PollTarget } from '../polls_store'
 import { dayEndTs } from '../search'
-import { myPerms, serverAdminPerms, userRefFor, useStore } from '../store'
+import { myPerms, scopeMarkTargets, serverAdminPerms, userRefFor, useStore } from '../store'
 import type { RChatState } from '../store_types'
 import { Perm, hasPerm } from '../types'
 import { viewKey, viewPath } from '../view'
 import { signedIn, username, usernameStep } from './global'
-import type { Action, ActionCtx, ArgChoice, ArgStep, Scope } from './types'
+import type { Action, ActionCtx, ArgChoice, ArgStep, Scope, Target } from './types'
 
 const get = () => useStore.getState()
 
@@ -59,6 +61,13 @@ const notifyHere = ({ s }: ActionCtx): NotifyScope | null => {
   return v.kind === 'channel'
     ? { kind: 'channel', id: v.channelId, server: v.server }
     : { kind: 'dm', id: v.dmId }
+}
+
+// A sidebar DM's, else the open channel's or DM's.
+const notifyTarget = (ctx: ActionCtx): NotifyScope | null => {
+  const t = ctx.target
+  if (t.kind !== 'dm') return notifyHere(ctx)
+  return t.where === 'sidebar' ? { kind: 'dm', id: t.dm.id } : null
 }
 
 const notifyServer = ({ server }: ActionCtx): NotifyScope | null =>
@@ -85,6 +94,8 @@ interface NotifyPlace {
   of(ctx: ActionCtx): NotifyScope | null
   // In titles: a fixed name, or one from the context.
   name: string | ((ctx: ActionCtx) => string)
+  // The menus mute and unmute join, which name the place by its noun ("Mute DM").
+  menu?: { targets: readonly Target['kind'][]; noun(ctx: ActionCtx): string }
 }
 
 const named = (p: NotifyPlace, verb: string, alone: string) => {
@@ -94,10 +105,20 @@ const named = (p: NotifyPlace, verb: string, alone: string) => {
     : { title: alone, label: (ctx: ActionCtx) => `${verb} ${name(ctx)}` }
 }
 
+// Mute and unmute in the menus `p.menu` names, labelled there by the place's noun.
+const inMenus = (p: NotifyPlace, verb: string, alone: string) => {
+  const plain = named(p, verb, alone)
+  const { menu } = p
+  if (!menu) return plain
+  const label = (ctx: ActionCtx) =>
+    ctx.via === 'menu' ? `${verb} ${menu.noun(ctx)}` : (plain.label?.(ctx) ?? plain.title)
+  return { ...plain, label, targets: menu.targets, order: 120 }
+}
+
 const notifyActions = (p: NotifyPlace): Action[] => [
   {
     id: `mute_${p.key}`,
-    ...named(p, 'Mute', 'Mute'),
+    ...inMenus(p, 'Mute', 'Mute'),
     scope: p.scope,
     icon: BellOff,
     keywords: ['notifications', 'silence'],
@@ -117,10 +138,16 @@ const notifyActions = (p: NotifyPlace): Action[] => [
   },
   {
     id: `unmute_${p.key}`,
-    ...named(p, 'Unmute', 'Unmute'),
+    ...inMenus(p, 'Unmute', 'Unmute'),
     scope: p.scope,
     icon: Bell,
     keywords: ['notifications'],
+    subtitle: ctx => {
+      const scope = p.menu && ctx.via === 'menu' ? p.of(ctx) : null
+      const now = Date.now()
+      const end = scope && muteEnd(ctx.s.notifyPrefs, scope, now)
+      return end ? mutedText(end, now) : undefined
+    },
     available: ctx => {
       const scope = p.of(ctx)
       return scope !== null && mutedNow(ctx.s, scope)
@@ -198,10 +225,14 @@ export const placeActions: Action[] = [
   {
     id: 'mark_read_here',
     title: 'Mark as read',
-    label: ctx => `Mark ${what(ctx)} as read`,
+    label: ctx => (ctx.via === 'menu' ? 'Mark as read' : `Mark ${what(ctx)} as read`),
     scope: 'channel',
     icon: Check,
+    iconFor: ({ via }) => (via === 'menu' ? CheckCheck : Check),
     keywords: ['read', 'unread'],
+    targets: ['dm'],
+    order: 110,
+    disabled: ({ s, list }) => list === null || !scopeMarkTargets(s, list).length,
     available: ({ list }) => list !== null,
     run: ({ list }) => {
       if (list) void get().markScopesRead([list])
@@ -276,7 +307,13 @@ export const placeActions: Action[] = [
     available: textChannel,
     run: (ctx, { value }) => void jumpToDate(ctx, value),
   },
-  ...notifyActions({ key: 'here', scope: 'channel', of: notifyHere, name: what }),
+  ...notifyActions({
+    key: 'here',
+    scope: 'channel',
+    of: notifyTarget,
+    name: what,
+    menu: { targets: ['dm'], noun: () => 'DM' },
+  }),
   {
     id: 'mark_server_read',
     title: 'Mark this server as read',
@@ -417,9 +454,13 @@ export const placeActions: Action[] = [
   {
     id: 'close_dm',
     title: 'Close this DM',
+    label: ({ via }) => (via === 'menu' ? 'Close DM' : 'Close this DM'),
     scope: 'dm',
     icon: X,
-    available: inDm,
+    targets: ['dm'],
+    order: 310,
+    available: ctx =>
+      ctx.target.kind === 'dm' ? ctx.target.where === 'sidebar' && signedIn(ctx.s) : inDm(ctx),
     run: ({ dm }) => {
       if (dm) void get().closeDm(dm.id)
     },

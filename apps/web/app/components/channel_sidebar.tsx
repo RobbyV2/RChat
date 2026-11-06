@@ -23,6 +23,7 @@ import {
   userRefFor,
   useStore,
 } from '../lib/store'
+import { openActionMenu } from '../lib/actions/menu'
 import { dmSections } from '../lib/nav_layout'
 import { canDeleteChannel } from '../lib/rules'
 import { enterKey } from '../lib/keys'
@@ -48,8 +49,7 @@ import {
 import { UserAvatar } from './user_avatar'
 import { ServerHeader } from './server_header'
 import { longPress } from './context_menu'
-import { blockMenuItem } from './blocking'
-import { FriendsEntry, friendMenuItem } from './friends'
+import { FriendsEntry } from './friends'
 import { dragScope, useDrag, type DragSpec } from './drag'
 import { profileTrigger } from './profile_card'
 import { LiveBadge, VoiceDock } from './voice_grid'
@@ -70,59 +70,27 @@ const joined = (server: string) => !!useStore.getState().me?.servers.some(x => x
 
 function DmRow({
   dm,
-  pinned,
   active,
   unread,
   pings,
 }: {
   dm: DmSummary
-  pinned: boolean
   active: boolean
   unread: boolean
   pings: number
 }) {
   const openDm = useStore(s => s.openDm)
-  const openContextMenu = useStore(s => s.openContextMenu)
-  const pinDm = useStore(s => s.pinDm)
-  const unpinDm = useStore(s => s.unpinDm)
-  const closeDm = useStore(s => s.closeDm)
   const placeDm = useStore(s => s.placeDm)
-  const markScopesRead = useStore(s => s.markScopesRead)
   const { id, other, is_self } = dm
   const muted = useStore(s => scopeMuted(s, { kind: 'dm', id }))
   return (
     <button
       onClick={() => void openDm(id)}
-      {...longPress(
-        (x, y) =>
-          openContextMenu(x, y, [
-            markReadItem(
-              scopeMarkTargets(useStore.getState(), `d${id}`),
-              () => void markScopesRead([`d${id}`])
-            ),
-            ...notifyMenuItems({ kind: 'dm', id }, 'DM'),
-            pinned
-              ? { label: 'Unpin DM', action: () => unpinDm(id) }
-              : { label: 'Pin DM', action: () => pinDm(id) },
-            { label: 'Close DM', action: () => void closeDm(id) },
-            ...[is_self ? null : friendMenuItem(other), blockMenuItem(other)].filter(
-              i => i !== null
-            ),
-            {
-              label: 'Copy DM ID',
-              action: () => void navigator.clipboard.writeText(String(id)),
-            },
-            {
-              label: 'Copy User ID',
-              action: () => void navigator.clipboard.writeText(other.username),
-            },
-          ]),
-        {
-          group: 'dm',
-          key: String(id),
-          onDrop: ({ zone, index }) => placeDm(id, zone === 'pinned' ? 'pinned' : 'recent', index),
-        }
-      )}
+      {...longPress((x, y) => openActionMenu(x, y, { kind: 'dm', dm, where: 'sidebar' }), {
+        group: 'dm',
+        key: String(id),
+        onDrop: ({ zone, index }) => placeDm(id, zone === 'pinned' ? 'pinned' : 'recent', index),
+      })}
       className={`mx-2 flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
         active
           ? 'bg-secondary-container text-on-secondary-container'
@@ -329,11 +297,10 @@ export function ChannelSidebar() {
     }
     const pinZone = dmDrag && pinned.length === 0
     const pinning = dropZone === 'pinned' && !pinned.some(d => String(d.id) === dragKey)
-    const row = (dm: DmSummary, isPinned: boolean) => (
+    const row = (dm: DmSummary) => (
       <DmRow
         key={dm.id}
         dm={dm}
-        pinned={isPinned}
         active={view.dmId === dm.id}
         unread={unread(`d${dm.id}`)}
         pings={pingsOf(`d${dm.id}`)}
@@ -355,7 +322,7 @@ export function ChannelSidebar() {
                 <Pin size={12} className="shrink-0" />
                 Pinned
               </div>
-              {pinned.map(dm => row(dm, true))}
+              {pinned.map(row)}
             </div>
           )}
           <div
@@ -410,7 +377,7 @@ export function ChannelSidebar() {
             />
           )}
           <div data-drop-zone="recent" data-drop-label="Unpin" className="flex shrink-0 flex-col">
-            {recent.map(dm => row(dm, false))}
+            {recent.map(row)}
             {dmsMore && <Sentinel key={dms.length} onVisible={loadMoreDms} />}
           </div>
         </div>
